@@ -30,7 +30,7 @@ pub fn write_repr_str<W: Write + ?Sized>(out: &mut W, s: &str) -> fmt::Result {
             continue;
         }
         out.write_str(s.get(run_start..i).unwrap_or_default())?;
-        run_start = i + c.len_utf8();
+        run_start = i.saturating_add(c.len_utf8());
         write_escaped_char(out, c)?;
     }
     out.write_str(s.get(run_start..).unwrap_or_default())?;
@@ -68,7 +68,7 @@ fn write_escaped_char<W: Write + ?Sized>(out: &mut W, c: char) -> fmt::Result {
 /// Returns `repr(s)` for a Python `str`. See [`write_repr_str`].
 #[must_use]
 pub fn repr_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
+    let mut out = String::with_capacity(s.len().saturating_add(2));
     // Writing to a `String` cannot fail.
     let _ = write_repr_str(&mut out, s);
     out
@@ -111,7 +111,7 @@ pub fn write_repr_bytes<W: Write + ?Sized>(out: &mut W, b: &[u8]) -> fmt::Result
 /// Returns `repr(b)` for a Python `bytes` object. See [`write_repr_bytes`].
 #[must_use]
 pub fn repr_bytes(b: &[u8]) -> String {
-    let mut out = String::with_capacity(b.len() + 3);
+    let mut out = String::with_capacity(b.len().saturating_add(3));
     let _ = write_repr_bytes(&mut out, b);
     out
 }
@@ -196,7 +196,7 @@ fn shortest_digits(x: f64) -> (String, i32) {
         // differently (2**-25 is 2.98023223876953125e-08). Fixed-precision
         // formatting rounds correctly, ties to even, like CPython; use it
         // whenever it still round-trips.
-        let nearest = format!("{x:.*e}", digits.len() - 1);
+        let nearest = format!("{x:.*e}", digits.len().saturating_sub(1));
         if nearest != shortest && nearest.parse::<f64>() == Ok(x) {
             return split_scientific(&nearest);
         }
@@ -274,7 +274,7 @@ mod tests {
             (-1.5, "-1.5"),
             (123_456_789.0, "123456789.0"),
             // Exact ties between two shortest candidates round to even.
-            (2.980_232_238_769_531_25e-8, "2.9802322387695312e-08"),
+            (2f64.powi(-25), "2.9802322387695312e-08"),
         ];
         for &(x, expected) in cases {
             assert_eq!(repr_float(x), expected, "repr({x:?})");

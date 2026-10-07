@@ -1,7 +1,7 @@
 //! Arbitrary-precision integers (storage and comparison only).
 
 use std::cmp::Ordering;
-use std::fmt;
+use std::fmt::{self, Write};
 use std::str::FromStr;
 
 /// An arbitrary-precision integer, as produced by PyYAML for integers that do
@@ -123,10 +123,10 @@ impl BigInt {
         let mut text = String::new();
         let mut iter = limbs.iter().rev();
         if let Some(first) = iter.next() {
-            text.push_str(&first.to_string());
+            let _ = write!(text, "{first}");
         }
         for limb in iter {
-            text.push_str(&format!("{limb:09}"));
+            let _ = write!(text, "{limb:09}");
         }
         Ok(Self::from_parts(negative, &text))
     }

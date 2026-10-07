@@ -74,7 +74,9 @@ impl Schema {
                 let context = || match id_key {
                     None => format!("At {object_name}()"),
                     Some(id_key) => {
-                        let id = dct.get(id_key).map_or_else(|| "MISSING".to_owned(), Value::repr);
+                        let id = dct
+                            .get(id_key)
+                            .map_or_else(|| "MISSING".to_owned(), Value::repr);
                         format!("At {object_name}({id_key}={id})")
                     }
                 };

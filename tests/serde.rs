@@ -1,5 +1,13 @@
 //! Tests of the `serde` feature.
 #![cfg(feature = "serde")]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    reason = "test code: failing loudly is the point"
+)]
 
 use std::collections::BTreeMap;
 

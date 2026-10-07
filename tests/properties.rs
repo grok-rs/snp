@@ -1,5 +1,13 @@
 //! Property tests: no panics on arbitrary input, round trips, and the
 //! `Eq`/`Hash` contract.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    reason = "test code: failing loudly is the point"
+)]
 
 use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
 
@@ -114,7 +122,7 @@ proptest! {
         let repr = py::repr_str(&s);
         prop_assert_eq!(unrepr_str(&repr), Some(s.clone()));
         // The output never contains raw control characters.
-        prop_assert!(!repr.chars().any(|c| c.is_control()));
+        prop_assert!(!repr.chars().any(char::is_control));
         // A quote is only escaped when it is the delimiter.
         let quote = repr.chars().next().unwrap_or('\'');
         prop_assert!(quote == '\'' || (s.contains('\'') && !s.contains('"')));
@@ -133,6 +141,7 @@ proptest! {
     }
 
     #[test]
+    #[allow(clippy::cast_precision_loss, reason = "the rounding is what is tested")]
     fn numeric_equality_is_exact(i in any::<i64>(), f in any::<f64>()) {
         let as_float = Value::Float(i as f64);
         // `i as f64` rounds; Python compares exactly.
@@ -165,7 +174,7 @@ proptest! {
             (Err(e), Err(std_err)) => {
                 prop_assert_eq!(e.start(), std_err.valid_up_to());
                 prop_assert!(e.start() < e.end() && e.end() <= bytes.len());
-                prop_assert_eq!(Some(&e.first_byte()), bytes.get(e.start()));
+                prop_assert_eq!(Some(e.first_byte()), bytes.get(e.start()).copied());
                 prop_assert!(e.to_string().starts_with("'utf-8' codec can't decode byte"));
             }
             _ => prop_assert!(false, "disagreement on {:?}", bytes),

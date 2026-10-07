@@ -1,6 +1,14 @@
 //! Tests of the public API added or changed in 0.3: warning context, custom
 //! items, introspection, shared schemas, owned defaults, Python value
 //! semantics and the error types.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    reason = "test code: failing loudly is the point"
+)]
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -401,7 +409,7 @@ fn validation_error_api() {
     assert_eq!(err.message(), "leaf");
     assert_eq!(err.contexts().collect::<Vec<_>>(), ["outer", "inner"]);
     assert_eq!(err.contexts().len(), 2);
-    assert_eq!(err.contexts().rev().next(), Some("inner"));
+    assert_eq!(err.contexts().next_back(), Some("inner"));
     assert_eq!(err.to_string(), "\n==> outer\n==> inner\n=====> leaf");
     assert!(std::error::Error::source(&err).is_none());
     assert_eq!(err.clone(), err);

@@ -169,7 +169,7 @@ impl SpecBuilder {
         }
     }
 
-    fn condition(&self, c: &Json) -> ConditionValue {
+    fn condition(c: &Json) -> ConditionValue {
         let values = || array(c, "values").iter().map(value).collect();
         match str_field(c, "kind") {
             "exact" => ConditionValue::Exact(value(field(c, "value"))),
@@ -186,7 +186,7 @@ impl SpecBuilder {
         let default = || value(field(c, "default"));
         let schema = || self.schema(field(c, "schema"));
         let condition_key = || value(field(c, "condition_key"));
-        let condition = || self.condition(field(c, "condition"));
+        let condition = || Self::condition(field(c, "condition"));
         let ensure_absent = || field(c, "ensure_absent").as_bool().expect("bool");
         let keys = || array(c, "keys").iter().map(value).collect::<Vec<_>>();
         match str_field(c, "kind") {

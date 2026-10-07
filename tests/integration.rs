@@ -1,3 +1,13 @@
+//! Ports of Python cfgv's own test suite (`tests/cfgv_test.py`).
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    reason = "test code: failing loudly is the point"
+)]
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -48,6 +58,7 @@ fn test_check_one_of_ok() {
 // ---- check_regex tests ----
 
 #[test]
+#[cfg(feature = "regex")]
 fn test_check_regex() {
     let check = CheckFn::check_regex();
     let err = check.check(&Value::String("(".into())).unwrap_err();
@@ -55,6 +66,7 @@ fn test_check_regex() {
 }
 
 #[test]
+#[cfg(feature = "regex")]
 fn test_check_regex_ok() {
     let check = CheckFn::check_regex();
     check.check(&Value::String("^$".into())).unwrap();
@@ -80,6 +92,7 @@ fn test_check_array_ok() {
 // ---- check_and tests ----
 
 #[test]
+#[cfg(feature = "regex")]
 fn test_check_and() {
     let check = CheckFn::check_and(vec![
         CheckFn::Type(ValueType::String, None),
@@ -93,6 +106,7 @@ fn test_check_and() {
 }
 
 #[test]
+#[cfg(feature = "regex")]
 fn test_check_and_ok() {
     let check = CheckFn::check_and(vec![
         CheckFn::Type(ValueType::String, None),
@@ -954,9 +968,12 @@ fn test_warn_additional_keys_when_has_extra_keys() {
         None,
         vec![
             Validator::required(true, CheckFn::check_bool()),
-            Validator::warn_additional_keys(vec![Value::Bool(true)], move |_extra, _keys, _dct, _cx| {
-                called_clone.store(true, Ordering::SeqCst);
-            }),
+            Validator::warn_additional_keys(
+                vec![Value::Bool(true)],
+                move |_extra, _keys, _dct, _cx| {
+                    called_clone.store(true, Ordering::SeqCst);
+                },
+            ),
         ],
     );
 
@@ -974,9 +991,12 @@ fn test_warn_additional_keys_when_no_extra_keys() {
         None,
         vec![
             Validator::required(true, CheckFn::check_bool()),
-            Validator::warn_additional_keys(vec![Value::Bool(true)], move |_extra, _keys, _dct, _cx| {
-                called_clone.store(true, Ordering::SeqCst);
-            }),
+            Validator::warn_additional_keys(
+                vec![Value::Bool(true)],
+                move |_extra, _keys, _dct, _cx| {
+                    called_clone.store(true, Ordering::SeqCst);
+                },
+            ),
         ],
     );
 
@@ -1167,8 +1187,8 @@ fn test_load_from_filename_unicode_error() {
     let dir = tempfile::tempdir().unwrap();
     let f = dir.path().join("f.notjson");
     std::fs::write(&f, b"\xa0\xa1").unwrap();
-    let err = load_from_filename(&f, &map_required(), json_load_strategy, Some("f.notjson"))
-        .unwrap_err();
+    let err =
+        load_from_filename(&f, &map_required(), json_load_strategy, Some("f.notjson")).unwrap_err();
     assert_trace(
         &invalid(err),
         &[
@@ -1183,7 +1203,8 @@ fn test_load_from_filename_fails_load_strategy() {
     let dir = tempfile::tempdir().unwrap();
     let f = dir.path().join("foo.notjson");
     std::fs::write(&f, "totes not json").unwrap();
-    let err = invalid(load_from_filename(&f, &map_required(), json_load_strategy, None).unwrap_err());
+    let err =
+        invalid(load_from_filename(&f, &map_required(), json_load_strategy, None).unwrap_err());
     let parts = err.trace_parts();
     assert_eq!(parts.len(), 2);
     assert!(parts[0].starts_with("File "));
@@ -1195,7 +1216,8 @@ fn test_load_from_filename_validation_error() {
     let dir = tempfile::tempdir().unwrap();
     let f = dir.path().join("foo.json");
     std::fs::write(&f, "{}").unwrap();
-    let err = invalid(load_from_filename(&f, &map_required(), json_load_strategy, None).unwrap_err());
+    let err =
+        invalid(load_from_filename(&f, &map_required(), json_load_strategy, None).unwrap_err());
     let parts = err.trace_parts();
     assert!(parts[0].starts_with("File "));
     assert_eq!(parts[1], "At foo(key=MISSING)");

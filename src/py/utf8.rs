@@ -131,7 +131,7 @@ pub fn decode_utf8(bytes: &[u8]) -> Result<&str, Utf8DecodeError> {
             },
             Some(len) => Utf8DecodeError {
                 start,
-                end: start.saturating_add(usize::from(len)),
+                end: start.saturating_add(len),
                 first_byte,
                 reason: if len == 1 && !is_lead_byte(first_byte) {
                     Utf8ErrorReason::InvalidStartByte

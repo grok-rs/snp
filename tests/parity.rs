@@ -14,6 +14,14 @@
 //!   covering every message format in `cfgv.py`, plus `load_from_filename`
 //!   cases (missing file, directory, decoding errors, universal newlines,
 //!   loader errors, nested validation errors, display names).
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    reason = "test code: failing loudly is the point"
+)]
 
 mod common;
 
@@ -135,32 +143,31 @@ fn validation_messages_defaults_and_warnings_match_python() {
         let mut warnings = Vec::new();
         let result = validate_with(&v, schema, &mut Cx::collect(&mut warnings));
         let expected = &case["result"];
-        match result {
-            Err(err) => m.compare(
+        if let Err(err) = result {
+            m.compare(
                 || format!("{name}: error"),
                 &err.to_string(),
                 expected["error"]
                     .as_str()
                     .unwrap_or("<python accepted the value>"),
-            ),
-            Ok(()) => {
-                let applied = expected["applied"]
-                    .as_str()
-                    .unwrap_or("<python rejected the value>");
-                m.compare(
-                    || format!("{name}: applied"),
-                    &apply_defaults(&v, schema).repr(),
-                    applied,
-                );
-                let removed = expected["removed"]
-                    .as_str()
-                    .unwrap_or("<python rejected the value>");
-                m.compare(
-                    || format!("{name}: removed"),
-                    &remove_defaults(&v, schema).repr(),
-                    removed,
-                );
-            }
+            );
+        } else {
+            let applied = expected["applied"]
+                .as_str()
+                .unwrap_or("<python rejected the value>");
+            m.compare(
+                || format!("{name}: applied"),
+                &apply_defaults(&v, schema).repr(),
+                applied,
+            );
+            let removed = expected["removed"]
+                .as_str()
+                .unwrap_or("<python rejected the value>");
+            m.compare(
+                || format!("{name}: removed"),
+                &remove_defaults(&v, schema).repr(),
+                removed,
+            );
         }
         let expected_warnings: Vec<&str> = cases(case, "warnings")
             .iter()
