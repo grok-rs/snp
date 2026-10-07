@@ -628,5 +628,5 @@
 {"hex":"7f80c3a9e0","result":{"error":"'utf-8' codec can't decode byte 0x80 in position 1: invalid start byte"}},
 {"hex":"dfed61bfffc3a9","result":{"error":"'utf-8' codec can't decode byte 0xdf in position 0: invalid continuation byte"}}
 ],
-"meta":{"cfgv":"3.5.0","python":"3.12.3","seed":20261008,"unicode":"15.0.0"}
+"meta":{"cfgv":"3.5.0","python":"3.12","seed":20261008,"unicode":"15.0.0"}
 }

@@ -10,15 +10,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
-    name: Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo check --all-features
-
   fmt:
     name: Format
     runs-on: ubuntu-latest
@@ -38,14 +29,22 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-features --all-targets -- -D warnings
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --all-targets --no-default-features -- -D warnings
 
   test:
-    name: Test (${{ matrix.toolchain }})
+    name: Test (${{ matrix.toolchain }}, ${{ matrix.features }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
+        # 1.85 is the MSRV (`rust-version` in Cargo.toml; edition 2024).
         toolchain: [stable, "1.85"]
+        features: [--all-features, --no-default-features, ""]
+    env:
+      # rust-toolchain.toml pins `stable`; RUSTUP_TOOLCHAIN takes precedence,
+      # so the MSRV job really builds with the MSRV.
+      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -54,7 +53,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.toolchain }}
-      - run: cargo test --all-features
+      - run: rustc --version && cargo --version
+      - run: cargo test ${{ matrix.features }}
 
   doc:
     name: Documentation
@@ -66,3 +66,24 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc --no-deps --all-features
+      - run: cargo doc --no-deps --no-default-features
+
+  vectors:
+    name: Python parity vectors are up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Regenerate from the cfgv 3.5.0 wheel and CPython 3.12
+        run: |
+          work="$RUNNER_TEMP/parity"
+          mkdir -p "$work/download" "$work/cfgv" "$work/vectors"
+          python -m pip download cfgv==3.5.0 --no-deps --only-binary=:all: -d "$work/download"
+          python -I -c 'import glob, sys, zipfile; zipfile.ZipFile(glob.glob(sys.argv[1] + "/cfgv-3.5.0-*.whl")[0]).extract("cfgv.py", sys.argv[2])' "$work/download" "$work/cfgv"
+          cd "$work"
+          python -I "$GITHUB_WORKSPACE/scripts/gen_parity_vectors.py" cfgv vectors
+          python -I "$GITHUB_WORKSPACE/scripts/gen_unicode_tables.py" tables.rs
+          diff -r "$GITHUB_WORKSPACE/tests/vectors" vectors
+          diff "$GITHUB_WORKSPACE/src/py/tables.rs" tables.rs

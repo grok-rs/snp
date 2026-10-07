@@ -1130,7 +1130,7 @@ def main():
     import cfgv  # noqa: E402  (the copied original, nothing else)
 
     meta = {
-        'python': sys.version.split()[0],
+        'python': '.'.join(map(str, sys.version_info[:2])),
         'unicode': unicodedata.unidata_version,
         'cfgv': '3.5.0',
         'seed': SEED,

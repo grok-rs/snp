@@ -5715,7 +5715,7 @@
 {"repr":"{'nested': {'deeper': [{'x': (1, (2,))}]}}","str":"{'nested': {'deeper': [{'x': (1, (2,))}]}}","type":"dict","value":{"t":"dict","v":[[{"t":"str","v":"nested"},{"t":"dict","v":[[{"t":"str","v":"deeper"},{"t":"list","v":[{"t":"dict","v":[[{"t":"str","v":"x"},{"t":"tuple","v":[{"t":"int","v":"1"},{"t":"tuple","v":[{"t":"int","v":"2"}]}]}]]}]}]]}]]}},
 {"repr":"[nan, inf, 1000000000000000000000000000000, b'\\x00']","str":"[nan, inf, 1000000000000000000000000000000, b'\\x00']","type":"list","value":{"t":"list","v":[{"bits":"7ff8000000000000","t":"float"},{"bits":"7ff0000000000000","t":"float"},{"t":"int","v":"1000000000000000000000000000000"},{"hex":"00","t":"bytes"}]}}
 ],
-"meta":{"cfgv":"3.5.0","python":"3.12.3","seed":20261008,"unicode":"15.0.0"},
+"meta":{"cfgv":"3.5.0","python":"3.12","seed":20261008,"unicode":"15.0.0"},
 "nonprintable":[
 [0,31],
 [127,160],

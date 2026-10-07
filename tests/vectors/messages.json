@@ -3459,7 +3459,7 @@
 {"display":null,"file":"a_directory","hex":null,"name":"a_directory_None","result":{"error":"\n=====> $TMP/a_directory is not a file"},"schema":130},
 {"display":"shown.cfg","file":"a_directory","hex":null,"name":"a_directory_shown.cfg","result":{"error":"\n=====> shown.cfg is not a file"},"schema":130}
 ],
-"meta":{"cfgv":"3.5.0","python":"3.12.3","seed":20261008,"unicode":"15.0.0"},
+"meta":{"cfgv":"3.5.0","python":"3.12","seed":20261008,"unicode":"15.0.0"},
 "regex_valid":{"\u0000(":false,"(":false,"(?<!foo)bar":true,"(?P<n>x)(?P=n)":true,"*":false,"[":false,"\\":false,"^$":true,"^a\\.txt$":true,"a\\Z":true,"a{":true,"both '\"(":false,"foo\\":false,"it's(":false,"say \"hi\"(":false,"tab\t(":false,"\u00e9(":false,"\ud83d\ude00)":false},
 "schemas":[
 {"id_key":null,"items":[{"check":{"kind":"bool"},"key":{"t":"str","v":"k"},"kind":"required"}],"kind":"map","name":"M"},
