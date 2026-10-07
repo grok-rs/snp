@@ -1,12 +1,14 @@
 [package]
 name = "cfgv"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
-description = "Validate configuration and produce human readable error messages"
+description = "Validate configuration and produce human readable error messages; a byte-for-byte compatible port of Python cfgv"
 license = "MIT"
 repository = "https://github.com/grok-rs/cfgv-rs"
-keywords = ["configuration", "validation", "schema", "config"]
+documentation = "https://docs.rs/cfgv"
+readme = "README.md"
+keywords = ["configuration", "validation", "schema", "cfgv", "pre-commit"]
 categories = ["config", "development-tools"]
 
 [dependencies]
