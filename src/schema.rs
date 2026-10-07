@@ -1,122 +1,118 @@
-use indexmap::IndexMap;
+//! Container schemas: `Map`, `Array` and `KeyValueMap`.
+
+use std::sync::Arc;
 
 use crate::check::CheckFn;
 use crate::error::{ValidationError, validate_context};
-use crate::validator::Validator;
+use crate::py;
+use crate::validator::{Cx, Validator};
 use crate::value::Value;
 
-/// A schema that validates configuration data structures.
+/// A schema for a container value, mirroring Python cfgv's `Map`, `Array`
+/// and `KeyValueMap`.
 ///
-/// Mirrors Python cfgv's `Map`, `Array`, and `KeyValueMap` containers.
+/// Schemas are immutable and `Send + Sync`; build them once (e.g. in a
+/// `static LazyLock<Schema>`) and share them. Nested schemas and item lists
+/// are reference-counted, so cloning a schema is cheap.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Schema {
-    /// Validates a map (dict) against a set of validators.
+    /// `Map(object_name, id_key, *items)`: a dict validated item by item.
     Map {
+        /// Name used in messages (`At {object_name}(...)`).
         object_name: String,
+        /// Key whose value identifies the map in the context line.
         id_key: Option<Value>,
-        items: Vec<Validator>,
+        /// The items, checked in order.
+        items: Arc<[Validator]>,
     },
-    /// Validates a list where each element matches a sub-schema.
-    Array { of: Box<Schema>, allow_empty: bool },
-    /// Validates a homogeneous mapping with typed keys and values matching a schema.
+    /// `Array(of, allow_empty)`: a list or tuple whose items all match `of`.
+    Array {
+        /// Schema of every item.
+        of: Arc<Schema>,
+        /// Whether an empty array is valid.
+        allow_empty: bool,
+    },
+    /// `KeyValueMap(object_name, check_key_fn, value_schema)`: a dict with
+    /// arbitrary keys that pass `check_key_fn` and values matching
+    /// `value_schema`.
     KeyValueMap {
+        /// Name used in messages.
         object_name: String,
+        /// Check applied to every key.
         check_key_fn: CheckFn,
-        value_schema: Box<Schema>,
+        /// Schema of every value.
+        value_schema: Arc<Schema>,
     },
 }
 
 impl Schema {
-    /// Validate a value against this schema.
+    /// Validates `value`, discarding warnings. See [`Schema::check_with`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the first validation error.
     pub fn check(&self, value: &Value) -> Result<(), ValidationError> {
+        self.check_with(value, &mut Cx::discard())
+    }
+
+    /// Validates `value`, emitting warnings through `cx`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first validation error, wrapped in its contexts.
+    pub fn check_with(&self, value: &Value, cx: &mut Cx<'_>) -> Result<(), ValidationError> {
         match self {
-            Schema::Map {
+            Self::Map {
                 object_name,
                 id_key,
                 items,
             } => {
-                let dct = match value {
-                    Value::Map(m) => m,
-                    _ => {
-                        return Err(ValidationError::new(format!(
-                            "Expected a {object_name} map but got a {}",
-                            value.type_name()
-                        )));
+                let Value::Map(dct) = value else {
+                    return Err(not_a_map(object_name, value));
+                };
+                let context = || match id_key {
+                    None => format!("At {object_name}()"),
+                    Some(id_key) => {
+                        let id = dct.get(id_key).map_or_else(|| "MISSING".to_owned(), Value::repr);
+                        format!("At {object_name}({id_key}={id})")
                     }
                 };
-
-                let context = || {
-                    if let Some(id_key) = id_key {
-                        let key_v = dct
-                            .get(id_key)
-                            .map(|v| v.repr())
-                            .unwrap_or_else(|| "MISSING".to_owned());
-                        format!("At {object_name}({id_key}={key_v})")
-                    } else {
-                        format!("At {object_name}()")
-                    }
-                };
-
                 validate_context(context, || {
-                    for item in items {
-                        item.check(dct)?;
-                    }
-                    Ok(())
+                    items.iter().try_for_each(|item| item.check(dct, cx))
                 })
             }
-
-            Schema::Array { of, allow_empty } => {
-                // First check it's actually an array
-                let list = match value {
-                    Value::List(l) => l,
-                    _ => {
-                        return Err(ValidationError::new(format!(
-                            "Expected array but got '{}'",
-                            value.type_name()
-                        )));
-                    }
-                };
-
-                if !allow_empty && list.is_empty() {
-                    let name = match of.as_ref() {
-                        Schema::Map { object_name, .. } => object_name.as_str(),
-                        Schema::KeyValueMap { object_name, .. } => object_name.as_str(),
-                        _ => "item",
-                    };
+            Self::Array { of, allow_empty } => {
+                let items = value.as_array().ok_or_else(|| {
+                    ValidationError::new(format!(
+                        "Expected array but got {}",
+                        py::repr_str(value.type_name())
+                    ))
+                })?;
+                if !allow_empty && items.is_empty() {
+                    let name = of.object_name().unwrap_or("item");
                     return Err(ValidationError::new(format!(
                         "Expected at least 1 '{name}'"
                     )));
                 }
-
-                for val in list {
-                    of.check(val)?;
-                }
-                Ok(())
+                items.iter().try_for_each(|item| of.check_with(item, cx))
             }
-
-            Schema::KeyValueMap {
+            Self::KeyValueMap {
                 object_name,
                 check_key_fn,
                 value_schema,
             } => {
-                let dct = match value {
-                    Value::Map(m) => m,
-                    _ => {
-                        return Err(ValidationError::new(format!(
-                            "Expected a {object_name} map but got a {}",
-                            value.type_name()
-                        )));
-                    }
+                let Value::Map(dct) = value else {
+                    return Err(not_a_map(object_name, value));
                 };
-
                 validate_context(
                     || format!("At {object_name}()"),
                     || {
-                        for (k, val) in dct {
+                        for (k, v) in dct {
                             validate_context(|| format!("For key: {k}"), || check_key_fn.check(k))?;
                             validate_context(
                                 || format!("At key: {k}"),
-                                || value_schema.check(val),
+                                || value_schema.check_with(v, cx),
                             )?;
                         }
                         Ok(())
@@ -126,99 +122,166 @@ impl Schema {
         }
     }
 
-    /// Apply defaults to a value according to this schema.
-    /// Returns a new value — does not mutate the input.
+    /// Returns a copy of `value` with defaults applied (Python
+    /// `apply_defaults`). Call it on validated values only: data that does
+    /// not have the shape of the schema is returned unchanged.
+    #[must_use]
     pub fn apply_defaults(&self, value: &Value) -> Value {
-        match self {
-            Schema::Map { items, .. } => {
-                let mut dct = value.as_map().cloned().unwrap_or_default();
-                for item in items {
-                    item.apply_default(&mut dct);
-                }
-                Value::Map(dct)
-            }
-
-            Schema::Array { of, .. } => {
-                let list = value.as_list().map(|l| l.to_vec()).unwrap_or_default();
-                Value::List(list.into_iter().map(|v| of.apply_defaults(&v)).collect())
-            }
-
-            Schema::KeyValueMap { value_schema, .. } => {
-                let dct = value.as_map().cloned().unwrap_or_default();
-                let new_map: IndexMap<Value, Value> = dct
-                    .into_iter()
-                    .map(|(k, v)| (k, value_schema.apply_defaults(&v)))
-                    .collect();
-                Value::Map(new_map)
-            }
-        }
+        self.apply_defaults_owned(value.clone())
     }
 
-    /// Remove defaults from a value according to this schema.
-    /// Returns a new value — does not mutate the input.
+    /// Applies defaults to `value`, consuming it and reusing its
+    /// allocations.
+    #[must_use]
+    pub fn apply_defaults_owned(&self, mut value: Value) -> Value {
+        self.apply_defaults_in_place(&mut value);
+        value
+    }
+
+    /// Returns a copy of `value` with every optional value that equals its
+    /// default removed (Python `remove_defaults`).
+    #[must_use]
     pub fn remove_defaults(&self, value: &Value) -> Value {
-        match self {
-            Schema::Map { items, .. } => {
-                let mut dct = value.as_map().cloned().unwrap_or_default();
-                for item in items {
-                    item.remove_default(&mut dct);
+        self.remove_defaults_owned(value.clone())
+    }
+
+    /// Removes defaults from `value`, consuming it and reusing its
+    /// allocations.
+    #[must_use]
+    pub fn remove_defaults_owned(&self, mut value: Value) -> Value {
+        self.remove_defaults_in_place(&mut value);
+        value
+    }
+
+    pub(crate) fn apply_defaults_in_place(&self, value: &mut Value) {
+        self.transform_in_place(value, true);
+    }
+
+    pub(crate) fn remove_defaults_in_place(&self, value: &mut Value) {
+        self.transform_in_place(value, false);
+    }
+
+    fn transform_in_place(&self, value: &mut Value, apply: bool) {
+        match (self, value) {
+            (Self::Map { items, .. }, Value::Map(dct)) => {
+                for item in items.iter() {
+                    if apply {
+                        item.apply_default(dct);
+                    } else {
+                        item.remove_default(dct);
+                    }
                 }
-                Value::Map(dct)
             }
-
-            Schema::Array { of, .. } => {
-                let list = value.as_list().map(|l| l.to_vec()).unwrap_or_default();
-                Value::List(list.into_iter().map(|v| of.remove_defaults(&v)).collect())
+            (Self::Array { of, .. }, value @ (Value::List(_) | Value::Tuple(_))) => {
+                // Python returns a list for both lists and tuples.
+                if let Value::Tuple(items) = value {
+                    *value = Value::List(std::mem::take(items));
+                }
+                if let Value::List(items) = value {
+                    for item in items {
+                        of.transform_in_place(item, apply);
+                    }
+                }
             }
-
-            Schema::KeyValueMap { value_schema, .. } => {
-                let dct = value.as_map().cloned().unwrap_or_default();
-                let new_map: IndexMap<Value, Value> = dct
-                    .into_iter()
-                    .map(|(k, v)| (k, value_schema.remove_defaults(&v)))
-                    .collect();
-                Value::Map(new_map)
+            (Self::KeyValueMap { value_schema, .. }, Value::Map(dct)) => {
+                for v in dct.values_mut() {
+                    value_schema.transform_in_place(v, apply);
+                }
             }
+            // Never replace data that does not match the schema.
+            _ => {}
         }
     }
 
-    // --- Convenience constructors ---
+    /// The `object_name` of a `Map` or `KeyValueMap` schema.
+    #[must_use]
+    pub fn object_name(&self) -> Option<&str> {
+        match self {
+            Self::Map { object_name, .. } | Self::KeyValueMap { object_name, .. } => {
+                Some(object_name)
+            }
+            Self::Array { .. } => None,
+        }
+    }
 
+    /// The items of a `Map` schema, e.g. to derive another schema from them
+    /// like pre-commit derives its config hook schema from the manifest
+    /// schema.
+    #[must_use]
+    pub fn items(&self) -> Option<&Arc<[Validator]>> {
+        match self {
+            Self::Map { items, .. } => Some(items),
+            _ => None,
+        }
+    }
+
+    // --- Constructors -------------------------------------------------------
+
+    /// `Map(object_name, id_key, *items)`.
+    ///
+    /// ```
+    /// use cfgv::{CheckFn, Schema, Validator, validate, value_map};
+    ///
+    /// let schema = Schema::map("Repository", Some("repo".into()), vec![
+    ///     Validator::required("repo", CheckFn::check_string()),
+    ///     Validator::required("rev", CheckFn::check_string()),
+    /// ]);
+    /// let err = validate(&value_map! {"repo" => "it's"}, &schema).unwrap_err();
+    /// assert_eq!(
+    ///     err.to_string(),
+    ///     "\n==> At Repository(repo=\"it's\")\n=====> Missing required key: rev",
+    /// );
+    /// ```
+    #[must_use]
     pub fn map(
         object_name: impl Into<String>,
         id_key: Option<Value>,
-        items: Vec<Validator>,
+        items: impl Into<Arc<[Validator]>>,
     ) -> Self {
-        Schema::Map {
+        Self::Map {
             object_name: object_name.into(),
             id_key,
-            items,
+            items: items.into(),
         }
     }
 
-    pub fn array(of: Schema) -> Self {
-        Schema::Array {
-            of: Box::new(of),
+    /// `Array(of)`: empty arrays are allowed.
+    #[must_use]
+    pub fn array(of: impl Into<Arc<Self>>) -> Self {
+        Self::Array {
+            of: of.into(),
             allow_empty: true,
         }
     }
 
-    pub fn array_nonempty(of: Schema) -> Self {
-        Schema::Array {
-            of: Box::new(of),
+    /// `Array(of, allow_empty=False)`.
+    #[must_use]
+    pub fn array_nonempty(of: impl Into<Arc<Self>>) -> Self {
+        Self::Array {
+            of: of.into(),
             allow_empty: false,
         }
     }
 
+    /// `KeyValueMap(object_name, check_key_fn, value_schema)`.
+    #[must_use]
     pub fn key_value_map(
         object_name: impl Into<String>,
         check_key_fn: CheckFn,
-        value_schema: Schema,
+        value_schema: impl Into<Arc<Self>>,
     ) -> Self {
-        Schema::KeyValueMap {
+        Self::KeyValueMap {
             object_name: object_name.into(),
             check_key_fn,
-            value_schema: Box::new(value_schema),
+            value_schema: value_schema.into(),
         }
     }
+}
+
+/// `Expected a {object_name} map but got a {type}`.
+fn not_a_map(object_name: &str, value: &Value) -> ValidationError {
+    ValidationError::new(format!(
+        "Expected a {object_name} map but got a {}",
+        value.type_name()
+    ))
 }

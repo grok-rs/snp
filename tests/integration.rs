@@ -954,7 +954,7 @@ fn test_warn_additional_keys_when_has_extra_keys() {
         None,
         vec![
             Validator::required(true, CheckFn::check_bool()),
-            Validator::warn_additional_keys(vec![Value::Bool(true)], move |_extra, _keys, _dct| {
+            Validator::warn_additional_keys(vec![Value::Bool(true)], move |_extra, _keys, _dct, _cx| {
                 called_clone.store(true, Ordering::SeqCst);
             }),
         ],
@@ -974,7 +974,7 @@ fn test_warn_additional_keys_when_no_extra_keys() {
         None,
         vec![
             Validator::required(true, CheckFn::check_bool()),
-            Validator::warn_additional_keys(vec![Value::Bool(true)], move |_extra, _keys, _dct| {
+            Validator::warn_additional_keys(vec![Value::Bool(true)], move |_extra, _keys, _dct, _cx| {
                 called_clone.store(true, Ordering::SeqCst);
             }),
         ],
@@ -1160,7 +1160,7 @@ fn test_load_from_filename_fails_load_strategy() {
     std::fs::write(&f, "totes not json").unwrap();
     let err = load_from_filename(&f, &map_required(), json_load_strategy, None).unwrap_err();
     // Should have "File ..." context
-    assert!(err.message().starts_with("File "));
+    assert!(err.contexts().next().unwrap().starts_with("File "));
 }
 
 #[test]
