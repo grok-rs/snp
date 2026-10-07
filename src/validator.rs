@@ -291,7 +291,7 @@ impl Validator {
             Validator::NoAdditionalKeys { keys } => {
                 let key_set: std::collections::HashSet<&Value> = keys.iter().collect();
                 let mut extra: Vec<&Value> = dct.keys().filter(|k| !key_set.contains(k)).collect();
-                extra.sort_by_cached_key(|v| v.to_string());
+                crate::value::py_sort(&mut extra);
                 if !extra.is_empty() {
                     let extra_s: Vec<String> = extra.iter().map(|v| format!("{v}")).collect();
                     let keys_s: Vec<String> = keys.iter().map(|v| format!("{v}")).collect();
@@ -311,7 +311,7 @@ impl Validator {
                     .filter(|k| !key_set.contains(k))
                     .cloned()
                     .collect();
-                extra.sort_by_cached_key(|v| v.to_string());
+                crate::value::py_sort(&mut extra);
                 if !extra.is_empty() {
                     callback(&extra, keys, dct);
                 }

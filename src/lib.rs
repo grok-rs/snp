@@ -42,7 +42,7 @@ pub use error::{ValidationError, validate_context};
 pub use load::load_from_filename;
 pub use schema::Schema;
 pub use validator::{Validator, WarnCallback};
-pub use value::Value;
+pub use value::{BigInt, Date, DateError, DateTime, Map, ParseBigIntError, Set, TzOffset, Value};
 
 /// Hidden re-export for use by the `value_map!` macro.
 #[doc(hidden)]

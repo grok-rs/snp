@@ -98,9 +98,9 @@ impl CheckFn {
                 if possible.contains(value) {
                     Ok(())
                 } else {
-                    let mut sorted_strs: Vec<String> =
-                        possible.iter().map(|v| format!("{v}")).collect();
-                    sorted_strs.sort();
+                    let mut sorted: Vec<&Value> = possible.iter().collect();
+                    crate::value::py_sort(&mut sorted);
+                    let sorted_strs: Vec<String> = sorted.iter().map(|v| v.to_string()).collect();
                     let possible_s = sorted_strs.join(", ");
                     Err(ValidationError::new(format!(
                         "Expected one of {possible_s} but got: {}",
