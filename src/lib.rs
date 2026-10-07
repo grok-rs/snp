@@ -58,6 +58,7 @@
 //!   for `&Value`, to convert validated values into typed structs.
 
 #![forbid(unsafe_code)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod check;
 mod condition;
@@ -65,6 +66,8 @@ mod error;
 mod load;
 pub mod py;
 mod schema;
+#[cfg(feature = "serde")]
+mod serde_impl;
 mod validator;
 mod value;
 
@@ -73,10 +76,11 @@ pub use condition::ConditionValue;
 pub use error::{ValidationError, validate_context};
 pub use load::{LoadError, load_from_filename, load_from_filename_with};
 pub use schema::Schema;
+#[cfg(feature = "serde")]
+#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+pub use serde_impl::{DeserializeError, from_value};
 pub use validator::{Cx, MapItem, Validator, WarnCallback};
-pub use value::{
-    BigInt, Date, DateError, DateTime, Map, ParseBigIntError, Set, TzOffset, Value,
-};
+pub use value::{BigInt, Date, DateError, DateTime, Map, ParseBigIntError, Set, TzOffset, Value};
 
 /// Validates `value` against `schema`, discarding warnings.
 ///

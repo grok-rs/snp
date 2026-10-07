@@ -284,6 +284,7 @@ impl CheckFn {
     /// [`CheckFn::check_regex_with`] to plug in a Python-compatible
     /// validator.
     #[cfg(feature = "regex")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "regex")))]
     #[must_use]
     pub fn check_regex() -> Self {
         Self::check_regex_with(|pattern| regex::Regex::new(pattern).is_ok())
