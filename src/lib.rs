@@ -25,10 +25,13 @@
 //! validate(&config, &schema).unwrap();
 //! ```
 
+#![forbid(unsafe_code)]
+
 mod check;
 mod condition;
 mod error;
 mod load;
+pub mod py;
 mod schema;
 mod validator;
 mod value;
