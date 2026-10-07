@@ -65,8 +65,15 @@ pub enum ExecPolicy {
     ///   there), so every unknown-name file is checked for a shebang.
     #[default]
     PythonCompat,
-    /// Any `x` permission bit (`mode & 0o111 != 0`), git's notion of an
-    /// executable file. Never executable on non-Unix platforms.
+    /// git's notion of an executable file: the owner `x` bit
+    /// (`mode & 0o100 != 0`). This is the bit `git add` records as `100755`
+    /// (git's `ce_permissions`), so on Unix with `core.fileMode=true` the
+    /// result agrees with [`Meta::from_git_mode`] on the staged mode. Group
+    /// and other bits are ignored: `0o655` is not executable. Never
+    /// executable on non-Unix platforms.
+    ///
+    /// For lefthook's notion ("any `x` bit") build the [`Meta`] by hand:
+    /// `Meta::regular(mode & 0o111 != 0)`.
     ModeBits,
 }
 
@@ -114,7 +121,7 @@ mod imp {
     pub(super) fn is_executable(policy: ExecPolicy, md: &fs::Metadata) -> bool {
         let mode = md.mode();
         match policy {
-            ExecPolicy::ModeBits => mode & 0o111 != 0,
+            ExecPolicy::ModeBits => mode & 0o100 != 0,
             ExecPolicy::PythonCompat => {
                 let uid = uid();
                 if uid == 0 {
@@ -201,8 +208,8 @@ impl Meta {
     ///
     /// | mode | meta |
     /// |---|---|
-    /// | `100644` (any `100xxx` without `x` bits) | regular file |
-    /// | `100755` (any `100xxx` with an `x` bit) | executable regular file |
+    /// | `100644` (any `100xxx` without the owner `x` bit) | regular file |
+    /// | `100755` (any `100xxx` with the owner `x` bit) | executable regular file |
     /// | `120000` | symlink |
     /// | `160000` (gitlink / submodule), `040000` (tree) | directory |
     /// | anything else | `None` |
@@ -224,7 +231,8 @@ impl Meta {
     #[must_use]
     pub const fn from_git_mode(mode: u32) -> Option<Self> {
         match mode & 0o170_000 {
-            0o100_000 => Some(Self::regular(mode & 0o111 != 0)),
+            // git's canon_mode / ce_permissions: only the owner bit counts.
+            0o100_000 => Some(Self::regular(mode & 0o100 != 0)),
             0o120_000 => Some(Self::new(FileKind::Symlink, false)),
             0o160_000 | 0o040_000 => Some(Self::new(FileKind::Directory, false)),
             _ => None,
@@ -255,6 +263,12 @@ mod tests {
         assert_eq!(Meta::from_git_mode(0o100_644), Some(Meta::regular(false)));
         assert_eq!(Meta::from_git_mode(0o100_755), Some(Meta::regular(true)));
         assert_eq!(Meta::from_git_mode(0o100_664), Some(Meta::regular(false)));
+        // Only the owner bit counts, as in git's ce_permissions (`git add`
+        // stages 0o655, 0o645 and 0o611 files as 100644).
+        assert_eq!(Meta::from_git_mode(0o100_655), Some(Meta::regular(false)));
+        assert_eq!(Meta::from_git_mode(0o100_611), Some(Meta::regular(false)));
+        assert_eq!(Meta::from_git_mode(0o100_700), Some(Meta::regular(true)));
+        assert_eq!(Meta::from_git_mode(0o100_100), Some(Meta::regular(true)));
         assert_eq!(
             Meta::from_git_mode(0o120_000),
             Some(Meta::new(FileKind::Symlink, false))
@@ -294,11 +308,16 @@ mod tests {
         let path = dir.path().join("f");
         fs::write(&path, "x")?;
         let is_root = rustix::process::getuid().is_root();
+        // (mode, PythonCompat for the owner, ModeBits = git's owner bit)
         for (mode, compat, bits) in [
             (0o644, false, false),
             (0o744, true, true),
-            (0o654, is_root, true),
-            (0o645, is_root, true),
+            (0o700, true, true),
+            (0o100, true, true),
+            (0o654, is_root, false),
+            (0o645, is_root, false),
+            (0o655, is_root, false),
+            (0o611, is_root, false),
             (0o755, true, true),
         ] {
             fs::set_permissions(&path, fs::Permissions::from_mode(mode))?;
@@ -312,6 +331,12 @@ mod tests {
             assert_eq!(
                 Meta::from_metadata(&md, ExecPolicy::PythonCompat),
                 Meta::regular(compat)
+            );
+            // The lstat path agrees with the git index fast path.
+            assert_eq!(
+                Some(Meta::from_metadata(&md, ExecPolicy::ModeBits)),
+                Meta::from_git_mode(0o100_000 | mode),
+                "{mode:o}"
             );
         }
         let md = fs::symlink_metadata(dir.path())?;

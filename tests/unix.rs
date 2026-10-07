@@ -83,17 +83,75 @@ fn exec_policies() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("tool");
     fs::write(&path, "#!/bin/sh\n").expect("write");
-    // Group/other x but not owner x: os.access(X_OK) is False for the owner.
+    // Group/other x but not owner x: os.access(X_OK) is False for the owner,
+    // and git stages the file as 100644.
     chmod(&path, 0o655);
     let md = fs::symlink_metadata(&path).expect("lstat");
-    assert!(Meta::from_metadata(&md, ExecPolicy::ModeBits).is_executable());
+    assert!(!Meta::from_metadata(&md, ExecPolicy::ModeBits).is_executable());
     let bits = tags_from_path_with(&path, ExecPolicy::ModeBits).expect("identify");
-    assert_eq!(bits.to_string(), "executable, file, sh, shell, text");
+    assert_eq!(bits.to_string(), "file, non-executable, text");
     if !privileged(dir.path()) {
         let compat = tags_from_path_with(&path, ExecPolicy::PythonCompat).expect("identify");
         assert_eq!(compat.to_string(), "file, non-executable, text");
         assert_eq!(tags_from_path(&path).expect("identify"), compat);
     }
+    // Owner x only: executable for both policies.
+    chmod(&path, 0o700);
+    for policy in [ExecPolicy::ModeBits, ExecPolicy::PythonCompat] {
+        let tags = tags_from_path_with(&path, policy).expect("identify");
+        assert_eq!(tags.to_string(), "executable, file, sh, shell, text");
+    }
+}
+
+/// `ExecPolicy::ModeBits` on `lstat` metadata must agree with the mode git
+/// records for the same file (`Meta::from_git_mode`), so that the `lstat`
+/// path and the git index fast path classify a file the same way.
+#[test]
+fn mode_bits_agree_with_git() {
+    use std::process::Command;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let d = dir.path();
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .args(["-c", "core.fileMode=true", "-c", "core.autocrlf=false"])
+            .args(args)
+            .current_dir(d)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+    };
+    match git(&["init", "-q", "."]) {
+        Ok(out) if out.status.success() => {}
+        _ => return, // git is not available
+    }
+    let modes = [
+        0o644, 0o664, 0o600, 0o655, 0o645, 0o611, 0o601, 0o610, 0o700, 0o711, 0o744, 0o755, 0o777,
+    ];
+    for mode in modes {
+        let path = d.join(format!("f{mode:o}"));
+        fs::write(&path, "x\n").expect("write");
+        chmod(&path, mode);
+    }
+    let add = git(&["add", "."]).expect("git add");
+    assert!(add.status.success(), "{add:?}");
+    let out = git(&["ls-files", "-s", "-z"]).expect("git ls-files");
+    assert!(out.status.success(), "{out:?}");
+    let mut seen = 0;
+    for entry in out.stdout.split(|&b| b == 0).filter(|e| !e.is_empty()) {
+        // "<mode> <sha> <stage>\t<path>"
+        let entry = std::str::from_utf8(entry).expect("utf-8");
+        let (info, name) = entry.split_once('\t').expect("tab");
+        let git_mode =
+            u32::from_str_radix(info.split(' ').next().expect("mode"), 8).expect("octal");
+        let md = fs::symlink_metadata(d.join(name)).expect("lstat");
+        assert_eq!(
+            Meta::from_git_mode(git_mode),
+            Some(Meta::from_metadata(&md, ExecPolicy::ModeBits)),
+            "{name}: git mode {git_mode:o}"
+        );
+        seen += 1;
+    }
+    assert_eq!(seen, modes.len());
 }
 
 #[test]

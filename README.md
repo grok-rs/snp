@@ -114,8 +114,10 @@ finishes from a reader or a byte slice (virtual file systems, archives, tests).
 on Unix it evaluates `access(2)` rules from the mode, owner and group against the
 process's real uid/gid/groups (ACLs and `noexec` mounts are not consulted); on
 Windows every file is executable, exactly as identify reports it (so unknown-name
-files are checked for a shebang there too). `ExecPolicy::ModeBits` uses any `x` bit,
-git's notion.
+files are checked for a shebang there too). `ExecPolicy::ModeBits` uses git's notion:
+the owner `x` bit only (`mode & 0o100`), exactly what `git add` records as `100755`, so
+it agrees with `Meta::from_git_mode` on the staged mode (a `0o655` file is not
+executable for either).
 
 ## Differences from identify
 

@@ -57,7 +57,9 @@ read. See "Migrating from 0.4" in the README.
   `PathBuf` and the OS error as `source`; the never-constructed `InvalidPath` and
   `InvalidUtf8` variants are removed. `FileKind` is `#[non_exhaustive]`.
 - **Breaking:** on Windows every file is executable (identify parity, so unknown
-  names are checked for a shebang); `ExecPolicy::ModeBits` gives git's notion.
+  names are checked for a shebang); `ExecPolicy::ModeBits` gives git's notion (the
+  owner `x` bit, `mode & 0o100`, which is what git stages as `100755`), so it agrees
+  with `Meta::from_git_mode`; `from_git_mode` likewise looks only at the owner bit.
 - On Unix, `executable` follows `access(2)` rules (owner / group / other bit for the
   real uid, any bit for root) instead of "any `x` bit".
 - Shebangs: Python `shlex` splitting (quotes, escapes, `#` is not a comment, vertical
