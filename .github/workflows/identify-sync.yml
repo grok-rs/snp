@@ -1,0 +1,31 @@
+name: identify sync
+
+# Weekly check that the generated tables (src/generated.rs) still match the
+# latest Python identify release on PyPI. Fails on drift; fix it with
+#   cargo xtask gen-identify --src "$(xtask/fetch-identify.sh latest /tmp/identify)"
+# then review, test and release.
+
+on:
+  schedule:
+    - cron: "23 6 * * 1" # Mondays 06:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  drift:
+    name: Compare with latest identify
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+    - name: Download the latest identify wheel (verified by sha256, not installed)
+      id: fetch
+      run: echo "src=$(xtask/fetch-identify.sh latest "$RUNNER_TEMP/identify")" >> "$GITHUB_OUTPUT"
+    - name: Regenerate and compare
+      run: cargo xtask gen-identify --src "${{ steps.fetch.outputs.src }}" --check

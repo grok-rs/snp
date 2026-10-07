@@ -11,14 +11,28 @@ env:
 
 jobs:
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
     - uses: Swatinem/rust-cache@v2
-    - run: cargo test
-    - run: cargo test --all-features
+    - run: cargo test --locked
+    - run: cargo test --locked --all-features
+
+  msrv:
+    name: MSRV (1.85)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@1.85.0
+    - uses: Swatinem/rust-cache@v2
+    # `+1.85.0` makes sure no toolchain file or default overrides the MSRV.
+    - run: cargo +1.85.0 test --locked --all-features
 
   fmt:
     name: Rustfmt
@@ -31,26 +45,32 @@ jobs:
     - run: cargo fmt --all -- --check
 
   clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
+    name: Clippy (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: clippy
     - uses: Swatinem/rust-cache@v2
-    - run: cargo clippy --all-features -- -D warnings
+    - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
-  msrv:
-    name: MSRV (1.94.0)
+  generated:
+    name: Generated tables match identify
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: "1.94.0"
+    - uses: dtolnay/rust-toolchain@stable
     - uses: Swatinem/rust-cache@v2
-    - run: cargo check --all-features
+    - name: Regenerate from the pinned identify release and compare
+      run: |
+        version="$(sed -n 's/^pub const IDENTIFY_VERSION: &str = "\(.*\)";$/\1/p' src/generated.rs)"
+        src="$(xtask/fetch-identify.sh "$version" "$RUNNER_TEMP/identify")"
+        cargo xtask gen-identify --src "$src" --check
 
   deny:
     name: cargo-deny
