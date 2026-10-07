@@ -51,7 +51,7 @@
 //!
 //! # Features
 //!
-//! * `regex` (default): [`CheckFn::check_regex`] backed by the `regex`
+//! * `regex` (default): `CheckFn::check_regex()` backed by the `regex`
 //!   crate. Without it, supply a validator with
 //!   [`CheckFn::check_regex_with`].
 //! * `serde`: `Serialize`/`Deserialize` for [`Value`] and a `Deserializer`
@@ -130,3 +130,8 @@ pub fn remove_defaults(value: &Value, schema: &Schema) -> Value {
 pub fn remove_defaults_owned(value: Value, schema: &Schema) -> Value {
     schema.remove_defaults_owned(value)
 }
+
+/// The examples of `README.md`, compiled and run as doctests.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+pub struct ReadmeDoctests;
