@@ -421,6 +421,9 @@ class Spec:
                 )
             return cfgv.WarnAdditionalKeys(
                 tuple(self.value(k) for k in c['keys']), callback)
+        custom = precommit_item(self, kind, key, c)
+        if custom is not None:
+            return custom
         raise ValueError(kind)
 
     def schema(self, s):
@@ -436,6 +439,140 @@ class Spec:
             return cfgv.KeyValueMap(s['name'], self.check(s['check_key']),
                                     self.schema(s['value_schema']))
         raise ValueError(kind)
+
+
+# pre-commit's custom map items (pre_commit/clientlib.py, 4.6.2), with
+# ``logger.warning`` replaced by appending to the warnings list. The Rust
+# tests implement the same items with ``cfgv::MapItem``.
+PC_STAGES = ('commit-msg', 'manual', 'pre-commit', 'pre-push')
+PC_LEGACY = {'commit': 'pre-commit', 'push': 'pre-push'}
+
+
+def transform_stage(stage):
+    return PC_LEGACY.get(stage, stage)
+
+
+def translate_language(name):
+    return {'system': 'unsupported', 'script': 'unsupported_script'}.get(
+        name, name)
+
+
+def precommit_item(spec, kind, key, c):
+    cfgv = spec.cfgv
+    warnings = spec.warnings
+
+    class StagesMigration:
+        def check(self, dct):
+            if key not in dct:
+                return
+            with cfgv.validate_context(f'At key: {key}'):
+                val = dct[key]
+                cfgv.check_array(cfgv.check_any)(val)
+                val = [transform_stage(v) for v in val]
+                cfgv.check_array(cfgv.check_one_of(PC_STAGES))(val)
+
+        def apply_default(self, dct):
+            dct.setdefault(key, [])
+            dct[key] = [transform_stage(v) for v in dct[key]]
+
+        def remove_default(self, dct):
+            pass
+
+    class DeprecatedStagesWarning:
+        def check(self, dct):
+            if key not in dct:
+                return
+            val = dct[key]
+            cfgv.check_array(cfgv.check_any)(val)
+            legacy_stages = [stage for stage in val if stage in PC_LEGACY]
+            if legacy_stages:
+                warnings.append(
+                    f'hook id `{dct["id"]}` uses deprecated stage names '
+                    f'({", ".join(legacy_stages)}) which will be removed in '
+                    f'a future version.  '
+                    f'run: `pre-commit migrate-config` to automatically fix '
+                    f'this.',
+                )
+
+        def apply_default(self, dct):
+            pass
+
+        def remove_default(self, dct):
+            pass
+
+    class LanguageMigrationRequired:
+        def __init__(self, check_fn):
+            self.check_fn = check_fn
+
+        def check(self, dct):
+            if key not in dct:
+                raise cfgv.ValidationError(f'Missing required key: {key}')
+            with cfgv.validate_context(f'At key: {key}'):
+                self.check_fn(translate_language(dct[key]))
+
+        def apply_default(self, dct):
+            if key in dct:
+                dct[key] = translate_language(dct[key])
+
+        def remove_default(self, dct):
+            pass
+
+    class WarnMutableRev(cfgv.Conditional):
+        def check(self, dct):
+            super().check(dct)
+            if self.key in dct:
+                rev = dct[self.key]
+                if '.' not in rev and not re.match(r'^[a-fA-F0-9]+$', rev):
+                    warnings.append(
+                        f'The {self.key!r} field of repo {dct["repo"]!r} '
+                        f'appears to be a mutable reference '
+                        f'(moving tag / branch).  Mutable references are '
+                        f'never updated after first install and are not '
+                        f'supported.  '
+                        f'See https://pre-commit.com/#using-the-latest-version-for-a-repository '  # noqa: E501
+                        f'for more details.  '
+                        f'Hint: `pre-commit autoupdate` often fixes this.',
+                    )
+
+    class OptionalSensibleRegexAtHook(cfgv.OptionalNoDefault):
+        def check(self, dct):
+            super().check(dct)
+            if '/*' in dct.get(self.key, ''):
+                warnings.append(
+                    f'The {self.key!r} field in hook {dct.get("id")!r} is a '
+                    f"regex, not a glob -- matching '/*' probably isn't "
+                    f'what you want here',
+                )
+            for fwd_slash_re in (r'[\\/]', r'[\/]', r'[/\\]'):
+                if fwd_slash_re in dct.get(self.key, ''):
+                    warnings.append(
+                        fr'pre-commit normalizes slashes in the {self.key!r} '
+                        fr'field in hook {dct.get("id")!r} to forward '
+                        fr'slashes, so you can use / instead of '
+                        fr'{fwd_slash_re}',
+                    )
+
+    class NotAllowed(cfgv.OptionalNoDefault):
+        def check(self, dct):
+            if self.key in dct:
+                raise cfgv.ValidationError(f'{self.key!r} cannot be overridden')
+
+    if kind == 'pc_stages_migration':
+        return StagesMigration()
+    if kind == 'pc_deprecated_stages_warning':
+        return DeprecatedStagesWarning()
+    if kind == 'pc_language_migration_required':
+        return LanguageMigrationRequired(spec.check(c['check']))
+    if kind == 'pc_warn_mutable_rev':
+        return WarnMutableRev(
+            key, cfgv.check_string, spec.value(c['condition_key']),
+            spec.condition(c['condition']), True,
+        )
+    if kind == 'pc_sensible_regex':
+        return OptionalSensibleRegexAtHook(key, cfgv.check_string)
+    if kind == 'pc_not_allowed':
+        return NotAllowed(key, cfgv.check_any)
+    return None
 
 
 TYPES = {
@@ -761,6 +898,100 @@ def schema_cases():
                            condition={'kind': 'exact', 'value': b(True)},
                            ensure_absent=True)),
         dct((s('c'), fl(1.0))))
+    # pre-commit-like configuration with custom items and warnings.
+    pc_hook = mp(
+        'Hook', s('id'),
+        item('required', key=s('id'), check=check('string')),
+        item('pc_language_migration_required', key=s('language'),
+             check=check('one_of', values=[
+                 s('python'), s('unsupported'), s('unsupported_script')])),
+        item('pc_stages_migration', key=s('stages')),
+        item('pc_sensible_regex', key=s('files')),
+        item('pc_deprecated_stages_warning', key=s('stages')),
+        item('optional', key=s('always_run'), check=check('bool'),
+             default=b(False)),
+    )
+    pc_meta_hook = mp(
+        'Hook', s('id'),
+        item('required', key=s('id'), check=check('string')),
+        item('pc_not_allowed', key=s('entry')),
+    )
+    pc_repo = mp(
+        'Repository', s('repo'),
+        item('required', key=s('repo'), check=check('string')),
+        item('pc_warn_mutable_rev', key=s('rev'), condition_key=s('repo'),
+             condition={'kind': 'not_in', 'values': [s('local'), s('meta')]}),
+        item('conditional_recurse', key=s('hooks'),
+             schema={'kind': 'array', 'of': pc_hook, 'allow_empty': True},
+             condition_key=s('repo'),
+             condition={'kind': 'not', 'value': s('meta')},
+             ensure_absent=False),
+        item('conditional_recurse', key=s('hooks'),
+             schema={'kind': 'array', 'of': pc_meta_hook,
+                     'allow_empty': True},
+             condition_key=s('repo'),
+             condition={'kind': 'exact', 'value': s('meta')},
+             ensure_absent=False),
+        item('warn_additional_keys', keys=[s('repo'), s('rev'), s('hooks')]),
+    )
+    pc_config = mp(
+        'Config', None,
+        item('required_recurse', key=s('repos'),
+             schema={'kind': 'array', 'of': pc_repo, 'allow_empty': True}),
+        item('optional', key=s('fail_fast'), check=check('bool'),
+             default=b(False)),
+        item('warn_additional_keys', keys=[s('repos'), s('fail_fast')]),
+    )
+
+    def hook(hid, *pairs):
+        return dct((s('id'), s(hid)), *pairs)
+
+    def repo(url, *pairs):
+        return dct((s('repo'), s(url)), *pairs)
+
+    pc_values = [
+        dct((s('repos'), lst())),
+        dct((s('repos'), lst(repo('https://r', (s('rev'), s('v1.0')),
+                                  (s('hooks'), lst()))))),
+        dct((s('repos'), lst(repo('https://r', (s('rev'), s('main')),
+                                  (s('hooks'), lst(hook('a', (s('language'), s('python'))))))))),
+        dct((s('repos'), lst(
+            repo('https://r', (s('rev'), s('deadBEEF')), (s('hooks'), lst(
+                hook('a', (s('language'), s('system')),
+                     (s('stages'), lst(s('commit'), s('push'), s('manual'))),
+                     (s('files'), s('^src/*.py'))),
+                hook('b', (s('language'), s('script')),
+                     (s('files'), s(r'a[\\/]b[/\\]c[\/]'))),
+            ))),
+            repo('local', (s('hooks'), lst(hook('c', (s('language'), s('python')),
+                                                (s('always_run'), b(True)))))),
+            repo('meta', (s('hooks'), lst(hook('check-hooks-apply')))),
+        )), (s('fail_fast'), b(True)), (s('extra_root'), i(1))),
+        dct((s('repos'), lst(repo('https://r', (s('rev'), s('topic')),
+                                  (s('hooks'), lst(hook('a'))))))),
+        dct((s('repos'), lst(repo('https://r', (s('rev'), s('topic')),
+                                  (s('hooks'), lst(hook('a', (s('language'), s('ruby'))))))))),
+        dct((s('repos'), lst(repo('https://r', (s('rev'), s('v1')),
+                                  (s('hooks'), lst(hook('a', (s('language'), s('python')),
+                                                        (s('stages'), lst(s('commit'), s('bogus')))))))))),
+        dct((s('repos'), lst(repo('https://r', (s('rev'), s('v1')),
+                                  (s('hooks'), lst(hook('a', (s('language'), s('python')),
+                                                        (s('stages'), s('commit'))))))))),
+        dct((s('repos'), lst(repo('https://r', (s('rev'), s('v1')),
+                                  (s('hooks'), lst(hook('a', (s('language'), s('python')),
+                                                        (s('files'), i(1))))))))),
+        dct((s('repos'), lst(repo('local', (s('rev'), s('v1.0')))))),
+        dct((s('repos'), lst(repo('meta', (s('hooks'), lst(
+            hook('identity', (s('entry'), s('x'))))))))),
+        dct((s('repos'), lst(repo('https://r', (s('rev'), s('v1')),
+                                  (s('hooks'), lst(hook('a', (s('language'), s('python')),
+                                                        (s('stages'), lst(s('commit')))))),
+                                  (s('unknown'), i(1)), (s('also'), i(2))),
+                       repo('https://x'))), (s('zzz'), i(1)), (s('aaa'), i(1))),
+    ]
+    for n, v in enumerate(pc_values):
+        add(f'precommit_{n}', pc_config, v)
+
     add('numeric_eq_remove_default',
         mp('M', None, item('optional', key=s('x'), check=check('any'),
                            default=i(0))),

@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use cfgv::{
-    BigInt, CheckFn, ConditionValue, Date, DateTime, Map, Schema, TzOffset, ValidationError,
-    Validator, Value, ValueType,
+    BigInt, CheckFn, ConditionValue, Cx, Date, DateTime, Map, MapItem, Schema, TzOffset,
+    ValidationError, Validator, Value, ValueType, validate_context,
 };
 use serde_json::Value as Json;
 
@@ -228,6 +228,27 @@ impl SpecBuilder {
                     ));
                 })
             }
+            "pc_stages_migration" => Validator::custom(PcStagesMigration { key: key() }),
+            "pc_deprecated_stages_warning" => {
+                Validator::custom(PcDeprecatedStagesWarning { key: key() })
+            }
+            "pc_language_migration_required" => Validator::custom(PcLanguageMigrationRequired {
+                key: key(),
+                check_fn: check(),
+            }),
+            "pc_warn_mutable_rev" => Validator::custom(PcWarnMutableRev {
+                inner: Validator::conditional_with_absent(
+                    key(),
+                    CheckFn::check_string(),
+                    condition_key(),
+                    condition(),
+                    true,
+                ),
+            }),
+            "pc_sensible_regex" => Validator::custom(PcSensibleRegex {
+                inner: Validator::optional_no_default(key(), CheckFn::check_string()),
+            }),
+            "pc_not_allowed" => Validator::custom(PcNotAllowed { key: key() }),
             other => panic!("unknown item {other:?}"),
         }
     }
@@ -296,5 +317,253 @@ impl Mismatches {
                 shown.join("\n")
             );
         }
+    }
+}
+
+// --- pre-commit's custom map items (pre_commit/clientlib.py 4.6.2) ---------
+//
+// Mirrors of the Python classes in scripts/gen_parity_vectors.py.
+
+const PC_STAGES: [&str; 4] = ["commit-msg", "manual", "pre-commit", "pre-push"];
+
+fn transform_stage(stage: &Value) -> Value {
+    match stage.as_str() {
+        Some("commit") => Value::from("pre-commit"),
+        Some("push") => Value::from("pre-push"),
+        _ => stage.clone(),
+    }
+}
+
+fn transform_stages(stages: &Value) -> Value {
+    stages
+        .as_array()
+        .unwrap_or_default()
+        .iter()
+        .map(transform_stage)
+        .collect()
+}
+
+fn translate_language(name: &Value) -> Value {
+    match name.as_str() {
+        Some("system") => Value::from("unsupported"),
+        Some("script") => Value::from("unsupported_script"),
+        _ => name.clone(),
+    }
+}
+
+/// `StagesMigration(key, [])`.
+#[derive(Debug)]
+pub struct PcStagesMigration {
+    pub key: Value,
+}
+
+impl MapItem for PcStagesMigration {
+    fn check(&self, dct: &Map, _cx: &mut Cx<'_>) -> Result<(), ValidationError> {
+        let Some(val) = dct.get(&self.key) else {
+            return Ok(());
+        };
+        validate_context(
+            || format!("At key: {}", self.key),
+            || {
+                CheckFn::check_array(CheckFn::check_any()).check(val)?;
+                CheckFn::check_array(CheckFn::check_one_of(PC_STAGES)).check(&transform_stages(val))
+            },
+        )
+    }
+
+    fn apply_default(&self, dct: &mut Map) {
+        let slot = dct
+            .entry(self.key.clone())
+            .or_insert_with(|| Value::List(Vec::new()));
+        *slot = transform_stages(slot);
+    }
+
+    fn key(&self) -> Option<&Value> {
+        Some(&self.key)
+    }
+}
+
+/// `DeprecatedStagesWarning(key)`.
+#[derive(Debug)]
+pub struct PcDeprecatedStagesWarning {
+    pub key: Value,
+}
+
+impl MapItem for PcDeprecatedStagesWarning {
+    fn check(&self, dct: &Map, cx: &mut Cx<'_>) -> Result<(), ValidationError> {
+        let Some(val) = dct.get(&self.key) else {
+            return Ok(());
+        };
+        CheckFn::check_array(CheckFn::check_any()).check(val)?;
+        let legacy: Vec<Value> = val
+            .as_array()
+            .unwrap_or_default()
+            .iter()
+            .filter(|s| matches!(s.as_str(), Some("commit" | "push")))
+            .cloned()
+            .collect();
+        if !legacy.is_empty() {
+            let id = dct
+                .get(&Value::from("id"))
+                .map(ToString::to_string)
+                .unwrap_or_default();
+            cx.warn(format!(
+                "hook id `{id}` uses deprecated stage names ({}) which will be removed in a \
+                 future version.  run: `pre-commit migrate-config` to automatically fix this.",
+                join_str(&legacy)
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// `LanguageMigrationRequired(key, check_fn)`.
+#[derive(Debug)]
+pub struct PcLanguageMigrationRequired {
+    pub key: Value,
+    pub check_fn: CheckFn,
+}
+
+impl MapItem for PcLanguageMigrationRequired {
+    fn check(&self, dct: &Map, _cx: &mut Cx<'_>) -> Result<(), ValidationError> {
+        let Some(val) = dct.get(&self.key) else {
+            return Err(ValidationError::new(format!(
+                "Missing required key: {}",
+                self.key
+            )));
+        };
+        validate_context(
+            || format!("At key: {}", self.key),
+            || self.check_fn.check(&translate_language(val)),
+        )
+    }
+
+    fn apply_default(&self, dct: &mut Map) {
+        if let Some(slot) = dct.get_mut(&self.key) {
+            *slot = translate_language(slot);
+        }
+    }
+
+    fn key(&self) -> Option<&Value> {
+        Some(&self.key)
+    }
+
+    fn check_fn(&self) -> Option<&CheckFn> {
+        Some(&self.check_fn)
+    }
+}
+
+/// `WarnMutableRev(Conditional)`: a built-in validator extended like a
+/// Python subclass.
+#[derive(Debug)]
+pub struct PcWarnMutableRev {
+    pub inner: Validator,
+}
+
+impl MapItem for PcWarnMutableRev {
+    fn check(&self, dct: &Map, cx: &mut Cx<'_>) -> Result<(), ValidationError> {
+        self.inner.check(dct, cx)?;
+        let Some(key) = self.inner.key() else {
+            return Ok(());
+        };
+        if let Some(rev) = dct.get(key).and_then(Value::as_str) {
+            // `re.match(r'^[a-fA-F0-9]+$', rev)`: `$` also matches before a
+            // trailing newline.
+            let body = rev.strip_suffix('\n').unwrap_or(rev);
+            let hex = !body.is_empty() && body.bytes().all(|b| b.is_ascii_hexdigit());
+            if !rev.contains('.') && !hex {
+                let repo = dct
+                    .get(&Value::from("repo"))
+                    .map(Value::repr)
+                    .unwrap_or_default();
+                cx.warn(format!(
+                    "The {} field of repo {repo} appears to be a mutable reference (moving tag / \
+                     branch).  Mutable references are never updated after first install and \
+                     are not supported.  See \
+                     https://pre-commit.com/#using-the-latest-version-for-a-repository for more \
+                     details.  Hint: `pre-commit autoupdate` often fixes this.",
+                    key.repr()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_default(&self, dct: &mut Map) {
+        self.inner.apply_default(dct);
+    }
+
+    fn key(&self) -> Option<&Value> {
+        self.inner.key()
+    }
+
+    fn check_fn(&self) -> Option<&CheckFn> {
+        self.inner.check_fn()
+    }
+}
+
+/// `OptionalSensibleRegexAtHook(OptionalNoDefault)`.
+#[derive(Debug)]
+pub struct PcSensibleRegex {
+    pub inner: Validator,
+}
+
+impl MapItem for PcSensibleRegex {
+    fn check(&self, dct: &Map, cx: &mut Cx<'_>) -> Result<(), ValidationError> {
+        self.inner.check(dct, cx)?;
+        let Some(key) = self.inner.key() else {
+            return Ok(());
+        };
+        let pattern = dct.get(key).and_then(Value::as_str).unwrap_or_default();
+        let id = dct
+            .get(&Value::from("id"))
+            .map_or_else(|| "None".to_owned(), Value::repr);
+        if pattern.contains("/*") {
+            cx.warn(format!(
+                "The {} field in hook {id} is a regex, not a glob -- matching '/*' probably \
+                 isn't what you want here",
+                key.repr()
+            ));
+        }
+        for fwd_slash_re in [r"[\\/]", r"[\/]", r"[/\\]"] {
+            if pattern.contains(fwd_slash_re) {
+                cx.warn(format!(
+                    "pre-commit normalizes slashes in the {} field in hook {id} to forward \
+                     slashes, so you can use / instead of {fwd_slash_re}",
+                    key.repr()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn key(&self) -> Option<&Value> {
+        self.inner.key()
+    }
+
+    fn check_fn(&self) -> Option<&CheckFn> {
+        self.inner.check_fn()
+    }
+}
+
+/// `NotAllowed(OptionalNoDefault)`.
+#[derive(Debug)]
+pub struct PcNotAllowed {
+    pub key: Value,
+}
+
+impl MapItem for PcNotAllowed {
+    fn check(&self, dct: &Map, _cx: &mut Cx<'_>) -> Result<(), ValidationError> {
+        if dct.contains_key(&self.key) {
+            return Err(ValidationError::new(format!(
+                "{} cannot be overridden",
+                self.key.repr()
+            )));
+        }
+        Ok(())
+    }
+
+    fn key(&self) -> Option<&Value> {
+        Some(&self.key)
     }
 }
