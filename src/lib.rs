@@ -118,3 +118,8 @@ pub use shebang::{MAX_SHEBANG_BYTES, ShlexError, parse_shebang, parse_shebang_by
 pub use table::TagTable;
 pub use tags::{IntoTag, Tag, TagSet, UnknownTagError};
 pub use text::{TEXT_PROBE_LEN, is_text, is_text_bytes};
+
+// Compile and run the README examples as doctests.
+#[doc = include_str!("../README.md")]
+#[cfg(doctest)]
+pub struct ReadmeDoctests;
