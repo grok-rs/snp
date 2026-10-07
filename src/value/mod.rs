@@ -50,6 +50,15 @@ pub type Set = IndexSet<Value>;
 /// [`Value::repr`] is Python's `repr()`; [`Display`](std::fmt::Display) is
 /// Python's `str()` (strings unquoted, dates in ISO format, everything else
 /// as `repr()`).
+///
+/// # Nesting depth
+///
+/// Cloning, dropping, comparing, hashing and formatting recurse into nested
+/// values, so a pathologically deep value (many thousands of levels) can
+/// exhaust the stack. Validation itself only recurses as deep as the
+/// schema. Loaders that build values from untrusted input should cap the
+/// nesting depth (PyYAML-compatible loaders typically allow a few hundred
+/// levels).
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub enum Value {
