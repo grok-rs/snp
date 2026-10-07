@@ -138,11 +138,7 @@ pub fn write_repr_float<W: Write + ?Sized>(out: &mut W, x: f64) -> fmt::Result {
     if x.is_sign_negative() {
         out.write_char('-')?;
     }
-    // Rust's `{:e}` yields the shortest round-trip digits, e.g. `1.2345e-7`.
-    let sci = format!("{:e}", x.abs());
-    let (mantissa, exponent) = sci.split_once('e').unwrap_or((sci.as_str(), "0"));
-    let exponent: i32 = exponent.parse().unwrap_or(0);
-    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    let (digits, exponent) = shortest_digits(x.abs());
     // The value is 0.DIGITS * 10^decpt.
     let decpt = exponent.saturating_add(1);
     if !(-4 < decpt && decpt <= 16) {
@@ -175,6 +171,37 @@ pub fn write_repr_float<W: Write + ?Sized>(out: &mut W, x: f64) -> fmt::Result {
         out.write_char('.')?;
         out.write_str(frac_part)
     }
+}
+
+/// Splits Rust's scientific notation (`1.25e-7`) into its significant
+/// digits (without trailing zeros) and decimal exponent.
+fn split_scientific(sci: &str) -> (String, i32) {
+    let (mantissa, exponent) = sci.split_once('e').unwrap_or((sci, "0"));
+    let mut digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    while digits.len() > 1 && digits.ends_with('0') {
+        digits.pop();
+    }
+    (digits, exponent.parse().unwrap_or(0))
+}
+
+/// The shortest digit string that round-trips to `x` (finite, positive)
+/// and its decimal exponent, choosing like CPython's `dtoa` mode 0 among
+/// equally short candidates: the one closest to `x`, ties to even.
+fn shortest_digits(x: f64) -> (String, i32) {
+    // `{:e}` yields the shortest round-trip digits, e.g. `1.2345e-7`.
+    let shortest = format!("{x:e}");
+    let (digits, exponent) = split_scientific(&shortest);
+    if digits.len() > 1 {
+        // Rust may break an exact tie between two equally short candidates
+        // differently (2**-25 is 2.98023223876953125e-08). Fixed-precision
+        // formatting rounds correctly, ties to even, like CPython; use it
+        // whenever it still round-trips.
+        let nearest = format!("{x:.*e}", digits.len() - 1);
+        if nearest != shortest && nearest.parse::<f64>() == Ok(x) {
+            return split_scientific(&nearest);
+        }
+    }
+    (digits, exponent)
 }
 
 /// Returns `repr(x)` for a Python `float`. See [`write_repr_float`].
@@ -246,6 +273,8 @@ mod tests {
             (f64::NAN, "nan"),
             (-1.5, "-1.5"),
             (123_456_789.0, "123456789.0"),
+            // Exact ties between two shortest candidates round to even.
+            (2.980_232_238_769_531_25e-8, "2.9802322387695312e-08"),
         ];
         for &(x, expected) in cases {
             assert_eq!(repr_float(x), expected, "repr({x:?})");
