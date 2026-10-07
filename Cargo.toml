@@ -18,6 +18,10 @@ name = "file-identify"
 path = "src/bin/main.rs"
 required-features = ["cli"]
 
+[[bench]]
+name = "identify"
+harness = false
+
 [features]
 default = []
 ## The `file-identify` command-line tool.
