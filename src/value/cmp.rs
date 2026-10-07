@@ -437,6 +437,43 @@ mod tests {
         );
     }
 
+    fn number() -> impl proptest::strategy::Strategy<Value = Value> {
+        use proptest::prelude::*;
+        #[allow(clippy::cast_precision_loss)]
+        let small_float = (-5i64..5).prop_map(|i| Value::Float(i as f64 / 2.0));
+        prop_oneof![
+            any::<bool>().prop_map(Value::Bool),
+            any::<i64>().prop_map(Value::Int),
+            (-5i64..5).prop_map(Value::Int),
+            small_float,
+            any::<f64>().prop_map(Value::Float),
+            (-1e25f64..1e25).prop_map(|f| Value::Float(f.trunc())),
+            "-?[1-9][0-9]{0,25}"
+                .prop_map(|s| Value::BigInt(s.parse().unwrap_or_else(|_| BigInt::from(0)))),
+        ]
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn number_order_is_total_and_consistent_with_eq(a in number(), b in number(), c in number()) {
+            use proptest::prop_assert_eq;
+            prop_assert_eq!(py_cmp(&a, &b), py_cmp(&b, &a).reverse());
+            prop_assert_eq!(py_cmp(&a, &b) == Ordering::Equal, a == b);
+            if py_cmp(&a, &b).is_le() && py_cmp(&b, &c).is_le() {
+                proptest::prop_assert!(py_cmp(&a, &c).is_le());
+            }
+            if a == b {
+                prop_assert_eq!(hash(&a), hash(&b));
+            }
+        }
+
+        #[test]
+        fn string_order_is_code_point_order(a in ".*", b in ".*") {
+            let by_chars = a.chars().cmp(b.chars());
+            proptest::prop_assert_eq!(py_cmp(&Value::from(a.as_str()), &Value::from(b.as_str())), by_chars);
+        }
+    }
+
     #[test]
     fn exact_int_float_comparison() {
         assert_eq!(
