@@ -36,7 +36,7 @@ mod schema;
 mod validator;
 mod value;
 
-pub use check::{CheckFn, CustomCheckFn, ValueType};
+pub use check::{CheckFn, CustomCheckFn, RegexCheck, ValueType};
 pub use condition::ConditionValue;
 pub use error::{ValidationError, validate_context};
 pub use load::load_from_filename;

@@ -1,54 +1,69 @@
+//! Conditions for the `Conditional*` validators.
+
 use crate::value::Value;
 
-/// A condition value used in `Conditional` validators.
+/// The `condition_value` of a `Conditional*` validator: decides, from the
+/// value of the condition key, whether the conditional check applies.
 ///
-/// Determines whether a conditional check should fire based on the value
-/// of a condition key in the map being validated.
+/// A missing condition key (Python's `MISSING`) never matches.
+///
+/// ```
+/// use cfgv::{ConditionValue, Value};
+///
+/// let not_local = ConditionValue::NotIn(vec![Value::from("local"), Value::from("meta")]);
+/// assert!(not_local.matches(Some(&Value::from("https://example.com/repo"))));
+/// assert!(!not_local.matches(Some(&Value::from("local"))));
+/// assert!(!not_local.matches(None));
+/// assert_eq!(not_local.describe_opposite(), "is any of ('local', 'meta')");
+/// ```
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ConditionValue {
-    /// Matches when the value equals exactly this value.
+    /// A plain condition value: matches when the value equals it (Python
+    /// `==`).
     Exact(Value),
-    /// Matches when the value is present and not equal to the given value.
+    /// `cfgv.Not(v)`: matches when the value is present and not equal to
+    /// `v`.
     Not(Value),
-    /// Matches when the value is present and contained in the set.
+    /// `cfgv.In(*values)`: matches when the value is present and equal to
+    /// one of the values.
     In(Vec<Value>),
-    /// Matches when the value is present and not contained in the set.
+    /// `cfgv.NotIn(*values)`: matches when the value is present and equal to
+    /// none of the values.
     NotIn(Vec<Value>),
 }
 
 impl ConditionValue {
-    /// Check whether `value` matches this condition.
-    /// `None` represents a missing key (MISSING in Python).
+    /// Whether the condition matches the condition key's value; `None`
+    /// stands for a missing key.
+    #[must_use]
     pub fn matches(&self, value: Option<&Value>) -> bool {
+        let Some(value) = value else {
+            return false;
+        };
         match self {
-            ConditionValue::Exact(expected) => value.is_some_and(|v| v == expected),
-            ConditionValue::Not(excluded) => value.is_some_and(|v| v != excluded),
-            ConditionValue::In(values) => value.is_some_and(|v| values.contains(v)),
-            ConditionValue::NotIn(values) => value.is_some_and(|v| !values.contains(v)),
+            Self::Exact(expected) => value == expected,
+            Self::Not(excluded) => value != excluded,
+            Self::In(values) => values.contains(value),
+            Self::NotIn(values) => !values.contains(value),
         }
     }
 
-    /// Describe the opposite condition, used in `ensure_absent` error messages.
-    ///
-    /// For `Not(True)`, produces `"is True"`.
-    /// For `In(1, 2)`, produces `"is not any of (1, 2)"`.
+    /// The explanation used in `ensure_absent` errors (`describe_opposite`
+    /// in Python): `is not {v!r}`, `is {v!r}`, `is not any of {values!r}` or
+    /// `is any of {values!r}`, where `values` is shown as a Python tuple.
+    #[must_use]
     pub fn describe_opposite(&self) -> String {
         match self {
-            ConditionValue::Exact(val) => format!("is not {val}"),
-            ConditionValue::Not(val) => format!("is {val}"),
-            ConditionValue::In(values) => {
-                let vals = format_value_tuple(values);
-                format!("is not any of {vals}")
-            }
-            ConditionValue::NotIn(values) => {
-                let vals = format_value_tuple(values);
-                format!("is any of {vals}")
-            }
+            Self::Exact(v) => format!("is not {}", v.repr()),
+            Self::Not(v) => format!("is {}", v.repr()),
+            Self::In(values) => format!("is not any of {}", tuple_repr(values)),
+            Self::NotIn(values) => format!("is any of {}", tuple_repr(values)),
         }
     }
 }
 
-fn format_value_tuple(values: &[Value]) -> String {
-    let inner: Vec<String> = values.iter().map(|v| format!("{v}")).collect();
-    format!("({})", inner.join(", "))
+/// `repr(tuple(values))`, including the trailing comma of a 1-tuple.
+fn tuple_repr(values: &[Value]) -> String {
+    Value::Tuple(values.to_vec()).repr()
 }
