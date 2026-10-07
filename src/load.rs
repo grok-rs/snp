@@ -112,6 +112,12 @@ where
 /// context. `display_filename` defaults to `filename` (also when empty, as
 /// with Python's `display_filename or filename`).
 ///
+/// Python re-raises every `ValidationError` as `exc_tp(e)`. The text of
+/// [`LoadError::Invalid`] is `str(exc_tp(e))` for an `exc_tp` whose `str()`
+/// is the wrapped error's, such as pre-commit's `InvalidConfigError`. With
+/// Python's default `exc_tp=ValidationError` the text gains a leading
+/// `"\n=====> "`; `ValidationError::new(err.to_string())` reproduces that.
+///
 /// ```no_run
 /// use std::path::Path;
 /// use cfgv::{Cx, Schema, load_from_filename_with};
