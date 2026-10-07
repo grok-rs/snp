@@ -71,7 +71,7 @@ mod value;
 pub use check::{CheckFn, CustomCheckFn, RegexCheck, ValueType};
 pub use condition::ConditionValue;
 pub use error::{ValidationError, validate_context};
-pub use load::load_from_filename;
+pub use load::{LoadError, load_from_filename, load_from_filename_with};
 pub use schema::Schema;
 pub use validator::{Cx, MapItem, Validator, WarnCallback};
 pub use value::{

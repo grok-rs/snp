@@ -1,47 +1,169 @@
-use std::path::Path;
+//! Loading, validating and defaulting a configuration file.
+
+use std::fmt;
+use std::io;
+use std::path::{Path, PathBuf};
 
 use crate::error::{ValidationError, validate_context};
+use crate::py;
 use crate::schema::Schema;
+use crate::validator::Cx;
 use crate::value::Value;
 
-/// Load a configuration file, validate it, and apply defaults.
+/// Error returned by [`load_from_filename`].
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum LoadError {
+    /// The file is not a regular file, is not valid UTF-8, could not be
+    /// parsed, or does not match the schema. Python cfgv raises (and
+    /// re-raises as `exc_tp`) a `ValidationError` with this text.
+    Invalid(ValidationError),
+    /// Reading the file failed. Python cfgv does not catch this: the
+    /// `OSError` raised by `open()` escapes.
+    Io {
+        /// The path that could not be read.
+        path: PathBuf,
+        /// The underlying error.
+        source: io::Error,
+    },
+}
+
+impl fmt::Display for LoadError {
+    /// `Invalid` displays like the [`ValidationError`]. `Io` displays like
+    /// CPython's `str(OSError)` on Unix, e.g. `[Errno 13] Permission
+    /// denied: 'config.yaml'`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Invalid(err) => err.fmt(f),
+            Self::Io { path, source } => {
+                let path = path.to_string_lossy();
+                match source.raw_os_error() {
+                    Some(code) => {
+                        let text = source.to_string();
+                        let suffix = format!(" (os error {code})");
+                        let strerror = text.strip_suffix(&suffix).unwrap_or(&text);
+                        write!(f, "[Errno {code}] {strerror}: ")?;
+                    }
+                    None => write!(f, "{source}: ")?,
+                }
+                py::write_repr_str(f, &path)
+            }
+        }
+    }
+}
+
+impl std::error::Error for LoadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Invalid(_) => None,
+            Self::Io { source, .. } => Some(source),
+        }
+    }
+}
+
+impl From<ValidationError> for LoadError {
+    fn from(err: ValidationError) -> Self {
+        Self::Invalid(err)
+    }
+}
+
+/// Loads, validates and defaults a configuration file like Python cfgv's
+/// `load_from_filename`, discarding warnings.
 ///
-/// # Arguments
-/// - `filename` — path to the file to load
-/// - `schema` — the schema to validate against
-/// - `load_strategy` — a function that parses file contents into a `Value`
-/// - `display_filename` — optional display name for error messages (defaults to `filename`)
+/// See [`load_from_filename_with`].
 ///
 /// # Errors
-/// Returns `ValidationError` if the file doesn't exist, can't be read as UTF-8,
-/// fails parsing, or fails validation.
-pub fn load_from_filename<F>(
+///
+/// See [`load_from_filename_with`].
+pub fn load_from_filename<F, E>(
     filename: &Path,
     schema: &Schema,
     load_strategy: F,
     display_filename: Option<&str>,
-) -> Result<Value, ValidationError>
+) -> Result<Value, LoadError>
 where
-    F: Fn(&str) -> Result<Value, Box<dyn std::error::Error>>,
+    F: FnOnce(&str) -> Result<Value, E>,
+    E: fmt::Display,
+{
+    load_from_filename_with(
+        filename,
+        schema,
+        load_strategy,
+        display_filename,
+        &mut Cx::discard(),
+    )
+}
+
+/// Loads, validates and defaults a configuration file like Python cfgv's
+/// `load_from_filename`, emitting validation warnings through `cx`.
+///
+/// 1. If `filename` is not a regular file (symlinks are followed):
+///    `{display_filename} is not a file`, without a `File` context.
+/// 2. The file is read and decoded as strict UTF-8, then `\r\n` and lone
+///    `\r` are translated to `\n` (Python text mode). A decoding error is
+///    reported with CPython's text, e.g. `'utf-8' codec can't decode byte
+///    0xff in position 0: invalid start byte`.
+/// 3. `load_strategy` parses the text; its error becomes the leaf message
+///    (`str(e)` in Python, [`Display`](fmt::Display) here).
+/// 4. The value is validated against `schema` and returned with defaults
+///    applied.
+///
+/// Errors from steps 2–4 are wrapped in a `File {display_filename}`
+/// context. `display_filename` defaults to `filename` (also when empty, as
+/// with Python's `display_filename or filename`).
+///
+/// ```no_run
+/// use std::path::Path;
+/// use cfgv::{Cx, Schema, load_from_filename_with};
+///
+/// # fn parse_yaml(_: &str) -> Result<cfgv::Value, String> { unimplemented!() }
+/// # let schema: Schema = unimplemented!();
+/// let mut warnings = Vec::new();
+/// let config = load_from_filename_with(
+///     Path::new(".pre-commit-config.yaml"),
+///     &schema,
+///     parse_yaml,
+///     None,
+///     &mut Cx::collect(&mut warnings),
+/// );
+/// ```
+///
+/// # Errors
+///
+/// Returns [`LoadError::Invalid`] for every case Python reports as a
+/// `ValidationError`, and [`LoadError::Io`] when the file cannot be read.
+pub fn load_from_filename_with<F, E>(
+    filename: &Path,
+    schema: &Schema,
+    load_strategy: F,
+    display_filename: Option<&str>,
+    cx: &mut Cx<'_>,
+) -> Result<Value, LoadError>
+where
+    F: FnOnce(&str) -> Result<Value, E>,
+    E: fmt::Display,
 {
     let display = display_filename
-        .map(|s| s.to_owned())
-        .unwrap_or_else(|| filename.display().to_string());
+        .filter(|s| !s.is_empty())
+        .map_or_else(|| filename.display().to_string(), str::to_owned);
 
     if !filename.is_file() {
-        return Err(ValidationError::new(format!("{display} is not a file")));
+        return Err(ValidationError::new(format!("{display} is not a file")).into());
     }
+    let bytes = std::fs::read(filename).map_err(|source| LoadError::Io {
+        path: filename.to_path_buf(),
+        source,
+    })?;
 
-    validate_context(
+    let value = validate_context(
         || format!("File {display}"),
         || {
-            let contents = std::fs::read_to_string(filename)
-                .map_err(|e| ValidationError::new(e.to_string()))?;
-
-            let data = load_strategy(&contents).map_err(|e| ValidationError::new(e.to_string()))?;
-
-            schema.check(&data)?;
-            Ok(schema.apply_defaults(&data))
+            let text = py::decode_utf8(&bytes).map_err(|e| ValidationError::new(e.to_string()))?;
+            let text = py::universal_newlines(text);
+            let data = load_strategy(&text).map_err(|e| ValidationError::new(e.to_string()))?;
+            schema.check_with(&data, cx)?;
+            Ok(schema.apply_defaults_owned(data))
         },
-    )
+    )?;
+    Ok(value)
 }

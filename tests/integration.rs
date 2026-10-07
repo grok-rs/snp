@@ -1132,6 +1132,13 @@ fn json_load_strategy(contents: &str) -> Result<Value, Box<dyn std::error::Error
     Ok(json_to_value(json_val))
 }
 
+fn invalid(err: LoadError) -> ValidationError {
+    match err {
+        LoadError::Invalid(err) => err,
+        other => panic!("expected a validation error, got {other:?}"),
+    }
+}
+
 #[test]
 fn test_load_from_filename_file_does_not_exist() {
     let err = load_from_filename(
@@ -1141,7 +1148,7 @@ fn test_load_from_filename_file_does_not_exist() {
         None,
     )
     .unwrap_err();
-    assert_eq!(err.message(), "does_not_exist is not a file");
+    assert_trace(&invalid(err), &["does_not_exist is not a file"]);
 }
 
 #[test]
@@ -1150,7 +1157,25 @@ fn test_load_from_filename_not_a_file() {
     let sub = dir.path().join("f");
     std::fs::create_dir(&sub).unwrap();
     let err = load_from_filename(&sub, &map_required(), json_load_strategy, None).unwrap_err();
+    let err = invalid(err);
+    assert_eq!(err.contexts().count(), 0);
     assert!(err.message().ends_with("is not a file"));
+}
+
+#[test]
+fn test_load_from_filename_unicode_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let f = dir.path().join("f.notjson");
+    std::fs::write(&f, b"\xa0\xa1").unwrap();
+    let err = load_from_filename(&f, &map_required(), json_load_strategy, Some("f.notjson"))
+        .unwrap_err();
+    assert_trace(
+        &invalid(err),
+        &[
+            "File f.notjson",
+            "'utf-8' codec can't decode byte 0xa0 in position 0: invalid start byte",
+        ],
+    );
 }
 
 #[test]
@@ -1158,9 +1183,11 @@ fn test_load_from_filename_fails_load_strategy() {
     let dir = tempfile::tempdir().unwrap();
     let f = dir.path().join("foo.notjson");
     std::fs::write(&f, "totes not json").unwrap();
-    let err = load_from_filename(&f, &map_required(), json_load_strategy, None).unwrap_err();
-    // Should have "File ..." context
-    assert!(err.contexts().next().unwrap().starts_with("File "));
+    let err = invalid(load_from_filename(&f, &map_required(), json_load_strategy, None).unwrap_err());
+    let parts = err.trace_parts();
+    assert_eq!(parts.len(), 2);
+    assert!(parts[0].starts_with("File "));
+    assert_eq!(parts[1], "expected ident at line 1 column 2");
 }
 
 #[test]
@@ -1168,7 +1195,7 @@ fn test_load_from_filename_validation_error() {
     let dir = tempfile::tempdir().unwrap();
     let f = dir.path().join("foo.json");
     std::fs::write(&f, "{}").unwrap();
-    let err = load_from_filename(&f, &map_required(), json_load_strategy, None).unwrap_err();
+    let err = invalid(load_from_filename(&f, &map_required(), json_load_strategy, None).unwrap_err());
     let parts = err.trace_parts();
     assert!(parts[0].starts_with("File "));
     assert_eq!(parts[1], "At foo(key=MISSING)");
@@ -1190,7 +1217,7 @@ fn test_load_from_filename_custom_display_no_file() {
     let f = dir.path().join("cfg.json");
     let err =
         load_from_filename(&f, &map_required(), json_load_strategy, Some("cfg.json")).unwrap_err();
-    assert_trace(&err, &["cfg.json is not a file"]);
+    assert_trace(&invalid(err), &["cfg.json is not a file"]);
 }
 
 #[test]
@@ -1201,7 +1228,7 @@ fn test_load_from_filename_custom_display_error() {
     let err =
         load_from_filename(&f, &map_required(), json_load_strategy, Some("cfg.json")).unwrap_err();
     assert_trace(
-        &err,
+        &invalid(err),
         &[
             "File cfg.json",
             "At foo(key=MISSING)",
