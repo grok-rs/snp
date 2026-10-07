@@ -1,37 +1,16 @@
-use crate::tags::{TagSet, tags_from_array};
-use phf::phf_map;
+//! identify's `interpreters` module: the shebang interpreter table.
 
-// Interpreter mappings using Perfect Hash Functions for compile-time optimization.
+use crate::tags::TagSet;
 
-pub static INTERPRETER_TAGS: phf::Map<&'static str, &'static [&'static str]> = phf_map! {
-    "ash" => &["shell", "ash"],
-    "awk" => &["awk"],
-    "bash" => &["shell", "bash"],
-    "bats" => &["shell", "bash", "bats"],
-    "cbsd" => &["shell", "cbsd"],
-    "csh" => &["shell", "csh"],
-    "dash" => &["shell", "dash"],
-    "expect" => &["expect"],
-    "ksh" => &["shell", "ksh"],
-    "node" => &["javascript"],
-    "nodejs" => &["javascript"],
-    "perl" => &["perl"],
-    "php" => &["php"],
-    "php7" => &["php", "php7"],
-    "php8" => &["php", "php8"],
-    "python" => &["python"],
-    "python2" => &["python", "python2"],
-    "python3" => &["python", "python3"],
-    "ruby" => &["ruby"],
-    "sh" => &["shell", "sh"],
-    "tcsh" => &["shell", "tcsh"],
-    "zsh" => &["shell", "zsh"],
-};
+pub use crate::generated::INTERPRETERS;
 
-/// Get tags for a given interpreter using compile-time optimized lookup.
+/// Tags for an exact interpreter name of [`INTERPRETERS`] (empty if
+/// unknown).
+///
+/// [`tags_from_interpreter`](crate::tags_from_interpreter) implements
+/// identify's full rules (path stripping and version fallback such as
+/// `python3.12` → `python3`).
+#[must_use]
 pub fn get_interpreter_tags(interpreter: &str) -> TagSet {
-    INTERPRETER_TAGS
-        .get(interpreter)
-        .map(|&tags| tags_from_array(tags))
-        .unwrap_or_default()
+    INTERPRETERS.get(interpreter).unwrap_or_default()
 }

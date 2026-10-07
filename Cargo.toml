@@ -2,16 +2,16 @@
 name = "file-identify"
 version = "0.4.0"
 edition = "2024"
+rust-version = "1.85"
 authors = ["Serhii Kaliuzhnyi <https://github.com/grok-rs>"]
-description = "File identification library for Rust - detects file types based on extensions, shebangs, and content"
+description = "File type identification (tags from names, extensions, shebangs and content) - a faithful Rust port of Python identify, as used by pre-commit"
 documentation = "https://docs.rs/file-identify"
 readme = "README.md"
 repository = "https://github.com/grok-rs/file-identify"
 license = "MIT"
-keywords = ["file", "identification", "detection", "filetype", "mime"]
+keywords = ["file", "identification", "detection", "filetype", "pre-commit"]
 categories = ["filesystem", "command-line-utilities"]
-rust-version = "1.94.0"
-exclude = ["tests/fixtures/**/*"]
+exclude = ["tests/fixtures/**/*", "xtask/", ".github/", ".cargo/", ".pre-commit-config.yaml", "renovate.json", "deny.toml"]
 
 [[bin]]
 name = "file-identify"
@@ -20,18 +20,22 @@ required-features = ["cli"]
 
 [features]
 default = []
+## The `file-identify` command-line tool.
 cli = ["dep:clap"]
 
 [dependencies]
-clap = { version = "4.0", features = ["derive"], optional = true }
+clap = { version = "4.5", features = ["derive"], optional = true }
 thiserror = "2.0.12"
-smallvec = "1.11"
-phf = { version = "0.12.1", features = ["macros"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.0.7", default-features = false, features = ["std", "process", "fs"] }
 
 [dev-dependencies]
 serde_json = "1.0"
-tempfile = "3.8"
+tempfile = "3.10"
 
+[lints.rust]
+unsafe_code = "forbid"
 
 [workspace]
 members = ["xtask"]
