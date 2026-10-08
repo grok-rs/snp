@@ -32,5 +32,9 @@ rustix.workspace = true
 [features]
 testing = []
 
+[package.metadata.cargo-machete]
+# md-5's library is named `md5` (`use md5` in src/common/); machete matches the package name.
+ignored = ["md-5"]
+
 [lints]
 workspace = true
