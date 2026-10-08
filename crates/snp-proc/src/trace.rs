@@ -216,7 +216,7 @@ mod tests {
         #[test]
         fn scrub_is_total_and_idempotent(s in "\\PC{0,60}", user in "[a-z0-9:]{1,12}") {
             let once = scrub_urls(&s);
-            proptest::prop_assert_eq!(scrub_urls(&once), once.clone());
+            proptest::prop_assert_eq!(scrub_urls(&once), once);
             let url = format!("x https://{user}@host/p {s}");
             let scrubbed = scrub_urls(&url);
             proptest::prop_assert!(scrubbed.starts_with("x https://***@host/p "));

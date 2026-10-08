@@ -10,7 +10,6 @@ use std::num::NonZeroUsize;
 #[cfg(target_os = "linux")]
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
