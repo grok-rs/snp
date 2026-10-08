@@ -474,7 +474,6 @@ dependencies = [
  "snp-cli",
  "snp-cmd",
  "snp-config",
- "snp-core",
  "snp-files",
  "snp-git",
  "snp-hooks",

@@ -20,7 +20,6 @@ snp-argparse = { path = "../crates/snp-argparse" }
 snp-cli = { path = "../crates/snp-cli" }
 snp-cmd = { path = "../crates/snp-cmd" }
 snp-config = { path = "../crates/snp-config" }
-snp-core = { path = "../crates/snp-core" }
 snp-files = { path = "../crates/snp-files" }
 snp-git = { path = "../crates/snp-git" }
 snp-hooks = { path = "../crates/snp-hooks" }
