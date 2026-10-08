@@ -211,6 +211,97 @@ fn json_round_trip() {
     assert_eq!(serde_json::to_string(&value).unwrap(), text);
 }
 
+/// Regression: a struct failed to deserialize from a map with a non-string
+/// key (YAML `true:`, `1:`, `null:`), although cfgv's `Map` schemas accept
+/// such keys; unknown non-string keys are now ignored like unknown string
+/// keys.
+#[test]
+fn non_string_keys_are_ignored_or_reported_by_their_python_str() {
+    #[derive(Debug, Deserialize, PartialEq)]
+    enum Flag {
+        True,
+    }
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct Loose {
+        id: String,
+        #[serde(default)]
+        args: Vec<String>,
+    }
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    #[allow(dead_code)]
+    struct Strict {
+        id: String,
+    }
+    let keys = [
+        Value::Bool(true),
+        Value::from(1),
+        Value::Null,
+        Value::from(1.5),
+        Value::Tuple(vec![Value::from("a")]),
+        Value::from(&b"id"[..]),
+    ];
+    for key in keys {
+        let mut map = cfgv::Map::new();
+        map.insert("id".into(), "x".into());
+        map.insert(key.clone(), "junk".into());
+        let value = Value::Map(map);
+        assert_eq!(
+            from_value::<Loose>(&value).unwrap(),
+            Loose {
+                id: "x".into(),
+                args: Vec::new()
+            },
+            "key {}",
+            key.repr()
+        );
+        let err = from_value::<Strict>(&value).unwrap_err();
+        assert!(
+            err.to_string()
+                .starts_with(&format!("unknown field `{key}`")),
+            "{err}"
+        );
+    }
+    // Enum variants are matched the same way.
+    assert_eq!(from_value::<Flag>(&Value::Bool(true)).ok(), None);
+    assert_eq!(
+        from_value::<Flag>(&value_map! {true => Value::Null}).unwrap(),
+        Flag::True
+    );
+}
+
+/// Regression: `check_int` accepts booleans (Python's `bool` is an `int`),
+/// but deserializing a validated boolean into an integer failed.
+#[test]
+fn integer_targets_accept_booleans_like_check_int() {
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct Hook {
+        priority: i32,
+    }
+    let check = cfgv::CheckFn::check_int();
+    for b in [false, true] {
+        let value = Value::Bool(b);
+        assert!(check.check(&value).is_ok());
+        assert_eq!(from_value::<i64>(&value).unwrap(), i64::from(b));
+        assert_eq!(from_value::<u8>(&value).unwrap(), u8::from(b));
+        assert_eq!(from_value::<i128>(&value).unwrap(), i128::from(b));
+        assert_eq!(from_value::<u128>(&value).unwrap(), u128::from(b));
+        assert_eq!(
+            from_value::<Option<u32>>(&value).unwrap(),
+            Some(u32::from(b))
+        );
+        assert_eq!(from_value::<bool>(&value).unwrap(), b);
+    }
+    // Floats follow `check_type(float)`, which rejects booleans.
+    assert!(from_value::<f64>(&Value::Bool(true)).is_err());
+    // Integers are still not booleans.
+    assert!(from_value::<bool>(&Value::from(1)).is_err());
+    assert_eq!(
+        from_value::<Hook>(&value_map! {"priority" => true}).unwrap(),
+        Hook { priority: 1 }
+    );
+}
+
 #[test]
 fn big_integers_beyond_i128() {
     let u = Value::from(u128::MAX);

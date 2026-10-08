@@ -37,10 +37,23 @@ impl de::Error for DeserializeError {
 /// Deserializes a `T` from a (typically validated and defaulted) [`Value`].
 ///
 /// Strings, byte strings and map keys are borrowed from `value` where `T`
-/// allows it. Big integers are visited as `u64`/`i128` when they fit and as
-/// their decimal text otherwise; dates and date-times as their ISO text
-/// (Python `str()`). Enums are accepted as a string (unit variant) or a
-/// single-entry map (`{variant: content}`).
+/// allows it. Big integers are visited as `u64`, `i128` or `u128` when they
+/// fit and as their Python `str()` text otherwise; dates and date-times as
+/// their ISO text (Python `str()`). Enums are accepted as a string (unit
+/// variant) or a single-entry map (`{variant: content}`).
+///
+/// Two rules keep validated values convertible:
+///
+/// * Integer targets (`i64`, `u8`, ...) accept booleans as `0` and `1`,
+///   since [`CheckFn::check_int`](crate::CheckFn::check_int) accepts them
+///   (`bool` is a subclass of `int` in Python). Other targets, including
+///   floats, still reject booleans.
+/// * Struct fields and enum variants are matched against keys through
+///   their Python `str()`: a non-string key (YAML `1:`, `true:`, `null:`)
+///   is ignored like any other unknown key, or reported by
+///   `#[serde(deny_unknown_fields)]` as e.g. ``unknown field `True` ``. As
+///   a consequence, a field renamed to `"1"` also matches the integer key
+///   `1`, where a Python dict lookup would not.
 ///
 /// ```
 /// use serde::Deserialize;
@@ -96,6 +109,19 @@ fn visit_map<'de, V: Visitor<'de>>(
     let value = visitor.visit_map(&mut access)?;
     access.end()?;
     Ok(value)
+}
+
+/// Integer targets: like `deserialize_any`, but booleans are visited as
+/// `0`/`1` because Python's `bool` is an `int` (what `check_int` accepts).
+macro_rules! deserialize_integer {
+    ($($method:ident)*) => {$(
+        fn $method<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+            match self {
+                Value::Bool(b) => visitor.visit_u64(u64::from(*b)),
+                _ => self.deserialize_any(visitor),
+            }
+        }
+    )*};
 }
 
 impl<'de> Deserializer<'de> for &'de Value {
@@ -168,10 +194,23 @@ impl<'de> Deserializer<'de> for &'de Value {
         }
     }
 
+    /// Struct fields and enum variants: strings as themselves, any other
+    /// key as its Python `str()`.
+    fn deserialize_identifier<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        match self {
+            Value::String(s) => visitor.visit_borrowed_str(s),
+            other => visitor.visit_string(other.to_string()),
+        }
+    }
+
+    deserialize_integer! {
+        deserialize_i8 deserialize_i16 deserialize_i32 deserialize_i64 deserialize_i128
+        deserialize_u8 deserialize_u16 deserialize_u32 deserialize_u64 deserialize_u128
+    }
+
     forward_to_deserialize_any! {
-        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
-        bytes byte_buf unit unit_struct seq tuple tuple_struct map struct
-        identifier ignored_any
+        bool f32 f64 char str string bytes byte_buf unit unit_struct seq tuple
+        tuple_struct map struct ignored_any
     }
 }
 
