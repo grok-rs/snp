@@ -52,9 +52,10 @@ pub fn zsplit(b: &[u8]) -> ZSplit<'_> {
 #[must_use]
 pub fn get_skips(skip: Option<&OsStr>) -> Vec<OsString> {
     let Some(skip) = skip else { return Vec::new() };
+    let mut seen: std::collections::HashSet<OsString> = std::collections::HashSet::new();
     let mut out: Vec<OsString> = Vec::new();
     for item in skip_items(skip) {
-        if !item.is_empty() && !out.contains(&item) {
+        if !item.is_empty() && seen.insert(item.clone()) {
             out.push(item);
         }
     }
