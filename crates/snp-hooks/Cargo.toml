@@ -22,6 +22,10 @@ snp-pyparsers.workspace = true
 snp-pyre.workspace = true
 cfgv.workspace = true
 file-identify.workspace = true
+# Byte scanning for the P1/P2/caveat natives (WP-27; anchored in src/pch/{p1,p2,caveats}/mod.rs). WP-26 owns
+# this manifest and adds any further dependency WP-27 requests (docs/WBS.md, "Integration-lead files").
+bstr.workspace = true
+memchr.workspace = true
 
 [lints]
 workspace = true

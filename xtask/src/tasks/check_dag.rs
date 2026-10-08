@@ -1,9 +1,10 @@
 //! `cargo xtask check-dag`: enforce the crate DAG of ARCHITECTURE §1.2 (normal, build and dev edges; xtask edges).
 //!
-//! Rules (§1.2, ADR-071 item 7):
+//! Rules (§1.2, ADR-071 item 7, ADR-081):
 //! * the workspace members are exactly the nodes of [`DAG`];
 //! * a crate's normal dependencies on workspace crates and on the user crates (`cfgv`, `file-identify`) are exactly
-//!   its listed edges, plus `snp-core` for every crate except `snp-pycompat`, `snp-probe` and `snp-core` itself;
+//!   its listed edges, plus `snp-core` for every crate (`xtask` included) except `snp-pycompat`, `snp-probe` and
+//!   `snp-core` itself;
 //! * build dependencies are a subset of the normal edges;
 //! * a crate may dev-depend on any of its ancestors, and on `snp-testkit` unless it is `snp-testkit` or one of its
 //!   ancestors (no dev-cycles); `snp` may dev-depend on every crate;
@@ -155,10 +156,11 @@ const DAG: &[(&str, &[&str])] = &[
             "snp-net",
             "snp-git",
             "snp-pyre",
+            "snp-lang",
         ],
     ),
     ("snp-difftest", &["snp-testkit", "snp-yaml"]),
-    ("xtask", &["snp-cli", "snp-hooks"]),
+    ("xtask", &["snp-cli", "snp-hooks", "snp-argparse"]),
 ];
 
 /// The sibling user crates: tracked as DAG leaves, not workspace members.
@@ -410,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn planted_xtask_edge_outside_cli_and_hooks_fails() {
+    fn planted_xtask_edge_outside_cli_hooks_argparse_fails() {
         let mut g = clean();
         plant(&mut g, "xtask", "normal", "snp-run");
         let v = check(&g);

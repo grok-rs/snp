@@ -22,9 +22,5 @@ snp-proc.workspace = true
 snp-pyre.workspace = true
 snp-store.workspace = true
 
-[features]
-# Forwards the language shim harness to crates/snp's `testing` feature (no snp -> snp-lang edge).
-testing = ["snp-lang/testing"]
-
 [lints]
 workspace = true

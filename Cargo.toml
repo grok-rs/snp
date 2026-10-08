@@ -6,6 +6,8 @@
 
 [workspace]
 members = ["crates/*", "xtask"]
+# The research prototype vendored into crates/snp-pycompat (ADR-056) stays a standalone package.
+exclude = ["docs/research/pycompat-proto"]
 resolver = "3"
 
 [workspace.package]
@@ -103,7 +105,7 @@ pretty_assertions = "1.4.1"
 dhat = "0.3"
 
 # --- build-time only (xtask) ---
-clap = { version = "4.6.7", features = ["derive"] }
+clap = { version = "4.6.7", default-features = false, features = ["std", "help", "usage", "error-context", "derive"] }
 clap_complete = "4.6.11"
 clap_mangen = "0.3.3"
 syn = { version = "2", features = ["full", "visit"] }
@@ -241,4 +243,12 @@ inherits = "release"
 lto = "thin"
 debug = "full"
 strip = "none"
+codegen-units = 16
+
+# The `perf-smoke` CI job's release-mode `#[ignore = "perf"]` tests (3x margin, ADR-071): release semantics
+# (opt-level 3, panic = "unwind", overflow checks) without fat LTO's single-unit link of every test binary.
+# WP-36's bench gate measures the real `release`/`dist` builds (ADR-081).
+[profile.perf]
+inherits = "release"
+lto = "thin"
 codegen-units = 16

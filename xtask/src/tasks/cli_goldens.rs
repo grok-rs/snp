@@ -6,7 +6,9 @@
 
 use std::ffi::OsString;
 
+use snp_argparse as _;
 use snp_cli as _;
+
 /// Runs the task with the arguments that follow its name.
 pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
     todo!()

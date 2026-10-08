@@ -7,6 +7,7 @@
 use std::ffi::OsString;
 
 use snp_hooks as _;
+
 /// Runs the task with the arguments that follow its name.
 pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
     todo!()

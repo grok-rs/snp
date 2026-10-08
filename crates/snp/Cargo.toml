@@ -24,6 +24,7 @@ snp-cmd.workspace = true
 snp-core.workspace = true
 snp-git.workspace = true
 snp-hooks.workspace = true
+snp-lang.workspace = true
 snp-migrate.workspace = true
 snp-net.workspace = true
 snp-os.workspace = true
@@ -55,8 +56,8 @@ tempfile.workspace = true
 
 [features]
 # Test-only instrumentation: fault injection (ADR-066), the spawn log and the language shim
-# harness (never in releases). snp-lang/testing is reached through snp-repo (no snp -> snp-lang edge).
-testing = ["snp-core/fault-injection", "snp-proc/testing", "snp-git/testing", "snp-repo/testing"]
+# harness (never in releases).
+testing = ["snp-core/fault-injection", "snp-proc/testing", "snp-git/testing", "snp-lang/testing"]
 # dhat heap profiling for the B3 allocation budget (WP-36).
 dhat-heap = ["dep:dhat"]
 # mimalloc as the musl global allocator, iff ADR-079's measurement adopts it (WP-36).

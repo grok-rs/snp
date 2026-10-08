@@ -6,6 +6,11 @@
 
 use std::ffi::OsString;
 
+use clap as _;
+use clap_complete as _;
+use clap_mangen as _;
+use snp_argparse as _;
+
 /// Runs the task with the arguments that follow its name.
 pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
     todo!()

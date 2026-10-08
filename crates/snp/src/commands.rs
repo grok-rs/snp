@@ -1,9 +1,8 @@
 //! The command table (§10.1): one arm per [`Cli`] variant, calling the command crates' entry points with the
 //! contexts the binary builds. `install --install-hooks` and the other binary-sequenced commands follow §1.4.22.
 //!
-//! The context builders are W0 stubs. `run_ctx` needs `snp_lang::ToolProbe` / `snp_lang::ProcRunner` for
-//! `RunCtx.probe` / `RunCtx.runner`, which the §1.2 edge list (`snp` has no `snp-lang` edge) does not allow the
-//! binary to construct yet: WP-33 resolves that with an ADR (edge, or a constructor in snp-run/snp-repo).
+//! The context builders are W0 stubs. `run_ctx` builds `RunCtx.probe` as `snp_lang::ToolProbe::new(persist_dir)`
+//! and `RunCtx.runner` as `snp_lang::ProcRunner { cancel }` (the snp → snp-lang edge of §1.2, ADR-081).
 //!
 //! Owner: WP-33 (W0 skeleton by WP-00).
 #![expect(clippy::todo, reason = "W0 stub, removed by WP-33")]
@@ -18,6 +17,8 @@ use snp_core::cancel::CancelToken;
 use snp_core::env::Env;
 use snp_core::failure::Failure;
 use snp_core::output::Printer;
+// W0 anchor for the ADR-081 edge: `run_ctx` names `snp_lang::{ToolProbe, ProcRunner}` once WP-33 fills it.
+use snp_lang as _;
 use snp_run::RunCtx;
 
 /// What the dispatcher knows before a command context exists.

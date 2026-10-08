@@ -24,12 +24,14 @@ snp-argparse = { path = "../crates/snp-argparse" }
 snp-cli = { path = "../crates/snp-cli" }
 snp-cmd = { path = "../crates/snp-cmd" }
 snp-config = { path = "../crates/snp-config" }
+snp-core = { path = "../crates/snp-core" }
 snp-files = { path = "../crates/snp-files" }
 snp-git = { path = "../crates/snp-git" }
 snp-hooks = { path = "../crates/snp-hooks" }
 snp-lang = { path = "../crates/snp-lang" }
 snp-migrate = { path = "../crates/snp-migrate" }
 snp-net = { path = "../crates/snp-net" }
+snp-os = { path = "../crates/snp-os" }
 snp-proc = { path = "../crates/snp-proc" }
 snp-pycompat = { path = "../crates/snp-pycompat" }
 snp-pyparsers = { path = "../crates/snp-pyparsers" }
@@ -37,6 +39,12 @@ snp-pyre = { path = "../crates/snp-pyre" }
 snp-stash = { path = "../crates/snp-stash" }
 snp-store = { path = "../crates/snp-store" }
 snp-yaml = { path = "../crates/snp-yaml" }
+
+# snp-core carries the context types most targets need (Env, CancelToken, LanguageId, Brand, WarnSink/DiagSink
+# for LoadOpts and HookCx); snp-os is for WP-15's `os_*` targets. Both are shared by many target owners and
+# need no anchor in a particular target file (ADR-081).
+[package.metadata.cargo-machete]
+ignored = ["snp-core", "snp-os"]
 
 # Not part of the snp workspace.
 [workspace]

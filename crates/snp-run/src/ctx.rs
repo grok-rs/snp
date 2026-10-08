@@ -22,7 +22,8 @@ use snp_repo::Resolve;
 use snp_store::Store;
 
 /// Constructed once by the binary (§3.1 step 2). `git_backend` is the run's Tool-role backend; the stash builds its
-/// own Critical one (§1.4.18). `net`/`installs` are the Limiters of §1.4.8; `probe`/`runner` feed `snp_lang::Host`.
+/// own Critical one (§1.4.18). `net`/`installs` are the Limiters of §1.4.8; `probe`/`runner` feed `snp_lang::Host`;
+/// the binary builds them as `ToolProbe::new(persist_dir)` and `ProcRunner { cancel }` (snp → snp-lang edge, ADR-081).
 #[derive(Debug)]
 pub struct RunCtx {
     /// The startup environment.

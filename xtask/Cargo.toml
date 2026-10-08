@@ -13,14 +13,22 @@ publish.workspace = true
 name = "xtask"
 path = "src/main.rs"
 
+# Internal edges: exactly (cli, hooks, argparse) + the implicit snp-core edge (ARCHITECTURE §1.2, ADR-081),
+# enforced by `cargo xtask check-dag`. This manifest stays with the integration lead (docs/WBS.md,
+# "Integration-lead files"): a task owner needing a further workspace dependency asks for it.
 [dependencies]
 anyhow.workspace = true
 serde_json.workspace = true
+snp-argparse.workspace = true
 snp-cli.workspace = true
 snp-core.workspace = true
 snp-hooks.workspace = true
 syn.workspace = true
 toml.workspace = true
+# `xtask completions` (WP-12): a clap::Command built from SNP_SPEC → completions and man pages (§9.1).
+clap.workspace = true
+clap_complete.workspace = true
+clap_mangen.workspace = true
 
 [lints]
 workspace = true
