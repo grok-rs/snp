@@ -1,0 +1,463 @@
+# cargo-fuzz crate (ARCHITECTURE §1.1, §13.5): not a member of the snp workspace. WP-00 pre-creates every
+# target of §13.5 (one stub file + one [[bin]] entry); the package owning a target's prefix fills the file
+# (docs/WBS.md "Disjoint ownership"). Nobody else edits this manifest.
+#
+#   cargo +nightly fuzz run <target> -- -max_total_time=60 -rss_limit_mb=512   (CI smoke; 300 s nightly)
+
+[package]
+name = "snp-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+snp-argparse = { path = "../crates/snp-argparse" }
+snp-cli = { path = "../crates/snp-cli" }
+snp-cmd = { path = "../crates/snp-cmd" }
+snp-config = { path = "../crates/snp-config" }
+snp-core = { path = "../crates/snp-core" }
+snp-files = { path = "../crates/snp-files" }
+snp-git = { path = "../crates/snp-git" }
+snp-hooks = { path = "../crates/snp-hooks" }
+snp-lang = { path = "../crates/snp-lang" }
+snp-migrate = { path = "../crates/snp-migrate" }
+snp-net = { path = "../crates/snp-net" }
+snp-proc = { path = "../crates/snp-proc" }
+snp-pycompat = { path = "../crates/snp-pycompat" }
+snp-pyparsers = { path = "../crates/snp-pyparsers" }
+snp-pyre = { path = "../crates/snp-pyre" }
+snp-stash = { path = "../crates/snp-stash" }
+snp-store = { path = "../crates/snp-store" }
+snp-yaml = { path = "../crates/snp-yaml" }
+
+# Not part of the snp workspace.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "argparse_parse"
+path = "fuzz_targets/argparse_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cmd_script_args"
+path = "fuzz_targets/cmd_script_args.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config_load_validate"
+path = "fuzz_targets/config_load_validate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config_manifest_load"
+path = "fuzz_targets/config_manifest_load.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config_migrate"
+path = "fuzz_targets/config_migrate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config_revline"
+path = "fuzz_targets/config_revline.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "files_classify"
+path = "fuzz_targets/files_classify.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "git_hook_script_classify"
+path = "fuzz_targets/git_hook_script_classify.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "git_merge_msg"
+path = "fuzz_targets/git_merge_msg.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "git_pre_push"
+path = "fuzz_targets/git_pre_push.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "git_z_split"
+path = "fuzz_targets/git_z_split.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lang_docker_mountinfo"
+path = "fuzz_targets/lang_docker_mountinfo.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lang_python_pyvenv_cfg"
+path = "fuzz_targets/lang_python_pyvenv_cfg.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "migrate_lefthook"
+path = "fuzz_targets/migrate_lefthook.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "net_archive_extract"
+path = "fuzz_targets/net_archive_extract.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_caveat_check_toml"
+path = "fuzz_targets/pch_caveat_check_toml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_caveat_check_xml"
+path = "fuzz_targets/pch_caveat_check_xml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_caveat_check_yaml"
+path = "fuzz_targets/pch_caveat_check_yaml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_caveat_detect_aws_credentials"
+path = "fuzz_targets/pch_caveat_detect_aws_credentials.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p0_check_added_large_files"
+path = "fuzz_targets/pch_p0_check_added_large_files.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p0_check_executables_have_shebangs"
+path = "fuzz_targets/pch_p0_check_executables_have_shebangs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p0_check_json"
+path = "fuzz_targets/pch_p0_check_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p0_check_merge_conflict"
+path = "fuzz_targets/pch_p0_check_merge_conflict.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p0_detect_private_key"
+path = "fuzz_targets/pch_p0_detect_private_key.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p0_end_of_file_fixer"
+path = "fuzz_targets/pch_p0_end_of_file_fixer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p0_fix_byte_order_marker"
+path = "fuzz_targets/pch_p0_fix_byte_order_marker.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p0_mixed_line_ending"
+path = "fuzz_targets/pch_p0_mixed_line_ending.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p0_no_commit_to_branch"
+path = "fuzz_targets/pch_p0_no_commit_to_branch.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p0_trailing_whitespace"
+path = "fuzz_targets/pch_p0_trailing_whitespace.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p1_check_byte_order_marker"
+path = "fuzz_targets/pch_p1_check_byte_order_marker.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p1_check_case_conflict"
+path = "fuzz_targets/pch_p1_check_case_conflict.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p1_check_shebang_scripts_are_executable"
+path = "fuzz_targets/pch_p1_check_shebang_scripts_are_executable.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p1_check_symlinks"
+path = "fuzz_targets/pch_p1_check_symlinks.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p1_destroyed_symlinks"
+path = "fuzz_targets/pch_p1_destroyed_symlinks.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p1_file_contents_sorter"
+path = "fuzz_targets/pch_p1_file_contents_sorter.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p1_pretty_format_json"
+path = "fuzz_targets/pch_p1_pretty_format_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p1_requirements_txt_fixer"
+path = "fuzz_targets/pch_p1_requirements_txt_fixer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p2_check_vcs_permalinks"
+path = "fuzz_targets/pch_p2_check_vcs_permalinks.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p2_fix_encoding_pragma"
+path = "fuzz_targets/pch_p2_fix_encoding_pragma.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p2_forbid_new_submodules"
+path = "fuzz_targets/pch_p2_forbid_new_submodules.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p2_name_tests_test"
+path = "fuzz_targets/pch_p2_name_tests_test.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pch_p2_sort_simple_yaml"
+path = "fuzz_targets/pch_p2_sort_simple_yaml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "proc_hookcmd_split"
+path = "fuzz_targets/proc_hookcmd_split.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "proc_shebang_resolve"
+path = "fuzz_targets/proc_shebang_resolve.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pycompat_decode_utf8"
+path = "fuzz_targets/pycompat_decode_utf8.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pycompat_ntpath"
+path = "fuzz_targets/pycompat_ntpath.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pycompat_rev_line"
+path = "fuzz_targets/pycompat_rev_line.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pycompat_rsplit4"
+path = "fuzz_targets/pycompat_rsplit4.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pycompat_shlex_split"
+path = "fuzz_targets/pycompat_shlex_split.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pygrep_match"
+path = "fuzz_targets/pygrep_match.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pyparsers_json"
+path = "fuzz_targets/pyparsers_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pyparsers_toml"
+path = "fuzz_targets/pyparsers_toml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pyparsers_xml"
+path = "fuzz_targets/pyparsers_xml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pyparsers_yamlcheck"
+path = "fuzz_targets/pyparsers_yamlcheck.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pyre_compile_match"
+path = "fuzz_targets/pyre_compile_match.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stash_journal_parse"
+path = "fuzz_targets/stash_journal_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "store_env_dir_name"
+path = "fuzz_targets/store_env_dir_name.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "store_marker_parse"
+path = "fuzz_targets/store_marker_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "yaml_compose_construct"
+path = "fuzz_targets/yaml_compose_construct.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "yaml_load"
+path = "fuzz_targets/yaml_load.rs"
+test = false
+doc = false
+bench = false
