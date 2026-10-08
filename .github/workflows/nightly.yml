@@ -1,0 +1,136 @@
+# Nightly (ARCHITECTURE §13.7; WBS WP-00 item 8: skeleton). Owned by WP-00; the jobs call xtask tasks owned by
+# later packages, which enable their job (remove `if: false`) when the task is implemented.
+name: nightly
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
+defaults:
+  run:
+    shell: bash
+    working-directory: snp
+
+jobs:
+  tests:
+    # nextest profile `nightly`: every test, including the opt-in ones (toolchains, network, oracle interop).
+    name: tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: taiki-e/install-action@v2
+        with: { tool: cargo-nextest }
+      - run: cargo build --workspace --bins --features snp/testing --locked
+      - run: cargo nextest run --workspace --features snp/testing --locked --profile nightly --run-ignored all --no-tests=warn
+
+  oracle:
+    # The pre-commit 4.6.2 oracles (WP-00): created and verified every night.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: astral-sh/setup-uv@v6
+      - run: cargo xtask oracle install
+      - run: target/oracle/pc462-py312/bin/pre-commit --version
+
+  fuzz:
+    # 300 s per target (ARCHITECTURE §13.5).
+    name: fuzz (shard ${{ matrix.shard }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    env:
+      RUST_MIN_STACK: "262144"
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install nightly --profile minimal
+      - uses: taiki-e/install-action@v2
+        with: { tool: cargo-fuzz }
+      - run: |
+          i=0
+          for t in $(cargo +nightly fuzz list); do
+            if [ $((i % 10)) -eq ${{ matrix.shard }} ]; then
+              cargo +nightly fuzz run "$t" -- -max_total_time=300 -timeout=5 -rss_limit_mb=512
+            fi
+            i=$((i + 1))
+          done
+
+  difftest:
+    # WP-35: generated scenarios against the oracle (`cargo xtask difftest --suite generated`).
+    if: false
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: astral-sh/setup-uv@v6
+      - run: cargo xtask oracle install
+      - run: cargo xtask difftest --suite generated --cases 2000 --seed "$GITHUB_RUN_ID"
+
+  catalog-status:
+    # WP-35: ported vs total catalog rows (tests/catalog/index.tsv).
+    if: false
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - run: cargo xtask catalog-status
+
+  bench:
+    # WP-36: end-to-end budgets against the oracle (`cargo xtask bench setup|run|gate`).
+    if: false
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: astral-sh/setup-uv@v6
+      - run: cargo xtask oracle install
+      - run: cargo xtask bench setup && cargo xtask bench run && cargo xtask bench gate
+
+  mutants:
+    # Mutation testing on snp-stash, snp-proc (xargs), snp-argparse and snp-pyre (ARCHITECTURE §13.7); enabled
+    # once those crates are implemented (W1/W2).
+    if: false
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: taiki-e/install-action@v2
+        with: { tool: "cargo-mutants,cargo-nextest" }
+      - run: cargo mutants --test-tool nextest -p snp-stash -p snp-proc -p snp-argparse -p snp-pyre

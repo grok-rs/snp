@@ -1,0 +1,47 @@
+# deps.lock drift (ADR-061; WBS WP-00 item 8). Owned by WP-00.
+#
+# Compares the commits pinned in deps.lock with the heads of the user crates' `snp-support` branches and opens an
+# issue when they differ (one open issue at a time). Bumping deps.lock is a dedicated PR that runs every gate.
+name: drift
+
+on:
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  deps-lock:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare deps.lock with the branch heads
+        id: drift
+        shell: bash
+        run: |
+          set +e
+          .github/scripts/deps-lock.sh drift > drift.md
+          status=$?
+          set -e
+          cat drift.md
+          if [ "$status" -eq 1 ]; then
+            echo "drifted=true" >> "$GITHUB_OUTPUT"
+          elif [ "$status" -ne 0 ]; then
+            exit "$status"
+          fi
+      - name: Open an issue
+        if: steps.drift.outputs.drifted == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="deps.lock drift: user-crate branch heads moved"
+          open=$(gh issue list --state open --search "\"$title\" in:title" --json number --jq 'length')
+          if [ "$open" = "0" ]; then
+            gh issue create --title "$title" --body-file drift.md
+          else
+            echo "An open drift issue already exists."
+          fi
