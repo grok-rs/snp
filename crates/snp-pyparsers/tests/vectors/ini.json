@@ -1,0 +1,2960 @@
+{
+ "generator": "xtask/oracle/pch_vectors.py",
+ "kind": "ini",
+ "python": "3.13.14",
+ "cases": [
+  {
+   "name": "case-000",
+   "text": "",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-001",
+   "text": "\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-002",
+   "text": "# only comment\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-003",
+   "text": "key = value\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-004",
+   "text": "  \n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-005",
+   "text": "[a]\naws_secret_access_key = abc\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_secret_access_key",
+      "abc"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-006",
+   "text": "[a]\nAWS_SECRET_ACCESS_KEY: ab\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_secret_access_key",
+      "ab"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-007",
+   "text": "[a]\naws_secret_access_key=\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-008",
+   "text": "[a]\naws_secret_access_key = %%x\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_secret_access_key",
+      "%x"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-009",
+   "text": "[a]\naws_secret_access_key = 5%b\n",
+   "result": {
+    "crash": [
+     "configparser.InterpolationSyntaxError",
+     "'%' must be followed by '%' or '(', found: '%b'"
+    ]
+   }
+  },
+  {
+   "name": "case-010",
+   "text": "[a]\naws_secret_access_key = %(x)s\n",
+   "result": {
+    "crash": [
+     "configparser.InterpolationMissingOptionError",
+     "Bad value substitution: option 'aws_secret_access_key' in section 'a' contains an interpolation key 'x' which is not a valid option name. Raw value: '%(x)s'"
+    ]
+   }
+  },
+  {
+   "name": "case-011",
+   "text": "[a]\nx = X\naws_secret_access_key = %(x)s-%(X)s\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_secret_access_key",
+      "X-X"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-012",
+   "text": "[a]\naws_secret_access_key = %(aws_secret_access_key)s\n",
+   "result": {
+    "crash": [
+     "configparser.InterpolationDepthError",
+     "Recursion limit exceeded in value substitution: option 'aws_secret_access_key' in section 'a' contains an interpolation key which cannot be substituted in 10 steps. Raw value: '%(aws_secret_access_key)s'"
+    ]
+   }
+  },
+  {
+   "name": "case-013",
+   "text": "[a]\naws_secret_access_key = %(x\n",
+   "result": {
+    "crash": [
+     "configparser.InterpolationSyntaxError",
+     "bad interpolation variable reference '%(x'"
+    ]
+   }
+  },
+  {
+   "name": "case-014",
+   "text": "[a]\naws_secret_access_key = %(x)d\n",
+   "result": {
+    "crash": [
+     "configparser.InterpolationSyntaxError",
+     "bad interpolation variable reference '%(x)d'"
+    ]
+   }
+  },
+  {
+   "name": "case-015",
+   "text": "[a]\naws_secret_access_key = %\n",
+   "result": {
+    "crash": [
+     "configparser.InterpolationSyntaxError",
+     "'%' must be followed by '%' or '(', found: '%'"
+    ]
+   }
+  },
+  {
+   "name": "case-016",
+   "text": "[a]\naws_secret_access_key = 100%\n",
+   "result": {
+    "crash": [
+     "configparser.InterpolationSyntaxError",
+     "'%' must be followed by '%' or '(', found: '%'"
+    ]
+   }
+  },
+  {
+   "name": "case-017",
+   "text": "[a]\n[a]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  2]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-018",
+   "text": "[a]\nk=1\nk=2\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  3]: option 'k' in section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-019",
+   "text": "[a]\nK=1\nk=2\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  3]: option 'k' in section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-020",
+   "text": "[DEFAULT]\n[DEFAULT]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-021",
+   "text": "[DEFAULT]\nk=1\n[DEFAULT]\nk=2\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  4]: option 'k' in section 'DEFAULT' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-022",
+   "text": "[DEFAULT]\naws_session_token = d\n[x]\n[y]\naws_session_token = y\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "d"
+     ],
+     [
+      "aws_session_token",
+      "y"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-023",
+   "text": "[a]\nnot an option\nalso bad\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  2]: 'not an option\\n'\n\t[line  3]: 'also bad\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-024",
+   "text": "[a]\n= v\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  2]: '= v\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-025",
+   "text": "[a]\n= v\n= w\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  3]: option '' in section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-026",
+   "text": "[a]\n:\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  2]: ':\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-027",
+   "text": "[a]\naws_session_token = 1\n  2\n\n  3\n#c\n  4\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "1\n2\n\n3\n4"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-028",
+   "text": "[a]\naws_session_token =\n  2\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "2"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-029",
+   "text": "[a]\n  aws_session_token = indented\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "indented"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-030",
+   "text": "[a]\nk = v\n    aws_session_token = c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-031",
+   "text": "[a] trailing\naws_session_token = t\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "t"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-032",
+   "text": "[a]]\naws_session_token = t\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "t"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-033",
+   "text": "[]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-034",
+   "text": "[ a ]\naws_session_token = t\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "t"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-035",
+   "text": "[a]\naws_session_token = t ; not a comment\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "t ; not a comment"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-036",
+   "text": "[a]\naws_session_token = #x\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "#x"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-037",
+   "text": "[a]\n;c\naws_session_token = s\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "s"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-038",
+   "text": "[a]\r\naws_session_token = crlf\r\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "crlf"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-039",
+   "text": "[a]\raws_session_token = cr\r",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "cr"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-040",
+   "text": "[a]\naws_session_token = \u00e9\u00e9\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "\u00e9\u00e9"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-041",
+   "text": "[\u00e9]\nAWS_SESSION_TOKEN = x\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "x"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-042",
+   "text": "[a]\naws_session_token := v\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "= v"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-043",
+   "text": "[a]\naws_session_token : = v\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "= v"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-044",
+   "text": "[a]\naws security token = no\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-045",
+   "text": "[a]\naws_secret_access_key = a\naws_security_token = b\naws_session_token = c\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_secret_access_key",
+      "a"
+     ],
+     [
+      "aws_security_token",
+      "b"
+     ],
+     [
+      "aws_session_token",
+      "c"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-046",
+   "text": "[a]\nk = v\n[b]\nk = v\n[a]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  5]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-047",
+   "text": "x\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-048",
+   "text": "[a]\nk = v\n\tcontinued\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-049",
+   "text": "[a]\nk\u00a0= v\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-050",
+   "text": "[a]\naws_session_token = \u000bx\u000b\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "x"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-051",
+   "text": "[a]\n\u2028\naws_session_token = s\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "s"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-052",
+   "text": "[a]\naws_session_token = %(missing)s\n",
+   "result": {
+    "crash": [
+     "configparser.InterpolationMissingOptionError",
+     "Bad value substitution: option 'aws_session_token' in section 'a' contains an interpolation key 'missing' which is not a valid option name. Raw value: '%(missing)s'"
+    ]
+   }
+  },
+  {
+   "name": "case-053",
+   "text": "[a]\nb = %(c)s\nc = %(b)s\naws_session_token = %(b)s\n",
+   "result": {
+    "crash": [
+     "configparser.InterpolationDepthError",
+     "Recursion limit exceeded in value substitution: option 'aws_session_token' in section 'a' contains an interpolation key which cannot be substituted in 10 steps. Raw value: '%(b)s'"
+    ]
+   }
+  },
+  {
+   "name": "case-054",
+   "text": "[DEFAULT]\nx = 1\n[a]\naws_session_token = %(X)s\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "1"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-055",
+   "text": "[a]\naws_session_token = v1\nAws_Session_Token = v2\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  3]: option 'aws_session_token' in section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-056",
+   "text": "[DEFAULT]\n[a]\n; c\n  cont\n  cont\nx = 1\naws_secret_access_key: k\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  4]: '  cont\\n'\n\t[line  5]: '  cont\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-057",
+   "text": "# c\n\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-058",
+   "text": "[DEFAULT]\n[DEFAULT]\n; c\ny = %(x)s\nbad line\n\n[b]\n[a]\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  5]: 'bad line\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-059",
+   "text": "# c\n[DEFAULT]\n[DEFAULT]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-060",
+   "text": "[b]\n[DEFAULT]\n= v\naws_session_token = s\nz = 50%%\n= v\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  6]: option '' in section 'DEFAULT' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-061",
+   "text": "[a]\n\n[a]\n[a]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  3]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-062",
+   "text": "x = 1\n[a]\nx = 1\n[a]\n[DEFAULT]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-063",
+   "text": "x = 1\nbad line\nx = 1\n; c\n  cont\n  cont\nx = 1\n= v\naws_secret_access_key: k\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-064",
+   "text": "x = 1\n; c\n# c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-065",
+   "text": "aws_secret_access_key: k\n\n[b]\ny = %(x)s\n[a]\n= v\nz = 50%%\n\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-066",
+   "text": "[DEFAULT]\n; c\n[DEFAULT]\n[a]\naws_secret_access_key: k\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_secret_access_key",
+      "k"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-067",
+   "text": "aws_secret_access_key: k\n[a]\n[b]\n[a]\n[b]\n= v\n  cont\nz = 50%%\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-068",
+   "text": "bad line\n\n\naws_session_token = s\n\naws_session_token = s\n[b]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-069",
+   "text": "  cont\n# c\nz = 50%%\n  cont\naws_session_token = s\nz = 50%%\naws_session_token = s\nx = 1\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-070",
+   "text": "# c\n  cont\n[b]\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-071",
+   "text": "[a]\ny = %(x)s\n[a]\n# c\naws_session_token = s\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  3]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-072",
+   "text": "  cont\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-073",
+   "text": "= v\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-074",
+   "text": "  cont\n; c\nbad line\n; c\naws_session_token = s\ny = %(x)s\naws_secret_access_key: k\n= v\nz = 50%%\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-075",
+   "text": "\naws_session_token = s\n[a]\n  cont\nx = 1\naws_session_token = s\n[DEFAULT]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-076",
+   "text": "y = %(x)s\n# c\n[a]\n# c\n[a]\n  cont\nbad line\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-077",
+   "text": "z = 50%%\n\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-078",
+   "text": "\nx = 1\nbad line\naws_secret_access_key: k\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-079",
+   "text": "# c\n# c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-080",
+   "text": "z = 50%%\n[a]\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-081",
+   "text": "[a]\n# c\n\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-082",
+   "text": "aws_session_token = s\naws_session_token = s\nx = 1\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-083",
+   "text": "y = %(x)s\n[DEFAULT]\nx = 1\n[b]\naws_session_token = s\n\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-084",
+   "text": "[a]\n[a]\n; c\n[a]\n[a]\naws_secret_access_key: k\naws_secret_access_key: k\naws_session_token = s\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  2]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-085",
+   "text": "[b]\nz = 50%%\nbad line\n[DEFAULT]\nbad line\nbad line\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  3]: 'bad line\\n'\n\t[line  5]: 'bad line\\n'\n\t[line  6]: 'bad line\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-086",
+   "text": "[DEFAULT]\nbad line\n[b]\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  2]: 'bad line\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-087",
+   "text": "[b]\n; c\nx = 1\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-088",
+   "text": "[a]\n= v\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  2]: '= v\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-089",
+   "text": "z = 50%%\n[DEFAULT]\naws_secret_access_key: k\n  cont\naws_session_token = s\n= v\n# c\nz = 50%%\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-090",
+   "text": "aws_session_token = s\nz = 50%%\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-091",
+   "text": "; c\n\n  cont\n[DEFAULT]\nz = 50%%\n\n[b]\nz = 50%%\n[b]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-092",
+   "text": "[a]\n[a]\naws_secret_access_key: k\n# c\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  2]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-093",
+   "text": "= v\ny = %(x)s\n[a]\ny = %(x)s\naws_secret_access_key: k\n[a]\n  cont\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-094",
+   "text": "[DEFAULT]\nz = 50%%\ny = %(x)s\ny = %(x)s\ny = %(x)s\naws_secret_access_key: k\ny = %(x)s\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  4]: option 'y' in section 'DEFAULT' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-095",
+   "text": "[a]\ny = %(x)s\n[a]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  3]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-096",
+   "text": "[a]\nx = 1\n[a]\n\n# c\n  cont\n[DEFAULT]\nz = 50%%\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  3]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-097",
+   "text": "[DEFAULT]\nx = 1\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-098",
+   "text": "bad line\naws_session_token = s\nbad line\naws_session_token = s\nx = 1\n\n[b]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-099",
+   "text": "# c\nbad line\nz = 50%%\ny = %(x)s\naws_session_token = s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-100",
+   "text": "= v\naws_secret_access_key: k\nbad line\naws_secret_access_key: k\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-101",
+   "text": "= v\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-102",
+   "text": "\nz = 50%%\n[b]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-103",
+   "text": "  cont\n= v\n[DEFAULT]\n= v\nx = 1\n[b]\n[a]\n[b]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-104",
+   "text": "bad line\n[b]\naws_session_token = s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-105",
+   "text": "[DEFAULT]\n; c\n[a]\n[a]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  4]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-106",
+   "text": "; c\ny = %(x)s\n; c\n\n[a]\n  cont\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-107",
+   "text": "[DEFAULT]\nbad line\nz = 50%%\n[a]\nbad line\n# c\n[a]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  7]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-108",
+   "text": "# c\n[a]\n; c\n\nbad line\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  5]: 'bad line\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-109",
+   "text": "\n[a]\n[b]\n[a]\nz = 50%%\n[DEFAULT]\n\naws_session_token = s\naws_secret_access_key: k\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  4]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-110",
+   "text": "aws_secret_access_key: k\naws_session_token = s\nbad line\n  cont\n  cont\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-111",
+   "text": "# c\n[a]\naws_session_token = s\naws_secret_access_key: k\n  cont\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_secret_access_key",
+      "k\ncont"
+     ],
+     [
+      "aws_session_token",
+      "s"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-112",
+   "text": "; c\n\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-113",
+   "text": "[a]\nx = 1\n[a]\nbad line\naws_secret_access_key: k\naws_secret_access_key: k\naws_session_token = s\nx = 1\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  3]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-114",
+   "text": "\n[a]\nx = 1\n\nx = 1\n\nx = 1\nz = 50%%\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  5]: option 'x' in section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-115",
+   "text": "[DEFAULT]\n[a]\nbad line\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  3]: 'bad line\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-116",
+   "text": "[a]\nbad line\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  2]: 'bad line\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-117",
+   "text": "; c\nz = 50%%\naws_secret_access_key: k\n\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-118",
+   "text": "aws_secret_access_key: k\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-119",
+   "text": "z = 50%%\n= v\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-120",
+   "text": "[b]\n[DEFAULT]\naws_secret_access_key: k\n[a]\n# c\n[DEFAULT]\n; c\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_secret_access_key",
+      "k"
+     ],
+     [
+      "aws_secret_access_key",
+      "k"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-121",
+   "text": "[b]\nz = 50%%\n[b]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  3]: section 'b' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-122",
+   "text": "aws_secret_access_key: k\n# c\naws_secret_access_key: k\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-123",
+   "text": "= v\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-124",
+   "text": "# c\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-125",
+   "text": "\n[b]\nz = 50%%\n[a]\n= v\n# c\n[a]\naws_session_token = s\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  7]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-126",
+   "text": "\naws_session_token = s\nz = 50%%\n# c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-127",
+   "text": "[a]\nz = 50%%\naws_secret_access_key: k\n  cont\naws_secret_access_key: k\nbad line\n[b]\n# c\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  5]: option 'aws_secret_access_key' in section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-128",
+   "text": "# c\nz = 50%%\n[b]\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-129",
+   "text": "\n[a]\naws_session_token = s\n[DEFAULT]\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "s"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-130",
+   "text": "aws_session_token = s\nx = 1\nx = 1\n[a]\n; c\naws_secret_access_key: k\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-131",
+   "text": "[DEFAULT]\n\n\n= v\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  4]: '= v\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-132",
+   "text": "x = 1\n[a]\n; c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-133",
+   "text": "[b]\nz = 50%%\naws_session_token = s\n# c\n[a]\n\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "s"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-134",
+   "text": "\n[b]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-135",
+   "text": "; c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-136",
+   "text": "  cont\nx = 1\n# c\n[a]\ny = %(x)s\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-137",
+   "text": "aws_session_token = s\nx = 1\nz = 50%%\nx = 1\nz = 50%%\nz = 50%%\n[a]\naws_secret_access_key: k\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-138",
+   "text": "y = %(x)s\naws_session_token = s\n\nz = 50%%\n[b]\n; c\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-139",
+   "text": "aws_secret_access_key: k\n\n\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-140",
+   "text": "z = 50%%\nz = 50%%\nx = 1\n= v\nz = 50%%\nbad line\n  cont\n\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-141",
+   "text": "= v\naws_secret_access_key: k\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-142",
+   "text": "bad line\nz = 50%%\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-143",
+   "text": "[a]\n[a]\nbad line\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  2]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-144",
+   "text": "  cont\nbad line\n[a]\n= v\n# c\ny = %(x)s\naws_secret_access_key: k\n; c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-145",
+   "text": "x = 1\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-146",
+   "text": "[a]\n[DEFAULT]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-147",
+   "text": "y = %(x)s\n\nz = 50%%\naws_session_token = s\ny = %(x)s\n; c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-148",
+   "text": "aws_secret_access_key: k\n[a]\n  cont\n\n[b]\n; c\n= v\n[b]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-149",
+   "text": "[a]\naws_secret_access_key: k\n# c\n  cont\n  cont\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_secret_access_key",
+      "k\ncont\ncont"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-150",
+   "text": "= v\nbad line\naws_secret_access_key: k\nx = 1\n# c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-151",
+   "text": "z = 50%%\naws_session_token = s\n= v\n# c\n\ny = %(x)s\nbad line\n= v\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-152",
+   "text": "z = 50%%\ny = %(x)s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-153",
+   "text": "  cont\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-154",
+   "text": "[b]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-155",
+   "text": "\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-156",
+   "text": "[a]\nx = 1\naws_session_token = s\n[DEFAULT]\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "s"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-157",
+   "text": "y = %(x)s\n[b]\naws_session_token = s\n[a]\n[DEFAULT]\nx = 1\n  cont\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-158",
+   "text": "[a]\n# c\nx = 1\n= v\n# c\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  4]: '= v\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-159",
+   "text": "aws_secret_access_key: k\n\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-160",
+   "text": "# c\n  cont\n[a]\n= v\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-161",
+   "text": "[DEFAULT]\n; c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-162",
+   "text": "x = 1\n[a]\naws_secret_access_key: k\naws_secret_access_key: k\nbad line\nz = 50%%\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-163",
+   "text": "[a]\nx = 1\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-164",
+   "text": "# c\nx = 1\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-165",
+   "text": "[DEFAULT]\nx = 1\ny = %(x)s\n[a]\n[b]\n[a]\ny = %(x)s\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  6]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-166",
+   "text": "aws_session_token = s\n= v\ny = %(x)s\naws_session_token = s\nbad line\n[a]\n\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-167",
+   "text": "[b]\n\n= v\n= v\n[a]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  4]: option '' in section 'b' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-168",
+   "text": "z = 50%%\n; c\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-169",
+   "text": "y = %(x)s\nbad line\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-170",
+   "text": "[DEFAULT]\nbad line\ny = %(x)s\nz = 50%%\n[a]\nz = 50%%\n; c\n  cont\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  2]: 'bad line\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-171",
+   "text": "# c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-172",
+   "text": "[b]\nz = 50%%\nbad line\ny = %(x)s\n[a]\n\nz = 50%%\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  3]: 'bad line\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-173",
+   "text": "= v\nx = 1\naws_secret_access_key: k\n[b]\naws_secret_access_key: k\n; c\n[DEFAULT]\naws_secret_access_key: k\n  cont\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-174",
+   "text": "[a]\n\n= v\n  cont\ny = %(x)s\n[a]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  6]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-175",
+   "text": "x = 1\n; c\n# c\nz = 50%%\nbad line\n[a]\n; c\n[b]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-176",
+   "text": "[a]\n[a]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  2]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-177",
+   "text": "aws_secret_access_key: k\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-178",
+   "text": "aws_secret_access_key: k\nz = 50%%\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-179",
+   "text": "[b]\n  cont\n\n[DEFAULT]\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  2]: '  cont\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-180",
+   "text": "[a]\n= v\n= v\n[b]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  3]: option '' in section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-181",
+   "text": "[a]\n= v\nz = 50%%\nz = 50%%\n  cont\nx = 1\n  cont\n[a]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  4]: option 'z' in section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-182",
+   "text": "= v\naws_session_token = s\nx = 1\n[a]\nz = 50%%\naws_secret_access_key: k\naws_session_token = s\n[DEFAULT]\n; c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-183",
+   "text": "z = 50%%\nx = 1\nbad line\n\ny = %(x)s\nz = 50%%\n# c\nx = 1\n# c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-184",
+   "text": "[DEFAULT]\n[a]\naws_secret_access_key: k\nbad line\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  4]: 'bad line\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-185",
+   "text": "[b]\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-186",
+   "text": "aws_secret_access_key: k\naws_secret_access_key: k\n[DEFAULT]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-187",
+   "text": "\nbad line\naws_secret_access_key: k\n= v\n[a]\n[DEFAULT]\n\nz = 50%%\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-188",
+   "text": "y = %(x)s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-189",
+   "text": "aws_secret_access_key: k\nbad line\ny = %(x)s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-190",
+   "text": "aws_secret_access_key: k\n= v\n[b]\nx = 1\ny = %(x)s\n[DEFAULT]\nx = 1\nbad line\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-191",
+   "text": "bad line\n[a]\naws_secret_access_key: k\n[a]\n\nz = 50%%\ny = %(x)s\naws_secret_access_key: k\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-192",
+   "text": "  cont\n\n[a]\nx = 1\n[b]\ny = %(x)s\n\nz = 50%%\n# c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-193",
+   "text": "[b]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-194",
+   "text": "[DEFAULT]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-195",
+   "text": "[b]\nx = 1\n; c\nx = 1\n[a]\n[b]\n[a]\n[DEFAULT]\n[b]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  4]: option 'x' in section 'b' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-196",
+   "text": "\nx = 1\n[b]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-197",
+   "text": "x = 1\n[a]\n[a]\nbad line\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-198",
+   "text": "x = 1\nx = 1\n  cont\ny = %(x)s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-199",
+   "text": "y = %(x)s\n[a]\n= v\nz = 50%%\n[a]\n; c\n[b]\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-200",
+   "text": "[a]\n[a]\n[a]\nx = 1\naws_secret_access_key: k\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  2]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-201",
+   "text": "# c\n= v\n; c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-202",
+   "text": "aws_secret_access_key: k\n= v\n[a]\n[a]\n\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-203",
+   "text": "= v\n; c\nx = 1\n[a]\n= v\ny = %(x)s\naws_session_token = s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-204",
+   "text": "x = 1\n; c\nbad line\naws_secret_access_key: k\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-205",
+   "text": "y = %(x)s\n; c\n\n# c\n[b]\naws_secret_access_key: k\n; c\nx = 1\n\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-206",
+   "text": "z = 50%%\n; c\n= v\n  cont\n  cont\nbad line\nz = 50%%\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-207",
+   "text": "= v\n; c\naws_secret_access_key: k\nbad line\nz = 50%%\n[b]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-208",
+   "text": "; c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-209",
+   "text": "; c\ny = %(x)s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-210",
+   "text": "bad line\nbad line\nz = 50%%\n# c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-211",
+   "text": "  cont\n[b]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-212",
+   "text": "# c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-213",
+   "text": "\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-214",
+   "text": "[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-215",
+   "text": "[a]\ny = %(x)s\n[DEFAULT]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-216",
+   "text": "[a]\naws_session_token = s\naws_secret_access_key: k\naws_secret_access_key: k\n\n[a]\n  cont\naws_session_token = s\n[a]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  4]: option 'aws_secret_access_key' in section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-217",
+   "text": "[a]\naws_secret_access_key: k\nz = 50%%\n  cont\nbad line\nz = 50%%\n\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  6]: option 'z' in section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-218",
+   "text": "aws_secret_access_key: k\nz = 50%%\n# c\nx = 1\n\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-219",
+   "text": "aws_session_token = s\n[a]\naws_session_token = s\n; c\nx = 1\n[a]\n  cont\n\naws_session_token = s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-220",
+   "text": "\n[a]\n= v\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  3]: '= v\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-221",
+   "text": "; c\naws_session_token = s\n# c\n= v\n[a]\n[DEFAULT]\n[DEFAULT]\nx = 1\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-222",
+   "text": "[b]\n# c\naws_session_token = s\ny = %(x)s\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_session_token",
+      "s"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-223",
+   "text": "[a]\n[b]\nz = 50%%\nx = 1\n= v\ny = %(x)s\n; c\naws_secret_access_key: k\naws_secret_access_key: k\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  9]: option 'aws_secret_access_key' in section 'b' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-224",
+   "text": "aws_session_token = s\n[a]\n[b]\naws_session_token = s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-225",
+   "text": "[b]\ny = %(x)s\n= v\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  3]: '= v\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-226",
+   "text": "[b]\n[a]\nx = 1\nz = 50%%\n[a]\n[b]\n[b]\n= v\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  5]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-227",
+   "text": "[a]\n= v\n[a]\n[DEFAULT]\nz = 50%%\n  cont\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  3]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-228",
+   "text": "[b]\n[b]\n= v\nz = 50%%\nz = 50%%\n[a]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  2]: section 'b' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-229",
+   "text": "; c\n[a]\n[b]\n[a]\naws_session_token = s\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  4]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-230",
+   "text": "# c\n[b]\n; c\n; c\n[a]\n# c\n  cont\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  7]: '  cont\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-231",
+   "text": "# c\n  cont\n; c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-232",
+   "text": "aws_secret_access_key: k\n; c\ny = %(x)s\n[DEFAULT]\nx = 1\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-233",
+   "text": "y = %(x)s\nz = 50%%\n[DEFAULT]\naws_secret_access_key: k\nbad line\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-234",
+   "text": "z = 50%%\naws_secret_access_key: k\n[DEFAULT]\n\naws_session_token = s\nbad line\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-235",
+   "text": "x = 1\n\ny = %(x)s\naws_secret_access_key: k\naws_session_token = s\n; c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-236",
+   "text": "z = 50%%\n  cont\ny = %(x)s\n[b]\n# c\n# c\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-237",
+   "text": "[b]\n; c\ny = %(x)s\nz = 50%%\n\ny = %(x)s\n# c\n# c\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  6]: option 'y' in section 'b' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-238",
+   "text": "bad line\n= v\n= v\n# c\n; c\n\n\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-239",
+   "text": "bad line\nbad line\naws_session_token = s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-240",
+   "text": "; c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-241",
+   "text": "z = 50%%\n; c\n; c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-242",
+   "text": "[DEFAULT]\n[a]\n[DEFAULT]\n[a]\n[a]\ny = %(x)s\ny = %(x)s\n[DEFAULT]\nz = 50%%\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  4]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-243",
+   "text": "; c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-244",
+   "text": "[DEFAULT]\nx = 1\n\naws_secret_access_key: k\n# c\naws_session_token = s\nbad line\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  7]: 'bad line\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-245",
+   "text": "aws_session_token = s\n# c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-246",
+   "text": "  cont\n\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-247",
+   "text": "# c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-248",
+   "text": "x = 1\n[DEFAULT]\n  cont\n# c\naws_session_token = s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-249",
+   "text": "[DEFAULT]\naws_session_token = s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-250",
+   "text": "x = 1\n= v\ny = %(x)s\n[a]\n[DEFAULT]\nx = 1\naws_session_token = s\naws_session_token = s\n[DEFAULT]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-251",
+   "text": "; c\n[a]\n; c\naws_session_token = s\nx = 1\nbad line\nx = 1\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  7]: option 'x' in section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-252",
+   "text": "aws_session_token = s\nbad line\nx = 1\n[a]\n[a]\naws_secret_access_key: k\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-253",
+   "text": "aws_secret_access_key: k\n\naws_secret_access_key: k\n; c\nz = 50%%\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-254",
+   "text": "bad line\n# c\nx = 1\n  cont\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-255",
+   "text": "aws_session_token = s\n; c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-256",
+   "text": "aws_secret_access_key: k\n\nx = 1\n\n# c\n\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-257",
+   "text": "; c\n[a]\n  cont\nz = 50%%\n# c\n[a]\n[a]\n[b]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  6]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-258",
+   "text": "[a]\nx = 1\n; c\nx = 1\n# c\ny = %(x)s\n[DEFAULT]\n= v\n[a]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  4]: option 'x' in section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-259",
+   "text": "; c\n\n# c\ny = %(x)s\nx = 1\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-260",
+   "text": "# c\n[DEFAULT]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-261",
+   "text": "x = 1\n[DEFAULT]\n; c\n[DEFAULT]\n[DEFAULT]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-262",
+   "text": "# c\n[a]\n= v\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  3]: '= v\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-263",
+   "text": "aws_secret_access_key: k\n  cont\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-264",
+   "text": "bad line\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-265",
+   "text": "[b]\ny = %(x)s\nbad line\ny = %(x)s\nz = 50%%\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  4]: option 'y' in section 'b' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-266",
+   "text": "bad line\naws_secret_access_key: k\nx = 1\nbad line\nz = 50%%\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-267",
+   "text": "y = %(x)s\n[a]\nbad line\n= v\n# c\n[b]\n# c\n[b]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-268",
+   "text": "\nz = 50%%\naws_session_token = s\n  cont\n# c\nbad line\ny = %(x)s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-269",
+   "text": "bad line\n  cont\nz = 50%%\n; c\nx = 1\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-270",
+   "text": "[b]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-271",
+   "text": "[b]\n[b]\n= v\nz = 50%%\n  cont\n[DEFAULT]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  2]: section 'b' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-272",
+   "text": "aws_session_token = s\n[b]\n[a]\nbad line\naws_secret_access_key: k\naws_secret_access_key: k\n; c\n# c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-273",
+   "text": "y = %(x)s\naws_session_token = s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-274",
+   "text": "[a]\nz = 50%%\nx = 1\n  cont\nx = 1\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  5]: option 'x' in section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-275",
+   "text": "# c\nbad line\n[DEFAULT]\n[a]\n  cont\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-276",
+   "text": "; c\n[a]\nbad line\n[b]\n# c\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  3]: 'bad line\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-277",
+   "text": "# c\n; c\nz = 50%%\n  cont\n[DEFAULT]\n= v\n[b]\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-278",
+   "text": "  cont\naws_session_token = s\naws_session_token = s\n  cont\n  cont\nbad line\n; c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-279",
+   "text": "= v\n\n; c\n[a]\nz = 50%%\n# c\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-280",
+   "text": "z = 50%%\n; c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-281",
+   "text": "[DEFAULT]\naws_session_token = s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-282",
+   "text": "[a]\n\n[DEFAULT]\naws_secret_access_key: k\n\n\ny = %(x)s\n",
+   "result": {
+    "pairs": [
+     [
+      "aws_secret_access_key",
+      "k"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "case-283",
+   "text": "aws_session_token = s\naws_secret_access_key: k\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-284",
+   "text": "bad line\n[DEFAULT]\n  cont\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-285",
+   "text": "  cont\n[a]\nbad line\n[a]\n  cont\nx = 1\n= v\naws_session_token = s\n[b]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-286",
+   "text": "[a]\n\nbad line\n[DEFAULT]\n[DEFAULT]\n[a]\n# c\n  cont\n# c\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  6]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-287",
+   "text": "  cont\ny = %(x)s\naws_session_token = s\nz = 50%%\n[a]\n= v\n[b]\n  cont\n; c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-288",
+   "text": "[b]\nz = 50%%\n[b]\nbad line\naws_secret_access_key: k\ny = %(x)s\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  3]: section 'b' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-289",
+   "text": "bad line\n[a]\n[a]\nz = 50%%\ny = %(x)s\n\n[DEFAULT]\n= v\naws_secret_access_key: k\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-290",
+   "text": "aws_session_token = s\nbad line\n[b]\n[b]\nbad line\n[DEFAULT]\n[a]\ny = %(x)s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-291",
+   "text": "= v\n[b]\naws_session_token = s\n; c\n[DEFAULT]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-292",
+   "text": "\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-293",
+   "text": "z = 50%%\naws_secret_access_key: k\n\n= v\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-294",
+   "text": "z = 50%%\ny = %(x)s\n[DEFAULT]\n  cont\n# c\n\n[DEFAULT]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-295",
+   "text": "z = 50%%\naws_secret_access_key: k\n[a]\n# c\naws_session_token = s\n[a]\n  cont\nbad line\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-296",
+   "text": "  cont\nz = 50%%\n  cont\n= v\n[b]\n[a]\nz = 50%%\n; c\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-297",
+   "text": "\nbad line\nx = 1\n  cont\naws_secret_access_key: k\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-298",
+   "text": "aws_secret_access_key: k\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-299",
+   "text": "z = 50%%\n  cont\n[DEFAULT]\n  cont\n[a]\n[a]\n; c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-300",
+   "text": "z = 50%%\n  cont\n[DEFAULT]\n  cont\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-301",
+   "text": "[a]\naws_session_token = s\nz = 50%%\nz = 50%%\n[b]\nz = 50%%\n[a]\n[b]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  4]: option 'z' in section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-302",
+   "text": "aws_session_token = s\n\n[b]\nbad line\n[b]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-303",
+   "text": "[a]\naws_session_token = s\n[b]\nbad line\n[DEFAULT]\nz = 50%%\naws_session_token = s\naws_session_token = s\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  8]: option 'aws_session_token' in section 'DEFAULT' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-304",
+   "text": "# c\n[a]\nx = 1\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-305",
+   "text": "y = %(x)s\n# c\nx = 1\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-306",
+   "text": "\nbad line\nbad line\n  cont\ny = %(x)s\naws_session_token = s\nz = 50%%\n  cont\n# c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-307",
+   "text": "[DEFAULT]\naws_secret_access_key: k\nbad line\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  3]: 'bad line\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-308",
+   "text": "z = 50%%\n[b]\n= v\nbad line\n[a]\n[DEFAULT]\n\naws_session_token = s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-309",
+   "text": "; c\n; c\n= v\n\n= v\n[DEFAULT]\ny = %(x)s\nz = 50%%\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-310",
+   "text": "[DEFAULT]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-311",
+   "text": "x = 1\n[DEFAULT]\n[DEFAULT]\n[DEFAULT]\n= v\n[b]\nbad line\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-312",
+   "text": "x = 1\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-313",
+   "text": "aws_secret_access_key: k\n[b]\nx = 1\nx = 1\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-314",
+   "text": "  cont\n[a]\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-315",
+   "text": "aws_session_token = s\n\n  cont\n# c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-316",
+   "text": "# c\n\n  cont\n[a]\nx = 1\n[a]\n[b]\nz = 50%%\nz = 50%%\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-317",
+   "text": "[b]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-318",
+   "text": "aws_secret_access_key: k\n\nz = 50%%\n[a]\n[DEFAULT]\n[a]\n[b]\nz = 50%%\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-319",
+   "text": "= v\nbad line\n[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-320",
+   "text": "[a]\n# c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-321",
+   "text": "\n[DEFAULT]\nz = 50%%\naws_secret_access_key: k\nz = 50%%\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  5]: option 'z' in section 'DEFAULT' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-322",
+   "text": "[a]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-323",
+   "text": "[DEFAULT]\n[a]\n; c\n[b]\n[a]\n# c\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  5]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-324",
+   "text": "[a]\n  cont\naws_session_token = s\n[a]\n\naws_session_token = s\n[a]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  4]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-325",
+   "text": "aws_session_token = s\n[a]\nx = 1\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-326",
+   "text": "[b]\n; c\n[a]\nbad line\nz = 50%%\naws_session_token = s\nz = 50%%\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  7]: option 'z' in section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-327",
+   "text": "  cont\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-328",
+   "text": "\n; c\nz = 50%%\n\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-329",
+   "text": "\n  cont\n[DEFAULT]\nbad line\nbad line\nbad line\nx = 1\nx = 1\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-330",
+   "text": "bad line\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-331",
+   "text": "y = %(x)s\ny = %(x)s\nbad line\n= v\n[b]\nz = 50%%\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-332",
+   "text": "  cont\n[a]\naws_session_token = s\n[a]\n; c\nx = 1\ny = %(x)s\n[DEFAULT]\n[b]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-333",
+   "text": "aws_session_token = s\n[a]\n\n[a]\n; c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-334",
+   "text": "# c\naws_secret_access_key: k\naws_session_token = s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-335",
+   "text": "bad line\nx = 1\naws_secret_access_key: k\n[b]\naws_secret_access_key: k\nz = 50%%\n; c\naws_session_token = s\n= v\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-336",
+   "text": "= v\n[b]\n\n[a]\n[a]\nx = 1\naws_session_token = s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-337",
+   "text": "[a]\n[DEFAULT]\n  cont\n\n[a]\n[a]\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateSectionError",
+     "While reading from 'creds.ini' [line  5]: section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-338",
+   "text": "bad line\nbad line\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-339",
+   "text": "aws_session_token = s\naws_session_token = s\ny = %(x)s\n[DEFAULT]\n\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-340",
+   "text": "[a]\naws_secret_access_key: k\n  cont\naws_secret_access_key: k\n; c\ny = %(x)s\ny = %(x)s\n\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  4]: option 'aws_secret_access_key' in section 'a' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-341",
+   "text": "[DEFAULT]\nx = 1\ny = %(x)s\ny = %(x)s\ny = %(x)s\n[a]\naws_secret_access_key: k\n\nx = 1\n",
+   "result": {
+    "crash": [
+     "configparser.DuplicateOptionError",
+     "While reading from 'creds.ini' [line  4]: option 'y' in section 'DEFAULT' already exists"
+    ]
+   }
+  },
+  {
+   "name": "case-342",
+   "text": "z = 50%%\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-343",
+   "text": "z = 50%%\n[DEFAULT]\n[DEFAULT]\naws_session_token = s\nbad line\n[a]\nz = 50%%\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-344",
+   "text": "# c\nx = 1\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-345",
+   "text": "# c\naws_secret_access_key: k\n  cont\naws_session_token = s\n  cont\naws_secret_access_key: k\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-346",
+   "text": "bad line\n[DEFAULT]\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-347",
+   "text": "z = 50%%\n[DEFAULT]\naws_session_token = s\n[a]\n= v\n\n= v\nx = 1\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-348",
+   "text": "[b]\n; c\n[DEFAULT]\n= v\naws_session_token = s\nbad line\nbad line\n[a]\n",
+   "result": {
+    "crash": [
+     "configparser.ParsingError",
+     "Source contains parsing errors: 'creds.ini'\n\t[line  4]: '= v\\n'\n\t[line  6]: 'bad line\\n'\n\t[line  7]: 'bad line\\n'"
+    ]
+   }
+  },
+  {
+   "name": "case-349",
+   "text": "x = 1\nx = 1\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-350",
+   "text": "  cont\n\n[a]\n; c\ny = %(x)s\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-351",
+   "text": "\n= v\nx = 1\n# c\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-352",
+   "text": "# c\ny = %(x)s\ny = %(x)s\n; c\n\n  cont\nbad line\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-353",
+   "text": "y = %(x)s\nz = 50%%\nx = 1\nz = 50%%\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-354",
+   "text": "# c\n  cont\nz = 50%%\n",
+   "result": {
+    "pairs": []
+   }
+  },
+  {
+   "name": "case-355",
+   "text": "  cont\n[a]\n[a]\naws_session_token = s\naws_secret_access_key: k\n[a]\nx = 1\n",
+   "result": {
+    "pairs": []
+   }
+  }
+ ]
+}
