@@ -204,8 +204,8 @@ fn is_text_matches() {
 mod on_disk {
     use super::*;
     use file_identify::{
-        ExecPolicy, IdentifyError, file_is_text, parse_shebang_from_file, tags_from_meta,
-        tags_from_path,
+        ExecPolicy, IdentifyError, file_is_text, parse_shebang_from_file,
+        parse_shebang_from_file_with, tags_from_meta, tags_from_path,
     };
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
@@ -289,11 +289,18 @@ mod on_disk {
             }
 
             match &case["shebang"] {
-                Value::Array(_) => assert_eq!(
-                    parse_shebang_from_file(&path).ok(),
-                    Some(strings(&case["shebang"])),
-                    "{ctx}"
-                ),
+                Value::Array(_) => {
+                    assert_eq!(
+                        parse_shebang_from_file(&path).ok(),
+                        Some(strings(&case["shebang"])),
+                        "{ctx}"
+                    );
+                    assert_eq!(
+                        parse_shebang_from_file_with(&path, ExecPolicy::PythonCompat).ok(),
+                        Some(strings(&case["shebang"])),
+                        "{ctx}"
+                    );
+                }
                 Value::Object(err) => {
                     let e = parse_shebang_from_file(&path).expect_err(&ctx);
                     assert_eq!(error_kind(&e), err["error"], "{ctx}");

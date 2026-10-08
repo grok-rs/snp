@@ -31,7 +31,8 @@ read. See "Migrating from 0.4" in the README.
   `from_git_mode_with`), `ExecPolicy` (`PythonCompat`, `ModeBits`), `classify` →
   `Classification::{Done, NeedsContent(Pending)}`, `Pending::{finish, finish_bytes}`,
   `tags_from_meta` (no `lstat`; no system call at all for known names),
-  `tags_from_path_with`.
+  `tags_from_path_with`, `parse_shebang_from_file_with` (the shebang is read only if
+  the file is executable under the given `ExecPolicy`, like `tags_from_path_with`).
 - `FileKind::Other` for FIFOs and devices, which are never opened.
 - `shlex_split` / `ShlexError` (Python `shlex.split`), `parse_shebang_bytes`,
   `is_text_bytes`, `MAX_SHEBANG_BYTES`, `TEXT_PROBE_LEN`.

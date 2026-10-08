@@ -84,6 +84,7 @@ Iteration, `Display` and `Debug` list tags in name order. `TagSet::ALL`,
 | `tags_from_interpreter(name)` | `tags_from_interpreter` | none |
 | `file_is_text(path)`, `is_text(reader)`, `is_text_bytes(&[u8])` | `file_is_text`, `is_text` | ≤ 1 KiB |
 | `parse_shebang_from_file(path)`, `parse_shebang(reader)`, `parse_shebang_bytes(&[u8])` | `parse_shebang_from_file`, `parse_shebang` | first line(s), bounded |
+| `parse_shebang_from_file_with(path, ExecPolicy)` | — | same |
 | `shlex_split(&str)` | `shlex.split` | none |
 
 `extensions::{EXTENSIONS, EXTENSIONS_NEED_BINARY_CHECK, NAMES}` and

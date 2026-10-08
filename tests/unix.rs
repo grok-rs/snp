@@ -7,8 +7,8 @@ use std::io;
 use std::path::Path;
 
 use file_identify::{
-    ExecPolicy, IdentifyError, Meta, file_is_text, parse_shebang_from_file, tags_from_path,
-    tags_from_path_with,
+    ExecPolicy, IdentifyError, Meta, file_is_text, parse_shebang_from_file,
+    parse_shebang_from_file_with, tags_from_path, tags_from_path_with,
 };
 
 const NONE: Vec<String> = Vec::new();
@@ -95,12 +95,24 @@ fn exec_policies() {
         assert_eq!(compat.to_string(), "file, non-executable, text");
         assert_eq!(tags_from_path(&path).expect("identify"), compat);
     }
+    // The shebang is read under the same policy as the tags.
+    let shebang = |policy| parse_shebang_from_file_with(&path, policy).expect("parse");
+    assert_eq!(shebang(ExecPolicy::ModeBits), NONE);
+    if !privileged(dir.path()) {
+        assert_eq!(shebang(ExecPolicy::PythonCompat), NONE);
+        assert_eq!(parse_shebang_from_file(&path).expect("parse"), NONE);
+    }
     // Owner x only: executable for both policies.
     chmod(&path, 0o700);
     for policy in [ExecPolicy::ModeBits, ExecPolicy::PythonCompat] {
         let tags = tags_from_path_with(&path, policy).expect("identify");
         assert_eq!(tags.to_string(), "executable, file, sh, shell, text");
+        assert_eq!(shebang(policy), ["/bin/sh"]);
     }
+    // Missing paths are reported whatever the policy.
+    let missing = dir.path().join("missing");
+    let err = parse_shebang_from_file_with(&missing, ExecPolicy::ModeBits).expect_err("missing");
+    assert!(matches!(err, IdentifyError::PathNotFound { .. }), "{err:?}");
 }
 
 /// `ExecPolicy::ModeBits` on `lstat` metadata must agree with the mode git

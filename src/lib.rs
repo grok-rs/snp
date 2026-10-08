@@ -48,7 +48,7 @@
 //! | [`tags_from_filename`] | `tags_from_filename` | none |
 //! | [`tags_from_interpreter`] | `tags_from_interpreter` | none |
 //! | [`file_is_text`], [`is_text`], [`is_text_bytes`] | `file_is_text`, `is_text` | ≤ 1 KiB |
-//! | [`parse_shebang_from_file`], [`parse_shebang`], [`parse_shebang_bytes`] | `parse_shebang_from_file`, `parse_shebang` | first line(s) |
+//! | [`parse_shebang_from_file`], [`parse_shebang_from_file_with`], [`parse_shebang`], [`parse_shebang_bytes`] | `parse_shebang_from_file`, `parse_shebang` | first line(s) |
 //!
 //! [`extensions`] and [`interpreters`] expose the raw tables.
 //!
@@ -108,7 +108,8 @@ pub mod tags;
 
 pub use classify::{
     Classification, FileInfo, Pending, classify, file_is_text, parse_shebang_from_file,
-    tags_from_info, tags_from_meta, tags_from_path, tags_from_path_with,
+    parse_shebang_from_file_with, tags_from_info, tags_from_meta, tags_from_path,
+    tags_from_path_with,
 };
 pub use error::{IdentifyError, Result};
 pub use filename::{tags_from_filename, tags_from_interpreter};

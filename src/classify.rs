@@ -350,6 +350,41 @@ pub fn file_is_text(path: impl AsRef<Path>) -> Result<bool> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn parse_shebang_from_file(path: impl AsRef<Path>) -> Result<Vec<String>> {
+    parse_shebang_from_file_with(path, ExecPolicy::PythonCompat)
+}
+
+/// [`parse_shebang_from_file`] with an explicit [`ExecPolicy`] deciding
+/// whether the file is executable (and therefore read at all).
+///
+/// With [`ExecPolicy::ModeBits`] only files with the owner `x` bit are read,
+/// on every platform (so on Windows the result is always empty), which
+/// agrees with [`tags_from_path_with`] and with a git index mode.
+///
+/// # Errors
+///
+/// As for [`parse_shebang_from_file`].
+///
+/// ```
+/// # let dir = tempfile::tempdir()?;
+/// # let path = dir.path().join("tool");
+/// # std::fs::write(&path, "#!/bin/sh\n")?;
+/// use file_identify::{ExecPolicy, parse_shebang_from_file_with};
+///
+/// # #[cfg(unix)] {
+/// # use std::os::unix::fs::PermissionsExt;
+/// // Owner x bit set: the shebang is read under both policies.
+/// std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o744))?;
+/// assert_eq!(parse_shebang_from_file_with(&path, ExecPolicy::ModeBits)?, ["/bin/sh"]);
+/// // Group and other x bits only: git stages 100644, so ModeBits says no.
+/// std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o655))?;
+/// assert!(parse_shebang_from_file_with(&path, ExecPolicy::ModeBits)?.is_empty());
+/// # }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn parse_shebang_from_file_with(
+    path: impl AsRef<Path>,
+    policy: ExecPolicy,
+) -> Result<Vec<String>> {
     let path = path.as_ref();
     let md = fs::symlink_metadata(path).map_err(|e| IdentifyError::not_found(path, e))?;
     let md = if md.file_type().is_symlink() {
@@ -361,9 +396,7 @@ pub fn parse_shebang_from_file(path: impl AsRef<Path>) -> Result<Vec<String>> {
     } else {
         md
     };
-    if !ExecPolicy::PythonCompat.is_executable(&md)
-        || FileKind::from_file_type(md.file_type()) == FileKind::Other
-    {
+    if !policy.is_executable(&md) || FileKind::from_file_type(md.file_type()) == FileKind::Other {
         return Ok(Vec::new());
     }
     shebang_unless_einval(open_for_read(path))
