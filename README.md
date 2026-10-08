@@ -10,7 +10,7 @@ popular hooks.
 
 ## Status
 
-**Under construction.** The workspace skeleton (wave 0) is being built; nothing is usable yet.
+**Under construction.** The workspace skeleton (wave 0) is in place; the commands are not implemented yet.
 Do not install snp over a working pre-commit setup.
 
 ## Documentation
@@ -31,9 +31,27 @@ The workspace depends on two sibling checkouts pinned in [`deps.lock`](deps.lock
 `../cfgv-rs` and `../file-identify`. The toolchain is pinned by `rust-toolchain.toml`.
 
 ```sh
+.github/scripts/deps-lock.sh checkout   # clone the two siblings at the pinned commits (skips existing ones)
 cargo build --workspace
-cargo xtask --help
+cargo xtask help                        # list the build-time tasks
 ```
+
+The gates every change must pass (the `ci` workflow runs them on Linux, macOS and Windows):
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-features --lib --bins -- -D warnings
+cargo clippy --workspace --all-features --tests --benches --examples -- \
+    -D warnings -A clippy::disallowed_macros -A clippy::arithmetic_side_effects
+cargo +1.98.0 check --workspace --all-targets       # MSRV
+cargo deny check && cargo machete
+cargo xtask check-dag && cargo xtask check-unsafe && cargo xtask lint-guards
+cargo build --workspace --bins --features snp/testing
+cargo nextest run --workspace --features snp/testing
+```
+
+The differential tests need the pre-commit 4.6.2 oracles: `cargo xtask oracle install` (requires `uv`) creates
+`target/oracle/pc462-py312` and `target/oracle/pc462-py313`.
 
 ## License
 
