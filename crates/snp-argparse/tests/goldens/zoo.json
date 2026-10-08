@@ -1,0 +1,2879 @@
+{
+  "generator": "cargo xtask cli-goldens",
+  "source": "CPython 3.13 argparse (target/oracle/pc462-py313) built from export_json of crates/snp-argparse/tests/zoo/spec.rs",
+  "cases": [
+    {
+      "id": "zoo: COLUMNS=10 -h",
+      "argv": [
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "10"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo\n       [-h]\n       [-n COUNT]\n       [--name NAME]\n       [--label LABEL]\n       [--level {low,mid,high}]\n       [-q]\n       [-Q]\n       [-t TAG]\n       [--opt [OPT]]\n       [--many MANY [MANY ...]]\n       [--some [{a,b} ...]]\n       [--fast |\n       --slow]\n       -r REQ\n       [--rem ...]\n       src\n       [FILE ...]\n\nzoo\nexercises\nevery\naction\nkind. It is\nlong enough\nto wrap at\nthe narrow\nwidths of\nthe golden\nmatrix,\nwith 100%\nof the\nwords.\n\npositional arguments:\n  src\n    the source\n  FILE\n    files\n\noptions:\n  -h, --help\n    show this\n    help\n    message and\n    exit\n  -n, --count COUNT\n    how many\n    (default 3,\n    type int)\n  --name NAME\n    an upper-\n    case name\n    (default\n    'X')\n  --label LABEL\n    anything\n    but the\n    empty\n    string\n  --level {low,mid,high}\n    one of low,\n    mid, high;\n    mid by\n    default\n  -q\n  -Q, --no-volume\n    turn the\n    volume off\n  -t, --tag TAG\n    repeatable\n  --opt [OPT]\n    optional\n    value, C\n    when bare\n  --many MANY [MANY ...]\n    one or more\n    values\n  --some [{a,b} ...]\n    zero or\n    more of a,\n    b\n  --fast\n    mode fast\n  --slow\n    mode slow\n  -r, --req REQ\n    a required\n    option\n  --rem ...\n    everything\n    after\n\nSee also:\nzoo --help.\nReport bugs\nto nobody.\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: COLUMNS=40 -h",
+      "argv": [
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "40"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo [-h] [-n COUNT]\n           [--name NAME]\n           [--label LABEL]\n           [--level {low,mid,high}]\n           [-q] [-Q] [-t TAG]\n           [--opt [OPT]]\n           [--many MANY [MANY ...]]\n           [--some [{a,b} ...]]\n           [--fast | --slow] -r REQ\n           [--rem ...]\n           src [FILE ...]\n\nzoo exercises every action kind. It is\nlong enough to wrap at the narrow\nwidths of the golden matrix, with 100%\nof the words.\n\npositional arguments:\n  src             the source\n  FILE            files\n\noptions:\n  -h, --help      show this help\n                  message and exit\n  -n, --count COUNT\n                  how many (default 3,\n                  type int)\n  --name NAME     an upper-case name\n                  (default 'X')\n  --label LABEL   anything but the\n                  empty string\n  --level {low,mid,high}\n                  one of low, mid,\n                  high; mid by default\n  -q\n  -Q, --no-volume\n                  turn the volume off\n  -t, --tag TAG   repeatable\n  --opt [OPT]     optional value, C\n                  when bare\n  --many MANY [MANY ...]\n                  one or more values\n  --some [{a,b} ...]\n                  zero or more of a, b\n  --fast          mode fast\n  --slow          mode slow\n  -r, --req REQ   a required option\n  --rem ...       everything after\n\nSee also: zoo --help. Report bugs to\nnobody.\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: COLUMNS=60 -h",
+      "argv": [
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "60"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG]\n           [--opt [OPT]] [--many MANY [MANY ...]]\n           [--some [{a,b} ...]] [--fast | --slow] -r REQ\n           [--rem ...]\n           src [FILE ...]\n\nzoo exercises every action kind. It is long enough to wrap\nat the narrow widths of the golden matrix, with 100% of\nthe words.\n\npositional arguments:\n  src                   the source\n  FILE                  files\n\noptions:\n  -h, --help            show this help message and exit\n  -n, --count COUNT     how many (default 3, type int)\n  --name NAME           an upper-case name (default 'X')\n  --label LABEL         anything but the empty string\n  --level {low,mid,high}\n                        one of low, mid, high; mid by\n                        default\n  -q\n  -Q, --no-volume       turn the volume off\n  -t, --tag TAG         repeatable\n  --opt [OPT]           optional value, C when bare\n  --many MANY [MANY ...]\n                        one or more values\n  --some [{a,b} ...]    zero or more of a, b\n  --fast                mode fast\n  --slow                mode slow\n  -r, --req REQ         a required option\n  --rem ...             everything after\n\nSee also: zoo --help. Report bugs to nobody.\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -h",
+      "argv": [
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\n\nzoo exercises every action kind. It is long enough to wrap at the narrow\nwidths of the golden matrix, with 100% of the words.\n\npositional arguments:\n  src                   the source\n  FILE                  files\n\noptions:\n  -h, --help            show this help message and exit\n  -n, --count COUNT     how many (default 3, type int)\n  --name NAME           an upper-case name (default 'X')\n  --label LABEL         anything but the empty string\n  --level {low,mid,high}\n                        one of low, mid, high; mid by default\n  -q\n  -Q, --no-volume       turn the volume off\n  -t, --tag TAG         repeatable\n  --opt [OPT]           optional value, C when bare\n  --many MANY [MANY ...]\n                        one or more values\n  --some [{a,b} ...]    zero or more of a, b\n  --fast                mode fast\n  --slow                mode slow\n  -r, --req REQ         a required option\n  --rem ...             everything after\n\nSee also: zoo --help. Report bugs to nobody.\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: COLUMNS=120 -h",
+      "argv": [
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "120"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL] [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow] -r REQ [--rem ...]\n           src [FILE ...]\n\nzoo exercises every action kind. It is long enough to wrap at the narrow widths of the golden matrix, with 100% of the\nwords.\n\npositional arguments:\n  src                   the source\n  FILE                  files\n\noptions:\n  -h, --help            show this help message and exit\n  -n, --count COUNT     how many (default 3, type int)\n  --name NAME           an upper-case name (default 'X')\n  --label LABEL         anything but the empty string\n  --level {low,mid,high}\n                        one of low, mid, high; mid by default\n  -q\n  -Q, --no-volume       turn the volume off\n  -t, --tag TAG         repeatable\n  --opt [OPT]           optional value, C when bare\n  --many MANY [MANY ...]\n                        one or more values\n  --some [{a,b} ...]    zero or more of a, b\n  --fast                mode fast\n  --slow                mode slow\n  -r, --req REQ         a required option\n  --rem ...             everything after\n\nSee also: zoo --help. Report bugs to nobody.\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=10 -h",
+      "argv": [
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "10"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub\n       [-h]\n       [--version]\n       [--top]\n       {listed,strict,quiet,nested} ...\n\npositional arguments:\n  {listed,strict,quiet,nested}\n    the command\n    to run\n    listed\n    a listed\n    command\n    with a zoo-\n    sub-free\n    help\n    strict\n    no abbrevia\n    tions, no\n    -h\n    hidden-cmd\n    never shown\n    nested\n    has its own\n    sub-\n    commands\n\noptions:\n  -h, --help\n    show this\n    help\n    message and\n    exit\n  --version\n    show the\n    version\n  --top\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=40 -h",
+      "argv": [
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "40"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub [-h] [--version]\n               [--top]\n               {listed,strict,quiet,nested} ...\n\npositional arguments:\n  {listed,strict,quiet,nested}\n                  the command to run\n    listed        a listed command\n                  with a zoo-sub-free\n                  help\n    strict        no abbreviations, no\n                  -h\n    hidden-cmd    never shown\n    nested        has its own sub-\n                  commands\n\noptions:\n  -h, --help      show this help\n                  message and exit\n  --version       show the version\n  --top\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=60 -h",
+      "argv": [
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "60"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub [-h] [--version] [--top]\n               {listed,strict,quiet,nested} ...\n\npositional arguments:\n  {listed,strict,quiet,nested}\n                        the command to run\n    listed              a listed command with a zoo-sub-\n                        free help\n    strict              no abbreviations, no -h\n    hidden-cmd          never shown\n    nested              has its own sub-commands\n\noptions:\n  -h, --help            show this help message and exit\n  --version             show the version\n  --top\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: -h",
+      "argv": [
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub [-h] [--version] [--top] {listed,strict,quiet,nested} ...\n\npositional arguments:\n  {listed,strict,quiet,nested}\n                        the command to run\n    listed              a listed command with a zoo-sub-free help\n    strict              no abbreviations, no -h\n    hidden-cmd          never shown\n    nested              has its own sub-commands\n\noptions:\n  -h, --help            show this help message and exit\n  --version             show the version\n  --top\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=120 -h",
+      "argv": [
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "120"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub [-h] [--version] [--top] {listed,strict,quiet,nested} ...\n\npositional arguments:\n  {listed,strict,quiet,nested}\n                        the command to run\n    listed              a listed command with a zoo-sub-free help\n    strict              no abbreviations, no -h\n    hidden-cmd          never shown\n    nested              has its own sub-commands\n\noptions:\n  -h, --help            show this help message and exit\n  --version             show the version\n  --top\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=10 listed -h",
+      "argv": [
+        "listed",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "10"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub listed\n       [-h]\n       [-1]\n       [--num NUM]\n       items [items ...]\n\nThe listed\ncommand.\n\npositional arguments:\n  items\n    one or more\n    items\n\noptions:\n  -h, --help\n    show this\n    help\n    message and\n    exit\n  -1\n  --num NUM\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=40 listed -h",
+      "argv": [
+        "listed",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "40"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub listed [-h] [-1]\n                      [--num NUM]\n                      items [items ...]\n\nThe listed command.\n\npositional arguments:\n  items       one or more items\n\noptions:\n  -h, --help  show this help message\n              and exit\n  -1\n  --num NUM\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=60 listed -h",
+      "argv": [
+        "listed",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "60"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub listed [-h] [-1] [--num NUM]\n                      items [items ...]\n\nThe listed command.\n\npositional arguments:\n  items       one or more items\n\noptions:\n  -h, --help  show this help message and exit\n  -1\n  --num NUM\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: listed -h",
+      "argv": [
+        "listed",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub listed [-h] [-1] [--num NUM] items [items ...]\n\nThe listed command.\n\npositional arguments:\n  items       one or more items\n\noptions:\n  -h, --help  show this help message and exit\n  -1\n  --num NUM\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=120 listed -h",
+      "argv": [
+        "listed",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "120"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub listed [-h] [-1] [--num NUM] items [items ...]\n\nThe listed command.\n\npositional arguments:\n  items       one or more items\n\noptions:\n  -h, --help  show this help message and exit\n  -1\n  --num NUM\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=10 nested -h",
+      "argv": [
+        "nested",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "10"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub nested\n       [-h]\n       {leaf} ...\n\npositional arguments:\n  {leaf}\n    leaf\n    the leaf\n\noptions:\n  -h, --help\n    show this\n    help\n    message and\n    exit\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=40 nested -h",
+      "argv": [
+        "nested",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "40"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub nested [-h] {leaf} ...\n\npositional arguments:\n  {leaf}\n    leaf      the leaf\n\noptions:\n  -h, --help  show this help message\n              and exit\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=60 nested -h",
+      "argv": [
+        "nested",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "60"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub nested [-h] {leaf} ...\n\npositional arguments:\n  {leaf}\n    leaf      the leaf\n\noptions:\n  -h, --help  show this help message and exit\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: nested -h",
+      "argv": [
+        "nested",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub nested [-h] {leaf} ...\n\npositional arguments:\n  {leaf}\n    leaf      the leaf\n\noptions:\n  -h, --help  show this help message and exit\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=120 nested -h",
+      "argv": [
+        "nested",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "120"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub nested [-h] {leaf} ...\n\npositional arguments:\n  {leaf}\n    leaf      the leaf\n\noptions:\n  -h, --help  show this help message and exit\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=10 nested leaf -h",
+      "argv": [
+        "nested",
+        "leaf",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "10"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub nested leaf\n       [-h]\n       [--deep]\n\noptions:\n  -h, --help\n    show this\n    help\n    message and\n    exit\n  --deep\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=40 nested leaf -h",
+      "argv": [
+        "nested",
+        "leaf",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "40"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub nested leaf [-h]\n                           [--deep]\n\noptions:\n  -h, --help  show this help message\n              and exit\n  --deep\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=60 nested leaf -h",
+      "argv": [
+        "nested",
+        "leaf",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "60"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub nested leaf [-h] [--deep]\n\noptions:\n  -h, --help  show this help message and exit\n  --deep\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: nested leaf -h",
+      "argv": [
+        "nested",
+        "leaf",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub nested leaf [-h] [--deep]\n\noptions:\n  -h, --help  show this help message and exit\n  --deep\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=120 nested leaf -h",
+      "argv": [
+        "nested",
+        "leaf",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "120"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub nested leaf [-h] [--deep]\n\noptions:\n  -h, --help  show this help message and exit\n  --deep\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=10 hidden-cmd -h",
+      "argv": [
+        "hidden-cmd",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "10"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub hidden-cmd\n       [-h]\n       x\n\npositional arguments:\n  x\n\noptions:\n  -h, --help\n    show this\n    help\n    message and\n    exit\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=40 hidden-cmd -h",
+      "argv": [
+        "hidden-cmd",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "40"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub hidden-cmd [-h] x\n\npositional arguments:\n  x\n\noptions:\n  -h, --help  show this help message\n              and exit\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=60 hidden-cmd -h",
+      "argv": [
+        "hidden-cmd",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "60"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub hidden-cmd [-h] x\n\npositional arguments:\n  x\n\noptions:\n  -h, --help  show this help message and exit\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: hidden-cmd -h",
+      "argv": [
+        "hidden-cmd",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub hidden-cmd [-h] x\n\npositional arguments:\n  x\n\noptions:\n  -h, --help  show this help message and exit\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=120 hidden-cmd -h",
+      "argv": [
+        "hidden-cmd",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "120"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub hidden-cmd [-h] x\n\npositional arguments:\n  x\n\noptions:\n  -h, --help  show this help message and exit\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=10 quiet --help",
+      "argv": [
+        "quiet",
+        "--help"
+      ],
+      "env": {
+        "COLUMNS": "10"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub quiet\n       [-h]\n\noptions:\n  -h, --help\n    show this\n    help\n    message and\n    exit\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=40 quiet --help",
+      "argv": [
+        "quiet",
+        "--help"
+      ],
+      "env": {
+        "COLUMNS": "40"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub quiet [-h]\n\noptions:\n  -h, --help  show this help message\n              and exit\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=60 quiet --help",
+      "argv": [
+        "quiet",
+        "--help"
+      ],
+      "env": {
+        "COLUMNS": "60"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub quiet [-h]\n\noptions:\n  -h, --help  show this help message and exit\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: quiet --help",
+      "argv": [
+        "quiet",
+        "--help"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub quiet [-h]\n\noptions:\n  -h, --help  show this help message and exit\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=120 quiet --help",
+      "argv": [
+        "quiet",
+        "--help"
+      ],
+      "env": {
+        "COLUMNS": "120"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-sub quiet [-h]\n\noptions:\n  -h, --help  show this help message and exit\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-files: COLUMNS=10 -h",
+      "argv": [
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "10"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-files\n       [-h]\n       [--maxkb MAXKB]\n       [--enforce-all]\n       [--fix {auto,crlf,lf,no}]\n       filenames [filenames ...]\n\nChecks\nfiles for\nthings.\n\npositional arguments:\n  filenames\n    Filenames\n    to check\n\noptions:\n  -h, --help\n    show this\n    help\n    message and\n    exit\n  --maxkb MAXKB\n    Maximum\n    allowable\n    KB for\n    added files\n  --enforce-all\n  --fix, -f {auto,crlf,lf,no}\n    Replace\n    line ending\n    with the\n    specified.\n    Default is\n    \"lf\"\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "files",
+      "prog": "zoo-files"
+    },
+    {
+      "id": "zoo-files: COLUMNS=40 -h",
+      "argv": [
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "40"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-files [-h] [--maxkb MAXKB]\n                 [--enforce-all]\n                 [--fix {auto,crlf,lf,no}]\n                 filenames [filenames ...]\n\nChecks files for things.\n\npositional arguments:\n  filenames       Filenames to check\n\noptions:\n  -h, --help      show this help\n                  message and exit\n  --maxkb MAXKB   Maximum allowable KB\n                  for added files\n  --enforce-all\n  --fix, -f {auto,crlf,lf,no}\n                  Replace line ending\n                  with the specified.\n                  Default is \"lf\"\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "files",
+      "prog": "zoo-files"
+    },
+    {
+      "id": "zoo-files: COLUMNS=60 -h",
+      "argv": [
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "60"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-files [-h] [--maxkb MAXKB] [--enforce-all]\n                 [--fix {auto,crlf,lf,no}]\n                 filenames [filenames ...]\n\nChecks files for things.\n\npositional arguments:\n  filenames             Filenames to check\n\noptions:\n  -h, --help            show this help message and exit\n  --maxkb MAXKB         Maximum allowable KB for added\n                        files\n  --enforce-all\n  --fix, -f {auto,crlf,lf,no}\n                        Replace line ending with the\n                        specified. Default is \"lf\"\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "files",
+      "prog": "zoo-files"
+    },
+    {
+      "id": "zoo-files: -h",
+      "argv": [
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-files [-h] [--maxkb MAXKB] [--enforce-all]\n                 [--fix {auto,crlf,lf,no}]\n                 filenames [filenames ...]\n\nChecks files for things.\n\npositional arguments:\n  filenames             Filenames to check\n\noptions:\n  -h, --help            show this help message and exit\n  --maxkb MAXKB         Maximum allowable KB for added files\n  --enforce-all\n  --fix, -f {auto,crlf,lf,no}\n                        Replace line ending with the specified. Default is\n                        \"lf\"\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "files",
+      "prog": "zoo-files"
+    },
+    {
+      "id": "zoo-files: COLUMNS=120 -h",
+      "argv": [
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "120"
+      },
+      "exit": 0,
+      "stdout": "usage: zoo-files [-h] [--maxkb MAXKB] [--enforce-all] [--fix {auto,crlf,lf,no}] filenames [filenames ...]\n\nChecks files for things.\n\npositional arguments:\n  filenames             Filenames to check\n\noptions:\n  -h, --help            show this help message and exit\n  --maxkb MAXKB         Maximum allowable KB for added files\n  --enforce-all\n  --fix, -f {auto,crlf,lf,no}\n                        Replace line ending with the specified. Default is \"lf\"\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "files",
+      "prog": "zoo-files"
+    },
+    {
+      "id": "zoo: (no arguments)",
+      "argv": [],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: the following arguments are required: -r/--req, src\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: src",
+      "argv": [
+        "src"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: the following arguments are required: -r/--req\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src",
+      "argv": [
+        "-r",
+        "x",
+        "src"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 3,
+        "files": [],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": false,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": null,
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src f1 f2",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "f1",
+        "f2"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 3,
+        "files": [
+          "f1",
+          "f2"
+        ],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": false,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": null,
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src -n 5 --name ABC --label y --level high -q -Q -t a -t b --opt --many 1 2 --some a b --fast",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "-n",
+        "5",
+        "--name",
+        "ABC",
+        "--label",
+        "y",
+        "--level",
+        "high",
+        "-q",
+        "-Q",
+        "-t",
+        "a",
+        "-t",
+        "b",
+        "--opt",
+        "--many",
+        "1",
+        "2",
+        "--some",
+        "a",
+        "b",
+        "--fast"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 5,
+        "files": [],
+        "hidden": null,
+        "label": "y",
+        "level": "high",
+        "many": [
+          "1",
+          "2"
+        ],
+        "mode": "fast",
+        "name": "ABC",
+        "opt": "C",
+        "quiet": true,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": [
+          "a",
+          "b"
+        ],
+        "src": "src",
+        "tags": [
+          "a",
+          "b"
+        ],
+        "volume": false
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --opt val",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--opt",
+        "val"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 3,
+        "files": [],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": "val",
+        "quiet": false,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": null,
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --opt=val",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--opt=val"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 3,
+        "files": [],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": "val",
+        "quiet": false,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": null,
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x --opt src",
+      "argv": [
+        "-r",
+        "x",
+        "--opt",
+        "src"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: the following arguments are required: src\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --name abc",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--name",
+        "abc"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: argument --name: invalid upper value: 'abc'\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --name=",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--name="
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: argument --name: invalid upper value: ''\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --label=",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--label="
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: argument --label: must not be empty\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --level bogus",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--level",
+        "bogus"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: argument --level: invalid choice: 'bogus' (choose from 'low', 'mid', 'high')\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --some a c",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--some",
+        "a",
+        "c"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: argument --some: invalid choice: 'c' (choose from 'a', 'b')\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --some",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--some"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 3,
+        "files": [],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": false,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": [],
+        "src": "src",
+        "tags": null,
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --many",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--many"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: argument --many: expected at least one argument\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --many=1",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--many=1"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 3,
+        "files": [],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": [
+          "1"
+        ],
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": false,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": null,
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --fast --slow",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--fast",
+        "--slow"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: argument --slow: not allowed with argument --fast\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --slow",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--slow"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 3,
+        "files": [],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "slow",
+        "name": "X",
+        "opt": null,
+        "quiet": false,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": null,
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --secret --fast",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--secret",
+        "--fast"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: argument --fast: not allowed with argument --secret\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --fast --secret",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--fast",
+        "--secret"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: argument --secret: not allowed with argument --fast\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src -n x",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "-n",
+        "x"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: argument -n/--count: invalid int value: 'x'\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --rem a -b --c",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--rem",
+        "a",
+        "-b",
+        "--c"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 3,
+        "files": [],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": false,
+        "rem": [
+          "a",
+          "-b",
+          "--c"
+        ],
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": null,
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x --rem",
+      "argv": [
+        "-r",
+        "x",
+        "--rem"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: the following arguments are required: src\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --rem",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--rem"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 3,
+        "files": [],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": false,
+        "rem": [],
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": null,
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src -qQt tag",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "-qQt",
+        "tag"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 3,
+        "files": [],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": true,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": [
+          "tag"
+        ],
+        "volume": false
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src -Qq",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "-Qq"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 3,
+        "files": [],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": true,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": null,
+        "volume": false
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src -n=5",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "-n=5"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 5,
+        "files": [],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": false,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": null,
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src -n5",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "-n5"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 5,
+        "files": [],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": false,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": null,
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src -qn5",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "-qn5"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 5,
+        "files": [],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": true,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": null,
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src -qn",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "-qn"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: argument -n/--count: expected one argument\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --cou 5",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--cou",
+        "5"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 5,
+        "files": [],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": false,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": null,
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --no-v",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--no-v"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 3,
+        "files": [],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": false,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": null,
+        "volume": false
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src -- -n 5",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--",
+        "-n",
+        "5"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 3,
+        "files": [
+          "-n",
+          "5"
+        ],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": false,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": null,
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src -t",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "-t"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: argument -t/--tag: expected one argument\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --hidden h",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--hidden",
+        "h"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 3,
+        "files": [],
+        "hidden": "h",
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": false,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": null,
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --le=low",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--le=low"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 3,
+        "files": [],
+        "hidden": null,
+        "label": null,
+        "level": "low",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": false,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": null,
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r -x src",
+      "argv": [
+        "-r",
+        "-x",
+        "src"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: argument -r/--req: expected one argument\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x -1 src",
+      "argv": [
+        "-r",
+        "x",
+        "-1",
+        "src"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 3,
+        "files": [
+          "src"
+        ],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": false,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "-1",
+        "tags": null,
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -rx src -t1 -t -2",
+      "argv": [
+        "-rx",
+        "src",
+        "-t1",
+        "-t",
+        "-2"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 3,
+        "files": [],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": false,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": [
+          "1",
+          "-2"
+        ],
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: --req= src",
+      "argv": [
+        "--req=",
+        "src"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 3,
+        "files": [],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": false,
+        "rem": null,
+        "req": "",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": null,
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --n 1",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--n",
+        "1"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: ambiguous option: --n could match --name, --no-volume\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --s a",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--s",
+        "a"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: ambiguous option: --s could match --some, --slow, --secret\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --tag",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--tag"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: argument -t/--tag: expected one argument\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src -q=1",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "-q=1"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: argument -q: ignored explicit argument '1'\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src --count 1_000 --count +7",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--count",
+        "1_000",
+        "--count",
+        "+7"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "count": 7,
+        "files": [],
+        "hidden": null,
+        "label": null,
+        "level": "mid",
+        "many": null,
+        "mode": "normal",
+        "name": "X",
+        "opt": null,
+        "quiet": false,
+        "rem": null,
+        "req": "x",
+        "secret": false,
+        "some": null,
+        "src": "src",
+        "tags": null,
+        "volume": true
+      },
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: -r x src f --level low g",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "f",
+        "--level",
+        "low",
+        "g"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT] [--name NAME] [--label LABEL]\n           [--level {low,mid,high}] [-q] [-Q] [-t TAG] [--opt [OPT]]\n           [--many MANY [MANY ...]] [--some [{a,b} ...]] [--fast | --slow]\n           -r REQ [--rem ...]\n           src [FILE ...]\nzoo: error: unrecognized arguments: g\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo: COLUMNS=40 -r x src --level bogus",
+      "argv": [
+        "-r",
+        "x",
+        "src",
+        "--level",
+        "bogus"
+      ],
+      "env": {
+        "COLUMNS": "40"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo [-h] [-n COUNT]\n           [--name NAME]\n           [--label LABEL]\n           [--level {low,mid,high}]\n           [-q] [-Q] [-t TAG]\n           [--opt [OPT]]\n           [--many MANY [MANY ...]]\n           [--some [{a,b} ...]]\n           [--fast | --slow] -r REQ\n           [--rem ...]\n           src [FILE ...]\nzoo: error: argument --level: invalid choice: 'bogus' (choose from 'low', 'mid', 'high')\n",
+      "ns": null,
+      "spec": "main",
+      "prog": "zoo"
+    },
+    {
+      "id": "zoo-sub: (no arguments)",
+      "argv": [],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-sub [-h] [--version] [--top] {listed,strict,quiet,nested} ...\nzoo-sub: error: the following arguments are required: {listed,strict,quiet,nested}\n",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: bogus",
+      "argv": [
+        "bogus"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-sub [-h] [--version] [--top] {listed,strict,quiet,nested} ...\nzoo-sub: error: argument {listed,strict,quiet,nested}: invalid choice: 'bogus' (choose from 'listed', 'strict', 'hidden-cmd', 'quiet', 'nested')\n",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: lis",
+      "argv": [
+        "lis"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-sub [-h] [--version] [--top] {listed,strict,quiet,nested} ...\nzoo-sub: error: argument {listed,strict,quiet,nested}: invalid choice: 'lis' (choose from 'listed', 'strict', 'hidden-cmd', 'quiet', 'nested')\n",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: --version",
+      "argv": [
+        "--version"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "zoo-sub version 1.2.3 (a long version string that wraps)\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: COLUMNS=20 --version",
+      "argv": [
+        "--version"
+      ],
+      "env": {
+        "COLUMNS": "20"
+      },
+      "exit": 0,
+      "stdout": "zoo-sub version\n1.2.3 (a long\nversion string\nthat wraps)\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: --ver",
+      "argv": [
+        "--ver"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "zoo-sub version 1.2.3 (a long version string that wraps)\n",
+      "stderr": "",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: listed",
+      "argv": [
+        "listed"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-sub listed [-h] [-1] [--num NUM] items [items ...]\nzoo-sub listed: error: the following arguments are required: items\n",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: listed a b -1",
+      "argv": [
+        "listed",
+        "a",
+        "b",
+        "-1"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "cmd": "listed",
+        "items": [
+          "a",
+          "b"
+        ],
+        "num": null,
+        "one": true,
+        "top": false
+      },
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: listed a -1 b",
+      "argv": [
+        "listed",
+        "a",
+        "-1",
+        "b"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-sub [-h] [--version] [--top] {listed,strict,quiet,nested} ...\nzoo-sub: error: unrecognized arguments: b\n",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: listed a --num 5",
+      "argv": [
+        "listed",
+        "a",
+        "--num",
+        "5"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "cmd": "listed",
+        "items": [
+          "a"
+        ],
+        "num": 5,
+        "one": false,
+        "top": false
+      },
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: listed a --nu 5",
+      "argv": [
+        "listed",
+        "a",
+        "--nu",
+        "5"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "cmd": "listed",
+        "items": [
+          "a"
+        ],
+        "num": 5,
+        "one": false,
+        "top": false
+      },
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: listed -5",
+      "argv": [
+        "listed",
+        "-5"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-sub listed [-h] [-1] [--num NUM] items [items ...]\nzoo-sub listed: error: the following arguments are required: items\n",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: listed a --num -5",
+      "argv": [
+        "listed",
+        "a",
+        "--num",
+        "-5"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-sub listed [-h] [-1] [--num NUM] items [items ...]\nzoo-sub listed: error: argument --num: expected one argument\n",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: listed a --num x",
+      "argv": [
+        "listed",
+        "a",
+        "--num",
+        "x"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-sub listed [-h] [-1] [--num NUM] items [items ...]\nzoo-sub listed: error: argument --num: invalid int value: 'x'\n",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: strict --verbose",
+      "argv": [
+        "strict",
+        "--verbose"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "cmd": "strict",
+        "maybe": null,
+        "top": false,
+        "verbose": true,
+        "version_info": false
+      },
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: strict --verb",
+      "argv": [
+        "strict",
+        "--verb"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-sub [-h] [--version] [--top] {listed,strict,quiet,nested} ...\nzoo-sub: error: unrecognized arguments: --verb\n",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: strict -h",
+      "argv": [
+        "strict",
+        "-h"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-sub [-h] [--version] [--top] {listed,strict,quiet,nested} ...\nzoo-sub: error: unrecognized arguments: -h\n",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: strict x",
+      "argv": [
+        "strict",
+        "x"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "cmd": "strict",
+        "maybe": "x",
+        "top": false,
+        "verbose": false,
+        "version_info": false
+      },
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: strict x y",
+      "argv": [
+        "strict",
+        "x",
+        "y"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-sub [-h] [--version] [--top] {listed,strict,quiet,nested} ...\nzoo-sub: error: unrecognized arguments: y\n",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: strict --version-info --verbose",
+      "argv": [
+        "strict",
+        "--version-info",
+        "--verbose"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "cmd": "strict",
+        "maybe": null,
+        "top": false,
+        "verbose": true,
+        "version_info": true
+      },
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: hidden-cmd v",
+      "argv": [
+        "hidden-cmd",
+        "v"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "cmd": "hidden-cmd",
+        "top": false,
+        "x": "v"
+      },
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: hidden-cmd",
+      "argv": [
+        "hidden-cmd"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-sub hidden-cmd [-h] x\nzoo-sub hidden-cmd: error: the following arguments are required: x\n",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: quiet",
+      "argv": [
+        "quiet"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "cmd": "quiet",
+        "top": false
+      },
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: quiet extra",
+      "argv": [
+        "quiet",
+        "extra"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-sub [-h] [--version] [--top] {listed,strict,quiet,nested} ...\nzoo-sub: error: unrecognized arguments: extra\n",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: nested",
+      "argv": [
+        "nested"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-sub nested [-h] {leaf} ...\nzoo-sub nested: error: the following arguments are required: leaf_cmd\n",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: nested leaf --deep",
+      "argv": [
+        "nested",
+        "leaf",
+        "--deep"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "cmd": "nested",
+        "deep": true,
+        "leaf_cmd": "leaf",
+        "top": false
+      },
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: nested leaf --de",
+      "argv": [
+        "nested",
+        "leaf",
+        "--de"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "cmd": "nested",
+        "deep": true,
+        "leaf_cmd": "leaf",
+        "top": false
+      },
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: nested bogus",
+      "argv": [
+        "nested",
+        "bogus"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-sub nested [-h] {leaf} ...\nzoo-sub nested: error: argument leaf_cmd: invalid choice: 'bogus' (choose from 'leaf')\n",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: --top listed a",
+      "argv": [
+        "--top",
+        "listed",
+        "a"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "cmd": "listed",
+        "items": [
+          "a"
+        ],
+        "num": null,
+        "one": false,
+        "top": true
+      },
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: listed a --top",
+      "argv": [
+        "listed",
+        "a",
+        "--top"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-sub [-h] [--version] [--top] {listed,strict,quiet,nested} ...\nzoo-sub: error: unrecognized arguments: --top\n",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: -- listed a",
+      "argv": [
+        "--",
+        "listed",
+        "a"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "cmd": "listed",
+        "items": [
+          "a"
+        ],
+        "num": null,
+        "one": false,
+        "top": false
+      },
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-sub: --top=1 listed a",
+      "argv": [
+        "--top=1",
+        "listed",
+        "a"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-sub [-h] [--version] [--top] {listed,strict,quiet,nested} ...\nzoo-sub: error: argument --top: ignored explicit argument '1'\n",
+      "ns": null,
+      "spec": "sub",
+      "prog": "zoo-sub"
+    },
+    {
+      "id": "zoo-files: (no arguments)",
+      "argv": [],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-files [-h] [--maxkb MAXKB] [--enforce-all]\n                 [--fix {auto,crlf,lf,no}]\n                 filenames [filenames ...]\nzoo-files: error: the following arguments are required: filenames\n",
+      "ns": null,
+      "spec": "files",
+      "prog": "zoo-files"
+    },
+    {
+      "id": "zoo-files: a b",
+      "argv": [
+        "a",
+        "b"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "enforce_all": false,
+        "filenames": [
+          "a",
+          "b"
+        ],
+        "fix": "lf",
+        "maxkb": 500
+      },
+      "spec": "files",
+      "prog": "zoo-files"
+    },
+    {
+      "id": "zoo-files: --maxkb 10 a",
+      "argv": [
+        "--maxkb",
+        "10",
+        "a"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "enforce_all": false,
+        "filenames": [
+          "a"
+        ],
+        "fix": "lf",
+        "maxkb": 10
+      },
+      "spec": "files",
+      "prog": "zoo-files"
+    },
+    {
+      "id": "zoo-files: --maxkb=x a",
+      "argv": [
+        "--maxkb=x",
+        "a"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-files [-h] [--maxkb MAXKB] [--enforce-all]\n                 [--fix {auto,crlf,lf,no}]\n                 filenames [filenames ...]\nzoo-files: error: argument --maxkb: invalid int value: 'x'\n",
+      "ns": null,
+      "spec": "files",
+      "prog": "zoo-files"
+    },
+    {
+      "id": "zoo-files: --fix crlf a",
+      "argv": [
+        "--fix",
+        "crlf",
+        "a"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "enforce_all": false,
+        "filenames": [
+          "a"
+        ],
+        "fix": "crlf",
+        "maxkb": 500
+      },
+      "spec": "files",
+      "prog": "zoo-files"
+    },
+    {
+      "id": "zoo-files: --fix bogus a",
+      "argv": [
+        "--fix",
+        "bogus",
+        "a"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 2,
+      "stdout": "",
+      "stderr": "usage: zoo-files [-h] [--maxkb MAXKB] [--enforce-all]\n                 [--fix {auto,crlf,lf,no}]\n                 filenames [filenames ...]\nzoo-files: error: argument --fix/-f: invalid choice: 'bogus' (choose from 'auto', 'crlf', 'lf', 'no')\n",
+      "ns": null,
+      "spec": "files",
+      "prog": "zoo-files"
+    },
+    {
+      "id": "zoo-files: -f no a",
+      "argv": [
+        "-f",
+        "no",
+        "a"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "enforce_all": false,
+        "filenames": [
+          "a"
+        ],
+        "fix": "no",
+        "maxkb": 500
+      },
+      "spec": "files",
+      "prog": "zoo-files"
+    },
+    {
+      "id": "zoo-files: -fno a",
+      "argv": [
+        "-fno",
+        "a"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "enforce_all": false,
+        "filenames": [
+          "a"
+        ],
+        "fix": "no",
+        "maxkb": 500
+      },
+      "spec": "files",
+      "prog": "zoo-files"
+    },
+    {
+      "id": "zoo-files: ZOO_MODE=bogus a",
+      "argv": [
+        "a"
+      ],
+      "env": {
+        "COLUMNS": "80",
+        "ZOO_MODE": "bogus"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "enforce_all": false,
+        "filenames": [
+          "a"
+        ],
+        "fix": "bogus",
+        "maxkb": 500
+      },
+      "spec": "files",
+      "prog": "zoo-files"
+    },
+    {
+      "id": "zoo-files: ZOO_MODE=crlf a",
+      "argv": [
+        "a"
+      ],
+      "env": {
+        "COLUMNS": "80",
+        "ZOO_MODE": "crlf"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "enforce_all": false,
+        "filenames": [
+          "a"
+        ],
+        "fix": "crlf",
+        "maxkb": 500
+      },
+      "spec": "files",
+      "prog": "zoo-files"
+    },
+    {
+      "id": "zoo-files: --enforce-all a",
+      "argv": [
+        "--enforce-all",
+        "a"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "enforce_all": true,
+        "filenames": [
+          "a"
+        ],
+        "fix": "lf",
+        "maxkb": 500
+      },
+      "spec": "files",
+      "prog": "zoo-files"
+    },
+    {
+      "id": "zoo-files: --enf a",
+      "argv": [
+        "--enf",
+        "a"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "enforce_all": true,
+        "filenames": [
+          "a"
+        ],
+        "fix": "lf",
+        "maxkb": 500
+      },
+      "spec": "files",
+      "prog": "zoo-files"
+    },
+    {
+      "id": "zoo-files: a -- -b",
+      "argv": [
+        "a",
+        "--",
+        "-b"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "enforce_all": false,
+        "filenames": [
+          "a",
+          "-b"
+        ],
+        "fix": "lf",
+        "maxkb": 500
+      },
+      "spec": "files",
+      "prog": "zoo-files"
+    },
+    {
+      "id": "zoo-files: -- --maxkb",
+      "argv": [
+        "--",
+        "--maxkb"
+      ],
+      "env": {
+        "COLUMNS": "80"
+      },
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "ns": {
+        "enforce_all": false,
+        "filenames": [
+          "--maxkb"
+        ],
+        "fix": "lf",
+        "maxkb": 500
+      },
+      "spec": "files",
+      "prog": "zoo-files"
+    }
+  ]
+}
