@@ -11,12 +11,24 @@ use crate::validator::Cx;
 use crate::value::Value;
 
 /// Error returned by [`load_from_filename`].
+///
+/// [`Error::source`](std::error::Error::source) is `None` for every
+/// variant: the [`Display`](fmt::Display) text already contains everything
+/// (the contexts of a validation error, the OS error text of an I/O error),
+/// so reporters that print source chains (`anyhow`'s `{:#}`, `eyre`, ...)
+/// do not repeat it. The [`io::Error`] of [`LoadError::Io`] is available
+/// in its `error` field.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum LoadError {
     /// The file is not a regular file, is not valid UTF-8, could not be
     /// parsed, or does not match the schema. Python cfgv raises (and
     /// re-raises as `exc_tp`) a `ValidationError` with this text.
+    ///
+    /// When the error is [uncaught](ValidationError::uncaught) (an
+    /// exception other than `ValidationError` raised during validation),
+    /// Python lets it escape instead: it has no `File` context and is not
+    /// re-raised as `exc_tp`.
     Invalid(ValidationError),
     /// Reading the file failed. Python cfgv does not catch this: the
     /// `OSError` raised by `open()` escapes.
@@ -24,7 +36,7 @@ pub enum LoadError {
         /// The path that could not be read.
         path: PathBuf,
         /// The underlying error.
-        source: io::Error,
+        error: io::Error,
     },
 }
 
@@ -35,16 +47,16 @@ impl fmt::Display for LoadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Invalid(err) => err.fmt(f),
-            Self::Io { path, source } => {
+            Self::Io { path, error } => {
                 let path = path.to_string_lossy();
-                match source.raw_os_error() {
+                match error.raw_os_error() {
                     Some(code) => {
-                        let text = source.to_string();
+                        let text = error.to_string();
                         let suffix = format!(" (os error {code})");
                         let strerror = text.strip_suffix(&suffix).unwrap_or(&text);
                         write!(f, "[Errno {code}] {strerror}: ")?;
                     }
-                    None => write!(f, "{source}: ")?,
+                    None => write!(f, "{error}: ")?,
                 }
                 py::write_repr_str(f, &path)
             }
@@ -52,14 +64,7 @@ impl fmt::Display for LoadError {
     }
 }
 
-impl std::error::Error for LoadError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Invalid(_) => None,
-            Self::Io { source, .. } => Some(source),
-        }
-    }
-}
+impl std::error::Error for LoadError {}
 
 impl From<ValidationError> for LoadError {
     fn from(err: ValidationError) -> Self {
@@ -137,7 +142,9 @@ where
 /// # Errors
 ///
 /// Returns [`LoadError::Invalid`] for every case Python reports as a
-/// `ValidationError`, and [`LoadError::Io`] when the file cannot be read.
+/// `ValidationError` (and for [uncaught](ValidationError::uncaught)
+/// exceptions raised during validation), and [`LoadError::Io`] when the
+/// file cannot be read.
 pub fn load_from_filename_with<F, E>(
     filename: &Path,
     schema: &Schema,
@@ -156,9 +163,9 @@ where
     if !filename.is_file() {
         return Err(ValidationError::new(format!("{display} is not a file")).into());
     }
-    let bytes = std::fs::read(filename).map_err(|source| LoadError::Io {
+    let bytes = std::fs::read(filename).map_err(|error| LoadError::Io {
         path: filename.to_path_buf(),
-        source,
+        error,
     })?;
 
     let value = validate_context(

@@ -635,6 +635,28 @@ fn int_string_conversion_limit_matches_cpython() {
     assert_eq!(err.message(), "Expected string got int");
 }
 
+/// Regression: walking `LoadError::Io`'s source chain repeated the OS
+/// error text that `Display` already contains.
+#[test]
+fn load_io_error_is_not_repeated_by_chain_printing_reporters() {
+    let io = LoadError::Io {
+        path: "c.yaml".into(),
+        error: std::io::Error::from_raw_os_error(13),
+    };
+    let mut chain = io.to_string();
+    let mut source = std::error::Error::source(&io);
+    while let Some(err) = source {
+        chain = format!("{chain}: {err}");
+        source = err.source();
+    }
+    #[cfg(unix)]
+    assert_eq!(chain, "[Errno 13] Permission denied: 'c.yaml'");
+    let LoadError::Io { error, .. } = &io else {
+        unreachable!()
+    };
+    assert_eq!(error.raw_os_error(), Some(13));
+}
+
 #[test]
 fn check_array_accepts_tuples() {
     let check = CheckFn::check_array(CheckFn::check_string());
@@ -663,17 +685,17 @@ fn validation_error_api() {
     assert!(std::error::Error::source(&load).is_none());
     let io = LoadError::Io {
         path: "missing.yaml".into(),
-        source: std::io::Error::from_raw_os_error(2),
+        error: std::io::Error::from_raw_os_error(2),
     };
     #[cfg(unix)]
     assert_eq!(
         io.to_string(),
         "[Errno 2] No such file or directory: 'missing.yaml'"
     );
-    assert!(std::error::Error::source(&io).is_some());
+    assert!(std::error::Error::source(&io).is_none());
     let custom = LoadError::Io {
         path: "it's.yaml".into(),
-        source: std::io::Error::other("boom"),
+        error: std::io::Error::other("boom"),
     };
     assert_eq!(custom.to_string(), "boom: \"it's.yaml\"");
 }
