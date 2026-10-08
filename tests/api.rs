@@ -498,6 +498,22 @@ fn regex_checker_can_raise_other_exceptions() {
     assert!(err.is_ok());
 }
 
+/// Regression: `check_type(str, typename='')` printed `Expected  got int`;
+/// Python uses `typename or tp.__name__`.
+#[test]
+fn check_type_with_empty_typename_uses_the_type_name() {
+    let check = CheckFn::check_type(ValueType::String, Some(""));
+    assert_eq!(
+        check.check(&Value::from(1)).unwrap_err().to_string(),
+        "\n=====> Expected str got int"
+    );
+    let named = CheckFn::check_type(ValueType::Map, Some("mapping"));
+    assert_eq!(
+        named.check(&Value::from(1)).unwrap_err().message(),
+        "Expected mapping got int"
+    );
+}
+
 #[test]
 fn uncaught_errors() {
     let err =

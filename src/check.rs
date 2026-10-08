@@ -201,7 +201,9 @@ impl CheckFn {
     ///
     /// Returns the cfgv error describing the first failure:
     ///
-    /// * `Type`: `Expected {typename} got {type(v).__name__}`
+    /// * `Type`: `Expected {typename} got {type(v).__name__}` (an empty
+    ///   `typename` falls back to the type name, like Python's `typename or
+    ///   tp.__name__`)
     /// * `OneOf`: `Expected one of {sorted choices} but got: {v!r}`
     /// * `Regex`: `{v!r} is not a valid python regex` for a `str` or `bytes`
     ///   pattern the checker rejects; the checker's own error; or, for any
@@ -220,7 +222,9 @@ impl CheckFn {
                 if tp.matches(value) {
                     Ok(())
                 } else {
-                    let expected = typename.unwrap_or_else(|| tp.name());
+                    let expected = typename
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or_else(|| tp.name());
                     Err(ValidationError::new(format!(
                         "Expected {expected} got {}",
                         value.type_name()
