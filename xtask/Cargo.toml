@@ -14,6 +14,7 @@ name = "xtask"
 path = "src/main.rs"
 
 [dependencies]
+anyhow.workspace = true
 snp-cli.workspace = true
 snp-core.workspace = true
 snp-hooks.workspace = true
