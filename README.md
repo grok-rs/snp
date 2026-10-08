@@ -176,6 +176,21 @@ A weekly workflow (`.github/workflows/identify-sync.yml`) does both against the 
 identify on PyPI and, when the tables changed, runs the tests and opens (or updates) a
 pull request on the `identify-sync` branch for review.
 
+## Fuzzing
+
+`fuzz/` holds [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) targets: `shebang`
+(`parse_shebang` / `parse_shebang_bytes`, also split into arbitrary reads), `filename`
+(`tags_from_filename`, `tags_from_interpreter`), `shlex` and `classify` (`classify` +
+`Pending`, bytes vs. reader, encoding tag invariants, `is_text`).
+
+```bash
+cargo +nightly fuzz run shebang          # with cargo-fuzz
+cargo +nightly fuzz run classify -- -max_total_time=60
+```
+
+CI builds them with stable rustc (the coverage flags `cargo fuzz build --sanitizer none`
+uses) and runs each target for 30 seconds.
+
 ## CLI
 
 ```bash

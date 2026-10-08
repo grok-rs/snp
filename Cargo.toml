@@ -11,7 +11,7 @@ repository = "https://github.com/grok-rs/file-identify"
 license = "MIT"
 keywords = ["file", "identification", "detection", "filetype", "pre-commit"]
 categories = ["filesystem", "command-line-utilities"]
-exclude = ["tests/fixtures/**/*", "xtask/", ".github/", ".cargo/", ".pre-commit-config.yaml", "renovate.json", "deny.toml"]
+exclude = ["tests/fixtures/**/*", "xtask/", "fuzz/", ".github/", ".cargo/", ".pre-commit-config.yaml", "renovate.json", "deny.toml"]
 
 [[bin]]
 name = "file-identify"
@@ -44,6 +44,8 @@ unsafe_code = "forbid"
 
 [workspace]
 members = ["xtask"]
+# cargo-fuzz targets: a separate workspace, built with `cargo fuzz`.
+exclude = ["fuzz"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

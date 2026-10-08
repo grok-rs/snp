@@ -43,7 +43,9 @@ read. See "Migrating from 0.4" in the README.
   `is_text_bytes`, `MAX_SHEBANG_BYTES`, `TEXT_PROBE_LEN`.
 - Parity tests against vectors produced by running identify 2.6.20
   (`tests/data/identify-vectors.json`, ~7000 cases incl. upstream's own test cases),
-  property tests (proptest), a benchmark (`cargo bench --bench identify`).
+  property tests (proptest), a benchmark (`cargo bench --bench identify`), and
+  cargo-fuzz targets (`fuzz/`: shebangs, file names, `shlex`, classification) with a
+  30-second-per-target smoke run in CI.
 - CI: Linux / macOS / Windows test matrix, a real MSRV job (`cargo +1.85.0 test`),
   clippy on Linux and Windows, a check that `src/generated.rs` matches the pinned
   identify wheel, and a weekly workflow that regenerates the tables and parity vectors
