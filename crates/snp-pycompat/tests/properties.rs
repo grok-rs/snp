@@ -368,7 +368,13 @@ mod properties {
                 .collect::<Vec<_>>()
                 .join("/");
             let n = ntpath::normpath(a.as_bytes());
-            assert_eq!(ntpath::normpath(&n), n, "{a:?}");
+            // idempotent unless `..` uncovered a drive-like component (as in CPython:
+            // normpath('x\\..\\.:.') is '.:.', whose own normpath is '.:')
+            let (da, ra, _) = ntpath::splitroot(a.as_bytes());
+            let (dn, rn, _) = ntpath::splitroot(&n);
+            if da.len() == dn.len() && ra.len() == rn.len() {
+                assert_eq!(ntpath::normpath(&n), n, "{a:?}");
+            }
             // the same results over UTF-8 and UTF-16 units
             assert_eq!(text8(&n), narrow(&ntpath::normpath(&wide(&a))), "{a:?}");
             assert_eq!(
