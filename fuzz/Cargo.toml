@@ -14,6 +14,10 @@ publish = false
 [package.metadata]
 cargo-fuzz = true
 
+# S1 (ARCHITECTURE §11.6): no `unsafe` in snp code; checked by `cargo xtask check-unsafe`.
+[lints.rust]
+unsafe_code = "forbid"
+
 [dependencies]
 libfuzzer-sys = "0.4.13"
 snp-argparse = { path = "../crates/snp-argparse" }

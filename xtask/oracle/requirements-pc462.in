@@ -1,0 +1,8 @@
+# The pre-commit 4.6.2 oracles (WBS WP-00 item 7, ADR-058). Pins of the WBS; everything else is resolved by
+# `cargo xtask oracle lock` into the hash-locked requirements-pc462.txt that `cargo xtask oracle install` uses.
+pre-commit==4.6.2
+identify==2.6.20
+cfgv==3.5.0
+PyYAML==6.0.3
+virtualenv==21.14.5
+nodeenv==1.11.0

@@ -1,0 +1,409 @@
+id	source	title	owner	hermetic	test_file
+T10-CFG-01	10 §5.1	type tag check	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-02	10 §5.1	repo git@github.com:pre-commit/pre-commit-hooks, rev sha, hook {id: pyflakes, files: '\.py$'} (+args…	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-03	10 §5.1	hook exclude: 0	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-04	10 §5.1	repo: local + rev: foo	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-05	10 §5.1	sample_local_config()	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-06	10 §5.1	config-hook schema items	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-07	10 §5.1	ci: {skip: [foo]} + meta identity	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-08	10 §5.1	remote repo https://gitlab.com/pycqa/flake8 with rev	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-09	10 §5.1	repo: meta + rev: 3.7.7	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-10	10 §5.1	files: None	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-11	10 §5.1	hook {id: flake8, files: <re>}	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-12	10 §5.1	top-level files: <re>, repos: []	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-13	10 §5.1	local hook stages: [invalid]	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-14	10 §5.1	stages: [commit, push] (hook) / default_stages: [commit, push]	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-15	10 §5.1	local hooks language: system / script	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-16	10 §5.1	manifests incl. language_version: python3.4, files: '' + always_run: true	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-17	10 §5.1	meta: id: i-dont-exist; identity + language: python; name: False; entry: echo hi	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-18	10 §5.1	meta check-hooks-apply defaults	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-19	10 §5.1	default_language_version: {pony: '1.0'} / {python: 3}	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-20	10 §5.1	parse_version	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-21	10 §5.1	minimum_pre_commit_version: '999' top-level / in hook / with repos: 5	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-22	10 §5.1	WarnAdditionalKeys	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-23	10 §5.1	stages [commit-msg, push, commit, merge-commit] in default_stages, manifest hook, config hook	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-24	10 §5.1	manifest file hooks: {} (mapping, not list)	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-25	10 §5.1	always_run: yes, pass_filenames: off	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-26	10 §5.1	remote repo rev: 1.10	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-27	10 §5.1	duplicate top-level key repos: [] twice	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-28	10 §5.1	anchors + merge key <<: *common in hooks; unknown root key x-common	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-CFG-29	10 §5.1	missing name in local hook	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-VAL-01	10 §5.1	repo's own .pre-commit-config.yaml	WP-33	yes	crates/snp/tests/it/validate.rs
+T10-VAL-02	10 §5.1	does-not-exist, { (bad YAML), {} (no repos)	WP-33	yes	crates/snp/tests/it/validate.rs
+T10-VAL-03	10 §5.1	same three	WP-33	yes	crates/snp/tests/it/validate.rs
+T10-RUN-01	10 §5.2	_start_msg(start='start', end_len=5, cols=15)	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-02	10 §5.2	_full_msg, cols 15/20	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-03	10 §5.2	_compute_cols	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-04	10 §5.2	SKIP parsing	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-10	10 §5.2	consuming repo of failing_hook_repo, stage empty foo.py	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-11	10 §5.2	arbitrary_bytes_repo, stage foo.py	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-12	10 §5.2	modified_file_returns_zero_repo, stage bar.py and foo.py	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-13	10 §5.2	types_repo (bar.py, bar.notpy); types_or_repo (bar.notpy,bar.pxd,bar.py); exclude_types_repo (exe =…	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-14	10 §5.2	top-level exclude: ^foo\.py$ (or files: ^bar\.py$) + meta identity; add foo.py,bar.py	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-15	10 §5.2	meta identity	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-16	10 §5.2	modified_file_returns_zero_repo, stage bar.py	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-17	10 §5.2	script_hooks_repo	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-18	10 §5.2	logfile_repo, stage foo.py	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-19	10 §5.2	always_run: true, nothing staged; alt config -c alternate_config.yaml; verbose: true hook	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-20	10 §5.2	run --from-ref master (or only --to-ref)	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-21	10 §5.2	hook printing env (probe env)	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-22	10 §5.2	in_merge_conflict	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-23	10 §5.2	SKIP=bash_hook; aliased repo SKIP=foo_bash + run foo_bash; local python hook with additional_depende…	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-24	10 §5.2	run / run --verbose	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-25	10 §5.2	duplicate {id: bash_hook} entry; aliased ({id: bash_hook, alias: foo_bash})	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-26	10 §5.2	run ☃; hook args: ['☃'] via git commit	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-27	10 §5.2	400 files named 'a'*100 + str(i); hook files: ''	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-28	10 §5.2	.gitattributes *.jpeg diff=empty; .git/config [diff "empty"] textconv = "true"; local system hook (t…	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-29	10 §5.2	3 pygrep hooks hook 1..3 with stages pre-commit / pre-push / manual	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-30	10 §5.2	commit_msg_repo, .git/COMMIT_EDITMSG=This is the commit message; post-checkout identity; prepare_com…	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-31	10 §5.2	local hooks: system identity-copy (files: \.py$) + pygrep DO NOT COMMIT; failing sh -c "! grep -iI t…	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-32	10 §5.2	config modified but not staged	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-33	10 §5.2	run --hook-stage commit-msg (no filename)	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-34	10 §5.2	subdir/foo.py staged	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-35	10 §5.2	pass_filenames × args	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-36	10 §5.2	failing hook ×2	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-37	10 §5.2	Classifier	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-38	10 §5.2	names .pre-commit-hooks.yaml, pre_commit/git.py, pre_commit/main.py	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-39	10 §5.2	2 local hooks	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-40	10 §5.2	env _PRE_COMMIT_SKIP_POST_CHECKOUT=1, no config file	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-50	10 §5.2	local hooks pass/fail(sh -c 'echo out; echo err >&2; exit 3' --)/no-match(files: \.nomatch$) + meta…	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-51	10 §5.2	same	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-52	10 §5.2	same	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-53	10 §5.2	same	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-54	10 §5.2	same	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-55	10 §5.2	repos: []	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-56	10 §5.2	no config file	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-57	10 §5.2	outside git	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-58	10 §5.2	staged a.txt + unstaged change on same file; fixer hook appends fixed	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-59	10 §5.2	invalid PRE_COMMIT_COLOR=bogus	WP-32	yes	crates/snp/tests/it/run.rs
+T10-RUN-60	10 §5.2	pre-commit with no subcommand	WP-32	yes	crates/snp/tests/it/run.rs
+T10-SFO-01	10 §5.3	nothing unstaged	WP-23	yes	crates/snp-stash/tests/catalog.rs
+T10-SFO-02	10 §5.3	unstaged herp\nderp\n	WP-23	yes	crates/snp-stash/tests/catalog.rs
+T10-SFO-03	10 §5.3	patch dir missing (deleted)	WP-23	yes	crates/snp-stash/tests/catalog.rs
+T10-SFO-04	10 §5.3	git config diff.external <script>; color.diff always	WP-23	yes	crates/snp-stash/tests/catalog.rs
+T10-SFO-05	10 §5.3	unstaged adds line 9; hook rewrites 1→a (non-conflicting)	WP-23	yes	crates/snp-stash/tests/catalog.rs
+T10-SFO-06	10 §5.3	unstaged 1→a; hook 1→b (conflict)	WP-23	yes	crates/snp-stash/tests/catalog.rs
+T10-SFO-07	10 §5.3	binary img.jpg: none unstaged / unstaged img2 / conflict img3 during hook	WP-23	yes	crates/snp-stash/tests/catalog.rs
+T10-SFO-08	10 §5.3	submodule sub staged at rev1; unstaged checkout rev2	WP-23	yes	crates/snp-stash/tests/catalog.rs
+T10-SFO-09	10 §5.3	unstaged change to bar + uncommitted file inside submodule; also with submodule.recurse=1	WP-23	yes	crates/snp-stash/tests/catalog.rs
+T10-SFO-10	10 §5.3	unstaged ☃ (UTF-8) / ú latin-1	WP-23	yes	crates/snp-stash/tests/catalog.rs
+T10-SFO-11	10 §5.3	latin-1 ú \n (trailing ws) then hook truncates file → patch fails to apply	WP-23	yes	crates/snp-stash/tests/catalog.rs
+T10-SFO-12	10 §5.3	matrix core.autocrlf ∈ {true,false,input} × crlf_before × crlf_after; staged 1\n2\n, worktree 3\n4\n…	WP-23	yes	crates/snp-stash/tests/catalog.rs
+T10-SFO-13	10 §5.3	autocrlf true/input; staged 1\r\n2\r\n3\r\n, worktree 1\n2\n3\n	WP-23	yes	crates/snp-stash/tests/catalog.rs
+T10-SFO-14	10 §5.3	apply.whitespace=error + crlf case	WP-23	yes	crates/snp-stash/tests/catalog.rs
+T10-SFO-15	10 §5.3	committed CRLF with autocrlf=false, then autocrlf=true + trailing CRLF lines	WP-23	yes	crates/snp-stash/tests/catalog.rs
+T10-SFO-16	10 §5.3	git add --intent-to-add foo	WP-23	yes	crates/snp-stash/tests/catalog.rs
+T10-SFO-17	10 §5.3	3 staged files modified; file 1 chmod 000 (posix)	WP-23	yes	crates/snp-stash/tests/catalog.rs
+T10-XRG-01	10 §5.4	affinity 345 / no affinity & cpu_count 123 / NotImplemented	WP-15	yes	crates/snp-proc/tests/catalog.rs
+T10-XRG-02	10 §5.4	env {}, {x:1}, {x:12}, {x:1,y:2}	WP-15	yes	crates/snp-proc/tests/catalog.rs
+T10-XRG-03	10 §5.4	partition(('cmd',),(),1) / (('cmd',),('foo',),1)	WP-15	yes	crates/snp-proc/src/xargs.rs
+T10-XRG-04	10 §5.4	cmd ninechars, args ....., ...., .........., ....., ......, max 21	WP-15	yes	crates/snp-proc/src/xargs.rs
+T10-XRG-05	10 §5.4	😑×5 win32 max 21 → 1 partition (UTF-16: 2 units each); linux max 31 → 1 partition (4 bytes each); 😑×…	WP-15	yes	crates/snp-proc/src/xargs.rs
+T10-XRG-06	10 §5.4	('foo',), 22×A, concurrency 4, max 50 → 6,6,6,4; 10×A → 4,4,2	WP-15	yes	crates/snp-proc/src/xargs.rs
+T10-XRG-07	10 §5.4	partition(('aaaaa',),('aaaaa',),1,_max_length=10)	WP-15	yes	crates/snp-proc/src/xargs.rs
+T10-XRG-08	10 §5.4	xargs(('echo',),('hello','world'))	WP-15	yes	crates/snp-proc/tests/catalog.rs
+T10-XRG-09	10 §5.4	bash -c 'exit $1' -- with max_length = len(cmd)+3 (one arg per partition): args 0 / 0,1 / 0,5,1	WP-15	yes	crates/snp-proc/tests/catalog.rs
+T10-XRG-10	10 §5.4	bash -c 'kill -9 $$' --	WP-15	yes	crates/snp-proc/tests/catalog.rs
+T10-XRG-11	10 §5.4	5× sleep 0.5 && echo $$ concurrency 5, one per partition	WP-15	yes	crates/snp-proc/tests/catalog.rs
+T10-XRG-12	10 §5.4	env propagation PRE_COMMIT_TEST_VAR	WP-15	yes	crates/snp-proc/tests/catalog.rs
+T10-XRG-13	10 §5.4	color=True	WP-15	yes	crates/snp-proc/tests/catalog.rs
+T10-XRG-14	10 §5.4	win: t.bat/t.cmd/T.CMD with 8192 x args	WP-15	no	crates/snp-proc/tests/catalog.rs
+T10-XRG-15	10 §5.4	cpu 4; env PRE_COMMIT_NO_CONCURRENCY/TRAVIS/none	WP-15	yes	crates/snp-proc/src/xargs.rs
+T10-XRG-16	10 §5.4	_shuffled([str(i) for i in range(10)])	WP-11	yes	crates/snp-pycompat/tests/catalog.rs
+T10-XRG-17	10 §5.4	run_xargs(('echo',), 0..9, require_serial=True)	WP-32	yes	crates/snp/tests/it/xargs.rs
+T10-XRG-18	10 §5.4	basic_run_hook(prefix, 'echo hi', ['hello'], ['file']*3)	WP-32	yes	crates/snp/tests/it/xargs.rs
+T10-XRG-19	10 §5.4	hook_cmd('echo hi', ()); hook_cmd('pre-commit hazmat cd a echo -- b', ())	WP-15	yes	crates/snp-proc/tests/catalog.rs
+T10-XRG-20	10 §5.4	exe_exists('ruby'): not found → False; /usr/bin/ruby → True; /foo/shims/ruby → False (regex [/\\]shi…	WP-16	yes	crates/snp-lang/tests/catalog.rs
+T10-XRG-21	10 §5.4	setup cmd writes \x81\xfe to stderr and exits 1	WP-16	yes	crates/snp-lang/tests/catalog.rs
+T10-XRG-22	10 §5.4	environment_dir(prefix,'langenv','default') → <prefix>/langenv-default; assert_version_default('lang…	WP-16	yes	crates/snp-lang/tests/catalog.rs
+T10-INS-01	10 §end	resolve hook types	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-02	10 §end	is-our-script	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-03	10 §end	in_git_dir	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-04	10 §end	.git/hooks deleted	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-05	10 §end	git config --local core.hooksPath hooks	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-06	10 §end	.git/hooks/pre-commit → dangling symlink /fake/baz	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-07	10 §end	uninstall when absent / after install	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-08	10 §end	consuming repo script_hooks_repo; variants: config moved to custom.yaml + install -c custom.yaml; re…	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-09	10 §end	committed unstaged file then modified (unstaged)	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-10	10 §end	branch merge --no-ff --no-commit -m ☃	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-11	10 §end	install twice (± legacy)	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-12	10 §end	hook file INSTALL_PYTHON="/dne"; PATH without pre-commit; minimal env	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-13	10 §end	failing_hook_repo	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-14	10 §end	pre-existing .git/hooks/pre-commit = #!/usr/bin/env bash\necho legacy hook\n (+x)	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-15	10 §end	legacy, install, write legacy again, install	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-16	10 §end	existing hook with bytes \xa0\xef\x12\xf2	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-17	10 §end	legacy echo "fail!"; exit 1	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-18	10 §end	± legacy	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-19	10 §end	legacy	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-20	10 §end	hook file = template with CURRENT_HASH replaced by PRIOR_HASHES[-1]	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-21	10 §end	foreign .git/hooks/pre-commit (echo 1)	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-22	10 §end	install --install-hooks / install + install-hooks	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-23	10 §end	PATH without pre-commit, HOME real	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-24	10 §end	upstream failing_hook_repo cloned; install -t pre-push; commits foo, zzz	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-25	10 §end	local hook bash -c "echo remote: $PRE_COMMIT_REMOTE_NAME" verbose; remote renamed origin2	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-26	10 §end	nothing new	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-27	10 §end	legacy pre-push reading read lr ls rr rs and asserting non-empty	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-28	10 §end	commit_msg_repo	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-29	10 §end	local system hooks with always_run, verbose, entry: touch <stage>.tmp; stages post-commit / post-mer…	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-30	10 §end	post-checkout hook language: fail always_run; pre-commit also installed; staged file + unstaged chan…	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-31	10 §end	prepare-commit-msg repos	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-32	10 §end	install -t pre-merge-commit; feature branch commit	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-33	10 §end	config removed; install -f without/with --allow-missing-config; env PRE_COMMIT_ALLOW_NO_CONFIG=1	WP-33	yes	crates/snp/tests/it/install.rs
+T10-INS-34	10 §end	config default_install_hook_types: [pre-commit, pre-push]	WP-33	yes	crates/snp/tests/it/install.rs
+T10-ITD-01	10 §end	target <tmp>/tmpl, init.templateDir unset	WP-33	yes	crates/snp/tests/it/init_templatedir.rs
+T10-ITD-02	10 §end	init.templateDir == target (also via ~/templatedir + expanduser)	WP-33	yes	crates/snp/tests/it/init_templatedir.rs
+T10-ITD-03	10 §end	HOME=<tmp>, target .	WP-33	yes	crates/snp/tests/it/init_templatedir.rs
+T10-ITD-04	10 §end	core.hooksPath set locally	WP-33	yes	crates/snp/tests/it/init_templatedir.rs
+T10-ITD-05	10 §end	default skip_on_missing_config=True for init-templatedir; --no-allow-missing-config	WP-33	yes	crates/snp/tests/it/init_templatedir.rs
+T10-HKI-01	10 §5.6	config exists / missing (skip=False) / missing (skip=True) / missing + PRE_COMMIT_ALLOW_NO_CONFIG=1	WP-32	yes	crates/snp/tests/it/hook_impl.rs
+T10-HKI-02	10 §5.6	<hook_dir>/<type>.legacy states	WP-32	yes	crates/snp/tests/it/hook_impl.rs
+T10-HKI-03	10 §5.6	arg counts OK: pre-commit 0, pre-merge-commit 0, pre-push 2, commit-msg 1, post-commit 0, post-merge…	WP-32	yes	crates/snp/tests/it/hook_impl.rs
+T10-HKI-04	10 §5.6	wrong counts	WP-32	yes	crates/snp/tests/it/hook_impl.rs
+T10-HKI-05	10 §5.6	namespace mapping	WP-32	yes	crates/snp/tests/it/hook_impl.rs
+T10-HKI-06	10 §5.6	push_example: src repo 1 commit; clone + 1 commit; stdin lines <local_ref> <local_sha> <remote_ref>…	WP-32	yes	crates/snp/tests/it/hook_impl.rs
+T10-HKI-07	10 §5.6	delete-branch stdin + config	WP-32	yes	crates/snp/tests/it/hook_impl.rs
+T10-HKI-08	10 §5.6	sample_local_config in git dir, nothing staged	WP-32	yes	crates/snp/tests/it/hook_impl.rs
+T10-HKI-09	10 §5.6	hook-impl --hook-type pre-commit	WP-32	yes	crates/snp/tests/it/hook_impl.rs
+T10-GIT-01	10 §5.7	repo root / deeper dir / inside .git/objects / parent of repo / exactly .git	WP-18	yes	crates/snp-git/tests/catalog.rs
+T10-GIT-02	10 §5.7	bare clone + worktree add foo; worktree in .git/trees/foo	WP-18	yes	crates/snp-git/tests/catalog.rs
+T10-GIT-03	10 §5.7	git rm --cached committed file	WP-18	yes	crates/snp-git/tests/catalog.rs
+T10-GIT-04	10 §5.7	merge conflict (incl. in submodule); cherry-pick conflict	WP-18	yes	crates/snp-git/tests/catalog.rs
+T10-GIT-05	10 §5.7	resolved conflict + other_file added; unstaged edits; a file named HEAD	WP-18	yes	crates/snp-git/tests/catalog.rs
+T10-GIT-06	10 §5.7	MERGE_MSG Merge branch 'foo' into bar\n\nConflicts:\n\tconflict_file\n (+\tother_conflict_file\n)	WP-18	yes	crates/snp-git/tests/catalog.rs
+T10-GIT-07	10 §5.7	HEAD^..HEAD adds a.txt b.txt; reversed → []; disparate histories (orphan) → ['b.txt']	WP-18	yes	crates/snp-git/tests/catalog.rs
+T10-GIT-14	10 §5.7	merge state	WP-18	yes	crates/snp-git/tests/catalog.rs
+T10-GIT-08	10 §5.7	zsplit	WP-18	yes	crates/snp-git/tests/catalog.rs
+T10-GIT-09	10 §5.7	file интервью	WP-18	yes	crates/snp-git/tests/catalog.rs
+T10-GIT-10	10 §5.7	merge conflict	WP-18	yes	crates/snp-git/tests/catalog.rs
+T10-GIT-11	10 §5.7	add --intent-to-add a; staged rename a→b + ITA c	WP-18	yes	crates/snp-git/tests/catalog.rs
+T10-GIT-12	10 §5.7	env with GIT_DIR, GIT_EXEC_PATH, GIT_SSH, GIT_SSH_COMMAND, GIT_CONFIG_KEY_0.., GIT_CONFIG_COUNT, htt…	WP-18	yes	crates/snp-git/tests/catalog.rs
+T10-GIT-13	10 §5.7	init_repo(tmp, remote='dne')	WP-18	yes	crates/snp-git/tests/catalog.rs
+T10-STO-01	10 §5.8	default dir realpath(~/.cache/pre-commit); XDG_CACHE_HOME=/tmp/fakehome → /tmp/fakehome/pre-commit;…	WP-22	yes	crates/snp-store/tests/catalog.rs
+T10-STO-02	10 §5.8	store dir created with README containing This directory is maintained by the pre-commit project. and…	WP-22	yes	crates/snp-store/tests/catalog.rs
+T10-STO-03	10 §5.8	clone(path, rev): first log Initializing environment for <repo>.; returned dir inside store, basenam…	WP-31	yes	crates/snp/tests/it/repository.rs
+T10-STO-04	10 §5.8	manifest with deprecated stages → second log record: repo {path} uses deprecated stage names (commit…	WP-31	yes	crates/snp/tests/it/repository.rs
+T10-STO-05	10 §5.8	clone /i_dont_exist_lol fails; error mentions the path; no leftover repo* dir	WP-18	yes	crates/snp-git/tests/catalog.rs
+T10-STO-06	10 §5.8	DB row exists → returned without cloning	WP-22	yes	crates/snp-store/tests/catalog.rs
+T10-STO-07	10 §5.8	shallow fetch fails → full fetch fallback; same result	WP-18	yes	crates/snp-git/tests/catalog.rs
+T10-STO-08	10 §5.8	rev = tag only reachable from a deleted branch → clone works	WP-18	yes	crates/snp-git/tests/catalog.rs
+T10-STO-09	10 §5.8	dir without DB → DB created; re-open idempotent	WP-22	yes	crates/snp-store/tests/catalog.rs
+T10-STO-10	10 §5.8	db_repo_name('repo', ())=repo; ('b','a','c') → repo:b,a,c (order preserved, not sorted)	WP-22	yes	crates/snp-store/tests/catalog.rs
+T10-STO-11	10 §5.8	mark_config_used('f') stores absolute path; idempotent; nonexistent path ignored; missing configs ta…	WP-22	yes	crates/snp-store/tests/catalog.rs
+T10-STO-12	10 §5.8	read-only store dir (posix) → readonly true; mark_config_used is a no-op	WP-22	yes	crates/snp-store/tests/catalog.rs
+T10-STO-13	10 §5.8	repo with nested submodule → clone checks out submodules recursively	WP-18	yes	crates/snp-git/tests/catalog.rs
+T10-REP-01	10 §5.9	not_found_exe → (1, Executable i-dont-exist-lol not found)	WP-31	yes	crates/snp/tests/it/repository.rs
+T10-REP-02	10 §5.9	script hook argv: ['bar']→bar\nHello World\n; ['foo bar','baz'] with manifest args → arg: hello\narg…	WP-31	yes	crates/snp/tests/it/repository.rs
+T10-REP-03	10 §5.9	interleaved 0..5 stdout/stderr in order (one pipe); with color: stdin: False\nstdout: True\nstderr:…	WP-31	yes	crates/snp/tests/it/repository.rs
+T10-REP-04	10 §5.9	hook cwd = repo root (pwd -L equals cd <root> && pwd)	WP-31	yes	crates/snp/tests/it/repository.rs
+T10-REP-05	10 §5.9	15000 args	WP-31	yes	crates/snp/tests/it/repository.rs
+T10-REP-06	10 §5.9	python env: deps roll-forward isolation (mccabe), .install_state_v1/v2 compat, reinstall logs 4 reco…	WP-31	no	crates/snp/tests/it/repository.rs
+T10-REP-07	10 §5.9	Unexpected key(s) present on local => too-much: foo, hello	WP-31	yes	crates/snp/tests/it/repository.rs
+T10-REP-08	10 §5.9	config files overrides manifest	WP-31	yes	crates/snp/tests/it/repository.rs
+T10-REP-09	10 §5.9	rev = tag v1.1 for two repos	WP-31	yes	crates/snp/tests/it/repository.rs
+T10-REP-10	10 §5.9	local python repo with deps → language_version resolved (≠ default), output ['filename']\nHello Worl…	WP-31	no	crates/snp/tests/it/repository.rs
+T10-REP-11	10 §5.9	default_stages applies unless hook sets stages	WP-31	yes	crates/snp/tests/it/repository.rs
+T10-REP-12	10 §5.9	unknown id → exit 1, [ERROR] \i-dont-exist\ is not present in repository file://{path}. Typo? Perhap…	WP-31	yes	crates/snp/tests/it/repository.rs
+T10-REP-13	10 §5.9	resolved manifest hook defaults: alias '', always_run False, args [], description '', exclude '^$',…	WP-31	yes	crates/snp/tests/it/repository.rs
+T10-REP-14	10 §5.9	language: unsupported + language_version → exit 1 The hook system-hook specifies language_version bu…	WP-31	yes	crates/snp/tests/it/repository.rs
+T10-REP-15	10 §5.9	argv ('i have spaces', 'and"\'quotes', '$and !this') reaches the process unchanged (no shell)	WP-31	yes	crates/snp/tests/it/repository.rs
+T10-REP-16	10 §5.9	entry pre-commit hazmat ignore-exit-code <python> -c 'raise SystemExit(sys.argv[1:])' + files f1 f2…	WP-31	yes	crates/snp/tests/it/repository.rs
+T10-AUP-01	10 §5.11	{'repo': 'repo/path', 'rev': 'v1.2.3'}	WP-33	yes	crates/snp/tests/it/autoupdate.rs
+T10-AUP-02	10 §5.11	up-to-date repo; out-of-date; default branch renamed dev; tag v1.2.3 on newest commit (tags_only Fal…	WP-33	yes	crates/snp/tests/it/autoupdate.rs
+T10-AUP-03	10 §5.11	config at HEAD	WP-33	yes	crates/snp/tests/it/autoupdate.rs
+T10-AUP-04	10 §5.11	config pinned at a rev where .pre-commit-hooks.yaml was absent (renamed nope.yaml)	WP-33	yes	crates/snp/tests/it/autoupdate.rs
+T10-AUP-05	10 §5.11	fmt = 'repos:\n- repo: {}\n rev: {}\n hooks:\n - id: foo\n'; with global core.useBuiltinFSMonitor=tr…	WP-33	yes	crates/snp/tests/it/autoupdate.rs
+T10-AUP-06	10 §5.11	--repo file://<path> with a local repo also present; --repo dne --repo foo	WP-33	yes	crates/snp/tests/it/autoupdate.rs
+T10-AUP-07	10 §5.11	rev: {} # definitely the version I want!\n + comment line + args: [foo, bar, baz]	WP-33	yes	crates/snp/tests/it/autoupdate.rs
+T10-AUP-08	10 §5.11	mixed \n/\r\n line endings (read & write)	WP-33	yes	crates/snp/tests/it/autoupdate.rs
+T10-AUP-09	10 §5.11	flow-style config repos: [{repo: …, rev: …, hooks: [# A comment!\n {id: foo}]}]	WP-33	yes	crates/snp/tests/it/autoupdate.rs
+T10-AUP-10	10 §5.11	tagged	WP-33	yes	crates/snp/tests/it/autoupdate.rs
+T10-AUP-11	10 §5.11	--tags-only	WP-33	yes	crates/snp/tests/it/autoupdate.rs
+T10-AUP-12	10 §5.11	upstream deleted all files (no manifest at HEAD)	WP-33	yes	crates/snp/tests/it/autoupdate.rs
+T10-AUP-13	10 §5.11	hook foo renamed to bar upstream	WP-33	yes	crates/snp/tests/it/autoupdate.rs
+T10-AUP-14	10 §5.11	local-only config; local first then stale remote	WP-33	yes	crates/snp/tests/it/autoupdate.rs
+T10-AUP-15	10 §5.11	meta-only config	WP-33	yes	crates/snp/tests/it/autoupdate.rs
+T10-AUP-16	10 §5.11	old list-format config	WP-33	yes	crates/snp/tests/it/autoupdate.rs
+T10-AUP-17	10 §5.11	rev: "{rev}" and rev: '{rev}'	WP-33	yes	crates/snp/tests/it/autoupdate.rs
+T10-MIG-01	10 §5.12	top-level list - repo: local\n hooks:\n - id: foo\n …	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-MIG-02	10 §5.12	# comment\n\n---\n- repo: local…	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-MIG-03	10 §5.12	flow list [{\n repo: local,\n …}] (no trailing newline)	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-MIG-04	10 §5.12	already repos: form	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-MIG-05	10 §5.12	sha: v1.2.0 keys (YAML and JSON-style "sha": "v1.2.0")	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-MIG-06	10 §5.12	language: python_venv / "python_venv"	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-MIG-07	10 §5.12	default_stages: [commit, push, merge-commit, commit-msg]; hook stages: ["commit", "push", "merge-com…	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-MIG-08	10 §5.12	[	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-MIG-09	10 §5.12	matchers SequenceItem, MappingKey, MappingValue	WP-21	yes	crates/snp-config/tests/catalog.rs
+T10-TRY-01	10 §5.13	repo modified_file_returns_zero_repo; consumer dir with staged empty test-file; --verbose, monotonic…	WP-32	yes	crates/snp/tests/it/try_repo.rs
+T10-TRY-02	10 §5.13	try-repo <repo> bash_hook --verbose	WP-32	yes	crates/snp/tests/it/try_repo.rs
+T10-TRY-03	10 §5.13	relative repo path; bare repo path (<repo>/.git)	WP-32	yes	crates/snp/tests/it/try_repo.rs
+T10-TRY-04	10 §5.13	--ref <old sha>	WP-32	yes	crates/snp/tests/it/try_repo.rs
+T10-TRY-05	10 §5.13	uncommitted manifest change (name modified name!)	WP-32	yes	crates/snp/tests/it/try_repo.rs
+T10-TRY-06	10 §5.13	staged-but-uncommitted files in the hook repo	WP-32	yes	crates/snp/tests/it/try_repo.rs
+T10-TRY-07	10 §5.13	from subdir try-repo ../foo	WP-32	yes	crates/snp/tests/it/try_repo.rs
+T10-GC-01	10 §5.14	config used at old rev, install-hooks, autoupdate, install-hooks → 2 repos, 1 config; gc → 1 repo; l…	WP-33	yes	crates/snp/tests/it/gc.rs
+T10-GC-02	10 §5.14	repo never cloned / meta-only / local-only config → 0 repo(s) removed.	WP-33	yes	crates/snp/tests/it/gc.rs
+T10-GC-03	10 §5.14	local language: python hook creates a store repo entry; kept while config exists	WP-33	yes	crates/snp/tests/it/gc.rs
+T10-GC-04	10 §5.14	config references a hook id that does not exist → gc does not crash, keeps repo	WP-33	yes	crates/snp/tests/it/gc.rs
+T10-GC-05	10 §5.14	invalid config {'i am': 'invalid'} marked used → config row deleted, 0 repo(s) removed.	WP-33	yes	crates/snp/tests/it/gc.rs
+T10-GC-06	10 §5.14	cloned repo whose manifest was deleted → repo removed (1 repo(s) removed.)	WP-33	yes	crates/snp/tests/it/gc.rs
+T10-GC-07	10 §5.14	pre-1.14 DB without configs table → 0 repo(s) removed.\n	WP-33	yes	crates/snp/tests/it/gc.rs
+T10-GC-08	10 §5.14	clean removes store dir and legacy ~/.pre-commit; prints Cleaned <dir>. per existing dir; idempotent	WP-33	yes	crates/snp/tests/it/clean.rs
+T10-MET-01	10 §5.15	meta check-useless-excludes with exclude: .pre-commit-config.yaml / files: foo / types: [python] / e…	WP-32	yes	crates/snp/tests/it/meta.rs
+T10-MET-02	10 §5.15	local hooks: script files: \.yaml$; language: fail files: changelog/.*(?<!\.rst)$ (negative lookbehi…	WP-32	yes	crates/snp/tests/it/meta.rs
+T10-MET-03	10 §5.15	top-level exclude: foo	WP-32	yes	crates/snp/tests/it/meta.rs
+T10-MET-04	10 §5.15	hook exclude: foo	WP-32	yes	crates/snp/tests/it/meta.rs
+T10-MET-05	10 §5.15	exclude: .pre-commit-config.yaml + types: [python]	WP-32	yes	crates/snp/tests/it/meta.rs
+T10-MET-06	10 §5.15	no excludes / matching exclude	WP-32	yes	crates/snp/tests/it/meta.rs
+T10-MET-07	10 §5.15	committed broken symlink excluded by hook	WP-32	yes	crates/snp/tests/it/meta.rs
+T10-MET-08	10 §5.15	identity a b c	WP-32	yes	crates/snp/tests/it/meta.rs
+T10-OUT-01	10 §5.16	write('hello world') writes UTF-8 bytes, flushes	WP-32	yes	crates/snp/tests/it/output.rs
+T10-OUT-02	10 §5.16	format_color('foo', GREEN, True) = \x1b[42mfoo\x1b[m; False → foo	WP-32	yes	crates/snp/tests/it/output.rs
+T10-OUT-03	10 §5.16	use_color: never→F; always→T; auto: stderr not a tty → F; tty + color support + TERM unset → T; no s…	WP-32	yes	crates/snp/tests/it/output.rs
+T10-OUT-04	10 §5.16	WARNING colored: \x1b[43;30m[WARNING]\x1b[m hi\n; uncolored [WARNING] hi\n; ERROR uses \x1b[41m; INF…	WP-32	yes	crates/snp/tests/it/output.rs
+T10-OUT-05	10 §5.16	RED \x1b[41m, GREEN \x1b[42m, YELLOW \x1b[43;30m, TURQUOISE \x1b[46;30m, SUBTLE \x1b[2m, NORMAL \x1b…	WP-32	yes	crates/snp/tests/it/output.rs
+T10-ERR-01	10 §5.17	no exception → nothing; FatalError → msg An error has occurred, exit 1; other exception → An unexpec…	WP-33	yes	crates/snp/tests/it/errors.rs
+T10-ERR-02	10 §5.17	stdout: {msg}: {ExcType}: {text}\nCheck the log at {PRE_COMMIT_HOME}/pre-commit.log\n; log file (ove…	WP-33	yes	crates/snp/tests/it/errors.rs
+T10-ERR-03	10 §5.17	non-ASCII message, non-UTF-8 bytes in CalledProcessError, __str__ raising → still exits cleanly (snp…	WP-33	yes	crates/snp/tests/it/errors.rs
+T10-ERR-04	10 §5.17	real process, ValueError("☃") → exit 3; last two lines An unexpected error has occurred: ValueError:…	WP-33	yes	crates/snp/tests/it/errors.rs
+T10-ERR-05	10 §5.17	store dir read-only → stdout starts An unexpected error has occurred: ValueError: ohai\nFailed to wr…	WP-33	yes	crates/snp/tests/it/errors.rs
+T10-CLI-01	10 §5.17	_adjust_args_and_chdir: not in git → FatalError; at root: config/files unchanged; from foo/: -c cfg.…	WP-33	yes	crates/snp/tests/it/cli.rs
+T10-CLI-02	10 §5.17	commands: autoupdate, clean, gc, install, install-hooks, migrate-config, run, sample-config, uninsta…	WP-33	yes	crates/snp/tests/it/cli.rs
+T10-CLI-03	10 §5.17	--help, help (= --help), help run (= run --help) exit 0, even outside a git repo	WP-33	yes	crates/snp/tests/it/cli.rs
+T10-CLI-04	10 §5.17	hazmat cd subdir -- cmd -- f1 f2 → tool cd, subdir subdir, cmd ['cmd','--','f1','f2']	WP-33	yes	crates/snp/tests/it/cli.rs
+T10-CLI-05	10 §5.17	main([]) outside repo → An error has occurred: FatalError: git failed. Is it installed, and are you…	WP-33	yes	crates/snp/tests/it/cli.rs
+T10-CLI-06	10 §5.17	run --hook-stage commit → stage normalized to pre-commit (also push→pre-push, merge-commit→pre-merge…	WP-33	yes	crates/snp/tests/it/cli.rs
+T10-CLI-07	10 §5.17	unknown option → exit 2, usage + pre-commit: error: unrecognized arguments: --nope on stderr; -a wit…	WP-33	yes	crates/snp/tests/it/cli.rs
+T10-HAZ-01	10 §5.18	_cmd_filenames: no -- → exit msg hazmat entry must end with -- ; hello world -- → cmd (hello, world)…	WP-26	yes	crates/snp-hooks/tests/catalog.rs
+T10-HAZ-02	10 §5.18	cd subdir cmd -- subdir/1 not-subdir/2 → exit msg unexpected file without prefix='subdir/': not-subd…	WP-26	yes	crates/snp-hooks/tests/catalog.rs
+T10-HAZ-03	10 §5.18	cd subdir <cmd> -- subdir/a subdir/b → cwd = subdir, files a,b; stderr empty	WP-26	yes	crates/snp-hooks/tests/catalog.rs
+T10-HAZ-04	10 §5.18	ignore-exit-code <cmd raising SystemExit("bye")> → ret 0, stderr bye\n	WP-26	yes	crates/snp-hooks/tests/catalog.rs
+T10-HAZ-05	10 §5.18	n1 <cmd> -- foo bar baz → one invocation per file (['foo']\n['bar']\n['baz']\n); any failure → ret 1	WP-26	yes	crates/snp-hooks/tests/catalog.rs
+T10-VAL-04	10 §5.18	sample-config stdout exactly: # See https://pre-commit.com for more information\n# See https://pre-c…	WP-33	yes	crates/snp/tests/it/validate.rs
+T10-UTL-01	10 §5.18	CalledProcessError str: command: ('exe',)\nreturn code: 1\nstdout:\n output\nstderr:\n errors / stdo…	WP-00	yes	crates/snp-core/src/failure.rs
+T10-UTL-02	10 §5.18	clean_path_on_failure removes the path on any error incl. SystemExit; keeps on success	WP-16	yes	crates/snp-lang/tests/catalog.rs
+T10-UTL-03	10 §5.18	running dne → (1, Executable dne not found); executable file without shebang → ret 1, output ends wi…	WP-15	yes	crates/snp-proc/tests/catalog.rs
+T10-UTL-04	10 §5.18	rmtree handles read-only directories (Go module cache)	WP-15	yes	crates/snp-proc/tests/catalog.rs
+T10-UTL-05	10 §5.18	parse_filename('herp derp derp') → (); #!/usr/bin/env echo → (echo,); find_executable absolute / on…	WP-15	yes	crates/snp-proc/tests/catalog.rs
+T10-UTL-06	10 §5.18	patch semantics: add / override / UNSET removes / Var('PATH') templating with default / values compu…	WP-00	yes	crates/snp-core/src/env.rs
+T10-UTL-07	10 §5.18	Prefix('foo').path('')=foo; ('foo','bar')=foo/bar; ('foo/bar','../baz')=foo/baz (normpath); ('./','b…	WP-11	yes	crates/snp-pycompat/tests/catalog.rs
+X13-CFG-01	13 X.4.1	minimum_pre_commit_version: "abc" (also "", "4.", "4.6.3rc1")	WP-21	yes	crates/snp-config/tests/catalog.rs
+X13-CFG-02	13 X.4.1	non-string root key 1: x	WP-21	yes	crates/snp-config/tests/catalog.rs
+X13-CFG-03	13 X.4.1	mixed root keys 1: x + foo: y	WP-21	yes	crates/snp-config/tests/catalog.rs
+X13-CFG-04	13 X.4.1	unhashable stages: [[a]], language: [x], types: [[a]]	WP-21	yes	crates/snp-config/tests/catalog.rs
+X13-CFG-05	13 X.4.1	regex repeat bound ≥ 4294967295 in files/exclude (top level, hook or manifest): a{4294967295}, a{429…	WP-21	yes	crates/snp-config/tests/catalog.rs
+X13-CFG-06	13 X.4.1	group nesting depth ≥ ~490, e.g. '('*490+')'*490; (?: behaves the same	WP-21	yes	crates/snp-config/tests/catalog.rs
+X13-CFG-07	13 X.4.1	two global inline flags that conflict: (?a)(?u)x, (?u)(?a)x. (?au) is already a clean re.error; (?u)…	WP-21	yes	crates/snp-config/tests/catalog.rs
+X13-CFG-08	13 X.4.1	PYTHONWARNINGS=error plus a pattern that warns ([[], [[:alpha:]], [a&&b], [a||b], [a~~b])	WP-21	yes	crates/snp-config/tests/catalog.rs
+X13-CFG-09	13 X.4.1	config or manifest exists but is unreadable (EACCES): run, validate-config, install, gc…	WP-21	yes	crates/snp-config/tests/catalog.rs
+X13-CFG-10	13 X.4.1	migrate-config, or autoupdate (which migrates first), with a missing config	WP-21	yes	crates/snp-config/tests/catalog.rs
+X13-CFG-11	13 X.4.1	migrate-config on a non-UTF-8 config (UTF-8 locale)	WP-21	yes	crates/snp-config/tests/catalog.rs
+X13-CFG-12	13 X.4.1	migrate-config on a list-root config whose re-indented fallback is invalid YAML (%YAML 1.1\n---\n- r…	WP-21	yes	crates/snp-config/tests/catalog.rs
+X13-CFG-13	13 X.4.1	any of CFG-01/04/05/06/07 inside a cloned repo's .pre-commit-hooks.yaml	WP-21	yes	crates/snp-config/tests/catalog.rs
+X13-CFG-14	13 X.4.1	knock-on effects: commands that load the config for a side purpose. install/uninstall _hook_types (i…	WP-33	yes	crates/snp/tests/it/errors.rs
+X13-ST-01	13 X.4.2	store dir missing and cannot be created (read-only parent). Affects every command, including validat…	WP-22	yes	crates/snp-store/tests/catalog.rs
+X13-ST-02	13 X.4.2	PRE_COMMIT_HOME names a regular file	WP-22	yes	crates/snp-store/tests/catalog.rs
+X13-ST-03	13 X.4.2	the store exists but is not writable ("read-only store"), and a new clone or local env is needed. Ca…	WP-22	yes	crates/snp-store/tests/catalog.rs
+X13-ST-04	13 X.4.2	read-only store and unstaged changes during run	WP-23	yes	crates/snp-stash/tests/catalog.rs
+X13-ST-05	13 X.4.2	another process holds a sqlite write lock on <store>/db.db for more than 5 s	WP-22	yes	crates/snp-store/tests/catalog.rs
+X13-ST-06	13 X.4.2	db.db is not a sqlite file	WP-22	yes	crates/snp-store/tests/catalog.rs
+X13-ST-07	13 X.4.2	db.db is an empty file	WP-22	yes	crates/snp-store/tests/catalog.rs
+X13-ST-08	13 X.4.2	db.db is a directory	WP-22	yes	crates/snp-store/tests/catalog.rs
+X13-ST-09	13 X.4.2	db.db is a read-only file inside a writable store (so readonly is false, store.py:65-68)	WP-22	yes	crates/snp-store/tests/catalog.rs
+X13-ST-10	13 X.4.2	stale DB row: a repoXXXXXXXX dir was deleted (by the user or by a partial gc failure, CMD-07)	WP-22	yes	crates/snp-store/tests/catalog.rs
+X13-ST-11	13 X.4.2	<store>/.lock cannot be opened (a directory, EACCES)	WP-22	yes	crates/snp-store/tests/catalog.rs
+X13-ST-12	13 X.4.2	Windows: msvcrt.locking fails with an errno other than EDEADLOCK	WP-22	yes	crates/snp-store/tests/catalog.rs
+X13-GIT-01	13 X.4.3	clone of a missing or unreachable repo, or an unknown rev	WP-31	yes	crates/snp/tests/it/repository.rs
+X13-GIT-02	13 X.4.3	autoupdate: the fetch fails for one repo	WP-33	yes	crates/snp/tests/it/autoupdate.rs
+X13-GIT-03	13 X.4.3	try-repo <bad repo>	WP-32	yes	crates/snp/tests/it/run.rs
+X13-GIT-04	13 X.4.3	run --from-ref <bad> --to-ref <ref>	WP-32	yes	crates/snp/tests/it/run.rs
+X13-GIT-05	13 X.4.3	non-UTF-8 path bytes in git ls-files -z (-a), git diff --staged -z (default), the merge-conflict dif…	WP-22	yes	crates/snp-files/tests/catalog.rs
+X13-GIT-06	13 X.4.3	run --files <non-UTF-8 name> that exists	WP-22	yes	crates/snp-files/tests/catalog.rs
+X13-GIT-07	13 X.4.3	a MERGE_MSG conflict line with non-UTF-8 bytes	WP-18	yes	crates/snp-git/tests/catalog.rs
+X13-GIT-08	13 X.4.3	non-UTF-8 git stderr on a cmd_output call (e.g. messages in a legacy-locale encoding)	WP-22	yes	crates/snp-files/tests/catalog.rs
+X13-GIT-09	13 X.4.3	git write-tree, git ls-files --unmerged or git checkout -- . fails	WP-23	yes	crates/snp-stash/tests/catalog.rs
+X13-GIT-10	13 X.4.3	git rev-parse --git-dir echoes --git-dir (git < 2.5)	WP-18	yes	crates/snp-git/tests/catalog.rs
+X13-CLS-01	13 X.4.4	an earlier hook deletes a file whose tags were not computed yet. Repro: an always_run hook with file…	WP-22	yes	crates/snp-files/tests/catalog.rs
+X13-CLS-02	13 X.4.4	a regular file that is unreadable, is not executable, and whose name gives no text/binary tag (no or…	WP-22	yes	crates/snp-files/tests/catalog.rs
+X13-CLS-03	13 X.4.4	a FIFO passed via --files (git cannot track FIFOs)	WP-22	yes	crates/snp-files/tests/catalog.rs
+X13-CLS-04	13 X.4.4	an lstat error other than ENOENT during tagging (EACCES on a parent dir, ELOOP, ENAMETOOLONG), after…	WP-22	yes	crates/snp-files/tests/catalog.rs
+X13-CLS-05	13 X.4.4	implementation note: file-identify 0.4.0 also blocks on FIFOs (fs::File::open, lib.rs:865)	WP-22	yes	crates/snp-files/tests/catalog.rs
+X13-EXE-01	13 X.4.5	entry: "" or whitespace only, with args: []	WP-32	yes	crates/snp/tests/it/run.rs
+X13-EXE-02	13 X.4.5	unbalanced quote or trailing backslash in entry	WP-32	yes	crates/snp/tests/it/run.rs
+X13-EXE-03	13 X.4.5	entry + args alone exceed the xargs limit while files are passed. The limit is min(ARG_MAX−2048−env,…	WP-32	yes	crates/snp/tests/it/run.rs
+X13-EXE-04	13 X.4.5	entry is an executable script that cannot be read (mode 0111)	WP-32	yes	crates/snp/tests/it/run.rs
+X13-EXE-05	13 X.4.5	log_file whose directory does not exist, which is a directory, or which is unwritable, on a hook tha…	WP-32	yes	crates/snp/tests/it/run.rs
+X13-EXE-06	13 X.4.5	pty allocation fails in color mode (e.g. a container without /dev/ptmx), or a pty os.read error othe…	WP-15	yes	crates/snp-proc/tests/catalog.rs
+X13-EXE-07	13 X.4.5	a pygrep entry pattern that Python rejects with something other than re.error: a{4294967295}, nestin…	WP-26	yes	crates/snp-hooks/tests/catalog.rs
+X13-EXE-08	13 X.4.5	a language in_env/run_hook raises (e.g. lua without luarocks)	WP-32	no	crates/snp/tests/it/run.rs
+X13-STASH-01	13 X.4.6	git checkout -- . fails while stashing	WP-23	yes	crates/snp-stash/tests/catalog.rs
+X13-STASH-02	13 X.4.6	on restore, git apply fails twice: after [WARNING] Stashed changes conflicted with hook auto-fixes..…	WP-23	yes	crates/snp-stash/tests/catalog.rs
+X13-STASH-03	13 X.4.6	stdout fails during the restore (EPIPE). The logger.warning at :88 raises before the rollback and th…	WP-23	yes	crates/snp-stash/tests/catalog.rs
+X13-ENV-01	13 X.4.7	.install_state_v1 malformed and .install_state_v2 absent	WP-31	yes	crates/snp/tests/it/repository.rs
+X13-ENV-02	13 X.4.7	.install_state_v1 unreadable	WP-31	yes	crates/snp/tests/it/repository.rs
+X13-ENV-03	13 X.4.7	install, health or version failures in language backends	WP-31	no	crates/snp/tests/it/repository.rs
+X13-ENV-04	13 X.4.7	a stale env dir cannot be removed (EACCES)	WP-31	yes	crates/snp/tests/it/repository.rs
+X13-HI-01	13 X.4.8	--hook-type is not a known type	WP-32	yes	crates/snp/tests/it/hook_impl.rs
+X13-HI-02	13 X.4.8	wrong argument count	WP-32	yes	crates/snp/tests/it/hook_impl.rs
+X13-HI-03	13 X.4.8	a pre-push stdin line with fewer than 4 whitespace-separated fields, including an empty line after a…	WP-18	yes	crates/snp-git/tests/catalog.rs
+X13-HI-04	13 X.4.8	pre-push stdin that is not valid UTF-8 (ref names may contain such bytes)	WP-18	yes	crates/snp-git/tests/catalog.rs
+X13-HI-05	13 X.4.8	local_sha is unknown or garbage, and the remote sha is null or not present locally	WP-32	yes	crates/snp/tests/it/hook_impl.rs
+X13-HI-06	13 X.4.8	git rev-list --max-parents=0 <sha> or git rev-parse <first>^ fails	WP-32	yes	crates/snp/tests/it/hook_impl.rs
+X13-HI-07	13 X.4.8	the legacy hook's shebang interpreter is missing, or <type>.legacy is a directory (which passes os.a…	WP-32	yes	crates/snp/tests/it/hook_impl.rs
+X13-HI-08	13 X.4.8	PRE_COMMIT_RUNNING_LEGACY is set (migration-mode recursion)	WP-32	yes	crates/snp/tests/it/hook_impl.rs
+X13-HZ-01	13 X.4.9	pre-commit hazmat with no tool	WP-33	yes	crates/snp/tests/it/hazmat_cli.rs
+X13-HZ-02	13 X.4.9	pre-commit hazmat n1|cd|ignore-exit-code <missing-exe> …	WP-33	yes	crates/snp/tests/it/hazmat_cli.rs
+X13-HZ-03	13 X.4.9	an empty command: hazmat ignore-exit-code, hazmat n1 --, hazmat cd sub --	WP-33	yes	crates/snp/tests/it/hazmat_cli.rs
+X13-HZ-04	13 X.4.9	hazmat cd <missing dir> CMD --	WP-33	yes	crates/snp/tests/it/hazmat_cli.rs
+X13-HZ-05	13 X.4.9	no --	WP-33	yes	crates/snp/tests/it/hazmat_cli.rs
+X13-HZ-06	13 X.4.9	the same failures inside a hook entry. pre-commit hazmat … is rewritten to python -m pre_commit.comm…	WP-26	yes	crates/snp-hooks/tests/catalog.rs
+X13-CMD-01	13 X.4.10	install when .git/hooks/<type> is a directory	WP-33	yes	crates/snp/tests/it/errors.rs
+X13-CMD-02	13 X.4.10	install when the hooks dir or script is unwritable	WP-33	yes	crates/snp/tests/it/errors.rs
+X13-CMD-03	13 X.4.10	install -f when <type>.legacy is a directory (install_uninstall.py:80-81)	WP-33	yes	crates/snp/tests/it/errors.rs
+X13-CMD-04	13 X.4.10	uninstall: os.remove/os.replace fails (:156,160)	WP-33	yes	crates/snp/tests/it/errors.rs
+X13-CMD-05	13 X.4.10	autoupdate: AssertionError: could not find rev lines (03 §11.3)	WP-33	yes	crates/snp/tests/it/errors.rs
+X13-CMD-06	13 X.4.10	autoupdate git failures	WP-33	yes	crates/snp/tests/it/errors.rs
+X13-CMD-07	13 X.4.10	gc when a tracked repo dir is missing	WP-33	yes	crates/snp/tests/it/errors.rs
+X13-CMD-08	13 X.4.10	gc: other rmtree failures (_handle_readonly retries chmod but can still fail)	WP-33	yes	crates/snp/tests/it/errors.rs
+X13-CMD-09	13 X.4.10	gc with a tracked config that crashes the loader (any CFG row)	WP-33	yes	crates/snp/tests/it/errors.rs
+X13-CMD-10	13 X.4.10	clean: rmtree failures	WP-33	yes	crates/snp/tests/it/errors.rs
+X13-CMD-11	13 X.4.10	validate-config / validate-manifest on an unreadable file	WP-33	yes	crates/snp/tests/it/errors.rs
+X13-CMD-12	13 X.4.10	try-repo	WP-33	yes	crates/snp/tests/it/errors.rs
+X13-EH-01	13 X.4.11	the store is unusable inside the handler	WP-33	yes	crates/snp/tests/it/errors.rs
+X13-EH-02	13 X.4.11	<store>/pre-commit.log is a directory, or an unwritable file in a writable store	WP-33	yes	crates/snp/tests/it/errors.rs
+X13-EH-03	13 X.4.11	stdout closed early (pre-commit run | head -c 20, or a GUI closing git's stderr pipe; git sends hook…	WP-33	yes	crates/snp/tests/it/errors.rs
+X13-EH-04	13 X.4.11	KeyboardInterrupt	WP-33	yes	crates/snp/tests/it/errors.rs
+X13-EH-05	13 X.4.11	a Rust panic (snp only)	WP-33	yes	crates/snp/tests/it/errors.rs
+X13-SM-01	13 X.5	a store row for (key, rev) is created (store.py:160), during hook building (all_hooks, config order)…	WP-31	yes	crates/snp/tests/it/repository.rs
+X13-SM-02	13 X.5	an env is installed (repository.py:66-68)	WP-31	yes	crates/snp/tests/it/repository.rs
+X13-SM-03	13 X.5	a files/exclude pattern triggers an re FutureWarning (CPython ≥ 3.7)	WP-21	yes	crates/snp-config/tests/catalog.rs
+X13-SM-04	13 X.5	warnings inside meta-hook output. The meta hooks run as python -m pre_commit.meta_hooks.* with no lo…	WP-32	yes	crates/snp/tests/it/run.rs
+X13-SM-05	13 X.5	pre-push, when a remote sha is not present locally (common after someone else pushed)	WP-18	yes	crates/snp-git/tests/catalog.rs
+X13-SM-06	13 X.5	exec fails with E2BIG (pass_filenames: false + huge args)	WP-32	yes	crates/snp/tests/it/run.rs
+X13-SM-07	13 X.5	entry whose first token is empty or #	WP-32	yes	crates/snp/tests/it/run.rs
+X13-SM-08	13 X.5	EPIPE noise (EH-03)	WP-33	yes	crates/snp/tests/it/errors.rs
+X13-SM-09	13 X.5	argparse (exit 2), re-verified	WP-12	yes	crates/snp-cli/tests/catalog.rs
+X13-SM-10	13 X.5	PYTHONWARNINGS (read by CPython, not by pre-commit)	WP-21	yes	crates/snp-config/tests/catalog.rs
+M11-MIG-01	11 §A.20	pre-commit install (oracle), then snp install	WP-33	no	crates/snp/tests/it/install.rs
+M11-MIG-02	11 §A.20	snp install, then oracle pre-commit install	WP-33	no	crates/snp/tests/it/install.rs
+M11-MIG-03	11 §A.20	snp install, then oracle pre-commit uninstall	WP-33	no	crates/snp/tests/it/install.rs
+M11-MIG-04	11 §A.20	prek script (fixture bytes from prek/crates/prek/src/cli/install.rs:372-386), then snp install	WP-33	yes	crates/snp/tests/it/install.rs
+M11-MIG-05	11 §A.20	chain C1 (pre-commit over prek), then snp install	WP-33	yes	crates/snp/tests/it/install.rs
+M11-MIG-06	11 §A.20	chain C2, then snp install	WP-33	yes	crates/snp/tests/it/install.rs
+M11-MIG-07	11 §A.20	snp 1.x script (V1 template), then snp install	WP-33	yes	crates/snp/tests/it/install.rs
+M11-MIG-08	11 §A.20	Case B: era-3 pre-commit script with INSTALL_PYTHON=/nonexistent, alias on PATH	WP-33	no	crates/snp/tests/it/install.rs
+M11-MIG-09	11 §A.20	Case C with snp on PATH but no alias	WP-33	yes	crates/snp/tests/it/install.rs
+M11-MIG-10	11 §A.20	era-1 fixture script (Python template from 9f0cfed600), alias on PATH	WP-33	yes	crates/snp/tests/it/install.rs
+M11-MIG-11	11 §A.20	snp script with CDPATH=. exported, legacy hook present	WP-33	yes	crates/snp/tests/it/install.rs
+M11-MIG-12	11 §A.20	pre-commit era-3 script + CDPATH=. + legacy, alias → snp	WP-33	yes	crates/snp/tests/it/install.rs
+M11-MIG-13	11 §A.20	snp script: SNP_EXE missing, oracle pre-commit on PATH	WP-33	no	crates/snp/tests/it/install.rs
+M11-MIG-14	11 §A.20	snp script: nothing available	WP-33	yes	crates/snp/tests/it/install.rs
+M11-MIG-15	11 §A.20	PRE_COMMIT_HOME=/p: snp run, then oracle gc and clean	WP-33	no	crates/snp/tests/it/install.rs
+M11-MIG-16	11 §A.20	SNP_HOME = the oracle's store	WP-33	no	crates/snp/tests/it/install.rs
+M11-MIG-17	11 §A.20	store containing a snp 1.x layout (README signature + db.db + resource-pools/)	WP-33	yes	crates/snp/tests/it/install.rs
+M11-MIG-18	11 §A.20	entry: pre-commit hazmat n1 nope --, … hazmat bogus, … hazmat cd sub echo (no --)	WP-33	yes	crates/snp/tests/it/install.rs
+M11-MIG-19	11 §A.20	pre-commit --version via symlink; snp --version	WP-33	yes	crates/snp/tests/it/install.rs
+M11-MIG-20	11 §A.20	compat brand golden test over every catalog string	WP-33	yes	crates/snp/tests/it/install.rs
+M11-MIG-21	11 §A.20	snp self alias install with an existing foreign pre-commit in DIR	WP-33	yes	crates/snp/tests/it/install.rs
+M11-MIG-22	11 §A.20	snp run with a pre-commit-owned hook, stderr a pty vs a pipe	WP-33	yes	crates/snp/tests/it/install.rs
+M11-MIG-23	11 §A.20	compat dist (Python, net_*): python -m pre_commit --version; Case A′ venv with the compat dist	WP-33	no	crates/snp/tests/it/install.rs
+M11-MIG-24	11 §A.20	doctor on the fixtures above	WP-33	yes	crates/snp/tests/it/install.rs

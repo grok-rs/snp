@@ -15,9 +15,12 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+serde_json.workspace = true
 snp-cli.workspace = true
 snp-core.workspace = true
 snp-hooks.workspace = true
+syn.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true
