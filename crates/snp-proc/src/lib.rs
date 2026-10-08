@@ -1,4 +1,6 @@
-//! Process spawning, roles, signals, child registry, `JobPool`, xargs and executable resolution (ARCHITECTURE §1.4.8).
+//! Process spawning (pipe/pty, stdin rules, isolated groups, output budget and spill, deadlines), process roles,
+//! the child registry with origin-aware signal forwarding and descendant cleanup, `JobPool`/`Limiter`, executable
+//! resolution, xargs partitioning and hook-command parsing (ARCHITECTURE §1.4.8, §3.6, §10.4).
 //!
 //! Owner: WP-15.
 
