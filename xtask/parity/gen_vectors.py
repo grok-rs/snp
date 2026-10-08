@@ -7,9 +7,11 @@ identify sources you trust, and run it isolated:
         --identify /path/to/copy/of/identify-2.6.20 \
         --out tests/data/identify-vectors.json
 
-`--identify` is the directory that contains the `identify/` package (and
-`setup.cfg`, used for the version). The output is consumed by
-`tests/parity.rs`. Everything is deterministic (fixed random seed).
+`--identify` is the directory that contains the `identify/` package and
+either `setup.cfg` (source checkout) or `identify-*.dist-info/` (unpacked
+wheel, e.g. from `xtask/fetch-identify.sh`), used for the version. The
+output is consumed by `tests/parity.rs`. Everything is deterministic (fixed
+random seed).
 """
 from __future__ import annotations
 
@@ -286,6 +288,22 @@ def gen_paths(identify):
     return out, specials
 
 
+def detect_version(root: str) -> str:
+    """identify's version from `setup.cfg` or an unpacked wheel's METADATA."""
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join(root, 'setup.cfg'))
+    version = cfg.get('metadata', 'version', fallback=None)
+    if version:
+        return version
+    for entry in sorted(os.listdir(root)):
+        if entry.startswith('identify-') and entry.endswith('.dist-info'):
+            with open(os.path.join(root, entry, 'METADATA'), encoding='utf-8') as f:
+                for line in f:
+                    if line.startswith('Version:'):
+                        return line.split(':', 1)[1].strip()
+    return 'unknown'
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument('--identify', required=True)
@@ -295,9 +313,7 @@ def main() -> int:
     sys.path.insert(0, root)
     from identify import extensions, identify, interpreters  # noqa: E402
 
-    cfg = configparser.ConfigParser()
-    cfg.read(os.path.join(root, 'setup.cfg'))
-    version = cfg.get('metadata', 'version', fallback='unknown')
+    version = detect_version(root)
 
     rng = random.Random(SEED)
     paths, specials = gen_paths(identify)

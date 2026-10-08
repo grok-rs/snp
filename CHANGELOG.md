@@ -46,7 +46,8 @@ read. See "Migrating from 0.4" in the README.
   property tests (proptest), a benchmark (`cargo bench --bench identify`).
 - CI: Linux / macOS / Windows test matrix, a real MSRV job (`cargo +1.85.0 test`),
   clippy on Linux and Windows, a check that `src/generated.rs` matches the pinned
-  identify wheel, and a weekly workflow that fails when identify on PyPI has drifted.
+  identify wheel, and a weekly workflow that regenerates the tables and parity vectors
+  from the latest identify on PyPI and opens a pull request when they changed.
 
 ### Changed
 - **Breaking:** `TagSet` is a bitset instead of `HashSet<&'static str>`;
