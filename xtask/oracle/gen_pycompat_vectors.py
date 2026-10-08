@@ -2,11 +2,27 @@
 
 Run with an isolated interpreter, from a directory that contains no .py files:
 
-    python3 -I gen_pycompat_vectors.py OUT.json FIXTURE_DIR
+    python3 -I gen_pycompat_vectors.py OUT.json FIXTURE_DIR [--legacy] [--delta-against BASE.json]
 
 Only the standard library is used. No pre-commit code is imported or executed;
 the composite vectors re-state the few pre-commit expressions (cited by
 file:line in the spec) inline.
+
+`cargo xtask pycompat-vectors` (WP-11) drives this script: under CPython 3.12.3 it
+writes crates/snp-pycompat/tests/vectors/pycompat-vectors.cpython312.json; under
+CPython 3.13.14 with `--delta-against` that file it writes
+pycompat-delta-cpython313.json, which holds only the entries whose 3.13 result
+differs: `{"meta": …, "delta": {section: {index-or-key: 3.13 value}}}`, where the
+key is a list index (decimal string) or an object key of the base section, or
+`"*"` for a section whose shape changed (replaced as a whole).
+
+Provenance (ADR-053): the 59 sections up to `decimal_zeros` are the recovered
+original generator, verbatim except for one sample of the `text_read` section
+(`b'a\\xc2\\x85b...'`, the bytes the rendered 15 §A4.4 table shows; the recovered copy
+had lost the `\\xc2` and crashed in `read_universal`). With `--legacy` the WP-11
+extension sections are omitted and CPython 3.12.3 reproduces the original file
+byte for byte (sha256 8c642b5fdf8c2d9b86786aa8bbcefc81cd97ed22eb77396e5095261cd7710004,
+15 §A1); the extension sections (`EXT_SECTIONS`) follow them in the full file.
 """
 from __future__ import annotations
 
@@ -22,8 +38,27 @@ import sys
 import textwrap
 import unicodedata
 
-OUT = sys.argv[1]
-FIXTURE = sys.argv[2]
+
+def _parse_args(argv):
+    pos, legacy, delta_base = [], False, None
+    it = iter(argv)
+    for a in it:
+        if a == '--legacy':
+            legacy = True
+        elif a == '--delta-against':
+            delta_base = next(it, None)
+            if delta_base is None:
+                sys.exit('--delta-against needs a file')
+        elif a.startswith('--'):
+            sys.exit(f'unknown option {a}')
+        else:
+            pos.append(a)
+    if len(pos) != 2:
+        sys.exit(__doc__)
+    return pos[0], pos[1], legacy, delta_base
+
+
+OUT, FIXTURE, LEGACY, DELTA_BASE = _parse_args(sys.argv[1:])
 
 V: dict = {
     'meta': {
@@ -436,7 +471,7 @@ def write_translate(s: str, newline) -> bytes:
     return buf.getvalue()
 
 
-TIO = [b'a\r\nb\rc\nd', b'\r', b'\r\r\n', b'\n\r', b'a\x85b\xe2\x80\xa8c',
+TIO = [b'a\r\nb\rc\nd', b'\r', b'\r\r\n', b'\n\r', b'a\xc2\x85b\xe2\x80\xa8c',
        b'\xef\xbb\xbfa\r\n', b'a\r\n', b'', b'x\x0cy\x0bz']
 V['text_read'] = [
     {'in_hex': b.hex(), 'newline_none': read_universal(b),
@@ -1091,7 +1126,329 @@ V['random_rev_lines'] = [{'in': ln, 'groups': rev_match(ln)} for ln in rand_rl]
 V['decimal_zeros'] = [cp for cp in range(0x110000)
                       if unicodedata.decimal(chr(cp), None) == 0]
 
-with open(OUT, 'w', encoding='utf-8', newline='\n') as f:
-    json.dump(V, f, ensure_ascii=True, indent=1)
-    f.write('\n')
-print('wrote', OUT, 'sections:', len(V))
+# ================================================= WP-11 extension sections
+# Everything below `decimal_zeros` was added by WP-11 for the production API of
+# ARCHITECTURE §1.4.2 (random, eaw, float, the bytes composites, case folding).
+# It uses its own RNG, so the original sections above are unaffected.
+import hashlib  # noqa: E402
+import math  # noqa: E402
+import signal  # noqa: E402
+import struct  # noqa: E402
+
+EXT_SECTIONS = [
+    'random_mt19937', 'random_randbelow', 'random_shuffle', 'random_shuffle_strings',
+    'float_round2', 'float_repr', 'east_asian_width_wf', 'len_cjk', 'int_parse',
+    'signal_names', 'repr_codepoints', 'ntpath_more', 'ntpath_pairs', 'text_io_random',
+    'str_split_random', 'bytes_split_random', 'pre_push_parse_bytes',
+]
+
+
+def _fnv1a64(data: bytes) -> str:
+    h = 0xcbf29ce484222325
+    for byte in data:
+        h ^= byte
+        h = (h * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
+    return '%016x' % h
+
+
+def _bits(x: float) -> str:
+    return struct.pack('>d', x).hex()
+
+
+FIXED_RANDOM_SEED = 1542676187  # lang_base.py:22
+
+
+def _shuffled(seq):  # lang_base.py:146-153
+    fixed_random = random.Random()
+    fixed_random.seed(FIXED_RANDOM_SEED, version=1)
+    seq = list(seq)
+    fixed_random.shuffle(seq)
+    return seq
+
+
+def _key_words(seed: int) -> list[int]:
+    # random_seed() in _randommodule.c: the 32-bit words of abs(seed), least significant first
+    n, words = abs(seed), []
+    while n:
+        words.append(n & 0xFFFFFFFF)
+        n >>= 32
+    return words or [0]
+
+
+def _len_cjk(msg: str) -> int:  # commands/run.py:36-38
+    widths = {'A': 1, 'F': 2, 'H': 1, 'N': 1, 'Na': 1, 'W': 2}
+    return sum(widths[unicodedata.east_asian_width(c)] for c in msg)
+
+
+def _duration(x: float) -> str:  # commands/run.py:202,221
+    return f'{round(x, 2) or 0}'
+
+
+def _signal_name(n: int):
+    try:
+        return signal.Signals(n).name
+    except ValueError:
+        return None
+
+
+def _extension() -> None:
+    ext = random.Random(20261009)
+
+    # ---- random.Random (MT19937): seeding, raw output, _randbelow, shuffle
+    V['random_mt19937'] = [
+        {'seed': str(s), 'key': _key_words(s),
+         'genrand': [r.getrandbits(32) for _ in range(8)]}
+        for s in [0, 1, 5489, FIXED_RANDOM_SEED, 2**32 - 1, 2**32, 2**64 + 5, -7,
+                  12345678901234567890123]
+        for r in [random.Random(s)]
+    ]
+    r = random.Random(FIXED_RANDOM_SEED)
+    V['random_randbelow'] = {
+        'seed': FIXED_RANDOM_SEED,
+        'cases': [[n, [r._randbelow(n) for _ in range(6)]]
+                  for n in [1, 2, 3, 5, 7, 10, 100, 1000, 2**16 + 1, 2**31 - 1, 2**31,
+                            2**32 - 1, 2**32, 2**32 + 1, 2**40 + 3, 2**53 + 1, 2**63,
+                            2**64 - 1]],
+    }
+    ns = sorted(set(range(65)) | {100, 1000, 2000, 5000} | set(range(0, 2001, 37)))
+    shuffles = []
+    for n in ns:
+        out = _shuffled(range(n))
+        entry = {'n': n, 'fnv1a64': _fnv1a64(','.join(map(str, out)).encode())}
+        if n <= 100:
+            entry['out'] = out
+        shuffles.append(entry)
+    V['random_shuffle'] = shuffles
+    seq = [str(i) for i in range(10)]
+    V['random_shuffle_strings'] = {'in': seq, 'out': _shuffled(seq)}  # T10-XRG-16
+
+    # ---- float: f'{round(x, 2) or 0}' and repr(float); inputs are IEEE-754 bit patterns
+    def finite_bits() -> float:
+        while True:
+            x = struct.unpack('>d', ext.getrandbits(64).to_bytes(8, 'big'))[0]
+            if math.isfinite(x):
+                return x
+
+    special = [
+        0.0, -0.0, math.inf, -math.inf, math.nan, 5e-324, -5e-324, 2.2250738585072014e-308,
+        1.7976931348623157e308, -1.7976931348623157e308, 1.0, 0.1, 0.001, -0.001, 0.004,
+        0.0049999999999999, 0.005, 0.0050000000000001, 0.0051, 0.125, 0.375, 0.625, 0.875,
+        2.675, 1.005, 1.015, 1.025, 0.285, 1.0049999999999999, 12.5, 0.77, 1.236, 99.995,
+        999.995, 1e15, 1e16, 1e17, 1e22, 1e23, 123456789.125, 4503599627370495.5,
+        9007199254740993.0, 0.0001, 1e-05, 1.5e-07, -0.125, -2.675, -0.005, 0.015, 0.025,
+    ]
+    ties = ([(2 * k + 1) / 200 for k in range(2000)] + [m / 8 for m in range(400)]
+            + [-(2 * k + 1) / 200 for k in range(0, 200, 7)])
+    rand = ([ext.random() for _ in range(2500)] + [ext.uniform(0, 100) for _ in range(2500)]
+            + [ext.expovariate(0.5) for _ in range(2500)] + [finite_bits() for _ in range(2500)])
+    V['float_round2'] = [f'{_bits(x)} {_duration(x)}' for x in special + ties + rand]
+    tens = [float(f'1e{e}') for e in range(-325, 309)]
+    edges = [9.999999999999999e15, 9999999999999998.0, 1e16 - 2, 0.0001, 9.999999999999999e-05,
+             0.00011, 123456789012345680.0, 1.25e22, 2.0**53, 2.0**63, 2.0**-1074, 0.3,
+             1 / 3, 2 / 3, 100.0, 1e-07]
+    V['float_repr'] = [f'{_bits(x)} {x!r}' for x in
+                       special + edges + tens + [finite_bits() for _ in range(3000)]]
+
+    # ---- east-asian width (commands/run.py:36-38)
+    V['east_asian_width_wf'] = ranges(
+        lambda cp: unicodedata.east_asian_width(chr(cp)) in ('W', 'F'))
+    V['len_cjk'] = [
+        {'in': s, 'out': _len_cjk(s)}
+        for s in ['', 'passing hook', '检查中文名称の長いフック', 'emoji 🎉 é combining é',
+                  '\u200b', 'e\u0301', '\uff21\uff22', '\uffe0x', '\u3000', '\u2e80',
+                  '\U0001f600\U0001f1fa\U0001f1f8', '\u1100\u115f\u1160', '\x00\x7f\x85',
+                  'ｱｲｳ', '\u20a9', '\U00020000\U0003fffd\U0002ebf0']
+    ]
+
+    # ---- int() (base 10) with the %.200R error text
+    int_in = [
+        '0', '-0', '+0', '00', '007', '1_000', '1__0', '_1', '1_', '+_1', '-_1', '1_0_0',
+        ' 42 ', '\t-17\n', '\x1c5\x1f', '\xa012\u3000', '\u200b1', '1\u200b', '- 1', '+-1',
+        '--1', '++1', '0x10', '0b1', '0o7', '1.0', '1e3', '', ' ', '-', '+', '_',
+        '\u0661\u0662\u0663', '\u0661_\u0662', '\U0001d7cf\U0001d7d0', '\u0663.1',
+        '12\u0660', '\xb2', '\xbd', '\u216b', '\u1369', '\u0660x1', 'abc', "it's",
+        'say "hi"', 'both \'"', '\x00', '1\x00', '\xe9', '9' * 38, '-' + '9' * 38,
+        '170141183460469231731687303715884105727', '-170141183460469231731687303715884105728',
+        'x' * 300, "'" * 250, '"' * 250, '\x00' * 150, '\xe9' * 300,
+        '\U0001fae9' * 30 + 'x' * 100, 'a\tb' * 80, '\u0966\u0967', '\uff11\uff10',
+        '\u2007', '1\u20072', '٣', '1 000',
+    ]
+    int_cases = []
+    for s in int_in:
+        out = call(int, s)
+        if 'ok' in out and not -2**127 <= out['ok'] < 2**127:
+            continue  # beyond i128: parse_int reports these (documented)
+        int_cases.append({'in': tag(s), 'out': out})
+    V['int_parse'] = int_cases
+
+    # ---- signal.Signals names of the generating platform (subprocess's "died with <Signals.X: n>")
+    V['signal_names'] = {'platform': sys.platform,
+                         'names': [[n, _signal_name(n)] for n in range(0, 70)]}
+
+    # ---- repr() of single code points around every printability boundary class
+    cps = (list(range(0x0, 0x300)) + list(range(0x2000, 0x2070)) + list(range(0x2ff0, 0x3001))
+           + list(range(0x31e0, 0x31f0)) + list(range(0xd7f0, 0xd800)) + list(range(0xdc80, 0xdd00))
+           + list(range(0xe000, 0xe010)) + list(range(0xfdd0, 0xfdf0)) + [0xfeff]
+           + list(range(0xfff0, 0x10000)) + list(range(0x1f600, 0x1f610))
+           + list(range(0x1fae0, 0x1fb00)) + list(range(0x2ebf0, 0x2ebf6))
+           + list(range(0x2ee5c, 0x2ee61)) + list(range(0xe0000, 0xe0081, 16)) + [0xf0000]
+           + [0x10fffd, 0x10fffe, 0x10ffff])
+    V['repr_codepoints'] = [{'in': tag(chr(cp)), 'out': repr(chr(cp))} for cp in cps]
+
+    # ---- ntpath: more roots (UNC, devices, non-ASCII drives) and Unicode case folding
+    nt_more = [
+        '\\\\?\\UNC\\srv\\share\\x', '\\\\?\\unc\\srv\\share', '//?/UNC/srv/share/x/../y',
+        '\\\\?\\UNC\\srv', '\\\\?\\UNC\\srv\\share', '\\\\.\\COM1', '\\\\.\\pipe\\name\\..\\x',
+        '\u00e9:x', '\u00e9:\\x', '\U0001f600:x', '\U0001f600:\\x\\..\\y', 'C:', 'c:..\\..',
+        '\\\\srv\\share\\..', '\\\\srv\\\\share', '\\\\\\x', '\\\\srv\\share\\', '///x', 'C:/',
+        'C:\\\\x\\\\y', '\u00c9LODIE\\\u03a3\u0391\u03a3', 'C:\\Users\\\u00c9lodie',
+        'c:\\users\\\u00e9lodie\\x', '\u0130\\x', '\u01c5:\\x', '\u212a\\x', '\u1e9e:\\x',
+        '\\\\S\u00c9RVER\\Share\\x', 'x\\\u039f\u0394\u039f\u03a3\\y', '\u03a3\u0391\u03a3',
+        'a.b\\c.', 'C:\\a\\b.tar.gz', 'C:a.b', '\\\\srv\\share.x\\y.z', 'C:\\a\\..\\..\\..',
+        '\\\\srv\\share\\a\\..\\..\\..', 'C:\\x\\.\\.\\y\\', '..\\\\..', 'a\\..\\..\\b',
+    ]
+    V['ntpath_more'] = [
+        {'in': p, 'splitroot': list(ntpath.splitroot(p)), 'normpath': ntpath.normpath(p),
+         'split': list(ntpath.split(p)), 'splitext': list(ntpath.splitext(p)),
+         'splitdrive': list(ntpath.splitdrive(p)), 'isabs': ntpath.isabs(p),
+         'normcase': ntpath.normcase(p), 'expanduser_profile': expanduser_env(
+             {'USERPROFILE': 'C:\\Users\\\u00c9lodie', 'USERNAME': '\u00c9lodie'},
+             '~' + p, ntpath)['ok']}
+        for p in nt_more
+    ]
+    nt_pairs = [
+        ('C:\\Users\\\u00c9lodie\\repo\\x', 'c:\\users\\\u00e9lodie\\repo'),
+        ('\\\\S\u00c9RVER\\Share\\x', '\\\\s\u00e9rver\\share'),
+        ('C:\\\u039f\u0394\u039f\u03a3\\x', 'c:\\\u03bf\u03b4\u03bf\u03c2'),
+        ('C:\\\u039f\u0394\u039f\u03a3\\x', 'c:\\\u03bf\u03b4\u03bf\u03c3'),
+        ('C:\\\u039f\u0394\u039f\u03a3x\\y', 'c:\\\u03bf\u03b4\u03bf\u03c3x'),
+        ('\u0130:\\x', 'i\u0307:\\y'), ('\u00e9:x', '\u00c9:y'), ('\u00e9:\\a\\b', '\u00c9:\\A'),
+        ('\\\\?\\UNC\\srv\\share\\x', '\\\\?\\unc\\SRV\\share\\y'), ('C:\\a', 'D:\\a'),
+        ('\u01c5:\\x\\y', '\u01c6:\\x'), ('C:\\K\\x', 'c:\\\u212a'), ('C:\\\u212a\\x', 'c:\\k'),
+        ('\\\\srv\\share', '\\\\srv\\share\\x'), ('C:x', 'c:y'), ('C:\\a\\b', 'C:'),
+        ('\\a\\b', '\\a'), ('a\\b', 'a'), ('C:\\Stra\u00dfe\\x', 'c:\\STRASSE'),
+    ]
+    V['ntpath_pairs'] = [
+        {'a': a, 'b': b, 'cwd': NT_CWD, 'join': ntpath.join(a, b), 'join_rev': ntpath.join(b, a),
+         'relpath': with_cwd(NT_CWD, ntpath.relpath, a, b),
+         'commonpath': call(ntpath.commonpath, [a, b])}
+        for a, b in nt_pairs
+    ]
+
+    # ---- text-mode newline translation on random text
+    tio_alpha = ['a', '\u00e9', '\r', '\n', '\r\n', '\x85', '\u2028', '\x0b', '\x0c', ' ', '\r\r']
+    tio = []
+    for _ in range(400):
+        s = ''.join(ext.choice(tio_alpha) for _ in range(ext.randint(0, 12)))
+        b = s.encode()
+        tio.append({'in': s, 'newline_none': read_universal(b),
+                    'windows_hex': write_translate(s, '\r\n').hex()})
+    V['text_io_random'] = tio
+
+    # ---- str.split / rsplit / partition / strip(chars) on random text
+    rows = []
+    for _ in range(400):
+        t = ''.join(ext.choice(TXT_ALPHA) for _ in range(ext.randint(0, 14)))
+        rows.append({
+            'in': t, 'split0': t.split(None, 0), 'split2': t.split(None, 2),
+            'split3': t.split(None, 3), 'rsplit0': t.rsplit(None, 0),
+            'rsplit1': t.rsplit(None, 1), 'rsplit': t.rsplit(), 'partition': list(t.partition(',')),
+            'strip_chars': t.strip('#,\\ '), 'lstrip_chars': t.lstrip('#,\\ '),
+            'rstrip_chars': t.rstrip('#,\\ '),
+        })
+    V['str_split_random'] = rows
+
+    # ---- bytes.rsplit(None, m) / bytes.split() on random bytes
+    b_alpha = [b'a', b'b', b' ', b'\t', b'\n', b'\r', b'\x0b', b'\x0c', b'\x1c', b'\x1f',
+               b'\x85', b'\xa0', b'\xc2\xa0', b'\xe9', b'\x00', b'#']
+    brows = []
+    for _ in range(400):
+        b = b''.join(ext.choice(b_alpha) for _ in range(ext.randint(0, 12)))
+        brows.append({'in_hex': b.hex(),
+                      **{f'rsplit_{m}': [x.hex() for x in b.rsplit(None, m)] for m in (-1, 0, 1, 3)}})
+    V['bytes_split_random'] = brows
+
+    # ---- the bytes variant of the pre-push parse (D-CRASH-11): bytes.splitlines + rsplit(maxsplit=3)
+    def pre_push_parse_bytes(stdin: bytes) -> list:
+        out = []
+        for line in stdin.splitlines():
+            parts = line.rsplit(maxsplit=3)
+            try:
+                a, b, c, d = parts
+            except ValueError as e:
+                out.append({'line_hex': line.hex(), **err(e)})
+                break
+            out.append({'line_hex': line.hex(), 'fields_hex': [x.hex() for x in (a, b, c, d)]})
+        return out
+
+    pp_alpha = [b'refs/heads/x', b'0' * 40, b'1' * 40, b' ', b'  ', b'\t', b'\x0b', b'\x0c',
+                b'\r', b'\n', b'\r\n', b'\x1c', b'\x85', b'\xa0', b'\xe9', b'\x00', b'(delete)']
+    pp_in = list(PP) + [
+        b''.join(ext.choice(pp_alpha) for _ in range(ext.randint(0, 10))) for _ in range(300)
+    ]
+    V['pre_push_parse_bytes'] = [{'in_hex': b.hex(), 'out': pre_push_parse_bytes(b)} for b in pp_in]
+
+    assert list(V)[-len(EXT_SECTIONS):] == EXT_SECTIONS, list(V)
+
+
+if not LEGACY:
+    _extension()
+
+
+def _delta(base: dict, cur: dict) -> dict:
+    out: dict = {}
+    for name in base:
+        if name != 'meta' and name not in cur:
+            sys.exit(f'section {name} missing from the current interpreter')
+    for name, val in cur.items():
+        if name == 'meta':
+            continue
+        b = base.get(name)
+        if b is None:
+            sys.exit(f'section {name} missing from the base file')
+        if b == val:
+            continue
+        if isinstance(val, list) and isinstance(b, list) and len(b) == len(val):
+            out[name] = {str(i): v for i, (x, v) in enumerate(zip(b, val)) if x != v}
+        elif isinstance(val, dict) and isinstance(b, dict) and list(b) == list(val):
+            out[name] = {k: v for k, v in val.items() if b[k] != v}
+        else:
+            # e.g. a range list of another length: the whole section is replaced
+            out[name] = {'*': val}
+    return out
+
+
+if DELTA_BASE is not None:
+    with open(DELTA_BASE, 'rb') as fh:
+        base_bytes = fh.read()
+    base = json.loads(base_bytes)
+    current = json.loads(json.dumps(V, ensure_ascii=True))  # tuples -> lists, as in the file
+    doc = {
+        'meta': {
+            'generator': 'xtask/oracle/gen_pycompat_vectors.py',
+            'python': platform.python_version(),
+            'implementation': platform.python_implementation(),
+            'unicode': unicodedata.unidata_version,
+            'platform': sys.platform,
+            'base': os.path.basename(DELTA_BASE),
+            'base_python': base['meta']['python'],
+            'base_unicode': base['meta']['unicode'],
+            'base_sha256': hashlib.sha256(base_bytes).hexdigest(),
+            'notes': (
+                'delta[section] maps a list index (decimal string) or an object key of the '
+                'base section to the value this interpreter produces, or "*" to the whole '
+                'section when its shape changed; sections and entries that are equal are '
+                'omitted'
+            ),
+        },
+        'delta': _delta(base, current),
+    }
+    with open(OUT, 'w', encoding='utf-8', newline='\n') as f:
+        json.dump(doc, f, ensure_ascii=True, indent=1)
+        f.write('\n')
+    print('wrote', OUT, 'delta sections:', len(doc['delta']))
+else:
+    with open(OUT, 'w', encoding='utf-8', newline='\n') as f:
+        json.dump(V, f, ensure_ascii=True, indent=1)
+        f.write('\n')
+    print('wrote', OUT, 'sections:', len(V))
