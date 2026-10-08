@@ -1,4 +1,4 @@
-//! One zero-sized backend per language, registered in [`crate::backend`] (§6.2). W0 stubs, implemented by WP-16
+//! One zero-sized backend per language, registered in [`crate::backend`] (§6.2): the env-less ones by WP-16
 //! (`envless`), WP-24 (group 1) and WP-25 (group 2).
 //!
 //! Owner: WP-16.
