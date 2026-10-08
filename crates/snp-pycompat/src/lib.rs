@@ -5,8 +5,9 @@
 //! dependencies** besides std: it sits under every other snp crate, and `regex` lives only in
 //! snp-pyre. The Unicode tables in `src/generated/` are produced by
 //! `xtask/oracle/gen_pycompat_tables.py` under CPython 3.13 (UCD 15.1, ADR-020). No public function
-//! returns `impl Trait`; iterators are named types. Every error type implements `Display` (= Python's
-//! `str(exc)`), `std::error::Error` and `py_type()` (the Python class printed in crash lines).
+//! returns `impl Trait`; iterators are named types. Every error type implements `Display` (=
+//! Python's `str(exc)`), `std::error::Error` and `py_type()` (the Python class printed in crash
+//! lines).
 //!
 //! Python profiles (ADR-020): string, path, shlex and codec semantics follow CPython 3.12 (the
 //! `tests/vectors/pycompat-vectors.cpython312.json` vectors); `repr`/`isprintable` and the

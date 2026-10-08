@@ -31,8 +31,8 @@ mod catalog {
         assert_eq!(shuffled(&seq), shuffled(&seq));
     }
 
-    /// `Prefix(prefix_dir).path(*parts)` (`prefix.py:9-10`): `normpath(join(prefix_dir, *parts))`, in
-    /// the POSIX flavour.
+    /// `Prefix(prefix_dir).path(*parts)` (`prefix.py:9-10`): `normpath(join(prefix_dir, *parts))`,
+    /// in the POSIX flavour.
     fn prefix_path_posix(prefix: &str, parts: &[&str]) -> String {
         let parts: Vec<&[u8]> = parts.iter().map(|p| p.as_bytes()).collect();
         let joined = posixpath::join(prefix.as_bytes(), &parts);
@@ -85,7 +85,8 @@ mod catalog {
                 "host {prefix:?} {part:?}"
             );
         }
-        // test_path_multiple_args: Prefix('foo').path('bar', 'baz') == os.path.join('foo', 'bar', 'baz')
+        // test_path_multiple_args: Prefix('foo').path('bar', 'baz') == os.path.join('foo', 'bar',
+        // 'baz')
         assert_eq!(prefix_path_posix("foo", &["bar", "baz"]), "foo/bar/baz");
         assert_eq!(
             String::from_utf8(posixpath::join(b"foo", &[b"bar", b"baz"])).unwrap(),

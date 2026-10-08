@@ -1,8 +1,8 @@
 //! Fuzz target `pycompat_rsplit4`: `a, b, c, d = line.rsplit(maxsplit=3)` of pre-push lines
 //! (`hook_impl.py:128-130`), str and bytes, and the other line/record splitters fed by git.
 //! Invariants (ARCHITECTURE §13.5): no panic, no hang > 5 s, ≤ 512 MB RSS, 256 KiB thread stacks;
-//! `rsplit4` equals `rsplit_whitespace(_, Some(3))`; splitlines with `keepends` reproduces the input
-//! in both directions; `zsplit` rejoined with NUL is the NUL-stripped input.
+//! `rsplit4` equals `rsplit_whitespace(_, Some(3))`; splitlines with `keepends` reproduces the
+//! input in both directions; `zsplit` rejoined with NUL is the NUL-stripped input.
 //!
 //! Owner: WP-11.
 #![no_main]

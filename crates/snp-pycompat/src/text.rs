@@ -297,7 +297,8 @@ pub fn split_whitespace(s: &str, maxsplit: Option<usize>) -> SplitWs<'_> {
 }
 
 /// `s.rsplit(None, maxsplit)`, returned left-to-right like Python. Once `maxsplit` is reached the
-/// remainder keeps its *leading* whitespace: `'  a b c d'.rsplit(maxsplit=3) == ['  a', 'b', 'c', 'd']`.
+/// remainder keeps its *leading* whitespace: `'  a b c d'.rsplit(maxsplit=3) == ['  a', 'b', 'c',
+/// 'd']`.
 #[must_use]
 pub fn rsplit_whitespace(s: &str, maxsplit: Option<usize>) -> Vec<&str> {
     let mut out = Vec::new();
@@ -381,7 +382,8 @@ impl UnpackError {
 }
 
 impl fmt::Display for UnpackError {
-    /// `not enough values to unpack (expected 4, got 3)` / `too many values to unpack (expected 4)`.
+    /// `not enough values to unpack (expected 4, got 3)` / `too many values to unpack (expected
+    /// 4)`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.got > self.expected {
             messages::unpack_too_many(f, self.expected)

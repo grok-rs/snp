@@ -38,10 +38,13 @@ impl std::error::Error for IntParseError {}
 
 /// `int(s)` in base 10: whitespace stripped at both ends, one optional sign directly before the
 /// digits, Unicode `Nd` digits of any script (`int('١٢')` == 12, `int('²')` fails), a single `_`
-/// only between digits, no prefix, no inner whitespace. The whitespace is `_PyUnicode_Transform…`'s:
-/// non-ASCII PY-WS becomes a space while ASCII stays as is, and `PyLong_FromString` skips only
-/// `Py_ISSPACE` (`' \t\n\r\x0b\x0c'`), so `int('\x1c5')` fails although `'\x1c'.isspace()`. CPython ints are unbounded; values outside
-/// `i128` are reported as this error (pre-commit only compares small version components).
+/// only between digits, no prefix, no inner whitespace.
+///
+/// The whitespace is that of `_PyUnicode_TransformDecimalAndSpaceToASCII`: non-ASCII PY-WS becomes
+/// a space while ASCII stays as is, and `PyLong_FromString` skips only `Py_ISSPACE`
+/// (`' \t\n\r\x0b\x0c'`), so `int('\x1c5')` fails although `'\x1c'.isspace()` is true. CPython ints
+/// are unbounded; values outside `i128` are reported as this error (pre-commit only compares small
+/// version components).
 pub fn parse_int(s: &str) -> Result<i128, IntParseError> {
     let err = || IntParseError {
         literal: s.to_owned(),

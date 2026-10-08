@@ -56,8 +56,8 @@ impl Utf8DecodeError {
 }
 
 impl fmt::Display for Utf8DecodeError {
-    /// `str(exc)`: `'utf-8' codec can't decode byte 0xe9 in position 14: invalid continuation byte`,
-    /// or `… decode bytes in position 3-4: unexpected end of data` for a longer range.
+    /// `str(exc)`: `'utf-8' codec can't decode byte 0xe9 in position 14: invalid continuation
+    /// byte`, or `… decode bytes in position 3-4: unexpected end of data` for a longer range.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let reason = self.reason.text();
         if self.end.saturating_sub(self.start) <= 1 {

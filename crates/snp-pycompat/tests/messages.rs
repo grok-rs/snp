@@ -1,7 +1,8 @@
 //! Goldens of every user-visible text of the crate (ARCHITECTURE §1.3 "Messages"; the definition of
-//! done asks for "messages golden-tested in both brands"): CPython's exception texts, which name no tool and are therefore
-//! the same bytes under the compat and the snp brand. The vector files prove them against CPython;
-//! these goldens pin the exact bytes and the `py_type()` crash-line class of every variant.
+//! done asks for "messages golden-tested in both brands"): CPython's exception texts, which name no
+//! tool and are therefore the same bytes under the compat and the snp brand. The vector files prove
+//! them against CPython; these goldens pin the exact bytes and the `py_type()` crash-line class of
+//! every variant.
 //!
 //! Owner: WP-11.
 

@@ -1,6 +1,6 @@
 //! CPython 3.12 `posixpath` (`Lib/posixpath.py`, `Lib/genericpath.py`; `normpath` is the C
-//! `_path_normpath`) on raw bytes (`OsStr::as_bytes()` on Unix); compiled on every OS. Purely lexical
-//! unless stated otherwise (15 §A4.9).
+//! `_path_normpath`) on raw bytes (`OsStr::as_bytes()` on Unix); compiled on every OS. Purely
+//! lexical unless stated otherwise (15 §A4.9).
 
 use std::borrow::Cow;
 
@@ -18,9 +18,10 @@ pub fn isabs(p: &[u8]) -> bool {
     p.first() == Some(&SEP)
 }
 
-/// `posixpath.normpath(p)` (`prefix.py:9-10` `Prefix.path`, `parse_shebang.py:25`): `''` → `'.'`; exactly two leading slashes are kept, one or three and
-/// more collapse to one; `''`/`.` components are dropped; `..` pops a previous non-`..` component,
-/// is dropped at the root and kept when it leads a relative path; no trailing slash.
+/// `posixpath.normpath(p)` (`prefix.py:9-10` `Prefix.path`, `parse_shebang.py:25`): `''` → `'.'`;
+/// exactly two leading slashes are kept, one or three and more collapse to one; `''`/`.` components
+/// are dropped; `..` pops a previous non-`..` component, is dropped at the root and kept when it
+/// leads a relative path; no trailing slash.
 #[must_use]
 pub fn normpath(p: &[u8]) -> Vec<u8> {
     if p.is_empty() {
@@ -74,8 +75,8 @@ pub fn join(a: &[u8], rest: &[&[u8]]) -> Vec<u8> {
     path
 }
 
-/// `posixpath.split(p)`: the tail follows the last `/`; the head loses its trailing slashes unless it
-/// consists of slashes only.
+/// `posixpath.split(p)`: the tail follows the last `/`; the head loses its trailing slashes unless
+/// it consists of slashes only.
 #[must_use]
 pub fn split(p: &[u8]) -> (&[u8], &[u8]) {
     let i = p
@@ -124,14 +125,16 @@ pub(crate) fn splitext_generic<'a>(p: &'a [u8], seps: &[u8]) -> (&'a [u8], &'a [
     (p, &[])
 }
 
-/// `posixpath.splitext(p)` (`genericpath._splitext`; `'...md'` → no extension; `'foo.'` → `('foo', '.')`).
+/// `posixpath.splitext(p)` (`genericpath._splitext`): `'...md'` has no extension, and
+/// `'foo.'` → `('foo', '.')`.
 #[must_use]
 pub fn splitext(p: &[u8]) -> (&[u8], &[u8]) {
     splitext_generic(p, b"/")
 }
 
-/// `posixpath.abspath(p)` (`main.py:178-186`) with an explicit cwd (`os.getcwd()`; snp never chdirs): lexical, i.e.
-/// `normpath(join(cwd, p))` — not `std::path::absolute`, which keeps `..` on Unix.
+/// `posixpath.abspath(p)` (`main.py:178-186`) with an explicit cwd (`os.getcwd()`; snp never
+/// chdirs): lexical, i.e. `normpath(join(cwd, p))` — not `std::path::absolute`, which keeps `..` on
+/// Unix.
 #[must_use]
 pub fn abspath(p: &[u8], cwd: &[u8]) -> Vec<u8> {
     if isabs(p) {
@@ -142,8 +145,8 @@ pub fn abspath(p: &[u8], cwd: &[u8]) -> Vec<u8> {
 }
 
 /// `posixpath.relpath(path, start)` (`main.py:191-199`); `start = None` means the cwd; `''` is
-/// `ValueError: no path specified`. Compares the `abspath` component lists (empty components dropped)
-/// and joins `..` for every unmatched start component with the rest of the path.
+/// `ValueError: no path specified`. Compares the `abspath` component lists (empty components
+/// dropped) and joins `..` for every unmatched start component with the rest of the path.
 pub fn relpath(p: &[u8], start: Option<&[u8]>, cwd: &[u8]) -> Result<Vec<u8>, PathError> {
     if p.is_empty() {
         return Err(PathError::NoPathSpecified);
@@ -161,8 +164,8 @@ pub fn relpath(p: &[u8], start: Option<&[u8]>, cwd: &[u8]) -> Result<Vec<u8>, Pa
     Ok(rel.join(&SEP))
 }
 
-/// `posixpath.commonpath(paths)` (`lang_base.py:70` `exe_exists`): component-wise, ignores `''`/`.` components, does not resolve
-/// `..` (`['/a/../b', '/a/b']` → `'/a'`).
+/// `posixpath.commonpath(paths)` (`lang_base.py:70` `exe_exists`): component-wise, ignores `''`/`.`
+/// components, does not resolve `..` (`['/a/../b', '/a/b']` → `'/a'`).
 pub fn commonpath(ps: &[&[u8]]) -> Result<Vec<u8>, PathError> {
     let Some(first) = ps.first() else {
         return Err(PathError::EmptySequence);
@@ -188,8 +191,8 @@ pub fn commonpath(ps: &[&[u8]]) -> Result<Vec<u8>, PathError> {
     Ok(out)
 }
 
-/// `posixpath.expanduser(p)` (`store.py:33`, `lang_base.py:68`): only a leading `~` or `~user` up to
-/// the first `/`; the home loses trailing slashes, and an empty result is `/`.
+/// `posixpath.expanduser(p)` (`store.py:33`, `lang_base.py:68`): only a leading `~` or `~user` up
+/// to the first `/`; the home loses trailing slashes, and an empty result is `/`.
 ///
 /// * `home_env`: `os.environ.get('HOME')` — `Some(b"")` is honoured (gives `/`).
 /// * `pw_current`: the passwd home of the real uid, used only when `HOME` is unset.
