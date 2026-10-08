@@ -1,0 +1,31 @@
+[package]
+name = "snp-run"
+description = "Run pipeline, scheduler, renderer, hook-impl, try-repo, install-hooks, list and meta hooks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+snp-cli.workspace = true
+snp-config.workspace = true
+snp-core.workspace = true
+snp-files.workspace = true
+snp-git.workspace = true
+snp-hooks.workspace = true
+snp-lang.workspace = true
+snp-net.workspace = true
+snp-os.workspace = true
+snp-proc.workspace = true
+snp-pycompat.workspace = true
+snp-pyre.workspace = true
+snp-repo.workspace = true
+snp-stash.workspace = true
+snp-store.workspace = true
+snp-yaml.workspace = true
+
+[lints]
+workspace = true

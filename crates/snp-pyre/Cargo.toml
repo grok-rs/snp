@@ -1,0 +1,21 @@
+[package]
+name = "snp-pyre"
+description = "CPython-3.12 `re` front end lowered to regex (tier 1) and fancy-regex (tier 2)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+snp-core.workspace = true
+snp-pycompat.workspace = true
+
+[features]
+default = ["py-re-names"]
+py-re-names = []
+
+[lints]
+workspace = true

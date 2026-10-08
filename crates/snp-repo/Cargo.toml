@@ -1,0 +1,30 @@
+[package]
+name = "snp-repo"
+description = "Hook resolution, clones, fast-path decisions and environment install orchestration"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+snp-config.workspace = true
+snp-core.workspace = true
+snp-files.workspace = true
+snp-git.workspace = true
+snp-hooks-data.workspace = true
+snp-lang.workspace = true
+snp-net.workspace = true
+snp-os.workspace = true
+snp-proc.workspace = true
+snp-pyre.workspace = true
+snp-store.workspace = true
+
+[features]
+# Forwards the language shim harness to crates/snp's `testing` feature (no snp -> snp-lang edge).
+testing = ["snp-lang/testing"]
+
+[lints]
+workspace = true

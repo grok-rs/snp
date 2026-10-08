@@ -1,0 +1,18 @@
+[package]
+name = "snp-difftest"
+description = "Differential harness against pre-commit 4.6.2 (tooling, not shipped)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+snp-core.workspace = true
+snp-testkit.workspace = true
+snp-yaml.workspace = true
+
+[lints]
+workspace = true

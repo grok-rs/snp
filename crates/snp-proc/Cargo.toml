@@ -1,0 +1,22 @@
+[package]
+name = "snp-proc"
+description = "Process spawning, roles, signals, child registry, JobPool, xargs and executable resolution"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+snp-core.workspace = true
+snp-os.workspace = true
+snp-pycompat.workspace = true
+file-identify.workspace = true
+
+[features]
+testing = []
+
+[lints]
+workspace = true

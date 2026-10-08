@@ -1,0 +1,27 @@
+[package]
+name = "snp-hooks"
+description = "Native hooks: framework, pygrep, fail, hazmat, builtin variants and pre-commit-hooks ports"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+snp-argparse.workspace = true
+snp-cli.workspace = true
+snp-core.workspace = true
+snp-git.workspace = true
+snp-hooks-data.workspace = true
+snp-os.workspace = true
+snp-proc.workspace = true
+snp-pycompat.workspace = true
+snp-pyparsers.workspace = true
+snp-pyre.workspace = true
+cfgv.workspace = true
+file-identify.workspace = true
+
+[lints]
+workspace = true

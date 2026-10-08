@@ -1,0 +1,18 @@
+[package]
+name = "snp-yaml"
+description = "PyYAML SafeLoader/SafeDumper compatibility over libyaml-safer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+snp-core.workspace = true
+snp-pycompat.workspace = true
+cfgv.workspace = true
+
+[lints]
+workspace = true

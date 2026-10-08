@@ -1,0 +1,20 @@
+[package]
+name = "snp-stash"
+description = "Staged-files stash guard (data-safety core) and the DiffOracle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+snp-core.workspace = true
+snp-git.workspace = true
+snp-os.workspace = true
+snp-proc.workspace = true
+snp-pycompat.workspace = true
+
+[lints]
+workspace = true

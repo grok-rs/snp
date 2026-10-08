@@ -1,0 +1,17 @@
+[package]
+name = "snp-os"
+description = "Durable filesystem primitives, file locks, terminal and colour decisions, home and realpath"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+snp-core.workspace = true
+snp-pycompat.workspace = true
+
+[lints]
+workspace = true

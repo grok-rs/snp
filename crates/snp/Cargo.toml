@@ -1,0 +1,65 @@
+[package]
+name = "snp"
+description = "You Shell Not Pass: a drop-in replacement for pre-commit 4.6.2 with lefthook-inspired extensions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+default-run = "snp"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "snp"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+snp-cli.workspace = true
+snp-cmd.workspace = true
+snp-core.workspace = true
+snp-git.workspace = true
+snp-hooks.workspace = true
+snp-migrate.workspace = true
+snp-net.workspace = true
+snp-os.workspace = true
+snp-proc.workspace = true
+snp-pyre.workspace = true
+snp-repo.workspace = true
+snp-run.workspace = true
+snp-store.workspace = true
+dhat = { workspace = true, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+# node tarballs are .tar.xz on Unix (ARCHITECTURE §1.4.9)
+snp-net = { workspace = true, features = ["xz"] }
+
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = { workspace = true, optional = true }
+
+[dev-dependencies]
+# integration tests (tests/it) and the WP-36 criterion benches
+criterion.workspace = true
+dhat.workspace = true
+snp-argparse.workspace = true
+snp-files.workspace = true
+snp-pycompat.workspace = true
+snp-pyre.workspace = true
+snp-testkit.workspace = true
+snp-yaml.workspace = true
+
+[features]
+# Test-only instrumentation: fault injection (ADR-066), the spawn log and the language shim
+# harness (never in releases). snp-lang/testing is reached through snp-repo (no snp -> snp-lang edge).
+testing = ["snp-core/fault-injection", "snp-proc/testing", "snp-git/testing", "snp-repo/testing"]
+# dhat heap profiling for the B3 allocation budget (WP-36).
+dhat-heap = ["dep:dhat"]
+# mimalloc as the musl global allocator, iff ADR-079's measurement adopts it (WP-36).
+musl-mimalloc = ["dep:mimalloc"]
+
+[lints]
+workspace = true
