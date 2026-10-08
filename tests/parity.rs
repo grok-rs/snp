@@ -28,8 +28,8 @@ mod common;
 use std::path::Path;
 
 use cfgv::{
-    Cx, LoadError, Map, ValidationError, Value, apply_defaults, load_from_filename, py,
-    remove_defaults, validate_with,
+    BigInt, Cx, LoadError, Map, ParseBigIntError, ValidationError, Value, apply_defaults,
+    load_from_filename, py, remove_defaults, validate_with,
 };
 use common::{Mismatches, SpecBuilder, hex_bytes, load_vectors, value};
 use serde_json::Value as Json;
@@ -143,31 +143,40 @@ fn validation_messages_defaults_and_warnings_match_python() {
         let mut warnings = Vec::new();
         let result = validate_with(&v, schema, &mut Cx::collect(&mut warnings));
         let expected = &case["result"];
-        if let Err(err) = result {
-            m.compare(
+        match result {
+            // An exception other than ValidationError escaped Python cfgv.
+            Err(err) if err.is_uncaught() => m.compare(
+                || format!("{name}: uncaught"),
+                &err.to_string(),
+                expected["uncaught"]
+                    .as_str()
+                    .unwrap_or("<python did not raise this exception>"),
+            ),
+            Err(err) => m.compare(
                 || format!("{name}: error"),
                 &err.to_string(),
                 expected["error"]
                     .as_str()
-                    .unwrap_or("<python accepted the value>"),
-            );
-        } else {
-            let applied = expected["applied"]
-                .as_str()
-                .unwrap_or("<python rejected the value>");
-            m.compare(
-                || format!("{name}: applied"),
-                &apply_defaults(&v, schema).repr(),
-                applied,
-            );
-            let removed = expected["removed"]
-                .as_str()
-                .unwrap_or("<python rejected the value>");
-            m.compare(
-                || format!("{name}: removed"),
-                &remove_defaults(&v, schema).repr(),
-                removed,
-            );
+                    .unwrap_or("<python did not raise a ValidationError>"),
+            ),
+            Ok(()) => {
+                let applied = expected["applied"]
+                    .as_str()
+                    .unwrap_or("<python rejected the value>");
+                m.compare(
+                    || format!("{name}: applied"),
+                    &repr_or_raise(&apply_defaults(&v, schema)),
+                    applied,
+                );
+                let removed = expected["removed"]
+                    .as_str()
+                    .unwrap_or("<python rejected the value>");
+                m.compare(
+                    || format!("{name}: removed"),
+                    &repr_or_raise(&remove_defaults(&v, schema)),
+                    removed,
+                );
+            }
         }
         let expected_warnings: Vec<&str> = cases(case, "warnings")
             .iter()
@@ -180,6 +189,87 @@ fn validation_messages_defaults_and_warnings_match_python() {
         );
     }
     m.finish("messages");
+}
+
+/// The generator's `repr_or_raise`: `repr()`, or `!{type}: {message}` when
+/// CPython raises.
+fn repr_or_raise(v: &Value) -> String {
+    v.try_repr()
+        .unwrap_or_else(|e| format!("!{}", ValidationError::from(e)))
+}
+
+#[test]
+fn int_digit_limit_matches_python() {
+    let vectors = load_vectors("repr.json");
+    let limit = &vectors["int_limit"];
+    let mut m = Mismatches::default();
+    for case in cases(limit, "parse") {
+        let input = text(case, "text");
+        let base = case["base"]
+            .as_u64()
+            .and_then(|b| u32::try_from(b).ok())
+            .expect("base");
+        let what = || {
+            format!(
+                "int({}... ({} chars), {base})",
+                &input[..12.min(input.len())],
+                input.len()
+            )
+        };
+        let result = &case["result"];
+        match (BigInt::from_str_radix(input, base), result["hex"].as_str()) {
+            (Ok(got), Some(hex)) => m.compare(what, &format!("{got:x}"), hex),
+            (Ok(got), None) => m.compare(what, &format!("{got:x}"), "<python failed>"),
+            (Err(err @ ParseBigIntError::ExceedsMaxStrDigits { .. }), _) => m.compare(
+                what,
+                &err.to_string(),
+                result["error"].as_str().unwrap_or("<python succeeded>"),
+            ),
+            // Other parse errors have Rust texts; Python must fail too.
+            (Err(_), expected) => m.compare(
+                what,
+                "<failed>",
+                expected.map_or("<failed>", |_| "<python succeeded>"),
+            ),
+        }
+    }
+    for case in cases(limit, "str") {
+        let hex = text(case, "hex");
+        let big = BigInt::from_str_radix(hex, 16).expect("hex");
+        let what = || format!("str(0x{}...)", &hex[..12.min(hex.len())]);
+        let result = &case["result"];
+        match big.to_decimal_string() {
+            Ok(text) => m.compare(
+                what,
+                &text,
+                result["str"].as_str().unwrap_or("<python raised>"),
+            ),
+            Err(err) => m.compare(
+                what,
+                &err.to_string(),
+                result["error"].as_str().unwrap_or("<python succeeded>"),
+            ),
+        }
+        m.compare(
+            || format!("{} exceeds", what()),
+            &big.exceeds_max_str_digits().to_string(),
+            &result.get("error").is_some().to_string(),
+        );
+        let value = Value::from(big);
+        match value.try_repr() {
+            Ok(repr) => m.compare(
+                what,
+                &repr,
+                result["str"].as_str().unwrap_or("<python raised>"),
+            ),
+            Err(err) => m.compare(
+                what,
+                &err.to_string(),
+                result["error"].as_str().unwrap_or("<python succeeded>"),
+            ),
+        }
+    }
+    m.finish("int digit limit");
 }
 
 /// The generator's `kv_loader`: `key=value` lines.

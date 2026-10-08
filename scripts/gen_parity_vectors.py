@@ -22,6 +22,12 @@ Value encoding (shared by all files)::
     {"t": "dict", "v": [[key, value], ...]}
     {"t": "date", "v": [y, m, d]}
     {"t": "datetime", "v": [y, m, d, H, M, S, us], "tz": seconds | null}
+    {"t": "int", "hex": "-ff"}  (integers beyond CPython's 4300-digit limit)
+
+Exceptions other than ``ValidationError`` that escape cfgv (which the Rust
+crate models as ``ValidationError::uncaught``) are recorded as
+``"{type}: {message}"``; a ``repr()`` that raises is recorded as
+``"!{type}: {message}"``.
 """
 from __future__ import annotations
 
@@ -237,6 +243,40 @@ def repr_vectors():
     return out
 
 
+def int_limit_vectors():
+    """``int(text, base)`` and ``str(int)`` around CPython's digit limit."""
+    parse = [
+        ('1' * 4300, 10), ('1' * 4301, 10), ('0' * 5000, 10),
+        ('-' + '1' * 4301, 10), ('+' + '9' * 4300, 10),
+        ('1' * 5000 + 'x', 10), ('z' * 4301, 36), ('z' * 4300, 36),
+        ('2' * 4301, 3), ('f' * 20000, 16), ('-' + 'F' * 9000, 16),
+        ('7' * 9000, 8), ('1' * 30000, 2), ('v' * 5000, 32),
+        ('3' * 5000, 4), ('ff', 16), ('-0', 16), ('0' * 6000, 16),
+    ]
+    out_parse = []
+    for text, base in parse:
+        try:
+            value = int(text, base)
+        except ValueError as e:
+            result = {'error': str(e)}
+        else:
+            result = {'hex': format(value, 'x')}
+        out_parse.append({'text': text, 'base': base, 'result': result})
+    values = [
+        10 ** 4300 - 1, 10 ** 4300, -(10 ** 4300 - 1), -(10 ** 4300),
+        2 ** 14284, 2 ** 14285, 2 ** 14286, 2 ** 14287, -(2 ** 14285),
+        int('f' * 4000, 16), 10 ** 4299, 10 ** 100,
+    ]
+    out_str = []
+    for v in values:
+        try:
+            result = {'str': str(v)}
+        except ValueError as e:
+            result = {'error': str(e)}
+        out_str.append({'hex': format(v, 'x'), 'result': result})
+    return {'parse': out_parse, 'str': out_str}
+
+
 def printable_ranges():
     ranges = []
     start = None
@@ -302,6 +342,8 @@ class Spec:
         if t in ('bool', 'str'):
             return d['v']
         if t == 'int':
+            if 'hex' in d:
+                return int(d['hex'], 16)
             return int(d['v'])
         if t == 'float':
             return struct.unpack('>d', bytes.fromhex(d['bits']))[0]
@@ -357,12 +399,15 @@ class Spec:
         raise ValueError(kind)
 
     def regex_check(self, v):
-        if isinstance(v, str):
+        if isinstance(v, (str, bytes)):
+            key = v if isinstance(v, str) else 'b:' + v.hex()
             try:
                 re.compile(v)
-                self.regexes[v] = True
+                self.regexes[key] = True
             except re.error:
-                self.regexes[v] = False
+                self.regexes[key] = False
+            except Exception as e:  # escapes cfgv.check_regex too
+                self.regexes[key] = f'{type(e).__name__}: {e}'
         self.cfgv.check_regex(v)
 
     def condition(self, c):
@@ -591,6 +636,11 @@ def s(v):
 
 def i(v):
     return {'t': 'int', 'v': str(v)}
+
+
+def hexint(v):
+    """An integer of any size (``str()`` of it may raise)."""
+    return {'t': 'int', 'hex': format(v, 'x')}
 
 
 def fl(v):
@@ -996,7 +1046,103 @@ def schema_cases():
         mp('M', None, item('optional', key=s('x'), check=check('any'),
                            default=i(0))),
         dct((s('x'), b(False))))
+
+    # check_type(tp, typename=''): `typename or tp.__name__`.
+    for n, v in enumerate(SAMPLE_VALUES):
+        add(f'type_empty_name_{n}',
+            mp('M', None, item('required', key=s('k'), check=check(
+                'type', type='str', name=''))),
+            dct((s('k'), v)))
+
+    # Bare check_regex: bytes patterns, and the TypeError re.compile
+    # raises for anything else (unhashable values fail while hashing).
+    regex_values = SAMPLE_VALUES + [
+        tup(lst()), tup(s('a'), tup(dct())), tup(i(1), s('x')),
+        {'t': 'bytes', 'hex': b'^$'.hex()}, {'t': 'bytes', 'hex': b'('.hex()},
+        {'t': 'bytes', 'hex': b'\\u0041'.hex()},
+        {'t': 'bytes', 'hex': b'(?u)a'.hex()},
+        {'t': 'bytes', 'hex': b'(?L)a'.hex()},
+        {'t': 'bytes', 'hex': b"it's\xff(".hex()},
+        {'t': 'bytes', 'hex': b'\\x41\\Z'.hex()},
+        s('(?L)a'), s('a{4294967296}'), s('a{1,4294967296}'),
+    ]
+    for n, v in enumerate(regex_values):
+        add(f'regex_bare_{n}',
+            mp('M', None, item('required', key=s('k'), check=check('regex'))),
+            dct((s('k'), v)))
+    add('regex_overflow_in_context',
+        mp('Hook', s('id'), item('required', key=s('id'), check=check(
+            'and', fns=[check('string'), check('regex')]))),
+        dct((s('id'), s('a{4294967296}'))))
+
+    # CPython refuses str()/repr() of integers with more than 4300 digits;
+    # cfgv lets the ValueError escape, even from contexts of valid values.
+    huge = hexint(int('f' * 4000, 16))
+    at_limit = hexint(10 ** 4300 - 1)
+    over_limit = hexint(-(10 ** 4300))
+    hook = mp('Hook', s('id'), item('required', key=s('id'),
+                                    check=check('any')),
+              item('optional', key=s('x'), check=check('int'), default=i(0)))
+    for name, v in [('huge', huge), ('at_limit', at_limit),
+                    ('over_limit', over_limit)]:
+        add(f'bigint_id_{name}', hook, dct((s('id'), v)))
+        add(f'bigint_id_{name}_error', hook,
+            dct((s('id'), v), (s('x'), s('nope'))))
+        add(f'bigint_id_{name}_in_tuple', hook,
+            dct((s('id'), tup(s('a'), v)), (s('x'), s('nope'))))
+        add(f'bigint_value_{name}', hook,
+            dct((s('id'), s('a')), (s('x'), v)))
+        add(f'bigint_value_{name}_type_error',
+            mp('M', None, item('required', key=s('k'),
+                               check=check('string'))),
+            dct((s('k'), v)))
+        add(f'bigint_one_of_{name}',
+            mp('M', None, item('required', key=s('k'), check=check(
+                'one_of', values=[i(1), i(2)]))),
+            dct((s('k'), v)))
+        add(f'bigint_one_of_choice_{name}',
+            mp('M', None, item('required', key=s('k'), check=check(
+                'one_of', values=[v, i(2)]))),
+            dct((s('k'), s('x'))))
+        add(f'bigint_ensure_absent_{name}',
+            mp('M', None, item(
+                'conditional', key=s('rev'), check=check('any'),
+                condition_key=s('repo'),
+                condition={'kind': 'not', 'value': s('local')},
+                ensure_absent=True)),
+            dct((s('repo'), s('local')), (s('rev'), v)))
+        add(f'bigint_ensure_absent_condition_{name}',
+            mp('M', None, item(
+                'conditional', key=s('rev'), check=check('any'),
+                condition_key=s('repo'),
+                condition={'kind': 'in', 'values': [s('x'), v]},
+                ensure_absent=True)),
+            dct((s('repo'), s('local')), (s('rev'), s('v1'))))
+        add(f'bigint_extra_key_{name}',
+            mp('M', None, item('no_additional_keys', keys=[s('a')])),
+            dct((s('a'), i(1)), (v, i(2))))
+        add(f'bigint_allowed_key_{name}',
+            mp('M', None, item('no_additional_keys', keys=[s('a'), v])),
+            dct((s('b'), i(1))))
+        add(f'bigint_kvmap_key_{name}',
+            {'kind': 'kvmap', 'name': 'Env', 'check_key': check('any'),
+             'value_schema': mp('V', None)},
+            dct((v, dct())))
+        add(f'bigint_required_key_{name}',
+            mp('M', None, item('required', key=v, check=check('any'))),
+            dct())
+        add(f'bigint_optional_key_present_{name}',
+            mp('M', None, item('optional_no_default', key=v,
+                               check=check('any'))),
+            dct((v, i(1))))
     return cases
+
+
+def repr_or_raise(v):
+    try:
+        return repr(v)
+    except ValueError as e:
+        return f'!{type(e).__name__}: {e}'
 
 
 def run_schema_cases(cfgv, cases, regexes):
@@ -1010,10 +1156,12 @@ def run_schema_cases(cfgv, cases, regexes):
             cfgv.validate(value, schema)
         except cfgv.ValidationError as e:
             result = {'error': str(e)}
+        except (TypeError, ValueError, OverflowError) as e:
+            result = {'uncaught': f'{type(e).__name__}: {e}'}
         else:
             result = {
-                'applied': repr(cfgv.apply_defaults(value, schema)),
-                'removed': repr(cfgv.remove_defaults(value, schema)),
+                'applied': repr_or_raise(cfgv.apply_defaults(value, schema)),
+                'removed': repr_or_raise(cfgv.remove_defaults(value, schema)),
             }
         out.append({**case, 'result': result, 'warnings': warnings})
     return out
@@ -1155,6 +1303,7 @@ def main():
     load = [intern(c) for c in load]
     files = {
         'repr.json': {'meta': meta, 'cases': repr_vectors(),
+                      'int_limit': int_limit_vectors(),
                       'nonprintable': printable_ranges()},
         'utf8.json': {'meta': meta, 'cases': utf8_vectors()},
         'messages.json': {'meta': meta, 'regex_valid': regexes,

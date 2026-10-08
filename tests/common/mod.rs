@@ -4,11 +4,12 @@
 #![allow(dead_code, unreachable_pub)]
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use cfgv::{
-    BigInt, CheckFn, ConditionValue, Cx, Date, DateTime, Map, MapItem, Schema, TzOffset,
-    ValidationError, Validator, Value, ValueType, validate_context,
+    BigInt, CheckFn, ConditionValue, Cx, Date, DateTime, Map, MapItem, RegexPattern, Schema,
+    TzOffset, ValidationError, Validator, Value, ValueType, validate_context,
 };
 use serde_json::Value as Json;
 
@@ -57,10 +58,14 @@ pub fn value(j: &Json) -> Value {
     match str_field(j, "t") {
         "none" => Value::Null,
         "bool" => Value::Bool(field(j, "v").as_bool().expect("bool")),
-        "int" => {
-            let text = str_field(j, "v");
-            Value::from(text.parse::<BigInt>().expect("decimal integer"))
-        }
+        "int" => match j.get("hex").and_then(Json::as_str) {
+            Some(hex) => Value::from(BigInt::from_str_radix(hex, 16).expect("hex integer")),
+            None => Value::from(
+                str_field(j, "v")
+                    .parse::<BigInt>()
+                    .expect("decimal integer"),
+            ),
+        },
         "float" => {
             let bits = u64::from_str_radix(str_field(j, "bits"), 16).expect("hex bits");
             Value::Float(f64::from_bits(bits))
@@ -98,22 +103,35 @@ pub fn value(j: &Json) -> Value {
     }
 }
 
+/// What Python's `re.compile` did with a pattern: compiled it, raised
+/// `re.error`, or raised another exception (`"{type}: {message}"`).
+#[derive(Debug, Clone)]
+pub enum RegexVerdict {
+    Valid(bool),
+    Raised(String, String),
+}
+
 /// Builds cfgv schemas from the JSON specs, mirroring the generator's
 /// `Spec` class.
 pub struct SpecBuilder {
-    pub regex_valid: Arc<HashMap<String, bool>>,
+    /// Keyed by the `str` pattern, or `b:{hex}` for a `bytes` pattern.
+    pub regex_valid: Arc<HashMap<String, RegexVerdict>>,
 }
 
 impl SpecBuilder {
     pub fn new(vectors: &Json) -> Self {
+        let verdict = |v: &Json| match v {
+            Json::Bool(b) => RegexVerdict::Valid(*b),
+            Json::String(raised) => {
+                let (tp, msg) = raised.split_once(": ").expect("type: message");
+                RegexVerdict::Raised(tp.to_owned(), msg.to_owned())
+            }
+            other => panic!("bad regex verdict {other}"),
+        };
         let regex_valid = vectors
             .get("regex_valid")
             .and_then(Json::as_object)
-            .map(|m| {
-                m.iter()
-                    .map(|(k, v)| (k.clone(), v.as_bool().expect("bool verdict")))
-                    .collect()
-            })
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), verdict(v))).collect())
             .unwrap_or_default();
         Self {
             regex_valid: Arc::new(regex_valid),
@@ -146,6 +164,7 @@ impl SpecBuilder {
                 };
                 let name = c.get("name").and_then(Json::as_str).map(|name| match name {
                     "mapping" => "mapping",
+                    "" => "",
                     other => panic!("add {other:?} to the static type names"),
                 });
                 CheckFn::check_type(tp, name)
@@ -153,10 +172,22 @@ impl SpecBuilder {
             "one_of" => CheckFn::check_one_of(array(c, "values").iter().map(value)),
             "regex" => {
                 let verdicts = Arc::clone(&self.regex_valid);
-                CheckFn::check_regex_with(move |pattern| {
-                    *verdicts
-                        .get(pattern)
-                        .unwrap_or_else(|| panic!("no verdict for {pattern:?}"))
+                CheckFn::check_regex_try_with(move |pattern| {
+                    let key = match pattern {
+                        RegexPattern::Str(s) => s.to_owned(),
+                        RegexPattern::Bytes(b) => b.iter().fold("b:".to_owned(), |mut key, x| {
+                            let _ = write!(key, "{x:02x}");
+                            key
+                        }),
+                        _ => panic!("unknown pattern kind"),
+                    };
+                    match verdicts.get(&key) {
+                        Some(RegexVerdict::Valid(valid)) => Ok(*valid),
+                        Some(RegexVerdict::Raised(tp, msg)) => {
+                            Err(ValidationError::uncaught(tp.clone(), msg.clone()))
+                        }
+                        None => panic!("no verdict for {key:?}"),
+                    }
                 })
             }
             "array" => CheckFn::check_array(self.check(field(c, "inner"))),
