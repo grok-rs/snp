@@ -1,6 +1,6 @@
-//! pre-commit-hooks ports, one registry per group.
+//! pre-commit-hooks ports, one registry per group (§7.4); [`crate::native`] concatenates them.
 //!
-//! Owner: WP-26.
+//! Owner: WP-26 (this file, `p0/`, `stubs/`); WP-27 owns `p1/`, `p2/` and `caveats/`.
 
 pub mod caveats;
 pub mod p0;
