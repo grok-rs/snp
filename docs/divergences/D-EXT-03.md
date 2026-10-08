@@ -1,6 +1,6 @@
 # D-EXT-03
 
-local-overlay notices on stderr: snp: using local overrides from {path}, the ignored-overlay note (tracked by git / CI), snp: local config overrides unknown hoo…
+local-overlay notices on stderr: snp: using local overrides from {path}, the ignored-overlay note (tracked by git / CI), snp: local config overrides unknown…
 
 * **Class:** EXT (COMPATIBILITY §5.7)
 * **Owner:** WP-21; the first package of the register row owns this file and

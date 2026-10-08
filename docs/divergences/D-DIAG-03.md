@@ -1,6 +1,6 @@
 # D-DIAG-03
 
-run hint, only when stderr is a TTY, SNP_NO_HINTS unset/empty and core.hooksPath unset: hint: {hook_path} runs {owner}, not snp; run {prog} install to switch (1…
+run hint, only when stderr is a TTY, SNP_NO_HINTS unset/empty and core.hooksPath unset: hint: {hook_path} runs {owner}, not snp; run {prog} install to switch…
 
 * **Class:** DIAG (COMPATIBILITY §5.8)
 * **Owner:** WP-32; the first package of the register row owns this file and

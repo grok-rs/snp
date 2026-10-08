@@ -1,6 +1,6 @@
 # D-DATA-02
 
-descendants of the cancelled hooks are killed (Linux subreaper, Windows job), then the stash is restored (restore messages printed), then death by the same sign…
+descendants of the cancelled hooks are killed (Linux subreaper, Windows job), then the stash is restored (restore messages printed), then death by the same…
 
 * **Class:** DATA (COMPATIBILITY §5.2)
 * **Owner:** WP-23 (contributing: WP-15); the first package of the register row owns this file and

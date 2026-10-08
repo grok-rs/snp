@@ -1,6 +1,6 @@
 # D-DIAG-02
 
-install/uninstall/init-templatedir/doctor --fix notes when replacing other managers' scripts: M1 Replaced hook script from {owner} at {hook_path} [+ (Python: {I…
+install/uninstall/init-templatedir/doctor --fix notes when replacing other managers' scripts: M1 Replaced hook script from {owner} at {hook_path} [+ (Python:…
 
 * **Class:** DIAG (COMPATIBILITY §5.8)
 * **Owner:** WP-33; the first package of the register row owns this file and

@@ -1,6 +1,6 @@
 # D-SEC-13
 
-as root (euid 0), a store owned by a non-root uid is refused with An error has occurred: FatalError: snp refuses to run as root from a store owned by uid <n>: <…
+as root (euid 0), a store owned by a non-root uid is refused with An error has occurred: FatalError: snp refuses to run as root from a store owned by uid <n>:…
 
 * **Class:** SEC (COMPATIBILITY §5.3)
 * **Owner:** WP-22; the first package of the register row owns this file and

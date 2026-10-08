@@ -182,8 +182,12 @@ fn clean_title(s: &str) -> String {
     if joined.chars().count() <= TITLE_MAX {
         return joined;
     }
+    // Cut at the last word boundary inside the limit (no half words).
     let t: String = joined.chars().take(TITLE_MAX).collect();
-    let mut t = t.trim_end().to_owned();
+    let cut = t
+        .rfind(' ')
+        .map_or(t.as_str(), |i| t.get(..i).unwrap_or(&t));
+    let mut t = cut.trim_end().to_owned();
     t.push('…');
     t
 }

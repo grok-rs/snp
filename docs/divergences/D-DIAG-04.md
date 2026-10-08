@@ -1,6 +1,6 @@
 # D-DIAG-04
 
-stash notices: the next-run recovery notice (§4.6), snp: waiting for another snp run in this worktree…, snp: restoring stashed changes, please wait, snp: git ne…
+stash notices: the next-run recovery notice (§4.6), snp: waiting for another snp run in this worktree…, snp: restoring stashed changes, please wait, snp: git…
 
 * **Class:** DIAG (COMPATIBILITY §5.8)
 * **Owner:** WP-23; the first package of the register row owns this file and

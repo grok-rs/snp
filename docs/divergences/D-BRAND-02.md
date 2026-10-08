@@ -1,6 +1,6 @@
 # D-BRAND-02
 
-prek and snp 1.x scripts are manager scripts (hook-script identity): replaced in place, no .legacy, no migration-mode lines; uninstall still restores a PreCommi…
+prek and snp 1.x scripts are manager scripts (hook-script identity): replaced in place, no .legacy, no migration-mode lines; uninstall still restores a…
 
 * **Class:** BRAND (COMPATIBILITY §5.4)
 * **Owner:** WP-33; the first package of the register row owns this file and

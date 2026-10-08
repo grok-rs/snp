@@ -1,6 +1,6 @@
 # D-PLAT-03
 
-Rust's BatBadBut-safe quoting; arguments containing CR/LF fail the hook with Executable {cmd0} cannot receive an argument containing a line break: {repr} (rc 1)…
+Rust's BatBadBut-safe quoting; arguments containing CR/LF fail the hook with Executable {cmd0} cannot receive an argument containing a line break: {repr} (rc…
 
 * **Class:** SEC (COMPATIBILITY §5.5)
 * **Owner:** WP-15; the first package of the register row owns this file and

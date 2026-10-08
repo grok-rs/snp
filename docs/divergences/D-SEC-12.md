@@ -1,6 +1,6 @@
 # D-SEC-12
 
-more than 64 MiB fails closed before the legacy hook and the hooks run: An error has occurred: FatalError: snp: hook stdin exceeds 64 MiB; refusing to run hooks…
+more than 64 MiB fails closed before the legacy hook and the hooks run: An error has occurred: FatalError: snp: hook stdin exceeds 64 MiB; refusing to run…
 
 * **Class:** SEC (COMPATIBILITY §5.3)
 * **Owner:** WP-32; the first package of the register row owns this file and

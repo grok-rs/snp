@@ -9,6 +9,8 @@ extend-exclude = [
     "crates/*/src/generated/**",
     "crates/*/tests/vectors/**",
     "tests/differential/scenarios/**",
+    # Generated from the research documents (titles quote them verbatim).
+    "tests/catalog/index.tsv",
 ]
 
 [default]
@@ -26,3 +28,11 @@ ba = "ba"
 nd = "nd"
 ue = "ue"
 ser = "ser"
+dne = "dne"
+mis = "mis"
+caf = "caf"
+flate = "flate"
+unparseable = "unparseable"
+# Unicode / CPython identifiers in the pycompat oracle scripts
+TIO = "TIO"
+PN = "PN"

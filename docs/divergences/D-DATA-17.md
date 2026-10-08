@@ -1,6 +1,6 @@
 # D-DATA-17
 
-a stash that would be non-empty on git < 2.19 is refused before any mutation: An error has occurred: FatalError: git <V> cannot stash intent-to-add files safely…
+a stash that would be non-empty on git < 2.19 is refused before any mutation: An error has occurred: FatalError: git <V> cannot stash intent-to-add files…
 
 * **Class:** DATA (COMPATIBILITY §5.2)
 * **Owner:** WP-23 (contributing: WP-18); the first package of the register row owns this file and

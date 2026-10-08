@@ -1,6 +1,6 @@
 # D-DIAG-01
 
-git < 2.31: [WARNING] git <V> is older than 2.31.0, the oldest git version snp is tested with. Set SNP_ALLOW_OLD_GIT=1 to silence this warning. (once per proces…
+git < 2.31: [WARNING] git <V> is older than 2.31.0, the oldest git version snp is tested with. Set SNP_ALLOW_OLD_GIT=1 to silence this warning. (once per…
 
 * **Class:** DIAG (COMPATIBILITY §5.8)
 * **Owner:** WP-18; the first package of the register row owns this file and

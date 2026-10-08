@@ -1,6 +1,6 @@
 # D-STORE-01
 
-own store SNP_HOME > $XDG_CACHE_HOME/snp > ~/.cache/snp (Windows %USERPROFILE%\.cache\snp), versioned layout, no SQLite; refuses pre-commit's store; crash log n…
+own store SNP_HOME > $XDG_CACHE_HOME/snp > ~/.cache/snp (Windows %USERPROFILE%\.cache\snp), versioned layout, no SQLite; refuses pre-commit's store; crash log…
 
 * **Class:** STORE (COMPATIBILITY §5.4)
 * **Owner:** WP-22 (contributing: WP-33); the first package of the register row owns this file and

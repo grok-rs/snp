@@ -1,6 +1,6 @@
 # D-PERF-01
 
-uv (--seed) with pip-config translation and a pip fallback; seeded packages may differ in version, and uv's resolver can differ on pre-releases, yanked versions…
+uv (--seed) with pip-config translation and a pip fallback; seeded packages may differ in version, and uv's resolver can differ on pre-releases, yanked…
 
 * **Class:** PERF (COMPATIBILITY §5.6)
 * **Owner:** WP-24; the first package of the register row owns this file and

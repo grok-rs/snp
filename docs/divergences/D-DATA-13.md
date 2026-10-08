@@ -1,6 +1,6 @@
 # D-DATA-13
 
-per-worktree lock (nested runs exempt via token only while the lock is held), durable journal + git-dir pointer, patch re-verified before the checkout, next-run…
+per-worktree lock (nested runs exempt via token only while the lock is held), durable journal + git-dir pointer, patch re-verified before the checkout,…
 
 * **Class:** DATA (COMPATIBILITY §5.2)
 * **Owner:** WP-23; the first package of the register row owns this file and
