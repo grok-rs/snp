@@ -13,5 +13,8 @@ publish.workspace = true
 snp-core.workspace = true
 snp-pycompat.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true
