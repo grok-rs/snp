@@ -1,16 +1,19 @@
 //! Micro-benchmarks without an external harness:
 //! `cargo bench --bench identify`.
 //!
-//! Prints the median time per operation over 15 samples.
+//! Prints the median time per operation over 15 samples. Run by
+//! `cargo test --benches` / `--all-targets` (without `--bench`), every case
+//! is executed once as a smoke test and nothing is timed.
 
 use std::fs;
 use std::hint::black_box;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use file_identify::{
-    Meta, Tag, TagSet, classify, parse_shebang_bytes, tags_from_filename, tags_from_interpreter,
-    tags_from_meta, tags_from_path,
+    ExecPolicy, Meta, Tag, TagSet, classify, parse_shebang_bytes, tags_from_filename,
+    tags_from_interpreter, tags_from_meta, tags_from_metadata, tags_from_path,
 };
 
 const NAMES: &[&str] = &[
@@ -26,8 +29,21 @@ const NAMES: &[&str] = &[
     "noext",
 ];
 
-/// Median time per call of `f` (called `batch` times per sample).
+/// Whether to measure: `cargo bench` passes `--bench` to a harness-less
+/// bench target, `cargo test` does not.
+fn measuring() -> bool {
+    static MEASURE: OnceLock<bool> = OnceLock::new();
+    *MEASURE.get_or_init(|| std::env::args().any(|arg| arg == "--bench"))
+}
+
+/// Median time per call of `f` (called `batch` times per sample); without
+/// `--bench`, call `f` once.
 fn bench(name: &str, batch: u32, mut f: impl FnMut()) {
+    if !measuring() {
+        f();
+        println!("{name:<48} ok (not measured: run `cargo bench`)");
+        return;
+    }
     for _ in 0..batch {
         f();
     }
@@ -120,6 +136,18 @@ fn main() {
             black_box(tags_from_path(black_box(path)).expect("identify"));
         });
     }
+    let unknown = d.join("data.unknownext");
+    let md = fs::symlink_metadata(&unknown).expect("lstat");
+    bench(
+        "tags_from_metadata (own lstat, unknown extension)",
+        5_000,
+        || {
+            black_box(
+                tags_from_metadata(black_box(&unknown), &md, ExecPolicy::PythonCompat)
+                    .expect("identify"),
+            );
+        },
+    );
     let known = d.join("a.py");
     let meta = Meta::from_git_mode(0o100_644).expect("mode");
     bench(
