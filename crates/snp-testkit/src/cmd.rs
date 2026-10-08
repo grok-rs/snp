@@ -4,7 +4,7 @@
 //! Owner: WP-18.
 
 use std::ffi::{OsStr, OsString};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
@@ -98,7 +98,7 @@ impl Cmd {
             return self.output_pty();
         }
         #[cfg(not(unix))]
-        let _no_pty: bool = self.tty;
+        let _: &bool = &self.tty; // no pty on Windows: plain pipes
         let mut cmd = self.command();
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = cmd
@@ -117,12 +117,20 @@ impl Cmd {
 
     #[cfg(unix)]
     fn output_pty(self) -> Output {
+        use std::io::Read as _;
+
         use rustix::fs::{Mode, OFlags};
         use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
         use rustix::termios::{OptionalActions, OutputModes, tcgetattr, tcsetattr};
 
-        let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC)
-            .or_fail("openpt");
+        // macOS has no atomic close-on-exec for the master: set it under the spawn lock (S15) so no concurrent
+        // spawn inherits the fd in between.
+        let master = {
+            let _guard = snp_core::spawnlock::guard();
+            let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY).or_fail("openpt");
+            rustix::io::fcntl_setfd(&master, rustix::io::FdFlags::CLOEXEC).or_fail("FD_CLOEXEC");
+            master
+        };
         grantpt(&master).or_fail("grantpt");
         unlockpt(&master).or_fail("unlockpt");
         let name = ptsname(&master, Vec::new()).or_fail("ptsname");
