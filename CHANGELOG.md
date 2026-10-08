@@ -66,6 +66,9 @@ read. See "Migrating from 0.4" in the README.
   tab / form feed allowed), `/usr/bin/env -S`, multi-line `nix-shell` shebangs; only
   2 bytes are read from non-scripts and at most 64 KiB from scripts (0.4 read the
   whole first line of any executable into memory).
+- `parse_shebang_from_file` returns an empty command when opening *or reading* the
+  file fails with `EINVAL`, as identify does; on Windows that is every Win32 error the
+  C runtime reports as `EINVAL` (e.g. `ERROR_CANT_ACCESS_FILE`).
 - `is_text` keeps reading until 1 KiB or end of input and retries `Interrupted`.
 - `tags_from_path` opens a file at most once (shebang and encoding from one 1 KiB
   read) and never opens FIFOs or devices; `file_is_text` on a missing path reports

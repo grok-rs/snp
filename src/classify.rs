@@ -330,9 +330,11 @@ pub fn file_is_text(path: impl AsRef<Path>) -> Result<bool> {
 /// # Errors
 ///
 /// [`IdentifyError::PathNotFound`] if the path does not exist;
-/// [`IdentifyError::IoError`] if opening or reading fails, except `EINVAL`
-/// on open, which yields an empty result as in identify. FIFOs and devices
-/// are never opened (empty result).
+/// [`IdentifyError::IoError`] if opening or reading fails, except for an
+/// error Python reports as `EINVAL`, which yields an empty result as in
+/// identify (on Windows that is every error the C runtime does not map to
+/// another `errno`, e.g. `ERROR_INVALID_NAME` or `ERROR_CANT_ACCESS_FILE`).
+/// FIFOs and devices are never opened (empty result).
 ///
 /// ```
 /// # let dir = tempfile::tempdir()?;
@@ -364,12 +366,78 @@ pub fn parse_shebang_from_file(path: impl AsRef<Path>) -> Result<Vec<String>> {
     {
         return Ok(Vec::new());
     }
-    let file = match open_for_read(path) {
-        Ok(file) => file,
-        Err(e) if e.kind() == io::ErrorKind::InvalidInput => return Ok(Vec::new()),
-        Err(e) => return Err(e.into()),
-    };
-    Ok(parse_shebang_buf(&mut Source::new(&[], file))?)
+    shebang_unless_einval(open_for_read(path))
+}
+
+/// The body of identify's
+/// `try: with open(path, 'rb') as f: return parse_shebang(f)` /
+/// `except OSError as e: if e.errno == errno.EINVAL: return ()`: an `EINVAL`
+/// from opening *or reading* gives an empty command.
+fn shebang_unless_einval<R: Read>(file: io::Result<R>) -> Result<Vec<String>> {
+    match file.and_then(|file| parse_shebang_buf(&mut Source::new(&[], file))) {
+        Ok(cmd) => Ok(cmd),
+        Err(e) if is_python_einval(&e) => Ok(Vec::new()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Whether Python would raise `err` as an `OSError` with `errno == EINVAL`.
+#[cfg(unix)]
+fn is_python_einval(err: &io::Error) -> bool {
+    err.raw_os_error() == Some(rustix::io::Errno::INVAL.raw_os_error())
+}
+
+/// Whether Python would raise `err` as an `OSError` with `errno == EINVAL`.
+///
+/// `open` and `read` go through the C runtime there (`_wopen`, `_read`),
+/// which maps the Win32 error code to `errno`.
+#[cfg(windows)]
+fn is_python_einval(err: &io::Error) -> bool {
+    err.raw_os_error()
+        .and_then(|code| u32::try_from(code).ok())
+        .is_some_and(crt_errno_is_einval)
+}
+
+/// Whether Python would raise `err` as an `OSError` with `errno == EINVAL`.
+#[cfg(not(any(unix, windows)))]
+fn is_python_einval(err: &io::Error) -> bool {
+    err.raw_os_error().is_some() && err.kind() == io::ErrorKind::InvalidInput
+}
+
+/// Whether the Microsoft C runtime maps the Win32 error `code` to `EINVAL`
+/// (`__acrt_errno_from_os_error`): every code that is neither in its table
+/// of other `errno` values nor in its `EACCES` (19..=36) or `ENOEXEC`
+/// (188..=202) ranges.
+#[cfg(any(windows, test))]
+const fn crt_errno_is_einval(code: u32) -> bool {
+    !matches!(
+        code,
+        2..=11
+            | 15..=36
+            | 53
+            | 65
+            | 67
+            | 80
+            | 82
+            | 83
+            | 89
+            | 108
+            | 109
+            | 112
+            | 114
+            | 128..=130
+            | 132
+            | 145
+            | 158
+            | 161
+            | 164
+            | 167
+            | 183
+            | 188..=202
+            | 206
+            | 215
+            | 1816
+    )
 }
 
 /// Pre-loaded file information for I/O-free identification (kept for
@@ -504,6 +572,109 @@ mod tests {
             p.finish(&long[..]).map(|t| t.to_string()).ok().as_deref(),
             Some("executable, file, python, python3, text")
         );
+    }
+
+    /// A reader that serves `data` in one chunk per call, then fails with
+    /// `error` (if any) instead of reporting the end of input; counts calls.
+    struct Scripted {
+        data: &'static [u8],
+        error: Option<fn() -> io::Error>,
+        reads: usize,
+    }
+
+    impl Read for Scripted {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.reads += 1;
+            if self.data.is_empty() {
+                return self.error.map_or(Ok(0), |error| Err(error()));
+            }
+            let n = buf.len().min(self.data.len());
+            let (now, later) = self.data.split_at(n);
+            buf[..n].copy_from_slice(now);
+            self.data = later;
+            Ok(n)
+        }
+    }
+
+    fn scripted(data: &'static [u8], error: Option<fn() -> io::Error>) -> Scripted {
+        Scripted {
+            data,
+            error,
+            reads: 0,
+        }
+    }
+
+    #[cfg(unix)]
+    fn einval() -> io::Error {
+        io::Error::from_raw_os_error(rustix::io::Errno::INVAL.raw_os_error())
+    }
+    #[cfg(unix)]
+    fn eio() -> io::Error {
+        io::Error::from_raw_os_error(rustix::io::Errno::IO.raw_os_error())
+    }
+    #[cfg(windows)]
+    fn einval() -> io::Error {
+        io::Error::from_raw_os_error(1920) // ERROR_CANT_ACCESS_FILE
+    }
+    #[cfg(windows)]
+    fn eio() -> io::Error {
+        io::Error::from_raw_os_error(5) // ERROR_ACCESS_DENIED: EACCES
+    }
+
+    /// identify returns `()` for an `OSError` with `EINVAL` raised by
+    /// `open()` *or* while `parse_shebang` reads the file.
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn shebang_einval_is_empty_on_open_and_on_read() {
+        assert_eq!(
+            shebang_unless_einval(Ok(scripted(b"#!/bin/sh\n", None))).ok(),
+            Some(vec!["/bin/sh".to_owned()])
+        );
+        // EINVAL from open().
+        assert_eq!(
+            shebang_unless_einval::<Scripted>(Err(einval())).ok(),
+            Some(vec![])
+        );
+        // EINVAL from the first read, and after `#!` was read.
+        assert_eq!(
+            shebang_unless_einval(Ok(scripted(b"", Some(einval)))).ok(),
+            Some(vec![])
+        );
+        assert_eq!(
+            shebang_unless_einval(Ok(scripted(b"#!/bin/", Some(einval)))).ok(),
+            Some(vec![])
+        );
+        // Any other OS error propagates, from open() or from read().
+        for result in [
+            shebang_unless_einval::<Scripted>(Err(eio())),
+            shebang_unless_einval(Ok(scripted(b"#!/bin/", Some(eio)))),
+        ] {
+            let Err(IdentifyError::IoError { source }) = result else {
+                panic!("expected an I/O error, got {result:?}");
+            };
+            assert_eq!(source.raw_os_error(), eio().raw_os_error());
+        }
+        // A non-OS error has no errno, so it is never EINVAL.
+        let custom = shebang_unless_einval(Ok(scripted(
+            b"",
+            Some(|| io::Error::new(io::ErrorKind::InvalidInput, "synthetic")),
+        )));
+        assert!(custom.is_err());
+    }
+
+    #[test]
+    fn crt_errno_mapping() {
+        // Explicitly EINVAL in the C runtime's table, or not in it at all.
+        for code in [1, 12, 13, 14, 87, 123, 131, 362, 1920, 4390, 0xffff_ffff] {
+            assert!(crt_errno_is_einval(code), "{code}");
+        }
+        // Mapped to another errno (ENOENT, EACCES, EBADF, ENOEXEC, ...).
+        for code in [
+            2, 3, 4, 5, 6, 8, 11, 15, 18, 19, 32, 33, 36, 53, 67, 80, 112, 145, 161, 183, 188, 202,
+            206, 1816,
+        ] {
+            assert!(!crt_errno_is_einval(code), "{code}");
+        }
     }
 
     #[test]
