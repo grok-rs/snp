@@ -1,5 +1,6 @@
 //! Check functions for single values (`check_bool`, `check_one_of`, ...).
 
+use std::borrow::Cow;
 use std::fmt;
 use std::sync::Arc;
 
@@ -11,8 +12,45 @@ use crate::value::{Value, py_sort};
 pub type CustomCheckFn = Arc<dyn Fn(&Value) -> Result<(), ValidationError> + Send + Sync>;
 
 /// Decides whether a pattern is a valid regular expression, see
-/// [`CheckFn::check_regex_with`].
-pub type RegexCheck = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+/// [`CheckFn::check_regex_try_with`].
+///
+/// `Ok(true)` accepts the pattern, `Ok(false)` rejects it like Python's
+/// `re.error` (`{pattern!r} is not a valid python regex`), and `Err(e)`
+/// aborts validation with `e`, typically an
+/// [uncaught](ValidationError::uncaught) exception such as the
+/// `OverflowError` or `RecursionError` that `re.compile` raises for some
+/// patterns.
+pub type RegexCheck = Arc<dyn Fn(RegexPattern<'_>) -> Result<bool, ValidationError> + Send + Sync>;
+
+/// A pattern handed to a [`RegexCheck`]: Python's `re.compile` accepts
+/// both `str` and `bytes` patterns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum RegexPattern<'a> {
+    /// A `str` pattern.
+    Str(&'a str),
+    /// A `bytes` pattern.
+    Bytes(&'a [u8]),
+}
+
+impl<'a> RegexPattern<'a> {
+    /// The pattern as text: a `str` pattern unchanged, a `bytes` pattern
+    /// decoded as Latin-1 (every byte becomes the code point of the same
+    /// value), which is how Python's `re` parser reads bytes patterns.
+    ///
+    /// ```
+    /// use cfgv::RegexPattern;
+    ///
+    /// assert_eq!(RegexPattern::Bytes(b"a\xff(").to_text(), "a\u{ff}(");
+    /// ```
+    #[must_use]
+    pub fn to_text(self) -> Cow<'a, str> {
+        match self {
+            Self::Str(s) => Cow::Borrowed(s),
+            Self::Bytes(b) => Cow::Owned(b.iter().copied().map(char::from).collect()),
+        }
+    }
+}
 
 /// A Python type for [`CheckFn::Type`], matched with `isinstance`
 /// semantics.
@@ -130,7 +168,8 @@ pub enum CheckFn {
     /// `check_one_of(possible)`: the value must equal (Python `==`) one of
     /// the possibilities.
     OneOf(Vec<Value>),
-    /// `check_regex`: the value must be a string that the checker accepts.
+    /// `check_regex`: the value must be a `str` or `bytes` pattern that the
+    /// checker accepts.
     Regex(RegexCheck),
     /// `check_array(inner)`: the value must be a list or tuple whose items
     /// all pass the inner check.
@@ -164,8 +203,11 @@ impl CheckFn {
     ///
     /// * `Type`: `Expected {typename} got {type(v).__name__}`
     /// * `OneOf`: `Expected one of {sorted choices} but got: {v!r}`
-    /// * `Regex`: `{v!r} is not a valid python regex` (`Expected string got
-    ///   {type}` for non-strings, where Python would raise `TypeError`)
+    /// * `Regex`: `{v!r} is not a valid python regex` for a `str` or `bytes`
+    ///   pattern the checker rejects; the checker's own error; or, for any
+    ///   other value, the [uncaught](ValidationError::uncaught) `TypeError`
+    ///   of `re.compile` (`first argument must be string or compiled
+    ///   pattern`, or `unhashable type: 'list'` for unhashable values)
     /// * `Array`: `Expected array but got {type(v).__name__!r}`, or the
     ///   inner error inside an `At index {i}` context
     ///
@@ -197,17 +239,21 @@ impl CheckFn {
                     value.try_repr()?
                 )))
             }
-            Self::Regex(is_valid) => match value {
-                Value::String(pattern) if is_valid(pattern) => Ok(()),
-                Value::String(pattern) => Err(ValidationError::new(format!(
-                    "{} is not a valid python regex",
-                    py::repr_str(pattern)
-                ))),
-                _ => Err(ValidationError::new(format!(
-                    "Expected string got {}",
-                    value.type_name()
-                ))),
-            },
+            Self::Regex(checker) => {
+                let pattern = match value {
+                    Value::String(s) => RegexPattern::Str(s),
+                    Value::Bytes(b) => RegexPattern::Bytes(b),
+                    _ => return Err(regex_type_error(value)),
+                };
+                if checker(pattern)? {
+                    Ok(())
+                } else {
+                    Err(ValidationError::new(format!(
+                        "{} is not a valid python regex",
+                        value.repr()
+                    )))
+                }
+            }
             Self::Array(inner) => {
                 let items = value.as_array().ok_or_else(|| {
                     ValidationError::new(format!(
@@ -284,17 +330,29 @@ impl CheckFn {
     /// The `regex` crate's syntax differs from Python's `re` (no
     /// look-around, no back-references, no `\Z`, ...), so this rejects some
     /// patterns Python accepts and vice versa. Use
-    /// [`CheckFn::check_regex_with`] to plug in a Python-compatible
-    /// validator.
+    /// [`CheckFn::check_regex_with`] or [`CheckFn::check_regex_try_with`]
+    /// to plug in a Python-compatible validator. `bytes` patterns are
+    /// decoded as Latin-1 ([`RegexPattern::to_text`]) and checked with
+    /// `regex::bytes`.
     #[cfg(feature = "regex")]
     #[cfg_attr(docsrs, doc(cfg(feature = "regex")))]
     #[must_use]
     pub fn check_regex() -> Self {
-        Self::check_regex_with(|pattern| regex::Regex::new(pattern).is_ok())
+        Self::check_regex_try_with(|pattern| {
+            Ok(match pattern {
+                RegexPattern::Bytes(_) => regex::bytes::Regex::new(&pattern.to_text()).is_ok(),
+                _ => regex::Regex::new(&pattern.to_text()).is_ok(),
+            })
+        })
     }
 
     /// `check_regex` with a caller-supplied validity test, e.g. a validator
     /// for Python's `re` dialect.
+    ///
+    /// `bytes` patterns are passed decoded as Latin-1
+    /// ([`RegexPattern::to_text`]), the text Python's `re` parser sees; the
+    /// few rules specific to bytes patterns (no `\u` escapes, no `(?u)`,
+    /// `(?L)` allowed) need [`CheckFn::check_regex_try_with`].
     ///
     /// ```
     /// use cfgv::{CheckFn, Value};
@@ -305,13 +363,50 @@ impl CheckFn {
     ///     check.check(&Value::from("foo\\")).unwrap_err().message(),
     ///     r"'foo\\' is not a valid python regex",
     /// );
+    /// assert_eq!(
+    ///     check.check(&Value::from(&b"foo\\"[..])).unwrap_err().message(),
+    ///     r"b'foo\\' is not a valid python regex",
+    /// );
     /// ```
     #[must_use]
     pub fn check_regex_with<F>(is_valid: F) -> Self
     where
         F: Fn(&str) -> bool + Send + Sync + 'static,
     {
-        Self::Regex(Arc::new(is_valid))
+        Self::check_regex_try_with(move |pattern| Ok(is_valid(&pattern.to_text())))
+    }
+
+    /// `check_regex` with a caller-supplied checker that sees whether the
+    /// pattern is `str` or `bytes` and can abort validation with an error
+    /// other than "not a valid python regex" (see [`RegexCheck`]).
+    ///
+    /// This reproduces `re.compile` raising something other than
+    /// `re.error`, which Python cfgv does not catch:
+    ///
+    /// ```
+    /// use cfgv::{CheckFn, RegexPattern, ValidationError, Value};
+    ///
+    /// let check = CheckFn::check_regex_try_with(|pattern| match pattern {
+    ///     RegexPattern::Str(p) if p.contains("{4294967296}") => Err(ValidationError::uncaught(
+    ///         "OverflowError",
+    ///         "the repetition number is too large",
+    ///     )),
+    ///     RegexPattern::Str(p) => Ok(!p.contains('(')),
+    ///     _ => Ok(false),
+    /// });
+    /// let err = check.check(&Value::from("a{4294967296}")).unwrap_err();
+    /// assert_eq!(err.to_string(), "OverflowError: the repetition number is too large");
+    /// assert_eq!(
+    ///     check.check(&Value::from("(")).unwrap_err().to_string(),
+    ///     "\n=====> '(' is not a valid python regex",
+    /// );
+    /// ```
+    #[must_use]
+    pub fn check_regex_try_with<F>(checker: F) -> Self
+    where
+        F: Fn(RegexPattern<'_>) -> Result<bool, ValidationError> + Send + Sync + 'static,
+    {
+        Self::Regex(Arc::new(checker))
     }
 
     /// `check_array(inner)`.
@@ -350,4 +445,24 @@ pub(crate) fn join_str<'a, I: IntoIterator<Item = &'a Value>>(
         out.push_str(&v.try_to_string()?);
     }
     Ok(out)
+}
+
+/// The uncaught `TypeError` that `re.compile(v)` raises for a value that is
+/// neither `str` nor `bytes`. CPython 3.12 first looks the pattern up in a
+/// cache keyed by it, so unhashable values fail while hashing.
+fn regex_type_error(value: &Value) -> ValidationError {
+    let message = unhashable_type(value).map_or_else(
+        || "first argument must be string or compiled pattern".to_owned(),
+        |name| format!("unhashable type: '{name}'"),
+    );
+    ValidationError::uncaught("TypeError", message)
+}
+
+/// The type of the first unhashable object `hash(value)` meets.
+fn unhashable_type(value: &Value) -> Option<&'static str> {
+    match value {
+        Value::List(_) | Value::Map(_) | Value::Set(_) => Some(value.type_name()),
+        Value::Tuple(items) => items.iter().find_map(unhashable_type),
+        _ => None,
+    }
 }

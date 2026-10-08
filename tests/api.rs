@@ -15,9 +15,9 @@ use std::sync::Arc;
 
 use cfgv::{
     BigInt, CheckFn, ConditionValue, Cx, Date, DateError, DateTime, LoadError, Map, MapItem,
-    MaxStrDigitsError, ParseBigIntError, Schema, Set, TzOffset, ValidationError, Validator, Value,
-    ValueType, apply_defaults, apply_defaults_owned, load_from_filename, py, remove_defaults,
-    remove_defaults_owned, validate, validate_with, value_map,
+    MaxStrDigitsError, ParseBigIntError, RegexPattern, Schema, Set, TzOffset, ValidationError,
+    Validator, Value, ValueType, apply_defaults, apply_defaults_owned, load_from_filename, py,
+    remove_defaults, remove_defaults_owned, validate, validate_with, value_map,
 };
 
 const fn assert_send_sync<T: Send + Sync>() {}
@@ -30,6 +30,7 @@ fn public_types_are_send_and_sync() {
     assert_send_sync::<BigInt>();
     assert_send_sync::<ParseBigIntError>();
     assert_send_sync::<MaxStrDigitsError>();
+    assert_send_sync::<RegexPattern<'static>>();
     assert_send_sync::<Date>();
     assert_send_sync::<DateTime>();
     assert_send_sync::<TzOffset>();
@@ -369,10 +370,6 @@ fn ensure_absent_uses_repr_and_tuple_syntax() {
 fn regex_checks() {
     let python_like = CheckFn::check_regex_with(|p| !p.contains("(?<!") || p.ends_with("bar"));
     assert!(python_like.check(&Value::from("(?<!foo)bar")).is_ok());
-    assert_eq!(
-        python_like.check(&Value::from(1)).unwrap_err().message(),
-        "Expected string got int"
-    );
     assert_eq!(format!("{python_like:?}"), "Regex(..)");
     #[cfg(feature = "regex")]
     {
@@ -390,7 +387,115 @@ fn regex_checks() {
             builtin.check(&Value::from("foo\\")).unwrap_err().message(),
             "'foo\\\\' is not a valid python regex"
         );
+        // Bytes patterns are checked too, like `re.compile(b'...')`.
+        assert!(builtin.check(&Value::from(&b"^a\\xff$"[..])).is_ok());
+        assert_eq!(
+            builtin
+                .check(&Value::from(&b"("[..]))
+                .unwrap_err()
+                .to_string(),
+            "\n=====> b'(' is not a valid python regex"
+        );
+        assert_eq!(
+            builtin.check(&Value::from(1)).unwrap_err().uncaught_type(),
+            Some("TypeError")
+        );
     }
+}
+
+/// Regression: a non-string, non-bytes value made `check_regex` report
+/// `Expected string got int`; Python's `re.compile` raises `TypeError`,
+/// which cfgv does not catch.
+#[test]
+fn regex_check_of_other_types_raises_type_error_like_python() {
+    let check = CheckFn::check_regex_with(|_| true);
+    let err = check.check(&Value::from(1)).unwrap_err();
+    assert!(err.is_uncaught());
+    assert_eq!(
+        err.to_string(),
+        "TypeError: first argument must be string or compiled pattern"
+    );
+    let unhashable = [
+        (Value::List(Vec::new()), "list"),
+        (value_map! {}, "dict"),
+        (Value::Set(Set::new()), "set"),
+        (
+            Value::Tuple(vec![Value::from(1), Value::List(Vec::new())]),
+            "list",
+        ),
+    ];
+    for (value, name) in unhashable {
+        assert_eq!(
+            check.check(&value).unwrap_err().to_string(),
+            format!("TypeError: unhashable type: '{name}'")
+        );
+    }
+    // pre-commit's `check_and(check_string, check_regex)` never gets there.
+    let pre_commit = CheckFn::check_and([CheckFn::check_string(), check]);
+    assert_eq!(
+        pre_commit.check(&Value::from(1)).unwrap_err().message(),
+        "Expected string got int"
+    );
+}
+
+/// Regression: bytes patterns were rejected with `Expected string got
+/// bytes`; Python compiles them (decoding them as Latin-1).
+#[test]
+fn regex_check_of_bytes_uses_the_checker_and_bytes_repr() {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = Arc::clone(&seen);
+    let check = CheckFn::check_regex_with(move |p| {
+        log.lock().unwrap().push(p.to_owned());
+        !p.contains('(')
+    });
+    assert!(check.check(&Value::from(&b"^$"[..])).is_ok());
+    assert_eq!(
+        check
+            .check(&Value::from(&b"it's\xff("[..]))
+            .unwrap_err()
+            .message(),
+        "b\"it's\\xff(\" is not a valid python regex"
+    );
+    assert_eq!(*seen.lock().unwrap(), ["^$", "it's\u{ff}("]);
+    assert_eq!(RegexPattern::Str("x").to_text(), "x");
+}
+
+/// Regression: the regex checker could only answer valid or invalid, so
+/// `re.compile` raising `OverflowError` (which cfgv does not catch) could
+/// not be reproduced.
+#[test]
+fn regex_checker_can_raise_other_exceptions() {
+    let check = CheckFn::check_regex_try_with(|pattern| match pattern {
+        RegexPattern::Str(p) if p.contains("4294967296") => Err(ValidationError::uncaught(
+            "OverflowError",
+            "the repetition number is too large",
+        )),
+        RegexPattern::Bytes(_) => Ok(false),
+        _ => Ok(true),
+    });
+    let schema = Schema::map(
+        "Hook",
+        Some("id".into()),
+        vec![Validator::optional_no_default(
+            "files",
+            CheckFn::check_and([CheckFn::check_string(), check]),
+        )],
+    );
+    let err = validate(
+        &value_map! {"id" => "x", "files" => "a{4294967296}"},
+        &schema,
+    )
+    .unwrap_err();
+    // No `At Hook(id='x')` / `At key: files` contexts: Python lets it escape.
+    assert_eq!(err.contexts().len(), 0);
+    assert_eq!(err.uncaught_type(), Some("OverflowError"));
+    assert_eq!(err.message(), "the repetition number is too large");
+    assert_eq!(
+        err.to_string(),
+        "OverflowError: the repetition number is too large"
+    );
+    let err = validate(&value_map! {"id" => "x", "files" => "ok"}, &schema);
+    assert!(err.is_ok());
 }
 
 #[test]

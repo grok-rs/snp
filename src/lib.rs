@@ -71,7 +71,7 @@ mod serde_impl;
 mod validator;
 mod value;
 
-pub use check::{CheckFn, CustomCheckFn, RegexCheck, ValueType};
+pub use check::{CheckFn, CustomCheckFn, RegexCheck, RegexPattern, ValueType};
 pub use condition::ConditionValue;
 pub use error::{ValidationError, validate_context};
 pub use load::{LoadError, load_from_filename, load_from_filename_with};
