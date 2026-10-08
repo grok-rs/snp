@@ -180,53 +180,70 @@ pub fn repr(v: &PyValue) -> String {
     out
 }
 
+/// One step of [`write_repr`]'s explicit stack.
+enum Step<'a> {
+    /// A value still to render.
+    Value(&'a PyValue),
+    /// Literal punctuation.
+    Text(&'static str),
+}
+
 /// Appends `repr(v)` to `out`: `[a, b]`, `(a,)`, `{k: v}` in insertion order, `None`/`True`/
-/// `False`, decimal ints, [`repr_float`] floats.
+/// `False`, decimal ints, [`repr_float`] floats. Iterative: arbitrarily deep nesting needs no
+/// thread stack (Python's `repr` would raise `RecursionError`).
 pub fn write_repr(out: &mut String, v: &PyValue) {
-    match v {
-        PyValue::None => out.push_str("None"),
-        PyValue::Bool(true) => out.push_str("True"),
-        PyValue::Bool(false) => out.push_str("False"),
-        PyValue::Int(PyInt::Small(i)) => {
-            write!(out, "{i}").unwrap_or_default();
-        }
-        PyValue::Int(PyInt::Decimal(d)) => out.push_str(d),
-        PyValue::Float(f) => out.push_str(&repr_float(*f)),
-        PyValue::Str(s) => write_repr_str(out, s),
-        PyValue::List(items) => {
-            out.push('[');
-            write_items(out, items);
-            out.push(']');
-        }
-        PyValue::Tuple(items) => {
-            out.push('(');
-            write_items(out, items);
-            if items.len() == 1 {
-                out.push(',');
+    let mut stack = vec![Step::Value(v)];
+    while let Some(step) = stack.pop() {
+        let v = match step {
+            Step::Text(t) => {
+                out.push_str(t);
+                continue;
             }
-            out.push(')');
-        }
-        PyValue::Dict(items) => {
-            out.push('{');
-            for (i, (k, v)) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
+            Step::Value(v) => v,
+        };
+        match v {
+            PyValue::None => out.push_str("None"),
+            PyValue::Bool(true) => out.push_str("True"),
+            PyValue::Bool(false) => out.push_str("False"),
+            PyValue::Int(PyInt::Small(i)) => {
+                write!(out, "{i}").unwrap_or_default();
+            }
+            PyValue::Int(PyInt::Decimal(d)) => out.push_str(d),
+            PyValue::Float(f) => out.push_str(&repr_float(*f)),
+            PyValue::Str(s) => write_repr_str(out, s),
+            PyValue::List(items) => {
+                out.push('[');
+                stack.push(Step::Text("]"));
+                push_items(&mut stack, items);
+            }
+            PyValue::Tuple(items) => {
+                out.push('(');
+                stack.push(Step::Text(if items.len() == 1 { ",)" } else { ")" }));
+                push_items(&mut stack, items);
+            }
+            PyValue::Dict(items) => {
+                out.push('{');
+                stack.push(Step::Text("}"));
+                for (i, (k, v)) in items.iter().enumerate().rev() {
+                    stack.push(Step::Value(v));
+                    stack.push(Step::Text(": "));
+                    stack.push(Step::Value(k));
+                    if i > 0 {
+                        stack.push(Step::Text(", "));
+                    }
                 }
-                write_repr(out, k);
-                out.push_str(": ");
-                write_repr(out, v);
             }
-            out.push('}');
         }
     }
 }
 
-fn write_items(out: &mut String, items: &[PyValue]) {
-    for (i, item) in items.iter().enumerate() {
+/// Schedules `items` separated by `", "` (pushed in reverse: the stack pops them in order).
+fn push_items<'a>(stack: &mut Vec<Step<'a>>, items: &'a [PyValue]) {
+    for (i, item) in items.iter().enumerate().rev() {
+        stack.push(Step::Value(item));
         if i > 0 {
-            out.push_str(", ");
+            stack.push(Step::Text(", "));
         }
-        write_repr(out, item);
     }
 }
 
@@ -517,6 +534,40 @@ mod tests {
             "100000000000000000000000000000000000000000"
         );
         assert_eq!(repr(&PyValue::Tuple(vec![PyValue::Tuple(vec![])])), "((),)");
+        let v = PyValue::Dict(vec![
+            (PyValue::Str("a".into()), PyValue::Tuple(vec![])),
+            (
+                PyValue::Int(PyInt::Small(-1)),
+                PyValue::Dict(vec![(PyValue::None, PyValue::List(vec![]))]),
+            ),
+        ]);
+        assert_eq!(repr(&v), "{'a': (), -1: {None: []}}");
+    }
+
+    #[test]
+    fn deep_nesting_needs_no_stack() {
+        let depth = 100_000;
+        let mut v = PyValue::List(vec![]);
+        for _ in 0..depth {
+            v = PyValue::List(vec![v]);
+        }
+        let render = move || {
+            let r = repr(&v);
+            // drop the nested value iteratively (its recursive Drop is the caller's concern)
+            let mut stack = vec![v];
+            while let Some(PyValue::List(items)) = stack.pop() {
+                stack.extend(items);
+            }
+            r
+        };
+        let out = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(render)
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(out.len(), 2 * (depth + 1));
+        assert!(out.starts_with("[[[") && out.ends_with("]]]"));
     }
 
     #[test]
