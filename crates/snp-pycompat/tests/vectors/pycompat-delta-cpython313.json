@@ -8,7 +8,7 @@
   "base": "pycompat-vectors.cpython312.json",
   "base_python": "3.12.3",
   "base_unicode": "15.0.0",
-  "base_sha256": "6fc2fceeb46b2ecda75cffd182558e99e36c9941d45fd5e6fac347618af9fc99",
+  "base_sha256": "6a268c468325e59559549b411bb676cecbc76d7a044225f0086a7735cc862e04",
   "notes": "delta[section] maps a list index (decimal string) or an object key of the base section to the value this interpreter produces, or \"*\" to the whole section when its shape changed; sections and entries that are equal are omitted"
  },
  "delta": {

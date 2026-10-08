@@ -1246,8 +1246,14 @@ def _extension() -> None:
     edges = [9.999999999999999e15, 9999999999999998.0, 1e16 - 2, 0.0001, 9.999999999999999e-05,
              0.00011, 123456789012345680.0, 1.25e22, 2.0**53, 2.0**63, 2.0**-1074, 0.3,
              1 / 3, 2 / 3, 100.0, 1e-07]
+    # doubles between 2**49 and 2**64 have short exact expansions, so exact ties between the two
+    # closest 17-digit candidates are common there (dtoa breaks them to the even digit)
+    dense = [struct.unpack('>d', (((0x430 + ext.randrange(16)) << 52) | ext.getrandbits(52))
+                           .to_bytes(8, 'big'))[0] for _ in range(2000)]
+    halves = [(2 * ext.getrandbits(53) + 1) / 2 ** ext.randrange(1, 12) for _ in range(500)]
     V['float_repr'] = [f'{_bits(x)} {x!r}' for x in
-                       special + edges + tens + [finite_bits() for _ in range(3000)]]
+                       special + edges + tens + [finite_bits() for _ in range(3000)]
+                       + dense + halves]
 
     # ---- east-asian width (commands/run.py:36-38)
     V['east_asian_width_wf'] = ranges(

@@ -51,13 +51,13 @@ struct Output {
 const VECTORS: Output = Output {
     path: "crates/snp-pycompat/tests/vectors/pycompat-vectors.cpython312.json",
     scratch: "pycompat-vectors.cpython312.json",
-    sha256: "6fc2fceeb46b2ecda75cffd182558e99e36c9941d45fd5e6fac347618af9fc99",
+    sha256: "6a268c468325e59559549b411bb676cecbc76d7a044225f0086a7735cc862e04",
 };
 
 const DELTA: Output = Output {
     path: "crates/snp-pycompat/tests/vectors/pycompat-delta-cpython313.json",
     scratch: "pycompat-delta-cpython313.json",
-    sha256: "886e373741f5d8ab547e8b2857fef72bcc5d6d1d02927e525c0e237c9d11f952",
+    sha256: "f79d739df1614f8515f4ea8bda1d208175f0020f723ea44acbbc5150d3b6a462",
 };
 
 const TABLES: Output = Output {
