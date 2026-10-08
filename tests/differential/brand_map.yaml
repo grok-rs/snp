@@ -1,0 +1,87 @@
+# brand_map: the machine-readable form of COMPATIBILITY §3.3 / ARCHITECTURE §9.6 (ADR-023, ADR-058).
+#
+# snp-difftest applies it to every NON-argparse text of the prog-patched pre-commit 4.6.2 oracle
+# (`target/oracle/pc462-py313/bin/pre-commit-snp-prog`) in snp-brand runs, then requires byte equality with snp.
+# argparse texts (usage, help, usage errors) are never substituted: they are rendered with prog `snp`.
+#
+# Created by WP-00 from COMPATIBILITY §3.3; owned by WP-35 afterwards (WBS "Divergence files").
+version: 1
+
+# A line exactly equal to `from` becomes `to`; applied before the substring rules (a plain substitution would give
+# `snp 4.6.2`).
+whole_line:
+  - from: "pre-commit 4.6.2"
+    to: "snp 2.0.0"
+
+# Substring rules, applied in this order to every non-argparse line of stdout and stderr.
+substitutions:
+  # install / uninstall (install_uninstall.py:85,111,157)
+  - from: "pre-commit installed at "
+    to: "snp installed at "
+  # COMPATIBILITY §3.3 row. Note: install_uninstall.py:157 prints `{hook_type} uninstalled`, so this line names the
+  # hook type `pre-commit`; WP-33/WP-35 confirm the rule before relying on it.
+  - from: "pre-commit uninstalled"
+    to: "snp uninstalled"
+  - from: "Use -f to use only pre-commit."
+    to: "Use -f to use only snp."
+  # hook-impl missing config (hook_impl.py:56-65)
+  - from: "Skipping `pre-commit`."
+    to: "Skipping `snp`."
+  - from: "- To permanently silence this, install pre-commit with the --allow-missing-config option"
+    to: "- To permanently silence this, install snp with the --allow-missing-config option"
+  - from: "- To uninstall pre-commit run `pre-commit uninstall`"
+    to: "- To uninstall snp run `snp uninstall`"
+  # show-diff banner lines 2-3 (run.py:307-311)
+  - from: "reproduce locally with: `pre-commit run --all-files`."
+    to: "reproduce locally with: `snp run --all-files`."
+  - from: "To run `pre-commit` as part of git workflow, use `pre-commit install`."
+    to: "To run `snp` as part of git workflow, use `snp install`."
+  # hints (clientlib.py:106,158,184,309; repository.py:185)
+  - from: "`pre-commit autoupdate --repo "
+    to: "`snp autoupdate --repo "
+  - from: "`pre-commit autoupdate`"
+    to: "`snp autoupdate`"
+  - from: "`pre-commit migrate-config`"
+    to: "`snp migrate-config`"
+  # messages naming the tool (clientlib.py:326,344; staged_files_only.py:103; lang_base.py:97,108;
+  # coursier.py:34; git.py:223; store.py:106)
+  - from: "pre-commit normalizes "
+    to: "snp normalizes "
+  - from: "pre-commit failed to diff"
+    to: "snp failed to diff"
+  - from: "for now, pre-commit requires "
+    to: "for now, snp requires "
+  - from: "for now, pre-commit does not support "
+    to: "for now, snp does not support "
+  - from: "pre-commit requires system-installed \"cs\""
+    to: "snp requires system-installed \"cs\""
+  - from: "pre-commit has detected a mix of cygwin"
+    to: "snp has detected a mix of cygwin"
+  - from: "Locking pre-commit directory"
+    to: "Locking snp directory"
+  # identify / min-version (clientlib.py:46,57-61)
+  - from: "Try upgrading identify and pre-commit?"
+    to: "Try upgrading snp?"
+  - from: " is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`."
+    to: " is required but snp 2.0.0 is compatible with pre-commit 4.6.2.  Perhaps upgrade snp."
+  # migration mode (hook_impl.py:22-29)
+  - from: "bug: pre-commit's script is installed in migration mode"
+    to: "bug: snp's script is installed in migration mode"
+  - from: "run `pre-commit install -f --hook-type "
+    to: "run `snp install -f --hook-type "
+  - from: "Please report this bug at https://github.com/pre-commit/pre-commit/issues"
+    to: "Please report this bug at https://github.com/grok-rs/snp/issues"
+  # crash log (error_handler.py:47; ADR-013)
+  - from: "/pre-commit.log"
+    to: "/snp.log"
+  - from: "pre-commit version: 4.6.2"
+    to: "snp version: 2.0.0"
+
+# Never substituted (a rule that would touch one of these is a bug of this file).
+never:
+  - ".pre-commit-config.yaml"
+  - ".pre-commit-hooks.yaml"
+  - "PRE_COMMIT_"
+  - "pre-commit hook(s) made changes."
+  - "Your pre-commit configuration is unstaged."
+  - "https://pre-commit.com/"

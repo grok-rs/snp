@@ -1,0 +1,5 @@
+# D-DIAG-01 (DIAG, owner WP-18): git < 2.31: [WARNING] git <V> is older than 2.31.0, the oldest git version snp is tested with. Set SNP_ALLOW_OLD_GIT=1 to silence this warning. (once per proces…
+# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
+# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+expect_divergence: D-DIAG-01
+status: stub

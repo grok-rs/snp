@@ -1,0 +1,5 @@
+# D-EXT-04 (DATA, owner WP-23): _SNP_STASH_LOCK=<token> is exported to hooks while a stash is held (nested runs skip the worktree lock) — class DATA
+# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
+# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+expect_divergence: D-EXT-04
+status: stub

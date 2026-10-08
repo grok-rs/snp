@@ -1,0 +1,5 @@
+# D-SEC-10 (SEC, owner WP-13): linear tier 1; tier 2 backtrack_limit 1e8 → An error has occurred: snp: regular expression {pattern!r} exceeded the backtracking limit on {path!r} (exit 1)
+# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
+# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+expect_divergence: D-SEC-10
+status: stub

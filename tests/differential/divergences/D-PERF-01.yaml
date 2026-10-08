@@ -1,0 +1,5 @@
+# D-PERF-01 (PERF, owner WP-24): uv (--seed) with pip-config translation and a pip fallback; seeded packages may differ in version, and uv's resolver can differ on pre-releases, yanked versions…
+# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
+# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+expect_divergence: D-PERF-01
+status: stub

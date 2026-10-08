@@ -1,0 +1,5 @@
+# D-SEC-11 (SEC, owner WP-14): depth 512, 1 M constructed nodes, 16 MiB file limits → YAML error
+# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
+# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+expect_divergence: D-SEC-11
+status: stub

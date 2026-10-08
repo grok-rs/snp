@@ -1,0 +1,5 @@
+# D-DATA-05 (DATA, owner WP-33): POSIX sh template, LF everywhere, atomic write that replaces a symlink instead of writing through it (template identity: BRAND)
+# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
+# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+expect_divergence: D-DATA-05
+status: stub

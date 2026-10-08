@@ -1,0 +1,5 @@
+# D-DATA-17 (DATA, owner WP-23): a stash that would be non-empty on git < 2.19 is refused before any mutation: An error has occurred: FatalError: git <V> cannot stash intent-to-add files safely…
+# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
+# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+expect_divergence: D-DATA-17
+status: stub

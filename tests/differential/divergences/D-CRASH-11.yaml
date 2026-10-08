@@ -1,0 +1,5 @@
+# D-CRASH-11 (CRASH, owner WP-18): same algorithm on bytes (ASCII whitespace), hooks run
+# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
+# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+expect_divergence: D-CRASH-11
+status: stub

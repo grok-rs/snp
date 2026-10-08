@@ -1,0 +1,5 @@
+# D-CRASH-01 (CRASH, owner WP-21): validation error leaf invalid literal for int() with base 10: 'abc', exit 1
+# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
+# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+expect_divergence: D-CRASH-01
+status: stub

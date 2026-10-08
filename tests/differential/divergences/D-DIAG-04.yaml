@@ -1,0 +1,5 @@
+# D-DIAG-04 (DIAG, owner WP-23): stash notices: the next-run recovery notice (§4.6), snp: waiting for another snp run in this worktree…, snp: restoring stashed changes, please wait, snp: git ne…
+# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
+# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+expect_divergence: D-DIAG-04
+status: stub

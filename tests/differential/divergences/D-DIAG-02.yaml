@@ -1,0 +1,5 @@
+# D-DIAG-02 (DIAG, owner WP-33): install/uninstall/init-templatedir/doctor --fix notes when replacing other managers' scripts: M1 Replaced hook script from {owner} at {hook_path} [+ (Python: {I…
+# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
+# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+expect_divergence: D-DIAG-02
+status: stub

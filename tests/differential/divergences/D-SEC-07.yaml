@@ -1,0 +1,8 @@
+# D-SEC-07 (SEC, owner WP-00): with PATH unset or empty, activation patches put no empty entry (cwd) on PATH.
+# Not reproducible through the CLI: with PATH unset or empty, pre-commit 4.6.2 and snp both fail to find git before
+# any hook runs (see docs/divergences/D-SEC-07.md). The behaviour is pinned by a unit test instead; WP-35's harness
+# treats `status: unit` as "covered elsewhere" (no scenario to run).
+expect_divergence: D-SEC-07
+status: unit
+unit_tests:
+  - crates/snp-core/src/env.rs::tests::prepend_path_without_trailing_separator

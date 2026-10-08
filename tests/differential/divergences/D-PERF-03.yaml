@@ -1,0 +1,5 @@
+# D-PERF-03 (PERF, owner WP-31): native implementations (fast path, ADR-031); output byte-identical; Tier A repos are never cloned (FD-8)
+# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
+# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+expect_divergence: D-PERF-03
+status: stub

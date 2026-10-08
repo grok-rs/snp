@@ -1,0 +1,5 @@
+# D-EXT-03 (EXT, owner WP-21): local-overlay notices on stderr: snp: using local overrides from {path}, the ignored-overlay note (tracked by git / CI), snp: local config overrides unknown hoo…
+# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
+# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+expect_divergence: D-EXT-03
+status: stub

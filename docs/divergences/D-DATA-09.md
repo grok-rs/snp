@@ -1,0 +1,23 @@
+# D-DATA-09
+
+UTF-8 always, each line's original EOL kept, atomic replace keeping the mode
+
+* **Class:** DATA (COMPATIBILITY §5.2)
+* **Owner:** WP-21; the first package of the register row owns this file and
+  `tests/differential/divergences/D-DATA-09.yaml` (WBS "Divergence files", ADR-071).
+* **Status:** stub, created by WP-00. The owner replaces the two sections below.
+
+## Register entry (COMPATIBILITY §5.2)
+
+| pre-commit 4.6.2 | snp |
+|---|---|
+| migrate-config/autoupdate read/write with the locale encoding and rewrite CRLF files as LF; non-atomic writes | UTF-8 always, each line's original EOL kept, atomic replace keeping the mode |
+
+## Rationale
+
+To be written by WP-21: why snp deviates from pre-commit 4.6.2 here, and why the deviation is safe.
+
+## Examples
+
+To be written by WP-21: a minimal reproduction with the exact pre-commit 4.6.2 bytes and the exact snp bytes; the
+scenario in `tests/differential/divergences/D-DATA-09.yaml` must keep reproducing the difference.

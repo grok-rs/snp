@@ -1,0 +1,5 @@
+# D-STORE-02 (STORE, owner WP-33): snp never touches pre-commit's directories; clean always prints Cleaned {snp store}.
+# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
+# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+expect_divergence: D-STORE-02
+status: stub
