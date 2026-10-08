@@ -301,3 +301,103 @@ pub(crate) fn exc(f: &snp_core::failure::Failure) -> (String, String) {
 pub(crate) fn rep(c: char, n: usize) -> String {
     std::iter::repeat_n(c, n).collect()
 }
+
+/// One `Faulty` rule: argument prefix, returncode, stdout, stderr.
+type Rule = (Vec<String>, i64, Vec<u8>, Vec<u8>);
+
+/// A real backend whose calls can be answered in-process: the first rule whose argument prefix matches the call
+/// (the arguments after `argv[0]`) gives `(returncode, stdout, stderr)`; other calls run the real git. Lets the
+/// catalog rows that need a failing or ancient git run without the `testing` feature.
+#[derive(Debug)]
+pub(crate) struct Faulty {
+    rules: Vec<Rule>,
+    real: ProcBackend,
+}
+
+impl Faulty {
+    pub(crate) fn new() -> Self {
+        Self {
+            rules: Vec::new(),
+            real: ProcBackend {
+                cancel: snp_core::cancel::CancelToken::new(),
+                role: Role::Tool,
+            },
+        }
+    }
+
+    /// Calls whose arguments start with `prefix` exit with `code` and print `stdout`/`stderr`.
+    pub(crate) fn on(mut self, prefix: &[&str], code: i64, stdout: &[u8], stderr: &[u8]) -> Self {
+        self.rules.push((
+            prefix.iter().map(|s| (*s).to_owned()).collect(),
+            code,
+            stdout.to_vec(),
+            stderr.to_vec(),
+        ));
+        self
+    }
+
+    fn rule(&self, argv: &[OsString]) -> Option<&Rule> {
+        let args: Vec<String> = argv
+            .iter()
+            .skip(1)
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        self.rules
+            .iter()
+            .find(|(p, ..)| args.len() >= p.len() && args.iter().zip(p).all(|(a, b)| a == b))
+    }
+}
+
+impl GitBackend for Faulty {
+    fn capture(
+        &self,
+        argv: &[OsString],
+        env: &Env,
+        cwd: &Path,
+        stdin: snp_proc::spawn::Stdin,
+        group: snp_proc::spawn::Group,
+    ) -> Result<snp_proc::spawn::Captured, snp_proc::spawn::SpawnError> {
+        match self.rule(argv) {
+            Some((_, code, out, err)) => Ok(snp_proc::spawn::Captured {
+                status: snp_proc::spawn::PyStatus(*code),
+                stdout: out.clone(),
+                stderr: err.clone(),
+                stopped_by_tty: false,
+            }),
+            None => self.real.capture(argv, env, cwd, stdin, group),
+        }
+    }
+
+    fn stream(
+        &self,
+        argv: &[OsString],
+        env: &Env,
+        cwd: &Path,
+        sink: &mut dyn std::io::Write,
+    ) -> Result<(snp_proc::spawn::PyStatus, Vec<u8>), snp_proc::spawn::SpawnError> {
+        match self.rule(argv) {
+            Some((_, code, out, err)) => {
+                sink.write_all(out)
+                    .map_err(|io| snp_proc::spawn::SpawnError {
+                        program: argv.first().cloned().unwrap_or_default(),
+                        io,
+                    })?;
+                Ok((snp_proc::spawn::PyStatus(*code), err.clone()))
+            }
+            None => self.real.stream(argv, env, cwd, sink),
+        }
+    }
+
+    fn inherit(
+        &self,
+        argv: &[OsString],
+        env: &Env,
+        cwd: &Path,
+        stdin: snp_proc::spawn::Stdin,
+    ) -> Result<snp_proc::spawn::PyStatus, snp_proc::spawn::SpawnError> {
+        match self.rule(argv) {
+            Some((_, code, ..)) => Ok(snp_proc::spawn::PyStatus(*code)),
+            None => self.real.inherit(argv, env, cwd, stdin),
+        }
+    }
+}

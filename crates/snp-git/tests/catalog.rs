@@ -237,10 +237,8 @@ mod rows {
         assert_eq!(e.exit_code(), 3);
     }
 
-    #[cfg(feature = "testing")]
     #[test]
     fn t10_git_08_zsplit() {
-        use snp_git::testing::{Response, ScriptedBackend};
         let sb = Sandbox::new();
         let repo = sb.init("repo");
         for (out, expected) in [
@@ -249,16 +247,13 @@ mod rows {
             (b"", vec![]),
             (b"foo", vec!["foo"]),
         ] {
-            let scripted = Arc::new(ScriptedBackend::new());
-            scripted.on(
-                "ls-files -z --deduplicate",
-                Response::Exit {
-                    code: 0,
-                    stdout: out.to_vec(),
-                    stderr: Vec::new(),
-                },
-            );
-            let (git, _) = snp_git::Git::discover(sb.exe(), &sb.env, &repo, scripted).unwrap();
+            let backend = Arc::new(crate::common::Faulty::new().on(
+                &["ls-files", "-z", "--deduplicate"],
+                0,
+                out,
+                b"",
+            ));
+            let (git, _) = snp_git::Git::discover(sb.exe(), &sb.env, &repo, backend).unwrap();
             assert_eq!(zl(&git.all_files().unwrap()), strs(&expected));
         }
     }
@@ -403,6 +398,35 @@ mod rows {
     }
 
     #[test]
+    fn t10_git_14_merge_state_and_the_conflicted_files_union() {
+        let sb = Sandbox::new();
+        let repo = sb.merge_conflict("conflict");
+        let (git, info) = sb.discover(&repo);
+        // in-conflict ⇔ both MERGE_MSG and MERGE_HEAD exist in the (worktree) git dir
+        assert_eq!(git.merge_state(&info), MergeState::Merging);
+        let msg = std::fs::read(info.git_dir.join("MERGE_MSG")).unwrap();
+        assert!(
+            String::from_utf8_lossy(&msg).contains("#\tconflict_file\n"),
+            "git writes the `#\\t` form"
+        );
+        sb.resolve_conflict(&repo);
+        sb.write(&repo, "other_file", b"oh hai");
+        sb.git(&repo, &["add", "other_file"]);
+        // the `#\t` lines of MERGE_MSG first (file order), then the merge diff, without duplicates
+        std::fs::write(
+            info.git_dir.join("MERGE_MSG"),
+            b"Merge branch 'foo' into bar\n\n# Conflicts:\n#\tz_only_in_msg\n#\tconflict_file\n",
+        )
+        .unwrap();
+        assert_eq!(
+            zl(&git.conflicted_files(&info).unwrap()),
+            strs(&["z_only_in_msg", "conflict_file", "other_file"])
+        );
+        std::fs::remove_file(info.git_dir.join("MERGE_HEAD")).unwrap();
+        assert_eq!(git.merge_state(&info), MergeState::None);
+    }
+
+    #[test]
     fn t10_sto_05_clone_failure_names_the_repo_and_leaves_nothing_else() {
         let sb = Sandbox::new();
         let store = sb.path("store");
@@ -431,24 +455,20 @@ mod rows {
         assert_eq!(entries, vec![OsString::from("repo1234")]);
     }
 
-    #[cfg(feature = "testing")]
     #[test]
     fn t10_sto_07_shallow_failure_falls_back_to_a_complete_clone() {
-        use snp_git::testing::{Response, ScriptedBackend};
         let sb = Sandbox::new();
         let path = sb.init("upstream");
         sb.commit(&path, "commit!");
         let rev = sb.head(&path);
         sb.commit(&path, "commit!");
-        let scripted = Arc::new(ScriptedBackend::new());
-        scripted.on(
-            "-c protocol.version=2 fetch origin *",
-            Response::Exit {
-                code: 1,
-                stdout: Vec::new(),
-                stderr: Vec::new(),
-            },
-        );
+        // force the shallow fetch to fail
+        let backend = Arc::new(crate::common::Faulty::new().on(
+            &["-c", "protocol.version=2", "fetch", "origin"],
+            1,
+            b"",
+            b"",
+        ));
         let dest = sb.path("clone");
         std::fs::create_dir_all(&dest).unwrap();
         OwnedRepo::clone_rev(
@@ -458,26 +478,16 @@ mod rows {
             path.to_str().unwrap(),
             &rev,
             CloneMode::Foreground,
-            Arc::<ScriptedBackend>::clone(&scripted),
+            backend,
         )
         .unwrap();
+        // checked out at the rev, by the complete clone: full history, remote branches, not shallow
         assert_eq!(sb.head(&dest), rev);
-        let calls: Vec<String> = scripted
-            .calls()
-            .iter()
-            .map(|c| {
-                c[1..]
-                    .iter()
-                    .map(|a| a.to_string_lossy().into_owned())
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            })
-            .collect();
-        assert!(
-            calls.contains(&"fetch origin --tags".to_owned()),
-            "{calls:?}"
+        assert!(!dest.join(".git/shallow").exists());
+        assert_eq!(
+            sb.git_text(&dest, &["rev-parse", "origin/master"]),
+            sb.head(&path)
         );
-        assert!(calls.contains(&format!("checkout {rev}")), "{calls:?}");
     }
 
     #[test]
@@ -601,25 +611,30 @@ mod rows {
         );
     }
 
-    #[cfg(feature = "testing")]
     #[test]
     fn x13_git_10_rev_parse_echoing_git_dir_is_a_fatal_error() {
-        use snp_git::testing::{Response, ScriptedBackend};
         use snp_git::{GitCaps, GitExe, GitVersion};
         let sb = Sandbox::new();
         let repo = sb.init("repo");
-        let exit = |out: &[u8]| Response::Exit {
-            code: 0,
-            stdout: out.to_vec(),
-            stderr: Vec::new(),
-        };
-        let scripted = Arc::new(ScriptedBackend::new());
-        scripted
-            .on("rev-parse --show-cdup", exit(b"\n"))
-            .on("rev-parse --is-inside-git-dir", exit(b"false\n"))
-            .on("rev-parse --git-dir", exit(b"--git-dir\n"))
-            .on("rev-parse --git-common-dir", exit(b"--git-common-dir\n"))
-            .on("rev-parse --git-path index", exit(b"--git-path\nindex\n"));
+        // git < 2.5 echoes the options it does not know
+        let scripted = Arc::new(
+            crate::common::Faulty::new()
+                .on(&["rev-parse", "--show-cdup"], 0, b"\n", b"")
+                .on(&["rev-parse", "--is-inside-git-dir"], 0, b"false\n", b"")
+                .on(&["rev-parse", "--git-dir"], 0, b"--git-dir\n", b"")
+                .on(
+                    &["rev-parse", "--git-common-dir"],
+                    0,
+                    b"--git-common-dir\n",
+                    b"",
+                )
+                .on(
+                    &["rev-parse", "--git-path", "index"],
+                    0,
+                    b"--git-path\nindex\n",
+                    b"",
+                ),
+        );
         let real = sb.exe();
         let old = Arc::new(GitExe {
             argv0: real.argv0.clone(),
