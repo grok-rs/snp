@@ -1,5 +1,7 @@
-//! CPython's `random.Random` (MT19937, `_randmodule.c`) as far as pre-commit uses it:
-//! `Random(1542676187).shuffle(seq)` in `lang_base._shuffled` — bit exact (02 §11.7).
+//! CPython's `random.Random` (MT19937, `Modules/_randommodule.c`, `Lib/random.py`) as far as
+//! pre-commit uses it: `Random(1542676187).shuffle(seq)` in `lang_base._shuffled`
+//! (`lang_base.py:146-153`), which orders the file arguments before xargs partitions them — bit
+//! exact (02 §11.7; verified for every n of the WP-11 acceptance list against CPython).
 
 const N: usize = 624;
 const M: usize = 397;
@@ -10,7 +12,7 @@ const LOWER_MASK: u32 = 0x7fff_ffff;
 /// `lang_base.FIXED_RANDOM_SEED`.
 const FIXED_RANDOM_SEED: u32 = 1_542_676_187;
 
-/// The Mersenne Twister state of a CPython `random.Random`.
+/// The Mersenne Twister state of a CPython `random.Random` (`RandomObject`: 624 words + index).
 #[derive(Clone, Debug)]
 pub struct Mt19937 {
     mt: Box<[u32; N]>,
@@ -49,8 +51,8 @@ impl Mt19937 {
         st
     }
 
-    /// `init_by_array(key)` — what `random.seed(int)` does with the 32-bit words of `abs(seed)`
-    /// (little-endian; `[0]` for zero).
+    /// `init_by_array(key)` (`_randommodule.c`) — what `random.seed(int)` (`random_seed`) does with
+    /// the 32-bit words of `abs(seed)`, least significant first; an empty key is `[0]` (seed 0).
     #[must_use]
     pub fn init_by_array(key: &[u32]) -> Self {
         let zero = [0_u32];
@@ -104,7 +106,7 @@ impl Mt19937 {
         self.index = 0;
     }
 
-    /// `genrand_uint32()`: the next tempered 32-bit output.
+    /// `genrand_uint32()`: the next tempered 32-bit output (= `getrandbits(32)`).
     pub fn genrand_u32(&mut self) -> u32 {
         if self.index >= N {
             self.twist();
@@ -132,8 +134,9 @@ impl Mt19937 {
         }
     }
 
-    /// `_randbelow_with_getrandbits(n)`: uniform in `[0, n)` by rejection sampling on
-    /// `getrandbits(n.bit_length())`. Python never calls it with 0; here 0 returns 0.
+    /// `Random._randbelow_with_getrandbits(n)` (`random.py`): uniform in `[0, n)` by rejection
+    /// sampling on `getrandbits(n.bit_length())`, whose words fill from the least significant end.
+    /// Python never calls it with 0; here 0 returns 0 without consuming output.
     pub fn randbelow(&mut self, n: u64) -> u64 {
         if n == 0 {
             return 0;
@@ -148,8 +151,11 @@ impl Mt19937 {
     }
 }
 
-/// `lang_base._shuffled(range(n))`: `random.Random()` seeded with `FIXED_RANDOM_SEED`
-/// (`version=1` is irrelevant for an int seed), then `shuffle` — a fresh generator per call.
+/// `lang_base._shuffled(range(n))` (`lang_base.py:146-153`): `random.Random()` seeded with
+/// `FIXED_RANDOM_SEED` (`version=1` is irrelevant for an int seed), then `Random.shuffle` (for `i`
+/// from `n-1` down to 1, swap `i` with `randbelow(i + 1)`) — a fresh generator per call, so every
+/// hook shuffles the same way. Apply the permutation to the file list: `files[out[k]]`. Lengths
+/// beyond `u32::MAX + 1` (never reached) are truncated.
 #[must_use]
 pub fn precommit_shuffled_indices(n: usize) -> Vec<u32> {
     let mut v: Vec<u32> = (0..n).map_while(|i| u32::try_from(i).ok()).collect();

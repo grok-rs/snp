@@ -33,7 +33,7 @@ impl<'a> Iterator for ZSplit<'a> {
 
 impl FusedIterator for ZSplit<'_> {}
 
-/// `git.zsplit(s)`: `s.strip('\0')`; empty → no records; else `split('\0')`.
+/// `git.zsplit(s)` (`git.py:19-24`): `s.strip('\0')`; empty → no records; else `split('\0')`.
 #[must_use]
 pub fn zsplit(b: &[u8]) -> ZSplit<'_> {
     let start = b.iter().take_while(|&&c| c == 0).count();
@@ -218,7 +218,13 @@ pub fn rev_line_match(line: &str) -> Option<[&str; 6]> {
 }
 
 /// `autoupdate._write_new_config` line assembly (`autoupdate.py:146-156`); `new_rev` is the
-/// rendered YAML scalar. `None` when the line is not a rev line.
+/// rendered YAML scalar (`yaml_dump({'rev': rev}, default_style=g3).split(':', 1)[1].strip()`).
+/// The comment is `  # frozen: <tag>` when freezing, dropped when `g5.strip()` starts with
+/// `# frozen:`, else `g5` kept. `None` when the line is not a rev line.
+///
+/// Exactly pre-commit's bytes: because g6 is always `"\n"`, a CRLF line whose comment is replaced
+/// loses its `\r` (15 §A5 D3). snp's autoupdate re-appends it (DEV-PY-1, D-DATA-10, WP-21); this
+/// composite stays the parity reference.
 #[must_use]
 pub fn rev_line_rewrite(line: &str, new_rev: &str, frozen: Option<&str>) -> Option<String> {
     let [g1, g2, _g3, _g4, g5, g6] = rev_line_match(line)?;
@@ -231,7 +237,8 @@ pub fn rev_line_rewrite(line: &str, new_rev: &str, frozen: Option<&str>) -> Opti
 }
 
 /// `migrate_config._migrate_map` header split (`migrate_config.py:21-34`): the longest prefix of
-/// `splitlines(True)` lines that start with `#` or `---` or are PY-WS only, and the rest.
+/// `splitlines(True)` lines that start with `#` or `---` or are PY-WS only (an all-NBSP or `\x1f`
+/// line counts as blank, a ZWSP line does not), and the rest.
 #[must_use]
 pub fn migrate_header_split(contents: &str) -> (&str, &str) {
     let n = splitlines_keepends(contents)

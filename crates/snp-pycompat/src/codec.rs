@@ -1,17 +1,19 @@
 //! `bytes.decode()` (strict UTF-8) with CPython's exact `UnicodeDecodeError` text,
 //! `errors='backslashreplace'`, the `surrogateescape` view of `os.fsdecode` and the
-//! `UnicodeEncodeError` of a strict re-encode (13 X.2.3, 15 §A4.3).
+//! `UnicodeEncodeError` of a strict re-encode (13 X.2.3, 15 §A4.3; `Objects/unicodeobject.c`,
+//! `Objects/stringlib/codecs.h`, `Python/codecs.c`).
 
 use std::borrow::Cow;
 use std::fmt::{self, Write as _};
 
 use crate::chars::PyChar;
+use crate::messages;
 
-/// Why CPython's UTF-8 decoder stopped.
+/// Why CPython's UTF-8 decoder stopped (the `reason` of `UnicodeDecodeError`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Utf8Reason {
-    /// A byte that can never start a UTF-8 sequence.
+    /// A byte that can never start a UTF-8 sequence (`80..BF`, `C0`, `C1`, `F5..FF`).
     InvalidStartByte,
     /// A valid start byte followed by a byte that cannot continue it.
     InvalidContinuationByte,
@@ -19,8 +21,20 @@ pub enum Utf8Reason {
     UnexpectedEndOfData,
 }
 
-/// CPython's `UnicodeDecodeError` for codec `'utf-8'`. `start..end` is the byte range CPython
-/// reports (the maximal invalid subpart, identical to `Utf8Error::valid_up_to`/`error_len`).
+impl Utf8Reason {
+    /// The reason text CPython prints.
+    const fn text(self) -> &'static str {
+        match self {
+            Self::InvalidStartByte => messages::INVALID_START_BYTE,
+            Self::InvalidContinuationByte => messages::INVALID_CONTINUATION_BYTE,
+            Self::UnexpectedEndOfData => messages::UNEXPECTED_END_OF_DATA,
+        }
+    }
+}
+
+/// CPython's `UnicodeDecodeError` for codec `'utf-8'` (`bytes.decode()`). `start..end` is the byte
+/// range CPython reports: the maximal invalid subpart, identical to Rust's
+/// `Utf8Error::valid_up_to`/`error_len`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Utf8DecodeError {
     /// Offset of the first undecodable byte within the whole buffer.
@@ -35,31 +49,21 @@ pub struct Utf8DecodeError {
 
 impl Utf8DecodeError {
     /// The Python exception class: `UnicodeDecodeError`.
+    #[must_use]
     pub const fn py_type(&self) -> &'static str {
-        "UnicodeDecodeError"
+        messages::UNICODE_DECODE_ERROR
     }
 }
 
 impl fmt::Display for Utf8DecodeError {
+    /// `str(exc)`: `'utf-8' codec can't decode byte 0xe9 in position 14: invalid continuation byte`,
+    /// or `… decode bytes in position 3-4: unexpected end of data` for a longer range.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let reason = match self.reason {
-            Utf8Reason::InvalidStartByte => "invalid start byte",
-            Utf8Reason::InvalidContinuationByte => "invalid continuation byte",
-            Utf8Reason::UnexpectedEndOfData => "unexpected end of data",
-        };
+        let reason = self.reason.text();
         if self.end.saturating_sub(self.start) <= 1 {
-            write!(
-                f,
-                "'utf-8' codec can't decode byte 0x{:02x} in position {}: {reason}",
-                self.first_byte, self.start
-            )
+            messages::decode_byte(f, self.first_byte, self.start, reason)
         } else {
-            write!(
-                f,
-                "'utf-8' codec can't decode bytes in position {}-{}: {reason}",
-                self.start,
-                self.end.saturating_sub(1)
-            )
+            messages::decode_bytes(f, self.start, self.end.saturating_sub(1), reason)
         }
     }
 }
@@ -67,7 +71,10 @@ impl fmt::Display for Utf8DecodeError {
 impl std::error::Error for Utf8DecodeError {}
 
 /// `str.encode('utf-8')` of a string holding a lone surrogate (a `surrogateescape`d argv byte):
-/// `'utf-8' codec can't encode character '\udcff' in position N: surrogates not allowed`.
+/// `'utf-8' codec can't encode character '\udcff' in position N: surrogates not allowed`
+/// (`output.py:10,33`). CPython reports a *run* of surrogates as `characters in position a-b`;
+/// snp never re-encodes surrogates (bytes end to end, D-CRASH-12), so only the single-character
+/// form exists here.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Utf8EncodeError {
     /// Character position of the surrogate.
@@ -78,28 +85,29 @@ pub struct Utf8EncodeError {
 
 impl Utf8EncodeError {
     /// The Python exception class: `UnicodeEncodeError`.
+    #[must_use]
     pub const fn py_type(&self) -> &'static str {
-        "UnicodeEncodeError"
+        messages::UNICODE_ENCODE_ERROR
     }
 }
 
 impl fmt::Display for Utf8EncodeError {
+    /// `str(exc)` of the strict UTF-8 encoder.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "'utf-8' codec can't encode character '\\u{:04x}' in position {}: surrogates not allowed",
-            self.surrogate, self.position
-        )
+        messages::encode_surrogate(f, self.surrogate, self.position)
     }
 }
 
 impl std::error::Error for Utf8EncodeError {}
 
+/// A byte that can start a UTF-8 sequence (ASCII or `C2..F4`).
 const fn is_start_byte(b: u8) -> bool {
     matches!(b, 0x00..=0x7f | 0xc2..=0xf4)
 }
 
-/// `b.decode()` (strict UTF-8). A BOM is kept as U+FEFF (codec `utf-8`, not `utf-8-sig`).
+/// `b.decode()` (strict UTF-8, `util.py:118-119`, `hook_impl.py:128`). A BOM is kept as U+FEFF
+/// (codec `utf-8`, not `utf-8-sig`). The error is the *first* invalid sequence, positioned in the
+/// whole buffer.
 pub fn decode_utf8(b: &[u8]) -> Result<&str, Utf8DecodeError> {
     core::str::from_utf8(b).map_err(|e| {
         let start = e.valid_up_to();
@@ -125,13 +133,16 @@ pub fn decode_utf8(b: &[u8]) -> Result<&str, Utf8DecodeError> {
     })
 }
 
-/// `b.decode(errors='backslashreplace')`: every undecodable byte becomes `\xNN`.
+/// `b.decode(errors='backslashreplace')` (`error_handler.py:29`): every byte of each maximal
+/// invalid subpart becomes `\xNN` (lowercase hex); valid input is borrowed.
 #[must_use]
 pub fn decode_utf8_backslashreplace(b: &[u8]) -> Cow<'_, str> {
     if let Ok(s) = core::str::from_utf8(b) {
         return Cow::Borrowed(s);
     }
     let mut out = String::new();
+    out.try_reserve(b.len().saturating_mul(2))
+        .unwrap_or_default();
     for chunk in b.utf8_chunks() {
         out.push_str(chunk.valid());
         for x in chunk.invalid() {
@@ -170,7 +181,8 @@ impl Iterator for FsDecodeChars<'_> {
 
 impl std::iter::FusedIterator for FsDecodeChars<'_> {}
 
-/// `os.fsdecode(b)` viewed as Python characters (POSIX `surrogateescape`).
+/// `os.fsdecode(b)` viewed as Python characters (POSIX `surrogateescape`, `Python/codecs.c`
+/// `PyCodec_SurrogateEscapeErrors`).
 #[must_use]
 pub fn fsdecode_chars(b: &[u8]) -> FsDecodeChars<'_> {
     FsDecodeChars {
@@ -247,6 +259,15 @@ mod tests {
             ]
         );
         assert_eq!(fsdecode_chars(b"").count(), 0);
+        let v: Vec<PyChar> = fsdecode_chars(b"\xe2\x82(").collect();
+        assert_eq!(
+            v,
+            vec![
+                PyChar::Surrogate(0xdce2),
+                PyChar::Surrogate(0xdc82),
+                PyChar::Scalar('(')
+            ]
+        );
     }
 
     #[test]

@@ -1,15 +1,20 @@
 //! Python `repr()` and `str(exception)` texts for the value shapes pre-commit formats into messages
-//! (01 §2.6, 13 X.2, 15 §A4.7).
+//! (01 §2.6, 13 X.2, 15 §A4.7; `Objects/unicodeobject.c` `unicode_repr`, `Objects/listobject.c`,
+//! `Objects/tupleobject.c`, `Objects/dictobject.c`, `Objects/exceptions.c`, `Lib/subprocess.py`).
 
 use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::io;
 
 use crate::chars::{PyChar, is_printable};
+use crate::messages;
 
 pub use crate::float::repr as repr_float;
 
-/// Appends `repr()` of a Python string given as characters (`unicode_repr`).
+/// Appends `repr()` of a Python string given as characters (`unicode_repr`): `'` unless the text
+/// holds `'` and no `"`; `\\`, the quote, `\t \n \r` escaped; other C0 and DEL as `\xNN`;
+/// non-printable non-ASCII as `\xNN`/`\uNNNN`/`\UNNNNNNNN` (lowercase hex); lone surrogates as
+/// `\udXXX`.
 fn write_quoted<I: Iterator<Item = PyChar> + Clone>(out: &mut String, chars: I) {
     let (mut sq, mut dq) = (false, false);
     for c in chars.clone() {
@@ -53,12 +58,12 @@ fn write_quoted<I: Iterator<Item = PyChar> + Clone>(out: &mut String, chars: I) 
     out.push(quote);
 }
 
-/// Appends `repr(s)` to `out`.
+/// Appends `repr(s)` to `out` (`unicode_repr`).
 pub fn write_repr_str(out: &mut String, s: &str) {
     write_quoted(out, s.chars().map(PyChar::Scalar));
 }
 
-/// `repr(s)` for a `str`.
+/// `repr(s)` for a `str` (`{x!r}` in pre-commit and cfgv messages; 01 §2.6).
 #[must_use]
 pub fn repr_str(s: &str) -> String {
     let mut out = String::new();
@@ -90,8 +95,7 @@ pub fn repr_os(s: &OsStr) -> String {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
-        let units: Vec<u16> = s.encode_wide().collect();
-        let chars = char::decode_utf16(units.iter().copied()).map(|r| match r {
+        let chars = char::decode_utf16(s.encode_wide()).map(|r| match r {
             Ok(c) => PyChar::Scalar(c),
             Err(e) => PyChar::Surrogate(e.unpaired_surrogate()),
         });
@@ -114,7 +118,8 @@ fn write_seq<S: AsRef<str>>(out: &mut String, xs: &[S]) {
     }
 }
 
-/// `repr(tuple_of_str)`, including the trailing comma of a 1-tuple (`('git',)`).
+/// `repr(tuple_of_str)`, including the trailing comma of a 1-tuple (`('git',)`; the argv of
+/// `CalledProcessError`, `util.py:71`).
 #[must_use]
 pub fn repr_str_tuple<S: AsRef<str>>(xs: &[S]) -> String {
     let mut out = String::from("(");
@@ -126,7 +131,7 @@ pub fn repr_str_tuple<S: AsRef<str>>(xs: &[S]) -> String {
     out
 }
 
-/// `repr(list_of_str)`.
+/// `repr(list_of_str)` (`hook_impl.py:189-210` argument lists, `lang_base.py:107-111`).
 #[must_use]
 pub fn repr_str_list<S: AsRef<str>>(xs: &[S]) -> String {
     let mut out = String::from("[");
@@ -140,7 +145,7 @@ pub fn repr_str_list<S: AsRef<str>>(xs: &[S]) -> String {
 pub enum PyInt {
     /// A value that fits `i128`.
     Small(i128),
-    /// Decimal digits (optionally `-`-prefixed) of a larger value.
+    /// Decimal digits (optionally `-`-prefixed) of a larger value, printed verbatim.
     Decimal(Box<str>),
 }
 
@@ -175,7 +180,8 @@ pub fn repr(v: &PyValue) -> String {
     out
 }
 
-/// Appends `repr(v)` to `out`.
+/// Appends `repr(v)` to `out`: `[a, b]`, `(a,)`, `{k: v}` in insertion order, `None`/`True`/
+/// `False`, decimal ints, [`repr_float`] floats.
 pub fn write_repr(out: &mut String, v: &PyValue) {
     match v {
         PyValue::None => out.push_str("None"),
@@ -233,8 +239,8 @@ pub fn fstring_eq(name: &str, v: &str) -> String {
     out
 }
 
-/// `str(OSError(errno, strerror[, filename[, None, filename2]]))`:
-/// `[Errno N] strerror: 'f1' -> 'f2'`.
+/// `str(OSError(errno, strerror[, filename[, None, filename2]]))` (`OSError_str`):
+/// `[Errno N] strerror: 'f1' -> 'f2'`; `f2` is ignored without `f1`.
 #[must_use]
 pub fn oserror_str(errno: i32, strerror: &str, f1: Option<&OsStr>, f2: Option<&OsStr>) -> String {
     let mut out = format!("[Errno {errno}] {strerror}");
@@ -253,14 +259,15 @@ fn push_filenames(out: &mut String, f1: Option<&OsStr>, f2: Option<&OsStr>) {
     }
 }
 
-/// The C library's message for an OS error code (Rust's text minus ` (os error N)`); on Windows
-/// CPython also strips trailing whitespace and dots of the `FormatMessageW` text.
+/// The C library's message for an OS error code (Rust's text minus ` (os error N)`, which on
+/// POSIX is `strerror(N)` like `os.strerror`); on Windows CPython strips trailing whitespace and
+/// dots of the `FormatMessageW` text (`PyErr_SetExcFromWindowsErrWithFilenameObjects`).
 fn os_message(code: i32) -> String {
     let full = io::Error::from_raw_os_error(code).to_string();
     let suffix = format!(" (os error {code})");
     let msg = full.strip_suffix(&suffix).unwrap_or(&full);
     if cfg!(windows) {
-        msg.trim_end_matches(|c: char| c == '.' || c.is_whitespace())
+        msg.trim_end_matches(|c: char| c == '.' || c <= ' ')
             .to_owned()
     } else {
         msg.to_owned()
@@ -285,23 +292,27 @@ pub fn oserror_from_io(e: &io::Error, f1: Option<&OsStr>, f2: Option<&OsStr>) ->
     }
 }
 
-/// `str(subprocess.CalledProcessError(rc, cmd))` (stdlib; raised by `subprocess.check_output` in
-/// `hook_impl.py:143-165`). `cmd_str` is `str(cmd)` (the tuple/list repr).
+/// `str(subprocess.CalledProcessError(rc, cmd))` (stdlib `Lib/subprocess.py`; raised by
+/// `subprocess.check_output` in `hook_impl.py:143-165`). `cmd_str` is `str(cmd)` (the tuple/list
+/// repr). A negative `rc` is a signal: `died with <Signals.SIGKILL: 9>.` or `died with unknown
+/// signal N.`.
 #[must_use]
 pub fn stdlib_called_process_error_str(rc: i64, cmd_str: &str) -> String {
     if rc < 0 {
         let sig = rc.unsigned_abs();
         match u32::try_from(sig).ok().and_then(signal_name) {
-            Some(name) => format!("Command '{cmd_str}' died with <Signals.{name}: {sig}>."),
-            None => format!("Command '{cmd_str}' died with unknown signal {sig}."),
+            Some(name) => messages::cpe_died_with(cmd_str, name, sig),
+            None => messages::cpe_unknown_signal(cmd_str, sig),
         }
     } else {
-        format!("Command '{cmd_str}' returned non-zero exit status {rc}.")
+        messages::cpe_exit_status(cmd_str, rc)
     }
 }
 
-/// The name Python's `signal.Signals` gives signal number `sig` on this platform (the
-/// alphabetically first of aliases, as `IntEnum._convert_` sorts them).
+/// The name Python's `signal.Signals` gives signal number `sig` on this platform (`Lib/signal.py`
+/// `_IntEnum._convert_`, which sorts by value then name, so the alphabetically first alias wins:
+/// `SIGABRT` over `SIGIOT`, `SIGCHLD` over `SIGCLD`, `SIGIO` over `SIGPOLL`). `None` where
+/// `signal.Signals(sig)` raises `ValueError`.
 #[must_use]
 pub const fn signal_name(sig: u32) -> Option<&'static str> {
     #[cfg(any(
@@ -349,7 +360,10 @@ pub const fn signal_name(sig: u32) -> Option<&'static str> {
     }
     #[cfg(windows)]
     {
+        // `signal.py` also converts the `CTRL_*` constants of the Windows `signal` module.
         Some(match sig {
+            0 => "CTRL_C_EVENT",
+            1 => "CTRL_BREAK_EVENT",
             2 => "SIGINT",
             4 => "SIGILL",
             8 => "SIGFPE",
@@ -408,12 +422,18 @@ pub const fn signal_name(sig: u32) -> Option<&'static str> {
     }
 }
 
-/// `ValueError` text of `int(literal)` (base 10): `invalid literal for int() with base 10: %.200R`
-/// — the repr is cut at 200 characters (no closing quote then).
+/// `ValueError` text of `int(literal)` (base 10, `Objects/longobject.c`):
+/// `invalid literal for int() with base 10: %.200R` — the repr is cut at 200 *characters*, even in
+/// the middle of an escape, and then has no closing quote.
 #[must_use]
 pub fn int_literal_error(literal: &str) -> String {
-    let r: String = repr_str(literal).chars().take(200).collect();
-    format!("invalid literal for int() with base 10: {r}")
+    let mut out = String::from(messages::INT_LITERAL_PREFIX);
+    out.extend(
+        repr_str(literal)
+            .chars()
+            .take(messages::INT_LITERAL_REPR_CHARS),
+    );
+    out
 }
 
 #[cfg(test)]
@@ -512,7 +532,7 @@ mod tests {
             "[Errno 2] No such file or directory: 'a' -> 'b'"
         );
         assert_eq!(
-            oserror_str(2, "No such file or directory", None, None),
+            oserror_str(2, "No such file or directory", None, Some(OsStr::new("b"))),
             "[Errno 2] No such file or directory"
         );
         assert_eq!(
@@ -522,6 +542,10 @@ mod tests {
         assert_eq!(
             stdlib_called_process_error_str(-99, "('git',)"),
             "Command '('git',)' died with unknown signal 99."
+        );
+        assert_eq!(
+            stdlib_called_process_error_str(i64::MIN, "x"),
+            "Command 'x' died with unknown signal 9223372036854775808."
         );
         #[cfg(target_os = "linux")]
         {
@@ -538,6 +562,10 @@ mod tests {
                 "[Errno 2] No such file or directory: './x.sh'"
             );
         }
+        assert_eq!(
+            oserror_from_io(&io::Error::other("custom"), None, None),
+            "custom"
+        );
         assert_eq!(
             int_literal_error("it's"),
             "invalid literal for int() with base 10: \"it's\""

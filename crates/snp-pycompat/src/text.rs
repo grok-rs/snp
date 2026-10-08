@@ -1,15 +1,93 @@
-//! `str` / `bytes` splitting and stripping with CPython semantics (15 §A4.1–§A4.2).
+//! `str` / `bytes` splitting and stripping with CPython semantics (15 §A4.1–§A4.2;
+//! `Objects/stringlib/split.h`, `Objects/unicodeobject.c`, `Objects/bytes_methods.c`).
 //!
 //! Rust's `str::lines`, `split_whitespace`, `trim` and `<[u8]>::trim_ascii` use different character
-//! sets (15 §A8); every pre-commit call site goes through these functions instead.
+//! sets (15 §A8); every pre-commit call site goes through these functions instead. The line
+//! splitters scan bytes, never decode to `char`s, and allocate nothing.
 
 use std::fmt;
 use std::iter::FusedIterator;
 
-use crate::chars::{is_bytes_space, is_linebreak, is_space};
+use crate::chars::{is_bytes_space, is_space};
+use crate::messages;
+
+/// Whether `b` can start a PY-LB boundary in UTF-8 text: the ASCII breaks `\n \x0b \x0c \r`,
+/// `\x1c..\x1e`, or the lead bytes of U+0085 (`C2 85`) and U+2028/U+2029 (`E2 80 A8`/`A9`).
+const fn may_start_linebreak(b: u8) -> bool {
+    matches!(b, b'\n'..=b'\r' | 0x1c..=0x1e | 0xc2 | 0xe2)
+}
+
+/// Whether `b` can end a PY-LB boundary in UTF-8 text (the ASCII breaks, or the last byte of
+/// U+0085, U+2028, U+2029).
+const fn may_end_linebreak(b: u8) -> bool {
+    matches!(b, b'\n'..=b'\r' | 0x1c..=0x1e | 0x85 | 0xa8 | 0xa9)
+}
+
+/// The first PY-LB boundary of `s` as `(start, len)` in bytes; `"\r\n"` is one boundary.
+fn find_linebreak(s: &str) -> Option<(usize, usize)> {
+    let b = s.as_bytes();
+    let mut from = 0_usize;
+    loop {
+        let off = b
+            .get(from..)?
+            .iter()
+            .position(|&c| may_start_linebreak(c))?;
+        let i = from.checked_add(off)?;
+        let at = |k: usize| b.get(i.checked_add(k)?).copied();
+        let len = match at(0) {
+            Some(b'\r') if at(1) == Some(b'\n') => 2,
+            Some(0xc2) => {
+                if at(1) == Some(0x85) {
+                    2
+                } else {
+                    0
+                }
+            }
+            Some(0xe2) => {
+                if at(1) == Some(0x80) && matches!(at(2), Some(0xa8 | 0xa9)) {
+                    3
+                } else {
+                    0
+                }
+            }
+            _ => 1,
+        };
+        if len > 0 {
+            return Some((i, len));
+        }
+        from = i.checked_add(1)?;
+    }
+}
+
+/// Length in bytes of the PY-LB boundary that ends `b` (0 when `b` does not end with one).
+const fn trailing_linebreak_len(b: &[u8]) -> usize {
+    match b {
+        [.., b'\r', b'\n'] | [.., 0xc2, 0x85] => 2,
+        [.., b'\n'..=b'\r' | 0x1c..=0x1e] => 1,
+        [.., 0xe2, 0x80, 0xa8 | 0xa9] => 3,
+        _ => 0,
+    }
+}
+
+/// The offset just after the last PY-LB boundary inside `b` (0 when there is none).
+fn last_linebreak_end(b: &[u8]) -> usize {
+    let mut end = b.len();
+    while let Some(j) = b
+        .get(..end)
+        .and_then(|h| h.iter().rposition(|&c| may_end_linebreak(c)))
+    {
+        let candidate = j.saturating_add(1);
+        if trailing_linebreak_len(b.get(..candidate).unwrap_or_default()) > 0 {
+            return candidate;
+        }
+        end = j;
+    }
+    0
+}
 
 /// `str.splitlines()` / `str.splitlines(True)`: zero-copy, Unicode line boundaries (PY-LB, with
-/// `"\r\n"` as one boundary).
+/// `"\r\n"` as one boundary; `Objects/stringlib/split.h` `STRINGLIB(splitlines)`). The text after
+/// the last boundary is a line only when it is non-empty (`'a\n'` → `['a']`, `''` → `[]`).
 #[derive(Clone, Debug)]
 pub struct SplitLines<'a> {
     rest: &'a str,
@@ -24,46 +102,36 @@ impl<'a> Iterator for SplitLines<'a> {
             return None;
         }
         let s = self.rest;
-        for (i, c) in s.char_indices() {
-            if !is_linebreak(c) {
-                continue;
-            }
-            let mut end = i.saturating_add(c.len_utf8());
-            if c == '\r' && s.as_bytes().get(end) == Some(&b'\n') {
-                end = end.saturating_add(1);
-            }
-            let (with_end, rest) = s.split_at_checked(end)?;
-            self.rest = rest;
-            return if self.keepends {
-                Some(with_end)
-            } else {
-                with_end.get(..i)
-            };
+        let Some((i, n)) = find_linebreak(s) else {
+            self.rest = "";
+            return Some(s);
+        };
+        let (with_end, rest) = s.split_at_checked(i.checked_add(n)?)?;
+        self.rest = rest;
+        if self.keepends {
+            Some(with_end)
+        } else {
+            with_end.get(..i)
         }
-        self.rest = "";
-        Some(s)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        if self.rest.is_empty() {
+            (0, Some(0))
+        } else {
+            (1, Some(self.rest.len()))
+        }
     }
 }
 
 impl DoubleEndedIterator for SplitLines<'_> {
     fn next_back(&mut self) -> Option<Self::Item> {
         let s = self.rest;
-        let (last_i, last_c) = s.char_indices().next_back()?;
-        // The terminator of the last line (if any): one PY-LB char, or "\r\n".
-        let content_end = if is_linebreak(last_c) {
-            match last_i.checked_sub(1) {
-                Some(j) if last_c == '\n' && s.as_bytes().get(j) == Some(&b'\r') => j,
-                _ => last_i,
-            }
-        } else {
-            s.len()
-        };
-        let head = s.get(..content_end)?;
-        let start = head
-            .char_indices()
-            .rev()
-            .find(|&(_, c)| is_linebreak(c))
-            .map_or(0, |(j, c)| j.saturating_add(c.len_utf8()));
+        if s.is_empty() {
+            return None;
+        }
+        let content_end = s.len().saturating_sub(trailing_linebreak_len(s.as_bytes()));
+        let start = last_linebreak_end(s.as_bytes().get(..content_end)?);
         let line = if self.keepends {
             s.get(start..)?
         } else {
@@ -76,7 +144,8 @@ impl DoubleEndedIterator for SplitLines<'_> {
 
 impl FusedIterator for SplitLines<'_> {}
 
-/// `bytes.splitlines()` / `bytes.splitlines(True)`: boundaries are `\n`, `\r` and `\r\n` only.
+/// `bytes.splitlines()` / `bytes.splitlines(True)`: boundaries are `\n`, `\r` and `\r\n` only
+/// (B-LB).
 #[derive(Clone, Debug)]
 pub struct BytesSplitLines<'a> {
     rest: &'a [u8],
@@ -95,10 +164,8 @@ impl<'a> Iterator for BytesSplitLines<'a> {
             self.rest = &[];
             return Some(b);
         };
-        let mut end = i.saturating_add(1);
-        if b.get(i) == Some(&b'\r') && b.get(end) == Some(&b'\n') {
-            end = end.saturating_add(1);
-        }
+        let crlf = b.get(i) == Some(&b'\r') && b.get(i.saturating_add(1)) == Some(&b'\n');
+        let end = i.saturating_add(if crlf { 2 } else { 1 });
         let (with_end, rest) = b.split_at_checked(end)?;
         self.rest = rest;
         if self.keepends {
@@ -107,11 +174,46 @@ impl<'a> Iterator for BytesSplitLines<'a> {
             with_end.get(..i)
         }
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        if self.rest.is_empty() {
+            (0, Some(0))
+        } else {
+            (1, Some(self.rest.len()))
+        }
+    }
+}
+
+impl DoubleEndedIterator for BytesSplitLines<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let b = self.rest;
+        if b.is_empty() {
+            return None;
+        }
+        let terminator = match b {
+            [.., b'\r', b'\n'] => 2,
+            [.., b'\n' | b'\r'] => 1,
+            _ => 0,
+        };
+        let content_end = b.len().saturating_sub(terminator);
+        let start = b
+            .get(..content_end)?
+            .iter()
+            .rposition(|&c| c == b'\n' || c == b'\r')
+            .map_or(0, |j| j.saturating_add(1));
+        let line = if self.keepends {
+            b.get(start..)?
+        } else {
+            b.get(start..content_end)?
+        };
+        self.rest = b.get(..start)?;
+        Some(line)
+    }
 }
 
 impl FusedIterator for BytesSplitLines<'_> {}
 
-/// `str.split(maxsplit=n)` (whitespace split, `sep=None`).
+/// `str.split(maxsplit=n)` (whitespace split, `sep=None`; `STRINGLIB(split_whitespace)`).
 #[derive(Clone, Debug)]
 pub struct SplitWs<'a> {
     rest: &'a str,
@@ -185,7 +287,7 @@ pub fn bytes_splitlines_keepends(b: &[u8]) -> BytesSplitLines<'_> {
 
 /// `s.split(None, maxsplit)`; `None` means unlimited (`-1`). Runs of PY-WS are one separator,
 /// leading whitespace is skipped, and once `maxsplit` is reached the remainder keeps its
-/// *trailing* whitespace.
+/// *trailing* whitespace (`'  a b  c  '.split(None, 2)` → `['a', 'b', 'c  ']`).
 #[must_use]
 pub fn split_whitespace(s: &str, maxsplit: Option<usize>) -> SplitWs<'_> {
     SplitWs {
@@ -260,7 +362,8 @@ pub fn bytes_rsplit_whitespace(b: &[u8], maxsplit: Option<usize>) -> Vec<&[u8]> 
     out
 }
 
-/// `ValueError` of a tuple unpack, e.g. `a, b, c, d = s.rsplit(maxsplit=3)` (`hook_impl.py:130`).
+/// `ValueError` of a tuple unpack, e.g. `a, b, c, d = s.rsplit(maxsplit=3)` (`hook_impl.py:130`;
+/// `Python/ceval.c` `unpack_iterable`, 3.12 wording).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct UnpackError {
     /// Number of targets.
@@ -271,28 +374,26 @@ pub struct UnpackError {
 
 impl UnpackError {
     /// The Python exception class: always `ValueError`.
+    #[must_use]
     pub const fn py_type(&self) -> &'static str {
-        "ValueError"
+        messages::VALUE_ERROR
     }
 }
 
 impl fmt::Display for UnpackError {
+    /// `not enough values to unpack (expected 4, got 3)` / `too many values to unpack (expected 4)`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.got > self.expected {
-            write!(f, "too many values to unpack (expected {})", self.expected)
+            messages::unpack_too_many(f, self.expected)
         } else {
-            write!(
-                f,
-                "not enough values to unpack (expected {}, got {})",
-                self.expected, self.got
-            )
+            messages::unpack_not_enough(f, self.expected, self.got)
         }
     }
 }
 
 impl std::error::Error for UnpackError {}
 
-/// `a, b, c, d = s.rsplit(maxsplit=3)` (pre-push lines; no allocation).
+/// `a, b, c, d = s.rsplit(maxsplit=3)` (pre-push lines, `hook_impl.py:129-130`; no allocation).
 pub fn rsplit4(s: &str) -> Result<[&str; 4], UnpackError> {
     let mut parts: [&str; 4] = [""; 4];
     let mut rest = s;
@@ -381,7 +482,8 @@ pub fn rstrip(s: &str) -> &str {
     s.trim_end_matches(is_space)
 }
 
-/// `s.strip(chars)`: `chars` is a *set* of characters, not a prefix/suffix.
+/// `s.strip(chars)`: `chars` is a *set* of characters, not a prefix/suffix (`strip('')` strips
+/// nothing).
 #[must_use]
 pub fn strip_chars<'a>(s: &'a str, set: &str) -> &'a str {
     s.trim_matches(|c| set.contains(c))
@@ -393,13 +495,13 @@ pub fn lstrip_chars<'a>(s: &'a str, set: &str) -> &'a str {
     s.trim_start_matches(|c| set.contains(c))
 }
 
-/// `s.rstrip(chars)`.
+/// `s.rstrip(chars)` (`'a\r\n'.rstrip('\n')` → `'a\r'`).
 #[must_use]
 pub fn rstrip_chars<'a>(s: &'a str, set: &str) -> &'a str {
     s.trim_end_matches(|c| set.contains(c))
 }
 
-/// `b.strip()` (B-WS: `b' \t\n\r\x0b\x0c'`).
+/// `b.strip()` (B-WS: `b' \t\n\r\x0b\x0c'`; not `<[u8]>::trim_ascii`, which keeps `\x0b`).
 #[must_use]
 pub fn bytes_strip(b: &[u8]) -> &[u8] {
     bytes_rstrip(bytes_lstrip(b))
@@ -419,7 +521,7 @@ pub fn bytes_rstrip(b: &[u8]) -> &[u8] {
     b.get(..b.len().saturating_sub(n)).unwrap_or_default()
 }
 
-/// `b.strip(set)`.
+/// `b.strip(set)` (a set of bytes: `b'foo\r\r\n'.strip(b'\r\n')` → `b'foo'`).
 #[must_use]
 pub fn bytes_strip_set<'a>(b: &'a [u8], set: &[u8]) -> &'a [u8] {
     bytes_rstrip_set(bytes_lstrip_set(b, set), set)
@@ -453,7 +555,8 @@ fn leading_space_len(b: &[u8]) -> Option<usize> {
     is_space(c).then_some(len)
 }
 
-/// Length in bytes of the PY-WS character that ends `b`, if `b` ends with one.
+/// Length in bytes of the PY-WS character that ends `b`, if `b` ends with one. UTF-8 is
+/// self-synchronising, so a valid sequence at the end decodes the same in the whole string.
 fn trailing_space_len(b: &[u8]) -> Option<usize> {
     (1..=4_usize).find_map(|k| {
         let tail = b.get(b.len().checked_sub(k)?..)?;
@@ -464,8 +567,8 @@ fn trailing_space_len(b: &[u8]) -> Option<usize> {
     })
 }
 
-/// `os.fsdecode(b).strip()` as bytes (POSIX `surrogateescape`): PY-WS characters decoded as
-/// UTF-8 are stripped; undecodable bytes are never whitespace.
+/// `os.fsdecode(b).strip()` as bytes (POSIX `surrogateescape`; `run.py:129-131` `SKIP`): PY-WS
+/// characters decoded as UTF-8 are stripped; undecodable bytes are never whitespace.
 #[must_use]
 pub fn strip_fsbytes(b: &[u8]) -> &[u8] {
     let mut start = 0_usize;
@@ -482,8 +585,9 @@ pub fn strip_fsbytes(b: &[u8]) -> &[u8] {
     b.get(start..end).unwrap_or_default()
 }
 
-/// `s.partition(sep)`: `(head, sep, tail)`, or `(s, "", "")` when `sep` does not occur. Python
-/// rejects an empty `sep`; here it splits before the first character.
+/// `s.partition(sep)`: `(head, sep, tail)`, or `(s, "", "")` when `sep` does not occur
+/// (`languages/rust.py:76`). Python rejects an empty `sep` (`ValueError: empty separator`); here an
+/// empty `sep` splits before the first character.
 #[must_use]
 pub fn partition<'a>(s: &'a str, sep: &str) -> (&'a str, &'a str, &'a str) {
     match s.find(sep) {
@@ -525,6 +629,9 @@ mod tests {
         "\r",
         "\n\r",
         "é\r\nü",
+        "\u{145}\u{2029}\u{2028}\u{85}x\u{85}",
+        "\u{c5}\u{85}\u{e2}\u{2080}\u{a8}",
+        "\u{2018}\u{20a8}\u{2828}",
     ];
 
     #[test]
@@ -537,6 +644,10 @@ mod tests {
         assert_eq!(sl("a\x1fb"), vec!["a\x1fb"]);
         assert_eq!(slk("a\r\nb\rc\n"), vec!["a\r\n", "b\r", "c\n"]);
         assert_eq!(sl("x\u{2028}y\u{85}z"), vec!["x", "y", "z"]);
+        // C2/E2 lead bytes of other characters are not boundaries
+        assert_eq!(sl("\u{a0}\u{2018}\u{20a8}"), vec!["\u{a0}\u{2018}\u{20a8}"]);
+        // continuation bytes 0x85/0xa8 of other characters are not boundaries either
+        assert_eq!(sl("\u{145}\u{2828}"), vec!["\u{145}\u{2828}"]);
     }
 
     #[test]
@@ -582,6 +693,18 @@ mod tests {
         let v: Vec<&[u8]> = bytes_splitlines_keepends(b"a\r\n\nb").collect();
         assert_eq!(v, vec![&b"a\r\n"[..], b"\n", b"b"]);
         assert_eq!(bytes_splitlines(b"").count(), 0);
+        for s in SAMPLES {
+            for keep in [false, true] {
+                let it = BytesSplitLines {
+                    rest: s.as_bytes(),
+                    keepends: keep,
+                };
+                let fwd: Vec<&[u8]> = it.clone().collect();
+                let mut back: Vec<&[u8]> = it.rev().collect();
+                back.reverse();
+                assert_eq!(fwd, back, "{s:?} keepends={keep}");
+            }
+        }
     }
 
     #[test]
@@ -632,6 +755,14 @@ mod tests {
             "not enough values to unpack (expected 4, got 1)"
         );
         assert_eq!(
+            UnpackError {
+                expected: 2,
+                got: 3
+            }
+            .to_string(),
+            "too many values to unpack (expected 2)"
+        );
+        assert_eq!(
             bytes_rsplit4(b"a\xffb o1 x y\r"),
             Ok([&b"a\xffb"[..], b"o1", b"x", b"y"])
         );
@@ -669,5 +800,6 @@ mod tests {
     fn partition_cases() {
         assert_eq!(partition("a=b=c", "="), ("a", "=", "b=c"));
         assert_eq!(partition("abc", "="), ("abc", "", ""));
+        assert_eq!(partition("abc", ""), ("", "", "abc"));
     }
 }

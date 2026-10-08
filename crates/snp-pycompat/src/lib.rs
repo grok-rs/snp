@@ -8,8 +8,14 @@
 //! returns `impl Trait`; iterators are named types. Every error type implements `Display` (= Python's
 //! `str(exc)`), `std::error::Error` and `py_type()` (the Python class printed in crash lines).
 //!
-//! W0 (WP-00) vendored the verified prototype (`docs/research/pycompat-proto`) adapted to these
-//! signatures; WP-11 completes the crate and regenerates the vectors.
+//! Python profiles (ADR-020): string, path, shlex and codec semantics follow CPython 3.12 (the
+//! `tests/vectors/pycompat-vectors.cpython312.json` vectors); `repr`/`isprintable` and the
+//! east-asian widths follow the UCD 15.1 data of CPython 3.13
+//! (`tests/vectors/pycompat-delta-cpython313.json`). `cargo xtask pycompat-vectors` regenerates
+//! both files and the tables; `--check` proves the committed ones byte-identical.
+//!
+//! No function panics on any input (the crate is fuzzed by `fuzz/fuzz_targets/pycompat_*.rs`), and
+//! the recursive Python originals (`posixpath._joinrealpath`) are iterative here.
 //!
 //! Owner: WP-11.
 #![forbid(unsafe_code)]
@@ -22,6 +28,7 @@ pub mod eaw;
 pub mod float;
 mod generated;
 pub mod int;
+mod messages;
 pub mod ntpath;
 pub mod ospath;
 pub mod posixpath;
@@ -32,7 +39,8 @@ pub mod shlex;
 pub mod text;
 pub mod textio;
 
-/// Python `ValueError` texts raised by `os.path` functions (both flavours).
+/// Python `ValueError` texts raised by `os.path` functions (both flavours; `posixpath.py` and
+/// `ntpath.py` of CPython 3.12).
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PathError {
@@ -46,7 +54,7 @@ pub enum PathError {
     DifferentDrives,
     /// ntpath `relpath` across drives → `path is on mount %r, start on mount %r`.
     DifferentMounts {
-        /// Drive of the path argument.
+        /// Drive of the path argument (`splitroot(abspath(path))[0]`).
         path_drive: String,
         /// Drive of the start argument.
         start_drive: String,
@@ -55,26 +63,27 @@ pub enum PathError {
 
 impl PathError {
     /// The Python exception class: always `ValueError`.
+    #[must_use]
     pub const fn py_type(&self) -> &'static str {
-        "ValueError"
+        messages::VALUE_ERROR
     }
 }
 
 impl fmt::Display for PathError {
+    /// `str(exc)` of the CPython 3.12 `ValueError`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NoPathSpecified => f.write_str("no path specified"),
-            Self::EmptySequence => f.write_str("commonpath() arg is an empty sequence"),
-            Self::MixAbsRel => f.write_str("Can't mix absolute and relative paths"),
-            Self::DifferentDrives => f.write_str("Paths don't have the same drive"),
+            Self::NoPathSpecified => f.write_str(messages::NO_PATH_SPECIFIED),
+            Self::EmptySequence => f.write_str(messages::COMMONPATH_EMPTY),
+            Self::MixAbsRel => f.write_str(messages::MIX_ABS_REL),
+            Self::DifferentDrives => f.write_str(messages::DIFFERENT_DRIVES),
             Self::DifferentMounts {
                 path_drive,
                 start_drive,
-            } => write!(
+            } => messages::different_mounts(
                 f,
-                "path is on mount {}, start on mount {}",
-                repr::repr_str(path_drive),
-                repr::repr_str(start_drive)
+                &repr::repr_str(path_drive),
+                &repr::repr_str(start_drive),
             ),
         }
     }
