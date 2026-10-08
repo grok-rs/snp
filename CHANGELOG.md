@@ -27,20 +27,46 @@ CPython 3.12. See the README for migration notes.
   `TzOffset` and `DateError` types (`DateError` displays CPython's
   `datetime` messages); `Map`/`Set` type aliases; more `From` impls and
   accessors (`as_float`, `as_bytes`, `as_array`, `as_map_mut`, ...).
+- `BigInt` stores a binary magnitude: `from_str_radix` parses hexadecimal,
+  octal and binary text of any length in linear time, and `bit_length`,
+  `to_u64`, `to_u128`, `to_decimal_string` and `LowerHex`/`UpperHex`
+  (`{:#x}` is Python's `hex()`) are available.
+- CPython's 4300-digit limit on `int`/`str` conversions:
+  `ParseBigIntError::ExceedsMaxStrDigits` (CPython's message) for longer
+  decimal input, and `MaxStrDigitsError` from `BigInt::to_decimal_string`,
+  `Value::try_repr` and `Value::try_to_string` where `str()`/`repr()`
+  raise `ValueError`. Validation raises that `ValueError` as an uncaught
+  error wherever Python formats such an integer, including the eagerly
+  built `At Hook(id=...)` and `For key: ...` contexts.
+- `ValidationError::uncaught`, `uncaught_type` and `is_uncaught` represent
+  Python exceptions other than `ValidationError` that escape cfgv (no
+  contexts, not wrapped by `load_from_filename`, displayed as
+  `{type}: {message}`), e.g. from custom checks such as pre-commit's
+  `check_min_version`.
 - `ValueType::{List, Tuple, Map, Set, Null, Date, DateTime}`
   (`check_type(ValueType::Map, None)` is Python's `check_type(dict)`).
 - `CheckFn::check_regex_with` to plug in a validator for Python's `re`
-  dialect, `CheckFn::check_any`, and `RegexCheck`.
+  dialect, `CheckFn::check_regex_try_with` (with `RegexCheck` and
+  `RegexPattern`) for a validator that sees `str` and `bytes` patterns and
+  can raise like `re.compile` (`OverflowError`, `RecursionError`), and
+  `CheckFn::check_any`.
 - `py` module with CPython-exact helpers: `repr_str`, `repr_bytes`,
   `repr_float`, `is_printable` (Unicode 15.0.0), `decode_utf8` /
   `Utf8DecodeError` and `universal_newlines`.
 - By-value `apply_defaults_owned` / `remove_defaults_owned`.
-- `LoadError` distinguishing validation failures from I/O errors.
+- `LoadError` distinguishing validation failures from I/O errors. Its
+  `Error::source()` is `None` (the `Display` text already includes the OS
+  error); the `io::Error` is in `LoadError::Io::error`.
 - Optional `serde` feature: `Deserializer` for `&Value`, `from_value`,
-  `Serialize` and `Deserialize` for `Value`.
+  `Serialize` and `Deserialize` for `Value`. Integer targets accept
+  booleans like `check_int`, and struct fields and enum variants match
+  keys by their Python `str()`, so non-string keys (YAML `1:`, `true:`)
+  are ignored or reported like unknown string keys.
 - Parity test suite generated from the real Python cfgv
-  (`scripts/gen_parity_vectors.py`, `tests/vectors/`), API tests and
-  property tests; CI job checking that the vectors are up to date.
+  (`scripts/gen_parity_vectors.py`, `tests/vectors/`), including the
+  exceptions that escape cfgv and the integer digit limit; API tests,
+  property tests and `cargo-fuzz` targets (`fuzz/`); CI job checking that
+  the vectors are up to date.
 
 ### Changed
 
@@ -54,6 +80,9 @@ CPython 3.12. See the README for migration notes.
 - **Breaking:** `ensure_absent` messages use `repr()` and tuple syntax:
   `repo is any of ('local', 'meta'), found rev: 'v1.0'`.
 - **Breaking:** the invalid-regex message uses `repr()` of the pattern.
+  `check_regex` also checks `bytes` patterns (`b'(' is not a valid python
+  regex`) and, like `re.compile`, raises an uncaught `TypeError` for any
+  other type instead of reporting `Expected string got {type}`.
 - **Breaking:** `check_one_of` and the additional-keys validators sort with
   Python's `sorted()` order (numbers numerically).
 - **Breaking:** `check_int` (`ValueType::Int`) accepts booleans and big
@@ -84,11 +113,20 @@ CPython 3.12. See the README for migration notes.
 
 ### Fixed
 
+- `check_type(tp, Some(""))` falls back to the type name, like Python's
+  `typename or tp.__name__`.
 - `remove_defaults` preserves the order of the remaining keys.
 - `Hash` of `Value::Map` is consistent with its order-independent `Eq`.
 - The declared MSRV (1.85) is now accurate and tested in CI (the toolchain
   file no longer masks the MSRV job).
 - `#![forbid(unsafe_code)]`.
+
+### Known limitations
+
+- `Value::String` cannot hold lone surrogates, which PyYAML produces for
+  escapes such as `"\ud800"`; loaders must reject or replace them.
+- `Value::repr` and `Display` write integers beyond CPython's 4300-digit
+  limit in hexadecimal, where Python raises (use `Value::try_repr`).
 
 ## [0.2.0] - 2026-04-05
 

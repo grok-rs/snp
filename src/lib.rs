@@ -3,7 +3,8 @@
 //! A Rust port of the Python [cfgv](https://github.com/asottile/cfgv)
 //! library (3.5.0) — the validation engine behind
 //! [pre-commit](https://pre-commit.com) — that reproduces its error messages
-//! byte for byte, including Python's `repr()` of every value kind.
+//! byte for byte, including Python's `repr()` of every value kind (see
+//! [Differences from Python](#differences-from-python) for the exceptions).
 //!
 //! # Example
 //!
@@ -37,7 +38,8 @@
 //! # Building blocks
 //!
 //! * [`Value`]: the data being validated — every type PyYAML's `SafeLoader`
-//!   produces, with Python equality, hashing and `repr()`.
+//!   produces (strings without lone surrogates), with Python equality,
+//!   hashing and `repr()`.
 //! * [`Schema`]: `Map`, `Array` and `KeyValueMap` containers.
 //! * [`Validator`]: the items of a `Map` (`Required`, `Optional`,
 //!   `Conditional`, ...), plus [`Validator::Custom`] for user-defined
@@ -45,6 +47,10 @@
 //! * [`CheckFn`]: checks for single values (`check_string`, `check_one_of`,
 //!   `check_regex`, ...).
 //! * [`Cx`]: the validation context that collects warnings in order.
+//! * [`ValidationError`]: the error, rendered like Python's
+//!   `str(ValidationError)`; [`ValidationError::uncaught`] stands for the
+//!   other Python exceptions that escape cfgv (`TypeError` from
+//!   `re.compile`, `ValueError` from `repr()` of a huge integer, ...).
 //! * [`load_from_filename`]: read, decode, parse, validate and default a file.
 //! * [`py`]: CPython-compatible `repr()`, `str.isprintable()` and UTF-8
 //!   decoding helpers.
@@ -56,6 +62,22 @@
 //!   [`CheckFn::check_regex_with`].
 //! * `serde`: `Serialize`/`Deserialize` for [`Value`] and a `Deserializer`
 //!   for `&Value`, to convert validated values into typed structs.
+//!
+//! # Differences from Python
+//!
+//! * `NaN == NaN` (keeps `Eq` lawful for map keys), sets keep insertion
+//!   order, and sorting values of mixed types (`check_one_of` choices,
+//!   unknown keys) groups them by type where Python raises `TypeError`.
+//! * [`Value::String`] cannot hold lone surrogates (`"\ud800"` in a
+//!   double-quoted YAML scalar); loaders must reject or replace them. See
+//!   [`Value`].
+//! * Integers with more than 4300 decimal digits: everything CPython raises
+//!   `ValueError` for is reproduced ([`BigInt`], [`Value::try_repr`], and
+//!   uncaught errors from validation), but the infallible [`Value::repr`]
+//!   and `Display` write such integers in hexadecimal.
+//! * `CheckFn::check_regex()` (feature `regex`) uses the `regex` crate's
+//!   dialect; plug in a validator of Python's `re` syntax with
+//!   [`CheckFn::check_regex_with`] or [`CheckFn::check_regex_try_with`].
 
 #![forbid(unsafe_code)]
 #![cfg_attr(docsrs, feature(doc_cfg))]

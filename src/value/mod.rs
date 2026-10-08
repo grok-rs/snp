@@ -49,7 +49,22 @@ pub type Set = IndexSet<Value>;
 ///
 /// [`Value::repr`] is Python's `repr()`; [`Display`](std::fmt::Display) is
 /// Python's `str()` (strings unquoted, dates in ISO format, everything else
-/// as `repr()`).
+/// as `repr()`). Where CPython raises because an integer has more than 4300
+/// decimal digits, [`Value::try_repr`] and [`Value::try_to_string`] fail
+/// and the infallible forms write the integer in hexadecimal.
+///
+/// # Strings and lone surrogates
+///
+/// [`Value::String`] holds a Rust [`String`], which cannot contain the
+/// surrogate code points `U+D800..=U+DFFF`. A Python `str` can: PyYAML turns
+/// the escape `"\ud800"` of a double-quoted scalar into a lone surrogate, and
+/// turns `"\ud83d\ude00"` into *two* code points, not one emoji. Such values
+/// cannot be represented, and their Python `repr()` (`'\ud800'`) cannot be
+/// reproduced. A loader should reject them with an error naming the
+/// escape, or, when losing them is acceptable, replace each surrogate
+/// with `U+FFFD`; it should not combine escaped surrogate pairs into one
+/// character, which PyYAML never does. Input files themselves are strict
+/// UTF-8 and never contain surrogates.
 ///
 /// # Nesting depth
 ///
@@ -73,7 +88,8 @@ pub enum Value {
     BigInt(BigInt),
     /// A `float`.
     Float(f64),
-    /// A `str`.
+    /// A `str` (without lone surrogates, see
+    /// [Strings and lone surrogates](#strings-and-lone-surrogates)).
     String(String),
     /// A `bytes` object (PyYAML `!!binary`).
     Bytes(Vec<u8>),

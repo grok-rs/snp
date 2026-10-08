@@ -11,7 +11,8 @@ A Rust port of the Python [cfgv](https://github.com/asottile/cfgv) library
 (3.5.0), the validation engine behind [pre-commit](https://pre-commit.com).
 Error messages are **byte-identical** to Python cfgv's, including Python's
 `repr()` of every value kind, which makes the crate suitable for drop-in
-reimplementations of Python tools.
+reimplementations of Python tools (see
+[Differences from Python](#differences-from-python) for the few gaps).
 
 ## Installation
 
@@ -104,8 +105,26 @@ cfgv does not parse YAML. Build `Value`s with your own loader (to match
 pre-commit, a YAML 1.1 / PyYAML `SafeLoader`-compatible one), or with the
 `serde` feature from any serde format. `Date::new`, `DateTime::new` and
 `TzOffset::from_hours_minutes` report out-of-range components with
-CPython's `datetime` error texts, and `BigInt::from_str_radix` handles
-arbitrarily large hex, octal and binary integers.
+CPython's `datetime` error texts.
+
+`BigInt::from_str_radix` parses hexadecimal, octal and binary integers of
+any length in linear time. Like CPython, it refuses more than 4300 digits
+in other radixes (`ParseBigIntError::ExceedsMaxStrDigits`, whose text is
+CPython's `ValueError` message, which PyYAML lets escape and cfgv reports
+as the loader error). Converting an integer with more than 4300 decimal
+digits back to text raises `ValueError` in CPython; `Value::try_repr`,
+`Value::try_to_string` and `BigInt::to_decimal_string` fail the same
+way, while the infallible `repr()`/`Display` write it in hexadecimal.
+
+Strings cannot contain lone surrogates, which PyYAML produces for escapes
+such as `"\ud800"` (and `"\ud83d\ude00"`, which PyYAML does *not* combine
+into one emoji). A loader should reject such scalars, or replace each
+surrogate with `U+FFFD` when that loss is acceptable.
+
+With the `serde` feature, `cfgv::from_value` converts validated values into
+typed structs. Integer fields accept booleans, as `check_int` does, and
+non-string keys (YAML `1:` or `true:`) are matched by their Python `str()`,
+so unknown ones are ignored like unknown string keys.
 
 ## Building blocks
 
@@ -177,7 +196,67 @@ Plug in your own validator:
 let check = cfgv::CheckFn::check_regex_with(|pattern| my_python_re::compile(pattern).is_ok());
 ```
 
-The failure message is always `{pattern!r} is not a valid python regex`.
+A rejected `str` or `bytes` pattern gives `{pattern!r} is not a valid python
+regex` (`bytes` patterns reach the validator decoded as Latin-1, as Python's
+parser reads them). `check_regex_try_with` receives a `RegexPattern` (`Str`
+or `Bytes`) and returns `Result<bool, ValidationError>`, so it can also
+reproduce `re.compile` raising something other than `re.error`, which cfgv
+does not catch:
+
+```rust
+use cfgv::{CheckFn, RegexPattern, ValidationError, Value};
+
+let check = CheckFn::check_regex_try_with(|pattern| match pattern {
+    RegexPattern::Str(p) if p.contains("{4294967296}") => Err(ValidationError::uncaught(
+        "OverflowError",
+        "the repetition number is too large",
+    )),
+    _ => Ok(true),
+});
+let err = check.check(&Value::from("a{4294967296}")).unwrap_err();
+assert_eq!(err.to_string(), "OverflowError: the repetition number is too large");
+```
+
+As in Python, a value that is neither `str` nor `bytes` makes `check_regex`
+raise an uncaught `TypeError`; pre-commit always runs `check_string` first.
+
+## Exceptions that escape cfgv
+
+Python validation code sometimes raises exceptions other than
+`ValidationError`: `re.compile` (`OverflowError`, `TypeError`), `repr()` of
+an integer with more than 4300 digits (`ValueError`), or pre-commit's own
+check functions (`int()` in `check_min_version`). cfgv's `validate_context`
+does not catch them, so they carry no `==> ...` context and
+`load_from_filename` does not re-raise them as `exc_tp`; pre-commit reports
+them as a crash.
+
+`ValidationError::uncaught(type, message)` represents such an exception.
+It travels through the same `Result`s as validation errors, ignores
+`with_context`, exposes `uncaught_type()`, and displays like the last line
+of a Python traceback:
+
+```rust
+use cfgv::{CheckFn, Schema, ValidationError, Validator, Value, validate, value_map};
+
+let schema = Schema::map("Config", None, vec![Validator::optional_no_default(
+    "minimum_pre_commit_version",
+    CheckFn::custom(|v| match v.as_str().map(str::parse::<u32>) {
+        Some(Ok(_)) => Ok(()),
+        _ => Err(ValidationError::uncaught(
+            "ValueError",
+            format!("invalid literal for int() with base 10: {}", v.repr()),
+        )),
+    }),
+)]);
+let err = validate(&value_map! {"minimum_pre_commit_version" => "x"}, &schema).unwrap_err();
+assert!(err.is_uncaught());
+assert_eq!(err.to_string(), "ValueError: invalid literal for int() with base 10: 'x'");
+```
+
+cfgv itself raises uncaught errors where Python would: `TypeError` from a
+bare `check_regex`, and CPython's `ValueError` wherever a message (or a
+context Python formats eagerly, such as `At Hook(id=...)`) would contain
+an integer beyond the 4300-digit limit.
 
 ## Loading files
 
@@ -185,7 +264,9 @@ The failure message is always `{pattern!r} is not a valid python regex`.
 file`, strict UTF-8 with CPython's `UnicodeDecodeError` text, universal
 newlines, the loader's error as the leaf message, and defaults applied to
 the result. Read failures are reported separately as `LoadError::Io`
-(Python lets that `OSError` escape).
+(Python lets that `OSError` escape); its `Display` is CPython's
+`str(OSError)` and `Error::source()` is `None` for every `LoadError`, so
+chain-printing reporters do not repeat the OS error text.
 
 ## Python compatibility helpers
 
@@ -193,6 +274,20 @@ The `cfgv::py` module exposes the CPython 3.12 primitives used for the
 messages: `repr_str`, `repr_bytes`, `repr_float`, `is_printable` (Unicode
 15.0.0), `decode_utf8` (with `str(UnicodeDecodeError)` as `Display`) and
 `universal_newlines`.
+
+## Differences from Python
+
+* `NaN == NaN` (so `Eq` stays lawful for map keys), sets keep insertion
+  order (CPython iterates them in hash order), and sorting values Python
+  cannot order (`check_one_of` choices or unknown keys of mixed types)
+  groups them by type instead of raising `TypeError`.
+* Strings with lone surrogates cannot be represented (see [Values](#values)).
+* `Value::repr` and `Display` cannot fail, so they write integers beyond
+  CPython's 4300-digit limit in hexadecimal; the fallible
+  `Value::try_repr`/`try_to_string` and validation itself fail like
+  CPython.
+* `check_regex()` uses the `regex` crate's dialect unless you plug in a
+  Python-compatible validator.
 
 ## Migrating from 0.2
 
@@ -210,11 +305,17 @@ messages: `repr_str`, `repr_bytes`, `repr_float`, `is_printable` (Unicode
 * `*Recurse` validators hold `Arc<Schema>` (constructors accept `Schema`
   or `Arc<Schema>`); `Schema::Map` items are `Arc<[Validator]>`.
 * `CheckFn::Regex` carries its checker; `check_regex()` requires the
-  default `regex` feature, `check_regex_with()` always works.
+  default `regex` feature, `check_regex_with()` and
+  `check_regex_try_with()` always work. `check_regex` also accepts `bytes`
+  patterns, and on any other type returns an uncaught `TypeError` (as
+  Python does) instead of `Expected string got int`; combine it with
+  `check_string` (as pre-commit does) to get the validation error.
 * `ValueType` gained `List`, `Tuple`, `Map`, `Set`, `Null`, `Date` and
   `DateTime`; `ValueType::Int` (`check_int`) accepts booleans like Python.
 * `ValidationError::message()` returns the leaf message;
   `contexts()` iterates the contexts; `Error::source()` is `None`.
+  `ValidationError::uncaught` represents Python exceptions cfgv does not
+  catch; check `is_uncaught()` where you report errors.
 * `load_from_filename` returns `Result<Value, LoadError>` and its loader
   may return any error type implementing `Display`.
 * `remove_defaults` keeps the order of the remaining keys, and
@@ -230,6 +331,17 @@ regenerate them, run from a directory without `.py` files:
 ```sh
 python3.12 -I scripts/gen_parity_vectors.py <dir containing cfgv.py> tests/vectors
 python3.12 -I scripts/gen_unicode_tables.py src/py/tables.rs
+```
+
+### Fuzzing
+
+`fuzz/` holds [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz)
+targets: arbitrary values against a pre-commit-like schema (validation,
+defaults, formatting, typed conversion and the `Eq`/`Hash` contract),
+`BigInt` parsing and formatting, and the CPython text helpers.
+
+```sh
+cargo +nightly fuzz run validate   # or: bigint, py_text
 ```
 
 ## License
