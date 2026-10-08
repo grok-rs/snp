@@ -439,7 +439,7 @@ fn merged_on(
     }
     drop(tx);
     let mut collector = Collector::new(budget);
-    let waited = started.supervise(spec, Some(&rx), |_, chunk| collector.push(chunk));
+    let waited = started.supervise(spec, Some(&rx), |_, chunk| collector.push(&chunk));
     Ok(Merged {
         status: waited.status,
         output: collector.finish(),
@@ -466,31 +466,28 @@ impl<'b> Collector<'b> {
         }
     }
 
-    fn push(&mut self, chunk: Vec<u8>) {
+    fn push(&mut self, chunk: &[u8]) {
         if let Some((file, len)) = &mut self.spill {
-            match file.write_all(&chunk) {
+            match file.write_all(chunk) {
                 Ok(()) => {
                     *len = len.saturating_add(u64::try_from(chunk.len()).unwrap_or(u64::MAX));
                 }
                 // The spill device failed: keep the rest in memory rather than lose output.
-                Err(_) => self.mem.extend_from_slice(&chunk),
+                Err(_) => self.mem.extend_from_slice(chunk),
             }
             return;
         }
-        if self.budget.try_take(chunk.len()) {
-            self.charged = self.charged.saturating_add(chunk.len());
-            if self.mem.is_empty() {
-                self.mem = chunk;
-            } else {
-                self.mem.extend_from_slice(&chunk);
-            }
+        // The budget is charged for the buffer's capacity (what can become resident), grown by doubling.
+        let needed = self.mem.len().saturating_add(chunk.len());
+        if needed <= self.charged || self.grow(needed) {
+            self.mem.extend_from_slice(chunk);
             return;
         }
         match self.budget.spill_file() {
             Ok(mut file) => {
                 let written = file
                     .write_all(&self.mem)
-                    .and_then(|()| file.write_all(&chunk));
+                    .and_then(|()| file.write_all(chunk));
                 if written.is_ok() {
                     let len = u64::try_from(self.mem.len().saturating_add(chunk.len()))
                         .unwrap_or(u64::MAX);
@@ -499,11 +496,34 @@ impl<'b> Collector<'b> {
                     self.mem = Vec::new();
                     self.spill = Some((file, len));
                 } else {
-                    self.mem.extend_from_slice(&chunk);
+                    self.mem.extend_from_slice(chunk);
                 }
             }
-            Err(_) => self.mem.extend_from_slice(&chunk),
+            Err(_) => self.mem.extend_from_slice(chunk),
         }
+    }
+
+    /// Grows the charged capacity to hold `needed` bytes: doubled when the budget allows, else exactly; `false`
+    /// (nothing charged) when even the exact growth does not fit.
+    fn grow(&mut self, needed: usize) -> bool {
+        let doubled = needed.max(self.charged.saturating_mul(2));
+        for target in [doubled, needed] {
+            let delta = target.saturating_sub(self.charged);
+            if !self.budget.try_take(delta) {
+                continue;
+            }
+            if self
+                .mem
+                .try_reserve_exact(target.saturating_sub(self.mem.len()))
+                .is_ok()
+            {
+                self.charged = target;
+                return true;
+            }
+            self.budget.give_back(delta);
+            return false;
+        }
+        false
     }
 
     fn finish(self) -> Output {
@@ -580,7 +600,7 @@ const TICK: Duration = Duration::from_millis(50);
 /// How long output is still collected after a deadline or cancellation killed the child (§3.6).
 const DRAIN: Duration = Duration::from_millis(500);
 /// Bounded reader channel (chunks of at most [`CHUNK`] bytes).
-const CHANNEL_BOUND: usize = 8;
+const CHANNEL_BOUND: usize = 4;
 /// Read size of the reader threads.
 const CHUNK: usize = 64 * 1024;
 /// Stack of the helper threads (their buffers live on the heap).
@@ -1518,9 +1538,19 @@ mod tests {
         let m = merged(&s, true, &budget(1 << 20)).unwrap();
         assert_eq!(m.status, PyStatus(0));
         assert_eq!(bytes_of(&m.output), b"out-tty\nerr-tty\nin-not-tty\na\nb\n");
-        // X13-EXE-06 / D-CRASH-16: a pty that cannot be allocated falls back to a pipe.
+    }
+
+    /// X13-EXE-06 / D-CRASH-16 (`util.py:133,188-194`): a pty that cannot be allocated (no `/dev/ptmx`, out of
+    /// ptys) makes pre-commit crash with exit 3; snp runs the hook on a pipe instead.
+    #[test]
+    fn x13_exe_06_pty_failure_falls_back_to_pipes() {
+        let (env, cancel) = (env(), CancelToken::new());
+        let argv = sh("[ -t 1 ] && echo out-tty; [ -t 0 ] || echo in-not-tty; echo err >&2");
+        let mut s = spec(&argv, &env, Path::new("/"), &cancel);
+        s.role = Role::Hook;
         let m = merged_impl(&s, true, &budget(1 << 20), true).unwrap();
-        assert_eq!(bytes_of(&m.output), b"in-not-tty\na\nb\n");
+        assert_eq!(m.status, PyStatus(0));
+        assert_eq!(bytes_of(&m.output), b"in-not-tty\nerr\n");
     }
 
     #[test]
@@ -1569,15 +1599,15 @@ mod tests {
     fn collector_keeps_memory_charged_and_refunds_spills() {
         let b = budget(100);
         let mut c = Collector::new(&b);
-        c.push(vec![b'x'; 60]);
+        c.push(&[b'x'; 60]);
         assert_eq!(b.remaining.load(Ordering::Relaxed), 40);
         let out = c.finish();
         assert!(matches!(out, Output::Memory(ref v) if v.len() == 60));
         // Memory outputs keep their charge.
         assert_eq!(b.remaining.load(Ordering::Relaxed), 40);
         let mut c = Collector::new(&b);
-        c.push(vec![b'y'; 30]);
-        c.push(vec![b'z'; 30]);
+        c.push(&[b'y'; 30]);
+        c.push(&[b'z'; 30]);
         assert_eq!(b.remaining.load(Ordering::Relaxed), 40);
         let out = c.finish();
         assert!(matches!(out, Output::Spilled { len: 60, .. }));

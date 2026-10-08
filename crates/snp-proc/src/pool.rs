@@ -447,15 +447,19 @@ mod tests {
     fn acquire_returns_none_once_cancelled() {
         let cancel = CancelToken::new();
         let pool = JobPool::new(nz(1), cancel.clone());
+        let (holding_tx, holding_rx) = std::sync::mpsc::channel();
         let held = std::thread::scope(|s| {
             let h = std::thread::Builder::new()
                 .spawn_scoped(s, || {
                     let p = pool.acquire();
-                    std::thread::sleep(Duration::from_millis(300));
+                    holding_tx.send(()).unwrap();
+                    // Keep the only permit until well after the cancellation.
+                    assert!(cancel.wait_timeout(Duration::from_secs(30)));
+                    std::thread::sleep(Duration::from_millis(200));
                     drop(p);
                 })
                 .unwrap();
-            std::thread::sleep(Duration::from_millis(50));
+            holding_rx.recv().unwrap();
             let c2 = cancel.clone();
             let t = std::thread::Builder::new()
                 .spawn_scoped(s, move || {
@@ -469,8 +473,8 @@ mod tests {
             h.join().unwrap();
             (got, start.elapsed())
         });
-        assert!(!held.0);
-        assert!(held.1 < Duration::from_millis(280), "{:?}", held.1);
+        assert!(!held.0, "a waiter gets None once cancelled");
+        assert!(held.1 < Duration::from_secs(5), "{:?}", held.1);
         assert!(pool.acquire().is_none());
     }
 

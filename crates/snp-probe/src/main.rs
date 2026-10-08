@@ -22,7 +22,8 @@
 //! | `stdin` | copy stdin to stdout |
 //! | `fail-on NAME FILES…` | exit 1 if a file argument equals NAME, else print the files |
 //! | `ntstatus HEX` | exit with the 32-bit code HEX (Windows NTSTATUS) |
-//! | `trap FILE [MS]` | POSIX: print `ready`, append each SIGINT/SIGTERM/SIGHUP name to FILE; MS ms (default 300) after the first signal exit 128+signo; 0 after 60 s without a signal |
+//! | `trap FILE [MS [TIMEOUT]]` | POSIX: create `FILE.ready` once the handlers are installed, append each SIGINT/SIGTERM/SIGHUP name to FILE; MS ms (default 300) after the first signal exit 128+signo; exit 0 after `TIMEOUT_MS` (default 60000) without a signal |
+//! | `fill BYTES` | BYTES bytes of the repeating pattern `0123456789abcdef` (output-budget tests) |
 //!
 //! Owner: WP-15.
 
@@ -206,6 +207,10 @@ fn run(args: &[OsString]) -> End {
             }
         }
         "trap" => trap(rest),
+        "fill" => parse_int::<u64>(rest.first(), "fill").map(|n| {
+            fill(n);
+            0
+        }),
         other => Err(End::Usage(format!("unknown subcommand {other:?}"))),
     };
     match r {
@@ -273,6 +278,26 @@ fn decode_hex(s: Option<&OsStr>) -> Result<Vec<u8>, End> {
     Ok(bytes)
 }
 
+/// `n` bytes of `0123456789abcdef…` in 64 KiB writes.
+fn fill(n: u64) {
+    let block: Vec<u8> = b"0123456789abcdef"
+        .iter()
+        .copied()
+        .cycle()
+        .take(64 * 1024)
+        .collect();
+    let mut o = io::stdout().lock();
+    let mut left = n;
+    while left > 0 {
+        let take = usize::try_from(left.min(64 * 1024)).unwrap_or(0);
+        if o.write_all(block.get(..take).unwrap_or_default()).is_err() {
+            return;
+        }
+        left = left.saturating_sub(u64::try_from(take).unwrap_or(left));
+    }
+    let _ignored = o.flush();
+}
+
 /// Dies by `sig` with its default action (POSIX); elsewhere returns 128 + sig.
 fn die_by_signal(sig: i32) -> i32 {
     #[cfg(unix)]
@@ -315,7 +340,7 @@ fn daemon_child(rest: &[OsString]) {
     std::thread::sleep(Duration::from_secs(secs));
 }
 
-/// `trap FILE [MS]`: records SIGINT/SIGTERM/SIGHUP (POSIX).
+/// `trap FILE [MS [TIMEOUT_MS]]`: records SIGINT/SIGTERM/SIGHUP (POSIX).
 fn trap(rest: &[OsString]) -> Result<i32, End> {
     #[cfg(unix)]
     {
@@ -327,41 +352,47 @@ fn trap(rest: &[OsString]) -> Result<i32, End> {
             Some(ms) => parse_int::<u64>(Some(ms), "trap")?,
             None => 300,
         };
+        let timeout = match rest.get(2) {
+            Some(ms) => parse_int::<u64>(Some(ms), "trap")?,
+            None => 60_000,
+        };
         let mut signals = signal_hook::iterator::Signals::new([SIGINT, SIGTERM, SIGHUP])
             .map_err(|e| End::Usage(format!("trap: {e}")))?;
-        line("ready");
+        let mut ready = file.clone();
+        ready.push(".ready");
+        std::fs::write(&ready, b"").map_err(|e| End::Usage(format!("trap: {e}")))?;
+        let record = |sig: i32| {
+            let name = match sig {
+                SIGINT => "INT",
+                SIGTERM => "TERM",
+                _ => "HUP",
+            };
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(file)
+            {
+                let _ignored = writeln!(f, "{name}");
+            }
+        };
         let start = std::time::Instant::now();
         let mut first: Option<i32> = None;
         loop {
             for sig in signals.pending() {
-                let name = match sig {
-                    SIGINT => "INT",
-                    SIGTERM => "TERM",
-                    _ => "HUP",
-                };
-                let mut f = std::fs::OpenOptions::new()
-                    .append(true)
-                    .create(true)
-                    .open(file)
-                    .map_err(|e| End::Usage(format!("trap: {e}")))?;
-                let _ignored = writeln!(f, "{name}");
+                record(sig);
                 first = first.or(Some(sig));
             }
             if let Some(sig) = first {
-                std::thread::sleep(Duration::from_millis(linger));
-                for sig in signals.pending() {
-                    let name = match sig {
-                        SIGINT => "INT",
-                        SIGTERM => "TERM",
-                        _ => "HUP",
-                    };
-                    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(file) {
-                        let _ignored = writeln!(f, "{name}");
+                let until = std::time::Instant::now().checked_add(Duration::from_millis(linger));
+                while until.is_some_and(|u| std::time::Instant::now() < u) {
+                    std::thread::sleep(Duration::from_millis(5));
+                    for later in signals.pending() {
+                        record(later);
                     }
                 }
                 return Ok(sig.saturating_add(128));
             }
-            if start.elapsed() > Duration::from_secs(60) {
+            if start.elapsed() > Duration::from_millis(timeout) {
                 return Ok(0);
             }
             std::thread::sleep(Duration::from_millis(5));
