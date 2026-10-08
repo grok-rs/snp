@@ -505,6 +505,8 @@ dependencies = [
 name = "snp-git"
 version = "2.0.0"
 dependencies = [
+ "blake3",
+ "memchr",
  "snp-core",
  "snp-os",
  "snp-proc",
