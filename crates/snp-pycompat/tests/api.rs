@@ -49,6 +49,31 @@ mod api {
     fn pp<'a, I: Iterator<Item = Result<PrePushLine<'a>, UnpackError>> + Clone>() {}
     fn ppb<'a, I: Iterator<Item = Result<[&'a [u8]; 4], UnpackError>> + Clone>() {}
 
+    /// §1.3: types are `Send + Sync` unless noted. `HomeLookup` is noted `!Send + !Sync` there (its fields are
+    /// `&dyn Fn` without `+ Sync`; it lives for one `expanduser` call) and is deliberately absent.
+    #[test]
+    fn send_sync_types() {
+        send_sync::<PyChar>();
+        send_sync::<Utf8Reason>();
+        send_sync::<SplitLines<'static>>();
+        send_sync::<BytesSplitLines<'static>>();
+        send_sync::<SplitWs<'static>>();
+        send_sync::<FsDecodeChars<'static>>();
+        send_sync::<ZSplit<'static>>();
+        send_sync::<PrePushLine<'static>>();
+        send_sync::<PrePushLines<'static>>();
+        send_sync::<PrePushLinesBytes<'static>>();
+        send_sync::<PyInt>();
+        send_sync::<PyValue>();
+        send_sync::<Mt19937>();
+        send_sync::<PathError>();
+        send_sync::<UnpackError>();
+        send_sync::<Utf8DecodeError>();
+        send_sync::<Utf8EncodeError>();
+        send_sync::<IntParseError>();
+        send_sync::<ShlexError>();
+    }
+
     #[test]
     fn errors() {
         error_type::<PathError>();

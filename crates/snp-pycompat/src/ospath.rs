@@ -11,6 +11,9 @@ use crate::PathError;
 
 /// Home-directory lookup injected by snp-os: the environment snapshot, and (Unix only) the passwd
 /// entries of the real uid (`pw_current`, used only when `HOME` is unset) and of `~user`.
+///
+/// `!Send + !Sync` by design (ARCHITECTURE §1.3): it borrows plain `&dyn Fn` lookups for one
+/// `expanduser` call on the calling thread.
 pub struct HomeLookup<'a> {
     /// `os.environ.get(name)`.
     pub env: &'a dyn Fn(&str) -> Option<OsString>,

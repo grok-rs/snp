@@ -5,6 +5,9 @@
 //!
 //! Owner: WP-00 (this file); each module file belongs to the package named next to its declaration.
 
+// The shared test harness of every module (`cargo machete --with-metadata` needs a real reference).
+use snp_testkit as _;
+
 #[cfg(test)]
 mod alias; // WP-33
 #[cfg(test)]

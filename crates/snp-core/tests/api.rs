@@ -36,6 +36,132 @@ mod api {
         drop(t);
     }
 
+    // The `// exhaustive` enums of §1.4.1: each match names every variant and has no wildcard arm, so adding,
+    // removing or renaming a variant breaks compilation.
+
+    const fn hook_type(t: HookType) -> u8 {
+        match t {
+            HookType::CommitMsg => 0,
+            HookType::PostCheckout => 1,
+            HookType::PostCommit => 2,
+            HookType::PostMerge => 3,
+            HookType::PostRewrite => 4,
+            HookType::PreCommit => 5,
+            HookType::PreMergeCommit => 6,
+            HookType::PrePush => 7,
+            HookType::PreRebase => 8,
+            HookType::PrepareCommitMsg => 9,
+        }
+    }
+
+    const fn arg_count(a: ArgCount) -> (u8, u8) {
+        match a {
+            ArgCount::Exact(n) => (n, n),
+            ArgCount::Range(lo, hi) => (lo, hi),
+        }
+    }
+
+    const fn stage_hook(s: Stage) -> Option<HookType> {
+        match s {
+            Stage::Hook(t) => Some(t),
+            Stage::Manual => None,
+        }
+    }
+
+    const fn language(l: LanguageId) -> u8 {
+        match l {
+            LanguageId::Conda => 0,
+            LanguageId::Coursier => 1,
+            LanguageId::Dart => 2,
+            LanguageId::Docker => 3,
+            LanguageId::DockerImage => 4,
+            LanguageId::Dotnet => 5,
+            LanguageId::Fail => 6,
+            LanguageId::Golang => 7,
+            LanguageId::Haskell => 8,
+            LanguageId::Julia => 9,
+            LanguageId::Lua => 10,
+            LanguageId::Node => 11,
+            LanguageId::Perl => 12,
+            LanguageId::Pygrep => 13,
+            LanguageId::Python => 14,
+            LanguageId::R => 15,
+            LanguageId::Ruby => 16,
+            LanguageId::Rust => 17,
+            LanguageId::Swift => 18,
+            LanguageId::Unsupported => 19,
+            LanguageId::UnsupportedScript => 20,
+        }
+    }
+
+    const fn brand(b: Brand) -> bool {
+        match b {
+            Brand::PreCommit => false,
+            Brand::Snp => true,
+        }
+    }
+
+    const fn exc_kind(k: ExcKind) -> bool {
+        match k {
+            ExcKind::Fatal => false,
+            ExcKind::Unexpected => true,
+        }
+    }
+
+    const fn color_setting(c: ColorSetting) -> u8 {
+        match c {
+            ColorSetting::Auto => 0,
+            ColorSetting::Always => 1,
+            ColorSetting::Never => 2,
+        }
+    }
+
+    #[test]
+    fn exhaustive_enums() {
+        let hooks: Vec<u8> = HookType::ALL.into_iter().map(hook_type).collect();
+        assert_eq!(hooks, (0..10).collect::<Vec<u8>>());
+        let langs: Vec<u8> = LanguageId::ALL.into_iter().map(language).collect();
+        assert_eq!(langs, (0..21).collect::<Vec<u8>>());
+        assert_eq!(arg_count(ArgCount::Exact(1)), (1, 1));
+        assert_eq!(arg_count(ArgCount::Range(1, 3)), (1, 3));
+        assert_eq!(
+            stage_hook(Stage::Hook(HookType::PrePush)),
+            Some(HookType::PrePush)
+        );
+        assert_eq!(stage_hook(Stage::Manual), None);
+        assert!(!brand(Brand::PreCommit) && brand(Brand::Snp));
+        assert!(!exc_kind(ExcKind::Fatal) && exc_kind(ExcKind::Unexpected));
+        assert_eq!(
+            [
+                ColorSetting::Auto,
+                ColorSetting::Always,
+                ColorSetting::Never
+            ]
+            .map(color_setting),
+            [0, 1, 2]
+        );
+    }
+
+    /// Calls both seam-trait methods through trait objects.
+    fn sinks(w: &dyn WarnSink, d: &dyn DiagSink) {
+        w.warn("x");
+        d.diag("y");
+    }
+
+    /// The seam-trait methods (`WarnSink::warn`, `DiagSink::diag`) pinned through every implementor, so the
+    /// trait method resolves (not `Printer`'s inherent `diag`).
+    #[test]
+    fn sink_methods() {
+        has::<fn(&Printer, &str)>(<Printer as WarnSink>::warn);
+        has::<fn(&Printer, &str)>(<Printer as DiagSink>::diag);
+        has::<fn(&CollectWarnings, &str)>(<CollectWarnings as WarnSink>::warn);
+        has::<fn(&CollectWarnings, &str)>(<CollectWarnings as DiagSink>::diag);
+        has::<fn(&dyn WarnSink, &dyn DiagSink)>(sinks);
+        let c = CollectWarnings::new();
+        sinks(&c, &c);
+        assert_eq!(c.take().len(), 2);
+    }
+
     #[test]
     fn send_sync_types() {
         send_sync::<HookType>();

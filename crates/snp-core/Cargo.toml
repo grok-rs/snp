@@ -12,6 +12,10 @@ publish.workspace = true
 [dependencies]
 snp-pycompat.workspace = true
 
+# tests/pty.rs: a real pseudo-terminal for the line-buffering acceptance item (WBS WP-00).
+[target.'cfg(unix)'.dev-dependencies]
+rustix.workspace = true
+
 [features]
 # Test-only panic-injection points (ADR-066); enabled by crates/snp's `testing` feature only.
 fault-injection = []
