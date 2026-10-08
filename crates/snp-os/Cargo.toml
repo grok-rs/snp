@@ -12,8 +12,16 @@ publish.workspace = true
 [dependencies]
 snp-core.workspace = true
 snp-pycompat.workspace = true
+same-file.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winapi-util.workspace = true
 
 [dev-dependencies]
+proptest.workspace = true
 tempfile.workspace = true
 
 [lints]
