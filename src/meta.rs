@@ -12,6 +12,10 @@ pub enum FileKind {
     /// A directory (also used for git submodules / gitlinks).
     Directory,
     /// A symbolic link.
+    ///
+    /// On Windows also a directory junction or another name-surrogate
+    /// reparse point, which the standard library reports as a symlink; see
+    /// [`FileKind::from_file_type`].
     Symlink,
     /// A Unix domain socket.
     Socket,
@@ -23,6 +27,13 @@ pub enum FileKind {
 
 impl FileKind {
     /// Classify a [`fs::FileType`] (from [`fs::symlink_metadata`]).
+    ///
+    /// On Windows, [`fs::FileType::is_symlink`] is true for every
+    /// name-surrogate reparse point, so a directory junction is
+    /// [`FileKind::Symlink`], while `os.lstat` in Python (and therefore
+    /// identify) reports a junction as a directory and only true symlinks as
+    /// links. The reparse tag that would tell them apart is not available
+    /// from the standard library without `unsafe` code.
     #[must_use]
     pub fn from_file_type(file_type: fs::FileType) -> Self {
         if file_type.is_dir() {
@@ -217,9 +228,22 @@ impl Meta {
     /// This needs no system call. It matches what identify would see on a
     /// checkout where the work tree agrees with the index (e.g. after
     /// pre-commit stashed unstaged changes) on Unix with
-    /// `core.fileMode=true`. On Windows identify considers every file
-    /// executable; use [`Meta::from_git_mode_with`] with
-    /// [`ExecPolicy::PythonCompat`] to reproduce that.
+    /// `core.fileMode=true` and `core.symlinks=true`. On Windows identify
+    /// considers every file executable; use [`Meta::from_git_mode_with`]
+    /// with [`ExecPolicy::PythonCompat`] to reproduce that.
+    ///
+    /// # Symlinks: do not trust `120000` with `core.symlinks=false`
+    ///
+    /// `120000` says the *index* holds a symlink. With `core.symlinks=false`
+    /// (the usual configuration on Windows, and set automatically on file
+    /// systems without symlinks) git checks it out as a regular file that
+    /// contains the target path, which identify tags `file`, `text` and
+    /// `executable` on Windows. On Windows, or whenever `core.symlinks` is
+    /// false, `lstat` such entries instead ([`tags_from_path`] or
+    /// [`tags_from_metadata`]).
+    ///
+    /// [`tags_from_path`]: crate::tags_from_path
+    /// [`tags_from_metadata`]: crate::tags_from_metadata
     ///
     /// ```
     /// use file_identify::{FileKind, Meta};
@@ -242,6 +266,10 @@ impl Meta {
     /// Like [`Meta::from_git_mode`], with platform executable semantics:
     /// [`ExecPolicy::PythonCompat`] on Windows marks every regular file
     /// executable (as identify does); otherwise git's bit is used.
+    ///
+    /// A `120000` entry still gives [`FileKind::Symlink`]: on Windows a
+    /// checkout usually has a regular file there (`core.symlinks=false`), so
+    /// `lstat` those entries instead; see [`Meta::from_git_mode`].
     #[must_use]
     pub fn from_git_mode_with(mode: u32, policy: ExecPolicy) -> Option<Self> {
         let meta = Self::from_git_mode(mode)?;

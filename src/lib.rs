@@ -67,6 +67,22 @@
 //!   line counts as "no shebang".
 //! * On Unix, `os.access(X_OK)` is evaluated from the file's mode, owner and
 //!   group (see [`ExecPolicy`]), ignoring ACLs and `noexec` mounts.
+//!
+//! Platform limitations (not deliberate):
+//!
+//! * On Windows a directory junction (and any other name-surrogate reparse
+//!   point) is tagged `symlink`: the standard library reports it as a
+//!   symlink and does not expose the reparse tag. identify (`os.lstat`)
+//!   reports `directory` for a junction; true symlinks agree.
+//!
+//! The git index fast path ([`Meta::from_git_mode`], [`tags_from_meta`])
+//! describes the index, not the work tree. It matches identify only when
+//! the two agree: in particular a `120000` entry is a symlink only if git
+//! created one. With `core.symlinks=false` (the usual case on Windows) git
+//! checks the link out as a regular file holding the target path, which
+//! identify tags `file`, …, `text`. On Windows, or whenever
+//! `core.symlinks=false`, do not trust `120000`: `lstat` the file
+//! ([`tags_from_path`], [`tags_from_metadata`]) instead.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::pedantic)]

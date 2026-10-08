@@ -95,7 +95,8 @@ allocation-free `get`).
 ### Git index fast path
 
 When you already know a file's mode from `git ls-files -s` / `git diff --raw`, skip the
-`lstat`:
+`lstat` (on Unix with `core.fileMode=true` and `core.symlinks=true`; see
+[Differences from identify](#differences-from-identify) for symlinks on Windows):
 
 ```rust
 use file_identify::{Meta, tags_from_meta};
@@ -128,7 +129,7 @@ executable for either).
 
 ## Differences from identify
 
-All deliberate, to stay safe on hostile input:
+Deliberate, to stay safe on hostile input:
 
 - FIFOs and devices are never opened (identify blocks forever on a FIFO). They are
   tagged `file`, the mode tag and their name tags, plus `binary` when the name does not
@@ -136,6 +137,23 @@ All deliberate, to stay safe on hostile input:
 - The shebang parser reads at most `MAX_SHEBANG_BYTES` (64 KiB); a longer first line
   counts as "no shebang" (identify reads the whole line, e.g. 50 MB of minified code).
 - `os.access` is evaluated from metadata, as described above.
+
+Platform limitations:
+
+- On Windows a directory junction (or another name-surrogate reparse point) is tagged
+  `symlink`: Rust's standard library reports it as a symlink and does not expose the
+  reparse tag. identify (`os.lstat`) reports `directory` for a junction. True symlinks
+  agree.
+
+The git index fast path describes the index, not the work tree, so it agrees with
+identify only where the two agree:
+
+- `120000` gives `symlink`, but with `core.symlinks=false` (usual on Windows) git checks
+  the link out as a regular file containing the target path, which identify tags
+  `file`, …, `text` (and `executable` on Windows). **On Windows, or whenever
+  `core.symlinks=false`, do not trust `120000`: `lstat` those entries**
+  (`tags_from_path` / `tags_from_metadata`).
+- `100755` / `100644` reflect the work tree only with `core.fileMode=true`.
 
 ## Keeping up with identify
 

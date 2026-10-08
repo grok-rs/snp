@@ -35,6 +35,10 @@ read. See "Migrating from 0.4" in the README.
   size: a small file costs open, read, close), `parse_shebang_from_file_with` (the shebang is read only if
   the file is executable under the given `ExecPolicy`, like `tags_from_path_with`).
 - `FileKind::Other` for FIFOs and devices, which are never opened.
+- Documentation of the remaining platform differences: on Windows a directory
+  junction is tagged `symlink` (identify: `directory`), and a git mode `120000` must
+  not be trusted with `core.symlinks=false` (usual on Windows), where the work tree
+  holds a regular file.
 - `shlex_split` / `ShlexError` (Python `shlex.split`), `parse_shebang_bytes`,
   `is_text_bytes`, `MAX_SHEBANG_BYTES`, `TEXT_PROBE_LEN`.
 - Parity tests against vectors produced by running identify 2.6.20

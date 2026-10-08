@@ -328,6 +328,12 @@ pub fn tags_from_metadata(
 /// more `read` (to observe its end) than with [`tags_from_metadata`]; use
 /// that when you hold `lstat` metadata.
 ///
+/// A meta from [`Meta::from_git_mode`] describes the index; the result
+/// matches identify only where the work tree agrees. A `120000` entry
+/// yields `symlink`, but with `core.symlinks=false` (usual on Windows) the
+/// work tree has a regular file there: on Windows, or whenever
+/// `core.symlinks` is false, identify such entries with [`tags_from_path`].
+///
 /// # Errors
 ///
 /// [`IdentifyError::PathNotFound`] if the file has to be opened but does not
