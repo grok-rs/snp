@@ -1,0 +1,16 @@
+[package]
+name = "snp-pycompat"
+description = "CPython stdlib semantics (str/bytes splitting, codecs, repr, shlex, os.path, pre-commit composites)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# ADR-056: no dependencies besides std (not even dev-dependencies; `cargo tree -p snp-pycompat`
+# must show none). `regex` is banned here (deny.toml).
+
+[lints]
+workspace = true
