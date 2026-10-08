@@ -821,6 +821,7 @@ dependencies = [
  "snp-store",
  "snp-testkit",
  "snp-yaml",
+ "tempfile",
 ]
 
 [[package]]

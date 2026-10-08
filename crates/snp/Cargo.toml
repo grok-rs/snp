@@ -51,6 +51,7 @@ snp-pycompat.workspace = true
 snp-pyre.workspace = true
 snp-testkit.workspace = true
 snp-yaml.workspace = true
+tempfile.workspace = true
 
 [features]
 # Test-only instrumentation: fault injection (ADR-066), the spawn log and the language shim
