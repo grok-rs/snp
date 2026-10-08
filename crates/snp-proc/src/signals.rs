@@ -65,9 +65,10 @@ static ACTIVE: Mutex<Option<Arc<State>>> = Mutex::new(None);
 /// handler: SIGINT raises `KeyboardInterrupt` (`error_handler.py:71-81`), SIGTERM/SIGHUP kill it outright.
 pub fn install(cancel: CancelToken, subreaper: bool) -> io::Result<SignalGuard> {
     imp::ensure_handler()?;
+    // Best effort: without the subreaper (a kernel or sandbox refusing the prctl) only the orphan sweep of
+    // `quiesce` is lost.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    if subreaper {
-        rustix::process::set_child_subreaper(Some(rustix::process::getpid()))?;
+    if subreaper && rustix::process::set_child_subreaper(Some(rustix::process::getpid())).is_ok() {
         registry::set_subreaper(true);
     }
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
