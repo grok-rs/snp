@@ -380,8 +380,8 @@ fn reprs() {
         };
         let rc = e["returncode"].as_i64().unwrap();
         let got = repr::stdlib_called_process_error_str(rc, &cmd_str);
-        if rc < 0 && !cfg!(target_os = "linux") && got.contains("<Signals.") {
-            continue; // signal names are per platform; the vectors come from Linux
+        if rc < 0 && !cfg!(target_os = "linux") {
+            continue; // `signal.Signals` is per platform; the vectors come from Linux
         }
         assert_eq!(got, s(&e["out"]), "{e}");
     }

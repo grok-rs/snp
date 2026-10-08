@@ -346,8 +346,15 @@ mod properties {
             let (root, ext) = posixpath::splitext(p.as_bytes());
             assert_eq!(<[&[u8]; 2]>::from((root, ext)).concat(), p.as_bytes());
             assert!(head.len() + tail.len() <= p.len());
+            // the host facade is posixpath on Unix and ntpath over UTF-16 on Windows
+            let host = ospath::normpath(OsStr::new(&p));
             #[cfg(unix)]
-            assert_eq!(ospath::normpath(OsStr::new(&p)).as_encoded_bytes(), &n[..]);
+            assert_eq!(host.as_encoded_bytes(), &n[..]);
+            #[cfg(windows)]
+            assert_eq!(
+                host.to_str().unwrap(),
+                String::from_utf8(ntpath::normpath(p.as_bytes())).unwrap()
+            );
         }
     }
 

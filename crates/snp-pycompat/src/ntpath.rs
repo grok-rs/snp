@@ -653,10 +653,10 @@ fn final_path_nonstrict(start: Vec<u16>) -> std::io::Result<Vec<u16>> {
                 if !e.raw_os_error().is_some_and(|c| ALLOWED.contains(&c)) {
                     return Err(e);
                 }
-                if let Ok(new_path) = readlink_deep(path.clone()) {
-                    if new_path != path {
-                        return Ok(with_tail(new_path, &tail));
-                    }
+                if let Ok(new_path) = readlink_deep(path.clone())
+                    && new_path != path
+                {
+                    return Ok(with_tail(new_path, &tail));
                 }
                 let (parent, name) = split(&path);
                 if !parent.is_empty() && name.is_empty() {
