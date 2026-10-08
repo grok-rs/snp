@@ -1,0 +1,85 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH snp 1  "snp 2.0.0" 
+.SH NAME
+snp \- You Shell Not Pass: a fast, drop\-in pre\-commit runner
+.SH SYNOPSIS
+\fBsnp\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIsubcommands\fR]
+.SH DESCRIPTION
+You Shell Not Pass: a fast, drop\-in pre\-commit runner
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+show this help message and exit
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+show program\*(Aqs version number and exit
+.SH SUBCOMMANDS
+.TP
+snp\-autoupdate(1)
+Auto\-update snp config to the latest repos\*(Aq versions.
+.TP
+snp\-cache(1)
+Inspect or clean snp\*(Aqs cache.
+.TP
+snp\-clean(1)
+Clean out snp files.
+.TP
+snp\-completions(1)
+Print a shell completion script.
+.TP
+snp\-config(1)
+Print the merged configuration or its JSON schema.
+.TP
+snp\-doctor(1)
+Check snp, the hook scripts and the cache for problems.
+.TP
+snp\-gc(1)
+Clean unused cached repos.
+.TP
+snp\-hazmat(1)
+Composable tools for rare use in hook `entry`.
+.TP
+snp\-init\-templatedir(1)
+Install hook script in a directory intended for use with `git config init.templateDir`.
+.TP
+snp\-install(1)
+Install the snp script.
+.TP
+snp\-install\-hooks(1)
+Install hook environments for all environments in the config file.  You may find `snp install \-\-install\-hooks` more useful.
+.TP
+snp\-list(1)
+List the hooks of the configuration.
+.TP
+snp\-migrate(1)
+Convert lefthook configurations or switch pre\-commit\-hooks to and from `repo: builtin`.
+.TP
+snp\-migrate\-config(1)
+Migrate list configuration to new map configuration.
+.TP
+snp\-run(1)
+Run hooks.
+.TP
+snp\-sample\-config(1)
+Produce a sample .pre\-commit\-config.yaml file
+.TP
+snp\-self(1)
+Manage the snp installation.
+.TP
+snp\-try\-repo(1)
+Try the hooks in a repository, useful for developing new hooks.
+.TP
+snp\-uninstall(1)
+Uninstall the snp script.
+.TP
+snp\-validate\-config(1)
+Validate .pre\-commit\-config.yaml files
+.TP
+snp\-validate\-manifest(1)
+Validate .pre\-commit\-hooks.yaml files
+.TP
+snp\-help(1)
+Show help for a specific command.
+.SH VERSION
+v2.0.0

@@ -1,0 +1,783 @@
+#compdef snp
+
+autoload -U is-at-least
+
+_snp() {
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
+
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
+    fi
+
+    local context curcontext="$curcontext" state line
+    _arguments "${_arguments_options[@]}" : \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+'-V[show program'\''s version number and exit]' \
+'--version[show program'\''s version number and exit]' \
+":: :_snp_commands" \
+"*::: :->snp" \
+&& ret=0
+    case $state in
+    (snp)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:snp-command-$line[1]:"
+        case $line[1] in
+            (autoupdate)
+_arguments "${_arguments_options[@]}" : \
+'--color=[Whether to use color in output. Defaults to \`auto\`.]:{auto,always,never}:_default' \
+'-c+[Path to alternate config file]: :_default' \
+'--config=[Path to alternate config file]: :_default' \
+'*--repo=[Only update this repository -- may be specified multiple times.]:REPO:_default' \
+'-j+[Number of threads to use. (default 1).]: :_default' \
+'--jobs=[Number of threads to use. (default 1).]: :_default' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+'--bleeding-edge[Update to the bleeding edge of \`HEAD\` instead of the latest tagged version (the default behavior).]' \
+'--freeze[Store "frozen" hashes in \`rev\` instead of tag names]' \
+&& ret=0
+;;
+(cache)
+_arguments "${_arguments_options[@]}" : \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+":: :_snp__subcmd__cache_commands" \
+"*::: :->cache" \
+&& ret=0
+
+    case $state in
+    (cache)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:snp-cache-command-$line[1]:"
+        case $line[1] in
+            (dir)
+_arguments "${_arguments_options[@]}" : \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+&& ret=0
+;;
+(size)
+_arguments "${_arguments_options[@]}" : \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+&& ret=0
+;;
+(gc)
+_arguments "${_arguments_options[@]}" : \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+&& ret=0
+;;
+(clean)
+_arguments "${_arguments_options[@]}" : \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(clean)
+_arguments "${_arguments_options[@]}" : \
+'--color=[Whether to use color in output. Defaults to \`auto\`.]:{auto,always,never}:_default' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+&& ret=0
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+':shell -- The shell to print the completion script for.:(bash zsh fish powershell)' \
+&& ret=0
+;;
+(config)
+_arguments "${_arguments_options[@]}" : \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+":: :_snp__subcmd__config_commands" \
+"*::: :->config" \
+&& ret=0
+
+    case $state in
+    (config)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:snp-config-command-$line[1]:"
+        case $line[1] in
+            (dump)
+_arguments "${_arguments_options[@]}" : \
+'-c+[Path to alternate config file]: :_default' \
+'--config=[Path to alternate config file]: :_default' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+'--json[Print JSON instead of YAML.]' \
+'--no-local-config[Ignore the local override file (.pre-commit-config.local.yaml).]' \
+&& ret=0
+;;
+(schema)
+_arguments "${_arguments_options[@]}" : \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(doctor)
+_arguments "${_arguments_options[@]}" : \
+'-c+[Path to alternate config file]: :_default' \
+'--config=[Path to alternate config file]: :_default' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+'--fix[Repair this repository'\''s hook scripts, then check again.]' \
+'--fast-path[Explain the native fast-path decision of every hook.]' \
+'--stash[Verify that a stash of unstaged changes round-trips.]' \
+&& ret=0
+;;
+(gc)
+_arguments "${_arguments_options[@]}" : \
+'--color=[Whether to use color in output. Defaults to \`auto\`.]:{auto,always,never}:_default' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+&& ret=0
+;;
+(hazmat)
+_arguments "${_arguments_options[@]}" : \
+'--color=[Whether to use color in output. Defaults to \`auto\`.]:{auto,always,never}:_default' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+":: :_snp__subcmd__hazmat_commands" \
+"*::: :->hazmat" \
+&& ret=0
+
+    case $state in
+    (hazmat)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:snp-hazmat-command-$line[1]:"
+        case $line[1] in
+            (cd)
+_arguments "${_arguments_options[@]}" : \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+':subdir:_default' \
+'*::cmd:_default' \
+&& ret=0
+;;
+(ignore-exit-code)
+_arguments "${_arguments_options[@]}" : \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+'*::cmd:_default' \
+&& ret=0
+;;
+(n1)
+_arguments "${_arguments_options[@]}" : \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+'*::cmd:_default' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(init-templatedir)
+_arguments "${_arguments_options[@]}" : \
+'--color=[Whether to use color in output. Defaults to \`auto\`.]:{auto,always,never}:_default' \
+'-c+[Path to alternate config file]: :_default' \
+'--config=[Path to alternate config file]: :_default' \
+'*-t+[]: :(commit-msg post-checkout post-commit post-merge post-rewrite pre-commit pre-merge-commit pre-push pre-rebase prepare-commit-msg)' \
+'*--hook-type=[]: :(commit-msg post-checkout post-commit post-merge post-rewrite pre-commit pre-merge-commit pre-push pre-rebase prepare-commit-msg)' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+'--no-allow-missing-config[Assume cloned repos should have a \`pre-commit\` config.]' \
+':directory -- The directory in which to write the hook script.:_default' \
+&& ret=0
+;;
+(install)
+_arguments "${_arguments_options[@]}" : \
+'--color=[Whether to use color in output. Defaults to \`auto\`.]:{auto,always,never}:_default' \
+'-c+[Path to alternate config file]: :_default' \
+'--config=[Path to alternate config file]: :_default' \
+'*-t+[]: :(commit-msg post-checkout post-commit post-merge post-rewrite pre-commit pre-merge-commit pre-push pre-rebase prepare-commit-msg)' \
+'*--hook-type=[]: :(commit-msg post-checkout post-commit post-merge post-rewrite pre-commit pre-merge-commit pre-push pre-rebase prepare-commit-msg)' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+'-f[Overwrite existing hooks / remove migration mode.]' \
+'--overwrite[Overwrite existing hooks / remove migration mode.]' \
+'--install-hooks[Whether to install hook environments for all environments in the config file.]' \
+'--allow-missing-config[Whether to allow a missing \`snp\` configuration file or exit with a failure code.]' \
+'--git-config-hooks[Install the hooks as git config entries (\`hook.<name>.command\`, git 2.54+) instead of hook scripts.]' \
+&& ret=0
+;;
+(install-hooks)
+_arguments "${_arguments_options[@]}" : \
+'--color=[Whether to use color in output. Defaults to \`auto\`.]:{auto,always,never}:_default' \
+'-c+[Path to alternate config file]: :_default' \
+'--config=[Path to alternate config file]: :_default' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+'--with-fallback[Also install the Python environments that hooks run natively by snp would fall back to (for offline use with SNP_NO_FAST_PATH).]' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'-c+[Path to alternate config file]: :_default' \
+'--config=[Path to alternate config file]: :_default' \
+'--hook-stage=[Only list the hooks of this stage. One of commit-msg, post-checkout, post-commit, post-merge, post-rewrite, pre-commit, pre-merge-commit, pre-push, pre-rebase, prepare-commit-msg, manual]: :(commit-msg post-checkout post-commit post-merge post-rewrite pre-commit pre-merge-commit pre-push pre-rebase prepare-commit-msg manual)' \
+'*--group=[Run only hooks in this group; repeat to select hooks in any of the groups. \`@ungrouped\` selects hooks without groups.]:GROUP:_default' \
+'*--require-group=[Run only hooks in this group; repeat to require every group.]:GROUP:_default' \
+'*--no-group=[Skip hooks in this group (repeatable; wins over --group and --require-group).]:GROUP:_default' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+'--json[Print JSON instead of text.]' \
+&& ret=0
+;;
+(migrate)
+_arguments "${_arguments_options[@]}" : \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+":: :_snp__subcmd__migrate_commands" \
+"*::: :->migrate" \
+&& ret=0
+
+    case $state in
+    (migrate)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:snp-migrate-command-$line[1]:"
+        case $line[1] in
+            (lefthook)
+_arguments "${_arguments_options[@]}" : \
+'--root=[Repository root (default\: the current git repository).]:DIR:_default' \
+'-c+[lefthook configuration to convert (default\: lefthook'\''s lookup).]:FILE:_default' \
+'--config=[lefthook configuration to convert (default\: lefthook'\''s lookup).]:FILE:_default' \
+'-o+[Where to write the result (default\: .pre-commit-config.yaml; \`-\` for stdout).]:FILE:_default' \
+'--output=[Where to write the result (default\: .pre-commit-config.yaml; \`-\` for stdout).]:FILE:_default' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+'--portable[Emit only keys pre-commit 4.x understands.]' \
+'--local[Also convert lefthook-local.yml into .pre-commit-config.local.yaml.]' \
+'--strict[Fail (exit 2) when a feature cannot be converted faithfully.]' \
+'--install[Afterwards remove lefthook'\''s hooks and install snp'\''s.]' \
+'-f[Overwrite an existing output file.]' \
+'--force[Overwrite an existing output file.]' \
+&& ret=0
+;;
+(builtin)
+_arguments "${_arguments_options[@]}" : \
+'-c+[Path to alternate config file]: :_default' \
+'--config=[Path to alternate config file]: :_default' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+&& ret=0
+;;
+(upstream)
+_arguments "${_arguments_options[@]}" : \
+'-c+[Path to alternate config file]: :_default' \
+'--config=[Path to alternate config file]: :_default' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(migrate-config)
+_arguments "${_arguments_options[@]}" : \
+'--color=[Whether to use color in output. Defaults to \`auto\`.]:{auto,always,never}:_default' \
+'-c+[Path to alternate config file]: :_default' \
+'--config=[Path to alternate config file]: :_default' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+&& ret=0
+;;
+(run)
+_arguments "${_arguments_options[@]}" : \
+'--color=[Whether to use color in output. Defaults to \`auto\`.]:{auto,always,never}:_default' \
+'-c+[Path to alternate config file]: :_default' \
+'--config=[Path to alternate config file]: :_default' \
+'--files=[Specific filenames to run hooks on.]:: :_default' \
+'--stdin-files=[Run on the file names read from stdin\: one per line (\`lines\`, the default) or NUL-separated (\`nul\`).]:: :(nul lines)' \
+'--hook-stage=[The stage during which the hook is fired. One of commit-msg, post-checkout, post-commit, post-merge, post-rewrite, pre-commit, pre-merge-commit, pre-push, pre-rebase, prepare-commit-msg, manual]: :(commit-msg post-checkout post-commit post-merge post-rewrite pre-commit pre-merge-commit pre-push pre-rebase prepare-commit-msg manual)' \
+'--remote-branch=[Remote branch ref used by \`git push\`.]: :_default' \
+'--local-branch=[Local branch ref used by \`git push\`.]: :_default' \
+'-s+[(for usage with \`--to-ref\`) -- this option represents the original ref in a \`from_ref...to_ref\` diff expression. For \`pre-push\` hooks, this represents the branch you are pushing to. For \`post-checkout\` hooks, this represents the branch that was previously checked out.]: :_default' \
+'--from-ref=[(for usage with \`--to-ref\`) -- this option represents the original ref in a \`from_ref...to_ref\` diff expression. For \`pre-push\` hooks, this represents the branch you are pushing to. For \`post-checkout\` hooks, this represents the branch that was previously checked out.]: :_default' \
+'--source=[(for usage with \`--to-ref\`) -- this option represents the original ref in a \`from_ref...to_ref\` diff expression. For \`pre-push\` hooks, this represents the branch you are pushing to. For \`post-checkout\` hooks, this represents the branch that was previously checked out.]: :_default' \
+'-o+[(for usage with \`--from-ref\`) -- this option represents the destination ref in a \`from_ref...to_ref\` diff expression. For \`pre-push\` hooks, this represents the branch being pushed. For \`post-checkout\` hooks, this represents the branch that is now checked out.]: :_default' \
+'--to-ref=[(for usage with \`--from-ref\`) -- this option represents the destination ref in a \`from_ref...to_ref\` diff expression. For \`pre-push\` hooks, this represents the branch being pushed. For \`post-checkout\` hooks, this represents the branch that is now checked out.]: :_default' \
+'--origin=[(for usage with \`--from-ref\`) -- this option represents the destination ref in a \`from_ref...to_ref\` diff expression. For \`pre-push\` hooks, this represents the branch being pushed. For \`post-checkout\` hooks, this represents the branch that is now checked out.]: :_default' \
+'--pre-rebase-upstream=[The upstream from which the series was forked.]: :_default' \
+'--pre-rebase-branch=[The branch being rebased, and is not set when rebasing the current branch.]: :_default' \
+'--commit-msg-filename=[Filename to check when running during \`commit-msg\`]: :_default' \
+'--prepare-commit-message-source=[Source of the commit message (typically the second argument to .git/hooks/prepare-commit-msg)]: :_default' \
+'--commit-object-name=[Commit object name (typically the third argument to .git/hooks/prepare-commit-msg)]: :_default' \
+'--remote-name=[Remote name used by \`git push\`.]: :_default' \
+'--remote-url=[Remote url used by \`git push\`.]: :_default' \
+'--checkout-type=[Indicates whether the checkout was a branch checkout (changing branches, flag=1) or a file checkout (retrieving a file from the index, flag=0).]: :_default' \
+'--is-squash-merge=[During a post-merge hook, indicates whether the merge was a squash merge]: :_default' \
+'--rewrite-command=[During a post-rewrite hook, specifies the command that invoked the rewrite]: :_default' \
+'-j+[Number of hooks to run in parallel (default\: the number of CPUs).]: :_default' \
+'--jobs=[Number of hooks to run in parallel (default\: the number of CPUs).]: :_default' \
+'*--group=[Run only hooks in this group; repeat to select hooks in any of the groups. \`@ungrouped\` selects hooks without groups.]:GROUP:_default' \
+'*--require-group=[Run only hooks in this group; repeat to require every group.]:GROUP:_default' \
+'*--no-group=[Skip hooks in this group (repeatable; wins over --group and --require-group).]:GROUP:_default' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+'-v[]' \
+'--verbose[]' \
+'-a[Run on all the files in the repo.]' \
+'--all-files[Run on all the files in the repo.]' \
+'--show-diff-on-failure[When hooks fail, run \`git diff\` directly afterward.]' \
+'--fail-fast[Stop after the first failing hook.]' \
+'--no-fast-path[Run pre-commit-hooks in their Python environments instead of snp'\''s native implementations.]' \
+'--summary[Print a summary of the hook results at the end.]' \
+'--no-local-config[Ignore the local override file (.pre-commit-config.local.yaml).]' \
+'*::hook -- Hook ids or aliases to run (default\: every hook of the stage).:_default' \
+&& ret=0
+;;
+(sample-config)
+_arguments "${_arguments_options[@]}" : \
+'--color=[Whether to use color in output. Defaults to \`auto\`.]:{auto,always,never}:_default' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+&& ret=0
+;;
+(self)
+_arguments "${_arguments_options[@]}" : \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+":: :_snp__subcmd__self_commands" \
+"*::: :->self" \
+&& ret=0
+
+    case $state in
+    (self)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:snp-self-command-$line[1]:"
+        case $line[1] in
+            (alias)
+_arguments "${_arguments_options[@]}" : \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+":: :_snp__subcmd__self__subcmd__alias_commands" \
+"*::: :->alias" \
+&& ret=0
+
+    case $state in
+    (alias)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:snp-self-alias-command-$line[1]:"
+        case $line[1] in
+            (install)
+_arguments "${_arguments_options[@]}" : \
+'--dir=[Directory of the alias (default\: the directory of snp).]:DIR:_default' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+'-f[Replace an existing pre-commit, keeping it as pre-commit.snp-backup.]' \
+'--force[Replace an existing pre-commit, keeping it as pre-commit.snp-backup.]' \
+&& ret=0
+;;
+(uninstall)
+_arguments "${_arguments_options[@]}" : \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(check)
+_arguments "${_arguments_options[@]}" : \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(try-repo)
+_arguments "${_arguments_options[@]}" : \
+'--color=[Whether to use color in output. Defaults to \`auto\`.]:{auto,always,never}:_default' \
+'-c+[Path to alternate config file]: :_default' \
+'--config=[Path to alternate config file]: :_default' \
+'--ref=[Manually select a rev to run against, otherwise the \`HEAD\` revision will be used.]: :_default' \
+'--rev=[Manually select a rev to run against, otherwise the \`HEAD\` revision will be used.]: :_default' \
+'--files=[Specific filenames to run hooks on.]:: :_default' \
+'--stdin-files=[Run on the file names read from stdin\: one per line (\`lines\`, the default) or NUL-separated (\`nul\`).]:: :(nul lines)' \
+'--hook-stage=[The stage during which the hook is fired. One of commit-msg, post-checkout, post-commit, post-merge, post-rewrite, pre-commit, pre-merge-commit, pre-push, pre-rebase, prepare-commit-msg, manual]: :(commit-msg post-checkout post-commit post-merge post-rewrite pre-commit pre-merge-commit pre-push pre-rebase prepare-commit-msg manual)' \
+'--remote-branch=[Remote branch ref used by \`git push\`.]: :_default' \
+'--local-branch=[Local branch ref used by \`git push\`.]: :_default' \
+'-s+[(for usage with \`--to-ref\`) -- this option represents the original ref in a \`from_ref...to_ref\` diff expression. For \`pre-push\` hooks, this represents the branch you are pushing to. For \`post-checkout\` hooks, this represents the branch that was previously checked out.]: :_default' \
+'--from-ref=[(for usage with \`--to-ref\`) -- this option represents the original ref in a \`from_ref...to_ref\` diff expression. For \`pre-push\` hooks, this represents the branch you are pushing to. For \`post-checkout\` hooks, this represents the branch that was previously checked out.]: :_default' \
+'--source=[(for usage with \`--to-ref\`) -- this option represents the original ref in a \`from_ref...to_ref\` diff expression. For \`pre-push\` hooks, this represents the branch you are pushing to. For \`post-checkout\` hooks, this represents the branch that was previously checked out.]: :_default' \
+'-o+[(for usage with \`--from-ref\`) -- this option represents the destination ref in a \`from_ref...to_ref\` diff expression. For \`pre-push\` hooks, this represents the branch being pushed. For \`post-checkout\` hooks, this represents the branch that is now checked out.]: :_default' \
+'--to-ref=[(for usage with \`--from-ref\`) -- this option represents the destination ref in a \`from_ref...to_ref\` diff expression. For \`pre-push\` hooks, this represents the branch being pushed. For \`post-checkout\` hooks, this represents the branch that is now checked out.]: :_default' \
+'--origin=[(for usage with \`--from-ref\`) -- this option represents the destination ref in a \`from_ref...to_ref\` diff expression. For \`pre-push\` hooks, this represents the branch being pushed. For \`post-checkout\` hooks, this represents the branch that is now checked out.]: :_default' \
+'--pre-rebase-upstream=[The upstream from which the series was forked.]: :_default' \
+'--pre-rebase-branch=[The branch being rebased, and is not set when rebasing the current branch.]: :_default' \
+'--commit-msg-filename=[Filename to check when running during \`commit-msg\`]: :_default' \
+'--prepare-commit-message-source=[Source of the commit message (typically the second argument to .git/hooks/prepare-commit-msg)]: :_default' \
+'--commit-object-name=[Commit object name (typically the third argument to .git/hooks/prepare-commit-msg)]: :_default' \
+'--remote-name=[Remote name used by \`git push\`.]: :_default' \
+'--remote-url=[Remote url used by \`git push\`.]: :_default' \
+'--checkout-type=[Indicates whether the checkout was a branch checkout (changing branches, flag=1) or a file checkout (retrieving a file from the index, flag=0).]: :_default' \
+'--is-squash-merge=[During a post-merge hook, indicates whether the merge was a squash merge]: :_default' \
+'--rewrite-command=[During a post-rewrite hook, specifies the command that invoked the rewrite]: :_default' \
+'-j+[Number of hooks to run in parallel (default\: the number of CPUs).]: :_default' \
+'--jobs=[Number of hooks to run in parallel (default\: the number of CPUs).]: :_default' \
+'*--group=[Run only hooks in this group; repeat to select hooks in any of the groups. \`@ungrouped\` selects hooks without groups.]:GROUP:_default' \
+'*--require-group=[Run only hooks in this group; repeat to require every group.]:GROUP:_default' \
+'*--no-group=[Skip hooks in this group (repeatable; wins over --group and --require-group).]:GROUP:_default' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+'-v[]' \
+'--verbose[]' \
+'-a[Run on all the files in the repo.]' \
+'--all-files[Run on all the files in the repo.]' \
+'--show-diff-on-failure[When hooks fail, run \`git diff\` directly afterward.]' \
+'--fail-fast[Stop after the first failing hook.]' \
+'--no-fast-path[Run pre-commit-hooks in their Python environments instead of snp'\''s native implementations.]' \
+'--summary[Print a summary of the hook results at the end.]' \
+'--no-local-config[Ignore the local override file (.pre-commit-config.local.yaml).]' \
+':repo -- Repository to source hooks from.:_default' \
+'*::hook -- Hook ids or aliases to run (default\: every hook of the stage).:_default' \
+&& ret=0
+;;
+(uninstall)
+_arguments "${_arguments_options[@]}" : \
+'--color=[Whether to use color in output. Defaults to \`auto\`.]:{auto,always,never}:_default' \
+'-c+[Path to alternate config file]: :_default' \
+'--config=[Path to alternate config file]: :_default' \
+'*-t+[]: :(commit-msg post-checkout post-commit post-merge post-rewrite pre-commit pre-merge-commit pre-push pre-rebase prepare-commit-msg)' \
+'*--hook-type=[]: :(commit-msg post-checkout post-commit post-merge post-rewrite pre-commit pre-merge-commit pre-push pre-rebase prepare-commit-msg)' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+'--git-config-hooks[Remove the git config hook entries instead of hook scripts.]' \
+&& ret=0
+;;
+(validate-config)
+_arguments "${_arguments_options[@]}" : \
+'--color=[Whether to use color in output. Defaults to \`auto\`.]:{auto,always,never}:_default' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+'--strict[Also report unknown hook keys (pre-commit only warns when it runs the hook).]' \
+'--portable[Also list the snp extension keys that pre-commit would warn about.]' \
+'*::filenames:_default' \
+&& ret=0
+;;
+(validate-manifest)
+_arguments "${_arguments_options[@]}" : \
+'--color=[Whether to use color in output. Defaults to \`auto\`.]:{auto,always,never}:_default' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+'--strict[Also report unknown hook keys (pre-commit only warns when it runs the hook).]' \
+'--portable[Also list the snp extension keys that pre-commit would warn about.]' \
+'*::filenames:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+'::help_cmd -- Command to show help for.:_default' \
+&& ret=0
+;;
+(hook-impl)
+_arguments "${_arguments_options[@]}" : \
+'--color=[Whether to use color in output. Defaults to \`auto\`.]:{auto,always,never}:_default' \
+'-c+[Path to alternate config file]: :_default' \
+'--config=[Path to alternate config file]: :_default' \
+'--hook-type=[]: :_default' \
+'--hook-dir=[]: :_default' \
+'-h[show this help message and exit]' \
+'--help[show this help message and exit]' \
+'--skip-on-missing-config[]' \
+'*::rest:_default' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+}
+
+(( $+functions[_snp_commands] )) ||
+_snp_commands() {
+    local commands; commands=(
+'autoupdate:Auto-update snp config to the latest repos'\'' versions.' \
+'cache:Inspect or clean snp'\''s cache.' \
+'clean:Clean out snp files.' \
+'completions:Print a shell completion script.' \
+'config:Print the merged configuration or its JSON schema.' \
+'doctor:Check snp, the hook scripts and the cache for problems.' \
+'gc:Clean unused cached repos.' \
+'hazmat:Composable tools for rare use in hook \`entry\`.' \
+'init-templatedir:Install hook script in a directory intended for use with \`git config init.templateDir\`.' \
+'install:Install the snp script.' \
+'install-hooks:Install hook environments for all environments in the config file.  You may find \`snp install --install-hooks\` more useful.' \
+'list:List the hooks of the configuration.' \
+'migrate:Convert lefthook configurations or switch pre-commit-hooks to and from \`repo\: builtin\`.' \
+'migrate-config:Migrate list configuration to new map configuration.' \
+'run:Run hooks.' \
+'sample-config:Produce a sample .pre-commit-config.yaml file' \
+'self:Manage the snp installation.' \
+'try-repo:Try the hooks in a repository, useful for developing new hooks.' \
+'uninstall:Uninstall the snp script.' \
+'validate-config:Validate .pre-commit-config.yaml files' \
+'validate-manifest:Validate .pre-commit-hooks.yaml files' \
+'help:Show help for a specific command.' \
+'hook-impl:' \
+    )
+    _describe -t commands 'snp commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__autoupdate_commands] )) ||
+_snp__subcmd__autoupdate_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp autoupdate commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__cache_commands] )) ||
+_snp__subcmd__cache_commands() {
+    local commands; commands=(
+'dir:Print the cache directory.' \
+'size:Print the size of the cache.' \
+'gc:Remove unused repositories and environments.' \
+'clean:Remove the whole cache.' \
+    )
+    _describe -t commands 'snp cache commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__cache__subcmd__clean_commands] )) ||
+_snp__subcmd__cache__subcmd__clean_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp cache clean commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__cache__subcmd__dir_commands] )) ||
+_snp__subcmd__cache__subcmd__dir_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp cache dir commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__cache__subcmd__gc_commands] )) ||
+_snp__subcmd__cache__subcmd__gc_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp cache gc commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__cache__subcmd__size_commands] )) ||
+_snp__subcmd__cache__subcmd__size_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp cache size commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__clean_commands] )) ||
+_snp__subcmd__clean_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp clean commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__completions_commands] )) ||
+_snp__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp completions commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__config_commands] )) ||
+_snp__subcmd__config_commands() {
+    local commands; commands=(
+'dump:Print the merged configuration, local overrides included.' \
+'schema:Print the JSON schema of .pre-commit-config.yaml.' \
+    )
+    _describe -t commands 'snp config commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__config__subcmd__dump_commands] )) ||
+_snp__subcmd__config__subcmd__dump_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp config dump commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__config__subcmd__schema_commands] )) ||
+_snp__subcmd__config__subcmd__schema_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp config schema commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__doctor_commands] )) ||
+_snp__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp doctor commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__gc_commands] )) ||
+_snp__subcmd__gc_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp gc commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__hazmat_commands] )) ||
+_snp__subcmd__hazmat_commands() {
+    local commands; commands=(
+'cd:cd to a subdir and run the command' \
+'ignore-exit-code:run the command but ignore the exit code' \
+'n1:run the command once per filename' \
+    )
+    _describe -t commands 'snp hazmat commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__hazmat__subcmd__cd_commands] )) ||
+_snp__subcmd__hazmat__subcmd__cd_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp hazmat cd commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__hazmat__subcmd__ignore-exit-code_commands] )) ||
+_snp__subcmd__hazmat__subcmd__ignore-exit-code_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp hazmat ignore-exit-code commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__hazmat__subcmd__n1_commands] )) ||
+_snp__subcmd__hazmat__subcmd__n1_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp hazmat n1 commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__help_commands] )) ||
+_snp__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp help commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__hook-impl_commands] )) ||
+_snp__subcmd__hook-impl_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp hook-impl commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__init-templatedir_commands] )) ||
+_snp__subcmd__init-templatedir_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp init-templatedir commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__install_commands] )) ||
+_snp__subcmd__install_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp install commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__install-hooks_commands] )) ||
+_snp__subcmd__install-hooks_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp install-hooks commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__list_commands] )) ||
+_snp__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp list commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__migrate_commands] )) ||
+_snp__subcmd__migrate_commands() {
+    local commands; commands=(
+'lefthook:Convert a lefthook configuration.' \
+'builtin:Switch pre-commit-hooks repos to \`repo\: builtin\`.' \
+'upstream:Switch \`repo\: builtin\` back to pre-commit-hooks.' \
+    )
+    _describe -t commands 'snp migrate commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__migrate__subcmd__builtin_commands] )) ||
+_snp__subcmd__migrate__subcmd__builtin_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp migrate builtin commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__migrate__subcmd__lefthook_commands] )) ||
+_snp__subcmd__migrate__subcmd__lefthook_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp migrate lefthook commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__migrate__subcmd__upstream_commands] )) ||
+_snp__subcmd__migrate__subcmd__upstream_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp migrate upstream commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__migrate-config_commands] )) ||
+_snp__subcmd__migrate-config_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp migrate-config commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__run_commands] )) ||
+_snp__subcmd__run_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp run commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__sample-config_commands] )) ||
+_snp__subcmd__sample-config_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp sample-config commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__self_commands] )) ||
+_snp__subcmd__self_commands() {
+    local commands; commands=(
+'alias:Manage the \`pre-commit\` alias.' \
+'check:Run the built-in self-test.' \
+    )
+    _describe -t commands 'snp self commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__self__subcmd__alias_commands] )) ||
+_snp__subcmd__self__subcmd__alias_commands() {
+    local commands; commands=(
+'install:Create a \`pre-commit\` alias of snp.' \
+'uninstall:Remove the \`pre-commit\` alias.' \
+'status:Show what \`pre-commit\` resolves to.' \
+    )
+    _describe -t commands 'snp self alias commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__self__subcmd__alias__subcmd__install_commands] )) ||
+_snp__subcmd__self__subcmd__alias__subcmd__install_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp self alias install commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__self__subcmd__alias__subcmd__status_commands] )) ||
+_snp__subcmd__self__subcmd__alias__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp self alias status commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__self__subcmd__alias__subcmd__uninstall_commands] )) ||
+_snp__subcmd__self__subcmd__alias__subcmd__uninstall_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp self alias uninstall commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__self__subcmd__check_commands] )) ||
+_snp__subcmd__self__subcmd__check_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp self check commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__try-repo_commands] )) ||
+_snp__subcmd__try-repo_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp try-repo commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__uninstall_commands] )) ||
+_snp__subcmd__uninstall_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp uninstall commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__validate-config_commands] )) ||
+_snp__subcmd__validate-config_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp validate-config commands' commands "$@"
+}
+(( $+functions[_snp__subcmd__validate-manifest_commands] )) ||
+_snp__subcmd__validate-manifest_commands() {
+    local commands; commands=()
+    _describe -t commands 'snp validate-manifest commands' commands "$@"
+}
+
+if [ "$funcstack[1]" = "_snp" ]; then
+    _snp "$@"
+else
+    compdef _snp snp
+fi

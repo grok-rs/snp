@@ -13,5 +13,9 @@ publish.workspace = true
 snp-argparse.workspace = true
 snp-core.workspace = true
 
+
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true
