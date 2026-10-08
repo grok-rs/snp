@@ -6,7 +6,7 @@ decision was needed, with sources), **Decision**, **Rationale**, **Consequences*
 2026-10-08. A later change to an accepted ADR is a new ADR that supersedes it (never an in-place edit of the decision),
 approved by the integration lead and the owners of the affected packages; the amended ADR only gains a status line
 naming the amending ADR, which is normative where they differ. ADR-056…ADR-080 apply the second design review
-(2026-10-08); Appendix B lists every finding and its disposition.
+(2026-10-08); Appendix B lists every finding and its disposition. ADR-081 applies the verification of the W0 skeleton.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -770,6 +770,8 @@ with id …`. `HookFilter::compile` takes `prefix: Option<RepoPath>` and `FileTa
 
 ### ADR-070 — Cross-crate contract corrections (review round 2)
 
+*Status: Accepted; amended by ADR-081 (the binary depends on snp-lang to build `RunCtx.probe`/`RunCtx.runner`; doctor still needs no snp-config edge). The amending ADR is normative where they differ.*
+
 **Context.** Several contracts could not compile against the DAG or forced same-wave packages to invent handshakes.
 **Decision.** Reflected in ARCHITECTURE §1.4: (1) doctor's fast-path table comes from `snp_run::doctor_fast_path`,
 wrapped by the binary in a `DoctorCheck` (no `snp` → snp-config/snp-lang edge); the stash-recovery check lives in
@@ -793,6 +795,8 @@ re-exports argparse's column rule for snp-run. (13) `Debug` supertraits on every
 `SNP_TEST_SPAWN_LOG` lives in snp-proc (`testing`), fault injection in snp-core.
 
 ### ADR-071 — Work-plan mechanics, corrected
+
+*Status: Accepted; amended by ADR-081 (xtask edges (cli, hooks, argparse); integration-lead files; shared manifests). The amending ADR is normative where they differ.*
 
 **Context.** W1 packages were not real leaves (snp-git needs `normalize_cmd`, xargs partitioning and the pycompat
 composites; snp-lang's `ProcRunner` needs `normalize_cmd`); a crate-level stub `#![expect]` in a `lib.rs` shared by
@@ -909,6 +913,49 @@ purpose. **Decision.** `--group G` (repeatable, OR), `--require-group G` (repeat
 wins over both), `@ungrouped` (hooks without groups) usable in all three; group names must not start with `@` (reserved
 for selectors); `SNP_SKIP_GROUPS` and the overlay's `skip_groups` exclude; `snp list` takes the same flags. Prefix
 stability: pre-commit's `run` has no option starting with `--req`. Amends ADR-039.
+
+### ADR-081 — W0 contract corrections (WP-00 verification)
+
+**Context.** Independent verification of the W0 skeleton found contracts that later packages could not code against
+as written. The binary builds `RunCtx` (§1.4.21) once, but `RunCtx.probe: Arc<snp_lang::ToolProbe>` and
+`RunCtx.runner: Arc<dyn snp_lang::CmdRunner>` (a `ProcRunner { cancel }` literal) need snp-lang, and §1.2 gave `snp` no
+snp-lang edge. `xtask cli-goldens` and `xtask completions` (WP-12) call `snp_argparse::export_json` and match on
+`snp_argparse::{Kind, Nargs}`, but the xtask edges were (cli, hooks). Several normative texts disagreed with the
+toolchain or the listings: clippy's `exit` lint never fires inside `main`; `debug_assert*` expands to the disallowed
+`assert*` macros; §1.3 called `PyRegex` cheap to clone while its listing derives only `Debug`; `HomeLookup` is
+`!Send + !Sync` without a note. Ownership left `snp-hooks/src/{hook,registry}.rs`, the multi-package contract tests
+and `crates/snp/tests/{api,skeleton}.rs` without a W1–W3 owner and the `user_crates.rs` drift checks under two claims;
+shared manifests forced same-wave edits (`crates/snp-hooks/Cargo.toml` for WP-27; `fuzz/Cargo.toml` lacked snp-core,
+which most §13.5 targets need). The fuzz jobs set `RUST_MIN_STACK=262144` for the whole job, which rustc honours for its
+own main thread (it overflows), while libFuzzer runs inputs on the process main thread, which the variable does not
+limit.
+**Decision.** (1) New edge `snp → snp-lang`: the binary builds `ToolProbe::new(persist_dir)` and `ProcRunner { cancel }`;
+crates/snp's `testing` feature enables `snp-lang/testing` directly. (2) New edge `xtask → snp-argparse`; xtask's edges
+are (cli, hooks, argparse) plus the implicit snp-core edge, which applies to xtask as to every crate but snp-pycompat
+and snp-probe. `xtask/Cargo.toml` pre-declares `clap` (default features off: `color` pulls the banned `anstyle-query`),
+`clap_complete` and `clap_mangen` for `xtask completions`. (3) `PyRegex` is not `Clone`: compiled patterns are shared
+as `Arc<PyRegex>` (`RegexCache::get`, `HookFilter`). (4) `snp_pycompat::ospath::HomeLookup` is `!Send + !Sync`
+(borrowed `&dyn Fn` lookups for one `expanduser` call), noted in §1.3 next to `SpawnGuard`. (5) `main.rs` marks its
+`process::exit` arm `#[expect(clippy::disallowed_methods, reason = …)]`; a non-test `debug_assert*` carries
+`#[expect(clippy::disallowed_macros, reason = …)]`. (6) Ownership (WBS): WP-26 owns `snp-hooks/src/{hook,registry}.rs`
+and `crates/snp-hooks/Cargo.toml` for both halves (it adds what WP-27 requests; WP-00 pre-declares `memchr` and `bstr`);
+WP-33 owns `crates/snp/tests/{api,skeleton}.rs`; the WBS rule "Integration-lead files" lists the files that stay with
+the integration lead after W0 (snp-core, the multi-package contract tests, the `user_crates.rs` drift checks,
+`crates/snp/tests/it/main.rs`, the fuzz and xtask manifests and infrastructure, `.github/scripts/**`, the catalog).
+(7) `fuzz/Cargo.toml` depends on snp-core and snp-os (machete-ignored: shared by many targets). (8) CI: a `perf` cargo
+profile (release + thin LTO, 16 codegen units) for the `perf-smoke` job; fuzz targets are built without
+`RUST_MIN_STACK` and run by `.github/scripts/fuzz-run.sh` under `ulimit -s 256` (main thread) with
+`RUST_MIN_STACK=262144` (spawned threads); every job has `timeout-minutes`; the arm64 Linux and Windows nightly runners
+run only while the repository is public; `.github/scripts/deny-fixture.sh` plants `regex`, `which` and `tokio` in
+snp-pycompat and expects `cargo deny check bans` to reject each. (9) `docs/research/pycompat-proto` is excluded from the
+workspace; `deps-lock.sh link` symlinks the sibling checkouts next to a linked worktree.
+**Rationale.** Edges instead of new API: snp already reaches snp-lang through snp-repo and snp-run, and xtask is never
+shipped, so neither edge costs build time or layering, while a constructor in snp-run/snp-repo or a re-export in snp-cli
+would be new frozen API that a W1/W3 package has to implement and pin. Text follows the toolchain where the toolchain
+cannot follow the text.
+**Consequences.** `check-dag` enforces the two new edges; ARCHITECTURE §1.2, §1.3, §1.4.2, §1.4.21, §1.4.24 and the
+WBS (rules, WP-00, WP-21, WP-22, WP-26, WP-33, crate table) are updated. Amends ADR-070 (item 1: the binary has the
+snp-lang edge; doctor still needs no snp-config edge) and ADR-071 (item 7: the xtask edges).
 
 ---
 

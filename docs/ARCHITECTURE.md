@@ -157,7 +157,7 @@ snp-net) so they compile in parallel and downstream edits never rebuild them.
 
 ### 1.2 Dependency DAG and implementation waves
 
-Internal edges (every crate except `snp-pycompat` and `snp-probe` (a standalone dev binary) also depends on `snp-core`; `snp-core` depends on `snp-pycompat`):
+Internal edges (every crate except `snp-pycompat` and `snp-probe` (a standalone dev binary) — `xtask` included — also depends on `snp-core`; `snp-core` depends on `snp-pycompat`):
 
 ```
 snp-pycompat   ← snp-core
@@ -175,9 +175,9 @@ snp-repo       (config, store, git, lang, hooks-data, files, proc, os, pyre, net
 snp-run        (repo, stash, hooks, files, config, store, git, lang, proc, os, pyre, yaml, cli, pycompat, net)
 snp-cmd        (config, store, git, stash, yaml, os, proc, cli, pycompat, hooks-data, pyre)
 snp-migrate    (config, yaml, pyre, hooks-data; file-identify)
-snp            (run, cmd, migrate, repo, hooks, cli, store, proc, os, net, git, pyre)
+snp            (run, cmd, migrate, repo, hooks, cli, store, proc, os, net, git, pyre, lang)
 snp-difftest   (testkit, yaml)
-xtask          (cli, hooks)                     — build-time tool, never shipped; may not depend on snp or snp-difftest
+xtask          (cli, hooks, argparse)           — build-time tool, never shipped; may not depend on snp or snp-difftest
 ```
 
 **Dev-dependencies** are checked by `check-dag` too: a crate may dev-depend on any of its own ancestors above, and on
@@ -213,11 +213,13 @@ its tests run with a fake resolver before snp-repo lands. Critical path: pycompa
   `checked_*`/`saturating_*`/`wrapping_*`; a proven-bounded site may carry `#[expect(clippy::arithmetic_side_effects,
   reason = "<bound>")]`. `clippy.toml`: `allow-unwrap-in-tests = true`, `allow-expect-in-tests = true`,
   `allow-panic-in-tests = true`, `allow-indexing-slicing-in-tests = true`; `disallowed-macros`: `assert`, `assert_eq`,
-  `assert_ne` (non-test code returns errors; `debug_assert*` stays allowed); `disallowed-methods`: `std::env::set_var`,
+  `assert_ne` (non-test code returns errors; `debug_assert*` expands to these macros, so a non-test `debug_assert*`
+  carries `#[expect(clippy::disallowed_macros, reason = "<invariant>")]`, ADR-081); `disallowed-methods`: `std::env::set_var`,
   `std::env::remove_var`, `std::env::set_current_dir`, `std::env::home_dir`, `std::env::var`, `std::env::var_os`,
   `std::env::vars_os` (only `snp_core::env::Env::capture_process` may read the process environment, via an
   `#[expect]`), `std::fs::canonicalize` (use `snp_os::realpath`), `std::process::exit` (allowed only in
-  `crates/snp/src/main.rs`, via `#[expect(clippy::exit, reason = "…")]`), and the panicking std APIs (ADR-066):
+  `crates/snp/src/main.rs`, via `#[expect(clippy::disallowed_methods, reason = "…")]` — clippy's `exit` lint never
+  fires inside `main`, ADR-081), and the panicking std APIs (ADR-066):
   `Duration::{from_secs_f64, from_secs_f32, mul_f64, mul_f32, div_f64, div_f32}` (use `try_from_secs_f64` + an upper
   bound), slice `split_at`/`split_at_mut`/`copy_from_slice`/`clone_from_slice`/`swap`/`chunks`/`chunks_exact`/
   `rchunks`/`windows`/`repeat`, `Iterator::step_by`, `Vec::{remove, insert, drain, split_off, swap_remove,
@@ -237,7 +239,8 @@ its tests run with a fake resolver before snp-repo lands. Critical path: pycompa
   compile: ``E0277: `!` is not an iterator``); every other stub body is `todo!()`.
 * **Profiles**: `release`: `opt-level = 3`, `lto = "fat"`, `codegen-units = 1`, **`panic = "unwind"`** (load-bearing,
   FD-5), `overflow-checks = true`, `debug = "line-tables-only"`, `strip = "debuginfo"`; `dist` inherits release +
-  `strip = "symbols"`; `profiling` = release + `lto = "thin"` + `debug = "full"`. Dev profile: `opt-level = 1` for
+  `strip = "symbols"`; `profiling` = release + `lto = "thin"` + `debug = "full"`; `perf` = release + `lto = "thin"` +
+  `codegen-units = 16` (the `perf-smoke` CI job's test binaries only, ADR-081). Dev profile: `opt-level = 1` for
   `regex-automata`, `fancy-regex`, `libyaml-safer`, `blake3`. System allocator on gnu, macOS and Windows (mimalloc
   measured: +RSS, no gain, 07 §3.15). musl: decided by measurement (07 D10: musl's allocator is slow under
   contention): WP-36 benches the musl build with the system allocator and with mimalloc behind
@@ -258,8 +261,9 @@ its tests run with a fake resolver before snp-repo lands. Critical path: pycompa
   0.3` (unix; `SignalsInfo<WithOrigin>`), `ctrlc 3.5` (windows, feature `termination`), `winapi-util 0.1.11` (windows:
   console VT), `process-wrap 10.0.1` (windows only: `std`, `job-object`), `mimalloc` (musl targets of `crates/snp`
   only, iff ADR-079's measurement adopts it); dev: `insta 1.49`, `proptest 1.11`, `rstest 0.27`, `criterion 0.8.2`,
-  `pretty_assertions 1.4.1`, `dhat 0.3` (bench feature); build-time only (`xtask`): `clap 4.6.7`, `clap_complete
-  4.6.11`, `clap_mangen 0.3.3`, `syn 2` (lint-guards), `anyhow 1`.
+  `pretty_assertions 1.4.1`, `dhat 0.3` (bench feature); build-time only (`xtask`): `clap 4.6.7` (default
+  features off: its `color` feature pulls the banned `anstyle-query`; ADR-081), `clap_complete 4.6.11`,
+  `clap_mangen 0.3.3`, `syn 2` (lint-guards), `anyhow 1`.
 * **Banned** (`deny.toml`): `tokio`, `async-std`, `rayon`, `clap` outside `xtask`, `which`, `shlex`, `shell-words`,
   `serde_yaml*`, `serde_yml`, `yaml-rust*`, `rusqlite`, `openssl*`, `atty`, `mimalloc` (except with `wrappers =
   ["snp"]` for the musl allocator), `regex` outside `snp-pyre` (wrappers; `snp-pycompat` is regex-free), `memmap2`,
@@ -277,8 +281,10 @@ its tests run with a fake resolver before snp-repo lands. Critical path: pycompa
 * **Contract tests**: every crate has `tests/api.rs` (WP-00) that references every public signature with explicit
   types; signature drift breaks compilation. `Send + Sync` static assertions for every type documented as such.
 * **Conventions for §1.4**: all public enums are `#[non_exhaustive]` unless marked `// exhaustive`; types are
-  `Send + Sync` unless noted (`snp_core::spawnlock::SpawnGuard` is `!Send` and excluded from the `api.rs` Send
-  assertions); `Env`, `Printer`, `CancelToken`, `Git`, `PyRegex` are cheap to clone (`Arc` inside). Every public type
+  `Send + Sync` unless noted (`snp_core::spawnlock::SpawnGuard` is `!Send`, and `snp_pycompat::ospath::HomeLookup`
+  is `!Send + !Sync` (borrowed `&dyn Fn` lookups that live for one `expanduser` call); both are excluded from the
+  `api.rs` Send assertions); `Env`, `Printer`, `CancelToken`, `Git` are cheap to clone (`Arc` inside); `PyRegex` is
+  not `Clone` — compiled patterns are shared as `Arc<PyRegex>` (from `RegexCache::get`; ADR-081). Every public type
   implements `Debug` (`missing_debug_implementations` + `-Dwarnings`): listings omit `#[derive(Debug)]` on plain
   structs for brevity, WP-00 adds it; manual impls are noted (`Printer`, `pygrep::Compiled`). Every seam trait has
   `std::fmt::Debug` as a supertrait (`WarnSink`, `DiagSink`, `Clock`, `CmdRunner`, `ToolDirs`, `Fetch`, `Resolve`,
@@ -682,6 +688,7 @@ pub mod ntpath {      // CPython 3.12 ntpath, generic over code units (u8 for te
 /// What every caller uses: posixpath on Unix, ntpath<u16> on Windows, over `OsStr`/`Path` with explicit cwd.
 pub mod ospath {
     /// Home lookup injected by snp-os (env snapshot; passwd file for `pw_*` on Unix, unused on Windows).
+    /// `!Send + !Sync` (§1.3): built on the calling thread for one `expanduser` call; manual `Debug`.
     pub struct HomeLookup<'a> { pub env: &'a dyn Fn(&str) -> Option<OsString>, pub pw_current: &'a dyn Fn() -> Option<OsString>,
                                 pub pw_named: &'a dyn Fn(&OsStr) -> Option<OsString> }
     pub fn normpath(p: &OsStr) -> OsString;
@@ -2023,7 +2030,8 @@ pub fn decision_table(cfg: &Config, cx: &ResolveCtx<'_>) -> Vec<(Arc<str>, Arc<s
 use std::{ffi::OsString, io, path::PathBuf, sync::Arc};
 use snp_core::{brand::Brand, cancel::CancelToken, clock::Clock, env::Env, failure::Failure, output::Printer};
 /// Constructed once by the binary (§3.1 step 2). `git_backend` is the run's Tool-role backend; the stash builds its own
-/// Critical one (§1.4.18). `net`/`installs` are the Limiters of §1.4.8; `probe`/`runner` feed `snp_lang::Host`.
+/// Critical one (§1.4.18). `net`/`installs` are the Limiters of §1.4.8; `probe`/`runner` feed `snp_lang::Host`; the
+/// binary builds them as `ToolProbe::new(persist_dir)` and `ProcRunner { cancel }` (snp → snp-lang edge, ADR-081).
 #[derive(Debug)] pub struct RunCtx { pub env: Env /* startup */, pub brand: Brand, pub printer: Arc<Printer>,
     pub store: snp_store::Store, pub git_exe: Arc<snp_git::GitExe>, pub git_backend: Arc<dyn snp_git::GitBackend>,
     pub resolver: Arc<dyn snp_repo::Resolve>, pub cancel: CancelToken, pub signals: Option<Arc<snp_proc::signals::SignalGuard>>,
@@ -2040,7 +2048,7 @@ pub fn try_repo(a: snp_cli::TryRepoArgs, cx: &RunCtx) -> Result<i32, Failure>;
 pub fn install_hooks(a: snp_cli::InstallHooksArgs, cx: &RunCtx) -> Result<i32, Failure>;
 pub fn list(a: snp_cli::ListArgs, cx: &RunCtx) -> Result<i32, Failure>;
 /// `snp doctor --fast-path`: loads the config and returns `snp_repo::decision_table` rows as (ok, text); the binary wraps
-/// it in a `snp_cmd::DoctorCheck` (no snp → snp-config/snp-lang edge needed; ADR-070).
+/// it in a `snp_cmd::DoctorCheck` (no snp → snp-config edge needed; ADR-070).
 pub fn doctor_fast_path(config: &std::ffi::OsStr, cx: &RunCtx) -> Result<Vec<(bool, String)>, Failure>;
 pub mod render {   // pure: events → bytes, snapshot-tested without processes (10 §9.1)
     pub fn cols(names: &[&str]) -> usize;                       // max(80, max len_cjk + 30)
@@ -2120,7 +2128,8 @@ pub fn to_upstream(config_bytes: &[u8]) -> Result<Vec<u8>, snp_core::failure::Fa
 fn main() -> std::process::ExitCode {
     match snp::entry() {                         // every guard and destructor of `entry` has already run
         snp::Exit::Code(c) => std::process::ExitCode::from(c),
-        #[expect(clippy::exit, reason = "Windows hook-impl `legacy | run` > 255 (14 A.7.4)")]
+        // clippy's `exit` lint never fires inside `main`; the clippy.toml `disallowed-methods` entry does (ADR-081).
+        #[expect(clippy::disallowed_methods, reason = "Windows hook-impl `legacy | run` > 255 (14 A.7.4)")]
         snp::Exit::Raw(r) => std::process::exit(r),
     }
 }
