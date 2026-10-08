@@ -205,7 +205,7 @@ mod on_disk {
     use super::*;
     use file_identify::{
         ExecPolicy, IdentifyError, file_is_text, parse_shebang_from_file,
-        parse_shebang_from_file_with, tags_from_meta, tags_from_path,
+        parse_shebang_from_file_with, tags_from_meta, tags_from_metadata, tags_from_path,
     };
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
@@ -264,8 +264,16 @@ mod on_disk {
                         Some(expected.clone()),
                         "{ctx}"
                     );
-                    // Same result from a pre-computed Meta (no lstat) ...
+                    // Same result from the caller's lstat metadata ...
                     let md = fs::symlink_metadata(&path).expect("lstat");
+                    assert_eq!(
+                        tags_from_metadata(&path, &md, ExecPolicy::PythonCompat)
+                            .map(names)
+                            .ok(),
+                        Some(expected.clone()),
+                        "{ctx}"
+                    );
+                    // ... from a pre-computed Meta (no lstat) ...
                     let meta = Meta::from_metadata(&md, ExecPolicy::PythonCompat);
                     assert_eq!(
                         tags_from_meta(&path, meta).map(names).ok(),

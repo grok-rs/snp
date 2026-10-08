@@ -196,7 +196,7 @@ fn open_for_read(path: &Path) -> io::Result<File> {
 
 /// Run the content step for `path`, opening it once.
 fn finish_from_file(path: &Path, pending: Pending, len_hint: Option<u64>) -> Result<TagSet> {
-    let mut file = open_for_read(path).map_err(|e| {
+    let file = open_for_read(path).map_err(|e| {
         if e.kind() == io::ErrorKind::NotFound {
             // identify re-checks `os.path.lexists` right before opening.
             IdentifyError::not_found(path, e)
@@ -204,7 +204,19 @@ fn finish_from_file(path: &Path, pending: Pending, len_hint: Option<u64>) -> Res
             IdentifyError::from(e)
         }
     })?;
-    // With a known size, don't issue an extra read just to observe EOF.
+    Ok(finish_sized(pending, file, len_hint)?)
+}
+
+/// [`Pending::finish`] for a file believed to be `len_hint` bytes long: a
+/// file smaller than [`TEXT_PROBE_LEN`] is read with a single `read` (no
+/// extra `read` just to observe the end of the file). Without a hint, or for
+/// an empty file (whose size may be unknown, as in `/proc`), up to
+/// [`TEXT_PROBE_LEN`] bytes are requested.
+fn finish_sized<R: Read>(
+    pending: Pending,
+    mut file: R,
+    len_hint: Option<u64>,
+) -> io::Result<TagSet> {
     let want = match len_hint {
         Some(len) if len > 0 => {
             usize::try_from(len).map_or(TEXT_PROBE_LEN, |l| l.min(TEXT_PROBE_LEN))
@@ -213,7 +225,7 @@ fn finish_from_file(path: &Path, pending: Pending, len_hint: Option<u64>) -> Res
     };
     let mut head = [0u8; TEXT_PROBE_LEN];
     let n = read_full(&mut file, head.get_mut(..want).unwrap_or_default())?;
-    Ok(pending.finish_with_head(head.get(..n).unwrap_or_default(), file)?)
+    pending.finish_with_head(head.get(..n).unwrap_or_default(), file)
 }
 
 /// Identify a path, exactly like `identify.tags_from_path`, with
@@ -258,10 +270,50 @@ pub fn tags_from_path(path: impl AsRef<Path>) -> Result<TagSet> {
 pub fn tags_from_path_with(path: impl AsRef<Path>, policy: ExecPolicy) -> Result<TagSet> {
     let path = path.as_ref();
     let md = fs::symlink_metadata(path).map_err(|e| IdentifyError::not_found(path, e))?;
-    let meta = Meta::from_metadata(&md, policy);
+    tags_from_metadata(path, &md, policy)
+}
+
+/// Identify a path whose `lstat` metadata ([`fs::symlink_metadata`]) the
+/// caller already holds, e.g. from an existence check (pre-commit filters
+/// files with `os.path.lexists` before identifying them).
+///
+/// This is [`tags_from_path_with`] without its `lstat`: the result is the
+/// same, and the file size from `metadata` lets a small file be read with a
+/// single `read` (open, read, close) instead of a second `read` to observe
+/// the end of the file. Pass metadata that does not follow symlinks;
+/// metadata from [`fs::metadata`] describes the link target instead.
+///
+/// # Errors
+///
+/// [`IdentifyError::PathNotFound`] if the file has to be opened but no
+/// longer exists; [`IdentifyError::IoError`] for other open or read
+/// failures.
+///
+/// ```
+/// # let dir = tempfile::tempdir()?;
+/// # let path = dir.path().join("notes.unknownext");
+/// # std::fs::write(&path, "hello\n")?;
+/// use file_identify::{ExecPolicy, tags_from_metadata, tags_from_path};
+///
+/// // The caller's own existence check ...
+/// let md = std::fs::symlink_metadata(&path)?;
+/// // ... is reused for identification: no second lstat.
+/// let tags = tags_from_metadata(&path, &md, ExecPolicy::PythonCompat)?;
+/// assert_eq!(tags, tags_from_path(&path)?);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn tags_from_metadata(
+    path: impl AsRef<Path>,
+    metadata: &fs::Metadata,
+    policy: ExecPolicy,
+) -> Result<TagSet> {
+    let path = path.as_ref();
+    let meta = Meta::from_metadata(metadata, policy);
     match classify(meta, path_bytes(path)) {
         Classification::Done(tags) => Ok(tags),
-        Classification::NeedsContent(pending) => finish_from_file(path, pending, Some(md.len())),
+        Classification::NeedsContent(pending) => {
+            finish_from_file(path, pending, Some(metadata.len()))
+        }
     }
 }
 
@@ -271,6 +323,10 @@ pub fn tags_from_path_with(path: impl AsRef<Path>, policy: ExecPolicy) -> Result
 /// No system call is made when the name decides everything; otherwise the
 /// file is opened once, as in [`tags_from_path`]. The meta is trusted: a
 /// path that does not exist is only reported when it has to be opened.
+///
+/// A [`Meta`] carries no file size, so a file that has to be read costs one
+/// more `read` (to observe its end) than with [`tags_from_metadata`]; use
+/// that when you hold `lstat` metadata.
 ///
 /// # Errors
 ///
@@ -708,6 +764,46 @@ mod tests {
         ] {
             assert!(!crt_errno_is_einval(code), "{code}");
         }
+    }
+
+    /// A small file whose size is known is read with one `read` call; without
+    /// the size a second `read` observes the end of the file.
+    #[test]
+    fn size_hint_saves_the_eof_read() {
+        let Classification::NeedsContent(p) = classify(Meta::regular(false), "x.unknownext") else {
+            panic!("unknown name needs content");
+        };
+        let mut file = scripted(b"hello\n", None);
+        let tags = finish_sized(p, &mut file, Some(6)).ok();
+        assert_eq!(
+            tags.map(|t| t.to_string()).as_deref(),
+            Some("file, non-executable, text")
+        );
+        assert_eq!(file.reads, 1);
+
+        let mut file = scripted(b"hello\n", None);
+        assert!(finish_sized(p, &mut file, None).is_ok());
+        assert_eq!(file.reads, 2);
+
+        // A size of zero may be a lie (procfs): read normally.
+        let mut file = scripted(b"\0", None);
+        let tags = finish_sized(p, &mut file, Some(0)).ok();
+        assert_eq!(
+            tags.map(|t| t.to_string()).as_deref(),
+            Some("binary, file, non-executable")
+        );
+        assert_eq!(file.reads, 2);
+
+        // An unterminated shebang still reads past the hinted size.
+        let Classification::NeedsContent(p) = classify(Meta::regular(true), "tool") else {
+            panic!("unknown executable needs content");
+        };
+        let mut file = scripted(b"#!/bin/zsh", None);
+        let tags = finish_sized(p, &mut file, Some(10)).ok();
+        assert_eq!(
+            tags.map(|t| t.to_string()).as_deref(),
+            Some("executable, file, shell, text, zsh")
+        );
     }
 
     #[test]

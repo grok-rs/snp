@@ -8,13 +8,19 @@ use std::path::Path;
 
 use file_identify::{
     ExecPolicy, IdentifyError, Meta, file_is_text, parse_shebang_from_file,
-    parse_shebang_from_file_with, tags_from_path, tags_from_path_with,
+    parse_shebang_from_file_with, tags_from_metadata, tags_from_path, tags_from_path_with,
 };
 
 const NONE: Vec<String> = Vec::new();
 
+/// `tags_from_path`, checked against `tags_from_metadata` on the same
+/// `lstat` result.
 fn tags_of(path: &Path) -> String {
-    tags_from_path(path).expect("identify").to_string()
+    let tags = tags_from_path(path).expect("identify");
+    let md = fs::symlink_metadata(path).expect("lstat");
+    let reused = tags_from_metadata(path, &md, ExecPolicy::PythonCompat).expect("identify");
+    assert_eq!(reused, tags, "{}", path.display());
+    tags.to_string()
 }
 
 fn chmod(path: &Path, mode: u32) {
@@ -207,6 +213,23 @@ fn symlinks_sockets_fifos() {
         let _ = std::process::Command::new("mkfifo").arg(&fifo_py).status();
         assert_eq!(tags_of(&fifo_py), "file, non-executable, python, text");
     }
+}
+
+/// The metadata is trusted: a file removed after the caller's `lstat` is
+/// reported like identify's re-check (`does not exist.`) when it has to be
+/// opened, and not noticed when the name decides everything.
+#[test]
+fn metadata_of_a_removed_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("gone");
+    fs::write(&path, "x").expect("write");
+    let md = fs::symlink_metadata(&path).expect("lstat");
+    fs::remove_file(&path).expect("remove");
+    let err = tags_from_metadata(&path, &md, ExecPolicy::PythonCompat).expect_err("removed");
+    assert!(matches!(err, IdentifyError::PathNotFound { .. }), "{err:?}");
+    let named = dir.path().join("gone.py");
+    let tags = tags_from_metadata(&named, &md, ExecPolicy::PythonCompat).expect("no I/O");
+    assert_eq!(tags.to_string(), "file, non-executable, python, text");
 }
 
 #[test]

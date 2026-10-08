@@ -42,7 +42,8 @@
 //!
 //! | Function | identify equivalent | I/O |
 //! |---|---|---|
-//! | [`tags_from_path`] | `tags_from_path` | 1 `lstat`, ≤ 1 open + 1 KiB read |
+//! | [`tags_from_path`], [`tags_from_path_with`] | `tags_from_path` | 1 `lstat`, ≤ 1 open + 1 KiB read |
+//! | [`tags_from_metadata`] | — (`lstat` metadata already at hand) | ≤ 1 open + 1 KiB read |
 //! | [`tags_from_meta`] | — (known [`Meta`], e.g. from a git index mode) | ≤ 1 open |
 //! | [`classify()`] + [`Pending`] | — | none / caller-provided content |
 //! | [`tags_from_filename`] | `tags_from_filename` | none |
@@ -108,8 +109,8 @@ pub mod tags;
 
 pub use classify::{
     Classification, FileInfo, Pending, classify, file_is_text, parse_shebang_from_file,
-    parse_shebang_from_file_with, tags_from_info, tags_from_meta, tags_from_path,
-    tags_from_path_with,
+    parse_shebang_from_file_with, tags_from_info, tags_from_meta, tags_from_metadata,
+    tags_from_path, tags_from_path_with,
 };
 pub use error::{IdentifyError, Result};
 pub use filename::{tags_from_filename, tags_from_interpreter};

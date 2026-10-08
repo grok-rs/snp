@@ -77,7 +77,8 @@ Iteration, `Display` and `Debug` list tags in name order. `TagSet::ALL`,
 |---|---|---|
 | `tags_from_path(path)` | `tags_from_path` | 1 `lstat`, ≤ 1 open + 1 KiB read |
 | `tags_from_path_with(path, ExecPolicy)` | — | same |
-| `tags_from_meta(path, Meta)` | — (metadata already known) | ≤ 1 open |
+| `tags_from_metadata(path, &fs::Metadata, ExecPolicy)` | — (reuse your own `lstat`) | ≤ 1 open + 1 KiB read |
+| `tags_from_meta(path, Meta)` | — (kind and mode already known) | ≤ 1 open |
 | `classify(Meta, name)` → `Done` / `NeedsContent(Pending)` | — | none |
 | `Pending::finish(reader)`, `Pending::finish_bytes(&[u8])` | — | caller-provided |
 | `tags_from_filename(name)` | `tags_from_filename` | none |
@@ -104,6 +105,11 @@ let meta = Meta::from_git_mode(0o100_644).expect("regular file");
 let tags = tags_from_meta("pkg/module.py", meta).unwrap();
 assert_eq!(tags.to_string(), "file, non-executable, python, text");
 ```
+
+When you have already called `fs::symlink_metadata` (for example to check that the
+file exists, as pre-commit does with `os.path.lexists`), pass the result to
+`tags_from_metadata` instead of calling `tags_from_path`: same tags, no second `lstat`,
+and a file smaller than 1 KiB is read with a single `read`.
 
 `classify` is the fully I/O-free core: it returns the final tags, or a `Pending` that
 tells you whether the content is needed for the shebang and/or `text`/`binary`, and
