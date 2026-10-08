@@ -2,14 +2,13 @@
 //! documented"; 04b §5.12). Needs the `testing` feature (CI enables it through `snp/testing`).
 #![cfg(feature = "testing")]
 
-use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::Path;
 
 use snp_core::env::Env;
 use snp_lang::common;
 use snp_lang::harness::{
-    GoldenCall, Reply, ShimRunner, Substitutions, TempToolDirs, parse_log, render_log, tool_name,
+    Reply, ShimRunner, Substitutions, TempToolDirs, parse_log, render_log, tool_name,
 };
 use snp_lang::{CmdRunner, LangError, ToolDirs};
 
@@ -223,6 +222,9 @@ fn temp_tool_dirs() {
 #[cfg(unix)]
 #[test]
 fn the_python_logger_speaks_the_same_format() {
+    use std::collections::BTreeMap;
+
+    use snp_lang::harness::GoldenCall;
     let oracle =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/oracle/pc462-py312/bin/python");
     let python = [oracle.as_path(), Path::new("/usr/bin/python3")]

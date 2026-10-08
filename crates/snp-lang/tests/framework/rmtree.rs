@@ -2,6 +2,7 @@
 //! a symlink.
 
 use std::io;
+#[cfg(unix)]
 use std::path::Path;
 
 use snp_lang::common;

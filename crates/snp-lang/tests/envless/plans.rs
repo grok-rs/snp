@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use snp_core::env::Env;
 use snp_core::lang::LanguageId;
-use snp_lang::harness::{Reply, TestHost};
+#[cfg(unix)]
+use snp_lang::harness::Reply;
+use snp_lang::harness::TestHost;
 use snp_lang::{PlanCtx, RunPlan, backend};
 
 /// `language`'s plan of `entry` + `args` with `prefix`.

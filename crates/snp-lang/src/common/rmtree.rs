@@ -215,6 +215,10 @@ mod imp {
                     stack.push(e.path());
                 } else if m.permissions().readonly() {
                     let mut p = m.permissions();
+                    #[expect(
+                        clippy::permissions_set_readonly_false,
+                        reason = "Windows: clears the read-only attribute"
+                    )]
                     p.set_readonly(false);
                     let _ignored = std::fs::set_permissions(e.path(), p);
                 }
@@ -233,7 +237,7 @@ mod imp {
                 Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
                 Err(e) => return Err(e),
             };
-            let last = i + 1 == rel.len();
+            let last = i.saturating_add(1) == rel.len();
             if is_link(&m) {
                 if !last {
                     return Err(io::Error::new(
@@ -250,6 +254,10 @@ mod imp {
             if last && !m.is_dir() {
                 if m.permissions().readonly() {
                     let mut perms = m.permissions();
+                    #[expect(
+                        clippy::permissions_set_readonly_false,
+                        reason = "Windows: clears the read-only attribute"
+                    )]
                     perms.set_readonly(false);
                     std::fs::set_permissions(&p, perms)?;
                 }

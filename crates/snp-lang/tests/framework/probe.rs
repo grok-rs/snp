@@ -3,7 +3,9 @@
 //! ADR-079).
 
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -54,6 +56,7 @@ fn probe_with(
 }
 
 /// The fact files written so far.
+#[cfg(unix)]
 fn facts(dir: &Path) -> Vec<PathBuf> {
     std::fs::read_dir(dir)
         .map(|rd| rd.map(|e| e.unwrap().path()).collect())
@@ -330,7 +333,7 @@ fn fingerprints() {
     assert_eq!(fp.len, u64::try_from(NATIVE.len()).unwrap());
     assert!(fp.mtime_ns > 0);
     assert_eq!(&*fp.detail, "");
-    assert_eq!(p.fingerprint(&f), Some(fp.clone()), "stable");
+    assert_eq!(p.fingerprint(&f).as_ref(), Some(&fp), "stable");
     assert_eq!(p.fingerprint(&d.path().join("missing")), None);
     #[cfg(unix)]
     {

@@ -8,8 +8,6 @@
 //! test renders snp's side — the rootless probe recorded by the `ShimRunner`, then each plan's argv with the file
 //! appended — and requires equality.
 
-use std::collections::BTreeMap;
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -49,16 +47,16 @@ fn base_env(home: &Path, path: &str) -> Vec<(String, String)> {
 
 /// Placeholders for the paths and ids that differ between runs and machines.
 fn substitutions(repo: &Path) -> Substitutions {
-    let mut s = Substitutions::new().with(repo.as_os_str(), "{REPO}");
+    let s = Substitutions::new().with(repo.as_os_str(), "{REPO}");
     #[cfg(unix)]
-    {
-        let user = format!(
+    let s = s.with(
+        format!(
             "{}:{}",
             rustix::process::getuid().as_raw(),
             rustix::process::getgid().as_raw()
-        );
-        s = s.with(user, "{UID}:{GID}");
-    }
+        ),
+        "{UID}:{GID}",
+    );
     s
 }
 
@@ -138,6 +136,8 @@ fn snp_matches_the_pre_commit_golden() {
 #[test]
 #[ignore = "oracle"]
 fn oracle_envless_golden_is_current() {
+    use std::collections::BTreeMap;
+    use std::fmt::Write as _;
     use std::os::unix::fs::PermissionsExt;
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/oracle/pc462-py312");
     let python = root.join("bin/python");
