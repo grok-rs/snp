@@ -671,7 +671,8 @@ mod tests {
     fn cancelled_token_stops_tools_but_not_critical() {
         let (env, cancel) = (env(), CancelToken::new());
         cancel.cancel(snp_core::cancel::CancelReason::Interrupt);
-        let argv = sh("sleep 30");
+        // `exec`: the killed process is sleep itself, so no orphan keeps the test's stdio open.
+        let argv = sh("exec sleep 30");
         let s = spec(&argv, &env, Path::new("/"), &cancel);
         let t0 = Instant::now();
         assert_eq!(inherit(&s).unwrap(), PyStatus(-9));
