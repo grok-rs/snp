@@ -22,7 +22,8 @@ defaults:
 
 jobs:
   tests:
-    # nextest profile `nightly`: every test, including the opt-in ones (toolchains, network, oracle interop).
+    # nextest profile `nightly` on every platform of ARCHITECTURE §13.7. Packages that add opt-in suites (toolchains,
+    # network, oracle interop) extend this job when they land.
     name: tests (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -38,7 +39,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with: { tool: cargo-nextest }
       - run: cargo build --workspace --bins --features snp/testing --locked
-      - run: cargo nextest run --workspace --features snp/testing --locked --profile nightly --run-ignored all --no-tests=warn
+      - run: cargo nextest run --workspace --features snp/testing --locked --profile nightly --no-tests=warn
 
   oracle:
     # The pre-commit 4.6.2 oracles (WP-00): created and verified every night.

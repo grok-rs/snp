@@ -1,0 +1,5 @@
+# Byte-exact goldens, vectors, scripts and generated tables: LF in every checkout, also on Windows runners whose
+# git defaults to core.autocrlf=true (WP-00). Binary files are detected by git.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf

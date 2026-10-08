@@ -570,7 +570,9 @@ pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
     let text = render(&generate(&root)?);
     let path = root.join(INDEX);
     if check {
-        let current = std::fs::read_to_string(&path).unwrap_or_default();
+        let current = std::fs::read_to_string(&path)
+            .unwrap_or_default()
+            .replace("\r\n", "\n");
         ensure!(
             current == text,
             "{INDEX} is stale: run `cargo xtask catalog-index` and commit the result"
@@ -634,7 +636,9 @@ mod tests {
             rows.iter().find(|r| r.id == "T10-UTL-06").unwrap().owner,
             "WP-00"
         );
-        let committed = std::fs::read_to_string(root.join(INDEX)).unwrap();
+        let committed = std::fs::read_to_string(root.join(INDEX))
+            .unwrap()
+            .replace("\r\n", "\n");
         assert_eq!(committed, render(&rows), "run `cargo xtask catalog-index`");
     }
 }
