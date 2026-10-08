@@ -557,8 +557,10 @@ impl<'a> ParserRun<'a, '_> {
                         ));
                     }
                     taken.push((ai, Cow::Borrowed(&[])));
-                    let clen = pystr::py_char_len(tb, off);
-                    let ch = tb.get(off..off.saturating_add(clen)).unwrap_or_default();
+                    let char_len = pystr::py_char_len(tb, off);
+                    let ch = tb
+                        .get(off..off.saturating_add(char_len))
+                        .unwrap_or_default();
                     let next = self.view.options().find(|(o, _)| {
                         let ob = o.as_bytes();
                         ob.first() == Some(&b'-') && ob.get(1..) == Some(ch)
@@ -566,7 +568,7 @@ impl<'a> ParserRun<'a, '_> {
                     if let Some((next_option, next)) = next {
                         action = Some(next);
                         option = next_option;
-                        let after = off.saturating_add(clen);
+                        let after = off.saturating_add(char_len);
                         match tb.get(after) {
                             None => {
                                 sep = Sep::None;

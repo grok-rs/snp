@@ -4770,9 +4770,10 @@
       "ns": null
     },
     {
-      "id": "--hel",
+      "id": "--help --bogus",
       "argv": [
-        "--hel"
+        "--help",
+        "--bogus"
       ],
       "env": {
         "COLUMNS": "80"
@@ -4909,10 +4910,10 @@
       "ns": null
     },
     {
-      "id": "run --hel",
+      "id": "run --he",
       "argv": [
         "run",
-        "--hel"
+        "--he"
       ],
       "env": {
         "COLUMNS": "80"

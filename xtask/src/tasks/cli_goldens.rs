@@ -228,7 +228,7 @@ const ROWS: &[Row] = &[
     (&[], &["-h", "run"]),
     (&[], &["-h", "--bogus"]),
     (&[], &["--he"]),
-    (&[], &["--hel"]),
+    (&[], &["--help", "--bogus"]),
     (&[], &["--v"]),
     (&[], &["--vers"]),
     (&[], &["-V"]),
@@ -238,7 +238,7 @@ const ROWS: &[Row] = &[
     (&[], &["run", "-h", "--bogus"]),
     (&[], &["run", "--bogus", "-h"]),
     (&[], &["run", "--hook-stage", "bogus", "-h"]),
-    (&[], &["run", "--hel"]),
+    (&[], &["run", "--he"]),
     (&[], &["run", "--ver", "-a"]),
     (&[], &["run", "-V"]),
     (&[], &["run", "--version"]),
@@ -1120,6 +1120,7 @@ fn generate(oracle: &Oracle) -> anyhow::Result<(Value, Value)> {
     check_unique(&cases)?;
     workspace::say(&format!("cli-goldens: {} snp cases", cases.len()));
     let paths = all_paths(&snp_tree, "snp");
+    let patched_checks = AtomicUsize::new(0);
     let snp = par_map(&cases, &|case| -> anyhow::Result<Outcome> {
         let built = oracle.script(&[OsStr::new("json"), snp_json.as_os_str()], case)?;
         if built.ns.is_none()
@@ -1135,9 +1136,14 @@ fn generate(oracle: &Oracle) -> anyhow::Result<(Value, Value)> {
                 case.id(),
                 path.join(" ")
             );
+            patched_checks.fetch_add(1, Ordering::Relaxed);
         }
         Ok(built)
     })?;
+    workspace::say(&format!(
+        "cli-goldens: {} snp cases of parsers identical to pre-commit's matched pre-commit-snp-prog",
+        patched_checks.load(Ordering::Relaxed)
+    ));
     let snp_doc = golden_doc(
         "snp",
         "CPython 3.13 argparse built from export_json(SNP_SPEC, \"snp\"); parsers identical to pre-commit's checked against pre-commit-snp-prog",
