@@ -1,5 +1,39 @@
-# D-CRASH-16 (CRASH, owner WP-15): falls back to pipes
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-CRASH-16 (CRASH, owner WP-15): a pty that cannot be allocated in colour mode falls back to pipes.
+# pre-commit's `Pty().__enter__` (`os.openpty()`) raises outside `Popen`'s try: exit 3 after the start line.
+# snp runs the partition on a pipe instead (docs/divergences/D-CRASH-16.md).
+name: divergences/D-CRASH-16
+since: "4.1.0"
 expect_divergence: D-CRASH-16
-status: stub
+requires:
+  git: ">=2.31"
+  net: false
+  tools: [bwrap]
+  os: [linux]
+  pty: false
+  # The harness runs both tools inside `bwrap --dev-bind / / --bind /dev/null /dev/ptmx`: every openpty() fails.
+  sandbox: no-ptmx
+work:
+  files: {a.txt: "a\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: echo-hook
+            name: echo hook
+            entry: echo coloured
+            language: system
+            pass_filenames: false
+            verbose: true
+  commit: [".pre-commit-config.yaml", a.txt]
+steps:
+  - tool: [run, --all-files, --color, always]
+    env: {}
+    tty: false
+compare:
+  # Diverges by design: pre-commit exits 3 with the crash banner, snp passes the hook.
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true

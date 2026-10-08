@@ -1,5 +1,38 @@
-# D-PLAT-02 (PLAT, owner WP-15): falls back to the interpreter's basename on PATH (Git for Windows semantics)
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-PLAT-02 (PLAT, owner WP-15): Windows, a missing absolute shebang interpreter falls back to its basename on PATH.
+# pre-commit: "Executable `/bin/sh` not found" (rc 1); snp runs the script with sh.exe from PATH
+# (docs/divergences/D-PLAT-02.md).
+name: divergences/D-PLAT-02
+since: "4.1.0"
 expect_divergence: D-PLAT-02
-status: stub
+requires:
+  git: ">=2.31"
+  net: false
+  tools: [sh]
+  os: [windows]
+  pty: false
+  path_profile: runner
+work:
+  files:
+    hook.sh: "#!/bin/sh\necho ran\n"
+    a.txt: "a\n"
+  exec: [hook.sh]
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: script-hook
+            name: script hook
+            entry: ./hook.sh
+            language: script
+            pass_filenames: false
+            always_run: true
+  commit: [".pre-commit-config.yaml", hook.sh, a.txt]
+steps:
+  - tool: [run, --all-files]
+compare:
+  # Diverges by design: pre-commit Failed / exit 1, snp Passed / exit 0.
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
