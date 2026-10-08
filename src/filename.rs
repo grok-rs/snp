@@ -11,8 +11,10 @@ use crate::tags::TagSet;
 ///
 /// `path` may contain directories; only the final component is used, split
 /// with the platform's Python `os.path` rules (`/` on Unix; `/`, `\` and a
-/// drive or UNC prefix on Windows). Bytes that are not UTF-8 are fine: they
-/// simply never match a table key.
+/// drive or UNC prefix on Windows, where, as in `ntpath.splitroot`, the
+/// drive is any single character followed by `:`, e.g. `é:`). Bytes that
+/// are not UTF-8 are fine: they simply never match a table key. On Windows
+/// pass the WTF-8 bytes of an `OsStr` (`as_encoded_bytes`).
 ///
 /// The rules, in order:
 ///
@@ -34,7 +36,11 @@ use crate::tags::TagSet;
 /// ```
 #[must_use]
 pub fn tags_from_filename(path: impl AsRef<[u8]>) -> TagSet {
-    let name = basename(path.as_ref());
+    tags_from_basename(basename(path.as_ref()))
+}
+
+/// [`tags_from_filename`] for a name without directory components.
+fn tags_from_basename(name: &[u8]) -> TagSet {
     let mut tags = name_tags(name);
     if let Some(ext) = extension(name) {
         tags = tags.union(extension_tags(ext));
@@ -100,8 +106,41 @@ pub(crate) fn nt_basename(path: &[u8]) -> &[u8] {
     }
 }
 
+/// Length in bytes of the first character of `p`, counted the way Python
+/// indexes the `str` (one code point per character).
+///
+/// Valid UTF-8 sequences and WTF-8 encoded surrogates (which Windows file
+/// names may contain, and which Python sees as one lone-surrogate
+/// character) count as one character; any other byte counts as one
+/// character on its own, as with Python's `surrogateescape` decoding.
+fn first_char_len(p: &[u8]) -> usize {
+    let Some(&lead) = p.first() else {
+        return 0;
+    };
+    let width = match lead {
+        0xc2..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf4 => 4,
+        // ASCII, continuation bytes and bytes that never start a sequence.
+        _ => return 1,
+    };
+    match p.get(..width) {
+        Some(seq)
+            if core::str::from_utf8(seq).is_ok()
+                || matches!(seq, [0xed, 0xa0..=0xbf, 0x80..=0xbf]) =>
+        {
+            width
+        }
+        _ => 1,
+    }
+}
+
 /// The third element of `ntpath.splitroot(path)` (the part after drive and
 /// root).
+///
+/// Separators, `?` and the UNC prefix are ASCII, so byte positions equal
+/// character positions everywhere except for the drive test, which looks
+/// at the second *character*.
 fn nt_after_root(p: &[u8]) -> &[u8] {
     let first = p.first().copied();
     let second = p.get(1).copied();
@@ -136,16 +175,20 @@ fn nt_after_root(p: &[u8]) -> &[u8] {
             // Relative path with root, e.g. \Windows
             p.get(1..).unwrap_or_default()
         }
-    } else if second == Some(b':') {
-        if p.get(2).copied().is_some_and(is_nt_sep) {
+    } else {
+        // `normp[1:2] == ':'`: the drive "letter" is any single character,
+        // e.g. `é:x.py` has the drive `é:`.
+        let colon = first_char_len(p);
+        if p.get(colon) != Some(&b':') {
+            // Relative path, e.g. Windows
+            p
+        } else if p.get(colon + 1).copied().is_some_and(is_nt_sep) {
             // Absolute drive-letter path, e.g. X:\Windows
-            p.get(3..).unwrap_or_default()
+            p.get(colon + 2..).unwrap_or_default()
         } else {
             // Relative path with drive, e.g. X:Windows
-            p.get(2..).unwrap_or_default()
+            p.get(colon + 1..).unwrap_or_default()
         }
-    } else {
-        p
     }
 }
 
@@ -298,6 +341,89 @@ mod tests {
         assert_eq!(nt_basename(b"//?/unc/server/share/y.rs"), b"y.rs");
         assert_eq!(nt_basename(b"\\Windows"), b"Windows");
         assert_eq!(nt_basename(b""), b"");
+    }
+
+    #[test]
+    fn nt_drive_is_one_character() {
+        // CPython 3.12 ntpath.basename; the drive test looks at the second
+        // character, not the second byte.
+        for (path, expected) in [
+            ("é:x.py", "x.py"),
+            ("é:\\x.py", "x.py"),
+            ("é:/x.py", "x.py"),
+            ("€:a/b.rs", "b.rs"),
+            ("😀:c.go", "c.go"),
+            ("\u{212a}:Dockerfile", "Dockerfile"),
+            ("é:", ""),
+            ("::x.py", "x.py"),
+            ("ab:c.py", "ab:c.py"),
+            ("é\\:x.py", ":x.py"),
+            ("éé:x.py", "éé:x.py"),
+        ] {
+            assert_eq!(
+                nt_basename(path.as_bytes()),
+                expected.as_bytes(),
+                "{path:?}"
+            );
+        }
+        // WTF-8 lone surrogate U+DCFF (a Windows name Python sees as '\udcff').
+        assert_eq!(nt_basename(b"\xed\xb3\xbf:x.py"), b"x.py");
+        // Undecodable bytes are one character each (surrogateescape).
+        assert_eq!(nt_basename(b"\xff:x.py"), b"x.py");
+        assert_eq!(nt_basename(b"\xc3:x.py"), b"x.py");
+        assert_eq!(nt_basename(b"\xc3\xa9\xa9:x.py"), b"\xc3\xa9\xa9:x.py");
+        // The reviewer's differential-fuzzing cases (identify with ntpath).
+        let nt_tags = |p: &[u8]| tags_from_basename(nt_basename(p)).to_string();
+        assert_eq!(
+            nt_tags("é:Containerfile.hgrcasciidoc".as_bytes()),
+            "dockerfile, text"
+        );
+        assert_eq!(nt_tags("é:bblayers.conf".as_bytes()), "bitbake, text");
+        assert_eq!(nt_tags("é:.sqlfluff".as_bytes()), "ini, text");
+    }
+
+    #[test]
+    fn first_char_lengths() {
+        assert_eq!(first_char_len(b""), 0);
+        assert_eq!(first_char_len(b"a:"), 1);
+        assert_eq!(first_char_len("é:".as_bytes()), 2);
+        assert_eq!(first_char_len("€".as_bytes()), 3);
+        assert_eq!(first_char_len("😀".as_bytes()), 4);
+        assert_eq!(first_char_len(b"\xed\xa0\x80"), 3); // WTF-8 surrogate
+        assert_eq!(first_char_len(b"\xed\xa0"), 1); // truncated
+        assert_eq!(first_char_len(b"\xe0\x80\x80"), 1); // overlong
+        assert_eq!(first_char_len(b"\xf5\x80\x80\x80"), 1);
+        assert_eq!(first_char_len(b"\x80"), 1);
+        assert_eq!(first_char_len(b"\xf0\x9f\x98"), 1); // truncated
+    }
+
+    /// The parity vectors carry identify's result with `ntpath` whenever it
+    /// differs from `posixpath`; check both columns on every platform (the
+    /// integration test only checks the current platform's column).
+    #[test]
+    fn parity_vectors_for_both_path_flavours() {
+        let data: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/data/identify-vectors.json"))
+                .expect("valid vector file");
+        let cases = data["tags_from_filename"].as_array().expect("cases");
+        let strings = |v: &serde_json::Value| -> Vec<String> {
+            v.as_array()
+                .expect("array")
+                .iter()
+                .map(|s| s.as_str().expect("tag").to_owned())
+                .collect()
+        };
+        let names = |t: TagSet| -> Vec<String> { t.names().map(str::to_owned).collect() };
+        let mut nt_specific = 0;
+        for case in cases {
+            let name = case[0].as_str().expect("name").as_bytes();
+            let posix = strings(&case[1]);
+            let nt = case.get(2).map_or_else(|| posix.clone(), strings);
+            nt_specific += usize::from(case.get(2).is_some());
+            assert_eq!(names(tags_from_basename(posix_basename(name))), posix);
+            assert_eq!(names(tags_from_basename(nt_basename(name))), nt);
+        }
+        assert!(nt_specific > 100, "{nt_specific}");
     }
 
     #[test]

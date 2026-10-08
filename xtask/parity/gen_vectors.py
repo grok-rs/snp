@@ -51,6 +51,18 @@ def gen_filenames(rng, identify, extensions):
         'a.b.c.d.e.f', 'Makefile.am.in', 'CMakeLists.txt', '.gitignore',
         'x.c++', 'x.C++', 'x.cs', 'x.CS', 'archive.ZIP', 'Gemfile.lock.bak',
     ])
+    # Windows drives: ntpath.splitroot tests the second *character* for ':',
+    # so the drive "letter" may be any (also non-ASCII) character.
+    for drive in ['C', 'c', 'z', '1', ' ', ':', '.', '\u00e9', '\u20ac', '\U0001f600',
+                  '\u212a', '\u0130', '\u00e9\u00e9', 'ab']:
+        for sep in ['', '\\', '/', '\\\\', ':']:
+            for tail in ['x.py', 'Dockerfile', '.sqlfluff', 'bblayers.conf', 'a\\b.rs',
+                         'a/b.go', 'Containerfile.hgrcasciidoc', '']:
+                names.add(drive + ':' + sep + tail)
+    names.update([
+        '\u00e9\\:x.py', '\u00e9/:x.py', '\\\\\u00e9:\\share\\x.py', '\\\u00e9:x.py',
+        '\\\\?\\UNC\\\u00e9:\\share\\Makefile', '\\\\?\\c:\\x.py', '\\\\.\\\u00e9:\\x.py',
+    ])
     for key in extensions.NAMES:
         names.update([key, 'dir/' + key, key + '.bak', 'x.' + key, 'pre.' + key + '.post'])
         names.add(key.upper())
