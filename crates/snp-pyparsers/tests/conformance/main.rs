@@ -14,3 +14,6 @@ mod difflib;
 
 #[cfg(test)]
 mod ini;
+
+#[cfg(test)]
+mod toml;

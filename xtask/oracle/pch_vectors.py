@@ -569,6 +569,146 @@ def difflib_vectors() -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------------------------------------------
+# tomllib (check-toml)
+# --------------------------------------------------------------------------------------------------------------
+
+def frame_depth() -> int:
+    """The number of Python frames on the stack of the caller of this function."""
+    depth = 0
+    f = sys._getframe(1)
+    while f is not None:
+        depth += 1
+        f = f.f_back
+    return depth
+
+
+def toml_result(data: bytes) -> dict[str, Any]:
+    """`check_toml.main` on one file, with the recursion headroom of the real console script: there
+    `tomllib.loads` runs at frame depth 4 (`<module>`, `main`, `tomllib.load`, `loads`) under a limit of 1000."""
+    import tomllib
+
+    try:
+        text = data.decode()
+    except UnicodeDecodeError as exc:
+        return crash(exc)
+    depth = frame_depth() + 1  # tomllib.loads' own frame
+    old = sys.getrecursionlimit()
+    sys.setrecursionlimit(1000 - 4 + depth)
+    try:
+        tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        return reported(str(exc))
+    except Exception as exc:  # noqa: BLE001
+        return crash(exc)
+    finally:
+        sys.setrecursionlimit(old)
+    return {'ok': True}
+
+
+def toml_hook_outcome(doc: str) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, 'f.toml')
+        with open(p, 'w', encoding='utf-8', newline='') as f:
+            f.write(doc)
+        r = subprocess.run([script('check-toml'), p], capture_output=True, text=True)
+    out = (r.stdout + r.stderr).strip()
+    if 'Traceback' in out:
+        last = out.splitlines()[-1]
+        ty, _, msg = last.partition(': ')
+        return {'crash': [ty, msg]}
+    if r.returncode == 0:
+        return {'ok': True}
+    assert out.startswith(f'{p}: '), out
+    return {'reported': out[len(p) + 2:]}
+
+
+TOML_SHAPES = {
+    'arr-int': lambda n: 'a = ' + '[' * n + '1' + ']' * n,
+    'arr-empty': lambda n: 'a = ' + '[' * n + ']' * n,
+    'arr-true': lambda n: 'a = ' + '[' * n + 'true' + ']' * n,
+    'arr-str': lambda n: 'a = ' + '[' * n + '"x"' + ']' * n,
+    'arr-mlstr': lambda n: 'a = ' + '[' * n + '"""x\\u0041"""' + ']' * n,
+    'arr-date': lambda n: 'a = ' + '[' * n + '1979-05-27T07:32:00+01:00' + ']' * n,
+    'arr-err': lambda n: 'a = ' + '[' * n + 'x',
+    'arr-comment': lambda n: 'a = ' + '[#c\n' * n + ']' * n,
+    'tbl-int': lambda n: 'a = ' + '{b = ' * n + '1' + '}' * n,
+    'tbl-empty': lambda n: 'a = ' + '{b = ' * n + '{}' + '}' * n,
+    'tbl-quoted': lambda n: 'a = ' + '{"b" = ' * n + '1' + '}' * n,
+    'tbl-dup': lambda n: 'a = ' + '{b = ' * n + '{c = 1, c = 2}' + '}' * n,
+    'mixed': lambda n: 'a = ' + '[{b = ' * n + '1' + '}]' * n,
+}
+
+
+def toml_vectors(corpora: str) -> dict[str, Any]:
+    suite = os.path.join(corpora, 'toml-test', 'tests')
+    raw: list[tuple[str, bytes]] = []
+    for sub in ('valid', 'invalid'):
+        for dirpath, _, files in sorted(os.walk(os.path.join(suite, sub))):
+            for fn in sorted(files):
+                if fn.endswith('.toml'):
+                    path = os.path.join(dirpath, fn)
+                    with open(path, 'rb') as f:
+                        raw.append((os.path.relpath(path, suite), f.read()))
+    hand = [
+        'a = 1\na = 2', 'a.b = 1\na = 2', 'a = \n', 'x = [1,\n2,\n', '﻿a = 1', 'a = { b = 1, }', 'a = {\n b = 1 }',
+        'a = 1 # \x07', '[a]\n[a]', 'a = 1979-05-27T07:32', 'a = 12:30', 'a = 1979-13-27', 'a = 0x', 'a = "\\e"',
+        'a = 1\rb = 2', '', 'a = 1\r\nb = 2\r\n', 'a = 99999999999999999999', 'a = ' + '9' * 4300, 'a = ' + '9' * 4301,
+        'a = -' + '9' * 4301, 'a = ' + '1_' * 4300 + '1', 'a = 0x' + 'f' * 5000, 'a = ' + '9' * 4301 + '.0',
+        'a = 2001-02-29', 'a = 2000-02-29', 'a = 0000-01-01', 'a = 2001-04-31T00:00:00Z', 'a = 1979-05-27 07:32:00',
+        'a = 1979-05-27 07:32', 'a = 1979-05-27T07:32:00.123456789+23:59', 'a = 1979-05-27T07:32:00+24:00',
+        'a = 1979-05-27T07:32:00-07:00', 'a = 07:32:00.5', 'a = 24:00:00', 'a = inf', 'a = -nan', 'a = +inf', 'a = infinity',
+        'a = 1e', 'a = 1e+', 'a = 1.e5', 'a = 1_', 'a = 1__0', 'a = 01', 'a = +0x1', 'a = 0b102', 'a = 0o78', 'a = 0xG',
+        'a = "\\u0041\\U0001F600"', 'a = "\\uD800"', 'a = "\\U00110000"', 'a = "\\u12"', 'a = "\\', 'a = "abc',
+        'a = """\nabc\\\n   def"""', 'a = """abc\\  \n  x"""', 'a = """abc\\  x"""', 'a = """a""""', 'a = """a"""""',
+        'a = """a""""""', "a = '''a''''", "a = '''\nx\x01'''", "a = 'x\x7f'", 'a = "x\x7f"', 'a = "\t"', 'a = "\x00"',
+        '# \r\n', '# x\ry', 'a = [1, 2,]', 'a = [1 2]', 'a = [,]', 'a = [', 'a = {', 'a = {b = 1, b = 2}',
+        'a = {b.c = 1, b = 2}', 'a = {b = [1], b.c = 2}', 'a = {b = {}, b.c = 1}', '[a]\nb = 1\n[a.b]', '[a.b]\n[a]',
+        '[a]\n[a.b]\n[a]', '[[a]]\n[a]', '[a]\n[[a]]', 'a = []\n[[a]]', 'a = [{}]\n[[a]]', '[[a.b]]\n[a]\nb.c = 1',
+        'a.b.c = 1\na.b.d = 2\n[a]', 'a.b = 1\n[a.b]', '[a.b.c]\n[a]\nb.c.d = 1', 'a = {b = 1}\na.c = 2', '[ a . b ]',
+        '[a]b = 1', '[[a]] x', '[a', '[[a]', '[]', '[[]]', 'a b = 1', 'a. = 1', '.a = 1', 'a = 1 b = 2', '"a" = 1\n\'a\' = 2',
+        'a = true1', 'a = truefalse', 'a = fals', '= 1', 'a.' + '.'.join(['x'] * 999) + ' = 1',
+        'a.' + '.'.join(['x'] * 1000) + ' = 1', '[' + '.'.join(['x'] * 1001) + ']', 'a = """\n\x0b"""',
+        'a\t=\t1\t#\tc', 'a = 1\n\n\n[b]\n\n c = 2', 'x = 1\n[[x]]',
+    ]
+    for i, h in enumerate(hand):
+        raw.append((f'hand-{i:03d}', h.encode('utf-8', 'surrogatepass')))
+    raw.append(('hand-bad-utf8', b'a = "\xff"'))
+    raw.append(('hand-bad-utf8-comment', b'# \xc3\x28\na = 1'))
+    rng = random.Random(1000)
+    valid = [b for n, b in raw if n.startswith('valid')]
+    alphabet = b'[]{}=.,"\'#\n \t\\x1-:_0aTZ+e'
+    for i in range(400):
+        b = bytearray(rng.choice(valid))
+        for _ in range(rng.randrange(1, 4)):
+            op = rng.randrange(3)
+            p = rng.randrange(len(b) + 1)
+            if op == 0:
+                b[p:p] = bytes([rng.choice(alphabet)])
+            elif op == 1 and b:
+                del b[min(p, len(b) - 1)]
+            elif b:
+                b[min(p, len(b) - 1)] = rng.choice(alphabet)
+        raw.append((f'mutant-{i:03d}', bytes(b)))
+    cases = [{'name': n, **blob(b), 'result': toml_result(b)} for n, b in raw]
+    depth = []
+    for shape, make in TOML_SHAPES.items():
+        # The threshold from the real script, then the cases around it.
+        lo, hi = 2, 3000
+        while hi - lo > 1:
+            mid = (lo + hi) // 2
+            if 'crash' in toml_hook_outcome(make(mid)):
+                hi = mid
+            else:
+                lo = mid
+        for n in (lo - 1, lo, lo + 1, lo + 2):
+            depth.append({'shape': shape, 'n': n, 'result': toml_hook_outcome(make(n))})
+    data = header('toml')
+    data['cases'] = cases
+    data['depth'] = depth
+    return data
+
+
+# --------------------------------------------------------------------------------------------------------------
 # configparser (detect-aws-credentials)
 # --------------------------------------------------------------------------------------------------------------
 
@@ -657,6 +797,7 @@ def main() -> int:
         'json': lambda: json_vectors(args.corpora),
         'difflib': difflib_vectors,
         'ini': ini_vectors,
+        'toml': lambda: toml_vectors(args.corpora),
     }
     # Modules whose code is identical in 3.12 and 3.13 (checked when the vectors were introduced) are recorded once,
     # from 3.13.
