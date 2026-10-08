@@ -25,11 +25,41 @@ use std::fmt;
 /// [`Error::source`](std::error::Error::source) is always `None`: the
 /// contexts are part of this error's own text, so error reporters that walk
 /// source chains do not print them twice.
+///
+/// # Uncaught exceptions
+///
+/// Python validation code can raise exceptions other than
+/// `ValidationError`: `re.compile` raises `OverflowError` for
+/// `a{4294967296}`, `repr()` of an integer with more than 4300 digits
+/// raises `ValueError`, and pre-commit's own check functions raise
+/// `ValueError` from `int()`. cfgv's `validate_context` does not catch them,
+/// so they escape validation without any context, and `load_from_filename`
+/// does not wrap them in `exc_tp`; pre-commit then reports a crash.
+///
+/// [`ValidationError::uncaught`] represents such an exception so that it
+/// can travel through the same `Result`s. An uncaught error ignores
+/// [`with_context`](ValidationError::with_context), reports its Python type
+/// through [`uncaught_type`](ValidationError::uncaught_type), and displays
+/// like the last line of a Python traceback (`{type}: {message}`).
+///
+/// ```
+/// use cfgv::{ValidationError, validate_context};
+///
+/// let err = validate_context(|| "At key: id".to_owned(), || {
+///     Err::<(), _>(ValidationError::uncaught("OverflowError", "the repetition number is too large"))
+/// })
+/// .unwrap_err();
+/// assert_eq!(err.uncaught_type(), Some("OverflowError"));
+/// assert_eq!(err.contexts().len(), 0);
+/// assert_eq!(err.to_string(), "OverflowError: the repetition number is too large");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ValidationError {
     message: String,
     /// Innermost context first (contexts are added while unwinding).
     contexts: Vec<String>,
+    /// The Python exception type of an uncaught exception.
+    uncaught: Option<Box<str>>,
 }
 
 impl ValidationError {
@@ -39,10 +69,40 @@ impl ValidationError {
         Self {
             message: message.into(),
             contexts: Vec::new(),
+            uncaught: None,
         }
     }
 
-    /// The leaf message (the text after `=====> `).
+    /// Creates an error standing for a Python exception of type `exc_type`
+    /// (e.g. `"ValueError"`) other than `ValidationError`, which Python cfgv
+    /// lets escape. See [Uncaught exceptions](#uncaught-exceptions).
+    ///
+    /// `message` is Python's `str(e)`.
+    #[must_use]
+    pub fn uncaught(exc_type: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            contexts: Vec::new(),
+            uncaught: Some(exc_type.into().into_boxed_str()),
+        }
+    }
+
+    /// The Python exception type of an [uncaught](ValidationError::uncaught)
+    /// exception; `None` for a validation error.
+    #[must_use]
+    pub fn uncaught_type(&self) -> Option<&str> {
+        self.uncaught.as_deref()
+    }
+
+    /// Whether this error stands for an exception Python cfgv does not
+    /// catch (see [`ValidationError::uncaught`]).
+    #[must_use]
+    pub const fn is_uncaught(&self) -> bool {
+        self.uncaught.is_some()
+    }
+
+    /// The leaf message (the text after `=====> `), or `str(e)` of an
+    /// uncaught exception.
     #[must_use]
     pub fn message(&self) -> &str {
         &self.message
@@ -54,10 +114,14 @@ impl ValidationError {
     }
 
     /// Wraps the error in one more (outer) context, like Python's
-    /// `validate_context(ctx)`.
+    /// `validate_context(ctx)`. An [uncaught](ValidationError::uncaught)
+    /// error is returned unchanged, because `validate_context` only catches
+    /// `ValidationError`.
     #[must_use]
     pub fn with_context(mut self, ctx: impl Into<String>) -> Self {
-        self.contexts.push(ctx.into());
+        if self.uncaught.is_none() {
+            self.contexts.push(ctx.into());
+        }
         self
     }
 
@@ -71,7 +135,17 @@ impl ValidationError {
 }
 
 impl fmt::Display for ValidationError {
+    /// Python's `str(ValidationError)`; for an uncaught exception, the last
+    /// line of its traceback: `{type}: {message}` (`{type}` alone when the
+    /// message is empty).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(exc_type) = &self.uncaught {
+            f.write_str(exc_type)?;
+            if !self.message.is_empty() {
+                write!(f, ": {}", self.message)?;
+            }
+            return Ok(());
+        }
         f.write_str("\n")?;
         for ctx in self.contexts() {
             writeln!(f, "==> {ctx}")?;
@@ -84,6 +158,7 @@ impl std::error::Error for ValidationError {}
 
 /// Runs `f` and wraps any [`ValidationError`] it returns in the context
 /// produced by `ctx`, like Python's `with validate_context(ctx):`.
+/// [Uncaught](ValidationError::uncaught) errors pass through unchanged.
 ///
 /// The context is built lazily, so the success path does not allocate.
 ///

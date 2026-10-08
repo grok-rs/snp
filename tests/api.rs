@@ -16,8 +16,8 @@ use std::sync::Arc;
 use cfgv::{
     BigInt, CheckFn, ConditionValue, Cx, Date, DateError, DateTime, LoadError, Map, MapItem,
     Schema, Set, TzOffset, ValidationError, Validator, Value, ValueType, apply_defaults,
-    apply_defaults_owned, py, remove_defaults, remove_defaults_owned, validate, validate_with,
-    value_map,
+    apply_defaults_owned, load_from_filename, py, remove_defaults, remove_defaults_owned, validate,
+    validate_with, value_map,
 };
 
 const fn assert_send_sync<T: Send + Sync>() {}
@@ -389,6 +389,63 @@ fn regex_checks() {
             "'foo\\\\' is not a valid python regex"
         );
     }
+}
+
+#[test]
+fn uncaught_errors() {
+    let err =
+        ValidationError::uncaught("ValueError", "invalid literal for int() with base 10: 'x'")
+            .with_context("At key: minimum_pre_commit_version");
+    assert!(err.is_uncaught());
+    assert_eq!(err.contexts().len(), 0);
+    assert_eq!(
+        err.trace_parts(),
+        ["invalid literal for int() with base 10: 'x'"]
+    );
+    assert_eq!(
+        err.to_string(),
+        "ValueError: invalid literal for int() with base 10: 'x'"
+    );
+    assert_eq!(
+        ValidationError::uncaught("KeyError", "").to_string(),
+        "KeyError"
+    );
+    assert!(!ValidationError::new("x").is_uncaught());
+    assert_eq!(ValidationError::new("x").uncaught_type(), None);
+    assert_ne!(
+        ValidationError::new("x"),
+        ValidationError::uncaught("ValueError", "x")
+    );
+
+    // A custom check that raises like pre-commit's `check_min_version`.
+    let schema = Schema::map(
+        "Config",
+        None,
+        vec![Validator::optional_no_default(
+            "minimum_pre_commit_version",
+            CheckFn::custom(|v| match v.as_str().map(str::parse::<u32>) {
+                Some(Ok(_)) => Ok(()),
+                _ => Err(ValidationError::uncaught(
+                    "ValueError",
+                    format!("invalid literal for int() with base 10: {}", v.repr()),
+                )),
+            }),
+        )],
+    );
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("config.cfg");
+    std::fs::write(&path, "x").unwrap();
+    let loader = |_: &str| Ok::<_, String>(value_map! {"minimum_pre_commit_version" => "x"});
+    let err = load_from_filename(&path, &schema, loader, Some("config.cfg")).unwrap_err();
+    let LoadError::Invalid(err) = err else {
+        panic!("expected a validation error, got {err:?}");
+    };
+    // No `File config.cfg` / `At Config()` contexts: Python lets it escape.
+    assert_eq!(err.contexts().len(), 0);
+    assert_eq!(
+        err.to_string(),
+        "ValueError: invalid literal for int() with base 10: 'x'"
+    );
 }
 
 #[test]
