@@ -1,0 +1,20 @@
+[package]
+name = "snp-core"
+description = "snp vocabulary: stages, languages, brand, Env/EnvPatch, CancelToken, Failure envelope, Printer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+snp-pycompat.workspace = true
+
+[features]
+# Test-only panic-injection points (ADR-066); enabled by crates/snp's `testing` feature only.
+fault-injection = []
+
+[lints]
+workspace = true
