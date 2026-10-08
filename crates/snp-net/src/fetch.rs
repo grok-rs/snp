@@ -146,6 +146,11 @@ fn transport(url: &str, msg: String) -> NetError {
 fn classify(e: ureq::Error, shown: &str) -> Step {
     use ureq::Error as E;
     match e {
+        // rustls reports handshake failures (unknown issuer, bad name, expired certificate) as `InvalidData`: another
+        // attempt cannot succeed.
+        E::Io(io) if io.kind() == io::ErrorKind::InvalidData => {
+            Step::Fail(transport(shown, io.to_string()))
+        }
         E::Io(io) => Step::Retry(transport(shown, io.to_string())),
         E::Timeout(t) => Step::Retry(transport(shown, format!("timed out ({t})"))),
         E::HostNotFound => Step::Retry(transport(shown, "host not found".to_owned())),

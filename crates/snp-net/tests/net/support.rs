@@ -8,7 +8,7 @@ use std::fmt::Write as _;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -82,6 +82,8 @@ pub(crate) struct Server {
     scheme: &'static str,
     /// Requests seen (`GET /path`).
     log: Arc<Mutex<Vec<String>>>,
+    /// TCP connections accepted.
+    accepted: Arc<AtomicUsize>,
     /// Stop flag.
     stop: Arc<AtomicBool>,
     /// The accept thread.
@@ -124,8 +126,9 @@ impl Server {
         let addr = listener.local_addr().expect("addr");
         let log = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
+        let accepted = Arc::new(AtomicUsize::new(0));
         let conn = Arc::new(conn);
-        let (log2, stop2) = (Arc::clone(&log), Arc::clone(&stop));
+        let (log2, stop2, accepted2) = (Arc::clone(&log), Arc::clone(&stop), Arc::clone(&accepted));
         let accept = std::thread::Builder::new()
             .name(format!("{scheme}-server"))
             .spawn(move || {
@@ -134,6 +137,7 @@ impl Server {
                         break;
                     }
                     let Ok(stream) = stream else { continue };
+                    accepted2.fetch_add(1, Ordering::SeqCst);
                     let (conn, log) = (Arc::clone(&conn), Arc::clone(&log2));
                     let _ignored = std::thread::Builder::new().spawn(move || conn(stream, &log));
                 }
@@ -143,6 +147,7 @@ impl Server {
             addr,
             scheme,
             log,
+            accepted,
             stop,
             accept: Some(accept),
         }
@@ -156,6 +161,11 @@ impl Server {
     /// `http://127.0.0.1:port` (proxy URL).
     pub(crate) fn proxy_url(&self) -> String {
         format!("http://{}", self.addr)
+    }
+
+    /// TCP connections accepted so far.
+    pub(crate) fn connections(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
     }
 
     /// The requests seen so far.

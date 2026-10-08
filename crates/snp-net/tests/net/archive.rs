@@ -155,17 +155,10 @@ impl Case {
     }
 }
 
+#[cfg(unix)]
 fn mode(p: &Path) -> u32 {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::symlink_metadata(p).unwrap().permissions().mode() & 0o7777
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = p;
-        0
-    }
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::symlink_metadata(p).unwrap().permissions().mode() & 0o7777
 }
 
 #[test]
@@ -616,14 +609,12 @@ fn a_kill_during_extraction_leaves_only_a_part_directory() {
     use std::time::{Duration, Instant};
     let c = Case::new();
     let fifo = c.dir.path().join("archive.fifo");
-    rustix::fs::mknodat(
-        rustix::fs::CWD,
-        &fifo,
-        rustix::fs::FileType::Fifo,
-        rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
-        0,
-    )
-    .unwrap();
+    // mkfifo(1) is POSIX (rustix has no mknodat on every Unix).
+    let made = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap();
+    assert!(made.success());
     let mut child = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",

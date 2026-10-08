@@ -111,6 +111,7 @@ fn unknown_issuer_is_refused_without_the_ca() {
     assert!(matches!(e, NetError::Transport { .. }), "{e:?}");
     // Certificate failures are not retried.
     assert_eq!(s.requests(), NONE);
+    assert_eq!(s.connections(), 1);
 }
 
 #[test]

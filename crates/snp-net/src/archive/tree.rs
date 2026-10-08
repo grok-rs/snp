@@ -172,6 +172,7 @@ mod imp {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         #[expect(
             clippy::unnecessary_wraps,
+            clippy::unused_self,
             reason = "same signature as the Linux variant"
         )]
         fn open_beneath(&self, _rel: &[OsString]) -> io::Result<Option<OwnedFd>> {
@@ -411,6 +412,7 @@ mod imp {
         #[expect(
             clippy::unnecessary_wraps,
             clippy::unused_self,
+            clippy::needless_pass_by_ref_mut,
             reason = "same signature as on Unix"
         )]
         pub(crate) fn set_dir_mode(&mut self, _rel: &[OsString], _m: u32) -> io::Result<()> {
@@ -418,6 +420,7 @@ mod imp {
         }
 
         /// Whether `rel` exists below the root as a directory (not a link).
+        #[expect(clippy::needless_pass_by_ref_mut, reason = "same signature as on Unix")]
         pub(crate) fn is_dir(&mut self, rel: &[OsString]) -> bool {
             check(self, rel).is_ok() && self.full(rel).is_dir()
         }
@@ -467,10 +470,15 @@ fn make_writable(dir: &Path) {
                 stack.push(e.path());
             }
             #[cfg(not(unix))]
-            if t.is_file()
+            if !t.is_dir()
+                && !t.is_symlink()
                 && let Ok(m) = std::fs::symlink_metadata(e.path())
             {
                 let mut perms = m.permissions();
+                #[expect(
+                    clippy::permissions_set_readonly_false,
+                    reason = "Windows: clears the read-only attribute"
+                )]
                 perms.set_readonly(false);
                 let _ignored = std::fs::set_permissions(e.path(), perms);
             }
