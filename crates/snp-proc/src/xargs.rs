@@ -20,14 +20,30 @@ use crate::spawn::PyStatus;
 /// Python), else `multiprocessing.cpu_count()` (`os.cpu_count()`), else 1.
 pub fn cpu_count() -> NonZeroUsize {
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    if let Some(n) = rustix::thread::sched_getaffinity(None)
+    let affinity = rustix::thread::sched_getaffinity(None)
         .ok()
-        .and_then(|set| NonZeroUsize::new(usize::try_from(set.count()).unwrap_or(0)))
-    {
-        return n;
-    }
-    // os.cpu_count(): sysconf(_SC_NPROCESSORS_ONLN) on Unix, the active processor count on Windows.
-    std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN)
+        .map(|set| usize::try_from(set.count()).unwrap_or(0));
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let affinity: Option<usize> = None;
+    // os.cpu_count(): sysconf(_SC_NPROCESSORS_ONLN) on Unix; Windows `GetSystemInfo` (D-PLAT-10: CPython uses
+    // `GetActiveProcessorCount(ALL_PROCESSOR_GROUPS)`, which differs only above 64 logical CPUs).
+    cpu_count_from(affinity, || {
+        std::thread::available_parallelism()
+            .ok()
+            .map(NonZeroUsize::get)
+    })
+}
+
+/// `xargs.cpu_count`'s fallback chain: the affinity count when available (and non-zero), else `cpu_count()`
+/// (`None` = `NotImplementedError`), else 1.
+fn cpu_count_from(
+    affinity: Option<usize>,
+    os_count: impl FnOnce() -> Option<usize>,
+) -> NonZeroUsize {
+    affinity
+        .and_then(NonZeroUsize::new)
+        .or_else(|| os_count().and_then(NonZeroUsize::new))
+        .unwrap_or(NonZeroUsize::MIN)
 }
 
 /// `PRE_COMMIT_NO_CONCURRENCY` present → 1; `TRAVIS` present → 2; else `cpu`; 1 when `require_serial`.
@@ -170,7 +186,116 @@ pub fn partition(
         }
     }
     ret.push(start..i);
+    #[cfg(windows)]
+    if let Some(script) = cmd.first().filter(|c| is_batch(c)) {
+        return Ok(resplit_batch(
+            script,
+            cmd.get(1..).unwrap_or_default(),
+            files,
+            ret,
+        ));
+    }
     Ok(ret)
+}
+
+/// cmd.exe's command-line limit (D-PLAT-09).
+#[cfg(any(test, windows))]
+const BATCH_LINE_MAX: usize = 8191;
+
+/// `cmd[0].lower().endswith(('.bat', '.cmd'))` (`xargs.py:155`).
+#[cfg(any(test, windows))]
+fn is_batch(program: &OsStr) -> bool {
+    let lower = program.as_encoded_bytes().to_ascii_lowercase();
+    lower.ends_with(b".bat") || lower.ends_with(b".cmd")
+}
+
+/// UTF-16 length of `s` (lossy for unpaired surrogates on Unix, exact on Windows).
+#[cfg(any(test, windows))]
+fn utf16_len(s: &OsStr) -> usize {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        s.encode_wide().count()
+    }
+    #[cfg(not(windows))]
+    {
+        s.to_string_lossy().encode_utf16().count()
+    }
+}
+
+/// The UTF-16 length of one argument as Rust's `make_bat_command_line` renders it (14 P-26): quoted when empty,
+/// ending with `\` or containing an ASCII character outside `[A-Za-z0-9#$*+-./:?@\_]`; inside quotes `"` becomes
+/// `""` and the backslashes before it are doubled, as are those before the closing quote; every `%` becomes
+/// `%%cd:~,%` (+7).
+#[cfg(any(test, windows))]
+fn bat_arg_len(arg: &OsStr) -> usize {
+    let text = arg.to_string_lossy();
+    let safe = |c: char| c.is_ascii_alphanumeric() || "#$*+-./:?@\\_".contains(c);
+    let quote = text.is_empty()
+        || text.ends_with('\\')
+        || text
+            .chars()
+            .any(|c| c.is_ascii() && (!safe(c) || c.is_ascii_control()));
+    let mut len: usize = 0;
+    let mut backslashes: usize = 0;
+    for c in text.chars() {
+        if c == '\\' {
+            backslashes = backslashes.saturating_add(1);
+        } else {
+            if c == '"' {
+                // n backslashes become 2n before an internal quote, and the quote is doubled.
+                len = len.saturating_add(backslashes).saturating_add(1);
+            }
+            backslashes = 0;
+        }
+        len = len.saturating_add(if c == '%' { 8 } else { c.len_utf16() });
+    }
+    if quote {
+        len = len.saturating_add(backslashes).saturating_add(2);
+    }
+    len
+}
+
+/// The length of `cmd.exe /e:ON /v:OFF /d /c ""<script>" <args…>"` (Rust's batch command line).
+#[cfg(any(test, windows))]
+fn bat_line_len<'a>(script: &OsStr, args: impl Iterator<Item = &'a OsStr>) -> usize {
+    let prefix = "cmd.exe /e:ON /v:OFF /d /c \"".len();
+    args.fold(
+        prefix.saturating_add(utf16_len(script)).saturating_add(3),
+        |acc, a| acc.saturating_add(1).saturating_add(bat_arg_len(a)),
+    )
+}
+
+/// D-PLAT-09: halves every partition whose real batch command line would exceed 8191 characters (pre-commit's
+/// budget counts unquoted lengths, so names needing quotes or containing `%` could overflow and crash).
+#[cfg(any(test, windows))]
+fn resplit_batch(
+    script: &OsStr,
+    cmd_args: &[OsString],
+    files: &[&OsStr],
+    ranges: Vec<Range<usize>>,
+) -> Vec<Range<usize>> {
+    let fits = |r: &Range<usize>| {
+        let part = files.get(r.clone()).unwrap_or_default();
+        let args = cmd_args
+            .iter()
+            .map(OsString::as_os_str)
+            .chain(part.iter().copied());
+        bat_line_len(script, args) <= BATCH_LINE_MAX
+    };
+    let mut out = Vec::new();
+    let mut todo: Vec<Range<usize>> = ranges.into_iter().rev().collect();
+    while let Some(r) = todo.pop() {
+        let n = r.end.saturating_sub(r.start);
+        if n <= 1 || fits(&r) {
+            out.push(r);
+        } else {
+            let mid = r.start.saturating_add(n / 2);
+            todo.push(mid..r.end);
+            todo.push(r.start..mid);
+        }
+    }
+    out
 }
 
 /// `max(abs(rc))` over the partitions, first wins on ties.
@@ -338,5 +463,108 @@ mod tests {
     #[test]
     fn cpu_count_is_positive() {
         assert!(cpu_count().get() >= 1);
+    }
+
+    /// `xargs_test.py:16-47`: affinity 345 → 345; no affinity and `cpu_count()` 123 → 123; neither → 1.
+    #[test]
+    fn t10_xrg_01_cpu_count_fallbacks() {
+        assert_eq!(cpu_count_from(Some(345), || Some(7)), n(345));
+        assert_eq!(cpu_count_from(None, || Some(123)), n(123));
+        assert_eq!(cpu_count_from(None, || None), n(1));
+        // An empty affinity set behaves like a missing one.
+        assert_eq!(cpu_count_from(Some(0), || Some(5)), n(5));
+    }
+
+    #[test]
+    fn batch_argument_lengths_follow_rusts_quoting() {
+        let l = |s: &str| bat_arg_len(OsStr::new(s));
+        assert_eq!(l("plain"), 5);
+        assert_eq!(l(""), 2);
+        assert_eq!(l("a b"), 5); // "a b"
+        assert_eq!(l("a\"b"), 6); // "a""b"
+        assert_eq!(l("a&b"), 5); // "a&b"
+        assert_eq!(l("a\\b\\"), 7); // "a\b\\"
+        assert_eq!(l("100%"), 13); // "100%%cd:~,%" quoted? '%' is unsafe → quoted
+        assert_eq!(l("C:/x/y.py"), 9);
+        assert_eq!(l("é"), 1);
+        let script = OsStr::new("C:\\t.bat");
+        // cmd.exe /e:ON /v:OFF /d /c ""C:\t.bat" x"
+        assert_eq!(
+            bat_line_len(script, [OsStr::new("x")].into_iter()),
+            "cmd.exe /e:ON /v:OFF /d /c \"\"C:\\t.bat\" x\"".len()
+        );
+        assert!(is_batch(OsStr::new("x.CMD")) && is_batch(OsStr::new("y.bat")));
+        assert!(!is_batch(OsStr::new("x.exe")));
+    }
+
+    /// D-PLAT-09: partitions whose quoted batch line exceeds 8191 are halved until they fit.
+    #[test]
+    fn d_plat_09_batch_partitions_are_resplit() {
+        let names: Vec<String> = (0..200).map(|i| format!("a%%%%%-{i:04}.txt")).collect();
+        let files: Vec<&OsStr> = names.iter().map(OsStr::new).collect();
+        let cmd = os(&["C:\\x\\run.cmd", "--fix"]);
+        // pre-commit's unquoted budget accepts all 200 in one partition…
+        let ranges: Vec<Range<usize>> = std::iter::once(0..200).collect();
+        let total: usize = files.iter().map(|f| f.len() + 1).sum();
+        assert!(total < batch_max_length(Path::new("C:\\Windows\\system32\\cmd.exe")));
+        let out = resplit_batch(OsStr::new("C:\\x\\run.cmd"), &cmd[1..], &files, ranges);
+        // …but every resulting partition fits the real limit, in order, without loss.
+        let mut next = 0;
+        for r in &out {
+            assert_eq!(r.start, next);
+            next = r.end;
+            let line = bat_line_len(
+                OsStr::new("C:\\x\\run.cmd"),
+                cmd[1..]
+                    .iter()
+                    .map(OsString::as_os_str)
+                    .chain(files[r.clone()].iter().copied()),
+            );
+            assert!(line <= BATCH_LINE_MAX, "{line}");
+        }
+        assert_eq!(next, 200);
+        assert!(out.len() > 1);
+        // Fitting partitions are unchanged.
+        assert_eq!(
+            resplit_batch(OsStr::new("t.bat"), &[], &files[..3], vec![0..1, 1..3]),
+            [0..1, 1..3]
+        );
+    }
+
+    proptest::proptest! {
+        /// 10 §7.5.1: never drops or duplicates a file, keeps the order, respects the budget and max_args, and
+        /// raises ArgumentTooLong exactly when a single argument cannot fit.
+        #[test]
+        fn partition_properties(
+            cmd in proptest::collection::vec("[a-z]{1,8}", 1..4),
+            files in proptest::collection::vec("[a-zé😑 ]{0,30}", 0..200),
+            jobs in 1usize..64,
+            max_len in 10usize..2000,
+        ) {
+            let cmd_os: Vec<OsString> = cmd.iter().map(OsString::from).collect();
+            let files_os: Vec<&OsStr> = files.iter().map(OsStr::new).collect();
+            let base = command_length(&cmd_os) + 1;
+            match partition(&cmd_os, &files_os, n(jobs), max_len) {
+                Ok(ranges) => {
+                    proptest::prop_assert!(!ranges.is_empty());
+                    let max_args = files.len().div_ceil(jobs).max(4);
+                    let mut next = 0;
+                    for r in &ranges {
+                        proptest::prop_assert_eq!(r.start, next);
+                        next = r.end;
+                        proptest::prop_assert!(r.len() <= max_args);
+                        let used: usize = base + files_os[r.clone()].iter().map(|f| cmdlen(f) + 1).sum::<usize>();
+                        proptest::prop_assert!(used <= max_len || r.is_empty());
+                        proptest::prop_assert!(!r.is_empty() || files.is_empty());
+                    }
+                    proptest::prop_assert_eq!(next, files.len());
+                }
+                Err(ArgumentTooLong(arg)) => {
+                    let alen = cmdlen(&arg) + 1;
+                    proptest::prop_assert!(base + alen > max_len);
+                    proptest::prop_assert!(files_os.contains(&arg.as_os_str()));
+                }
+            }
+        }
     }
 }
