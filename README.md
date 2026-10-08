@@ -36,6 +36,11 @@ cargo build --workspace
 cargo xtask help                        # list the build-time tasks
 ```
 
+In a linked git worktree (for example an agent's `.claude/worktrees/<name>`), `../cfgv-rs` resolves next to the
+worktree, not next to the main checkout. `.github/scripts/deps-lock.sh link` run inside the worktree symlinks the
+main checkout's siblings there (for `.claude/worktrees/<name>`: `.claude/worktrees/cfgv-rs` and
+`.claude/worktrees/file-identify`).
+
 The gates every change must pass (the `ci` workflow runs them on Linux, macOS and Windows):
 
 ```sh
@@ -45,6 +50,7 @@ cargo clippy --workspace --all-features --tests --benches --examples -- \
     -D warnings -A clippy::disallowed_macros -A clippy::arithmetic_side_effects
 cargo +1.98.0 check --workspace --all-targets       # MSRV
 cargo deny check && cargo machete
+.github/scripts/deny-fixture.sh                     # deny.toml still bans regex/which/tokio in snp-pycompat
 cargo xtask check-dag && cargo xtask check-unsafe && cargo xtask lint-guards
 cargo build --workspace --bins --features snp/testing
 cargo nextest run --workspace --features snp/testing

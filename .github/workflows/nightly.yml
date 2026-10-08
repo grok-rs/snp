@@ -28,8 +28,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-2025, windows-11-arm]
+        os: [ubuntu-24.04, macos-15, macos-15-intel, windows-2025]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: taiki-e/install-action@v2
+        with: { tool: cargo-nextest }
+      - run: cargo build --workspace --bins --features snp/testing --locked
+      - run: cargo nextest run --workspace --features snp/testing --locked --profile nightly --no-tests=warn
+
+  tests-arm:
+    # The arm64 Linux and Windows runners exist for public repositories only; skipped while grok-rs/snp is private.
+    name: tests (${{ matrix.os }})
+    if: ${{ !github.event.repository.private }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with: { path: snp }
@@ -44,6 +66,7 @@ jobs:
   oracle:
     # The pre-commit 4.6.2 oracles (WP-00): created and verified every night.
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with: { path: snp }
@@ -58,12 +81,11 @@ jobs:
     # 300 s per target (ARCHITECTURE §13.5).
     name: fuzz (shard ${{ matrix.shard }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-    env:
-      RUST_MIN_STACK: "262144"
     steps:
       - uses: actions/checkout@v4
         with: { path: snp }
@@ -72,19 +94,14 @@ jobs:
       - run: rustup toolchain install nightly --profile minimal
       - uses: taiki-e/install-action@v2
         with: { tool: cargo-fuzz }
-      - run: |
-          i=0
-          for t in $(cargo +nightly fuzz list); do
-            if [ $((i % 10)) -eq ${{ matrix.shard }} ]; then
-              cargo +nightly fuzz run "$t" -- -max_total_time=300 -timeout=5 -rss_limit_mb=512
-            fi
-            i=$((i + 1))
-          done
+      - run: cargo +nightly fuzz build
+      - run: .github/scripts/fuzz-run.sh ${{ matrix.shard }} 10 300
 
   difftest:
     # WP-35: generated scenarios against the oracle (`cargo xtask difftest --suite generated`).
     if: false
     runs-on: ubuntu-24.04
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
         with: { path: snp }
@@ -99,6 +116,7 @@ jobs:
     # WP-35: ported vs total catalog rows (tests/catalog/index.tsv).
     if: false
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with: { path: snp }
@@ -111,6 +129,7 @@ jobs:
     # WP-36: end-to-end budgets against the oracle (`cargo xtask bench setup|run|gate`).
     if: false
     runs-on: ubuntu-24.04
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
         with: { path: snp }
@@ -126,6 +145,7 @@ jobs:
     # once those crates are implemented (W1/W2).
     if: false
     runs-on: ubuntu-24.04
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
         with: { path: snp }

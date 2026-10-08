@@ -6,6 +6,9 @@
 #                                  lock's directory, e.g. ../cfgv-rs); an existing checkout at the right rev is kept
 #   deps-lock.sh drift    [LOCK]   compare each rev with the head of its branch; prints a Markdown report and exits
 #                                  1 when any crate drifted (or its branch is missing), 0 when all match
+#   deps-lock.sh link     [LOCK]   in a linked git worktree (e.g. .claude/worktrees/<name>, where ../cfgv-rs resolves
+#                                  inside .claude/worktrees/), symlink each missing sibling to the main checkout's
+#                                  sibling; existing paths are kept
 #
 # LOCK defaults to deps.lock next to this repository's root. Only `[[crate]]` tables with `key = "value"` lines are
 # understood (the format WP-00 writes).
@@ -90,9 +93,33 @@ drift() {
     return "$status"
 }
 
+link() {
+    local common main
+    common="$(git -C "$lock_dir" rev-parse --path-format=absolute --git-common-dir)"
+    main="$(dirname "$common")"
+    if [ "$main" = "$lock_dir" ]; then
+        echo "deps-lock: $lock_dir is the main checkout; use \`checkout\`" >&2
+        exit 2
+    fi
+    list | while IFS=$'\t' read -r name path _repo _branch _rev; do
+        dest="$lock_dir/$path"
+        src="$main/$path"
+        if [ -e "$dest" ] || [ -L "$dest" ]; then
+            echo "deps-lock: $name: $dest exists, kept"
+        elif [ -d "$src" ]; then
+            ln -s "$(cd "$src" && pwd)" "$dest"
+            echo "deps-lock: $name: $dest -> $(cd "$src" && pwd)"
+        else
+            echo "deps-lock: $name: the main checkout has no $src; run \`checkout\` there first" >&2
+            exit 1
+        fi
+    done
+}
+
 case "$cmd" in
     list) list ;;
     checkout) checkout ;;
     drift) drift ;;
-    *) echo "usage: deps-lock.sh list|checkout|drift [LOCK]" >&2; exit 2 ;;
+    link) link ;;
+    *) echo "usage: deps-lock.sh list|checkout|drift|link [LOCK]" >&2; exit 2 ;;
 esac
