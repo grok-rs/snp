@@ -1,0 +1,12 @@
+#!/bin/sh
+# git 2.30.2 (Debian 11) in a container, as a drop-in `git` for the ignored old-git tests of snp-git:
+#
+#   docker pull buildpack-deps:bullseye-scm
+#   SNP_TEST_OLD_GIT_DIR=crates/snp-git/tests/old-git cargo test -p snp-git --test catalog -- --ignored old_git
+#
+# The current directory and the test's temp root are mounted at the same paths; the caller's uid owns the files.
+# `SNP_TEST_OLD_GIT_IMAGE` overrides the image (any image whose `git` is older than 2.31).
+image="${SNP_TEST_OLD_GIT_IMAGE:-buildpack-deps:bullseye-scm}"
+tmp="${TMPDIR:-/tmp}"
+exec docker run --rm -i -u "$(id -u):$(id -g)" -e HOME=/tmp -e GIT_CONFIG_NOSYSTEM=1 \
+    -v "$PWD:$PWD" -v "$tmp:$tmp" -w "$PWD" "$image" git "$@"

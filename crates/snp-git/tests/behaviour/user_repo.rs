@@ -225,6 +225,56 @@ fn dedup_fallback_equals_ls_files_deduplicate() {
     assert_eq!(joined, with_flag);
 }
 
+/// D-CRASH-26 on a real git 2.30 (WBS WP-18 acceptance): `crates/snp-git/tests/old-git/git` runs Debian 11's git
+/// 2.30.2 in a container. snp-git resolves it, gets the warning-band capabilities, discovers the repository with
+/// separate `rev-parse` calls and lists the files with the fallback, which equals the host git's
+/// `ls-files -z --deduplicate` byte for byte.
+#[test]
+#[ignore = "needs docker: SNP_TEST_OLD_GIT_DIR=crates/snp-git/tests/old-git cargo test -- --ignored old_git"]
+fn old_git_dedup_fallback_on_a_git_2_30_container() {
+    let process = snp_core::env::Env::capture_process();
+    let Some(dir) = process.get("SNP_TEST_OLD_GIT_DIR") else {
+        eprintln!("SNP_TEST_OLD_GIT_DIR unset: skipped");
+        return;
+    };
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(dir);
+    let sb = Sandbox::new();
+    let repo = sb.merge_conflict("conflict");
+    sb.write(&repo, "sp ace", b"");
+    sb.git(&repo, &["add", "sp ace"]);
+    let mut path = dir.into_os_string();
+    path.push(":");
+    path.push(sb.env.get("PATH").unwrap());
+    let old_env = sb.env.patched(&EnvPatch::default().set("PATH", path));
+    let old = GitExe::resolve(&old_env, &repo, None).unwrap();
+    let v = old.caps.version.unwrap();
+    assert!(
+        v < GitVersion {
+            major: 2,
+            minor: 31,
+            patch: 0
+        },
+        "{v}"
+    );
+    assert!(!old.caps.ls_files_dedup && !old.caps.path_format);
+    let (git, info) = Git::discover(Arc::new(old), &sb.env, &repo, sb.backend()).unwrap();
+    assert_eq!(info.root, repo);
+    let fallback = git.all_files().unwrap();
+    let joined: Vec<u8> = fallback.iter().flat_map(|r| [r, b"\0"].concat()).collect();
+    assert_eq!(joined, sb.git(&repo, &["ls-files", "-z", "--deduplicate"]));
+    // and the real flag fails on that git exactly as pre-commit 4.6.2 does (rc 129)
+    let raw = git
+        .run_raw(&[
+            OsStr::new("ls-files"),
+            OsStr::new("-z"),
+            OsStr::new("--deduplicate"),
+        ])
+        .unwrap();
+    assert_eq!(raw.status.0, 129);
+}
+
 #[test]
 fn pch_facts_use_upstream_argv_and_invalidate_on_index_changes() {
     let sb = Sandbox::new();

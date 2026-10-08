@@ -1,5 +1,36 @@
-# D-CRASH-26 (CRASH, owner WP-18): ls-files -z + adjacent dedup (byte-identical list); the real flag is kept on ≥ 2.31 for argv parity in error texts
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-CRASH-26 (CRASH, owner WP-18): `ls-files -z` + adjacent dedup below git 2.31
+# `run --all-files` on git 2.19–2.30: pre-commit 4.6.2 crashes on `ls-files -z --deduplicate` (rc 129, exit 3); snp
+# lists the files with the byte-identical fallback and runs the hook. Runs on the CI git 2.30 container (ADR-063).
 expect_divergence: D-CRASH-26
-status: stub
+name: divergences/D-CRASH-26-all-files-on-git-2.30
+since: "4.6.1"
+requires: {git: ">=2.19, <2.31", net: false, tools: [], os: [linux], pty: false}
+work:
+  files: {a.txt: "a\n", b.py: "print(1)\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: show
+            name: show
+            entry: echo
+            language: system
+            verbose: true
+  commit: [".pre-commit-config.yaml", a.txt, b.py]
+steps:
+  - tool: [run, --all-files]
+    env: {SNP_ALLOW_OLD_GIT: "1"}
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+expected:
+  oracle:
+    exit: 3
+    stdout_starts_with: "An unexpected error has occurred: CalledProcessError: command: ("
+    stdout_contains: "'ls-files', '-z', '--deduplicate')\nreturn code: 129\n"
+  snp:
+    exit: 0
+    stdout_contains: "show....."

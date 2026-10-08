@@ -1,5 +1,34 @@
 # D-PLAT-08 (PLAT, owner WP-18): clear error, exit 1
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# Windows with MSYS2's git first on PATH: pre-commit 4.6.2's cygwin check is dead code on native Python and the run
+# misbehaves; snp stops before any repository call with a FatalError (exit 1).
+# Uses `requires.tools: [msys2-git]` (the CI Windows runner's C:\msys64\usr\bin\git.exe, put first on PATH through
+# `env.PATH_PREPEND`) — an extension of the 10 §7.4.3 schema.
 expect_divergence: D-PLAT-08
-status: stub
+name: divergences/D-PLAT-08-msys2-git-on-windows
+since: "4.6.2"
+requires: {git: ">=2.31", net: false, tools: [msys2-git], os: [windows], pty: false}
+work:
+  files: {a.txt: "a\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: x
+            name: x
+            entry: echo
+            language: system
+  commit: [".pre-commit-config.yaml"]
+  stage: [a.txt]
+steps:
+  - tool: [run]
+    env: {PATH_PREPEND: 'C:\msys64\usr\bin'}
+compare:
+  stdout: tierB
+  stderr: exact
+  exit: exact
+expected:
+  oracle:
+    exit_not: 1
+  snp:
+    exit: 1
+    stdout_starts_with: "An error has occurred: FatalError: pre-commit does not support a Cygwin or MSYS2 git on Windows (found "
