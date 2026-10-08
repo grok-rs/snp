@@ -67,7 +67,7 @@ sha2 = "0.11.0"
 md-5 = "0.11.0"
 
 # --- data formats (state files and JSON I/O only) ---
-serde = { version = "1.0.229", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive", "rc"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 toml = { version = "1.1.6", default-features = false, features = ["std", "parse", "display", "serde", "preserve_order"] }
 roxmltree = "0.21"
@@ -145,6 +145,8 @@ future_not_send = "allow"
 # W0 additions: stub bodies (`todo!()`) and frozen signatures make these pure noise
 missing_const_for_fn = "allow"
 too_long_first_doc_paragraph = "allow"
+# the frozen §1.4 contracts return `Result<_, snp_core::failure::Failure>` by value everywhere (cold error path)
+result_large_err = "allow"
 # S2: no panic reachable from input (ARCHITECTURE §1.3, ADR-066)
 unwrap_used = "deny"
 expect_used = "deny"
