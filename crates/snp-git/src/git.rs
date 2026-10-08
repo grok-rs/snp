@@ -1,210 +1,1095 @@
 //! The user repository: every git call with pre-commit's exact argv (02 G.1) + only the G.7 rows 1–3 additions.
 //!
+//! Every call runs with `cwd` = the work-tree root that discovery found and `env` = the run environment (pre-commit
+//! exports its `PRE_COMMIT_*` variables into `os.environ`, so its own git calls see them; 02 §6.1). Output is kept as
+//! bytes in git's order (`diff.orderFile` parity, D-CRASH-12).
+//!
 //! Owner: WP-18.
-#![expect(clippy::todo, reason = "W0 stub, removed by WP-18")]
-#![expect(
-    unused_variables,
-    clippy::needless_pass_by_value,
-    reason = "W0 stub parameters, removed by WP-18"
-)]
 
 use std::ffi::{OsStr, OsString};
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use snp_core::env::Env;
-use snp_core::failure::Failure;
+use snp_core::brand::Brand;
+use snp_core::env::{Env, EnvPatch};
+use snp_core::failure::{Failure, pyerr};
 use snp_core::path::RepoPath;
-use snp_proc::spawn::{Captured, Group};
-use snp_pycompat as _;
+use snp_proc::spawn::{Captured, Group, SpawnError, Stdin};
+use snp_pycompat::codec::decode_utf8;
+use snp_pycompat::precommit::{merge_msg_conflicts, pre_push_lines, pre_push_lines_bytes};
+use snp_pycompat::text::{bytes_strip, splitlines, strip};
 
+use crate::run::{self, Out, bare_git_argv, concat, os_from_bytes};
+use crate::types::{BadRecord, is_null_oid, parse_diff_raw, parse_ls_files_stage};
+use crate::zlist::TooLarge;
 use crate::{
     DiffFingerprint, DiffIndex, GitBackend, GitExe, IndexEntries, MergeState, ObjectId, PrePushNs,
-    RepoInfo, ZList,
+    RepoInfo, ZList, messages,
 };
 
-/// A handle on the user repository; cheap clone.
+/// A handle on the user repository; cheap clone (`Arc`s inside).
 #[derive(Clone, Debug)]
 pub struct Git {
-    /// W0 placeholder; WP-18 stores exe: `Arc<GitExe>`, env: `Env`, root: `Arc<Path>`, backend: `Arc<dyn GitBackend>`.
-    _priv: (),
+    pub(crate) exe: Arc<GitExe>,
+    pub(crate) env: Env,
+    pub(crate) root: Arc<Path>,
+    pub(crate) admin_dir: Arc<Path>,
+    pub(crate) backend: Arc<dyn GitBackend>,
+    pub(crate) brand: Brand,
+}
+
+fn too_large(_: TooLarge) -> Failure {
+    Failure::unexpected("MemoryError", "git output larger than 4 GiB")
+}
+
+fn bad_record(what: &str, r: &BadRecord) -> Failure {
+    Failure::unexpected(
+        "ValueError",
+        format!(
+            "unexpected `git {what}` output: {}",
+            snp_pycompat::repr::repr_fsbytes(&r.0)
+        ),
+    )
+}
+
+fn os(s: &str) -> OsString {
+    OsString::from(s)
+}
+
+/// `bytes.strip()` of a one-line output, as an `OsString`.
+fn stripped(b: &[u8]) -> OsString {
+    os_from_bytes(bytes_strip(b))
+}
+
+/// `stdout` without git's single trailing newline (`rev-parse`, `config --get` print exactly one).
+fn chomp(b: &[u8]) -> &[u8] {
+    b.strip_suffix(b"\n").unwrap_or(b)
+}
+
+/// A sink wrapper that counts bytes, records whether a non-`bytes.isspace()` byte was seen (`stdout.strip()`
+/// emptiness) and remembers the sink's own I/O error (so it is not reported as a spawn failure).
+struct Counting<'a> {
+    inner: &'a mut dyn io::Write,
+    written: u64,
+    non_ws: bool,
+    error: Option<io::ErrorKind>,
+}
+
+impl io::Write for Counting<'_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self.inner.write(buf) {
+            Ok(n) => {
+                let part = buf.get(..n).unwrap_or_default();
+                if !self.non_ws {
+                    self.non_ws = part
+                        .iter()
+                        .any(|&b| !snp_pycompat::chars::is_bytes_space(b));
+                }
+                self.written = self
+                    .written
+                    .saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
+                Ok(n)
+            }
+            Err(e) => {
+                self.error = Some(e.kind());
+                Err(e)
+            }
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner
+            .flush()
+            .inspect_err(|e| self.error = Some(e.kind()))
+    }
+}
+
+/// The spawn-or-sink failure of a streamed call as Python's `OSError` (exit 3).
+fn stream_failure(e: &SpawnError, sink_failed: bool) -> Failure {
+    if sink_failed {
+        Failure::from_io(&e.io, None, None)
+    } else {
+        Failure::from_io(&e.io, Some(e.program.as_os_str()), None)
+    }
+}
+
+/// The pre-push stdin records of `hook_impl._pre_push_ns`, lazily: valid UTF-8 → `str.splitlines()` +
+/// `str.rsplit(maxsplit=3)` (PY-WS, ADR-022); otherwise the same on bytes (`bytes.splitlines()`, ASCII whitespace;
+/// D-CRASH-11). A malformed line yields its `ValueError` only when reached.
+pub(crate) enum PrePushRecords<'a> {
+    Text(snp_pycompat::precommit::PrePushLines<'a>),
+    Bytes(snp_pycompat::precommit::PrePushLinesBytes<'a>),
+}
+
+impl<'a> Iterator for PrePushRecords<'a> {
+    type Item = Result<[&'a [u8]; 4], snp_pycompat::text::UnpackError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Text(lines) => Some(lines.next()?.map(|l| {
+                [l.local_branch, l.local_sha, l.remote_branch, l.remote_sha].map(str::as_bytes)
+            })),
+            Self::Bytes(lines) => lines.next(),
+        }
+    }
+}
+
+pub(crate) fn pre_push_records(stdin: &[u8]) -> PrePushRecords<'_> {
+    match decode_utf8(stdin) {
+        Ok(text) => PrePushRecords::Text(pre_push_lines(text)),
+        Err(_) => PrePushRecords::Bytes(pre_push_lines_bytes(stdin)),
+    }
+}
+
+/// Discovery parsed from `rev-parse` output lines.
+struct Discovered {
+    cdup: Vec<u8>,
+    inside: Vec<u8>,
+    git_dir: Vec<u8>,
+    common_dir: Vec<u8>,
+    index: Vec<u8>,
+}
+
+/// The combined call's lines: 5 normally, 4 when `--show-cdup` printed nothing (inside `.git`, bare repository).
+/// Anything else (a path containing a newline) means "ask separately".
+fn parse_combined(stdout: &[u8]) -> Option<Discovered> {
+    let body = stdout.strip_suffix(b"\n")?;
+    let lines: Vec<&[u8]> = body.split(|&b| b == b'\n').collect();
+    let is_bool = |l: &&[u8]| *l == b"true" || *l == b"false";
+    let (cdup, rest): (&[u8], &[&[u8]]) = match lines.as_slice() {
+        [cdup, rest @ ..] if rest.len() == 4 && rest.first().is_some_and(is_bool) => (cdup, rest),
+        rest if rest.len() == 4 && rest.first().is_some_and(is_bool) => (b"", rest),
+        _ => return None,
+    };
+    let [inside, git_dir, common_dir, index] = rest else {
+        return None;
+    };
+    Some(Discovered {
+        cdup: cdup.to_vec(),
+        inside: inside.to_vec(),
+        git_dir: git_dir.to_vec(),
+        common_dir: common_dir.to_vec(),
+        index: index.to_vec(),
+    })
+}
+
+/// `os.path.normpath(os.path.join(base, p))` over raw output bytes.
+fn join_norm(base: &Path, p: &[u8]) -> PathBuf {
+    let joined = snp_pycompat::ospath::join(base.as_os_str(), &[&os_from_bytes(p)]);
+    PathBuf::from(snp_pycompat::ospath::normpath(&joined))
 }
 
 impl Git {
     /// One `git rev-parse --show-cdup --is-inside-git-dir --git-dir --git-common-dir --git-path index` (fallback to
     /// separate calls on 2.19–2.30 or on newline-containing paths); `FatalError` texts verbatim (02 §3).
+    ///
+    /// `git.get_root` (`git.py:51-73`) + `get_git_dir`/`get_git_common_dir` (`git.py:76-93`) + `git_path('index')`
+    /// (`git.py:205-207`). On git ≥ 2.31 the combined call adds `--path-format=absolute` before the path options
+    /// (02 G.9 item 6); its argv is never shown (every failure is `git failed. Is it installed, …`). A `--git-dir`
+    /// echoed back (git < 2.5) is X13-GIT-10's `FatalError`. The returned `Git` renders brand-dependent texts in the
+    /// compat brand until [`Git::with_brand`] says otherwise.
     pub fn discover(
         exe: Arc<GitExe>,
         env: &Env,
         cwd: &Path,
         backend: Arc<dyn GitBackend>,
     ) -> Result<(Self, RepoInfo), Failure> {
-        todo!()
+        let info = Self::discover_info(&exe, env, cwd, backend.as_ref())?;
+        let git = Self {
+            exe,
+            env: env.clone(),
+            root: Arc::from(info.root.as_path()),
+            admin_dir: Arc::from(info.git_dir.as_path()),
+            backend,
+            brand: Brand::PreCommit,
+        };
+        Ok((git, info))
     }
 
-    /// Run vars exported (pre-commit sets `os.environ`).
+    fn discover_info(
+        exe: &GitExe,
+        env: &Env,
+        cwd: &Path,
+        backend: &dyn GitBackend,
+    ) -> Result<RepoInfo, Failure> {
+        let argv = |args: &[&str]| -> Vec<OsString> {
+            let mut v = exe.argv0.clone();
+            v.extend(args.iter().map(|a| os(a)));
+            v
+        };
+        let fatal = |msg: &str| Failure::fatal("FatalError", msg.to_owned());
+        let combined = if exe.caps.path_format {
+            let out = run::capture(
+                backend,
+                &argv(&[
+                    "rev-parse",
+                    "--show-cdup",
+                    "--is-inside-git-dir",
+                    "--path-format=absolute",
+                    "--git-dir",
+                    "--git-common-dir",
+                    "--git-path",
+                    "index",
+                ]),
+                env,
+                cwd,
+                Group::Inherit,
+            );
+            if out.status != 0 {
+                return Err(fatal(messages::GIT_FAILED));
+            }
+            parse_combined(&out.stdout)
+        } else {
+            None
+        };
+        let d = if let Some(d) = combined {
+            d
+        } else {
+            // get_root(): two calls; any failure is "git failed".
+            let cdup = run::capture(
+                backend,
+                &argv(&["rev-parse", "--show-cdup"]),
+                env,
+                cwd,
+                Group::Inherit,
+            );
+            if cdup.status != 0 {
+                return Err(fatal(messages::GIT_FAILED));
+            }
+            let inside = run::capture(
+                backend,
+                &argv(&["rev-parse", "--is-inside-git-dir"]),
+                env,
+                cwd,
+                Group::Inherit,
+            );
+            if inside.status != 0 {
+                return Err(fatal(messages::GIT_FAILED));
+            }
+            if bytes_strip(&inside.stdout) != b"false" {
+                return Err(fatal(messages::TOPLEVEL_EMPTY));
+            }
+            let root = snp_pycompat::ospath::abspath(&stripped(&cdup.stdout), cwd);
+            let at_root = |args: &[&str]| -> Result<Vec<u8>, Failure> {
+                let a = argv(args);
+                let out = run::checked(backend, &a, env, &root, Group::Inherit)?;
+                Ok(bytes_strip(&out.stdout).to_vec())
+            };
+            Discovered {
+                cdup: bytes_strip(&cdup.stdout).to_vec(),
+                inside: b"false".to_vec(),
+                git_dir: at_root(&["rev-parse", "--git-dir"])?,
+                common_dir: at_root(&["rev-parse", "--git-common-dir"])?,
+                index: at_root(&["rev-parse", "--git-path", "index"])?,
+            }
+        };
+        if d.inside != b"false" {
+            return Err(fatal(messages::TOPLEVEL_EMPTY));
+        }
+        let root = snp_pycompat::ospath::abspath(&os_from_bytes(&d.cdup), cwd);
+        if d.git_dir == b"--git-dir" {
+            // git < 2.5: `AssertionError: unreachable: no git dir` in pre-commit (X13-GIT-10).
+            let exe_name = exe.argv0.first().map_or_else(|| os("git"), Clone::clone);
+            return Err(Failure::fatal(
+                "FatalError",
+                messages::git_dir_unsupported(&exe.version_text(), &exe_name),
+            ));
+        }
+        let git_dir = join_norm(&root, &d.git_dir);
+        let common_dir = if d.common_dir == b"--git-common-dir" {
+            git_dir.clone() // `git.py:92`: git < 2.5
+        } else {
+            join_norm(&root, &d.common_dir)
+        };
+        let index_file = if d.index.starts_with(b"--git-path") {
+            env.get_nonempty("GIT_INDEX_FILE").map_or_else(
+                || git_dir.join("index"),
+                |p| join_norm(&root, p.as_encoded_bytes()),
+            )
+        } else {
+            join_norm(&root, &d.index)
+        };
+        Ok(RepoInfo {
+            is_worktree: git_dir != common_dir,
+            root,
+            git_dir,
+            common_dir,
+            index_file,
+        })
+    }
+
+    /// Run vars exported (pre-commit sets `os.environ`, `run.py:375-417`): every later call sees `env`.
     #[must_use]
     pub fn with_env(&self, env: Env) -> Self {
-        todo!()
+        Self {
+            env,
+            ..self.clone()
+        }
     }
 
     /// The stash's Critical backend (ADR-065).
     #[must_use]
     pub fn with_backend(&self, b: Arc<dyn GitBackend>) -> Self {
-        todo!()
+        Self {
+            backend: b,
+            ..self.clone()
+        }
+    }
+
+    /// The brand of the texts this handle renders (`{prog} failed to diff …`, COMPATIBILITY §3.3); `discover`
+    /// starts with the compat brand. Derived handles (`with_env`, `with_backend`) keep it.
+    #[must_use]
+    pub fn with_brand(&self, brand: Brand) -> Self {
+        Self {
+            brand,
+            ..self.clone()
+        }
     }
 
     /// The environment of every call.
     pub fn env(&self) -> &Env {
-        todo!()
+        &self.env
     }
 
     /// The work-tree root (cwd of every call).
     pub fn root(&self) -> &Path {
-        todo!()
+        &self.root
     }
 
-    /// `git ls-files --unmerged`.
+    fn argv<S: AsRef<OsStr>>(&self, args: &[S]) -> Vec<OsString> {
+        let mut v = self.exe.argv0.clone();
+        v.extend(args.iter().map(|a| a.as_ref().to_os_string()));
+        v
+    }
+
+    fn capture<S: AsRef<OsStr>>(&self, args: &[S], env: &Env, group: Group) -> Out {
+        run::capture(
+            self.backend.as_ref(),
+            &self.argv(args),
+            env,
+            &self.root,
+            group,
+        )
+    }
+
+    fn checked<S: AsRef<OsStr>>(&self, args: &[S]) -> Result<Out, Failure> {
+        run::checked(
+            self.backend.as_ref(),
+            &self.argv(args),
+            &self.env,
+            &self.root,
+            Group::Inherit,
+        )
+    }
+
+    fn checked_zlist<S: AsRef<OsStr>>(&self, args: &[S]) -> Result<ZList, Failure> {
+        ZList::from_z(self.checked(args)?.stdout).map_err(too_large)
+    }
+
+    /// `_has_unmerged_paths` (`run.py:325-327`): `git ls-files --unmerged` (checked), stdout non-blank.
     pub fn has_unmerged(&self) -> Result<bool, Failure> {
-        todo!()
+        Ok(!bytes_strip(&self.checked(&["ls-files", "--unmerged"])?.stdout).is_empty())
     }
 
-    /// `git diff --quiet --no-ext-diff <cfg>`: rc == 1 exactly.
+    /// `_has_unstaged_config` (`run.py:330-334`): `git diff --quiet --no-ext-diff <cfg>` (no `--`), rc == 1 exactly;
+    /// any other returncode (128 for a missing or outside path) is "staged".
     pub fn config_is_unstaged(&self, cfg: &OsStr) -> Result<bool, Failure> {
-        todo!()
+        let args = [
+            os("diff"),
+            os("--quiet"),
+            os("--no-ext-diff"),
+            cfg.to_os_string(),
+        ];
+        Ok(self.capture(&args, &self.env, Group::Inherit).status == 1)
     }
 
-    /// `git diff --name-only --diff-filter=A -z` + `--no-renames` (hazard b).
+    /// `git.intent_to_add_files` (`git.py:146-151`) + `--no-renames` (hazard b, D-DATA-12):
+    /// `git diff --no-renames --no-ext-diff --ignore-submodules --diff-filter=A --name-only -z` (checked).
     pub fn intent_to_add(&self) -> Result<ZList, Failure> {
-        todo!()
+        self.checked_zlist(&[
+            "diff",
+            "--no-renames",
+            "--no-ext-diff",
+            "--ignore-submodules",
+            "--diff-filter=A",
+            "--name-only",
+            "-z",
+        ])
     }
 
-    /// `git rm --cached --` (xargs-partitioned, rc ignored).
+    fn zlist_os(paths: &ZList) -> Vec<OsString> {
+        paths.iter().map(os_from_bytes).collect()
+    }
+
+    /// `xargs(('git', 'rm', '--cached', '--'), files)` (`staged_files_only.py:41`): partitioned by command length,
+    /// serial, returncode ignored.
     pub fn rm_cached(&self, paths: &ZList, group: Group) -> Result<(), Failure> {
-        todo!()
+        let files = Self::zlist_os(paths);
+        let refs: Vec<&OsStr> = files.iter().map(OsString::as_os_str).collect();
+        run::xargs_serial(
+            self.backend.as_ref(),
+            &self.argv(&["rm", "--cached", "--"]),
+            &refs,
+            &self.env,
+            &self.root,
+            group,
+        )
+        .map(drop)
     }
 
-    /// `git add --intent-to-add --`.
+    /// `xargs(('git', 'add', '--intent-to-add', '--'), files)` (`staged_files_only.py:45`): returncode ignored.
     pub fn add_intent_to_add(&self, paths: &ZList, group: Group) -> Result<(), Failure> {
-        todo!()
+        let files = Self::zlist_os(paths);
+        let refs: Vec<&OsStr> = files.iter().map(OsString::as_os_str).collect();
+        run::xargs_serial(
+            self.backend.as_ref(),
+            &self.argv(&["add", "--intent-to-add", "--"]),
+            &refs,
+            &self.env,
+            &self.root,
+            group,
+        )
+        .map(drop)
     }
 
-    /// `git write-tree`.
+    /// `git write-tree` (checked, `staged_files_only.py:52`), stripped.
     pub fn write_tree(&self) -> Result<ObjectId, Failure> {
-        todo!()
+        let out = self.checked(&["write-tree"])?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        ObjectId::parse(strip(&text)).ok_or_else(|| {
+            Failure::unexpected(
+                "ValueError",
+                format!(
+                    "`git write-tree` printed {}",
+                    snp_pycompat::repr::repr_str(&text)
+                ),
+            )
+        })
     }
 
-    /// `GIT_DIFF_OPTS` removed (hazard a); stdout streamed into `sink`; `FatalError` text for other rcs (02 §7).
+    /// `GIT_DIFF_OPTS` removed (hazard a, D-DATA-11); stdout streamed into `sink`; `FatalError` text for other rcs
+    /// (02 §7).
+    ///
+    /// `git diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff <tree> --`
+    /// (`staged_files_only.py:53-104`): rc 0 → [`DiffIndex::Clean`]; rc 1 with `stdout.strip()` empty →
+    /// [`DiffIndex::CrlfQuirk`]; rc 1 → [`DiffIndex::Patch`]; any other rc →
+    /// `FatalError: {prog} failed to diff -- perhaps due to permissions?` + the format-A `CalledProcessError` of the
+    /// bare-`git` argv with empty stdout. A failing `sink` is its own `OSError` (exit 3).
     pub fn diff_index_patch(
         &self,
         tree: &ObjectId,
         sink: &mut dyn io::Write,
     ) -> Result<DiffIndex, Failure> {
-        todo!()
+        let args: Vec<OsString> = [
+            "diff-index",
+            "--ignore-submodules",
+            "--binary",
+            "--exit-code",
+            "--no-color",
+            "--no-ext-diff",
+            tree.as_str(),
+            "--",
+        ]
+        .iter()
+        .map(|a| os(a))
+        .collect();
+        let env = self.env.without(&["GIT_DIFF_OPTS"]);
+        let mut counting = Counting {
+            inner: sink,
+            written: 0,
+            non_ws: false,
+            error: None,
+        };
+        let (status, stderr) = self
+            .backend
+            .stream(&self.argv(&args), &env, &self.root, &mut counting)
+            .map_err(|e| stream_failure(&e, counting.error.is_some()))?;
+        match status.0 {
+            0 => Ok(DiffIndex::Clean),
+            1 if !counting.non_ws => Ok(DiffIndex::CrlfQuirk),
+            1 => Ok(DiffIndex::Patch {
+                bytes_written: counting.written,
+            }),
+            rc => Err(Failure::fatal(
+                "FatalError",
+                messages::diff_failed(
+                    self.brand,
+                    &pyerr::called_process_a(&bare_git_argv(&args), rc, Some(b""), Some(&stderr)),
+                ),
+            )),
+        }
     }
 
-    /// `git -c submodule.recurse=0 checkout -- .`.
+    /// `git -c submodule.recurse=0 checkout -- .` (checked, `staged_files_only.py:23,81,95`), with
+    /// `_PRE_COMMIT_SKIP_POST_CHECKOUT=1` when `skip_post_checkout` (#1418).
     pub fn checkout_all(&self, skip_post_checkout: bool, group: Group) -> Result<(), Failure> {
-        todo!()
+        let env = if skip_post_checkout {
+            self.env
+                .patched(&EnvPatch::default().set("_PRE_COMMIT_SKIP_POST_CHECKOUT", "1"))
+        } else {
+            self.env.clone()
+        };
+        run::checked(
+            self.backend.as_ref(),
+            &self.argv(&["-c", "submodule.recurse=0", "checkout", "--", "."]),
+            &env,
+            &self.root,
+            group,
+        )
+        .map(drop)
     }
 
-    /// `git apply --whitespace=nowarn <patch>` (optionally `-c core.autocrlf=false`); Ok(false) on failure.
+    /// One `_git_apply` attempt (`staged_files_only.py:26-33`): `git apply --whitespace=nowarn <patch>` or, with
+    /// `autocrlf_false`, `git -c core.autocrlf=false apply --whitespace=nowarn <patch>`.
+    ///
+    /// `Ok(true)` = applied. A failing plain attempt is `Ok(false)` (pre-commit catches it and retries); a failing
+    /// `autocrlf_false` attempt is the checked call's `CalledProcessError` (exit 3 text of X13-STASH-02), exactly as
+    /// `_git_apply` raises it — the caller decides whether to roll back or to report it.
     pub fn apply(&self, patch: &Path, autocrlf_false: bool, group: Group) -> Result<bool, Failure> {
-        todo!()
+        let mut args: Vec<OsString> = Vec::new();
+        if autocrlf_false {
+            args.extend([os("-c"), os("core.autocrlf=false")]);
+        }
+        args.extend([
+            os("apply"),
+            os("--whitespace=nowarn"),
+            patch.as_os_str().to_os_string(),
+        ]);
+        let argv = self.argv(&args);
+        let out = run::capture(self.backend.as_ref(), &argv, &self.env, &self.root, group);
+        match (out.status, autocrlf_false) {
+            (0, _) => Ok(true),
+            (_, false) => Ok(false),
+            (_, true) => Err(out.called_process_error(&argv)),
+        }
     }
 
-    /// `git apply --check` (`stage_fixed`, snp-only).
+    /// `git apply --check --whitespace=nowarn <patch>` (`stage_fixed`, snp-only; the same whitespace mode as the
+    /// restore's apply): would the user's patch still apply on top of the hook fixes.
     pub fn apply_check(&self, patch: &Path) -> Result<bool, Failure> {
-        todo!()
+        let args = [
+            os("apply"),
+            os("--check"),
+            os("--whitespace=nowarn"),
+            patch.as_os_str().to_os_string(),
+        ];
+        Ok(self.capture(&args, &self.env, Group::Inherit).status == 0)
     }
 
-    /// `git add --` of literal paths (`stage_fixed`, snp-only).
+    /// `git --literal-pathspecs add -- <paths>` (`stage_fixed`, snp-only, ARCHITECTURE §4.5): partitioned like
+    /// `xargs`, each partition checked.
     pub fn add_literal(&self, paths: &[RepoPath], group: Group) -> Result<(), Failure> {
-        todo!()
+        let files: Vec<OsString> = paths.iter().map(|p| p.to_os().into_owned()).collect();
+        let refs: Vec<&OsStr> = files.iter().map(OsString::as_os_str).collect();
+        run::xargs_checked(
+            self.backend.as_ref(),
+            &self.argv(&["--literal-pathspecs", "add", "--"]),
+            &refs,
+            &self.env,
+            &self.root,
+            group,
+        )
     }
 
-    /// `git diff --staged --name-only --no-ext-diff -z` + `--no-renames` (output-neutral).
+    /// `git.get_staged_files` (`git.py:135-143`) + `--no-renames` (output-neutral, 02 G.7 row 3):
+    /// `git diff --staged --name-only --no-ext-diff -z --diff-filter=ACMRTUXB --no-renames` (checked).
     pub fn staged_files(&self) -> Result<ZList, Failure> {
-        todo!()
+        self.checked_zlist(&[
+            "diff",
+            "--staged",
+            "--name-only",
+            "--no-ext-diff",
+            "-z",
+            "--diff-filter=ACMRTUXB",
+            "--no-renames",
+        ])
     }
 
-    /// `git ls-files -z` with `--deduplicate`, or adjacent dedup on < 2.31 (D-CRASH-26).
+    /// `git.get_all_files` (`git.py:154-155`): `git ls-files -z --deduplicate`, or on git < 2.31 `git ls-files -z` +
+    /// adjacent dedup (byte-identical list; D-CRASH-26).
     pub fn all_files(&self) -> Result<ZList, Failure> {
-        todo!()
+        if self.exe.caps.ls_files_dedup {
+            self.checked_zlist(&["ls-files", "-z", "--deduplicate"])
+        } else {
+            ZList::from_z_dedup(self.checked(&["ls-files", "-z"])?.stdout).map_err(too_large)
+        }
     }
 
-    /// `ls-files -s -z`.
+    /// `git ls-files -s -z` (checked): every index entry with its mode, unmerged stages included (ADR-079).
     pub fn tracked_with_modes(&self) -> Result<IndexEntries, Failure> {
-        todo!()
+        let out = self.checked(&["ls-files", "-s", "-z"])?;
+        parse_ls_files_stage(out.stdout).map_err(|r| bad_record("ls-files -s -z", &r))
     }
 
-    /// `diff --staged --raw -z --no-renames --diff-filter=ACMRTUXB`.
+    /// `git diff --staged --raw -z --no-renames --diff-filter=ACMRTUXB` (checked): the staged paths with their index
+    /// modes (ADR-079).
     pub fn staged_with_modes(&self) -> Result<IndexEntries, Failure> {
-        todo!()
+        let out = self.checked(&[
+            "diff",
+            "--staged",
+            "--raw",
+            "-z",
+            "--no-renames",
+            "--diff-filter=ACMRTUXB",
+        ])?;
+        parse_diff_raw(out.stdout).map_err(|r| bad_record("diff --staged --raw -z", &r))
     }
 
     /// Entry count from the index header (`DIRC`, version, count; 12 bytes read, no spawn) — Stat-mode gate.
+    ///
+    /// `None` when the index is missing, unreadable or not a version 2–4 index. A split index (`core.splitIndex`)
+    /// counts only the entries of the main file: an underestimate the caller's own `ls-files -s -z` corrects.
     pub fn index_entry_count(&self, info: &RepoInfo) -> Option<u32> {
-        todo!()
+        let mut header = [0_u8; 12];
+        std::fs::File::open(&info.index_file)
+            .ok()?
+            .read_exact(&mut header)
+            .ok()?;
+        let (magic, rest) = header.split_first_chunk::<4>()?;
+        let (version, rest) = rest.split_first_chunk::<4>()?;
+        let (count, _) = rest.split_first_chunk::<4>()?;
+        let version = u32::from_be_bytes(*version);
+        (magic == b"DIRC" && (2..=4).contains(&version)).then(|| u32::from_be_bytes(*count))
     }
 
-    /// `git diff --name-only --no-ext-diff -z <from>...<to>`.
+    /// `git.get_changed_files` (`git.py:158-167`): `git diff --name-only --no-ext-diff -z <from>...<to>`; on a
+    /// `CalledProcessError` (no merge base) the two-dot form, whose error is the one reported (X13-GIT-04). No
+    /// `--no-renames`: it would change the list (02 G.7).
     pub fn changed_files(&self, from: &OsStr, to: &OsStr) -> Result<ZList, Failure> {
-        todo!()
+        let diff = |sep: &str| -> Result<ZList, Failure> {
+            let range = concat(&[from, OsStr::new(sep), to]);
+            let args = [
+                os("diff"),
+                os("--name-only"),
+                os("--no-ext-diff"),
+                os("-z"),
+                range,
+            ];
+            self.checked_zlist(&args)
+        };
+        diff("...").or_else(|_| diff(".."))
     }
 
-    /// stat `MERGE_MSG` ∧ `MERGE_HEAD`.
+    /// `git.is_in_merge_conflict` (`git.py:96-101`): `MERGE_MSG` and `MERGE_HEAD` both exist in the git dir (a
+    /// cherry-pick conflict has no `MERGE_MSG`+`MERGE_HEAD` pair).
     pub fn merge_state(&self, info: &RepoInfo) -> MergeState {
-        todo!()
+        if info.git_dir.join("MERGE_MSG").exists() && info.git_dir.join("MERGE_HEAD").exists() {
+            MergeState::Merging
+        } else {
+            MergeState::None
+        }
     }
 
-    /// First-seen order union; `MERGE_MSG` on bytes.
+    /// `git.get_conflicted_files` (`git.py:114-132`): the tab-indented `MERGE_MSG` lines (parsed on bytes, never
+    /// decoded: D-CRASH-12, X13-GIT-07) ∪ `git diff --name-only --no-ext-diff -z -m <write-tree> HEAD MERGE_HEAD --`,
+    /// in first-seen order (pre-commit's `set` order is per-process random). The `[INFO] Checking merge-conflict
+    /// files only.` line is the caller's.
     pub fn conflicted_files(&self, info: &RepoInfo) -> Result<ZList, Failure> {
-        todo!()
+        let msg_path = info.git_dir.join("MERGE_MSG");
+        let merge_msg = std::fs::read(&msg_path).map_err(|e| {
+            // os.path.join(get_git_dir('.'), 'MERGE_MSG'): relative to the root when git printed a relative dir.
+            let shown = info
+                .git_dir
+                .strip_prefix(&info.root)
+                .map_or_else(|_| msg_path.clone(), |rel| rel.join("MERGE_MSG"));
+            Failure::from_io(&e, Some(shown.as_os_str()), None)
+        })?;
+        let tree = self.write_tree()?;
+        let diff = self.checked_zlist(&[
+            "diff",
+            "--name-only",
+            "--no-ext-diff",
+            "-z",
+            "-m",
+            tree.as_str(),
+            "HEAD",
+            "MERGE_HEAD",
+            "--",
+        ])?;
+        let mut out = ZList::default();
+        for p in merge_msg_conflicts(&merge_msg)
+            .into_iter()
+            .chain(diff.iter())
+        {
+            if !out.contains(p) {
+                out.push(p).map_err(too_large)?;
+            }
+        }
+        Ok(out)
     }
 
-    /// Streaming blake3, O(1) memory.
+    /// `run._get_diff` (`run.py:274-279`): `git diff --no-ext-diff --no-textconv --ignore-submodules` (unchecked,
+    /// stderr discarded), hashed with blake3 while streaming (O(1) memory). A spawn failure hashes the text pre-commit
+    /// would compare (`_oserror_to_output`).
     pub fn diff_fingerprint(&self) -> Result<DiffFingerprint, Failure> {
-        todo!()
+        let mut hasher = blake3::Hasher::new();
+        let mut counting = Counting {
+            inner: &mut hasher,
+            written: 0,
+            non_ws: false,
+            error: None,
+        };
+        let argv = self.argv(&[
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--ignore-submodules",
+        ]);
+        match self
+            .backend
+            .stream(&argv, &self.env, &self.root, &mut counting)
+        {
+            Ok(_) => {}
+            Err(e) if counting.error.is_some() => return Err(stream_failure(&e, true)),
+            Err(e) => {
+                let text = Out::from_spawn_error(&e).stdout;
+                io::Write::write_all(&mut counting, &text)
+                    .map_err(|e| Failure::from_io(&e, None, None))?;
+            }
+        }
+        let non_empty = counting.written > 0;
+        Ok(DiffFingerprint {
+            digest: *hasher.finalize().as_bytes(),
+            non_empty,
+        })
     }
 
-    /// `git diff --no-ext-diff [--color]`; inherits stdout.
+    /// `--show-diff-on-failure` (`run.py:317-320`): `subprocess.call(('git', '--no-pager', 'diff', '--no-ext-diff',
+    /// '--color=always'|'--color=never'))` with inherited stdio; the returncode is ignored. The caller flushes the
+    /// Printer first.
     pub fn show_diff(&self, color: bool) -> Result<(), Failure> {
-        todo!()
+        let color_arg = if color {
+            "--color=always"
+        } else {
+            "--color=never"
+        };
+        let argv = self.argv(&["--no-pager", "diff", "--no-ext-diff", color_arg]);
+        self.backend
+            .inherit(&argv, &self.env, &self.root, Stdin::Inherit)
+            .map(drop)
+            .map_err(|e| Failure::from_io(&e.io, Some(OsStr::new("git")), None))
     }
 
-    /// `git config core.hooksPath`.
+    /// `git.has_core_hookpaths_set` (`git.py:179-182`): `git config core.hooksPath` (unchecked); the stripped value
+    /// when non-blank.
     pub fn hooks_path(&self) -> Result<Option<OsString>, Failure> {
-        todo!()
+        let out = self.capture(&["config", "core.hooksPath"], &self.env, Group::Inherit);
+        let v = bytes_strip(&out.stdout);
+        Ok((!v.is_empty()).then(|| os_from_bytes(v)))
     }
 
-    /// `config --list --show-origin -z` files.
+    /// `git config --list --show-origin -z` (checked; snp-only, `DiffOracle` inputs): the distinct origin files in
+    /// first-seen order, relative ones joined to the root. Non-file origins (`command line:`, `blob:`, …) are skipped.
     pub fn config_origins(&self) -> Result<Vec<PathBuf>, Failure> {
-        todo!()
+        let records = self.checked_zlist(&["config", "--list", "--show-origin", "-z"])?;
+        let mut out: Vec<PathBuf> = Vec::new();
+        let mut it = records.iter();
+        while let Some(origin) = it.next() {
+            let _key_value: Option<&[u8]> = it.next();
+            if let Some(file) = origin.strip_prefix(b"file:") {
+                let p = join_norm(&self.root, file);
+                if !out.contains(&p) {
+                    out.push(p);
+                }
+            }
+        }
+        Ok(out)
     }
 
-    /// `git config --get <key>`.
+    /// `git config --get <key>`: `Some(value)` (rc 0), `None` (rc 1: unset); other returncodes are the checked
+    /// call's `CalledProcessError`.
     pub fn config_get(&self, key: &str) -> Result<Option<OsString>, Failure> {
-        todo!()
+        let argv = self.argv(&["config", "--get", key]);
+        let out = run::capture(
+            self.backend.as_ref(),
+            &argv,
+            &self.env,
+            &self.root,
+            Group::Inherit,
+        );
+        match out.status {
+            0 => Ok(Some(os_from_bytes(chomp(&out.stdout)))),
+            1 => Ok(None),
+            _ => Err(out.called_process_error(&argv)),
+        }
     }
 
-    /// `git config --get-regexp <pattern>`.
+    /// `git config -z --get-regexp <pattern>` (02 G.5 double-run detection): `(key, value)` pairs in config order;
+    /// a valueless key has an empty value; rc 1 (no match) is empty.
     pub fn config_get_regexp(&self, pattern: &str) -> Result<Vec<(OsString, OsString)>, Failure> {
-        todo!()
+        let argv = self.argv(&["config", "-z", "--get-regexp", pattern]);
+        let out = run::capture(
+            self.backend.as_ref(),
+            &argv,
+            &self.env,
+            &self.root,
+            Group::Inherit,
+        );
+        match out.status {
+            0 => {}
+            1 => return Ok(Vec::new()),
+            _ => return Err(out.called_process_error(&argv)),
+        }
+        let records = ZList::from_z(out.stdout).map_err(too_large)?;
+        Ok(records
+            .iter()
+            .map(|r| match memchr::memchr(b'\n', r) {
+                Some(i) => (
+                    os_from_bytes(r.get(..i).unwrap_or_default()),
+                    os_from_bytes(r.get(i.saturating_add(1)..).unwrap_or_default()),
+                ),
+                None => (os_from_bytes(r), OsString::new()),
+            })
+            .collect())
     }
 
-    /// 02 §16.3 + X13-HI-04.
+    /// `hook_impl._pre_push_ns` (`hook_impl.py:120-174`, 02 §16.3, ADR-022) + X13-HI-04.
+    ///
+    /// Valid UTF-8: Python `str.splitlines()` + `line.rsplit(maxsplit=3)`; a malformed line is
+    /// `ValueError: not enough values to unpack (expected 4, got N)` (exit 3, X13-HI-03), raised only when reached.
+    /// Non-UTF-8 stdin runs the same algorithm on bytes (D-CRASH-11). A deletion (all-zero local OID, 40 **or** 64
+    /// digits: D-CRASH-10) is skipped; a remote OID present locally (`git cat-file -e <sha>^{commit}`, stdio
+    /// inherited: its `fatal: Not a valid object name …` reaches stderr, X13-SM-05) gives `from_ref`/`to_ref`;
+    /// otherwise `git rev-list <local> --topo-order --reverse --not --remotes=<remote>` decides between "nothing new"
+    /// (next line), a whole new history (`all_files`) and `from_ref = <first new>^`. The first line that yields a
+    /// namespace wins. The `rev-list`/`rev-parse` failures are the stdlib `CalledProcessError` (format B, bare `git`);
+    /// git's stderr, which Python leaves on the terminal, is carried in the exception's stderr hint.
     pub fn pre_push(
         &self,
         stdin: &[u8],
         remote_name: &OsStr,
     ) -> Result<Option<PrePushNs>, Failure> {
-        todo!()
+        for line in pre_push_records(stdin) {
+            let fields = line.map_err(|e| Failure::unexpected(e.py_type(), e.to_string()))?;
+            if let Some(ns) = self.pre_push_line(fields, remote_name)? {
+                return Ok(Some(ns));
+            }
+        }
+        Ok(None)
     }
 
-    /// Raw call with the hook env for pre-commit-hooks emulation (exact upstream argv, 09 §3, §9.6).
+    fn pre_push_line(
+        &self,
+        [local_branch, local_sha, remote_branch, remote_sha]: [&[u8]; 4],
+        remote_name: &OsStr,
+    ) -> Result<Option<PrePushNs>, Failure> {
+        if is_null_oid(local_sha) {
+            return Ok(None);
+        }
+        let ns = |all_files: bool, from: Option<OsString>, to: Option<OsString>| PrePushNs {
+            all_files,
+            from_ref: from,
+            to_ref: to,
+            local_branch: os_from_bytes(local_branch),
+            remote_branch: os_from_bytes(remote_branch),
+        };
+        let local = os_from_bytes(local_sha);
+        if !is_null_oid(remote_sha) && self.rev_exists(remote_sha)? {
+            return Ok(Some(ns(
+                false,
+                Some(os_from_bytes(remote_sha)),
+                Some(local),
+            )));
+        }
+        let ancestors = self.check_output(&[
+            os("rev-list"),
+            local.clone(),
+            os("--topo-order"),
+            os("--reverse"),
+            os("--not"),
+            concat(&[OsStr::new("--remotes="), remote_name]),
+        ])?;
+        let ancestors = String::from_utf8_lossy(&ancestors);
+        let ancestors = strip(&ancestors);
+        let Some(first) = splitlines(ancestors).next() else {
+            return Ok(None); // nothing new on this ref
+        };
+        let roots_out =
+            self.check_output(&[os("rev-list"), os("--max-parents=0"), local.clone()])?;
+        let roots_text = String::from_utf8_lossy(&roots_out);
+        if splitlines(&roots_text).any(|r| r == first) {
+            return Ok(Some(ns(true, None, None)));
+        }
+        let source = self.check_output(&[os("rev-parse"), os(&format!("{first}^"))])?;
+        let source = String::from_utf8_lossy(&source);
+        Ok(Some(ns(false, Some(os(strip(&source))), Some(local))))
+    }
+
+    /// `_rev_exists` (`hook_impl.py:116-117`): `subprocess.call(('git', 'cat-file', '-e', f'{rev}^{{commit}}'))`.
+    fn rev_exists(&self, rev: &[u8]) -> Result<bool, Failure> {
+        let mut spec = os_from_bytes(rev);
+        spec.push("^{commit}");
+        let argv = self.argv(&[os("cat-file"), os("-e"), spec]);
+        self.backend
+            .inherit(&argv, &self.env, &self.root, Stdin::Inherit)
+            .map(|st| st.0 == 0)
+            .map_err(|e| Failure::from_io(&e.io, Some(OsStr::new("git")), None))
+    }
+
+    /// `subprocess.check_output(('git', *args))`: stdout; a non-zero returncode is the stdlib
+    /// `CalledProcessError` (format B, bare `git`; 13 X.2.2).
+    fn check_output(&self, args: &[OsString]) -> Result<Vec<u8>, Failure> {
+        let argv = self.argv(args);
+        let c = self
+            .backend
+            .capture(&argv, &self.env, &self.root, Stdin::Null, Group::Inherit)
+            .map_err(|e| Failure::from_io(&e.io, Some(OsStr::new("git")), None))?;
+        if c.status.0 == 0 {
+            return Ok(c.stdout);
+        }
+        let mut exc = snp_core::failure::PyExc::new(
+            "CalledProcessError",
+            pyerr::called_process_b(&bare_git_argv(args), c.status.0),
+        );
+        let stderr = String::from_utf8_lossy(chomp(&c.stderr)).into_owned();
+        if !stderr.is_empty() {
+            exc = exc.with_hint(stderr);
+        }
+        Err(Failure::Exc {
+            kind: snp_core::failure::ExcKind::Unexpected,
+            exc,
+        })
+    }
+
+    /// Raw call with the hook env for pre-commit-hooks emulation (exact upstream argv, 09 §3, §9.6): `git <args>` in
+    /// the root, stdin `/dev/null`, unchecked. A spawn failure is Python's `OSError` for `'git'`.
     pub fn run_raw(&self, args: &[&OsStr]) -> Result<Captured, Failure> {
-        todo!()
+        self.backend
+            .capture(
+                &self.argv(args),
+                &self.env,
+                &self.root,
+                Stdin::Null,
+                Group::Inherit,
+            )
+            .map_err(|e| Failure::from_io(&e.io, Some(OsStr::new("git")), None))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unhex(s: &str) -> Vec<u8> {
+        let nib = |c: u8| u8::try_from(char::from(c).to_digit(16).unwrap()).unwrap();
+        let b = s.as_bytes();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i + 1 < b.len() {
+            out.push(nib(b[i]) * 16 + nib(b[i + 1]));
+            i += 2;
+        }
+        out
+    }
+
+    fn hexlify(b: &[u8]) -> String {
+        use std::fmt::Write as _;
+        b.iter().fold(String::new(), |mut s, x| {
+            write!(s, "{x:02x}").unwrap();
+            s
+        })
+    }
+
+    /// The parse of every V-PP stdin (generated with the pre-commit 4.6.2 oracle by `tests/vectors/gen_v_pp.py`)
+    /// equals the vectors: pre-commit's own records for valid UTF-8, the bytes algorithm (D-CRASH-11) otherwise.
+    #[test]
+    fn pre_push_records_match_v_pp_vectors() {
+        let doc: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/vectors/v_pp.json")).unwrap();
+        let vectors = doc["vectors"].as_array().unwrap();
+        assert!(vectors.len() >= 20);
+        for v in vectors {
+            let stdin = unhex(v["stdin_hex"].as_str().unwrap());
+            let mut got: Vec<serde_json::Value> = Vec::new();
+            for rec in pre_push_records(&stdin) {
+                match rec {
+                    Ok(fields) => got.push(serde_json::json!({
+                        "fields": fields.iter().map(|f| hexlify(f)).collect::<Vec<_>>()
+                    })),
+                    Err(e) => {
+                        got.push(serde_json::json!({ "error": format!("{}: {e}", e.py_type()) }));
+                        break;
+                    }
+                }
+            }
+            assert_eq!(serde_json::Value::Array(got), v["snp"], "stdin {stdin:?}");
+            if std::str::from_utf8(&stdin).is_ok() {
+                assert_eq!(
+                    v["snp"], v["pre_commit"],
+                    "valid UTF-8 parses exactly like pre-commit"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn combined_rev_parse_shapes() {
+        let d = parse_combined(b"../\nfalse\n/r/.git\n/r/.git\n/r/.git/index\n").unwrap();
+        assert_eq!(d.cdup, b"../");
+        assert_eq!(d.inside, b"false");
+        assert_eq!(d.index, b"/r/.git/index");
+        let d = parse_combined(b"\nfalse\n/r/.git\n/r/.git\n/r/.git/index\n").unwrap();
+        assert_eq!(d.cdup, b"");
+        // inside .git: --show-cdup prints nothing
+        let d = parse_combined(b"true\n/r/.git\n/r/.git\n/r/.git/index\n").unwrap();
+        assert_eq!(
+            (d.cdup.as_slice(), d.inside.as_slice()),
+            (&b""[..], &b"true"[..])
+        );
+        // a newline inside a path: ask separately
+        assert!(parse_combined(b"\nfalse\n/r/a\nb/.git\n/r/.git\n/r/.git/index\n").is_none());
+        assert!(parse_combined(b"\nmaybe\n/r/.git\n/r/.git\n/r/.git/index\n").is_none());
+        assert!(parse_combined(b"no newline").is_none());
+        assert!(parse_combined(b"").is_none());
+    }
+
+    #[test]
+    fn helpers() {
+        assert_eq!(chomp(b"x\n"), b"x");
+        assert_eq!(chomp(b"x\n\n"), b"x\n");
+        assert_eq!(stripped(b" a \n"), OsString::from("a"));
+        assert_eq!(
+            join_norm(Path::new("/r"), b"./x/../.git"),
+            PathBuf::from("/r/.git")
+        );
+        assert_eq!(
+            join_norm(Path::new("/r"), b"/abs/.git"),
+            PathBuf::from("/abs/.git")
+        );
+    }
+
+    #[test]
+    fn counting_tracks_blankness_and_sink_errors() {
+        struct Fail;
+        impl io::Write for Fail {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::Error::other("full"))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut v = Vec::new();
+        let mut c = Counting {
+            inner: &mut v,
+            written: 0,
+            non_ws: false,
+            error: None,
+        };
+        io::Write::write_all(&mut c, b" \n\t").unwrap();
+        assert!(!c.non_ws);
+        io::Write::write_all(&mut c, b"x").unwrap();
+        assert!(c.non_ws);
+        assert_eq!(c.written, 4);
+        let mut f = Fail;
+        let mut c = Counting {
+            inner: &mut f,
+            written: 0,
+            non_ws: false,
+            error: None,
+        };
+        assert!(io::Write::write_all(&mut c, b"x").is_err());
+        assert_eq!(c.error, Some(io::ErrorKind::Other));
     }
 }
