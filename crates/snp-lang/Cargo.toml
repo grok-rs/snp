@@ -28,6 +28,12 @@ zip.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 rustix.workspace = true
+# Node's Unix builds are `.tar.xz` (ARCHITECTURE §1.3: liblzma, feature `xz` of snp-net, Unix node tarballs only).
+snp-net = { workspace = true, features = ["xz"] }
+
+[target.'cfg(windows)'.dependencies]
+# `ToolProbe::fingerprint`: the file index of an executable (`GetFileInformationByHandle`).
+winapi-util.workspace = true
 
 [features]
 testing = []

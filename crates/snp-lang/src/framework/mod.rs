@@ -5,15 +5,15 @@
 mod context;
 mod error;
 mod language;
+pub(crate) mod messages;
 mod plan;
 mod probe;
 mod seams;
 mod state;
 
-use blake3 as _;
-
 pub use context::{EnvCtx, Host, InstallCtx, PlanCtx};
 pub use error::LangError;
+pub(crate) use language::default_support;
 pub use language::{LOCAL_TEMPLATE, Language, Support, VersionSupport, backend, check_support};
 pub use plan::{PreStep, RunPlan};
 pub use probe::ToolProbe;
