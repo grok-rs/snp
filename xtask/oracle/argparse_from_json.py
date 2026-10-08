@@ -9,6 +9,10 @@ Run with an oracle interpreter (`target/oracle/pc462-py313/bin/python -I`). Two 
     argparse_from_json.py json-plain SPEC.json -- ARGV...
         Build the parser the same way and call `parse_args(ARGV)` only (the generic zoo specs of snp-argparse).
 
+    argparse_from_json.py textwrap CASES.json --
+        Print `[textwrap.wrap(text, width, initial_indent=…, subsequent_indent=…), …]` as one JSON line for the
+        `[{"text", "width", "initial", "subsequent"}, …]` cases (snp-argparse's textwrap vectors).
+
     argparse_from_json.py pre-commit [--prog PROG] -- ARGV...
         Run `pre_commit.main.main(ARGV)`, optionally with argparse's `prog='pre-commit'` patched to PROG (the
         `pre-commit-snp-prog` launcher), and `pre_commit.color.use_color` returning the validated string instead
@@ -243,6 +247,19 @@ def main_json(path: str, argv: list[str]) -> int:
     return 0
 
 
+def main_textwrap(path: str) -> int:
+    import textwrap
+
+    with open(path, encoding='utf-8') as f:
+        cases = json.load(f)
+    out = [
+        textwrap.wrap(c['text'], c['width'], initial_indent=c['initial'], subsequent_indent=c['subsequent'])
+        for c in cases
+    ]
+    sys.stdout.write(json.dumps(out) + '\n')
+    return 0
+
+
 def main_pre_commit(prog: str | None, argv: list[str]) -> int:
     if prog is not None:
         init = argparse.ArgumentParser.__init__
@@ -284,6 +301,8 @@ def main() -> int:
         return main_json(head[1], argv)
     if head[:1] == ['json-plain'] and len(head) == 2:
         return main_json_plain(head[1], argv)
+    if head[:1] == ['textwrap'] and len(head) == 2:
+        return main_textwrap(head[1])
     if head[:1] == ['pre-commit']:
         prog = None
         if head[1:2] == ['--prog'] and len(head) == 3:

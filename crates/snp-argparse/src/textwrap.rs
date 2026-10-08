@@ -328,4 +328,12 @@ mod tests {
         );
         assert_eq!(fill("x", 1, "    ", "    "), "    x");
     }
+
+    #[test]
+    fn indents_wider_than_the_width_terminate() {
+        // CPython loops forever here (`_handle_long_word` keeps appending an empty chunk); snp must not hang.
+        assert_eq!(wrap_indented("\r\n ab", 1, "  ", "  "), ["  a", "  b"]);
+        assert_eq!(wrap_indented("   ", 1, "  ", "  "), Vec::<String>::new());
+        assert_eq!(wrap("x", 0), ["x"]);
+    }
 }

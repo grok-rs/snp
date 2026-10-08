@@ -1365,6 +1365,115 @@ fn generate_zoo(oracle: &Oracle) -> anyhow::Result<Value> {
     }))
 }
 
+// ----- textwrap vectors (12 §A.16: "textwrap port ≡ Python on random ASCII and Unicode text") -------------------
+
+const TEXTWRAP_VECTORS: &str = "crates/snp-argparse/tests/vectors/textwrap.json";
+
+/// A small deterministic generator (xorshift64*), so the vectors are reproducible without a dependency.
+#[derive(Debug)]
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+
+    fn below(&mut self, n: usize) -> usize {
+        let n = u64::try_from(n.max(1)).unwrap_or(u64::MAX);
+        usize::try_from(self.next().checked_rem(n).unwrap_or(0)).unwrap_or(0)
+    }
+
+    fn pick<'a>(&mut self, items: &[&'a str]) -> &'a str {
+        let i = self.below(items.len());
+        items.get(i).copied().unwrap_or_default()
+    }
+}
+
+/// Random texts made of words (ASCII and non-ASCII letters, Unicode digits, `_`), hyphens and em-dashes,
+/// punctuation and every whitespace `textwrap` treats specially, with widths and indents.
+fn textwrap_cases() -> Vec<Value> {
+    const LETTERS: &[&str] = &[
+        "a", "b", "e", "k", "o", "z", "A", "Q", "é", "ß", "Ж", "中", "_", "1", "7", "\u{663}",
+    ];
+    const PIECES: &[&str] = &[
+        " ", " ", " ", "  ", "\t", "\n", "\r\n", "\u{a0}", "\u{b}", "\u{c}", "-", "-", "--", "---",
+        ".", ",", "!", "?", "'", "\"", "&", ";", ":", "(", ")", "`",
+    ];
+    const INDENTS: &[&str] = &["", "", "  ", "> ", "\u{b7} "];
+    let mut rng = Rng(0x5eed_2026_1008_0012);
+    let mut out = Vec::new();
+    for _ in 0..3000 {
+        let mut text = String::new();
+        for _ in 0..rng.below(40) {
+            if rng.below(3) == 0 {
+                text.push_str(rng.pick(PIECES));
+            } else {
+                for _ in 0..rng.below(12).saturating_add(1) {
+                    text.push_str(rng.pick(LETTERS));
+                }
+            }
+        }
+        let initial = rng.pick(INDENTS);
+        let subsequent = rng.pick(INDENTS);
+        // CPython loops forever when an indent leaves no room on a line and the text starts with whitespace
+        // (`_handle_long_word` keeps appending an empty chunk), so every line gets at least one column.
+        let room = initial.chars().count().max(subsequent.chars().count());
+        let width = rng.below(30).saturating_add(1).saturating_add(room);
+        out.push(json!({
+            "text": text,
+            "width": width,
+            "initial": initial,
+            "subsequent": subsequent,
+        }));
+    }
+    out
+}
+
+fn generate_textwrap(oracle: &Oracle) -> anyhow::Result<Value> {
+    std::fs::create_dir_all(oracle.scratch.join("home"))?;
+    let cases = textwrap_cases();
+    let input = oracle.scratch.join("textwrap-cases.json");
+    std::fs::write(&input, serde_json::to_string(&cases)?)?;
+    let case = Case::new(&[], &[]);
+    let mut cmd = oracle.command(&oracle.bin.join("python"), &case);
+    cmd.arg("-I")
+        .arg(&oracle.script)
+        .arg("textwrap")
+        .arg(&input)
+        .arg("--");
+    let out = cmd.output().context("running the textwrap oracle")?;
+    ensure!(
+        out.status.success(),
+        "textwrap oracle failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let lines: Vec<Value> =
+        serde_json::from_slice(&out.stdout).context("textwrap oracle output")?;
+    ensure!(
+        lines.len() == cases.len(),
+        "textwrap oracle: wrong number of results"
+    );
+    let docs: Vec<Value> = cases
+        .into_iter()
+        .zip(lines)
+        .map(|(mut c, l)| {
+            if let Value::Object(m) = &mut c {
+                m.insert("lines".to_owned(), l);
+            }
+            c
+        })
+        .collect();
+    workspace::say(&format!("cli-goldens: {} textwrap vectors", docs.len()));
+    Ok(json!({
+        "generator": "cargo xtask cli-goldens",
+        "source": "CPython 3.13 textwrap.wrap (target/oracle/pc462-py313)",
+        "cases": docs,
+    }))
+}
+
 /// Runs the task with the arguments that follow its name.
 pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
     let check = match args {
@@ -1385,6 +1494,7 @@ pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
         scratch: root.join("target/cli-goldens"),
     };
     let zoo = generate_zoo(&oracle)?;
+    let textwrap = generate_textwrap(&oracle)?;
     let (compat, snp) = generate(&oracle)?;
     let dir = root.join(GOLDEN_DIR);
     std::fs::create_dir_all(&dir)?;
@@ -1396,6 +1506,7 @@ pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
         (dir.join("compat.json"), compat),
         (dir.join("snp.json"), snp),
         (root.join(ZOO_GOLDEN), zoo),
+        (root.join(TEXTWRAP_VECTORS), textwrap),
     ] {
         let text = format!("{}\n", serde_json::to_string_pretty(&doc)?);
         if check {
