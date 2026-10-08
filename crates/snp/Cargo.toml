@@ -61,5 +61,30 @@ dhat-heap = ["dep:dhat"]
 # mimalloc as the musl global allocator, iff ADR-079's measurement adopts it (WP-36).
 musl-mimalloc = ["dep:mimalloc"]
 
+# WP-36's criterion micro-benches (ARCHITECTURE §12.3); W0 stubs under benches/.
+[[bench]]
+name = "argparse_hook_impl"
+harness = false
+
+[[bench]]
+name = "len_cjk"
+harness = false
+
+[[bench]]
+name = "pyre_kinds"
+harness = false
+
+[[bench]]
+name = "shuffle_partition"
+harness = false
+
+[[bench]]
+name = "tagging_tiers"
+harness = false
+
+[[bench]]
+name = "yaml_manifest_load"
+harness = false
+
 [lints]
 workspace = true
