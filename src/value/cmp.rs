@@ -39,12 +39,6 @@ fn f64_as_i64(f: f64) -> Option<i64> {
     }
 }
 
-/// The exact decimal text of an integral finite float outside the `i64`
-/// range (Rust prints fixed-precision floats exactly).
-fn big_f64_text(f: f64) -> Option<String> {
-    (f.is_finite() && f.fract() == 0.0).then(|| format!("{f:.0}"))
-}
-
 fn num_eq(a: Num<'_>, b: Num<'_>) -> bool {
     match (a, b) {
         (Num::Int(a), Num::Int(b)) => a == b,
@@ -53,7 +47,7 @@ fn num_eq(a: Num<'_>, b: Num<'_>) -> bool {
         (Num::Int(_), Num::Big(_)) | (Num::Big(_), Num::Int(_)) => false,
         (Num::Big(a), Num::Big(b)) => a == b,
         (Num::Big(b), Num::Float(f)) | (Num::Float(f), Num::Big(b)) => {
-            big_f64_text(f).is_some_and(|text| text == b.as_str())
+            BigInt::from_integral_f64(f).is_some_and(|x| x == *b)
         }
         (Num::Float(a), Num::Float(b)) => a == b || (a.is_nan() && b.is_nan()),
     }
@@ -81,7 +75,7 @@ fn hash_num<H: Hasher>(n: Num<'_>, state: &mut H) {
         }
         Num::Big(b) => {
             state.write_u8(TAG_BIG);
-            b.as_str().hash(state);
+            b.hash(state);
         }
         Num::Float(f) => {
             if f.is_nan() {
@@ -89,9 +83,9 @@ fn hash_num<H: Hasher>(n: Num<'_>, state: &mut H) {
             } else if let Some(i) = f64_as_i64(f) {
                 state.write_u8(TAG_INT);
                 i.hash(state);
-            } else if let Some(text) = big_f64_text(f) {
+            } else if let Some(big) = BigInt::from_integral_f64(f) {
                 state.write_u8(TAG_BIG);
-                text.hash(state);
+                big.hash(state);
             } else {
                 state.write_u8(TAG_FLOAT);
                 f.to_bits().hash(state);
@@ -197,9 +191,7 @@ fn cmp_big_f64(b: &BigInt, f: f64) -> Ordering {
         };
     }
     let trunc = f.trunc();
-    let trunc_big = format!("{trunc:.0}")
-        .parse::<BigInt>()
-        .unwrap_or_else(|_| BigInt::from(0));
+    let trunc_big = BigInt::from_integral_f64(trunc).unwrap_or_else(|| BigInt::from(0));
     b.cmp(&trunc_big).then_with(|| {
         // `b` is an integer equal to `trunc(f)`.
         if f > trunc {

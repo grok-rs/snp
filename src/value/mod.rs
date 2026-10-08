@@ -7,7 +7,7 @@ mod fmt;
 
 use indexmap::{IndexMap, IndexSet};
 
-pub use bigint::{BigInt, ParseBigIntError};
+pub use bigint::{BigInt, MaxStrDigitsError, ParseBigIntError};
 pub(crate) use cmp::py_sort;
 pub use datetime::{Date, DateError, DateTime, TzOffset};
 

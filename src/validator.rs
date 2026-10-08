@@ -378,7 +378,10 @@ fn require_key(key: &Value, dct: &Map) -> Result<(), ValidationError> {
     if dct.contains_key(key) {
         Ok(())
     } else {
-        Err(ValidationError::new(format!("Missing required key: {key}")))
+        Err(ValidationError::new(format!(
+            "Missing required key: {}",
+            key.try_to_string()?
+        )))
     }
 }
 
@@ -388,7 +391,11 @@ where
     F: FnOnce(&Value) -> Result<(), ValidationError>,
 {
     match dct.get(key) {
-        Some(val) => validate_context(|| format!("At key: {key}"), || check(val)),
+        Some(val) => {
+            // Python formats the context before running the check.
+            key.check_str_digits()?;
+            validate_context(|| format!("At key: {key}"), || check(val))
+        }
         None => Ok(()),
     }
 }
@@ -414,11 +421,16 @@ fn check_ensure_absent(
         return Ok(());
     }
     match dct.get(key) {
-        Some(found) => Err(ValidationError::new(format!(
-            "Expected {key} to be absent when {condition_key} {}, found {key}: {}",
-            condition_value.describe_opposite(),
-            found.repr(),
-        ))),
+        Some(found) => {
+            condition_value.check_str_digits()?;
+            let key = key.try_to_string()?;
+            Err(ValidationError::new(format!(
+                "Expected {key} to be absent when {} {}, found {key}: {}",
+                condition_key.try_to_string()?,
+                condition_value.describe_opposite(),
+                found.try_repr()?,
+            )))
+        }
         None => Ok(()),
     }
 }
@@ -522,8 +534,8 @@ impl Validator {
                 }
                 Err(ValidationError::new(format!(
                     "Additional keys found: {}.  Only these keys are allowed: {}",
-                    join_str(extra),
-                    join_str(keys),
+                    join_str(extra)?,
+                    join_str(keys)?,
                 )))
             }
             Self::WarnAdditionalKeys { keys, callback } => {

@@ -156,11 +156,21 @@ impl fmt::Display for ValidationError {
 
 impl std::error::Error for ValidationError {}
 
+impl From<crate::value::MaxStrDigitsError> for ValidationError {
+    /// The uncaught `ValueError` that CPython raises when formatting an
+    /// integer with more than 4300 digits.
+    fn from(err: crate::value::MaxStrDigitsError) -> Self {
+        Self::uncaught("ValueError", err.to_string())
+    }
+}
+
 /// Runs `f` and wraps any [`ValidationError`] it returns in the context
 /// produced by `ctx`, like Python's `with validate_context(ctx):`.
 /// [Uncaught](ValidationError::uncaught) errors pass through unchanged.
 ///
 /// The context is built lazily, so the success path does not allocate.
+/// Python formats it eagerly; when formatting it could raise (`repr()` of an
+/// integer beyond CPython's digit limit), check that first.
 ///
 /// # Errors
 ///

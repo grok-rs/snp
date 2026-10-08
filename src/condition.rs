@@ -1,6 +1,6 @@
 //! Conditions for the `Conditional*` validators.
 
-use crate::value::Value;
+use crate::value::{MaxStrDigitsError, Value};
 
 /// The `condition_value` of a `Conditional*` validator: decides, from the
 /// value of the condition key, whether the conditional check applies.
@@ -46,6 +46,17 @@ impl ConditionValue {
             Self::Not(excluded) => value != excluded,
             Self::In(values) => values.contains(value),
             Self::NotIn(values) => !values.contains(value),
+        }
+    }
+
+    /// Fails when [`ConditionValue::describe_opposite`] would raise in
+    /// Python (an integer beyond CPython's digit limit).
+    pub(crate) fn check_str_digits(&self) -> Result<(), MaxStrDigitsError> {
+        match self {
+            Self::Exact(v) | Self::Not(v) => v.check_str_digits(),
+            Self::In(values) | Self::NotIn(values) => {
+                values.iter().try_for_each(Value::check_str_digits)
+            }
         }
     }
 

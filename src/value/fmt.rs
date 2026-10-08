@@ -2,11 +2,15 @@
 
 use std::fmt::{self, Write};
 
-use super::Value;
+use super::{MaxStrDigitsError, Value};
 use crate::py;
 
 impl Value {
     /// Python's `repr()` of the value, byte-identical to CPython 3.12.
+    ///
+    /// The one exception is an integer with more than 4300 decimal digits,
+    /// for which CPython raises `ValueError` (see [`Value::try_repr`]); it is
+    /// written in hexadecimal (`0x...`) instead.
     ///
     /// ```
     /// use cfgv::Value;
@@ -24,7 +28,58 @@ impl Value {
         out
     }
 
-    /// Writes Python's `repr()` of the value to `out`.
+    /// Python's `repr()` of the value, failing like CPython when the value
+    /// contains an integer with more than
+    /// [`BigInt::MAX_STR_DIGITS`](crate::BigInt::MAX_STR_DIGITS) decimal
+    /// digits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MaxStrDigitsError`] (CPython's `ValueError`) in that case.
+    ///
+    /// ```
+    /// use cfgv::{BigInt, Value};
+    ///
+    /// let huge = Value::from(BigInt::from_str_radix(&"f".repeat(4000), 16).unwrap());
+    /// assert!(huge.try_repr().is_err());
+    /// assert!(Value::List(vec![huge]).try_repr().is_err());
+    /// assert_eq!(Value::from("x").try_repr().as_deref(), Ok("'x'"));
+    /// ```
+    pub fn try_repr(&self) -> Result<String, MaxStrDigitsError> {
+        self.check_str_digits()?;
+        Ok(self.repr())
+    }
+
+    /// Python's `str()` of the value ([`Display`](fmt::Display)), failing
+    /// like [`Value::try_repr`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MaxStrDigitsError`] (CPython's `ValueError`) when the
+    /// value contains an integer with more than 4300 decimal digits.
+    pub fn try_to_string(&self) -> Result<String, MaxStrDigitsError> {
+        self.check_str_digits()?;
+        Ok(self.to_string())
+    }
+
+    /// Fails when `repr()`/`str()` of the value would raise `ValueError` in
+    /// CPython because it contains an integer with too many digits.
+    pub(crate) fn check_str_digits(&self) -> Result<(), MaxStrDigitsError> {
+        match self {
+            Self::BigInt(b) if b.exceeds_max_str_digits() => Err(MaxStrDigitsError),
+            Self::List(items) | Self::Tuple(items) => {
+                items.iter().try_for_each(Self::check_str_digits)
+            }
+            Self::Set(items) => items.iter().try_for_each(Self::check_str_digits),
+            Self::Map(map) => map
+                .iter()
+                .try_for_each(|(k, v)| k.check_str_digits().and_then(|()| v.check_str_digits())),
+            _ => Ok(()),
+        }
+    }
+
+    /// Writes Python's `repr()` of the value to `out` (see
+    /// [`Value::repr`]).
     ///
     /// Dicts, lists, tuples and sets keep their iteration order; a
     /// one-element tuple is written as `(x,)` and an empty set as `set()`.
@@ -48,7 +103,7 @@ impl Value {
             Self::Bool(true) => out.write_str("True"),
             Self::Bool(false) => out.write_str("False"),
             Self::Int(i) => write!(out, "{i}"),
-            Self::BigInt(b) => out.write_str(b.as_str()),
+            Self::BigInt(b) => write!(out, "{b}"),
             Self::Float(f) => py::write_repr_float(out, *f),
             Self::Bytes(b) => py::write_repr_bytes(out, b),
             Self::List(items) => {
@@ -107,7 +162,8 @@ impl fmt::Display for Value {
     /// Python's `str()`: strings are written unquoted, dates and date-times
     /// in ISO format (`2020-01-01`, `2020-01-01 10:00:00+00:00`), and every
     /// other value exactly like [`Value::repr`] (containers show their items
-    /// with `repr()`).
+    /// with `repr()`). See [`Value::try_to_string`] for integers beyond
+    /// CPython's digit limit.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.write_common(f)
     }

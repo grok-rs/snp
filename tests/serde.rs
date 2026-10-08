@@ -210,3 +210,15 @@ fn json_round_trip() {
     let value: Value = serde_json::from_str(text).unwrap();
     assert_eq!(serde_json::to_string(&value).unwrap(), text);
 }
+
+#[test]
+fn big_integers_beyond_i128() {
+    let u = Value::from(u128::MAX);
+    assert_eq!(from_value::<u128>(&u).unwrap(), u128::MAX);
+    assert_eq!(serde_json::to_string(&u).unwrap(), u128::MAX.to_string());
+    let huge = Value::from(BigInt::from_str_radix(&"f".repeat(4000), 16).unwrap());
+    // Python's str() would raise; the text is the hexadecimal literal.
+    let text = from_value::<String>(&huge).unwrap();
+    assert_eq!(text.len(), 4002);
+    assert!(text.starts_with("0xfff"));
+}

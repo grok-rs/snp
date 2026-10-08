@@ -71,6 +71,14 @@ impl Schema {
                 let Value::Map(dct) = value else {
                     return Err(not_a_map(object_name, value));
                 };
+                // Python formats the context before checking the items, so
+                // an id that `repr()` cannot format fails even a valid map.
+                if let Some(id_key) = id_key {
+                    id_key.check_str_digits()?;
+                    if let Some(id) = dct.get(id_key) {
+                        id.check_str_digits()?;
+                    }
+                }
                 let context = || match id_key {
                     None => format!("At {object_name}()"),
                     Some(id_key) => {
@@ -111,6 +119,8 @@ impl Schema {
                     || format!("At {object_name}()"),
                     || {
                         for (k, v) in dct {
+                            // Python formats each context before using it.
+                            k.check_str_digits()?;
                             validate_context(|| format!("For key: {k}"), || check_key_fn.check(k))?;
                             validate_context(
                                 || format!("At key: {k}"),

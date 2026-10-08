@@ -15,9 +15,9 @@ use std::sync::Arc;
 
 use cfgv::{
     BigInt, CheckFn, ConditionValue, Cx, Date, DateError, DateTime, LoadError, Map, MapItem,
-    Schema, Set, TzOffset, ValidationError, Validator, Value, ValueType, apply_defaults,
-    apply_defaults_owned, load_from_filename, py, remove_defaults, remove_defaults_owned, validate,
-    validate_with, value_map,
+    MaxStrDigitsError, ParseBigIntError, Schema, Set, TzOffset, ValidationError, Validator, Value,
+    ValueType, apply_defaults, apply_defaults_owned, load_from_filename, py, remove_defaults,
+    remove_defaults_owned, validate, validate_with, value_map,
 };
 
 const fn assert_send_sync<T: Send + Sync>() {}
@@ -28,6 +28,8 @@ fn public_types_are_send_and_sync() {
     assert_send_sync::<Map>();
     assert_send_sync::<Set>();
     assert_send_sync::<BigInt>();
+    assert_send_sync::<ParseBigIntError>();
+    assert_send_sync::<MaxStrDigitsError>();
     assert_send_sync::<Date>();
     assert_send_sync::<DateTime>();
     assert_send_sync::<TzOffset>();
@@ -446,6 +448,70 @@ fn uncaught_errors() {
         err.to_string(),
         "ValueError: invalid literal for int() with base 10: 'x'"
     );
+}
+
+/// Regression: parsing hexadecimal text was quadratic (a 1 MB literal took
+/// minutes); power-of-two radixes are now linear.
+#[test]
+fn big_hex_literals_parse_in_linear_time() {
+    let digits = "f".repeat(1 << 20);
+    let started = std::time::Instant::now();
+    let big = BigInt::from_str_radix(&digits, 16).unwrap();
+    assert_eq!(big.bit_length(), 4 << 20);
+    assert_eq!(format!("{big:x}"), digits);
+    let octal = BigInt::from_str_radix(&"7".repeat(1 << 20), 8).unwrap();
+    assert_eq!(octal.bit_length(), 3 << 20);
+    let binary = BigInt::from_str_radix(&"1".repeat(1 << 20), 2).unwrap();
+    assert_eq!(binary.bit_length(), 1 << 20);
+    // Generous even for unoptimised builds; the quadratic version needed
+    // minutes for the first literal alone.
+    assert!(started.elapsed() < std::time::Duration::from_secs(20));
+    // Formatting falls back to hexadecimal instead of a quadratic
+    // conversion that CPython refuses anyway.
+    assert!(big.exceeds_max_str_digits());
+    assert_eq!(Value::from(big.clone()).repr().len(), digits.len() + 2);
+}
+
+/// Regression: decimal text beyond CPython's 4300-digit limit was accepted
+/// and `repr()` printed every digit, where CPython raises `ValueError`.
+#[test]
+fn int_string_conversion_limit_matches_cpython() {
+    let err = "1".repeat(5000).parse::<BigInt>().unwrap_err();
+    assert_eq!(err, ParseBigIntError::ExceedsMaxStrDigits { digits: 5000 });
+    assert_eq!(
+        err.to_string(),
+        "Exceeds the limit (4300 digits) for integer string conversion: value has 5000 digits; \
+         use sys.set_int_max_str_digits() to increase the limit"
+    );
+    assert!("9".repeat(BigInt::MAX_STR_DIGITS).parse::<BigInt>().is_ok());
+
+    let huge = Value::from(BigInt::from_str_radix(&"f".repeat(4000), 16).unwrap());
+    assert_eq!(huge.try_repr(), Err(MaxStrDigitsError));
+    assert_eq!(huge.try_to_string(), Err(MaxStrDigitsError));
+    assert_eq!(
+        Value::Tuple(vec![Value::from("id"), huge.clone()]).try_repr(),
+        Err(MaxStrDigitsError)
+    );
+    assert!(huge.repr().starts_with("0xffff"));
+    let from: ValidationError = MaxStrDigitsError.into();
+    assert_eq!(from.uncaught_type(), Some("ValueError"));
+
+    // Python formats `At Hook(id=...)` before checking the items, so even a
+    // valid hook fails.
+    let schema = Schema::map(
+        "Hook",
+        Some("id".into()),
+        vec![Validator::required("id", CheckFn::check_any())],
+    );
+    let err = validate(&value_map! {"id" => huge.clone()}, &schema).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "ValueError: Exceeds the limit (4300 digits) for integer string conversion; \
+         use sys.set_int_max_str_digits() to increase the limit"
+    );
+    // A type error never formats the value.
+    let err = CheckFn::check_string().check(&huge).unwrap_err();
+    assert_eq!(err.message(), "Expected string got int");
 }
 
 #[test]

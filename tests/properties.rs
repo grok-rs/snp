@@ -200,6 +200,73 @@ proptest! {
     }
 
     #[test]
+    fn big_int_matches_u128_in_every_radix(n in any::<u128>(), negative in any::<bool>(), radix in 2u32..=36) {
+        // Reference digits of `n` in `radix`.
+        let mut digits = Vec::new();
+        let mut rest = n;
+        loop {
+            digits.push(char::from_digit(u32::try_from(rest % u128::from(radix)).unwrap(), radix).unwrap());
+            rest /= u128::from(radix);
+            if rest == 0 {
+                break;
+            }
+        }
+        let text: String = digits.iter().rev().collect();
+        let signed = if negative { format!("-{text}") } else { text.to_uppercase() };
+        let big = BigInt::from_str_radix(&signed, radix).unwrap();
+        let expected = if negative && n != 0 { format!("-{n}") } else { n.to_string() };
+        prop_assert_eq!(big.to_string(), expected.clone());
+        prop_assert_eq!(big.to_decimal_string().unwrap(), expected);
+        prop_assert_eq!(big.is_negative(), negative && n != 0);
+        prop_assert_eq!(big.bit_length(), u64::from(128 - n.leading_zeros()));
+        if !negative {
+            prop_assert_eq!(big.to_u128(), Some(n));
+            prop_assert_eq!(big, BigInt::from(n));
+        }
+    }
+
+    #[test]
+    fn big_hex_round_trips_and_orders_like_text(
+        a in "[1-9a-f][0-9a-f]{0,300}",
+        b in "[1-9a-f][0-9a-f]{0,300}",
+        zeros in 0usize..40,
+    ) {
+        let x = BigInt::from_str_radix(&format!("{}{a}", "0".repeat(zeros)), 16).unwrap();
+        let y = BigInt::from_str_radix(&b, 16).unwrap();
+        prop_assert_eq!(format!("{x:x}"), a.clone());
+        prop_assert_eq!(format!("{:#X}", y), format!("0x{}", b.to_uppercase()));
+        let by_text = a.len().cmp(&b.len()).then_with(|| a.cmp(&b));
+        prop_assert_eq!(x.cmp(&y), by_text);
+        prop_assert_eq!(x == y, a == b);
+        let (vx, vy) = (Value::from(x.clone()), Value::from(y.clone()));
+        prop_assert_eq!(vx == vy, a == b);
+        if vx == vy {
+            prop_assert_eq!(hash(&vx), hash(&vy));
+        }
+        // Decimal text round trips (well within the 4300-digit limit).
+        let decimal = x.to_decimal_string().unwrap();
+        prop_assert_eq!(decimal.parse::<BigInt>().unwrap(), x);
+    }
+
+    #[test]
+    fn big_int_parsing_never_panics(s in "[-+]?[0-9a-zA-Z_ ]{0,60}", radix in 0u32..40) {
+        let _ = BigInt::from_str_radix(&s, radix);
+    }
+
+    #[test]
+    fn huge_floats_equal_their_integer(exp in 64u32..960, mantissa in 1u64..(1 << 53)) {
+        #[allow(clippy::cast_precision_loss, reason = "the mantissa fits in 53 bits")]
+        let f = (mantissa as f64) * 2f64.powi(i32::try_from(exp).unwrap());
+        let text = format!("{f:.0}");
+        let big = Value::from(text.parse::<BigInt>().unwrap());
+        let float = Value::Float(f);
+        prop_assert_eq!(&big, &float);
+        prop_assert_eq!(hash(&big), hash(&float));
+        let next = Value::from(format!("{text}1").parse::<BigInt>().unwrap());
+        prop_assert_ne!(&next, &float);
+    }
+
+    #[test]
     fn aware_datetimes_compare_by_instant(dt in datetime(), shift_hours in -12i64..12) {
         let Some(tz) = dt.tz() else { return Ok(()); };
         let hour = i64::from(dt.hour()) + shift_hours;

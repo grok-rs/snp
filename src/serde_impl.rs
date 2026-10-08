@@ -107,12 +107,14 @@ impl<'de> Deserializer<'de> for &'de Value {
             Value::Bool(b) => visitor.visit_bool(*b),
             Value::Int(i) => visitor.visit_i64(*i),
             Value::BigInt(b) => {
-                if let Ok(u) = b.as_str().parse::<u64>() {
+                if let Some(u) = b.to_u64() {
                     visitor.visit_u64(u)
                 } else if let Some(i) = b.to_i128() {
                     visitor.visit_i128(i)
+                } else if let Some(u) = b.to_u128() {
+                    visitor.visit_u128(u)
                 } else {
-                    visitor.visit_borrowed_str(b.as_str())
+                    visitor.visit_string(b.to_string())
                 }
             }
             Value::Float(f) => visitor.visit_f64(*f),
@@ -369,16 +371,17 @@ impl<'de> Visitor<'de> for ValueVisitor {
 impl Serialize for Value {
     /// Serializes the value with serde's data model: lists, tuples and sets
     /// as sequences, dicts as maps, bytes as bytes, big integers as `i128`
-    /// when they fit (as decimal text otherwise), dates and date-times as
-    /// their ISO text.
+    /// or `u128` when they fit (as their Python `str()` text otherwise),
+    /// dates and date-times as their ISO text.
     fn serialize<S: ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
             Self::Null => serializer.serialize_unit(),
             Self::Bool(b) => serializer.serialize_bool(*b),
             Self::Int(i) => serializer.serialize_i64(*i),
-            Self::BigInt(b) => match b.to_i128() {
-                Some(i) => serializer.serialize_i128(i),
-                None => serializer.serialize_str(b.as_str()),
+            Self::BigInt(b) => match (b.to_i128(), b.to_u128()) {
+                (Some(i), _) => serializer.serialize_i128(i),
+                (None, Some(u)) => serializer.serialize_u128(u),
+                (None, None) => serializer.collect_str(b),
             },
             Self::Float(f) => serializer.serialize_f64(*f),
             Self::String(s) => serializer.serialize_str(s),

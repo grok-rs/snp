@@ -80,7 +80,10 @@ pub use schema::Schema;
 #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 pub use serde_impl::{DeserializeError, from_value};
 pub use validator::{Cx, MapItem, Validator, WarnCallback};
-pub use value::{BigInt, Date, DateError, DateTime, Map, ParseBigIntError, Set, TzOffset, Value};
+pub use value::{
+    BigInt, Date, DateError, DateTime, Map, MaxStrDigitsError, ParseBigIntError, Set, TzOffset,
+    Value,
+};
 
 /// Validates `value` against `schema`, discarding warnings.
 ///

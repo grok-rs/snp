@@ -168,6 +168,9 @@ impl CheckFn {
     ///   {type}` for non-strings, where Python would raise `TypeError`)
     /// * `Array`: `Expected array but got {type(v).__name__!r}`, or the
     ///   inner error inside an `At index {i}` context
+    ///
+    /// Where Python's message would contain `repr()` of an integer with more
+    /// than 4300 digits, the error is CPython's uncaught `ValueError`.
     pub fn check(&self, value: &Value) -> Result<(), ValidationError> {
         match self {
             Self::Any => Ok(()),
@@ -188,10 +191,10 @@ impl CheckFn {
                 }
                 let mut sorted: Vec<&Value> = possible.iter().collect();
                 py_sort(&mut sorted);
-                let choices = join_str(sorted);
+                let choices = join_str(sorted)?;
                 Err(ValidationError::new(format!(
                     "Expected one of {choices} but got: {}",
-                    value.repr()
+                    value.try_repr()?
                 )))
             }
             Self::Regex(is_valid) => match value {
@@ -334,14 +337,17 @@ impl CheckFn {
     }
 }
 
-/// `', '.join(str(x) for x in values)`.
-pub(crate) fn join_str<'a, I: IntoIterator<Item = &'a Value>>(values: I) -> String {
+/// `', '.join(str(x) for x in values)`, failing like CPython for integers
+/// beyond the digit limit.
+pub(crate) fn join_str<'a, I: IntoIterator<Item = &'a Value>>(
+    values: I,
+) -> Result<String, ValidationError> {
     let mut out = String::new();
     for (i, v) in values.into_iter().enumerate() {
         if i > 0 {
             out.push_str(", ");
         }
-        out.push_str(&v.to_string());
+        out.push_str(&v.try_to_string()?);
     }
-    out
+    Ok(out)
 }
