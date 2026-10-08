@@ -531,7 +531,64 @@ mod tests {
         );
     }
 
+    /// A line-by-line transliteration of `xargs.partition` (`xargs.py:76-117`): a reversed list popped from the end,
+    /// an overflowing argument pushed back.
+    fn reference_partition(
+        cmd: &[OsString],
+        files: &[&OsStr],
+        jobs: usize,
+        max_len: usize,
+    ) -> Result<Vec<Vec<OsString>>, OsString> {
+        let max_args = files.len().div_ceil(jobs).max(4);
+        let mut ret = Vec::new();
+        let mut ret_cmd: Vec<OsString> = Vec::new();
+        let mut varargs: Vec<&OsStr> = files.iter().rev().copied().collect();
+        let base = command_length(cmd) + 1;
+        let mut total = base;
+        while let Some(arg) = varargs.pop() {
+            let arg_len = cmdlen(arg) + 1;
+            if total + arg_len <= max_len && ret_cmd.len() < max_args {
+                ret_cmd.push(arg.to_os_string());
+                total += arg_len;
+            } else if ret_cmd.is_empty() {
+                return Err(arg.to_os_string());
+            } else {
+                ret.push([cmd, &ret_cmd].concat());
+                ret_cmd = Vec::new();
+                total = base;
+                varargs.push(arg);
+            }
+        }
+        ret.push([cmd, &ret_cmd].concat());
+        Ok(ret)
+    }
+
     proptest::proptest! {
+        /// 10 §7.5.1 model test: `partition` equals the Python transliteration on random inputs.
+        #[test]
+        fn partition_matches_the_python_model(
+            cmd in proptest::collection::vec("[a-z]{1,6}", 1..4),
+            files in proptest::collection::vec("[a-zé😑 ]{0,20}", 0..120),
+            jobs in 1usize..32,
+            max_len in 10usize..600,
+        ) {
+            let cmd_os: Vec<OsString> = cmd.iter().map(OsString::from).collect();
+            let files_os: Vec<&OsStr> = files.iter().map(OsStr::new).collect();
+            let got = partition(&cmd_os, &files_os, n(jobs), max_len)
+                .map(|ranges| {
+                    ranges
+                        .into_iter()
+                        .map(|r| {
+                            let mut v = cmd_os.clone();
+                            v.extend(files_os[r].iter().map(|f| f.to_os_string()));
+                            v
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .map_err(|e| e.0);
+            proptest::prop_assert_eq!(got, reference_partition(&cmd_os, &files_os, jobs, max_len));
+        }
+
         /// 10 §7.5.1: never drops or duplicates a file, keeps the order, respects the budget and max_args, and
         /// raises ArgumentTooLong exactly when a single argument cannot fit.
         #[test]

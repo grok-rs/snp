@@ -51,11 +51,21 @@ fn matrix() {
         .iter()
         .map(OsString::from)
         .collect();
-    // Exits 0 by itself after 3 s: well beyond the 1 s grace, so a kill would show as -9.
-    let critical: Vec<OsString> = [probe.as_str(), "trap", &file("critical"), "300", "3000"]
-        .iter()
-        .map(OsString::from)
-        .collect();
+    // Exits 0 by itself 2 s after the grace would end: a kill within the grace window would show as -9.
+    let grace_ms: u64 = driver_param("SNP_KILL_GRACE")
+        .and_then(|g| g.parse::<u64>().ok())
+        .map_or(2_000, |s| s * 1_000);
+    let critical_timeout = (grace_ms + 2_000).to_string();
+    let critical: Vec<OsString> = [
+        probe.as_str(),
+        "trap",
+        &file("critical"),
+        "300",
+        &critical_timeout,
+    ]
+    .iter()
+    .map(OsString::from)
+    .collect();
     let env = crate::common::env();
     let cwd = dir.clone();
     let budget = crate::common::budget();
@@ -153,10 +163,15 @@ mod posix {
 
     /// Starts the `matrix`/`shield` driver (1 s kill grace) with stdout and stderr piped.
     pub(super) fn start(scenario: &str) -> Driver {
+        start_with_grace(scenario, "1")
+    }
+
+    /// Starts a driver with `SNP_KILL_GRACE=grace` (whole seconds).
+    pub(super) fn start_with_grace(scenario: &str, grace: &str) -> Driver {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("results");
         let mut cmd = driver_command("catalog::driver_entry", scenario);
-        cmd.env("SNP_KILL_GRACE", "1")
+        cmd.env("SNP_KILL_GRACE", grace)
             .env("SNP_PROC_TEST_DIR", dir.path())
             .env("SNP_PROC_TEST_OUT", &out)
             .stdin(Stdio::null())
@@ -234,12 +249,12 @@ fn assert_isolated_and_critical(d: &posix::Driver, sig: &str) {
 }
 
 /// Sent SIGINT: forwarded to Inherit children by pid and to isolated groups by `-pgid`; snp returns (exit 130 is
-/// the envelope's).
+/// the envelope's). Runs with the default 2 s grace: the Critical child is not signalled across the whole window.
 #[cfg(unix)]
 #[test]
 fn signal_matrix_sent_sigint() {
     use std::os::unix::process::ExitStatusExt;
-    let mut d = posix::start("matrix");
+    let mut d = posix::start_with_grace("matrix", "2");
     posix::wait_ready(&d);
     posix::send(&d, rustix::process::Signal::INT);
     let st = posix::finish(&mut d);

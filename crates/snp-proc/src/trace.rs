@@ -211,6 +211,18 @@ mod tests {
         assert_eq!(scrub_urls("é://ü:p@ö"), "é://***@ö");
     }
 
+    proptest::proptest! {
+        /// Scrubbing never panics, is idempotent and leaves no userinfo before an `@` of a URL authority.
+        #[test]
+        fn scrub_is_total_and_idempotent(s in "\\PC{0,60}", user in "[a-z0-9:]{1,12}") {
+            let once = scrub_urls(&s);
+            proptest::prop_assert_eq!(scrub_urls(&once), once.clone());
+            let url = format!("x https://{user}@host/p {s}");
+            let scrubbed = scrub_urls(&url);
+            proptest::prop_assert!(scrubbed.starts_with("x https://***@host/p "));
+        }
+    }
+
     #[test]
     fn rendering_hides_secrets() {
         let env = Env::from_pairs([

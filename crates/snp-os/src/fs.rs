@@ -673,7 +673,7 @@ mod imp {
     pub(super) fn create_truncate_nofollow(path: &Path) -> io::Result<File> {
         let fd = rustix::fs::open(
             path,
-            OFlags::WRONLY | OFlags::CREATE | OFlags::TRUNC | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            OFlags::RDWR | OFlags::CREATE | OFlags::TRUNC | OFlags::NOFOLLOW | OFlags::CLOEXEC,
             Mode::from_raw_mode(0o666),
         )?;
         Ok(File::from(fd))
@@ -697,14 +697,22 @@ mod imp {
                 ),
             ));
         }
-        let euid = rustix::process::geteuid();
-        let owner = md.uid();
-        if owner == euid.as_raw() {
-            Ok(Ownership::Own)
-        } else {
-            Ok(Ownership::Foreign {
-                root_over_user: euid.is_root() && owner != 0,
-            })
+        Ok(super::classify_owner(
+            md.uid(),
+            rustix::process::geteuid().as_raw(),
+        ))
+    }
+}
+
+/// ADR-044/ADR-077: `Own` when the directory belongs to the effective uid, else `Foreign`, with
+/// `root_over_user` when snp runs as root (euid 0) over a non-root owner's directory.
+#[cfg(any(unix, test))]
+const fn classify_owner(owner: u32, euid: u32) -> Ownership {
+    if owner == euid {
+        Ownership::Own
+    } else {
+        Ownership::Foreign {
+            root_over_user: euid == 0 && owner != 0,
         }
     }
 }
@@ -1188,6 +1196,32 @@ mod tests {
         let f = d.path().join("file");
         std::fs::write(&f, b"").unwrap();
         assert!(ensure_private_dir(&f).is_err());
+    }
+
+    /// ADR-044/ADR-077: ownership classification, including `root_over_user` (only reachable as root on a real
+    /// system).
+    #[test]
+    fn owner_classification() {
+        assert_eq!(classify_owner(1000, 1000), Ownership::Own);
+        assert_eq!(classify_owner(0, 0), Ownership::Own);
+        assert_eq!(
+            classify_owner(1000, 0),
+            Ownership::Foreign {
+                root_over_user: true
+            }
+        );
+        assert_eq!(
+            classify_owner(0, 1000),
+            Ownership::Foreign {
+                root_over_user: false
+            }
+        );
+        assert_eq!(
+            classify_owner(1001, 1000),
+            Ownership::Foreign {
+                root_over_user: false
+            }
+        );
     }
 
     #[test]

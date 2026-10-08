@@ -71,7 +71,9 @@ deny = [
     { crate = "memmap2", reason = "no memory-mapped files (truncation SIGBUS)" },
     { crate = "anstyle-query", reason = "Windows colour via winapi-util (ADR-029)" },
     { crate = "unicode-width", reason = "east-asian width from snp-pycompat tables (UCD 15.1)" },
-    { crate = "nix", reason = "rustix only (safe APIs)" },
+    # ctrlc and process-wrap are Windows-only dependencies of snp-proc; their `cfg(unix)` edge to nix is never built,
+    # but cargo-deny evaluates target cfgs per edge, so the two must be listed as wrappers (WP-15).
+    { crate = "nix", wrappers = ["ctrlc", "process-wrap"], reason = "rustix only (safe APIs)" },
 ]
 
 [sources]

@@ -192,6 +192,17 @@ mod tests {
         );
     }
 
+    proptest::proptest! {
+        /// The passwd parser accepts arbitrary bytes without panicking and only returns a field of an input line.
+        #[test]
+        fn passwd_parsing_is_total(data in proptest::collection::vec(proptest::num::u8::ANY, 0..400)) {
+            if let Some(dir) = passwd::parse_home(&data, |_, _| true) {
+                proptest::prop_assert!(dir.len() <= data.len());
+                proptest::prop_assert!(!dir.contains(&b'\n') && !dir.contains(&b':'));
+            }
+        }
+    }
+
     #[test]
     fn default_cache_root_rules() {
         let root =

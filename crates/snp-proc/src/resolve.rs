@@ -262,6 +262,34 @@ pub fn self_exe() -> io::Result<PathBuf> {
     Ok(CACHE.get_or_init(|| exe).clone())
 }
 
+/// Windows: `PATHEXT` is tried directory-major (every extension in the first `PATH` entry before the second one),
+/// extensions before the bare name, with the extension's case from `PATHEXT` (14 P-20, 04a §14.6).
+#[cfg(test)]
+#[cfg(windows)]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn windows_pathext_is_directory_major() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a");
+        let b = d.path().join("b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(a.join("tool.cmd"), b"").unwrap();
+        std::fs::write(a.join("tool"), b"#!/bin/sh\n").unwrap();
+        std::fs::write(b.join("tool.exe"), b"").unwrap();
+        let mut path = a.clone().into_os_string();
+        path.push(";");
+        path.push(&b);
+        let env = Env::from_pairs([("Path", path), ("PATHEXT", OsString::from(".EXE;.CMD"))]);
+        // Directory-major: a\tool.CMD (second extension, first directory) beats b\tool.EXE; the extension's case
+        // comes from PATHEXT; the extension-less shim is tried last.
+        let got = find_executable(OsStr::new("tool"), &env, d.path()).unwrap();
+        assert_eq!(got, a.join("tool.CMD"));
+    }
+}
+
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
