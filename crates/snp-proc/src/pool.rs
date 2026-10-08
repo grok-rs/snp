@@ -45,6 +45,7 @@ fn fd_budget() -> NonZeroUsize {
 }
 
 /// The clamp for a soft `RLIMIT_NOFILE` (`None` = unlimited).
+#[cfg(any(unix, test))]
 fn fd_budget_for(soft: Option<u64>) -> NonZeroUsize {
     soft.map_or(NonZeroUsize::MAX, |s| {
         let per = s.saturating_sub(64) / 8;

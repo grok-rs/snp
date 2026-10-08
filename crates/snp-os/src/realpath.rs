@@ -17,6 +17,7 @@ pub fn realpath_nonstrict(p: &Path, cwd: &Path) -> io::Result<PathBuf> {
 }
 
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use super::*;
 

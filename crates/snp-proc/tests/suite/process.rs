@@ -4,16 +4,21 @@
 //! the spawn log and the secret-free trace log. Tests that change process-wide state (rlimits, the subreaper,
 //! killing every descendant) run in a driver process of their own.
 
+#[cfg(unix)]
 use std::ffi::OsString;
 use std::num::NonZeroUsize;
-use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use snp_core::cancel::{CancelReason, CancelToken};
 use snp_proc::pool::{JobPool, Limiter};
-use snp_proc::spawn::{self, Group, Output, OutputBudget, PyStatus};
+use snp_proc::spawn::{self, Group, PyStatus};
+#[cfg(target_os = "linux")]
+use snp_proc::spawn::{Output, OutputBudget};
 
 use crate::common::{
     budget, bytes, driver_command, driver_param, env, hook, ms, probe, probe_argv, report, result,
@@ -27,6 +32,7 @@ pub(crate) fn drive(scenario: &str) -> bool {
         "rss" => rss(),
         "quiesce" => quiesce_daemon(),
         "quiesce_hold" => quiesce_hold(),
+        "trace" => trace(),
         _ => return false,
     }
     true
@@ -126,7 +132,15 @@ fn signal_death_and_enoexec() {
     std::fs::write(d.path().join("x"), b"echo would run under sh\n").unwrap();
     std::fs::set_permissions(d.path().join("x"), std::fs::Permissions::from_mode(0o755)).unwrap();
     let argv = [OsString::from("./x")];
-    let e = spawn::merged(&hook(&argv, &env, d.path(), &cancel), false, &budget()).unwrap_err();
+    // A child forked by a concurrent test may hold the just-written file open for a moment (ETXTBSY).
+    let mut e = spawn::merged(&hook(&argv, &env, d.path(), &cancel), false, &budget()).unwrap_err();
+    for _ in 0..20 {
+        if e.io.raw_os_error() != Some(26) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+        e = spawn::merged(&hook(&argv, &env, d.path(), &cancel), false, &budget()).unwrap_err();
+    }
     assert_eq!(e.python_text(), "[Errno 8] Exec format error: './x'");
 }
 
@@ -493,6 +507,8 @@ fn quiesce_hold() {
             })
             .unwrap();
         std::thread::sleep(Duration::from_millis(500));
+        // The cancel path: the run's token is cancelled first.
+        cancel.cancel(CancelReason::Interrupt);
         snp_proc::registry::quiesce(Duration::from_millis(100));
         let m = h.join().unwrap();
         report("status", m.status.0);
@@ -500,46 +516,24 @@ fn quiesce_hold() {
     report("took_ms", t0.elapsed().as_millis());
 }
 
-/// `SNP_LOG=trace`: the spawn event shows no secret value (allow-list, ADR-077).
+/// `SNP_LOG=trace`: the spawn event shows no secret value (allow-list, ADR-077). Runs in a driver process with a
+/// global subscriber (tracing's per-callsite interest cache is process-wide).
 #[test]
 fn trace_log_shows_no_secrets() {
-    use std::sync::Mutex;
-    #[derive(Clone, Default)]
-    struct Buf(Arc<Mutex<Vec<u8>>>);
-    impl std::io::Write for Buf {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0
-                .lock()
-                .map_err(|_| std::io::Error::other("poisoned"))?
-                .extend_from_slice(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    let buf = Buf::default();
-    let writer = buf.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
-        .with_ansi(false)
-        .with_writer(move || writer.clone())
-        .finish();
-    let d = tempfile::tempdir().unwrap();
-    let env = snp_core::env::Env::from_pairs([
-        ("PATH", "/usr/bin:/bin"),
-        ("NPM_AUTH", "npm-token-SECRET1"),
-        ("MYSQL_PWD", "mysql-SECRET2"),
-        ("OPENAI_API_KEY", "sk-SECRET3"),
-        ("SNP_JOBS", "4"),
-    ]);
-    let cancel = CancelToken::new();
-    let argv = probe_argv(&["args", "https://user:SECRET4@example.com/repo.git"]);
-    tracing::subscriber::with_default(subscriber, || {
-        let m = spawn::merged(&hook(&argv, &env, d.path(), &cancel), false, &budget()).unwrap();
-        assert_eq!(m.status, PyStatus(0));
-    });
-    let log = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("trace.log");
+    let out = dir.path().join("results");
+    let st = driver_command("catalog::driver_entry", "trace")
+        .env("SNP_PROC_TEST_DIR", dir.path())
+        .env("SNP_PROC_TEST_OUT", &out)
+        .env("SNP_PROC_TEST_LOG", &log_path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(st.success(), "{:?}", results(&out));
+    assert_eq!(result(&results(&out), "status"), Some("0"));
+    let log = std::fs::read_to_string(&log_path).unwrap();
     assert!(log.contains("spawn"), "{log}");
     assert!(
         log.contains("SNP_JOBS=\\\"4\\\"") || log.contains("SNP_JOBS=\"4\""),
@@ -549,6 +543,30 @@ fn trace_log_shows_no_secrets() {
     for secret in ["SECRET1", "SECRET2", "SECRET3", "SECRET4"] {
         assert!(!log.contains(secret), "{secret} leaked: {log}");
     }
+}
+
+/// The driver side of [`trace_log_shows_no_secrets`].
+fn trace() {
+    let log_path = PathBuf::from(driver_param("SNP_PROC_TEST_LOG").unwrap());
+    let file = std::fs::File::create(&log_path).unwrap();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_ansi(false)
+        .with_writer(std::sync::Mutex::new(file))
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).unwrap();
+    let d = PathBuf::from(driver_param("SNP_PROC_TEST_DIR").unwrap());
+    let env = snp_core::env::Env::from_pairs([
+        ("PATH", "/usr/bin:/bin"),
+        ("NPM_AUTH", "npm-token-SECRET1"),
+        ("MYSQL_PWD", "mysql-SECRET2"),
+        ("OPENAI_API_KEY", "sk-SECRET3"),
+        ("SNP_JOBS", "4"),
+    ]);
+    let cancel = CancelToken::new();
+    let argv = probe_argv(&["args", "https://user:SECRET4@example.com/repo.git"]);
+    let m = spawn::merged(&hook(&argv, &env, &d, &cancel), false, &budget()).unwrap();
+    report("status", m.status.0);
 }
 
 /// `SNP_TEST_SPAWN_LOG`: every spawn appends `<role> <group> <argv0 basename>`.

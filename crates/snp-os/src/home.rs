@@ -76,6 +76,7 @@ mod passwd {
     }
 
     /// `name:passwd:uid:gid:gecos:dir:shell` lines; NIS `+`/`-` lines and malformed lines are skipped.
+    #[cfg(any(unix, test))]
     pub(super) fn parse_home(data: &[u8], matches: impl Fn(&[u8], &[u8]) -> bool) -> Option<&[u8]> {
         data.split(|b| *b == b'\n').find_map(|line| {
             let line = line.strip_suffix(b"\r").unwrap_or(line);

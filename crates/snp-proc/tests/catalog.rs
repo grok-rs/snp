@@ -12,6 +12,7 @@ mod common;
 #[path = "suite/process.rs"]
 mod process;
 #[cfg(test)]
+#[cfg(unix)]
 #[path = "suite/signals.rs"]
 mod signals;
 
@@ -20,13 +21,16 @@ mod catalog {
     use std::ffi::{OsStr, OsString};
     use std::num::NonZeroUsize;
     use std::path::Path;
+    #[cfg(unix)]
     use std::time::{Duration, Instant};
 
     use snp_core::cancel::CancelToken;
     use snp_core::env::Env;
     use snp_core::failure::Failure;
     use snp_proc::pool::JobPool;
-    use snp_proc::resolve::{self, ExeError};
+    use snp_proc::resolve;
+    #[cfg(unix)]
+    use snp_proc::resolve::ExeError;
     use snp_proc::spawn::{self, PyStatus};
     use snp_proc::{hookcmd, xargs};
 
@@ -39,9 +43,22 @@ mod catalog {
             return;
         };
         assert!(
-            crate::process::drive(&scenario) || crate::signals::drive(&scenario),
+            crate::process::drive(&scenario) || signals_drive(&scenario),
             "unknown driver scenario {scenario}"
         );
+    }
+
+    /// The signal scenarios (POSIX only).
+    fn signals_drive(scenario: &str) -> bool {
+        #[cfg(unix)]
+        {
+            crate::signals::drive(scenario)
+        }
+        #[cfg(not(unix))]
+        {
+            let _: &str = scenario;
+            false
+        }
     }
 
     /// `xargs.xargs` + `lang_base.run_xargs` as snp-run will compose them: `normalize_cmd` once (an `ExeError` is
@@ -90,7 +107,8 @@ mod catalog {
     }
 
     /// `xargs_test.py:16-47` on the real machine: Linux counts the affinity mask (cgroup quotas ignored, like
-    /// Python), elsewhere `os.cpu_count()`. The fallback chain itself is `src/xargs.rs`'s `t10_xrg_01_cpu_count_fallbacks`.
+    /// Python), elsewhere `os.cpu_count()`. The fallback chain itself is `t10_xrg_01_cpu_count_fallbacks` in
+    /// `src/xargs.rs`.
     #[test]
     fn t10_xrg_01_cpu_count_is_the_affinity_count() {
         #[cfg(target_os = "linux")]
@@ -276,15 +294,25 @@ mod catalog {
             let script = d.path().join("noshebang");
             std::fs::write(&script, b"echo hi\n").unwrap();
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-            let (st, out) = run_xargs(
-                &os(&["./noshebang"]),
-                &[],
-                1,
-                30_000,
-                false,
-                &env(),
-                d.path(),
-            );
+            // A child forked by a concurrent test may still hold the just-written file open for a moment
+            // (ETXTBSY, "Text file busy"): retry that transient error only.
+            let mut attempt = 0;
+            let (st, out) = loop {
+                let r = run_xargs(
+                    &os(&["./noshebang"]),
+                    &[],
+                    1,
+                    30_000,
+                    false,
+                    &env(),
+                    d.path(),
+                );
+                attempt += 1;
+                if !r.1.starts_with(b"[Errno 26]") || attempt > 20 {
+                    break r;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            };
             assert_eq!(st, PyStatus(1));
             assert_eq!(out, b"[Errno 8] Exec format error: './noshebang'\n");
         }
@@ -335,7 +363,7 @@ mod catalog {
             resolve::normexe(us.as_os_str(), &path_env(&[]), r).unwrap(),
             us
         );
-        let trivial = vec![us.clone().into_os_string(), OsString::from("hi")];
+        let trivial = vec![us.as_os_str().to_os_string(), OsString::from("hi")];
         assert_eq!(
             resolve::normalize_cmd(&trivial, &path_env(&[]), r).unwrap(),
             trivial
@@ -379,6 +407,7 @@ mod catalog {
             }
             p
         };
+        #[cfg(unix)]
         let bin_on_path = |extra: &[(&str, OsString)]| {
             let mut path = bin.clone().into_os_string();
             if cfg!(unix) {

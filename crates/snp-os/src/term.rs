@@ -135,7 +135,7 @@ pub fn stdout_is_windows_console() -> bool {
 pub fn ensure_vt() {
     #[cfg(windows)]
     if COLOR_DECIDED.load(Ordering::Relaxed) {
-        let _ignored: bool = enable_vt_on_stderr();
+        let _ignored = enable_vt_on_stderr();
     }
 }
 

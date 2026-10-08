@@ -112,8 +112,8 @@ impl Drop for SignalGuard {
 impl SignalGuard {
     /// Shield the stash restore from further signals.
     ///
-    /// While any shield is alive a signal prints [`crate::messages::RESTORE_NOTICE`] once (per shielded period) and
-    /// does nothing else beyond recording a first signal.
+    /// While any shield is alive a signal prints `snp: restoring stashed changes, please wait` once (per shielded
+    /// period) and does nothing else beyond recording a first signal.
     pub fn shield(&self) -> RestoreShield {
         if self.state.shields.fetch_add(1, Ordering::AcqRel) == 0 {
             self.state.notice_printed.store(false, Ordering::Release);

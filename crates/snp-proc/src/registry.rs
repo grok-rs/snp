@@ -1,17 +1,18 @@
 //! Every child spawned by `spawn::*` is registered until reaped (waitid(WNOWAIT) on Unix → no pid reuse; Windows keeps
 //! the handle). Critical children are registered for reaping only: nothing here ever signals them (ADR-065).
 //!
-//! A child's [`Cell`] holds the `Child` behind a mutex. Its worker detects the exit with
+//! A child's cell holds the `Child` behind a mutex. Its worker detects the exit with
 //! `waitid(WEXITED|WNOHANG|WNOWAIT)` (the zombie keeps its pid and, for an isolated child, its process group id
 //! reserved), and reaps it only at the very end, under the cell's mutex, setting `reaped`. Every kill takes the same
 //! mutex and skips reaped cells, so a signal can never reach a recycled pid (ARCHITECTURE §3.6 "reaping").
 //!
 //! Owner: WP-15.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant};
 
+use snp_core::cancel::CancelToken;
 use snp_core::sync;
 
 use crate::spawn::{Group, Role};
@@ -56,6 +57,7 @@ pub enum Origin {
 
 /// Whether an Inherit-group child must be sent `sig` (ARCHITECTURE §10.4): only signals sent by a process; an
 /// unknown origin counts as sent for TERM/HUP and as kernel-generated for INT.
+#[cfg(any(unix, test))]
 const fn reaches_inherit_children(sig: Sig, origin: Origin) -> bool {
     match origin {
         Origin::Sent => true,
@@ -117,6 +119,9 @@ pub(crate) struct Cell {
     pub(crate) group: Group,
     /// The child and its reaped flag.
     pub(crate) state: Mutex<CellState>,
+    /// The token of its spawn: `forward`, `escalate` and `quiesce` act only on children whose token is cancelled
+    /// (a child spawned with an independent token, such as a restore-time helper, has opted out).
+    cancel: CancelToken,
     /// Registry id.
     id: u64,
 }
@@ -153,7 +158,8 @@ static SPAWN_GATE: RwLock<()> = RwLock::new(());
 static KILL_GRACE_MS: AtomicU64 = AtomicU64::new(2_000);
 
 /// Whether this process is a child subreaper (Linux; set by `signals::install`).
-static SUBREAPER: AtomicBool = AtomicBool::new(false);
+#[cfg(any(target_os = "linux", target_os = "android"))]
+static SUBREAPER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Most Job Objects of finished hooks kept for `quiesce` (Windows).
 #[cfg(windows)]
@@ -173,6 +179,7 @@ pub(crate) fn set_kill_grace(d: Duration) {
 }
 
 /// Records that `PR_SET_CHILD_SUBREAPER` is in effect.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub(crate) fn set_subreaper(on: bool) {
     SUBREAPER.store(on, Ordering::Relaxed);
 }
@@ -183,7 +190,13 @@ pub(crate) fn spawn_gate() -> RwLockReadGuard<'static, ()> {
 }
 
 /// Registers a freshly spawned child.
-pub(crate) fn register(child: Proc, pid: u32, role: Role, group: Group) -> Arc<Cell> {
+pub(crate) fn register(
+    child: Proc,
+    pid: u32,
+    role: Role,
+    group: Group,
+    cancel: CancelToken,
+) -> Arc<Cell> {
     let cell = Arc::new(Cell {
         pid,
         role,
@@ -192,6 +205,7 @@ pub(crate) fn register(child: Proc, pid: u32, role: Role, group: Group) -> Arc<C
             child: Some(child),
             reaped: false,
         }),
+        cancel,
         id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
     });
     sync::lock(&REGISTRY).live.push(Arc::clone(&cell));
@@ -217,6 +231,13 @@ pub(crate) fn unregister(cell: &Cell) {
     }
     drop(reg);
     CHANGED.notify_all();
+    tracing::trace!(
+        target: "snp::spawn",
+        pid = cell.pid,
+        role = ?cell.role,
+        group = ?cell.group,
+        "child released"
+    );
 }
 
 /// A snapshot of the live cells.
@@ -278,7 +299,7 @@ pub(crate) fn kill_now(cell: &Cell) {
 pub fn forward(sig: Sig, origin: Origin) {
     #[cfg(unix)]
     for cell in live() {
-        if cell.role == Role::Critical {
+        if !affected(&cell) {
             continue;
         }
         match cell.group {
@@ -295,20 +316,28 @@ pub fn forward(sig: Sig, origin: Origin) {
 
 /// After the grace: SIGKILL Hook/Tool children (Isolated by -pgid), Windows job terminate.
 ///
-/// The second phase of the §10.4 table (pid-reuse-safe: reaped cells are skipped). Critical children are never
-/// touched.
+/// The second phase of the §10.4 table (pid-reuse-safe: reaped cells are skipped). Critical children, and children
+/// whose spawn token is not cancelled, are never touched.
 pub fn escalate() {
     for cell in live() {
-        kill_now(&cell);
+        if affected(&cell) {
+            kill_now(&cell);
+        }
     }
+}
+
+/// Whether the cancellation reaches `cell`: a Hook/Tool child whose spawn token is cancelled (the run's token or a
+/// child of it). Critical children and children spawned with an independent, uncancelled token are never touched.
+fn affected(cell: &Cell) -> bool {
+    cell.role != Role::Critical && cell.cancel.is_cancelled()
 }
 
 /// Cancel path only, before the restore: wait ≤ `bound` for Hook/Tool children to exit, then (Linux, subreaper)
 /// SIGKILL and reap every remaining non-Critical descendant found under /proc/self/task/*/children; Windows: the run's
 /// hook Job Object is terminated; macOS: Isolated groups by -pgid only (residual risk, D-DATA-02).
 ///
-/// Remaining registered Hook/Tool children are killed with SIGKILL (by `-pgid` when isolated) once `bound` elapses; their
-/// workers reap them. On Linux with `PR_SET_CHILD_SUBREAPER` (`signals::install(_, true)`) the orphaned descendants
+/// Remaining registered Hook/Tool children of the cancelled token are killed with SIGKILL (by `-pgid` when isolated)
+/// once `bound` elapses; their workers reap them. On Linux with `PR_SET_CHILD_SUBREAPER` (`signals::install(_, true)`) the orphaned descendants
 /// of finished hooks have been reparented to snp: every child of this process that is not registered is killed and
 /// reaped, in rounds, until none is left (their own children reparent in turn); Critical children and their
 /// descendants are never touched. Windows terminates the Job Objects of live and finished hooks.
@@ -317,7 +346,7 @@ pub fn quiesce(bound: Duration) {
     {
         let mut reg = sync::lock(&REGISTRY);
         loop {
-            if !reg.live.iter().any(|c| c.role != Role::Critical) {
+            if !reg.live.iter().any(|c| affected(c)) {
                 break;
             }
             let left = deadline.map_or(Duration::from_millis(50), |d| {
@@ -333,7 +362,7 @@ pub fn quiesce(bound: Duration) {
         }
     }
     escalate();
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     if SUBREAPER.load(Ordering::Relaxed) {
         sweep_orphans();
     }
@@ -348,7 +377,7 @@ pub fn quiesce(bound: Duration) {
 }
 
 /// The direct children of this process (every thread's `/proc/self/task/<tid>/children`).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn proc_children() -> Vec<i32> {
     let mut out = Vec::new();
     let Ok(tasks) = std::fs::read_dir("/proc/self/task") else {
@@ -370,7 +399,7 @@ fn proc_children() -> Vec<i32> {
 
 /// SIGKILLs and reaps every unregistered child (orphaned hook descendants reparented to this subreaper), in
 /// rounds bounded to ~2 s in total.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn sweep_orphans() {
     use rustix::process::{Pid, Signal, WaitId, WaitIdOptions};
     let _gate = sync::write(&SPAWN_GATE);

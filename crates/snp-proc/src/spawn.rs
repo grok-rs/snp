@@ -641,6 +641,13 @@ enum Phase {
     /// Running normally.
     Normal,
     /// The deadline sent SIGTERM at this instant.
+    #[cfg_attr(
+        windows,
+        expect(
+            dead_code,
+            reason = "Windows has no SIGTERM: the job is terminated at once"
+        )
+    )]
     Terminating(Instant),
     /// Cancellation was observed at this instant.
     Cancelling(Instant),
@@ -653,6 +660,10 @@ enum Poll {
     Running,
     Exited(PyStatus),
     /// Critical child stopped by SIGTTIN/SIGTTOU.
+    #[cfg_attr(
+        windows,
+        expect(dead_code, reason = "job-control stops are POSIX-only")
+    )]
     TtyStopped,
 }
 
@@ -1042,7 +1053,7 @@ fn start(
         spawn_platform(cmd, spec.role, group)
     };
     let (proc_, pid, stdin, out, err) = spawned.map_err(fail)?;
-    let cell = registry::register(proc_, pid, spec.role, group);
+    let cell = registry::register(proc_, pid, spec.role, group, spec.cancel.clone());
     drop(gate);
     let started = Started {
         cell,
@@ -1567,10 +1578,23 @@ mod tests {
         }
         let argv = [OsString::from("./x.sh")];
         let (env, cancel) = (env(), CancelToken::new());
-        let e = capture(&spec(&argv, &env, d.path(), &cancel)).unwrap_err();
+        // A child forked by a concurrent test may hold the just-written file open for a moment (ETXTBSY).
+        let retry = |f: &dyn Fn() -> SpawnError| {
+            let mut e = f();
+            for _ in 0..20 {
+                if e.io.raw_os_error() != Some(26) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+                e = f();
+            }
+            e
+        };
+        let e = retry(&|| capture(&spec(&argv, &env, d.path(), &cancel)).unwrap_err());
         assert_eq!(e.python_text(), "[Errno 8] Exec format error: './x.sh'");
         let budget = budget(1024);
-        let e = merged(&spec(&argv, &env, d.path(), &cancel), false, &budget).unwrap_err();
+        let e =
+            retry(&|| merged(&spec(&argv, &env, d.path(), &cancel), false, &budget).unwrap_err());
         assert_eq!(e.python_text(), "[Errno 8] Exec format error: './x.sh'");
         let argv = [OsString::from("/nonexistent/prog")];
         let e = capture(&spec(&argv, &env, d.path(), &cancel)).unwrap_err();
