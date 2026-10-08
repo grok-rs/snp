@@ -1,0 +1,28 @@
+# crate-ci/typos configuration.
+
+[files]
+extend-exclude = [
+    "Cargo.lock",
+    "deps.lock",
+    # Research corpora quote third-party sources, byte strings and generated vectors verbatim.
+    "docs/research/**",
+    "crates/*/src/generated/**",
+    "crates/*/tests/vectors/**",
+    "tests/differential/scenarios/**",
+]
+
+[default]
+extend-ignore-re = [
+    # hex digests and object ids
+    "[0-9a-f]{12,}",
+    # escaped byte strings
+    "\\\\x[0-9a-fA-F]{2}",
+]
+
+[default.extend-words]
+# Python / pre-commit vocabulary
+fo = "fo"
+ba = "ba"
+nd = "nd"
+ue = "ue"
+ser = "ser"

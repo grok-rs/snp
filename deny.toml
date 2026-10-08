@@ -1,0 +1,81 @@
+# cargo-deny configuration (ARCHITECTURE §1.3 "Banned", §11.7 supply chain).
+
+[graph]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+]
+all-features = true
+
+[advisories]
+yanked = "deny"
+unmaintained = "workspace"
+ignore = []
+
+[licenses]
+confidence-threshold = 0.93
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "MPL-2.0",
+]
+
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+deny = [
+    # ADR-004: no async runtime.
+    { crate = "tokio", reason = "no async runtime (ADR-004)" },
+    { crate = "async-std", reason = "no async runtime (ADR-004)" },
+    { crate = "rayon", reason = "one global JobPool (ADR-004, ADR-065)" },
+    # ADR-010: clap only in the build-time xtask.
+    { crate = "clap", wrappers = ["xtask", "clap_complete", "clap_mangen", "criterion"], reason = "own argparse engine (ADR-010); clap only in xtask (and the criterion bench harness)" },
+    # ADR-014: own executable lookup.
+    { crate = "which", reason = "own find_executable (ADR-014)" },
+    # Python shlex semantics come from snp-pycompat.
+    { crate = "shlex", wrappers = ["cc"], reason = "use snp_pycompat::shlex (Python semantics); `cc` build scripts may use it" },
+    { crate = "shell-words", reason = "use snp_pycompat::shlex (Python semantics)" },
+    # ADR-002: libyaml-safer + own PyYAML layers.
+    { crate = "serde_yaml", reason = "deprecated; snp-yaml (ADR-002)" },
+    { crate = "serde_yml", reason = "RUSTSEC-2025-0068; snp-yaml (ADR-002)" },
+    { crate = "libyml", reason = "RUSTSEC-2025-0067" },
+    { crate = "yaml-rust", reason = "RUSTSEC-2024-0320; snp-yaml (ADR-002)" },
+    { crate = "yaml-rust2", reason = "snp-yaml (ADR-002)" },
+    # FD-2: own store, no SQLite.
+    { crate = "rusqlite", reason = "no SQLite store (FD-2)" },
+    { crate = "openssl", reason = "rustls only" },
+    { crate = "openssl-sys", reason = "rustls only" },
+    { crate = "atty", reason = "RUSTSEC-2021-0145; std::io::IsTerminal" },
+    # ADR-079: mimalloc only as the musl allocator of the snp binary.
+    { crate = "mimalloc", wrappers = ["snp"], reason = "only the musl allocator of crates/snp (ADR-079)" },
+    # ADR-003: `regex` only behind snp-pyre (snp-pycompat is regex-free). Third-party dev tools
+    # that use it internally are allowed as wrappers.
+    { crate = "regex", wrappers = ["snp-pyre", "insta", "criterion", "tracing-subscriber", "matchers"], reason = "regex only via snp-pyre (ADR-003, ADR-056)" },
+    { crate = "memmap2", reason = "no memory-mapped files (truncation SIGBUS)" },
+    { crate = "anstyle-query", reason = "Windows colour via winapi-util (ADR-029)" },
+    { crate = "unicode-width", reason = "east-asian width from snp-pycompat tables (UCD 15.1)" },
+    { crate = "nix", reason = "rustix only (safe APIs)" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

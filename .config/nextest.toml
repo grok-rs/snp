@@ -1,0 +1,24 @@
+# cargo-nextest profiles (ARCHITECTURE §13.7, 07 §4.8).
+
+[profile.default]
+# Hermetic tests only; oracle/differential tests are behind `#[ignore]` or separate jobs.
+fail-fast = false
+slow-timeout = { period = "30s", terminate-after = 4 }
+status-level = "fail"
+final-status-level = "slow"
+
+[profile.ci]
+retries = 2
+failure-output = "immediate-final"
+slow-timeout = { period = "60s", terminate-after = 5 }
+
+[profile.ci.junit]
+path = "junit.xml"
+
+[profile.nightly]
+retries = 0
+failure-output = "immediate-final"
+slow-timeout = { period = "120s", terminate-after = 10 }
+
+[profile.nightly.junit]
+path = "junit.xml"

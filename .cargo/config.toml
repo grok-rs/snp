@@ -1,0 +1,6 @@
+[alias]
+xtask = "run --package xtask --"
+lint = "clippy --workspace --all-targets --locked"
+
+# Do not put -Dwarnings into rustflags here (it would invalidate the build cache for every
+# developer invocation); CI sets RUSTFLAGS=-Dwarnings (ARCHITECTURE §1.3).

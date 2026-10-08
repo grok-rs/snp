@@ -1,0 +1,24 @@
+# Pinned sibling user crates (ADR-061, ARCHITECTURE §1.5).
+#
+# The workspace depends on `../cfgv-rs` and `../file-identify` as path dependencies. Every CI
+# job and every release build checks both repositories out next to this repository at exactly
+# the `rev` below before running any cargo command; the scheduled drift job compares `rev`
+# with the head of `branch` and opens an issue when they differ. Bumping a `rev` is an
+# ordinary PR that runs every gate (incl. crates/snp-config/tests/user_crates.rs and
+# crates/snp-files/tests/user_crates.rs).
+
+[[crate]]
+name = "cfgv"
+version = "0.3.0"
+path = "../cfgv-rs"
+repository = "https://github.com/grok-rs/cfgv-rs"
+branch = "snp-support"
+rev = "6a04a30c3f11b9582570cf4cf0639699efe3dc9f"
+
+[[crate]]
+name = "file-identify"
+version = "0.5.0"
+path = "../file-identify"
+repository = "https://github.com/grok-rs/file-identify"
+branch = "snp-support"
+rev = "1324f403ba9b519b466fd27d186ae4e75cfa8d0b"
