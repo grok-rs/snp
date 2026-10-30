@@ -1,37 +1,41 @@
 //! `shlex.quote`, `shlex.join` and `shlex.split` (`posix=True`, `whitespace_split=True`,
-//! `commenters=''`) (15 §A4.8).
+//! `commenters=''`) (15 §A4.8; `Lib/shlex.py`).
 
 use std::borrow::Cow;
 use std::fmt;
 
-/// `ValueError` raised by `shlex.split`.
+use crate::messages;
+
+/// `ValueError` raised by `shlex.split` (`shlex.read_token`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ShlexError {
-    /// EOF inside quotes.
+    /// EOF inside quotes: `No closing quotation`.
     NoClosingQuotation,
-    /// EOF directly after a backslash (also inside `"…"`).
+    /// EOF directly after a backslash (also inside `"…"`): `No escaped character`.
     NoEscapedCharacter,
 }
 
 impl ShlexError {
     /// The Python exception class: `ValueError`.
+    #[must_use]
     pub const fn py_type(&self) -> &'static str {
-        "ValueError"
+        messages::VALUE_ERROR
     }
 }
 
 impl fmt::Display for ShlexError {
+    /// `str(exc)`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::NoClosingQuotation => "No closing quotation",
-            Self::NoEscapedCharacter => "No escaped character",
+            Self::NoClosingQuotation => messages::NO_CLOSING_QUOTATION,
+            Self::NoEscapedCharacter => messages::NO_ESCAPED_CHARACTER,
         })
     }
 }
 
 impl std::error::Error for ShlexError {}
 
-/// `shlex._find_unsafe` complement: ASCII `[A-Za-z0-9_@%+=:,./-]`.
+/// `shlex._find_unsafe` complement: ASCII `[A-Za-z0-9_@%+=:,./-]` (`re.ASCII` `\w`).
 const fn is_safe(b: u8) -> bool {
     b.is_ascii_alphanumeric()
         || matches!(
@@ -40,7 +44,9 @@ const fn is_safe(b: u8) -> bool {
         )
 }
 
-/// `shlex.quote(s)`.
+/// `shlex.quote(s)` (`clientlib.py:106,355`, `install_uninstall.py:105-107`): `''` for the empty
+/// string; `s` itself when every character is safe; else `'…'` with each `'` as `'"'"'`.
+/// Non-ASCII letters are unsafe (`'é'` → `"'é'"`).
 #[must_use]
 pub fn quote(s: &str) -> Cow<'_, str> {
     if s.is_empty() {
@@ -49,8 +55,16 @@ pub fn quote(s: &str) -> Cow<'_, str> {
     if s.bytes().all(is_safe) {
         return Cow::Borrowed(s);
     }
-    let mut out = String::from("'");
-    out.push_str(&s.replace('\'', "'\"'\"'"));
+    let mut out = String::new();
+    out.try_reserve(s.len().saturating_add(2))
+        .unwrap_or_default();
+    out.push('\'');
+    for (i, part) in s.split('\'').enumerate() {
+        if i > 0 {
+            out.push_str("'\"'\"'");
+        }
+        out.push_str(part);
+    }
     out.push('\'');
     Cow::Owned(out)
 }
@@ -77,7 +91,7 @@ pub fn quote_bytes(b: &[u8]) -> Cow<'_, [u8]> {
     Cow::Owned(out)
 }
 
-/// `shlex.join(args)` = `' '.join(quote(a) for a in args)`.
+/// `shlex.join(args)` = `' '.join(quote(a) for a in args)` (`install_uninstall.py:107`).
 #[must_use]
 pub fn join<I: IntoIterator<Item = S>, S: AsRef<str>>(args: I) -> String {
     let mut out = String::new();
@@ -109,8 +123,10 @@ enum Esc {
     InDouble,
 }
 
-/// `shlex.split(s)`: `'…'` is literal; inside `"…"` a backslash escapes only `"` and `\`; outside
-/// quotes it escapes any character; `''` and `""` produce an empty token; `#` is ordinary.
+/// `shlex.split(s)` (`lang_base.py:175` `hook_cmd`, `languages/r.py:183`): the `read_token` state
+/// machine with SHLEX-WS separators (`' \t\r\n'` only); `'…'` is literal; inside `"…"` a backslash
+/// escapes only `"` and `\`; outside quotes it escapes any character (a newline too); `''` and
+/// `""` produce an empty token; `#` is ordinary (`commenters=''`).
 pub fn split(s: &str) -> Result<Vec<String>, ShlexError> {
     let mut out = Vec::new();
     let mut tok = String::new();

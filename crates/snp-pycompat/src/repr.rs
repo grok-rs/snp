@@ -1,16 +1,37 @@
 //! Python `repr()` and `str(exception)` texts for the value shapes pre-commit formats into messages
-//! (01 §2.6, 13 X.2, 15 §A4.7).
+//! (01 §2.6, 13 X.2, 15 §A4.7; `Objects/unicodeobject.c` `unicode_repr`, `Objects/listobject.c`,
+//! `Objects/tupleobject.c`, `Objects/dictobject.c`, `Objects/exceptions.c`, `Lib/subprocess.py`).
 
 use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::io;
 
 use crate::chars::{PyChar, is_printable};
+use crate::messages;
 
 pub use crate::float::repr as repr_float;
 
-/// Appends `repr()` of a Python string given as characters (`unicode_repr`).
+/// Appends `repr()` of a Python string given as characters (`unicode_repr`): `'` unless the text
+/// holds `'` and no `"`; `\\`, the quote, `\t \n \r` escaped; other C0 and DEL as `\xNN`;
+/// non-printable non-ASCII as `\xNN`/`\uNNNN`/`\UNNNNNNNN` (lowercase hex); lone surrogates as
+/// `\udXXX`.
 fn write_quoted<I: Iterator<Item = PyChar> + Clone>(out: &mut String, chars: I) {
+    write_quoted_upto(out, chars, usize::MAX);
+}
+
+/// [`write_quoted`] that stops after `max_chars` characters of output (`%.NR`), so a huge input
+/// costs O(`max_chars`) beyond the quote scan.
+fn write_quoted_upto<I: Iterator<Item = PyChar> + Clone>(
+    out: &mut String,
+    chars: I,
+    max_chars: usize,
+) {
+    if max_chars == 0 {
+        return;
+    }
+    let start = out.len();
+    // characters written so far (escapes are ASCII: bytes == characters)
+    let mut written: usize = 0;
     let (mut sq, mut dq) = (false, false);
     for c in chars.clone() {
         match c {
@@ -21,7 +42,12 @@ fn write_quoted<I: Iterator<Item = PyChar> + Clone>(out: &mut String, chars: I) 
     }
     let quote = if sq && !dq { '"' } else { '\'' };
     out.push(quote);
+    written = written.saturating_add(1);
     for c in chars {
+        if written >= max_chars {
+            break;
+        }
+        let before = out.len();
         match c {
             PyChar::Scalar(c) if c == quote || c == '\\' => {
                 out.push('\\');
@@ -49,16 +75,27 @@ fn write_quoted<I: Iterator<Item = PyChar> + Clone>(out: &mut String, chars: I) 
                 write!(out, "\\u{u:04x}").unwrap_or_default();
             }
         }
+        written = written.saturating_add(out.get(before..).map_or(0, |t| t.chars().count()));
     }
-    out.push(quote);
+    if written < max_chars {
+        out.push(quote);
+    } else if written > max_chars {
+        // only an escape (all ASCII, at most 9 characters) can overshoot: cut inside it
+        for _ in max_chars..written {
+            if out.len() <= start {
+                break;
+            }
+            out.pop();
+        }
+    }
 }
 
-/// Appends `repr(s)` to `out`.
+/// Appends `repr(s)` to `out` (`unicode_repr`).
 pub fn write_repr_str(out: &mut String, s: &str) {
     write_quoted(out, s.chars().map(PyChar::Scalar));
 }
 
-/// `repr(s)` for a `str`.
+/// `repr(s)` for a `str` (`{x!r}` in pre-commit and cfgv messages; 01 §2.6).
 #[must_use]
 pub fn repr_str(s: &str) -> String {
     let mut out = String::new();
@@ -90,8 +127,7 @@ pub fn repr_os(s: &OsStr) -> String {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
-        let units: Vec<u16> = s.encode_wide().collect();
-        let chars = char::decode_utf16(units.iter().copied()).map(|r| match r {
+        let chars = char::decode_utf16(s.encode_wide()).map(|r| match r {
             Ok(c) => PyChar::Scalar(c),
             Err(e) => PyChar::Surrogate(e.unpaired_surrogate()),
         });
@@ -114,7 +150,8 @@ fn write_seq<S: AsRef<str>>(out: &mut String, xs: &[S]) {
     }
 }
 
-/// `repr(tuple_of_str)`, including the trailing comma of a 1-tuple (`('git',)`).
+/// `repr(tuple_of_str)`, including the trailing comma of a 1-tuple (`('git',)`; the argv of
+/// `CalledProcessError`, `util.py:71`).
 #[must_use]
 pub fn repr_str_tuple<S: AsRef<str>>(xs: &[S]) -> String {
     let mut out = String::from("(");
@@ -126,7 +163,7 @@ pub fn repr_str_tuple<S: AsRef<str>>(xs: &[S]) -> String {
     out
 }
 
-/// `repr(list_of_str)`.
+/// `repr(list_of_str)` (`hook_impl.py:189-210` argument lists, `lang_base.py:107-111`).
 #[must_use]
 pub fn repr_str_list<S: AsRef<str>>(xs: &[S]) -> String {
     let mut out = String::from("[");
@@ -140,7 +177,7 @@ pub fn repr_str_list<S: AsRef<str>>(xs: &[S]) -> String {
 pub enum PyInt {
     /// A value that fits `i128`.
     Small(i128),
-    /// Decimal digits (optionally `-`-prefixed) of a larger value.
+    /// Decimal digits (optionally `-`-prefixed) of a larger value, printed verbatim.
     Decimal(Box<str>),
 }
 
@@ -175,52 +212,70 @@ pub fn repr(v: &PyValue) -> String {
     out
 }
 
-/// Appends `repr(v)` to `out`.
+/// One step of [`write_repr`]'s explicit stack.
+enum Step<'a> {
+    /// A value still to render.
+    Value(&'a PyValue),
+    /// Literal punctuation.
+    Text(&'static str),
+}
+
+/// Appends `repr(v)` to `out`: `[a, b]`, `(a,)`, `{k: v}` in insertion order, `None`/`True`/
+/// `False`, decimal ints, [`repr_float`] floats. Iterative: arbitrarily deep nesting needs no
+/// thread stack (Python's `repr` would raise `RecursionError`).
 pub fn write_repr(out: &mut String, v: &PyValue) {
-    match v {
-        PyValue::None => out.push_str("None"),
-        PyValue::Bool(true) => out.push_str("True"),
-        PyValue::Bool(false) => out.push_str("False"),
-        PyValue::Int(PyInt::Small(i)) => {
-            write!(out, "{i}").unwrap_or_default();
-        }
-        PyValue::Int(PyInt::Decimal(d)) => out.push_str(d),
-        PyValue::Float(f) => out.push_str(&repr_float(*f)),
-        PyValue::Str(s) => write_repr_str(out, s),
-        PyValue::List(items) => {
-            out.push('[');
-            write_items(out, items);
-            out.push(']');
-        }
-        PyValue::Tuple(items) => {
-            out.push('(');
-            write_items(out, items);
-            if items.len() == 1 {
-                out.push(',');
+    let mut stack = vec![Step::Value(v)];
+    while let Some(step) = stack.pop() {
+        let v = match step {
+            Step::Text(t) => {
+                out.push_str(t);
+                continue;
             }
-            out.push(')');
-        }
-        PyValue::Dict(items) => {
-            out.push('{');
-            for (i, (k, v)) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
+            Step::Value(v) => v,
+        };
+        match v {
+            PyValue::None => out.push_str("None"),
+            PyValue::Bool(true) => out.push_str("True"),
+            PyValue::Bool(false) => out.push_str("False"),
+            PyValue::Int(PyInt::Small(i)) => {
+                write!(out, "{i}").unwrap_or_default();
+            }
+            PyValue::Int(PyInt::Decimal(d)) => out.push_str(d),
+            PyValue::Float(f) => out.push_str(&repr_float(*f)),
+            PyValue::Str(s) => write_repr_str(out, s),
+            PyValue::List(items) => {
+                out.push('[');
+                stack.push(Step::Text("]"));
+                push_items(&mut stack, items);
+            }
+            PyValue::Tuple(items) => {
+                out.push('(');
+                stack.push(Step::Text(if items.len() == 1 { ",)" } else { ")" }));
+                push_items(&mut stack, items);
+            }
+            PyValue::Dict(items) => {
+                out.push('{');
+                stack.push(Step::Text("}"));
+                for (i, (k, v)) in items.iter().enumerate().rev() {
+                    stack.push(Step::Value(v));
+                    stack.push(Step::Text(": "));
+                    stack.push(Step::Value(k));
+                    if i > 0 {
+                        stack.push(Step::Text(", "));
+                    }
                 }
-                write_repr(out, k);
-                out.push_str(": ");
-                write_repr(out, v);
             }
-            out.push('}');
         }
     }
 }
 
-fn write_items(out: &mut String, items: &[PyValue]) {
-    for (i, item) in items.iter().enumerate() {
+/// Schedules `items` separated by `", "` (pushed in reverse: the stack pops them in order).
+fn push_items<'a>(stack: &mut Vec<Step<'a>>, items: &'a [PyValue]) {
+    for (i, item) in items.iter().enumerate().rev() {
+        stack.push(Step::Value(item));
         if i > 0 {
-            out.push_str(", ");
+            stack.push(Step::Text(", "));
         }
-        write_repr(out, item);
     }
 }
 
@@ -233,8 +288,8 @@ pub fn fstring_eq(name: &str, v: &str) -> String {
     out
 }
 
-/// `str(OSError(errno, strerror[, filename[, None, filename2]]))`:
-/// `[Errno N] strerror: 'f1' -> 'f2'`.
+/// `str(OSError(errno, strerror[, filename[, None, filename2]]))` (`OSError_str`):
+/// `[Errno N] strerror: 'f1' -> 'f2'`; `f2` is ignored without `f1`.
 #[must_use]
 pub fn oserror_str(errno: i32, strerror: &str, f1: Option<&OsStr>, f2: Option<&OsStr>) -> String {
     let mut out = format!("[Errno {errno}] {strerror}");
@@ -253,14 +308,15 @@ fn push_filenames(out: &mut String, f1: Option<&OsStr>, f2: Option<&OsStr>) {
     }
 }
 
-/// The C library's message for an OS error code (Rust's text minus ` (os error N)`); on Windows
-/// CPython also strips trailing whitespace and dots of the `FormatMessageW` text.
+/// The C library's message for an OS error code (Rust's text minus ` (os error N)`, which on
+/// POSIX is `strerror(N)` like `os.strerror`); on Windows CPython strips trailing whitespace and
+/// dots of the `FormatMessageW` text (`PyErr_SetExcFromWindowsErrWithFilenameObjects`).
 fn os_message(code: i32) -> String {
     let full = io::Error::from_raw_os_error(code).to_string();
     let suffix = format!(" (os error {code})");
     let msg = full.strip_suffix(&suffix).unwrap_or(&full);
     if cfg!(windows) {
-        msg.trim_end_matches(|c: char| c == '.' || c.is_whitespace())
+        msg.trim_end_matches(|c: char| c == '.' || c <= ' ')
             .to_owned()
     } else {
         msg.to_owned()
@@ -270,6 +326,13 @@ fn os_message(code: i32) -> String {
 /// `str(OSError)` for an `io::Error`: `[Errno N] strerror…` (POSIX) or `[WinError N] text…`
 /// (Windows), with the filenames of [`oserror_str`] (13 X.2.1). An error without an OS code
 /// renders as its own message.
+///
+/// On Windows this is the form of a failed Win32 call (`os.stat`, `os.rename`, `os.listdir`, …:
+/// `PyErr_SetExcFromWindowsErr`). CRT-backed calls — the builtin `open()` / `io.FileIO` and
+/// `os.open` (`_wopen`) — keep `[Errno N] <msvcrt strerror>` (13 X.2.1), e.g. `[Errno 13]
+/// Permission denied: 'x'` where this function gives `[WinError 5] Access is denied: 'x'`
+/// (Rust's `File::open` reports the Win32 code). A caller emulating such a call renders it with
+/// [`oserror_str`] and the CRT `errno` / `strerror` instead.
 #[must_use]
 pub fn oserror_from_io(e: &io::Error, f1: Option<&OsStr>, f2: Option<&OsStr>) -> String {
     let Some(code) = e.raw_os_error() else {
@@ -285,23 +348,27 @@ pub fn oserror_from_io(e: &io::Error, f1: Option<&OsStr>, f2: Option<&OsStr>) ->
     }
 }
 
-/// `str(subprocess.CalledProcessError(rc, cmd))` (stdlib; raised by `subprocess.check_output` in
-/// `hook_impl.py:143-165`). `cmd_str` is `str(cmd)` (the tuple/list repr).
+/// `str(subprocess.CalledProcessError(rc, cmd))` (stdlib `Lib/subprocess.py`; raised by
+/// `subprocess.check_output` in `hook_impl.py:143-165`). `cmd_str` is `str(cmd)` (the tuple/list
+/// repr). A negative `rc` is a signal: `died with <Signals.SIGKILL: 9>.` or `died with unknown
+/// signal N.`.
 #[must_use]
 pub fn stdlib_called_process_error_str(rc: i64, cmd_str: &str) -> String {
     if rc < 0 {
         let sig = rc.unsigned_abs();
         match u32::try_from(sig).ok().and_then(signal_name) {
-            Some(name) => format!("Command '{cmd_str}' died with <Signals.{name}: {sig}>."),
-            None => format!("Command '{cmd_str}' died with unknown signal {sig}."),
+            Some(name) => messages::cpe_died_with(cmd_str, name, sig),
+            None => messages::cpe_unknown_signal(cmd_str, sig),
         }
     } else {
-        format!("Command '{cmd_str}' returned non-zero exit status {rc}.")
+        messages::cpe_exit_status(cmd_str, rc)
     }
 }
 
-/// The name Python's `signal.Signals` gives signal number `sig` on this platform (the
-/// alphabetically first of aliases, as `IntEnum._convert_` sorts them).
+/// The name Python's `signal.Signals` gives signal number `sig` on this platform (`Lib/signal.py`
+/// `_IntEnum._convert_`, which sorts by value then name, so the alphabetically first alias wins:
+/// `SIGABRT` over `SIGIOT`, `SIGCHLD` over `SIGCLD`, `SIGIO` over `SIGPOLL`). `None` where
+/// `signal.Signals(sig)` raises `ValueError`.
 #[must_use]
 pub const fn signal_name(sig: u32) -> Option<&'static str> {
     #[cfg(any(
@@ -349,7 +416,10 @@ pub const fn signal_name(sig: u32) -> Option<&'static str> {
     }
     #[cfg(windows)]
     {
+        // `signal.py` also converts the `CTRL_*` constants of the Windows `signal` module.
         Some(match sig {
+            0 => "CTRL_C_EVENT",
+            1 => "CTRL_BREAK_EVENT",
             2 => "SIGINT",
             4 => "SIGILL",
             8 => "SIGFPE",
@@ -408,17 +478,28 @@ pub const fn signal_name(sig: u32) -> Option<&'static str> {
     }
 }
 
-/// `ValueError` text of `int(literal)` (base 10): `invalid literal for int() with base 10: %.200R`
-/// — the repr is cut at 200 characters (no closing quote then).
+/// `ValueError` text of `int(literal)` (base 10, `Objects/longobject.c`):
+/// `invalid literal for int() with base 10: %.200R` — the repr is cut at 200 *characters*, even in
+/// the middle of an escape, and then has no closing quote.
 #[must_use]
 pub fn int_literal_error(literal: &str) -> String {
-    let r: String = repr_str(literal).chars().take(200).collect();
-    format!("invalid literal for int() with base 10: {r}")
+    let mut out = String::from(messages::INT_LITERAL_PREFIX);
+    write_quoted_upto(
+        &mut out,
+        literal.chars().map(PyChar::Scalar),
+        messages::INT_LITERAL_REPR_CHARS,
+    );
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `s * n` (`str::repeat` is a disallowed method).
+    fn rep(s: &str, n: usize) -> String {
+        std::iter::repeat_n(s, n).collect()
+    }
 
     #[test]
     fn str_reprs() {
@@ -497,6 +578,40 @@ mod tests {
             "100000000000000000000000000000000000000000"
         );
         assert_eq!(repr(&PyValue::Tuple(vec![PyValue::Tuple(vec![])])), "((),)");
+        let v = PyValue::Dict(vec![
+            (PyValue::Str("a".into()), PyValue::Tuple(vec![])),
+            (
+                PyValue::Int(PyInt::Small(-1)),
+                PyValue::Dict(vec![(PyValue::None, PyValue::List(vec![]))]),
+            ),
+        ]);
+        assert_eq!(repr(&v), "{'a': (), -1: {None: []}}");
+    }
+
+    #[test]
+    fn deep_nesting_needs_no_stack() {
+        let depth = 100_000;
+        let mut v = PyValue::List(vec![]);
+        for _ in 0..depth {
+            v = PyValue::List(vec![v]);
+        }
+        let render = move || {
+            let r = repr(&v);
+            // drop the nested value iteratively (its recursive Drop is the caller's concern)
+            let mut stack = vec![v];
+            while let Some(PyValue::List(items)) = stack.pop() {
+                stack.extend(items);
+            }
+            r
+        };
+        let out = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(render)
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(out.len(), 2 * (depth + 1));
+        assert!(out.starts_with("[[[") && out.ends_with("]]]"));
     }
 
     #[test]
@@ -512,7 +627,7 @@ mod tests {
             "[Errno 2] No such file or directory: 'a' -> 'b'"
         );
         assert_eq!(
-            oserror_str(2, "No such file or directory", None, None),
+            oserror_str(2, "No such file or directory", None, Some(OsStr::new("b"))),
             "[Errno 2] No such file or directory"
         );
         assert_eq!(
@@ -522,6 +637,10 @@ mod tests {
         assert_eq!(
             stdlib_called_process_error_str(-99, "('git',)"),
             "Command '('git',)' died with unknown signal 99."
+        );
+        assert_eq!(
+            stdlib_called_process_error_str(i64::MIN, "x"),
+            "Command 'x' died with unknown signal 9223372036854775808."
         );
         #[cfg(target_os = "linux")]
         {
@@ -539,6 +658,10 @@ mod tests {
             );
         }
         assert_eq!(
+            oserror_from_io(&io::Error::other("custom"), None, None),
+            "custom"
+        );
+        assert_eq!(
             int_literal_error("it's"),
             "invalid literal for int() with base 10: \"it's\""
         );
@@ -549,5 +672,34 @@ mod tests {
             "invalid literal for int() with base 10: ".len() + 200
         );
         assert!(!e.ends_with('\''));
+        // `%.200R` against the full repr, for cuts at every position inside escapes and
+        // multi-byte characters
+        let units = [
+            "a",
+            "\u{e9}",
+            "\u{1f600}",
+            "\n",
+            "\x01",
+            "\u{378}",
+            "\u{1fae9}",
+            "'",
+            "\\",
+        ];
+        for n in 0..240_usize {
+            let lit: String = (0..n).map(|i| units[(i * 7 + n) % units.len()]).collect();
+            let full: String = repr_str(&lit).chars().take(200).collect();
+            assert_eq!(
+                int_literal_error(&lit),
+                format!("invalid literal for int() with base 10: {full}"),
+                "{lit:?}"
+            );
+        }
+        // a multi-megabyte literal renders the same 200 characters
+        let huge = rep("\u{e9}\n", 4_000_000);
+        let want: String = repr_str(&rep("\u{e9}\n", 200)).chars().take(200).collect();
+        assert_eq!(
+            int_literal_error(&huge),
+            format!("invalid literal for int() with base 10: {want}")
+        );
     }
 }

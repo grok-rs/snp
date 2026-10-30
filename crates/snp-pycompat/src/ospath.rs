@@ -1,5 +1,6 @@
-//! `os.path` as every caller uses it: [`crate::posixpath`] on Unix, [`crate::ntpath`] over UTF-16
-//! units on Windows, on `OsStr`/`Path` with an explicit cwd (snp never chdirs).
+//! `os.path` as every caller uses it (15 §A2.5): [`crate::posixpath`] on Unix, [`crate::ntpath`]
+//! over UTF-16 units on Windows, on `OsStr`/`Path` with an explicit cwd (snp never chdirs, where
+//! pre-commit's `main.py:189-190` does `os.chdir(toplevel)`).
 
 use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
@@ -58,7 +59,7 @@ mod imp {
     }
 }
 
-/// `os.path.normpath(p)`.
+/// `os.path.normpath(p)` (`prefix.py:9-10`, `git.py:80,90`).
 #[must_use]
 pub fn normpath(p: &OsStr) -> OsString {
     #[cfg(unix)]
@@ -71,7 +72,7 @@ pub fn normpath(p: &OsStr) -> OsString {
     }
 }
 
-/// `os.path.join(a, *rest)`.
+/// `os.path.join(a, *rest)` (`Prefix.path`, `lang_base.environment_dir`, `store.py:33-36`).
 #[must_use]
 pub fn join(a: &OsStr, rest: &[&OsStr]) -> OsString {
     #[cfg(unix)]
@@ -87,7 +88,7 @@ pub fn join(a: &OsStr, rest: &[&OsStr]) -> OsString {
     }
 }
 
-/// `os.path.split(p)`.
+/// `os.path.split(p)` (`store.py:50`).
 #[must_use]
 pub fn split(p: &OsStr) -> (OsString, OsString) {
     #[cfg(unix)]
@@ -103,13 +104,13 @@ pub fn split(p: &OsStr) -> (OsString, OsString) {
     }
 }
 
-/// `os.path.dirname(p)`.
+/// `os.path.dirname(p)` (`lang_base.py:79`).
 #[must_use]
 pub fn dirname(p: &OsStr) -> OsString {
     split(p).0
 }
 
-/// `os.path.basename(p)`.
+/// `os.path.basename(p)` (`languages/docker.py:74`).
 #[must_use]
 pub fn basename(p: &OsStr) -> OsString {
     split(p).1
@@ -159,7 +160,10 @@ pub fn abspath(p: &OsStr, cwd: &Path) -> PathBuf {
     }
 }
 
-/// `os.path.relpath(p, start)` against an explicit `cwd` (`start = None` means the cwd).
+/// `os.path.relpath(p, start)` against an explicit `cwd` (`start = None` means the cwd;
+/// `main.py:191-199`). Windows: both sides go through the real [`abspath`] (`GetFullPathNameW`), as
+/// in CPython, so a root-relative `\x` takes the cwd's drive; another drive is
+/// `ValueError: path is on mount 'D:', start on mount 'C:'` (D-PLAT-06 is the caller's).
 pub fn relpath(p: &OsStr, start: Option<&OsStr>, cwd: &Path) -> Result<OsString, PathError> {
     #[cfg(unix)]
     {
@@ -172,17 +176,13 @@ pub fn relpath(p: &OsStr, start: Option<&OsStr>, cwd: &Path) -> Result<OsString,
     }
     #[cfg(windows)]
     {
+        let abs = |x: &[u16]| -> Vec<u16> { imp::units(abspath(&imp::os(x), cwd).as_os_str()) };
         let start = start.map(imp::units);
-        crate::ntpath::relpath(
-            &imp::units(p),
-            start.as_deref(),
-            &imp::units(cwd.as_os_str()),
-        )
-        .map(imp::os)
+        crate::ntpath::relpath_with(&imp::units(p), start.as_deref(), &abs).map(imp::os)
     }
 }
 
-/// `os.path.commonpath(paths)`.
+/// `os.path.commonpath(paths)` (`lang_base.py:70`).
 pub fn commonpath(ps: &[&OsStr]) -> Result<OsString, PathError> {
     #[cfg(unix)]
     {
@@ -197,7 +197,7 @@ pub fn commonpath(ps: &[&OsStr]) -> Result<OsString, PathError> {
     }
 }
 
-/// `os.path.normcase(p)`: identity on Unix; `/` → `\` + lowercase on Windows.
+/// `os.path.normcase(p)`: identity on Unix; `/` → `\` + `str.lower()` on Windows.
 #[must_use]
 pub fn normcase(p: &OsStr) -> OsString {
     #[cfg(unix)]
@@ -210,7 +210,9 @@ pub fn normcase(p: &OsStr) -> OsString {
     }
 }
 
-/// `os.path.expanduser(p)` with the injected [`HomeLookup`].
+/// `os.path.expanduser(p)` with the injected [`HomeLookup`] (`store.py:33`, `clean.py:11`,
+/// `lang_base.py:68`): Unix honours `HOME` even when empty and asks passwd only when it is unset;
+/// Windows uses `USERPROFILE`, then `HOMEDRIVE` + `HOMEPATH`, never `HOME`.
 #[must_use]
 pub fn expanduser<'a>(p: &'a OsStr, home: &HomeLookup<'_>) -> Cow<'a, OsStr> {
     #[cfg(unix)]
@@ -239,7 +241,9 @@ pub fn expanduser<'a>(p: &'a OsStr, home: &HomeLookup<'_>) -> Cow<'a, OsStr> {
     }
 }
 
-/// Non-strict `os.path.realpath(p)` against an explicit `cwd`.
+/// Non-strict `os.path.realpath(p)` against an explicit `cwd` (`store.py:36`,
+/// `init_templatedir.py:34-35`): POSIX `_joinrealpath`, Windows `GetFinalPathNameByHandleW` with
+/// the non-strict walk-up.
 pub fn realpath(p: &OsStr, cwd: &Path) -> io::Result<PathBuf> {
     #[cfg(unix)]
     {

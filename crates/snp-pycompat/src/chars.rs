@@ -1,5 +1,7 @@
 //! Character classes of CPython: `str.isspace`, `str.splitlines` boundaries, `bytes.isspace`,
-//! `str.isprintable` and `unicodedata.decimal` (15 §A3; tables: CPython 3.13, UCD 15.1).
+//! `str.isprintable` and `unicodedata.decimal` (15 §A3; `Objects/unicodectype.c`,
+//! `Include/cpython/pyctype.h`; tables: CPython 3.13, UCD 15.1). Every class is verified over all
+//! 1,114,112 code points against the vector files.
 
 use core::cmp::Ordering;
 
@@ -8,8 +10,9 @@ use crate::generated::tables;
 /// Unicode version of the generated tables (CPython 3.13's `unicodedata.unidata_version`).
 pub const UNICODE_VERSION: &str = tables::UNICODE_VERSION;
 
-/// Python `\s` in a `str` pattern as the body of a regex character class (data for snp-pyre):
-/// exactly the code points for which [`is_space`] is true.
+/// Python `\s` in a `str` pattern (`Lib/re/_parser.py` `CATEGORY_SPACE` → `Py_UNICODE_ISSPACE`)
+/// as the body of a regex character class (data for snp-pyre): exactly the code points for which
+/// [`is_space`] is true.
 pub const PY_STR_SPACE_CLASS: &str = r"\t\n\x0B\x0C\r\x1C-\x20\x{85}\x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}";
 
 /// One Python character: a Unicode scalar value, or a lone surrogate (a `surrogateescape`d byte
