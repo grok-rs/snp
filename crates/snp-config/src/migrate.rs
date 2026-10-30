@@ -295,6 +295,24 @@ mod tests {
     }
 
     #[test]
+    fn bom_and_unicode_spans_are_byte_exact() {
+        let src = "\u{feff}# é\nrepos:\n-   repo: https://ex.com/é\n    sha: v1\n    hooks:\n    -   id: ü\n        stages: [commit]\n";
+        assert_eq!(
+            migrated(src),
+            src.replace("sha:", "rev:")
+                .replace("[commit]", "[pre-commit]")
+        );
+        // pre-commit 4.6.2 splices these rewrites one code point too early (`   reva: v1`, `pre-committ]`); a
+        // list root behind a BOM re-indents into invalid YAML (pre-commit: ScannerError, exit 3; D-CRASH-07).
+        let list = "\u{feff}-   repo: local\n    hooks: []\n";
+        let e = migrate_config(list.as_bytes(), OsStr::new("c")).unwrap_err();
+        assert_eq!(
+            e.rendered,
+            "\n==> File c\n=====> mapping values are not allowed in this context\n  in \"<unicode string>\", line 3, column 14"
+        );
+    }
+
+    #[test]
     fn crlf_is_kept() {
         let src = "-   repo: local\r\n    hooks:\r\n    -   id: x\r\n        name: x\r\n        entry: x\r\n        language: system\r\n        stages: [commit]\r\n";
         let out = migrated(src);

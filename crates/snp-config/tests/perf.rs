@@ -15,9 +15,14 @@ mod perf {
 
     /// A config of 50 repos × 10 hooks with regexes, stages and extension keys.
     fn big_config() -> String {
-        let mut s = String::from("default_stages: [pre-commit, pre-push]\nexclude: '^vendor/'\nrepos:\n");
+        let mut s =
+            String::from("default_stages: [pre-commit, pre-push]\nexclude: '^vendor/'\nrepos:\n");
         for r in 0..25 {
-            writeln!(s, "-   repo: https://example.com/r{r}\n    rev: v1.{r}.0\n    hooks:").expect("w");
+            writeln!(
+                s,
+                "-   repo: https://example.com/r{r}\n    rev: v1.{r}.0\n    hooks:"
+            )
+            .expect("w");
             for h in 0..10 {
                 writeln!(s, "    -   id: h{h}\n        files: '\\.(py|pyi)$'\n        args: [--a, --b={h}]\n        priority: {h}").expect("w");
             }
@@ -44,7 +49,13 @@ mod perf {
         };
         let regexes = RegexCache::new();
         let sink = CollectWarnings::new();
-        let o = LoadOpts { brand: Brand::PreCommit, ext: ExtMode::Enabled, regexes: &regexes, warn: &sink, diag: &sink };
+        let o = LoadOpts {
+            brand: Brand::PreCommit,
+            ext: ExtMode::Enabled,
+            regexes: &regexes,
+            warn: &sink,
+            diag: &sink,
+        };
         let start = Instant::now();
         let cfg = snp_config::load_config(&src, &o).expect("load");
         let mut n = 0_usize;

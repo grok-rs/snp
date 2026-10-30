@@ -324,10 +324,13 @@ mod api {
         has::<fn(&str) -> String>(overlay::unknown_hook_note);
         has::<fn(&Path, &OsStr) -> Result<Vec<u8>, ConfigError>>(migrate::read_config);
         has::<[&str; 2]>([migrate::MIGRATED, migrate::ALREADY_MIGRATED]);
-        has::<fn(FileKind, &OsStr, &LoadOpts<'_>, bool) -> Result<(), ConfigError>>(validate::validate);
-        fn display<T: std::fmt::Display + std::error::Error>() {}
-        display::<MergeError>();
+        has::<fn(FileKind, &OsStr, &LoadOpts<'_>, bool) -> Result<(), ConfigError>>(
+            validate::validate,
+        );
+        error_type::<MergeError>();
     }
+
+    fn error_type<T: std::fmt::Display + std::error::Error>() {}
 
     #[test]
     fn sample_dump_schema() {
