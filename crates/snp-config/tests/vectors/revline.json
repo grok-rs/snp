@@ -1,0 +1,234 @@
+{
+ "generator": "crates/snp-config/tests/oracle/gen_config_vectors.py",
+ "pre_commit": "4.6.2",
+ "python": "3.12.3",
+ "cases": [
+  {
+   "name": "AUP-05 one of two stale",
+   "input": "repos:\n-   repo: a\n    rev: v1\n    hooks:\n    -   id: foo\n-   repo: b\n    rev: v1\n    hooks:\n    -   id: foo\n",
+   "updates": [
+    {
+     "repo_index": 1,
+     "rev": "v2",
+     "frozen": null
+    }
+   ],
+   "output": "repos:\n-   repo: a\n    rev: v1\n    hooks:\n    -   id: foo\n-   repo: b\n    rev: v2\n    hooks:\n    -   id: foo\n",
+   "exc": null,
+   "reformatted": false
+  },
+  {
+   "name": "AUP-07 comments kept",
+   "input": "repos:\n-   repo: a\n    rev: v1  # definitely the version I want!\n    hooks:\n    -   id: foo\n        # These args are because reasons!\n        args: [foo, bar, baz]\n",
+   "updates": [
+    {
+     "repo_index": 0,
+     "rev": "v2",
+     "frozen": null
+    }
+   ],
+   "output": "repos:\n-   repo: a\n    rev: v2  # definitely the version I want!\n    hooks:\n    -   id: foo\n        # These args are because reasons!\n        args: [foo, bar, baz]\n",
+   "exc": null,
+   "reformatted": false
+  },
+  {
+   "name": "AUP-08 mixed endings",
+   "input": "repos:\n-   repo: a\r\n    rev: v1\r\n    hooks:\n    -   id: foo\r\n",
+   "updates": [
+    {
+     "repo_index": 0,
+     "rev": "v2",
+     "frozen": null
+    }
+   ],
+   "output": "repos:\n-   repo: a\r\n    rev: v2\r\n    hooks:\n    -   id: foo\r\n",
+   "exc": null,
+   "reformatted": false
+  },
+  {
+   "name": "AUP-09 flow style",
+   "input": "repos: [{repo: a, rev: v1, hooks: [# A comment!\n    {id: foo}]}]\n",
+   "updates": [
+    {
+     "repo_index": 0,
+     "rev": "v2",
+     "frozen": null
+    }
+   ],
+   "output": "repos:\n-   repo: a\n    rev: v2\n    hooks:\n    -   id: foo\n",
+   "exc": null,
+   "reformatted": true
+  },
+  {
+   "name": "AUP-10 freeze",
+   "input": "repos:\n-   repo: a\n    rev: v1.2.3\n    hooks: [{id: foo}]\n",
+   "updates": [
+    {
+     "repo_index": 0,
+     "rev": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "frozen": "v1.2.3"
+    }
+   ],
+   "output": "repos:\n-   repo: a\n    rev: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  # frozen: v1.2.3\n    hooks: [{id: foo}]\n",
+   "exc": null,
+   "reformatted": false
+  },
+  {
+   "name": "AUP-10 unfreeze",
+   "input": "repos:\n-   repo: a\n    rev: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  # frozen: v1.2.3\n    hooks: [{id: foo}]\n",
+   "updates": [
+    {
+     "repo_index": 0,
+     "rev": "v1.2.3",
+     "frozen": null
+    }
+   ],
+   "output": "repos:\n-   repo: a\n    rev: v1.2.3\n    hooks: [{id: foo}]\n",
+   "exc": null,
+   "reformatted": false
+  },
+  {
+   "name": "AUP-14 local first",
+   "input": "repos:\n-   repo: local\n    hooks: []\n-   repo: b\n    rev: v1\n    hooks: []\n",
+   "updates": [
+    {
+     "repo_index": 1,
+     "rev": "v2",
+     "frozen": null
+    }
+   ],
+   "output": "repos:\n-   repo: local\n    hooks: []\n-   repo: b\n    rev: v2\n    hooks: []\n",
+   "exc": null,
+   "reformatted": false
+  },
+  {
+   "name": "AUP-17 double quoted",
+   "input": "repos:\n-   repo: a\n    rev: \"v1\"\n    hooks: []\n",
+   "updates": [
+    {
+     "repo_index": 0,
+     "rev": "v2",
+     "frozen": null
+    }
+   ],
+   "output": "repos:\n-   repo: a\n    rev: \"v2\"\n    hooks: []\n",
+   "exc": null,
+   "reformatted": false
+  },
+  {
+   "name": "AUP-17 single quoted",
+   "input": "repos:\n-   repo: a\n    rev: 'v1'\n    hooks: []\n",
+   "updates": [
+    {
+     "repo_index": 0,
+     "rev": "v2",
+     "frozen": null
+    }
+   ],
+   "output": "repos:\n-   repo: a\n    rev: 'v2'\n    hooks: []\n",
+   "exc": null,
+   "reformatted": false
+  },
+  {
+   "name": "quoting of a retyping rev",
+   "input": "repos:\n-   repo: a\n    rev: v1\n    hooks: []\n",
+   "updates": [
+    {
+     "repo_index": 0,
+     "rev": "1.0",
+     "frozen": null
+    }
+   ],
+   "output": "repos:\n-   repo: a\n    rev: '1.0'\n    hooks: []\n",
+   "exc": null,
+   "reformatted": false
+  },
+  {
+   "name": "quoting of yes",
+   "input": "repos:\n-   repo: a\n    rev: v1\n    hooks: []\n",
+   "updates": [
+    {
+     "repo_index": 0,
+     "rev": "yes",
+     "frozen": null
+    }
+   ],
+   "output": "repos:\n-   repo: a\n    rev: 'yes'\n    hooks: []\n",
+   "exc": null,
+   "reformatted": false
+  },
+  {
+   "name": "rev at column 0",
+   "input": "repos:\n- repo: a\n  rev: v1\n  hooks: []\n",
+   "updates": [
+    {
+     "repo_index": 0,
+     "rev": "v2",
+     "frozen": null
+    }
+   ],
+   "output": "repos:\n- repo: a\n  rev: v2\n  hooks: []\n",
+   "exc": null,
+   "reformatted": false
+  },
+  {
+   "name": "D-DATA-10 freeze crlf",
+   "input": "repos:\r\n-   repo: a\r\n    rev: v1  # note\r\n    hooks: []\r\n",
+   "updates": [
+    {
+     "repo_index": 0,
+     "rev": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "frozen": "v2"
+    }
+   ],
+   "output": "repos:\r\n-   repo: a\r\n    rev: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  # frozen: v2\n    hooks: []\r\n",
+   "exc": null,
+   "reformatted": false,
+   "divergence": "D-DATA-10",
+   "snp_output": "repos:\r\n-   repo: a\r\n    rev: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  # frozen: v2\r\n    hooks: []\r\n",
+   "snp_reformatted": false
+  },
+  {
+   "name": "D-DATA-10 unfreeze crlf",
+   "input": "repos:\r\n-   repo: a\r\n    rev: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  # frozen: v1\r\n    hooks: []\r\n",
+   "updates": [
+    {
+     "repo_index": 0,
+     "rev": "v2",
+     "frozen": null
+    }
+   ],
+   "output": "repos:\r\n-   repo: a\r\n    rev: v2\n    hooks: []\r\n",
+   "exc": null,
+   "reformatted": false,
+   "divergence": "D-DATA-10",
+   "snp_output": "repos:\r\n-   repo: a\r\n    rev: v2\r\n    hooks: []\r\n",
+   "snp_reformatted": false
+  },
+  {
+   "name": "D-DATA-16 no final newline",
+   "input": "# keep me\nrepos:\n-   repo: a\n    hooks: []\n    rev: v1  # c",
+   "updates": [
+    {
+     "repo_index": 0,
+     "rev": "v2",
+     "frozen": null
+    }
+   ],
+   "output": "repos:\n-   repo: a\n    hooks: []\n    rev: v2\n",
+   "exc": null,
+   "reformatted": true,
+   "divergence": "D-DATA-16",
+   "snp_output": "# keep me\nrepos:\n-   repo: a\n    hooks: []\n    rev: v2  # c",
+   "snp_reformatted": false
+  },
+  {
+   "name": "nothing to update",
+   "input": "repos:\n-   repo: a\n    rev: v1\n    hooks: []\n",
+   "updates": [],
+   "output": "repos:\n-   repo: a\n    rev: v1\n    hooks: []\n",
+   "exc": null,
+   "reformatted": false
+  }
+ ]
+}

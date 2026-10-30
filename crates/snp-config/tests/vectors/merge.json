@@ -1,0 +1,461 @@
+{
+ "generator": "crates/snp-config/tests/oracle/gen_config_vectors.py",
+ "pre_commit": "4.6.2",
+ "python": "3.12.3",
+ "cases": [
+  {
+   "name": "R1 local unknown keys",
+   "config": "repos:\n-   repo: local\n    hooks:\n    -   id: echo1\n        name: echo1\n        entry: echo\n        language: system\n        zzz: 1\n        foo: 2\n",
+   "manifest": null,
+   "hooks": [
+    {
+     "additional_dependencies": [],
+     "alias": "",
+     "always_run": false,
+     "args": [],
+     "description": "",
+     "entry": "echo",
+     "exclude": "^$",
+     "exclude_types": [],
+     "fail_fast": false,
+     "files": "",
+     "id": "echo1",
+     "language": "unsupported",
+     "language_version": "default",
+     "log_file": "",
+     "minimum_pre_commit_version": "0",
+     "name": "echo1",
+     "pass_filenames": true,
+     "require_serial": false,
+     "stages": [
+      "commit-msg",
+      "post-checkout",
+      "post-commit",
+      "post-merge",
+      "post-rewrite",
+      "pre-commit",
+      "pre-merge-commit",
+      "pre-push",
+      "pre-rebase",
+      "prepare-commit-msg",
+      "manual"
+     ],
+     "types": [
+      "file"
+     ],
+     "types_or": [],
+     "verbose": false
+    }
+   ],
+   "logs": [
+    [
+     "WARNING",
+     "Unexpected key(s) present on local => echo1: foo, zzz"
+    ]
+   ],
+   "exit": null
+  },
+  {
+   "name": "R3 language_version on system",
+   "config": "repos:\n-   repo: local\n    hooks:\n    -   id: lv\n        name: lv\n        entry: echo\n        language: system\n        language_version: python3\n",
+   "manifest": null,
+   "hooks": [],
+   "logs": [
+    [
+     "ERROR",
+     "The hook `lv` specifies `language_version` but is using language `unsupported` which does not install an environment.  Perhaps you meant to use a specific language?"
+    ]
+   ],
+   "exit": 1
+  },
+  {
+   "name": "R3 additional_dependencies on script",
+   "config": "repos:\n-   repo: local\n    hooks:\n    -   id: ad\n        name: ad\n        entry: echo\n        language: script\n        additional_dependencies: [x]\n",
+   "manifest": null,
+   "hooks": [],
+   "logs": [
+    [
+     "ERROR",
+     "The hook `ad` specifies `additional_dependencies` but is using language `unsupported_script` which does not install an environment.  Perhaps you meant to use a specific language?"
+    ]
+   ],
+   "exit": 1
+  },
+  {
+   "name": "R4 default_language_version on unsupported",
+   "config": "default_language_version: {unsupported: x}\nrepos:\n-   repo: local\n    hooks:\n    -   id: s\n        name: s\n        entry: echo\n        language: system\n",
+   "manifest": null,
+   "hooks": [],
+   "logs": [
+    [
+     "ERROR",
+     "The hook `s` specifies `language_version` but is using language `unsupported` which does not install an environment.  Perhaps you meant to use a specific language?"
+    ]
+   ],
+   "exit": 1
+  },
+  {
+   "name": "R5 empty default stages",
+   "config": "default_stages: []\nrepos:\n-   repo: local\n    hooks:\n    -   id: s\n        name: s\n        entry: echo\n        language: system\n",
+   "manifest": null,
+   "hooks": [
+    {
+     "additional_dependencies": [],
+     "alias": "",
+     "always_run": false,
+     "args": [],
+     "description": "",
+     "entry": "echo",
+     "exclude": "^$",
+     "exclude_types": [],
+     "fail_fast": false,
+     "files": "",
+     "id": "s",
+     "language": "unsupported",
+     "language_version": "default",
+     "log_file": "",
+     "minimum_pre_commit_version": "0",
+     "name": "s",
+     "pass_filenames": true,
+     "require_serial": false,
+     "stages": [],
+     "types": [
+      "file"
+     ],
+     "types_or": [],
+     "verbose": false
+    }
+   ],
+   "logs": [],
+   "exit": null
+  },
+  {
+   "name": "R6 manifest and config unknown keys",
+   "config": "repos:\n-   repo: https://example.com/r\n    rev: v1\n    hooks:\n    -   id: hello\n        bar: 1\n",
+   "manifest": "- {id: hello, name: hello, entry: echo, language: system, foo: 1, stages: [commit, push, manual, commit]}\n",
+   "hooks": [
+    {
+     "additional_dependencies": [],
+     "alias": "",
+     "always_run": false,
+     "args": [],
+     "description": "",
+     "entry": "echo",
+     "exclude": "^$",
+     "exclude_types": [],
+     "fail_fast": false,
+     "files": "",
+     "id": "hello",
+     "language": "unsupported",
+     "language_version": "default",
+     "log_file": "",
+     "minimum_pre_commit_version": "0",
+     "name": "hello",
+     "pass_filenames": true,
+     "require_serial": false,
+     "stages": [
+      "pre-commit",
+      "pre-push",
+      "manual",
+      "pre-commit"
+     ],
+     "types": [
+      "file"
+     ],
+     "types_or": [],
+     "verbose": false
+    }
+   ],
+   "logs": [
+    [
+     "WARNING",
+     "Unexpected key(s) present on https://example.com/r => hello: bar, foo"
+    ]
+   ],
+   "exit": null
+  },
+  {
+   "name": "R7 whole-key override",
+   "config": "repos:\n-   repo: https://example.com/r\n    rev: v1\n    hooks:\n    -   id: h\n        stages: []\n        args: [--x]\n        language: system\n        name: renamed\n",
+   "manifest": "- {id: h, name: h, entry: echo, language: python, stages: [merge-commit], args: [--y, --z], types: [python]}\n",
+   "hooks": [
+    {
+     "additional_dependencies": [],
+     "alias": "",
+     "always_run": false,
+     "args": [
+      "--x"
+     ],
+     "description": "",
+     "entry": "echo",
+     "exclude": "^$",
+     "exclude_types": [],
+     "fail_fast": false,
+     "files": "",
+     "id": "h",
+     "language": "unsupported",
+     "language_version": "default",
+     "log_file": "",
+     "minimum_pre_commit_version": "0",
+     "name": "renamed",
+     "pass_filenames": true,
+     "require_serial": false,
+     "stages": [
+      "commit-msg",
+      "post-checkout",
+      "post-commit",
+      "post-merge",
+      "post-rewrite",
+      "pre-commit",
+      "pre-merge-commit",
+      "pre-push",
+      "pre-rebase",
+      "prepare-commit-msg",
+      "manual"
+     ],
+     "types": [
+      "python"
+     ],
+     "types_or": [],
+     "verbose": false
+    }
+   ],
+   "logs": [],
+   "exit": null
+  },
+  {
+   "name": "language_version on an env-less override",
+   "config": "repos:\n-   repo: https://example.com/r\n    rev: v1\n    hooks:\n    -   id: h\n        language: system\n",
+   "manifest": "- {id: h, name: h, entry: echo, language: python, language_version: python3.11}\n",
+   "hooks": [],
+   "logs": [
+    [
+     "ERROR",
+     "The hook `h` specifies `language_version` but is using language `unsupported` which does not install an environment.  Perhaps you meant to use a specific language?"
+    ]
+   ],
+   "exit": 1
+  },
+  {
+   "name": "every key overridden",
+   "config": "repos:\n-   repo: https://example.com/r\n    rev: v1\n    hooks:\n    -   id: h\n        name: n2\n        entry: e2\n        alias: al\n        files: '^a'\n        exclude: '^b'\n        types: [text]\n        types_or: [python, rust]\n        exclude_types: [binary]\n        additional_dependencies: [dep==1]\n        args: [--x]\n        always_run: true\n        fail_fast: true\n        pass_filenames: false\n        description: d2\n        language_version: python3.12\n        log_file: out.log\n        minimum_pre_commit_version: '1.0'\n        require_serial: true\n        stages: [commit, manual]\n        verbose: true\n",
+   "manifest": "- {id: h, name: h, entry: echo, language: python}\n",
+   "hooks": [
+    {
+     "additional_dependencies": [
+      "dep==1"
+     ],
+     "alias": "al",
+     "always_run": true,
+     "args": [
+      "--x"
+     ],
+     "description": "d2",
+     "entry": "e2",
+     "exclude": "^b",
+     "exclude_types": [
+      "binary"
+     ],
+     "fail_fast": true,
+     "files": "^a",
+     "id": "h",
+     "language": "python",
+     "language_version": "python3.12",
+     "log_file": "out.log",
+     "minimum_pre_commit_version": "1.0",
+     "name": "n2",
+     "pass_filenames": false,
+     "require_serial": true,
+     "stages": [
+      "pre-commit",
+      "manual"
+     ],
+     "types": [
+      "text"
+     ],
+     "types_or": [
+      "python",
+      "rust"
+     ],
+     "verbose": true
+    }
+   ],
+   "logs": [],
+   "exit": null
+  },
+  {
+   "name": "language override changes the default_language_version lookup",
+   "config": "default_language_version: {node: \"18.0.0\", python: python3.12}\nrepos:\n-   repo: https://example.com/r\n    rev: v1\n    hooks:\n    -   id: h\n        language: node\n",
+   "manifest": "- {id: h, name: h, entry: echo, language: python}\n",
+   "hooks": [
+    {
+     "additional_dependencies": [],
+     "alias": "",
+     "always_run": false,
+     "args": [],
+     "description": "",
+     "entry": "echo",
+     "exclude": "^$",
+     "exclude_types": [],
+     "fail_fast": false,
+     "files": "",
+     "id": "h",
+     "language": "node",
+     "language_version": "18.0.0",
+     "log_file": "",
+     "minimum_pre_commit_version": "0",
+     "name": "h",
+     "pass_filenames": true,
+     "require_serial": false,
+     "stages": [
+      "commit-msg",
+      "post-checkout",
+      "post-commit",
+      "post-merge",
+      "post-rewrite",
+      "pre-commit",
+      "pre-merge-commit",
+      "pre-push",
+      "pre-rebase",
+      "prepare-commit-msg",
+      "manual"
+     ],
+     "types": [
+      "file"
+     ],
+     "types_or": [],
+     "verbose": false
+    }
+   ],
+   "logs": [],
+   "exit": null
+  },
+  {
+   "name": "meta defaults and stages",
+   "config": "default_stages: [pre-push]\nrepos:\n-   repo: meta\n    hooks:\n    -   id: identity\n        args: [--foo]\n    -   id: check-useless-excludes\n        stages: [manual]\n",
+   "manifest": null,
+   "hooks": [
+    {
+     "additional_dependencies": [],
+     "alias": "",
+     "always_run": false,
+     "args": [
+      "--foo"
+     ],
+     "description": "",
+     "entry": "/tmp/claude-1000/-home-dromix-projects-snp/484ec4f1-c0f7-4123-b7cd-bc3e3cb59b63/scratchpad/pc462-py312/bin/python -m pre_commit.meta_hooks.identity",
+     "exclude": "^$",
+     "exclude_types": [],
+     "fail_fast": false,
+     "files": "",
+     "id": "identity",
+     "language": "unsupported",
+     "language_version": "default",
+     "log_file": "",
+     "minimum_pre_commit_version": "0",
+     "name": "identity",
+     "pass_filenames": true,
+     "require_serial": false,
+     "stages": [
+      "pre-push"
+     ],
+     "types": [
+      "file"
+     ],
+     "types_or": [],
+     "verbose": true
+    },
+    {
+     "additional_dependencies": [],
+     "alias": "",
+     "always_run": false,
+     "args": [],
+     "description": "",
+     "entry": "/tmp/claude-1000/-home-dromix-projects-snp/484ec4f1-c0f7-4123-b7cd-bc3e3cb59b63/scratchpad/pc462-py312/bin/python -m pre_commit.meta_hooks.check_useless_excludes",
+     "exclude": "^$",
+     "exclude_types": [],
+     "fail_fast": false,
+     "files": "^\\.pre\\-commit\\-config\\.yaml$",
+     "id": "check-useless-excludes",
+     "language": "unsupported",
+     "language_version": "default",
+     "log_file": "",
+     "minimum_pre_commit_version": "0",
+     "name": "Check for useless excludes",
+     "pass_filenames": true,
+     "require_serial": false,
+     "stages": [
+      "manual"
+     ],
+     "types": [
+      "file"
+     ],
+     "types_or": [],
+     "verbose": false
+    }
+   ],
+   "logs": [],
+   "exit": null
+  },
+  {
+   "name": "E1 unknown id",
+   "config": "repos:\n-   repo: https://example.com/r\n    rev: v1\n    hooks:\n    -   id: nonexistent\n",
+   "manifest": "- {id: hello, name: hello, entry: echo, language: system}\n",
+   "hooks": [],
+   "logs": [
+    [
+     "ERROR",
+     "`nonexistent` is not present in repository https://example.com/r.  Typo? Perhaps it is introduced in a newer version?  Often `pre-commit autoupdate` fixes this."
+    ]
+   ],
+   "exit": 1
+  },
+  {
+   "name": "duplicate manifest ids: last wins",
+   "config": "repos:\n-   repo: https://example.com/r\n    rev: v1\n    hooks:\n    -   id: a\n",
+   "manifest": "- {id: a, name: first, entry: one, language: system}\n- {id: a, name: second, entry: two, language: system}\n",
+   "hooks": [
+    {
+     "additional_dependencies": [],
+     "alias": "",
+     "always_run": false,
+     "args": [],
+     "description": "",
+     "entry": "two",
+     "exclude": "^$",
+     "exclude_types": [],
+     "fail_fast": false,
+     "files": "",
+     "id": "a",
+     "language": "unsupported",
+     "language_version": "default",
+     "log_file": "",
+     "minimum_pre_commit_version": "0",
+     "name": "second",
+     "pass_filenames": true,
+     "require_serial": false,
+     "stages": [
+      "commit-msg",
+      "post-checkout",
+      "post-commit",
+      "post-merge",
+      "post-rewrite",
+      "pre-commit",
+      "pre-merge-commit",
+      "pre-push",
+      "pre-rebase",
+      "prepare-commit-msg",
+      "manual"
+     ],
+     "types": [
+      "file"
+     ],
+     "types_or": [],
+     "verbose": false
+    }
+   ],
+   "logs": [],
+   "exit": null
+  }
+ ]
+}
