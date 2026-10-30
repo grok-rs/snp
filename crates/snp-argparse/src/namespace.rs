@@ -74,13 +74,24 @@ impl Namespace {
 
     /// `_copy_items(getattr(namespace, dest)) + values` (`_AppendAction`).
     pub(crate) fn append(&mut self, dest: &'static str, values: Vec<OsString>, given: bool) {
-        let mut items = match self.entry(dest).map(|e| &e.value) {
-            Some(Value::List(v)) => v.clone(),
-            Some(Value::Str(s)) => vec![s.clone()],
-            _ => Vec::new(),
-        };
-        items.extend(values);
-        self.assign(dest, Value::List(items), given);
+        // The entry owns its value (the action's default was moved in by value), so extending it in place cannot
+        // alias the default the way an un-copied Python list would; this keeps N appends linear instead of the
+        // O(N^2) of re-cloning the accumulated list on every occurrence.
+        match self.entry_mut(dest) {
+            Some(e) => {
+                match &mut e.value {
+                    Value::List(v) => v.extend(values),
+                    Value::Str(s) => {
+                        let first = std::mem::take(s);
+                        e.value = Value::List(std::iter::once(first).chain(values).collect());
+                    }
+                    other => *other = Value::List(values),
+                }
+                e.assigned = true;
+                e.given |= given;
+            }
+            None => self.assign(dest, Value::List(values), given),
+        }
     }
 
     /// Replaces the default with its converted value (end of `_parse_known_args`), keeping it a default.
@@ -164,5 +175,27 @@ mod tests {
         assert!(ns.command().is_none());
         ns.set_command("run", Namespace::default());
         assert_eq!(ns.command().map(|c| c.0), Some("run"));
+    }
+
+    #[test]
+    fn append_extends_in_place() {
+        let mut ns = Namespace::default();
+        ns.init_default("repos", Value::Unset, 0);
+        ns.append("repos", vec!["a".into()], false);
+        assert!(!ns.was_given("repos"));
+        ns.append("repos", vec!["b".into(), "c".into()], true);
+        assert_eq!(ns.list("repos"), ["a", "b", "c"].map(OsString::from));
+        assert!(ns.was_given("repos") && ns.entry("repos").is_some_and(|e| e.assigned));
+        // A string default becomes the first item, as before.
+        ns.init_default("s", Value::Str("x".into()), 1);
+        ns.append("s", vec!["y".into()], true);
+        assert_eq!(ns.list("s"), ["x", "y"].map(OsString::from));
+        // A dest no action initialised is created.
+        ns.append("new", vec!["z".into()], true);
+        assert_eq!(ns.list("new"), [OsString::from("z")]);
+        // A non-list, non-string value is replaced.
+        ns.init_default("n", Value::Int(3), 2);
+        ns.append("n", vec!["w".into()], true);
+        assert_eq!(ns.list("n"), [OsString::from("w")]);
     }
 }

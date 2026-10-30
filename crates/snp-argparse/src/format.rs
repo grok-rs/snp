@@ -248,8 +248,7 @@ impl<'a> Formatter<'a> {
                     }
                 } else {
                     let indent = " ".repeat_n_safe(pylen_usize(prefix));
-                    let all: Vec<String> = parts.clone();
-                    let mut lines = get_lines(&all, &indent, None, text_width);
+                    let mut lines = get_lines(&parts, &indent, None, text_width);
                     if lines.len() > 1 {
                         lines = get_lines(opt_parts, &indent, None, text_width);
                         lines.extend(get_lines(pos_parts, &indent, None, text_width));
