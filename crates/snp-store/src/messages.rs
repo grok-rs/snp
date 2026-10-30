@@ -63,8 +63,7 @@ pub(crate) fn foreign_store_warning(uid: Option<u32>, path: &Path) -> String {
 }
 
 /// The first line of the README snp writes into a store it creates (ARCHITECTURE §5.2).
-pub(crate) const README: &str =
-    "This directory is maintained by snp (You Shell Not Pass).\nLearn more: https://github.com/grok-rs/snp\n";
+pub(crate) const README: &str = "This directory is maintained by snp (You Shell Not Pass).\nLearn more: https://github.com/grok-rs/snp\n";
 
 /// The first README line of pre-commit's store (`store.py:72-76`): its signature (M7).
 pub(crate) const PRE_COMMIT_README_SIGNATURE: &[u8] =

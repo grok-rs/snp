@@ -23,7 +23,9 @@ use snp_core::output::DiagSink;
 use snp_os::fs::Ownership;
 use snp_os::lock::{FileLock, LockMode};
 
-use crate::keys::{self, MarkerKey, RepoHandle, RepoKey, RepoKind, RepoMeta, ToolRef, TrackedConfig};
+use crate::keys::{
+    self, MarkerKey, RepoHandle, RepoKey, RepoKind, RepoMeta, ToolRef, TrackedConfig,
+};
 use crate::layout::{self, mkdir_private};
 use crate::location::{StoreLocation, StoreSource};
 use crate::{maintenance, marker, messages};
@@ -154,7 +156,8 @@ impl Store {
                 messages::refuse_world_writable_store(root),
             ));
         }
-        let ownership = snp_os::fs::ensure_private_dir(root).map_err(|e| mkdir_failure(root, &e))?;
+        let ownership =
+            snp_os::fs::ensure_private_dir(root).map_err(|e| mkdir_failure(root, &e))?;
         if !self.ephemeral {
             self.check_ownership(ownership, diag)?;
         }
@@ -206,11 +209,21 @@ impl Store {
         on_wait: &mut dyn FnMut(),
         c: &CancelToken,
     ) -> Result<StoreGuard, Failure> {
-        let mut held = vec![lock_at(&self.root().join(layout::LOCK), LockMode::Shared, on_wait, c)?];
+        let mut held = vec![lock_at(
+            &self.root().join(layout::LOCK),
+            LockMode::Shared,
+            on_wait,
+            c,
+        )?];
         if let Some(main) = &self.shared_root
             && main.is_dir()
         {
-            held.push(lock_at(&main.join(layout::LOCK), LockMode::Shared, on_wait, c)?);
+            held.push(lock_at(
+                &main.join(layout::LOCK),
+                LockMode::Shared,
+                on_wait,
+                c,
+            )?);
         }
         Ok(StoreGuard(held))
     }
@@ -225,7 +238,12 @@ impl Store {
         on_wait: &mut dyn FnMut(),
         c: &CancelToken,
     ) -> Result<StoreGuard, Failure> {
-        let lock = lock_at(&self.root().join(layout::LOCK), LockMode::Exclusive, on_wait, c)?;
+        let lock = lock_at(
+            &self.root().join(layout::LOCK),
+            LockMode::Exclusive,
+            on_wait,
+            c,
+        )?;
         Ok(StoreGuard(vec![lock]))
     }
 
@@ -328,7 +346,10 @@ impl Store {
         self.load(key).ok_or_else(|| {
             Failure::unexpected(
                 "AssertionError",
-                format!("snp: store entry {} vanished after materialisation", key.hex()),
+                format!(
+                    "snp: store entry {} vanished after materialisation",
+                    key.hex()
+                ),
             )
         })
     }
@@ -397,7 +418,8 @@ impl Store {
     /// `None` otherwise — a missing, truncated or garbled state means "not installed" (X13-ENV-01; pre-commit
     /// crashes on a malformed `.install_state_v1`).
     pub fn read_install_marker(env_dir: &Path) -> Option<Vec<u8>> {
-        let bytes = snp_os::fs::read_capped(&env_dir.join(layout::INSTALL_STATE), marker::META_CAP).ok()?;
+        let bytes =
+            snp_os::fs::read_capped(&env_dir.join(layout::INSTALL_STATE), marker::META_CAP).ok()?;
         marker::is_json_value(&bytes).then_some(bytes)
     }
 
@@ -493,10 +515,11 @@ impl Store {
     /// gc's `SELECT path FROM configs` (`gc.py:65-70`) with each config's recorded project root (ADR-075), sorted;
     /// malformed entries are skipped.
     pub fn tracked_configs(&self) -> Vec<TrackedConfig> {
-        let mut out: Vec<TrackedConfig> = maintenance::config_entries(&self.root().join(layout::CONFIGS))
-            .into_iter()
-            .map(|(_, path, project_root)| TrackedConfig { path, project_root })
-            .collect();
+        let mut out: Vec<TrackedConfig> =
+            maintenance::config_entries(&self.root().join(layout::CONFIGS))
+                .into_iter()
+                .map(|(_, path, project_root)| TrackedConfig { path, project_root })
+                .collect();
         out.sort_by(|a, b| (&a.path, &a.project_root).cmp(&(&b.path, &b.project_root)));
         out.dedup();
         out
@@ -631,7 +654,8 @@ impl Store {
             return None;
         }
         let bytes =
-            snp_os::fs::read_capped(&self.root().join(layout::STORE_FILE), marker::META_CAP).ok()?;
+            snp_os::fs::read_capped(&self.root().join(layout::STORE_FILE), marker::META_CAP)
+                .ok()?;
         let old = marker::decode_store_file(&bytes)?;
         (old != self.root()).then_some(old)
     }
@@ -651,7 +675,8 @@ impl Store {
     /// A complete entry: marker parses, derives `key`, checkout present.
     fn load(&self, key: &RepoKey) -> Option<RepoHandle> {
         let dir = self.repo_dir(key);
-        let bytes = snp_os::fs::read_capped(&dir.join(layout::REPO_MARKER), marker::META_CAP).ok()?;
+        let bytes =
+            snp_os::fs::read_capped(&dir.join(layout::REPO_MARKER), marker::META_CAP).ok()?;
         let meta = marker::decode_repo_meta(&bytes)?;
         if meta.key() != *key {
             return None;
@@ -710,9 +735,7 @@ impl Store {
     fn write_readme_if_new(&self, existed: bool) {
         let root = self.root();
         let readme = root.join(layout::README);
-        if existed
-            && (fs::symlink_metadata(&readme).is_ok() || !only_lock_inside(root))
-        {
+        if existed && (fs::symlink_metadata(&readme).is_ok() || !only_lock_inside(root)) {
             return;
         }
         let _written: io::Result<()> =

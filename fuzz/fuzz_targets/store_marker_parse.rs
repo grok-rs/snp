@@ -22,7 +22,9 @@ use snp_store::{RepoKey, Store, StoreLocation, StoreSource};
 /// One scratch store per fuzz process.
 fn scratch() -> &'static PathBuf {
     static DIR: OnceLock<PathBuf> = OnceLock::new();
-    DIR.get_or_init(|| std::env::temp_dir().join(format!("snp-fuzz-store-marker-{}", std::process::id())))
+    DIR.get_or_init(|| {
+        std::env::temp_dir().join(format!("snp-fuzz-store-marker-{}", std::process::id()))
+    })
 }
 
 const KEY: &str = "00112233445566778899aabbccddeeff";
@@ -30,8 +32,13 @@ const KEY: &str = "00112233445566778899aabbccddeeff";
 fuzz_target!(|data: &[u8]| {
     let root = scratch();
     let _ = std::fs::remove_dir_all(root);
-    let store = Store::new(StoreLocation { path: root.clone(), source: StoreSource::SnpHome });
-    store.ensure_created(Brand::Snp, &CollectWarnings::new()).expect("scratch store");
+    let store = Store::new(StoreLocation {
+        path: root.clone(),
+        source: StoreSource::SnpHome,
+    });
+    store
+        .ensure_created(Brand::Snp, &CollectWarnings::new())
+        .expect("scratch store");
     let repo = root.join("repos-v1").join(KEY);
     let env = repo.join("envs").join("py_env-3.12");
     std::fs::create_dir_all(repo.join("src/.git")).expect("src");

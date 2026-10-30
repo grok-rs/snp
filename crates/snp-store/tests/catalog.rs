@@ -24,9 +24,9 @@ mod catalog {
     use snp_core::env::Env;
     use snp_core::failure::Failure;
     use snp_core::output::CollectWarnings;
+    use snp_store::{Store, TrackedConfig};
     #[cfg(unix)]
     use snp_store::{StoreSource, resolve_location};
-    use snp_store::{Store, TrackedConfig};
 
     #[cfg(unix)]
     use crate::common::{exc_text, fake_clone, is_root};
@@ -55,7 +55,11 @@ mod catalog {
         let loc = resolve_location(&env(&[("HOME", h)]), cwd).unwrap();
         assert_eq!(loc.path, home.join(".cache/snp"));
         assert_eq!(loc.source, StoreSource::PlatformDefault);
-        let loc = resolve_location(&env(&[("HOME", h), ("XDG_CACHE_HOME", "/tmp/fakehome")]), cwd).unwrap();
+        let loc = resolve_location(
+            &env(&[("HOME", h), ("XDG_CACHE_HOME", "/tmp/fakehome")]),
+            cwd,
+        )
+        .unwrap();
         assert_eq!(loc.path, real(Path::new("/tmp/fakehome")).join("snp"));
         let snp_home = home.join("snp_home");
         let loc = resolve_location(
@@ -105,12 +109,16 @@ mod catalog {
         let root = real(d.path()).join("pre-existing");
         std::fs::create_dir_all(&root).unwrap();
         let s = store_at(&root);
-        s.ensure_created(Brand::Snp, &CollectWarnings::new()).unwrap();
+        s.ensure_created(Brand::Snp, &CollectWarnings::new())
+            .unwrap();
         assert!(root.join("store-v1.json").is_file());
         assert!(root.join("repos-v1").is_dir());
-        s.ensure_created(Brand::Snp, &CollectWarnings::new()).unwrap();
+        s.ensure_created(Brand::Snp, &CollectWarnings::new())
+            .unwrap();
         let again = store_at(&root);
-        again.ensure_created(Brand::PreCommit, &CollectWarnings::new()).unwrap();
+        again
+            .ensure_created(Brand::PreCommit, &CollectWarnings::new())
+            .unwrap();
         assert_eq!(again.relocated_from(), None);
     }
 
@@ -124,7 +132,10 @@ mod catalog {
         let id = snp_store::RepoId::Url(Arc::from("repo"));
         let mut sorted = deps.clone();
         sorted.sort();
-        assert_ne!(Store::remote_key(&id, "r", &deps), Store::remote_key(&id, "r", &sorted));
+        assert_ne!(
+            Store::remote_key(&id, "r", &deps),
+            Store::remote_key(&id, "r", &sorted)
+        );
     }
 
     /// T10-STO-11: `mark_config_used` records the absolute path (with its project root); idempotent; a nonexistent
@@ -166,12 +177,15 @@ mod catalog {
         std::fs::write(&cfg, b"").unwrap();
         let ro = |mode| {
             for dir in ["", "configs-v1"] {
-                std::fs::set_permissions(root.join(dir), std::fs::Permissions::from_mode(mode)).unwrap();
+                std::fs::set_permissions(root.join(dir), std::fs::Permissions::from_mode(mode))
+                    .unwrap();
             }
         };
         ro(0o500);
         let again = store_at(&root);
-        again.ensure_created(Brand::Snp, &CollectWarnings::new()).unwrap();
+        again
+            .ensure_created(Brand::Snp, &CollectWarnings::new())
+            .unwrap();
         again.mark_config_used(&cfg, g.path());
         assert_eq!(again.tracked_configs().len(), 0);
         ro(0o700);
@@ -196,7 +210,9 @@ mod catalog {
         assert!(!s.exists());
         assert_eq!(s.crash_log(Brand::PreCommit), root.join("pre-commit.log"));
         let _patches = s.patches_dir();
-        let err = s.ensure_created(Brand::PreCommit, &CollectWarnings::new()).unwrap_err();
+        let err = s
+            .ensure_created(Brand::PreCommit, &CollectWarnings::new())
+            .unwrap_err();
         assert_eq!(err.exit_code(), 3);
         assert_eq!(
             exc_text(&err),
@@ -244,12 +260,14 @@ mod catalog {
         materialize(&s, &cached, meta);
         let set = |mode| {
             for dir in ["", "scratch", "repos-v1"] {
-                std::fs::set_permissions(root.join(dir), std::fs::Permissions::from_mode(mode)).unwrap();
+                std::fs::set_permissions(root.join(dir), std::fs::Permissions::from_mode(mode))
+                    .unwrap();
             }
         };
         set(0o500);
         let ro = store_at(&root);
-        ro.ensure_created(Brand::Snp, &CollectWarnings::new()).unwrap();
+        ro.ensure_created(Brand::Snp, &CollectWarnings::new())
+            .unwrap();
         assert!(ro.lookup(&cached).is_some());
         let (key, meta) = remote(URL, "new", &["six"]);
         let err = ro
@@ -287,7 +305,10 @@ mod catalog {
         assert_eq!(s.tracked_configs().len(), 1);
         assert!(root.join("db.db").exists());
         let _swept = s.sweep(std::time::SystemTime::now());
-        assert!(root.join("db.db").exists(), "only 1.x leftovers behind their README are removed");
+        assert!(
+            root.join("db.db").exists(),
+            "only 1.x leftovers behind their README are removed"
+        );
     }
 
     #[test]
@@ -335,7 +356,11 @@ mod catalog {
         let h2 = materialize(&s, &key, meta.clone());
         assert!(h2.src.join(".git").is_dir());
         // A garbled marker is the same.
-        std::fs::write(root.join("repos-v1").join(key.hex()).join(".snp-repo.json"), b"{").unwrap();
+        std::fs::write(
+            root.join("repos-v1").join(key.hex()).join(".snp-repo.json"),
+            b"{",
+        )
+        .unwrap();
         assert!(s.lookup(&key).is_none());
         assert_eq!(s.all_repos().len(), 0);
         let h3 = materialize(&s, &key, meta);
@@ -355,7 +380,10 @@ mod catalog {
             exc_text(&err),
             (
                 "IsADirectoryError".to_owned(),
-                format!("[Errno 21] Is a directory: '{}'", root.join(".lock").display())
+                format!(
+                    "[Errno 21] Is a directory: '{}'",
+                    root.join(".lock").display()
+                )
             )
         );
         assert!(s.exclusive(&mut || {}, &CancelToken::new()).is_err());
@@ -372,9 +400,11 @@ mod catalog {
         }
         let (_g, root, s) = new_store();
         std::fs::write(root.join(".lock"), b"").unwrap();
-        std::fs::set_permissions(root.join(".lock"), std::fs::Permissions::from_mode(0o000)).unwrap();
+        std::fs::set_permissions(root.join(".lock"), std::fs::Permissions::from_mode(0o000))
+            .unwrap();
         let err = s.exclusive(&mut || {}, &CancelToken::new()).unwrap_err();
-        std::fs::set_permissions(root.join(".lock"), std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::set_permissions(root.join(".lock"), std::fs::Permissions::from_mode(0o600))
+            .unwrap();
         assert_eq!(err.exit_code(), 3);
         assert_eq!(exc_text(&err).0, "PermissionError");
         assert!(s.exclusive(&mut || {}, &CancelToken::new()).is_ok());

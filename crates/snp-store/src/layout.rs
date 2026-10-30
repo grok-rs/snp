@@ -129,13 +129,32 @@ mod tests {
 
     #[test]
     fn safe_components() {
-        for ok in ["3.12", "python3.12", "default", "system", "1.0+local", "a-b_c", "x"] {
+        for ok in [
+            "3.12",
+            "python3.12",
+            "default",
+            "system",
+            "1.0+local",
+            "a-b_c",
+            "x",
+        ] {
             assert!(is_safe_component(ok), "{ok}");
             assert_eq!(safe_component(ok), ok);
         }
         let long: String = std::iter::repeat_n('a', 65).collect();
         for bad in [
-            "", ".", "..", "../../x", "/abs", "C:\\x", "a/b", "a\\b", "a\0b", "a b", "é", long.as_str(),
+            "",
+            ".",
+            "..",
+            "../../x",
+            "/abs",
+            "C:\\x",
+            "a/b",
+            "a\\b",
+            "a\0b",
+            "a b",
+            "é",
+            long.as_str(),
         ] {
             assert!(!is_safe_component(bad), "{bad:?}");
             let h = safe_component(bad);

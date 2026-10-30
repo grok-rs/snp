@@ -58,16 +58,16 @@ mod perf {
             .unwrap()
         };
         let filters = [
-            f("", &["text"], &[]),                                         // trailing-whitespace
-            f("", &["text"], &[]),                                         // end-of-file-fixer
-            f("", &["yaml"], &[]),                                         // check-yaml
-            f("", &["json"], &[]),                                         // check-json
-            f("", &["file"], &[]),                                         // check-added-large-files
-            f("", &["text"], &[]),                                         // check-merge-conflict
-            f("", &["file"], &["python", "pyi"]),                          // black
-            f(r"\.py$", &["python"], &[]),                                 // flake8
+            f("", &["text"], &[]),                // trailing-whitespace
+            f("", &["text"], &[]),                // end-of-file-fixer
+            f("", &["yaml"], &[]),                // check-yaml
+            f("", &["json"], &[]),                // check-json
+            f("", &["file"], &[]),                // check-added-large-files
+            f("", &["text"], &[]),                // check-merge-conflict
+            f("", &["file"], &["python", "pyi"]), // black
+            f(r"\.py$", &["python"], &[]),        // flake8
             f("", &["file"], &["javascript", "markdown", "json", "yaml"]), // prettier
-            f(r"^src/.*\.py$", &["file"], &[]),                            // a local hook
+            f(r"^src/.*\.py$", &["file"], &[]),   // a local hook
         ];
         let permits = std::thread::available_parallelism().map_or(4, |n| n.get().min(8));
         let pool = JobPool::new(

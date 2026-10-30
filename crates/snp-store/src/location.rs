@@ -97,7 +97,8 @@ pub(crate) fn readme_first_line(dir: &Path) -> Option<Vec<u8>> {
     Some(line.strip_suffix(b"\r").unwrap_or(line).to_vec())
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use super::*;
 
@@ -113,7 +114,11 @@ mod tests {
         assert_eq!(loc.path, PathBuf::from("/work/proj/rel/store"));
         assert_eq!(loc.source, StoreSource::SnpHome);
 
-        let e = env(&[("HOME", "/home/u"), ("SNP_HOME", ""), ("XDG_CACHE_HOME", "/x")]);
+        let e = env(&[
+            ("HOME", "/home/u"),
+            ("SNP_HOME", ""),
+            ("XDG_CACHE_HOME", "/x"),
+        ]);
         let loc = resolve_location(&e, cwd).unwrap();
         assert_eq!(loc.path, PathBuf::from("/x/snp"));
         assert_eq!(loc.source, StoreSource::XdgCacheHome);
@@ -143,8 +148,16 @@ mod tests {
         let cwd = Path::new("/w");
         for e in [
             env(&[("HOME", "/h"), ("SNP_HOME", "/h/.cache/pre-commit")]),
-            env(&[("HOME", "/h"), ("SNP_HOME", "/p"), ("PRE_COMMIT_HOME", "/p")]),
-            env(&[("HOME", "/h"), ("SNP_HOME", "/x/pre-commit"), ("XDG_CACHE_HOME", "/x")]),
+            env(&[
+                ("HOME", "/h"),
+                ("SNP_HOME", "/p"),
+                ("PRE_COMMIT_HOME", "/p"),
+            ]),
+            env(&[
+                ("HOME", "/h"),
+                ("SNP_HOME", "/x/pre-commit"),
+                ("XDG_CACHE_HOME", "/x"),
+            ]),
         ] {
             let err = resolve_location(&e, cwd).unwrap_err();
             assert_eq!(err.exit_code(), 1);
@@ -152,7 +165,10 @@ mod tests {
                 panic!("not an exception")
             };
             assert_eq!(&*exc.ty, "FatalError");
-            assert!(String::from_utf8_lossy(&exc.text).starts_with("snp refuses to use pre-commit's cache directory"));
+            assert!(
+                String::from_utf8_lossy(&exc.text)
+                    .starts_with("snp refuses to use pre-commit's cache directory")
+            );
         }
     }
 }

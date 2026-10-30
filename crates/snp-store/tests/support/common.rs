@@ -26,7 +26,8 @@ pub(crate) fn new_store() -> (tempfile::TempDir, PathBuf, Store) {
         .unwrap()
         .join("store");
     let s = store_at(&root);
-    s.ensure_created(Brand::Snp, &CollectWarnings::new()).unwrap();
+    s.ensure_created(Brand::Snp, &CollectWarnings::new())
+        .unwrap();
     (d, root, s)
 }
 

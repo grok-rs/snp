@@ -88,8 +88,7 @@ impl Classifier {
         par_chunks(pool, kept.len(), |range| {
             let mut out = Vec::new();
             for &id in kept.get(range).unwrap_or_default() {
-                if f
-                    .prefix
+                if f.prefix
                     .as_ref()
                     .is_some_and(|p| table.relative_to(id, p).is_none())
                     || !passes(table, id, &f.files, &f.exclude)?

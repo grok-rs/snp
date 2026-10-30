@@ -147,6 +147,17 @@ mod tests {
         assert!(Arc::ptr_eq(&f.files, &g.files));
         assert!(f.needs.stat && !f.needs.encoding && !f.needs.shebang);
         assert!(g.needs.shebang);
-        assert!(HookFilter::compile("(", "", TagSet::EMPTY, TagSet::EMPTY, TagSet::EMPTY, None, &cache).is_err());
+        assert!(
+            HookFilter::compile(
+                "(",
+                "",
+                TagSet::EMPTY,
+                TagSet::EMPTY,
+                TagSet::EMPTY,
+                None,
+                &cache
+            )
+            .is_err()
+        );
     }
 }

@@ -41,7 +41,10 @@ pub(crate) fn path_from_json(v: &Value) -> Option<PathBuf> {
 /// A path from raw bytes: the bytes on Unix; valid UTF-8 elsewhere.
 #[cfg_attr(
     unix,
-    expect(clippy::unnecessary_wraps, reason = "only Windows can reject the bytes")
+    expect(
+        clippy::unnecessary_wraps,
+        reason = "only Windows can reject the bytes"
+    )
 )]
 pub(crate) fn path_from_bytes(bytes: Vec<u8>) -> Option<PathBuf> {
     #[cfg(unix)]
@@ -231,7 +234,10 @@ pub(crate) fn decode_config_entry(bytes: &[u8]) -> Option<(PathBuf, PathBuf)> {
     if cfg.is_empty() || root.is_empty() || memchr::memchr(0, root).is_some() {
         return None;
     }
-    Some((path_from_bytes(cfg.to_vec())?, path_from_bytes(root.to_vec())?))
+    Some((
+        path_from_bytes(cfg.to_vec())?,
+        path_from_bytes(root.to_vec())?,
+    ))
 }
 
 /// Install markers stay opaque to the store, but a file that is not even one JSON value (truncated, garbled) is no

@@ -25,7 +25,13 @@ mod classify {
         TagSet::from_names(names).unwrap()
     }
 
-    fn filter(files: &str, exclude: &str, types: &[&str], prefix: Option<&[u8]>, cache: &RegexCache) -> HookFilter {
+    fn filter(
+        files: &str,
+        exclude: &str,
+        types: &[&str],
+        prefix: Option<&[u8]>,
+        cache: &RegexCache,
+    ) -> HookFilter {
         HookFilter::compile(
             files,
             exclude,
@@ -45,7 +51,9 @@ mod classify {
     }
 
     fn views(c: &Classifier, ids: &[FileId]) -> Vec<String> {
-        ids.iter().map(|&id| c.table.match_view(id).to_owned()).collect()
+        ids.iter()
+            .map(|&id| c.table.match_view(id).to_owned())
+            .collect()
     }
 
     /// Writes `n` unknown-name files (identify would read every one of them) under `root`.
@@ -105,12 +113,21 @@ mod classify {
     fn default_types_file_reads_no_contents_syscall_counter() {
         let d = tempfile::tempdir().unwrap();
         let out = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "classify::io_counter_child", "--nocapture", "--test-threads=1"])
+            .args([
+                "--exact",
+                "classify::io_counter_child",
+                "--nocapture",
+                "--test-threads=1",
+            ])
             .env("SNP_FILES_IO_CHILD", d.path())
             .output()
             .unwrap();
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(out.status.success(), "{stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         let line = stdout
             .lines()
             .find_map(|l| l.split_once("SNP-IO ").map(|(_, rest)| rest))
@@ -139,15 +156,25 @@ mod classify {
         let d = tempfile::tempdir().unwrap();
         let names = unknown_names(d.path(), 20);
         for n in &names {
-            std::fs::set_permissions(d.path().join(n), std::fs::Permissions::from_mode(0o000)).unwrap();
+            std::fs::set_permissions(d.path().join(n), std::fs::Permissions::from_mode(0o000))
+                .unwrap();
         }
         let cache = RegexCache::new();
         let pool = pool(2);
         let c = classifier(FileTable::from_args(names.clone(), d.path()), &cache, &pool);
-        assert_eq!(c.for_hook(&filter("", "^$", &["file"], None, &cache), &pool).unwrap().len(), 20);
-        assert!(c.for_hook(&filter("", "^$", &["binary"], None, &cache), &pool).is_err());
+        assert_eq!(
+            c.for_hook(&filter("", "^$", &["file"], None, &cache), &pool)
+                .unwrap()
+                .len(),
+            20
+        );
+        assert!(
+            c.for_hook(&filter("", "^$", &["binary"], None, &cache), &pool)
+                .is_err()
+        );
         for n in &names {
-            std::fs::set_permissions(d.path().join(n), std::fs::Permissions::from_mode(0o644)).unwrap();
+            std::fs::set_permissions(d.path().join(n), std::fs::Permissions::from_mode(0o644))
+                .unwrap();
         }
     }
 
@@ -160,27 +187,52 @@ mod classify {
             std::fs::create_dir_all(full.parent().unwrap()).unwrap();
             std::fs::write(full, b"x\n").unwrap();
         }
-        let names: Vec<OsString> = ["sub/b.py", "a.py", "sub/b.py", "missing.py", "sub2/c.py", "sub/d.txt"]
-            .iter()
-            .map(OsString::from)
-            .collect();
+        let names: Vec<OsString> = [
+            "sub/b.py",
+            "a.py",
+            "sub/b.py",
+            "missing.py",
+            "sub2/c.py",
+            "sub/d.txt",
+        ]
+        .iter()
+        .map(OsString::from)
+        .collect();
         let cache = RegexCache::new();
         let pool = pool(2);
         let c = classifier(FileTable::from_args(names, d.path()), &cache, &pool);
-        assert_eq!(views(&c, &c.kept), ["sub/b.py", "a.py", "sub/b.py", "sub2/c.py", "sub/d.txt"]);
-        let py = c.for_hook(&filter(r"\.py$", "^$", &["python"], None, &cache), &pool).unwrap();
-        assert_eq!(views(&c, &py), ["sub/b.py", "a.py", "sub/b.py", "sub2/c.py"]);
-        let ex = c.for_hook(&filter("", "^sub/", &["file"], None, &cache), &pool).unwrap();
+        assert_eq!(
+            views(&c, &c.kept),
+            ["sub/b.py", "a.py", "sub/b.py", "sub2/c.py", "sub/d.txt"]
+        );
+        let py = c
+            .for_hook(&filter(r"\.py$", "^$", &["python"], None, &cache), &pool)
+            .unwrap();
+        assert_eq!(
+            views(&c, &py),
+            ["sub/b.py", "a.py", "sub/b.py", "sub2/c.py"]
+        );
+        let ex = c
+            .for_hook(&filter("", "^sub/", &["file"], None, &cache), &pool)
+            .unwrap();
         assert_eq!(views(&c, &ex), ["a.py", "sub2/c.py"]);
-        let pre = c.for_hook(&filter("", "^$", &["file"], Some(b"sub"), &cache), &pool).unwrap();
+        let pre = c
+            .for_hook(&filter("", "^$", &["file"], Some(b"sub"), &cache), &pool)
+            .unwrap();
         assert_eq!(views(&c, &pre), ["sub/b.py", "sub/b.py", "sub/d.txt"]);
         // check-useless-excludes: by_types consults the types only.
         let only_types = filter("^nothing$", ".*", &["text"], Some(b"nowhere"), &cache);
         let all = c.by_types(&c.kept, &only_types).unwrap();
-        assert_eq!(views(&c, &all), ["sub/b.py", "a.py", "sub/b.py", "sub2/c.py", "sub/d.txt"]);
+        assert_eq!(
+            views(&c, &all),
+            ["sub/b.py", "a.py", "sub/b.py", "sub2/c.py", "sub/d.txt"]
+        );
         // Top-level include/exclude.
         let table = FileTable::from_args(
-            ["a.py", "sub/b.py", "sub/d.txt"].iter().map(OsString::from).collect(),
+            ["a.py", "sub/b.py", "sub/d.txt"]
+                .iter()
+                .map(OsString::from)
+                .collect(),
             d.path(),
         );
         let include = cache.get("^sub/", Options::CONFIG).unwrap();
@@ -192,7 +244,10 @@ mod classify {
     /// Trusted git modes give the stat tier with zero syscalls (the files do not even exist on disk).
     #[test]
     fn trusted_modes_need_no_syscalls() {
-        let names: Vec<OsString> = ["x.py", "run", "link", "subm"].iter().map(OsString::from).collect();
+        let names: Vec<OsString> = ["x.py", "run", "link", "subm"]
+            .iter()
+            .map(OsString::from)
+            .collect();
         let mut table = FileTable::from_args(names, Path::new("/definitely/not/here"));
         table.set_trusted_modes(vec![
             (&b"x.py"[..], 0o100_644),
@@ -206,16 +261,24 @@ mod classify {
         let cache = RegexCache::new();
         let pool = pool(1);
         let c = classifier(table, &cache, &pool);
-        let files = c.for_hook(&filter("", "^$", &["file"], None, &cache), &pool).unwrap();
+        let files = c
+            .for_hook(&filter("", "^$", &["file"], None, &cache), &pool)
+            .unwrap();
         assert_eq!(views(&c, &files), ["x.py", "run"]);
         // Symlink modes are not trusted on Windows (core.symlinks=false).
         if !cfg!(windows) {
-            let s = c.for_hook(&filter("", "^$", &["symlink"], None, &cache), &pool).unwrap();
+            let s = c
+                .for_hook(&filter("", "^$", &["symlink"], None, &cache), &pool)
+                .unwrap();
             assert_eq!(views(&c, &s), ["link"]);
-            let dirs = c.for_hook(&filter("", "^$", &["directory"], None, &cache), &pool).unwrap();
+            let dirs = c
+                .for_hook(&filter("", "^$", &["directory"], None, &cache), &pool)
+                .unwrap();
             assert_eq!(views(&c, &dirs), ["subm"]);
         }
-        let exe = c.for_hook(&filter("", "^$", &["executable"], None, &cache), &pool).unwrap();
+        let exe = c
+            .for_hook(&filter("", "^$", &["executable"], None, &cache), &pool)
+            .unwrap();
         assert!(views(&c, &exe).contains(&"run".to_owned()));
     }
 
@@ -266,7 +329,10 @@ mod classify {
             assert_eq!(table.os(FileId(0)).to_str(), Some("dir/file.py"));
             assert!(slash.search(table.match_view(FileId(0))).unwrap());
             let p = RepoPath::new(b"dir").unwrap();
-            assert_eq!(table.relative_to(FileId(0), &p).as_deref(), Some(&b"file.py"[..]));
+            assert_eq!(
+                table.relative_to(FileId(0), &p).as_deref(),
+                Some(&b"file.py"[..])
+            );
         } else {
             assert_eq!(table.match_view(FileId(0)), "dir\\file.py");
             assert!(!slash.search(table.match_view(FileId(0))).unwrap());
@@ -286,13 +352,23 @@ mod classify {
         let cache = RegexCache::new();
         let pool = pool(1);
         let c = classifier(
-            FileTable::from_args(["real.py", "link.py", "pkg.py"].iter().map(OsString::from).collect(), d.path()),
+            FileTable::from_args(
+                ["real.py", "link.py", "pkg.py"]
+                    .iter()
+                    .map(OsString::from)
+                    .collect(),
+                d.path(),
+            ),
             &cache,
             &pool,
         );
-        let py = c.for_hook(&filter("", "^$", &["python"], None, &cache), &pool).unwrap();
+        let py = c
+            .for_hook(&filter("", "^$", &["python"], None, &cache), &pool)
+            .unwrap();
         assert_eq!(views(&c, &py), ["real.py"]);
-        let none = c.for_hook(&filter("", "^$", &[], None, &cache), &pool).unwrap();
+        let none = c
+            .for_hook(&filter("", "^$", &[], None, &cache), &pool)
+            .unwrap();
         assert_eq!(none.len(), 3);
     }
 }

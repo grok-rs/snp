@@ -178,9 +178,7 @@ impl FileTable {
     /// produced by git) is dropped. Order and duplicates are kept (`diff.orderFile` parity, 02 G.0 #8).
     pub fn from_zbuf(buf: Vec<u8>, spans: Vec<(u32, u32)>, root: &Path) -> Self {
         let len = buf.len();
-        let valid = |&(s, e): &(u32, u32)| {
-            s <= e && usize::try_from(e).is_ok_and(|e| e <= len)
-        };
+        let valid = |&(s, e): &(u32, u32)| s <= e && usize::try_from(e).is_ok_and(|e| e <= len);
         let spans: Box<[(u32, u32)]> = if spans.iter().all(valid) {
             spans.into_boxed_slice()
         } else {
@@ -645,9 +643,7 @@ pub(crate) fn par_chunks<T: Send>(
     if n < PARALLEL_MIN || permits.get() == 1 || JobPool::holds_permit() {
         return f(0..n);
     }
-    let per = n
-        .div_ceil(permits.get().saturating_mul(4))
-        .max(CHUNK_MIN);
+    let per = n.div_ceil(permits.get().saturating_mul(4)).max(CHUNK_MIN);
     let chunks = n.div_ceil(per);
     let parts = pool.map_ordered(permits, chunks, |k| {
         let start = k.saturating_mul(per);
@@ -745,18 +741,28 @@ mod tests {
     use super::*;
 
     fn table(paths: &[&str]) -> FileTable {
-        FileTable::from_args(paths.iter().map(OsString::from).collect(), Path::new("/nonexistent-root"))
+        FileTable::from_args(
+            paths.iter().map(OsString::from).collect(),
+            Path::new("/nonexistent-root"),
+        )
     }
 
     #[test]
     fn arena_and_spans() {
-        let t = FileTable::from_zbuf(b"a.py\0b/c.txt\0".to_vec(), vec![(0, 4), (5, 12), (9, 99), (7, 6)], Path::new("/r"));
+        let t = FileTable::from_zbuf(
+            b"a.py\0b/c.txt\0".to_vec(),
+            vec![(0, 4), (5, 12), (9, 99), (7, 6)],
+            Path::new("/r"),
+        );
         assert_eq!(t.len(), 2);
         assert_eq!(t.bytes(FileId(0)), b"a.py");
         assert_eq!(t.bytes(FileId(1)), b"b/c.txt");
         assert_eq!(t.bytes(FileId(2)), b"");
         assert_eq!(t.match_view(FileId(7)), "");
-        assert!(matches!(t.tags(FileId(9), Needs::default()), TagOutcome::Vanished));
+        assert!(matches!(
+            t.tags(FileId(9), Needs::default()),
+            TagOutcome::Vanished
+        ));
     }
 
     #[test]
@@ -784,21 +790,41 @@ mod tests {
         let slash = RepoPath::new(b"a/").unwrap();
         assert_eq!(t.relative_to(FileId(0), &slash).as_deref(), Some(&b"b"[..]));
         let dot = RepoPath::new(b".").unwrap();
-        assert_eq!(t.relative_to(FileId(1), &dot).as_deref(), Some(&b"ab/c"[..]));
+        assert_eq!(
+            t.relative_to(FileId(1), &dot).as_deref(),
+            Some(&b"ab/c"[..])
+        );
         let dot_slash = RepoPath::new(b"./a").unwrap();
-        assert_eq!(t.relative_to(FileId(3), &dot_slash).as_deref(), Some(&b"b/c"[..]));
+        assert_eq!(
+            t.relative_to(FileId(3), &dot_slash).as_deref(),
+            Some(&b"b/c"[..])
+        );
     }
 
     #[test]
     fn trusted_modes_match_duplicates_by_path() {
         let mut t = table(&["x.sh", "a.py", "x.sh", "gone"]);
-        t.set_trusted_modes(vec![(&b"x.sh"[..], 0o100_755), (&b"a.py"[..], 0o100_644), (&b"zzz"[..], 0o100_644)]);
-        let n = Needs { stat: true, ..Needs::default() };
+        t.set_trusted_modes(vec![
+            (&b"x.sh"[..], 0o100_755),
+            (&b"a.py"[..], 0o100_644),
+            (&b"zzz"[..], 0o100_644),
+        ]);
+        let n = Needs {
+            stat: true,
+            ..Needs::default()
+        };
         for id in [0, 2] {
-            let TagOutcome::Tags(tags) = t.tags(FileId(id), n) else { panic!() };
-            assert!(tags.contains("executable") && tags.contains("shell"), "{tags}");
+            let TagOutcome::Tags(tags) = t.tags(FileId(id), n) else {
+                panic!()
+            };
+            assert!(
+                tags.contains("executable") && tags.contains("shell"),
+                "{tags}"
+            );
         }
-        let TagOutcome::Tags(tags) = t.tags(FileId(1), n) else { panic!() };
+        let TagOutcome::Tags(tags) = t.tags(FileId(1), n) else {
+            panic!()
+        };
         assert!(tags.contains("non-executable") && tags.contains("python"));
         // No mode and no file under the (nonexistent) root: gone.
         assert!(matches!(t.tags(FileId(3), n), TagOutcome::Vanished));
@@ -811,16 +837,27 @@ mod tests {
     #[test]
     fn retain_lexists_keeps_trusted_and_compacts() {
         let mut t = table(&["keep.py", "gone.py", "keep2.py"]);
-        t.set_trusted_modes(vec![(&b"keep.py"[..], 0o100_644), (&b"keep2.py"[..], 0o100_755)]);
+        t.set_trusted_modes(vec![
+            (&b"keep.py"[..], 0o100_644),
+            (&b"keep2.py"[..], 0o100_755),
+        ]);
         let _name: TagOutcome<'_> = t.tags(FileId(2), Needs::default());
         t.retain_lexists();
         assert_eq!(t.len(), 2);
         assert_eq!(t.bytes(FileId(1)), b"keep2.py");
-        let TagOutcome::Tags(tags) = t.tags(FileId(1), Needs { stat: true, ..Needs::default() }) else {
+        let TagOutcome::Tags(tags) = t.tags(
+            FileId(1),
+            Needs {
+                stat: true,
+                ..Needs::default()
+            },
+        ) else {
             panic!()
         };
         assert!(tags.contains("executable"));
-        let TagOutcome::Tags(tags) = t.tags(FileId(1), Needs::default()) else { panic!() };
+        let TagOutcome::Tags(tags) = t.tags(FileId(1), Needs::default()) else {
+            panic!()
+        };
         assert_eq!(tags, file_identify::tags_from_filename("keep2.py"));
     }
 }

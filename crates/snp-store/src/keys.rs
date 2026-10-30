@@ -66,8 +66,12 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::new();
     for &b in bytes {
-        out.push(char::from(DIGITS.get(usize::from(b >> 4)).copied().unwrap_or(b'0')));
-        out.push(char::from(DIGITS.get(usize::from(b & 0x0f)).copied().unwrap_or(b'0')));
+        out.push(char::from(
+            DIGITS.get(usize::from(b >> 4)).copied().unwrap_or(b'0'),
+        ));
+        out.push(char::from(
+            DIGITS.get(usize::from(b & 0x0f)).copied().unwrap_or(b'0'),
+        ));
     }
     out
 }
@@ -356,7 +360,8 @@ mod tests {
     #[test]
     fn hex_round_trip() {
         let k = RepoKey([
-            0x00, 0x01, 0x7f, 0x80, 0xff, 0x10, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde,
+            0x00, 0x01, 0x7f, 0x80, 0xff, 0x10, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a,
+            0xbc, 0xde,
         ]);
         let h = k.hex();
         assert_eq!(h, "00017f80ff10abcdef123456789abcde");

@@ -20,7 +20,8 @@ use snp_core::failure::Failure;
 use snp_core::lang::LanguageId;
 use snp_core::output::CollectWarnings;
 use snp_store::{
-    MarkerKey, RepoHandle, RepoId, RepoKind, RepoMeta, Store, StoreSource, ToolRef, resolve_location,
+    MarkerKey, RepoHandle, RepoId, RepoKind, RepoMeta, Store, StoreSource, ToolRef,
+    resolve_location,
 };
 
 #[cfg(unix)]
@@ -52,7 +53,10 @@ fn child(role: &str, root: &Path, extra: &[(&str, &Path)]) -> Command {
 fn wait_for(path: &Path, what: &str) {
     let start = Instant::now();
     while !path.exists() {
-        assert!(start.elapsed() < Duration::from_secs(30), "timed out waiting for {what}");
+        assert!(
+            start.elapsed() < Duration::from_secs(30),
+            "timed out waiting for {what}"
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
 }
@@ -72,13 +76,17 @@ fn finish(c: Child) -> String {
 #[test]
 fn child_entry() {
     let env = Env::capture_process();
-    let Some(role) = env.get("SNP_STORE_CHILD").map(|r| r.to_string_lossy().into_owned()) else {
+    let Some(role) = env
+        .get("SNP_STORE_CHILD")
+        .map(|r| r.to_string_lossy().into_owned())
+    else {
         return;
     };
     let root = PathBuf::from(env.get("SNP_STORE_ROOT").unwrap());
     let get = |k: &str| PathBuf::from(env.get(k).unwrap());
     let s = store_at(&root);
-    s.ensure_created(Brand::Snp, &CollectWarnings::new()).unwrap();
+    s.ensure_created(Brand::Snp, &CollectWarnings::new())
+        .unwrap();
     let (key, meta) = remote(URL, "v1", &[]);
     match role.as_str() {
         "materialize" => {
@@ -120,10 +128,16 @@ fn child_entry() {
                         c2.cancel(CancelReason::Interrupt);
                     })
                     .unwrap();
-                let r = s.shared(&mut || {
-                    waits.fetch_add(1, Ordering::SeqCst);
-                }, &c);
-                assert!(matches!(r, Err(Failure::Interrupted(CancelReason::Interrupt))));
+                let r = s.shared(
+                    &mut || {
+                        waits.fetch_add(1, Ordering::SeqCst);
+                    },
+                    &c,
+                );
+                assert!(matches!(
+                    r,
+                    Err(Failure::Interrupted(CancelReason::Interrupt))
+                ));
                 t.join().unwrap();
             }
             println!("WAITS {}", waits.load(Ordering::SeqCst));
@@ -152,14 +166,22 @@ fn location_matrix() {
     let home_s = home.to_str().unwrap();
     let cwd = base.join("cwd");
     let cases: Vec<Case<'_>> = vec![
-        (vec![("HOME", home_s)], base.join("real/home/.cache/snp"), StoreSource::PlatformDefault),
+        (
+            vec![("HOME", home_s)],
+            base.join("real/home/.cache/snp"),
+            StoreSource::PlatformDefault,
+        ),
         (
             vec![("HOME", home_s), ("XDG_CACHE_HOME", "xdg")],
             cwd.join("xdg/snp"),
             StoreSource::XdgCacheHome,
         ),
         (
-            vec![("HOME", home_s), ("XDG_CACHE_HOME", "/x"), ("SNP_HOME", "s")],
+            vec![
+                ("HOME", home_s),
+                ("XDG_CACHE_HOME", "/x"),
+                ("SNP_HOME", "s"),
+            ],
             cwd.join("s"),
             StoreSource::SnpHome,
         ),
@@ -173,7 +195,11 @@ fn location_matrix() {
             base.join("real/home/.cache/snp"),
             StoreSource::PlatformDefault,
         ),
-        (vec![("HOME", "")], PathBuf::from("/.cache/snp"), StoreSource::PlatformDefault),
+        (
+            vec![("HOME", "")],
+            PathBuf::from("/.cache/snp"),
+            StoreSource::PlatformDefault,
+        ),
     ];
     for (pairs, want, source) in cases {
         let loc = resolve_location(&env(&pairs), &cwd).unwrap();
@@ -204,7 +230,11 @@ fn m7_refuses_pre_commit_store_by_path_and_by_readme() {
     let base = snp_os::realpath::realpath_nonstrict(d.path(), Path::new("/")).unwrap();
     let pc = base.join("pc");
     let pc_s = pc.to_str().unwrap();
-    let e = env(&[("HOME", base.to_str().unwrap()), ("PRE_COMMIT_HOME", pc_s), ("SNP_HOME", pc_s)]);
+    let e = env(&[
+        ("HOME", base.to_str().unwrap()),
+        ("PRE_COMMIT_HOME", pc_s),
+        ("SNP_HOME", pc_s),
+    ]);
     let err = resolve_location(&e, &base).unwrap_err();
     assert_eq!(err.exit_code(), 1);
     assert_eq!(
@@ -226,7 +256,10 @@ fn m7_refuses_pre_commit_store_by_path_and_by_readme() {
         b"This directory is maintained by the pre-commit project.\nLearn more: https://github.com/pre-commit/pre-commit\n",
     )
     .unwrap();
-    let e = env(&[("HOME", base.to_str().unwrap()), ("SNP_HOME", copy.to_str().unwrap())]);
+    let e = env(&[
+        ("HOME", base.to_str().unwrap()),
+        ("SNP_HOME", copy.to_str().unwrap()),
+    ]);
     assert_eq!(resolve_location(&e, &base).unwrap_err().exit_code(), 1);
     // The default pre-commit store (`~/.cache/pre-commit`) too.
     let e = env(&[
@@ -237,8 +270,12 @@ fn m7_refuses_pre_commit_store_by_path_and_by_readme() {
     // snp's own README is fine.
     let own = base.join("own");
     let s = store_at(&own);
-    s.ensure_created(Brand::Snp, &CollectWarnings::new()).unwrap();
-    let e = env(&[("HOME", base.to_str().unwrap()), ("SNP_HOME", own.to_str().unwrap())]);
+    s.ensure_created(Brand::Snp, &CollectWarnings::new())
+        .unwrap();
+    let e = env(&[
+        ("HOME", base.to_str().unwrap()),
+        ("SNP_HOME", own.to_str().unwrap()),
+    ]);
     assert_eq!(resolve_location(&e, &base).unwrap().path, own);
 }
 
@@ -250,7 +287,10 @@ fn eight_processes_materialize_one_key_with_one_fill() {
     let (_g, root, _s) = new_store();
     let counter = root.parent().unwrap().join("fills");
     std::fs::create_dir_all(&counter).unwrap();
-    #[expect(clippy::needless_collect, reason = "all children must start before the first is awaited")]
+    #[expect(
+        clippy::needless_collect,
+        reason = "all children must start before the first is awaited"
+    )]
     let children: Vec<Child> = (0..8)
         .map(|_| {
             child("materialize", &root, &[("SNP_STORE_COUNTER", &counter)])
@@ -267,7 +307,11 @@ fn eight_processes_materialize_one_key_with_one_fill() {
                 .unwrap()
         })
         .collect();
-    assert_eq!(std::fs::read_dir(&counter).unwrap().count(), 1, "exactly one fill");
+    assert_eq!(
+        std::fs::read_dir(&counter).unwrap().count(),
+        1,
+        "exactly one fill"
+    );
     assert!(srcs.iter().all(|s| *s == srcs[0]), "{srcs:?}");
     let (key, _) = remote(URL, "v1", &[]);
     let h = store_at(&root).lookup(&key).unwrap();
@@ -308,7 +352,13 @@ fn materialize_is_double_checked_and_failures_leave_nothing() {
         Err(Failure::unexpected("CalledProcessError", "clone failed"))
     };
     let err = s
-        .materialize(&key, meta.clone(), &mut fails, &mut || {}, &CancelToken::new())
+        .materialize(
+            &key,
+            meta.clone(),
+            &mut fails,
+            &mut || {},
+            &CancelToken::new(),
+        )
         .unwrap_err();
     assert_eq!(exc_text(&err).1, "clone failed");
     assert!(s.lookup(&key).is_none());
@@ -330,7 +380,16 @@ fn materialize_is_double_checked_and_failures_leave_nothing() {
     // Metadata that does not derive the key is a bug, never stored.
     let (key3, _) = remote(URL, "v4", &[]);
     let (_, meta4) = remote(URL, "v5", &[]);
-    assert!(s.materialize(&key3, meta4, &mut fake_clone, &mut || {}, &CancelToken::new()).is_err());
+    assert!(
+        s.materialize(
+            &key3,
+            meta4,
+            &mut fake_clone,
+            &mut || {},
+            &CancelToken::new()
+        )
+        .is_err()
+    );
     assert_eq!(s.all_repos().len(), 1);
 }
 
@@ -378,22 +437,47 @@ fn env_dir_names_are_sanitized_or_hashed() {
     let (_g, root, s) = new_store();
     let h = handle(&s);
     std::fs::create_dir_all(&h.envs).unwrap();
-    for v in ["python3.12", "3.12.1", "default", "system", "22.11.0", "1.0+local"] {
+    for v in [
+        "python3.12",
+        "3.12.1",
+        "default",
+        "system",
+        "22.11.0",
+        "1.0+local",
+    ] {
         let d = s.env_dir(&h, LanguageId::Python, v);
-        assert_eq!(d.file_name().unwrap().to_str().unwrap(), format!("py_env-{v}"));
+        assert_eq!(
+            d.file_name().unwrap().to_str().unwrap(),
+            format!("py_env-{v}")
+        );
     }
-    assert!(s
-        .env_dir(&h, LanguageId::Node, "system")
-        .ends_with("node_env-system"));
+    assert!(
+        s.env_dir(&h, LanguageId::Node, "system")
+            .ends_with("node_env-system")
+    );
     let sentinel = root.join("sentinel");
     std::fs::create_dir_all(&sentinel).unwrap();
     std::fs::write(sentinel.join("keep"), b"x").unwrap();
     let long: String = std::iter::repeat_n('9', 65).collect();
-    for v in ["../../x", "/abs", "C:\\x", "a\0b", "", ".", "..", "a/b", long.as_str(), "../../../sentinel"] {
+    for v in [
+        "../../x",
+        "/abs",
+        "C:\\x",
+        "a\0b",
+        "",
+        ".",
+        "..",
+        "a/b",
+        long.as_str(),
+        "../../../sentinel",
+    ] {
         let d = s.env_dir(&h, LanguageId::Python, v);
         assert_eq!(d.parent().unwrap(), h.envs, "{v:?}");
         let name = d.file_name().unwrap().to_str().unwrap().to_owned();
-        assert!(name.starts_with("py_env-h") && name.len() == "py_env-h".len() + 16, "{name}");
+        assert!(
+            name.starts_with("py_env-h") && name.len() == "py_env-h".len() + 16,
+            "{name}"
+        );
         std::fs::create_dir_all(d.join("bin")).unwrap();
         snp_os::fs::remove_tree_within(&d, &h.envs).unwrap();
         assert!(!d.exists());
@@ -420,9 +504,15 @@ fn install_marker_round_trip_and_malformed_state() {
         version: Arc::from("22.11.0"),
     }];
     Store::commit_install_marker(&env_dir, json, &tools).unwrap();
-    assert_eq!(Store::read_install_marker(&env_dir).as_deref(), Some(&json[..]));
+    assert_eq!(
+        Store::read_install_marker(&env_dir).as_deref(),
+        Some(&json[..])
+    );
     let sidecar = std::fs::read_to_string(env_dir.join(".snp-tools.json")).unwrap();
-    assert!(sidecar.contains("\"node\"") && sidecar.contains("22.11.0"), "{sidecar}");
+    assert!(
+        sidecar.contains("\"node\"") && sidecar.contains("22.11.0"),
+        "{sidecar}"
+    );
     for bad in [&b"{bad"[..], b"", b"\xff\xfe", br#"{"v":1,"#] {
         std::fs::write(env_dir.join(".snp-install-state.json"), bad).unwrap();
         assert_eq!(Store::read_install_marker(&env_dir), None, "{bad:?}");
@@ -482,8 +572,14 @@ fn lock_wait_callback_runs_once_per_process() {
     let out = finish(child("count_waits", &root, &[]).spawn().unwrap());
     drop(guard);
     assert!(out.contains("WAITS 1"), "{out}");
-    assert_eq!(snp_store::locking_message(Brand::PreCommit), "Locking pre-commit directory");
-    assert_eq!(snp_store::locking_message(Brand::Snp), "Locking snp directory");
+    assert_eq!(
+        snp_store::locking_message(Brand::PreCommit),
+        "Locking pre-commit directory"
+    );
+    assert_eq!(
+        snp_store::locking_message(Brand::Snp),
+        "Locking snp directory"
+    );
 }
 
 /// Per-repository and per-tool locks are exclusive and independent.
@@ -493,12 +589,18 @@ fn repo_and_tool_locks() {
     let (key, _) = remote(URL, "lock", &[]);
     let l = s.repo_lock(&key, &mut || {}, &CancelToken::new()).unwrap();
     let path = root.join("repos-v1").join(format!("{}.lock", key.hex()));
-    assert!(snp_os::lock::FileLock::try_acquire(&path, snp_os::lock::LockMode::Exclusive)
-        .unwrap()
-        .is_none());
-    let t = s.tool_lock("node", &mut || {}, &CancelToken::new()).unwrap();
+    assert!(
+        snp_os::lock::FileLock::try_acquire(&path, snp_os::lock::LockMode::Exclusive)
+            .unwrap()
+            .is_none()
+    );
+    let t = s
+        .tool_lock("node", &mut || {}, &CancelToken::new())
+        .unwrap();
     assert!(root.join("tools-v1/node.lock").exists());
-    let odd = s.tool_lock("../evil", &mut || {}, &CancelToken::new()).unwrap();
+    let odd = s
+        .tool_lock("../evil", &mut || {}, &CancelToken::new())
+        .unwrap();
     assert!(!root.join("evil.lock").exists());
     drop((l, t, odd));
     // Released (a child spawned concurrently by another test may hold a forked copy of the fd until its exec).
@@ -507,7 +609,10 @@ fn repo_and_tool_locks() {
         .unwrap()
         .is_none()
     {
-        assert!(start.elapsed() < Duration::from_secs(5), "the repo lock was not released");
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "the repo lock was not released"
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
 }
@@ -523,7 +628,10 @@ fn sweep_keeps_unrestored_patches_and_referenced_tools() {
     let journal = patches.join("run-42-abcd.snp-journal");
     std::fs::write(
         &journal,
-        format!(r#"{{"v":1,"state":"failed","patch":"{}"}}"#, patches.join("patch1700000000-42").display()),
+        format!(
+            r#"{{"v":1,"state":"failed","patch":"{}"}}"#,
+            patches.join("patch1700000000-42").display()
+        ),
     )
     .unwrap();
     // Tools: node referenced, go unreferenced, uv unreferenced but locked.
@@ -581,7 +689,12 @@ fn sweep_removes_other_versions_and_snp1_leftovers() {
     let r = s.sweep(SystemTime::now());
     assert_eq!(r.removed_dirs, 1);
     assert!(!root.join("repos-v0").exists());
-    assert!(!root.join("repos-v1").join(format!("{}.lock", key.hex())).exists());
+    assert!(
+        !root
+            .join("repos-v1")
+            .join(format!("{}.lock", key.hex()))
+            .exists()
+    );
     // Without the 1.x signature, 1.x-looking names are not ours to delete.
     assert!(root.join("repos").exists() && root.join("db.db").exists());
     assert!(!r.legacy_v1_removed);
@@ -596,9 +709,11 @@ fn sweep_removes_other_versions_and_snp1_leftovers() {
     for gone in ["repos", "environments", "db.db"] {
         assert!(!root.join(gone).exists(), "{gone}");
     }
-    assert!(std::fs::read_to_string(root.join("README"))
-        .unwrap()
-        .starts_with("This directory is maintained by snp (You Shell Not Pass)."));
+    assert!(
+        std::fs::read_to_string(root.join("README"))
+            .unwrap()
+            .starts_with("This directory is maintained by snp (You Shell Not Pass).")
+    );
     assert!(root.join("repos-v1").exists());
 }
 
@@ -628,9 +743,25 @@ fn clean_retires_the_layout_but_keeps_unknown_and_recovery_data() {
     let patches = s.patches_dir();
     std::fs::write(patches.join("patch1-1"), b"restored").unwrap();
     std::fs::write(patches.join("patch2-2"), b"kept").unwrap();
-    std::fs::write(patches.join("run-2-x.snp-journal"), b"{\"patch\":\"/p/patch2-2\"}").unwrap();
+    std::fs::write(
+        patches.join("run-2-x.snp-journal"),
+        b"{\"patch\":\"/p/patch2-2\"}",
+    )
+    .unwrap();
     s.clean().unwrap();
-    for gone in ["repos-v1", "keys-v1", "configs-v1", "tools-v1", "cache-v1", "scratch", "trash", "spill", "README", "store-v1.json", "snp.log"] {
+    for gone in [
+        "repos-v1",
+        "keys-v1",
+        "configs-v1",
+        "tools-v1",
+        "cache-v1",
+        "scratch",
+        "trash",
+        "spill",
+        "README",
+        "store-v1.json",
+        "snp.log",
+    ] {
         assert!(!root.join(gone).exists(), "{gone}");
     }
     assert!(root.join("user-notes.txt").exists());
@@ -638,9 +769,11 @@ fn clean_retires_the_layout_but_keeps_unknown_and_recovery_data() {
     assert!(patches.join("patch2-2").exists());
     assert!(patches.join("run-2-x.snp-journal").exists());
     // The store comes back on demand.
-    s.ensure_created(Brand::Snp, &CollectWarnings::new()).unwrap();
+    s.ensure_created(Brand::Snp, &CollectWarnings::new())
+        .unwrap();
     let s2 = store_at(&root);
-    s2.ensure_created(Brand::Snp, &CollectWarnings::new()).unwrap();
+    s2.ensure_created(Brand::Snp, &CollectWarnings::new())
+        .unwrap();
     assert!(root.join("repos-v1").is_dir());
     assert!(s2.lookup(&key).is_none());
 }
@@ -655,11 +788,15 @@ fn ephemeral_store_keeps_repos_inside_and_reads_tools_from_the_shared_store() {
     let eroot = tmp.path().join("try-repo");
     std::fs::create_dir_all(&eroot).unwrap();
     let e = Store::ephemeral(&eroot, Some(&main));
-    e.ensure_created(Brand::PreCommit, &CollectWarnings::new()).unwrap();
+    e.ensure_created(Brand::PreCommit, &CollectWarnings::new())
+        .unwrap();
     let (key, meta) = remote(URL, "try", &[]);
     let h = materialize(&e, &key, meta);
     assert!(h.src.starts_with(&eroot));
-    assert!(main.lookup(&key).is_none(), "the main store gains no repos-v1 entry");
+    assert!(
+        main.lookup(&key).is_none(),
+        "the main store gains no repos-v1 entry"
+    );
     let m = MarkerKey::Initialized {
         db_repo_name: Arc::from(URL),
         rev: Arc::from("try"),
@@ -681,7 +818,11 @@ fn ephemeral_store_keeps_repos_inside_and_reads_tools_from_the_shared_store() {
     assert!(main.exclusive(&mut || {}, &CancelToken::new()).is_ok());
     // Without a shared store, everything lives under the root.
     let alone = Store::ephemeral(&tmp.path().join("alone"), None);
-    assert!(alone.tool_dir("go", "1").starts_with(tmp.path().join("alone")));
+    assert!(
+        alone
+            .tool_dir("go", "1")
+            .starts_with(tmp.path().join("alone"))
+    );
     assert!(main_root.join("tools-v1").exists());
 }
 
@@ -729,7 +870,10 @@ fn repo_id_from_config_uses_the_project_root() {
     let idb = RepoId::from_config("../tools", &base.join("b/proj"));
     assert!(matches!(&ida, RepoId::LocalPath(p) if *p == base.join("a/tools")));
     assert!(matches!(&idb, RepoId::LocalPath(p) if *p == base.join("b/tools")));
-    assert_ne!(Store::remote_key(&ida, "HEAD", &[]), Store::remote_key(&idb, "HEAD", &[]));
+    assert_ne!(
+        Store::remote_key(&ida, "HEAD", &[]),
+        Store::remote_key(&idb, "HEAD", &[])
+    );
     assert_eq!(
         snp_store::db_repo_name("../tools", &[Arc::from("b"), Arc::from("a")]),
         "../tools:b,a"
@@ -746,10 +890,13 @@ fn relocated_store_is_detected() {
     let moved = snp_os::realpath::realpath_nonstrict(&moved, Path::new("/")).unwrap();
     let s = store_at(&moved);
     assert_eq!(s.relocated_from().as_deref(), Some(root.as_path()));
-    s.ensure_created(Brand::Snp, &CollectWarnings::new()).unwrap();
+    s.ensure_created(Brand::Snp, &CollectWarnings::new())
+        .unwrap();
     assert_eq!(s.relocated_from().as_deref(), Some(root.as_path()));
     let again = store_at(&moved);
-    again.ensure_created(Brand::Snp, &CollectWarnings::new()).unwrap();
+    again
+        .ensure_created(Brand::Snp, &CollectWarnings::new())
+        .unwrap();
     assert_eq!(again.relocated_from(), None);
 }
 
@@ -764,7 +911,8 @@ fn paths_and_laziness() {
     assert_eq!(s.crash_log(Brand::Snp), root.join("snp.log"));
     assert_eq!(s.spill_dir(), root.join("spill"));
     assert!(!root.exists(), "no I/O before ensure_created");
-    s.ensure_created(Brand::Snp, &CollectWarnings::new()).unwrap();
+    s.ensure_created(Brand::Snp, &CollectWarnings::new())
+        .unwrap();
     assert_eq!(
         std::fs::read_to_string(root.join("README")).unwrap(),
         "This directory is maintained by snp (You Shell Not Pass).\nLearn more: https://github.com/grok-rs/snp\n"
@@ -773,8 +921,19 @@ fn paths_and_laziness() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        for dir in ["", "repos-v1", "spill", "patches", "scratch", "keys-v1", "configs-v1"] {
-            let mode = std::fs::metadata(root.join(dir)).unwrap().permissions().mode();
+        for dir in [
+            "",
+            "repos-v1",
+            "spill",
+            "patches",
+            "scratch",
+            "keys-v1",
+            "configs-v1",
+        ] {
+            let mode = std::fs::metadata(root.join(dir))
+                .unwrap()
+                .permissions()
+                .mode();
             assert_eq!(mode & 0o777, 0o700, "{dir}");
         }
     }
@@ -796,7 +955,11 @@ fn world_writable_store_is_refused() {
         .ensure_created(Brand::Snp, &CollectWarnings::new())
         .unwrap_err();
     assert_eq!(err.exit_code(), 1);
-    assert!(exc_text(&err).1.starts_with("snp refuses to use the world-writable store"));
+    assert!(
+        exc_text(&err)
+            .1
+            .starts_with("snp refuses to use the world-writable store")
+    );
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o1777)).unwrap();
     store_at(&root)
         .ensure_created(Brand::Snp, &CollectWarnings::new())
@@ -815,13 +978,18 @@ fn foreign_store_as_root_is_refused_unless_allowed() {
     let root = d.path().join("foreign");
     std::fs::create_dir_all(&root).unwrap();
     std::os::unix::fs::chown(&root, Some(1000), Some(1000)).unwrap();
-    let allowed = Env::capture_process().get("SNP_ALLOW_FOREIGN_STORE").is_some_and(|v| v == "1");
+    let allowed = Env::capture_process()
+        .get("SNP_ALLOW_FOREIGN_STORE")
+        .is_some_and(|v| v == "1");
     let diag = CollectWarnings::new();
     let r = store_at(&root).ensure_created(Brand::Snp, &diag);
     if allowed {
         r.unwrap();
         let w = diag.take();
-        assert!(w.iter().any(|l| l.contains("is owned by uid 1000")), "{w:?}");
+        assert!(
+            w.iter().any(|l| l.contains("is owned by uid 1000")),
+            "{w:?}"
+        );
         return;
     }
     let err = r.unwrap_err();
@@ -846,5 +1014,9 @@ fn foreign_store_as_root_is_refused_unless_allowed() {
         .env("SNP_ALLOW_FOREIGN_STORE", "1")
         .output()
         .unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
 }

@@ -46,7 +46,12 @@ mod oracle {
     }
 
     /// Materialises the vector tree under a fresh temp dir; returns (dir guard, root, entries, sockets).
-    fn tree() -> (tempfile::TempDir, PathBuf, Vec<Entry>, Vec<std::os::unix::net::UnixListener>) {
+    fn tree() -> (
+        tempfile::TempDir,
+        PathBuf,
+        Vec<Entry>,
+        Vec<std::os::unix::net::UnixListener>,
+    ) {
         let json: serde_json::Value =
             serde_json::from_str(include_str!("vectors/identify_tree.json")).unwrap();
         assert_eq!(json["identify"], "2.6.20");

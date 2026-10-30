@@ -167,9 +167,9 @@ pub(crate) fn sweep(root: &Path, tools_root: &Path, now: SystemTime) -> SweepRep
         if layout::parse_bucket(name).is_some_and(|(_, v)| v != layout::BUCKET_VERSION)
             && e.file_type().is_ok_and(|t| t.is_dir())
         {
-            report.removed_dirs = report
-                .removed_dirs
-                .saturating_add(usize::from(snp_os::fs::retire_dir(&e.path(), &trash).is_ok()));
+            report.removed_dirs = report.removed_dirs.saturating_add(usize::from(
+                snp_os::fs::retire_dir(&e.path(), &trash).is_ok(),
+            ));
         }
     }
 
@@ -275,12 +275,7 @@ pub(crate) fn clean(root: &Path) -> Result<(), Failure> {
     let io_err = |e: &io::Error, p: &Path| Failure::from_io(e, Some(p.as_os_str()), None);
     let readme = readme_first_line(root);
     let snp1 = readme.as_deref() == Some(messages::SNP1_README_SIGNATURE);
-    let ours = snp1
-        || readme.as_deref()
-            == messages::README
-                .split('\n')
-                .next()
-                .map(str::as_bytes);
+    let ours = snp1 || readme.as_deref() == messages::README.split('\n').next().map(str::as_bytes);
 
     let mut dirs: Vec<PathBuf> = [
         layout::REPOS,
@@ -325,7 +320,8 @@ pub(crate) fn clean(root: &Path) -> Result<(), Failure> {
     for e in &all {
         let name = e.file_name();
         let bytes = name.as_encoded_bytes();
-        let keep = bytes.ends_with(layout::JOURNAL_SUFFIX.as_bytes()) || mentioned(bytes, &journals);
+        let keep =
+            bytes.ends_with(layout::JOURNAL_SUFFIX.as_bytes()) || mentioned(bytes, &journals);
         if !keep {
             let path = e.path();
             snp_os::fs::remove_tree_within(&path, &patches).map_err(|err| io_err(&err, &path))?;
@@ -358,7 +354,8 @@ mod tests {
 
     #[test]
     fn journal_mentions_are_whole_names() {
-        let journals = vec![br#"{"patch":"/s/patches/patch1700000000-42","state":"failed"}"#.to_vec()];
+        let journals =
+            vec![br#"{"patch":"/s/patches/patch1700000000-42","state":"failed"}"#.to_vec()];
         assert!(mentioned(b"patch1700000000-42", &journals));
         assert!(!mentioned(b"patch1700000000-4", &journals));
         assert!(!mentioned(b"patch1700000000-421", &journals));

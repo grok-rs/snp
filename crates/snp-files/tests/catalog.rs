@@ -84,7 +84,9 @@ mod catalog {
         let pool = pool();
         let c = classifier(&root, &["a.txt", "b.txt", "c.txt"], &cache, &pool);
         // Hook 1 (`files: ^a\.txt$`) runs `rm -f b.txt` (tags of b.txt not computed yet) …
-        let h1 = c.for_hook(&filter(r"^a\.txt$", &["file"], &cache), &pool).unwrap();
+        let h1 = c
+            .for_hook(&filter(r"^a\.txt$", &["file"], &cache), &pool)
+            .unwrap();
         assert_eq!(names_of(&c, &h1), ["a.txt"]);
         std::fs::remove_file(root.join("b.txt")).unwrap();
         // … and hook 2 (`types: [file]`) no longer sees it; neither does hook 3.
@@ -121,10 +123,14 @@ mod catalog {
         let files = c.for_hook(&filter("", &["file"], &cache), &pool).unwrap();
         assert_eq!(names_of(&c, &files), ["noext", "u.txt"]);
         // `files: \.txt$` + `types: [text]`: the name decides, no open.
-        let txt = c.for_hook(&filter(r"\.txt$", &["text"], &cache), &pool).unwrap();
+        let txt = c
+            .for_hook(&filter(r"\.txt$", &["text"], &cache), &pool)
+            .unwrap();
         assert_eq!(names_of(&c, &txt), ["u.txt"]);
         // `types: [text]` over noext: fail closed with the identify open error.
-        let err = c.for_hook(&filter("", &["text"], &cache), &pool).unwrap_err();
+        let err = c
+            .for_hook(&filter("", &["text"], &cache), &pool)
+            .unwrap_err();
         assert_eq!(err.exit_code(), 3);
         let snp_core::failure::Failure::Exc { exc, .. } = err else {
             panic!("not an exception")
@@ -286,9 +292,13 @@ mod catalog {
         let all = cache.get("", Options::CONFIG).unwrap();
         let none = cache.get("^$", Options::CONFIG).unwrap();
         let c = Classifier::new(Arc::new(table), &all, &none, &pool).unwrap();
-        let got = c.for_hook(&filter(r"\.txt$", &["text", "plain-text"], &cache), &pool).unwrap();
+        let got = c
+            .for_hook(&filter(r"\.txt$", &["text", "plain-text"], &cache), &pool)
+            .unwrap();
         assert_eq!(got, [FileId(0), bad]);
-        let got = c.for_hook(&filter("\u{fffd}", &["file"], &cache), &pool).unwrap();
+        let got = c
+            .for_hook(&filter("\u{fffd}", &["file"], &cache), &pool)
+            .unwrap();
         assert_eq!(got, [bad]);
     }
 
@@ -346,7 +356,10 @@ mod catalog {
             Some(&out.stdout),
             Some(&out.stderr),
         );
-        assert!(text.split(|&b| b == b'\n').any(|l| l.ends_with(b"\xff bad")));
+        assert!(
+            text.split(|&b| b == b'\n')
+                .any(|l| l.ends_with(b"\xff bad"))
+        );
         assert!(String::from_utf8_lossy(&text).contains("fatal: \u{fffd} bad"));
     }
 }
