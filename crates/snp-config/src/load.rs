@@ -146,7 +146,9 @@ pub(crate) fn future_warnings(value: &Value, kind: Kind, o: &LoadOpts<'_>) {
                     hook(h, &mut patterns);
                 }
             }
-            if let Some(patches) = get(root, "hooks").and_then(Value::as_map) {
+            if let (Kind::Overlay, Some(patches)) =
+                (kind, get(root, "hooks").and_then(Value::as_map))
+            {
                 for h in patches.values().filter_map(Value::as_map) {
                     hook(h, &mut patterns);
                 }
