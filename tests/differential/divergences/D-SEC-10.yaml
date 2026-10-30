@@ -1,5 +1,36 @@
-# D-SEC-10 (SEC, owner WP-13): linear tier 1; tier 2 backtrack_limit 1e8 → An error has occurred: snp: regular expression {pattern!r} exceeded the backtracking limit on {path!r} (exit 1)
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-SEC-10 (SEC, owner WP-13): tier 2 stops after 10^8 backtracking steps (docs/divergences/D-SEC-10.md).
+# pre-commit spends ~5 s exploring 2^25 partitions of the `a` run, finds no match and skips the hook (exit 0);
+# snp's backtrack limit aborts the run with "exceeded the backtracking limit on 'aaa…ab'" (exit 1).
+name: divergences/D-SEC-10
+since: "4.1.0"
 expect_divergence: D-SEC-10
-status: stub
+requires:
+  git: ">=2.31"
+  net: false
+  tools: []
+  os: [linux, macos, windows]
+  pty: false
+work:
+  files:
+    # 26 x `a` + `b`: CPython needs ~5 s, more than snp's 10^8 steps (~2.5 s).
+    aaaaaaaaaaaaaaaaaaaaaaaaaab: ""
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: matched
+            name: matched
+            entry: the files pattern matched
+            language: fail
+            files: '(?:(?=a)a+)+(?<!a)b'
+  commit: [".pre-commit-config.yaml", aaaaaaaaaaaaaaaaaaaaaaaaaab]
+steps:
+  - tool: [run, --all-files]
+compare:
+  # Diverges by design: pre-commit prints `(no files to check)Skipped` and exits 0, snp prints the
+  # backtrack-limit error and exits 1.
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true

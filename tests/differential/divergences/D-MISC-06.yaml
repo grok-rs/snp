@@ -1,5 +1,34 @@
-# D-MISC-06 (TIERB, owner WP-13): as stated (corpus frequency 0)
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-MISC-06 (TIERB, owner WP-13): regex corner cases of 01 Addendum §A.6.13 D1-D6 (docs/divergences/D-MISC-06.md).
+# D1: under IGNORECASE CPython's back-reference compares lower() per character (sigma != final sigma), fancy-regex
+# compares simple case folds (both fold to U+03C3): pre-commit skips the hook, snp runs it and it fails.
+name: divergences/D-MISC-06
+since: "4.1.0"
 expect_divergence: D-MISC-06
-status: stub
+requires:
+  git: ">=2.31"
+  net: false
+  tools: []
+  os: [linux, macos, windows]
+  pty: false
+work:
+  files:
+    "σς.txt": ""
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: matched
+            name: matched
+            entry: the files pattern matched
+            language: fail
+            files: '(?i)(σ)\1'
+  commit: [".pre-commit-config.yaml", "σς.txt"]
+steps:
+  - tool: [run, --all-files]
+compare:
+  # Diverges by design: pre-commit prints `(no files to check)Skipped` (exit 0), snp `Failed` with the file (exit 1).
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
