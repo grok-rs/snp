@@ -10,8 +10,9 @@
 //! Refused (the whole extraction fails with [`NetError::UnsafeEntry`]): absolute, drive-prefixed and `..` names;
 //! character/block devices, FIFOs, sockets and unknown entry types; hard links except to a regular file extracted
 //! earlier from the same archive; symlinks when [`Extract::allow_symlinks_inside`] is false, and otherwise symlinks
-//! whose target — resolved lexically against the extracted tree — leaves it, is absolute, or passes through (or
-//! names) another symlink of the archive. setuid/setgid/sticky bits are stripped from every mode. Nothing is ever
+//! whose target — resolved lexically against the extracted tree — leaves it, is absolute, passes through (or names)
+//! another symlink of the archive, or steps back (`..`) over anything but a real directory of the tree (which also
+//! catches symlinks reached through a case or normalisation variant of their name on macOS and Windows). setuid/setgid/sticky bits are stripped from every mode. Nothing is ever
 //! written through a symlink: the extraction tree (`archive/tree.rs`) uses descriptor-relative, `O_NOFOLLOW` file
 //! operations.
 //!
@@ -31,7 +32,7 @@ mod tree;
 mod zip;
 
 use path::{RelPath, entry_path, resolve_symlink, unsafe_entry};
-use tree::{IMPLICIT_DIR_MODE, Tree, remove_part, set_file_mode};
+use tree::{Tree, remove_part, set_file_mode};
 
 /// Extraction options.
 #[derive(Copy, Clone, Debug)]
@@ -54,6 +55,13 @@ const MAX_LINK_TARGET: usize = 4096;
 const DEFAULT_FILE_MODE: u32 = 0o644;
 /// See [`DEFAULT_FILE_MODE`].
 const DEFAULT_DIR_MODE: u32 = 0o755;
+/// Cap on what an extraction keeps in memory besides file data: the paths, link names and targets it records, and
+/// every metadata record (GNU long name/link, pax header) the `tar` crate reads into memory between two entries.
+/// node, go and the ruby helpers need well under 8 MiB (go ≈ 15k entries).
+pub(crate) const METADATA_BUDGET: u64 = 64 << 20;
+/// Cap on the tar bytes between two entries that are not entry data: headers, padding and metadata records
+/// (`tar::Archive` reads a long name or pax header whole into memory). Path names are ≤ 4096 bytes in practice.
+pub(crate) const MAX_METADATA_RECORD: u64 = 1 << 20;
 
 /// Extracts into `<dest>.part-<rand>` (same FS) in two passes — regular files and directories first, symlinks last —
 /// then renames to `dest` (ADR-077). Rejected: absolute, `..` and drive-prefixed names; device, FIFO and socket
@@ -64,7 +72,7 @@ const DEFAULT_DIR_MODE: u32 = 0o755;
 pub fn tar_gz(archive: &Path, dest: &Path, o: &Extract) -> Result<(), NetError> {
     let f = File::open(archive)?;
     extract(dest, o, |x| {
-        tar::walk(flate2::read::GzDecoder::new(BufReader::new(f)), x)
+        tar::walk(flate2::read::GzDecoder::new(BufReader::new(f)), archive, x)
     })
 }
 
@@ -77,7 +85,7 @@ pub fn tar_xz(archive: &Path, dest: &Path, o: &Extract) -> Result<(), NetError> 
     {
         let f = File::open(archive)?;
         extract(dest, o, |x| {
-            tar::walk(liblzma::read::XzDecoder::new(BufReader::new(f)), x)
+            tar::walk(liblzma::read::XzDecoder::new(BufReader::new(f)), archive, x)
         })
     }
     #[cfg(not(feature = "xz"))]
@@ -126,6 +134,8 @@ fn extract(
             files: HashSet::new(),
             dirs: Vec::new(),
             symlinks: Vec::new(),
+            metadata: 0,
+            implicit_seen: 0,
         };
         walk(&mut x)?;
         x.finish()
@@ -183,6 +193,18 @@ pub(crate) struct Extraction<'a> {
     dirs: Vec<(RelPath, u32)>,
     /// Symlinks for the second pass.
     symlinks: Vec<PendingLink>,
+    /// Bytes of recorded metadata (paths, link names and targets), against [`METADATA_BUDGET`].
+    metadata: u64,
+    /// The implicit directories of the tree already charged to `metadata`.
+    implicit_seen: usize,
+}
+
+/// The memory a recorded path costs (an estimate including the per-component `OsString` overhead).
+fn path_cost(p: &[OsString]) -> u64 {
+    p.iter().fold(48_u64, |n, c| {
+        n.saturating_add(u64::try_from(c.len()).unwrap_or(u64::MAX))
+            .saturating_add(32)
+    })
 }
 
 impl Extraction<'_> {
@@ -194,6 +216,25 @@ impl Extraction<'_> {
                 io::ErrorKind::InvalidData,
                 format!("archive has more than {MAX_ENTRIES} entries"),
             )));
+        }
+        Ok(())
+    }
+
+    /// Charges `bytes` of recorded metadata, plus the implicit directories the tree created since the last charge.
+    fn charge(&mut self, bytes: u64) -> Result<(), NetError> {
+        let implicit = self.tree.implicit_dirs();
+        let new = implicit
+            .get(self.implicit_seen..)
+            .unwrap_or_default()
+            .iter()
+            .fold(0_u64, |n, p| n.saturating_add(path_cost(p)));
+        self.implicit_seen = implicit.len();
+        self.metadata = self.metadata.saturating_add(bytes).saturating_add(new);
+        if self.metadata > METADATA_BUDGET {
+            return Err(NetError::TooLarge {
+                url: "archive metadata (names and link targets)".to_owned(),
+                limit: METADATA_BUDGET,
+            });
         }
         Ok(())
     }
@@ -213,6 +254,7 @@ impl Extraction<'_> {
             return Ok(());
         };
         self.tree.mkdirs(&rel)?;
+        self.charge(path_cost(&rel))?;
         self.dirs
             .push((rel, mode.unwrap_or(DEFAULT_DIR_MODE) & 0o777));
         Ok(())
@@ -247,12 +289,19 @@ impl Extraction<'_> {
         set_file_mode(&f, mode.unwrap_or(DEFAULT_FILE_MODE) & 0o777)?;
         drop(f);
         self.total = self.total.saturating_add(copied);
+        self.charge(path_cost(&rel))?;
         self.files.insert(rel);
         Ok(())
     }
 
-    /// A hard link entry: only to a regular file extracted earlier from this archive.
-    pub(crate) fn hard_link(&mut self, raw: &[u8], target_raw: &[u8]) -> Result<(), NetError> {
+    /// A hard link entry: only to a regular file extracted earlier from this archive. Its mode (when the format has
+    /// one) applies to the shared file, as CPython `tarfile` `chmod`s the link after `os.link`.
+    pub(crate) fn hard_link(
+        &mut self,
+        raw: &[u8],
+        target_raw: &[u8],
+        mode: Option<u32>,
+    ) -> Result<(), NetError> {
         let Some(rel) = self.path(raw)? else {
             return Ok(());
         };
@@ -263,6 +312,10 @@ impl Extraction<'_> {
             .filter(|t| self.files.contains(t))
             .ok_or_else(|| unsafe_entry(raw))?;
         self.tree.hard_link(&target, &rel)?;
+        if let Some(m) = mode {
+            self.tree.set_link_mode(&rel, m & 0o777)?;
+        }
+        self.charge(path_cost(&rel))?;
         self.files.insert(rel);
         Ok(())
     }
@@ -275,6 +328,12 @@ impl Extraction<'_> {
         if !self.o.allow_symlinks_inside || target.len() > MAX_LINK_TARGET {
             return Err(unsafe_entry(raw));
         }
+        let bytes = [target.len(), raw.len()]
+            .iter()
+            .fold(path_cost(&rel).saturating_mul(2), |n, l| {
+                n.saturating_add(u64::try_from(*l).unwrap_or(u64::MAX))
+            });
+        self.charge(bytes)?;
         self.symlinks.push(PendingLink {
             path: rel,
             target: target.to_vec(),
@@ -294,19 +353,28 @@ impl Extraction<'_> {
         let links: HashSet<RelPath> = self.symlinks.iter().map(|l| l.path.clone()).collect();
         let is_link = |p: &[OsString]| links.contains(p);
         for l in &self.symlinks {
-            let resolved = resolve_symlink(&l.path, &l.target, &is_link)
+            // The link's parent exists before its target is judged (`..` over it must be a real directory).
+            // (A parent below an archive symlink is refused by `resolve_symlink` instead.)
+            if let Some((_, parent)) = l.path.split_last()
+                && !(1..=parent.len()).any(|i| parent.get(..i).is_some_and(is_link))
+            {
+                self.tree.mkdirs(parent)?;
+            }
+            let tree = &mut *self.tree;
+            let resolved = resolve_symlink(&l.path, &l.target, &is_link, &mut |p| tree.is_dir(p))
                 .ok_or_else(|| unsafe_entry(&l.name))?;
             let target = os_target(&l.target).ok_or_else(|| unsafe_entry(&l.name))?;
             let target_is_dir = self.tree.is_dir(&resolved);
             self.tree.symlink(&target, &l.path, target_is_dir)?;
         }
-        // Implicit directories get the default, explicit entries their own mode (the last entry for a path wins);
-        // applied deepest first.
+        // Implicit directories get `0o777 & !umask`, explicit entries their own mode (the last entry for a path
+        // wins); applied deepest first, the root last.
+        let implicit_mode = self.tree.implicit_dir_mode();
         let mut modes: Vec<(RelPath, u32, usize)> = self
             .tree
             .implicit_dirs()
             .iter()
-            .map(|d| (d.clone(), IMPLICIT_DIR_MODE))
+            .map(|d| (d.clone(), implicit_mode))
             .chain(std::mem::take(&mut self.dirs))
             .enumerate()
             .map(|(seq, (p, m))| (p, m, seq))
@@ -323,6 +391,7 @@ impl Extraction<'_> {
         for (rel, mode) in &last {
             self.tree.set_dir_mode(rel, *mode)?;
         }
+        self.tree.set_dir_mode(&[], implicit_mode)?;
         Ok(())
     }
 }

@@ -39,9 +39,18 @@ and a hostile archive can write outside the environment directory. snp (ADR-034,
   (rustup-init, a verified binary instead of a piped shell script) or a digest embedded in snp (uv, the ruby helpers);
 * extracts in two passes into `<dest>.part-<rand>` (regular files and directories, then symlinks), refusing absolute,
   `..` and drive-prefixed names, device/FIFO/socket entries, hard links that do not point at a regular file extracted
-  earlier, and symlinks that leave the tree or chain through another symlink; parents are opened without following
-  links (Linux: `openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)`); setuid/setgid/sticky bits are stripped; the tree is
-  renamed into place only when complete.
+  earlier, and symlinks that leave the tree or chain through another symlink (a `..` in a target must step back over
+  a real directory of the tree, which also catches a chain spelled with a case variant on case-insensitive macOS and
+  Windows filesystems: `X -> .` + `y -> x/..`); parents are opened without following links (Linux:
+  `openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)`); setuid/setgid/sticky bits are stripped; metadata held in memory is
+  bounded (1 MiB of tar records between two entries, so a gzip-bombed GNU long name fails as too large; 64 MiB of
+  recorded names and link targets); the tree is renamed into place only when complete. Otherwise the result matches
+  CPython `tarfile.extractall`: directories without an entry get `0o777 & ~umask`, a hard link's mode applies to the
+  shared file.
+* resolves node's `default`/`latest`/`lts` to the newest release of `index.json` that is not a pre-release and lists
+  a build for the target (the unofficial builds' index for musl and riscv64). nodeenv 1.11.0 takes the first entry
+  (only checking the x86_64-musl/riscv64 builds), which in October 2026 is `v27.0.0-alpha.0.0.0` — a pre-release
+  everywhere and a 404 on x86_64 macOS (no `darwin-x64` build) — and has no arm64-musl case at all.
 
 The divergence is invisible for genuine downloads: the same archives are installed at the same places. It only
 appears when the bytes are not the published ones — then snp fails closed (exit 3, the message names the URL and

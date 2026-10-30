@@ -92,13 +92,20 @@ pub(crate) fn entry_path(raw: &[u8], strip: u8) -> Result<Option<RelPath>, NetEr
 }
 
 /// Resolves the target of the symlink `link` lexically against the extracted tree: the result stays inside the tree
-/// and no component on the way (including the final one) is a symlink of the archive (`symlinks`, the set of every
+/// and no component on the way (including the final one) is a symlink of the archive (`is_symlink`, the set of every
 /// symlink entry), so chains such as `x -> .` + `y -> x/..` are refused. Absolute and drive-prefixed targets are
 /// refused. The resolved path (empty = the tree root) is returned.
+///
+/// Name equality alone cannot see every symlink: on a case-insensitive or normalising filesystem (macOS, Windows)
+/// `x` opens the archive's `X`. So every component a `..` steps back over must also be a real directory of the tree
+/// right now (`is_real_dir`: opened without following symlinks). Pass-1 directories never become symlinks later
+/// (creating a link over an existing name fails, case-insensitively too), a name that does not exist yet is refused,
+/// and without `..` a lexical path through symlinks that each stay inside the tree physically stays inside too.
 pub(crate) fn resolve_symlink(
     link: &[OsString],
     target: &[u8],
     is_symlink: &dyn Fn(&[OsString]) -> bool,
+    is_real_dir: &mut dyn FnMut(&[OsString]) -> bool,
 ) -> Option<RelPath> {
     if target.is_empty() || is_rooted(target) {
         return None;
@@ -115,6 +122,9 @@ pub(crate) fn resolve_symlink(
         match c {
             b"" | b"." => {}
             b".." => {
+                if stack.is_empty() || !is_real_dir(&stack) {
+                    return None;
+                }
                 stack.pop()?;
             }
             _ => {
@@ -181,12 +191,25 @@ mod tests {
             .collect()
     }
 
+    /// Every path that is not a symlink of `links` (nor below one) is a real directory.
     fn resolve(link: &str, target: &str, links: &[&str]) -> Option<String> {
+        resolve_in(link, target, links, None)
+    }
+
+    /// `dirs`: the real directories of the tree (`None`: everything that is not a symlink).
+    fn resolve_in(
+        link: &str,
+        target: &str,
+        links: &[&str],
+        dirs: Option<&[&str]>,
+    ) -> Option<String> {
         let set: Vec<RelPath> = links.iter().map(|l| rel(l)).collect();
-        resolve_symlink(&rel(link), target.as_bytes(), &|p| {
-            set.iter().any(|s| s == p)
-        })
-        .map(|r| {
+        let is_link = |p: &[OsString]| set.iter().any(|s| s == p);
+        let mut is_dir = |p: &[OsString]| match dirs {
+            Some(d) => d.iter().any(|d| rel(d) == p),
+            None => !(1..=p.len()).any(|i| p.get(..i).is_some_and(is_link)),
+        };
+        resolve_symlink(&rel(link), target.as_bytes(), &is_link, &mut is_dir).map(|r| {
             r.iter()
                 .map(|c| c.to_string_lossy().into_owned())
                 .collect::<Vec<_>>()
@@ -213,5 +236,33 @@ mod tests {
         assert_eq!(resolve("y", "x", &["x", "y"]), None);
         assert_eq!(resolve("x", "x", &["x"]), None);
         assert_eq!(resolve("x/y", "z", &["x", "x/y"]), None);
+    }
+
+    /// A case-insensitive filesystem: `x` names the symlink `X`, which is no real directory (ADR-077 vector smuggled
+    /// through a case variant).
+    #[test]
+    fn dot_dot_needs_a_real_directory() {
+        // `X -> .`, `y -> x/..`: `x` is not a directory of the tree (it is `X`, a symlink, or nothing at all).
+        assert_eq!(resolve_in("y", "x/..", &["X", "y"], Some(&[])), None);
+        // `d/x -> ..`, `y -> d/X/..`.
+        assert_eq!(resolve_in("y", "d/X/..", &["d/x", "y"], Some(&["d"])), None);
+        // A real directory may be stepped back over.
+        assert_eq!(
+            resolve_in(
+                "bin/npm",
+                "../lib/cli.js",
+                &["bin/npm"],
+                Some(&["bin", "lib"])
+            )
+            .as_deref(),
+            Some("lib/cli.js")
+        );
+        assert_eq!(
+            resolve_in("a/l", "../b/../c", &["a/l"], Some(&["a", "b"])).as_deref(),
+            Some("c")
+        );
+        // ... but not one that does not exist (yet).
+        assert_eq!(resolve_in("a/l", "../b/../c", &["a/l"], Some(&["a"])), None);
+        assert_eq!(resolve_in("a/l", "../c", &["a/l"], Some(&[])), None);
     }
 }

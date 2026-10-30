@@ -17,9 +17,6 @@ use std::path::PathBuf;
 
 use super::path::RelPath;
 
-/// Mode of directories created implicitly (a file's parent without its own entry), as `tar` gives them.
-pub(crate) const IMPLICIT_DIR_MODE: u32 = 0o755;
-
 /// The tree being populated.
 #[derive(Debug)]
 pub(crate) struct Tree {
@@ -29,8 +26,10 @@ pub(crate) struct Tree {
     /// The root's directory handle.
     #[cfg(unix)]
     fd: rustix::fd::OwnedFd,
-    /// Directories created implicitly (they get [`IMPLICIT_DIR_MODE`] at the end).
+    /// Directories created implicitly (they get [`Tree::implicit_dir_mode`] at the end).
     implicit: Vec<RelPath>,
+    /// `0o777 & !umask`: the mode `mkdir` gave the root (Python's `os.makedirs`, GNU tar).
+    implicit_mode: u32,
 }
 
 impl Tree {
@@ -49,9 +48,21 @@ impl Tree {
                 OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::RDONLY,
                 Mode::empty(),
             )?;
+            // The umask, read without changing it process-wide: the mode `mkdir(0o777)` produced. The root then
+            // stays private until the final modes are applied.
+            let implicit_mode = {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::File::from(fd.try_clone()?)
+                    .metadata()?
+                    .permissions()
+                    .mode()
+                    & 0o777
+            };
+            rustix::fs::fchmod(&fd, Mode::RWXU)?;
             Ok(Self {
                 fd,
                 implicit: Vec::new(),
+                implicit_mode,
             })
         }
         #[cfg(not(unix))]
@@ -59,8 +70,15 @@ impl Tree {
             Ok(Self {
                 root: root.to_path_buf(),
                 implicit: Vec::new(),
+                implicit_mode: 0o777,
             })
         }
+    }
+
+    /// The final mode of implicitly created directories and of the root: `0o777 & !umask` (CPython `tarfile` creates
+    /// a member's missing parents with `os.makedirs`).
+    pub(crate) fn implicit_dir_mode(&self) -> u32 {
+        self.implicit_mode
     }
 
     /// The root path.
@@ -247,6 +265,24 @@ mod imp {
         pub(crate) fn is_dir(&mut self, rel: &[OsString]) -> bool {
             self.dir(rel, false).is_ok()
         }
+
+        /// `chmod` of the regular file `rel` (a hard link: the shared inode; special bits never set). The tree's
+        /// directories are private (0700) until the final modes, so nothing can swap `rel` between the check and
+        /// the `chmod`.
+        pub(crate) fn set_link_mode(&mut self, rel: &[OsString], m: u32) -> io::Result<()> {
+            let (parent, name) = split_last(rel)?;
+            let pfd = self.dir(parent, false)?;
+            let p = pfd.as_ref().map_or_else(|| self.fd.as_fd(), AsFd::as_fd);
+            let st = rustix::fs::statat(p, name.as_os_str(), AtFlags::SYMLINK_NOFOLLOW)?;
+            if FileType::from_raw_mode(st.st_mode) != FileType::RegularFile {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("{} is not a regular file", name.to_string_lossy()),
+                ));
+            }
+            rustix::fs::chmodat(p, name.as_os_str(), mode(m & 0o777), AtFlags::empty())
+                .map_err(Into::into)
+        }
     }
 
     /// `chmod` of an extracted file (special bits never set).
@@ -423,6 +459,16 @@ mod imp {
         #[expect(clippy::needless_pass_by_ref_mut, reason = "same signature as on Unix")]
         pub(crate) fn is_dir(&mut self, rel: &[OsString]) -> bool {
             check(self, rel).is_ok() && self.full(rel).is_dir()
+        }
+
+        /// The read-only attribute of the regular file `rel` (a hard link) from `m`, as `os.chmod` sets it.
+        #[expect(clippy::needless_pass_by_ref_mut, reason = "same signature as on Unix")]
+        pub(crate) fn set_link_mode(&mut self, rel: &[OsString], m: u32) -> io::Result<()> {
+            check(self, rel)?;
+            let full = self.full(rel);
+            let mut perms = std::fs::symlink_metadata(&full)?.permissions();
+            perms.set_readonly(m & 0o222 == 0);
+            std::fs::set_permissions(full, perms)
         }
     }
 

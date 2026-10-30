@@ -1,7 +1,8 @@
 //! Fuzz target `net_archive_extract`: safe archive extraction (ADR-077).
 //! Invariants (ARCHITECTURE §13.5): no panic, no hang > 5 s, ≤ 512 MB RSS, 256 KiB thread stacks; and the
-//! extraction never creates anything outside its destination: a canary directory next to it stays empty, and on
-//! failure no destination appears.
+//! extraction never creates anything outside its destination: a canary directory next to it stays empty, on
+//! failure no destination appears, and on success every extracted symlink that resolves at all resolves (physically,
+//! `fs::canonicalize`) inside the destination.
 //!
 //! Input: byte 0 selects the format (tar stream gzipped by the target, so the tar parser sees the fuzzer's bytes;
 //! raw `.tar.gz`; raw `.zip`), byte 1 the options, the rest is the archive.
@@ -63,6 +64,33 @@ fn crc32(bytes: &[u8]) -> u32 {
     !crc
 }
 
+/// The first symlink below `dest` whose physical resolution leaves `dest` (dangling links are skipped).
+fn escaping_symlink(dest: &Path) -> Option<PathBuf> {
+    let root = std::fs::canonicalize(dest).ok()?;
+    let mut stack = vec![(dest.to_path_buf(), 0_usize)];
+    while let Some((d, depth)) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let Ok(t) = e.file_type() else {
+                continue;
+            };
+            let p = e.path();
+            if t.is_symlink() {
+                if let Ok(real) = std::fs::canonicalize(&p)
+                    && !real.starts_with(&root)
+                {
+                    return Some(p);
+                }
+            } else if t.is_dir() && depth < 256 {
+                stack.push((p, depth.saturating_add(1)));
+            }
+        }
+    }
+    None
+}
+
 /// Removes `dir` even when the extraction left read-only directories behind.
 fn cleanup(dir: &Path) {
     if std::fs::remove_dir_all(dir).is_ok() {
@@ -122,7 +150,12 @@ fuzz_target!(|data: &[u8]| {
         .map(|d| d.flatten().map(|e| e.file_name()).collect())
         .unwrap_or_default();
     let ok = result.is_ok();
+    let escaping = if ok { escaping_symlink(&dest) } else { None };
     cleanup(&work);
+    assert!(
+        escaping.is_none(),
+        "a symlink resolves outside the destination: {escaping:?}"
+    );
     assert!(canary_empty, "extraction wrote outside its destination");
     if ok {
         assert_eq!(

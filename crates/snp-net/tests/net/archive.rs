@@ -54,10 +54,13 @@ fn sym<'a>(name: &'a str, target: &'a str) -> E<'a> {
     }
 }
 fn hard<'a>(name: &'a str, target: &'a str) -> E<'a> {
+    hard_mode(name, target, 0o644)
+}
+fn hard_mode<'a>(name: &'a str, target: &'a str, mode: u32) -> E<'a> {
     E {
         name: name.as_bytes(),
         kind: HARD,
-        mode: 0o644,
+        mode,
         data: b"",
         link: target.as_bytes(),
     }
@@ -171,7 +174,8 @@ fn a_regular_archive_extracts_with_strip_links_and_modes() {
         dir("node-v1/lib/npm/", 0o755),
         file("node-v1/lib/npm/cli.js", 0o644, b"cli"),
         sym("node-v1/bin/npm", "../lib/npm/cli.js"),
-        hard("node-v1/bin/node2", "node-v1/bin/node"),
+        // The link's mode applies to the shared inode (CPython `tarfile` `chmod`s it after `os.link`).
+        hard_mode("node-v1/bin/node2", "node-v1/bin/node", 0o750),
         // A parent without its own entry.
         file("node-v1/share/doc/README", 0o644, b"readme"),
         // A read-only directory: its mode is applied after its content was written.
@@ -213,10 +217,17 @@ fn a_regular_archive_extracts_with_strip_links_and_modes() {
             Path::new("../lib/npm/cli.js")
         );
         assert_eq!(std::fs::read(d.join("bin/npm")).unwrap(), b"cli");
-        assert_eq!(mode(&d.join("bin/node")), 0o755);
+        assert_eq!(mode(&d.join("bin/node")), 0o750);
+        assert_eq!(mode(&d.join("bin/node2")), 0o750);
         assert_eq!(mode(&d.join("lib/npm/cli.js")), 0o644);
         assert_eq!(mode(&d.join("ro")), 0o555);
-        assert_eq!(mode(&d.join("share")), 0o755);
+        // Directories without an entry (and the root) get `0o777 & !umask`, as `os.makedirs` gives them.
+        let probe = c.dir.path().join("umask-probe");
+        std::fs::create_dir_all(&probe).unwrap();
+        let implicit = mode(&probe);
+        assert_eq!(mode(&d.join("share")), implicit);
+        assert_eq!(mode(&d.join("share/doc")), implicit);
+        assert_eq!(mode(&d), implicit);
         assert_eq!(
             std::fs::metadata(d.join("bin/node")).unwrap().ino(),
             std::fs::metadata(d.join("bin/node2")).unwrap().ino()
@@ -279,6 +290,96 @@ fn chained_symlinks_are_refused() {
         let r = c.tar_gz(&entries, &OPTS);
         c.assert_refused(r, "chain");
     }
+}
+
+/// The ADR-077 vector through a case variant: on a case-insensitive filesystem (macOS, Windows) `x` opens `X`, so
+/// name equality with the archive's symlinks cannot see the chain. Every `..` must step back over a real directory.
+#[test]
+fn case_variant_chains_are_refused() {
+    for entries in [
+        vec![sym("X", "."), sym("y", "x/..")],
+        vec![sym("y", "x/.."), sym("X", ".")],
+        vec![dir("d/", 0o755), sym("d/x", ".."), sym("y", "d/X/..")],
+        vec![dir("d/", 0o755), sym("y", "d/X/.."), sym("d/x", "..")],
+        // `..` over a name that is no directory of the tree at all (a file, nothing).
+        vec![file("f", 0o644, b"f"), sym("y", "f/../f")],
+        vec![file("f", 0o644, b"f"), sym("y", "nothing/../f")],
+    ] {
+        let c = Case::new();
+        let r = c.tar_gz(&entries, &OPTS);
+        c.assert_refused(r, "case-variant chain");
+    }
+    // `..` over real directories (explicit or implicit) still works.
+    let c = Case::new();
+    c.tar_gz(
+        &[
+            file("a/b/f", 0o644, b"f"),
+            sym("a/l", "b/../b/f"),
+            sym("c/l", "../a/b/f"),
+        ],
+        &OPTS,
+    )
+    .unwrap();
+    assert_eq!(std::fs::read(c.dest().join("a/l")).unwrap(), b"f");
+    assert_eq!(std::fs::read(c.dest().join("c/l")).unwrap(), b"f");
+}
+
+/// A GNU long-name record (`././@LongLink`) far beyond any path, gzip-bombed: refused as too large before the `tar`
+/// crate buffers it (it reads such records whole into memory).
+#[test]
+fn a_huge_long_name_record_is_too_large() {
+    let case = Case::new();
+    let mib: u64 = 16;
+    let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    let mut header = tar::Header::new_gnu();
+    for (slot, b) in header.as_mut_bytes().iter_mut().zip(b"././@LongLink") {
+        *slot = *b;
+    }
+    header.set_size(mib << 20);
+    header.set_mode(0o644);
+    header.set_entry_type(tar::EntryType::GNULongName);
+    header.set_cksum();
+    enc.write_all(header.as_bytes()).unwrap();
+    let chunk = vec![b'a'; 1 << 20];
+    for _ in 0..mib {
+        enc.write_all(&chunk).unwrap();
+    }
+    enc.write_all(&tar(&[file("f", 0o644, b"f")])).unwrap();
+    let path = case.write("a.tar.gz", &enc.finish().unwrap());
+    let r = archive::tar_gz(&path, &case.dest(), &OPTS);
+    assert!(
+        matches!(&r, Err(NetError::TooLarge { limit, .. }) if *limit == 1 << 20),
+        "{r:?}"
+    );
+    assert_eq!(case.out_names(), Vec::<String>::new());
+}
+
+/// Deferred symlinks (name + target, up to 4096 bytes each) are charged to the metadata budget (64 MiB): an archive
+/// of thousands of maximal ones is refused instead of growing without bound.
+#[test]
+fn the_recorded_metadata_is_capped() {
+    let c = Case::new();
+    let mut b = tar::Builder::new(flate2::write::GzEncoder::new(
+        Vec::new(),
+        flate2::Compression::fast(),
+    ));
+    let target: String = std::iter::repeat_n('t', 4000).collect();
+    let pad: String = std::iter::repeat_n('x', 4000).collect();
+    for i in 0..6000 {
+        let mut h = tar::Header::new_gnu();
+        h.set_entry_type(tar::EntryType::Symlink);
+        h.set_mode(0o777);
+        h.set_size(0);
+        let name = format!("l{i:05}{pad}");
+        b.append_link(&mut h, &name, &target).unwrap();
+    }
+    let a = c.write("a.tar.gz", &b.into_inner().unwrap().finish().unwrap());
+    let r = archive::tar_gz(&a, &c.dest(), &OPTS);
+    assert!(
+        matches!(&r, Err(NetError::TooLarge { limit, .. }) if *limit == 64 << 20),
+        "{r:?}"
+    );
+    assert_eq!(c.out_names(), Vec::<String>::new());
 }
 
 #[test]
