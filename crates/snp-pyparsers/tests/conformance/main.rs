@@ -17,3 +17,6 @@ mod ini;
 
 #[cfg(test)]
 mod toml;
+
+#[cfg(test)]
+mod yaml;

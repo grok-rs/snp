@@ -780,6 +780,439 @@ def ini_vectors() -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------------------------------------------
+# expat (check-xml)
+# --------------------------------------------------------------------------------------------------------------
+
+def xml_result(data: bytes) -> dict[str, Any]:
+    """`check_xml.main` on one file named `f.xml` in the current directory: `str(SAXParseException)` (what the hook
+    prints inside `f.xml: Failed to xml parse (…)`), a crash, or ok."""
+    import xml.sax.handler
+
+    with open('f.xml', 'wb') as f:
+        f.write(data)
+    try:
+        with open('f.xml', 'rb') as xml_file:
+            xml.sax.parse(xml_file, xml.sax.handler.ContentHandler())
+    except xml.sax.SAXException as exc:
+        return reported(str(exc))
+    except Exception as exc:  # noqa: BLE001
+        return crash(exc)
+    return {'ok': True}
+
+
+XML_HAND = [
+    b'', b'<a>', b'<a></b>', b'<a/><b/>', b'<a>\xff</a>', b'<a>&nope;</a>', b'<a b="1" b="2"/>', b'\n<?xml version="1.0"?><a/>',
+    b'<a>&#0;</a>', b'<a>]]></a>', b'<!-- c -- d -->', b'<!-- only comment -->', b'<a/>\x00', b'  <a/>', b'\xef\xbb\xbf<a/>',
+    b'<?xml version="1.0" encoding="latin-1"?><a>\xe9</a>', b'<!DOCTYPE a [<!ENTITY e "x">]><a>&e;</a>', b'<a>&#x10FFFF;</a>',
+    b'<?xml version="1.1"?><a/>', b'<a><![CDATA[x]]></a>', '<a>ééé<b></a>'.encode(), '<a>\U0001F600</b>'.encode(),
+    b'<a>\r\n<b>\r</a>', b'<y:c/>', b'<!DOCTYPE a SYSTEM "nope.dtd"><a/>', b'<!DOCTYPE a SYSTEM "x.dtd"><a>&undef;</a>',
+    b'<?xml version="1.0" encoding="windows-1252"?><a>\x80</a>', b'<?xml version="1.0" encoding="shift_jis"?><a/>',
+    b'<?xml version="1.0" encoding="nope"?><a/>', b'<?xml version="1.0" encoding="utf-16"?><a/>', b'\xff\xfe<\x00a\x00/\x00>\x00',
+    b'\xfe\xff\x00<\x00a\x00/\x00>', b'<\x00a\x00/\x00>\x00', b'<?xml version="1.0" encoding="ascii"?><a>\xe9</a>',
+    b'<?xml version="1.0" encoding="us-ascii"?><a/>', b'<?xml version="1.0" encoding="ISO-8859-1"?><a>\xff</a>',
+    b'<?xml version="1.0" encoding="cp437"?><a>\x80</a>', b'<?xml version="1.0" encoding="koi8-r"?><a>\xc1</a>',
+    b'<?xml version="1.0" encoding="iso-8859-15"?><a>\xa4</a>', b'<?xml version="1.0" encoding="utf8"?><a/>',
+    b'<?xml version="1.0" encoding="UTF-8"?><a/>', b'<?xml version="1.0" encoding="euc-jp"?><a/>', b'<?xml version="1.0" encoding="big5"?><a/>',
+    b'<?xml version="1.0" encoding="latin1"?><a/>', b'<?xml version="1.0" encoding="mac-roman"?><a>\x80</a>',
+    b'<?xml version="2.0"?><a/>', b'<?xml version="1.0" standalone="maybe"?><a/>', b'<?xml encoding="utf-8"?><a/>',
+    b'<?xml version="1.0"?><?xml version="1.0"?><a/>', b'<?xml version="1.0" ?><a/>', b"<?xml version='1.0'?><a/>",
+    b'<?xml  version="1.0"  encoding="utf-8"  standalone="yes" ?><a/>', b'<?xml version="1.0" standalone="yes"?><a>&e;</a>',
+    b'<?xml version="1.0" standalone="yes"?><!DOCTYPE a SYSTEM "x"><a>&e;</a>', b'<?XML version="1.0"?><a/>',
+    b'<?xmlx?><a/>', b'<?pi?><a/>', b'<?pi x?><a/><?pi y?>', b'<a><?pi x?></a>', b'<?xml?>', b'<a b=c/>', b'<a b="<"/>',
+    b'<a b="&lt;"/>', b'<a b="&#60;"/>', b'<a b="&undef;"/>', b'<!DOCTYPE a [<!ENTITY e "<">]><a b="&e;"/>',
+    b'<!DOCTYPE a [<!ENTITY e SYSTEM "x">]><a b="&e;"/>', b'<!DOCTYPE a [<!ENTITY e SYSTEM "x">]><a>&e;</a>',
+    b'<!DOCTYPE a [<!ENTITY e SYSTEM "x" NDATA n>]><a>&e;</a>', b'<!DOCTYPE a [<!ENTITY e "&e;">]><a>&e;</a>',
+    b'<!DOCTYPE a [<!ENTITY e "&f;"><!ENTITY f "&e;">]><a>&e;</a>', b'<!DOCTYPE a [<!ENTITY e "<b>">]><a>&e;</a>',
+    b'<!DOCTYPE a [<!ENTITY e "</a>">]><a>&e;', b'<!DOCTYPE a [<!ENTITY % p "x">]><a/>', b'<!DOCTYPE a [%p;]><a/>',
+    b'<!DOCTYPE a [<!ENTITY % p "<!ENTITY e \'x\'>">%p;]><a>&e;</a>', b'<!DOCTYPE a [<!ELEMENT a (#PCDATA)>]><a/>',
+    b'<!DOCTYPE a [<!ELEMENT a (b|c)*>]><a/>', b'<!DOCTYPE a [<!ELEMENT a (b,c|d)>]><a/>', b'<!DOCTYPE a [<!ATTLIST a b CDATA #IMPLIED>]><a/>',
+    b'<!DOCTYPE a [<!ATTLIST a b (x|y) "z">]><a/>', b'<!DOCTYPE a [<!NOTATION n SYSTEM "x">]><a/>', b'<!DOCTYPE a [<!FOO>]><a/>',
+    b'<!DOCTYPE a [<!ELEMENT a ANY>]><a/><!DOCTYPE b>', b'<!DOCTYPE a><a/>', b'<!DOCTYPE a PUBLIC "x" "y"><a/>',
+    b'<!DOCTYPE a PUBLIC "x\x01" "y"><a/>', b'<!DOCTYPE a [ <!-- c --> <?pi?> ]><a/>', b'<!DOCTYPE a [<![INCLUDE[]]>]><a/>',
+    b'<a>&amp;&lt;&gt;&apos;&quot;</a>', b'<a>&#x;</a>', b'<a>&#xD800;</a>', b'<a>&#65536;</a>', b'<a>&#x110000;</a>',
+    b'<a>&#99999999999999999999;</a>', b'<a>&a b;</a>', b'<a>&</a>', b'<a>&#</a>', b'<a><</a>', b'<a>></a>', b'<a b="1"c="2"/>',
+    b'<a b="1" b ="2"/>', b'<a\tb="1"/>', b'<a b = "1" />', b'<a></a >', b'<a></ a>', b'< a/>', b'<a/ >', b'<a b/>', b'<a b=/>',
+    b'<1a/>', b'<a-1/>', b'<.a/>', b'<_a/>', b'<:a/>', b'<a:b:c/>', '<é/>'.encode(), '<a·/>'.encode(), '<ก/>'.encode(),
+    b'<a>\x01</a>', b'<a>\x0c</a>', b'<a>\x7f</a>', b'<a>\xc2\x80</a>', b'<a>\xef\xbf\xbe</a>', b'<a>\xed\xa0\x80</a>',
+    b'<a>\xf4\x90\x80\x80</a>', b'<a>\xc0\xaf</a>', b'<a>\xe0\x80\xaf</a>', b'<a>\xc3</a>', b'<a>\xe2\x82</a>', b'<a>x', b'<a', b'<',
+    b'<a b="', b'<a b="1"', b'<!--', b'<!-- x', b'<![CDATA[x]]>', b'<a><![CDATA[x</a>', b'<a><![CDATA[x]]</a>', b'<?', b'<?x',
+    b'<!DOCTYPE', b'<!DOCTYPE a', b'<!DOCTYPE a [', b'<!DOCTYPE a [<!ENTITY', b'x', b' ', b'\n', b'<a/>x', b'<a/>&e;', b'<a/><!-- c -->',
+    b'<a/>\n\n', b'<a/><a', b'</a>', b'<a></a></a>', b'<a><b></a></b>', b'<a>' * 10 + b'</a>' * 10, b'<a>' * 2000 + b'</a>' * 2000,
+    b'<!DOCTYPE a [<!ENTITY e "' + b'x' * 100 + b'">]><a>' + b'&e;' * 100 + b'</a>',
+    b'<!DOCTYPE l [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;"><!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">'
+    b'<!ENTITY d "&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;"><!ENTITY e "&d;&d;&d;&d;&d;&d;&d;&d;&d;&d;"><!ENTITY f "&e;&e;&e;&e;&e;&e;&e;&e;&e;&e;">'
+    b'<!ENTITY g "&f;&f;&f;&f;&f;&f;&f;&f;&f;&f;"><!ENTITY h "&g;&g;&g;&g;&g;&g;&g;&g;&g;&g;"><!ENTITY i "&h;&h;&h;&h;&h;&h;&h;&h;&h;&h;">'
+    b']><l>&i;</l>',
+    b'<a>' + b'x' * 70000 + b'</b>', b'<a>' + b'x' * 65533 + '€'.encode() + b'</a>', b'<a>' + b'x' * 65534 + b'\r\n</b>',
+]
+
+
+def xml_vectors(corpora: str) -> dict[str, Any]:
+    suite = os.path.join(corpora, 'xmlconf')
+    raw: list[tuple[str, bytes]] = []
+    for dirpath, _, files in sorted(os.walk(suite)):
+        for fn in sorted(files):
+            if fn.endswith('.xml'):
+                path = os.path.join(dirpath, fn)
+                with open(path, 'rb') as f:
+                    raw.append((f'xmlconf/{os.path.relpath(path, suite)}', f.read()))
+    raw.sort()
+    for i, h in enumerate(XML_HAND):
+        raw.append((f'hand-{i:03d}', h))
+    rng = random.Random(1002)
+    small = [b for n, b in raw if len(b) < 3000]
+    alphabet = b'<>/!?&;#x="\' \n\r\t-[]%aAbZ09.:\xc3\xa9\x00\xff'
+    for i in range(600):
+        b = bytearray(rng.choice(small))
+        for _ in range(rng.randrange(1, 4)):
+            op = rng.randrange(3)
+            p = rng.randrange(len(b) + 1)
+            if op == 0:
+                b[p:p] = bytes([rng.choice(alphabet)])
+            elif op == 1 and b:
+                del b[min(p, len(b) - 1)]
+            elif b:
+                b[min(p, len(b) - 1)] = rng.choice(alphabet)
+        raw.append((f'mutant-{i:03d}', bytes(b)))
+    cases = []
+    with tempfile.TemporaryDirectory() as d:
+        old = os.getcwd()
+        os.chdir(d)
+        try:
+            for name, b in raw:
+                cases.append({'name': name, **blob(b), 'result': xml_result(b)})
+        finally:
+            os.chdir(old)
+    data = header('xml')
+    import pyexpat
+    data['expat'] = pyexpat.EXPAT_VERSION
+    data['cases'] = cases
+    return data
+
+
+# --------------------------------------------------------------------------------------------------------------
+# ruamel.yaml (check-yaml)
+# --------------------------------------------------------------------------------------------------------------
+
+YAML_MODES = ('safe', 'multi', 'unsafe')
+
+
+def yaml_run(files: list[bytes], mode: str) -> list[dict[str, Any]]:
+    """`check_yaml.main` over `files` (named `f0.yaml`, `f1.yaml`, … in the current directory) in one hook process:
+    one module-global `YAML(typ='safe')` shared by all files, the load functions of `check_yaml.LOAD_FNS`, and the
+    recursion headroom of the real console script (`main` at frame depth 2 under a limit of 1000). The outcomes
+    stop at the first crash, like the process."""
+    import ruamel.yaml
+    from pre_commit_hooks import check_yaml
+
+    check_yaml.yaml = ruamel.yaml.YAML(typ='safe')
+    fn = {
+        'safe': check_yaml.yaml.load,
+        'multi': check_yaml._load_all,
+        'unsafe': check_yaml._parse_unsafe,
+    }[mode]
+    names = []
+    for i, data in enumerate(files):
+        names.append(f'f{i}.yaml')
+        with open(names[-1], 'wb') as f:
+            f.write(data)
+    out: list[dict[str, Any]] = []
+    old = sys.getrecursionlimit()
+    sys.setrecursionlimit(1000 + frame_depth() - 2)
+    try:
+        for name in names:
+            try:
+                with open(name, encoding='UTF-8') as f:
+                    fn(f)
+            except ruamel.yaml.YAMLError as exc:
+                out.append(reported(str(exc)))
+            except Exception as exc:  # noqa: BLE001 - every other exception is the crash path
+                out.append(crash(exc))
+            else:
+                out.append({'ok': True})
+            if 'crash' in out[-1]:
+                break
+    finally:
+        sys.setrecursionlimit(old)
+    return out
+
+
+def yaml_modes(data: bytes) -> dict[str, Any]:
+    return {mode: yaml_run([data], mode)[0] for mode in YAML_MODES}
+
+
+YAML_HAND = [
+    # 09 §4.C catalogue
+    'a: 1\na: 2\n', 'a: 1\n---\nb: 2\n', 'a: 1\n---\n', 'a: 1\n...\nb: 2\n', 'a: !foo 1', 'a: !!python/object:os.system x',
+    '%TAG ! tag:x,2000:\n---\na: !foo 1', 'a: =', 'a: [1, 2\n', 'a: b: c', 'a: "\x07"', 'a: 1\n\x00', 'a: *nope',
+    'key: value\n\tbad: tab', 'a: |\n  x\n b: 1', '"\\x"', 'a:\n  - b\n  c: d', '<<: [1]', '<<: {a: 1}\n<<: {b: 2}',
+    '{a: 1}: 2', '!!map', 'a: !!omap [1, 2]', '%YAML 2.0\n---\na: 1', '--- !!set\n? a\n? a', '', '\ufeffa: 1',
+    'a: 1\r\nb: 2\r\n', '? [1, 2]', '[1, 2]: x', '%YAML 1.1\n---\na: yes', 'a: 0x1G', 'a: !!binary "!!!"', 'a: !!str',
+    'a: !!null x', '---\n...\n', 'a: &x 1\nb: &x 2', '%FOO bar\n---\na: 1', 'a: "\x85"', 'a: &b {x: 1}\nc:\n  <<: *b',
+    'a: !!int "abc"', 'a: !!float abc', 'a: 2001-13-45', 'a: !!bool maybe', '%YAML 1.3\n---\na: 1',
+    '--- !!omap\n- a: 1\n- a: 2',
+    # duplicate keys and the Python equality model
+    '1: a\n1.0: b', '1: a\ntrue: b', '0x01: a\n1: b', '0: a\nfalse: b', '0: a\n-0.0: b', '.inf: a\n.Inf: b',
+    '.nan: a\n.nan: b', '.nan: a\n.NaN: b', '~: a\nnull: b', '017: a\n17: b', '0o17: a\n15: b', '1_000: a\n1000: b',
+    '1:20: a\n"1:20": b', '%YAML 1.1\n---\n1:20: a\n80: b', '%YAML 1.1\n---\nyes: a\ntrue: b', '%YAML 1.1\n---\n017: a\n15: b',
+    '2001-01-01: a\n2001-01-01 00:00:00: b', '2001-01-01: a\n2001-01-01: b',
+    '2001-01-01T00:00:00Z: a\n2001-01-01T01:00:00+01:00: b', '2001-01-01T00:00:00: a\n2001-01-01T00:00:00Z: b',
+    '? [1]\n: a\n? [1]\n: b', '? [1, [2]]\n: a', '? {a: 1}\n: b', '? !!set {a}\n: b', '? !!omap [a: 1]\n: b',
+    '? !!pairs [a: 1]\n: b\n? !!pairs [a: 1]\n: c', '!!binary aGk=: a\n!!binary aGk=: b', 'a: [1]\na: [2]',
+    'a: {x: 1}\na: {}', 'a: !!set {x}\na: 2', "a: \"it's\\n\"\na: 'x'", 'a: 1500.0\na: 1e16', 'a: 1\na: .inf',
+    'a: -.inf\na: .nan', 'a: true\na: 2001-01-01 10:00:00', 'a: 2001-01-01\na: !!binary aGk=',
+    'a: 0b101\na: 0x_1f', 'a: 1e+16\na: 1.5e-7', 'a: 123456789012345678901234567890\na: 0', '? - a\n  - b\n: 1\n? [a, b]\n: 2',
+    '? [.nan]\n: a\n? [.nan]\n: b', '? [!!float nan]\n: a\n? [!!float nan]\n: b', '!!float nan: a\n!!float nan: b',
+    '? [a, {b: 1}]\n: x', '? [[a]]\n: x', '? [!!set {a}]\n: x', '? [!!omap [a: 1]]\n: x', '? [!!pairs [a: 1]]\n: x\n',
+    '? {a: 1, a: 2}\n: x', '? [{a: 1, a: 2}]\n: x', '? &k [*k]\n: x', '&a [*a]', '&a {b: *a}', '&a {*a: 1}',
+    'a: &x [1, 2]\nb: *x\nb: *x', '? !!str 1\n: a\n? "1"\n: b', '"a": 1\n\'a\': 2', 'a: 1\nA: 2',
+    # explicit-tag crash paths
+    'a: !!int ""', 'a: !!float ""', 'a: !!int "- 5"', 'a: !!int " 12 "', 'a: !!int "0x"', 'a: !!int "0b2"', 'a: !!int "0o9"',
+    'a: !!int "1_2"', 'a: !!int "+0x0x1f"', 'a: !!int "１２"', 'a: !!int "1:2"', '%YAML 1.1\n---\na: !!int "1::2"',
+    '%YAML 1.1\n---\na: !!int "09"', '%YAML 1.1\n---\na: !!int "1:x"', 'a: !!int ' + '9' * 4301, 'a: !!int 0x' + 'f' * 5000,
+    'a: ' + '9' * 4301, 'a: ' + '9' * 4300, '? ' + '9' * 4300 + '0\n: a', 'a: !!float "1e5x"', 'a: !!float "inf"',
+    'a: !!float "-Infinity"', 'a: !!float " 1.5 "', 'a: !!float "1_000.5"', 'a: !!float "١٢"', 'a: !!float "1e999"',
+    '%YAML 1.1\n---\na: !!float "1:30.5"', '%YAML 1.1\n---\na: !!float "1:x"', '%YAML 1.1\n---\na: 1e5', '%YAML 1.1\n---\na: 190:20:30.15',
+    'a: !!bool Yes', 'a: !!bool ON', 'a: !!bool ""', 'a: !!bool [1]', 'a: !!null [1]', 'a: !!str {=: x}', 'a: !!str [1]',
+    'a: !!bool {=: yes}', 'a: !!int {=: 5}', 'a: !!binary "aGk"', 'a: !!binary "aG=k"', 'a: !!binary "é"', 'a: !!binary "a"',
+    'a: !!binary "aGk=\\naGk="', 'a: !!binary [1]', 'a: !!timestamp 2001-01-01', 'a: !!timestamp x', 'a: !!timestamp [1]',
+    'a: !!timestamp "2001-01-01\\n"', 'a: 2001-02-29', 'a: 2000-02-29', 'a: 0000-01-01', 'a: 2001-01-01 24:00:00',
+    'a: 2001-01-01 23:60:00', 'a: 2001-01-01 23:59:60', 'a: 2001-1-1 1:00:00', 'a: 2001-01-01t10:00:00',
+    'a: 2001-01-01 10:00:00.1234567', 'a: 2001-01-01 10:00:00.9999995', 'a: 9999-12-31 23:59:59.9999999',
+    'a: 2001-01-01 10:00:00 +25:00', 'a: 2001-01-01 10:00:00 -05', 'a: 2001-01-01 10:00:00 Z', 'a: 2001-01-01 10:00:00.Z',
+    'a: 2001-01-01\tl0:00:00', 'a: !!omap {a: 1}', 'a: !!omap [[1]]', 'a: !!omap [{a: 1, b: 2}]', 'a: !!omap [[a]: 1]',
+    'a: !!omap [{a: 1}, {a: 2}]', 'a: !!omap [{[1]: 2}]', 'a: !!pairs {a: 1}', 'a: !!pairs [1]', 'a: !!pairs [{a: 1, b: 2}]',
+    'a: !!set [1]', 'a: !!set {[1]}', 'a: !!seq x', 'a: !!seq {a: 1}', 'a: !!map [1]', 'a: !!merge x', 'a: <<', '- <<',
+    '<<: *x', '<<: !!str x', '<<: [{a: 1}, x]', '<<: [{a: 1}, {b: 2}]\na: 3', 'a: &a {<<: *a}', '<<: {a: 1}\na: 1\na: 2',
+    '=: 1', '= : 1\n= : 2', 'a: =', '[=]', 'a: !<tag:yaml.org,2002:str> x', 'a: !<!> x', 'a: ! x', 'a: ! 1', 'a: !! x',
+    'a: !e! x', '%TAG !e! tag:e.com,2000:\n---\na: !e!x 1', '%TAG !e! tag:e.com,2000:\n%TAG !e! x\n---\na: 1',
+    'a: !foo%25 1', 'a: !foo%2541 1', 'a: !foo%ff 1', 'a: !foo%c3%a9 1', 'a: !foo%zz 1', 'a: !<foo 1',
+    # scanner / parser / reader errors
+    'a: "\\ud800"\na: 1', 'a: "\\ud800"\nb: !!int "\\ud800"', 'a: "\\U00110000"', 'a: "\\U0010ffff"', 'a: "\\q"', 'a: "x\n',
+    "a: 'x", 'a: |0\n x', 'a: |2-\n  x', 'a: |-+\n x', 'a: >1+\n  x\n', 'a: | # c\n x\n', 'a: |x', 'a: |\n  \n   x\n',
+    'a: |\n\n  x\n   y\n', '- a\nb: c', 'a:\n- b\n-c', '[a, b]]', '{a: b}}', ']', '}', '[a: b, c]', '{a, b: c}', '[a, ? b]',
+    '{? a: b}', '{a: [b}', 'a: @x', 'a: `x', '%', '%YAML', '%YAML 1', '%YAML 1.', '%YAML a.b', '%YAML 1.1 x',
+    '%YAML 1.1\n%YAML 1.1\n---\n', '%TAG !\n---', '%TAG ! \n---', '%TAG !x tag:\n---', '%TAG !x! \n', '%YAML 1.2 # c\n---\n',
+    '&', '*', '&a', '&a b: c', '*a b', 'a: &a\nb: *a', '&a [1]: 2', 'a: !', '!a!b c', 'a: !!a!b c', '--- a\n--- b',
+    '--- |\n  x\n...\n--- >\n  y', '... x', '---\na\n... # c\n', '---\na: 1\n... x', 'a: 1\n... \nb: 2', 'a\n--- b',
+    'a: b\n  c: d', 'a:\n  b\n c', 'a: - b', 'a: ? b', '- - - a', '? a\n? b\n: c', '? a\n: b\n: c', ': a', '? : a',
+    'a: "b\n---\nc"', "a: 'b\n...\n'", 'a: b\n--- c', 'a: [b\n---\n]', 'a: {b: c\n', 'a: "\\', 'a: \'\'\'',
+    'a: b #c\nd: e#f', 'a: b\t#c', 'a: \tb', '\ta: b', ' \ta', 'a:\t b', '- \ta', '[a,\tb]', 'a: [\tb]', 'a: b\x7f', '\x01',
+    '\ue000a: b', '\ufffe', 'a: \U0001F600', 'a: b\u2028c: d', 'a: b\u2029', 'a\x85: b', '"a\x85b"', 'a: "\\N\\_\\L\\P\\e\\0"',
+    'a: :b', 'a: b:', 'a: b:c', '[a:b]', '[a: b]', '{a:b}', '{"a":b}', '["a":b]', '[a:, b]', '{a:, b}', '[?]', '{?}',
+    '? ? a', '[[[[[[a]]]]]]', '{a: [{b: [c]}]}', '- [a, {b: c}]\n- d', 'a: ' + 'x' * 1100 + ': b', 'x' * 1030 + ': a',
+    '"' + 'x' * 1030 + '": a', 'a:\n  - b\n -c', 'a: |\n x\n  y\n z', 'a: >\n x\n\n  y\n z\n', 'a: |+\n x\n\n',
+    'a:\n  b: |\n    c\n  d: e', '- |\n a\n- b', '|\n x', '>\n x', '--- |\n x', '|', '>', '--- >-\n', '- |',
+    'a: >\n\n\n', 'a: |\n  x\n\n\nb: c', 'a: |\n x\n# c\nb: 1', '- >\n  a\n  b\n\n  c\n',
+]
+
+
+def yaml_bytes_cases() -> list[tuple[str, bytes]]:
+    """Inputs whose interest lies in the bytes and in the 4096-character reader chunks / 8192-byte text-io chunks."""
+    out: list[tuple[str, bytes]] = [
+        ('bad-utf8', b'a: \xff'), ('bad-utf8-cont', b'a: \xc3('), ('bad-utf8-trunc', b'a: \xe2\x82'),
+        ('bad-utf8-surrogate', b'a: \xed\xa0\x80'), ('bom-only', b'\xef\xbb\xbf'), ('bom-twice', b'\xef\xbb\xbf\xef\xbb\xbfa: 1'),
+        ('bom-later', b'a: 1\n\xef\xbb\xbfb: 2'), ('bom-in-scalar', b'a: x\xef\xbb\xbfy'), ('cr-only', b'a: 1\rb: 2\r'),
+        ('cr-in-quoted', b'a: "x\ry"'), ('crlf-block', b'a: |\r\n  x\r\n  y\r\n'), ('nel', b'a: 1\xc2\x85b: 2'),
+        ('utf16-bom', b'\xff\xfea\x00:\x00'),
+    ]
+    line = b'key: value\n'
+    for k in (1, 2, 3):
+        for delta in (-12, -2, -1, 0, 1, 2, 11):
+            pos = 4096 * k + delta
+            body = (line * (pos // len(line) + 1))[:pos]
+            out.append((f'nonprintable-at-{pos}', body + b'\x07\n'))
+            out.append((f'error-then-nonprintable-{pos}', b'a: b: c\n' + body[8:] + b'\x07\n'))
+            out.append((f'tail-error-{pos}', body + b'- x\n'))
+    for k in (1, 2):
+        for delta in (-3, -2, -1, 0, 1, 2):
+            pos = 8192 * k + delta
+            body = (line * (pos // len(line) + 1))[:pos]
+            out.append((f'badbyte-at-{pos}', body + b'\xff\n'))
+            out.append((f'error-then-badbyte-{pos}', b'a: b: c\n' + body[8:] + b'\xff\n'))
+            out.append((f'nonprintable-then-badbyte-{pos}', b'\x07' + body[1:] + b'\xff\n'))
+            out.append((f'euro-at-{pos}', body + b'\xe2\x82\xac\n'))
+            out.append((f'crlf-at-{pos}', body + b'\r\nz: 1\r\n'))
+            out.append((f'cr-at-{pos}', body + b'\rz: 1\r'))
+            out.append((f'trunc-at-{pos}', body + b'\xe2\x82'))
+    big = b''.join(b'k%d: v%d\n' % (i, i) for i in range(3000))
+    out.append(('big-dup', big + b'k1: again\n'))
+    out.append(('big-nonprintable-late', b'a: b: c\n' + big + b'\x01'))
+    out.append(('big-badbyte-late', b'a: b: c\n' + big + b'\xff'))
+    out.append(('big-badbyte-early-error-late', big[:100] + b'\xff' + big))
+    return out
+
+
+YAML_SHAPES = {
+    'fseq-empty': lambda n: '[' * n + ']' * n,
+    'fseq-int': lambda n: '[' * n + '1' + ']' * n,
+    'fseq-str': lambda n: '[' * n + 'abc' + ']' * n,
+    'fseq-dq': lambda n: '[' * n + '"x"' + ']' * n,
+    'fseq-err': lambda n: '[' * n + 'a: b: c',
+    'fseq-tag': lambda n: '[' * n + '!foo x' + ']' * n,
+    'fmap': lambda n: '{a: ' * n + '1' + '}' * n,
+    'fmap-empty': lambda n: '{a: ' * n + '{}' + '}' * n,
+    'fmap-dup': lambda n: '{a: ' * n + '{b: 1, b: 2}' + '}' * n,
+    'bseq': lambda n: '- ' * n + '1',
+    'bmap': lambda n: ''.join(' ' * i + 'a:\n' for i in range(n)) + ' ' * n + '1\n',
+    'key-fseq': lambda n: '? ' + '[' * n + ']' * n + '\n',
+    'key-fmap': lambda n: '? ' + '{a: ' * n + '1' + '}' * n + '\n',
+    'mixed': lambda n: '[{a: ' * n + '1' + '}]' * n,
+    'anchors': lambda n: '[&a ' * n + '1' + ']' * n,
+    'merge': lambda n: '{<<: ' * n + '{a: 1}' + '}' * n,
+}
+
+
+def yaml_hook_outcome(doc: str, flags: list[str]) -> dict[str, Any]:
+    """The real `check-yaml` console script on one file."""
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, 'f.yaml')
+        with open(p, 'w', encoding='utf-8', newline='') as f:
+            f.write(doc)
+        r = subprocess.run([script('check-yaml'), *flags, p], capture_output=True, text=True)
+    out = (r.stdout + r.stderr).strip()
+    if 'Traceback' in out:
+        last = out.splitlines()[-1]
+        ty, _, msg = last.partition(': ')
+        return {'crash': [ty, msg]}
+    if r.returncode == 0:
+        return {'ok': True}
+    stdout = r.stdout[:-1] if r.stdout.endswith('\n') else r.stdout  # print()'s newline
+    return {'reported': stdout.replace(p, 'f0.yaml')}
+
+
+def yaml_peak(data: bytes, mode: str) -> int:
+    """The deepest Python frame (`main` = 2) `check-yaml` reaches on `data` as the second file of a process whose
+    first file was empty (so the one-time creation of the YAML object's components is not measured)."""
+    import ruamel.yaml
+    from pre_commit_hooks import check_yaml
+
+    check_yaml.yaml = ruamel.yaml.YAML(typ='safe')
+    fn = {'safe': check_yaml.yaml.load, 'multi': check_yaml._load_all, 'unsafe': check_yaml._parse_unsafe}[mode]
+    for name, content in (('f0.yaml', b''), ('f1.yaml', data)):
+        with open(name, 'wb') as f:
+            f.write(content)
+    with open('f0.yaml', encoding='UTF-8') as f:
+        fn(f)
+    depth = [frame_depth()]  # this function's depth: main's counterpart
+    base = depth[0] - 2
+    peak = [0]
+
+    def prof(frame: Any, event: str, arg: Any) -> None:
+        if event == 'call':
+            depth[0] += 1
+            peak[0] = max(peak[0], depth[0])
+        elif event == 'return':
+            depth[0] -= 1
+
+    old = sys.getrecursionlimit()
+    sys.setrecursionlimit(100000)
+    try:
+        with open('f1.yaml', encoding='UTF-8') as f:
+            sys.setprofile(prof)
+            try:
+                fn(f)
+            except Exception:  # noqa: BLE001
+                pass
+            finally:
+                sys.setprofile(None)
+    finally:
+        sys.setrecursionlimit(old)
+    return peak[0] - base
+
+
+def yaml_vectors(corpora: str) -> dict[str, Any]:
+    suite = os.path.join(corpora, 'yaml-test-suite')
+    raw: list[tuple[str, bytes]] = []
+    for dirpath, _, files in sorted(os.walk(suite)):
+        if 'in.yaml' in files:
+            with open(os.path.join(dirpath, 'in.yaml'), 'rb') as f:
+                raw.append((f'suite/{os.path.relpath(dirpath, suite)}', f.read()))
+    raw.sort()
+    for i, h in enumerate(YAML_HAND):
+        raw.append((f'hand-{i:03d}', h.encode('utf-8', 'surrogatepass')))
+    raw.extend((f'bytes-{n}', b) for n, b in yaml_bytes_cases())
+    rng = random.Random(1001)
+    valid = [b for n, b in raw if n.startswith('suite/') and len(b) < 2000]
+    alphabet = b'[]{}:,-?#&*!|>\'"%@`\n \t\\x1.0aTZ+e=<~\r'
+    for i in range(700):
+        b = bytearray(rng.choice(valid))
+        for _ in range(rng.randrange(1, 4)):
+            op = rng.randrange(3)
+            p = rng.randrange(len(b) + 1)
+            if op == 0:
+                b[p:p] = bytes([rng.choice(alphabet)])
+            elif op == 1 and b:
+                del b[min(p, len(b) - 1)]
+            elif b:
+                b[min(p, len(b) - 1)] = rng.choice(alphabet)
+        raw.append((f'mutant-{i:03d}', bytes(b)))
+    sequences = [
+        ['%YAML 1.1\n---\na: 1\n', 'b: 0o17\nc: yes\n017: x\n15: y\n'],
+        ['%YAML 1.1\n---\na: 1\n', '---\nyes: 1\ntrue: 2\n'],
+        ['%YAML 1.1\n---\na: 1\n', '%YAML 1.2\n---\nyes: 1\ntrue: 2\n', 'yes: 1\ntrue: 2\n'],
+        ['%YAML 1.1\n--- a\n--- b\n', 'a: 1\n...\nb: 2\n'],
+        ['- [[!!foo y]]\n- [!!bar x]\n', 'a: 1\n'],
+        ['- [[1]]\n- [!!bar x]\n', '- !!baz z\n'],
+        ['? [!!foo x]\n: 1\n', 'a: [1]\na: [2]\n'],
+        ['? [!!foo x]\n: 1\n', 'a: {b: 1}\na: {c: 2}\n', 'a: [1]\na: [2]\n'],
+        ['a: b: c\n', 'a: 1\na: 2\n', 'a: !!int x\n', 'never: reached\n'],
+        ['a: [1, 2\n', '- [[!!x 1]]\n- !!y 2\n', '- 1\n'],
+        ['a: &x 1\n', 'b: *x\n'],
+        ['%TAG !e! tag:e,2000:\n---\na: !e!x 1\n', 'a: !e!x 1\n'],
+        ['a: 1\n---\nb: 2\n', 'a: 1\n'],
+        ['{a: [{b: [!!q 1]}]}\n', '[1]\n'],
+    ]
+    cases = []
+    seqs = []
+    with tempfile.TemporaryDirectory() as d:
+        old = os.getcwd()
+        os.chdir(d)
+        try:
+            for name, b in raw:
+                cases.append({'name': name, **blob(b), 'result': yaml_modes(b)})
+            for i, files in enumerate(sequences):
+                bs = [x.encode() for x in files]
+                seqs.append({
+                    'name': f'seq-{i:02d}', 'files': [blob(b) for b in bs],
+                    'result': {mode: yaml_run(bs, mode) for mode in YAML_MODES},
+                })
+        finally:
+            os.chdir(old)
+    depth = []
+    for shape, make in YAML_SHAPES.items():
+        for mode, flags in (('safe', []), ('multi', ['-m'])):
+            lo, hi = 2, 3000
+            while hi - lo > 1:
+                mid = (lo + hi) // 2
+                if 'crash' in yaml_hook_outcome(make(mid), flags):
+                    hi = mid
+                else:
+                    lo = mid
+            for n in (lo - 1, lo, lo + 1, lo + 2):
+                depth.append({'shape': shape, 'mode': mode, 'n': n, 'result': yaml_hook_outcome(make(n), flags)})
+    depth.append({'shape': 'fseq-empty', 'mode': 'unsafe', 'n': 5000,
+                  'result': yaml_hook_outcome(YAML_SHAPES['fseq-empty'](5000), ['--unsafe'])})
+    frames = []
+    with tempfile.TemporaryDirectory() as d:
+        old = os.getcwd()
+        os.chdir(d)
+        try:
+            for name, b in raw:
+                if not name.startswith(('suite/', 'hand-')) or len(b) > 4000:
+                    continue
+                frames.append({'name': name, 'peak': {mode: yaml_peak(b, mode) for mode in YAML_MODES}})
+        finally:
+            os.chdir(old)
+    data = header('yaml')
+    data['cases'] = cases
+    data['sequences'] = seqs
+    data['depth'] = depth
+    data['frames'] = frames
+    return data
+
+
+# --------------------------------------------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------------------------------------------
 
@@ -798,10 +1231,12 @@ def main() -> int:
         'difflib': difflib_vectors,
         'ini': ini_vectors,
         'toml': lambda: toml_vectors(args.corpora),
+        'yaml': lambda: yaml_vectors(args.corpora),
+        'xml': lambda: xml_vectors(args.corpora),
     }
     # Modules whose code is identical in 3.12 and 3.13 (checked when the vectors were introduced) are recorded once,
     # from 3.13.
-    version_independent = {'difflib', 'ini'}
+    version_independent = {'difflib', 'ini', 'xml'}
     for name, gen in gens.items():
         if name not in only:
             continue
