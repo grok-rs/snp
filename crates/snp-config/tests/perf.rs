@@ -71,4 +71,23 @@ mod perf {
         assert_eq!(n, 250);
         assert!(elapsed.as_millis() < 150, "load + merge took {elapsed:?}");
     }
+
+    /// The D-DATA-14 node dedupe is linear: 300k rewritable stage items (≈ 2.7 MB) migrate in ≈ 1.25 s, as fast
+    /// as the same file without rewrites (load + compose dominate); the quadratic dedupe took ≈ 35 s at 320k.
+    #[test]
+    #[ignore = "perf"]
+    fn migrate_300k_stage_items_under_4s() {
+        let mut s = String::from("default_stages:\n");
+        for _ in 0..300_000 {
+            s.push_str("- commit\n");
+        }
+        s.push_str("repos: []\n");
+        let start = Instant::now();
+        let out =
+            snp_config::migrate::migrate_config(s.as_bytes(), ".pre-commit-config.yaml".as_ref())
+                .expect("migrate");
+        let elapsed = start.elapsed();
+        assert!(matches!(out, snp_config::migrate::Outcome::Migrated(_)));
+        assert!(elapsed.as_millis() < 4000, "migrate took {elapsed:?}");
+    }
 }

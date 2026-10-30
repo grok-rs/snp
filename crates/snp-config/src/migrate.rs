@@ -2,7 +2,8 @@
 //!
 //! pre-commit's algorithm with three data-safety fixes: the file is read and written as UTF-8 on every platform
 //! and each line keeps its own line ending (D-DATA-09, D-CRASH-25; the caller replaces the file atomically keeping
-//! its mode), a node reached twice through an alias is rewritten once (D-DATA-14), and a block scalar (`|`, `>`)
+//! its mode), a node reached twice through an alias is rewritten once and a rewritten node keeps its `&anchor`
+//! (D-DATA-14; its `!tag` is dropped as in pre-commit), and a block scalar (`|`, `>`)
 //! is replaced by a plain scalar instead of pre-commit's `>python>` (D-DATA-15). Every failure is an
 //! `InvalidConfigError` under `File <config>` (D-CRASH-07), never a crash.
 //!
@@ -137,20 +138,29 @@ fn match_chain(doc: &Document, root: NodeId, chain: &[Step]) -> Vec<NodeId> {
     current
 }
 
-/// The start of a node's scalar token within its span: past any `&anchor` / `!tag` properties.
-fn token_start(text: &str, span: &std::ops::Range<usize>) -> usize {
+/// The node properties in front of a scalar token: `(token start, kept prefix)`.
+///
+/// pre-commit replaces the node from its start mark, so a `!tag` and an `&anchor` disappear with the old
+/// value. snp drops the tags too (byte-identical output) but keeps every anchor with the whitespace after it:
+/// dropping one would leave a later `*alias` undefined and the file invalid YAML (D-DATA-14).
+fn properties(text: &str, span: &std::ops::Range<usize>) -> (usize, String) {
     let mut pos = span.start;
+    let mut kept = String::new();
     loop {
         let rest = text.get(pos..span.end).unwrap_or("");
         if !(rest.starts_with('&') || rest.starts_with('!')) {
-            return pos;
+            return (pos, kept);
         }
         let prop = rest.find([' ', '\t', '\r', '\n']).unwrap_or(rest.len());
         let after = rest.get(prop..).unwrap_or("");
         let ws = after
             .len()
             .saturating_sub(after.trim_start_matches([' ', '\t', '\r', '\n']).len());
-        pos = pos.saturating_add(prop).saturating_add(ws);
+        let len = prop.saturating_add(ws);
+        if rest.starts_with('&') {
+            kept.push_str(rest.get(..len).unwrap_or(""));
+        }
+        pos = pos.saturating_add(len);
     }
 }
 
@@ -226,24 +236,24 @@ fn migrate_composed(contents: &str) -> Result<String, String> {
             rewrites.push((id, format!("pre-{v}")));
         }
     }
-    // D-DATA-14: one rewrite per node (an aliased node is reached once per alias).
-    let mut seen = Vec::new();
+    // D-DATA-14: one rewrite per node (an aliased node is reached once per alias); node ids are dense indices
+    // into `doc.nodes`, so a bitmap keeps this linear.
+    let mut seen = vec![false; doc.nodes.len()];
     rewrites.retain(|(id, _)| {
-        if seen.contains(id) {
-            false
-        } else {
-            seen.push(*id);
-            true
-        }
+        usize::try_from(id.0)
+            .ok()
+            .and_then(|i| seen.get_mut(i))
+            .is_some_and(|s| !std::mem::replace(s, true))
     });
     let mut spans: Vec<(usize, usize, String)> = Vec::new();
     for (id, new) in rewrites {
         let Some(n) = doc.nodes.get(usize::try_from(id.0).unwrap_or(usize::MAX)) else {
             continue;
         };
-        let start = token_start(contents, &n.span);
+        let (start, mut kept) = properties(contents, &n.span);
         let token = contents.get(start..n.span.end).unwrap_or("");
-        spans.push((start, n.span.end, replacement(n.style, token, &new)));
+        kept.push_str(&replacement(n.style, token, &new));
+        spans.push((n.span.start, n.span.end, kept));
     }
     spans.sort_by_key(|(start, _, _)| *start);
     let mut out = String::new();
@@ -272,10 +282,38 @@ mod tests {
     }
 
     #[test]
-    fn token_start_skips_properties() {
+    fn properties_keep_anchors_and_drop_tags() {
         let t = "a: &x !!str commit";
-        assert_eq!(token_start(t, &(3..t.len())), 12);
-        assert_eq!(token_start("commit", &(0..6)), 0);
+        assert_eq!(properties(t, &(3..t.len())), (12, "&x ".to_owned()));
+        let t = "a: !!str &x commit";
+        assert_eq!(properties(t, &(3..t.len())), (12, "&x ".to_owned()));
+        assert_eq!(properties("commit", &(0..6)), (0, String::new()));
+    }
+
+    #[test]
+    fn tags_are_dropped_like_pre_commit() {
+        let src = "default_stages: [!!str commit]\nrepos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: system\n        stages:\n        - !!str push\n";
+        assert_eq!(
+            migrated(src),
+            src.replace("!!str commit", "pre-commit")
+                .replace("!!str push", "pre-push")
+        );
+        let src = "repos:\n-   repo: https://x/r\n    !!str sha: v1\n    hooks: []\n";
+        assert_eq!(migrated(src), src.replace("!!str sha", "rev"));
+    }
+
+    #[test]
+    fn anchors_survive_a_rewrite() {
+        // pre-commit: `  rev: v1` and `x: *k` is an undefined alias (the file no longer loads).
+        let src = "repos:\n-   repo: https://x/r\n    &k sha: v1\n    hooks: []\nx: *k\n";
+        let out = migrated(src);
+        assert_eq!(out, src.replace("&k sha", "&k rev"));
+        assert!(snp_yaml::load(&out, &limits()).is_ok());
+        let src = "default_stages: [&s !!str 'commit']\nx: *s\nrepos: []\n";
+        assert_eq!(
+            migrated(src),
+            src.replace("&s !!str 'commit'", "&s 'pre-commit'")
+        );
     }
 
     #[test]
