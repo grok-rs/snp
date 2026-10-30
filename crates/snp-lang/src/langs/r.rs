@@ -11,7 +11,12 @@
 //!
 //! The health check (`r.py:86-107`) compares the recorded R version with the current one (two Rscript runs). snp
 //! records the fingerprint of the Rscript executable at install time (`InstallOutcome::fingerprint`) and skips both
-//! runs while that executable is unchanged (04b §5.8; ADR decision "R health stamp → yes (invisible)").
+//! runs while that executable is unchanged (04b §5.8; ADR decision "R health stamp → yes (invisible)"). Only a native
+//! Rscript that is not a version-manager proxy gets a fingerprint (its realpath): an asdf/mise shim or a `#!` wrapper
+//! can switch R versions without changing, so those always take pre-commit's two runs.
+//!
+//! The prefix literal of the scripts ([`r_string_literal`]) equals Python's `repr` except for non-printable non-ASCII
+//! characters and undecodable bytes, which get R escapes (`\U{…}`, `\xNN`) instead of Python's. COMPATIBILITY §5 has no register ID for that literal difference yet (allocation by the integration lead is pending).
 //!
 //! The hook's `entry` must be `Rscript <script>` or `Rscript -e <expr>` (`_entry_validate`, texts verbatim, including
 //! the missing space before `or`); the script is joined to the repository unless the hook is local.
@@ -206,16 +211,70 @@ fn execute_r(
         .to_owned())
 }
 
-/// The Rscript executable install and health use, resolved for its fingerprint (absolute paths only).
+/// The Rscript executable install and health use, resolved (realpath) for its fingerprint. `None` (no fast path:
+/// pre-commit's two Rscript runs every time) for a relative path and for an Rscript whose file can stay the same while
+/// the R version behind it changes: a version-manager proxy (a `shims` directory: asdf, mise, rtx, pyenv-style
+/// managers; a manager binary) or a script (`#!`; on Windows anything but `.exe`/`.com`). These are the guards of the
+/// framework's persisted probe facts (`ToolProbe`, ARCHITECTURE §6.1).
 fn rscript_fingerprint(host: &Host<'_>, env_dir: &Path) -> Option<Fingerprint> {
     let exe = rscript_exec(host.base_env);
     let found: PathBuf = host.probe.find_exe(&exe, host.base_env, env_dir)?;
     if !found.is_absolute() {
         return None;
     }
-    let mut fp = host.probe.fingerprint(&found)?;
+    let real = snp_pycompat::ospath::realpath(found.as_os_str(), env_dir).ok()?;
+    if is_version_proxy(&found, &real) || !is_native(&real) {
+        return None;
+    }
+    let mut fp = host.probe.fingerprint(&real)?;
     fp.detail = Arc::from("Rscript");
     Some(fp)
+}
+
+/// A version-manager proxy: a `shims` (or Chocolatey) directory on either path, or a manager's own binary.
+fn is_version_proxy(found: &Path, real: &Path) -> bool {
+    const MANAGERS: [&str; 11] = [
+        "rustup",
+        "rustup-init",
+        "mise",
+        "rtx",
+        "volta",
+        "volta-shim",
+        "proto-shim",
+        "asdf",
+        "pyenv",
+        "rbenv",
+        "nodenv",
+    ];
+    let has_component = |p: &Path, name: &str| {
+        p.components()
+            .any(|c| matches!(c, std::path::Component::Normal(n) if n.eq_ignore_ascii_case(name)))
+    };
+    if [found, real]
+        .iter()
+        .any(|p| has_component(p, "shims") || has_component(p, "chocolatey"))
+    {
+        return true;
+    }
+    let stem = real
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    MANAGERS.contains(&stem.as_str())
+}
+
+/// A native executable: not a `#!` script (Windows: `.exe`/`.com`).
+fn is_native(real: &Path) -> bool {
+    use std::io::Read as _;
+    if cfg!(windows) {
+        return real
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("exe") || e.eq_ignore_ascii_case("com"));
+    }
+    let mut head = [0_u8; 2];
+    std::fs::File::open(real)
+        .and_then(|mut f| f.read_exact(&mut head))
+        .is_ok_and(|()| head != *b"#!")
 }
 
 /// The two-spawn health check of pre-commit (`r.py:86-107`).

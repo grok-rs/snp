@@ -8,7 +8,8 @@
 //!   inspect parsers with pre-commit's verbatim fixtures, bind-path translation;
 //! * `langs` — the per-language rules: conda installer selection, coursier/haskell errors, dart pubspec reading and
 //!   executable-name validation, dotnet nuspec parsing and its size cap, julia's ignored version, the lua version probe
-//!   memoised per process, perl quoting, r entry validation, script literal and health fast path, swift;
+//!   memoised per run, perl quoting, r entry validation, script literal and health fast path, swift;
+//! * `pubspec` — the dart pubspec reader replayed against the PyYAML-generated `testdata/group2/pubspec` vectors;
 //! * `support` — the `check_support` texts of every group-2 language in both brands;
 //! * `toolchain` — real-toolchain tests (`tc_<lang>_*`, `#[ignore = "toolchain"]`, run nightly where the tool exists).
 //!
@@ -26,6 +27,9 @@ mod langs;
 #[cfg(test)]
 #[cfg(feature = "testing")]
 mod oracle;
+#[cfg(test)]
+#[cfg(feature = "testing")]
+mod pubspec;
 #[cfg(test)]
 #[cfg(feature = "testing")]
 mod support;

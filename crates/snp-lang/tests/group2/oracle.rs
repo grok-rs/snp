@@ -17,7 +17,7 @@
 //! for temporary directories in order of appearance).
 //!
 //! Two pre-commit calls are folded on its side, both invisible: the repeated `luarocks config --lua-ver` (pre-commit
-//! spawns it on every activation, snp once per process) and nothing else — docker's per-run build is rendered from
+//! spawns it on every activation, snp once per run) and nothing else — docker's per-run build is rendered from
 //! the plan's pre-step, whose `docker image inspect` skip probe pre-commit does not have (D-PERF-04).
 
 use std::collections::BTreeMap;

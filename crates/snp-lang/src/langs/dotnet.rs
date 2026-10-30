@@ -8,7 +8,8 @@
 //! supported. Hooks run with `<env>/bin` first on `PATH`.
 //!
 //! snp differences: the packages are processed in sorted order (pre-commit: directory order); the nuspec entry is read
-//! with a 1 MiB cap and parsed with `roxmltree` (no entity expansion), 04b §5.7.
+//! with a 1 MiB cap and parsed with `roxmltree` (no entity expansion), 04b §5.7: a nuspec with a DTD (`<!DOCTYPE …>`,
+//! internal entities) is refused, where `ElementTree` would expand them. COMPATIBILITY §5 has no register ID for the DTD refusal yet (allocation by the integration lead is pending).
 //!
 //! Owner: WP-25.
 

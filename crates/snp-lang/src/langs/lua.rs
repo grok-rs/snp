@@ -9,7 +9,7 @@
 //! `luarocks --tree <env> install <dep>` per dependency (luarocks cannot install several at once).
 //!
 //! snp differences: pre-commit spawns `luarocks config --lua-ver` on every activation (once per install and once per
-//! hook run); snp spawns it **once per process** for a given environment and cwd ([`lua_version`]) — the output cannot
+//! hook run); snp spawns it **once per run** ([`lua_version`], memoised in the run's `ToolProbe`) — the output cannot
 //! change while snp runs. Non-UTF-8 output is decoded lossily instead of crashing (D-CRASH-13). Rockspecs are sorted.
 //! luarocks remains required at run time (parity, 04b §5.10 #5): a missing luarocks fails the hook run with
 //! pre-commit's `CalledProcessError`.
@@ -18,11 +18,10 @@
 
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
 
-use snp_core::env::{Env, EnvPatch};
+use snp_core::env::EnvPatch;
 use snp_core::lang::LanguageId;
-use snp_core::sync::lock;
 
 use super::docker::group2::{
     assert_support, basic_plan, default_version, makedirs, outcome, py_join, star,
@@ -41,63 +40,22 @@ pub struct Lua;
 /// `_get_lua_version()`'s argv (`lua.py:22-25`).
 pub const LUA_VERSION_PROBE: [&str; 3] = ["luarocks", "config", "--lua-ver"];
 
-/// One memoised probe result: keyed by a digest of the environment and the cwd it ran with.
-type Slot = Arc<Mutex<Option<Arc<str>>>>;
-
-/// The memo: (key, slot) pairs.
-type Memo = Mutex<Vec<([u8; 32], Slot)>>;
-
-/// The process-wide memo of [`lua_version`].
-fn memo() -> &'static Memo {
-    static MEMO: OnceLock<Memo> = OnceLock::new();
-    MEMO.get_or_init(|| Mutex::new(Vec::new()))
-}
-
-/// blake3 over the sorted environment and the cwd: what steers `luarocks config` (its `PATH`, `LUAROCKS_CONFIG`,
-/// `HOME`, the project's `.luarocks/` …).
-fn memo_key(env: &Env, cwd: &Path) -> [u8; 32] {
-    let mut pairs: Vec<(&OsStr, &OsStr)> = env.iter().collect();
-    pairs.sort_by(|a, b| a.0.as_encoded_bytes().cmp(b.0.as_encoded_bytes()));
-    let mut h = blake3::Hasher::new();
-    for (k, v) in pairs {
-        h.update(k.as_encoded_bytes());
-        h.update(b"=");
-        h.update(v.as_encoded_bytes());
-        h.update(b"\0");
-    }
-    h.update(b"cwd=");
-    h.update(cwd.as_os_str().as_encoded_bytes());
-    *h.finalize().as_bytes()
-}
-
 /// `_get_lua_version()`: `luarocks config --lua-ver` through the host's runner with the run's base environment in
 /// the run's cwd, stdout decoded lossily and stripped (Python `str.strip()`); a non-zero exit is pre-commit's
 /// format-A `CalledProcessError`.
 ///
-/// Memoised per process (keyed by the environment and the cwd); concurrent callers wait for the one running probe; a
-/// failure is not memoised.
+/// Memoised in the run's [`ToolProbe`](crate::ToolProbe) (no process-global state, ARCHITECTURE S6): the Lua slot of
+/// `ToolProbe::default_version`, which `Lua::default_version` never uses (Lua's `language_version` is always
+/// `default`, `lang_base.basic_get_default_version`). Concurrent callers wait for the one running probe; a failure is
+/// not memoised.
 pub fn lua_version(host: &Host<'_>) -> Result<Arc<str>, LangError> {
-    let key = memo_key(host.base_env, host.cwd);
-    let slot = {
-        let mut slots = lock(memo());
-        if let Some((_, s)) = slots.iter().find(|(k, _)| *k == key) {
-            Arc::clone(s)
-        } else {
-            let s: Slot = Arc::new(Mutex::new(None));
-            slots.push((key, Arc::clone(&s)));
-            s
-        }
-    };
-    let mut guard = lock(&slot);
-    if let Some(v) = guard.as_ref() {
-        return Ok(Arc::clone(v));
-    }
-    let argv: Vec<OsString> = LUA_VERSION_PROBE.iter().map(OsString::from).collect();
-    let stdout = setup_cmd(host.runner, &argv, host.base_env, host.cwd)?;
-    let text = String::from_utf8_lossy(&stdout);
-    let v: Arc<str> = Arc::from(snp_pycompat::text::strip(&text));
-    *guard = Some(Arc::clone(&v));
-    Ok(v)
+    host.probe
+        .default_version(LanguageId::Lua, host.base_env, host.cwd, &mut || {
+            let argv: Vec<OsString> = LUA_VERSION_PROBE.iter().map(OsString::from).collect();
+            let stdout = setup_cmd(host.runner, &argv, host.base_env, host.cwd)?;
+            let text = String::from_utf8_lossy(&stdout);
+            Ok(Arc::from(snp_pycompat::text::strip(&text)))
+        })
 }
 
 /// `get_env_patch(d)` for Lua version `version` (`lua.py:28-43`).

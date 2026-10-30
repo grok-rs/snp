@@ -9,7 +9,7 @@
 //!
 //! snp differences: descriptors are processed in sorted order (pre-commit: directory order, 04b §5.5), and an empty
 //! channel directory without dependencies yields an empty environment instead of pre-commit's `FileNotFoundError` on
-//! its state file (04b §5.10 #8).
+//! its state file (04b §5.10 #8). COMPATIBILITY §5 has no register ID for the empty-channel success yet (allocation by the integration lead is pending).
 //!
 //! Owner: WP-25.
 

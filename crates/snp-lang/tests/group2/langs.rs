@@ -12,7 +12,9 @@ use snp_core::lang::LanguageId;
 use snp_lang::harness::Reply;
 use snp_lang::langs::conda::conda_exe;
 use snp_lang::langs::coursier::missing_cs_message;
-use snp_lang::langs::dart::{Executables, pubspec_executables, valid_executable_name};
+use snp_lang::langs::dart::{
+    Executables, MAX_PUBSPEC, pubspec_executables, read_pubspec, valid_executable_name,
+};
 use snp_lang::langs::dotnet::{MAX_NUSPEC, NUGET_CONFIG, nuspec_tool_id, read_nuspec};
 use snp_lang::langs::lua::lua_version;
 use snp_lang::langs::r::{
@@ -209,12 +211,18 @@ fn lang_coursier_empty_channel_dir_creates_the_env() {
 #[test]
 fn lang_dart_pubspec_shapes() {
     let names = |xs: &[&str]| Executables::Names(xs.iter().map(|x| (*x).to_owned()).collect());
-    let cases: [(&str, Executables); 14] = [
+    let then = |xs: &[&str], ty| {
+        Executables::NamesThenNonStr(xs.iter().map(|x| (*x).to_owned()).collect(), ty)
+    };
+    let cases: Vec<(&str, Executables)> = vec![
         ("name: x\nexecutables: {}\n", names(&[])),
         ("name: x\n", Executables::Missing),
+        ("# nothing\n", Executables::EmptyDocument),
         ("name: x\nexecutables:\n", Executables::Null),
         ("executables: null\n", Executables::Null),
         ("executables: ~ # none\n", Executables::Null),
+        ("executables: 5\n", Executables::NotIterable("int")),
+        ("executables: yes\n", Executables::NotIterable("bool")),
         (
             "name: x\nexecutables:\n  a:\n  b: other\n  'c d':\n    # nested\nversion: 1\n",
             names(&["a", "b", "c d"]),
@@ -226,30 +234,69 @@ fn lang_dart_pubspec_shapes() {
         ("executables: [a, 'b']\n", names(&["a", "b"])),
         ("executables:\n- a\n- b\nname: x\n", names(&["a", "b"])),
         ("executables:\n  - a\n", names(&["a"])),
-        (
-            "%YAML 1.2\n---\nexecutables: {b, a: }\n...\n",
-            names(&["b", "a"]),
-        ),
+        ("---\nexecutables: {b, a: }\n...\n", names(&["b", "a"])),
         ("\u{feff}executables:\n  x: y # c\n", names(&["x"])),
         ("executables: {a}\nexecutables:\n  b:\n", names(&["b"])),
         (
             "environment:\n  sdk: '>=2.12.0'\nexecutables:\n  \"tab\\tname\":\n",
             names(&["tab\tname"]),
         ),
+        // A string is iterated by characters; an empty one installs nothing.
+        ("executables: abc\n", names(&["a", "b", "c"])),
+        ("executables: ''\n", names(&[])),
+        // A flow collection on its own line is the value, not a key (review finding).
+        ("executables:\n  {a: b}\n", names(&["a"])),
+        ("executables:\n  {a: b, c: d}\n", names(&["a", "c"])),
+        ("executables:\n  [a, b]\n", names(&["a", "b"])),
+        // Duplicate keys collapse into the first position, like a dict.
+        ("executables:\n  a:\n  b:\n  a: c\n", names(&["a", "b"])),
+        ("executables: {a: b, a: c}\n", names(&["a"])),
+        // Keys PyYAML resolves to another type: the loop crashes there (after the names before it).
+        ("executables:\n  a:\n  123:\n  b:\n", then(&["a"], "int")),
+        ("executables:\n  yes:\n", then(&[], "bool")),
+        ("executables:\n  null:\n", then(&[], "NoneType")),
+        ("executables:\n  ~:\n", then(&[], "NoneType")),
+        ("executables:\n  1.5:\n", then(&[], "float")),
+        ("executables:\n  0x1f:\n", then(&[], "int")),
+        ("executables:\n  1:30:\n", then(&[], "int")),
+        (
+            "executables:\n  '123':\n  yess:\n  2to3x:\n",
+            names(&["123", "yess", "2to3x"]),
+        ),
+        ("executables:\n  - a\n  - {b: c}\n", then(&["a"], "dict")),
+        // Multi-line plain scalars and flow collections over several lines.
+        (
+            "description: a\n  b\nexecutables: [a,\n  b]\n",
+            names(&["a", "b"]),
+        ),
+        ("executables: {\n  a: b,\n}\n", names(&["a"])),
+        ("executables: {a: [b]}\n", names(&["a"])),
     ];
     for (text, want) in cases {
         assert_eq!(pubspec_executables(text).unwrap(), want, "{text:?}");
     }
+    // Invalid YAML (PyYAML raises) and constructs outside the subset.
     for bad in [
         "- a\n",
-        "executables: x\n",
         "executables: &a {}\n",
-        "executables: {a: [b]}\n",
         "executables:\n  ? a\n",
         "a: 1\n---\nb: 2\n",
         "  indented: 1\n",
         "executables:\n\t- a\n",
         "executables: [a\n",
+        "executables: [a, b]\n- a\n",
+        "executables:\n  x: y: z\n",
+        "executables:\n  foo: *x\n",
+        "executables:\n  : x\n",
+        "executables:\n  @foo:\n",
+        "executables:\n  %foo:\n",
+        "executables:\n odd:\nname: x\n  \"d\":\n",
+        "description: |\n  foo\n# comment\n  bar\nexecutables:\n  x:\n",
+        "executables:\n  0b_:\n",
+        "x: =\nexecutables:\n  a:\n",
+        "executables:\n  <<: {a: b}\n",
+        "...\n",
+        "x: \u{1}\nexecutables:\n  a:\n",
     ] {
         assert!(pubspec_executables(bad).is_err(), "{bad:?}");
     }
@@ -304,21 +351,88 @@ fn lang_dart_rejects_a_traversing_executable_name() {
 fn lang_dart_missing_or_null_executables_fail() {
     for (body, frag) in [
         ("name: x\n", "no `executables` key"),
-        ("name: x\nexecutables:\n", "`executables` is null"),
+        (
+            "name: x\nexecutables:\n",
+            "'NoneType' object is not iterable",
+        ),
+        ("name: x\nexecutables: 1\n", "'int' object is not iterable"),
+        ("# empty\n", "'NoneType' object is not subscriptable"),
     ] {
         let fx = Fx::new(&[]);
         fx.put("pubspec.yaml", body.as_bytes());
         let e = fx.install(LanguageId::Dart, &[]).unwrap_err();
+        assert!(e.to_string().contains(frag), "{body}: {e}");
         assert_eq!(Failure::from(e).exit_code(), 3, "{body}");
-        let fx = Fx::new(&[]);
-        fx.put("pubspec.yaml", body.as_bytes());
-        assert!(
-            fx.install(LanguageId::Dart, &[])
-                .unwrap_err()
-                .to_string()
-                .contains(frag)
+        // pre-commit crashes after `dart pub get`.
+        assert_eq!(
+            call_argvs(&fx.t),
+            vec![vec!["dart", "pub", "get"]],
+            "{body}"
         );
     }
+}
+
+#[test]
+fn lang_dart_non_str_key_crashes_after_the_names_before_it() {
+    let fx = Fx::new(&[]);
+    fx.put(
+        "pubspec.yaml",
+        b"name: x\nexecutables:\n  a:\n  123:\n  b:\n",
+    );
+    let e = fx.install(LanguageId::Dart, &[]).unwrap_err();
+    assert_eq!(
+        e.to_string(),
+        "join() argument must be str, bytes, or os.PathLike object, not 'int'"
+    );
+    assert_eq!(Failure::from(e).exit_code(), 3);
+    let calls = call_argvs(&fx.t);
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert!(calls[1][5].ends_with("a.dart"), "{calls:?}");
+}
+
+#[test]
+fn lang_dart_duplicate_keys_compile_once() {
+    let fx = Fx::new(&[]);
+    fx.put("pubspec.yaml", b"name: x\nexecutables:\n  a:\n  a: b\n");
+    fx.install(LanguageId::Dart, &[]).unwrap();
+    let calls = call_argvs(&fx.t);
+    assert_eq!(calls.len(), 2, "{calls:?}");
+}
+
+#[test]
+fn lang_dart_invalid_pubspec_fails_before_pub_get() {
+    let fx = Fx::new(&[]);
+    fx.put("pubspec.yaml", b"name: x\nexecutables: [a, b]\n- a\n");
+    let e = fx.install(LanguageId::Dart, &[]).unwrap_err();
+    assert_eq!(Failure::from(e).exit_code(), 3);
+    assert!(fx.t.runner.calls().is_empty());
+}
+
+#[test]
+fn lang_dart_pubspec_cap_refuses_instead_of_truncating() {
+    // A file of exactly the cap is read; one byte more is refused (never parsed in part).
+    let cap = usize::try_from(MAX_PUBSPEC).unwrap();
+    let head = b"name: x\nexecutables:\n  a:\n";
+    let mut body = head.to_vec();
+    body.resize(cap, b'\n');
+    let fx = Fx::new(&[]);
+    fx.put("pubspec.yaml", &body);
+    assert_eq!(
+        read_pubspec(&fx.prefix).unwrap(),
+        Executables::Names(vec!["a".to_owned()])
+    );
+    body.push(b'\n');
+    fx.put("pubspec.yaml", &body);
+    let e = read_pubspec(&fx.prefix).unwrap_err();
+    assert_eq!(e.py_type(), "ValueError");
+    assert!(
+        e.to_string()
+            .ends_with("pubspec.yaml is larger than 1048576 bytes"),
+        "{e}"
+    );
+    let e = fx.install(LanguageId::Dart, &[]).unwrap_err();
+    assert!(e.to_string().contains("larger than"), "{e}");
+    assert!(fx.t.runner.calls().is_empty());
 }
 
 #[test]
@@ -571,7 +685,7 @@ fn lang_julia_activation() {
 // ---- lua ----
 
 #[test]
-fn lang_lua_version_probed_once_per_process() {
+fn lang_lua_version_probed_once_per_run() {
     let fx = Fx::new(&[]);
     fx.t.runner
         .reply("luarocks", Reply::ok(" 5.3 \n").when(["config"]).sticky());
@@ -586,6 +700,23 @@ fn lang_lua_version_probed_once_per_process() {
         .filter(|c| c[1] == "config")
         .count();
     assert_eq!(probes, 1);
+    // The memo lives in the run's ToolProbe, not in the process: a fresh probe (another run) asks again, and the Lua
+    // language_version is still `default`.
+    assert_eq!(
+        &*backend(LanguageId::Lua).default_version(&host).unwrap(),
+        "default"
+    );
+    let fresh = snp_lang::ToolProbe::new(None);
+    let other = snp_lang::Host {
+        probe: &fresh,
+        ..fx.t.host()
+    };
+    assert_eq!(&*lua_version(&other).unwrap(), "5.3");
+    let probes = call_argvs(&fx.t)
+        .into_iter()
+        .filter(|c| c[1] == "config")
+        .count();
+    assert_eq!(probes, 2);
     let env = fx.activated(LanguageId::Lua).unwrap();
     let d = fx.env_dir(LanguageId::Lua, "default");
     let lua_path = env.get("LUA_PATH").unwrap().to_string_lossy().into_owned();
@@ -793,24 +924,49 @@ fn lang_r_prefix_literal_matches_python_repr() {
     );
 }
 
-#[test]
-fn lang_r_health_fast_path_and_texts() {
-    let fx = Fx::new(&[]);
-    let rscript = fx.tool("Rscript");
-    fx.t.runner.reply("Rscript", Reply::ok("4.3.3").sticky());
-    let out = fx.install(LanguageId::R, &[]).unwrap();
-    let fp = out.fingerprint.clone().unwrap();
-    assert_eq!(fp.exe, rscript);
-    let installs = fx.t.runner.calls().len();
-    let state = InstallState {
+/// A native (non-`#!`) fake Rscript under `<dir>/bin`, outside any `shims` directory, for `R_HOME=<dir>`.
+fn native_r_home(dir: &Path) -> std::path::PathBuf {
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let rscript = bin.join(if cfg!(windows) {
+        "Rscript.exe"
+    } else {
+        "Rscript"
+    });
+    std::fs::write(&rscript, b"\x7fELF fake").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&rscript, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    rscript
+}
+
+/// The install state recorded from `out`.
+fn r_state(out: &snp_lang::InstallOutcome) -> InstallState {
+    InstallState {
         v: InstallState::VERSION,
         language: Arc::from("r"),
         language_version: Arc::from("default"),
         deps: Arc::from(Vec::new()),
         installer: Arc::clone(&out.installer),
-        fingerprint: out.fingerprint,
+        fingerprint: out.fingerprint.clone(),
         snp_version: Arc::from("x"),
-    };
+    }
+}
+
+#[test]
+fn lang_r_health_fast_path_and_texts() {
+    let home = tempfile::tempdir().unwrap();
+    let home_dir = snp_pycompat::ospath::realpath(home.path().as_os_str(), home.path()).unwrap();
+    let rscript = native_r_home(&home_dir);
+    let fx = Fx::new(&[("R_HOME", home_dir.to_str().unwrap())]);
+    fx.t.runner.reply("Rscript", Reply::ok("4.3.3").sticky());
+    let out = fx.install(LanguageId::R, &[]).unwrap();
+    let fp = out.fingerprint.clone().unwrap();
+    assert_eq!(fp.exe, rscript);
+    let installs = fx.t.runner.calls().len();
+    let state = r_state(&out);
     // Unchanged Rscript: healthy without spawning.
     assert_eq!(
         fx.health(LanguageId::R, Some(&state)).unwrap(),
@@ -818,12 +974,51 @@ fn lang_r_health_fast_path_and_texts() {
     );
     assert_eq!(fx.t.runner.calls().len(), installs);
     // A replaced Rscript (other size): pre-commit's two spawns.
-    std::fs::write(&rscript, b"#!/bin/sh\n# upgraded\n").unwrap();
+    std::fs::write(&rscript, b"\x7fELF upgraded").unwrap();
     assert_eq!(
         fx.health(LanguageId::R, Some(&state)).unwrap(),
         Health::Healthy
     );
     assert_eq!(fx.t.runner.calls().len(), installs + 2);
+}
+
+#[test]
+fn lang_r_health_never_trusts_a_shim_or_script_rscript() {
+    // `Fx::tool` writes a `#!/bin/sh` script into a `shims` directory: an asdf/mise-style proxy whose file stays the
+    // same while the R version behind it changes. No fingerprint, and health always runs pre-commit's two scripts.
+    let fx = Fx::new(&[]);
+    fx.tool("Rscript");
+    fx.t.runner.reply("Rscript", Reply::ok("4.3.3").sticky());
+    let out = fx.install(LanguageId::R, &[]).unwrap();
+    assert_eq!(out.fingerprint, None);
+    let installs = fx.t.runner.calls().len();
+    let mut state = r_state(&out);
+    assert_eq!(
+        fx.health(LanguageId::R, Some(&state)).unwrap(),
+        Health::Healthy
+    );
+    assert_eq!(fx.t.runner.calls().len(), installs + 2);
+    // Even a state carrying a matching fingerprint of the shim (e.g. recorded by an older snp) is not trusted.
+    state.fingerprint =
+        fx.t.probe
+            .fingerprint(&fx.shims.join("Rscript"))
+            .map(|mut f| {
+                f.detail = Arc::from("Rscript");
+                f
+            });
+    assert!(state.fingerprint.is_some());
+    fx.health(LanguageId::R, Some(&state)).unwrap();
+    assert_eq!(fx.t.runner.calls().len(), installs + 4);
+    // A native Rscript reached through a symlink in a `shims` directory is a proxy too.
+    #[cfg(unix)]
+    {
+        let real = tempfile::tempdir().unwrap();
+        let target = native_r_home(real.path());
+        let fx = Fx::new(&[]);
+        std::os::unix::fs::symlink(&target, fx.shims.join("Rscript")).unwrap();
+        fx.t.runner.reply("Rscript", Reply::ok("4.3.3").sticky());
+        assert_eq!(fx.install(LanguageId::R, &[]).unwrap().fingerprint, None);
+    }
 }
 
 #[test]
@@ -871,6 +1066,33 @@ fn lang_r_install_copies_renv_and_requires_the_lock() {
     assert!(d.join("renv").join("activate.R").is_file());
     // The temporary scripts are gone.
     assert_eq!(std::fs::read_dir(&fx.tmp).unwrap().count(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn lang_copytree_refuses_a_symlink_loop_quickly() {
+    // `renv/x -> .` and `renv/y -> .`: depth-bounded recursion alone would make ~2^64 copies.
+    let fx = Fx::new(&[]);
+    let renv = fx.prefix.join("renv");
+    std::os::unix::fs::symlink(".", renv.join("x")).unwrap();
+    std::os::unix::fs::symlink(".", renv.join("y")).unwrap();
+    let start = std::time::Instant::now();
+    let e = fx.install(LanguageId::R, &[]).unwrap_err();
+    assert!(start.elapsed() < std::time::Duration::from_secs(10));
+    assert!(e.to_string().contains("symlink loop"), "{e}");
+    assert!(fx.t.runner.calls().is_empty());
+    // A symlink to a sibling directory (no loop) is followed and copied, as by shutil.copytree.
+    let fx = Fx::new(&[]);
+    let renv = fx.prefix.join("renv");
+    std::fs::create_dir_all(fx.prefix.join("other")).unwrap();
+    std::fs::write(fx.prefix.join("other").join("f"), b"x").unwrap();
+    std::os::unix::fs::symlink("../other", renv.join("link")).unwrap();
+    fx.install(LanguageId::R, &[]).unwrap();
+    let d = fx.env_dir(LanguageId::R, "default");
+    assert_eq!(
+        std::fs::read(d.join("renv").join("link").join("f")).unwrap(),
+        b"x"
+    );
 }
 
 // ---- swift ----

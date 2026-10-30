@@ -8,7 +8,7 @@
 //! `shlex.quote`.
 //!
 //! snp difference: the environment directory exists after a successful install even when cpan installed nothing
-//! (pre-commit then fails writing its state file, 04b §2.8).
+//! (pre-commit then fails writing its state file, 04b §2.8). COMPATIBILITY §5 has no register ID for this crash fix yet (allocation by the integration lead is pending).
 //!
 //! Owner: WP-25.
 

@@ -176,40 +176,88 @@ pub(crate) fn copy_into(src: &Path, dst_dir: &Path) -> Result<PathBuf, LangError
     Ok(dst)
 }
 
-/// Depth bound of [`copytree`] (symlinked directories are followed, as `shutil.copytree(symlinks=False)` does; the
-/// bound turns a symlink loop into an error instead of an unbounded recursion).
+/// Depth bound of [`copytree`] (symlinked directories are followed, as `shutil.copytree(symlinks=False)` does): a
+/// backstop behind the ancestor check of [`copytree_depth`].
 const MAX_COPY_DEPTH: usize = 64;
 
 /// `shutil.copytree(src, dst)` with the defaults (`symlinks=False`): `dst` must not exist; files are copied with their
 /// permission bits, symlinks are followed (their targets' contents are copied).
+///
+/// A directory that is its own ancestor (a symlink loop such as `x -> .`) is an error instead of a copy: pre-commit
+/// recurses until the OS refuses the path, and two such links expand to exponentially many copies.
 pub(crate) fn copytree(src: &Path, dst: &Path) -> Result<(), LangError> {
-    copytree_depth(src, dst, 0)
+    let mut ancestors = Vec::new();
+    copytree_depth(src, dst, &mut ancestors)
 }
 
-fn copytree_depth(src: &Path, dst: &Path, depth: usize) -> Result<(), LangError> {
-    if depth > MAX_COPY_DEPTH {
-        return Err(LangError::Io {
-            op: "copytree",
-            path: src.to_path_buf(),
-            err: io::Error::other("directory nesting too deep (symlink loop?)"),
-        });
+/// The identity of a directory: (device or volume, inode or file index); `None` when it cannot be determined.
+#[cfg(unix)]
+fn dir_identity(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let md = std::fs::metadata(path).ok()?;
+    Some((md.dev(), md.ino()))
+}
+
+/// The identity of a directory: (volume serial number, file index); `None` when it cannot be determined.
+#[cfg(windows)]
+fn dir_identity(path: &Path) -> Option<(u64, u64)> {
+    let h = winapi_util::Handle::from_path_any(path).ok()?;
+    let info = winapi_util::file::information(&h).ok()?;
+    Some((info.volume_serial_number(), info.file_index()))
+}
+
+/// No directory identities on other platforms (the depth bound remains).
+#[cfg(not(any(unix, windows)))]
+fn dir_identity(_path: &Path) -> Option<(u64, u64)> {
+    None
+}
+
+/// The error of a directory that loops back onto an ancestor (or nests too deep).
+fn symlink_loop(src: &Path) -> LangError {
+    LangError::Io {
+        op: "copytree",
+        path: src.to_path_buf(),
+        err: io::Error::other("directory nesting too deep (symlink loop?)"),
+    }
+}
+
+/// [`copytree`] of `src`, whose ancestors' identities are `ancestors`.
+fn copytree_depth(
+    src: &Path,
+    dst: &Path,
+    ancestors: &mut Vec<(u64, u64)>,
+) -> Result<(), LangError> {
+    if ancestors.len() > MAX_COPY_DEPTH {
+        return Err(symlink_loop(src));
+    }
+    let id = dir_identity(src);
+    if let Some(id) = id
+        && ancestors.contains(&id)
+    {
+        return Err(symlink_loop(src));
     }
     #[expect(
         clippy::create_dir,
         reason = "shutil.copytree: the destination must not exist (FileExistsError)"
     )]
     std::fs::create_dir(dst).map_err(io_err("copytree", dst))?;
-    for name in listdir(src)? {
-        let from = src.join(&name);
-        let to = dst.join(&name);
-        let md = std::fs::metadata(&from).map_err(io_err("copytree", &from))?;
-        if md.is_dir() {
-            copytree_depth(&from, &to, depth.saturating_add(1))?;
-        } else {
-            std::fs::copy(&from, &to).map_err(io_err("copytree", &from))?;
+    // Unknown identities still count towards the depth bound.
+    ancestors.push(id.unwrap_or_else(|| (u64::MAX, u64::try_from(ancestors.len()).unwrap_or(0))));
+    let result = (|| {
+        for name in listdir(src)? {
+            let from = src.join(&name);
+            let to = dst.join(&name);
+            let md = std::fs::metadata(&from).map_err(io_err("copytree", &from))?;
+            if md.is_dir() {
+                copytree_depth(&from, &to, ancestors)?;
+            } else {
+                std::fs::copy(&from, &to).map_err(io_err("copytree", &from))?;
+            }
         }
-    }
-    Ok(())
+        Ok(())
+    })();
+    ancestors.pop();
+    result
 }
 
 /// `tempfile.TemporaryDirectory()`: a fresh `tmpXXXXXXXX` directory in `tempfile.gettempdir()` of the run's
