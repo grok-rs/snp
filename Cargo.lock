@@ -1689,6 +1689,7 @@ dependencies = [
  "indexmap",
  "proptest",
  "serde_json",
+ "sha2",
  "snp-core",
  "snp-pycompat",
  "snp-pyre",
