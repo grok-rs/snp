@@ -24,7 +24,9 @@ use crate::specs::{PRE_COMMIT_SPEC, SNP_SPEC};
 /// The compat brand parses with [`PRE_COMMIT_SPEC`] and prog `pre-commit`, the snp brand with [`SNP_SPEC`] and
 /// prog `snp` (ADR-023, ADR-058). Help and `--version` text → [`CliOutcome::Stdout`] (exit 0); usage errors →
 /// [`CliOutcome::Usage`] (stderr, exit 2). `stdout_tty_cols` is the width of the terminal on stdout (`None` when
-/// stdout is not a terminal); `COLUMNS` wins over it (12 §A.3).
+/// stdout is not a terminal); `COLUMNS` wins over it (12 §A.3). The texts use `\n`: the caller writes them through
+/// Python's text layer (`Printer::py_print`), which turns them into CRLF on Windows like `sys.stdout`/`sys.stderr` do.
+/// `hazmat` without a tool, pre-commit's `AttributeError` crash (exit 3), is a usage error here (D-CRASH-22).
 pub fn parse(
     brand: Brand,
     argv: &[OsString],
