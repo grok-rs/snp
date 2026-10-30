@@ -4,10 +4,9 @@
 //!
 //! Owner: WP-21.
 
-use std::cmp::Ordering;
 use std::sync::{Arc, LazyLock};
 
-use cfgv::{Map, Value};
+use cfgv::{Cx, Map, Validator, Value};
 use file_identify::TagSet;
 use indexmap::IndexMap;
 use snp_core::lang::LanguageId;
@@ -87,31 +86,42 @@ pub(crate) fn key_str(k: &Value) -> String {
     k.try_to_string().unwrap_or_else(|_| k.to_string())
 }
 
-/// Python's `sorted()` over hook keys: strings by code point; other types grouped after them by type name and
-/// `str()` (pre-commit would crash on mixed types; D-CRASH-02).
-pub(crate) fn sort_keys(keys: &mut [(Value, String)]) {
-    keys.sort_by(|(a, sa), (b, sb)| match (a, b) {
-        (Value::String(x), Value::String(y)) => x.cmp(y),
-        (Value::String(_), _) => Ordering::Less,
-        (_, Value::String(_)) => Ordering::Greater,
-        _ => a.type_name().cmp(b.type_name()).then_with(|| sa.cmp(sb)),
+/// `sorted(keys)` rendered with `str()`, in Python's order: cfgv-rs's `py_sort` (reached through
+/// `WarnAdditionalKeys`, which hands its callback the extra keys sorted), the order of the root and repo
+/// warnings. Strings sort by code point, numbers and booleans numerically, other types by type rank (pre-commit
+/// would crash on a non-string key, D-CRASH-02); keys a Python dict collapses (`1`, `true`) are one key.
+pub(crate) fn py_sorted_keys(keys: impl IntoIterator<Item = Value>) -> Vec<Arc<str>> {
+    static SORTER: LazyLock<Validator> = LazyLock::new(|| {
+        Validator::warn_additional_keys(
+            Vec::new(),
+            |extra: &[Value], _keys: &[Value], _dct: &Map, cx: &mut Cx<'_>| {
+                for k in extra {
+                    cx.warn(key_str(k));
+                }
+            },
+        )
     });
+    let map: Map = keys.into_iter().map(|k| (k, Value::Null)).collect();
+    if map.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    // A `WarnAdditionalKeys` check never fails.
+    if SORTER.check(&map, &mut Cx::collect(&mut out)).is_err() {
+        return Vec::new();
+    }
+    out.into_iter().map(|s| Arc::from(s.as_str())).collect()
 }
 
 /// The keys of `m` that are neither one of the 22 hook keys nor (when `ext` is enabled) an extension key, as
 /// `str()` values in `sorted()` order (`hook.py:49-57`).
 pub(crate) fn extra_keys(m: &Map, ext: ExtMode) -> Vec<Arc<str>> {
-    let mut extra: Vec<(Value, String)> = m
-        .keys()
-        .filter(|k| !k.as_str().is_some_and(|s| HOOK_KEYS.contains(&s)))
-        .filter(|k| ext == ExtMode::Strict || !ext::is_hook_ext_key(k))
-        .map(|k| (k.clone(), key_str(k)))
-        .collect();
-    sort_keys(&mut extra);
-    extra
-        .into_iter()
-        .map(|(_, s)| Arc::from(s.as_str()))
-        .collect()
+    py_sorted_keys(
+        m.keys()
+            .filter(|k| !k.as_str().is_some_and(|s| HOOK_KEYS.contains(&s)))
+            .filter(|k| ext == ExtMode::Strict || !ext::is_hook_ext_key(k))
+            .cloned(),
+    )
 }
 
 fn language(m: &Map) -> LanguageId {

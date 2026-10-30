@@ -8,8 +8,8 @@ use std::sync::Arc;
 use cfgv::{Map, Value};
 use snp_core::output::WarnSink;
 
-use crate::convert::{arc, key_str, stage_set, str_list, tag_set};
-use crate::ext;
+use crate::convert::{arc, py_sorted_keys, stage_set, str_list, tag_set};
+use crate::ext::{self, Condition};
 use crate::items::DEFAULT;
 use crate::overlay::HookPatch;
 use crate::{Config, ConfigHook, HookDef, MergeError, messages};
@@ -55,21 +55,21 @@ fn apply_key(h: &mut HookDef, key: &str, v: &Value) -> bool {
 }
 
 /// Applies the keys of `raw` (`ret.update(raw)`), collecting the keys that are not hook keys into `extra`.
-fn update(h: &mut HookDef, raw: &Map, extra: &mut Vec<String>) {
+fn update(h: &mut HookDef, raw: &Map, extra: &mut Vec<Value>) {
     for (k, v) in raw {
         let handled = k.as_str().is_some_and(|key| apply_key(h, key, v));
         if !handled {
-            extra.push(key_str(k));
+            extra.push(k.clone());
         }
     }
 }
 
 /// The overlay hook patch (ARCHITECTURE §8.4), applied after manifest ∪ config: `entry` expands `{entry}`
 /// against the merged entry, `env` merges (overlay wins), every other key replaces.
-fn apply_patch(h: &mut HookDef, patch: &HookPatch, extra: &mut Vec<String>) {
+fn apply_patch(h: &mut HookDef, patch: &HookPatch, extra: &mut Vec<Value>) {
     for (k, v) in &patch.raw {
         let Some(key) = k.as_str() else {
-            extra.push(key_str(k));
+            extra.push(k.clone());
             continue;
         };
         if key == "entry" {
@@ -79,15 +79,21 @@ fn apply_patch(h: &mut HookDef, patch: &HookPatch, extra: &mut Vec<String>) {
         } else if ext::HOOK_EXT_KEYS.contains(&key) {
             ext::apply_hook_key(&mut h.ext, key, v);
         } else if !apply_key(h, key, v) {
-            extra.push(key_str(k));
+            extra.push(k.clone());
         }
     }
 }
 
-/// The resolution rules of `_hook` after the dict merge (01 §6.3, §6.4) and `Hook.create`'s W11 warning.
+/// The resolution rules of `_hook` after the dict merge (01 §6.3, §6.4), the overlay's `skip_groups` against the
+/// final groups, and `Hook.create`'s W11 warning.
+///
+/// `h.extra_keys` (the manifest's or the local hook's unknown keys, already in `sorted()` order) is united with
+/// `added` (the config's and the patch's) and sorted again like Python's `sorted()` (`convert::py_sorted_keys`,
+/// the order of the root and repo warnings and of `validate-config --strict`). A non-string key is shown with
+/// `str()` where pre-commit's `", ".join(...)` / `sorted(...)` would crash (D-CRASH-02).
 fn finish(
     mut h: HookDef,
-    mut extra: Vec<String>,
+    added: Vec<Value>,
     cfg: &Config,
     src: &str,
     warn: &dyn WarnSink,
@@ -115,26 +121,39 @@ fn finish(
             });
         }
     }
-    extra.sort();
-    extra.dedup();
-    if !extra.is_empty() {
+    if !added.is_empty() {
+        let base = h.extra_keys.iter().map(|k| Value::from(&**k));
+        h.extra_keys = py_sorted_keys(base.chain(added));
+    }
+    if crate::overlay::skips_groups(cfg, &h.ext.groups) {
+        h.ext.skip.push(Condition::All(Vec::new()));
+    }
+    if !h.extra_keys.is_empty() {
         warn.warn(&messages::unexpected_keys_hook(
             src,
             &h.id,
-            &messages::join(&extra),
+            &messages::join(&h.extra_keys),
         ));
     }
-    h.extra_keys = extra.iter().map(|k| Arc::from(k.as_str())).collect();
     Ok(h)
 }
 
 /// `repository._hook()`: manifest ∪ overrides (whole-key), `language_version` via `default_language_version` (the
 /// language's own default is resolved by snp-repo with probes), empty stages ⇒ `default_stages`, env-less guards,
 /// W11 unknown-key warning (sorted) after merging. `overlay` (§8.4) is applied last, after manifest ∪ config:
-/// `{entry}` expands against the merged entry; fast-path G4 and the `InstallKey` see the patched `HookDef`.
+/// `{entry}` expands against the merged entry; fast-path G4 and the `InstallKey` see the patched `HookDef`. The
+/// overlay's `skip_groups` (recorded by [`crate::overlay::apply_root`]) is matched against the final `groups`
+/// and adds an always-true `skip` condition after the patch's own `skip`.
 ///
 /// The unknown-id check (E1) is the caller's (it needs the whole repo first, `repository.py:180-187`); its text
 /// is [`MergeError::UnknownId`]'s [`message`](MergeError::message).
+///
+/// **Warning order.** For a cloned repo pre-commit runs `_hook()` (the env-less errors) for every hook before any
+/// `Hook.create` (W11, `repository.py:189-200`): a remote repo whose third hook fails prints no W11 for its first
+/// two. The caller reproduces that by passing one buffering sink per remote/builtin repo
+/// (`snp_core::output::CollectWarnings`), flushing it to the real sink once every hook of the repo merged and
+/// dropping it on the first error. ([`finalize_local`] needs no buffer: local and meta hooks are created one by
+/// one, `repository.py:161-168`.)
 pub fn merge_hook(
     m: &HookDef,
     c: &ConfigHook,
@@ -144,7 +163,7 @@ pub fn merge_hook(
     warn: &dyn WarnSink,
 ) -> Result<HookDef, MergeError> {
     let mut h = m.clone();
-    let mut extra: Vec<String> = m.extra_keys.iter().map(ToString::to_string).collect();
+    let mut extra = Vec::new();
     update(&mut h, &c.raw, &mut extra);
     h.ext = c.ext.clone();
     if let Some(p) = overlay {
@@ -153,7 +172,9 @@ pub fn merge_hook(
     finish(h, extra, cfg, src, warn)
 }
 
-/// The `repo: local` / `repo: meta` half of `_hook()` (no manifest: the hook dict is already defaulted).
+/// The `repo: local` / `repo: meta` half of `_hook()` (no manifest: the hook dict is already defaulted). Each
+/// hook's W11 is printed before the next hook merges (`_non_cloned_repository_hooks`, `repository.py:161-168`),
+/// so the warnings go straight to the caller's sink.
 pub fn finalize_local(
     h: &HookDef,
     cfg: &Config,
@@ -162,7 +183,7 @@ pub fn finalize_local(
     warn: &dyn WarnSink,
 ) -> Result<HookDef, MergeError> {
     let mut h = h.clone();
-    let mut extra: Vec<String> = h.extra_keys.iter().map(ToString::to_string).collect();
+    let mut extra = Vec::new();
     if let Some(p) = overlay {
         apply_patch(&mut h, p, &mut extra);
     }

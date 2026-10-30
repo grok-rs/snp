@@ -637,8 +637,8 @@ repos:
         // {entry} expands against the merged manifest entry; the patch's language changes the install identity.
         let cy = &hooks[0];
         assert!(
-            matches!(cy.ext.skip.as_slice(), [Condition::All(a)] if a.is_empty()),
-            "skip_groups applied"
+            cy.ext.skip.is_empty(),
+            "skip_groups is matched at merge time"
         );
         let patch = ov.hook_patch(&cy.id, "").expect("patch");
         assert_eq!(patch.keys().collect::<Vec<_>>(), ["entry", "language"]);
@@ -654,6 +654,10 @@ repos:
         assert_eq!(&*merged.entry, "docker compose run --rm app check-yaml");
         assert_eq!(merged.language.as_str(), "docker_image");
         assert_eq!(merged.types.names().collect::<Vec<_>>(), ["yaml"]);
+        assert!(
+            matches!(merged.ext.skip.as_slice(), [Condition::All(a)] if a.is_empty()),
+            "skip_groups applied"
+        );
         let eof = &hooks[1];
         let patch = ov.hook_patch(&eof.id, "").expect("patch");
         let merged = merge_hook(
@@ -724,6 +728,72 @@ repos:
             path.to_string_lossy().as_ref()
         );
         assert_eq!(json["repos"].as_array().map(Vec::len), Some(3));
+    }
+
+    /// `skip_groups` is matched against the groups after the hook patch, and survives a patched `skip`.
+    #[test]
+    fn overlay_skip_groups_follow_the_patched_hook() {
+        let cases = [
+            // (hook groups, overlay) -> skipped
+            (
+                "[slow]",
+                "skip_groups: [slow]\nhooks:\n  x:\n    skip: [merge]\n",
+                true,
+            ),
+            (
+                "[fast]",
+                "skip_groups: [fast]\nhooks:\n  x:\n    groups: [other]\n",
+                false,
+            ),
+            (
+                "[fast]",
+                "skip_groups: [slow]\nhooks:\n  x:\n    groups: [slow]\n",
+                true,
+            ),
+            ("[slow]", "skip_groups: [slow]\n", true),
+            ("[fast]", "skip_groups: [slow]\n", false),
+        ];
+        let man = ok(load_manifest_text(
+            "- {id: x, name: x, entry: x, language: system}\n",
+            PC,
+        ))
+        .0;
+        for (groups, text, skipped) in cases {
+            let (_d, _p, ov, _) = loaded_overlay(text);
+            let ov = ov.expect("overlay");
+            let local = format!(
+                "repos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: system\n        groups: {groups}\n"
+            );
+            let remote = format!(
+                "repos:\n-   repo: https://x/y\n    rev: v1.0\n    hooks:\n    -   id: x\n        groups: {groups}\n"
+            );
+            for text_cfg in [local, remote] {
+                let (mut cfg, _) = ok(load_config_text(&text_cfg, PC, E));
+                overlay::apply_root(&mut cfg, &ov, &CollectWarnings::new());
+                let sink = CollectWarnings::new();
+                let merged = match &cfg.repos[0] {
+                    RepoConfig::Local { hooks } => {
+                        let p = ov.hook_patch(&hooks[0].id, "");
+                        finalize_local(&hooks[0], &cfg, "local", p, &sink)
+                    }
+                    RepoConfig::Remote { hooks, repo, .. } => {
+                        let p = ov.hook_patch(&hooks[0].id, "");
+                        merge_hook(&man.hooks[0], &hooks[0], &cfg, repo, p, &sink)
+                    }
+                    _ => panic!("repo"),
+                }
+                .expect("merge");
+                let always = merged
+                    .ext
+                    .skip
+                    .iter()
+                    .any(|c| matches!(c, Condition::All(a) if a.is_empty()));
+                assert_eq!(always, skipped, "{groups} {text:?} {text_cfg}");
+                if text.contains("skip: [merge]") {
+                    assert!(matches!(merged.ext.skip.first(), Some(Condition::Merge)));
+                }
+            }
+        }
     }
 
     #[test]
@@ -1010,6 +1080,60 @@ repos:
             serde_json::from_str(&snp_config::effective_dump(&cfg, true)).expect("json");
         assert_eq!(json["default_stages"].as_array().map(Vec::len), Some(11));
         assert_eq!(json["default_language_version"]["python"], "default");
+    }
+
+    /// D-CRASH-02 at hook level: `Hook.create`'s `", ".join(sorted(...))` crashes on a non-string key (`TypeError`,
+    /// exit 3); snp warns with Python's `sorted()` order, the same in `run` (merge) and `validate-config --strict`.
+    #[test]
+    fn non_string_hook_keys_warn_in_python_order() {
+        let cases = [
+            ("true: x\n        2: y\n        10: z\n", "True, 2, 10"),
+            ("1.5: x\n        foo: 1\n", "1.5, foo"),
+            ("zz: 1\n        ~: 2\n        3: 3\n", "None, 3, zz"),
+        ];
+        for (keys, want) in cases {
+            let local = format!(
+                "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        {keys}"
+            );
+            let (cfg, _) = ok(load_config_text(&local, PC, E));
+            let RepoConfig::Local { hooks } = &cfg.repos[0] else {
+                panic!("local")
+            };
+            let sink = CollectWarnings::new();
+            finalize_local(&hooks[0], &cfg, "local", None, &sink).expect("merge");
+            let w = format!("Unexpected key(s) present on local => a: {want}");
+            assert_eq!(sink.take(), std::slice::from_ref(&w), "run {keys:?}");
+            let (_dir, path) = file_in_tempdir("c.yaml", Some(local.as_bytes()));
+            let l = with_opts(PC, E, |o| {
+                Ok::<_, snp_config::ConfigError>(validate_file(
+                    FileKind::Config,
+                    path.as_os_str(),
+                    o,
+                    true,
+                ))
+            });
+            assert_eq!(l.warnings, [w], "validate --strict {keys:?}");
+            let remote = format!(
+                "repos:\n-   repo: https://x/y\n    rev: v1.0\n    hooks:\n    -   id: a\n        {keys}"
+            );
+            let (cfg, _) = ok(load_config_text(&remote, PC, E));
+            let man = ok(load_manifest_text(
+                "- {id: a, name: a, entry: a, language: system}\n",
+                PC,
+            ))
+            .0;
+            let RepoConfig::Remote { hooks, repo, .. } = &cfg.repos[0] else {
+                panic!("remote")
+            };
+            merge_hook(&man.hooks[0], &hooks[0], &cfg, repo, None, &sink).expect("merge");
+            assert_eq!(
+                sink.take(),
+                [format!(
+                    "Unexpected key(s) present on https://x/y => a: {want}"
+                )],
+                "remote {keys:?}"
+            );
+        }
     }
 
     #[test]
