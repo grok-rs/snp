@@ -1,5 +1,58 @@
-# D-DIAG-04 (DIAG, owner WP-23): stash notices: the next-run recovery notice (§4.6), snp: waiting for another snp run in this worktree…, snp: restoring stashed changes, please wait, snp: git…
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-DIAG-04 (DIAG, owner WP-23): stash notices on stderr — here the recovery notice for an orphaned journal
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands`, `expect_divergence` and the `signal` step
+# key of ARCHITECTURE §13.2. Step 1 is killed (SIGKILL) during its hook; step 2 runs a clean commit: stdout and exit
+# are pre-commit's, stderr carries snp's notice only.
+name: divergences/D-DIAG-04-stash-notices
 expect_divergence: D-DIAG-04
-status: stub
+status: active
+since: "4.6.2"
+brands: [compat, snp]
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files: {foo: "1\n2\n3\n"}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: slow
+            name: slow
+            entry: sh -c 'test -e .second-run || { touch .hook-started; exec sleep 30; }' --
+            language: system
+            files: ^foo$
+  commit: [".pre-commit-config.yaml"]
+  stage: [foo]
+  unstaged: {foo: "1\nTWO\n3\n"}
+  git_config: {}
+steps:
+  - tool: [run]
+    env: {}
+    stdin: ""
+    tty: false
+    signal: {name: KILL, after: .hook-started}
+  - shell: "touch .second-run && git checkout -- foo"
+  - tool: [run]
+    env: {}
+    stdin: ""
+    tty: false
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    steps:
+      2: {exit: 0, stderr: ""}
+  snp:
+    steps:
+      2:
+        exit: 0
+        stderr_matches: '^snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in \S+ \(index tree [0-9a-f]{40}\)\. Restore with: git apply --3way \S+\n$'

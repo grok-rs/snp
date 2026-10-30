@@ -5,7 +5,8 @@ one stderr line after the envelope: [ERROR] Your unstaged changes are saved in <
 * **Class:** DATA (COMPATIBILITY §5.2)
 * **Owner:** WP-23; the first package of the register row owns this file and
   `tests/differential/divergences/D-DATA-01.yaml` (WBS "Divergence files", ADR-071).
-* **Status:** stub, created by WP-00. The owner replaces the two sections below.
+* **Status:** implemented by WP-23 (`snp_stash::StashGuard::restore`, the K+ hint of `PyExc::hint`; the envelope
+  prints it, `snp::envelope::report`).
 
 ## Register entry (COMPATIBILITY §5.2)
 
@@ -15,9 +16,41 @@ one stderr line after the envelope: [ERROR] Your unstaged changes are saved in <
 
 ## Rationale
 
-To be written by WP-23: why snp deviates from pre-commit 4.6.2 here, and why the deviation is safe.
+When `git apply` fails twice, then again after the rollback checkout (`staged_files_only.py:85-96`), pre-commit
+raises the last `CalledProcessError` (exit 3). At that point the user's unstaged changes exist **only** in
+`<store>/patch<ts>-<pid>`; the exception text names the patch only as an argument of the failed command, and the
+crash log is the only further hint. Users who do not recognise this lose their work.
+
+snp keeps every byte of pre-commit's stdout (line 1 of the envelope is the same `CalledProcessError` text, exit 3) and
+adds one line on **stderr** after it (ADR-045): where the work is and the command that restores it. The command is
+`git apply --3way` (ADR-067), not plain `git apply`: snp patches are `--binary` with full index lines and their
+preimage blobs are in the object store (the tree was written by `git write-tree`), so a three-way apply also succeeds
+after a partial apply or on top of later edits, where the plain form fails. The patch, the journal and the git-dir
+pointer are kept forever (never garbage-collected), and the next run in that worktree repeats the notice (D-DATA-13).
+
+Why it is safe: stdout and the exit code are unchanged (K2 holds for stdout), the line goes to stderr only, and it is
+printed only on the path where pre-commit has already failed with exit 3.
 
 ## Examples
 
-To be written by WP-23: a minimal reproduction with the exact pre-commit 4.6.2 bytes and the exact snp bytes; the
-scenario in `tests/differential/divergences/D-DATA-01.yaml` must keep reproducing the difference.
+A restore that keeps failing (a hook left a file the patch cannot apply to, and the rollback cannot help either):
+
+```text
+$ pre-commit run          # pre-commit 4.6.2, stdout
+[WARNING] Unstaged files detected.
+[INFO] Stashing unstaged files to /s/patch1791403656-1781218.
+…
+[WARNING] Stashed changes conflicted with hook auto-fixes... Rolling back fixes...
+An unexpected error has occurred: CalledProcessError: command: ('/usr/bin/git', '-c', 'core.autocrlf=false', 'apply', '--whitespace=nowarn', '/s/patch1791403656-1781218')
+return code: 1
+…
+Check the log at /s/pre-commit.log
+(stderr: empty)
+
+$ snp run                 # stdout identical; stderr:
+[ERROR] Your unstaged changes are saved in /s/patches/patch1791403656-1781218; restore them with: git apply --3way /s/patches/patch1791403656-1781218
+```
+
+The scenario `tests/differential/divergences/D-DATA-01.yaml` makes every `git apply` fail through a `git` wrapper on
+`PATH`; the oracle's stderr stays empty while snp's carries the line. The unit-level proof is
+`crates/snp-stash/tests/catalog.rs::x13_stash_02_apply_fails_twice_k_plus` (the hinted command restores the work).

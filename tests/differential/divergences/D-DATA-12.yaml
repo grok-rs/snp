@@ -1,5 +1,52 @@
-# D-DATA-12 (DATA, owner WP-23): --no-renames on the ITA query
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-DATA-12 (DATA, owner WP-23): --no-renames on the intent-to-add query (02 G.0 hazard b)
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands` and `expect_divergence` (ARCHITECTURE §13.2).
+# a.txt is committed, then deleted in the worktree (unstaged); b.txt with the same content is added with -N. pre-commit
+# pairs them as a rename, misses the intent-to-add file and exits 3 with the deletion lost; snp detects it.
+name: divergences/D-DATA-12-ita-rename
 expect_divergence: D-DATA-12
-status: stub
+status: active
+since: "4.6.2"
+brands: [compat, snp]
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos, windows], pty: false}
+repos: {}
+work:
+  files: {a.txt: "same content\nline 2\nline 3\n"}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: noop
+            name: noop
+            entry: "true"
+            language: system
+            always_run: true
+            pass_filenames: false
+  commit: [".pre-commit-config.yaml", a.txt]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - shell: "rm a.txt && printf 'same content\\nline 2\\nline 3\\n' > b.txt && git add --intent-to-add b.txt"
+  - tool: [run]
+    env: {}
+    stdin: ""
+    tty: false
+compare:
+  stdout: tierB
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    exit: 3
+    stdout_contains: "already exists in working directory"
+  snp:
+    exit: 0
+    stdout_starts_with: "[WARNING] Unstaged intent-to-add files detected.\n"

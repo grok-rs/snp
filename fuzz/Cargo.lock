@@ -1217,6 +1217,8 @@ dependencies = [
 name = "snp-stash"
 version = "2.0.0"
 dependencies = [
+ "blake3",
+ "serde_json",
  "snp-core",
  "snp-git",
  "snp-os",
