@@ -150,6 +150,7 @@ mod testkit {
             "LANG",
             "TZ",
             "VIRTUALENV_NO_DOWNLOAD",
+            "GIT_CEILING_DIRECTORIES",
         ];
         for (k, _) in &vars {
             assert!(
@@ -157,6 +158,27 @@ mod testkit {
                 "{k} leaked into the child env"
             );
         }
+        // the root sits under the target dir (inside the snp checkout): discovery stops at its parent, so a
+        // directory of the root that is not a repository is never taken for the snp repository
+        assert_eq!(
+            get("GIT_CEILING_DIRECTORIES").map(PathBuf::from).as_deref(),
+            root.parent()
+        );
+        let plain = root.join("not-a-repo");
+        std::fs::create_dir_all(&plain).unwrap();
+        let exe = snp_proc::resolve::find_executable(OsStr::new("git"), env.env(), &plain).unwrap();
+        let mut c = Command::new(exe);
+        env.env().apply_to(&mut c);
+        let out = c
+            .args(["rev-parse", "--show-toplevel"])
+            .current_dir(&plain)
+            .output()
+            .unwrap();
+        assert!(
+            !out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
         assert_eq!(
             std::fs::read_dir(root.join("git-template"))
                 .unwrap()

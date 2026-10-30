@@ -59,12 +59,25 @@ fn process_var(key: &str) -> Option<OsString> {
     Env::capture_process().get(key).map(OsStr::to_os_string)
 }
 
+/// `<workspace>/target/tmp`, located like `target/oracle` (`CARGO_TARGET_TMPDIR` is a compile-time variable of
+/// integration tests only, so library code derives it).
+fn default_tmp_base() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp")
+}
+
 impl TestEnv {
-    /// A fresh hermetic environment: a canonicalised temp root (under `$SNP_TEST_TMPDIR` when set) holding `home/`
-    /// (+ `.gitconfig`, `.cache/`), `store/` (`PRE_COMMIT_HOME`), `snp-store/` (`SNP_HOME`), an empty `git-template/`
-    /// and `tmp/`; the child env of 10 §7.3.2.
+    /// A fresh hermetic environment: a canonicalised temp root holding `home/` (+ `.gitconfig`, `.cache/`), `store/`
+    /// (`PRE_COMMIT_HOME`), `snp-store/` (`SNP_HOME`), an empty `git-template/` and `tmp/`; the child env of 10 §7.3.2.
+    ///
+    /// The root lives under `$SNP_TEST_TMPDIR`, else `$CARGO_TARGET_TMPDIR`, else the workspace's `target/tmp` (the
+    /// directory cargo gives integration tests as `CARGO_TARGET_TMPDIR`): a known prefix that `cargo clean` removes
+    /// and that no periodic `/tmp` cleaner touches. Because that prefix sits inside the snp checkout,
+    /// `GIT_CEILING_DIRECTORIES` stops git's discovery at the root's parent: a test directory that is not a
+    /// repository never finds the snp repository above it.
     pub fn new(bins: Bins) -> Self {
-        let base = process_var("SNP_TEST_TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from);
+        let base = process_var("SNP_TEST_TMPDIR")
+            .or_else(|| process_var("CARGO_TARGET_TMPDIR"))
+            .map_or_else(default_tmp_base, PathBuf::from);
         mkdirs(&base);
         let tmp = tempfile::Builder::new()
             .prefix("snp-test-")
@@ -114,6 +127,12 @@ impl TestEnv {
         if cfg!(windows) {
             pairs.push(("TEMP".into(), tmpdir.as_os_str().to_os_string()));
             pairs.push(("TMP".into(), tmpdir.as_os_str().to_os_string()));
+        }
+        if let Some(parent) = root.parent() {
+            pairs.push((
+                "GIT_CEILING_DIRECTORIES".into(),
+                parent.as_os_str().to_os_string(),
+            ));
         }
         let fixed_date = crate::harness::date(0);
         for (k, v) in [
