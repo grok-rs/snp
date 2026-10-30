@@ -17,6 +17,12 @@ snp-yaml.workspace = true
 cfgv.workspace = true
 file-identify.workspace = true
 indexmap.workspace = true
+globset.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true
