@@ -22,6 +22,8 @@ const MARKER_DOMAIN: &[u8] = b"snp.keys.v1\0";
 const CONFIG_DOMAIN: &[u8] = b"snp.config.v1\0";
 
 /// The key of a materialised repository (`repos-v1/<hex>`).
+///
+/// Replaces pre-commit's `(repo, ref)` primary key of the `repos` table (`store.py:90-98`).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct RepoKey(pub [u8; 16]);
 
@@ -161,6 +163,8 @@ pub struct ToolRef {
 }
 
 /// A tracked config and the project root its relative `repo:` paths resolve against (configs-v1 records both).
+///
+/// A row of pre-commit's `configs` table (`store.py:217-235`) plus the project root (ADR-075).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrackedConfig {
     /// The config's realpath.
@@ -185,6 +189,8 @@ pub enum RepoKind {
 }
 
 /// What `.snp-repo.json` records.
+///
+/// The `(repo, ref)` and dependency inputs of pre-commit's `_new_repo` (`store.py:132-171`).
 #[derive(Clone, Debug)]
 pub struct RepoMeta {
     /// Remote or local.
@@ -204,6 +210,8 @@ impl RepoMeta {
 }
 
 /// A materialised repository.
+///
+/// What `Store.clone`/`make_local` return in pre-commit (the clone directory, the hook `Prefix`, `store.py:132-215`).
 #[derive(Clone, Debug)]
 pub struct RepoHandle {
     /// Its key.

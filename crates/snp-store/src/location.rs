@@ -26,6 +26,8 @@ pub enum StoreSource {
 }
 
 /// The resolved store directory.
+///
+/// `store._get_default_directory()` (`store.py:25-36`) under snp's own name.
 #[derive(Clone, Debug)]
 pub struct StoreLocation {
     /// The store root.

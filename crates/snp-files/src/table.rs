@@ -34,6 +34,8 @@ use snp_proc::pool::JobPool;
 use snp_pycompat as _;
 
 /// Index of a file in its [`FileTable`].
+///
+/// Hooks receive ids instead of pre-commit's `str` names (`run.py:151`); shuffling permutes ids.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub struct FileId(pub u32);
 
@@ -50,6 +52,8 @@ pub enum TagOutcome<'a> {
 }
 
 /// What a filter needs beyond the name tier (§2.3): stat (type/mode tags), encoding (text/binary), shebang tags.
+///
+/// The steps of `identify.tags_from_path` (`identify.py:40-83`) a filter can observe (ADR-041).
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Needs {
     /// `lstat` tier.
@@ -132,6 +136,8 @@ struct Interner {
 }
 
 /// One byte arena + spans; tier columns allocated on first need (§2.3, ADR-079).
+///
+/// pre-commit's `Classifier.filenames` plus the `functools.cache` of `_types_for_file` (`run.py:72-79`).
 pub struct FileTable {
     /// All paths, as git printed them.
     arena: Vec<u8>,
@@ -309,16 +315,23 @@ impl FileTable {
     }
 
     /// Number of files.
+    ///
+    /// `len(classifier.filenames)` (`run.py:73-74`) once `retain_lexists` ran.
     pub fn len(&self) -> usize {
         self.spans.len()
     }
 
     /// Whether the table is empty.
+    ///
+    /// pre-commit's emptiness checks of the file list (`run.py:151`).
     pub fn is_empty(&self) -> bool {
         self.spans.is_empty()
     }
 
     /// The path bytes as git printed them.
+    ///
+    /// What pre-commit's `zsplit` would decode (`git.py:19-24`); snp keeps the bytes (D-CRASH-12). Empty for an id
+    /// outside the table.
     pub fn bytes(&self, id: FileId) -> &[u8] {
         self.index(id).map_or(&[], |i| self.bytes_at(i))
     }

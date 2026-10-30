@@ -55,6 +55,8 @@ struct Created {
 }
 
 /// snp's store (`~/.cache/snp`).
+///
+/// The counterpart of pre-commit's `Store` (`store.py`): no SQLite, a versioned content-addressed layout (ARCHITECTURE §5.2).
 #[derive(Debug)]
 pub struct Store {
     /// Where the store lives.
@@ -110,11 +112,15 @@ impl Store {
     }
 
     /// Where the store lives.
+    ///
+    /// pre-commit's `Store.directory` (`store.py:60-62`).
     pub fn location(&self) -> &StoreLocation {
         &self.loc
     }
 
     /// Whether the store directory exists.
+    ///
+    /// `os.path.exists(self.directory)` of `Store.__init__` (`store.py:66-70`); one `stat`, nothing is created.
     pub fn exists(&self) -> bool {
         self.root().is_dir()
     }
@@ -595,6 +601,9 @@ impl Store {
     }
 
     /// `patches/`.
+    ///
+    /// Where the stash guard writes `patch<secs>-<pid>` and its journals; pre-commit writes the patch into the store
+    /// root (`staged_files_only.py:66-69`).
     pub fn patches_dir(&self) -> PathBuf {
         self.root().join(layout::PATCHES)
     }
@@ -611,6 +620,9 @@ impl Store {
     }
 
     /// `scratch/`.
+    ///
+    /// In-progress clones and extractions (same filesystem as `repos-v1`, so the final rename is atomic); the
+    /// counterpart of pre-commit's `tempfile.mkdtemp(prefix='repo', dir=store)` (`store.py:162`).
     pub fn scratch_dir(&self) -> PathBuf {
         self.root().join(layout::SCRATCH)
     }
@@ -759,6 +771,8 @@ impl Store {
 }
 
 /// What `sweep` removed.
+///
+/// snp-only (pre-commit's gc removes database rows only, `gc.py:61-93`); WP-33 prints the 1.x notice from it.
 #[derive(Debug, Default)]
 pub struct SweepReport {
     /// Orphaned scratch/trash directories.
