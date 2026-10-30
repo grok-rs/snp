@@ -499,9 +499,15 @@ fn repo_and_tool_locks() {
     let odd = s.tool_lock("../evil", &mut || {}, &CancelToken::new()).unwrap();
     assert!(!root.join("evil.lock").exists());
     drop((l, t, odd));
-    assert!(snp_os::lock::FileLock::try_acquire(&path, snp_os::lock::LockMode::Exclusive)
+    // Released (a child spawned concurrently by another test may hold a forked copy of the fd until its exec).
+    let start = Instant::now();
+    while snp_os::lock::FileLock::try_acquire(&path, snp_os::lock::LockMode::Exclusive)
         .unwrap()
-        .is_some());
+        .is_none()
+    {
+        assert!(start.elapsed() < Duration::from_secs(5), "the repo lock was not released");
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 /// sweep: restored patches older than 30 days go, unrestored ones (mentioned by a journal) and journals stay;
