@@ -358,7 +358,7 @@ impl Language for R {
         Ok(env_patch(cx.env_dir))
     }
 
-    /// `run_hook` (`r.py:262-278`): [`hook_command`]; validation failures are pre-commit's run-time `ValueError`s
+    /// `run_hook` (`r.py:262-278`): `_cmd_from_hook` (see the module docs); validation failures are pre-commit's run-time `ValueError`s
     /// (exit 3), an entry that does not split is the C-hook of the other languages.
     fn plan(&self, cx: &PlanCtx<'_>) -> Result<RunPlan, LangError> {
         Ok(
