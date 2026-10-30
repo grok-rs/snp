@@ -39,7 +39,10 @@ pub(crate) fn py_char_len(b: &[u8], i: usize) -> usize {
     {
         return 3;
     }
-    match rest.utf8_chunks().next() {
+    // Only the first character matters: a valid one is at most 4 bytes, and a truncated sequence still classifies
+    // its first byte the same way. Looking at the whole tail would make a short-option cluster O(n^2).
+    let head = rest.get(..4).unwrap_or(rest);
+    match head.utf8_chunks().next() {
         Some(chunk) => chunk.valid().chars().next().map_or(1, char::len_utf8),
         None => 1,
     }
@@ -65,21 +68,21 @@ pub(crate) fn os_tail(s: &OsStr, start: usize) -> OsString {
         let mut skipped = 0usize;
         let mut idx = 0usize;
         while skipped < start {
-            let Some(&u) = units.get(idx) else { break };
+            let Some(&unit) = units.get(idx) else { break };
             let next_is_low = units
                 .get(idx.saturating_add(1))
                 .is_some_and(|&n| (0xDC00..=0xDFFF).contains(&n));
-            let (w, n) = if (0xD800..=0xDBFF).contains(&u) && next_is_low {
+            let (width, step) = if (0xD800..=0xDBFF).contains(&unit) && next_is_low {
                 (4, 2)
-            } else if (0xD800..=0xDFFF).contains(&u) || u >= 0x800 {
+            } else if (0xD800..=0xDFFF).contains(&unit) || unit >= 0x800 {
                 (3, 1)
-            } else if u >= 0x80 {
+            } else if unit >= 0x80 {
                 (2, 1)
             } else {
                 (1, 1)
             };
-            skipped = skipped.saturating_add(w);
-            idx = idx.saturating_add(n);
+            skipped = skipped.saturating_add(width);
+            idx = idx.saturating_add(step);
         }
         OsString::from_wide(units.get(idx..).unwrap_or_default())
     }
@@ -160,12 +163,23 @@ pub(crate) fn collapse_ascii_ws(s: &str) -> String {
     out
 }
 
-/// Python `int(s)` (base 10) saturated to `i64`: PY-WS stripped at both ends, one optional sign, Unicode decimal
-/// digits with single underscores only between digits, at most 4300 digits (`sys.int_info.default_max_str_digits`).
-/// `None` when Python raises `ValueError`.
+/// Whitespace `int()` strips: `_PyUnicode_TransformDecimalAndSpaceToASCII` maps only code points >= 128 that are
+/// `Py_UNICODE_ISSPACE` to `' '`, then `PyLong_FromString` skips `Py_ISSPACE` (`" \t\n\v\f\r"`). So, unlike
+/// `str.strip()`, the ASCII separators U+001C..U+001F are not stripped.
+fn is_int_space(c: char) -> bool {
+    if c.is_ascii() {
+        matches!(c, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r')
+    } else {
+        is_space(c)
+    }
+}
+
+/// Python `int(s)` (base 10) saturated to `i64`: `int()` whitespace ([`is_int_space`]) stripped at both ends, one
+/// optional sign, Unicode decimal digits with single underscores only between digits, at most 4300 digits
+/// (`sys.int_info.default_max_str_digits`). `None` when Python raises `ValueError`.
 pub(crate) fn py_int(s: &str) -> Option<i64> {
     const MAX_STR_DIGITS: usize = 4300;
-    let t = s.trim_matches(is_space);
+    let t = s.trim_matches(is_int_space);
     let (neg, digits) = match t.strip_prefix('-') {
         Some(rest) => (true, rest),
         None => (false, t.strip_prefix('+').unwrap_or(t)),
@@ -356,6 +370,40 @@ mod tests {
         assert_eq!(py_int(separated.trim_end_matches('_')), Some(i64::MAX));
         let zeros: String = std::iter::repeat_n('0', 4301).collect();
         assert_eq!(py_int(&zeros), None);
+    }
+
+    /// `int()` strips only `Py_ISSPACE` among ASCII characters, so the separators U+001C..U+001F that
+    /// `str.strip()` removes make it raise (CPython 3.13: `int('\x1c5')` → `ValueError`).
+    #[test]
+    fn python_int_ascii_separators_are_not_whitespace() {
+        for c in ['\x1c', '\x1d', '\x1e', '\x1f'] {
+            assert_eq!(py_int(&format!("{c}5")), None, "{c:?} + '5'");
+            assert_eq!(py_int(&format!("5{c}")), None, "'5' + {c:?}");
+            assert_eq!(py_int(&c.to_string()), None);
+            assert_eq!(
+                py_strip(&format!("{c}5{c}")),
+                "5",
+                "str.strip() does strip {c:?}"
+            );
+        }
+        for c in [
+            ' ', '\t', '\n', '\x0b', '\x0c', '\r', '\u{85}', '\u{a0}', '\u{3000}',
+        ] {
+            assert_eq!(py_int(&format!("{c}5{c}")), Some(5), "{c:?}");
+        }
+    }
+
+    #[test]
+    fn char_len_looks_at_one_character() {
+        assert_eq!(py_char_len("a\u{e9}\u{20ac}\u{1f600}".as_bytes(), 0), 1);
+        assert_eq!(py_char_len("a\u{e9}\u{20ac}\u{1f600}".as_bytes(), 1), 2);
+        assert_eq!(py_char_len("a\u{e9}\u{20ac}\u{1f600}".as_bytes(), 3), 3);
+        assert_eq!(py_char_len("a\u{e9}\u{20ac}\u{1f600}".as_bytes(), 6), 4);
+        assert_eq!(py_char_len("a\u{e9}\u{20ac}\u{1f600}".as_bytes(), 10), 0);
+        // A truncated sequence and a lone continuation byte are one character per byte.
+        assert_eq!(py_char_len(&[0xF0, 0x9F, 0x98], 0), 1);
+        assert_eq!(py_char_len(&[0x80, b'a'], 0), 1);
+        assert_eq!(py_char_len(&[0xF0, 0x9F, 0x98, 0x80, 0xFF], 0), 4);
     }
 
     #[test]

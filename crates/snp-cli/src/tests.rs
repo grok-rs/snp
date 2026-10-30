@@ -613,6 +613,54 @@ fn columns_come_from_the_environment() {
     assert_eq!(format!("{tty:?}"), format!("{narrow:?}"));
 }
 
+/// `COLUMNS` goes through Python `int()`, which does not strip U+001C..U+001F: CPython falls back to 80 columns.
+#[test]
+fn columns_with_an_ascii_separator_fall_back_to_80() {
+    for brand in BOTH {
+        let odd = run_env(brand, &["clean", "-h"], &[("COLUMNS", "\x1c40")]);
+        let default = run_env(brand, &["clean", "-h"], &[]);
+        let narrow = run_env(brand, &["clean", "-h"], &[("COLUMNS", "40")]);
+        assert_eq!(format!("{odd:?}"), format!("{default:?}"), "{brand:?}");
+        assert_ne!(format!("{odd:?}"), format!("{narrow:?}"), "{brand:?}");
+    }
+}
+
+/// `-j/--jobs` is `type=int`; `int('\x1c5')` raises, so argparse reports an invalid int value.
+#[test]
+fn jobs_with_an_ascii_separator_is_an_invalid_int() {
+    for brand in BOTH {
+        for v in [
+            "\x1c5", "5\x1c", "\x1d5", "5\x1d", "\x1e5", "5\x1e", "\x1f5", "5\x1f",
+        ] {
+            let err = usage(brand, &["autoupdate", "-j", v]);
+            assert_eq!(
+                last_line(&err),
+                format!(
+                    "{} autoupdate: error: argument -j/--jobs: invalid int value: {}",
+                    brand.prog(),
+                    py_repr(v)
+                ),
+                "{brand:?} {v:?}"
+            );
+        }
+    }
+}
+
+/// `repr()` of the four separators as CPython prints them.
+fn py_repr(v: &str) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::from("'");
+    for c in v.chars() {
+        if c.is_ascii_control() {
+            write!(out, "\\x{:02x}", u32::from(c)).unwrap();
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
+}
+
 #[test]
 fn completions_cover_every_option() {
     fn walk(spec: &'static snp_argparse::ParserSpec, out: &mut Vec<&'static str>) {
