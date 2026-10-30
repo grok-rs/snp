@@ -1,0 +1,857 @@
+{
+ "meta": {
+  "libyaml": "0.2.5",
+  "python": "3.12.3",
+  "pyyaml": "6.0.3"
+ },
+ "vectors": [
+  {
+   "dump": "repos:\n-   repo: /path/hooks1\n    rev: v1.1.0\n    hooks:\n    -   id: h1\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: system\n",
+   "yaml": "# keep me\nrepos: [{repo: /path/hooks1, rev: v1.1.0, hooks: [{id: h1}]},  # c\n        {repo: local, hooks: [{id: x, name: x, entry: x, language: system}]}]\n"
+  },
+  {
+   "dump": "repos:\n-   repo: x\n    rev: v1\n    hooks:\n    -   id: a\n        args:\n        - --x\n        - y\n        stages: []\nfail_fast: true\nn: null\n",
+   "yaml": "repos:\n- repo: x\n  rev: v1\n  hooks:\n  - id: a\n    args: [--x, y]\n    stages: []\nfail_fast: true\nn: null\n"
+  },
+  {
+   "dump": "repos:\n-   repo: /tmp/x y\n    rev: '1.0'\n    hooks:\n    -   id: flake8\n    -   id: \"\\xE9\"\n        args:\n        - --max=1\n        - 'yes'\n        - ''\n        always_run: true\n        n: 3\n",
+   "yaml": "repos:\n- repo: /tmp/x y\n  rev: \"1.0\"\n  hooks:\n  - id: flake8\n  - id: \"\\xE9\"\n    args: [--max=1, \"yes\", \"\"]\n    always_run: true\n    n: 3\n"
+  },
+  {
+   "dump": "{}\n",
+   "yaml": "{}\n"
+  },
+  {
+   "dump": "[]\n",
+   "yaml": "[]\n"
+  },
+  {
+   "dump": "a: {}\nb: []\nc:\n- []\n- {}\n",
+   "yaml": "a: {}\nb: []\nc: [[], {}]\n"
+  },
+  {
+   "dump": "a: 1\n",
+   "yaml": "a: 1\n"
+  },
+  {
+   "dump": "x\n",
+   "yaml": "\"x\"\n"
+  },
+  {
+   "dump": "1\n",
+   "yaml": "1\n"
+  },
+  {
+   "dump": "null\n",
+   "yaml": "~\n"
+  },
+  {
+   "dump": "- 1\n-   - 2\n    -   - 3\n-   a:\n    - b\n",
+   "yaml": "[1, [2, [3]], {a: [b]}]\n"
+  },
+  {
+   "dump": "a:\n-   - 1\n    - 2\n-   - 3\n",
+   "yaml": "a: [[1, 2], [3]]\n"
+  },
+  {
+   "dump": "k: !!binary |\n    aGVsbG8=\n",
+   "yaml": "k: !!binary aGVsbG8=\n"
+  },
+  {
+   "dump": "k: !!set\n    a: null\n    b: null\n",
+   "yaml": "k: !!set {a, b}\n"
+  },
+  {
+   "dump": "s: !!set {}\n",
+   "yaml": "s: !!set {}\n"
+  },
+  {
+   "dump": "k:\n-   - a\n    - 1\n",
+   "yaml": "k: !!omap [{a: 1}]\n"
+  },
+  {
+   "dump": "k:\n-   - a\n    - 1\n-   - a\n    - 2\n",
+   "yaml": "k: !!pairs [{a: 1}, {a: 2}]\n"
+  },
+  {
+   "dump": "d: 2020-01-01\nt: 2001-12-14 21:59:43.100000-05:00\nu: 2002-01-01 00:00:00+00:00\nn: 2020-01-01 10:00:00\n",
+   "yaml": "d: 2020-01-01\nt: 2001-12-14 21:59:43.10 -5\nu: 2002-01-01T00:00:00Z\nn: 2020-01-01 10:00:00\n"
+  },
+  {
+   "dump": "f:\n- 1.5\n- -0.0\n- .inf\n- -.inf\n- .nan\n- 1.0e+16\n- 1.0e-05\n- 685230.15\n- 1.0e+20\n- 0.1\n",
+   "yaml": "f: [1.5, -0.0, .inf, -.inf, .nan, 1.0e+16, 1.0e-5, 6.8523015e+5, 100000000000000000000.0, 0.1]\n"
+  },
+  {
+   "dump": "i:\n- 0\n- -1\n- 9223372036854775808\n- -9999999999999999999999999999999999999999\n",
+   "yaml": "i: [0, -1, 9223372036854775808, -9999999999999999999999999999999999999999]\n"
+  },
+  {
+   "dump": "b:\n- true\n- false\n- true\n- false\n",
+   "yaml": "b: [yes, no, on, off]\n"
+  },
+  {
+   "dump": "long: word word word word word word word word word word word word word word word word\n    word word word word word word word word word word word word word word word word\n    word word word word word word word word\n",
+   "yaml": "long: word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n"
+  },
+  {
+   "dump": "long2: \"w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd\n    w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd\n    w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd w\\xE9rd\"\n",
+   "yaml": "long2: \"w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd w\\xe9rd\"\n"
+  },
+  {
+   "dump": "ml: 'line1\n\n    line2\n\n\n    '\n",
+   "yaml": "ml: \"line1\\nline2\\n\\n\"\n"
+  },
+  {
+   "dump": "ml2: \"a\\n b\"\n",
+   "yaml": "ml2: \"a\\n b\"\n"
+  },
+  {
+   "dump": "ml3: \"a \\nb\"\n",
+   "yaml": "ml3: \"a \\nb\"\n"
+  },
+  {
+   "dump": "trail: 'a '\n",
+   "yaml": "trail: \"a \"\n"
+  },
+  {
+   "dump": "lead: ' a'\n",
+   "yaml": "lead: \" a\"\n"
+  },
+  {
+   "dump": "tab: \"a\\tb\"\n",
+   "yaml": "tab: \"a\\tb\"\n"
+  },
+  {
+   "dump": "cr: \"a\\rb\"\n",
+   "yaml": "cr: \"a\\rb\"\n"
+  },
+  {
+   "dump": "nel: \"a\\Nb\"\n",
+   "yaml": "nel: \"a\\x85b\"\n"
+  },
+  {
+   "dump": "ls: \"a\\Lb\"\n",
+   "yaml": "ls: \"a\\u2028b\"\n"
+  },
+  {
+   "dump": "emoji: \"\\U0001F600 x\"\n",
+   "yaml": "emoji: \"\\U0001F600 x\"\n"
+  },
+  {
+   "dump": "ctrl: \"\\x01\\x7F\\x9F\"\n",
+   "yaml": "ctrl: \"\\x01\\x7f\\x9f\"\n"
+  },
+  {
+   "dump": "bom: \"\\uFEFFa\"\n",
+   "yaml": "bom: \"\\ufeffa\"\n"
+  },
+  {
+   "dump": "nul: \"a\\0b\"\n",
+   "yaml": "nul: \"a\\0b\"\n"
+  },
+  {
+   "dump": "bs: a\\b\n",
+   "yaml": "bs: \"a\\\\b\"\n"
+  },
+  {
+   "dump": "dq: a\"b\n",
+   "yaml": "dq: \"a\\\"b\"\n"
+  },
+  {
+   "dump": "sq: it's\n",
+   "yaml": "sq: \"it's\"\n"
+  },
+  {
+   "dump": "both: x\"y'z\n",
+   "yaml": "both: \"x\\\"y'z\"\n"
+  },
+  {
+   "dump": "key with spaces: v\n",
+   "yaml": "\"key with spaces\": v\n"
+  },
+  {
+   "dump": "'k: v': 1\n",
+   "yaml": "\"k: v\": 1\n"
+  },
+  {
+   "dump": "'': empty key\n",
+   "yaml": "\"\": empty key\n"
+  },
+  {
+   "dump": "? kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk\n: long key\n",
+   "yaml": "? \"kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk\"\n: long key\n"
+  },
+  {
+   "dump": "? 'multi\n\n    line key'\n: v\n",
+   "yaml": "? \"multi\\nline key\"\n: v\n"
+  },
+  {
+   "dump": "1: t\n2.5: float key\nnull: n\n",
+   "yaml": "1: int key\n2.5: float key\nnull: n\ntrue: t\n"
+  },
+  {
+   "dump": "'---': a\n'...': b\nc: '---'\nd: '- x'\ne: -x\nf: '? x'\ng: :x\n",
+   "yaml": "\"---\": a\n\"...\": b\nc: \"---\"\nd: \"- x\"\ne: \"-x\"\nf: \"? x\"\ng: \":x\"\n"
+  },
+  {
+   "dump": "x: 'a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a\n    a a a a a a a a a a a a a a a a a a a a a '\n",
+   "yaml": "x: \"a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a \"\n"
+  },
+  {
+   "dump": "x: a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  b\n",
+   "yaml": "x: \"a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  b\"\n"
+  },
+  {
+   "dump": "x: \"\\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9\n    \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9\n    \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9 \\xE9\n    \\xE9 \\xE9 \"\n",
+   "yaml": "x: \"\u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \u00e9 \"\n"
+  },
+  {
+   "dump": "x:\n- wwwwwwwwwwwwwwwwwwwwwwwwwwwwww\n- wwwwwwwwwwwwwwwwwwwwwwwwwwwwww\n- wwwwwwwwwwwwwwwwwwwwwwwwwwwwww\n- wwwwwwwwwwwwwwwwwwwwwwwwwwwwww\n- wwwwwwwwwwwwwwwwwwwwwwwwwwwwww\n",
+   "yaml": "x: [\"wwwwwwwwwwwwwwwwwwwwwwwwwwwwww\", \"wwwwwwwwwwwwwwwwwwwwwwwwwwwwww\", \"wwwwwwwwwwwwwwwwwwwwwwwwwwwwww\", \"wwwwwwwwwwwwwwwwwwwwwwwwwwwwww\", \"wwwwwwwwwwwwwwwwwwwwwwwwwwwwww\"]\n"
+  },
+  {
+   "dump": "nested:\n    a:\n        b:\n            c:\n            - 1\n            -   d:\n                - e\n                -   f: g\n",
+   "yaml": "nested:\n  a:\n    b:\n      c: [1, {d: [e, {f: g}]}]\n"
+  },
+  {
+   "dump": "x: &id001\n    repo: local\n    hooks: []\nrepos:\n- *id001\n- *id001\n",
+   "yaml": "x: &x {repo: local, hooks: []}\nrepos: [*x, *x]\n"
+  },
+  {
+   "dump": "d: &id001 2020-01-01\ne: *id001\nf:\n- *id001\n- 2020-01-01\n",
+   "yaml": "d: &d 2020-01-01\ne: *d\nf: [*d, 2020-01-01]\n"
+  },
+  {
+   "dump": "t: &id001 2001-12-14 21:59:43.100000-05:00\nu:\n    *id001 : x\n",
+   "yaml": "t: &t 2001-12-14 21:59:43.10 -5\nu: {*t : x}\n"
+  },
+  {
+   "dump": "b:\n    x: 1\n    y: &id001\n    - 1\n    - 2\nc:\n    x: 3\n    y: *id001\nd:\n    x: 1\n    y: *id001\n",
+   "yaml": "b: &b {x: 1, y: [1, 2]}\nc:\n  <<: *b\n  x: 3\nd: {<<: *b}\n"
+  },
+  {
+   "dump": "l: &id001 []\nm: &id002 {}\nn:\n- *id001\n- *id002\n- *id001\n",
+   "yaml": "l: &l []\nm: &m {}\nn: [*l, *m, *l]\n"
+  },
+  {
+   "dump": "s: &id001 !!set\n    a: null\n    b: null\nt:\n- *id001\n- *id001\n",
+   "yaml": "s: &s !!set {a, b}\nt: [*s, *s]\n"
+  },
+  {
+   "dump": "p: &id001\n-   - a\n    - 1\n-   - a\n    - 2\nq: *id001\n",
+   "yaml": "p: &p !!pairs [{a: 1}, {a: 2}]\nq: *p\n"
+  },
+  {
+   "dump": "a: &id002\n- &id001\n    - x\n- *id001\nc: *id002\n",
+   "yaml": "a: &a [&b [x], *b]\nc: *a\n"
+  },
+  {
+   "dump": "k: 1\nm:\n    1: v\n    w: 1\n",
+   "yaml": "k: &k 1\nm: {*k : v, w: *k}\n"
+  },
+  {
+   "dump": "big: &id001\n    k0: v\n    k1: v\n    k2: v\n    k3: v\n    k4: v\nr:\n- *id001\n- *id001\n",
+   "yaml": "big: &big {k0: v, k1: v, k2: v, k3: v, k4: v}\nr: [*big, *big]\n"
+  },
+  {
+   "dump": "k: \"b.\\L0b#-0-\\L1abx1a\\\" --.\\\"\\n..0:bx x\\L##\"\n",
+   "yaml": "k: \"b.\\L0b#-0-\\L1abx1a\\\" --.\\\"\\n..0:bx x\\L##\"\n"
+  },
+  {
+   "dump": "k: \"-\\n \\xE9-00a'a'.1#-:- #'\\t'0 -'#\\\"1#\\\"x' #ba\\L\\n xb##:xa#\\t1\"\n",
+   "yaml": "k: \"-\\n \\xE9-00a'a'.1#-:- #'\\t'0 -'#\\\"1#\\\"x' #ba\\L\\n xb##:xa#\\t1\"\n"
+  },
+  {
+   "dump": "k: '-### '\n",
+   "yaml": "k: \"-### \"\n"
+  },
+  {
+   "dump": "k: \"\\\"\\xE9'\\L\\n'# \\nb '\\\"\\xE9\\xE9\\L\\L\\ta-x\\n .\\\"b\\xE9-\\t\\n\\L0.a.\\n:b:.1' \\nb\\t\\n-a\\xE9\\\"':\\xE91:\\\"\\L#b\n    #'\\n\\t\\n0 1#a\\L'\\n\\xE9\\\"'a-:.0#-0\\xE9' \"\n",
+   "yaml": "k: \"\\\"\\xE9'\\L\\n'# \\nb '\\\"\\xE9\\xE9\\L\\L\\ta-x\\n .\\\"b\\xE9-\\t\\n\\L0.a.\\n:b:.1' \\nb\\t\\n-a\\xE9\\\"':\\xE91:\\\"\\L#b #'\\n\\t\\n0 1#a\\L'\\n\\xE9\\\"'a-:.0#-0\\xE9' \"\n"
+  },
+  {
+   "dump": "k: \"x11 ..x\\\"0:0 \\t\\t:\\xE9x0\\n-\\na1-.1-\\xE9'x.\\n.::\\xE900a\\\"x\\t#1--:\\t0a1 \"\n",
+   "yaml": "k: \"x11 ..x\\\"0:0 \\t\\t:\\xE9x0\\n-\\na1-.1-\\xE9'x.\\n.::\\xE900a\\\"x\\t#1--:\\t0a1 \"\n"
+  },
+  {
+   "dump": "k: \"'\\nx'b\\xE9''::b#00x\"\n",
+   "yaml": "k: \"'\\nx'b\\xE9''::b#00x\"\n"
+  },
+  {
+   "dump": "k: \"-#x\\n\\t:\\xE9\\xE90b\\\"\\tab\\xE9 \\t\\nx\\Lxa \\\"\\xE9#\\xE9xb -bx0x:.----\\tbx1\\n'1\\xE9\\L\\xE911b0ab:ba\\ta:':01'a1\\\":\\\"1\\xE9:0\\xE9-\\xE9\\nb\n    -.\\L1\\n\\xE9'-\\\"0'#\"\n",
+   "yaml": "k: \"-#x\\n\\t:\\xE9\\xE90b\\\"\\tab\\xE9 \\t\\nx\\Lxa \\\"\\xE9#\\xE9xb -bx0x:.----\\tbx1\\n'1\\xE9\\L\\xE911b0ab:ba\\ta:':01'a1\\\":\\\"1\\xE9:0\\xE9-\\xE9\\nb -.\\L1\\n\\xE9'-\\\"0'#\"\n"
+  },
+  {
+   "dump": "k: \"\\t\\\"\"\n",
+   "yaml": "k: \"\\t\\\"\"\n"
+  },
+  {
+   "dump": "k: \"10\\L-\\t\\\"\\xE9 \\\"\\\"1\\n1#\"\n",
+   "yaml": "k: \"10\\L-\\t\\\"\\xE9 \\\"\\\"1\\n1#\"\n"
+  },
+  {
+   "dump": "k: \".-1 \\\"\\n\\n.0'.x.\\n\\t01\\\".\\\"\\n-x0' 1\\t-xb '#x b'0\\\"##\\xE9\\L\\xE9b.\\L:#\\\"a\\\".x-\\\"\\t'\\L'#:x\\t\n    \\t a.\"\n",
+   "yaml": "k: \".-1 \\\"\\n\\n.0'.x.\\n\\t01\\\".\\\"\\n-x0' 1\\t-xb '#x b'0\\\"##\\xE9\\L\\xE9b.\\L:#\\\"a\\\".x-\\\"\\t'\\L'#:x\\t \\t a.\"\n"
+  },
+  {
+   "dump": "k: \"::\\xE90 a\\n\\n\\\"0\\xE9\\xE91-#b#'1x .10x0'abba xb# #\\xE9 \\t00b\\L-xa': \\xE90a\\L'\\L1\\\"bx:\n    x\\t\\n\\xE9 :1'\\xE9.a-\\L.#\\n0#'0:\\L#b\\n \"\n",
+   "yaml": "k: \"::\\xE90 a\\n\\n\\\"0\\xE9\\xE91-#b#'1x .10x0'abba xb# #\\xE9 \\t00b\\L-xa': \\xE90a\\L'\\L1\\\"bx: x\\t\\n\\xE9 :1'\\xE9.a-\\L.#\\n0#'0:\\L#b\\n \"\n"
+  },
+  {
+   "dump": "k: \"'#\\xE9\\L1'\\t.ba-1\\L\\t\\L\\L\\n'#'11b\\t\\t0\\L\\t\\\":\\tb:::0abax\\n-x\\L\\\"\\t\\t #b.a\\\"\\t\\\"\\L1\\xE9\\n\\\":a:b\\n#x'\\nxx\n    '\\t..- 0\\tx\\nb\\t#\\\"\"\n",
+   "yaml": "k: \"'#\\xE9\\L1'\\t.ba-1\\L\\t\\L\\L\\n'#'11b\\t\\t0\\L\\t\\\":\\tb:::0abax\\n-x\\L\\\"\\t\\t #b.a\\\"\\t\\\"\\L1\\xE9\\n\\\":a:b\\n#x'\\nxx '\\t..- 0\\tx\\nb\\t#\\\"\"\n"
+  },
+  {
+   "dump": "k: \"#x.\\xE9:b0\\t:\\L0\\t11-x\"\n",
+   "yaml": "k: \"#x.\\xE9:b0\\t:\\L0\\t11-x\"\n"
+  },
+  {
+   "dump": "k: \"# a\\n .b\\\"#.#x#ba \\n\\L\\t1'\\\"x1##1-:0a:\\t1#\\n00:b'.\\n0\\L\\L0.x#-:abx.x\\L#ba:0\\n\\nb\\xE9-:\\nba:\n    x\\n:0\"\n",
+   "yaml": "k: \"# a\\n .b\\\"#.#x#ba \\n\\L\\t1'\\\"x1##1-:0a:\\t1#\\n00:b'.\\n0\\L\\L0.x#-:abx.x\\L#ba:0\\n\\nb\\xE9-:\\nba: x\\n:0\"\n"
+  },
+  {
+   "dump": "k: \"'  \\L\\n\\\"xa \\\"\\t\\xE9\\t.a'x1:0a\\t\\\":.b\\L-\\tb0\\n\"\n",
+   "yaml": "k: \"'  \\L\\n\\\"xa \\\"\\t\\xE9\\t.a'x1:0a\\t\\\":.b\\L-\\tb0\\n\"\n"
+  },
+  {
+   "dump": "k: \"---'-\\\"b\\nb\\L\\naaxx0 \\xE9aa\\L\\L1-:\\n.bb\\L\\t\\xE9\\\"0b.--ab#\\na---\"\n",
+   "yaml": "k: \"---'-\\\"b\\nb\\L\\naaxx0 \\xE9aa\\L\\L1-:\\n.bb\\L\\t\\xE9\\\"0b.--ab#\\na---\"\n"
+  },
+  {
+   "dump": "k: \"b..\\xE9\\n\\\"-\\L.#\\L\\n#\\\"#\\L':a-b\\L 0#-b.x\\nx'1' \\L::\\L:\\t'x\\t\\L:\\t.b\\t.-x00bb'.\\t\\n\\txa#x.bb\n    \\ \\L.'-#\\t#\"\n",
+   "yaml": "k: \"b..\\xE9\\n\\\"-\\L.#\\L\\n#\\\"#\\L':a-b\\L 0#-b.x\\nx'1' \\L::\\L:\\t'x\\t\\L:\\t.b\\t.-x00bb'.\\t\\n\\txa#x.bb  \\L.'-#\\t#\"\n"
+  },
+  {
+   "dump": "k: \"\\L\\Lb\\\"1\\n.-x:00#\\L\\L\\xE9\\xE9#ab'##\\\"x1#x.ax1x'\\n\\xE9\"\n",
+   "yaml": "k: \"\\L\\Lb\\\"1\\n.-x:00#\\L\\L\\xE9\\xE9#ab'##\\\"x1#x.ax1x'\\n\\xE9\"\n"
+  },
+  {
+   "dump": "k: \"\\xE9-\\\"'\\\"#\\t0##:ab\\L1b..b\\t\\\"\\L x\\n#a\\t'\"\n",
+   "yaml": "k: \"\\xE9-\\\"'\\\"#\\t0##:ab\\L1b..b\\t\\\"\\L x\\n#a\\t'\"\n"
+  },
+  {
+   "dump": "k: \":\\tx.1'0#0#a\\n0#'\\\"\\n:1\\\"00\\L\\xE9..\\\"#x\"\n",
+   "yaml": "k: \":\\tx.1'0#0#a\\n0#'\\\"\\n:1\\\"00\\L\\xE9..\\\"#x\"\n"
+  },
+  {
+   "dump": "k: \"\\\"\\\"\\\"\\L.-b\\\":\\xE9a-1 \\Lba::a\\xE910.\\xE9\\tb\\\" \\L0x10 x'0\\L\\n.a\\tb\\La#a \\t#x#b\\t\\xE9\n    .:aa\\\"x:#01-\\t#'::x'b0\\n\\L':ba#'0\\t'bx :\\\"x\"\n",
+   "yaml": "k: \"\\\"\\\"\\\"\\L.-b\\\":\\xE9a-1 \\Lba::a\\xE910.\\xE9\\tb\\\" \\L0x10 x'0\\L\\n.a\\tb\\La#a \\t#x#b\\t\\xE9 .:aa\\\"x:#01-\\t#'::x'b0\\n\\L':ba#'0\\t'bx :\\\"x\"\n"
+  },
+  {
+   "dump": "k: \"1\\ta\\\"\\n\\xE9 0:\\xE9'  \\xE9\\xE9 :\\\"1b\\\"\\n\\xE9 -\\n#.\\xE90\\n'' \\n.:\\n::\\t\\xE90a0:a.:.\\\"#\n    #--\\L\\\" b'#1\\xE9\\xE9-1'0b0-\\t\"\n",
+   "yaml": "k: \"1\\ta\\\"\\n\\xE9 0:\\xE9'  \\xE9\\xE9 :\\\"1b\\\"\\n\\xE9 -\\n#.\\xE90\\n'' \\n.:\\n::\\t\\xE90a0:a.:.\\\"# #--\\L\\\" b'#1\\xE9\\xE9-1'0b0-\\t\"\n"
+  },
+  {
+   "dump": "k: \"\\n1 \\L '\\xE9 0\\xE9\\naa1b 0.: #-x\\nx''\\n: -'-bx'x \\\"..\\t\\L-\\\"0.x\\n:0#-01\\L1x: 1b.\\L\\t\\xE9111x0b\\xE90x\\xE9#\\t'--\\t\\xE9\\xE9#.-'\\L\\xE9\\xE9\\xE9\"\n",
+   "yaml": "k: \"\\n1 \\L '\\xE9 0\\xE9\\naa1b 0.: #-x\\nx''\\n: -'-bx'x \\\"..\\t\\L-\\\"0.x\\n:0#-01\\L1x: 1b.\\L\\t\\xE9111x0b\\xE90x\\xE9#\\t'--\\t\\xE9\\xE9#.-'\\L\\xE9\\xE9\\xE9\"\n"
+  },
+  {
+   "dump": "k: \"bb\\xE9#a#ba-:a -.0\\xE9a#.a0-#x-\\\" 0-0\\\"\\na\\xE9b#:-1\\L-0a:#01\\L\\\".\\L-'\\\"'a-aax\\xE9\\n\\t0\\\"\\xE9\\nx.\\xE90a\\xE9\\t.a\\\":\\t\\\"'\\L':b:00\\\"\\L\\t#-':0\\t\\n\"\n",
+   "yaml": "k: \"bb\\xE9#a#ba-:a -.0\\xE9a#.a0-#x-\\\" 0-0\\\"\\na\\xE9b#:-1\\L-0a:#01\\L\\\".\\L-'\\\"'a-aax\\xE9\\n\\t0\\\"\\xE9\\nx.\\xE90a\\xE9\\t.a\\\":\\t\\\"'\\L':b:00\\\"\\L\\t#-':0\\t\\n\"\n"
+  },
+  {
+   "dump": "k: \"\\\"\\L\\na\\xE9\\n.\\tb\\L:\\xE9\\xE9\\xE9::-\\ta.1\\L\\n \\n \\t\\xE9 \\n\\L\\n0\\n0x\\tb\\\"1 1\\L\\n\\xE9\\L.\\t\\t'\\t00::xx\\t\\n:\\\"\\n0\\xE9\\n\n    \\L -\\\"a-\\\":-\\t#'\"\n",
+   "yaml": "k: \"\\\"\\L\\na\\xE9\\n.\\tb\\L:\\xE9\\xE9\\xE9::-\\ta.1\\L\\n \\n \\t\\xE9 \\n\\L\\n0\\n0x\\tb\\\"1 1\\L\\n\\xE9\\L.\\t\\t'\\t00::xx\\t\\n:\\\"\\n0\\xE9\\n \\L -\\\"a-\\\":-\\t#'\"\n"
+  },
+  {
+   "dump": "k: \"\\n1:\\\" \\n : \\xE90a1\\t'\\\"#\\Labba\"\n",
+   "yaml": "k: \"\\n1:\\\" \\n : \\xE90a1\\t'\\\"#\\Labba\"\n"
+  },
+  {
+   "dump": "k: \" \\\"x'\\xE9#\\xE9\"\n",
+   "yaml": "k: \" \\\"x'\\xE9#\\xE9\"\n"
+  },
+  {
+   "dump": "k: \"-\\n\\xE9\\t.\\t\\L\\L#1#0- \\L\\xE90.a- x-#-1\\xE9-''\\nbb0:x\\xE9\\xE9\\xE9.a0\\xE9\\xE9 1\\t\\\"-x\\Lxx\\\"a\\xE9-.\\L#\\n0#xb01\\xE9'\\t\\xE9\\\"\"\n",
+   "yaml": "k: \"-\\n\\xE9\\t.\\t\\L\\L#1#0- \\L\\xE90.a- x-#-1\\xE9-''\\nbb0:x\\xE9\\xE9\\xE9.a0\\xE9\\xE9 1\\t\\\"-x\\Lxx\\\"a\\xE9-.\\L#\\n0#xb01\\xE9'\\t\\xE9\\\"\"\n"
+  },
+  {
+   "dump": "k: \"-\\\":\\\"xba'0\\L.:-1.x\\L#\\n#:\\\"\\naaa\\n:b\\xE9\\\"'xb\\xE9\\xE9x\\t'\"\n",
+   "yaml": "k: \"-\\\":\\\"xba'0\\L.:-1.x\\L#\\n#:\\\"\\naaa\\n:b\\xE9\\\"'xb\\xE9\\xE9x\\t'\"\n"
+  },
+  {
+   "dump": "k: \"\\t b 0b#x\\n\\\"0b.x.110\\\"x \\t#1\\\"\\xE9bb \\n\\xE9.\"\n",
+   "yaml": "k: \"\\t b 0b#x\\n\\\"0b.x.110\\\"x \\t#1\\\"\\xE9bb \\n\\xE9.\"\n"
+  },
+  {
+   "dump": "k: \"11#'0#:  \\xE9\\xE9.'\\\"\\L--\\\"x:x0aa0 \\\".'b1\"\n",
+   "yaml": "k: \"11#'0#:  \\xE9\\xE9.'\\\"\\L--\\\"x:x0aa0 \\\".'b1\"\n"
+  },
+  {
+   "dump": "k: \"-.a\\\" '\\\"\\Lb#-x'..\\\"\\t0#\\L\\t  0.01#'1x\\n#x\\nax\\L#\\n:#.-.-\\n\\xE9ax\\t.\\xE9\\t 0a\\ta\n    \\xE9.\\t- \\n:.\\\".'b0\"\n",
+   "yaml": "k: \"-.a\\\" '\\\"\\Lb#-x'..\\\"\\t0#\\L\\t  0.01#'1x\\n#x\\nax\\L#\\n:#.-.-\\n\\xE9ax\\t.\\xE9\\t 0a\\ta \\xE9.\\t- \\n:.\\\".'b0\"\n"
+  },
+  {
+   "dump": "k: \"0-b00\\t1\\t-'\\nxa:\\\"'\\\"\\L##x-a\\xE9:\\t 1-\\t.#a1'\\xE9##\\xE9\\n0x-0\\\"#\\L\"\n",
+   "yaml": "k: \"0-b00\\t1\\t-'\\nxa:\\\"'\\\"\\L##x-a\\xE9:\\t 1-\\t.#a1'\\xE9##\\xE9\\n0x-0\\\"#\\L\"\n"
+  },
+  {
+   "dump": "k: \"b\\\".\\\"0a \\L\\xE9#\\L.b\\n\\L-b\\\"0.'.-#0.##x0\\\"ba#'x\"\n",
+   "yaml": "k: \"b\\\".\\\"0a \\L\\xE9#\\L.b\\n\\L-b\\\"0.'.-#0.##x0\\\"ba#'x\"\n"
+  },
+  {
+   "dump": "k: \"1\\n-'\\L\\\".:'b:1\\t \\L\\t\\L-\\nx':\\\"\\L\\t1\\t#1\\xE91a#0a\\Lb\\xE9b\\n\"\n",
+   "yaml": "k: \"1\\n-'\\L\\\".:'b:1\\t \\L\\t\\L-\\nx':\\\"\\L\\t1\\t#1\\xE91a#0a\\Lb\\xE9b\\n\"\n"
+  },
+  {
+   "dump": "k: \"1\\n\\t\\\":\\\"'a \\n.b\\n:x1.-\\t- \"\n",
+   "yaml": "k: \"1\\n\\t\\\":\\\"'a \\n.b\\n:x1.-\\t- \"\n"
+  },
+  {
+   "dump": "k: \" .--\\\".xx\\L \\n1\\\"1\\n1x0a\\xE9\\\"\\Lb00':-.x\"\n",
+   "yaml": "k: \" .--\\\".xx\\L \\n1\\\"1\\n1x0a\\xE9\\\"\\Lb00':-.x\"\n"
+  },
+  {
+   "dump": "k: \"a\\\"\\L:.b.x:\\L\\xE9\\\"\\n#\\L. \\nb\\n-.0.ax\\n\\xE91x\\n--\\n\\n'aa:a'':xx'a''\\xE9 \\L\\L x-.0\\xE9-\\L\n    0'#\\t\\t#\\xE9.xa1b-0b.b.\\xE9 \\t ax\\xE9\\\"\\\":0'0\\L'\\L.\"\n",
+   "yaml": "k: \"a\\\"\\L:.b.x:\\L\\xE9\\\"\\n#\\L. \\nb\\n-.0.ax\\n\\xE91x\\n--\\n\\n'aa:a'':xx'a''\\xE9 \\L\\L x-.0\\xE9-\\L 0'#\\t\\t#\\xE9.xa1b-0b.b.\\xE9 \\t ax\\xE9\\\"\\\":0'0\\L'\\L.\"\n"
+  },
+  {
+   "dump": "k: \"\\xE9\\L'.##'\\L..:\\L0x\\xE9#\\n ###x\\t\\L\\\"\\xE9'#ax\\xE9\\n\\t-1.\\\"-:::.\\xE9\\\"#\\\" \\\"bx0a\n    0\\nx \\\":.1\\L'-\\Lx\\\"1\\n1.#xaabax:-\\L:0a\\t\"\n",
+   "yaml": "k: \"\\xE9\\L'.##'\\L..:\\L0x\\xE9#\\n ###x\\t\\L\\\"\\xE9'#ax\\xE9\\n\\t-1.\\\"-:::.\\xE9\\\"#\\\" \\\"bx0a 0\\nx \\\":.1\\L'-\\Lx\\\"1\\n1.#xaabax:-\\L:0a\\t\"\n"
+  },
+  {
+   "dump": "k: \"\\\" \\n\\t:\\xE9x1'0b\\L-\\t 0#b\\n\\L\\xE9xx\\t#-\\n '\\xE9# : :\\\"1a:\"\n",
+   "yaml": "k: \"\\\" \\n\\t:\\xE9x1'0b\\L-\\t 0#b\\n\\L\\xE9xx\\t#-\\n '\\xE9# : :\\\"1a:\"\n"
+  },
+  {
+   "dump": "k: \"--:# \\xE91\\xE9 '0\\L\\xE9-'\\xE9#\\t\\n#\\L:1.b\\\":\\L\\t'\\xE9b- -:\"\n",
+   "yaml": "k: \"--:# \\xE91\\xE9 '0\\L\\xE9-'\\xE9#\\t\\n#\\L:1.b\\\":\\L\\t'\\xE9b- -:\"\n"
+  },
+  {
+   "dump": "k: \".--\\t1-\\\"bx0.\\\"\\L0'ab#a x'\\\"0\\xE9 x\\n1\\t '\"\n",
+   "yaml": "k: \".--\\t1-\\\"bx0.\\\"\\L0'ab#a x'\\\"0\\xE9 x\\n1\\t '\"\n"
+  },
+  {
+   "dump": "k: \"0#:#0#:1-1\\L:\\xE90b\\xE9\\t\\tx'\\L. '\\\".#\\\" \\L\\\":\\xE90\\xE9-0a\\\"b\\xE9bb0 #b#:#\\L..\n    '\\\"\"\n",
+   "yaml": "k: \"0#:#0#:1-1\\L:\\xE90b\\xE9\\t\\tx'\\L. '\\\".#\\\" \\L\\\":\\xE90\\xE9-0a\\\"b\\xE9bb0 #b#:#\\L.. '\\\"\"\n"
+  },
+  {
+   "dump": "k: \"\\t:\"\n",
+   "yaml": "k: \"\\t:\"\n"
+  },
+  {
+   "dump": "k: \"a1\\\"bx\\\" .\\xE9'\\\"-bb\\\"\\t x011ba \\t.#\\xE9:\\n\\xE9\\n\\L\\xE9\\n b-x'b\\xE90b0\\t x\\L:\\xE9-.\n    x a-\\t\\\"\\na :\\\" x#a\\\":\\\"b1 -0\\xE9# :a\\L'.#:\\xE9:a\\t\\xE9\"\n",
+   "yaml": "k: \"a1\\\"bx\\\" .\\xE9'\\\"-bb\\\"\\t x011ba \\t.#\\xE9:\\n\\xE9\\n\\L\\xE9\\n b-x'b\\xE90b0\\t x\\L:\\xE9-. x a-\\t\\\"\\na :\\\" x#a\\\":\\\"b1 -0\\xE9# :a\\L'.#:\\xE9:a\\t\\xE9\"\n"
+  },
+  {
+   "dump": "k: \"\\\"\\n\\xE9 --\\Lx\\t:\\tx-\\\"-10 \\n\\\"\\\". \\n\\t'a\\\"x\\xE9-\\t-:.\\n\\\"a#\\n'\\xE9:\\t.\\xE9\\t.-b\\L0\\n\\xE9#0\\L0\n    #-x-\\La #:\\n\\\"\\xE9\\xE9b111-'xb:\\n.0 \\t#.a\\nb\\t#x1\\L1\"\n",
+   "yaml": "k: \"\\\"\\n\\xE9 --\\Lx\\t:\\tx-\\\"-10 \\n\\\"\\\". \\n\\t'a\\\"x\\xE9-\\t-:.\\n\\\"a#\\n'\\xE9:\\t.\\xE9\\t.-b\\L0\\n\\xE9#0\\L0 #-x-\\La #:\\n\\\"\\xE9\\xE9b111-'xb:\\n.0 \\t#.a\\nb\\t#x1\\L1\"\n"
+  },
+  {
+   "dump": "k: \"#\\\"\\\"01a'#.::0\\\"\\xE91\\n00\\xE9b\\t0\\t.0\\La\"\n",
+   "yaml": "k: \"#\\\"\\\"01a'#.::0\\\"\\xE91\\n00\\xE9b\\t0\\t.0\\La\"\n"
+  },
+  {
+   "dump": "k: \"\\L.. #\"\n",
+   "yaml": "k: \"\\L.. #\"\n"
+  },
+  {
+   "dump": "k: \"\\n  0:\\L#0\\\"\\L-\\n'b#'\\t:':1\\Lx 'b.'\\t:\\L\\\":b::-0-\\xE9#-\\\"#\\t:\\n\\xE9\\\"1\\L#\\n\\xE9\"\n",
+   "yaml": "k: \"\\n  0:\\L#0\\\"\\L-\\n'b#'\\t:':1\\Lx 'b.'\\t:\\L\\\":b::-0-\\xE9#-\\\"#\\t:\\n\\xE9\\\"1\\L#\\n\\xE9\"\n"
+  },
+  {
+   "dump": "k: \"0\\t\\L\\\"b b:\\xE9-\\La-1'0'\\t'x\\t:\\na\\xE9\\\" \\L-:\"\n",
+   "yaml": "k: \"0\\t\\L\\\"b b:\\xE9-\\La-1'0'\\t'x\\t:\\na\\xE9\\\" \\L-:\"\n"
+  },
+  {
+   "dump": "k: '#\".'\n",
+   "yaml": "k: \"#\\\".\"\n"
+  },
+  {
+   "dump": "k: \"x\\na.''b\\na\\xE9x\\n\\xE9\\xE9'1# \\n0a#\\xE90.01-.-aa '\\xE9::.'a'\\n-a-.'\\\"b\\xE9:\\ta\\Lax0\n    .b1b\\tb0''#.00'1\\\"\\t\\L \\L0-\\n:\\xE9\\xE9x' \"\n",
+   "yaml": "k: \"x\\na.''b\\na\\xE9x\\n\\xE9\\xE9'1# \\n0a#\\xE90.01-.-aa '\\xE9::.'a'\\n-a-.'\\\"b\\xE9:\\ta\\Lax0 .b1b\\tb0''#.00'1\\\"\\t\\L \\L0-\\n:\\xE9\\xE9x' \"\n"
+  },
+  {
+   "dump": "k: \"\\L0.\\txb\\\"--#x\\t a\\xE9\\n\\xE9- \\Lb:##:b0\\\".11\\L\\\"-:x0#0#00\\L:b'\\\"--0-#-:\\\"\\n#\\L-\\\"0\\xE9':\\t-b\\L:'#b\"\n",
+   "yaml": "k: \"\\L0.\\txb\\\"--#x\\t a\\xE9\\n\\xE9- \\Lb:##:b0\\\".11\\L\\\"-:x0#0#00\\L:b'\\\"--0-#-:\\\"\\n#\\L-\\\"0\\xE9':\\t-b\\L:'#b\"\n"
+  },
+  {
+   "dump": "k: \"#:'\\L\\\"::\\xE9:\\n'0\\xE9:#.a:b\\xE9a##\\L-xx\\xE90\\t':\\xE9b.-.x1x\\tx\\\"\\\"0:\\L\\xE9\\\".b.-1\\L:\n    #'\\xE9a\\t0.\\n\"\n",
+   "yaml": "k: \"#:'\\L\\\"::\\xE9:\\n'0\\xE9:#.a:b\\xE9a##\\L-xx\\xE90\\t':\\xE9b.-.x1x\\tx\\\"\\\"0:\\L\\xE9\\\".b.-1\\L: #'\\xE9a\\t0.\\n\"\n"
+  },
+  {
+   "dump": "k: \"-x\\\"\\n\\tb\\L-'\\\"\\xE9\\t\\t.' \\tb\\L#-\\L:\\L\\\"'1.-\\xE9\\\"x\\n\\xE9\\L\\xE9\\xE9#a0 1 x:.\\L#\\L'1:.0x\\\"#'##'\\L\\L-1a#xa\\n#.'a\\tx\\n#\\\"11\\\"1x:\\\"1:\\na#1a \"\n",
+   "yaml": "k: \"-x\\\"\\n\\tb\\L-'\\\"\\xE9\\t\\t.' \\tb\\L#-\\L:\\L\\\"'1.-\\xE9\\\"x\\n\\xE9\\L\\xE9\\xE9#a0 1 x:.\\L#\\L'1:.0x\\\"#'##'\\L\\L-1a#xa\\n#.'a\\tx\\n#\\\"11\\\"1x:\\\"1:\\na#1a \"\n"
+  },
+  {
+   "dump": "k: \"\\xE9\\L0\\\"\\t0\\tx\\\"\\t0'.1\\n aa\\\" axx 0#\\xE9:1a\\n'1.\\L0\\\"\\\"0-:'\\xE9\\xE9.'.\\t11'a\\xE9'a\\n:bb\\t0babx\\L\\L\\t-\\xE9\\L'10:1\"\n",
+   "yaml": "k: \"\\xE9\\L0\\\"\\t0\\tx\\\"\\t0'.1\\n aa\\\" axx 0#\\xE9:1a\\n'1.\\L0\\\"\\\"0-:'\\xE9\\xE9.'.\\t11'a\\xE9'a\\n:bb\\t0babx\\L\\L\\t-\\xE9\\L'10:1\"\n"
+  },
+  {
+   "dump": "k: \"\\n b#-##\\\" #b\\n.\\L\\t#x\"\n",
+   "yaml": "k: \"\\n b#-##\\\" #b\\n.\\L\\t#x\"\n"
+  },
+  {
+   "dump": "k: \"a1\\xE9-bb.\\xE9x0#\\L\\\"\\t\\L\\\". #'\\t0\\L:01\\n#0\"\n",
+   "yaml": "k: \"a1\\xE9-bb.\\xE9x0#\\L\\\"\\t\\L\\\". #'\\t0\\L:01\\n#0\"\n"
+  },
+  {
+   "dump": "k: \".'\\xE9-\\xE9x0\\\"\\xE91\\L\\n\\L\"\n",
+   "yaml": "k: \".'\\xE9-\\xE9x0\\\"\\xE91\\L\\n\\L\"\n"
+  },
+  {
+   "dump": "k: \":0\\n.x.a-.b'1 \\xE9\\L\\\". b'' ::#x\\\"-##aa\\xE9 :b\\\"--\\\"0\\L1:1-\\L#1\\Laa0x\\L:\\\".\\nb\\t0\n    x\\xE9\\L\\n-.0\\xE91#b\\\"\\\"'\\tb \"\n",
+   "yaml": "k: \":0\\n.x.a-.b'1 \\xE9\\L\\\". b'' ::#x\\\"-##aa\\xE9 :b\\\"--\\\"0\\L1:1-\\L#1\\Laa0x\\L:\\\".\\nb\\t0 x\\xE9\\L\\n-.0\\xE91#b\\\"\\\"'\\tb \"\n"
+  },
+  {
+   "dump": "k: \"\\L':ax\\L\\tb'.\\L\\\"0'\\L\\n.#. 0\\t''::x\\n\\n.:#.\\t\\xE9\\xE90\\t\\n\\xE91a0:0x1:\\\"\\L'-.a\\Lb--#a\\t\n    a1\\xE90--\\t\\L\\t1a#x-\\n\\n'a'\\xE9x#\\n-\\xE9\\\"0a\"\n",
+   "yaml": "k: \"\\L':ax\\L\\tb'.\\L\\\"0'\\L\\n.#. 0\\t''::x\\n\\n.:#.\\t\\xE9\\xE90\\t\\n\\xE91a0:0x1:\\\"\\L'-.a\\Lb--#a\\t a1\\xE90--\\t\\L\\t1a#x-\\n\\n'a'\\xE9x#\\n-\\xE9\\\"0a\"\n"
+  },
+  {
+   "dump": "k: \"0\\n\\tb1a 1 xa'\\\":\\nbba#-\\L\\\"\\xE9\\L.\\\"\\t\\n\\t\\\" \\\"\\xE9xa.\\n0ba 0\\\"\\n\\Lx#.'-\\t1b0\\n:\\t\n    \\na\\xE9\\xE9.\\\"\\t#-xb\\\"\\xE9:\\t-\\n 0'#\\t\\L\\\"#x-\\xE90\\Laa\\t1a#\"\n",
+   "yaml": "k: \"0\\n\\tb1a 1 xa'\\\":\\nbba#-\\L\\\"\\xE9\\L.\\\"\\t\\n\\t\\\" \\\"\\xE9xa.\\n0ba 0\\\"\\n\\Lx#.'-\\t1b0\\n:\\t \\na\\xE9\\xE9.\\\"\\t#-xb\\\"\\xE9:\\t-\\n 0'#\\t\\L\\\"#x-\\xE90\\Laa\\t1a#\"\n"
+  },
+  {
+   "dump": "k: \".a01\\L0-.'\\L0.1b1xba0\\t\\t\\n\\\"#0\\L' -\\t\\xE9''\\\"\\xE9\\\"b\\xE90#\\L\\L\\n\\n10-:\\L\\\"\\t:1b\\\"10--0\\t\\n\\xE91\\\"\\\"\\\"ba.:1\"\n",
+   "yaml": "k: \".a01\\L0-.'\\L0.1b1xba0\\t\\t\\n\\\"#0\\L' -\\t\\xE9''\\\"\\xE9\\\"b\\xE90#\\L\\L\\n\\n10-:\\L\\\"\\t:1b\\\"10--0\\t\\n\\xE91\\\"\\\"\\\"ba.:1\"\n"
+  },
+  {
+   "dump": "k: \"\\\".\\L1\"\n",
+   "yaml": "k: \"\\\".\\L1\"\n"
+  },
+  {
+   "dump": "k: \"\\n\\xE9\\\"1\\t-b\\n\\\"a1\\n.#-\\n#:.\\xE9\\tx 0.0'\\n \\n11\\taa0.\\n\\n.\\t\\xE9a\\\"\\L0\\xE90\\n#a0\\\"\\t:\\\"\\n\\L\n    \\\"1\\\"\\xE9\\xE9'1b1a1\\n'\\Lxb: \\xE9\\La\"\n",
+   "yaml": "k: \"\\n\\xE9\\\"1\\t-b\\n\\\"a1\\n.#-\\n#:.\\xE9\\tx 0.0'\\n \\n11\\taa0.\\n\\n.\\t\\xE9a\\\"\\L0\\xE90\\n#a0\\\"\\t:\\\"\\n\\L \\\"1\\\"\\xE9\\xE9'1b1a1\\n'\\Lxb: \\xE9\\La\"\n"
+  },
+  {
+   "dump": "k: \"0\\n'a .\\L00:1:.x\\xE90.:1--'\\tb\\\"'\\xE90' #\\L : \\\"1#0.:b'a'1b\\L-#\"\n",
+   "yaml": "k: \"0\\n'a .\\L00:1:.x\\xE90.:1--'\\tb\\\"'\\xE90' #\\L : \\\"1#0.:b'a'1b\\L-#\"\n"
+  },
+  {
+   "dump": "k: \"1 01 .0x.\\L1\\\"\\n 1'\\naa\\nx\\t\\L:0-\\t\\L-\\\"\\\"a\\\"b\\t\\\"\\t\\Lxx\\t\\t:\\xE9'\\n\\L\\L'\\\"\\La\\La.0-\\\"\\t\n    \\t\\t\\t:.\\\"-b.-\\n'ba'1\\\":\\xE9\\n#.' -.\\xE9a\\\"\\\"\\Laa\\L'#:-b\"\n",
+   "yaml": "k: \"1 01 .0x.\\L1\\\"\\n 1'\\naa\\nx\\t\\L:0-\\t\\L-\\\"\\\"a\\\"b\\t\\\"\\t\\Lxx\\t\\t:\\xE9'\\n\\L\\L'\\\"\\La\\La.0-\\\"\\t \\t\\t\\t:.\\\"-b.-\\n'ba'1\\\":\\xE9\\n#.' -.\\xE9a\\\"\\\"\\Laa\\L'#:-b\"\n"
+  },
+  {
+   "dump": "k: \"a\\xE9\\t \\n.-.a'-\\n#00:a\\xE9\\\"\\\"\\t'b \\\"-0 '\\xE9.b0--\\L#'1.\\L\\t.a\\L\\xE9x1'-b'\\n-\n    -1'\\xE900\\nx.0#b\\L \\xE9\\n'\\xE9\\xE9 \\xE9axa:\"\n",
+   "yaml": "k: \"a\\xE9\\t \\n.-.a'-\\n#00:a\\xE9\\\"\\\"\\t'b \\\"-0 '\\xE9.b0--\\L#'1.\\L\\t.a\\L\\xE9x1'-b'\\n- -1'\\xE900\\nx.0#b\\L \\xE9\\n'\\xE9\\xE9 \\xE9axa:\"\n"
+  },
+  {
+   "dump": "k: \"1'\\xE9'1#b0a\\L\\nbb. \\\"\\nx00::.#1\\t\\L1\\n:\\t\\L:\\xE90\\L\\t'\\\" a\\n1\\\"\\t\\t-a:x\\\".0:'\\Lx\n    \\n0\\Lb \\\"\"\n",
+   "yaml": "k: \"1'\\xE9'1#b0a\\L\\nbb. \\\"\\nx00::.#1\\t\\L1\\n:\\t\\L:\\xE90\\L\\t'\\\" a\\n1\\\"\\t\\t-a:x\\\".0:'\\Lx \\n0\\Lb \\\"\"\n"
+  },
+  {
+   "dump": "k: \"\\\"\\n-\\L-#:\\n-a\\t\\t#\\L\\t:-#a\\\"x 1a#bb\\t10:.b:x0  \\n\\L0\\L.\"\n",
+   "yaml": "k: \"\\\"\\n-\\L-#:\\n-a\\t\\t#\\L\\t:-#a\\\"x 1a#bb\\t10:.b:x0  \\n\\L0\\L.\"\n"
+  },
+  {
+   "dump": "k: \"\\t#:1 \\\"#\\xE9-x 11':.\\xE9-'ba\\t\\L\\n\\xE9.01\\\"##0-:\\taa.\\t\\t\\xE9b\\t\"\n",
+   "yaml": "k: \"\\t#:1 \\\"#\\xE9-x 11':.\\xE9-'ba\\t\\L\\n\\xE9.01\\\"##0-:\\taa.\\t\\t\\xE9b\\t\"\n"
+  },
+  {
+   "dump": "k: \"\\n aab:b\\n#:\\n-0bx'\\\"\\\" \\n1 \\n\\xE91 \\n-\\\"\\xE9'#\\La:\\n:bb1:\\Lx\\xE90.x-1\\t x b\\t\\n\\n\n    -\\xE9\\\"1-\\L.\\L\\t\\L--b\\\"1-'1\\\"'1\\\"1'\\L\"\n",
+   "yaml": "k: \"\\n aab:b\\n#:\\n-0bx'\\\"\\\" \\n1 \\n\\xE91 \\n-\\\"\\xE9'#\\La:\\n:bb1:\\Lx\\xE90.x-1\\t x b\\t\\n\\n -\\xE9\\\"1-\\L.\\L\\t\\L--b\\\"1-'1\\\"'1\\\"1'\\L\"\n"
+  },
+  {
+   "dump": "k: \"'bb::\\L\\t\\n0\\xE90a'.x\\ta'11\\L\\t#\\n\\t0a0a0\\n\\ta#xx1-:\\xE9\\n1b\\xE9011'' ' \"\n",
+   "yaml": "k: \"'bb::\\L\\t\\n0\\xE90a'.x\\ta'11\\L\\t#\\n\\t0a0a0\\n\\ta#xx1-:\\xE9\\n1b\\xE9011'' ' \"\n"
+  },
+  {
+   "dump": "k: \" .0-0-b..-0'. 1 a.'0b0b\\n:b#\\L\\L#'-\\xE9:-\\ta01\\n0\\n#-:\\t\\n 0\\t0b0\\n-\\\"'1\\ta\\La#.\n    \\L\\\"b\\\"bx\"\n",
+   "yaml": "k: \" .0-0-b..-0'. 1 a.'0b0b\\n:b#\\L\\L#'-\\xE9:-\\ta01\\n0\\n#-:\\t\\n 0\\t0b0\\n-\\\"'1\\ta\\La#. \\L\\\"b\\\"bx\"\n"
+  },
+  {
+   "dump": "k: \"\\t\\n\\t\\L'\\xE9\\t'-0-\\nb-\\La\\L\\txbb\\L. \\L0\\t1\\\"\\tx:ba\\na0b\\xE9\\L\\n:1-\\t\\\"a#xb-0'#b0a:-\\nb#0b.-\n    ' \\t\\t 1\\\"a1\\t:'#\\na.:1\\xE9-00.-.1\"\n",
+   "yaml": "k: \"\\t\\n\\t\\L'\\xE9\\t'-0-\\nb-\\La\\L\\txbb\\L. \\L0\\t1\\\"\\tx:ba\\na0b\\xE9\\L\\n:1-\\t\\\"a#xb-0'#b0a:-\\nb#0b.- ' \\t\\t 1\\\"a1\\t:'#\\na.:1\\xE9-00.-.1\"\n"
+  },
+  {
+   "dump": "k: \": \\xE9#:0\\nb.'x \\L\\xE9 x 0x\\\"0':#1\\t0.:x# 00\\\"x.\\t\\\"x\\Lb:\"\n",
+   "yaml": "k: \": \\xE9#:0\\nb.'x \\L\\xE9 x 0x\\\"0':#1\\t0.:x# 00\\\"x.\\t\\\"x\\Lb:\"\n"
+  },
+  {
+   "dump": "k: \"-\\t ::-#0:\\t#ba\\Lb.'-.-x0b .\\\"\\\"#\\L#b#axxa -.-:'\\t\\Lx\\L-::a\\xE9 b\\xE9:'-.-\\xE9:b\\t\\t-1'\\nx:x\\\":a\\nx0:.ba\\\"\\L\\\"\\n-1\\L\\xE9ba:.'''\\t'\"\n",
+   "yaml": "k: \"-\\t ::-#0:\\t#ba\\Lb.'-.-x0b .\\\"\\\"#\\L#b#axxa -.-:'\\t\\Lx\\L-::a\\xE9 b\\xE9:'-.-\\xE9:b\\t\\t-1'\\nx:x\\\":a\\nx0:.ba\\\"\\L\\\"\\n-1\\L\\xE9ba:.'''\\t'\"\n"
+  },
+  {
+   "dump": "k: \"'\\\"a.\\xE9.b1bx#\\t00'a-\\xE9.'\\nx\\L:0 \\xE9\\n\\\"\\xE9'\\L\\t00\\t.\\\"-\\\":#\\\"1#0-b\\xE9x'x\"\n",
+   "yaml": "k: \"'\\\"a.\\xE9.b1bx#\\t00'a-\\xE9.'\\nx\\L:0 \\xE9\\n\\\"\\xE9'\\L\\t00\\t.\\\"-\\\":#\\\"1#0-b\\xE9x'x\"\n"
+  },
+  {
+   "dump": "k: ''''''''\n",
+   "yaml": "k: \"'''\"\n"
+  },
+  {
+   "dump": "k: \"\\L\\\"x\\xE9x' '':ba\\n0a'\\t- ab\\tx-0\\n\\t\\t \\xE9x-\\xE9\"\n",
+   "yaml": "k: \"\\L\\\"x\\xE9x' '':ba\\n0a'\\t- ab\\tx-0\\n\\t\\t \\xE9x-\\xE9\"\n"
+  },
+  {
+   "dump": "k: \"xa #\\t-'':b\\xE9\\\"10.\\\".#.\\xE9.'1\\\"\\xE9#'#1 \\t\\xE9#b\\xE9#-\\\"x'a\\t-\\n1 x\\L.-a##-b'..\\t\\\"#'#-'x-\\xE9..\\L\\t.\\\"\\n\\t:\\xE9\\n\"\n",
+   "yaml": "k: \"xa #\\t-'':b\\xE9\\\"10.\\\".#.\\xE9.'1\\\"\\xE9#'#1 \\t\\xE9#b\\xE9#-\\\"x'a\\t-\\n1 x\\L.-a##-b'..\\t\\\"#'#-'x-\\xE9..\\L\\t.\\\"\\n\\t:\\xE9\\n\"\n"
+  },
+  {
+   "dump": "k: \"1'a'.\\L\\\"b1--:\\n\\xE9b0\\t \\L0\\\"110.\\t:.0\\\"\\n1:-#x\\t':a.#b'b\\L:\\t0x:\\n'1'\\n.-'\\xE90bxa\\n.:-0\\xE9xa'-\\xE9:1\n    .\\n\"\n",
+   "yaml": "k: \"1'a'.\\L\\\"b1--:\\n\\xE9b0\\t \\L0\\\"110.\\t:.0\\\"\\n1:-#x\\t':a.#b'b\\L:\\t0x:\\n'1'\\n.-'\\xE90bxa\\n.:-0\\xE9xa'-\\xE9:1 .\\n\"\n"
+  },
+  {
+   "dump": "k: \"a\\L\\n#x1-# \\tb\\L-\\xE9\\n-b:xbba:bx1aax\\t\\n\\n\\\"\\t\\n\\L- .:\\L-\\\".1:\\\"\\\"bb: \\t\\n-'\\\"\\L.#'\\t\\n'#:\\n000a--0\\n#\\\"\\\"\\L\\L0-#\\tb\\t\n    \\t#a0\\xE9\\L\\t#0\\xE91\\\"\\\"\"\n",
+   "yaml": "k: \"a\\L\\n#x1-# \\tb\\L-\\xE9\\n-b:xbba:bx1aax\\t\\n\\n\\\"\\t\\n\\L- .:\\L-\\\".1:\\\"\\\"bb: \\t\\n-'\\\"\\L.#'\\t\\n'#:\\n000a--0\\n#\\\"\\\"\\L\\L0-#\\tb\\t \\t#a0\\xE9\\L\\t#0\\xE91\\\"\\\"\"\n"
+  },
+  {
+   "dump": "k: \"\\Lx\\L\\xE9: -1b\\\".1\\La\\t.:\"\n",
+   "yaml": "k: \"\\Lx\\L\\xE9: -1b\\\".1\\La\\t.:\"\n"
+  },
+  {
+   "dump": "k: \" 0ba\\xE9:b\\L\\\"#:b\\\"\\xE9# 0bbaa\\tb0.\\n0#a\\nb.1..'\\n\\\"x\\t\\n\\\"#-a\\xE9\"\n",
+   "yaml": "k: \" 0ba\\xE9:b\\L\\\"#:b\\\"\\xE9# 0bbaa\\tb0.\\n0#a\\nb.1..'\\n\\\"x\\t\\n\\\"#-a\\xE9\"\n"
+  },
+  {
+   "dump": "k: \"#a: \\xE9ab\\L1:\\n: b#:a\\txa.\\L  \\t1 b 0\\nb'0#\\\"''.1. ':x-': :# :\\t\\t\\nx\\n1\\xE9\\\"\\t::00':'\n    a- a 1'.x1  \\\"0-\\n\\xE9#\"\n",
+   "yaml": "k: \"#a: \\xE9ab\\L1:\\n: b#:a\\txa.\\L  \\t1 b 0\\nb'0#\\\"''.1. ':x-': :# :\\t\\t\\nx\\n1\\xE9\\\"\\t::00':' a- a 1'.x1  \\\"0-\\n\\xE9#\"\n"
+  },
+  {
+   "dump": "k: \"-\\t-ba0-\\xE9-:\\\"-:b- \\n1'\\t\\xE9- '\\\".\\tx-'b0\\n-\\t\\t':.:\\t\\t\\t\\L\\n0 \\L\\\"--'00b\\xE9#\\xE9\n    -b\\\"\"\n",
+   "yaml": "k: \"-\\t-ba0-\\xE9-:\\\"-:b- \\n1'\\t\\xE9- '\\\".\\tx-'b0\\n-\\t\\t':.:\\t\\t\\t\\L\\n0 \\L\\\"--'00b\\xE9#\\xE9 -b\\\"\"\n"
+  },
+  {
+   "dump": "k: \"b-. \\xE9.#.\\t--0 b\\\"1 \\Lb\\t.-.-0:#\\\"b-\\L\\n\"\n",
+   "yaml": "k: \"b-. \\xE9.#.\\t--0 b\\\"1 \\Lb\\t.-.-0:#\\\"b-\\L\\n\"\n"
+  },
+  {
+   "dump": "k: \"b-\\\":#:\\n:'\\n-aa\\n\\xE9#\\t-xaab\\L ':\\L1\\xE9 ''-\\nx-\\\"#'\\L\\t.b:\\\"\\tbx1\\\"\\\" 1::-#':ax\\L#:1a.\n    \\t\\\"1b a\\xE9\\xE91\\L\\xE9#ba\\t-:\\\"\\xE9\\n1#\\xE9\\L\\tb\\xE9'\"\n",
+   "yaml": "k: \"b-\\\":#:\\n:'\\n-aa\\n\\xE9#\\t-xaab\\L ':\\L1\\xE9 ''-\\nx-\\\"#'\\L\\t.b:\\\"\\tbx1\\\"\\\" 1::-#':ax\\L#:1a. \\t\\\"1b a\\xE9\\xE91\\L\\xE9#ba\\t-:\\\"\\xE9\\n1#\\xE9\\L\\tb\\xE9'\"\n"
+  },
+  {
+   "dump": "k: -.\n",
+   "yaml": "k: \"-.\"\n"
+  },
+  {
+   "dump": "k: \" 0\\xE9:.-:b\\xE9\\L'\\\"\\xE9b\\n-'' '1\\xE9x'\\\"\\xE9\\n\\\"x\\xE9:0#\\n0\\\"a.:.bbb0 x\\L'\\L1a\\L\\\"-'\\t\\t'\\xE9\\L1a1.0\\\"x--1\\xE9bbx\\L:a\\xE9x\\L\"\n",
+   "yaml": "k: \" 0\\xE9:.-:b\\xE9\\L'\\\"\\xE9b\\n-'' '1\\xE9x'\\\"\\xE9\\n\\\"x\\xE9:0#\\n0\\\"a.:.bbb0 x\\L'\\L1a\\L\\\"-'\\t\\t'\\xE9\\L1a1.0\\\"x--1\\xE9bbx\\L:a\\xE9x\\L\"\n"
+  },
+  {
+   "dump": "k: \"a\\L.   \\nb00\\xE9\\xE9\\n' \\xE9#\\n\\n #0\\L10'-0x:\\xE9\\\"0b\\nx \\xE9\\n\\taa'-#\\L--xb\\xE9\\xE9-'\n    0\\L\"\n",
+   "yaml": "k: \"a\\L.   \\nb00\\xE9\\xE9\\n' \\xE9#\\n\\n #0\\L10'-0x:\\xE9\\\"0b\\nx \\xE9\\n\\taa'-#\\L--xb\\xE9\\xE9-' 0\\L\"\n"
+  },
+  {
+   "dump": "k: \"\\txa:.:bbbb\\n.a1\\xE9\\n-\\\" \\\"b#''1#.b''--\\\"--a\"\n",
+   "yaml": "k: \"\\txa:.:bbbb\\n.a1\\xE9\\n-\\\" \\\"b#''1#.b''--\\\"--a\"\n"
+  },
+  {
+   "dump": "k: \"1x-xb \\xE9#a\\n-b\\n'\\xE9  -x101\\\" '0\\t\\\"x\\n0#a#a\\ta.\\t'0:  :b0:1.\\n0:1\\L\\L\\t\\\"-'\\\"\\t#\\\".\n    \\L\\L'-x. #.\\\"-\\xE9'x0\\\"\\n\"\n",
+   "yaml": "k: \"1x-xb \\xE9#a\\n-b\\n'\\xE9  -x101\\\" '0\\t\\\"x\\n0#a#a\\ta.\\t'0:  :b0:1.\\n0:1\\L\\L\\t\\\"-'\\\"\\t#\\\". \\L\\L'-x. #.\\\"-\\xE9'x0\\\"\\n\"\n"
+  },
+  {
+   "dump": "k: \" \\\"\\t:a0--'0\\xE9b\\t\\\"\\t1\\L\\xE9\\t\\t1\\L1\\L\\xE9\\n\\n::.1.xa0'.1\\\"0\\xE9#':#a:'1: 0\\t0axb\\t:\\n000ax.b\\tb\\\"1\n    x\\L\\tax#\\xE9a \\xE9101.0\\t\"\n",
+   "yaml": "k: \" \\\"\\t:a0--'0\\xE9b\\t\\\"\\t1\\L\\xE9\\t\\t1\\L1\\L\\xE9\\n\\n::.1.xa0'.1\\\"0\\xE9#':#a:'1: 0\\t0axb\\t:\\n000ax.b\\tb\\\"1 x\\L\\tax#\\xE9a \\xE9101.0\\t\"\n"
+  },
+  {
+   "dump": "k: \"\\t.#aa\\n1 a-'#'#.\\L\\\"0\\n:aa-\\L\\nx\\na .#-#b1'\\t-#\\na'a.:'.'1\\t.\"\n",
+   "yaml": "k: \"\\t.#aa\\n1 a-'#'#.\\L\\\"0\\n:aa-\\L\\nx\\na .#-#b1'\\t-#\\na'a.:'.'1\\t.\"\n"
+  },
+  {
+   "dump": "k: \"# a\\t\\\"00:\"\n",
+   "yaml": "k: \"# a\\t\\\"00:\"\n"
+  },
+  {
+   "dump": "k: \"\\t\\\"\\xE9 :.0:.bx\\xE9x\\na':.'b.a'#\\L'\\\"b\\\"\\t\"\n",
+   "yaml": "k: \"\\t\\\"\\xE9 :.0:.bx\\xE9x\\na':.'b.a'#\\L'\\\"b\\\"\\t\"\n"
+  },
+  {
+   "dump": "k: \":1\\\"\\Lx-1-##.\\n\\\"a\\na'\\t  1\\L.b\\\"1\\\"\\n\\t\\xE90\\L\"\n",
+   "yaml": "k: \":1\\\"\\Lx-1-##.\\n\\\"a\\na'\\t  1\\L.b\\\"1\\\"\\n\\t\\xE90\\L\"\n"
+  },
+  {
+   "dump": "k: \"\\t0'-ab\\t\\xE9\"\n",
+   "yaml": "k: \"\\t0'-ab\\t\\xE9\"\n"
+  },
+  {
+   "dump": "k: \".0\\n-0aa\\\".1\\nab\\\"\\xE91\\\"\\\": -a\\xE9-\\\"-#. x''\\n00\\nxa:\"\n",
+   "yaml": "k: \".0\\n-0aa\\\".1\\nab\\\"\\xE91\\\"\\\": -a\\xE9-\\\"-#. x''\\n00\\nxa:\"\n"
+  },
+  {
+   "dump": "k: \"\\\"\\L'\\\"\\n.0x\\xE9 a .\\L#b\\xE91b#\\t\\nb-\\\"1a.'b1\\\"-\\t'::\\xE90-:x#a\\xE9''1:b- \\n.\\nx.'\\xE9\n    x:#.#'-a0\\L0#-b\\xE91:\\xE9.b\\xE9#\\n0\\L #00ba\\L 10-\\xE9a\"\n",
+   "yaml": "k: \"\\\"\\L'\\\"\\n.0x\\xE9 a .\\L#b\\xE91b#\\t\\nb-\\\"1a.'b1\\\"-\\t'::\\xE90-:x#a\\xE9''1:b- \\n.\\nx.'\\xE9 x:#.#'-a0\\L0#-b\\xE91:\\xE9.b\\xE9#\\n0\\L #00ba\\L 10-\\xE9a\"\n"
+  },
+  {
+   "dump": "k: \"\\xE9-\\xE91.\\\"0\\\"a\\\"'1'\\Lxx a\\t#-0b \"\n",
+   "yaml": "k: \"\\xE9-\\xE91.\\\"0\\\"a\\\"'1'\\Lxx a\\t#-0b \"\n"
+  },
+  {
+   "dump": "k: \"\\\"1a1\\\"a#\\\"'\\\"'\\\"-'\\Lax'#0\\xE9':\\n-a:'a\\n\\xE91b-0\"\n",
+   "yaml": "k: \"\\\"1a1\\\"a#\\\"'\\\"'\\\"-'\\Lax'#0\\xE9':\\n-a:'a\\n\\xE91b-0\"\n"
+  },
+  {
+   "dump": "k: \"b':0'a \\t'a\\\"a1.\"\n",
+   "yaml": "k: \"b':0'a \\t'a\\\"a1.\"\n"
+  },
+  {
+   "dump": "k: \":.x \\L1101::0\\xE90b##'-\\\"\\L.'\\L#.1-'\\xE9x0\\nb 1'#x' \\\"'0a#'\\n\\t\\t\\L\\\"-#'\\xE91.'\n    .\\L\\xE9-\\\"\"\n",
+   "yaml": "k: \":.x \\L1101::0\\xE90b##'-\\\"\\L.'\\L#.1-'\\xE9x0\\nb 1'#x' \\\"'0a#'\\n\\t\\t\\L\\\"-#'\\xE91.' .\\L\\xE9-\\\"\"\n"
+  },
+  {
+   "dump": "k: \"-b. \\xE9\\L.  aa\\xE9x\\L1a#.\\\"\\n\\n0b\\xE9#.\\xE9 ''a-\\t\\tx\"\n",
+   "yaml": "k: \"-b. \\xE9\\L.  aa\\xE9x\\L1a#.\\\"\\n\\n0b\\xE9#.\\xE9 ''a-\\t\\tx\"\n"
+  },
+  {
+   "dump": "k: \":\\\"b.\\na '\\xE9\\xE9x:\\L.\\n:.'1\\t-\\L\\L: \\\":'-.\\xE9x''a:'xa#-xb.1\\L\\xE900b:\\xE9\\t\\xE9'\\\"...\\t1.axa\\L#x\n    :\\\" .-\\L \\na#1\\Lb.b\\xE9\\\":-\\Lbx0\\t\"\n",
+   "yaml": "k: \":\\\"b.\\na '\\xE9\\xE9x:\\L.\\n:.'1\\t-\\L\\L: \\\":'-.\\xE9x''a:'xa#-xb.1\\L\\xE900b:\\xE9\\t\\xE9'\\\"...\\t1.axa\\L#x :\\\" .-\\L \\na#1\\Lb.b\\xE9\\\":-\\Lbx0\\t\"\n"
+  },
+  {
+   "dump": "k: \"\\n#':''\\\"\\n.#\\Lxb-\\\"\\L\\L\\L:\\nxb0\\\"\"\n",
+   "yaml": "k: \"\\n#':''\\\"\\n.#\\Lxb-\\\"\\L\\L\\L:\\nxb0\\\"\"\n"
+  },
+  {
+   "dump": "k: \"x\\xE9.#'\\xE9\\n'## bx\\La1'#'x#'1\\xE9'\"\n",
+   "yaml": "k: \"x\\xE9.#'\\xE9\\n'## bx\\La1'#'x#'1\\xE9'\"\n"
+  },
+  {
+   "dump": "k: \"'\\L..b'a-b\\\"-\\n.a\\L1\\t\\\"\\xE91\\t'-\\n\\xE9b\\\"bb \\L\\n\\\"\\t:1b\\xE9\\Lx\\xE9 .:.-b1a\\\"-a0#xb\\n#\\xE9.x''\\n.\n    \\\"\\xE9\\n\\L-\\xE9b-a''-a\\xE90\\n'\\xE9\\xE9\\tx\\t\\xE9-b.\\t\\\"\\xE9\\\" #\\t\"\n",
+   "yaml": "k: \"'\\L..b'a-b\\\"-\\n.a\\L1\\t\\\"\\xE91\\t'-\\n\\xE9b\\\"bb \\L\\n\\\"\\t:1b\\xE9\\Lx\\xE9 .:.-b1a\\\"-a0#xb\\n#\\xE9.x''\\n. \\\"\\xE9\\n\\L-\\xE9b-a''-a\\xE90\\n'\\xE9\\xE9\\tx\\t\\xE9-b.\\t\\\"\\xE9\\\" #\\t\"\n"
+  },
+  {
+   "dump": "k: \"b'\\L0.-\\L- '\\L\\\"  \\t\\t1\\xE9x-a\\xE90x\\nb#\"\n",
+   "yaml": "k: \"b'\\L0.-\\L- '\\L\\\"  \\t\\t1\\xE9x-a\\xE90x\\nb#\"\n"
+  },
+  {
+   "dump": "k: \"0aa1\\n1a#\\xE90\\t x#\\xE9:\\\"x\\xE9#01\\xE9''bxx\\L\\L:a1.0a\\\"b\\\"1-\\L0b:.\\L#x 0::1 -\\t\\t\\L00a\\\"\\na-#b\n    \\n\\\"a:\\n:\\xE9b\\n \\t\\n'\\t0\\L0:1.xx\\L-\"\n",
+   "yaml": "k: \"0aa1\\n1a#\\xE90\\t x#\\xE9:\\\"x\\xE9#01\\xE9''bxx\\L\\L:a1.0a\\\"b\\\"1-\\L0b:.\\L#x 0::1 -\\t\\t\\L00a\\\"\\na-#b \\n\\\"a:\\n:\\xE9b\\n \\t\\n'\\t0\\L0:1.xx\\L-\"\n"
+  },
+  {
+   "dump": "k: \"1#1\\n\\L# \\n#1x:: \\nax\\L1 -\\na1\\Lxbb.\\\"0\\xE9\\t\"\n",
+   "yaml": "k: \"1#1\\n\\L# \\n#1x:: \\nax\\L1 -\\na1\\Lxbb.\\\"0\\xE9\\t\"\n"
+  },
+  {
+   "dump": "k: \"\\\"x\\\"0\\La 0\\\"\\xE9b\\xE9\\L1a.\\n#0\\\"xb:a'x\\L\\n #'':#\\L:.#.1\\t  '\\xE9b\"\n",
+   "yaml": "k: \"\\\"x\\\"0\\La 0\\\"\\xE9b\\xE9\\L1a.\\n#0\\\"xb:a'x\\L\\n #'':#\\L:.#.1\\t  '\\xE9b\"\n"
+  },
+  {
+   "dump": "k: \".:x\\L:-\\L\\n \\nx0\\\"\\\"#b:#\\xE9-\\xE9\\t\\\"\\n#10x\\L\\\"\\ta\\L1:\\t0b\\n#\\xE9-'00\\t\\xE9\\Lx\\\"a\\t0\\t\\\".b.#\\xE9\\nb'\\t\\tx\\\"\\\"a\\xE9\\xE9\"\n",
+   "yaml": "k: \".:x\\L:-\\L\\n \\nx0\\\"\\\"#b:#\\xE9-\\xE9\\t\\\"\\n#10x\\L\\\"\\ta\\L1:\\t0b\\n#\\xE9-'00\\t\\xE9\\Lx\\\"a\\t0\\t\\\".b.#\\xE9\\nb'\\t\\tx\\\"\\\"a\\xE9\\xE9\"\n"
+  },
+  {
+   "dump": "k: \"\\xE9.:'b01\\\"-#\\\"'\"\n",
+   "yaml": "k: \"\\xE9.:'b01\\\"-#\\\"'\"\n"
+  },
+  {
+   "dump": "k: \"0'\\t\\L\\t\\n'.x#-# \\n\\\"0\\n10#1bb\\\"# -\\L\\\"a::\\t#\\t\\\"\"\n",
+   "yaml": "k: \"0'\\t\\L\\t\\n'.x#-# \\n\\\"0\\n10#1bb\\\"# -\\L\\\"a::\\t#\\t\\\"\"\n"
+  },
+  {
+   "dump": "k: \".\\t\\\"\\xE9ab\\xE9#'-\\n\\\"-:\\n'\\xE9\\t\\\"\\\"\\n::\\La\\\"\\xE9b1\\t1\\n\\L0.aa\\xE9#\\n'\\xE9bx:.1\\xE9:a\\xE9::#''\n    \\La'a\\n\\xE9:a:  0b\\\"x'a\\t-\\L'1#\\n01\\t:b1..x\\t '\"\n",
+   "yaml": "k: \".\\t\\\"\\xE9ab\\xE9#'-\\n\\\"-:\\n'\\xE9\\t\\\"\\\"\\n::\\La\\\"\\xE9b1\\t1\\n\\L0.aa\\xE9#\\n'\\xE9bx:.1\\xE9:a\\xE9::#'' \\La'a\\n\\xE9:a:  0b\\\"x'a\\t-\\L'1#\\n01\\t:b1..x\\t '\"\n"
+  },
+  {
+   "dump": "k: \"bb\\n'b\\L#\\xE9bax1a -\\L\\n\\n'\\xE9bb## \\\":01''\\xE9\\nxx1#\"\n",
+   "yaml": "k: \"bb\\n'b\\L#\\xE9bax1a -\\L\\n\\n'\\xE9bb## \\\":01''\\xE9\\nxx1#\"\n"
+  },
+  {
+   "dump": "k: \"-b\\Lxa:0#\\L\\L11x 0 a1.'-\\\"xx\\\"\\xE9:a#\\t\\t0b\\\"\\xE9::b:1#- aa\\\"b--\\n-..-\"\n",
+   "yaml": "k: \"-b\\Lxa:0#\\L\\L11x 0 a1.'-\\\"xx\\\"\\xE9:a#\\t\\t0b\\\"\\xE9::b:1#- aa\\\"b--\\n-..-\"\n"
+  },
+  {
+   "dump": "k: \"\\xE91.#.-'''\\t. '\\xE9\\xE9:0'\\Lx1\\xE9\\L -1b\\xE9\\L\\\"-0\\\"x-\\n \\t#xa1.:1\\\"\\xE9 :1x\\t.\\n:'\\L\n    \\\"0\\xE90\\L0.\\n1\\n\\\"'\\Lb\\L:ab a#\\nb\"\n",
+   "yaml": "k: \"\\xE91.#.-'''\\t. '\\xE9\\xE9:0'\\Lx1\\xE9\\L -1b\\xE9\\L\\\"-0\\\"x-\\n \\t#xa1.:1\\\"\\xE9 :1x\\t.\\n:'\\L \\\"0\\xE90\\L0.\\n1\\n\\\"'\\Lb\\L:ab a#\\nb\"\n"
+  },
+  {
+   "dump": "k: \"\\t#x\\na\\t\\xE9\\n\\\"\\xE9'1\\Lbbb\\L\\\"a#\\t1\\n:x1\\n-a\\L''a b\\t'#a\\\"a\\tb0\\L b1b:b\\t. \\nb11:1.\\xE9a010\"\n",
+   "yaml": "k: \"\\t#x\\na\\t\\xE9\\n\\\"\\xE9'1\\Lbbb\\L\\\"a#\\t1\\n:x1\\n-a\\L''a b\\t'#a\\\"a\\tb0\\L b1b:b\\t. \\nb11:1.\\xE9a010\"\n"
+  },
+  {
+   "dump": "k: \"x0\\xE9#x0'a1x'''0a\\t  .a bx\\L\\t :\\xE9\\La \\\"#.\\\"1\\t\\xE9:\\xE9:\\\"1x :x\\\"#\\L\\t:#\\\"'#x\n    x-1..\\\"a0\\\"-x\\\"0\\txb a.1\\\"-b-\\t\\L:1\\n\\\"\\xE9.-..\\t\\xE91 \"\n",
+   "yaml": "k: \"x0\\xE9#x0'a1x'''0a\\t  .a bx\\L\\t :\\xE9\\La \\\"#.\\\"1\\t\\xE9:\\xE9:\\\"1x :x\\\"#\\L\\t:#\\\"'#x x-1..\\\"a0\\\"-x\\\"0\\txb a.1\\\"-b-\\t\\L:1\\n\\\"\\xE9.-..\\t\\xE91 \"\n"
+  },
+  {
+   "dump": "k: \"\\ta\\xE9 b\\\" #.' x\\t\\t\\L:\\Lb0\\L1b\\xE9 \\\"'b--\\nx011b 1 .0#\\t\\t\\\" .\\xE9a\\t0 1\\t\\L\\ta#.\\n.\\xE9xx\\xE9#'':\\t\\\"\"\n",
+   "yaml": "k: \"\\ta\\xE9 b\\\" #.' x\\t\\t\\L:\\Lb0\\L1b\\xE9 \\\"'b--\\nx011b 1 .0#\\t\\t\\\" .\\xE9a\\t0 1\\t\\L\\ta#.\\n.\\xE9xx\\xE9#'':\\t\\\"\"\n"
+  },
+  {
+   "dump": "k: \"' \\n\"\n",
+   "yaml": "k: \"' \\n\"\n"
+  },
+  {
+   "dump": "k: \"#:11\\t1# :\\\"'.'\\\": \\\" \\xE9b\\n\\L\\n. 0a.b#x\\n 'b\\xE9 x\\L\"\n",
+   "yaml": "k: \"#:11\\t1# :\\\"'.'\\\": \\\" \\xE9b\\n\\L\\n. 0a.b#x\\n 'b\\xE9 x\\L\"\n"
+  },
+  {
+   "dump": "k: \":\\n\\Lb.#\\t1.'\\\"\\tbx\\xE9#\\t\\xE9#bx 0xbx\\t.-b\\Lb0#:-a\\n.\\\"x\\La-\\t0-':\\\"#\\t\\\"\\t\\t\\xE9b\\t\n    x\\\"#'aa#:b:-'b1..'--\\L#\\\" \\xE9'ax\\\"0-'\\xE9\\n\\ta0\"\n",
+   "yaml": "k: \":\\n\\Lb.#\\t1.'\\\"\\tbx\\xE9#\\t\\xE9#bx 0xbx\\t.-b\\Lb0#:-a\\n.\\\"x\\La-\\t0-':\\\"#\\t\\\"\\t\\t\\xE9b\\t x\\\"#'aa#:b:-'b1..'--\\L#\\\" \\xE9'ax\\\"0-'\\xE9\\n\\ta0\"\n"
+  },
+  {
+   "dump": "k: \".x::.:\\t\\xE9.#:'\\t\\xE90\\n#\\t' \\n\\xE9\\L'-0\\\"x\\L0 \\xE9:#-0x.\\\"#\\L x xx\\tx\\\"bx\"\n",
+   "yaml": "k: \".x::.:\\t\\xE9.#:'\\t\\xE90\\n#\\t' \\n\\xE9\\L'-0\\\"x\\L0 \\xE9:#-0x.\\\"#\\L x xx\\tx\\\"bx\"\n"
+  },
+  {
+   "dump": "k: \"\\t.# xx.-\\xE9ab1\\\"\\xE9\\xE91:-a#1\\xE9\\txx'aa-\\xE9b\\nx0a\\n0a\\n\\t1'bx0:0-\\\"\\t\\n\\t0\\t\\xE9\"\n",
+   "yaml": "k: \"\\t.# xx.-\\xE9ab1\\\"\\xE9\\xE91:-a#1\\xE9\\txx'aa-\\xE9b\\nx0a\\n0a\\n\\t1'bx0:0-\\\"\\t\\n\\t0\\t\\xE9\"\n"
+  },
+  {
+   "dump": "k: \"b.\\t.1#:#b\\xE9'\\L\\tx1:\\xE9\\t\"\n",
+   "yaml": "k: \"b.\\t.1#:#b\\xE9'\\L\\tx1:\\xE9\\t\"\n"
+  },
+  {
+   "dump": "k: \"\\xE9\\xE9\\txb\\L  0'0-\\\"\\xE9-' # .'#bbb \\n:0#:1\\xE9\\t1x.:0:aa1#b0x.-\\Lb#x'\\xE9'x\\xE90:#\\t:1\\Lx01'.::a\"\n",
+   "yaml": "k: \"\\xE9\\xE9\\txb\\L  0'0-\\\"\\xE9-' # .'#bbb \\n:0#:1\\xE9\\t1x.:0:aa1#b0x.-\\Lb#x'\\xE9'x\\xE90:#\\t:1\\Lx01'.::a\"\n"
+  },
+  {
+   "dump": "k: \"0\\L1'a\\n\\t.. \\n0''#1  \\t\\L 0#-\\t11#.a-\\\"''\\L'.#.a.\\n:.1bxa-\\n\\\"\\\"x\\\"x:\\\"0##\\xE9b\\\"\n    .\\\"xb-ba#b':\\L\\n\\Lb1x\\t\\\"\"\n",
+   "yaml": "k: \"0\\L1'a\\n\\t.. \\n0''#1  \\t\\L 0#-\\t11#.a-\\\"''\\L'.#.a.\\n:.1bxa-\\n\\\"\\\"x\\\"x:\\\"0##\\xE9b\\\" .\\\"xb-ba#b':\\L\\n\\Lb1x\\t\\\"\"\n"
+  },
+  {
+   "dump": "k: \"#00\\xE9\\xE9\\La axba\"\n",
+   "yaml": "k: \"#00\\xE9\\xE9\\La axba\"\n"
+  },
+  {
+   "dump": "k: \"0x0a1\\\"ax0\\L'.'0'1\\L- x:b1x:\\n'\\t\\xE9a.\\t:0\\n0aa\\xE9x-\\L #0..\\t0#::'0a\\\"\\t.a-''\\n\\La-\\L\\\"x\\n\n    \\L1.a a\\L\\L a--axa\\L\"\n",
+   "yaml": "k: \"0x0a1\\\"ax0\\L'.'0'1\\L- x:b1x:\\n'\\t\\xE9a.\\t:0\\n0aa\\xE9x-\\L #0..\\t0#::'0a\\\"\\t.a-''\\n\\La-\\L\\\"x\\n \\L1.a a\\L\\L a--axa\\L\"\n"
+  },
+  {
+   "dump": "k: \"\\\":1\\t\\\"\\t x' \\n0'--\\xE9\\t.\\\"\\t\\xE9:0:a x :'.#x\\t.#:. \\nx'b\\xE9\\t\\t##\\nb10-0-\\t:xb0\\n#-\\L\\xE9\\n:\"\n",
+   "yaml": "k: \"\\\":1\\t\\\"\\t x' \\n0'--\\xE9\\t.\\\"\\t\\xE9:0:a x :'.#x\\t.#:. \\nx'b\\xE9\\t\\t##\\nb10-0-\\t:xb0\\n#-\\L\\xE9\\n:\"\n"
+  },
+  {
+   "dump": "k: \"x\\\"\\n:\\t\\n.b-1\\tx\\t\\n1--#\\n \\ta \\n1-\\\"\\L::\\L\\xE9a\\n'\\Lxa\\L\\\"\\\":.\\\"10# \\L\\ta\\n\\xE9xb#\\xE91':\\\"\\n\\xE9\\L'xab00-\n    \\\"-\\n.'#1:x.0.0\\t.\\xE90\\t#0# .1\\n.\\L\"\n",
+   "yaml": "k: \"x\\\"\\n:\\t\\n.b-1\\tx\\t\\n1--#\\n \\ta \\n1-\\\"\\L::\\L\\xE9a\\n'\\Lxa\\L\\\"\\\":.\\\"10# \\L\\ta\\n\\xE9xb#\\xE91':\\\"\\n\\xE9\\L'xab00- \\\"-\\n.'#1:x.0.0\\t.\\xE90\\t#0# .1\\n.\\L\"\n"
+  },
+  {
+   "dump": "k: a'#b\n",
+   "yaml": "k: \"a'#b\"\n"
+  },
+  {
+   "dump": "k: \"a0-\\\"x\\t x\\L-\\xE9#.a:\\t:\\\"11-a\\t1\\na\\\"1\\t-''\\La -\\L\\\"0-0' --0b\\xE9.b  \\L\\n-1:.\\\"\\t\n    \\n0b:x'.'xbb\\La1 -1#\\xE9\\\":\\\"xb -a\\xE9 .1'bx\\t1\"\n",
+   "yaml": "k: \"a0-\\\"x\\t x\\L-\\xE9#.a:\\t:\\\"11-a\\t1\\na\\\"1\\t-''\\La -\\L\\\"0-0' --0b\\xE9.b  \\L\\n-1:.\\\"\\t \\n0b:x'.'xbb\\La1 -1#\\xE9\\\":\\\"xb -a\\xE9 .1'bx\\t1\"\n"
+  },
+  {
+   "dump": "k: \"x: ab\\La.:\\xE9b.' \\xE9-#.\\\"b\\xE9\\L'xb1\\t0::\\xE9'\\xE90-\\t'-0\\n0\\ta:#' \\\"1:\\L\\L-0-11#\\\"x\\t\"\n",
+   "yaml": "k: \"x: ab\\La.:\\xE9b.' \\xE9-#.\\\"b\\xE9\\L'xb1\\t0::\\xE9'\\xE90-\\t'-0\\n0\\ta:#' \\\"1:\\L\\L-0-11#\\\"x\\t\"\n"
+  },
+  {
+   "dump": "k: \"\\\"\\\"-\\t\\L1 1--''.0..:.\\L-x\\t\\L\\\"\\n\\La#:\\L\\t.aa a\\n0aa0x\\Lx#\\\"xa\\L1\"\n",
+   "yaml": "k: \"\\\"\\\"-\\t\\L1 1--''.0..:.\\L-x\\t\\L\\\"\\n\\La#:\\L\\t.aa a\\n0aa0x\\Lx#\\\"xa\\L1\"\n"
+  },
+  {
+   "dump": "k: \"---\\t'\\n:\\\"#a\\xE9'.a\\xE9-xx:'a1\\La0-x.0b#\\xE9\\xE9a.\\\":\\L\\n1x\\L'b\\t a\\xE9#\\tx\\L\\xE9:\\t'x-\\na\\tx.'\\\"\\L\\t1\\t\"\n",
+   "yaml": "k: \"---\\t'\\n:\\\"#a\\xE9'.a\\xE9-xx:'a1\\La0-x.0b#\\xE9\\xE9a.\\\":\\L\\n1x\\L'b\\t a\\xE9#\\tx\\L\\xE9:\\t'x-\\na\\tx.'\\\"\\L\\t1\\t\"\n"
+  },
+  {
+   "dump": "k: \"\\\"' \\L:-x '\\\"'# 0'\\xE9\\xE9\\\"#:\\\"b:ab\\La--x.-\\L\\xE9\\\"\\L'\\L\\xE9:\\nabx\\L:#b\\\"\\L\\xE9-\\t1a':0\n    .\\xE9-x-1'b'11#\"\n",
+   "yaml": "k: \"\\\"' \\L:-x '\\\"'# 0'\\xE9\\xE9\\\"#:\\\"b:ab\\La--x.-\\L\\xE9\\\"\\L'\\L\\xE9:\\nabx\\L:#b\\\"\\L\\xE9-\\t1a':0 .\\xE9-x-1'b'11#\"\n"
+  },
+  {
+   "dump": "k: \"011\\t\\\".110bb\\xE9a0b-xa.0-\\xE9-'\\\"\\xE91a\\xE9xa:b\\xE9\\t'b0 xx\\ta\\\"#x.b\"\n",
+   "yaml": "k: \"011\\t\\\".110bb\\xE9a0b-xa.0-\\xE9-'\\\"\\xE91a\\xE9xa:b\\xE9\\t'b0 xx\\ta\\\"#x.b\"\n"
+  },
+  {
+   "dump": "k: \"b1a1#\\t0bx#\\xE9\\L::\\\"\"\n",
+   "yaml": "k: \"b1a1#\\t0bx#\\xE9\\L::\\\"\"\n"
+  },
+  {
+   "dump": "k: \".\\Lx#-#\\xE9x-x\\xE9b-bx:'0\\n\\xE9\\n#00\\t\\xE91\\n0  x\\n.\\n#0\\xE9\\Lxa-0\\t\\n\\t0'\\n.1x1\\xE9\\xE91\\xE9x#b\\\"a\\L':0\n    \\n\\t1xx\\L'\"\n",
+   "yaml": "k: \".\\Lx#-#\\xE9x-x\\xE9b-bx:'0\\n\\xE9\\n#00\\t\\xE91\\n0  x\\n.\\n#0\\xE9\\Lxa-0\\t\\n\\t0'\\n.1x1\\xE9\\xE91\\xE9x#b\\\"a\\L':0 \\n\\t1xx\\L'\"\n"
+  },
+  {
+   "dump": "k: \"b\\L\\\"#.\\\"\\nx\\\"1.0.\\t\\L::'a1#.b 0\\Lb \"\n",
+   "yaml": "k: \"b\\L\\\"#.\\\"\\nx\\\"1.0.\\t\\L::'a1#.b 0\\Lb \"\n"
+  },
+  {
+   "dump": "k: \"-0:0 \\\" :a'b.011x'ba\\\"\\L-1\\\"'\\t: -b ' \\n'\\Lx-:a\\\"\"\n",
+   "yaml": "k: \"-0:0 \\\" :a'b.011x'ba\\\"\\L-1\\\"'\\t: -b ' \\n'\\Lx-:a\\\"\"\n"
+  },
+  {
+   "dump": "k: \"\\xE9.\\L###.x\\n#\\t##b\\t '00a\\\"\"\n",
+   "yaml": "k: \"\\xE9.\\L###.x\\n#\\t##b\\t '00a\\\"\"\n"
+  },
+  {
+   "dump": "k: \"#x.\\xE9\\t b:\\xE9\\n :\\n.\\xE91x-b--\\xE9\\\"\\xE9'b00' b- 0\\t\\\".\\L\\t\\L\\nb.\\n#\"\n",
+   "yaml": "k: \"#x.\\xE9\\t b:\\xE9\\n :\\n.\\xE91x-b--\\xE9\\\"\\xE9'b00' b- 0\\t\\\".\\L\\t\\L\\nb.\\n#\"\n"
+  }
+ ]
+}

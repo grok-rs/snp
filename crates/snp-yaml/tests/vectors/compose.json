@@ -1,0 +1,1665 @@
+{
+ "meta": {
+  "libyaml": "0.2.5",
+  "python": "3.12.3",
+  "pyyaml": "6.0.3"
+ },
+ "vectors": [
+  {
+   "nodes": [
+    {
+     "end": 79,
+     "map": [
+      [
+       1,
+       2
+      ]
+     ],
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 5,
+     "scalar": "repos",
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 79,
+     "seq": [
+      3
+     ],
+     "start": [
+      7,
+      1,
+      0
+     ],
+     "tag": "tag:yaml.org,2002:seq"
+    },
+    {
+     "end": 79,
+     "map": [
+      [
+       4,
+       5
+      ],
+      [
+       6,
+       7
+      ]
+     ],
+     "start": [
+      11,
+      1,
+      4
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 15,
+     "scalar": "repo",
+     "start": [
+      11,
+      1,
+      4
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 22,
+     "scalar": "local",
+     "start": [
+      17,
+      1,
+      10
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 32,
+     "scalar": "hooks",
+     "start": [
+      27,
+      2,
+      4
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 79,
+     "seq": [
+      8
+     ],
+     "start": [
+      38,
+      3,
+      4
+     ],
+     "tag": "tag:yaml.org,2002:seq"
+    },
+    {
+     "end": 79,
+     "map": [
+      [
+       9,
+       10
+      ],
+      [
+       11,
+       12
+      ]
+     ],
+     "start": [
+      42,
+      3,
+      8
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 44,
+     "scalar": "id",
+     "start": [
+      42,
+      3,
+      8
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 47,
+     "scalar": "x",
+     "start": [
+      46,
+      3,
+      12
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 62,
+     "scalar": "stages",
+     "start": [
+      56,
+      4,
+      8
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 78,
+     "seq": [
+      13,
+      14
+     ],
+     "start": [
+      64,
+      4,
+      16
+     ],
+     "tag": "tag:yaml.org,2002:seq"
+    },
+    {
+     "end": 71,
+     "scalar": "commit",
+     "start": [
+      65,
+      4,
+      17
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 77,
+     "scalar": "push",
+     "start": [
+      73,
+      4,
+      25
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    }
+   ],
+   "yaml": "repos:\n-   repo: local\n    hooks:\n    -   id: x\n        stages: [commit, push]\n"
+  },
+  {
+   "nodes": [
+    {
+     "end": 43,
+     "map": [
+      [
+       1,
+       2
+      ],
+      [
+       4,
+       2
+      ],
+      [
+       5,
+       6
+      ],
+      [
+       7,
+       8
+      ]
+     ],
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 1,
+     "scalar": "a",
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 14,
+     "seq": [
+      3
+     ],
+     "start": [
+      3,
+      0,
+      3
+     ],
+     "tag": "tag:yaml.org,2002:seq"
+    },
+    {
+     "end": 13,
+     "scalar": "commit",
+     "start": [
+      7,
+      0,
+      7
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 16,
+     "scalar": "b",
+     "start": [
+      15,
+      1,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 22,
+     "scalar": "c",
+     "start": [
+      21,
+      2,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 27,
+     "scalar": "q",
+     "start": [
+      24,
+      2,
+      3
+     ],
+     "style": "\"",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 33,
+     "scalar": "d",
+     "start": [
+      32,
+      3,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 43,
+     "scalar": "lit\n",
+     "start": [
+      35,
+      3,
+      3
+     ],
+     "style": "|",
+     "tag": "tag:yaml.org,2002:str"
+    }
+   ],
+   "yaml": "a: &s [commit]\nb: *s\nc: \"q\" # c\nd: |\n  lit\n"
+  },
+  {
+   "nodes": [
+    {
+     "end": 22,
+     "map": [
+      [
+       1,
+       2
+      ],
+      [
+       3,
+       4
+      ]
+     ],
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 2,
+     "scalar": "k\u00e9",
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 6,
+     "scalar": "v\u00e9",
+     "start": [
+      4,
+      0,
+      4
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 8,
+     "scalar": "x",
+     "start": [
+      7,
+      1,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 21,
+     "seq": [
+      5,
+      6
+     ],
+     "start": [
+      10,
+      1,
+      3
+     ],
+     "tag": "tag:yaml.org,2002:seq"
+    },
+    {
+     "end": 12,
+     "scalar": "1",
+     "start": [
+      11,
+      1,
+      4
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:int"
+    },
+    {
+     "end": 20,
+     "map": [
+      [
+       7,
+       8
+      ]
+     ],
+     "start": [
+      14,
+      1,
+      7
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 16,
+     "scalar": "y",
+     "start": [
+      15,
+      1,
+      8
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 19,
+     "scalar": "2",
+     "start": [
+      18,
+      1,
+      11
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:int"
+    }
+   ],
+   "yaml": "\ufeffk\u00e9: v\u00e9\nx: [1, {y: 2}]\n"
+  },
+  {
+   "nodes": [
+    {
+     "end": 56,
+     "map": [
+      [
+       1,
+       2
+      ],
+      [
+       3,
+       4
+      ],
+      [
+       7,
+       8
+      ],
+      [
+       9,
+       10
+      ]
+     ],
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 1,
+     "scalar": "a",
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 10,
+     "scalar": "1",
+     "start": [
+      3,
+      0,
+      3
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 12,
+     "scalar": "b",
+     "start": [
+      11,
+      1,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 25,
+     "map": [
+      [
+       5,
+       6
+      ]
+     ],
+     "start": [
+      14,
+      1,
+      3
+     ],
+     "tag": "!foo"
+    },
+    {
+     "end": 21,
+     "scalar": "x",
+     "start": [
+      20,
+      1,
+      9
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 24,
+     "scalar": "1",
+     "start": [
+      23,
+      1,
+      12
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:int"
+    },
+    {
+     "end": 27,
+     "scalar": "c",
+     "start": [
+      26,
+      2,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 33,
+     "scalar": "12",
+     "start": [
+      29,
+      2,
+      3
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:int"
+    },
+    {
+     "end": 35,
+     "scalar": "d",
+     "start": [
+      34,
+      3,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 55,
+     "seq": [
+      11
+     ],
+     "start": [
+      37,
+      3,
+      3
+     ],
+     "tag": "tag:yaml.org,2002:python/tuple"
+    },
+    {
+     "end": 54,
+     "scalar": "1",
+     "start": [
+      53,
+      3,
+      19
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:int"
+    }
+   ],
+   "yaml": "a: !!str 1\nb: !foo {x: 1}\nc: ! 12\nd: !!python/tuple [1]\n"
+  },
+  {
+   "nodes": [
+    {
+     "end": 29,
+     "seq": [
+      1,
+      2,
+      5
+     ],
+     "start": [
+      4,
+      1,
+      0
+     ],
+     "tag": "tag:yaml.org,2002:seq"
+    },
+    {
+     "end": 7,
+     "scalar": "a",
+     "start": [
+      6,
+      1,
+      2
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 20,
+     "seq": [
+      3,
+      4
+     ],
+     "start": [
+      10,
+      2,
+      2
+     ],
+     "tag": "tag:yaml.org,2002:seq"
+    },
+    {
+     "end": 13,
+     "scalar": "b",
+     "start": [
+      12,
+      2,
+      4
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 19,
+     "scalar": "c",
+     "start": [
+      18,
+      3,
+      4
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 28,
+     "map": [
+      [
+       6,
+       7
+      ]
+     ],
+     "start": [
+      22,
+      4,
+      2
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 24,
+     "scalar": "d",
+     "start": [
+      23,
+      4,
+      3
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 27,
+     "scalar": "e",
+     "start": [
+      26,
+      4,
+      6
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    }
+   ],
+   "yaml": "---\n- a\n- - b\n  - c\n- {d: e}\n...\n"
+  },
+  {
+   "nodes": [
+    {
+     "end": 34,
+     "map": [
+      [
+       1,
+       2
+      ],
+      [
+       3,
+       4
+      ],
+      [
+       5,
+       6
+      ]
+     ],
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 3,
+     "scalar": "sha",
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 11,
+     "scalar": "v1.2.0",
+     "start": [
+      5,
+      0,
+      5
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 17,
+     "scalar": "sha",
+     "start": [
+      12,
+      1,
+      0
+     ],
+     "style": "'",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 22,
+     "scalar": "x",
+     "start": [
+      19,
+      1,
+      7
+     ],
+     "style": "'",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 28,
+     "scalar": "sha",
+     "start": [
+      23,
+      2,
+      0
+     ],
+     "style": "\"",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 33,
+     "scalar": "y",
+     "start": [
+      30,
+      2,
+      7
+     ],
+     "style": "\"",
+     "tag": "tag:yaml.org,2002:str"
+    }
+   ],
+   "yaml": "sha: v1.2.0\n'sha': 'x'\n\"sha\": \"y\"\n"
+  },
+  {
+   "nodes": [
+    {
+     "end": 50,
+     "map": [
+      [
+       1,
+       2
+      ]
+     ],
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 1,
+     "scalar": "a",
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 50,
+     "seq": [
+      3,
+      4
+     ],
+     "start": [
+      5,
+      1,
+      2
+     ],
+     "tag": "tag:yaml.org,2002:seq"
+    },
+    {
+     "end": 30,
+     "scalar": "folded text",
+     "start": [
+      7,
+      1,
+      4
+     ],
+     "style": ">",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 49,
+     "scalar": "plain multi",
+     "start": [
+      34,
+      4,
+      4
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    }
+   ],
+   "yaml": "a:\n  - >-\n    folded\n    text\n  - plain\n    multi\n"
+  },
+  {
+   "nodes": [],
+   "yaml": ""
+  },
+  {
+   "nodes": [],
+   "yaml": "# nothing\n"
+  },
+  {
+   "nodes": [
+    {
+     "end": 18,
+     "map": [
+      [
+       1,
+       2
+      ],
+      [
+       3,
+       4
+      ]
+     ],
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 1,
+     "scalar": "x",
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 6,
+     "scalar": "\u65e5\u672c\u8a9e",
+     "start": [
+      3,
+      0,
+      3
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 8,
+     "scalar": "y",
+     "start": [
+      7,
+      1,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 17,
+     "seq": [
+      5,
+      6
+     ],
+     "start": [
+      10,
+      1,
+      3
+     ],
+     "tag": "tag:yaml.org,2002:seq"
+    },
+    {
+     "end": 12,
+     "scalar": "\ud83d\ude00",
+     "start": [
+      11,
+      1,
+      4
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 16,
+     "scalar": "e\u0301",
+     "start": [
+      14,
+      1,
+      7
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    }
+   ],
+   "yaml": "x: \u65e5\u672c\u8a9e\ny: [\ud83d\ude00, e\u0301]\n"
+  },
+  {
+   "nodes": [
+    {
+     "end": 15,
+     "map": [
+      [
+       1,
+       2
+      ],
+      [
+       4,
+       5
+      ]
+     ],
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 1,
+     "scalar": "a",
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 7,
+     "seq": [
+      3
+     ],
+     "start": [
+      3,
+      1,
+      0
+     ],
+     "tag": "tag:yaml.org,2002:seq"
+    },
+    {
+     "end": 6,
+     "scalar": "x",
+     "start": [
+      5,
+      1,
+      2
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 10,
+     "scalar": "b",
+     "start": [
+      9,
+      2,
+      2
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 14,
+     "scalar": "c",
+     "start": [
+      13,
+      3,
+      2
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    }
+   ],
+   "yaml": "a:\n- x\n? b\n: c\n"
+  },
+  {
+   "nodes": [
+    {
+     "end": 12,
+     "map": [
+      [
+       1,
+       2
+      ],
+      [
+       4,
+       5
+      ]
+     ],
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 1,
+     "scalar": "a",
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 7,
+     "seq": [
+      3
+     ],
+     "start": [
+      3,
+      1,
+      0
+     ],
+     "tag": "tag:yaml.org,2002:seq"
+    },
+    {
+     "end": 6,
+     "scalar": "x",
+     "start": [
+      5,
+      1,
+      2
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 8,
+     "scalar": "b",
+     "start": [
+      7,
+      2,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 11,
+     "scalar": "c",
+     "start": [
+      10,
+      2,
+      3
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    }
+   ],
+   "yaml": "a:\n- x\nb: c\n"
+  },
+  {
+   "nodes": [
+    {
+     "end": 9,
+     "seq": [
+      1,
+      4
+     ],
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "tag": "tag:yaml.org,2002:seq"
+    },
+    {
+     "end": 5,
+     "map": [
+      [
+       2,
+       3
+      ]
+     ],
+     "start": [
+      1,
+      0,
+      1
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 2,
+     "scalar": "a",
+     "start": [
+      1,
+      0,
+      1
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 5,
+     "scalar": "b",
+     "start": [
+      4,
+      0,
+      4
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 8,
+     "scalar": "c",
+     "start": [
+      7,
+      0,
+      7
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    }
+   ],
+   "yaml": "[a: b, c]\n"
+  },
+  {
+   "nodes": [
+    {
+     "end": 24,
+     "seq": [
+      1,
+      5
+     ],
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "tag": "tag:yaml.org,2002:seq"
+    },
+    {
+     "end": 8,
+     "seq": [
+      2
+     ],
+     "start": [
+      2,
+      0,
+      2
+     ],
+     "tag": "tag:yaml.org,2002:seq"
+    },
+    {
+     "end": 7,
+     "map": [
+      [
+       3,
+       4
+      ]
+     ],
+     "start": [
+      3,
+      0,
+      3
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 4,
+     "scalar": "a",
+     "start": [
+      3,
+      0,
+      3
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 7,
+     "scalar": "b",
+     "start": [
+      6,
+      0,
+      6
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 23,
+     "seq": [
+      6,
+      9
+     ],
+     "start": [
+      11,
+      1,
+      2
+     ],
+     "tag": "tag:yaml.org,2002:seq"
+    },
+    {
+     "end": 19,
+     "map": [
+      [
+       7,
+       8
+      ]
+     ],
+     "start": [
+      12,
+      1,
+      3
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 15,
+     "scalar": "x",
+     "start": [
+      14,
+      1,
+      5
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 19,
+     "scalar": "y",
+     "start": [
+      18,
+      1,
+      9
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 22,
+     "scalar": "z",
+     "start": [
+      21,
+      1,
+      12
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    }
+   ],
+   "yaml": "- [a: b]\n- [? x : y, z]\n"
+  },
+  {
+   "nodes": [
+    {
+     "end": 22,
+     "map": [
+      [
+       1,
+       2
+      ],
+      [
+       5,
+       6
+      ]
+     ],
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 2,
+     "scalar": "a",
+     "start": [
+      1,
+      0,
+      1
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 10,
+     "seq": [
+      3,
+      4
+     ],
+     "start": [
+      4,
+      0,
+      4
+     ],
+     "tag": "tag:yaml.org,2002:seq"
+    },
+    {
+     "end": 6,
+     "scalar": "b",
+     "start": [
+      5,
+      0,
+      5
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 9,
+     "scalar": "c",
+     "start": [
+      8,
+      0,
+      8
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 13,
+     "scalar": "d",
+     "start": [
+      12,
+      0,
+      12
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 21,
+     "map": [
+      [
+       7,
+       8
+      ]
+     ],
+     "start": [
+      15,
+      0,
+      15
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 17,
+     "scalar": "e",
+     "start": [
+      16,
+      0,
+      16
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 20,
+     "scalar": "f",
+     "start": [
+      19,
+      0,
+      19
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    }
+   ],
+   "yaml": "{a: [b, c], d: {e: f}}\n"
+  },
+  {
+   "nodes": [
+    {
+     "end": 21,
+     "map": [
+      [
+       1,
+       2
+      ],
+      [
+       3,
+       4
+      ]
+     ],
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 1,
+     "scalar": "a",
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 11,
+     "scalar": "x\n\n",
+     "start": [
+      3,
+      0,
+      3
+     ],
+     "style": "|",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 12,
+     "scalar": "b",
+     "start": [
+      11,
+      3,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 21,
+     "scalar": "y",
+     "start": [
+      14,
+      3,
+      3
+     ],
+     "style": ">",
+     "tag": "tag:yaml.org,2002:str"
+    }
+   ],
+   "yaml": "a: |+\n  x\n\nb: >-\n  y\n"
+  },
+  {
+   "nodes": [
+    {
+     "end": 39,
+     "map": [
+      [
+       1,
+       2
+      ],
+      [
+       3,
+       4
+      ],
+      [
+       7,
+       4
+      ]
+     ],
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 1,
+     "scalar": "a",
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 16,
+     "scalar": "aGk=",
+     "start": [
+      3,
+      0,
+      3
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:binary"
+    },
+    {
+     "end": 18,
+     "scalar": "b",
+     "start": [
+      17,
+      1,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 32,
+     "map": [
+      [
+       5,
+       6
+      ]
+     ],
+     "start": [
+      20,
+      1,
+      3
+     ],
+     "tag": "tag:yaml.org,2002:set"
+    },
+    {
+     "end": 31,
+     "scalar": "p",
+     "start": [
+      30,
+      1,
+      13
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 31,
+     "scalar": "",
+     "start": [
+      31,
+      1,
+      14
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:null"
+    },
+    {
+     "end": 34,
+     "scalar": "c",
+     "start": [
+      33,
+      2,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    }
+   ],
+   "yaml": "a: !!binary aGk=\nb: &x !!set {p}\nc: *x\n"
+  },
+  {
+   "nodes": [
+    {
+     "end": 13,
+     "map": [
+      [
+       1,
+       2
+      ]
+     ],
+     "start": [
+      2,
+      1,
+      0
+     ],
+     "tag": "tag:yaml.org,2002:map"
+    },
+    {
+     "end": 3,
+     "scalar": "k",
+     "start": [
+      2,
+      1,
+      0
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    },
+    {
+     "end": 13,
+     "seq": [
+      3
+     ],
+     "start": [
+      8,
+      2,
+      2
+     ],
+     "tag": "tag:yaml.org,2002:seq"
+    },
+    {
+     "end": 11,
+     "scalar": "v",
+     "start": [
+      10,
+      2,
+      4
+     ],
+     "style": "",
+     "tag": "tag:yaml.org,2002:str"
+    }
+   ],
+   "yaml": "\r\nk:\r\n  - v\r\n"
+  }
+ ]
+}
