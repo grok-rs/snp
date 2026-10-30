@@ -90,8 +90,13 @@ fn install_go(h: &Host<'_>, version: &str, env_dir: &Path) -> Result<Option<Tool
     };
     mkdirs(env_dir)?;
     let goroot = env_dir.join(".go");
-    if shared::symlink(&tool.dir, &goroot, true).is_ok() {
-        return Ok(Some((Arc::from("go"), Arc::from(tool.version.as_str()))));
+    match shared::symlink(&tool.dir, &goroot, true) {
+        Ok(()) => return Ok(Some((Arc::from("go"), Arc::from(tool.version.as_str())))),
+        // Never copy over (or through) something that exists: `env_dir` is new on entry.
+        Err(e) if std::fs::symlink_metadata(&goroot).is_ok() => {
+            return Err(io_err("symlink", &goroot, e));
+        }
+        Err(_) => {}
     }
     // No symbolic links (Windows without the privilege): a private copy, as pre-commit has.
     copy_tree(&tool.dir, &goroot)?;

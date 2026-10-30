@@ -208,9 +208,11 @@ fn choose_backend(
     if let Some(dep) = pipconf::unsupported_dep(cx.deps) {
         return fallback(messages::dash_dependency(&dep));
     }
-    match uv::find(h, mode == Mode::Uv)? {
-        Some(uv) => Ok((Backend::Uv(uv), Some(translation))),
-        None => fallback(messages::NO_UV.to_owned()),
+    match uv::find(h, mode == Mode::Uv) {
+        Ok(Some(uv)) => Ok((Backend::Uv(uv), Some(translation))),
+        Ok(None) => fallback(messages::NO_UV.to_owned()),
+        Err(LangError::Interrupted) => Err(LangError::Interrupted),
+        Err(e) => fallback(format!("{}: {e}", messages::NO_UV)),
     }
 }
 

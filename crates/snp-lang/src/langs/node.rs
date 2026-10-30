@@ -172,7 +172,8 @@ fn link_toolchain(tool: &Path, env_dir: &Path) -> Result<(), LangError> {
 
 /// The `node` the activated environment resolves, as a realpath.
 fn resolved_node(h: &Host<'_>, env: &Env) -> Option<PathBuf> {
-    let found = h.probe.find_exe(OsStr::new("node"), env, h.cwd)?;
+    // Uncached: the memo of `ToolProbe::find_exe` would keep a lookup made before the install.
+    let found = snp_proc::resolve::find_executable(OsStr::new("node"), env, h.cwd)?;
     let abs = if found.is_absolute() {
         found
     } else {

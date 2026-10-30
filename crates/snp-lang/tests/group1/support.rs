@@ -13,7 +13,7 @@ use snp_lang::{EnvCtx, Host, InstallCtx, PlanCtx};
 use snp_net::{Checksum, Fetch, NetError};
 
 /// The files of the hook repository (pre-commit's clone and snp's prefix hold the same).
-pub const HOOK_FILES: [(&str, &str); 8] = [
+pub(crate) const HOOK_FILES: [(&str, &str); 8] = [
     (
         ".pre-commit-hooks.yaml",
         "-   id: py-hook\n    name: py-hook\n    entry: py-hello --flag\n    language: python\n    files: ^a\\.txt$\n    require_serial: true\n\
@@ -44,32 +44,32 @@ pub const HOOK_FILES: [(&str, &str); 8] = [
 ];
 
 /// A temporary world: `<root>/repo` (the user's repository, the run's cwd), `<root>/prefix` (the hook clone),
-/// `<root>/shims` (fake executables on `PATH`), `<root>/home`.
+/// `<root>/fakebin` (fake executables on `PATH`; not named `shims`, which `exe_exists` rejects), `<root>/home`.
 #[derive(Debug)]
-pub struct World {
+pub(crate) struct World {
     /// Keeps the directory alive.
     _dir: tempfile::TempDir,
     /// The canonical root.
-    pub root: PathBuf,
+    pub(crate) root: PathBuf,
     /// The user's repository.
-    pub repo: PathBuf,
+    pub(crate) repo: PathBuf,
     /// The hook prefix.
-    pub prefix: PathBuf,
+    pub(crate) prefix: PathBuf,
     /// Fake executables.
-    pub shims: PathBuf,
+    pub(crate) shims: PathBuf,
     /// `$HOME`.
-    pub home: PathBuf,
+    pub(crate) home: PathBuf,
 }
 
 impl World {
     /// A new world with the hook files in the prefix (and a `.git` directory, as in a clone).
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = snp_pycompat::ospath::realpath(dir.path().as_os_str(), dir.path()).unwrap();
         let w = Self {
             repo: root.join("repo"),
             prefix: root.join("prefix"),
-            shims: root.join("shims"),
+            shims: root.join("fakebin"),
             home: root.join("home"),
             root,
             _dir: dir,
@@ -85,15 +85,19 @@ impl World {
     }
 
     /// The `PATH` of both sides: the shims, then the system directories.
-    pub fn path(&self) -> OsString {
+    pub(crate) fn path(&self) -> OsString {
         let mut p = self.shims.clone().into_os_string();
         p.push(if cfg!(windows) { ";" } else { ":" });
-        p.push(if cfg!(windows) { r"C:\Windows\System32" } else { "/usr/bin:/bin" });
+        p.push(if cfg!(windows) {
+            r"C:\Windows\System32"
+        } else {
+            "/usr/bin:/bin"
+        });
         p
     }
 
     /// The base environment (the run's, with `PRE_COMMIT=1`) plus `extra`.
-    pub fn env(&self, extra: &[(&str, &str)]) -> Env {
+    pub(crate) fn env(&self, extra: &[(&str, &str)]) -> Env {
         let mut pairs: Vec<(OsString, OsString)> = vec![
             ("PATH".into(), self.path()),
             ("HOME".into(), self.home.clone().into_os_string()),
@@ -109,20 +113,36 @@ impl World {
         Env::from_pairs(pairs)
     }
 
+    /// A hermetic environment: `PATH` holds only the fake executables (nothing of the host is found).
+    pub(crate) fn isolated_env(&self, extra: &[(&str, &str)]) -> Env {
+        let mut pairs: Vec<(OsString, OsString)> = vec![
+            ("PATH".into(), self.shims.clone().into_os_string()),
+            ("HOME".into(), self.home.clone().into_os_string()),
+            ("PRE_COMMIT".into(), "1".into()),
+        ];
+        if cfg!(windows) {
+            pairs.push(("USERPROFILE".into(), self.home.clone().into_os_string()));
+        }
+        for (k, v) in extra {
+            pairs.push(((*k).into(), (*v).into()));
+        }
+        Env::from_pairs(pairs)
+    }
+
     /// A host recording into a [`snp_lang::harness::ShimRunner`] whose delta base is `env`, cwd = the repository.
-    pub fn host(&self, env: Env) -> TestHost {
+    pub(crate) fn host(&self, env: Env) -> TestHost {
         TestHost::new(&self.repo, env)
     }
 
     /// An empty executable `name` in the shims directory.
-    pub fn shim(&self, name: &str) -> PathBuf {
+    pub(crate) fn shim(&self, name: &str) -> PathBuf {
         let p = self.shims.join(name);
         exe(&p);
         p
     }
 
     /// The path placeholders of this world.
-    pub fn subst(&self) -> Substitutions {
+    pub(crate) fn subst(&self) -> Substitutions {
         Substitutions::new()
             .with(self.repo.join(".snp-tools").as_os_str(), "{TOOLS}")
             .with(self.repo.as_os_str(), "{REPO}")
@@ -133,7 +153,7 @@ impl World {
 }
 
 /// An empty executable file (parents created).
-pub fn exe(p: &Path) {
+pub(crate) fn exe(p: &Path) {
     std::fs::create_dir_all(p.parent().unwrap()).unwrap();
     std::fs::write(p, b"").unwrap();
     #[cfg(unix)]
@@ -144,12 +164,17 @@ pub fn exe(p: &Path) {
 }
 
 /// `deps` as the trait wants them.
-pub fn deps(v: &[&str]) -> Vec<Arc<str>> {
+pub(crate) fn deps(v: &[&str]) -> Vec<Arc<str>> {
     v.iter().map(|s| Arc::from(*s)).collect()
 }
 
 /// An environment context.
-pub fn env_ctx<'a>(host: &'a Host<'a>, prefix: &'a Path, version: &'a str, env_dir: &'a Path) -> EnvCtx<'a> {
+pub(crate) fn env_ctx<'a>(
+    host: &'a Host<'a>,
+    prefix: &'a Path,
+    version: &'a str,
+    env_dir: &'a Path,
+) -> EnvCtx<'a> {
     EnvCtx {
         host,
         prefix,
@@ -159,7 +184,7 @@ pub fn env_ctx<'a>(host: &'a Host<'a>, prefix: &'a Path, version: &'a str, env_d
 }
 
 /// An install context.
-pub fn install_ctx<'a>(
+pub(crate) fn install_ctx<'a>(
     host: &'a Host<'a>,
     prefix: &'a Path,
     version: &'a str,
@@ -175,7 +200,7 @@ pub fn install_ctx<'a>(
 }
 
 /// A plan context.
-pub fn plan_ctx<'a>(
+pub(crate) fn plan_ctx<'a>(
     host: &'a Host<'a>,
     prefix: &'a Path,
     version: &'a str,
@@ -199,7 +224,7 @@ pub fn plan_ctx<'a>(
 
 /// A file effect of a scripted call; templates expand `{cwd}`, `{argN}` and `{env:NAME}`.
 #[derive(Debug, Clone, Copy)]
-pub enum Eff {
+pub(crate) enum Eff {
     /// `mkdir -p`.
     Mkdir(&'static str),
     /// An empty executable file.
@@ -210,21 +235,26 @@ pub enum Eff {
 
 /// One scripted reply, shared by the snp side (a [`Reply`]) and the oracle side (`record.py`'s `replies`).
 #[derive(Debug, Clone)]
-pub struct R {
+pub(crate) struct R {
     /// The tool.
-    pub tool: &'static str,
+    pub(crate) tool: &'static str,
     /// Argument prefix.
-    pub when: &'static [&'static str],
+    pub(crate) when: &'static [&'static str],
     /// Exit status.
-    pub status: i64,
+    pub(crate) status: i64,
     /// stdout.
-    pub stdout: &'static str,
+    pub(crate) stdout: &'static str,
     /// Effects.
-    pub effects: Vec<Eff>,
+    pub(crate) effects: Vec<Eff>,
 }
 
 /// A reply without effects.
-pub fn r(tool: &'static str, when: &'static [&'static str], status: i64, stdout: &'static str) -> R {
+pub(crate) fn r(
+    tool: &'static str,
+    when: &'static [&'static str],
+    status: i64,
+    stdout: &'static str,
+) -> R {
     R {
         tool,
         when,
@@ -250,14 +280,19 @@ fn expand(t: &str, rec: &Recorded, base: &Env) -> PathBuf {
             .and_then(|(_, v)| v.clone())
             .or_else(|| base.get(name).map(OsStr::to_os_string))
             .unwrap_or_default();
-        out = format!("{}{}{}", &out[..start], value.to_string_lossy(), &out[end + 1..]);
+        out = format!(
+            "{}{}{}",
+            &out[..start],
+            value.to_string_lossy(),
+            &out[end + 1..]
+        );
     }
     PathBuf::from(out)
 }
 
 impl R {
     /// The snp-side reply (sticky).
-    pub fn reply(&self, base: &Env) -> Reply {
+    pub(crate) fn reply(&self, base: &Env) -> Reply {
         let effects = self.effects.clone();
         let base = base.clone();
         Reply {
@@ -293,7 +328,7 @@ impl R {
     }
 
     /// The oracle-side reply (`record.py` JSON).
-    pub fn json(&self) -> serde_json::Value {
+    pub(crate) fn json(&self) -> serde_json::Value {
         let effects: Vec<serde_json::Value> = self
             .effects
             .iter()
@@ -315,7 +350,7 @@ impl R {
 }
 
 /// Scripts `replies` on the host's runner.
-pub fn script(t: &TestHost, replies: &[R]) {
+pub(crate) fn script(t: &TestHost, replies: &[R]) {
     for r in replies {
         t.runner.reply(r.tool, r.reply(&t.env));
     }
@@ -323,13 +358,13 @@ pub fn script(t: &TestHost, replies: &[R]) {
 
 /// A [`Fetch`] serving fixed texts and files (verified like the real one).
 #[derive(Debug, Default)]
-pub struct FakeFetch {
+pub(crate) struct FakeFetch {
     /// URL → text.
-    pub texts: Vec<(String, String)>,
+    pub(crate) texts: Vec<(String, String)>,
     /// URL → bytes.
-    pub files: Vec<(String, Vec<u8>)>,
+    pub(crate) files: Vec<(String, Vec<u8>)>,
     /// Every URL asked for, in order.
-    pub asked: Mutex<Vec<String>>,
+    pub(crate) asked: Mutex<Vec<String>>,
 }
 
 impl Fetch for FakeFetch {
@@ -383,12 +418,15 @@ impl Fetch for FakeFetch {
 }
 
 /// sha256 hex of `b`.
-pub fn sha256_hex(b: &[u8]) -> String {
-    Sha256::digest(b).iter().map(|x| format!("{x:02x}")).collect()
+pub(crate) fn sha256_hex(b: &[u8]) -> String {
+    Sha256::digest(b)
+        .iter()
+        .map(|x| format!("{x:02x}"))
+        .collect()
 }
 
 /// A `.tar.gz` holding `files` (`(path, body, mode)`, directories implied).
-pub fn tar_gz(files: &[(&str, &[u8], u32)]) -> Vec<u8> {
+pub(crate) fn tar_gz(files: &[(&str, &[u8], u32)]) -> Vec<u8> {
     let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
     let mut b = tar::Builder::new(enc);
     for (path, body, mode) in files {

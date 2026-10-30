@@ -24,7 +24,9 @@ use snp_core::lang::LanguageId;
 use snp_lang::harness::{GoldenCall, Recorded, Substitutions, parse_log, render_log};
 use snp_lang::{Health, RunPlan, backend, check_support};
 
-use crate::support::{Eff, FakeFetch, HOOK_FILES, R, World, deps, env_ctx, install_ctx, plan_ctx, r, script};
+use crate::support::{
+    Eff, FakeFetch, HOOK_FILES, R, World, deps, env_ctx, install_ctx, plan_ctx, r, script,
+};
 
 /// One scenario.
 struct Sc {
@@ -87,7 +89,12 @@ fn python_replies() -> Vec<R> {
 /// snp's pip backend: the reference probe and `-m venv`.
 fn python_snp_replies() -> Vec<R> {
     vec![
-        r("python3", &["-S", "-c"], 0, "cpython\n3.12.3.final.0\n/usr/bin/python3\n"),
+        r(
+            "python3",
+            &["-S", "-c"],
+            0,
+            "cpython\n3.12.3.final.0\n/usr/bin/python3\n",
+        ),
         R {
             effects: vec![
                 Eff::Mkdir("{arg3}/bin"),
@@ -102,8 +109,10 @@ fn python_snp_replies() -> Vec<R> {
 /// The environment-creation calls and snp's reference probe.
 fn skip_python(c: &GoldenCall) -> bool {
     let a: Vec<&str> = c.argv.iter().map(String::as_str).collect();
-    matches!(a.as_slice(), ["python", "-mvirtualenv", ..] | ["python3", "-m", "venv", ..])
-        || (a.first() == Some(&"python3") && a.get(1) == Some(&"-S"))
+    matches!(
+        a.as_slice(),
+        ["python", "-mvirtualenv", ..] | ["python3", "-m", "venv", ..]
+    ) || (a.first() == Some(&"python3") && a.get(1) == Some(&"-S"))
 }
 
 /// nodeenv.
@@ -129,7 +138,11 @@ fn narrow_none(_: &GoldenCall) -> Option<&'static [&'static str]> {
 /// The managed-rust cargo calls: argv, cwd and `RUSTUP_TOOLCHAIN`.
 fn narrow_cargo(c: &GoldenCall) -> Option<&'static [&'static str]> {
     let a: Vec<&str> = c.argv.iter().map(String::as_str).collect();
-    matches!(a.as_slice(), ["cargo", "install", ..] | ["cargo", "add", ..]).then_some(&["RUSTUP_TOOLCHAIN"][..])
+    matches!(
+        a.as_slice(),
+        ["cargo", "install", ..] | ["cargo", "add", ..]
+    )
+    .then_some(&["RUSTUP_TOOLCHAIN"][..])
 }
 
 /// The go.dev JSON of the default go version.
@@ -226,7 +239,10 @@ fn scenarios() -> Vec<Sc> {
             deps: &["golang.org/x/tools/cmd/goimports@latest"],
             entry: "go-hello",
             replies: vec![R {
-                effects: vec![Eff::Exe("{env:GOPATH}/bin/go-hello"), Eff::Mkdir("{env:GOPATH}/pkg/mod")],
+                effects: vec![
+                    Eff::Exe("{env:GOPATH}/bin/go-hello"),
+                    Eff::Mkdir("{env:GOPATH}/pkg/mod"),
+                ],
                 ..r("go", &["install"], 0, "")
             }],
             ..base("golang_system_deps", "go-hook", LanguageId::Golang)
@@ -341,7 +357,11 @@ fn snp_side(sc: &Sc) -> Vec<GoldenCall> {
     }
     if !sc.fetch.is_empty() {
         t.fetch = Some(Box::new(FakeFetch {
-            texts: sc.fetch.iter().map(|(u, b)| ((*u).to_owned(), (*b).to_owned())).collect(),
+            texts: sc
+                .fetch
+                .iter()
+                .map(|(u, b)| ((*u).to_owned(), (*b).to_owned()))
+                .collect(),
             ..FakeFetch::default()
         }));
     }
@@ -355,16 +375,28 @@ fn snp_side(sc: &Sc) -> Vec<GoldenCall> {
     let deps = deps(sc.deps);
     check_support(sc.lang, &version, &deps, host.brand).unwrap();
     let env_dir = w.prefix.join(env_dir_name(sc.lang, &version));
-    be.install(&install_ctx(&host, &w.prefix, &version, &env_dir, &deps, false))
-        .unwrap();
+    be.install(&install_ctx(
+        &host, &w.prefix, &version, &env_dir, &deps, false,
+    ))
+    .unwrap();
     let ecx = env_ctx(&host, &w.prefix, &version, &env_dir);
-    assert_eq!(be.health(&ecx, None).unwrap(), Health::Healthy, "{}", sc.name);
+    assert_eq!(
+        be.health(&ecx, None).unwrap(),
+        Health::Healthy,
+        "{}",
+        sc.name
+    );
     let patch = be.activate(&ecx).unwrap();
     let env = t.env.patched(&patch);
     let plan = be
-        .plan(&plan_ctx(&host, &w.prefix, &version, &env_dir, &env, sc.entry))
+        .plan(&plan_ctx(
+            &host, &w.prefix, &version, &env_dir, &env, sc.entry,
+        ))
         .unwrap();
-    let RunPlan::Xargs { cmd, env: run_env, .. } = plan else {
+    let RunPlan::Xargs {
+        cmd, env: run_env, ..
+    } = plan
+    else {
         panic!("{plan:?}")
     };
     let subst = w.subst();
@@ -401,7 +433,9 @@ fn normalize(sc: &Sc, calls: Vec<GoldenCall>) -> Vec<GoldenCall> {
         })
         .collect();
     // pre-commit iterates `cargo install` packages from a set.
-    let start = out.iter().position(|c| c.argv.get(..2) == Some(&["cargo".to_owned(), "install".to_owned()][..]));
+    let start = out
+        .iter()
+        .position(|c| c.argv.get(..2) == Some(&["cargo".to_owned(), "install".to_owned()][..]));
     if let Some(s) = start {
         let end = out[s..]
             .iter()
@@ -419,13 +453,21 @@ fn snp_matches_the_pre_commit_goldens() {
             .unwrap_or_else(|e| panic!("{}: {e}", sc.name));
         let theirs = normalize(&sc, parse_log(&golden, &Substitutions::new()).unwrap());
         let ours = normalize(&sc, snp_side(&sc));
-        assert_eq!(render_log(&ours), render_log(&theirs), "scenario {}", sc.name);
+        assert_eq!(
+            render_log(&ours),
+            render_log(&theirs),
+            "scenario {}",
+            sc.name
+        );
     }
 }
 
 /// The oracle venv: `target/oracle/pc462-py312`, or `$SNP_ORACLE_PY312`.
 fn oracle_root() -> PathBuf {
-    #[expect(clippy::disallowed_methods, reason = "test switch selecting the oracle venv")]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "test switch selecting the oracle venv"
+    )]
     let explicit = std::env::var_os("SNP_ORACLE_PY312");
     explicit.map_or_else(
         || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/oracle/pc462-py312"),
@@ -476,7 +518,10 @@ fn record(sc: &Sc, python: &Path) -> String {
     }
     if !sc.deps.is_empty() {
         let d: Vec<String> = sc.deps.iter().map(|d| format!("'{d}'")).collect();
-        hook.push_str(&format!("            additional_dependencies: [{}]\n", d.join(", ")));
+        hook.push_str(&format!(
+            "            additional_dependencies: [{}]\n",
+            d.join(", ")
+        ));
     }
     let config = format!(
         "repos:\n-   repo: {}\n    rev: {rev}\n    hooks:\n{hook}",
@@ -493,7 +538,10 @@ fn record(sc: &Sc, python: &Path) -> String {
     let mut env: BTreeMap<String, String> = BTreeMap::new();
     for (k, v) in w.env(&[]).iter() {
         if k != "PRE_COMMIT" {
-            env.insert(k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned());
+            env.insert(
+                k.to_string_lossy().into_owned(),
+                v.to_string_lossy().into_owned(),
+            );
         }
     }
     env.insert("PRE_COMMIT_HOME".into(), store.display().to_string());
@@ -565,8 +613,14 @@ fn record(sc: &Sc, python: &Path) -> String {
 fn oracle_group1_goldens_are_current() {
     let root = oracle_root();
     let python = root.join("bin/python");
-    assert!(python.exists(), "run `cargo xtask oracle install` (or set SNP_ORACLE_PY312)");
-    #[expect(clippy::disallowed_methods, reason = "test switch to rewrite the goldens")]
+    assert!(
+        python.exists(),
+        "run `cargo xtask oracle install` (or set SNP_ORACLE_PY312)"
+    );
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "test switch to rewrite the goldens"
+    )]
     let update = std::env::var_os("SNP_UPDATE_GOLDENS").is_some();
     for sc in scenarios() {
         let rendered = record(&sc, &python);
