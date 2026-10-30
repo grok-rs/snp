@@ -11,6 +11,7 @@
 //!
 //! Owner: WP-13.
 
+use std::borrow::Cow;
 use std::sync::OnceLock;
 
 use crate::error::MatchError;
@@ -148,7 +149,7 @@ impl T2 {
             let lane = latin1(h.bytes());
             return self
                 .re
-                .is_match(lane.as_str())
+                .is_match(lane.as_ref())
                 .map_err(|_| MatchError::Backtrack);
         }
         match h.text() {
@@ -166,7 +167,7 @@ impl T2 {
                 .map_err(|_| MatchError::Backtrack)
         };
         if self.latin1 {
-            return anchored(latin1(h.bytes()).as_str());
+            return anchored(latin1(h.bytes()).as_ref());
         }
         h.text().map_or(Ok(false), anchored)
     }
@@ -177,9 +178,13 @@ impl T2 {
             let lane = latin1(h.bytes());
             let m = self
                 .re
-                .find(lane.as_str())
+                .find(lane.as_ref())
                 .map_err(|_| MatchError::Backtrack)?;
-            return Ok(m.map(|m| (char_offset(&lane, m.start()), char_offset(&lane, m.end()))));
+            return Ok(m.map(|m| match &lane {
+                // ASCII: the lane is the haystack itself.
+                Cow::Borrowed(_) => (m.start(), m.end()),
+                Cow::Owned(lane) => (char_offset(lane, m.start()), char_offset(lane, m.end())),
+            }));
         }
         match h.text() {
             Some(t) => Ok(self
@@ -193,8 +198,14 @@ impl T2 {
 }
 
 /// The Latin-1 lane: each byte becomes the character with the same value (a bijection onto U+0000–U+00FF).
-fn latin1(b: &[u8]) -> String {
-    b.iter().copied().map(char::from).collect()
+/// ASCII haystacks (the usual pygrep line) are their own lane and are not copied.
+fn latin1(b: &[u8]) -> Cow<'_, str> {
+    if b.is_ascii()
+        && let Ok(s) = std::str::from_utf8(b)
+    {
+        return Cow::Borrowed(s);
+    }
+    Cow::Owned(b.iter().copied().map(char::from).collect())
 }
 
 /// A byte offset of the Latin-1 lane mapped back to the original bytes (one character per byte).
@@ -396,7 +407,7 @@ impl Compiled {
                 depth,
                 bytes,
             } => {
-                if cond.needs_exact(h.bytes()) {
+                if cond.needs_exact_span(h.bytes()) {
                     let Some(e) = Self::exact(exact, exact_src.as_deref(), *bytes, *depth) else {
                         return Err(MatchError::Backtrack);
                     };

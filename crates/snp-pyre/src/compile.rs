@@ -23,7 +23,9 @@ const EAGER_EST: u64 = 20_000;
 /// memory grow with the expansion ([`crate::ast::Info::est`], ~µs of compile time). Above ~0.1 s of estimated
 /// work the pattern is `Unsupported` before any engine is built — `a{40000}`, `[0-9a-f]{5000}` and `\w{90}`
 /// compile, `a{100000}`, `\w{1000}` and nested counts like `(?:a{999}){999}` do not (CPython compiles them
-/// without unrolling). The corpus maximum is a count of 111 on single characters.
+/// without unrolling). Anchors are charged by their exact look-around forms (a Unicode `\b`/`\B` ~200, a
+/// non-MULTILINE `$` 50), so runs of ~500 word boundaries or ~2 000 `$` are the limit. The corpus maximum is a count
+/// of 111 on single characters.
 const EXPANSION_BUDGET: u64 = 100_000;
 
 /// Parse + post-parse checks only; never builds an engine (validate-config, config load; ARCHITECTURE §3.3
@@ -68,12 +70,15 @@ enum Imp {
     Engines(Box<Engines>),
 }
 
-/// Engines and the texts the lazy `re.fullmatch` variant is built from.
+/// Engines and the texts the lazy `re.match` / `re.fullmatch` variants are built from.
 #[derive(Debug)]
 struct Engines {
     texts: Texts,
-    /// `re.search` and `re.match`.
+    /// `re.search`, and `re.match` unless `prefix` exists.
     search: Compiled,
+    /// `re.match` of a pattern whose search engines carry the charset-prefix rule ([`lower::Quirk`]), built on
+    /// first use from `texts`.
+    prefix: Option<OnceLock<Option<Compiled>>>,
     /// `re.fullmatch` (`\A(?:P)\z`), built on first use.
     full: OnceLock<Option<Compiled>>,
     eager: bool,
@@ -81,6 +86,15 @@ struct Engines {
 
 impl Engines {
     fn is_match(&self, h: Hay<'_>, op: Op) -> Result<bool, MatchError> {
+        if op == Op::Prefix
+            && let Some(cell) = &self.prefix
+        {
+            let prefix = cell.get_or_init(|| Compiled::build(&self.texts, false, self.eager).ok());
+            let Some(prefix) = prefix else {
+                return Err(MatchError::Backtrack);
+            };
+            return prefix.is_match(h, Op::Prefix);
+        }
         if op != Op::Full {
             return self.search.is_match(h, op);
         }
@@ -275,9 +289,40 @@ fn engines(ast: &Ast, opts: Options) -> Result<(MatchKind, Imp), PyReError> {
         return Err(PyReError::Unsupported(messages::OVER_BUDGET.into()));
     }
     let tier2 = info.feat.has(Features::TIER2);
+    let texts = texts(ast, opts, tier2, None)?;
+    let quirk = lower::search_quirk(ast);
+    let search_texts = match &quirk {
+        Some(q) => Some(self::texts(ast, opts, tier2, Some(q))?),
+        None => None,
+    };
+    let eager = info.est > EAGER_EST;
+    let search = Compiled::build(search_texts.as_ref().unwrap_or(&texts), false, eager)
+        .map_err(|e| PyReError::Unsupported(e.into_boxed_str()))?;
+    let kind = if tier2 {
+        MatchKind::Tier2
+    } else {
+        MatchKind::Tier1
+    };
+    let engines = Engines {
+        texts,
+        search,
+        prefix: quirk.map(|_| OnceLock::new()),
+        full: OnceLock::new(),
+        eager,
+    };
+    Ok((kind, Imp::Engines(Box::new(engines))))
+}
+
+/// The lowered texts of `ast` (`quirk`: the `re.search` variant of [`lower::Quirk`]).
+fn texts(
+    ast: &Ast,
+    opts: Options,
+    tier2: bool,
+    quirk: Option<&lower::Quirk>,
+) -> Result<Texts, PyReError> {
     let bytes = ast.bytes;
     let texts = if tier2 {
-        let exact = lower::lower(ast, Variant::Exact, opts.haystack);
+        let exact = lower::lower_with(ast, Variant::Exact, opts.haystack, quirk);
         let relaxed = lower::lower(ast, Variant::Relaxed, opts.haystack);
         Texts {
             main: exact.text.into_boxed_str(),
@@ -290,17 +335,28 @@ fn engines(ast: &Ast, opts: Options) -> Result<(MatchKind, Imp), PyReError> {
             relaxed_anchored: relaxed.anchored,
         }
     } else {
-        let fast = lower::lower(ast, Variant::Fast, opts.haystack);
-        let exact =
-            (!fast.cond.is_none()).then(|| lower::lower(ast, Variant::Exact, opts.haystack));
-        let depth = exact
-            .as_ref()
-            .map_or(fast.depth, |e| e.depth.max(fast.depth));
+        let mut fast = lower::lower_with(ast, Variant::Fast, opts.haystack, quirk);
+        let mut exact = (!fast.cond.is_none())
+            .then(|| lower::lower_with(ast, Variant::Exact, opts.haystack, quirk));
         if let Some(e) = &exact
             && e.depth >= crate::engine::FANCY_MAX_DEPTH
         {
-            return Err(PyReError::Unsupported(messages::TOO_DEEP_FOR_TIER2.into()));
+            let only_span = lower::Cond {
+                span: false,
+                ..fast.cond
+            }
+            .is_none();
+            if !only_span {
+                return Err(PyReError::Unsupported(messages::TOO_DEEP_FOR_TIER2.into()));
+            }
+            // Only the match span of a nullable loop needed the exact form: keep `regex`'s span (D-MISC-06)
+            // rather than rejecting a pattern whose matches are exact.
+            fast.cond.span = false;
+            exact = None;
         }
+        let depth = exact
+            .as_ref()
+            .map_or(fast.depth, |e| e.depth.max(fast.depth));
         Texts {
             main: fast.text.into_boxed_str(),
             exact: exact.map(|e| e.text.into_boxed_str()),
@@ -315,21 +371,7 @@ fn engines(ast: &Ast, opts: Options) -> Result<(MatchKind, Imp), PyReError> {
     if tier2 && texts.depth >= crate::engine::FANCY_MAX_DEPTH {
         return Err(PyReError::Unsupported(messages::TOO_DEEP_FOR_TIER2.into()));
     }
-    let eager = info.est > EAGER_EST;
-    let search = Compiled::build(&texts, false, eager)
-        .map_err(|e| PyReError::Unsupported(e.into_boxed_str()))?;
-    let kind = if tier2 {
-        MatchKind::Tier2
-    } else {
-        MatchKind::Tier1
-    };
-    let engines = Engines {
-        texts,
-        search,
-        full: OnceLock::new(),
-        eager,
-    };
-    Ok((kind, Imp::Engines(Box::new(engines))))
+    Ok(texts)
 }
 
 #[cfg(test)]

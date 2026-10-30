@@ -17,7 +17,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
-use crate::ast::{Ast, At, Cat, Flags, MAXREPEAT, Node, NodeId, RepKind, SeqId, SetItem};
+use crate::ast::{Ast, At, Cat, Features, Flags, MAXREPEAT, Node, NodeId, RepKind, SeqId, SetItem};
 use crate::fold::RangeSet;
 use crate::options::Haystack;
 
@@ -34,6 +34,10 @@ pub(crate) enum Variant {
 
 /// When a haystack must use the exact variant instead of the fast one (§A.6.5).
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent condition bits, tested one by one"
+)]
 pub(crate) struct Cond {
     /// A non-MULTILINE `$` became `\z`: haystacks ending with `\n` need the exact form.
     pub(crate) nl: bool,
@@ -41,12 +45,16 @@ pub(crate) struct Cond {
     pub(crate) ascii: bool,
     /// A `\B` became Rust's: the empty haystack needs the exact form (Python's `\B` is false there).
     pub(crate) nonempty: bool,
+    /// A greedy loop over a nullable body: `regex` keeps iterating after an empty iteration where CPython's
+    /// `MAX_UNTIL` stops (`_sre` `last_ptr`), which changes the match *end* but never whether a match exists, so
+    /// only match spans (`search_bytes`) need the exact form.
+    pub(crate) span: bool,
 }
 
 impl Cond {
     /// No condition: the fast form is exact for every haystack.
     pub(crate) const fn is_none(self) -> bool {
-        !self.nl && !self.ascii && !self.nonempty
+        !self.nl && !self.ascii && !self.nonempty && !self.span
     }
 
     /// `use_exact` of §A.6.5 for haystack `h`.
@@ -54,6 +62,11 @@ impl Cond {
         (self.nl && h.last() == Some(&b'\n'))
             || (self.nonempty && h.is_empty())
             || (self.ascii && !h.is_ascii())
+    }
+
+    /// `use_exact` for a match span: [`Cond::needs_exact`] or a nullable greedy loop.
+    pub(crate) fn needs_exact_span(self, h: &[u8]) -> bool {
+        self.span || self.needs_exact(h)
     }
 }
 
@@ -81,6 +94,8 @@ enum Work {
     Node(NodeId, Flags),
     Text(&'static str),
     Owned(String),
+    /// Enter / leave a copy whose capture groups are emitted as `(?:…)`.
+    Plain(bool),
 }
 
 /// The emitter.
@@ -93,6 +108,104 @@ struct Emitter<'a> {
     cond: Cond,
     anchored: bool,
     numbering: Numbering,
+    /// Inside a copy emitted without capture groups (see [`Emitter::repeat`]).
+    plain: u32,
+    /// The `re.search` charset-prefix rule, when it applies (see [`search_quirk`]).
+    quirk: Option<&'a Quirk>,
+}
+
+/// CPython 3.12's search-only charset prefix (`re/_compiler.py` `_compile_info`): when a pattern of nonzero
+/// minimum width starts (through groups) with a set, `_get_charset_prefix` returns that set, but
+/// `_compile_charset` then compiles it with the *top-level* flags, so for `(?a:\W)` the prefix is the Unicode
+/// `\W`, and `re.search` only tries the positions whose character is in it (`_sre` `SRE(search)`), while
+/// `re.match`/`re.fullmatch` use the ASCII set. The search texts intersect the first set with the prefix set.
+#[derive(Debug, Clone)]
+pub(crate) struct Quirk {
+    /// The nodes (`Lit`/`In`) that consume the first character.
+    nodes: Vec<NodeId>,
+    /// The prefix set, rendered with Unicode categories.
+    negate: bool,
+    items: Vec<SetItem>,
+}
+
+/// [`Quirk`] of `ast`, when its search differs from its match (str patterns whose leading set lies in a scoped
+/// `(?a:…)` group and contains a category).
+pub(crate) fn search_quirk(ast: &Ast) -> Option<Quirk> {
+    if ast.bytes || !ast.flags.has(Flags::U) || ast.root_info().lo == 0 {
+        return None;
+    }
+    let mut fl = ast.flags;
+    let mut seq = ast.root;
+    // `while True: … if op is not SUBPATTERN: break` (`_get_charset_prefix`).
+    let (first, node) = loop {
+        let &first = ast.seq(seq).first()?;
+        match ast.node(first)? {
+            Node::Group { add, del, body, .. } => {
+                fl = fl.combine(*add, *del);
+                seq = *body;
+            }
+            node => break (first, node),
+        }
+    };
+    if !fl.has(Flags::A) {
+        return None;
+    }
+    // `_get_iscased` under the combined (ASCII) flags: ASCII letters are cased.
+    let ignore = fl.has(Flags::I);
+    let cased = |c: u32| ignore && char::from_u32(c).is_some_and(|ch| ch.is_ascii_alphabetic());
+    let set_ok = |items: &[SetItem]| {
+        items.iter().all(|it| match *it {
+            SetItem::Lit(c) => !cased(c),
+            SetItem::Range(lo, hi) => !(ignore && (hi > 0xFFFF || (lo..=hi).any(cased))),
+            SetItem::Cat(_) => true,
+        })
+    };
+    let has_cat = |items: &[SetItem]| items.iter().any(|it| matches!(it, SetItem::Cat(_)));
+    match node {
+        Node::In { negate, items } => (set_ok(items) && has_cat(items)).then(|| Quirk {
+            nodes: vec![first],
+            negate: *negate,
+            items: items.to_vec(),
+        }),
+        Node::Branch(alts) => {
+            // `_parse_sub` first moves a first item shared by every alternative out of the branch.
+            let firsts: Option<Vec<NodeId>> =
+                alts.iter().map(|&a| ast.seq(a).first().copied()).collect();
+            if let Some(firsts) = firsts
+                && let Some(Node::In { negate, items }) = firsts.first().and_then(|&n| ast.node(n))
+                && firsts.iter().all(|&n| {
+                    matches!(ast.node(n), Some(Node::In { negate: g, items: it }) if g == negate && it == items)
+                })
+            {
+                return (set_ok(items) && has_cat(items)).then(|| Quirk {
+                    nodes: firsts.clone(),
+                    negate: *negate,
+                    items: items.to_vec(),
+                });
+            }
+            // `_parse_sub` turns a branch of single literals and non-negated sets into one set.
+            let mut nodes = Vec::new();
+            let mut items = Vec::new();
+            for &a in alts {
+                let [only] = ast.seq(a) else { return None };
+                match ast.node(*only)? {
+                    Node::Lit(c) => items.push(SetItem::Lit(*c)),
+                    Node::In {
+                        negate: false,
+                        items: it,
+                    } => items.extend_from_slice(it),
+                    _ => return None,
+                }
+                nodes.push(*only);
+            }
+            (set_ok(&items) && has_cat(&items)).then_some(Quirk {
+                nodes,
+                negate: false,
+                items,
+            })
+        }
+        _ => None,
+    }
 }
 
 /// Capture numbering of the exact text. CPython's `GROUPREF_EXISTS` (`_sre` `SRE_OP_GROUPREF_EXISTS`) treats
@@ -180,6 +293,16 @@ impl Numbering {
 
 /// Lowers `ast` (its global flags already include the compile options).
 pub(crate) fn lower(ast: &Ast, variant: Variant, haystack: Haystack) -> Lowered {
+    lower_with(ast, variant, haystack, None)
+}
+
+/// [`lower`] for the `re.search` engines of a pattern with a [`Quirk`].
+pub(crate) fn lower_with(
+    ast: &Ast,
+    variant: Variant,
+    haystack: Haystack,
+    quirk: Option<&Quirk>,
+) -> Lowered {
     let numbering = if variant == Variant::Exact {
         Numbering::new(ast)
     } else {
@@ -193,6 +316,8 @@ pub(crate) fn lower(ast: &Ast, variant: Variant, haystack: Haystack) -> Lowered 
         cond: Cond::default(),
         anchored: false,
         numbering,
+        plain: 0,
+        quirk,
     };
     let mut hint = 0_usize;
     for s in &ast.seqs {
@@ -206,6 +331,8 @@ pub(crate) fn lower(ast: &Ast, variant: Variant, haystack: Haystack) -> Lowered 
         match w {
             Work::Text(t) => e.out.push_str(t),
             Work::Owned(t) => e.out.push_str(&t),
+            Work::Plain(true) => e.plain = e.plain.saturating_add(1),
+            Work::Plain(false) => e.plain = e.plain.saturating_sub(1),
             Work::Seq(id, fl) => {
                 for &n in ast.seq(id).iter().rev() {
                     stack.push(Work::Node(n, fl));
@@ -270,6 +397,18 @@ impl Emitter<'_> {
         let Some(node) = self.ast.node(id) else {
             return;
         };
+        if let Some(q) = self.quirk
+            && q.nodes.contains(&id)
+        {
+            let own = match node {
+                Node::Lit(c) => self.class(false, &[SetItem::Lit(*c)], fl),
+                Node::In { negate, items } => self.class(*negate, items, fl),
+                _ => String::new(),
+            };
+            let prefix = self.class(q.negate, &q.items, Flags::empty());
+            write!(self.out, "[{own}&&{prefix}]").unwrap_or_default();
+            return;
+        }
         match node {
             Node::Lit(c) => {
                 let t = self.literal(*c, fl);
@@ -309,6 +448,7 @@ impl Emitter<'_> {
             } => {
                 let inner = fl.combine(*add, *del);
                 let exact = self.variant == Variant::Exact;
+                let exact = exact && self.plain == 0;
                 let open = if gid.is_some() && exact { "(" } else { "(?:" };
                 let close = match gid {
                     Some(g) if exact && self.numbering.aux.contains_key(g) => ")()",
@@ -389,9 +529,18 @@ impl Emitter<'_> {
         }
     }
 
-    /// §A.6.8.
+    /// §A.6.8, plus three rewrites of the exact (fancy-regex) text:
+    ///
+    /// * a greedy loop over a nullable body runs each iteration as `(?:(?=)X)`: the empty look-ahead makes the
+    ///   loop "hard", so fancy-regex runs it on its VM, whose `RepeatEpsilonGr` leaves the loop after an empty
+    ///   iteration exactly like CPython's `MAX_UNTIL` (`_sre` `last_ptr`), instead of delegating it to `regex`,
+    ///   which drops the empty path and keeps iterating (`(?:x*|y)+` on `xyx` is `(0, 1)` in CPython);
+    /// * an unbounded `*` over a body with a capture group gets an extra never-matching alternative
+    ///   (`(?:X|NEVER)*`), and a lazy repeat that may run zero times is wrapped as `(?:X??|NEVER)`: fancy-regex
+    ///   0.19's tree optimizer rewrites `(X+?)*` to `(X+?)?` and `a*b??a*` to `a*(?:ba*)?`, which changes the
+    ///   match span when a lazy quantifier is involved; the extra alternative hides the shapes it matches.
     fn repeat(
-        &self,
+        &mut self,
         kind: RepKind,
         min: u32,
         max: u32,
@@ -448,10 +597,66 @@ impl Emitter<'_> {
         if kind == RepKind::Lazy {
             quant.push('?');
         }
-        let tail = format!("{iter_close}{quant}{}", if possessive { ")" } else { "" });
+        let facts = self.ast.seq_facts(body);
+        let exact = self.variant == Variant::Exact;
+        let nullable_loop = facts.lo == 0 && max == MAXREPEAT;
+        if nullable_loop && kind == RepKind::Greedy && self.variant == Variant::Fast {
+            self.cond.span = true;
+        }
+        let unobservable = !facts.feat.has(Features::CAPTURE)
+            || !self
+                .ast
+                .root_info()
+                .feat
+                .has(Features::BACKREF.or(Features::COND));
+        if exact && nullable_loop && min >= 2 && !possessive && unobservable {
+            // fancy-regex compares a nullable loop's epsilon slot at every arrival after the first, also below
+            // the minimum, so a slot left over from an earlier entry of the same loop (inside another nullable
+            // loop) can leave `X{2,}` after one iteration. CPython runs the first `min` iterations
+            // unconditionally and checks emptiness only after that, i.e. `X{m}` followed by a fresh `X*`. The
+            // first copy is emitted without capture groups (group numbers are unchanged, as each group still
+            // opens once), which is exact whenever no back-reference or conditional can observe a capture.
+            let parts = vec![
+                Work::Plain(true),
+                Work::Text("(?:"),
+                Work::Seq(body, fl),
+                Work::Plain(false),
+                Work::Owned(format!("){{{min}}}(?:")),
+                Work::Text(if kind == RepKind::Greedy { "(?=)" } else { "" }),
+                Work::Seq(body, fl),
+                Work::Text(if kind == RepKind::Lazy { ")*?" } else { ")*" }),
+            ];
+            Self::push_seq_of(stack, parts);
+            return;
+        }
+        // `min` ≤ 1 only (above): a `{2,}` loop whose captures are observable keeps fancy-regex's own handling.
+        let nullable_greedy = nullable_loop && kind == RepKind::Greedy && min <= 1;
+        let mark = if exact && nullable_greedy { "(?=)" } else { "" };
+        let never_iter = exact
+            && min == 0
+            && max == MAXREPEAT
+            && !nullable_greedy
+            && facts.feat.has(Features::CAPTURE);
+        let never_rep = exact && min == 0 && kind == RepKind::Lazy;
+        let alt_iter = if never_iter {
+            format!("|{}", self.never())
+        } else {
+            String::new()
+        };
+        let tail = format!(
+            "{alt_iter}{iter_close}{quant}{}{}",
+            if possessive { ")" } else { "" },
+            if never_rep {
+                format!("|{})", self.never())
+            } else {
+                String::new()
+            }
+        );
         let parts = vec![
+            Work::Text(if never_rep { "(?:" } else { "" }),
             Work::Text(open),
             Work::Text(iter_open),
+            Work::Text(mark),
             Work::Seq(body, fl),
             Work::Owned(tail),
         ];
