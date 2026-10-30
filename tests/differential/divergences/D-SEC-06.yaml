@@ -1,5 +1,42 @@
-# D-SEC-06 (SEC, owner WP-18): one retry with the other --object-format after mismatched algorithms
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-SEC-06 (SEC, owner WP-18): one retry with the other --object-format after `mismatched algorithms`
+# A SHA-256 hook repository used from a SHA-1 default: pre-commit 4.6.2's store clone fails (`mismatched algorithms`,
+# exit 3); snp re-inits the clone as SHA-256 once and runs the hook.
+# Uses `object_format` on a `repos` entry and `${rev:hooks}` (its 64-hex HEAD) — `object_format` extends the
+# 10 §7.4.3 schema.
 expect_divergence: D-SEC-06
-status: stub
+name: divergences/D-SEC-06-sha256-hook-repository
+since: "4.6.2"
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos, windows], pty: false}
+repos:
+  hooks:
+    object_format: sha256
+    files:
+      .pre-commit-hooks.yaml: |
+        -   id: x
+            name: x
+            entry: echo
+            language: system
+work:
+  files: {a.txt: "a\n"}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks:
+        -   id: x
+  commit: [".pre-commit-config.yaml", a.txt]
+steps:
+  - tool: [run, --all-files]
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+expected:
+  oracle:
+    exit: 3
+    stdout_contains: "fatal: mismatched algorithms: client sha1; server sha256"
+  snp:
+    exit: 0
+    stdout_contains: "Passed"

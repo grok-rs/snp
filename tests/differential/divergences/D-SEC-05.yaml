@@ -1,5 +1,50 @@
 # D-SEC-05 (SEC, owner WP-18): installers and owned repos get pre-commit's no_git_env allow-list
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# `pre-commit autoupdate` with GIT_DIR exported (hazard c): pre-commit 4.6.2 writes partial-clone config into the
+# user's repository and crashes (exit 3); snp updates the rev and leaves .git/config untouched.
+# Uses `${root}` (the scenario root R, identical for both tools) to point GIT_DIR at the work repository, and
+# `compare.git_config: exact` (bytes of .git/config after the step) — extensions of the 10 §7.4.3 schema.
 expect_divergence: D-SEC-05
-status: stub
+name: divergences/D-SEC-05-git-dir-during-autoupdate
+since: "4.6.1"
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos, windows], pty: false}
+repos:
+  hooks:
+    files:
+      .pre-commit-hooks.yaml: |
+        -   id: x
+            name: x
+            entry: echo
+            language: system
+    tags: [v1.0.0]
+    then:
+      - commit: v2
+      - tag: v2.0.0
+work:
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: v1.0.0
+        hooks:
+        -   id: x
+  commit: [".pre-commit-config.yaml"]
+steps:
+  - tool: [autoupdate]
+    env: {GIT_DIR: "${root}/work/.git"}
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  config_file: exact
+  git_config: exact
+expected:
+  oracle:
+    exit: 3
+    stdout_contains: "'fetch', 'origin', 'HEAD', '--quiet', '--filter=blob:none', '--tags')\nreturn code: 128\n"
+    git_config_contains: "partialClone = true"
+  snp:
+    exit: 0
+    stdout_contains: "updating v1.0.0 -> v2.0.0"
+    git_config_unchanged: true

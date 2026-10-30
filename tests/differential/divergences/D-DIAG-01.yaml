@@ -1,5 +1,34 @@
-# D-DIAG-01 (DIAG, owner WP-18): git < 2.31: [WARNING] git <V> is older than 2.31.0, the oldest git version snp is tested with. Set SNP_ALLOW_OLD_GIT=1 to silence this warning. (once per…
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-DIAG-01 (DIAG, owner WP-18): the once-per-process old-git warning on stderr
+# A staged run on git 2.19–2.30: stdout and exit code are pre-commit 4.6.2's, snp adds one stderr line (02 G.4).
+# Runs on the CI git 2.30 container (ADR-063).
 expect_divergence: D-DIAG-01
-status: stub
+name: divergences/D-DIAG-01-old-git-warning
+since: "4.6.2"
+requires: {git: ">=2.19, <2.31", net: false, tools: [], os: [linux], pty: false}
+work:
+  files: {a.txt: "a\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: x
+            name: x
+            entry: echo
+            language: system
+  commit: [".pre-commit-config.yaml"]
+  stage: [a.txt]
+steps:
+  - tool: [run]
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+expected:
+  oracle:
+    exit: 0
+    stderr: ""
+  snp:
+    exit: 0
+    stderr_matches: '^\[WARNING\] git 2\.(19|2[0-9]|30)\.[0-9]+ is older than 2\.31\.0, the oldest git version snp is tested with\. Set SNP_ALLOW_OLD_GIT=1 to silence this warning\.\n$'
