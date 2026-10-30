@@ -1,5 +1,44 @@
-# D-CRASH-12 (CRASH, owner WP-22): bytes end to end (argv, identify); lossy UTF-8 view for regex matching
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-CRASH-12 (CRASH, owner WP-22): non-UTF-8 file names stay bytes (argv, identify); regexes see a lossy view.
+# Extension of the 10 §7.4.3 schema: `files_bytes` maps names whose `\xNN` escapes stand for raw bytes (expanded by
+# the harness; YAML keys cannot hold them) to contents.
 expect_divergence: D-CRASH-12
-status: stub
+name: divergences/D-CRASH-12-non-utf8-file-name
+since: "4.6.2"
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files: {}
+  files_bytes: {'bad\xff.txt': "x\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: echo
+            name: echo
+            entry: echo
+            language: system
+  commit: [".pre-commit-config.yaml", 'bad\xff.txt']
+  stage: []
+steps:
+  - tool: [run, --all-files]
+  - tool: [run, --files, 'bad\xff.txt']
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+expected:
+  oracle:
+    - exit: 3
+      stdout_starts_with: "An unexpected error has occurred: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff"
+    - exit: 3
+      stdout_starts_with: "echo.....................................................................An unexpected error has occurred: UnicodeEncodeError: 'utf-8' codec can't encode character '\\udcff' in position 3: surrogates not allowed"
+  snp:
+    - exit: 0
+      stdout: |
+        echo.....................................................................Passed
+    - exit: 0
+      stdout: |
+        echo.....................................................................Passed

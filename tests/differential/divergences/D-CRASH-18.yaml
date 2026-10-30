@@ -1,5 +1,40 @@
-# D-CRASH-18 (CRASH, owner WP-22): crash (exit 3, same text) only when a selected hook's filter needs the content tier
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-CRASH-18 (CRASH, owner WP-22): an unreadable file crashes the run only when a selected hook needs its content.
+# Extension of the 10 §7.4.3 schema: `modes` sets worktree file modes after the commit (posix); `requires.root:
+# false` (root reads mode-000 files, so both tools would pass).
 expect_divergence: D-CRASH-18
-status: stub
+name: divergences/D-CRASH-18-unreadable-file-not-needed
+since: "4.6.2"
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: false, root: false}
+repos: {}
+work:
+  files: {noext: "x\n"}
+  modes: {noext: "000"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: echo
+            name: echo
+            entry: echo
+            language: system
+  commit: [".pre-commit-config.yaml", noext]
+  stage: []
+steps:
+  - tool: [run, --all-files]
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+expected:
+  oracle:
+    exit: 3
+    stdout: |
+      An unexpected error has occurred: PermissionError: [Errno 13] Permission denied: 'noext'
+      Check the log at ${store}/pre-commit.log
+  snp:
+    exit: 0
+    stdout: |
+      echo.....................................................................Passed

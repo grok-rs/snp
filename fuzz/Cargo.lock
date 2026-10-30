@@ -1036,6 +1036,7 @@ name = "snp-files"
 version = "2.0.0"
 dependencies = [
  "file-identify",
+ "rustix",
  "snp-core",
  "snp-os",
  "snp-proc",
@@ -1228,6 +1229,11 @@ dependencies = [
 name = "snp-store"
 version = "2.0.0"
 dependencies = [
+ "blake3",
+ "memchr",
+ "rustix",
+ "serde",
+ "serde_json",
  "snp-core",
  "snp-os",
  "snp-pycompat",

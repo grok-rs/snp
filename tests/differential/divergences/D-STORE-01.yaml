@@ -1,5 +1,35 @@
-# D-STORE-01 (STORE, owner WP-22): own store SNP_HOME > $XDG_CACHE_HOME/snp > ~/.cache/snp (Windows %USERPROFILE%\.cache\snp), versioned layout, no SQLite; refuses pre-commit's store; crash log…
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-STORE-01 (STORE, owner WP-22, contributing WP-33): snp keeps its own store; PRE_COMMIT_HOME never moves it.
+# An invalid config makes both tools write a crash log and name it: pre-commit 4.6.2 under $PRE_COMMIT_HOME, snp
+# under ~/.cache/snp (`pre-commit.log` in the compat brand, `snp.log` in the snp brand).
 expect_divergence: D-STORE-01
-status: stub
+name: divergences/D-STORE-01-store-location
+since: "4.6.2"
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files: {}
+  config: |
+    repos: 1
+  commit: [".pre-commit-config.yaml"]
+  stage: []
+steps:
+  - tool: [run, --all-files]
+    env:
+      HOME: "${work}/home"
+      XDG_CACHE_HOME: ""
+      PRE_COMMIT_HOME: "${work}/pch"
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: false
+expected:
+  oracle:
+    exit: 1
+    stdout_ends_with: "Check the log at ${work}/pch/pre-commit.log\n"
+  snp:
+    exit: 1
+    stdout_ends_with:
+      compat: "Check the log at ${work}/home/.cache/snp/pre-commit.log\n"
+      snp: "Check the log at ${work}/home/.cache/snp/snp.log\n"
+    absent: ["${work}/pch"]
