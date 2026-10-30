@@ -1,5 +1,28 @@
 # D-DATA-10 (DATA, owner WP-21): the line keeps its \r (DEV-PY-1)
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# Scenario in the schema of docs/research/10-test-strategy.md §7.4.3; `expected` states how each side
+# must differ (WP-35's harness fails when the difference stops reproducing).
 expect_divergence: D-DATA-10
-status: stub
+name: divergences/D-DATA-10-freeze-keeps-cr
+since: "4.6.2"
+requires: {git: ">=2.19", net: false, tools: [], os: [linux, macos, windows], pty: false}
+repos:
+  hooks: {fixture: script_hooks_repo, tags: [v2.0.0]}
+work:
+  files: {}
+  config: "repos:\r\n-   repo: ${repo:hooks}\r\n    rev: ${rev:hooks}  # note\r\n    hooks:\r\n    -   id: bash_hook\r\n"
+  commit: [".pre-commit-config.yaml"]
+steps:
+  - tool: [autoupdate, --freeze]
+    env: {GIT_ALLOW_PROTOCOL: file}
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  config_file: exact
+expected:
+  oracle:
+    exit: 0
+    config_file_contains: "  # frozen: v2.0.0\n    hooks:\r\n"
+  snp:
+    exit: 0
+    config_file_contains: "  # frozen: v2.0.0\r\n    hooks:\r\n"

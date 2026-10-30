@@ -178,13 +178,22 @@ pub(crate) fn future_warnings(value: &Value, kind: Kind, o: &LoadOpts<'_>) {
     }
 }
 
+/// `display_filename or filename` (`cfgv.py:430`), lossily decoded for cfgv's `&str` display name.
+pub(crate) fn display_name<'a>(display: &'a OsStr, path: &'a Path) -> std::borrow::Cow<'a, str> {
+    if display.is_empty() {
+        path.to_string_lossy()
+    } else {
+        display.to_string_lossy()
+    }
+}
+
 /// `load_config` (`clientlib.py`): read, decode, PyYAML-load, validate, default, transform (01 §2–§5).
 ///
 /// `src.display` (the `-c` path as pre-commit shows it, relative to the repository root for run-type commands,
 /// 01 §8.4) is converted with `to_string_lossy` for cfgv's `load_from_filename_with(…, display_filename:
 /// Option<&str>, …)`.
 pub fn load_config(src: &ConfigSource, o: &LoadOpts<'_>) -> Result<Config, ConfigError> {
-    let display = src.display.to_string_lossy();
+    let display = display_name(&src.display, &src.path);
     let bytes = read_file(&src.path, &display, false)?;
     let schema = schema::config_schema(o.brand, o.ext);
     let value = validate_bytes(&bytes, &display, schema, Kind::Config, o)?;
@@ -199,7 +208,7 @@ pub fn load_manifest(
     display: &OsStr,
     o: &LoadOpts<'_>,
 ) -> Result<Manifest, ConfigError> {
-    let display = display.to_string_lossy();
+    let display = display_name(display, path);
     let bytes = read_file(path, &display, true)?;
     manifest_from_bytes(&bytes, &display, o)
 }

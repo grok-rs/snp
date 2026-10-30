@@ -1,5 +1,36 @@
 # D-EXT-02 (EXT, owner WP-21): the local overlay .pre-commit-config.local.yaml / SNP_LOCAL_CONFIG
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# Scenario in the schema of docs/research/10-test-strategy.md §7.4.3; `expected` states how each side
+# must differ (WP-35's harness fails when the difference stops reproducing).
 expect_divergence: D-EXT-02
-status: stub
+name: divergences/D-EXT-02-local-overlay
+since: "4.6.2"
+requires: {git: ">=2.19", net: false, tools: [], os: [linux, macos], pty: false}
+work:
+  files:
+    a.txt: "a\n"
+    .pre-commit-config.local.yaml: |
+      hooks:
+        show:
+          entry: "echo overlay {entry}"
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: show
+            name: show
+            entry: echo base
+            language: system
+            verbose: true
+  commit: [".pre-commit-config.yaml", a.txt]
+steps:
+  - tool: [run, --all-files]
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+expected:
+  oracle:
+    stdout_contains: "\nbase a.txt\n"
+  snp:
+    stdout_contains: "\noverlay echo base a.txt\n"
+    stderr: "snp: using local overrides from .pre-commit-config.local.yaml\n"

@@ -1,5 +1,26 @@
 # D-CRASH-04 (CRASH, owner WP-21): validation error '<repr>' is not a valid python regex, exit 1
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# Scenario in the schema of docs/research/10-test-strategy.md §7.4.3; `expected` states how each side
+# must differ (WP-35's harness fails when the difference stops reproducing).
 expect_divergence: D-CRASH-04
-status: stub
+name: divergences/D-CRASH-04-regex-overflow
+since: "4.6.2"
+requires: {git: ">=2.19", net: false, tools: [], os: [linux, macos, windows], pty: false}
+work:
+  files: {}
+  config: |
+    files: 'a{4294967296}'
+    repos: []
+  commit: [".pre-commit-config.yaml"]
+steps:
+  - tool: [validate-config, .pre-commit-config.yaml]
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+expected:
+  oracle:
+    exit: 3
+    stdout_starts_with: "An unexpected error has occurred: OverflowError: the repetition number is too large\n"
+  snp:
+    exit: 1
+    stdout: "\n==> File .pre-commit-config.yaml\n==> At Config()\n==> At key: files\n=====> 'a{4294967296}' is not a valid python regex\n"

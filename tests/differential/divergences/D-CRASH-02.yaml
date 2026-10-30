@@ -1,5 +1,27 @@
 # D-CRASH-02 (CRASH, owner WP-21): [WARNING] Unexpected key(s) present at root: … (Python str() of the keys, sorted by type rank)
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# Scenario in the schema of docs/research/10-test-strategy.md §7.4.3; `expected` states how each side
+# must differ (WP-35's harness fails when the difference stops reproducing).
 expect_divergence: D-CRASH-02
-status: stub
+name: divergences/D-CRASH-02-non-string-root-keys
+since: "4.6.2"
+requires: {git: ">=2.19", net: false, tools: [], os: [linux, macos, windows], pty: false}
+work:
+  files: {}
+  config: |
+    repos: []
+    1: x
+    foo: y
+  commit: [".pre-commit-config.yaml"]
+steps:
+  - tool: [validate-config, .pre-commit-config.yaml]
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+expected:
+  oracle:
+    exit: 3
+    stdout_starts_with: "An unexpected error has occurred: TypeError: '<' not supported between instances of 'str' and 'int'\n"
+  snp:
+    exit: 0
+    stdout: "[WARNING] Unexpected key(s) present at root: 1, foo\n"

@@ -1,5 +1,25 @@
 # D-DATA-09 (DATA, owner WP-21): UTF-8 always, each line's original EOL kept, atomic replace keeping the mode
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# Scenario in the schema of docs/research/10-test-strategy.md §7.4.3; `expected` states how each side
+# must differ (WP-35's harness fails when the difference stops reproducing).
 expect_divergence: D-DATA-09
-status: stub
+name: divergences/D-DATA-09-migrate-keeps-crlf
+since: "4.6.2"
+requires: {git: ">=2.19", net: false, tools: [], os: [linux, macos], pty: false}
+work:
+  files:
+    .pre-commit-config.yaml: "-   repo: local\r\n    hooks:\r\n    -   id: x\r\n        name: x\r\n        entry: x\r\n        language: system\r\n        stages: [commit]\r\n"
+  commit: [".pre-commit-config.yaml"]
+steps:
+  - tool: [migrate-config]
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  config_file: exact
+expected:
+  oracle:
+    exit: 0
+    config_file: "repos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: system\n        stages: [pre-commit]\n"
+  snp:
+    exit: 0
+    config_file: "repos:\r\n-   repo: local\r\n    hooks:\r\n    -   id: x\r\n        name: x\r\n        entry: x\r\n        language: system\r\n        stages: [pre-commit]\r\n"
