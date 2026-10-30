@@ -37,7 +37,8 @@ fn entries(text: &[u8]) -> Vec<(String, String, Option<Vec<u8>>)> {
                 i = i.saturating_add(1);
                 let mut name = String::new();
                 while let Some(c) = at(i) {
-                    if c == b']' || c == b'"' || c == b'\n' || c == b' ' || c == b'\t' || c == b'.' {
+                    if c == b']' || c == b'"' || c == b'\n' || c == b' ' || c == b'\t' || c == b'.'
+                    {
                         break;
                     }
                     name.push(char::from(c.to_ascii_lowercase()));
@@ -200,7 +201,9 @@ pub(crate) fn collect(seeds: &[PathBuf], root: &Path, env: &Env) -> Facts {
         let Ok(text) = snp_os::fs::read_capped(&file, CONFIG_CAP) else {
             continue;
         };
-        let base = file.parent().map_or_else(|| root.to_path_buf(), Path::to_path_buf);
+        let base = file
+            .parent()
+            .map_or_else(|| root.to_path_buf(), Path::to_path_buf);
         for (section, key, value) in entries(&text) {
             match (section.as_str(), key.as_str(), value) {
                 ("include" | "includeif", "path", Some(v)) => {
@@ -233,7 +236,10 @@ pub(crate) fn from_env(env: &Env, root: &Path) -> Option<Facts> {
     let mut facts = Facts::default();
     if let Some(params) = env.get("GIT_CONFIG_PARAMETERS") {
         let lower = params.to_string_lossy().to_ascii_lowercase();
-        if lower.contains("include") || lower.contains("attributesfile") || lower.contains("attr.tree") {
+        if lower.contains("include")
+            || lower.contains("attributesfile")
+            || lower.contains("attr.tree")
+        {
             return None;
         }
     }
@@ -291,7 +297,11 @@ mod tests {
         assert_eq!(
             got,
             vec![
-                ("core".into(), "attributesfile".into(), Some("~/attrs".into())),
+                (
+                    "core".into(),
+                    "attributesfile".into(),
+                    Some("~/attrs".into())
+                ),
                 ("core".into(), "bare".into(), None),
                 ("include".into(), "path".into(), Some("a b.cfg".into())),
                 ("includeif".into(), "path".into(), Some("x.cfg".into())),
@@ -333,7 +343,11 @@ mod tests {
         let f = collect(&[root.join("a.cfg")], root, &env);
         assert_eq!(
             f.config_files,
-            vec![root.join("a.cfg"), root.join("b.cfg"), root.join("missing.cfg")]
+            vec![
+                root.join("a.cfg"),
+                root.join("b.cfg"),
+                root.join("missing.cfg")
+            ]
         );
         assert_eq!(f.attributes_files, vec![root.join("attrs")]);
         assert!(!f.attr_tree);

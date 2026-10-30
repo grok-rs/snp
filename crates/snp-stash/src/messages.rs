@@ -72,7 +72,11 @@ const RESET_MAX_PATHS: usize = 64;
 ///
 /// `staged_fixed` (state `staging-fixed`) prepends the index reset: `git reset -q <tree> -- <paths…>`, or
 /// `git read-tree <tree>` when the list is long.
-pub(crate) fn recovery_notice(patch: &Path, tree: Option<&str>, staged_fixed: &[RepoPath]) -> String {
+pub(crate) fn recovery_notice(
+    patch: &Path,
+    tree: Option<&str>,
+    staged_fixed: &[RepoPath],
+) -> String {
     let p = shown(patch);
     let mut s = format!(
         "snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in {p}"

@@ -114,7 +114,11 @@ impl WorktreeLock {
         Self {
             lock: Some(lock),
             path,
-            token: if written.is_ok() { token } else { String::new() },
+            token: if written.is_ok() {
+                token
+            } else {
+                String::new()
+            },
         }
     }
 
@@ -247,10 +251,17 @@ mod tests {
     #[test]
     fn timeouts() {
         assert_eq!(timeout_from(None), DEFAULT_TIMEOUT);
-        assert_eq!(timeout_from(Some(OsStr::new("2.5"))), Duration::from_millis(2500));
+        assert_eq!(
+            timeout_from(Some(OsStr::new("2.5"))),
+            Duration::from_millis(2500)
+        );
         assert_eq!(timeout_from(Some(OsStr::new("1e9"))), MAX_TIMEOUT);
         for bad in ["-1", "nan", "inf", "x", ""] {
-            assert_eq!(timeout_from(Some(OsStr::new(bad))), DEFAULT_TIMEOUT, "{bad}");
+            assert_eq!(
+                timeout_from(Some(OsStr::new(bad))),
+                DEFAULT_TIMEOUT,
+                "{bad}"
+            );
         }
     }
 
@@ -259,7 +270,8 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = printer();
         let cancel = CancelToken::new();
-        let Acquired::Held(held) = acquire(d.path(), None, &p, &cancel, Duration::ZERO).unwrap() else {
+        let Acquired::Held(held) = acquire(d.path(), None, &p, &cancel, Duration::ZERO).unwrap()
+        else {
             panic!("not held")
         };
         let token = held.token().to_owned();
@@ -275,15 +287,27 @@ mod tests {
         .unwrap();
         assert!(matches!(nested, Acquired::Nested(t) if t == token));
         // A wrong token waits and times out.
-        let e = acquire(d.path(), Some(OsStr::new("bogus")), &p, &cancel, Duration::ZERO).unwrap_err();
+        let e = acquire(
+            d.path(),
+            Some(OsStr::new("bogus")),
+            &p,
+            &cancel,
+            Duration::ZERO,
+        )
+        .unwrap_err();
         assert_eq!(e.exit_code(), 1);
         assert!(try_probe(d.path()).is_none());
         held.release();
         assert_eq!(read_token(&lock_path(d.path())), "");
         // The stale token exempts nobody: the lock is free, so the run takes it with a new token.
-        let Acquired::Held(again) =
-            acquire(d.path(), Some(OsStr::new(&token)), &p, &cancel, Duration::ZERO).unwrap()
-        else {
+        let Acquired::Held(again) = acquire(
+            d.path(),
+            Some(OsStr::new(&token)),
+            &p,
+            &cancel,
+            Duration::ZERO,
+        )
+        .unwrap() else {
             panic!("a stale token must not exempt")
         };
         assert_ne!(again.token(), token);

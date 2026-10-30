@@ -117,6 +117,8 @@ struct Inner {
     staged_fixed: Vec<RepoPath>,
     /// The SIGTTIN/SIGTTOU notice was printed.
     tty_noted: bool,
+    /// The restore failed (K+): the journal is kept.
+    restore_failed: bool,
 }
 
 /// The journal of this run: the store journal (optional when the store is read-only and only intent-to-add files are
@@ -202,6 +204,55 @@ impl Write for PatchSink<'_> {
     }
 }
 
+/// The first `diff-index` sink: the patch file (`patches/patch<secs>-<pid>[-<n>]`, `create_new` 0600) is created at
+/// the first byte, so a clean run never touches the store; everything written is hashed. A creation or write error is
+/// kept (and stops the stream) so the caller can tell a read-only store (X13-ST-04) from a git failure.
+struct LazyPatch<'a> {
+    inner: &'a Inner,
+    opened: Option<(PathBuf, BufWriter<File>)>,
+    failed: Option<(io::Error, PathBuf)>,
+    hasher: blake3::Hasher,
+}
+
+impl Write for LazyPatch<'_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.failed.is_some() {
+            return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+        }
+        if self.opened.is_none() {
+            match self.inner.create_patch_file() {
+                Ok((p, f)) => self.opened = Some((p, BufWriter::new(f))),
+                Err((e, shown)) => {
+                    let kind = e.kind();
+                    self.failed = Some((e, shown));
+                    return Err(io::Error::from(kind));
+                }
+            }
+        }
+        let Some((p, w)) = self.opened.as_mut() else {
+            return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+        };
+        match w.write(buf) {
+            Ok(n) => {
+                self.hasher.update(buf.get(..n).unwrap_or_default());
+                Ok(n)
+            }
+            Err(e) => {
+                let kind = e.kind();
+                self.failed = Some((e, p.clone()));
+                Err(io::Error::from(kind))
+            }
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self.opened.as_mut() {
+            Some((_, w)) => w.flush(),
+            None => Ok(()),
+        }
+    }
+}
+
 /// `staged_files_only` entry: lock, journal, `write-tree`, `diff-index`, checkout (§4.2 steps 1–9).
 ///
 /// `staged_files_only.py:35-104` entered in pre-commit's order (`_intent_to_add_cleared` first,
@@ -240,6 +291,7 @@ pub fn enter(cx: StashCtx) -> Result<StashGuard, Failure> {
             journal: None,
             staged_fixed: Vec::new(),
             tty_noted: false,
+            restore_failed: false,
         })),
     };
     fault::hit(Point::StashState(1));
@@ -373,7 +425,11 @@ impl Inner {
                 ));
             }
             Err(e) => {
-                return Err(Failure::from_io(&e, Some(self.cx.patches_dir.as_os_str()), None));
+                return Err(Failure::from_io(
+                    &e,
+                    Some(self.cx.patches_dir.as_os_str()),
+                    None,
+                ));
             }
         }
         let mut j = Journal {
@@ -423,7 +479,12 @@ impl Inner {
                     .map(|r| r.as_bytes().to_vec())
                     .collect();
                 j.update(state).map_err(|e| {
-                    let shown = j.file.as_ref().or(j.pointer.as_ref()).cloned().unwrap_or_default();
+                    let shown = j
+                        .file
+                        .as_ref()
+                        .or(j.pointer.as_ref())
+                        .cloned()
+                        .unwrap_or_default();
                     Failure::from_io(&e, Some(shown.as_os_str()), None)
                 })
             }
@@ -463,30 +524,51 @@ impl Inner {
                 _ => Ok(StashOutcome::Nothing { clean: false }),
             };
         }
-        let (path, file) = match self.create_patch_file() {
-            Ok(v) => v,
-            Err((e, shown)) => return self.unwritable_store(&tree, &e, &shown),
+        let (first, opened, failed, digest) = {
+            let mut sink = LazyPatch {
+                inner: &*self,
+                opened: None,
+                failed: None,
+                hasher: blake3::Hasher::new(),
+            };
+            let res = self.git().diff_index_patch(&tree, &mut sink);
+            let flushed = sink.opened.as_mut().map_or(Ok(()), |(_, w)| w.flush());
+            if let (Err(e), Some((p, _))) = (flushed, &sink.opened) {
+                sink.failed = Some((e, p.clone()));
+            }
+            (res, sink.opened, sink.failed, sink.hasher.finalize())
         };
-        let mut w = BufWriter::new(file);
-        let streamed = self.stream_patch(&tree, &mut w, &path);
-        let (outcome, digest) = match streamed {
-            Ok(v) => v,
-            Err(e) => {
+        let discard = |opened: Option<(PathBuf, BufWriter<File>)>| {
+            if let Some((p, w)) = opened {
                 drop(w);
-                let _ignored = std::fs::remove_file(&path);
+                let _ignored = std::fs::remove_file(p);
+            }
+        };
+        if let Some((e, shown)) = failed {
+            let created = opened.as_ref().map(|(p, _)| p.clone());
+            discard(opened);
+            return match created {
+                // Created but not writable (ENOSPC, EIO): before any worktree mutation.
+                Some(p) => Err(Failure::from_io(&e, Some(p.as_os_str()), None)),
+                None => self.unwritable_store(&tree, &e, &shown),
+            };
+        }
+        let outcome = match first {
+            Ok(o) => o,
+            Err(e) => {
+                discard(opened);
                 return Err(e);
             }
         };
-        match outcome {
-            DiffIndex::Patch { .. } => {}
-            other => {
-                drop(w);
-                let _ignored = std::fs::remove_file(&path);
+        let (path, mut w) = match (outcome, opened) {
+            (DiffIndex::Patch { .. }, Some(v)) => v,
+            (other, opened) => {
+                discard(opened);
                 return Ok(StashOutcome::Nothing {
                     clean: matches!(other, DiffIndex::Clean),
                 });
             }
-        }
+        };
         // 6. durable: the patch, then the journal + pointer (state `stashed`), one directory fsync.
         self.patch = Some(path.clone());
         let durable = w
@@ -565,7 +647,8 @@ impl Inner {
             self.abandon_patch(&path);
             return Err(Failure::fatal("FatalError", messages::KEPT_CHANGING));
         }
-        self.printer().log(Level::Warning, messages::UNSTAGED_DETECTED);
+        self.printer()
+            .log(Level::Warning, messages::UNSTAGED_DETECTED);
         self.printer().log(Level::Info, &messages::stashing(&path));
         // 8. checkout (pre-commit's `try` starts here: a failing checkout still restores).
         self.stash_active = true;
@@ -646,13 +729,16 @@ impl Inner {
         match self.git().diff_index_patch(tree, &mut sink)? {
             DiffIndex::Patch { .. } => {
                 let patch = if shown == self.cx.patches_dir {
-                    self.cx
-                        .patches_dir
-                        .join(format!("patch{}-{}", self.cx.clock.unix_secs(), pid()))
+                    self.cx.patches_dir.join(format!(
+                        "patch{}-{}",
+                        self.cx.clock.unix_secs(),
+                        pid()
+                    ))
                 } else {
                     shown.to_path_buf()
                 };
-                self.printer().log(Level::Warning, messages::UNSTAGED_DETECTED);
+                self.printer()
+                    .log(Level::Warning, messages::UNSTAGED_DETECTED);
                 self.printer().log(Level::Info, &messages::stashing(&patch));
                 Err(Failure::from_io(e, Some(shown.as_os_str()), None))
             }
@@ -756,7 +842,8 @@ impl Inner {
         } else {
             self.journal_best_effort(State::RollingBack);
             fault::hit(Point::StashState(8));
-            self.printer().log(Level::Warning, messages::CONFLICT_ROLLBACK);
+            self.printer()
+                .log(Level::Warning, messages::CONFLICT_ROLLBACK);
             fault::hit(Point::RestoreCommand(3));
             self.git()
                 .checkout_all(true, Group::Isolated)
@@ -767,7 +854,8 @@ impl Inner {
                 self.printer().log(Level::Info, &messages::restored(patch));
                 self.journal_best_effort(State::Restored);
                 fault::hit(Point::StashState(9));
-                if self.cx.verify && !matches!(crate::verify_restored(self.git(), patch), Ok(true)) {
+                if self.cx.verify && !matches!(crate::verify_restored(self.git(), patch), Ok(true))
+                {
                     self.printer().diag(&messages::verify_failed(patch));
                 }
                 Ok(())
@@ -780,26 +868,35 @@ impl Inner {
     }
 
     /// Steps 10–11: restore, intent-to-add re-add, journal cleanup, unlock.
+    ///
+    /// Resumable: each step marks itself done, so the panic fallback (`Drop`) re-entered after a panic inside one of
+    /// them continues where it stopped instead of re-applying a restored patch.
     fn finish(&mut self) -> Result<(), Failure> {
         let shield = self.cx.signals.as_ref().map(|s| s.shield());
-        let mut result = match self.patch.clone() {
-            Some(patch) if self.stash_active => self.restore_patch(&patch),
-            _ => Ok(()),
-        };
+        let mut result = Ok(());
+        if self.stash_active
+            && let Some(patch) = self.patch.clone()
+        {
+            let restored = self.restore_patch(&patch);
+            self.stash_active = false;
+            if let Err(e) = restored {
+                self.restore_failed = true;
+                result = Err(e);
+            }
+        }
         if self.ita_cleared {
             fault::hit(Point::RestoreCommand(6));
             let readd = self.git().add_intent_to_add(&self.ita, Group::Isolated);
+            self.ita_cleared = false;
             if let (Err(e), Ok(())) = (readd, &result) {
                 result = Err(e);
             }
         }
-        let failed_restore = self.stash_active && result.is_err();
-        if let Some(j) = &self.journal {
-            if failed_restore {
-                // K+: patch, journal and pointer are kept forever (never gc'd).
-            } else {
-                j.remove();
-            }
+        if !self.restore_failed
+            && let Some(j) = self.journal.take()
+        {
+            // Done. (K+: patch, journal and pointer are kept forever, never gc'd.)
+            j.remove();
         }
         fault::hit(Point::StashState(10));
         if let Some(l) = self.lock.take() {
@@ -871,11 +968,15 @@ impl StashGuard {
         self.finish()
     }
 
+    /// Runs the restore with the state still in place: a panic inside it leaves `inner` for the `Drop` fallback,
+    /// which resumes the remaining steps.
     fn finish(&mut self) -> Result<(), Failure> {
-        match self.inner.take() {
-            Some(mut inner) => inner.finish(),
+        let result = match self.inner.as_deref_mut() {
+            Some(inner) => inner.finish(),
             None => Ok(()),
-        }
+        };
+        self.inner = None;
+        result
     }
 }
 

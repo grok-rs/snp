@@ -66,7 +66,10 @@ impl State {
 
 /// Whether a journaled state means the run never restored (ARCHITECTURE §4.6).
 pub(crate) fn is_unrestored(state: &str) -> bool {
-    matches!(state, "stashed" | "staging-fixed" | "rolling-back" | "failed")
+    matches!(
+        state,
+        "stashed" | "staging-fixed" | "rolling-back" | "failed"
+    )
 }
 
 /// The journal contents.
@@ -158,8 +161,12 @@ fn enc_bytes(b: &[u8]) -> Value {
     }
     let mut hex = String::new();
     for &byte in b {
-        hex.push(char::from(*HEX.get(usize::from(byte >> 4)).unwrap_or(&b'0')));
-        hex.push(char::from(*HEX.get(usize::from(byte & 0xf)).unwrap_or(&b'0')));
+        hex.push(char::from(
+            *HEX.get(usize::from(byte >> 4)).unwrap_or(&b'0'),
+        ));
+        hex.push(char::from(
+            *HEX.get(usize::from(byte & 0xf)).unwrap_or(&b'0'),
+        ));
     }
     let mut m = Map::new();
     m.insert("hex".to_owned(), Value::String(hex));
@@ -351,13 +358,9 @@ impl PointerData {
 /// `create_new` (`O_EXCL`, 0600) + write; `durable` adds `sync_all`.
 pub(crate) fn write_new(path: &Path, bytes: &[u8], durable: bool) -> io::Result<()> {
     let mut f = new_file(path)?;
-    let res = f.write_all(bytes).and_then(|()| {
-        if durable {
-            f.sync_all()
-        } else {
-            Ok(())
-        }
-    });
+    let res = f
+        .write_all(bytes)
+        .and_then(|()| if durable { f.sync_all() } else { Ok(()) });
     if res.is_err() {
         drop(f);
         let _ignored = std::fs::remove_file(path);

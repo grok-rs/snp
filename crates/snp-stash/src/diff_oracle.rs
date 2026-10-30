@@ -97,7 +97,12 @@ impl St {
     fn from_result(r: std::io::Result<std::fs::Metadata>) -> Self {
         match r {
             Ok(md) => Self::from_metadata(&md),
-            Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory) => {
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
                 Self::MISSING
             }
             Err(e) => Self {
@@ -108,7 +113,23 @@ impl St {
     }
 
     fn lstat(p: &Path) -> Self {
-        Self::from_result(std::fs::symlink_metadata(p))
+        Self::from_result(std::fs::symlink_metadata(p)).dir_identity()
+    }
+
+    /// A directory is compared by identity only (`kind`, `dev`, `ino`): its size and times change whenever an
+    /// untracked file is created in it, which never changes `git diff`; a directory replaced by a symlink or by
+    /// another directory still differs.
+    const fn dir_identity(self) -> Self {
+        match self.kind {
+            Kind::Dir => Self {
+                size: 0,
+                mtime: 0,
+                ctime: 0,
+                mode: 0,
+                ..self
+            },
+            _ => self,
+        }
     }
 
     fn stat(p: &Path) -> Self {
@@ -252,7 +273,10 @@ fn tracked_paths(root: &Path, tracked: &IndexEntries) -> Option<(Vec<PathBuf>, u
         files.push(root.join(crate::journal::bytes_path(p)));
         // Every ancestor directory (`a/b/c` → `a`, `a/b`).
         let mut end = 0_usize;
-        while let Some(off) = p.get(end..).and_then(|rest| rest.iter().position(|&b| b == b'/')) {
+        while let Some(off) = p
+            .get(end..)
+            .and_then(|rest| rest.iter().position(|&b| b == b'/'))
+        {
             end = end.saturating_add(off);
             if let Some(dir) = p.get(..end)
                 && seen_dirs.insert(dir.to_vec())
@@ -333,8 +357,14 @@ fn build_inputs(
     if let Some(p) = &prefix {
         push(p.join("etc").join("gitattributes"), InputKind::Other);
     }
-    push(info.common_dir.join("info").join("attributes"), InputKind::Other);
-    push(info.git_dir.join("info").join("attributes"), InputKind::Other);
+    push(
+        info.common_dir.join("info").join("attributes"),
+        InputKind::Other,
+    );
+    push(
+        info.git_dir.join("info").join("attributes"),
+        InputKind::Other,
+    );
     for d in dirs {
         push(d.join(".gitattributes"), InputKind::Other);
     }
@@ -360,7 +390,9 @@ fn stat_all(paths: &[PathBuf]) -> Vec<St> {
             let h = std::thread::Builder::new()
                 .name("snp-diff-stat".to_owned())
                 .stack_size(256 * 1024)
-                .spawn_scoped(s, move || part.iter().map(|p| St::lstat(p)).collect::<Vec<St>>());
+                .spawn_scoped(s, move || {
+                    part.iter().map(|p| St::lstat(p)).collect::<Vec<St>>()
+                });
             handles.push((start, end, h));
             start = end;
         }
@@ -371,7 +403,13 @@ fn stat_all(paths: &[PathBuf]) -> Vec<St> {
             } else {
                 // A refused or failed thread: stat that chunk here.
                 ok = false;
-                out.extend(paths.get(start..end).unwrap_or_default().iter().map(|p| St::lstat(p)));
+                out.extend(
+                    paths
+                        .get(start..end)
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|p| St::lstat(p)),
+                );
             }
         }
         ok
@@ -380,7 +418,12 @@ fn stat_all(paths: &[PathBuf]) -> Vec<St> {
     out
 }
 
-fn snapshot_with(paths: &[PathBuf], inputs: &[(PathBuf, InputKind)], path_stats: Vec<St>, taken: i128) -> Snapshot {
+fn snapshot_with(
+    paths: &[PathBuf],
+    inputs: &[(PathBuf, InputKind)],
+    path_stats: Vec<St>,
+    taken: i128,
+) -> Snapshot {
     let input_stats: Vec<(St, St)> = inputs
         .iter()
         .map(|(p, _)| (St::lstat(p), St::stat(p)))
@@ -395,7 +438,14 @@ fn snapshot_with(paths: &[PathBuf], inputs: &[(PathBuf, InputKind)], path_stats:
         .iter()
         .enumerate()
         .filter(|(_, (l, s))| l.racy(taken) || s.racy(taken))
-        .map(|(i, (_, s))| (i, inputs.get(i).and_then(|(p, _)| content_hash(p, s.kind, true))))
+        .map(|(i, (_, s))| {
+            (
+                i,
+                inputs
+                    .get(i)
+                    .and_then(|(p, _)| content_hash(p, s.kind, true)),
+            )
+        })
         .collect();
     Snapshot {
         paths: path_stats,
@@ -461,7 +511,13 @@ impl StatState {
         }
         if !d.any {
             for (i, h) in &snap.racy_paths {
-                let now = self.paths.get(*i).and_then(|p| content_hash(p, snap.paths.get(*i).map_or(Kind::Missing, |s| s.kind), false));
+                let now = self.paths.get(*i).and_then(|p| {
+                    content_hash(
+                        p,
+                        snap.paths.get(*i).map_or(Kind::Missing, |s| s.kind),
+                        false,
+                    )
+                });
                 if now != *h {
                     d.any = true;
                     break;
