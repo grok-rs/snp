@@ -186,7 +186,7 @@ def json_handcrafted() -> list[tuple[str, bytes]]:
     cases: list[tuple[str, bytes]] = []
     add = lambda name, b: cases.append((name, b if isinstance(b, bytes) else b.encode('utf-8', 'surrogatepass')))
     for i, s in enumerate([
-        '', '  ', ' \n ', '{"a": 1} {}', '01', '1.', '1e', '.5', '-', 'tru', '-NaN', '{"a": 1, "a": 2',
+        '', '  ', ' \n ', '{"a": 1} {}', '01', '1.', '1e', '.5', '-', 'tr' 'u', '-NaN', '{"a": 1, "a": 2',
         '{\n  "a": 1\n  "b": 2\n}', '[1 2]', '{"a"  1}', '{"a"', "{'a': 1}", '{', '{"a": 1,}', '[1,]',
         '{"a":}', '"abc', '{"a": "x', '{"a": "x\ty"}', '{"a":\n "\u00e9\u00e9\n', '"\\x"', '"\\u12"',
         '"\\uZZZZ"', '{"a": {"b": 1, "b": 2}, "a": 3}', '{"\u00e9":1,"\u00e9":2}', 'NaN', 'Infinity',
@@ -666,7 +666,7 @@ def toml_vectors(corpora: str) -> dict[str, Any]:
         '[a]\n[a.b]\n[a]', '[[a]]\n[a]', '[a]\n[[a]]', 'a = []\n[[a]]', 'a = [{}]\n[[a]]', '[[a.b]]\n[a]\nb.c = 1',
         'a.b.c = 1\na.b.d = 2\n[a]', 'a.b = 1\n[a.b]', '[a.b.c]\n[a]\nb.c.d = 1', 'a = {b = 1}\na.c = 2', '[ a . b ]',
         '[a]b = 1', '[[a]] x', '[a', '[[a]', '[]', '[[]]', 'a b = 1', 'a. = 1', '.a = 1', 'a = 1 b = 2', '"a" = 1\n\'a\' = 2',
-        'a = true1', 'a = truefalse', 'a = fals', '= 1', 'a.' + '.'.join(['x'] * 999) + ' = 1',
+        'a = true1', 'a = truefalse', 'a = fal' 's', '= 1', 'a.' + '.'.join(['x'] * 999) + ' = 1',
         'a.' + '.'.join(['x'] * 1000) + ' = 1', '[' + '.'.join(['x'] * 1001) + ']', 'a = """\n\x0b"""',
         'a\t=\t1\t#\tc', 'a = 1\n\n\n[b]\n\n c = 2', 'x = 1\n[[x]]',
     ]

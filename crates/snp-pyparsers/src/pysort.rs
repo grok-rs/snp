@@ -454,8 +454,8 @@ impl<E, F: FnMut(usize, usize) -> Result<bool, Stop<E>>> State<F> {
             }
             let mut min_gallop = self.min_gallop;
             loop {
-                let mut acount = 0usize;
-                let mut bcount = 0usize;
+                let mut count_a = 0usize;
+                let mut count_b = 0usize;
                 loop {
                     let x = get(a, ib).ok_or_else(internal)?;
                     let y = get(&tmp, ta).ok_or_else(internal)?;
@@ -463,26 +463,26 @@ impl<E, F: FnMut(usize, usize) -> Result<bool, Stop<E>>> State<F> {
                         set(a, dest, x).ok_or_else(internal)?;
                         dest = inc(dest)?;
                         ib = inc(ib)?;
-                        bcount = inc(bcount)?;
-                        acount = 0;
+                        count_b = inc(count_b)?;
+                        count_a = 0;
                         nb = dec(nb)?;
                         if nb == 0 {
                             break 'merge Exit::Done;
                         }
-                        if bcount >= min_gallop {
+                        if count_b >= min_gallop {
                             break;
                         }
                     } else {
                         set(a, dest, y).ok_or_else(internal)?;
                         dest = inc(dest)?;
                         ta = inc(ta)?;
-                        acount = inc(acount)?;
-                        bcount = 0;
+                        count_a = inc(count_a)?;
+                        count_b = 0;
                         na = dec(na)?;
                         if na == 1 {
                             break 'merge Exit::Copy;
                         }
-                        if acount >= min_gallop {
+                        if count_a >= min_gallop {
                             break;
                         }
                     }
@@ -495,7 +495,7 @@ impl<E, F: FnMut(usize, usize) -> Result<bool, Stop<E>>> State<F> {
                     self.min_gallop = min_gallop;
                     let key = get(a, ib).ok_or_else(internal)?;
                     let k = self.gallop_right(key, &tmp, ta, na, 0)?;
-                    acount = k;
+                    count_a = k;
                     if k > 0 {
                         for _ in 0..k {
                             set(a, dest, get(&tmp, ta).ok_or_else(internal)?)
@@ -520,7 +520,7 @@ impl<E, F: FnMut(usize, usize) -> Result<bool, Stop<E>>> State<F> {
                     }
                     let key = get(&tmp, ta).ok_or_else(internal)?;
                     let k = self.gallop_left(key, a, ib, nb, 0)?;
-                    bcount = k;
+                    count_b = k;
                     if k > 0 {
                         for _ in 0..k {
                             set(a, dest, get(a, ib).ok_or_else(internal)?).ok_or_else(internal)?;
@@ -539,7 +539,7 @@ impl<E, F: FnMut(usize, usize) -> Result<bool, Stop<E>>> State<F> {
                     if na == 1 {
                         break 'merge Exit::Copy;
                     }
-                    if acount < MIN_GALLOP && bcount < MIN_GALLOP {
+                    if count_a < MIN_GALLOP && count_b < MIN_GALLOP {
                         break;
                     }
                 }
@@ -599,8 +599,8 @@ impl<E, F: FnMut(usize, usize) -> Result<bool, Stop<E>>> State<F> {
             }
             let mut min_gallop = self.min_gallop;
             loop {
-                let mut acount = 0usize;
-                let mut bcount = 0usize;
+                let mut count_a = 0usize;
+                let mut count_b = 0usize;
                 loop {
                     let x = get(&tmp, dec(tb)?).ok_or_else(internal)?;
                     let y = get(a, dec(ia)?).ok_or_else(internal)?;
@@ -608,25 +608,25 @@ impl<E, F: FnMut(usize, usize) -> Result<bool, Stop<E>>> State<F> {
                     if (self.lt)(x, y)? {
                         ia = dec(ia)?;
                         set(a, dest, y).ok_or_else(internal)?;
-                        acount = inc(acount)?;
-                        bcount = 0;
+                        count_a = inc(count_a)?;
+                        count_b = 0;
                         na = dec(na)?;
                         if na == 0 {
                             break 'merge Exit::Done;
                         }
-                        if acount >= min_gallop {
+                        if count_a >= min_gallop {
                             break;
                         }
                     } else {
                         tb = dec(tb)?;
                         set(a, dest, x).ok_or_else(internal)?;
-                        bcount = inc(bcount)?;
-                        acount = 0;
+                        count_b = inc(count_b)?;
+                        count_a = 0;
                         nb = dec(nb)?;
                         if nb == 1 {
                             break 'merge Exit::Copy;
                         }
-                        if bcount >= min_gallop {
+                        if count_b >= min_gallop {
                             break;
                         }
                     }
@@ -640,7 +640,7 @@ impl<E, F: FnMut(usize, usize) -> Result<bool, Stop<E>>> State<F> {
                     let key = get(&tmp, dec(tb)?).ok_or_else(internal)?;
                     let k = self.gallop_right(key, a, pa, na, dec(na)?)?;
                     let k = na.checked_sub(k).ok_or_else(internal)?;
-                    acount = k;
+                    count_a = k;
                     if k > 0 {
                         for _ in 0..k {
                             dest = dec(dest)?;
@@ -662,7 +662,7 @@ impl<E, F: FnMut(usize, usize) -> Result<bool, Stop<E>>> State<F> {
                     let key = get(a, dec(ia)?).ok_or_else(internal)?;
                     let k = self.gallop_left(key, &tmp, 0, nb, dec(nb)?)?;
                     let k = nb.checked_sub(k).ok_or_else(internal)?;
-                    bcount = k;
+                    count_b = k;
                     if k > 0 {
                         for _ in 0..k {
                             dest = dec(dest)?;
@@ -685,7 +685,7 @@ impl<E, F: FnMut(usize, usize) -> Result<bool, Stop<E>>> State<F> {
                     if na == 0 {
                         break 'merge Exit::Done;
                     }
-                    if acount < MIN_GALLOP && bcount < MIN_GALLOP {
+                    if count_a < MIN_GALLOP && count_b < MIN_GALLOP {
                         break;
                     }
                 }

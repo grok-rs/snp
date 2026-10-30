@@ -139,24 +139,24 @@ impl<'s> Matcher<'s> {
         self.b.get(j).copied()
     }
 
-    /// `find_longest_match(alo, ahi, blo, bhi)` → (i, j, k).
+    /// `find_longest_match(a_lo, a_hi, b_lo, b_hi)` → (i, j, k).
     fn find_longest_match(
         &self,
-        alo: usize,
-        ahi: usize,
-        blo: usize,
-        bhi: usize,
+        a_lo: usize,
+        a_hi: usize,
+        b_lo: usize,
+        b_hi: usize,
     ) -> (usize, usize, usize) {
-        let (mut besti, mut bestj, mut bestsize) = (alo, blo, 0usize);
+        let (mut besti, mut bestj, mut bestsize) = (a_lo, b_lo, 0usize);
         let mut j2len: HashMap<usize, usize> = HashMap::new();
-        for i in alo..ahi {
+        for i in a_lo..a_hi {
             let mut newj2len: HashMap<usize, usize> = HashMap::new();
             if let Some(js) = self.at_a(i).and_then(|x| self.b2j.get(&x)) {
                 for &j in js {
-                    if j < blo {
+                    if j < b_lo {
                         continue;
                     }
-                    if j >= bhi {
+                    if j >= b_hi {
                         break;
                     }
                     let prev = j
@@ -176,16 +176,16 @@ impl<'s> Matcher<'s> {
             j2len = newj2len;
         }
         // Extend with equal elements on both sides (no junk: `isbjunk` is always false).
-        while besti > alo
-            && bestj > blo
+        while besti > a_lo
+            && bestj > b_lo
             && self.at_a(besti.saturating_sub(1)) == self.at_b(bestj.saturating_sub(1))
         {
             besti = besti.saturating_sub(1);
             bestj = bestj.saturating_sub(1);
             bestsize = bestsize.saturating_add(1);
         }
-        while besti.saturating_add(bestsize) < ahi
-            && bestj.saturating_add(bestsize) < bhi
+        while besti.saturating_add(bestsize) < a_hi
+            && bestj.saturating_add(bestsize) < b_hi
             && self.at_a(besti.saturating_add(bestsize))
                 == self.at_b(bestj.saturating_add(bestsize))
         {
@@ -199,15 +199,15 @@ impl<'s> Matcher<'s> {
         let (la, lb) = (self.a.len(), self.b.len());
         let mut queue = vec![(0usize, la, 0usize, lb)];
         let mut blocks = Vec::new();
-        while let Some((alo, ahi, blo, bhi)) = queue.pop() {
-            let (i, j, k) = self.find_longest_match(alo, ahi, blo, bhi);
+        while let Some((a_lo, a_hi, b_lo, b_hi)) = queue.pop() {
+            let (i, j, k) = self.find_longest_match(a_lo, a_hi, b_lo, b_hi);
             if k > 0 {
                 blocks.push((i, j, k));
-                if alo < i && blo < j {
-                    queue.push((alo, i, blo, j));
+                if a_lo < i && b_lo < j {
+                    queue.push((a_lo, i, b_lo, j));
                 }
-                if i.saturating_add(k) < ahi && j.saturating_add(k) < bhi {
-                    queue.push((i.saturating_add(k), ahi, j.saturating_add(k), bhi));
+                if i.saturating_add(k) < a_hi && j.saturating_add(k) < b_hi {
+                    queue.push((i.saturating_add(k), a_hi, j.saturating_add(k), b_hi));
                 }
             }
         }

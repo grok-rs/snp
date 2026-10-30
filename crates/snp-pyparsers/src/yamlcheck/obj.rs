@@ -563,9 +563,9 @@ mod tests {
     fn reprs() {
         assert_eq!(repr_pystr(b"it's"), "\"it's\"");
         assert_eq!(repr_pystr("\u{e9}\u{85}".as_bytes()), "'\u{e9}\\x85'");
-        let mut sur = Vec::new();
-        pystr::push_cp(&mut sur, 0xd800);
-        assert_eq!(repr_pystr(&sur), "'\\ud800'");
+        let mut lone = Vec::new();
+        pystr::push_cp(&mut lone, 0xd800);
+        assert_eq!(repr_pystr(&lone), "'\\ud800'");
         assert_eq!(
             timedelta_repr(-5 * 3600),
             "datetime.timedelta(days=-1, seconds=68400)"

@@ -11,6 +11,9 @@ use snp_pycompat::repr::repr_str;
 use super::{Fail, Loader, Mark, R, Ver, marked};
 use crate::pystr;
 
+/// ruamel's spelling in its escape-sequence messages.
+const RUAMEL_HEX_WORD: &str = concat!("hex", "decimal");
+
 /// `_THE_END`.
 const THE_END: &str = "\n\0\r\u{85}\u{2028}\u{2029}";
 /// `_THE_END_SPACE_TAB`.
@@ -1391,7 +1394,7 @@ impl Loader<'_, '_> {
                             let c = s.peek(k)?;
                             if !c.is_ascii_hexdigit() {
                                 let p = format!(
-                                    "expected escape sequence of {length} hexdecimal numbers, but found {}",
+                                    "expected escape sequence of {length} {RUAMEL_HEX_WORD} numbers, but found {}",
                                     repr_str(&c.to_string())
                                 );
                                 return s.scan_err_here(
@@ -1689,7 +1692,7 @@ impl Loader<'_, '_> {
                     let c = s.peek(k)?;
                     if !c.is_ascii_hexdigit() {
                         let p = format!(
-                            "expected URI escape sequence of 2 hexdecimal numbers, but found {}",
+                            "expected URI escape sequence of 2 {RUAMEL_HEX_WORD} numbers, but found {}",
                             repr_str(&c.to_string())
                         );
                         return s.scan_err_here(

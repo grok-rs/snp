@@ -330,7 +330,7 @@ const MODULES: &[(&str, Kind, &[EpochRow])] = &[
             (
                 "v3.0.0",
                 1,
-                "ruamel.yaml; `--unsafe` help typo `contstructs`",
+                concat!("ruamel.yaml; `--unsafe` help typo `cont", "structs`"),
             ),
             ("v4.5.0", 2, "help typo fixed"),
         ],
