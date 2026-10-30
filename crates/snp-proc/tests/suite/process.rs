@@ -31,6 +31,7 @@ pub(crate) fn drive(scenario: &str) -> bool {
         "rss" => rss(),
         "quiesce" => quiesce_daemon(),
         "quiesce_hold" => quiesce_hold(),
+        "quiesce_critical" => quiesce_critical(),
         "trace" => trace(),
         _ => return false,
     }
@@ -482,6 +483,81 @@ fn quiesce_daemon() {
 #[cfg(not(target_os = "linux"))]
 fn quiesce_daemon() {}
 
+/// Linux, subreaper: the sweep spares an orphan left in the process group of a finished Critical child, and still
+/// kills one left in a hook's group.
+#[cfg(target_os = "linux")]
+#[test]
+fn quiesce_spares_the_orphans_of_critical_children() {
+    let r = run_driver("quiesce_critical");
+    assert_eq!(result(&r, "reparented"), Some("true"), "{r:?}");
+    assert_eq!(result(&r, "critical_orphan_alive"), Some("true"), "{r:?}");
+    assert_eq!(result(&r, "hook_orphan_alive"), Some("false"), "{r:?}");
+}
+
+#[cfg(target_os = "linux")]
+fn quiesce_critical() {
+    use snp_proc::spawn::{Role, Spec, Stdin};
+    let d = PathBuf::from(driver_param("SNP_PROC_TEST_DIR").unwrap());
+    let cancel = CancelToken::new();
+    let _guard = snp_proc::signals::install(cancel.clone(), true).unwrap();
+    let env = env();
+    let argv: Vec<OsString> = [
+        "/bin/sh",
+        "-c",
+        "sleep 30 </dev/null >/dev/null 2>&1 & echo $!",
+    ]
+    .iter()
+    .map(OsString::from)
+    .collect();
+    let pid_of = |out: &[u8]| -> i32 { String::from_utf8_lossy(out).trim().parse().unwrap() };
+    let critical = Spec {
+        group: Group::Isolated,
+        role: Role::Critical,
+        stdin: Stdin::Null,
+        ..hook(&argv, &env, &d, &cancel)
+    };
+    let c = spawn::capture(&critical).unwrap();
+    let crit_orphan = pid_of(&c.stdout);
+    let m = spawn::merged(&hook(&argv, &env, &d, &cancel), false, &budget()).unwrap();
+    let hook_orphan = pid_of(&bytes(&m.output));
+    let ppid = |pid: i32| -> Option<u32> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        let after = stat.rsplit_once(')')?.1;
+        after.split_whitespace().nth(1)?.parse().ok()
+    };
+    let me = Some(std::process::id());
+    let t0 = Instant::now();
+    while (ppid(crit_orphan) != me || ppid(hook_orphan) != me)
+        && t0.elapsed() < Duration::from_secs(5)
+    {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    report(
+        "reparented",
+        ppid(crit_orphan) == me && ppid(hook_orphan) == me,
+    );
+    cancel.cancel(CancelReason::Interrupt);
+    snp_proc::registry::quiesce(Duration::from_millis(200));
+    // A zombie is not alive: only a running (or sleeping) process counts.
+    let alive = |pid: i32| {
+        std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .ok()
+            .and_then(|s| {
+                s.rsplit_once(')')
+                    .map(|(_, a)| a.trim_start().starts_with(['S', 'R', 'D']))
+            })
+            .unwrap_or(false)
+    };
+    report("critical_orphan_alive", alive(crit_orphan));
+    report("hook_orphan_alive", alive(hook_orphan));
+    if let Some(p) = rustix::process::Pid::from_raw(crit_orphan) {
+        let _ignored = rustix::process::kill_process(p, rustix::process::Signal::KILL);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn quiesce_critical() {}
+
 /// `quiesce` ends a hook whose descendant holds its stdout (Linux: subreaper sweep; Windows: the hook's Job Object).
 #[cfg(any(target_os = "linux", windows))]
 #[test]
@@ -539,7 +615,13 @@ fn trace_log_shows_no_secrets() {
         "{log}"
     );
     assert!(log.contains("NPM_AUTH=<redacted, 17 bytes>"), "{log}");
-    for secret in ["SECRET1", "SECRET2", "SECRET3", "SECRET4"] {
+    assert!(
+        log.contains("GIT_DIR=\\\"/repo/.git\\\"") || log.contains("GIT_DIR=\"/repo/.git\""),
+        "{log}"
+    );
+    for secret in [
+        "SECRET1", "SECRET2", "SECRET3", "SECRET4", "SECRET5", "SECRET6", "SECRET7",
+    ] {
         assert!(!log.contains(secret), "{secret} leaked: {log}");
     }
 }
@@ -560,6 +642,10 @@ fn trace() {
         ("NPM_AUTH", "npm-token-SECRET1"),
         ("MYSQL_PWD", "mysql-SECRET2"),
         ("OPENAI_API_KEY", "sk-SECRET3"),
+        ("GIT_CREDENTIALS", "user:SECRET5"),
+        ("GIT_TOKEN", "SECRET6"),
+        ("SNP_GITHUB_TOKEN", "SECRET7"),
+        ("GIT_DIR", "/repo/.git"),
         ("SNP_JOBS", "4"),
     ]);
     let cancel = CancelToken::new();

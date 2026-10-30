@@ -161,6 +161,16 @@ static KILL_GRACE_MS: AtomicU64 = AtomicU64::new(2_000);
 #[cfg(any(target_os = "linux", target_os = "android"))]
 static SUBREAPER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// The process groups of Critical children spawned by this process (each Critical child leads its own group, ADR-026),
+/// kept after they exit so the descendant sweep spares what they left behind (Linux; most recent first-out, bounded).
+#[cfg(any(target_os = "linux", target_os = "android"))]
+static CRITICAL_GROUPS: Mutex<std::collections::VecDeque<u32>> =
+    Mutex::new(std::collections::VecDeque::new());
+
+/// Most Critical process groups remembered for the sweep (Linux).
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const CRITICAL_GROUPS_MAX: usize = 4096;
+
 /// Most Job Objects of finished hooks kept for `quiesce` (Windows).
 #[cfg(windows)]
 const RETIRED_JOBS_MAX: usize = 4096;
@@ -208,6 +218,14 @@ pub(crate) fn register(
         cancel,
         id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
     });
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if role == Role::Critical {
+        let mut groups = sync::lock(&CRITICAL_GROUPS);
+        if groups.len() >= CRITICAL_GROUPS_MAX {
+            groups.pop_front();
+        }
+        groups.push_back(pid);
+    }
     sync::lock(&REGISTRY).live.push(Arc::clone(&cell));
     cell
 }
@@ -339,8 +357,11 @@ fn affected(cell: &Cell) -> bool {
 /// Remaining registered Hook/Tool children of the cancelled token are killed with SIGKILL (by `-pgid` when isolated)
 /// once `bound` elapses; their workers reap them. On Linux with `PR_SET_CHILD_SUBREAPER` (`signals::install(_, true)`) the orphaned descendants
 /// of finished hooks have been reparented to snp: every child of this process that is not registered is killed and
-/// reaped, in rounds, until none is left (their own children reparent in turn); Critical children and their
-/// descendants are never touched. Windows terminates the Job Objects of live and finished hooks.
+/// reaped, in rounds, until none is left (their own children reparent in turn). Live Critical children are never
+/// touched, and neither is an orphan still in the process group or session of a Critical child of this run (a
+/// credential helper or `git maintenance` left by a stash command); a descendant of a Critical child that has left
+/// its group and session (`setsid`, a daemon) is indistinguishable from a hook's daemon and is swept (D-DATA-02
+/// residual). Windows terminates the Job Objects of live and finished hooks.
 pub fn quiesce(bound: Duration) {
     let deadline = Instant::now().checked_add(bound);
     {
@@ -397,20 +418,39 @@ fn proc_children() -> Vec<i32> {
     out
 }
 
-/// SIGKILLs and reaps every unregistered child (orphaned hook descendants reparented to this subreaper), in
-/// rounds bounded to ~2 s in total.
+/// Whether an orphan (our child, so its pid is stable) is in the process group or session of a Critical child.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn left_by_critical(pid: rustix::process::Pid, critical: &[u32]) -> bool {
+    let of = |id: rustix::io::Result<rustix::process::Pid>| {
+        id.ok()
+            .and_then(|g| u32::try_from(g.as_raw_nonzero().get()).ok())
+            .is_some_and(|g| critical.contains(&g))
+    };
+    of(rustix::process::getpgid(Some(pid))) || of(rustix::process::getsid(Some(pid)))
+}
+
+/// SIGKILLs and reaps every unregistered child (orphaned hook descendants reparented to this subreaper) except
+/// those [`left_by_critical`] (only reaped once they exited), in rounds bounded to ~2 s in total.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn sweep_orphans() {
     use rustix::process::{Pid, Signal, WaitId, WaitIdOptions};
     let _gate = sync::write(&SPAWN_GATE);
+    let critical: Vec<u32> = sync::lock(&CRITICAL_GROUPS).iter().copied().collect();
     let start = Instant::now();
     loop {
         let registered: Vec<u32> = live().iter().map(|c| c.pid).collect();
-        let orphans: Vec<Pid> = proc_children()
+        let (spared, orphans): (Vec<Pid>, Vec<Pid>) = proc_children()
             .into_iter()
             .filter(|p| u32::try_from(*p).is_ok_and(|p| !registered.contains(&p)))
             .filter_map(Pid::from_raw)
-            .collect();
+            .partition(|p| left_by_critical(*p, &critical));
+        for pid in spared {
+            // Reap it if it has exited (never signalled).
+            let _ignored = rustix::process::waitid(
+                WaitId::Pid(pid),
+                WaitIdOptions::EXITED | WaitIdOptions::NOHANG,
+            );
+        }
         if orphans.is_empty() {
             return;
         }

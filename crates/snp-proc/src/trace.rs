@@ -3,8 +3,9 @@
 //! Values are printed only for `PATH`, `PATHEXT`, `HOME`, `USERPROFILE`, `TERM`, `LANG`, `LC_*`, `TZ`, `PRE_COMMIT*`,
 //! `SNP_*`, `GIT_*` (except `GIT_ASKPASS`, `GIT_CONFIG_VALUE_*` and `GIT_CONFIG_PARAMETERS`, which carry credentials)
 //! and the language activation variables snp sets itself; every other variable is logged as
-//! `NAME=<redacted, N bytes>`. URL userinfo (`scheme://user:secret@host`) is scrubbed from argv and from every
-//! printed value.
+//! `NAME=<redacted, N bytes>`. A name that looks like a credential is redacted even under an allowed prefix
+//! (`GIT_TOKEN`, `GIT_CREDENTIALS`, `SNP_GITHUB_TOKEN`, `PRE_COMMIT_API_KEY`: [`looks_secret`]). URL userinfo
+//! (`scheme://user:secret@host`) is scrubbed from argv and from every printed value.
 //!
 //! Owner: WP-15.
 
@@ -59,13 +60,30 @@ const SHOWN_PREFIXES: [&str; 4] = ["LC_", "PRE_COMMIT", "SNP_", "GIT_"];
 /// `GIT_*` names that carry credentials.
 const GIT_SECRETS: [&str; 2] = ["GIT_ASKPASS", "GIT_CONFIG_PARAMETERS"];
 
+/// Substrings that mark a credential anywhere in an (upper-cased) name.
+const SECRET_PARTS: [&str; 5] = ["TOKEN", "PASSWORD", "PASSWD", "SECRET", "CREDENTIAL"];
+
+/// `_`-separated words that mark a credential (`GIT_AUTH`, `X_PASS`, `GH_PAT`; not `GIT_AUTHOR_NAME`).
+const SECRET_WORDS: [&str; 5] = ["AUTH", "PASS", "PAT", "PWD", "APIKEY"];
+
+/// Whether an upper-cased variable name looks like it carries a credential: it contains [`SECRET_PARTS`], has a
+/// [`SECRET_WORDS`] word, or ends in `KEY` as its last word (`*_API_KEY`, `*_KEY`; `GIT_CONFIG_KEY_0` does not).
+fn looks_secret(upper: &str) -> bool {
+    SECRET_PARTS.iter().any(|p| upper.contains(p))
+        || upper.split('_').any(|w| SECRET_WORDS.contains(&w))
+        || upper.rsplit('_').next().is_some_and(|w| w.ends_with("KEY"))
+}
+
 /// Whether the value of `name` may be logged (ASCII-case-insensitive, as names are on Windows).
 pub(crate) fn value_is_shown(name: &OsStr) -> bool {
     let Some(name) = name.to_str() else {
         return false;
     };
     let upper = name.to_ascii_uppercase();
-    if upper.starts_with("GIT_CONFIG_VALUE_") || GIT_SECRETS.contains(&upper.as_str()) {
+    if upper.starts_with("GIT_CONFIG_VALUE_")
+        || GIT_SECRETS.contains(&upper.as_str())
+        || looks_secret(&upper)
+    {
         return false;
     }
     if SHOWN.contains(&upper.as_str()) || ACTIVATION.contains(&upper.as_str()) {
@@ -172,6 +190,14 @@ mod tests {
             "SNP_JOBS",
             "GIT_INDEX_FILE",
             "GIT_DIR",
+            "GIT_AUTHOR_NAME",
+            "GIT_COMMITTER_EMAIL",
+            "GIT_CONFIG_KEY_0",
+            "GIT_CONFIG_COUNT",
+            "GIT_SSH_COMMAND",
+            "GIT_TERMINAL_PROMPT",
+            "SNP_OUTPUT_BUDGET",
+            "PRE_COMMIT_HOME",
             "VIRTUAL_ENV",
             "npm_config_prefix",
         ] {
@@ -187,6 +213,17 @@ mod tests {
             "AWS_SECRET_ACCESS_KEY",
             "npm_config__authToken",
             "LANGUAGE_SECRET",
+            "GIT_CREDENTIALS",
+            "GIT_TOKEN",
+            "git_token",
+            "GIT_PASSWORD",
+            "GIT_AUTH_TOKEN",
+            "GIT_AUTH",
+            "GIT_PAT",
+            "SNP_GITHUB_TOKEN",
+            "SNP_SIGNING_KEY",
+            "PRE_COMMIT_API_KEY",
+            "PRE_COMMIT_PASSWD",
         ] {
             assert!(!value_is_shown(OsStr::new(hidden)), "{hidden}");
         }
