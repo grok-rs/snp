@@ -31,7 +31,9 @@ import re
 import re._constants as C
 import re._parser as P
 import signal
+import subprocess
 import sys
+import tempfile
 import unicodedata
 import warnings
 
@@ -439,8 +441,11 @@ def conditional_reentry(pattern, mode, flags):
 
 
 def nullable_loop(pattern, mode, flags):
-    """The pattern repeats a body that can match the empty string. CPython ends such a loop after an empty
-    iteration *with that iteration's priority*; the regex crate drops the empty path, so the span end of a
+    """The pattern repeats a body that can match the empty string in a way snp cannot run like CPython (D8).
+
+    CPython ends such a loop after an empty iteration *with that iteration's priority*. snp reproduces that for
+    unbounded greedy loops (fancy-regex's epsilon check) and lazy ones, but not for bounded or possessive loops, nor
+    for `{2,}` loops whose captures a back-reference or conditional can observe: there the span end of a
     leftmost-first match may differ (never whether there is a match). Marked so the test can tell."""
     try:
         with warnings.catch_warnings():
@@ -448,13 +453,35 @@ def nullable_loop(pattern, mode, flags):
             sp = P.parse(encode(pattern, mode), flags)
     except Exception:
         return False
+    observable = bool(re.search(r'\\[1-9]|\(\?P=|\(\?\(', pattern))
+
+    def has_group(sub):
+        todo = [sub]
+        while todo:
+            for op, av in todo.pop().data:
+                if op is C.SUBPATTERN and av[0]:
+                    return True
+                if op in (C.MAX_REPEAT, C.MIN_REPEAT, C.POSSESSIVE_REPEAT):
+                    todo.append(av[2])
+                elif op is C.SUBPATTERN or op is C.ATOMIC_GROUP:
+                    todo.append(av[-1] if op is C.SUBPATTERN else av)
+                elif op is C.BRANCH:
+                    todo.extend(av[1])
+                elif op in (C.ASSERT, C.ASSERT_NOT):
+                    todo.append(av[1])
+        return False
+
     stack = [sp]
     while stack:
         cur = stack.pop()
         for op, av in cur.data:
             if op in (C.MAX_REPEAT, C.MIN_REPEAT, C.POSSESSIVE_REPEAT):
                 if av[2].getwidth()[0] == 0 and av[1] > 1:
-                    return True
+                    unbounded = av[1] == C.MAXREPEAT
+                    exact = unbounded and (op is C.MIN_REPEAT or (
+                        op is C.MAX_REPEAT and (av[0] <= 1 or not (observable and has_group(av[2])))))
+                    if not exact:
+                        return True
                 stack.append(av[2])
             elif op is C.BRANCH:
                 stack.extend(av[1])
@@ -1011,6 +1038,14 @@ def edge_patterns():
     rows += [('|'.join('w%d' % i for i in range(2000)), 's')]
     rows += [('[\\x00-\\U0010ffff]', 's'), ('[^\\x00-\\U0010ffff]', 's'), ('(?i)[\\x00-\\U0010ffff]', 's')]
     rows += [('[\\x00-\\xff]', 'b'), ('[^\\x00-\\xff]', 'b')]
+    # review round 1 (appended so that the rows above keep their haystack draws): `\U` past a C int (D7),
+    # nullable loop bodies (`MAX_UNTIL`'s empty-iteration exit), lazy bodies fancy-regex's optimizer rewrites,
+    # and the search-only charset prefix of a scoped `(?a:…)` set.
+    for p in ('\\U80000000', '\\UFFFFFFFF', '[\\U80000000-\\U90000000]', '(?:x*|y)+', '(?:$|.)*', '(?:x*|y)+z',
+              '(?:x*|y){2,}', '(?:a|\\b)*', '(?=x)(x+?)*', '(?<=a)(x+?)*', '(?=x)((x)+?)*', '(?=a)a*b??a*'):
+        rows += [(p, 's'), (p, 'b')]
+    rows += [(p, 's') for p in ('(?a:\\W)', '(?a:[\\SA-k])', '(?ims)(?:(?a:[\\S]a))', '(?a:\\Wa|\\Wb)', '(?a:\\W|x)',
+                                '(?i)(?a:[\\Sa])', '((?a:[^\\w]))', '(?a:\\W)*x')]
     seen = set()
     out = []
     for r in rows:
@@ -1462,6 +1497,42 @@ def calibrate_pad():
     raise SystemExit('could not calibrate the nesting padding')
 
 
+# bytes patterns are compiled only by pygrep: `python -m pre_commit.languages.pygrep` runs `main()`, which calls
+# `re.compile(args.pattern.encode(), flags)` itself, from a much shallower stack than config validation (494
+# nested groups compile there, 495 raise RecursionError, measured with pygrep's `main` on CPython 3.12.3). The
+# probe reproduces that stack: run with `-m`, `raise SystemExit(main())`, `re.compile` called from `main`.
+PYGREP_PROBE = """import json, re, sys
+
+
+def main():
+    out = []
+    for p in json.load(sys.stdin):
+        try:
+            rx = re.compile(p.encode(), 0)
+        except RecursionError:
+            out.append(None)
+            continue
+        out.append([rx.search(x) is not None for x in (b'a', b'ab', b'b', b'')])
+    json.dump(out, sys.stdout)
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
+"""
+
+
+def pygrep_outcomes(patterns):
+    """[hits or None (RecursionError)] of each bytes pattern compiled at pygrep's stack depth."""
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, 'snp_pygrep_probe.py'), 'w', encoding='utf-8') as fh:
+            fh.write(PYGREP_PROBE)
+        # `-E -s` instead of `-I`: `-m` must find the probe in its own (fresh, empty) directory.
+        res = subprocess.run([sys.executable, '-E', '-s', '-m', 'snp_pygrep_probe'], cwd=tmp, check=True,
+                             input=json.dumps(patterns).encode(), capture_output=True)
+    return json.loads(res.stdout)
+
+
 def nesting_rows(pad):
     shapes = {
         'cap': lambda n: '(' * n + 'a' + ')' * n,
@@ -1476,17 +1547,22 @@ def nesting_rows(pad):
     }
     rows = []
     for name, f in shapes.items():
-        ns = [1, 2, 8, 62, 63, 64, 65, 100, 250, 251, 483, 484, 485, 486, 500] if name != 'cond' else [1, 100, 967, 968,
-                                                                                                         969, 970, 971]
-        for n in ns:
-            for mode in ('s', 'b'):
-                rx, out = outcome(f(n), mode, 0, pad)
-                row = {'shape': name, 'n': n, 'md': mode}
-                row.update(out)
-                if rx is not None:
-                    row['hit'] = [rx.search(x) is not None for x in ('a', 'ab', 'b', '') ] if mode == 's' else [
-                        rx.search(x) is not None for x in (b'a', b'ab', b'b', b'')]
-                rows.append(row)
+        ns = [1, 2, 8, 62, 63, 64, 65, 100, 250, 251, 483, 484, 485, 486, 493, 494, 495, 496, 500] if name != 'cond' \
+            else [1, 100, 967, 968, 969, 970, 971, 987, 988, 989, 990]
+        probe = pygrep_outcomes([f(n) for n in ns])
+        for n, hits in zip(ns, probe):
+            rx, out = outcome(f(n), 's', 0, pad)
+            row = {'shape': name, 'n': n, 'md': 's'}
+            row.update(out)
+            if rx is not None:
+                row['hit'] = [rx.search(x) is not None for x in ('a', 'ab', 'b', '')]
+            rows.append(row)
+            row = {'shape': name, 'n': n, 'md': 'b'}
+            if hits is None:
+                row.update({'t': 'RecursionError', 'str': 'maximum recursion depth exceeded'})
+            else:
+                row.update({'ok': True, 'hit': hits})
+            rows.append(row)
     return rows
 
 
@@ -1568,7 +1644,11 @@ def main():
 
     if want('nesting'):
         pad = calibrate_pad()
-        dump(os.path.join(args.out, 'nesting.json'), {'pad': pad, 'rows': nesting_rows(pad)})
+        rows = nesting_rows(pad)
+        cap = {(r['n'], r['md']): r.get('ok', False) for r in rows if r['shape'] == 'cap'}
+        if not (cap[494, 'b'] and not cap[495, 'b']):
+            raise SystemExit('the pygrep probe does not reproduce pygrep\'s 494-group limit')
+        dump(os.path.join(args.out, 'nesting.json'), {'pad': pad, 'rows': rows})
 
     if want('fuzz_str'):
         fr = random.Random(args.seed + 5)

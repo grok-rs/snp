@@ -156,17 +156,23 @@ mod perf {
             assert_eq!(re.kind(), MatchKind::Tier2);
             let t = Instant::now();
             assert_eq!(re.search(&haystack), Err(MatchError::Backtrack));
+            let search = t.elapsed();
+            let t = Instant::now();
             assert_eq!(
                 re.search_bytes(haystack.as_bytes()),
                 Err(MatchError::Backtrack)
             );
-            let elapsed = t.elapsed();
-            eprintln!("{mode:?}: two searches stopped at the backtrack limit in {elapsed:?}");
-            // Target < 10 s per search (WBS WP-13); 3× margin (ADR-071).
-            assert!(
-                elapsed < Duration::from_secs(60),
-                "{elapsed:?} for two searches (target < 10 s each)"
+            let spans = t.elapsed();
+            eprintln!(
+                "{mode:?}: search stopped at the backtrack limit in {search:?}, search_bytes in {spans:?}"
             );
+            // The acceptance bound of WBS WP-13, per search (measured ~3.3 s, i.e. a 3× margin).
+            for elapsed in [search, spans] {
+                assert!(
+                    elapsed < Duration::from_secs(10),
+                    "{elapsed:?} for one search (acceptance: < 10 s)"
+                );
+            }
         }
     }
 

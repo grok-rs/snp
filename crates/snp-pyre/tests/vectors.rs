@@ -3,7 +3,8 @@
 //! (`re.search` / `re.match` / `re.fullmatch`, spans for bytes patterns) for the edge list, the corpus, the
 //! grammar fuzz sets and the nesting rows.
 //!
-//! The only tolerated difference is 01 Addendum §A.6.13 D1 (IGNORECASE back-references, D-MISC-06).
+//! The only tolerated differences are 01 Addendum §A.6.13 D1 (IGNORECASE back-references) and the D7 error class
+//! of `\U` escapes above 0x7FFFFFFF (`OverflowError` in CPython, a `bad escape` in snp), both in D-MISC-06.
 //!
 //! Owner: WP-13.
 
@@ -213,6 +214,14 @@ mod vectors {
                 true
             }
             (PyReError::Value(m), "ValueError") => **m == *want_str,
+            // D7 (D-MISC-06): `\U` above 0x7FFFFFFF in a str pattern, where CPython's `chr` raises
+            // `OverflowError: Python int too large to convert to C int`; snp reports the `bad escape`.
+            (PyReError::Re { msg, .. }, "OverflowError")
+                if want_str == "Python int too large to convert to C int"
+                    && msg.starts_with("bad escape \\U") =>
+            {
+                true
+            }
             _ => false,
         };
         if !ok {
@@ -337,8 +346,9 @@ mod vectors {
                 }
             }
         }
-        // A nullable loop body may end a match at a different place (never decide whether there is one): span-only
-        // differences of such rows are tolerated and counted (the regex crate's empty-iteration priority).
+        // D8 (D-MISC-06): the nullable loops snp cannot run like CPython's `MAX_UNTIL` (bounded, possessive, or
+        // `{2,}` with observable captures) may end a match at a different place (never decide whether there is
+        // one): span-only differences of such rows are tolerated and counted (bounded by `assert_vectors`).
         let nullable_loop = row["nl"] == true;
         let mut tolerated = false;
         let checks: [(&str, &Vec<u64>, u64); 3] = [

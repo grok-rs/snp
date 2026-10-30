@@ -1,7 +1,8 @@
 # D-MISC-06
 
 Regular-expression corner cases where snp's engines cannot reproduce CPython 3.12 `re` exactly (01 Addendum
-§A.6.13 D1–D6). None occurs in the 4 858-pattern corpus.
+§A.6.13 D1–D6, plus D7–D8 found in the WP-13 review and pending a §A.6.13 / COMPATIBILITY row update by the
+integration lead). None occurs in the 4 858-pattern corpus.
 
 * **Class:** TIERB (COMPATIBILITY §5.9)
 * **Owner:** WP-13 (`snp_pyre`); the first package of the register row owns this file and
@@ -11,7 +12,7 @@ Regular-expression corner cases where snp's engines cannot reproduce CPython 3.1
 
 | pre-commit 4.6.2 | snp |
 |---|---|
-| regex corner cases (01 Addendum §A.6.13 D1–D6): IGNORECASE backreferences across `K`/`k`, `ſ`/`s`, `ς`/`σ`; code points unassigned in UCD 15.0 treated as UCD 16; `\N{…}` without the `py-re-names` feature; `(?L)` under a single-byte non-UTF-8 locale; patterns too large for the engines (`Unsupported`, reported as the validation error plus a stderr hint) | as stated (corpus frequency 0) |
+| regex corner cases (01 Addendum §A.6.13 D1–D6): IGNORECASE backreferences across `K`/`k`, `ſ`/`s`, `ς`/`σ`; code points unassigned in UCD 15.0 treated as UCD 16; `\N{…}` without the `py-re-names` feature; `(?L)` under a single-byte non-UTF-8 locale; patterns too large for the engines (`Unsupported`, reported as the validation error plus a stderr hint); D7: `\U` above 0x7FFFFFFF in a str pattern (`OverflowError` in CPython, `bad escape` in snp); D8: nullable loop bodies that are bounded, possessive, or `{2,}` with captures a back-reference or conditional observes | as stated (corpus frequency 0) |
 
 ## Rationale
 
@@ -36,9 +37,33 @@ without a third, backtracking engine of snp's own:
   reported as cfgv's `… is not a valid python regex` validation error plus a stderr hint — never a crash, never a
   silent mismatch.
 
-All six are safe: they are deterministic, need deliberately exotic patterns, and either fail loudly (D3, D5, D6) or
-change the answer only for case-insensitive back-references between rare letters (D1) or for characters newer than
-UCD 15.0 (D2).
+* **D7 — `\U` past a C int.** In a str pattern `\U80000000` … `\UFFFFFFFF` (also inside a set) makes `chr()` in
+  `re/_parser.py` raise `OverflowError: Python int too large to convert to C int` instead of the `re.error`
+  `bad escape \U…` of the values 0x110000–0x7FFFFFFF. snp reports the `bad escape` (position included):
+  `snp_pyre::PyReError::Overflow` carries the fixed repetition text, and a message-carrying variant would change
+  the frozen ARCH §1.4.5 contract. Both are rejections; only pygrep's last traceback line differs (and the class
+  pre-commit would crash with on a config pattern, D-CRASH-04). Bytes patterns have no `\U` escape and are exact.
+  The edge vectors carry the three shapes; `tests/vectors.rs` tolerates exactly this class.
+* **D8 — empty iterations snp cannot end like `MAX_UNTIL`.** CPython leaves a loop after an iteration that matched
+  the empty string, with that iteration's priority (`_sre` `last_ptr`). snp runs unbounded greedy loops over a
+  nullable body on fancy-regex's epsilon-checked VM loop (and `X{m,}` as `X{m}` + such a loop), which is exact
+  (`(?:x*|y)+` on `xyx` is `(0, 1)`, as `pygrep --multiline` needs). Left: bounded `X{m,n}` and possessive loops over
+  a nullable body, and `X{m,}` (m ≥ 2) when a back-reference or conditional can observe X's captures. There the match
+  *end* may differ (never whether `re.search` finds a match), and a conditional on a group of the loop can see an
+  iteration CPython never runs: `(?x)((a)?(?<!\n)(?(1)[a-z]|(?:i|^))){0,2}` fullmatches `ab` in snp, not in CPython
+  (this is the "conditional re-entry" class of `gen_re_vectors.py`, about one random pattern in 4 000). The same
+  span difference remains for a tier-1 pattern nested 63 or more groups deep, whose exact form fancy-regex cannot
+  build.
+
+All eight are safe: they are deterministic, need deliberately exotic patterns, and either fail loudly (D3, D5, D6, D7: a
+rejected pattern stays rejected) or change the answer only for case-insensitive back-references between rare
+letters (D1), for characters newer than UCD 15.0 (D2), or for empty iterations of exotic nullable loops (D8).
+
+Fixed in the WP-13 review (exact now, with regression tests in `crates/snp-pyre/tests/acceptance.rs` and edge
+vectors): spans of unbounded nullable loops; fancy-regex 0.19's tree rewrites of lazy bodies (`(X+?)*` → `(X+?)?`,
+`a*b??a*` → `a*(?:ba*)?`); the search-only charset prefix of a leading scoped `(?a:…)` set (`re.search(r'(?a:\W)',
+'é')` is `None` while `re.match` matches); and pygrep's own recursion depth for bytes patterns (494 nested groups
+compile, 495 raise `RecursionError`, against 484/485 for config patterns).
 
 ## Examples
 
