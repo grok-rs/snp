@@ -85,13 +85,15 @@ impl Section {
 struct Parsed {
     defaults: Section,
     sections: Vec<(String, Section)>,
+    /// Section name → position in `sections` (configparser's `_sections` dict).
+    section_index: HashMap<String, usize>,
 }
 
 impl Parsed {
     fn section(&self, name: &str) -> Option<&Section> {
-        self.sections
-            .iter()
-            .find(|(n, _)| n == name)
+        self.section_index
+            .get(name)
+            .and_then(|&i| self.sections.get(i))
             .map(|(_, s)| s)
     }
 
@@ -112,8 +114,30 @@ fn crash(ty: &'static str, text: String) -> ReadError {
     ReadError::Crash(CheckError::crash(ty, text))
 }
 
-/// Options of one section while reading: name → value lines (joined at the end).
-type RawOptions = Vec<(String, Vec<String>)>;
+/// Options of one section while reading: name → value lines (joined at the end), in insertion order, with a
+/// name → position index (configparser's per-section dict), so option and continuation lines are O(1).
+#[derive(Debug, Default)]
+struct RawOptions {
+    opts: Vec<(String, Vec<String>)>,
+    index: HashMap<String, usize>,
+}
+
+impl RawOptions {
+    fn find_mut(&mut self, name: &str) -> Option<&mut Vec<String>> {
+        let i = *self.index.get(name)?;
+        self.opts.get_mut(i).map(|(_, v)| v)
+    }
+
+    /// `cursect[name] = [value]`.
+    fn set(&mut self, name: String, value: String) {
+        if let Some(values) = self.find_mut(&name) {
+            *values = vec![value];
+            return;
+        }
+        self.index.insert(name.clone(), self.opts.len());
+        self.opts.push((name, vec![value]));
+    }
+}
 
 /// Which section the parser is filling.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -126,7 +150,7 @@ enum Cur {
 /// `RawConfigParser._read` + `_join_multiline_values` (values are lists of lines until joined).
 fn read(text: &str, source: &str) -> Result<Parsed, ReadError> {
     let text = snp_pycompat::textio::universal_newlines(text);
-    let mut defaults: RawOptions = Vec::new();
+    let mut defaults = RawOptions::default();
     let mut sections: Vec<(String, RawOptions)> = Vec::new();
     let mut section_index: HashMap<String, usize> = HashMap::new();
     let mut added_sections: HashSet<String> = HashSet::new();
@@ -151,7 +175,7 @@ fn read(text: &str, source: &str) -> Result<Parsed, ReadError> {
                 .as_deref()
                 .filter(|n| !n.is_empty() && !has_comments && cur != Cur::None);
             if let Some(values) = name.and_then(|n| {
-                options_mut(&mut defaults, &mut sections, &cur).and_then(|o| find_mut(o, n))
+                options_mut(&mut defaults, &mut sections, &cur).and_then(|o| o.find_mut(n))
             }) {
                 values.push(String::new());
             }
@@ -163,9 +187,9 @@ fn read(text: &str, source: &str) -> Result<Parsed, ReadError> {
             && optname.as_deref().is_some_and(|n| !n.is_empty())
             && cur_indent > indent_level
         {
-            let name = optname.clone().unwrap_or_default();
+            let name = optname.as_deref().unwrap_or_default();
             if let Some(values) =
-                options_mut(&mut defaults, &mut sections, &cur).and_then(|o| find_mut(o, &name))
+                options_mut(&mut defaults, &mut sections, &cur).and_then(|o| o.find_mut(name))
             {
                 values.push(clean.to_owned());
             }
@@ -199,7 +223,7 @@ fn read(text: &str, source: &str) -> Result<Parsed, ReadError> {
                 cur = Cur::Default;
             } else {
                 let i = sections.len();
-                sections.push((h.to_owned(), Vec::new()));
+                sections.push((h.to_owned(), RawOptions::default()));
                 section_index.insert(h.to_owned(), i);
                 added_sections.insert(h.to_owned());
                 cur = Cur::Section(i);
@@ -235,10 +259,7 @@ fn read(text: &str, source: &str) -> Result<Parsed, ReadError> {
         added_options.insert(key);
         let value = strip(clean.get(p.saturating_add(1)..).unwrap_or_default()).to_owned();
         if let Some(opts) = options_mut(&mut defaults, &mut sections, &cur) {
-            match find_mut(opts, &name) {
-                Some(values) => *values = vec![value],
-                None => opts.push((name.clone(), vec![value])),
-            }
+            opts.set(name.clone(), value);
         }
         optname = Some(name);
     }
@@ -251,7 +272,7 @@ fn read(text: &str, source: &str) -> Result<Parsed, ReadError> {
     }
     let join = |opts: RawOptions| -> Section {
         let mut s = Section::default();
-        for (name, values) in opts {
+        for (name, values) in opts.opts {
             let joined = rstrip(&values.join("\n")).to_owned();
             s.index.insert(name.clone(), s.options.len());
             s.options.push((name, joined));
@@ -261,6 +282,7 @@ fn read(text: &str, source: &str) -> Result<Parsed, ReadError> {
     Ok(Parsed {
         defaults: join(defaults),
         sections: sections.into_iter().map(|(n, o)| (n, join(o))).collect(),
+        section_index,
     })
 }
 
@@ -274,10 +296,6 @@ fn options_mut<'a>(
         Cur::Default => Some(defaults),
         Cur::Section(i) => sections.get_mut(*i).map(|(_, o)| o),
     }
-}
-
-fn find_mut<'a>(opts: &'a mut [(String, Vec<String>)], name: &str) -> Option<&'a mut Vec<String>> {
-    opts.iter_mut().find(|(n, _)| n == name).map(|(_, v)| v)
 }
 
 /// `BasicInterpolation.before_get` → `_interpolate_some` (iterative; `%%`, `%(name)s`, depth 10).
@@ -368,6 +386,58 @@ fn interpolate(p: &Parsed, section: &str, option: &str, value: &str) -> Result<S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The fastest of three parses of `text`, which must succeed.
+    fn best_time(text: &str) -> std::time::Duration {
+        (0..3)
+            .map(|_| {
+                let t = std::time::Instant::now();
+                assert!(aws_credentials(text).is_ok());
+                t.elapsed()
+            })
+            .min()
+            .unwrap_or_default()
+    }
+
+    /// Section and option lookups are hashed (configparser's dicts): 4× the sections or the options of one
+    /// section may cost at most 8× the time (the linear searches made it 16×).
+    #[test]
+    fn reading_is_linear() {
+        use std::fmt::Write as _;
+        let sections = |n: usize| {
+            (0..n).fold(String::new(), |mut s, i| {
+                writeln!(
+                    s,
+                    "[s{i}]\naws_secret_access_key = k{i}\naws_session_token = t\nother = a\n  continued"
+                )
+                .unwrap_or_default();
+                s
+            })
+        };
+        let options = |n: usize| {
+            (0..n).fold(String::from("[only]\n"), |mut s, i| {
+                writeln!(s, "k{i} = v\n  more").unwrap_or_default();
+                s
+            })
+        };
+        let shapes: [(&str, &dyn Fn(usize) -> String); 2] =
+            [("sections", &sections), ("options", &options)];
+        for (name, make) in shapes {
+            let small = best_time(&make(5_000));
+            let big = best_time(&make(20_000));
+            let ratio = big.as_secs_f64() / small.as_secs_f64().max(1e-6);
+            assert!(
+                ratio < 8.0,
+                "{name}: 5k {small:?}, 20k {big:?} (×{ratio:.1})"
+            );
+        }
+        let all = aws_credentials(&sections(3)).unwrap_or_default();
+        assert_eq!(all.len(), 6);
+        assert_eq!(
+            all.get(2),
+            Some(&("aws_secret_access_key".to_owned(), "k1".to_owned()))
+        );
+    }
 
     #[test]
     fn basics() {
