@@ -27,5 +27,20 @@ file-identify.workspace = true
 bstr.workspace = true
 memchr.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+# `__hazmat` dies by the signal that interrupted it (03 Addendum §H.8.7).
+signal-hook.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
+
+# Path H (`__hazmat`) is a process of its own: the test binary re-executes itself as that process, so it owns
+# `main` (03 Addendum §H.8.9).
+[[test]]
+name = "hazmat"
+path = "tests/hazmat/main.rs"
+harness = false
+
 [lints]
 workspace = true
