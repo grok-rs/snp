@@ -1,0 +1,3 @@
+{"argv":["gem","build","hooks.gemspec"],"cwd":"{PREFIX}","env":{"BUNDLE_IGNORE_CONFIG":"1","GEM_HOME":"{PREFIX}/rbenv-system/gems","PATH":"{PREFIX}/rbenv-system/gems/bin:{SHIMS}:/usr/bin:/bin"}}
+{"argv":["gem","install","--no-document","--no-format-executable","--no-user-install","--install-dir","{PREFIX}/rbenv-system/gems","--bindir","{PREFIX}/rbenv-system/gems/bin","hooks-0.0.0.gem","rake"],"cwd":"{PREFIX}","env":{"BUNDLE_IGNORE_CONFIG":"1","GEM_HOME":"{PREFIX}/rbenv-system/gems","PATH":"{PREFIX}/rbenv-system/gems/bin:{SHIMS}:/usr/bin:/bin"}}
+{"argv":["ruby-hello","a.txt"],"cwd":"{REPO}","env":{"BUNDLE_IGNORE_CONFIG":"1","GEM_HOME":"{PREFIX}/rbenv-system/gems","PATH":"{PREFIX}/rbenv-system/gems/bin:{SHIMS}:/usr/bin:/bin"}}

@@ -1,0 +1,4 @@
+{"argv":["cargo","add","serde@1.0"],"cwd":"{PREFIX}","env":{"PATH":"{PREFIX}/rustenv-system/bin:{SHIMS}:/usr/bin:/bin"}}
+{"argv":["cargo","install","--bins","--root","{PREFIX}/rustenv-system","--path","."],"cwd":"{PREFIX}","env":{"PATH":"{PREFIX}/rustenv-system/bin:{SHIMS}:/usr/bin:/bin"}}
+{"argv":["cargo","install","--bins","--root","{PREFIX}/rustenv-system","shellharden","--version","4.2.0"],"cwd":"{PREFIX}","env":{"PATH":"{PREFIX}/rustenv-system/bin:{SHIMS}:/usr/bin:/bin"}}
+{"argv":["rust-hello","a.txt"],"cwd":"{REPO}","env":{"PATH":"{PREFIX}/rustenv-system/bin:{SHIMS}:/usr/bin:/bin"}}
