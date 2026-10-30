@@ -110,8 +110,13 @@ fn first_char_len<U: Unit>(p: &[U]) -> usize {
     }
     match encoding::<U>() {
         Encoding::Utf8 => {
-            let head = as_bytes(p.get(..4).unwrap_or(p));
-            match core::str::from_utf8(&head) {
+            // at most one UTF-8 sequence, copied to the stack
+            let mut buf = [0_u8; 4];
+            for (slot, &u) in buf.iter_mut().zip(p) {
+                *slot = u8::try_from(raw(u)).unwrap_or(0xff);
+            }
+            let head = buf.get(..p.len().min(4)).unwrap_or_default();
+            match core::str::from_utf8(head) {
                 Ok(s) => s.chars().next().map_or(1, char::len_utf8),
                 Err(e) => head
                     .get(..e.valid_up_to())
@@ -204,13 +209,17 @@ fn position_from<U: Unit>(p: &[U], from: usize, pred: impl Fn(U) -> bool) -> Opt
         .map(|i| i.saturating_add(from))
 }
 
-/// The drive as Python text (for `%r` in `path is on mount …`; lone surrogates become U+FFFD).
+/// The drive as Python text (for `%r` in `path is on mount …`): undecodable bytes and lone
+/// surrogates become U+FFFD, as [`PathError::DifferentMounts`] documents (its fields are `String`).
 fn to_string_lossy<U: Unit>(p: &[U]) -> String {
     match encoding::<U>() {
         Encoding::Utf16 => String::from_utf16_lossy(&as_wide(p)),
         Encoding::Utf8 | Encoding::Other => String::from_utf8_lossy(&as_bytes(p)).into_owned(),
     }
 }
+
+/// `\\?\UNC\`, compared case-insensitively with `/` as `\` (no allocation per call).
+const UNC_PREFIX: [u8; 8] = *b"\\\\?\\UNC\\";
 
 /// `ntpath.splitroot(p)` (3.12): `(drive, root, tail)` with `/` treated as `\`. UNC
 /// (`\\server\share`, `\\?\UNC\server\share`) and device (`\\.\dev`, `\\?\X:`) drives end before
@@ -223,14 +232,15 @@ pub fn splitroot<U: Unit>(p: &[U]) -> (&[U], &[U], &[U]) {
     if sep_at(0) {
         if sep_at(1) {
             // UNC drives (\\server\share, \\?\UNC\server\share) and device drives (\\.\dev, \\?\X:)
-            let unc: Vec<U> = lit(b"\\\\?\\UNC\\");
-            let start = if p.get(..8).is_some_and(|h| {
-                h.iter().zip(&unc).all(|(&x, &y)| {
-                    let x = if is(x, b'/') { backslash() } else { x };
-                    let upper = x
-                        .to_ascii()
-                        .map_or(x, |b| U::from_ascii(b.to_ascii_uppercase()));
-                    upper == y
+            let start = if p.get(..UNC_PREFIX.len()).is_some_and(|h| {
+                h.iter().zip(UNC_PREFIX).all(|(&x, y)| {
+                    x.to_ascii().map(|b| {
+                        if b == b'/' {
+                            b'\\'
+                        } else {
+                            b.to_ascii_uppercase()
+                        }
+                    }) == Some(y)
                 })
             }) {
                 8
@@ -735,6 +745,32 @@ mod tests {
 
     fn s(v: &[u8]) -> String {
         String::from_utf8(v.to_vec()).unwrap()
+    }
+
+    /// The documented limit of the `String` fields of `PathError::DifferentMounts`: an undecodable
+    /// drive unit renders as U+FFFD (CPython: `\udcff` / `\ud800`); decodable drives are exact.
+    #[test]
+    fn different_mounts_drive_text_is_lossy_only_for_undecodable_units() {
+        let cwd = b"D:\\x";
+        let e = relpath(b"//\xff\\sh\\a".as_slice(), None, cwd.as_slice()).unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            "path is on mount '\\\\\\\\\u{fffd}\\\\sh', start on mount 'D:'"
+        );
+        let wide = |t: &str| t.encode_utf16().collect::<Vec<u16>>();
+        let mut p = wide("//");
+        p.push(0xd800);
+        p.extend(wide("\\sh\\a"));
+        let e = relpath(&p, None, &wide("C:\\\u{e9}")).unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            "path is on mount '\\\\\\\\\u{fffd}\\\\sh', start on mount 'C:'"
+        );
+        let e = relpath(&wide("\u{3a3}:\\a"), None, &wide("C:\\")).unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            "path is on mount '\u{3a3}:', start on mount 'C:'"
+        );
     }
 
     #[test]

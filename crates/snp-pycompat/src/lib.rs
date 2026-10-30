@@ -54,6 +54,11 @@ pub enum PathError {
     /// ntpath `commonpath` over different drives → `Paths don't have the same drive`.
     DifferentDrives,
     /// ntpath `relpath` across drives → `path is on mount %r, start on mount %r`.
+    ///
+    /// The fields are `String` (frozen contract, ARCH §1.4.2), so a drive holding an undecodable
+    /// byte (u8 view) or a lone surrogate (u16 view) is stored with U+FFFD in its place and
+    /// renders as `'\\\\�\\sh'` where CPython shows `'\\\\\udcff\\sh'`. Every decodable
+    /// drive renders exactly.
     DifferentMounts {
         /// Drive of the path argument (`splitroot(abspath(path))[0]`).
         path_drive: String,

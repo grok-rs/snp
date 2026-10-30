@@ -16,6 +16,22 @@ pub use crate::float::repr as repr_float;
 /// non-printable non-ASCII as `\xNN`/`\uNNNN`/`\UNNNNNNNN` (lowercase hex); lone surrogates as
 /// `\udXXX`.
 fn write_quoted<I: Iterator<Item = PyChar> + Clone>(out: &mut String, chars: I) {
+    write_quoted_upto(out, chars, usize::MAX);
+}
+
+/// [`write_quoted`] that stops after `max_chars` characters of output (`%.NR`), so a huge input
+/// costs O(`max_chars`) beyond the quote scan.
+fn write_quoted_upto<I: Iterator<Item = PyChar> + Clone>(
+    out: &mut String,
+    chars: I,
+    max_chars: usize,
+) {
+    if max_chars == 0 {
+        return;
+    }
+    let start = out.len();
+    // characters written so far (escapes are ASCII: bytes == characters)
+    let mut written: usize = 0;
     let (mut sq, mut dq) = (false, false);
     for c in chars.clone() {
         match c {
@@ -26,7 +42,12 @@ fn write_quoted<I: Iterator<Item = PyChar> + Clone>(out: &mut String, chars: I) 
     }
     let quote = if sq && !dq { '"' } else { '\'' };
     out.push(quote);
+    written = written.saturating_add(1);
     for c in chars {
+        if written >= max_chars {
+            break;
+        }
+        let before = out.len();
         match c {
             PyChar::Scalar(c) if c == quote || c == '\\' => {
                 out.push('\\');
@@ -54,8 +75,19 @@ fn write_quoted<I: Iterator<Item = PyChar> + Clone>(out: &mut String, chars: I) 
                 write!(out, "\\u{u:04x}").unwrap_or_default();
             }
         }
+        written = written.saturating_add(out.get(before..).map_or(0, |t| t.chars().count()));
     }
-    out.push(quote);
+    if written < max_chars {
+        out.push(quote);
+    } else if written > max_chars {
+        // only an escape (all ASCII, at most 9 characters) can overshoot: cut inside it
+        for _ in max_chars..written {
+            if out.len() <= start {
+                break;
+            }
+            out.pop();
+        }
+    }
 }
 
 /// Appends `repr(s)` to `out` (`unicode_repr`).
@@ -294,6 +326,13 @@ fn os_message(code: i32) -> String {
 /// `str(OSError)` for an `io::Error`: `[Errno N] strerror…` (POSIX) or `[WinError N] text…`
 /// (Windows), with the filenames of [`oserror_str`] (13 X.2.1). An error without an OS code
 /// renders as its own message.
+///
+/// On Windows this is the form of a failed Win32 call (`os.stat`, `os.rename`, `os.listdir`, …:
+/// `PyErr_SetExcFromWindowsErr`). CRT-backed calls — the builtin `open()` / `io.FileIO` and
+/// `os.open` (`_wopen`) — keep `[Errno N] <msvcrt strerror>` (13 X.2.1), e.g. `[Errno 13]
+/// Permission denied: 'x'` where this function gives `[WinError 5] Access is denied: 'x'`
+/// (Rust's `File::open` reports the Win32 code). A caller emulating such a call renders it with
+/// [`oserror_str`] and the CRT `errno` / `strerror` instead.
 #[must_use]
 pub fn oserror_from_io(e: &io::Error, f1: Option<&OsStr>, f2: Option<&OsStr>) -> String {
     let Some(code) = e.raw_os_error() else {
@@ -445,10 +484,10 @@ pub const fn signal_name(sig: u32) -> Option<&'static str> {
 #[must_use]
 pub fn int_literal_error(literal: &str) -> String {
     let mut out = String::from(messages::INT_LITERAL_PREFIX);
-    out.extend(
-        repr_str(literal)
-            .chars()
-            .take(messages::INT_LITERAL_REPR_CHARS),
+    write_quoted_upto(
+        &mut out,
+        literal.chars().map(PyChar::Scalar),
+        messages::INT_LITERAL_REPR_CHARS,
     );
     out
 }
@@ -456,6 +495,11 @@ pub fn int_literal_error(literal: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `s * n` (`str::repeat` is a disallowed method).
+    fn rep(s: &str, n: usize) -> String {
+        std::iter::repeat_n(s, n).collect()
+    }
 
     #[test]
     fn str_reprs() {
@@ -628,5 +672,34 @@ mod tests {
             "invalid literal for int() with base 10: ".len() + 200
         );
         assert!(!e.ends_with('\''));
+        // `%.200R` against the full repr, for cuts at every position inside escapes and
+        // multi-byte characters
+        let units = [
+            "a",
+            "\u{e9}",
+            "\u{1f600}",
+            "\n",
+            "\x01",
+            "\u{378}",
+            "\u{1fae9}",
+            "'",
+            "\\",
+        ];
+        for n in 0..240_usize {
+            let lit: String = (0..n).map(|i| units[(i * 7 + n) % units.len()]).collect();
+            let full: String = repr_str(&lit).chars().take(200).collect();
+            assert_eq!(
+                int_literal_error(&lit),
+                format!("invalid literal for int() with base 10: {full}"),
+                "{lit:?}"
+            );
+        }
+        // a multi-megabyte literal renders the same 200 characters
+        let huge = rep("\u{e9}\n", 4_000_000);
+        let want: String = repr_str(&rep("\u{e9}\n", 200)).chars().take(200).collect();
+        assert_eq!(
+            int_literal_error(&huge),
+            format!("invalid literal for int() with base 10: {want}")
+        );
     }
 }
