@@ -4,7 +4,7 @@
 
 use cfgv::{Map, Value};
 
-use crate::overlay::marker_key;
+use crate::overlay::{marker_key, skip_groups_key};
 use crate::{Config, messages};
 
 /// The JSON form of a validated value: Python's `json.dumps` view of what `yaml_load` built (dates and date-times
@@ -42,7 +42,10 @@ fn to_json(v: &Value) -> serde_json::Value {
 /// field. JSON carries the same information under the top-level key `_snp_local_overrides`.
 pub fn effective_dump(cfg: &Config, json: bool) -> String {
     let mut raw = cfg.raw.clone();
-    let marker = raw.as_map_mut().and_then(|m| m.shift_remove(&marker_key()));
+    let marker = raw.as_map_mut().and_then(|m| {
+        m.shift_remove(&skip_groups_key());
+        m.shift_remove(&marker_key())
+    });
     if json {
         let mut out = to_json(&raw);
         if let (Some(marker), serde_json::Value::Object(obj)) = (&marker, &mut out) {

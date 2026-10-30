@@ -12,7 +12,7 @@ use snp_core::env::Env;
 use snp_core::output::DiagSink;
 
 use crate::convert::{self, get};
-use crate::ext::{self, Condition, FailOnChanges, HookExt};
+use crate::ext::{self, FailOnChanges, HookExt};
 use crate::load::{self, Kind};
 use crate::{Config, ConfigError, ExtMode, LoadOpts, RepoConfig, messages, schema};
 
@@ -20,6 +20,30 @@ use crate::{Config, ConfigError, ExtMode, LoadOpts, RepoConfig, messages, schema
 /// YAML document can produce as a plain mapping key).
 pub(crate) fn marker_key() -> Value {
     Value::Tuple(vec![Value::from("snp"), Value::from("local-overrides")])
+}
+
+/// The key under which [`apply_root`] records `skip_groups` in `Config::raw` for [`skips_groups`] (another tuple
+/// key; [`crate::effective_dump`] drops it).
+pub(crate) fn skip_groups_key() -> Value {
+    Value::Tuple(vec![Value::from("snp"), Value::from("skip-groups")])
+}
+
+/// Whether the overlay applied to `cfg` excludes a hook with these (final, merged) `groups`.
+pub(crate) fn skips_groups(cfg: &Config, groups: &[std::sync::Arc<str>]) -> bool {
+    if groups.is_empty() {
+        return false;
+    }
+    let Some(skip) = cfg
+        .raw
+        .as_map()
+        .and_then(|m| m.get(&skip_groups_key()))
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
+    groups
+        .iter()
+        .any(|g| skip.iter().any(|s| s.as_str() == Some(&**g)))
 }
 
 /// A loaded overlay: hooks by alias|id, `skip_groups`, `fail_on_changes`, appended `repos`.
@@ -119,7 +143,6 @@ pub fn load(path: &Path, o: &LoadOpts<'_>) -> Result<Overlay, ConfigError> {
         Kind::Overlay,
         o,
     )?;
-    load::future_warnings(&value, Kind::Overlay, o);
     Ok(from_value(path, &value))
 }
 
@@ -139,14 +162,7 @@ fn from_value(path: &Path, value: &Value) -> Overlay {
             let (Some(key), Some(raw)) = (k.as_str(), v.as_map()) else {
                 continue;
             };
-            let mut ext = ext::parse_hook_ext(raw);
-            if ext
-                .groups
-                .iter()
-                .any(|g| skip_groups.iter().any(|s| s == &**g))
-            {
-                ext.skip.push(Condition::All(Vec::new()));
-            }
+            let ext = ext::parse_hook_ext(raw);
             hooks.insert(
                 key.to_owned(),
                 HookPatch {
@@ -175,40 +191,18 @@ fn from_value(path: &Path, value: &Value) -> Overlay {
     }
 }
 
-/// Marks every hook of `hooks` whose groups intersect `skip` as always skipped.
-fn skip_groups_in(ext: &mut HookExt, skip: &[String]) {
-    if ext.groups.iter().any(|g| skip.iter().any(|s| s == &**g)) {
-        ext.skip.push(Condition::All(Vec::new()));
-    }
-}
-
 /// Root items only: `skip_groups`, `fail_on_changes`, appended repos; prints the active-overlay stderr line.
 ///
-/// `skip_groups` is applied as an always-true `skip` condition on every hook (of the config and of the appended
-/// repos) whose `groups` intersect it, so the hook prints pre-commit's `Skipped` line like `SKIP=`. The overlay is
-/// recorded in `Config::raw` for [`crate::effective_dump`].
+/// `skip_groups` is recorded in the `Config`; [`crate::merge_hook`] / [`crate::finalize_local`] match it against
+/// each hook's final `groups` (after the hook patch, which may set `groups` or `skip`) and add an always-true
+/// `skip` condition, so the hook prints pre-commit's `Skipped` line like `SKIP=`. The overlay is recorded in
+/// `Config::raw` for [`crate::effective_dump`].
 pub fn apply_root(cfg: &mut Config, ov: &Overlay, diag: &dyn DiagSink) {
     diag.diag(&messages::overlay_active(&ov.path.to_string_lossy()));
     if let Some(f) = ov.fail_on_changes {
         cfg.root_ext.fail_on_changes = f;
     }
     cfg.repos.extend(ov.repos.iter().cloned());
-    if !ov.skip_groups.is_empty() {
-        for repo in &mut cfg.repos {
-            match repo {
-                RepoConfig::Remote { hooks, .. } | RepoConfig::Builtin { hooks } => {
-                    for h in hooks {
-                        skip_groups_in(&mut h.ext, &ov.skip_groups);
-                    }
-                }
-                RepoConfig::Local { hooks } | RepoConfig::Meta { hooks } => {
-                    for h in hooks {
-                        skip_groups_in(&mut h.ext, &ov.skip_groups);
-                    }
-                }
-            }
-        }
-    }
     let mut fields: Vec<Value> = Vec::new();
     for (key, patch) in &ov.hooks {
         for k in patch.keys() {
@@ -232,6 +226,14 @@ pub fn apply_root(cfg: &mut Config, ov: &Overlay, diag: &dyn DiagSink) {
         marker.insert(Value::from("path"), Value::from(ov.path.to_string_lossy()));
         marker.insert(Value::from("fields"), Value::List(fields));
         root.insert(marker_key(), Value::Map(marker));
+        if !ov.skip_groups.is_empty() {
+            let slot = root
+                .entry(skip_groups_key())
+                .or_insert_with(|| Value::List(Vec::new()));
+            if let Value::List(groups) = slot {
+                groups.extend(ov.skip_groups.iter().map(|g| Value::from(g.as_str())));
+            }
+        }
     }
 }
 

@@ -75,6 +75,47 @@ pub(crate) fn check_string_regex() -> CheckFn {
     ])
 }
 
+/// The `Cx` warning prefix of [`Compiled`] (no real warning starts with NUL); `load::validate_bytes` routes these
+/// to its pattern list instead of the warning sink.
+pub(crate) const COMPILED: &str = "\0snp-compiled\0";
+
+/// A `files` / `exclude` item whose check compiles the pattern (`check_regex` → `re.compile`, `cfgv.py:386`):
+/// after a successful check it reports the pattern through `Cx` (prefix [`COMPILED`]), so the loader prints the
+/// pattern's `FutureWarning`s in the order pre-commit compiles them, also when a later item fails (D-MISC-04).
+#[derive(Debug)]
+pub(crate) struct Compiled(pub(crate) Validator);
+
+impl MapItem for Compiled {
+    fn check(&self, dct: &Map, cx: &mut Cx<'_>) -> Result<(), ValidationError> {
+        self.0.check(dct, cx)?;
+        if let Some(p) = self
+            .0
+            .key()
+            .and_then(|k| dct.get(k))
+            .and_then(Value::as_str)
+        {
+            cx.warn(format!("{COMPILED}{p}"));
+        }
+        Ok(())
+    }
+
+    fn apply_default(&self, dct: &mut Map) {
+        MapItem::apply_default(&self.0, dct);
+    }
+
+    fn remove_default(&self, dct: &mut Map) {
+        MapItem::remove_default(&self.0, dct);
+    }
+
+    fn key(&self) -> Option<&Value> {
+        MapItem::key(&self.0)
+    }
+
+    fn check_fn(&self) -> Option<&CheckFn> {
+        MapItem::check_fn(&self.0)
+    }
+}
+
 /// `check_type_tag` (`clientlib.py:42-47`): `tag not in ALL_TAGS` (file-identify's tags = identify 2.6.20).
 pub(crate) fn check_type_tag(brand: Brand) -> CheckFn {
     CheckFn::custom(move |v| {

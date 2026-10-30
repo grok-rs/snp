@@ -18,9 +18,10 @@ use snp_core::stage::{HookType, Stage};
 use crate::ExtMode;
 use crate::ext::{self, HOOK_EXT_KEYS, ROOT_EXT_KEYS};
 use crate::items::{
-    BUILTIN, BuiltinNoRev, DEFAULT, DeprecatedStagesWarning, ExtKey, LOCAL, LanguageMigration,
-    META, NotAllowed, PriorityAliases, SensibleRegex, StagesMigration, UnlessBuiltin,
-    WarnMutableRev, check_min_version, check_string_regex, check_type_tag, language_values,
+    BUILTIN, BuiltinNoRev, Compiled, DEFAULT, DeprecatedStagesWarning, ExtKey, LOCAL,
+    LanguageMigration, META, NotAllowed, PriorityAliases, SensibleRegex, StagesMigration,
+    UnlessBuiltin, WarnMutableRev, check_min_version, check_string_regex, check_type_tag,
+    language_values,
 };
 use crate::messages;
 
@@ -79,8 +80,8 @@ fn manifest_items(brand: Brand) -> Vec<Validator> {
             true,
         )),
         Validator::optional("alias", CheckFn::check_string(), ""),
-        Validator::optional("files", check_string_regex(), ""),
-        Validator::optional("exclude", check_string_regex(), "^$"),
+        compiled(Validator::optional("files", check_string_regex(), "")),
+        compiled(Validator::optional("exclude", check_string_regex(), "^$")),
         Validator::optional("types", tags(brand), Value::List(vec![Value::from("file")])),
         Validator::optional("types_or", tags(brand), Value::List(Vec::new())),
         Validator::optional("exclude_types", tags(brand), Value::List(Vec::new())),
@@ -109,6 +110,11 @@ fn manifest_items(brand: Brand) -> Vec<Validator> {
     ]
 }
 
+/// A `files` / `exclude` item that reports its compiled pattern (`items::Compiled`).
+fn compiled(item: Validator) -> Validator {
+    Validator::custom(Compiled(item))
+}
+
 /// The key of an item (`item.key`).
 fn item_key(item: &Validator) -> Option<&str> {
     item.key().and_then(Value::as_str)
@@ -125,7 +131,9 @@ fn no_default_items(brand: Brand, except: &[&str]) -> Vec<Validator> {
                 return None;
             }
             let check = item.check_fn()?.clone();
-            Some(Validator::optional_no_default(key, check))
+            let compiles = matches!(key.as_str(), "files" | "exclude");
+            let item = Validator::optional_no_default(key, check);
+            Some(if compiles { compiled(item) } else { item })
         })
         .collect()
 }
@@ -379,8 +387,8 @@ fn build_config_schema(brand: Brand, ext: ExtMode) -> Schema {
         ),
         Validator::custom(StagesMigration::new("default_stages", Some(all_stages()))),
         Validator::custom(DeprecatedStagesWarning::top(brand)),
-        Validator::optional("files", check_string_regex(), ""),
-        Validator::optional("exclude", check_string_regex(), "^$"),
+        compiled(Validator::optional("files", check_string_regex(), "")),
+        compiled(Validator::optional("exclude", check_string_regex(), "^$")),
         Validator::optional("fail_fast", CheckFn::check_bool(), false),
         Validator::warn_additional_keys(
             known,

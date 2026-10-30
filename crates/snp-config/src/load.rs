@@ -5,7 +5,8 @@
 //! (no `File` context) when `os.path.isfile` is false; `open(...).read()` outside the validation context (an
 //! unreadable file is an uncaught `OSError`, exit 3, X13-CFG-09); then, inside `File {display}`: strict UTF-8 with
 //! universal newlines, `yaml_load` (any error → leaf `str(e)`), `validate`, `apply_defaults`. Warnings flow into
-//! `LoadOpts::warn` in cfgv item order; regex `FutureWarning`s go to `LoadOpts::diag` afterwards (D-MISC-04).
+//! `LoadOpts::warn` in cfgv item order; regex `FutureWarning`s go to `LoadOpts::diag` afterwards, in the order
+//! the patterns were compiled and also when validation failed later (D-MISC-04).
 //!
 //! Owner: WP-21.
 
@@ -18,7 +19,8 @@ use cfgv::{Cx, Schema, ValidationError, Value};
 use snp_core::failure::pyerr;
 use snp_pyre::Options;
 
-use crate::convert::{self, get, get_str};
+use crate::convert;
+use crate::items::COMPILED;
 use crate::{Config, ConfigError, ConfigSource, LoadOpts, Manifest, messages, schema};
 
 /// What a load validates.
@@ -87,7 +89,9 @@ pub(crate) fn read_file(
 }
 
 /// The steps of `load_from_filename` inside `File {display}`: decode, YAML-load (manifest forward-compat
-/// guard), validate with warnings, apply defaults.
+/// guard), validate with warnings, apply defaults. The `files` / `exclude` patterns compiled by the checks
+/// (`items::Compiled`) print their `FutureWarning`s afterwards, also when a later item failed (pre-commit
+/// compiles them during validation, so its warnings reach stderr before the error).
 pub(crate) fn validate_bytes(
     bytes: &[u8],
     display: &str,
@@ -95,6 +99,7 @@ pub(crate) fn validate_bytes(
     kind: Kind,
     o: &LoadOpts<'_>,
 ) -> Result<Value, ConfigError> {
+    let mut compiled: Vec<String> = Vec::new();
     let result = cfgv::validate_context(
         || format!("File {display}"),
         || {
@@ -107,55 +112,25 @@ pub(crate) fn validate_bytes(
                 let inner = ValidationError::new(messages::min_version(o.brand, "5"));
                 return Err(ValidationError::new(inner.to_string()));
             }
-            let mut cx = Cx::new(|msg: String| o.warn.warn(&msg));
-            schema.check_with(&data, &mut cx)?;
+            let mut cx = Cx::new(|msg: String| match msg.strip_prefix(COMPILED) {
+                Some(p) => compiled.push(p.to_owned()),
+                None => o.warn.warn(&msg),
+            });
+            let checked = schema.check_with(&data, &mut cx);
+            drop(cx);
+            checked?;
             Ok(schema.apply_defaults_owned(data))
         },
     );
+    future_warnings(&compiled, o);
     result.map_err(|e| ConfigError::invalid(kind.is_manifest(), &e))
 }
 
-/// Emits one `[WARNING] regex …` stderr line per distinct (pattern, `FutureWarning`) of the `files` / `exclude`
-/// patterns of a validated value, in document order (01 Addendum §A.4, D-MISC-04). Patterns are compiled through
-/// the run's cache, so the filters reuse them.
-pub(crate) fn future_warnings(value: &Value, kind: Kind, o: &LoadOpts<'_>) {
-    fn hook<'a>(h: &'a cfgv::Map, out: &mut Vec<&'a str>) {
-        for k in ["files", "exclude"] {
-            if let Some(p) = get_str(h, k) {
-                out.push(p);
-            }
-        }
-    }
-    let mut patterns: Vec<&str> = Vec::new();
-    match (kind, value) {
-        (Kind::Manifest, Value::List(hooks)) => {
-            for h in hooks.iter().filter_map(Value::as_map) {
-                hook(h, &mut patterns);
-            }
-        }
-        (_, Value::Map(root)) => {
-            hook(root, &mut patterns);
-            let repos = get(root, "repos")
-                .and_then(Value::as_array)
-                .unwrap_or_default();
-            for repo in repos.iter().filter_map(Value::as_map) {
-                let hooks = get(repo, "hooks")
-                    .and_then(Value::as_array)
-                    .unwrap_or_default();
-                for h in hooks.iter().filter_map(Value::as_map) {
-                    hook(h, &mut patterns);
-                }
-            }
-            if let (Kind::Overlay, Some(patches)) =
-                (kind, get(root, "hooks").and_then(Value::as_map))
-            {
-                for h in patches.values().filter_map(Value::as_map) {
-                    hook(h, &mut patterns);
-                }
-            }
-        }
-        _ => {}
-    }
+/// Emits one `[WARNING] regex …` stderr line per distinct (pattern, `FutureWarning`) of the compiled `files` /
+/// `exclude` patterns, in the order the schema compiled them (cfgv item order: a config's hooks before its
+/// top-level `files` / `exclude`; 01 Addendum §A.4, D-MISC-04). Patterns are compiled through the run's cache,
+/// so the filters reuse them.
+fn future_warnings(patterns: &[String], o: &LoadOpts<'_>) {
     let mut seen: Vec<(&str, &str)> = Vec::new();
     let mut compiled = Vec::new();
     for p in patterns {
@@ -163,7 +138,7 @@ pub(crate) fn future_warnings(value: &Value, kind: Kind, o: &LoadOpts<'_>) {
             continue;
         }
         if let Ok(rx) = o.regexes.get(p, Options::CONFIG) {
-            compiled.push((p, rx));
+            compiled.push((p.as_str(), rx));
         }
     }
     for (p, rx) in &compiled {
@@ -199,7 +174,6 @@ pub fn load_config(src: &ConfigSource, o: &LoadOpts<'_>) -> Result<Config, Confi
     let bytes = read_file(&src.path, &display, false)?;
     let schema = schema::config_schema(o.brand, o.ext);
     let value = validate_bytes(&bytes, &display, schema, Kind::Config, o)?;
-    future_warnings(&value, Kind::Config, o);
     Ok(convert::config(src.clone(), value, o.ext))
 }
 
@@ -237,6 +211,5 @@ fn manifest_from_bytes(
         Kind::Manifest,
         o,
     )?;
-    future_warnings(&value, Kind::Manifest, o);
     Ok(convert::manifest(&value))
 }
