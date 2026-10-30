@@ -1,5 +1,68 @@
-# D-SEC-08 (SEC, owner WP-16): TLS + sha256 verified before extraction; safe extraction
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-SEC-08 (SEC, owner WP-16): toolchain downloads are verified (TLS + sha256) before extraction; extraction is safe.
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3, plus the `fixtures` key WP-35's harness provides for this
+# scenario: an HTTPS interception proxy (HTTPS_PROXY) whose CA is trusted through SSL_CERT_FILE by both tools.
+# The proxy answers for go.dev and dl.google.com only; everything else is refused, so the scenario never needs the
+# network. `${fixture:…}` values are substituted by the materialiser.
 expect_divergence: D-SEC-08
-status: stub
+name: divergences/D-SEC-08-tampered-go-archive
+since: "4.6.2"
+requires: {git: ">=2.31", net: false, tools: [], os: [linux], pty: false}
+fixtures:
+  mitm_https_proxy:
+    # A certificate for go.dev and dl.google.com signed by a throwaway CA (generated per run).
+    hosts: [go.dev, dl.google.com]
+    responses:
+      # The genuine-looking manifest: its sha256 is the digest of the *untampered* archive below.
+      "https://go.dev/dl/?mode=json&include=all":
+        json_go_releases: {version: go1.23.2, files: [{os: linux, arch: amd64, archive: genuine}]}
+      "https://go.dev/dl/?mode=json":
+        json_go_releases: {version: go1.23.2, files: []}
+      # What actually arrives: a different archive whose `go/bin/go` prints `pwned` and exits 1.
+      "https://dl.google.com/go/go1.23.2.linux-amd64.tar.gz":
+        tar_gz: {"go/bin/go": {mode: 0o755, content: "#!/bin/sh\necho pwned\nexit 1\n"}}
+    archives:
+      genuine:
+        tar_gz: {"go/bin/go": {mode: 0o755, content: "#!/bin/sh\nexit 0\n"}}
+repos: {}
+work:
+  files:
+    go.mod: "module example.com/hook\n\ngo 1.23\n"
+    main.go: "package main\n\nfunc main() {}\n"
+  exec: []
+  symlinks: {}
+  config: |
+    default_language_version:
+        golang: 1.23.2
+    repos:
+    -   repo: local
+        hooks:
+        -   id: go-hook
+            name: go hook
+            entry: hook
+            language: golang
+            pass_filenames: false
+  commit: [".pre-commit-config.yaml", go.mod, main.go]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - tool: [run, --all-files]
+    env:
+      HTTPS_PROXY: "${fixture:mitm_https_proxy.url}"
+      SSL_CERT_FILE: "${fixture:mitm_https_proxy.ca_file}"
+    stdin: ""
+    tty: false
+# pre-commit 4.6.2: installs the tampered toolchain; `go install ./...` prints `pwned` → CalledProcessError, exit 3
+#   (with a real malicious archive the hook would run the attacker's code and pass).
+# snp: `NetError: checksum mismatch for https://dl.google.com/go/go1.23.2.linux-amd64.tar.gz: expected …, got …`,
+#   exit 3, nothing extracted.
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore

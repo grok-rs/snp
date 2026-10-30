@@ -12,8 +12,24 @@ publish.workspace = true
 [dependencies]
 snp-core.workspace = true
 snp-os.workspace = true
+flate2.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tar.workspace = true
 thiserror.workspace = true
+ureq.workspace = true
+zip.workspace = true
 liblzma = { workspace = true, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+# The local HTTPS test server (WBS WP-16 acceptance: "local HTTPS test server (rustls, self-signed CA via
+# SSL_CERT_FILE)"). rustls is already in the dependency graph through ureq; it is not in [workspace.dependencies],
+# so the server side is declared here, pinned to the transitive version (reported to the integration lead).
+rustls = { version = "=0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 
 [features]
 xz = ["dep:liblzma"]

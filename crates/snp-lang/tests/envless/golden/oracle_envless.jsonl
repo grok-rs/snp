@@ -1,0 +1,4 @@
+{"argv":["docker","system","info","--format","{{ json . }}"],"cwd":"{REPO}","env":{}}
+{"argv":["docker","run","--rm","-u","{UID}:{GID}","-v","{REPO}:/src:rw,Z","--workdir","/src","--entrypoint","echo","alpine:3","hi","--flag","a.txt"],"cwd":"{REPO}","env":{}}
+{"argv":["fakehook","--flag","arg one","a.txt"],"cwd":"{REPO}","env":{}}
+{"argv":["check.sh","x","a.txt"],"cwd":"{REPO}","env":{}}
