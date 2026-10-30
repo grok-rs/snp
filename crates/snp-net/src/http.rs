@@ -207,12 +207,14 @@ struct IdleTransport {
 
 impl IdleTransport {
     /// `timeout` shortened to the idle bound (the reason is kept for the error text).
+    ///
+    /// `NextTimeout` lives in ureq's `unversioned` module (no semver guarantee; 3.5.0 added fields), so it is
+    /// copied and only `after` is replaced, never rebuilt from a struct literal.
     fn clamp(&self, timeout: NextTimeout) -> NextTimeout {
         if timeout.after.is_not_happening() || *timeout.after > self.idle {
-            NextTimeout {
-                after: UreqDuration::Exact(self.idle),
-                reason: timeout.reason,
-            }
+            let mut t = timeout;
+            t.after = UreqDuration::Exact(self.idle);
+            t
         } else {
             timeout
         }
