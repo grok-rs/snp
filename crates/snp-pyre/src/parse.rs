@@ -4,7 +4,8 @@
 //!
 //! The recursion of `_parse_sub`/`_parse` is replaced by an explicit frame stack. Python's `nested` argument
 //! is tracked exactly and bounded by [`PARSE_NEST_LIMIT`], the depth at which pre-commit 4.6.2 raises
-//! `RecursionError` (01 Addendum §A.4: 484 nested groups accepted, 485 rejected).
+//! `RecursionError` (01 Addendum §A.4: 484 nested groups accepted, 485 rejected), or for bytes patterns by
+//! [`PYGREP_NEST_LIMIT`], pygrep's (494 accepted, 495 rejected).
 //!
 //! Owner: WP-13.
 
@@ -28,6 +29,12 @@ use crate::unicode;
 /// (whose `_parse_sub` sits at `nested = 970`) and 970 conditionals raise `RecursionError` (calibrated against
 /// CPython 3.12.3 at pre-commit's stack depth, `tests/vectors/nesting.json`).
 pub(crate) const PARSE_NEST_LIMIT: u32 = 970;
+
+/// [`PARSE_NEST_LIMIT`] for bytes patterns, which only pygrep compiles: `python -m pre_commit.languages.pygrep`
+/// calls `re.compile` from a much shallower stack than config validation, so 494 nested groups and 988 nested
+/// conditionals compile there, while 495 groups and 989 conditionals raise `RecursionError` (measured with
+/// pygrep's `main` on CPython 3.12.3, `tests/vectors/nesting.json` bytes rows).
+pub(crate) const PYGREP_NEST_LIMIT: u32 = 989;
 
 /// The parsed pattern plus its warnings.
 #[derive(Debug)]
@@ -292,10 +299,19 @@ impl Parser<'_> {
         });
     }
 
+    /// The recursion budget of the caller that compiles this pattern kind.
+    fn nest_limit(&self) -> u32 {
+        if self.t.istext {
+            PARSE_NEST_LIMIT
+        } else {
+            PYGREP_NEST_LIMIT
+        }
+    }
+
     /// A child frame, unless it would exceed pre-commit's recursion budget.
-    fn sub_frame(verbose: bool, nested: u32, ret: SubRet) -> Result<Frame, PyReError> {
+    fn sub_frame(&self, verbose: bool, nested: u32, ret: SubRet) -> Result<Frame, PyReError> {
         // `_parse_sub` immediately calls `_parse(nested + 1)`.
-        if nested >= PARSE_NEST_LIMIT {
+        if nested >= self.nest_limit() {
             return Err(PyReError::Recursion);
         }
         Ok(Frame::Sub(SubFrame {
@@ -313,7 +329,7 @@ impl Parser<'_> {
         first: bool,
         ret: ParseRet,
     ) -> Result<Frame, PyReError> {
-        if nested > PARSE_NEST_LIMIT {
+        if nested > self.nest_limit() {
             return Err(PyReError::Recursion);
         }
         let seq = self.new_seq()?;
@@ -329,7 +345,7 @@ impl Parser<'_> {
     /// Drives the frame stack; returns the top-level sequence.
     fn run(&mut self) -> Result<SeqId, PyReError> {
         let verbose = self.flags.has(Flags::X);
-        let mut stack = vec![Self::sub_frame(verbose, 0, SubRet::Root)?];
+        let mut stack = vec![self.sub_frame(verbose, 0, SubRet::Root)?];
         let mut done: Option<Done> = None;
         while let Some(frame) = stack.pop() {
             match frame {
@@ -1008,7 +1024,7 @@ impl Parser<'_> {
                     start,
                     reset_lookbehind,
                 };
-                return Self::sub_frame(f.verbose, child_nested, ret).map(Some);
+                return self.sub_frame(f.verbose, child_nested, ret).map(Some);
             } else if char.is('(') {
                 return self.conditional(f, start).map(Some);
             } else if char.is('>') {
@@ -1052,7 +1068,7 @@ impl Parser<'_> {
             del,
             start,
         };
-        Self::sub_frame(sub_verbose, child_nested, ret).map(Some)
+        self.sub_frame(sub_verbose, child_nested, ret).map(Some)
     }
 
     fn seq_is_empty(&self, seq: SeqId) -> bool {
@@ -1330,6 +1346,19 @@ fn atom_cost(node: &Node, unicode: bool, ignorecase: bool) -> u64 {
     }
 }
 
+/// Cost estimate of one anchor for [`Info::est`]: the exact forms of §A.6.5 are look-arounds that fancy-regex
+/// builds as separate `regex` delegates (measured ~0.2 ms and ~60 KB for each Unicode `\b`/`\B`, whose classes
+/// are `[\pL\pN_]`, and a few µs for each non-MULTILINE `$`, `(?=\n?\z)`), so a run of anchors is charged like
+/// the classes it expands to.
+fn anchor_cost(at: At, unicode: bool, multiline: bool) -> u64 {
+    match at {
+        At::Boundary | At::NonBoundary if unicode => 200,
+        At::Boundary | At::NonBoundary => 2,
+        At::End if !multiline => 50,
+        _ => 1,
+    }
+}
+
 /// Fills `node_info`/`seq_info` bottom-up (`SubPattern.getwidth`, `_compile`'s errors in compile order).
 fn compute_info(ast: &mut Ast) {
     let template = ast.flags.has(Flags::T);
@@ -1368,8 +1397,8 @@ fn compute_info(ast: &mut Ast) {
                 feat: Features::default(),
                 est: atom_cost(node, unicode, ignorecase),
             },
-            Node::At(_) => Info {
-                est: 1,
+            Node::At(at) => Info {
+                est: anchor_cost(*at, unicode, ast.flags.has(Flags::M)),
                 ..Info::default()
             },
             Node::Branch(alts) => {
