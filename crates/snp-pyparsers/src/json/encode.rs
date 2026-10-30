@@ -13,8 +13,14 @@ use super::value::Val;
 use crate::CheckError;
 use crate::pystr;
 
-/// The largest output this encoder produces before reporting `MemoryError` (Python would be swapping by then).
-const MAX_OUTPUT: usize = 1 << 30;
+/// The largest output (and `--indent` string) this encoder produces before reporting `MemoryError`: a resource
+/// cap (1 GiB), where Python goes on as long as memory lasts. It is a SEC-class divergence (unbounded resources),
+/// reachable only with an absurd `--indent` or a multi-GiB document.
+pub(super) const MAX_OUTPUT: usize = 1 << 30;
+
+fn memory_error() -> CheckError {
+    CheckError::crash("MemoryError", "")
+}
 
 /// The per-level indent string (`' ' * n` for an integer `--indent`, else the literal).
 #[derive(Debug, Clone)]
@@ -24,30 +30,38 @@ pub(super) enum Indent<'a> {
 
 impl<'a> Indent<'a> {
     /// `parse_num_to_int(s)` then `json.encoder`'s `' ' * indent` for an `int`: `int(s)` if Python accepts it, else
-    /// the string itself. An integer too large to allocate is Python's `MemoryError`/`OverflowError` crash.
+    /// the string itself. An integer beyond `index` range is Python's `OverflowError`; an indent longer than
+    /// [`MAX_OUTPUT`], or one that cannot be allocated, is `MemoryError`.
     pub(super) fn parse(s: &'a str) -> Result<Self, CheckError> {
         if !is_int_syntax(s) {
             return Ok(Self::Str(Cow::Borrowed(s)));
         }
-        match snp_pycompat::int::parse_int(s) {
-            Ok(n) if n <= 0 => Ok(Self::Str(Cow::Borrowed(""))),
-            Ok(n) if n <= 1 << 24 => {
-                let n = usize::try_from(n).unwrap_or(0);
-                Ok(Self::Str(Cow::Owned(std::iter::repeat_n(' ', n).collect())))
-            }
-            Ok(_) => Err(CheckError::crash("MemoryError", "")),
-            Err(_) => {
-                let negative = s.trim_matches(is_space).starts_with('-');
-                if negative {
-                    Ok(Self::Str(Cow::Borrowed("")))
-                } else {
-                    Err(CheckError::crash(
-                        "OverflowError",
-                        "cannot fit 'int' into an index-sized integer",
-                    ))
-                }
-            }
+        // `int(s)` raises ValueError past 4300 digits (underscores not counted): the string is used literally.
+        if s.chars().filter(|&c| decimal_value(c).is_some()).count() > 4300 {
+            return Ok(Self::Str(Cow::Borrowed(s)));
         }
+        let overflow = || {
+            CheckError::crash(
+                "OverflowError",
+                "cannot fit 'int' into an index-sized integer",
+            )
+        };
+        // `' ' * n` needs `n` as a `Py_ssize_t`.
+        let n = snp_pycompat::int::parse_int(s)
+            .ok()
+            .and_then(|n| i64::try_from(n).ok())
+            .ok_or_else(overflow)?;
+        if n <= 0 {
+            return Ok(Self::Str(Cow::Borrowed("")));
+        }
+        let n = usize::try_from(n).unwrap_or(usize::MAX);
+        if n > MAX_OUTPUT {
+            return Err(memory_error());
+        }
+        let mut ind = String::new();
+        ind.try_reserve_exact(n).map_err(|_| memory_error())?;
+        ind.extend(std::iter::repeat_n(' ', n));
+        Ok(Self::Str(Cow::Owned(ind)))
     }
 
     fn as_bytes(&self) -> &[u8] {
@@ -100,7 +114,7 @@ pub(super) fn dumps(
     let mut pending: Option<&Val> = Some(v);
     loop {
         if out.len() > MAX_OUTPUT {
-            return Err(CheckError::crash("MemoryError", ""));
+            return Err(memory_error());
         }
         if let Some(val) = pending.take() {
             match val {
@@ -134,7 +148,7 @@ pub(super) fn dumps(
             if !first {
                 out.push(b',');
             }
-            lead.write(out, level);
+            lead.write(out, level)?;
             if let Some(k) = key {
                 encode_str(k, ensure_ascii, out);
                 out.extend_from_slice(b": ");
@@ -147,7 +161,7 @@ pub(super) fn dumps(
                 b'}'
             };
             stack.pop();
-            lead.write(out, stack.len());
+            lead.write(out, stack.len())?;
             out.push(close);
         }
     }
@@ -160,12 +174,24 @@ struct Lead<'i> {
 }
 
 impl Lead<'_> {
-    fn write(&mut self, out: &mut Vec<u8>, level: usize) {
+    /// Appends the line break and indent of `level`; `MemoryError` before anything grows past [`MAX_OUTPUT`] (a
+    /// huge indent times a deep level would otherwise abort on allocation failure).
+    fn write(&mut self, out: &mut Vec<u8>, level: usize) -> Result<(), CheckError> {
         let want = level.saturating_mul(self.ind.len()).saturating_add(1);
+        if want > MAX_OUTPUT || out.len().saturating_add(want) > MAX_OUTPUT {
+            return Err(memory_error());
+        }
+        if self.buf.len() < want {
+            self.buf
+                .try_reserve(want.saturating_sub(self.buf.len()))
+                .map_err(|_| memory_error())?;
+        }
         while self.buf.len() < want {
             self.buf.extend_from_slice(self.ind);
         }
+        out.try_reserve(want).map_err(|_| memory_error())?;
         out.extend_from_slice(self.buf.get(..want).unwrap_or(&self.buf));
+        Ok(())
     }
 }
 

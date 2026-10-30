@@ -14,6 +14,7 @@
 mod encode;
 mod limits;
 mod scan;
+mod tree;
 mod value;
 
 use std::borrow::Cow;
@@ -32,7 +33,12 @@ pub enum PyMinor {
 }
 
 /// A decoded JSON document (`json.loads(…, object_pairs_hook=…)`).
-#[derive(Debug, Clone, PartialEq)]
+///
+/// `Drop`, `Clone`, `PartialEq` and `Debug` are implemented iteratively (explicit heap stacks, no recursion on
+/// nesting), so a tree as deep as CPython accepts (about 10 000 levels) is safe on a 256 KiB stack. They behave as
+/// the derived impls would (`Float` compares with `f64` `==`; `{:?}` prints the derived compact form; `{:#?}` prints
+/// the same compact form). The `Drop` impl means a value cannot be destructured by move; match by reference or
+/// move the children out with `std::mem::take` through a `&mut` match.
 #[non_exhaustive]
 pub enum JsonValue {
     /// `null`.
@@ -64,14 +70,23 @@ pub fn check(bytes: &[u8], v: PyMinor) -> Result<(), String> {
 
 /// [`check`] keeping a crash apart: `Crash` for `RecursionError` (nesting beyond CPython's limits) and for a
 /// duplicate key holding a lone surrogate (printing it raises `UnicodeEncodeError`; positions are relative to the
-/// message). The v3.x hook (no duplicate check) is [`loads`]' acceptance.
+/// message). The v3.x hook (no duplicate check, no hook frames) is [`check_v3`].
 pub fn check_ex(bytes: &[u8], v: PyMinor) -> Result<(), CheckError> {
     let text = decode_bytes(bytes)?;
     scan::check(&text, v)
 }
 
+/// `check-json` v3.0.0–v3.4.0 (epoch 1): `json.load(f)` with no `object_pairs_hook`, so duplicate keys are
+/// accepted and objects nest as deep as arrays (the C scanner's container threshold; no Python hook frames).
+/// `Err` as for [`check_ex`] (`Reported` is the text inside `Failed to json decode (…)`).
+pub fn check_v3(bytes: &[u8], v: PyMinor) -> Result<(), CheckError> {
+    let text = decode_bytes(bytes)?;
+    scan::check_v3(&text, v)
+}
+
 /// `json.loads(bytes, object_pairs_hook=…)`: iterative, CPython's recursion thresholds (those of `check-json`'s
-/// `json.load` with a Python `object_pairs_hook`). `Err` as for [`check`]; duplicates are kept in order.
+/// `json.load` with a Python `object_pairs_hook`, so objects stop a few levels before arrays; the hook-less v3.x
+/// acceptance is [`check_v3`]). `Err` as for [`check`]; duplicates are kept in order.
 pub fn loads(bytes: &[u8], v: PyMinor) -> Result<JsonValue, String> {
     let text = decode_bytes(bytes).map_err(CheckError::into_message)?;
     scan::loads(&text, v).map_err(CheckError::into_message)
@@ -98,16 +113,20 @@ pub struct DumpOpts {
 /// `ensure_ascii`, plus the trailing `\n`. Sorting duplicate keys compares their values with Python's `<`; where
 /// Python raises `TypeError` this infallible variant keeps the original order of those pairs. [`pretty_format`]
 /// is the exact hook path (crashes, lone surrogates, recursion limits).
+///
+/// Resource cap: where the pretty text (or the `--indent` string) would exceed 1 GiB, which [`pretty_format`]
+/// reports as `MemoryError` (Python would go on while memory lasts), this infallible variant returns the
+/// rendering with no indent (`--indent 0`: one item per line) instead; and the bare `"\n"` if even that exceeds
+/// the cap. An `--indent` beyond Python's index range (`OverflowError`) is treated the same way.
 pub fn dumps_pretty(v: &JsonValue, o: &DumpOpts) -> String {
     let indent = match encode::Indent::parse(&o.indent) {
         Ok(i) => i,
         Err(_) => encode::Indent::Str(Cow::Borrowed("")),
     };
     let val = value::Val::from_json(v);
-    let val = value::pairs_first_tree(val, o, None);
+    let val = value::pairs_first_tree(val, o);
     let mut out = Vec::new();
-    // The tree is finite and the encoder iterative; a byte budget cannot be exceeded by a valid tree here, so the
-    // error case (impossible indent sizes) degrades to the compact rendering.
+    // The documented cap fallback.
     if encode::dumps(&val, &indent, o.ensure_ascii, &mut out).is_err() {
         out.clear();
         let _ignored = encode::dumps(
@@ -125,10 +144,10 @@ pub fn dumps_pretty(v: &JsonValue, o: &DumpOpts) -> String {
 /// (ARCHITECTURE §1.4.11 addition): `contents` is the file as the hook reads it (`open(f, encoding='UTF-8')`,
 /// universal newlines). `Ok` is the pretty text (with its `\n`); `Err(Reported)` is the `ValueError` the hook turns
 /// into `Input File … is not a valid JSON` (its `str()` is not printed); `Err(Crash)` is `TypeError` (duplicate keys
-/// whose values Python cannot order), `RecursionError` (parse or encoder limits of `v`), `MemoryError` (an absurd
-/// `--indent`), or `UnicodeEncodeError` for a lone surrogate kept by `ensure_ascii=False` (the hook writes or
-/// diffs the text later, after printing `Fixing file …` with `--autofix`; the position is the index in the
-/// pretty text).
+/// whose values Python cannot order), `RecursionError` (parse or encoder limits of `v`), `MemoryError` (an
+/// `--indent` or a pretty text over the 1 GiB resource cap, or a failed allocation), or `UnicodeEncodeError` for
+/// a lone surrogate kept by `ensure_ascii=False` (the hook writes or diffs the text later, after printing
+/// `Fixing file …` with `--autofix`; the position is the index in the pretty text).
 pub fn pretty_format(contents: &str, o: &DumpOpts, v: PyMinor) -> Result<String, CheckError> {
     let indent = encode::Indent::parse(&o.indent)?;
     let tree = scan::pretty(contents.as_bytes(), o, v)?;
@@ -225,6 +244,77 @@ enum Enc {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn opts(indent: &str) -> DumpOpts {
+        DumpOpts {
+            indent: indent.to_owned(),
+            ensure_ascii: true,
+            sort_keys: true,
+            top_keys: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn huge_indents_work_as_in_python() {
+        // py313: `_get_pretty_format('{"a": 1}', 20000000)` is '{\n' + ' ' * 20000000 + '"a": 1\n}\n'.
+        for ind in ["16777216", "16777217", "20000000"] {
+            let n: usize = ind.parse().unwrap_or(0);
+            let Ok(out) = pretty_format("{\"a\": 1}", &opts(ind), PyMinor::P313) else {
+                panic!("indent {ind} must work");
+            };
+            assert_eq!(out.len(), n + 11, "{ind}");
+            assert!(out.starts_with("{\n  ") && out.ends_with(" \"a\": 1\n}\n"));
+            assert_eq!(
+                dumps_pretty(&JsonValue::Array(vec![JsonValue::Null]), &opts(ind)).len(),
+                n + 9
+            );
+        }
+        // Over the 1 GiB resource cap: MemoryError; beyond Python's index range: OverflowError.
+        for (ind, ty) in [
+            ("1073741825", "MemoryError"),
+            ("2000000000", "MemoryError"),
+            ("99999999999999999999", "OverflowError"),
+            ("-99999999999999999999", "OverflowError"),
+            ("-9223372036854775809", "OverflowError"),
+            ("9223372036854775807", "MemoryError"),
+        ] {
+            match pretty_format("{\"a\": 1}", &opts(ind), PyMinor::P313) {
+                Err(CheckError::Crash(e)) => assert_eq!(e.ty, ty, "{ind}"),
+                other => panic!("{ind}: {other:?}"),
+            }
+        }
+        // py312/py313: `-9223372036854775808` is no indent; 4301 digits are not an `int` (used literally); 4300
+        // are, and overflow.
+        let rep = |s: &str, n: usize| std::iter::repeat_n(s, n).collect::<String>();
+        let lit = rep("0", 4301);
+        assert_eq!(
+            pretty_format("[1]", &opts("-9223372036854775808"), PyMinor::P312)
+                .ok()
+                .as_deref(),
+            Some("[\n1\n]\n")
+        );
+        assert_eq!(
+            pretty_format("[1]", &opts(&lit), PyMinor::P312).ok(),
+            Some(format!("[\n{lit}1\n]\n"))
+        );
+        for big in [rep("9", 4300), format!("{}1", rep("1_", 2200))] {
+            match pretty_format("[1]", &opts(&big), PyMinor::P313) {
+                Err(CheckError::Crash(e)) => assert_eq!(e.ty, "OverflowError"),
+                other => panic!("{other:?}"),
+            }
+        }
+        // The scalar document needs no indent line, but Python still builds the indent string.
+        assert!(pretty_format("1", &opts("1073741825"), PyMinor::P313).is_err());
+        // A deep document with a large indent stops at the cap instead of allocating level * indent bytes.
+        let deep = format!("{}{}", rep("[", 200), rep("]", 200));
+        match pretty_format(&deep, &opts("10000000"), PyMinor::P313) {
+            Err(CheckError::Crash(e)) => assert_eq!(e.ty, "MemoryError"),
+            other => panic!("{other:?}"),
+        }
+        // The infallible encoder's documented fallback: no indent.
+        let v = JsonValue::Array(vec![JsonValue::Null]);
+        assert_eq!(dumps_pretty(&v, &opts("2000000000")), "[\nnull\n]\n");
+    }
 
     #[test]
     fn catalogue_09() {

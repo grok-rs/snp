@@ -10,8 +10,9 @@ use super::{DumpOpts, JsonValue, PyMinor};
 use crate::pysort;
 use crate::pystr;
 
-/// A decoded JSON value as the Python object `json.loads` builds.
-#[derive(Debug, Clone)]
+/// A decoded JSON value as the Python object `json.loads` builds. Deliberately not `Clone`: a derived clone
+/// recurses once per nesting level (and copying subtrees made `dumps_pretty` quadratic in depth).
+#[derive(Debug)]
 pub(super) enum Val {
     /// `None`.
     Null,
@@ -377,8 +378,9 @@ pub(super) fn pairs_first(
     Ok(out)
 }
 
-/// [`pairs_first`] applied to every object of a tree, innermost first (iterative post-order).
-pub(super) fn pairs_first_tree(v: Val, o: &DumpOpts, minor: Option<PyMinor>) -> Val {
+/// The lenient [`pairs_first`] (never raises) applied to every object of a tree, innermost first (iterative
+/// post-order; no subtree is copied).
+pub(super) fn pairs_first_tree(v: Val, o: &DumpOpts) -> Val {
     enum Work {
         Visit(Val),
         List(usize),
@@ -408,10 +410,7 @@ pub(super) fn pairs_first_tree(v: Val, o: &DumpOpts, minor: Option<PyMinor>) -> 
             Work::Dict(keys) => {
                 let vals = split_tail(&mut out, keys.len());
                 let pairs: Vec<_> = keys.into_iter().zip(vals).collect();
-                let pairs = match pairs_first(pairs.clone(), o, minor) {
-                    Ok(p) => p,
-                    Err(_) => pairs_first(pairs, o, None).unwrap_or_default(),
-                };
+                let pairs = pairs_first(pairs, o, None).unwrap_or_default();
                 out.push(Val::Dict(pairs));
             }
         }

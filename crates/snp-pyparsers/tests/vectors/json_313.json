@@ -11,6 +11,11 @@
   "check_const": 9997,
   "check_hook": 9996,
   "check_hook_raise": 9995,
+  "check_v3_arrays": 9998,
+  "check_v3_stop": 9997,
+  "check_v3_errmsg": 9994,
+  "check_v3_int": 9997,
+  "check_v3_objects": 9998,
   "pretty_stop": 9997,
   "pretty_errmsg": 9994,
   "pretty_errmsg_str": 9994,
@@ -25,6 +30,9 @@
    "name": "suite-i_number_double_huge_neg_exp.json",
    "b64": "WzEyMy40NTZlLTc4OV0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -46,6 +54,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -63,6 +74,9 @@
    "name": "suite-i_number_neg_int_huge_exp.json",
    "b64": "Wy0xZSs5OTk5XQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -84,6 +98,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -101,6 +118,9 @@
    "name": "suite-i_number_real_neg_overflow.json",
    "b64": "Wy0xMjMxMjNlMTAwMDAwXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -122,6 +142,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -139,6 +162,9 @@
    "name": "suite-i_number_real_underflow.json",
    "b64": "WzEyM2UtMTAwMDAwMDBd",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -160,6 +186,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -177,6 +206,9 @@
    "name": "suite-i_number_too_big_pos_int.json",
    "b64": "WzEwMDAwMDAwMDAwMDAwMDAwMDAwMF0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -198,6 +230,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -215,6 +250,9 @@
    "name": "suite-i_object_key_lone_2nd_surrogate.json",
    "b64": "eyJcdURGQUEiOjB9",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -240,6 +278,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -257,6 +298,9 @@
    "name": "suite-i_string_1st_valid_surrogate_2nd_invalid.json",
    "b64": "WyJcdUQ4ODhcdTEyMzQiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -278,6 +322,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -297,6 +344,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xfa in position 7: invalid start byte"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xfa in position 7: invalid start byte"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xfa in position 7: invalid start byte"
    }
@@ -305,6 +355,9 @@
    "name": "suite-i_string_UTF8_surrogate_U+D800.json",
    "b64": "WyLtoIAiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -326,6 +379,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -343,6 +399,9 @@
    "name": "suite-i_string_incomplete_surrogate_pair.json",
    "b64": "WyJcdURkMWVhIl0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -364,6 +423,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -381,6 +443,9 @@
    "name": "suite-i_string_invalid_lonely_surrogate.json",
    "b64": "WyJcdWQ4MDAiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -402,6 +467,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -421,6 +489,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xff in position 2: invalid start byte"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xff in position 2: invalid start byte"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xff in position 2: invalid start byte"
    }
@@ -429,6 +500,9 @@
    "name": "suite-i_string_inverted_surrogates_U+1D11E.json",
    "b64": "WyJcdURkMWVcdUQ4MzQiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -450,6 +524,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xe9 in position 2: invalid continuation byte"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xe9 in position 2: invalid continuation byte"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xe9 in position 2: invalid continuation byte"
    }
@@ -458,6 +535,9 @@
    "name": "suite-i_string_lone_second_surrogate.json",
    "b64": "WyJcdURGQUEiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -479,6 +559,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0x81 in position 2: invalid start byte"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0x81 in position 2: invalid start byte"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0x81 in position 2: invalid start byte"
    }
@@ -487,6 +570,9 @@
    "name": "suite-i_string_not_in_unicode_range.json",
    "b64": "WyL0v7+/Il0=",
    "check": {
+    "reported": "'utf-8' codec can't decode byte 0xf4 in position 2: invalid continuation byte"
+   },
+   "check_v3": {
     "reported": "'utf-8' codec can't decode byte 0xf4 in position 2: invalid continuation byte"
    },
    "loads": {
@@ -499,6 +585,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xc0 in position 2: invalid start byte"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xc0 in position 2: invalid start byte"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xc0 in position 2: invalid start byte"
    }
@@ -507,6 +596,9 @@
    "name": "suite-i_string_overlong_sequence_6_bytes.json",
    "b64": "WyL8g7+/v78iXQ==",
    "check": {
+    "reported": "'utf-8' codec can't decode byte 0xfc in position 2: invalid start byte"
+   },
+   "check_v3": {
     "reported": "'utf-8' codec can't decode byte 0xfc in position 2: invalid start byte"
    },
    "loads": {
@@ -519,6 +611,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xfc in position 2: invalid start byte"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xfc in position 2: invalid start byte"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xfc in position 2: invalid start byte"
    }
@@ -529,6 +624,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xe0 in position 2: invalid continuation byte"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xe0 in position 2: invalid continuation byte"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xe0 in position 2: invalid continuation byte"
    }
@@ -537,6 +635,9 @@
    "name": "suite-i_string_utf16BE_no_BOM.json",
    "b64": "AFsAIgDpACIAXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -558,6 +659,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -575,6 +679,9 @@
    "name": "suite-i_structure_500_nested_arrays.json",
    "b64": "W1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tdXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -2588,6 +2695,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -2603,6 +2713,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
    }
@@ -2611,6 +2724,9 @@
    "name": "suite-n_array_a_invalid_utf8.json",
    "b64": "W2HlXQ==",
    "check": {
+    "reported": "'utf-8' codec can't decode byte 0xe5 in position 2: invalid continuation byte"
+   },
+   "check_v3": {
     "reported": "'utf-8' codec can't decode byte 0xe5 in position 2: invalid continuation byte"
    },
    "loads": {
@@ -2623,6 +2739,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
    }
@@ -2631,6 +2750,9 @@
    "name": "suite-n_array_comma_after_close.json",
    "b64": "WyIiXSw=",
    "check": {
+    "reported": "Extra data: line 1 column 5 (char 4)"
+   },
+   "check_v3": {
     "reported": "Extra data: line 1 column 5 (char 4)"
    },
    "loads": {
@@ -2643,6 +2765,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -2651,6 +2776,9 @@
    "name": "suite-n_array_double_comma.json",
    "b64": "WzEsLDJd",
    "check": {
+    "reported": "Expecting value: line 1 column 4 (char 3)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 4 (char 3)"
    },
    "loads": {
@@ -2663,6 +2791,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 6 (char 5)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 6 (char 5)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 6 (char 5)"
    }
@@ -2671,6 +2802,9 @@
    "name": "suite-n_array_extra_close.json",
    "b64": "WyJ4Il1d",
    "check": {
+    "reported": "Extra data: line 1 column 6 (char 5)"
+   },
+   "check_v3": {
     "reported": "Extra data: line 1 column 6 (char 5)"
    },
    "loads": {
@@ -2683,6 +2817,9 @@
    "check": {
     "reported": "Illegal trailing comma before end of array: line 1 column 4 (char 3)"
    },
+   "check_v3": {
+    "reported": "Illegal trailing comma before end of array: line 1 column 4 (char 3)"
+   },
    "loads": {
     "reported": "Illegal trailing comma before end of array: line 1 column 4 (char 3)"
    }
@@ -2691,6 +2828,9 @@
    "name": "suite-n_array_incomplete.json",
    "b64": "WyJ4Ig==",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
    },
    "loads": {
@@ -2703,6 +2843,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -2711,6 +2854,9 @@
    "name": "suite-n_array_inner_array_no_comma.json",
    "b64": "WzNbNF1d",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -2723,6 +2869,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xff in position 1: invalid start byte"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xff in position 1: invalid start byte"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xff in position 1: invalid start byte"
    }
@@ -2731,6 +2880,9 @@
    "name": "suite-n_array_items_separated_by_semicolon.json",
    "b64": "WzE6Ml0=",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -2743,6 +2895,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -2751,6 +2906,9 @@
    "name": "suite-n_array_just_minus.json",
    "b64": "Wy1d",
    "check": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -2763,6 +2921,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 5 (char 4)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 5 (char 4)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 5 (char 4)"
    }
@@ -2771,6 +2932,9 @@
    "name": "suite-n_array_newlines_unclosed.json",
    "b64": "WyJhIiwKNAosMSw=",
    "check": {
+    "reported": "Expecting value: line 3 column 4 (char 11)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 3 column 4 (char 11)"
    },
    "loads": {
@@ -2783,6 +2947,9 @@
    "check": {
     "reported": "Illegal trailing comma before end of array: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Illegal trailing comma before end of array: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Illegal trailing comma before end of array: line 1 column 3 (char 2)"
    }
@@ -2791,6 +2958,9 @@
    "name": "suite-n_array_number_and_several_commas.json",
    "b64": "WzEsLF0=",
    "check": {
+    "reported": "Expecting value: line 1 column 4 (char 3)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 4 (char 3)"
    },
    "loads": {
@@ -2803,6 +2973,9 @@
    "check": {
     "reported": "Invalid control character at: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Invalid control character at: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Invalid control character at: line 1 column 3 (char 2)"
    }
@@ -2811,6 +2984,9 @@
    "name": "suite-n_array_star_inside.json",
    "b64": "Wypd",
    "check": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -2823,6 +2999,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
    }
@@ -2831,6 +3010,9 @@
    "name": "suite-n_array_unclosed_trailing_comma.json",
    "b64": "WzEs",
    "check": {
+    "reported": "Expecting value: line 1 column 4 (char 3)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 4 (char 3)"
    },
    "loads": {
@@ -2843,6 +3025,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 3 column 3 (char 8)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 3 column 3 (char 8)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 3 column 3 (char 8)"
    }
@@ -2851,6 +3036,9 @@
    "name": "suite-n_array_unclosed_with_object_inside.json",
    "b64": "W3t9",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
    },
    "loads": {
@@ -2863,6 +3051,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -2871,6 +3062,9 @@
    "name": "suite-n_incomplete_null.json",
    "b64": "W251bF0=",
    "check": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -2883,6 +3077,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -2891,6 +3088,9 @@
    "name": "suite-n_multidigit_number_then_00.json",
    "b64": "MTIzAA==",
    "check": {
+    "reported": "Extra data: line 1 column 4 (char 3)"
+   },
+   "check_v3": {
     "reported": "Extra data: line 1 column 4 (char 3)"
    },
    "loads": {
@@ -2903,6 +3103,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -2911,6 +3114,9 @@
    "name": "suite-n_number_+1.json",
    "b64": "WysxXQ==",
    "check": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -2923,6 +3129,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -2931,6 +3140,9 @@
    "name": "suite-n_number_-01.json",
    "b64": "Wy0wMV0=",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
    },
    "loads": {
@@ -2943,6 +3155,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 6 (char 5)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 6 (char 5)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 6 (char 5)"
    }
@@ -2951,6 +3166,9 @@
    "name": "suite-n_number_-2..json",
    "b64": "Wy0yLl0=",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
    },
    "loads": {
@@ -2963,6 +3181,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -2971,6 +3192,9 @@
    "name": "suite-n_number_.-1.json",
    "b64": "Wy4tMV0=",
    "check": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -2983,6 +3207,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -2991,6 +3218,9 @@
    "name": "suite-n_number_0.1.2.json",
    "b64": "WzAuMS4yXQ==",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
    },
    "loads": {
@@ -3003,6 +3233,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
    }
@@ -3011,6 +3244,9 @@
    "name": "suite-n_number_0.3e.json",
    "b64": "WzAuM2Vd",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
    },
    "loads": {
@@ -3023,6 +3259,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    }
@@ -3031,6 +3270,9 @@
    "name": "suite-n_number_0_capital_E+.json",
    "b64": "WzBFK10=",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -3043,6 +3285,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    }
@@ -3051,6 +3296,9 @@
    "name": "suite-n_number_0e+.json",
    "b64": "WzBlK10=",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -3063,6 +3311,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    }
@@ -3071,6 +3322,9 @@
    "name": "suite-n_number_1.0e+.json",
    "b64": "WzEuMGUrXQ==",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
    },
    "loads": {
@@ -3083,6 +3337,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
    }
@@ -3091,6 +3348,9 @@
    "name": "suite-n_number_1.0e.json",
    "b64": "WzEuMGVd",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
    },
    "loads": {
@@ -3103,6 +3363,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
    }
@@ -3111,6 +3374,9 @@
    "name": "suite-n_number_1eE2.json",
    "b64": "WzFlRTJd",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -3123,6 +3389,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    }
@@ -3131,6 +3400,9 @@
    "name": "suite-n_number_2.e-3.json",
    "b64": "WzIuZS0zXQ==",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -3143,6 +3415,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    }
@@ -3151,6 +3426,9 @@
    "name": "suite-n_number_9.e+.json",
    "b64": "WzkuZStd",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -3163,6 +3441,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -3171,6 +3452,9 @@
    "name": "suite-n_number_NaN.json",
    "b64": "W05hTl0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -3192,6 +3476,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -3200,6 +3487,9 @@
    "name": "suite-n_number_expression.json",
    "b64": "WzErMl0=",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -3212,6 +3502,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    }
@@ -3222,6 +3515,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    }
@@ -3230,6 +3526,9 @@
    "name": "suite-n_number_infinity.json",
    "b64": "W0luZmluaXR5XQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -3251,6 +3550,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    }
@@ -3259,6 +3561,9 @@
    "name": "suite-n_number_invalid-negative-real.json",
    "b64": "Wy0xMjMuMTIzZm9vXQ==",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 10 (char 9)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 10 (char 9)"
    },
    "loads": {
@@ -3271,6 +3576,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xe5 in position 4: invalid continuation byte"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xe5 in position 4: invalid continuation byte"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xe5 in position 4: invalid continuation byte"
    }
@@ -3279,6 +3587,9 @@
    "name": "suite-n_number_invalid-utf-8-in-exponent.json",
    "b64": "WzFlMeVd",
    "check": {
+    "reported": "'utf-8' codec can't decode byte 0xe5 in position 4: invalid continuation byte"
+   },
+   "check_v3": {
     "reported": "'utf-8' codec can't decode byte 0xe5 in position 4: invalid continuation byte"
    },
    "loads": {
@@ -3291,6 +3602,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xe5 in position 2: invalid continuation byte"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xe5 in position 2: invalid continuation byte"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xe5 in position 2: invalid continuation byte"
    }
@@ -3299,6 +3613,9 @@
    "name": "suite-n_number_minus_infinity.json",
    "b64": "Wy1JbmZpbml0eV0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -3320,6 +3637,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -3328,6 +3648,9 @@
    "name": "suite-n_number_minus_space_1.json",
    "b64": "Wy0gMV0=",
    "check": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -3340,6 +3663,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
    }
@@ -3348,6 +3674,9 @@
    "name": "suite-n_number_neg_real_without_int_part.json",
    "b64": "Wy0uMTIzXQ==",
    "check": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -3360,6 +3689,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
    }
@@ -3368,6 +3700,9 @@
    "name": "suite-n_number_real_garbage_after_e.json",
    "b64": "WzFlYV0=",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -3380,6 +3715,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xe5 in position 3: invalid continuation byte"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xe5 in position 3: invalid continuation byte"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xe5 in position 3: invalid continuation byte"
    }
@@ -3388,6 +3726,9 @@
    "name": "suite-n_number_real_without_fractional_part.json",
    "b64": "WzEuXQ==",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -3400,6 +3741,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -3408,6 +3752,9 @@
    "name": "suite-n_number_with_alpha.json",
    "b64": "WzEuMmEtM10=",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
    },
    "loads": {
@@ -3420,6 +3767,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 20 (char 19)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 20 (char 19)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 20 (char 19)"
    }
@@ -3428,6 +3778,9 @@
    "name": "suite-n_number_with_leading_zero.json",
    "b64": "WzAxMl0=",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -3440,6 +3793,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 7 (char 6)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 7 (char 6)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 7 (char 6)"
    }
@@ -3448,6 +3804,9 @@
    "name": "suite-n_object_bracket_key.json",
    "b64": "e1s6ICJ4In0K",
    "check": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -3460,6 +3819,9 @@
    "check": {
     "reported": "Expecting ':' delimiter: line 1 column 5 (char 4)"
    },
+   "check_v3": {
+    "reported": "Expecting ':' delimiter: line 1 column 5 (char 4)"
+   },
    "loads": {
     "reported": "Expecting ':' delimiter: line 1 column 5 (char 4)"
    }
@@ -3468,6 +3830,9 @@
    "name": "suite-n_object_double_colon.json",
    "b64": "eyJ4Ijo6ImIifQ==",
    "check": {
+    "reported": "Expecting value: line 1 column 6 (char 5)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 6 (char 5)"
    },
    "loads": {
@@ -3480,6 +3845,9 @@
    "check": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    }
@@ -3488,6 +3856,9 @@
    "name": "suite-n_object_garbage_at_end.json",
    "b64": "eyJhIjoiYSIgMTIzfQ==",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 10 (char 9)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 10 (char 9)"
    },
    "loads": {
@@ -3500,6 +3871,9 @@
    "check": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    }
@@ -3508,6 +3882,9 @@
    "name": "suite-n_object_lone_continuation_byte_in_key_and_trailing_comma.json",
    "b64": "eyK5IjoiMCIsfQ==",
    "check": {
+    "reported": "'utf-8' codec can't decode byte 0xb9 in position 2: invalid start byte"
+   },
+   "check_v3": {
     "reported": "'utf-8' codec can't decode byte 0xb9 in position 2: invalid start byte"
    },
    "loads": {
@@ -3520,6 +3897,9 @@
    "check": {
     "reported": "Expecting ':' delimiter: line 1 column 6 (char 5)"
    },
+   "check_v3": {
+    "reported": "Expecting ':' delimiter: line 1 column 6 (char 5)"
+   },
    "loads": {
     "reported": "Expecting ':' delimiter: line 1 column 6 (char 5)"
    }
@@ -3528,6 +3908,9 @@
    "name": "suite-n_object_missing_key.json",
    "b64": "ezoiYiJ9",
    "check": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -3540,6 +3923,9 @@
    "check": {
     "reported": "Expecting ':' delimiter: line 1 column 6 (char 5)"
    },
+   "check_v3": {
+    "reported": "Expecting ':' delimiter: line 1 column 6 (char 5)"
+   },
    "loads": {
     "reported": "Expecting ':' delimiter: line 1 column 6 (char 5)"
    }
@@ -3548,6 +3934,9 @@
    "name": "suite-n_object_missing_value.json",
    "b64": "eyJhIjo=",
    "check": {
+    "reported": "Expecting value: line 1 column 6 (char 5)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 6 (char 5)"
    },
    "loads": {
@@ -3560,6 +3949,9 @@
    "check": {
     "reported": "Expecting ':' delimiter: line 1 column 5 (char 4)"
    },
+   "check_v3": {
+    "reported": "Expecting ':' delimiter: line 1 column 5 (char 4)"
+   },
    "loads": {
     "reported": "Expecting ':' delimiter: line 1 column 5 (char 4)"
    }
@@ -3568,6 +3960,9 @@
    "name": "suite-n_object_non_string_key.json",
    "b64": "ezE6MX0=",
    "check": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -3580,6 +3975,9 @@
    "check": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    }
@@ -3588,6 +3986,9 @@
    "name": "suite-n_object_repeated_null_null.json",
    "b64": "e251bGw6bnVsbCxudWxsOm51bGx9",
    "check": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -3600,6 +4001,9 @@
    "check": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 9 (char 8)"
    },
+   "check_v3": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 9 (char 8)"
+   },
    "loads": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 9 (char 8)"
    }
@@ -3608,6 +4012,9 @@
    "name": "suite-n_object_single_quote.json",
    "b64": "eydhJzowfQ==",
    "check": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -3620,6 +4027,9 @@
    "check": {
     "reported": "Illegal trailing comma before end of object: line 1 column 8 (char 7)"
    },
+   "check_v3": {
+    "reported": "Illegal trailing comma before end of object: line 1 column 8 (char 7)"
+   },
    "loads": {
     "reported": "Illegal trailing comma before end of object: line 1 column 8 (char 7)"
    }
@@ -3628,6 +4038,9 @@
    "name": "suite-n_object_trailing_comment.json",
    "b64": "eyJhIjoiYiJ9LyoqLw==",
    "check": {
+    "reported": "Extra data: line 1 column 10 (char 9)"
+   },
+   "check_v3": {
     "reported": "Extra data: line 1 column 10 (char 9)"
    },
    "loads": {
@@ -3640,6 +4053,9 @@
    "check": {
     "reported": "Extra data: line 1 column 10 (char 9)"
    },
+   "check_v3": {
+    "reported": "Extra data: line 1 column 10 (char 9)"
+   },
    "loads": {
     "reported": "Extra data: line 1 column 10 (char 9)"
    }
@@ -3648,6 +4064,9 @@
    "name": "suite-n_object_trailing_comment_slash_open.json",
    "b64": "eyJhIjoiYiJ9Ly8=",
    "check": {
+    "reported": "Extra data: line 1 column 10 (char 9)"
+   },
+   "check_v3": {
     "reported": "Extra data: line 1 column 10 (char 9)"
    },
    "loads": {
@@ -3660,6 +4079,9 @@
    "check": {
     "reported": "Extra data: line 1 column 10 (char 9)"
    },
+   "check_v3": {
+    "reported": "Extra data: line 1 column 10 (char 9)"
+   },
    "loads": {
     "reported": "Extra data: line 1 column 10 (char 9)"
    }
@@ -3668,6 +4090,9 @@
    "name": "suite-n_object_two_commas_in_a_row.json",
    "b64": "eyJhIjoiYiIsLCJjIjoiZCJ9",
    "check": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 10 (char 9)"
+   },
+   "check_v3": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 10 (char 9)"
    },
    "loads": {
@@ -3680,6 +4105,9 @@
    "check": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    }
@@ -3688,6 +4116,9 @@
    "name": "suite-n_object_unterminated-value.json",
    "b64": "eyJhIjoiYQ==",
    "check": {
+    "reported": "Unterminated string starting at: line 1 column 6 (char 5)"
+   },
+   "check_v3": {
     "reported": "Unterminated string starting at: line 1 column 6 (char 5)"
    },
    "loads": {
@@ -3700,6 +4131,9 @@
    "check": {
     "reported": "Expecting ':' delimiter: line 1 column 22 (char 21)"
    },
+   "check_v3": {
+    "reported": "Expecting ':' delimiter: line 1 column 22 (char 21)"
+   },
    "loads": {
     "reported": "Expecting ':' delimiter: line 1 column 22 (char 21)"
    }
@@ -3708,6 +4142,9 @@
    "name": "suite-n_object_with_trailing_garbage.json",
    "b64": "eyJhIjoiYiJ9Iw==",
    "check": {
+    "reported": "Extra data: line 1 column 10 (char 9)"
+   },
+   "check_v3": {
     "reported": "Extra data: line 1 column 10 (char 9)"
    },
    "loads": {
@@ -3720,6 +4157,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -3728,6 +4168,9 @@
    "name": "suite-n_string_1_surrogate_then_escape.json",
    "b64": "WyJcdUQ4MDBcIl0=",
    "check": {
+    "reported": "Unterminated string starting at: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Unterminated string starting at: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -3740,6 +4183,9 @@
    "check": {
     "reported": "Invalid \\uXXXX escape: line 1 column 10 (char 9)"
    },
+   "check_v3": {
+    "reported": "Invalid \\uXXXX escape: line 1 column 10 (char 9)"
+   },
    "loads": {
     "reported": "Invalid \\uXXXX escape: line 1 column 10 (char 9)"
    }
@@ -3748,6 +4194,9 @@
    "name": "suite-n_string_1_surrogate_then_escape_u1.json",
    "b64": "WyJcdUQ4MDBcdTEiXQ==",
    "check": {
+    "reported": "Invalid \\uXXXX escape: line 1 column 10 (char 9)"
+   },
+   "check_v3": {
     "reported": "Invalid \\uXXXX escape: line 1 column 10 (char 9)"
    },
    "loads": {
@@ -3760,6 +4209,9 @@
    "check": {
     "reported": "Invalid \\uXXXX escape: line 1 column 10 (char 9)"
    },
+   "check_v3": {
+    "reported": "Invalid \\uXXXX escape: line 1 column 10 (char 9)"
+   },
    "loads": {
     "reported": "Invalid \\uXXXX escape: line 1 column 10 (char 9)"
    }
@@ -3768,6 +4220,9 @@
    "name": "suite-n_string_accentuated_char_no_quotes.json",
    "b64": "W8OpXQ==",
    "check": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -3780,6 +4235,9 @@
    "check": {
     "reported": "Invalid \\escape: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Invalid \\escape: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Invalid \\escape: line 1 column 3 (char 2)"
    }
@@ -3788,6 +4246,9 @@
    "name": "suite-n_string_escape_x.json",
    "b64": "WyJceDAwIl0=",
    "check": {
+    "reported": "Invalid \\escape: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Invalid \\escape: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -3800,6 +4261,9 @@
    "check": {
     "reported": "Unterminated string starting at: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Unterminated string starting at: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Unterminated string starting at: line 1 column 2 (char 1)"
    }
@@ -3808,6 +4272,9 @@
    "name": "suite-n_string_escaped_ctrl_char_tab.json",
    "b64": "WyJcCSJd",
    "check": {
+    "reported": "Invalid \\escape: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Invalid \\escape: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -3820,6 +4287,9 @@
    "check": {
     "reported": "Invalid \\escape: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Invalid \\escape: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Invalid \\escape: line 1 column 3 (char 2)"
    }
@@ -3828,6 +4298,9 @@
    "name": "suite-n_string_incomplete_escape.json",
    "b64": "WyJcIl0=",
    "check": {
+    "reported": "Unterminated string starting at: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Unterminated string starting at: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -3840,6 +4313,9 @@
    "check": {
     "reported": "Invalid \\uXXXX escape: line 1 column 4 (char 3)"
    },
+   "check_v3": {
+    "reported": "Invalid \\uXXXX escape: line 1 column 4 (char 3)"
+   },
    "loads": {
     "reported": "Invalid \\uXXXX escape: line 1 column 4 (char 3)"
    }
@@ -3848,6 +4324,9 @@
    "name": "suite-n_string_incomplete_surrogate.json",
    "b64": "WyJcdUQ4MzRcdURkIl0=",
    "check": {
+    "reported": "Invalid \\uXXXX escape: line 1 column 10 (char 9)"
+   },
+   "check_v3": {
     "reported": "Invalid \\uXXXX escape: line 1 column 10 (char 9)"
    },
    "loads": {
@@ -3860,6 +4339,9 @@
    "check": {
     "reported": "Invalid \\escape: line 1 column 15 (char 14)"
    },
+   "check_v3": {
+    "reported": "Invalid \\escape: line 1 column 15 (char 14)"
+   },
    "loads": {
     "reported": "Invalid \\escape: line 1 column 15 (char 14)"
    }
@@ -3868,6 +4350,9 @@
    "name": "suite-n_string_invalid-utf-8-in-escape.json",
    "b64": "WyJcdeUiXQ==",
    "check": {
+    "reported": "'utf-8' codec can't decode byte 0xe5 in position 4: invalid continuation byte"
+   },
+   "check_v3": {
     "reported": "'utf-8' codec can't decode byte 0xe5 in position 4: invalid continuation byte"
    },
    "loads": {
@@ -3880,6 +4365,9 @@
    "check": {
     "reported": "Invalid \\escape: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Invalid \\escape: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Invalid \\escape: line 1 column 3 (char 2)"
    }
@@ -3888,6 +4376,9 @@
    "name": "suite-n_string_invalid_unicode_escape.json",
    "b64": "WyJcdXFxcXEiXQ==",
    "check": {
+    "reported": "Invalid \\uXXXX escape: line 1 column 4 (char 3)"
+   },
+   "check_v3": {
     "reported": "Invalid \\uXXXX escape: line 1 column 4 (char 3)"
    },
    "loads": {
@@ -3900,6 +4391,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xe5 in position 3: invalid continuation byte"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xe5 in position 3: invalid continuation byte"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xe5 in position 3: invalid continuation byte"
    }
@@ -3908,6 +4402,9 @@
    "name": "suite-n_string_leading_uescaped_thinspace.json",
    "b64": "W1x1MDAyMCJhc2QiXQ==",
    "check": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -3920,6 +4417,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -3928,6 +4428,9 @@
    "name": "suite-n_string_single_doublequote.json",
    "b64": "Ig==",
    "check": {
+    "reported": "Unterminated string starting at: line 1 column 1 (char 0)"
+   },
+   "check_v3": {
     "reported": "Unterminated string starting at: line 1 column 1 (char 0)"
    },
    "loads": {
@@ -3940,6 +4443,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -3948,6 +4454,9 @@
    "name": "suite-n_string_single_string_no_double_quotes.json",
    "b64": "YWJj",
    "check": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
    "loads": {
@@ -3960,6 +4469,9 @@
    "check": {
     "reported": "Unterminated string starting at: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Unterminated string starting at: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Unterminated string starting at: line 1 column 2 (char 1)"
    }
@@ -3968,6 +4480,9 @@
    "name": "suite-n_string_unescaped_ctrl_char.json",
    "b64": "WyJhAGEiXQ==",
    "check": {
+    "reported": "Invalid control character at: line 1 column 4 (char 3)"
+   },
+   "check_v3": {
     "reported": "Invalid control character at: line 1 column 4 (char 3)"
    },
    "loads": {
@@ -3980,6 +4495,9 @@
    "check": {
     "reported": "Invalid control character at: line 1 column 6 (char 5)"
    },
+   "check_v3": {
+    "reported": "Invalid control character at: line 1 column 6 (char 5)"
+   },
    "loads": {
     "reported": "Invalid control character at: line 1 column 6 (char 5)"
    }
@@ -3988,6 +4506,9 @@
    "name": "suite-n_string_unescaped_tab.json",
    "b64": "WyIJIl0=",
    "check": {
+    "reported": "Invalid control character at: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Invalid control character at: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -4000,6 +4521,9 @@
    "check": {
     "reported": "Invalid \\escape: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Invalid \\escape: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Invalid \\escape: line 1 column 2 (char 1)"
    }
@@ -4008,6 +4532,9 @@
    "name": "suite-n_string_with_trailing_garbage.json",
    "b64": "IiJ4",
    "check": {
+    "reported": "Extra data: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Extra data: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -4027,6 +4554,12 @@
      "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
     ]
    },
+   "check_v3": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   },
    "loads": {
     "crash": [
      "RecursionError",
@@ -4040,6 +4573,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -4048,6 +4584,9 @@
    "name": "suite-n_structure_UTF8_BOM_no_data.json",
    "b64": "77u/",
    "check": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
    "loads": {
@@ -4060,6 +4599,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    }
@@ -4068,6 +4610,9 @@
    "name": "suite-n_structure_angle_bracket_null.json",
    "b64": "WzxudWxsPl0=",
    "check": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -4080,6 +4625,9 @@
    "check": {
     "reported": "Extra data: line 1 column 4 (char 3)"
    },
+   "check_v3": {
+    "reported": "Extra data: line 1 column 4 (char 3)"
+   },
    "loads": {
     "reported": "Extra data: line 1 column 4 (char 3)"
    }
@@ -4088,6 +4636,9 @@
    "name": "suite-n_structure_array_with_extra_array_close.json",
    "b64": "WzFdXQ==",
    "check": {
+    "reported": "Extra data: line 1 column 4 (char 3)"
+   },
+   "check_v3": {
     "reported": "Extra data: line 1 column 4 (char 3)"
    },
    "loads": {
@@ -4100,6 +4651,9 @@
    "check": {
     "reported": "Unterminated string starting at: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Unterminated string starting at: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Unterminated string starting at: line 1 column 2 (char 1)"
    }
@@ -4108,6 +4662,9 @@
    "name": "suite-n_structure_ascii-unicode-identifier.json",
    "b64": "YcOl",
    "check": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
    "loads": {
@@ -4120,6 +4677,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -4128,6 +4688,9 @@
    "name": "suite-n_structure_close_unopened_array.json",
    "b64": "MV0=",
    "check": {
+    "reported": "Extra data: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Extra data: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -4140,6 +4703,9 @@
    "check": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 12 (char 11)"
    },
+   "check_v3": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 12 (char 11)"
+   },
    "loads": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 12 (char 11)"
    }
@@ -4148,6 +4714,9 @@
    "name": "suite-n_structure_double_array.json",
    "b64": "W11bXQ==",
    "check": {
+    "reported": "Extra data: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Extra data: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -4160,6 +4729,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    }
@@ -4168,6 +4740,9 @@
    "name": "suite-n_structure_incomplete_UTF8_BOM.json",
    "b64": "77t7fQ==",
    "check": {
+    "reported": "'utf-8' codec can't decode bytes in position 0-1: invalid continuation byte"
+   },
+   "check_v3": {
     "reported": "'utf-8' codec can't decode bytes in position 0-1: invalid continuation byte"
    },
    "loads": {
@@ -4180,6 +4755,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xe5 in position 0: unexpected end of data"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xe5 in position 0: unexpected end of data"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xe5 in position 0: unexpected end of data"
    }
@@ -4188,6 +4766,9 @@
    "name": "suite-n_structure_lone-open-bracket.json",
    "b64": "Ww==",
    "check": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -4200,6 +4781,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    }
@@ -4208,6 +4792,9 @@
    "name": "suite-n_structure_null-byte-outside-string.json",
    "b64": "WwBd",
    "check": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -4220,6 +4807,9 @@
    "check": {
     "reported": "Extra data: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Extra data: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Extra data: line 1 column 2 (char 1)"
    }
@@ -4228,6 +4818,9 @@
    "name": "suite-n_structure_object_followed_by_closing_object.json",
    "b64": "e319",
    "check": {
+    "reported": "Extra data: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Extra data: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -4240,6 +4833,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 5 (char 4)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 5 (char 4)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 5 (char 4)"
    }
@@ -4248,6 +4844,9 @@
    "name": "suite-n_structure_object_with_comment.json",
    "b64": "eyJhIjovKmNvbW1lbnQqLyJiIn0=",
    "check": {
+    "reported": "Expecting value: line 1 column 6 (char 5)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 6 (char 5)"
    },
    "loads": {
@@ -4260,6 +4859,9 @@
    "check": {
     "reported": "Extra data: line 1 column 13 (char 12)"
    },
+   "check_v3": {
+    "reported": "Extra data: line 1 column 13 (char 12)"
+   },
    "loads": {
     "reported": "Extra data: line 1 column 13 (char 12)"
    }
@@ -4270,6 +4872,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -4278,6 +4883,9 @@
    "name": "suite-n_structure_open_array_comma.json",
    "b64": "Wyw=",
    "check": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -4297,6 +4905,12 @@
      "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
     ]
    },
+   "check_v3": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   },
    "loads": {
     "crash": [
      "RecursionError",
@@ -4310,6 +4924,9 @@
    "check": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 3 (char 2)"
    }
@@ -4318,6 +4935,9 @@
    "name": "suite-n_structure_open_array_open_string.json",
    "b64": "WyJh",
    "check": {
+    "reported": "Unterminated string starting at: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Unterminated string starting at: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -4330,6 +4950,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
    }
@@ -4338,6 +4961,9 @@
    "name": "suite-n_structure_open_object.json",
    "b64": "ew==",
    "check": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -4350,6 +4976,9 @@
    "check": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    }
@@ -4358,6 +4987,9 @@
    "name": "suite-n_structure_open_object_comma.json",
    "b64": "eyw=",
    "check": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -4370,6 +5002,9 @@
    "check": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    }
@@ -4378,6 +5013,9 @@
    "name": "suite-n_structure_open_object_open_string.json",
    "b64": "eyJh",
    "check": {
+    "reported": "Unterminated string starting at: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Unterminated string starting at: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -4390,6 +5028,9 @@
    "check": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    }
@@ -4398,6 +5039,9 @@
    "name": "suite-n_structure_open_open.json",
    "b64": "WyJce1siXHtbIlx7WyJcew==",
    "check": {
+    "reported": "Invalid \\escape: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Invalid \\escape: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -4410,6 +5054,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xe9 in position 0: unexpected end of data"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xe9 in position 0: unexpected end of data"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xe9 in position 0: unexpected end of data"
    }
@@ -4418,6 +5065,9 @@
    "name": "suite-n_structure_single_star.json",
    "b64": "Kg==",
    "check": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
    "loads": {
@@ -4430,6 +5080,9 @@
    "check": {
     "reported": "Extra data: line 1 column 10 (char 9)"
    },
+   "check_v3": {
+    "reported": "Extra data: line 1 column 10 (char 9)"
+   },
    "loads": {
     "reported": "Extra data: line 1 column 10 (char 9)"
    }
@@ -4438,6 +5091,9 @@
    "name": "suite-n_structure_uescaped_LF_before_string.json",
    "b64": "W1x1MDAwQSIiXQ==",
    "check": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -4450,6 +5106,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    }
@@ -4458,6 +5117,9 @@
    "name": "suite-n_structure_unclosed_array_partial_null.json",
    "b64": "WyBmYWxzZSwgbnVs",
    "check": {
+    "reported": "Expecting value: line 1 column 10 (char 9)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 10 (char 9)"
    },
    "loads": {
@@ -4470,6 +5132,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 9 (char 8)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 9 (char 8)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 9 (char 8)"
    }
@@ -4478,6 +5143,9 @@
    "name": "suite-n_structure_unclosed_array_unfinished_true.json",
    "b64": "WyBmYWxzZSwgdHJ1",
    "check": {
+    "reported": "Expecting value: line 1 column 10 (char 9)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 10 (char 9)"
    },
    "loads": {
@@ -4490,6 +5158,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 13 (char 12)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 13 (char 12)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 13 (char 12)"
    }
@@ -4498,6 +5169,9 @@
    "name": "suite-n_structure_unicode-identifier.json",
    "b64": "w6U=",
    "check": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
    "loads": {
@@ -4510,6 +5184,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -4520,6 +5197,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -4528,6 +5208,9 @@
    "name": "suite-y_array_arraysWithSpaces.json",
    "b64": "W1tdICAgXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -4549,6 +5232,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -4568,6 +5254,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -4581,6 +5270,9 @@
    "name": "suite-y_array_ending_with_newline.json",
    "b64": "WyJhIl0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -4602,6 +5294,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -4616,6 +5311,9 @@
    "name": "suite-y_array_heterogeneous.json",
    "b64": "W251bGwsIDEsICIxIiwge31d",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -4646,6 +5344,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -4660,6 +5361,9 @@
    "name": "suite-y_array_with_1_and_newline.json",
    "b64": "WzEKXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -4681,6 +5385,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -4698,6 +5405,9 @@
    "name": "suite-y_array_with_several_null.json",
    "b64": "WzEsbnVsbCxudWxsLG51bGwsMl0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -4726,6 +5436,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -4743,6 +5456,9 @@
    "name": "suite-y_number.json",
    "b64": "WzEyM2U2NV0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -4764,6 +5480,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -4781,6 +5500,9 @@
    "name": "suite-y_number_0e1.json",
    "b64": "WzBlMV0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -4802,6 +5524,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -4819,6 +5544,9 @@
    "name": "suite-y_number_double_close_to_zero.json",
    "b64": "Wy0wLjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMV0K",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -4840,6 +5568,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -4857,6 +5588,9 @@
    "name": "suite-y_number_minus_zero.json",
    "b64": "Wy0wXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -4878,6 +5612,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -4895,6 +5632,9 @@
    "name": "suite-y_number_negative_one.json",
    "b64": "Wy0xXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -4916,6 +5656,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -4933,6 +5676,9 @@
    "name": "suite-y_number_real_capital_e.json",
    "b64": "WzFFMjJd",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -4954,6 +5700,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -4971,6 +5720,9 @@
    "name": "suite-y_number_real_capital_e_pos_exp.json",
    "b64": "WzFFKzJd",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -4992,6 +5744,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5009,6 +5764,9 @@
    "name": "suite-y_number_real_fraction_exponent.json",
    "b64": "WzEyMy40NTZlNzhd",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5030,6 +5788,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5047,6 +5808,9 @@
    "name": "suite-y_number_real_pos_exponent.json",
    "b64": "WzFlKzJd",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5068,6 +5832,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5087,6 +5854,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5104,6 +5874,9 @@
    "name": "suite-y_object.json",
    "b64": "eyJhc2QiOiJzZGYiLCAiZGZnIjoiZmdoIn0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5137,6 +5910,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5159,6 +5935,9 @@
    "b64": "eyJhIjoiYiIsImEiOiJjIn0=",
    "check": {
     "reported": "Duplicate key: a"
+   },
+   "check_v3": {
+    "ok": true
    },
    "loads": {
     "value": [
@@ -5191,6 +5970,9 @@
    "check": {
     "reported": "Duplicate key: a"
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5222,6 +6004,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5235,6 +6020,9 @@
    "name": "suite-y_object_empty_key.json",
    "b64": "eyIiOjB9",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5260,6 +6048,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5281,6 +6072,9 @@
    "name": "suite-y_object_extreme_numbers.json",
    "b64": "eyAibWluIjogLTEuMGUrMjgsICJtYXgiOiAxLjBlKzI4IH0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5312,6 +6106,9 @@
    "name": "suite-y_object_long_strings.json",
    "b64": "eyJ4IjpbeyJpZCI6ICJ4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4In1dLCAiaWQiOiAieHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eCJ9",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5357,6 +6154,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5378,6 +6178,9 @@
    "name": "suite-y_object_string_unicode.json",
    "b64": "eyJ0aXRsZSI6Ilx1MDQxZlx1MDQzZVx1MDQzYlx1MDQ0Mlx1MDQzZVx1MDQ0MFx1MDQzMCBcdTA0MTdcdTA0MzVcdTA0M2NcdTA0M2JcdTA0MzVcdTA0M2FcdTA0M2VcdTA0M2ZcdTA0MzAiIH0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5403,6 +6206,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5426,6 +6232,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5443,6 +6252,9 @@
    "name": "suite-y_string_accepted_surrogate_pair.json",
    "b64": "WyJcdUQ4MDFcdWRjMzciXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5464,6 +6276,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5481,6 +6296,9 @@
    "name": "suite-y_string_allowed_escapes.json",
    "b64": "WyJcIlxcXC9cYlxmXG5cclx0Il0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5502,6 +6320,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5519,6 +6340,9 @@
    "name": "suite-y_string_backslash_doublequotes.json",
    "b64": "WyJcIiJd",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5540,6 +6364,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5557,6 +6384,9 @@
    "name": "suite-y_string_double_escape_a.json",
    "b64": "WyJcXGEiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5578,6 +6408,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5595,6 +6428,9 @@
    "name": "suite-y_string_escaped_control_character.json",
    "b64": "WyJcdTAwMTIiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5616,6 +6452,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5633,6 +6472,9 @@
    "name": "suite-y_string_in_array.json",
    "b64": "WyJhc2QiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5654,6 +6496,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5671,6 +6516,9 @@
    "name": "suite-y_string_last_surrogates_1_and_2.json",
    "b64": "WyJcdURCRkZcdURGRkYiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5692,6 +6540,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5709,6 +6560,9 @@
    "name": "suite-y_string_nonCharacterInUTF-8_U+10FFFF.json",
    "b64": "WyL0j7+/Il0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5730,6 +6584,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5747,6 +6604,9 @@
    "name": "suite-y_string_null_escape.json",
    "b64": "WyJcdTAwMDAiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5768,6 +6628,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5785,6 +6648,9 @@
    "name": "suite-y_string_pi.json",
    "b64": "WyLPgCJd",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5806,6 +6672,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5823,6 +6692,9 @@
    "name": "suite-y_string_simple_ascii.json",
    "b64": "WyJhc2QgIl0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5844,6 +6716,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5857,6 +6732,9 @@
    "name": "suite-y_string_surrogates_U+1D11E_MUSICAL_SYMBOL_G_CLEF.json",
    "b64": "WyJcdUQ4MzRcdURkMWUiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5878,6 +6756,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5895,6 +6776,9 @@
    "name": "suite-y_string_two-byte-utf-8.json",
    "b64": "WyJcdTAxMjMiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5916,6 +6800,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5933,6 +6820,9 @@
    "name": "suite-y_string_u+2029_par_sep.json",
    "b64": "WyLigKkiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5954,6 +6844,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -5971,6 +6864,9 @@
    "name": "suite-y_string_uescaped_newline.json",
    "b64": "WyJuZXdcdTAwMEFsaW5lIl0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -5992,6 +6888,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -6009,6 +6908,9 @@
    "name": "suite-y_string_unicode.json",
    "b64": "WyJcdUE2NkQiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -6030,6 +6932,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -6047,6 +6952,9 @@
    "name": "suite-y_string_unicode_2.json",
    "b64": "WyLijYLjiLTijYIiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -6068,6 +6976,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -6085,6 +6996,9 @@
    "name": "suite-y_string_unicode_U+1FFFE_nonchar.json",
    "b64": "WyJcdUQ4M0ZcdURGRkUiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -6106,6 +7020,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -6123,6 +7040,9 @@
    "name": "suite-y_string_unicode_U+2064_invisible_plus.json",
    "b64": "WyJcdTIwNjQiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -6144,6 +7064,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -6161,6 +7084,9 @@
    "name": "suite-y_string_unicode_U+FFFE_nonchar.json",
    "b64": "WyJcdUZGRkUiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -6182,6 +7108,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -6199,6 +7128,9 @@
    "name": "suite-y_string_utf8.json",
    "b64": "WyLigqzwnYSeIl0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -6220,6 +7152,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -6239,6 +7174,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      "f"
@@ -6249,6 +7187,9 @@
    "name": "suite-y_structure_lonely_int.json",
    "b64": "NDI=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -6266,6 +7207,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -6281,6 +7225,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      "n"
@@ -6291,6 +7238,9 @@
    "name": "suite-y_structure_lonely_string.json",
    "b64": "ImFzZCI=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -6308,6 +7258,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      "t"
@@ -6318,6 +7271,9 @@
    "name": "suite-y_structure_string_empty.json",
    "b64": "IiI=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -6333,6 +7289,9 @@
    "name": "suite-y_structure_trailing_newline.json",
    "b64": "WyJhIl0K",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -6354,6 +7313,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -6368,6 +7330,9 @@
    "name": "suite-y_structure_whitespace_array.json",
    "b64": "IFtdIA==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -6385,6 +7350,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    }
@@ -6393,6 +7361,9 @@
    "name": "hand-001",
    "b64": "ICA=",
    "check": {
+    "reported": "Expecting value: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -6405,6 +7376,9 @@
    "check": {
     "reported": "Expecting value: line 2 column 2 (char 3)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 2 column 2 (char 3)"
+   },
    "loads": {
     "reported": "Expecting value: line 2 column 2 (char 3)"
    }
@@ -6413,6 +7387,9 @@
    "name": "hand-003",
    "b64": "eyJhIjogMX0ge30=",
    "check": {
+    "reported": "Extra data: line 1 column 10 (char 9)"
+   },
+   "check_v3": {
     "reported": "Extra data: line 1 column 10 (char 9)"
    },
    "loads": {
@@ -6425,6 +7402,9 @@
    "check": {
     "reported": "Extra data: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Extra data: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Extra data: line 1 column 2 (char 1)"
    }
@@ -6433,6 +7413,9 @@
    "name": "hand-005",
    "b64": "MS4=",
    "check": {
+    "reported": "Extra data: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Extra data: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -6445,6 +7428,9 @@
    "check": {
     "reported": "Extra data: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Extra data: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Extra data: line 1 column 2 (char 1)"
    }
@@ -6453,6 +7439,9 @@
    "name": "hand-007",
    "b64": "LjU=",
    "check": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
    "loads": {
@@ -6465,6 +7454,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    }
@@ -6473,6 +7465,9 @@
    "name": "hand-009",
    "b64": "dHJ1",
    "check": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
    "loads": {
@@ -6485,6 +7480,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    }
@@ -6493,6 +7491,9 @@
    "name": "hand-011",
    "b64": "eyJhIjogMSwgImEiOiAy",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 16 (char 15)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 16 (char 15)"
    },
    "loads": {
@@ -6505,6 +7506,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 3 column 3 (char 13)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 3 column 3 (char 13)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 3 column 3 (char 13)"
    }
@@ -6513,6 +7517,9 @@
    "name": "hand-013",
    "b64": "WzEgMl0=",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 4 (char 3)"
    },
    "loads": {
@@ -6525,6 +7532,9 @@
    "check": {
     "reported": "Expecting ':' delimiter: line 1 column 7 (char 6)"
    },
+   "check_v3": {
+    "reported": "Expecting ':' delimiter: line 1 column 7 (char 6)"
+   },
    "loads": {
     "reported": "Expecting ':' delimiter: line 1 column 7 (char 6)"
    }
@@ -6533,6 +7543,9 @@
    "name": "hand-015",
    "b64": "eyJhIg==",
    "check": {
+    "reported": "Expecting ':' delimiter: line 1 column 5 (char 4)"
+   },
+   "check_v3": {
     "reported": "Expecting ':' delimiter: line 1 column 5 (char 4)"
    },
    "loads": {
@@ -6545,6 +7558,9 @@
    "check": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    }
@@ -6553,6 +7569,9 @@
    "name": "hand-017",
    "b64": "ew==",
    "check": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -6565,6 +7584,9 @@
    "check": {
     "reported": "Illegal trailing comma before end of object: line 1 column 8 (char 7)"
    },
+   "check_v3": {
+    "reported": "Illegal trailing comma before end of object: line 1 column 8 (char 7)"
+   },
    "loads": {
     "reported": "Illegal trailing comma before end of object: line 1 column 8 (char 7)"
    }
@@ -6573,6 +7595,9 @@
    "name": "hand-019",
    "b64": "WzEsXQ==",
    "check": {
+    "reported": "Illegal trailing comma before end of array: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Illegal trailing comma before end of array: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -6585,6 +7610,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 6 (char 5)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 6 (char 5)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 6 (char 5)"
    }
@@ -6593,6 +7621,9 @@
    "name": "hand-021",
    "b64": "ImFiYw==",
    "check": {
+    "reported": "Unterminated string starting at: line 1 column 1 (char 0)"
+   },
+   "check_v3": {
     "reported": "Unterminated string starting at: line 1 column 1 (char 0)"
    },
    "loads": {
@@ -6605,6 +7636,9 @@
    "check": {
     "reported": "Unterminated string starting at: line 1 column 7 (char 6)"
    },
+   "check_v3": {
+    "reported": "Unterminated string starting at: line 1 column 7 (char 6)"
+   },
    "loads": {
     "reported": "Unterminated string starting at: line 1 column 7 (char 6)"
    }
@@ -6613,6 +7647,9 @@
    "name": "hand-023",
    "b64": "eyJhIjogIngJeSJ9",
    "check": {
+    "reported": "Invalid control character at: line 1 column 9 (char 8)"
+   },
+   "check_v3": {
     "reported": "Invalid control character at: line 1 column 9 (char 8)"
    },
    "loads": {
@@ -6625,6 +7662,9 @@
    "check": {
     "reported": "Invalid control character at: line 2 column 5 (char 10)"
    },
+   "check_v3": {
+    "reported": "Invalid control character at: line 2 column 5 (char 10)"
+   },
    "loads": {
     "reported": "Invalid control character at: line 2 column 5 (char 10)"
    }
@@ -6633,6 +7673,9 @@
    "name": "hand-025",
    "b64": "Ilx4Ig==",
    "check": {
+    "reported": "Invalid \\escape: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Invalid \\escape: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -6645,6 +7688,9 @@
    "check": {
     "reported": "Invalid \\uXXXX escape: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Invalid \\uXXXX escape: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Invalid \\uXXXX escape: line 1 column 3 (char 2)"
    }
@@ -6653,6 +7699,9 @@
    "name": "hand-027",
    "b64": "Ilx1WlpaWiI=",
    "check": {
+    "reported": "Invalid \\uXXXX escape: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Invalid \\uXXXX escape: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -6664,6 +7713,9 @@
    "b64": "eyJhIjogeyJiIjogMSwgImIiOiAyfSwgImEiOiAzfQ==",
    "check": {
     "reported": "Duplicate key: b"
+   },
+   "check_v3": {
+    "ok": true
    },
    "loads": {
     "value": [
@@ -6712,6 +7764,9 @@
    "check": {
     "reported": "Duplicate key: \u00e9"
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -6743,6 +7798,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -6756,6 +7814,9 @@
    "name": "hand-031",
    "b64": "SW5maW5pdHk=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -6773,6 +7834,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -6786,6 +7850,9 @@
    "name": "hand-033",
    "b64": "W05hTiwgSW5maW5pdHksIC1JbmZpbml0eV0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -6815,6 +7882,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -6830,6 +7900,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -6843,6 +7916,9 @@
    "name": "hand-036",
    "b64": "WzFlLTQwMF0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -6864,6 +7940,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -6877,6 +7956,9 @@
    "name": "hand-038",
    "b64": "Ilx1ZDgwMFx1ZGMwMCI=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -6894,6 +7976,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -6907,6 +7992,9 @@
    "name": "hand-040",
    "b64": "Ilx1ZDgwMFx1MDA0MSI=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -6924,6 +8012,9 @@
    "check": {
     "reported": "Invalid \\uXXXX escape: line 1 column 9 (char 8)"
    },
+   "check_v3": {
+    "reported": "Invalid \\uXXXX escape: line 1 column 9 (char 8)"
+   },
    "loads": {
     "reported": "Invalid \\uXXXX escape: line 1 column 9 (char 8)"
    }
@@ -6932,6 +8023,9 @@
    "name": "hand-042",
    "b64": "Ilx1ZDgwMFwi",
    "check": {
+    "reported": "Unterminated string starting at: line 1 column 1 (char 0)"
+   },
+   "check_v3": {
     "reported": "Unterminated string starting at: line 1 column 1 (char 0)"
    },
    "loads": {
@@ -6944,6 +8038,9 @@
    "check": {
     "reported": "Invalid \\uXXXX escape: line 1 column 9 (char 8)"
    },
+   "check_v3": {
+    "reported": "Invalid \\uXXXX escape: line 1 column 9 (char 8)"
+   },
    "loads": {
     "reported": "Invalid \\uXXXX escape: line 1 column 9 (char 8)"
    }
@@ -6952,6 +8049,9 @@
    "name": "hand-044",
    "b64": "Ilx1MTIzNA==",
    "check": {
+    "reported": "Invalid \\uXXXX escape: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Invalid \\uXXXX escape: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -6964,6 +8064,9 @@
    "check": {
     "reported": "Invalid \\uXXXX escape: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Invalid \\uXXXX escape: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Invalid \\uXXXX escape: line 1 column 3 (char 2)"
    }
@@ -6972,6 +8075,9 @@
    "name": "hand-046",
    "b64": "Ilx1ZDgzNFx1ZGQxZSI=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -6987,6 +8093,9 @@
    "name": "hand-047",
    "b64": "WyJcdWQ4MzRcdWRkMWUiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -7008,6 +8117,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -7023,6 +8135,9 @@
    "check": {
     "reported": "Unterminated string starting at: line 1 column 1 (char 0)"
    },
+   "check_v3": {
+    "reported": "Unterminated string starting at: line 1 column 1 (char 0)"
+   },
    "loads": {
     "reported": "Unterminated string starting at: line 1 column 1 (char 0)"
    }
@@ -7031,6 +8146,9 @@
    "name": "hand-050",
    "b64": "Ilwi",
    "check": {
+    "reported": "Unterminated string starting at: line 1 column 1 (char 0)"
+   },
+   "check_v3": {
     "reported": "Unterminated string starting at: line 1 column 1 (char 0)"
    },
    "loads": {
@@ -7043,6 +8161,9 @@
    "check": {
     "reported": "Unterminated string starting at: line 1 column 1 (char 0)"
    },
+   "check_v3": {
+    "reported": "Unterminated string starting at: line 1 column 1 (char 0)"
+   },
    "loads": {
     "reported": "Unterminated string starting at: line 1 column 1 (char 0)"
    }
@@ -7051,6 +8172,9 @@
    "name": "hand-052",
    "b64": "In8i",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -7068,6 +8192,9 @@
    "check": {
     "reported": "Invalid control character at: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Invalid control character at: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Invalid control character at: line 1 column 2 (char 1)"
    }
@@ -7078,6 +8205,9 @@
    "check": {
     "reported": "Invalid control character at: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Invalid control character at: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Invalid control character at: line 1 column 2 (char 1)"
    }
@@ -7086,6 +8216,9 @@
    "name": "hand-055",
    "b64": "IuKAqCI=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -7103,6 +8236,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -7116,6 +8252,9 @@
    "name": "hand-057",
    "b64": "e30=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -7133,6 +8272,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -7146,6 +8288,9 @@
    "name": "hand-059",
    "b64": "eyB9",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -7163,6 +8308,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -7176,6 +8324,9 @@
    "name": "hand-061",
    "b64": "IFsgMSAsIDIgXSA=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -7201,6 +8352,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
    }
@@ -7209,6 +8363,9 @@
    "name": "hand-063",
    "b64": "WzEs",
    "check": {
+    "reported": "Expecting value: line 1 column 4 (char 3)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 4 (char 3)"
    },
    "loads": {
@@ -7221,6 +8378,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -7229,6 +8389,9 @@
    "name": "hand-065",
    "b64": "XQ==",
    "check": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
    "loads": {
@@ -7241,6 +8404,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    }
@@ -7249,6 +8415,9 @@
    "name": "hand-067",
    "b64": "eyJhIjoxfX0=",
    "check": {
+    "reported": "Extra data: line 1 column 8 (char 7)"
+   },
+   "check_v3": {
     "reported": "Extra data: line 1 column 8 (char 7)"
    },
    "loads": {
@@ -7261,6 +8430,9 @@
    "check": {
     "reported": "Extra data: line 1 column 4 (char 3)"
    },
+   "check_v3": {
+    "reported": "Extra data: line 1 column 4 (char 3)"
+   },
    "loads": {
     "reported": "Extra data: line 1 column 4 (char 3)"
    }
@@ -7269,6 +8441,9 @@
    "name": "hand-069",
    "b64": "eyJhIiA6IDEgLCAiYiIgOiBbIF0gfQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -7302,6 +8477,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      "n"
@@ -7312,6 +8490,9 @@
    "name": "hand-071",
    "b64": "dHJ1ZQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -7326,6 +8507,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      "f"
@@ -7338,6 +8522,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    }
@@ -7346,6 +8533,9 @@
    "name": "hand-074",
    "b64": "bnVsbHM=",
    "check": {
+    "reported": "Extra data: line 1 column 5 (char 4)"
+   },
+   "check_v3": {
     "reported": "Extra data: line 1 column 5 (char 4)"
    },
    "loads": {
@@ -7358,6 +8548,9 @@
    "check": {
     "reported": "Extra data: line 1 column 5 (char 4)"
    },
+   "check_v3": {
+    "reported": "Extra data: line 1 column 5 (char 4)"
+   },
    "loads": {
     "reported": "Extra data: line 1 column 5 (char 4)"
    }
@@ -7366,6 +8559,9 @@
    "name": "hand-076",
    "b64": "ZmFsc2V5",
    "check": {
+    "reported": "Extra data: line 1 column 6 (char 5)"
+   },
+   "check_v3": {
     "reported": "Extra data: line 1 column 6 (char 5)"
    },
    "loads": {
@@ -7378,6 +8574,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    }
@@ -7388,6 +8587,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    }
@@ -7396,6 +8598,9 @@
    "name": "hand-079",
    "b64": "LTA=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -7413,6 +8618,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -7426,6 +8634,9 @@
    "name": "hand-081",
    "b64": "MC4w",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -7443,6 +8654,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -7456,6 +8670,9 @@
    "name": "hand-083",
    "b64": "MWUrNQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -7473,6 +8690,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -7488,6 +8708,9 @@
    "check": {
     "reported": "Extra data: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Extra data: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Extra data: line 1 column 2 (char 1)"
    }
@@ -7496,6 +8719,9 @@
    "name": "hand-086",
    "b64": "MUUt",
    "check": {
+    "reported": "Extra data: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Extra data: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -7508,6 +8734,9 @@
    "check": {
     "reported": "Extra data: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Extra data: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Extra data: line 1 column 2 (char 1)"
    }
@@ -7516,6 +8745,9 @@
    "name": "hand-088",
    "b64": "WzFlXQ==",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -7528,6 +8760,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    }
@@ -7538,6 +8773,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -7546,6 +8784,9 @@
    "name": "hand-091",
    "b64": "Wy0xXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -7567,6 +8808,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -7575,6 +8819,9 @@
    "name": "hand-093",
    "b64": "WysxXQ==",
    "check": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -7587,6 +8834,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    }
@@ -7595,6 +8845,9 @@
    "name": "hand-095",
    "b64": "WzAwXQ==",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -7607,6 +8860,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
    }
@@ -7615,6 +8871,9 @@
    "name": "hand-097",
    "b64": "WzEuZTVd",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -7627,6 +8886,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 5 (char 4)"
    }
@@ -7635,6 +8897,9 @@
    "name": "hand-099",
    "b64": "Wy41XQ==",
    "check": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -7647,6 +8912,9 @@
    "check": {
     "reported": "Expecting ',' delimiter: line 1 column 6 (char 5)"
    },
+   "check_v3": {
+    "reported": "Expecting ',' delimiter: line 1 column 6 (char 5)"
+   },
    "loads": {
     "reported": "Expecting ',' delimiter: line 1 column 6 (char 5)"
    }
@@ -7655,6 +8923,9 @@
    "name": "hand-101",
    "b64": "eyJhIjoxICJiIjoyfQ==",
    "check": {
+    "reported": "Expecting ',' delimiter: line 1 column 8 (char 7)"
+   },
+   "check_v3": {
     "reported": "Expecting ',' delimiter: line 1 column 8 (char 7)"
    },
    "loads": {
@@ -7667,6 +8938,9 @@
    "check": {
     "reported": "Expecting ':' delimiter: line 1 column 6 (char 5)"
    },
+   "check_v3": {
+    "reported": "Expecting ':' delimiter: line 1 column 6 (char 5)"
+   },
    "loads": {
     "reported": "Expecting ':' delimiter: line 1 column 6 (char 5)"
    }
@@ -7675,6 +8949,9 @@
    "name": "hand-103",
    "b64": "ezE6IDJ9",
    "check": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -7687,6 +8964,9 @@
    "check": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 8 (char 7)"
    },
+   "check_v3": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 8 (char 7)"
+   },
    "loads": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 8 (char 7)"
    }
@@ -7695,6 +8975,9 @@
    "name": "hand-105",
    "b64": "WzEsLDJd",
    "check": {
+    "reported": "Expecting value: line 1 column 4 (char 3)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 4 (char 3)"
    },
    "loads": {
@@ -7707,6 +8990,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -7715,6 +9001,9 @@
    "name": "hand-107",
    "b64": "eywiYSI6MX0=",
    "check": {
+    "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -7727,6 +9016,9 @@
    "check": {
     "reported": "Illegal trailing comma before end of object: line 1 column 7 (char 6)"
    },
+   "check_v3": {
+    "reported": "Illegal trailing comma before end of object: line 1 column 7 (char 6)"
+   },
    "loads": {
     "reported": "Illegal trailing comma before end of object: line 1 column 7 (char 6)"
    }
@@ -7735,6 +9027,9 @@
    "name": "hand-109",
    "b64": "WzEsIF0=",
    "check": {
+    "reported": "Illegal trailing comma before end of array: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Illegal trailing comma before end of array: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -7747,6 +9042,9 @@
    "check": {
     "reported": "Illegal trailing comma before end of object: line 1 column 7 (char 6)"
    },
+   "check_v3": {
+    "reported": "Illegal trailing comma before end of object: line 1 column 7 (char 6)"
+   },
    "loads": {
     "reported": "Illegal trailing comma before end of object: line 1 column 7 (char 6)"
    }
@@ -7755,6 +9053,9 @@
    "name": "hand-111",
    "b64": "WzEsCl0=",
    "check": {
+    "reported": "Illegal trailing comma before end of array: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Illegal trailing comma before end of array: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -7767,6 +9068,9 @@
    "check": {
     "reported": "Extra data: line 1 column 9 (char 8)"
    },
+   "check_v3": {
+    "reported": "Extra data: line 1 column 9 (char 8)"
+   },
    "loads": {
     "reported": "Extra data: line 1 column 9 (char 8)"
    }
@@ -7777,6 +9081,9 @@
    "check": {
     "reported": "Extra data: line 1 column 4 (char 3)"
    },
+   "check_v3": {
+    "reported": "Extra data: line 1 column 4 (char 3)"
+   },
    "loads": {
     "reported": "Extra data: line 1 column 4 (char 3)"
    }
@@ -7785,6 +9092,9 @@
    "name": "hand-114",
    "b64": "77u/W10=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -7802,6 +9112,9 @@
    "check": {
     "reported": "Extra data: line 1 column 4 (char 3)"
    },
+   "check_v3": {
+    "reported": "Extra data: line 1 column 4 (char 3)"
+   },
    "loads": {
     "reported": "Extra data: line 1 column 4 (char 3)"
    }
@@ -7810,6 +9123,9 @@
    "name": "hand-116",
    "b64": "AA==",
    "check": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
    "loads": {
@@ -7822,6 +9138,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -7830,6 +9149,9 @@
    "name": "hand-118",
    "b64": "WyIAIl0=",
    "check": {
+    "reported": "Invalid control character at: line 1 column 3 (char 2)"
+   },
+   "check_v3": {
     "reported": "Invalid control character at: line 1 column 3 (char 2)"
    },
    "loads": {
@@ -7842,6 +9164,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    }
@@ -7852,6 +9177,9 @@
    "check": {
     "reported": "Extra data: line 1 column 3 (char 2)"
    },
+   "check_v3": {
+    "reported": "Extra data: line 1 column 3 (char 2)"
+   },
    "loads": {
     "reported": "Extra data: line 1 column 3 (char 2)"
    }
@@ -7860,6 +9188,9 @@
    "name": "hand-121",
    "b64": "CQ0KIFtdCQ0KIA==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -7877,6 +9208,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    }
@@ -7885,6 +9219,9 @@
    "name": "hand-123",
    "b64": "Wwtd",
    "check": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -7897,6 +9234,9 @@
    "check": {
     "reported": "Unterminated string starting at: line 1 column 1 (char 0)"
    },
+   "check_v3": {
+    "reported": "Unterminated string starting at: line 1 column 1 (char 0)"
+   },
    "loads": {
     "reported": "Unterminated string starting at: line 1 column 1 (char 0)"
    }
@@ -7906,6 +9246,9 @@
    "b64": "eyLDqSI6IsOpIiwgIsOpIjogMX0=",
    "check": {
     "reported": "Duplicate key: \u00e9"
+   },
+   "check_v3": {
+    "ok": true
    },
    "loads": {
     "value": [
@@ -7938,6 +9281,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -7956,6 +9302,9 @@
    "b64": "eyIiOjEsICIiOjJ9",
    "check": {
     "reported": "Duplicate key: "
+   },
+   "check_v3": {
+    "ok": true
    },
    "loads": {
     "value": [
@@ -7987,6 +9336,9 @@
    "b64": "eyJhIjpbeyJiIjoxLCJiIjoyfV19",
    "check": {
     "reported": "Duplicate key: b"
+   },
+   "check_v3": {
+    "ok": true
    },
    "loads": {
     "value": [
@@ -8030,6 +9382,9 @@
    "b64": "eyJhIjoxLCJiIjp7ImEiOjF9LCJhIjozfQ==",
    "check": {
     "reported": "Duplicate key: a"
+   },
+   "check_v3": {
+    "ok": true
    },
    "loads": {
     "value": [
@@ -8078,6 +9433,9 @@
    "check": {
     "reported": "Duplicate key: y"
    },
+   "check_v3": {
+    "reported": "Expecting ':' delimiter: line 1 column 29 (char 28)"
+   },
    "loads": {
     "reported": "Expecting ':' delimiter: line 1 column 29 (char 28)"
    }
@@ -8086,6 +9444,9 @@
    "name": "hand-131",
    "b64": "WzExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTFd",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -8107,6 +9468,9 @@
    "check": {
     "reported": "Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit"
    },
+   "check_v3": {
+    "reported": "Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit"
+   },
    "loads": {
     "reported": "Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit"
    }
@@ -8115,6 +9479,9 @@
    "name": "hand-133",
    "b64": "LTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEx",
    "check": {
+    "reported": "Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit"
+   },
+   "check_v3": {
     "reported": "Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit"
    },
    "loads": {
@@ -8127,6 +9494,9 @@
    "check": {
     "reported": "Exceeds the limit (4300 digits) for integer string conversion: value has 5000 digits; use sys.set_int_max_str_digits() to increase the limit"
    },
+   "check_v3": {
+    "reported": "Exceeds the limit (4300 digits) for integer string conversion: value has 5000 digits; use sys.set_int_max_str_digits() to increase the limit"
+   },
    "loads": {
     "reported": "Exceeds the limit (4300 digits) for integer string conversion: value has 5000 digits; use sys.set_int_max_str_digits() to increase the limit"
    }
@@ -8135,6 +9505,9 @@
    "name": "hand-135",
    "b64": "MTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEuNQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -8152,6 +9525,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -8167,6 +9543,9 @@
    "check": {
     "reported": "Extra data: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Extra data: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Extra data: line 1 column 2 (char 1)"
    }
@@ -8175,6 +9554,9 @@
    "name": "enc-utf8-bom",
    "b64": "77u/WzFd",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -8196,6 +9578,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 1 (char 0)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 1 (char 0)"
    }
@@ -8206,6 +9591,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xff in position 2: invalid start byte"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xff in position 2: invalid start byte"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xff in position 2: invalid start byte"
    }
@@ -8214,6 +9602,9 @@
    "name": "enc-utf16le-bom",
    "b64": "//5bADEALAAgACIA6QAiAF0A",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -8239,6 +9630,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -8256,6 +9650,9 @@
    "name": "enc-utf16le",
    "b64": "WwAxACwAIAAiAOkAIgBdAA==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -8281,6 +9678,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -8304,6 +9704,9 @@
    "check": {
     "reported": "'utf-16-le' codec can't decode byte 0x00 in position 6: truncated data"
    },
+   "check_v3": {
+    "reported": "'utf-16-le' codec can't decode byte 0x00 in position 6: truncated data"
+   },
    "loads": {
     "reported": "'utf-16-le' codec can't decode byte 0x00 in position 6: truncated data"
    }
@@ -8314,6 +9717,9 @@
    "check": {
     "reported": "'utf-16-be' codec can't decode byte 0x5b in position 6: truncated data"
    },
+   "check_v3": {
+    "reported": "'utf-16-be' codec can't decode byte 0x5b in position 6: truncated data"
+   },
    "loads": {
     "reported": "'utf-16-be' codec can't decode byte 0x5b in position 6: truncated data"
    }
@@ -8322,6 +9728,9 @@
    "name": "enc-utf32le-bom",
    "b64": "//4AAFsAAAAxAAAAXQAAAA==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -8343,6 +9752,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -8360,6 +9772,9 @@
    "name": "enc-utf32le",
    "b64": "WwAAADEAAABdAAAA",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -8381,6 +9796,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -8400,6 +9818,9 @@
    "check": {
     "reported": "'utf-32-le' codec can't decode bytes in position 4-7: code point not in range(0x110000)"
    },
+   "check_v3": {
+    "reported": "'utf-32-le' codec can't decode bytes in position 4-7: code point not in range(0x110000)"
+   },
    "loads": {
     "reported": "'utf-32-le' codec can't decode bytes in position 4-7: code point not in range(0x110000)"
    }
@@ -8410,6 +9831,9 @@
    "check": {
     "reported": "'utf-32-le' codec can't decode byte 0x00 in position 12: truncated data"
    },
+   "check_v3": {
+    "reported": "'utf-32-le' codec can't decode byte 0x00 in position 12: truncated data"
+   },
    "loads": {
     "reported": "'utf-32-le' codec can't decode byte 0x00 in position 12: truncated data"
    }
@@ -8418,6 +9842,9 @@
    "name": "enc-utf16le-lone-surrogate",
    "b64": "IgAA2CIA",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -8435,6 +9862,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -8448,6 +9878,9 @@
    "name": "enc-utf16le-2bytes",
    "b64": "MQA=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -8465,6 +9898,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -8480,6 +9916,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -8493,6 +9932,9 @@
    "name": "enc-three-bytes",
    "b64": "WzFd",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -8514,6 +9956,9 @@
    "check": {
     "reported": "Extra data: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Extra data: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Extra data: line 1 column 2 (char 1)"
    }
@@ -8522,6 +9967,9 @@
    "name": "enc-nul-first-4",
    "b64": "AAAAWw==",
    "check": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
+   "check_v3": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
    "loads": {
@@ -8534,6 +9982,9 @@
    "check": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    },
+   "check_v3": {
+    "reported": "Expecting value: line 1 column 2 (char 1)"
+   },
    "loads": {
     "reported": "Expecting value: line 1 column 2 (char 1)"
    }
@@ -8542,6 +9993,9 @@
    "name": "enc-bad-start",
    "b64": "WyL/Il0=",
    "check": {
+    "reported": "'utf-8' codec can't decode byte 0xff in position 2: invalid start byte"
+   },
+   "check_v3": {
     "reported": "'utf-8' codec can't decode byte 0xff in position 2: invalid start byte"
    },
    "loads": {
@@ -8554,6 +10008,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xc3 in position 2: invalid continuation byte"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xc3 in position 2: invalid continuation byte"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xc3 in position 2: invalid continuation byte"
    }
@@ -8562,6 +10019,9 @@
    "name": "enc-trunc",
    "b64": "WyLigg==",
    "check": {
+    "reported": "'utf-8' codec can't decode bytes in position 2-3: unexpected end of data"
+   },
+   "check_v3": {
     "reported": "'utf-8' codec can't decode bytes in position 2-3: unexpected end of data"
    },
    "loads": {
@@ -8574,6 +10034,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode bytes in position 0-1: unexpected end of data"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode bytes in position 0-1: unexpected end of data"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode bytes in position 0-1: unexpected end of data"
    }
@@ -8582,6 +10045,9 @@
    "name": "enc-surrogate-utf8",
    "b64": "WyLtoIAiXQ==",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -8603,6 +10069,9 @@
    "check": {
     "ok": true
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -8622,6 +10091,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xed in position 2: invalid continuation byte"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xed in position 2: invalid continuation byte"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xed in position 2: invalid continuation byte"
    }
@@ -8634,6 +10106,9 @@
      "UnicodeEncodeError",
      "'utf-8' codec can't encode character '\\ud800' in position 15: surrogates not allowed"
     ]
+   },
+   "check_v3": {
+    "ok": true
    },
    "loads": {
     "value": [
@@ -8666,6 +10141,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xc0 in position 2: invalid start byte"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xc0 in position 2: invalid start byte"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xc0 in position 2: invalid start byte"
    }
@@ -8674,6 +10152,9 @@
    "name": "enc-too-big",
    "b64": "WyL0kICAIl0=",
    "check": {
+    "reported": "'utf-8' codec can't decode byte 0xf4 in position 2: invalid continuation byte"
+   },
+   "check_v3": {
     "reported": "'utf-8' codec can't decode byte 0xf4 in position 2: invalid continuation byte"
    },
    "loads": {
@@ -8686,6 +10167,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xf5 in position 2: invalid start byte"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xf5 in position 2: invalid start byte"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xf5 in position 2: invalid start byte"
    }
@@ -8694,6 +10178,9 @@
    "name": "enc-e0-bad",
    "b64": "WyLggIAiXQ==",
    "check": {
+    "reported": "'utf-8' codec can't decode byte 0xe0 in position 2: invalid continuation byte"
+   },
+   "check_v3": {
     "reported": "'utf-8' codec can't decode byte 0xe0 in position 2: invalid continuation byte"
    },
    "loads": {
@@ -8706,6 +10193,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xf0 in position 2: invalid continuation byte"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xf0 in position 2: invalid continuation byte"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xf0 in position 2: invalid continuation byte"
    }
@@ -8714,6 +10204,9 @@
    "name": "enc-lone-cont",
    "b64": "WyKAIl0=",
    "check": {
+    "reported": "'utf-8' codec can't decode byte 0x80 in position 2: invalid start byte"
+   },
+   "check_v3": {
     "reported": "'utf-8' codec can't decode byte 0x80 in position 2: invalid start byte"
    },
    "loads": {
@@ -8726,6 +10219,9 @@
    "check": {
     "reported": "'utf-8' codec can't decode byte 0xff in position 10: invalid start byte"
    },
+   "check_v3": {
+    "reported": "'utf-8' codec can't decode byte 0xff in position 10: invalid start byte"
+   },
    "loads": {
     "reported": "'utf-8' codec can't decode byte 0xff in position 10: invalid start byte"
    }
@@ -8734,6 +10230,9 @@
    "name": "enc-cp1252",
    "b64": "WyJjYWbpIl0=",
    "check": {
+    "reported": "'utf-8' codec can't decode byte 0xe9 in position 5: invalid continuation byte"
+   },
+   "check_v3": {
     "reported": "'utf-8' codec can't decode byte 0xe9 in position 5: invalid continuation byte"
    },
    "loads": {
@@ -8748,6 +10247,9 @@
      "UnicodeEncodeError",
      "'utf-8' codec can't encode character '\\ud800' in position 15: surrogates not allowed"
     ]
+   },
+   "check_v3": {
+    "ok": true
    },
    "loads": {
     "value": [
@@ -8783,6 +10285,9 @@
      "'utf-8' codec can't encode character '\\ud800' in position 15: surrogates not allowed"
     ]
    },
+   "check_v3": {
+    "ok": true
+   },
    "loads": {
     "value": [
      [
@@ -8812,6 +10317,9 @@
    "name": "enc-pair-vs-cesu",
    "b64": "eyJcdWQ4M2RcdWRlMDAiOjEsIu2gve24gCI6Mn0=",
    "check": {
+    "ok": true
+   },
+   "check_v3": {
     "ok": true
    },
    "loads": {
@@ -8844,6 +10352,9 @@
    "b64": "eyJcdWQ4M2RcdWRlMDAiOjEsIvCfmIAiOjJ9",
    "check": {
     "reported": "Duplicate key: \ud83d\ude00"
+   },
+   "check_v3": {
+    "ok": true
    },
    "loads": {
     "value": [
@@ -49782,6 +51293,715 @@
   },
   {
    "mode": "check",
+   "shape": "mixed",
+   "n": 10000,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "arrays",
+   "n": 9993,
+   "result": {
+    "ok": true
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "arrays",
+   "n": 9998,
+   "result": {
+    "ok": true
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "arrays",
+   "n": 9999,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "arrays",
+   "n": 10000,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "stop",
+   "n": 9993,
+   "result": {
+    "reported": "Expecting value: line 1 column 9994 (char 9993)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "stop",
+   "n": 9994,
+   "result": {
+    "reported": "Expecting value: line 1 column 9995 (char 9994)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "stop",
+   "n": 9995,
+   "result": {
+    "reported": "Expecting value: line 1 column 9996 (char 9995)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "stop",
+   "n": 9996,
+   "result": {
+    "reported": "Expecting value: line 1 column 9997 (char 9996)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "stop",
+   "n": 9997,
+   "result": {
+    "reported": "Expecting value: line 1 column 9998 (char 9997)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "stop",
+   "n": 9998,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while calling a Python object"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "stop",
+   "n": 9999,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "stop",
+   "n": 10000,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "eof",
+   "n": 9993,
+   "result": {
+    "reported": "Expecting value: line 1 column 9994 (char 9993)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "eof",
+   "n": 9994,
+   "result": {
+    "reported": "Expecting value: line 1 column 9995 (char 9994)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "eof",
+   "n": 9995,
+   "result": {
+    "reported": "Expecting value: line 1 column 9996 (char 9995)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "eof",
+   "n": 9996,
+   "result": {
+    "reported": "Expecting value: line 1 column 9997 (char 9996)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "eof",
+   "n": 9997,
+   "result": {
+    "reported": "Expecting value: line 1 column 9998 (char 9997)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "eof",
+   "n": 9998,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while calling a Python object"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "eof",
+   "n": 9999,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "eof",
+   "n": 10000,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "errmsg",
+   "n": 9993,
+   "result": {
+    "reported": "Expecting ',' delimiter: line 1 column 9996 (char 9995)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "errmsg",
+   "n": 9994,
+   "result": {
+    "reported": "Expecting ',' delimiter: line 1 column 9997 (char 9996)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "errmsg",
+   "n": 9995,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while calling a Python object"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "errmsg",
+   "n": 9996,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "errmsg",
+   "n": 9997,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "errmsg",
+   "n": 9998,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while calling a Python object"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "errmsg",
+   "n": 9999,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "errmsg",
+   "n": 10000,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "errmsg_str",
+   "n": 9993,
+   "result": {
+    "reported": "Invalid control character at: line 1 column 9995 (char 9994)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "errmsg_str",
+   "n": 9994,
+   "result": {
+    "reported": "Invalid control character at: line 1 column 9996 (char 9995)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "errmsg_str",
+   "n": 9995,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while calling a Python object"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "errmsg_str",
+   "n": 9996,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "errmsg_str",
+   "n": 9997,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "errmsg_str",
+   "n": 9998,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while calling a Python object"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "errmsg_str",
+   "n": 9999,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "errmsg_str",
+   "n": 10000,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "int",
+   "n": 9993,
+   "result": {
+    "reported": "Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "int",
+   "n": 9997,
+   "result": {
+    "reported": "Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "int",
+   "n": 9998,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while calling a Python object"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "int",
+   "n": 9999,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "int",
+   "n": 10000,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "const",
+   "n": 9993,
+   "result": {
+    "ok": true
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "const",
+   "n": 9997,
+   "result": {
+    "ok": true
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "const",
+   "n": 9998,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while calling a Python object"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "const",
+   "n": 9999,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "const",
+   "n": 10000,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "hook",
+   "n": 9993,
+   "result": {
+    "reported": "Expecting ',' delimiter: line 1 column 19983 (char 19982)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "hook",
+   "n": 9994,
+   "result": {
+    "reported": "Expecting ',' delimiter: line 1 column 19985 (char 19984)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "hook",
+   "n": 9995,
+   "result": {
+    "reported": "Expecting ',' delimiter: line 1 column 19987 (char 19986)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "hook",
+   "n": 9996,
+   "result": {
+    "reported": "Expecting ',' delimiter: line 1 column 19989 (char 19988)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "hook",
+   "n": 9997,
+   "result": {
+    "reported": "Expecting ',' delimiter: line 1 column 19991 (char 19990)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "hook",
+   "n": 9998,
+   "result": {
+    "reported": "Expecting ',' delimiter: line 1 column 19993 (char 19992)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "hook",
+   "n": 9999,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON object from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "hook",
+   "n": 10000,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "hook_raise",
+   "n": 9993,
+   "result": {
+    "ok": true
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "hook_raise",
+   "n": 9998,
+   "result": {
+    "ok": true
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "hook_raise",
+   "n": 9999,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON object from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "hook_raise",
+   "n": 10000,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "objects",
+   "n": 9993,
+   "result": {
+    "ok": true
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "objects",
+   "n": 9998,
+   "result": {
+    "ok": true
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "objects",
+   "n": 9999,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON object from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "objects",
+   "n": 10000,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON object from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "objects_err",
+   "n": 9993,
+   "result": {
+    "reported": "Expecting ',' delimiter: line 1 column 49968 (char 49967)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "objects_err",
+   "n": 9994,
+   "result": {
+    "reported": "Expecting ',' delimiter: line 1 column 49973 (char 49972)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "objects_err",
+   "n": 9995,
+   "result": {
+    "reported": "Expecting ',' delimiter: line 1 column 49978 (char 49977)"
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "objects_err",
+   "n": 9996,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while calling a Python object"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "objects_err",
+   "n": 9997,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "objects_err",
+   "n": 9998,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "objects_err",
+   "n": 9999,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON object from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "objects_err",
+   "n": 10000,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON object from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "mixed",
+   "n": 9993,
+   "result": {
+    "ok": true
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "mixed",
+   "n": 9997,
+   "result": {
+    "ok": true
+   }
+  },
+  {
+   "mode": "check_v3",
+   "shape": "mixed",
+   "n": 9998,
+   "result": {
+    "crash": [
+     "RecursionError",
+     "maximum recursion depth exceeded while decoding a JSON array from a unicode string"
+    ]
+   }
+  },
+  {
+   "mode": "check_v3",
    "shape": "mixed",
    "n": 10000,
    "result": {

@@ -97,6 +97,12 @@ fn check_matches_cpython() {
             let input = input(case);
             let w = want(&case["check"]);
             f.check(&name, &got(&json::check_ex(&input, v)), &w);
+            let w3 = want(&case["check_v3"]);
+            f.check(
+                &format!("{name} (v3)"),
+                &got(&json::check_v3(&input, v)),
+                &w3,
+            );
             // The frozen API renders the same outcome as a string.
             let frozen = json::check(&input, v);
             let expect = match &w {
@@ -215,6 +221,7 @@ fn dumps_pretty_agrees_with_pretty_format() {
 #[test]
 fn recursion_thresholds_match_cpython() {
     let mut f = Failures::default();
+    let mut v3_seen = false;
     for (v, file) in MINORS {
         let data = vectors(file);
         for case in data["depth"].as_array().unwrap() {
@@ -228,6 +235,9 @@ fn recursion_thresholds_match_cpython() {
             let w = want(&case["result"]);
             let g = if mode == "check" {
                 got(&json::check_ex(doc.as_bytes(), v))
+            } else if mode == "check_v3" {
+                v3_seen = true;
+                got(&json::check_v3(doc.as_bytes(), v))
             } else {
                 let o = DumpOpts {
                     indent: "2".into(),
@@ -243,19 +253,11 @@ fn recursion_thresholds_match_cpython() {
             f.check(&name, &g, &w);
         }
     }
+    assert!(
+        v3_seen,
+        "the vectors lack the check-json v3 (no hook) depth cases"
+    );
     f.finish("json recursion thresholds");
-}
-
-/// Drops a deep `JsonValue` without recursion (the derived drop recurses once per level).
-fn dismantle(v: JsonValue) {
-    let mut stack = vec![v];
-    while let Some(v) = stack.pop() {
-        match v {
-            JsonValue::Array(items) => stack.extend(items),
-            JsonValue::Object(pairs) => stack.extend(pairs.into_iter().map(|(_, x)| x)),
-            _ => {}
-        }
-    }
 }
 
 #[test]
@@ -269,7 +271,7 @@ fn dumps_pretty_never_fails() {
     };
     let out = json::dumps_pretty(&deep, &o);
     assert!(out.starts_with("[\n ["));
-    dismantle(deep);
+    drop(deep); // `JsonValue`'s drop is iterative
     let dup = JsonValue::Object(vec![
         ("a".into(), JsonValue::Int("1".into())),
         ("a".into(), JsonValue::Object(Vec::new())),

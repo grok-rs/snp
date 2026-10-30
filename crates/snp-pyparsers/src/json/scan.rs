@@ -544,8 +544,11 @@ fn unreachable_frame<T>() -> Result<T, CheckError> {
 // check-json
 // --------------------------------------------------------------------------------------------------------------
 
-/// `check_json.py`: no values, keys checked by `raise_duplicate_keys` at every object close.
-struct CheckBuild;
+/// `check_json.py`: no values; with `hook`, keys checked by `raise_duplicate_keys` at every object close (v4.0.0+),
+/// without it the plain `json.load(f)` of v3.x (no Python call per object).
+struct CheckBuild {
+    hook: bool,
+}
 
 impl Build for CheckBuild {
     type V = ();
@@ -561,6 +564,9 @@ impl Build for CheckBuild {
         pairs: Vec<(Box<[u8]>, ())>,
         depth: usize,
     ) -> Result<(), CheckError> {
+        if !self.hook {
+            return Ok(());
+        }
         cx.hook(depth)?;
         let mut seen = std::collections::HashSet::new();
         for (key, ()) in &pairs {
@@ -590,7 +596,14 @@ impl Build for CheckBuild {
 
 /// [`super::check_ex`] on decoded text.
 pub(super) fn check(text: &[u8], v: PyMinor) -> Result<(), CheckError> {
-    Scanner::new(text, v, Path::Check, CheckBuild)
+    Scanner::new(text, v, Path::Check, CheckBuild { hook: true })
+        .parse()
+        .map(|_| ())
+}
+
+/// [`super::check_v3`] on decoded text.
+pub(super) fn check_v3(text: &[u8], v: PyMinor) -> Result<(), CheckError> {
+    Scanner::new(text, v, Path::CheckV3, CheckBuild { hook: false })
         .parse()
         .map(|_| ())
 }

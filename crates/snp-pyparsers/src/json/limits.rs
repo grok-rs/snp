@@ -17,6 +17,9 @@ use super::PyMinor;
 pub(super) enum Path {
     /// `check-json`: `json.load(f, object_pairs_hook=raise_duplicate_keys)`.
     Check,
+    /// `check-json` v3.0.0–v3.4.0 (epoch 1): `json.load(f)`, no hook. Same call stack as [`Path::Check`], but
+    /// objects are built by the C scanner, so only the container, error and C-call thresholds apply.
+    CheckV3,
     /// `pretty-format-json`: `json.loads(contents, object_pairs_hook=pairs_first)` then `json.dumps(indent=…)`.
     Pretty,
 }
@@ -43,6 +46,14 @@ pub(super) struct Limits {
 impl Limits {
     pub(super) const fn of(path: Path, v: PyMinor) -> Self {
         match (path, v) {
+            (Path::CheckV3, v) => {
+                let c = Self::of(Path::Check, v);
+                Self {
+                    hook: usize::MAX,
+                    hook_raise: usize::MAX,
+                    ..c
+                }
+            }
             (Path::Check, PyMinor::P312) => Self {
                 enter: 9997,
                 stop: 9996,
