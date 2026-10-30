@@ -9,8 +9,10 @@
 //! input; Python's own recursion limits are emulated as the crash path where the hooks hit them.
 //!
 //! The frozen API (`Result<_, String>`) renders an uncaught Python exception as its traceback's last line
-//! (`Type: text`); the `*_ex`/`*_named` additions keep the difference between a reported error (the hook prints it
-//! and continues) and a crash (exit 1, the rest of the partition is skipped, 09 §2.6) as [`CheckError`].
+//! (`Type: text`); the `*_ex` additions (and `yamlcheck::Checker`, which carries ruamel's state from one file to
+//! the next as the hook's single `YAML` object does) take the file name and the emulated CPython minor, and keep
+//! the difference between a reported error (the hook prints it and continues) and a crash (exit 1, the rest of the
+//! partition is skipped, 09 §2.6) as [`CheckError`].
 //!
 //! Owner: WP-17.
 

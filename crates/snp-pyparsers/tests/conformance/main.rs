@@ -20,3 +20,6 @@ mod toml;
 
 #[cfg(test)]
 mod yaml;
+
+#[cfg(test)]
+mod xml;

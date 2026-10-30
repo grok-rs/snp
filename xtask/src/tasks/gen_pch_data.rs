@@ -13,7 +13,8 @@
 //! * `gen-pch-data vectors [--py312 PYTHON] [--py313 PYTHON] [--corpora DIR]` runs
 //!   `xtask/oracle/pch_vectors.py` under both host interpreters (each needs `ruamel.yaml==0.19.1`) and rewrites
 //!   `crates/snp-pyparsers/tests/vectors/*.json` from the corpora in `DIR` (default `target/pch-corpora`, fetched
-//!   by `xtask/oracle/pch_corpora.py`).
+//!   by `xtask/oracle/pch_corpora.py`), then runs `xtask/oracle/pch_expat_tables.py` under both to rewrite
+//!   `crates/snp-pyparsers/src/xml/generated/` (expat's Name classes, Python's single-byte codecs per minor).
 //!
 //! Owner: WP-17.
 
@@ -1389,9 +1390,28 @@ fn vectors(root: &Path, args: &[OsString]) -> anyhow::Result<()> {
             script.display()
         );
     }
+    let tables = root.join("xtask/oracle/pch_expat_tables.py");
+    let gen_dir = root.join("crates/snp-pyparsers/src/xml/generated");
+    for python in [&py312, &py313] {
+        let status = Command::new(python)
+            .arg("-I")
+            .arg(&tables)
+            .arg(&gen_dir)
+            .env("PYTHONHASHSEED", "0")
+            .env("PYTHONUTF8", "1")
+            .status()
+            .with_context(|| format!("running {}", python.display()))?;
+        ensure!(
+            status.success(),
+            "{} {} failed ({status})",
+            python.display(),
+            tables.display()
+        );
+    }
     workspace::say(&format!(
-        "vectors written to {}",
-        workspace::rel(root, &out)
+        "vectors written to {}, expat tables to {}",
+        workspace::rel(root, &out),
+        workspace::rel(root, &gen_dir)
     ));
     Ok(())
 }
