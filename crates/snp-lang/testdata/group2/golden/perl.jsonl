@@ -1,0 +1,2 @@
+{"argv":["cpan","-T",".","Foo::Bar"],"cwd":"{PREFIX}","env":{"PATH":"{ENV}/bin:{SHIMS}:/usr/bin:/bin","PERL5LIB":"{ENV}/lib/perl5","PERL_MB_OPT":"--install_base {ENV}","PERL_MM_OPT":"INSTALL_BASE={ENV} INSTALLSITEMAN1DIR=none INSTALLSITEMAN3DIR=none"}}
+{"argv":["fakehook","a.txt"],"cwd":"{REPO}","env":{"PATH":"{ENV}/bin:{SHIMS}:/usr/bin:/bin","PERL5LIB":"{ENV}/lib/perl5","PERL_MB_OPT":"--install_base {ENV}","PERL_MM_OPT":"INSTALL_BASE={ENV} INSTALLSITEMAN1DIR=none INSTALLSITEMAN3DIR=none"}}

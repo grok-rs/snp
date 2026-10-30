@@ -1,0 +1,24 @@
+721 386 0:45 / / rw,relatime master:218 - overlay overlay rw,lowerdir=/var/lib/docker/overlay2/l/QHZ7OM7P4AQD3XLG274ZPWAJCV:/var/lib/docker/overlay2/l/5RFG6SZWVGOG2NKEYXJDQCQYX5,upperdir=/var/lib/docker/overlay2/e4ad859fc5d4791932b9b976052f01fb0063e01de3cef916e40ae2121f6a166e/diff,workdir=/var/lib/docker/overlay2/e4ad859fc5d4791932b9b976052f01fb0063e01de3cef916e40ae2121f6a166e/work,nouserxattr
+722 721 0:48 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw
+723 721 0:50 / /dev rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755,inode64
+724 723 0:51 / /dev/pts rw,nosuid,noexec,relatime - devpts devpts rw,gid=5,mode=620,ptmxmode=666
+725 721 0:52 / /sys ro,nosuid,nodev,noexec,relatime - sysfs sysfs ro
+726 725 0:26 / /sys/fs/cgroup ro,nosuid,nodev,noexec,relatime - cgroup2 cgroup rw,nsdelegate,memory_recursiveprot
+727 723 0:47 / /dev/mqueue rw,nosuid,nodev,noexec,relatime - mqueue mqueue rw
+728 723 0:53 / /dev/shm rw,nosuid,nodev,noexec,relatime - tmpfs shm rw,size=65536k,inode64
+729 721 8:3 /var/lib/docker/containers/c33988ec7651ebc867cb24755eaf637a6734088bc7eef59d5799293a9e5450f7/resolv.conf /etc/resolv.conf rw,relatime - ext4 /dev/sda3 rw,errors=remount-ro
+730 721 8:3 /var/lib/docker/containers/c33988ec7651ebc867cb24755eaf637a6734088bc7eef59d5799293a9e5450f7/hostname /etc/hostname rw,relatime - ext4 /dev/sda3 rw,errors=remount-ro
+731 721 8:3 /var/lib/docker/containers/c33988ec7651ebc867cb24755eaf637a6734088bc7eef59d5799293a9e5450f7/hosts /etc/hosts rw,relatime - ext4 /dev/sda3 rw,errors=remount-ro
+387 723 0:51 /0 /dev/console rw,nosuid,noexec,relatime - devpts devpts rw,gid=5,mode=620,ptmxmode=666
+388 722 0:48 /bus /proc/bus ro,nosuid,nodev,noexec,relatime - proc proc rw
+389 722 0:48 /fs /proc/fs ro,nosuid,nodev,noexec,relatime - proc proc rw
+525 722 0:48 /irq /proc/irq ro,nosuid,nodev,noexec,relatime - proc proc rw
+526 722 0:48 /sys /proc/sys ro,nosuid,nodev,noexec,relatime - proc proc rw
+571 722 0:48 /sysrq-trigger /proc/sysrq-trigger ro,nosuid,nodev,noexec,relatime - proc proc rw
+572 722 0:57 / /proc/asound ro,relatime - tmpfs tmpfs ro,inode64
+575 722 0:58 / /proc/acpi ro,relatime - tmpfs tmpfs ro,inode64
+576 722 0:50 /null /proc/kcore rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755,inode64
+577 722 0:50 /null /proc/keys rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755,inode64
+578 722 0:50 /null /proc/timer_list rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755,inode64
+579 722 0:59 / /proc/scsi ro,relatime - tmpfs tmpfs ro,inode64
+580 725 0:60 / /sys/firmware ro,relatime - tmpfs tmpfs ro,inode64

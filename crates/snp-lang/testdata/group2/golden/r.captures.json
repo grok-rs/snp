@@ -1,0 +1,22 @@
+[
+  [
+    "script.R",
+    "options(\n    install.packages.compile.from.source = \"never\",\n    pkgType = \"binary\"\n)\n\nprefix_dir <- '{PREFIX}'\noptions(\n    repos = c(CRAN = \"https://cran.rstudio.com\"),\n    renv.consent = TRUE\n)\nsource(\"renv/activate.R\")\nrenv::restore()\nactivate_statement <- paste0(\n  'suppressWarnings({',\n  'old <- setwd(\"', getwd(), '\"); ',\n  'source(\"renv/activate.R\"); ',\n  'setwd(old); ',\n  'renv::load(\"', getwd(), '\");})'\n)\nwriteLines(activate_statement, 'activate.R')\nis_package <- tryCatch(\n  {\n      path_desc <- file.path(prefix_dir, 'DESCRIPTION')\n      suppressWarnings(desc <- read.dcf(path_desc))\n      \"Package\" %in% colnames(desc)\n  },\n  error = function(...) FALSE\n)\nif (is_package) {\n    renv::install(prefix_dir)\n}\n"
+  ],
+  [
+    "script.R",
+    "options(\n    install.packages.compile.from.source = \"never\",\n    pkgType = \"binary\"\n)\n\nrenv::settings$r.version(as.character(getRversion()))"
+  ],
+  [
+    "script.R",
+    "options(\n    install.packages.compile.from.source = \"never\",\n    pkgType = \"binary\"\n)\n\nrenv::install(commandArgs(trailingOnly = TRUE))"
+  ],
+  [
+    "script.R",
+    "options(\n    install.packages.compile.from.source = \"never\",\n    pkgType = \"binary\"\n)\n\ncat(renv::settings$r.version())"
+  ],
+  [
+    "script.R",
+    "options(\n    install.packages.compile.from.source = \"never\",\n    pkgType = \"binary\"\n)\n\ncat(as.character(getRversion()))"
+  ]
+]

@@ -1,0 +1,3 @@
+{"argv":["cabal","update"],"cwd":"{PREFIX}","env":{}}
+{"argv":["cabal","install","--install-method","copy","--installdir","{ENV}/bin","hello","other-1.0"],"cwd":"{PREFIX}","env":{}}
+{"argv":["fakehook","a.txt"],"cwd":"{REPO}","env":{"PATH":"{ENV}/bin:{SHIMS}:/usr/bin:/bin"}}

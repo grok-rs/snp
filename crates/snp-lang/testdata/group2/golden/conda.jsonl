@@ -1,0 +1,3 @@
+{"argv":["conda","env","create","-p","{ENV}","--file","environment.yml"],"cwd":"{PREFIX}","env":{}}
+{"argv":["conda","install","-p","{ENV}","pkgA","pkgB=1.0"],"cwd":"{PREFIX}","env":{}}
+{"argv":["fakehook","--flag","a b","a.txt"],"cwd":"{REPO}","env":{"CONDA_PREFIX":"{ENV}","PATH":"{ENV}/bin:{SHIMS}:/usr/bin:/bin"}}

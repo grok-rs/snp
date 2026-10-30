@@ -1,0 +1,2 @@
+{"argv":["swift","build","--package-path","{PREFIX}","-c","release","--build-path","{ENV}/.build"],"cwd":"{REPO}","env":{}}
+{"argv":["fakehook","--flag","a.txt"],"cwd":"{REPO}","env":{"PATH":"{ENV}/.build/release:{SHIMS}:/usr/bin:/bin"}}

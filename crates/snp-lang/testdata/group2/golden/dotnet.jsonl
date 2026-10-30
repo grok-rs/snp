@@ -1,0 +1,3 @@
+{"argv":["dotnet","pack","--configuration","Release","--property","PackageOutputPath={PREFIX}/pre-commit-build"],"cwd":"{PREFIX}","env":{}}
+{"argv":["dotnet","tool","install","--configfile","{TMP}/T1/nuget.config","--tool-path","{ENV}/bin","--add-source","{PREFIX}/pre-commit-build","my.tool"],"cwd":"{PREFIX}","env":{}}
+{"argv":["fakehook","a.txt"],"cwd":"{REPO}","env":{"PATH":"{ENV}/bin:{SHIMS}:/usr/bin:/bin"}}

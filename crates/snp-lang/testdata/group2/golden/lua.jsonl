@@ -1,0 +1,5 @@
+{"argv":["luarocks","config","--lua-ver"],"cwd":"{REPO}","env":{}}
+{"argv":["luarocks","--tree","{ENV}","make","pre-commit-package-dev-1.rockspec"],"cwd":"{PREFIX}","env":{"LUA_CPATH":"{ENV}/lib/lua/5.4/?.so;;","LUA_PATH":"{ENV}/share/lua/5.4/?.lua;{ENV}/share/lua/5.4/?/init.lua;;","PATH":"{ENV}/bin:{SHIMS}:/usr/bin:/bin"}}
+{"argv":["luarocks","--tree","{ENV}","install","penlight"],"cwd":"{PREFIX}","env":{"LUA_CPATH":"{ENV}/lib/lua/5.4/?.so;;","LUA_PATH":"{ENV}/share/lua/5.4/?.lua;{ENV}/share/lua/5.4/?/init.lua;;","PATH":"{ENV}/bin:{SHIMS}:/usr/bin:/bin"}}
+{"argv":["luarocks","--tree","{ENV}","install","luacheck"],"cwd":"{PREFIX}","env":{"LUA_CPATH":"{ENV}/lib/lua/5.4/?.so;;","LUA_PATH":"{ENV}/share/lua/5.4/?.lua;{ENV}/share/lua/5.4/?/init.lua;;","PATH":"{ENV}/bin:{SHIMS}:/usr/bin:/bin"}}
+{"argv":["fakehook","a.txt"],"cwd":"{REPO}","env":{"LUA_CPATH":"{ENV}/lib/lua/5.4/?.so;;","LUA_PATH":"{ENV}/share/lua/5.4/?.lua;{ENV}/share/lua/5.4/?/init.lua;;","PATH":"{ENV}/bin:{SHIMS}:/usr/bin:/bin"}}

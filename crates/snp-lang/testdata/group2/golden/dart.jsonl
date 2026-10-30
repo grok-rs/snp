@@ -1,0 +1,10 @@
+{"argv":["dart","pub","get"],"cwd":"{PREFIX}","env":{"PUB_CACHE":"{TMP}/T1"}}
+{"argv":["dart","pub","cache","add","pkg_x","--version","1.2.3"],"cwd":"{PREFIX}","env":{"PUB_CACHE":"{TMP}/T2"}}
+{"argv":["dart","pub","get"],"cwd":"{TMP}/T3/pkg","env":{"PUB_CACHE":"{TMP}/T2"}}
+{"argv":["dart","compile","exe","--output","{ENV}/bin/pkg_x_tool","{TMP}/T3/pkg/bin/pkg_x_tool.dart"],"cwd":"{TMP}/T3/pkg","env":{"PUB_CACHE":"{TMP}/T2"}}
+{"argv":["dart","compile","exe","--output","{ENV}/bin/aliased","{TMP}/T3/pkg/bin/aliased.dart"],"cwd":"{TMP}/T3/pkg","env":{"PUB_CACHE":"{TMP}/T2"}}
+{"argv":["dart","pub","cache","add","pkg_y"],"cwd":"{PREFIX}","env":{"PUB_CACHE":"{TMP}/T4"}}
+{"argv":["dart","pub","get"],"cwd":"{TMP}/T5/pkg","env":{"PUB_CACHE":"{TMP}/T4"}}
+{"argv":["dart","compile","exe","--output","{ENV}/bin/pkg_y_tool","{TMP}/T5/pkg/bin/pkg_y_tool.dart"],"cwd":"{TMP}/T5/pkg","env":{"PUB_CACHE":"{TMP}/T4"}}
+{"argv":["dart","compile","exe","--output","{ENV}/bin/aliased","{TMP}/T5/pkg/bin/aliased.dart"],"cwd":"{TMP}/T5/pkg","env":{"PUB_CACHE":"{TMP}/T4"}}
+{"argv":["fakehook","--x","a.txt"],"cwd":"{REPO}","env":{"PATH":"{ENV}/bin:{SHIMS}:/usr/bin:/bin"}}

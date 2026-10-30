@@ -1,0 +1,6 @@
+{"argv":["Rscript","--vanilla","{TMP}/T1/script.R"],"cwd":"{ENV}","env":{"R_PROFILE_USER":"{ENV}/activate.R"}}
+{"argv":["Rscript","--no-save","--no-restore","--no-site-file","--no-environ","{TMP}/T2/script.R"],"cwd":"{ENV}","env":{"R_PROFILE_USER":"{ENV}/activate.R"}}
+{"argv":["Rscript","--no-save","--no-restore","--no-site-file","--no-environ","{TMP}/T3/script.R","rprojroot@1.0","glue"],"cwd":"{ENV}","env":{"R_PROFILE_USER":"{ENV}/activate.R"}}
+{"argv":["Rscript","--no-save","--no-restore","--no-site-file","--no-environ","{TMP}/T4/script.R"],"cwd":"{ENV}","env":{"R_PROFILE_USER":"{ENV}/activate.R"}}
+{"argv":["Rscript","--no-save","--no-restore","--no-site-file","--no-environ","{TMP}/T5/script.R"],"cwd":"{ENV}","env":{"R_PROFILE_USER":"{ENV}/activate.R"}}
+{"argv":["Rscript","--no-save","--no-restore","--no-site-file","--no-environ","hooks/check.R","--foo","a.txt"],"cwd":"{REPO}","env":{"R_PROFILE_USER":"{ENV}/activate.R"}}
