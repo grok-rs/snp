@@ -53,7 +53,11 @@ fn crc32(bytes: &[u8]) -> u32 {
     for b in bytes {
         crc ^= u32::from(*b);
         for _ in 0..8 {
-            crc = if crc & 1 == 1 { (crc >> 1) ^ 0xedb8_8320 } else { crc >> 1 };
+            crc = if crc & 1 == 1 {
+                (crc >> 1) ^ 0xedb8_8320
+            } else {
+                crc >> 1
+            };
         }
     }
     !crc
@@ -87,7 +91,9 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let work = workdir();
-    if std::fs::create_dir_all(work.join("out")).is_err() || std::fs::create_dir(work.join("canary")).is_err() {
+    if std::fs::create_dir_all(work.join("out")).is_err()
+        || std::fs::create_dir(work.join("canary")).is_err()
+    {
         cleanup(&work);
         return;
     }
@@ -119,7 +125,11 @@ fuzz_target!(|data: &[u8]| {
     cleanup(&work);
     assert!(canary_empty, "extraction wrote outside its destination");
     if ok {
-        assert_eq!(out, [std::ffi::OsString::from("dest")], "unexpected leftovers");
+        assert_eq!(
+            out,
+            [std::ffi::OsString::from("dest")],
+            "unexpected leftovers"
+        );
     } else {
         assert!(out.is_empty(), "a failed extraction left {out:?}");
     }
