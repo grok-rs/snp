@@ -95,27 +95,7 @@ mod catalog {
         assert_eq!(prefix_path_nt("foo", &["bar", "baz"]), "foo\\bar\\baz");
     }
 
-    /// T10-UTL-07 `test_star` (`prefix_test.py:43-46`): `Prefix.star('.txt')` is
-    /// `tuple(p for p in os.listdir(prefix_dir) if p.endswith(end))` — a plain suffix test on the
-    /// names, not an extension parse (`splitext`).
-    #[test]
-    fn t10_utl_07_prefix_star_lists_matching_basenames() {
-        let dir = std::env::temp_dir().join(format!("pycompat-star-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).unwrap_or_default();
-        std::fs::create_dir_all(&dir).unwrap();
-        for f in ["a.txt", "b.txt", "c.py", "d.txt.bak"] {
-            std::fs::write(dir.join(f), b"").unwrap();
-        }
-        let mut star: Vec<String> = std::fs::read_dir(&dir)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().into_string().unwrap())
-            .filter(|name| name.as_bytes().ends_with(b".txt"))
-            .collect();
-        star.sort();
-        assert_eq!(star, ["a.txt", "b.txt"]);
-        // the suffix test differs from splitext for names like `.txt` and `x..txt`
-        assert!(b".txt".ends_with(b".txt"));
-        assert_eq!(posixpath::splitext(b".txt").1, b"");
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
+    // T10-UTL-07 `test_star` (`prefix_test.py:43-46`, `Prefix.star` = `tuple(p for p in
+    // os.listdir(prefix_dir) if p.endswith(end))`) calls no `os.path` function: it is a plain
+    // directory listing with a suffix test and belongs to snp-lang's `Prefix`, not to this crate.
 }
