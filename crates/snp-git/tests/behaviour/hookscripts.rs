@@ -56,6 +56,12 @@ fn classify_special_files() {
     let d = tempfile::tempdir().unwrap();
     assert_eq!(classify(&d.path().join("missing")).unwrap(), Owner::Missing);
     assert_eq!(classify(d.path()).unwrap(), Owner::NotAFile);
+    // a `hooks` file where the directory should be: `os.path.lexists` is False (ENOTDIR), not an error
+    std::fs::write(d.path().join("hooks"), b"").unwrap();
+    assert_eq!(
+        classify(&d.path().join("hooks").join("pre-commit")).unwrap(),
+        Owner::Missing
+    );
     #[cfg(unix)]
     {
         let dangling = d.path().join("dangling");

@@ -27,7 +27,6 @@ pub use exe::{GitCaps, GitExe, GitVersion};
 pub use git::Git;
 pub use owned::{CloneMode, OwnedRepo, RevInfo, no_git_env, prefetch_eligible};
 pub use types::{
-    DiffFingerprint, DiffIndex, IndexEntries, InvalidObjectId, MergeState, ObjectId, PrePushNs,
-    RepoInfo,
+    DiffFingerprint, DiffIndex, IndexEntries, MergeState, ObjectId, PrePushNs, RepoInfo,
 };
 pub use zlist::ZList;

@@ -5,7 +5,6 @@
 use std::ffi::OsString;
 use std::fmt;
 use std::path::PathBuf;
-use std::str::FromStr;
 
 use crate::ZList;
 
@@ -29,18 +28,6 @@ pub struct RepoInfo {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ObjectId(Box<str>);
 
-/// Not a 40- or 64-digit hex object id.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InvalidObjectId(pub String);
-
-impl fmt::Display for InvalidObjectId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "not a git object id: {:?}", self.0)
-    }
-}
-
-impl std::error::Error for InvalidObjectId {}
-
 impl ObjectId {
     /// Validates `hex` (`git write-tree` / `rev-parse` output after `.strip()`).
     pub fn parse(hex: &str) -> Option<Self> {
@@ -62,14 +49,6 @@ impl ObjectId {
 impl fmt::Display for ObjectId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
-    }
-}
-
-impl FromStr for ObjectId {
-    type Err = InvalidObjectId;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::parse(s).ok_or_else(|| InvalidObjectId(s.to_owned()))
     }
 }
 
@@ -257,16 +236,10 @@ mod tests {
         assert!(!id.is_null());
         assert_eq!(id.as_str(), sha);
         assert_eq!(id.to_string(), sha);
-        assert_eq!(sha.parse::<ObjectId>().unwrap(), id);
         assert!(ObjectId::parse("abc").is_none());
         assert!(ObjectId::parse(&std::iter::repeat_n('g', 40).collect::<String>()).is_none());
-        assert!("x".parse::<ObjectId>().is_err());
         assert!(!is_null_oid(b"0"));
         assert!(!is_null_oid(&[b'0'; 41]));
-        assert_eq!(
-            InvalidObjectId("x".into()).to_string(),
-            r#"not a git object id: "x""#
-        );
     }
 
     #[test]

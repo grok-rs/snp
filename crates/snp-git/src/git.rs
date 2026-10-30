@@ -57,6 +57,25 @@ fn os(s: &str) -> OsString {
     OsString::from(s)
 }
 
+/// The brand of this process: `basename(argv[0])` (ADR-023, `Brand::detect`), read once.
+fn process_brand() -> Brand {
+    static BRAND: std::sync::OnceLock<Brand> = std::sync::OnceLock::new();
+    *BRAND.get_or_init(|| Brand::detect(std::env::args_os().next().as_deref()))
+}
+
+/// `set(a) | set(b)` in first-seen order (pre-commit's `set` order is per-process random): O(n) with a hash set
+/// over the borrowed records, whatever the number of conflicted paths.
+fn first_seen_union<'a>(records: impl Iterator<Item = &'a [u8]>) -> Result<ZList, TooLarge> {
+    let mut seen: std::collections::HashSet<&'a [u8]> = std::collections::HashSet::new();
+    let mut out = ZList::default();
+    for p in records {
+        if seen.insert(p) {
+            out.push(p)?;
+        }
+    }
+    Ok(out)
+}
+
 /// `bytes.strip()` of a one-line output, as an `OsString`.
 fn stripped(b: &[u8]) -> OsString {
     os_from_bytes(bytes_strip(b))
@@ -188,7 +207,8 @@ impl Git {
     /// (`git.py:205-207`). On git ≥ 2.31 the combined call adds `--path-format=absolute` before the path options
     /// (02 G.9 item 6); its argv is never shown (every failure is `git failed. Is it installed, …`). A `--git-dir`
     /// echoed back (git < 2.5) is X13-GIT-10's `FatalError`. The returned `Git` renders brand-dependent texts in the
-    /// compat brand until [`Git::with_brand`] says otherwise.
+    /// brand of this process (`Brand::detect(argv[0])`, ADR-023), so a caller written against the frozen contract
+    /// gets the right `{prog}`; [`Git::with_brand`] overrides it (tests, embedders).
     pub fn discover(
         exe: Arc<GitExe>,
         env: &Env,
@@ -202,7 +222,7 @@ impl Git {
             root: Arc::from(info.root.as_path()),
             admin_dir: Arc::from(info.git_dir.as_path()),
             backend,
-            brand: Brand::PreCommit,
+            brand: process_brand(),
         };
         Ok((git, info))
     }
@@ -707,16 +727,12 @@ impl Git {
             "MERGE_HEAD",
             "--",
         ])?;
-        let mut out = ZList::default();
-        for p in merge_msg_conflicts(&merge_msg)
-            .into_iter()
-            .chain(diff.iter())
-        {
-            if !out.contains(p) {
-                out.push(p).map_err(too_large)?;
-            }
-        }
-        Ok(out)
+        first_seen_union(
+            merge_msg_conflicts(&merge_msg)
+                .into_iter()
+                .chain(diff.iter()),
+        )
+        .map_err(too_large)
     }
 
     /// `run._get_diff` (`run.py:274-279`): `git diff --no-ext-diff --no-textconv --ignore-submodules` (unchecked,
@@ -854,7 +870,8 @@ impl Git {
     /// otherwise `git rev-list <local> --topo-order --reverse --not --remotes=<remote>` decides between "nothing new"
     /// (next line), a whole new history (`all_files`) and `from_ref = <first new>^`. The first line that yields a
     /// namespace wins. The `rev-list`/`rev-parse` failures are the stdlib `CalledProcessError` (format B, bare `git`);
-    /// git's stderr, which Python leaves on the terminal, is carried in the exception's stderr hint.
+    /// git's stderr goes to the process stderr, raw and before the exception is reported, as Python leaves it
+    /// inherited.
     pub fn pre_push(
         &self,
         stdin: &[u8],
@@ -929,27 +946,37 @@ impl Git {
 
     /// `subprocess.check_output(('git', *args))`: stdout; a non-zero returncode is the stdlib
     /// `CalledProcessError` (format B, bare `git`; 13 X.2.2).
+    ///
+    /// Python leaves git's stderr inherited, so its raw bytes reach the terminal before pre-commit prints the
+    /// exception: the captured stderr is written, unmodified, to the process stderr as soon as the call returns
+    /// (success or failure), never into the exception.
     fn check_output(&self, args: &[OsString]) -> Result<Vec<u8>, Failure> {
+        self.check_output_to(args, &mut io::stderr().lock())
+    }
+
+    /// [`Git::check_output`] with git's stderr forwarded to `stderr`.
+    fn check_output_to(
+        &self,
+        args: &[OsString],
+        stderr: &mut dyn io::Write,
+    ) -> Result<Vec<u8>, Failure> {
         let argv = self.argv(args);
         let c = self
             .backend
             .capture(&argv, &self.env, &self.root, Stdin::Null, Group::Inherit)
             .map_err(|e| Failure::from_io(&e.io, Some(OsStr::new("git")), None))?;
+        if !c.stderr.is_empty() {
+            // best effort, like an inherited descriptor: a closed stderr loses the text, never the result
+            let _ignored: io::Result<()> =
+                stderr.write_all(&c.stderr).and_then(|()| stderr.flush());
+        }
         if c.status.0 == 0 {
             return Ok(c.stdout);
         }
-        let mut exc = snp_core::failure::PyExc::new(
+        Err(Failure::unexpected(
             "CalledProcessError",
             pyerr::called_process_b(&bare_git_argv(args), c.status.0),
-        );
-        let stderr = String::from_utf8_lossy(chomp(&c.stderr)).into_owned();
-        if !stderr.is_empty() {
-            exc = exc.with_hint(stderr);
-        }
-        Err(Failure::Exc {
-            kind: snp_core::failure::ExcKind::Unexpected,
-            exc,
-        })
+        ))
     }
 
     /// Raw call with the hook env for pre-commit-hooks emulation (exact upstream argv, 09 §3, §9.6): `git <args>` in
@@ -1023,6 +1050,65 @@ mod tests {
         }
     }
 
+    fn scripted_git(scripted: Arc<crate::testing::ScriptedBackend>) -> Git {
+        Git {
+            exe: Arc::new(GitExe {
+                argv0: vec![os("/usr/bin/git")],
+                caps: crate::GitCaps::for_version(None),
+            }),
+            env: Env::from_pairs(std::iter::empty::<(OsString, OsString)>()),
+            root: Arc::from(Path::new("/")),
+            admin_dir: Arc::from(Path::new("/.git")),
+            backend: scripted,
+            brand: Brand::PreCommit,
+        }
+    }
+
+    /// `subprocess.check_output` leaves stderr inherited: git's raw bytes reach stderr before the exception (on
+    /// success too), and the exception carries no hint.
+    #[test]
+    fn check_output_forwards_raw_stderr_and_keeps_it_out_of_the_exception() {
+        use crate::testing::{Response, ScriptedBackend};
+        let scripted = Arc::new(ScriptedBackend::new());
+        scripted.on(
+            "rev-list *",
+            Response::Exit {
+                code: 128,
+                stdout: Vec::new(),
+                stderr: b"fatal: bad object \xff\n".to_vec(),
+            },
+        );
+        scripted.on(
+            "rev-parse *",
+            Response::Exit {
+                code: 0,
+                stdout: b"abc\n".to_vec(),
+                stderr: b"warning: w\n".to_vec(),
+            },
+        );
+        let git = scripted_git(Arc::clone(&scripted));
+        let mut err = Vec::new();
+        let e = git
+            .check_output_to(&[os("rev-list"), os("x")], &mut err)
+            .unwrap_err();
+        assert_eq!(err, b"fatal: bad object \xff\n");
+        let Failure::Exc { exc, .. } = &e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(exc.hint, None);
+        assert_eq!(
+            String::from_utf8_lossy(&exc.text),
+            "Command '('git', 'rev-list', 'x')' returned non-zero exit status 128."
+        );
+        let mut err = Vec::new();
+        assert_eq!(
+            git.check_output_to(&[os("rev-parse"), os("y")], &mut err)
+                .unwrap(),
+            b"abc\n"
+        );
+        assert_eq!(err, b"warning: w\n");
+    }
+
     #[test]
     fn combined_rev_parse_shapes() {
         let d = parse_combined(b"../\nfalse\n/r/.git\n/r/.git\n/r/.git/index\n").unwrap();
@@ -1042,6 +1128,31 @@ mod tests {
         assert!(parse_combined(b"\nmaybe\n/r/.git\n/r/.git\n/r/.git/index\n").is_none());
         assert!(parse_combined(b"no newline").is_none());
         assert!(parse_combined(b"").is_none());
+    }
+
+    #[test]
+    fn first_seen_union_is_linear_and_keeps_order() {
+        let a: Vec<Vec<u8>> = (0..50_000_u32)
+            .map(|i| format!("a/{i}").into_bytes())
+            .collect();
+        let b: Vec<Vec<u8>> = (25_000..75_000_u32)
+            .rev()
+            .map(|i| format!("a/{i}").into_bytes())
+            .collect();
+        let t = std::time::Instant::now();
+        let u = first_seen_union(a.iter().chain(&b).map(Vec::as_slice)).unwrap();
+        assert!(
+            t.elapsed() < std::time::Duration::from_secs(5),
+            "{:?}",
+            t.elapsed()
+        );
+        assert_eq!(u.len(), 75_000);
+        assert_eq!(u.get(0), Some(&b"a/0"[..]));
+        assert_eq!(u.get(49_999), Some(&b"a/49999"[..]));
+        assert_eq!(u.get(50_000), Some(&b"a/74999"[..]));
+        assert_eq!(u.get(74_999), Some(&b"a/50000"[..]));
+        let small = first_seen_union([&b"x"[..], b"y", b"x", b"z", b"y"].into_iter()).unwrap();
+        assert_eq!(small.iter().collect::<Vec<_>>(), [&b"x"[..], b"y", b"z"]);
     }
 
     #[test]

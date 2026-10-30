@@ -108,13 +108,14 @@ fn classify_bytes_with(b: &[u8], prior_ids: &[&str]) -> Owner {
 
 /// Classifies the hook script at `path` (≤ 1 MiB read).
 ///
-/// `symlink_metadata` decides `Missing`; symlinks are followed (a dangling or looping one is `Foreign`); anything
-/// that is not a regular file is `NotAFile` and never opened (a FIFO would block). Read errors of a regular file
-/// (permissions) are returned.
+/// `symlink_metadata` decides `Missing` (like `os.path.lexists`, a path below a non-directory is missing too);
+/// symlinks are followed (a dangling or looping one is `Foreign`); anything that is not a regular file is `NotAFile`
+/// and never read. The file is opened non-blocking and re-checked on the open handle, so a FIFO swapped in after
+/// the `stat` can neither block the open nor be read. Read errors of a regular file (permissions) are returned.
 pub fn classify(path: &Path) -> io::Result<Owner> {
     let lmd = match fs::symlink_metadata(path) {
         Ok(m) => m,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Owner::Missing),
+        Err(e) if is_absent(&e) => return Ok(Owner::Missing),
         Err(e) => return Err(e),
     };
     let md = if lmd.file_type().is_symlink() {
@@ -128,11 +129,68 @@ pub fn classify(path: &Path) -> io::Result<Owner> {
     if !md.is_file() {
         return Ok(Owner::NotAFile);
     }
+    let file = open_nonblocking(path)?;
+    if !file.metadata()?.is_file() {
+        return Ok(Owner::NotAFile);
+    }
     let mut bytes = Vec::new();
-    fs::File::open(path)?
-        .take(READ_CAP)
-        .read_to_end(&mut bytes)?;
+    file.take(READ_CAP).read_to_end(&mut bytes)?;
     Ok(classify_bytes(&bytes))
+}
+
+/// `os.path.lexists` is False for `ENOENT` and for `ENOTDIR` (a path component is a regular file).
+fn is_absent(e: &io::Error) -> bool {
+    matches!(
+        e.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+    )
+}
+
+/// `O_NONBLOCK` of the target's libc (std opens with `O_CLOEXEC` already); `0` where it is not known here, which
+/// leaves only the handle check (checked against `rustix` by this module's tests).
+#[cfg(unix)]
+const O_NONBLOCK: i32 = if cfg!(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos",
+    target_os = "visionos",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly",
+)) {
+    0x0004
+} else if cfg!(all(
+    any(target_os = "linux", target_os = "android"),
+    not(any(
+        target_arch = "mips",
+        target_arch = "mips32r6",
+        target_arch = "mips64",
+        target_arch = "mips64r6",
+        target_arch = "sparc",
+        target_arch = "sparc64"
+    ))
+)) {
+    0o4000
+} else {
+    0
+};
+
+/// `open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)`: never blocks on a FIFO or a device.
+#[cfg(unix)]
+fn open_nonblocking(path: &Path) -> io::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(O_NONBLOCK)
+        .open(path)
+}
+
+/// Windows has no FIFOs in the file namespace: a plain read-only open.
+#[cfg(not(unix))]
+fn open_nonblocking(path: &Path) -> io::Result<fs::File> {
+    fs::File::open(path)
 }
 
 impl Owner {
@@ -160,6 +218,36 @@ impl Owner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The open used after the `stat` never blocks on a FIFO (a writer-less FIFO blocks a plain `open(2)` forever),
+    /// and the handle check sees it is not a regular file.
+    #[test]
+    #[cfg(unix)]
+    fn o_nonblock_is_the_libc_value() {
+        let want = rustix::fs::OFlags::NONBLOCK.bits();
+        assert_eq!(u32::try_from(O_NONBLOCK).unwrap(), want);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn the_handle_open_never_blocks_on_a_fifo() {
+        let d = tempfile::tempdir().unwrap();
+        let fifo = d.path().join("fifo");
+        let st = std::process::Command::new("mkfifo").arg(&fifo).status();
+        if !st.is_ok_and(|s| s.success()) {
+            return;
+        }
+        let f = open_nonblocking(&fifo).unwrap();
+        assert!(!f.metadata().unwrap().is_file());
+        let reg = d.path().join("reg");
+        fs::write(&reg, b"#!/bin/sh\n").unwrap();
+        let mut text = String::new();
+        open_nonblocking(&reg)
+            .unwrap()
+            .read_to_string(&mut text)
+            .unwrap();
+        assert_eq!(text, "#!/bin/sh\n");
+    }
 
     #[test]
     fn rank_beats_position() {

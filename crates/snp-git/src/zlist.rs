@@ -128,11 +128,6 @@ impl ZList {
         Ok(())
     }
 
-    /// Whether `record` is already an entry (linear scan; used for small unions only).
-    pub(crate) fn contains(&self, record: &[u8]) -> bool {
-        self.iter().any(|r| r == record)
-    }
-
     /// A list over `buf` with explicit spans (index-entry parsing keeps git's buffer and points at the path part of
     /// each record); spans outside `buf` are dropped.
     pub(crate) fn from_parts(buf: Vec<u8>, spans: Vec<(u32, u32)>) -> Self {
@@ -207,11 +202,10 @@ mod tests {
     }
 
     #[test]
-    fn records_and_contains() {
+    fn records_and_push() {
         let mut l = ZList::from_records([&b"a"[..], b"b c"]).unwrap();
         l.push(b"").unwrap();
-        assert!(l.contains(b"b c"));
-        assert!(!l.contains(b"z"));
+        assert_eq!(l.get(1), Some(&b"b c"[..]));
         assert_eq!(format!("{l:?}"), r#"["a", "b c", ""]"#);
         assert!(ZList::default().is_empty());
     }

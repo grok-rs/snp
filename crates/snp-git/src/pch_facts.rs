@@ -229,6 +229,9 @@ impl PchFacts {
                 Group::Inherit,
             )
             .map_err(|e| Failure::from_io(&e.io, Some(OsStr::new("git")), None))?;
+        // `subprocess.run(encoding='utf-8', check=True)`: `communicate()` decodes stdout before `check` looks at
+        // the returncode, so undecodable output is the `UnicodeDecodeError` even when git failed
+        decode_utf8(&c.stdout).map_err(|e| Failure::unexpected(e.py_type(), e.to_string()))?;
         if c.status.0 != 0 {
             let mut bare = vec![OsStr::new("git").to_os_string()];
             bare.extend(args.iter().map(Into::into));
@@ -237,7 +240,6 @@ impl PchFacts {
                 pyerr::called_process_b(&bare, c.status.0),
             ));
         }
-        decode_utf8(&c.stdout).map_err(|e| Failure::unexpected(e.py_type(), e.to_string()))?;
         let fields: Vec<&[u8]> = snp_pycompat::precommit::zsplit(&c.stdout).collect();
         let mut lfs = Vec::new();
         let mut i = 0_usize;

@@ -70,16 +70,19 @@ fn every_call_can_fail_and_is_recorded() {
          '--binary', '--exit-code', '--no-color', '--no-ext-diff', '{tree}', '--')\nreturn code: 2\nstdout: \
          (none)\nstderr:\n    error: permission denied"
     );
+    // `discover` takes the brand of the process (argv[0] of this test binary is not `pre-commit`): snp
     assert_eq!(
         exc(&e),
-        ("FatalError".to_owned(), format!("pre-commit {want_tail}"))
+        ("FatalError".to_owned(), format!("snp {want_tail}"))
     );
     assert_eq!(e.exit_code(), 1);
-    let e = git
-        .with_brand(Brand::Snp)
-        .diff_index_patch(&tree, &mut Vec::new())
-        .unwrap_err();
-    assert_eq!(exc(&e).1, format!("snp {want_tail}"));
+    for (brand, prog) in [(Brand::PreCommit, "pre-commit"), (Brand::Snp, "snp")] {
+        let e = git
+            .with_brand(brand)
+            .diff_index_patch(&tree, &mut Vec::new())
+            .unwrap_err();
+        assert_eq!(exc(&e).1, format!("{prog} {want_tail}"));
+    }
 
     scripted.on("diff-index *", exit(1, b" \n\t", b""));
     assert!(matches!(
@@ -217,11 +220,8 @@ fn pre_push_errors_use_the_stdlib_format_with_a_bare_git() {
              returned non-zero exit status 128."
         )
     );
-    // git's stderr (inherited by Python) reaches stderr through the exception's hint
-    assert_eq!(
-        exc.hint.as_deref(),
-        Some("fatal: bad object 1111111111111111111111111111111111111111")
-    );
+    // git's stderr (inherited by Python) goes to the process stderr, never into the exception's K+ hint slot
+    assert_eq!(exc.hint, None);
     assert_eq!(e.exit_code(), 3);
 
     // a 64-hex all-zero local OID is a deletion (D-CRASH-10): skipped without a git call
@@ -259,5 +259,148 @@ fn pre_push_errors_use_the_stdlib_format_with_a_bare_git() {
     assert_eq!(
         args(&last),
         format!("cat-file -e {}^{{commit}}", crate::common::rep('2', 40))
+    );
+}
+
+/// Exact argv is part of the parity contract (it is echoed in `CalledProcessError` texts): every public `Git` call
+/// once, compared with pre-commit's argv (`git.py`, `staged_files_only.py`, `run.py`, `hook_impl.py`) plus only the
+/// 02 G.7 additions (`--no-renames` on the intent-to-add and staged queries) and the snp-only calls of ARCH §1.4.13.
+#[test]
+fn every_user_repo_call_has_pre_commits_exact_argv() {
+    let sb = Sandbox::new();
+    let (repo, scripted, git) = setup(&sb);
+    let (_, info) = sb.discover(&repo);
+    std::fs::write(
+        info.git_dir.join("MERGE_MSG"),
+        b"Merge\n\n# Conflicts:\n#\ta\n",
+    )
+    .unwrap();
+    let tree = crate::common::rep('a', 40);
+    let local = crate::common::rep('1', 40);
+    let first = crate::common::rep('3', 40);
+    scripted.on("*", exit(0, b"", b""));
+    scripted.on("write-tree", exit(0, format!("{tree}\n").as_bytes(), b""));
+    scripted.on("diff --no-renames *", exit(0, b"a\0", b""));
+    scripted.on("cat-file -e *", exit(1, b"", b""));
+    scripted.on(
+        "rev-list * --topo-order *",
+        exit(0, format!("{first}\n").as_bytes(), b""),
+    );
+    let start = scripted.calls().len();
+
+    let ita = git.intent_to_add().unwrap();
+    git.has_unmerged().unwrap();
+    git.config_is_unstaged(OsStr::new(".pre-commit-config.yaml"))
+        .unwrap();
+    git.rm_cached(&ita, Group::Inherit).unwrap();
+    git.add_intent_to_add(&ita, Group::Inherit).unwrap();
+    let oid = git.write_tree().unwrap();
+    git.diff_index_patch(&oid, &mut Vec::new()).unwrap();
+    git.checkout_all(true, Group::Inherit).unwrap();
+    git.apply(std::path::Path::new("p.patch"), false, Group::Inherit)
+        .unwrap();
+    git.apply(std::path::Path::new("p.patch"), true, Group::Inherit)
+        .unwrap();
+    git.apply_check(std::path::Path::new("p.patch")).unwrap();
+    git.add_literal(
+        &[snp_core::path::RepoPath::new(b"a").unwrap()],
+        Group::Inherit,
+    )
+    .unwrap();
+    git.staged_files().unwrap();
+    git.all_files().unwrap();
+    git.tracked_with_modes().unwrap();
+    git.staged_with_modes().unwrap();
+    git.changed_files(OsStr::new("origin/main"), OsStr::new("HEAD"))
+        .unwrap();
+    git.conflicted_files(&info).unwrap();
+    git.diff_fingerprint().unwrap();
+    git.show_diff(true).unwrap();
+    git.show_diff(false).unwrap();
+    git.hooks_path().unwrap();
+    git.config_origins().unwrap();
+    git.config_get("core.hooksPath").unwrap();
+    git.config_get_regexp("^hook\\.").unwrap();
+    git.pre_push(
+        format!(
+            "refs/heads/a {local} refs/heads/a {}\n",
+            crate::common::rep('2', 40)
+        )
+        .as_bytes(),
+        OsStr::new("origin"),
+    )
+    .unwrap();
+    git.run_raw(&[OsStr::new("ls-files"), OsStr::new("--")])
+        .unwrap();
+
+    let all_files = if sb.exe().caps.ls_files_dedup {
+        "ls-files -z --deduplicate"
+    } else {
+        "ls-files -z"
+    };
+    let golden: Vec<String> = [
+        "diff --no-renames --no-ext-diff --ignore-submodules --diff-filter=A --name-only -z",
+        "ls-files --unmerged",
+        "diff --quiet --no-ext-diff .pre-commit-config.yaml",
+        "rm --cached -- a",
+        "add --intent-to-add -- a",
+        "write-tree",
+        &format!(
+            "diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff {tree} --"
+        ),
+        "-c submodule.recurse=0 checkout -- .",
+        "apply --whitespace=nowarn p.patch",
+        "-c core.autocrlf=false apply --whitespace=nowarn p.patch",
+        "apply --check --whitespace=nowarn p.patch",
+        "--literal-pathspecs add -- a",
+        "diff --staged --name-only --no-ext-diff -z --diff-filter=ACMRTUXB --no-renames",
+        all_files,
+        "ls-files -s -z",
+        "diff --staged --raw -z --no-renames --diff-filter=ACMRTUXB",
+        "diff --name-only --no-ext-diff -z origin/main...HEAD",
+        "write-tree",
+        &format!("diff --name-only --no-ext-diff -z -m {tree} HEAD MERGE_HEAD --"),
+        "diff --no-ext-diff --no-textconv --ignore-submodules",
+        "--no-pager diff --no-ext-diff --color=always",
+        "--no-pager diff --no-ext-diff --color=never",
+        "config core.hooksPath",
+        "config --list --show-origin -z",
+        "config --get core.hooksPath",
+        "config -z --get-regexp ^hook\\.",
+        &format!("cat-file -e {}^{{commit}}", crate::common::rep('2', 40)),
+        &format!("rev-list {local} --topo-order --reverse --not --remotes=origin"),
+        &format!("rev-list --max-parents=0 {local}"),
+        &format!("rev-parse {first}^"),
+        "ls-files --",
+    ]
+    .iter()
+    .map(|s| (*s).to_owned())
+    .collect();
+    let calls = scripted.calls();
+    let got: Vec<String> = calls[start..].iter().map(|c| args(c)).collect();
+    assert_eq!(got, golden);
+    // argv[0] is always the resolved git, never a bare name
+    let exe = git_exe_path(&scripted);
+    assert!(calls[start..].iter().all(|c| c[0] == OsStr::new(&exe)));
+}
+
+/// `subprocess.run(encoding='utf-8', check=True)` decodes stdout before checking the returncode.
+#[test]
+fn lfs_files_decodes_before_checking_the_returncode() {
+    let sb = Sandbox::new();
+    let (_, scripted, git) = setup(&sb);
+    let facts = snp_git::pch_facts::PchFacts::new(git);
+    scripted.on("check-attr *", exit(1, b"a\0filter\0\xff\0", b""));
+    let e = facts.lfs_files(&[b"a".as_slice()]).unwrap_err();
+    assert_eq!(exc(&e).0, "UnicodeDecodeError");
+    scripted.on("check-attr *", exit(1, b"a\0filter\0lfs\0", b""));
+    let e = facts.lfs_files(&[b"a".as_slice()]).unwrap_err();
+    assert_eq!(
+        exc(&e),
+        (
+            "CalledProcessError".to_owned(),
+            "Command '('git', 'check-attr', 'filter', '-z', '--stdin')' returned non-zero exit status 1."
+                .to_owned()
+        )
     );
 }

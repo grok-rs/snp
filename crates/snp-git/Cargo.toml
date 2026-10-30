@@ -21,6 +21,9 @@ memchr.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 
+[target.'cfg(unix)'.dev-dependencies]
+rustix.workspace = true
+
 [features]
 testing = []
 
