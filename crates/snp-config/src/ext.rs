@@ -872,7 +872,7 @@ mod tests {
         assert_eq!(ok("1m30s"), Duration::from_secs(90));
         assert_eq!(ok("500ms"), Duration::from_millis(500));
         assert_eq!(ok("1h2m3.5s"), Duration::from_millis(3_723_500));
-        assert_eq!(ok("1.5h"), Duration::from_secs(5400));
+        assert_eq!(ok("1.5h"), Duration::from_mins(90));
         assert_eq!(ok(".5s"), Duration::from_millis(500));
         assert_eq!(ok("1.s"), Duration::from_secs(1));
         assert_eq!(ok("+5s"), Duration::from_secs(5));

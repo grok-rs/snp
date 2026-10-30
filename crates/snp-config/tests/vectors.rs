@@ -6,6 +6,7 @@
 //!
 //! Owner: WP-21.
 
+#[cfg(test)]
 pub mod support;
 
 #[cfg(test)]
@@ -27,19 +28,27 @@ mod vectors {
         if let Some(s) = c["input"].as_str() {
             return Some(s.as_bytes().to_vec());
         }
-        let hex = c["input_hex"].as_str().expect("input");
-        let digit = |b: u8| char::from(b).to_digit(16).expect("hex digit");
+        let hex = c["input_hex"]
+            .as_str()
+            .map(str::as_bytes)
+            .unwrap_or_default();
+        let digit = |b: u8| char::from(b).to_digit(16).unwrap_or(0);
         Some(
-            hex.as_bytes()
-                .chunks(2)
-                .map(|p| u8::try_from(digit(p[0]) * 16 + digit(p[1])).expect("byte"))
+            hex.as_chunks::<2>()
+                .0
+                .iter()
+                .map(|[hi, lo]| u8::try_from(digit(*hi) * 16 + digit(*lo)).unwrap_or(0))
                 .collect(),
         )
     }
 
     fn strs(v: &Json) -> Vec<String> {
         v.as_array()
-            .map(|a| a.iter().map(|s| s.as_str().expect("str").to_owned()).collect())
+            .map(|a| {
+                a.iter()
+                    .map(|s| s.as_str().expect("str").to_owned())
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -69,7 +78,10 @@ mod vectors {
                 c["error"].as_str().map(str::to_owned)
             };
             if !divergent && !c["exc"].is_null() {
-                failures.push(format!("{name}: an undeclared pre-commit crash {}", c["exc"]));
+                failures.push(format!(
+                    "{name}: an undeclared pre-commit crash {}",
+                    c["exc"]
+                ));
                 continue;
             }
             for brand in BRANDS {
@@ -88,14 +100,20 @@ mod vectors {
                         }
                     });
                     let tag = format!("{name} [{brand:?}, {ext:?}]");
-                    let want_w: Vec<String> = want_warnings.iter().map(|w| brand_text(brand, w)).collect();
+                    let want_w: Vec<String> =
+                        want_warnings.iter().map(|w| brand_text(brand, w)).collect();
                     if loaded.warnings != want_w {
-                        failures.push(format!("{tag}: warnings\n  got  {:?}\n  want {want_w:?}", loaded.warnings));
+                        failures.push(format!(
+                            "{tag}: warnings\n  got  {:?}\n  want {want_w:?}",
+                            loaded.warnings
+                        ));
                     }
                     let got_error = loaded.result.as_ref().err().map(|e| e.rendered.clone());
                     let want_e = want_error.as_deref().map(|e| brand_text(brand, e));
                     if got_error != want_e {
-                        failures.push(format!("{tag}: error\n  got  {got_error:?}\n  want {want_e:?}"));
+                        failures.push(format!(
+                            "{tag}: error\n  got  {got_error:?}\n  want {want_e:?}"
+                        ));
                     }
                     if let Err(e) = &loaded.result {
                         let want_manifest = kind == "manifest";
@@ -127,18 +145,28 @@ mod vectors {
                             }
                         }
                         if got_dedup != want_fw {
-                            failures.push(format!("{tag}: future warnings {:?} want {want_fw:?}", loaded.diag));
+                            failures.push(format!(
+                                "{tag}: future warnings {:?} want {want_fw:?}",
+                                loaded.diag
+                            ));
                         }
                     }
                 }
             }
         }
-        assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
+        assert!(
+            failures.is_empty(),
+            "{} failures:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
     }
 
     /// `Hook` fields of the oracle (names sorted) as the test compares them.
     fn hook_json(h: &HookDef) -> Json {
-        let list = |xs: &[std::sync::Arc<str>]| Json::from(xs.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        let list = |xs: &[std::sync::Arc<str>]| {
+            Json::from(xs.iter().map(ToString::to_string).collect::<Vec<_>>())
+        };
         let tags = |t: &file_identify::TagSet| {
             let mut v: Vec<String> = t.names().map(str::to_owned).collect();
             v.sort();
@@ -184,7 +212,11 @@ mod vectors {
         for c in &cases {
             let name = c["name"].as_str().expect("name");
             for brand in BRANDS {
-                let config = crate::support::load_config_text(c["config"].as_str().expect("config"), brand, ExtMode::Enabled);
+                let config = crate::support::load_config_text(
+                    c["config"].as_str().expect("config"),
+                    brand,
+                    ExtMode::Enabled,
+                );
                 let (cfg, _) = crate::support::ok(config);
                 let manifest = c["manifest"]
                     .as_str()
@@ -195,23 +227,37 @@ mod vectors {
                 let mut exit = Json::Null;
                 'repos: for repo in &cfg.repos {
                     let built: Vec<Result<HookDef, snp_config::MergeError>> = match repo {
-                        RepoConfig::Local { hooks } => {
-                            hooks.iter().map(|h| finalize_local(h, &cfg, "local", None, &warn)).collect()
-                        }
-                        RepoConfig::Meta { hooks } => {
-                            hooks.iter().map(|h| finalize_local(h, &cfg, "meta", None, &warn)).collect()
-                        }
+                        RepoConfig::Local { hooks } => hooks
+                            .iter()
+                            .map(|h| finalize_local(h, &cfg, "local", None, &warn))
+                            .collect(),
+                        RepoConfig::Meta { hooks } => hooks
+                            .iter()
+                            .map(|h| finalize_local(h, &cfg, "meta", None, &warn))
+                            .collect(),
                         RepoConfig::Remote { repo, hooks, .. } => {
                             let m = manifest.as_ref().expect("manifest");
                             if let Some(missing) = hooks.iter().find(|h| m.get(&h.id).is_none()) {
-                                let e = snp_config::MergeError::UnknownId { id: missing.id.clone(), repo: repo.clone() };
+                                let e = snp_config::MergeError::UnknownId {
+                                    id: std::sync::Arc::clone(&missing.id),
+                                    repo: std::sync::Arc::clone(repo),
+                                };
                                 logs.push(serde_json::json!(["ERROR", e.message(brand)]));
                                 exit = Json::from(1);
                                 break 'repos;
                             }
                             hooks
                                 .iter()
-                                .map(|h| merge_hook(m.get(&h.id).expect("hook"), h, &cfg, repo, None, &warn))
+                                .map(|h| {
+                                    merge_hook(
+                                        m.get(&h.id).expect("hook"),
+                                        h,
+                                        &cfg,
+                                        repo,
+                                        None,
+                                        &warn,
+                                    )
+                                })
                                 .collect()
                         }
                         _ => Vec::new(),
@@ -234,11 +280,18 @@ mod vectors {
                     .as_array()
                     .expect("logs")
                     .iter()
-                    .map(|l| serde_json::json!([l[0], brand_text(brand, l[1].as_str().expect("msg"))]))
+                    .map(|l| {
+                        serde_json::json!([l[0], brand_text(brand, l[1].as_str().expect("msg"))])
+                    })
                     .collect();
                 assert_eq!(logs, want_logs, "{name} [{brand:?}] logs");
                 assert_eq!(exit, c["exit"], "{name} [{brand:?}] exit");
-                let want_hooks: Vec<Json> = c["hooks"].as_array().expect("hooks").iter().map(oracle_hook).collect();
+                let want_hooks: Vec<Json> = c["hooks"]
+                    .as_array()
+                    .expect("hooks")
+                    .iter()
+                    .map(oracle_hook)
+                    .collect();
                 assert_eq!(hooks, want_hooks, "{name} [{brand:?}] hooks");
             }
         }
@@ -257,10 +310,17 @@ mod vectors {
                 (Err(e), None, Some(exc)) => {
                     assert_eq!(c["divergence"], "D-CRASH-07", "{name}");
                     let (_, msg) = exc.split_once(": ").expect("exc");
-                    assert_eq!(e.rendered, format!("\n==> File .pre-commit-config.yaml\n=====> {msg}"), "{name}");
+                    assert_eq!(
+                        e.rendered,
+                        format!("\n==> File .pre-commit-config.yaml\n=====> {msg}"),
+                        "{name}"
+                    );
                 }
                 (Ok(out), None, None) => {
-                    let want = c["snp_output"].as_str().or_else(|| c["output"].as_str()).expect("output");
+                    let want = c["snp_output"]
+                        .as_str()
+                        .or_else(|| c["output"].as_str())
+                        .expect("output");
                     let stdout = c["stdout"].as_str().expect("stdout");
                     match out {
                         Outcome::Migrated(b) => {
@@ -290,13 +350,18 @@ mod vectors {
                 .expect("updates")
                 .iter()
                 .map(|u| RevUpdate {
-                    repo_index: usize::try_from(u["repo_index"].as_u64().expect("idx")).expect("usize"),
+                    repo_index: usize::try_from(u["repo_index"].as_u64().expect("idx"))
+                        .expect("usize"),
                     new_rev: u["rev"].as_str().expect("rev").into(),
                     frozen_comment: u["frozen"].as_str().map(Into::into),
                 })
                 .collect();
-            let got = rewrite(c["input"].as_str().expect("input").as_bytes(), &updates).expect(name);
-            let want = c["snp_output"].as_str().or_else(|| c["output"].as_str()).expect("output");
+            let got =
+                rewrite(c["input"].as_str().expect("input").as_bytes(), &updates).expect(name);
+            let want = c["snp_output"]
+                .as_str()
+                .or_else(|| c["output"].as_str())
+                .expect("output");
             let want_reformat = c
                 .get("snp_reformatted")
                 .and_then(Json::as_bool)

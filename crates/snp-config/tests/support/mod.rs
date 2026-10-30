@@ -23,7 +23,9 @@ pub fn repo_root() -> PathBuf {
 
 /// A committed vector file of `tests/vectors/`.
 pub fn vectors(name: &str) -> Vec<serde_json::Value> {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors").join(name);
+    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/vectors")
+        .join(name);
     let text = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
     let v: serde_json::Value = serde_json::from_str(&text).expect("json");
     v["cases"].as_array().expect("cases").clone()
@@ -44,7 +46,12 @@ fn brand_rules() -> &'static [(String, String)] {
         subs.iter()
             .map(|r| {
                 let m = r.as_map().expect("rule");
-                let get = |k: &str| m.get(&Value::from(k)).and_then(Value::as_str).expect(k).to_owned();
+                let get = |k: &str| {
+                    m.get(&Value::from(k))
+                        .and_then(Value::as_str)
+                        .expect(k)
+                        .to_owned()
+                };
                 (get("from"), get("to"))
             })
             .collect()
@@ -74,7 +81,11 @@ pub struct Loaded<T> {
 }
 
 /// Runs `f` with fresh sinks.
-pub fn with_opts<T>(brand: Brand, ext: ExtMode, f: impl FnOnce(&LoadOpts<'_>) -> Result<T, ConfigError>) -> Loaded<T> {
+pub fn with_opts<T>(
+    brand: Brand,
+    ext: ExtMode,
+    f: impl FnOnce(&LoadOpts<'_>) -> Result<T, ConfigError>,
+) -> Loaded<T> {
     let regexes = RegexCache::new();
     let warn = CollectWarnings::new();
     let diag = CollectWarnings::new();
