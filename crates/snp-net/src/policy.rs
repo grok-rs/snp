@@ -36,12 +36,13 @@ pub(crate) struct Policy {
     pub(crate) node_shasums: Option<String>,
     /// `SNP_GO_JSON_URL`: replaces both go.dev JSON URLs; must be `https://`.
     pub(crate) go_json: Option<String>,
-    /// Proxy for `https://` URLs: `https_proxy`, `HTTPS_PROXY`, `all_proxy`, `ALL_PROXY` (first non-empty).
+    /// Proxy for `https://` URLs: the `https` entry of [`proxies_environment`], else its `all` entry.
     pub(crate) https_proxy: Option<String>,
-    /// Proxy for `http://` URLs: `http_proxy`, `HTTP_PROXY` (ignored under CGI, `REQUEST_METHOD` set), `all_proxy`,
-    /// `ALL_PROXY`.
+    /// Proxy for `http://` URLs: the `http` entry of [`proxies_environment`] (whose `HTTP_PROXY` is ignored under
+    /// CGI), else its `all` entry.
     pub(crate) http_proxy: Option<String>,
-    /// `no_proxy` / `NO_PROXY`: comma-separated host patterns that bypass the proxy.
+    /// The `no` entry of [`proxies_environment`] (`no_proxy` / `NO_PROXY`): comma-separated host patterns that
+    /// bypass the proxy.
     pub(crate) no_proxy: Option<String>,
     /// `SSL_CERT_FILE`: a PEM bundle that replaces the platform trust store (OpenSSL semantics).
     pub(crate) cert_file: Option<PathBuf>,
@@ -62,17 +63,23 @@ impl Policy {
         p.node_mirror = p.url_var(env, "SNP_NODE_MIRROR");
         p.node_shasums = p.url_var(env, "SNP_NODE_SHASUMS_URL");
         p.go_json = p.url_var(env, "SNP_GO_JSON_URL");
-        p.https_proxy = p.first_var(
-            env,
-            &["https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"],
-        );
-        p.http_proxy = if env.is_present("REQUEST_METHOD") {
-            // httpoxy: under CGI the HTTP_PROXY header becomes an env var (urllib and curl ignore it too).
-            p.first_var(env, &["http_proxy", "all_proxy", "ALL_PROXY"])
-        } else {
-            p.first_var(env, &["http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"])
+        let proxies = proxies_environment(env);
+        let mut entry = |key: &str| {
+            let (name, value) = proxies
+                .iter()
+                .find(|(k, _, _)| k == key)
+                .map(|(_, n, v)| (n, v))?;
+            if let Some(s) = value.to_str() {
+                Some(s.to_owned())
+            } else {
+                p.error(format!("{} is not valid UTF-8", name.to_string_lossy()));
+                None
+            }
         };
-        p.no_proxy = p.first_var(env, &["no_proxy", "NO_PROXY"]);
+        let (https, http, all, no) = (entry("https"), entry("http"), entry("all"), entry("no"));
+        p.https_proxy = https.or_else(|| all.clone());
+        p.http_proxy = http.or(all);
+        p.no_proxy = no;
         p.cert_file = env.get_nonempty("SSL_CERT_FILE").map(PathBuf::from);
         if let Some(dirs) = env.get_nonempty("SSL_CERT_DIR") {
             p.cert_dirs = std::env::split_paths(dirs)
@@ -80,11 +87,6 @@ impl Policy {
                 .collect();
         }
         p
-    }
-
-    /// The first non-empty UTF-8 value of `names`; a non-UTF-8 value is a configuration error.
-    fn first_var(&mut self, env: &Env, names: &[&str]) -> Option<String> {
-        names.iter().find_map(|name| self.str_var(env, name))
     }
 
     /// A non-empty variable as UTF-8 (a non-UTF-8 value is recorded as a configuration error).
@@ -138,6 +140,53 @@ impl Policy {
         }
         url.to_owned()
     }
+}
+
+/// CPython's `urllib.request.getproxies_environment` (3.12/3.13) over `env`: `(scheme, variable, value)` entries.
+///
+/// Pass 1 takes every non-empty variable whose lowercased name ends in `_proxy` (any case: `HTTPS_PROXY`,
+/// `Https_Proxy`; on a repeat the later variable wins); under CGI (`REQUEST_METHOD` set) the `http` entry is dropped
+/// (httpoxy, CVE-2016-1000110: the `Proxy:` request header arrives as `HTTP_PROXY`). Pass 2 lets every variable whose
+/// name ends in a lowercase `_proxy` override, and a set-but-empty one removes its scheme (`https_proxy=` disables an
+/// `HTTPS_PROXY`). On Windows `os.environ` uppercases every name, so pass 2 never matches there. The `all` entry
+/// (`ALL_PROXY`) is not used by urllib; snp adds it as the fallback of ureq and curl. Non-UTF-8 names are skipped.
+fn proxies_environment(env: &Env) -> Vec<(String, std::ffi::OsString, std::ffi::OsString)> {
+    let mut proxies: Vec<(String, std::ffi::OsString, std::ffi::OsString)> = Vec::new();
+    let mut put = |key: String, name: &std::ffi::OsStr, value: &std::ffi::OsStr| {
+        proxies.retain(|(k, _, _)| *k != key);
+        if !value.is_empty() {
+            proxies.push((key, name.to_os_string(), value.to_os_string()));
+        }
+    };
+    for (name, value) in env.iter() {
+        let Some(lower) = name.to_str().map(str::to_lowercase) else {
+            continue;
+        };
+        if !value.is_empty()
+            && let Some(key) = lower.strip_suffix("_proxy")
+        {
+            put(key.to_owned(), name, value);
+        }
+    }
+    if env.is_present("REQUEST_METHOD") {
+        put(
+            "http".to_owned(),
+            std::ffi::OsStr::new(""),
+            std::ffi::OsStr::new(""),
+        );
+    }
+    if !cfg!(windows) {
+        for (name, value) in env.iter() {
+            if let Some(s) = name.to_str()
+                && s.ends_with("_proxy")
+                && let Some(key) = s.to_lowercase().strip_suffix("_proxy")
+            {
+                put(key.to_owned(), name, value);
+            }
+        }
+    }
+    drop(put);
+    proxies
 }
 
 /// `scheme://` of `url`, lowercased (`None` without `://`).
@@ -207,8 +256,52 @@ mod tests {
             ("REQUEST_METHOD", "GET"),
         ]));
         assert_eq!(cgi.http_proxy, None);
+        // `all` is snp's fallback where urllib's result has no entry for the scheme.
         let all = Policy::from_env(&env(&[("ALL_PROXY", "http://all:4"), ("https_proxy", "")]));
         assert_eq!(all.https_proxy.as_deref(), Some("http://all:4"));
+    }
+
+    /// CPython 3.12.3: `env -i HTTPS_PROXY=http://upper:1 https_proxy= python3.12 -I -c 'import urllib.request as u;
+    /// print(u.getproxies_environment())'` prints `{}`; `no_proxy= NO_PROXY=a` has no `no` entry either.
+    #[test]
+    fn proxies_match_urllib_getproxies_environment() {
+        let p = Policy::from_env(&env(&[
+            ("HTTPS_PROXY", "http://upper:1"),
+            ("https_proxy", ""),
+            ("NO_PROXY", "a"),
+            ("no_proxy", ""),
+            ("Http_Proxy", "http://mixed:2"),
+        ]));
+        // (On Windows the names are one variable each, whose last value is empty.)
+        assert_eq!(p.https_proxy, None);
+        assert_eq!(p.no_proxy, None);
+        // Pass 1 matches any case.
+        assert_eq!(p.http_proxy.as_deref(), Some("http://mixed:2"));
+        // A lowercase-suffixed name of any prefix case overrides in pass 2 (`HTTPS_proxy`).
+        let p = Policy::from_env(&env(&[
+            ("HTTPS_proxy", "http://second:1"),
+            ("HTTPS_PROXY", "http://first:2"),
+        ]));
+        let want = if cfg!(windows) {
+            "http://first:2"
+        } else {
+            "http://second:1"
+        };
+        assert_eq!(p.https_proxy.as_deref(), Some(want));
+        // CGI drops pass 1's `http` (any case), but a lowercase `http_proxy` comes back in pass 2.
+        let p = Policy::from_env(&env(&[
+            ("REQUEST_METHOD", "GET"),
+            ("HTTP_PROXY", "http://header:1"),
+        ]));
+        assert_eq!(p.http_proxy, None);
+        if !cfg!(windows) {
+            let p = Policy::from_env(&env(&[
+                ("REQUEST_METHOD", "GET"),
+                ("HTTP_PROXY", "http://header:1"),
+                ("http_proxy", "http://lower:2"),
+            ]));
+            assert_eq!(p.http_proxy.as_deref(), Some("http://lower:2"));
+        }
     }
 
     #[cfg(unix)]
