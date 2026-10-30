@@ -5,6 +5,9 @@
 
 pub mod diff_oracle;
 mod guard;
+mod journal;
+mod lock;
+mod messages;
 mod recovery;
 
 pub use guard::{StashCtx, StashGuard, Stashed, enter};
