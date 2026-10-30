@@ -22,7 +22,7 @@
 //! | `stdin` | copy stdin to stdout |
 //! | `fail-on NAME FILES…` | exit 1 if a file argument equals NAME, else print the files |
 //! | `ntstatus HEX` | exit with the 32-bit code HEX (Windows NTSTATUS) |
-//! | `trap FILE [MS [TIMEOUT]]` | POSIX: create `FILE.ready` once the handlers are installed, append each SIGINT/SIGTERM/SIGHUP name to FILE; MS ms (default 300) after the first signal exit 128+signo; exit 0 after `TIMEOUT_MS` (default 60000) without a signal |
+//! | `trap FILE [MS [TIMEOUT]]` | create `FILE.ready` once the handlers are installed, append each SIGINT/SIGTERM/SIGHUP name (Windows: each console control event as `INT`) to FILE; MS ms (default 300) after the first signal exit 128+signo; exit 0 after `TIMEOUT_MS` (default 60000) without a signal |
 //! | `fill BYTES` | BYTES bytes of the repeating pattern `0123456789abcdef` (output-budget tests) |
 //!
 //! Owner: WP-15.
@@ -342,67 +342,98 @@ fn daemon_child(rest: &[OsString]) {
 
 /// `trap FILE [MS [TIMEOUT_MS]]`: records SIGINT/SIGTERM/SIGHUP (POSIX).
 fn trap(rest: &[OsString]) -> Result<i32, End> {
-    #[cfg(unix)]
-    {
-        use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
-        let Some(file) = rest.first() else {
-            return Err(End::Usage("trap expects FILE".to_owned()));
-        };
-        let linger = match rest.get(1) {
-            Some(ms) => parse_int::<u64>(Some(ms), "trap")?,
-            None => 300,
-        };
-        let timeout = match rest.get(2) {
-            Some(ms) => parse_int::<u64>(Some(ms), "trap")?,
-            None => 60_000,
-        };
-        let mut signals = signal_hook::iterator::Signals::new([SIGINT, SIGTERM, SIGHUP])
-            .map_err(|e| End::Usage(format!("trap: {e}")))?;
-        let mut ready = file.clone();
-        ready.push(".ready");
-        std::fs::write(&ready, b"").map_err(|e| End::Usage(format!("trap: {e}")))?;
-        let record = |sig: i32| {
-            let name = match sig {
-                SIGINT => "INT",
-                SIGTERM => "TERM",
-                _ => "HUP",
-            };
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open(file)
-            {
-                let _ignored = writeln!(f, "{name}");
-            }
-        };
-        let start = std::time::Instant::now();
-        let mut first: Option<i32> = None;
-        loop {
-            for sig in signals.pending() {
-                record(sig);
-                first = first.or(Some(sig));
-            }
-            if let Some(sig) = first {
-                let until = std::time::Instant::now().checked_add(Duration::from_millis(linger));
-                while until.is_some_and(|u| std::time::Instant::now() < u) {
-                    std::thread::sleep(Duration::from_millis(5));
-                    for later in signals.pending() {
-                        record(later);
-                    }
-                }
-                return Ok(sig.saturating_add(128));
-            }
-            if start.elapsed() > Duration::from_millis(timeout) {
-                return Ok(0);
-            }
-            std::thread::sleep(Duration::from_millis(5));
+    let Some(file) = rest.first() else {
+        return Err(End::Usage("trap expects FILE".to_owned()));
+    };
+    let linger = match rest.get(1) {
+        Some(ms) => parse_int::<u64>(Some(ms), "trap")?,
+        None => 300,
+    };
+    let timeout = match rest.get(2) {
+        Some(ms) => parse_int::<u64>(Some(ms), "trap")?,
+        None => 60_000,
+    };
+    let mut pending = trap_source()?;
+    let mut ready = file.clone();
+    ready.push(".ready");
+    std::fs::write(&ready, b"").map_err(|e| End::Usage(format!("trap: {e}")))?;
+    let record = |name: &str| {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(file)
+        {
+            let _ignored = writeln!(f, "{name}");
         }
+    };
+    let start = std::time::Instant::now();
+    let mut first: Option<i32> = None;
+    loop {
+        for (name, code) in pending() {
+            record(name);
+            first = first.or(Some(code));
+        }
+        if let Some(code) = first {
+            let until = std::time::Instant::now().checked_add(Duration::from_millis(linger));
+            while until.is_some_and(|u| std::time::Instant::now() < u) {
+                std::thread::sleep(Duration::from_millis(5));
+                for (later, _) in pending() {
+                    record(later);
+                }
+            }
+            return Ok(code.saturating_add(128));
+        }
+        if start.elapsed() > Duration::from_millis(timeout) {
+            return Ok(0);
+        }
+        std::thread::sleep(Duration::from_millis(5));
     }
-    #[cfg(not(unix))]
-    {
-        let _: &[OsString] = rest;
-        Err(End::Usage("trap is POSIX-only".to_owned()))
-    }
+}
+
+/// The signals received since the last call, as `(name, signo)`.
+type Pending = Box<dyn FnMut() -> Vec<(&'static str, i32)>>;
+
+/// POSIX: SIGINT/SIGTERM/SIGHUP through signal-hook.
+#[cfg(unix)]
+fn trap_source() -> Result<Pending, End> {
+    use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+    let mut signals = signal_hook::iterator::Signals::new([SIGINT, SIGTERM, SIGHUP])
+        .map_err(|e| End::Usage(format!("trap: {e}")))?;
+    Ok(Box::new(move || {
+        signals
+            .pending()
+            .map(|sig| {
+                let name = match sig {
+                    SIGINT => "INT",
+                    SIGTERM => "TERM",
+                    _ => "HUP",
+                };
+                (name, sig)
+            })
+            .collect()
+    }))
+}
+
+/// Windows: console control events (`CTRL_C`/`CTRL_BREAK`, close) through ctrlc, recorded as `INT` (signo 2). A
+/// process started with `CREATE_NEW_PROCESS_GROUP` has `CTRL_C` disabled and never records it.
+#[cfg(windows)]
+fn trap_source() -> Result<Pending, End> {
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    ctrlc::set_handler(move || {
+        let _ignored = tx.send(());
+    })
+    .map_err(|e| End::Usage(format!("trap: {e}")))?;
+    Ok(Box::new(move || {
+        rx.try_iter().map(|()| ("INT", 2)).collect()
+    }))
+}
+
+/// Elsewhere: no signals.
+#[cfg(not(any(unix, windows)))]
+fn trap_source() -> Result<Pending, End> {
+    Err(End::Usage(
+        "trap is not supported on this platform".to_owned(),
+    ))
 }
 
 /// Python's `isatty()` per stream and the stdin file type.

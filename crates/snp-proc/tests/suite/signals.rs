@@ -1,5 +1,5 @@
-//! The ARCHITECTURE §10.4 signal matrix as POSIX process tests (ADR-065): a driver process (this test binary
-//! re-executed) installs snp's handler and runs an Inherit-group hook, an isolated hook group and a Critical
+//! The ARCHITECTURE §10.4 signal matrix as POSIX process tests, plus the Windows console `CTRL_C` test (ADR-065):
+//! a driver process (this test binary re-executed) installs snp's handler and runs an Inherit-group hook, an isolated hook group and a Critical
 //! command, each a `snp-probe trap` that records the signals it receives; the test then signals the driver — with
 //! kill(2) (origin Sent) or through a pseudo-terminal it controls (origin Kernel: ^C, hangup) — and checks who was
 //! signalled, that kernel-generated signals are never re-sent, that isolated groups get the signal by `-pgid`, that
@@ -18,6 +18,7 @@ pub(crate) fn drive(scenario: &str) -> bool {
     match scenario {
         "matrix" => matrix(),
         "shield" => shield(),
+        "win_ctrlc" => win_ctrlc(),
         _ => return false,
     }
     true
@@ -144,6 +145,76 @@ fn shield() {
 
 #[cfg(not(unix))]
 fn shield() {}
+
+/// The driver side of the Windows `CTRL_C` test: an Inherit and an Isolated (`CREATE_NEW_PROCESS_GROUP`) hook, each
+/// a `snp-probe trap` lingering 5 s after an event and exiting 0 by itself after 60 s.
+#[cfg(windows)]
+fn win_ctrlc() {
+    use std::ffi::OsString;
+
+    use snp_core::cancel::CancelToken;
+    use snp_proc::signals;
+    use snp_proc::spawn::{self, Group, Role, Spec, Stdin};
+
+    let dir = PathBuf::from(driver_param("SNP_PROC_TEST_DIR").unwrap());
+    let cancel = CancelToken::new();
+    let _guard = signals::install(cancel.clone(), false).unwrap();
+    let probe = probe().into_os_string();
+    let argv = |name: &str| -> Vec<OsString> {
+        vec![
+            probe.clone(),
+            OsString::from("trap"),
+            dir.join(name).into_os_string(),
+            OsString::from("5000"),
+            OsString::from("60000"),
+        ]
+    };
+    let (inherit, isolated) = (argv("inherit"), argv("iso"));
+    let env = crate::common::env();
+    let budget = crate::common::budget();
+    let spec = |argv, group| Spec {
+        argv,
+        env: &env,
+        cwd: &dir,
+        stdin: Stdin::EmptyPipe,
+        group,
+        role: Role::Hook,
+        deadline: None,
+        cancel: &cancel,
+    };
+    let t0 = std::time::Instant::now();
+    std::thread::scope(|s| {
+        let h_inherit = std::thread::Builder::new()
+            .spawn_scoped(s, || {
+                spawn::merged(&spec(&inherit, Group::Inherit), false, &budget).unwrap()
+            })
+            .unwrap();
+        let h_iso = std::thread::Builder::new()
+            .spawn_scoped(s, || {
+                spawn::merged(&spec(&isolated, Group::Isolated), false, &budget).unwrap()
+            })
+            .unwrap();
+        for n in ["inherit", "iso"] {
+            assert!(
+                wait_for(&dir.join(format!("{n}.ready")), 30),
+                "{n} not ready"
+            );
+        }
+        report("ready", 1);
+        let i = h_inherit.join().unwrap();
+        let g = h_iso.join().unwrap();
+        report("inherit_status", i.status.0);
+        report("inherit_interrupted", i.interrupted);
+        report("iso_status", g.status.0);
+        report("iso_interrupted", g.interrupted);
+    });
+    report("took_ms", t0.elapsed().as_millis());
+    report("reason", format!("{:?}", cancel.reason()));
+    report("done", 1);
+}
+
+#[cfg(not(windows))]
+fn win_ctrlc() {}
 
 #[cfg(unix)]
 mod posix {
@@ -428,4 +499,142 @@ fn restore_shield_prints_one_notice() {
     assert_eq!(result(&r, "reason"), Some("Some(Interrupt)"), "{r:?}");
     assert_eq!(result(&r, "done"), Some("1"));
     assert!(st.success());
+}
+
+/// Windows (ARCH §10.4, WBS WP-15): a console `CTRL_C` reaches the Inherit hook (the console delivers it; snp only
+/// cancels), never the Isolated (`CREATE_NEW_PROCESS_GROUP`) one, and both hooks' Job Objects are terminated after
+/// the grace (`SNP_KILL_GRACE=1`), long before the probes' own 60 s timeout. The driver runs on a console of its own
+/// (`CREATE_NEW_CONSOLE`); a PowerShell helper attaches to it and calls `GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0)`
+/// through `Add-Type` (no unsafe Rust anywhere).
+#[cfg(windows)]
+#[test]
+fn windows_ctrl_c_reaches_inherit_children_only() {
+    use std::os::windows::process::CommandExt;
+    use std::process::Stdio;
+    use std::time::Instant;
+
+    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("results");
+    let mut child = driver_command("catalog::driver_entry", "win_ctrlc")
+        .env("SNP_KILL_GRACE", "1")
+        .env("SNP_PROC_TEST_DIR", dir.path())
+        .env("SNP_PROC_TEST_OUT", &out)
+        .creation_flags(CREATE_NEW_CONSOLE)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let t0 = Instant::now();
+    while result(&results(&out), "ready").is_none() {
+        assert!(
+            t0.elapsed() < Duration::from_secs(60),
+            "driver never became ready: {:?}",
+            results(&out)
+        );
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "driver exited early: {:?}",
+            results(&out)
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let script = format!(
+        r#"$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class SnpConsole {{
+    [DllImport("kernel32.dll", SetLastError = true)] public static extern bool FreeConsole();
+    [DllImport("kernel32.dll", SetLastError = true)] public static extern bool AttachConsole(uint pid);
+    [DllImport("kernel32.dll", SetLastError = true)] public static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add);
+    [DllImport("kernel32.dll", SetLastError = true)] public static extern bool GenerateConsoleCtrlEvent(uint ev, uint group);
+}}
+'@
+[void][SnpConsole]::FreeConsole()
+if (-not [SnpConsole]::AttachConsole({pid})) {{ exit 2 }}
+[void][SnpConsole]::SetConsoleCtrlHandler([IntPtr]::Zero, $true)
+if (-not [SnpConsole]::GenerateConsoleCtrlEvent(0, 0)) {{ exit 3 }}
+Start-Sleep -Milliseconds 300
+[void][SnpConsole]::FreeConsole()
+exit 0
+"#,
+        pid = child.id()
+    );
+    let st = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-EncodedCommand"])
+        .arg(encoded_command(&script))
+        .stdin(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(st.success(), "the CTRL_C helper failed: {st:?}");
+    let t1 = Instant::now();
+    let st = loop {
+        if let Some(st) = child.try_wait().unwrap() {
+            break st;
+        }
+        assert!(
+            t1.elapsed() < Duration::from_secs(60),
+            "driver hung: {:?}",
+            results(&out)
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let r = results(&out);
+    assert!(st.success(), "{st:?} {r:?}");
+    assert_eq!(
+        trapped(&dir.path().join("inherit")),
+        ["INT"],
+        "the console delivers CTRL_C to Inherit children: {r:?}"
+    );
+    assert!(
+        trapped(&dir.path().join("iso")).is_empty(),
+        "CREATE_NEW_PROCESS_GROUP children never see CTRL_C: {r:?}"
+    );
+    assert_eq!(result(&r, "reason"), Some("Some(Interrupt)"), "{r:?}");
+    // Both were terminated with their Job Object after the 1 s grace: neither lingered 5 s nor reached its timeout.
+    assert_eq!(result(&r, "inherit_interrupted"), Some("true"), "{r:?}");
+    assert_eq!(result(&r, "iso_interrupted"), Some("true"), "{r:?}");
+    assert_ne!(result(&r, "iso_status"), Some("0"), "{r:?}");
+    assert_ne!(result(&r, "inherit_status"), Some("130"), "{r:?}");
+    assert!(t1.elapsed() < Duration::from_secs(15), "{r:?}");
+}
+
+/// PowerShell's `-EncodedCommand`: base64 of the UTF-16LE script.
+fn encoded_command(script: &str) -> String {
+    const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let mut out = String::new();
+    let (full, rest) = bytes.as_chunks::<3>();
+    let mut last = [0_u8; 3];
+    for (dst, src) in last.iter_mut().zip(rest) {
+        *dst = *src;
+    }
+    let groups = full
+        .iter()
+        .map(|c| (*c, 3))
+        .chain((!rest.is_empty()).then_some((last, rest.len())));
+    for (b, len) in groups {
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= len {
+                out.push(char::from(
+                    B64[usize::try_from((n >> (18 - 6 * i)) & 63).unwrap()],
+                ));
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// The base64 encoder of the Windows test (checked on every OS).
+#[test]
+fn encoded_command_base64() {
+    // "ab" in UTF-16LE = 61 00 62 00; "abc" = 61 00 62 00 63 00.
+    assert_eq!(encoded_command("ab"), "YQBiAA==");
+    assert_eq!(encoded_command("a"), "YQA=");
+    assert_eq!(encoded_command("abc"), "YQBiAGMA");
 }

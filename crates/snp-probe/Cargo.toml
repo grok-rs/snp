@@ -18,6 +18,7 @@ rustix.workspace = true
 signal-hook.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+ctrlc.workspace = true
 winapi-util.workspace = true
 
 [lints]

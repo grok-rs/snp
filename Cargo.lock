@@ -1315,6 +1315,7 @@ dependencies = [
 name = "snp-probe"
 version = "2.0.0"
 dependencies = [
+ "ctrlc",
  "rustix",
  "signal-hook",
  "winapi-util",

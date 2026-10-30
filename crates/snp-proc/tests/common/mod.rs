@@ -144,7 +144,6 @@ pub(crate) fn result<'a>(results: &'a [(String, String)], key: &str) -> Option<&
 }
 
 /// Waits until `path` exists (bounded).
-#[cfg(unix)]
 pub(crate) fn wait_for(path: &Path, secs: u64) -> bool {
     let t0 = Instant::now();
     while t0.elapsed().as_secs() < secs {
@@ -157,7 +156,6 @@ pub(crate) fn wait_for(path: &Path, secs: u64) -> bool {
 }
 
 /// The lines of a trap file (missing → none).
-#[cfg(unix)]
 pub(crate) fn trapped(path: &Path) -> Vec<String> {
     std::fs::read_to_string(path)
         .unwrap_or_default()

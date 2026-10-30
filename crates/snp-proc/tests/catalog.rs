@@ -12,7 +12,7 @@ mod common;
 #[path = "suite/process.rs"]
 mod process;
 #[cfg(test)]
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[path = "suite/signals.rs"]
 mod signals;
 
@@ -48,13 +48,13 @@ mod catalog {
         );
     }
 
-    /// The signal scenarios (POSIX only).
+    /// The signal scenarios (POSIX matrix, Windows console events).
     fn signals_drive(scenario: &str) -> bool {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             crate::signals::drive(scenario)
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             let _: &str = scenario;
             false
