@@ -76,16 +76,16 @@ mod properties {
             }
             _ => {}
         }
-        let mut os = OsString::from(s);
-        if cfg!(unix) && rng.below(30) == 0 {
-            #[cfg(unix)]
-            {
-                use std::os::unix::ffi::OsStringExt as _;
-                let mut b = os.into_vec();
-                b.push(0xff);
-                os = OsString::from_vec(b);
-            }
-        }
+        let os = OsString::from(s);
+        #[cfg(unix)]
+        let os = if rng.below(30) == 0 {
+            use std::os::unix::ffi::OsStringExt as _;
+            let mut b = os.into_vec();
+            b.push(0xff);
+            OsString::from_vec(b)
+        } else {
+            os
+        };
         os
     }
 

@@ -278,6 +278,22 @@ mod tests {
         assert!(want.contains(&("snp".to_owned(), "cmd:completions".to_owned())));
     }
 
+    /// The committed scripts (shipped through `snp_cli::COMPLETIONS`) and the man page are exactly what the
+    /// generators render from `SNP_SPEC` now: `cargo xtask completions --check` as a test, so editing the spec
+    /// without regenerating, or hand-editing a script, fails wherever the workspace tests run.
+    #[test]
+    fn committed_completions_are_fresh() {
+        let dir = workspace::root().unwrap().join(OUT_DIR);
+        for &(file, shell) in FILES {
+            let want = render(file, shell).unwrap();
+            let got = std::fs::read(dir.join(file)).unwrap();
+            assert!(
+                got == want,
+                "{OUT_DIR}/{file} is stale: run `cargo xtask completions`"
+            );
+        }
+    }
+
     #[test]
     fn every_generator_renders() {
         for &(file, shell) in FILES {
