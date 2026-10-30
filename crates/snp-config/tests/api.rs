@@ -324,6 +324,9 @@ mod api {
         has::<fn(&str) -> String>(overlay::unknown_hook_note);
         has::<fn(&Path, &OsStr) -> Result<Vec<u8>, ConfigError>>(migrate::read_config);
         has::<[&str; 2]>([migrate::MIGRATED, migrate::ALREADY_MIGRATED]);
+        has::<fn(&[u8], &[RevUpdate], ExtMode) -> Result<Rewrite, ConfigError>>(
+            revline::rewrite_with,
+        );
         has::<fn(FileKind, &OsStr, &LoadOpts<'_>, bool) -> Result<(), ConfigError>>(
             validate::validate,
         );

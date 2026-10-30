@@ -24,7 +24,7 @@ use snp_yaml::emit::{Quote, redump, scalar_for_rev};
 
 use crate::items::{BUILTIN, LOCAL, META};
 use crate::load::limits;
-use crate::{ConfigError, messages};
+use crate::{ConfigError, ExtMode, messages};
 
 /// One repo's new `rev` (and `# frozen: …` comment).
 #[derive(Debug, Clone)]
@@ -52,7 +52,7 @@ fn invalid(msg: String) -> ConfigError {
 }
 
 /// The `repos` entries that have a rev line, as indices into `repos` (`config_repos`, `autoupdate.py:174-177`).
-fn rev_repo_indices(text: &str) -> Result<Vec<usize>, ConfigError> {
+fn rev_repo_indices(text: &str, ext: ExtMode) -> Result<Vec<usize>, ConfigError> {
     let value =
         snp_yaml::load(&universal_newlines(text), &limits()).map_err(|e| invalid(e.to_string()))?;
     let repos = value
@@ -68,7 +68,11 @@ fn rev_repo_indices(text: &str) -> Result<Vec<usize>, ConfigError> {
                 .as_map()
                 .and_then(|m| m.get(&Value::from("repo")))
                 .and_then(Value::as_str);
-            !matches!(url, Some(LOCAL | META | BUILTIN))
+            match url {
+                Some(LOCAL | META) => false,
+                Some(BUILTIN) => ext == ExtMode::Strict,
+                _ => true,
+            }
         })
         .map(|(i, _)| i)
         .collect())
@@ -169,8 +173,18 @@ fn apply(text: &str, repo_indices: &[usize], updates: &[RevUpdate]) -> Option<St
 /// `original` is the file's bytes (strict UTF-8, line endings as on disk). An update whose `repo_index` names a
 /// repo without a rev line is ignored.
 pub fn rewrite(original: &[u8], updates: &[RevUpdate]) -> Result<Rewrite, ConfigError> {
+    rewrite_with(original, updates, ExtMode::Enabled)
+}
+
+/// [`rewrite`] under an explicit [`ExtMode`]: with `Strict` (`SNP_COMPAT_STRICT=1`) `repo: builtin` is an ordinary
+/// remote URL with a `rev:` line, as in pre-commit (only `local` and `meta` are skipped, `autoupdate.py:174-177`).
+pub fn rewrite_with(
+    original: &[u8],
+    updates: &[RevUpdate],
+    ext: ExtMode,
+) -> Result<Rewrite, ConfigError> {
     let text = snp_pycompat::codec::decode_utf8(original).map_err(|e| invalid(e.to_string()))?;
-    let repo_indices = rev_repo_indices(text)?;
+    let repo_indices = rev_repo_indices(text, ext)?;
     if let Some(out) = apply(text, &repo_indices, updates) {
         return Ok(Rewrite::Lines(out.into_bytes()));
     }
@@ -228,6 +242,24 @@ mod tests {
     fn local_repos_are_skipped() {
         let src =
             "repos:\n-   repo: local\n    hooks: []\n-   repo: r\n    rev: v1\n    hooks: []\n";
+        let out = lines_of(rewrite(src.as_bytes(), &[up(1, "v2", None)]).unwrap());
+        assert_eq!(out, src.replace("v1", "v2"));
+    }
+
+    #[test]
+    fn builtin_has_a_rev_line_only_in_strict_mode() {
+        let src = "repos:\n-   repo: builtin\n    rev: v1.0.0\n    hooks: []\n-   repo: https://x/r\n    rev: v1.0.0\n    hooks: []\n";
+        let out = lines_of(
+            rewrite_with(src.as_bytes(), &[up(1, "v2.0.0", None)], ExtMode::Strict).unwrap(),
+        );
+        assert_eq!(
+            out,
+            "repos:\n-   repo: builtin\n    rev: v1.0.0\n    hooks: []\n-   repo: https://x/r\n    rev: v2.0.0\n    hooks: []\n"
+        );
+        let out =
+            lines_of(rewrite_with(src.as_bytes(), &[up(0, "v3", None)], ExtMode::Strict).unwrap());
+        assert_eq!(out, src.replacen("v1.0.0", "v3", 1));
+        let src = "repos:\n-   repo: builtin\n    hooks: []\n-   repo: https://x/r\n    rev: v1\n    hooks: []\n";
         let out = lines_of(rewrite(src.as_bytes(), &[up(1, "v2", None)]).unwrap());
         assert_eq!(out, src.replace("v1", "v2"));
     }
