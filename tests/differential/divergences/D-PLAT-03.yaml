@@ -1,5 +1,38 @@
-# D-PLAT-03 (SEC, owner WP-15): Rust's BatBadBut-safe quoting; arguments containing CR/LF fail the hook with Executable {cmd0} cannot receive an argument containing a line break: {repr} (rc…
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-PLAT-03 (PLAT/SEC, owner WP-15): Windows batch hooks receive file names literally (BatBadBut-safe quoting).
+# pre-commit lets cmd.exe interpret `&` in an unquoted file name (the second command runs); snp passes the name
+# quoted (docs/divergences/D-PLAT-03.md).
+name: divergences/D-PLAT-03
+since: "4.1.0"
 expect_divergence: D-PLAT-03
-status: stub
+requires:
+  git: ">=2.31"
+  net: false
+  tools: []
+  os: [windows]
+  pty: false
+work:
+  files:
+    run.cmd: "@echo off\r\necho %*\r\n"
+    "a&echo INJECTED.txt": "x\n"
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: batch-echo
+            name: batch echo
+            entry: run.cmd
+            language: system
+            files: \.txt$
+            verbose: true
+  commit: [".pre-commit-config.yaml", run.cmd, "a&echo INJECTED.txt"]
+steps:
+  - tool: [run, --all-files]
+    env:
+      # run.cmd is found through PATH (the work tree root first).
+      PATH: "${work};${env:PATH}"
+compare:
+  # Diverges by design in the hook output (pre-commit executes the injected `echo`).
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true

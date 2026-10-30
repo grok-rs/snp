@@ -1,8 +1,9 @@
 //! `parse_shebang.find_executable` / `normexe` / `normalize_cmd` (15 §A4.11, ADR-014).
 //!
 //! W0 working baseline (ADR-071): exact ports with an explicit `cwd` (snp never chdirs, so every relative path is
-//! checked against `cwd` where Python checks against the process cwd); `os.access(X_OK)` is file-identify's
-//! `ExecPolicy::PythonCompat`. WP-15 owns and completes the module without changing a signature.
+//! checked against `cwd` where Python checks against the process cwd). `os.access(X_OK)` is the real `access(2)` call
+//! on Unix (real uid/gids, ACLs, `noexec` mounts, LSMs, root's rules — exactly CPython's `os.access`) and file-identify's
+//! `ExecPolicy::PythonCompat` on Windows. WP-15 owns and completes the module without changing a signature.
 //!
 //! Owner: WP-15.
 
@@ -10,7 +11,8 @@ use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use file_identify::{ExecPolicy, IdentifyError};
+#[cfg(not(unix))]
+use file_identify::ExecPolicy;
 use snp_core::env::Env;
 use snp_core::failure::pyerr;
 use snp_pycompat::ospath;
@@ -58,9 +60,22 @@ fn at(cwd: &Path, p: &OsStr) -> PathBuf {
     }
 }
 
+/// `os.access(p, os.X_OK)`: `access(2)` with the real uid/gids on Unix (what CPython calls), so `noexec` mounts,
+/// POSIX ACLs and LSMs decide exactly as for pre-commit; file-identify's `PythonCompat` emulation on Windows.
+#[cfg(unix)]
+fn access_x(p: &Path, _md: &std::fs::Metadata) -> bool {
+    rustix::fs::access(p, rustix::fs::Access::EXEC_OK).is_ok()
+}
+
+/// `os.access(p, os.X_OK)` (Windows: CPython's rule, the file exists).
+#[cfg(not(unix))]
+fn access_x(_p: &Path, md: &std::fs::Metadata) -> bool {
+    ExecPolicy::PythonCompat.is_executable(md)
+}
+
 /// `os.path.isfile(p) and os.access(p, os.X_OK)`.
 fn is_executable_file(p: &Path) -> bool {
-    std::fs::metadata(p).is_ok_and(|md| md.is_file() && ExecPolicy::PythonCompat.is_executable(&md))
+    std::fs::metadata(p).is_ok_and(|md| md.is_file() && access_x(p, &md))
 }
 
 /// `parse_shebang.find_executable(name, env=…)` with an explicit cwd.
@@ -105,6 +120,9 @@ pub enum ExeError {
     /// "Executable `x` is not executable".
     NotExecutable(OsString),
     /// Reading the shebang failed (identify lets the `OSError` propagate).
+    ///
+    /// The error's kind is the OS error's and its text is the complete `str(OSError)` including the file name
+    /// (`[Errno 13] Permission denied: './x'`), as pre-commit's crash line shows it.
     Io(io::Error),
 }
 
@@ -119,9 +137,18 @@ impl ExeError {
             Self::NotExecutable(o) => (o, "is not executable"),
             Self::Io(e) => return pyerr::os_error_text(e, None, None),
         };
-        format!("Executable `{}` {what}", orig.to_string_lossy())
+        crate::messages::executable(orig, what)
     }
 }
+
+impl std::fmt::Display for ExeError {
+    /// [`ExeError::message`].
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message())
+    }
+}
+
+impl std::error::Error for ExeError {}
 
 /// `parse_shebang.normexe(orig, env=…)`.
 ///
@@ -132,43 +159,92 @@ pub fn normexe(orig: &OsStr, env: &Env, cwd: &Path) -> Result<PathBuf, ExeError>
         return find_executable(orig, env, cwd)
             .ok_or_else(|| ExeError::NotFound(orig.to_os_string()));
     }
-    let md = std::fs::metadata(at(cwd, orig));
-    match md {
+    let full = at(cwd, orig);
+    match std::fs::metadata(&full) {
         Ok(md) if md.is_dir() => Err(ExeError::IsDirectory(orig.to_os_string())),
         Ok(md) if !md.is_file() => Err(ExeError::NotFound(orig.to_os_string())),
         Err(_) => Err(ExeError::NotFound(orig.to_os_string())),
-        Ok(md) if !ExecPolicy::PythonCompat.is_executable(&md) => {
-            Err(ExeError::NotExecutable(orig.to_os_string()))
-        }
+        Ok(md) if !access_x(&full, &md) => Err(ExeError::NotExecutable(orig.to_os_string())),
         Ok(_) => Ok(PathBuf::from(orig)),
     }
 }
 
 /// `parse_shebang.parse_filename`: `()` unless the file exists, else identify's `parse_shebang_from_file`.
+///
+/// identify: `os.path.lexists` (true here: `exists` passed) → `os.access(X_OK)` false gives `()` → `open(path, 'rb')`
+/// and `parse_shebang(f)`, an `EINVAL` from open or read gives `()`, any other `OSError` propagates. The `X_OK` gate
+/// is [`access_x`] (the real `access(2)` on Unix); the parsing is `file_identify::parse_shebang` (non-UTF-8 → `()`,
+/// identify parity). The shebang line is capped at 64 KiB by file-identify (a longer line counts as no shebang,
+/// D-SEC-09).
 fn parse_filename(exe: &Path, cwd: &Path) -> Result<Vec<OsString>, ExeError> {
     let full = at(cwd, exe.as_os_str());
-    if std::fs::metadata(&full).is_err() {
+    let Ok(md) = std::fs::metadata(&full) else {
+        return Ok(Vec::new());
+    };
+    // Only regular files are ever opened (a FIFO would block; normexe already required a regular file).
+    if !md.is_file() || !access_x(&full, &md) {
         return Ok(Vec::new());
     }
-    match file_identify::parse_shebang_from_file_with(&full, ExecPolicy::PythonCompat) {
+    let os_error = |e: &io::Error| {
+        // `open(path, 'rb')` names the path as Python saw it (relative to the cwd).
+        ExeError::Io(io::Error::new(
+            e.kind(),
+            pyerr::os_error_text(e, Some(exe.as_os_str()), None),
+        ))
+    };
+    shebang_of(&full).map_err(|e| os_error(&e))
+}
+
+/// `try: open(path, 'rb')` + `parse_shebang(f)` / `except OSError: EINVAL → ()` once `os.access(X_OK)` passed.
+#[cfg(unix)]
+fn shebang_of(full: &Path) -> io::Result<Vec<OsString>> {
+    match std::fs::File::open(full).and_then(file_identify::parse_shebang) {
         Ok(cmd) => Ok(cmd.into_iter().map(OsString::from).collect()),
-        Err(IdentifyError::PathNotFound { source, .. } | IdentifyError::IoError { source }) => {
-            Err(ExeError::Io(source))
+        Err(e) if e.raw_os_error() == Some(rustix::io::Errno::INVAL.raw_os_error()) => {
+            Ok(Vec::new())
         }
-        Err(other) => Err(ExeError::Io(io::Error::other(other.to_string()))),
+        Err(e) => Err(e),
     }
 }
 
-/// normexe → shebang (`file_identify::parse_shebang_from_file_with`, empty for non-UTF-8 = identify parity) →
+/// identify's `parse_shebang_from_file` (Windows: `PythonCompat` is CPython's `os.access` there).
+#[cfg(not(unix))]
+fn shebang_of(full: &Path) -> io::Result<Vec<OsString>> {
+    match file_identify::parse_shebang_from_file_with(full, ExecPolicy::PythonCompat) {
+        Ok(cmd) => Ok(cmd.into_iter().map(OsString::from).collect()),
+        Err(
+            file_identify::IdentifyError::PathNotFound { source, .. }
+            | file_identify::IdentifyError::IoError { source },
+        ) => Err(source),
+        Err(other) => Err(io::Error::other(other.to_string())),
+    }
+}
+
+/// normexe → shebang (`file_identify::parse_shebang` behind `access(2)`, empty for non-UTF-8 = identify parity) →
 /// normexe again; Windows-only basename fallback for absolute shebang interpreters (D-PLAT-02).
 ///
-/// An empty `cmd` (Python: `IndexError`) is `NotFound("")`.
+/// `parse_shebang.normalize_cmd` (`parse_shebang.py:65-85`): exactly one level of shebang interpretation; the
+/// interpreter goes through `PATH` with the same error texts. The D-PLAT-02 fallback applies only to an interpreter
+/// that came from a shebang and starts with `/` (Git for Windows' `parse_interpreter`): `#!/bin/sh` resolves `sh` on
+/// `PATH`; when that fails too, pre-commit's message names the original interpreter. An empty `cmd` (Python:
+/// `IndexError`) is `NotFound("")`.
 pub fn normalize_cmd(cmd: &[OsString], env: &Env, cwd: &Path) -> Result<Vec<OsString>, ExeError> {
+    normalize_cmd_impl(cmd, env, cwd, cfg!(windows))
+}
+
+/// [`normalize_cmd`] with the D-PLAT-02 fallback switchable (tested on every OS).
+fn normalize_cmd_impl(
+    cmd: &[OsString],
+    env: &Env,
+    cwd: &Path,
+    basename_fallback_on: bool,
+) -> Result<Vec<OsString>, ExeError> {
     let Some((first, rest)) = cmd.split_first() else {
         return Err(ExeError::NotFound(OsString::new()));
     };
     let exe = normexe(first, env, cwd)?;
     let shebang = parse_filename(&exe, cwd)?;
+    let from_shebang = !shebang.is_empty();
     let mut full: Vec<OsString> = shebang;
     full.push(exe.into_os_string());
     full.extend(rest.iter().cloned());
@@ -177,13 +253,12 @@ pub fn normalize_cmd(cmd: &[OsString], env: &Env, cwd: &Path) -> Result<Vec<OsSt
     };
     let exe = match normexe(head, env, cwd) {
         Ok(exe) => exe,
-        Err(ExeError::NotFound(orig)) if cfg!(windows) && has_sep(&orig, true) => {
-            // D-PLAT-02: `#!/bin/sh` on Windows falls back to `sh` on PATH (Git for Windows semantics).
-            let base = ospath::basename(&orig);
-            if base.is_empty() {
-                return Err(ExeError::NotFound(orig));
-            }
-            normexe(&base, env, cwd).map_err(|_| ExeError::NotFound(orig))?
+        Err(ExeError::NotFound(orig))
+            if basename_fallback_on
+                && from_shebang
+                && orig.as_encoded_bytes().starts_with(b"/") =>
+        {
+            basename_fallback(&orig, env, cwd)?
         }
         Err(e) => return Err(e),
     };
@@ -193,13 +268,65 @@ pub fn normalize_cmd(cmd: &[OsString], env: &Env, cwd: &Path) -> Result<Vec<OsSt
     Ok(out)
 }
 
+/// D-PLAT-02: `find_executable(basename(interp))`, keeping pre-commit's "not found" text for `interp` otherwise.
+fn basename_fallback(orig: &OsStr, env: &Env, cwd: &Path) -> Result<PathBuf, ExeError> {
+    let base = ospath::basename(orig);
+    if base.is_empty() || has_sep(&base, true) {
+        return Err(ExeError::NotFound(orig.to_os_string()));
+    }
+    find_executable(&base, env, cwd).ok_or_else(|| ExeError::NotFound(orig.to_os_string()))
+}
+
 /// `current_exe` → absolute, not canonicalised (03 H.8.1).
+///
+/// Computed once per process. On Linux a binary replaced while running reads as `<path> (deleted)`; then
+/// `/proc/self/exe` (which still executes the running image) is used.
 pub fn self_exe() -> io::Result<PathBuf> {
+    static CACHE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    if let Some(p) = CACHE.get() {
+        return Ok(p.clone());
+    }
     let exe = std::env::current_exe()?;
-    if exe.is_absolute() {
-        Ok(exe)
+    let exe = if exe.is_absolute() {
+        exe
     } else {
-        std::path::absolute(exe)
+        std::path::absolute(exe)?
+    };
+    #[cfg(target_os = "linux")]
+    let exe = if exe.as_os_str().as_encoded_bytes().ends_with(b" (deleted)") && !exe.exists() {
+        let proc_exe = PathBuf::from("/proc/self/exe");
+        if proc_exe.exists() { proc_exe } else { exe }
+    } else {
+        exe
+    };
+    Ok(CACHE.get_or_init(|| exe).clone())
+}
+
+/// Windows: `PATHEXT` is tried directory-major (every extension in the first `PATH` entry before the second one),
+/// extensions before the bare name, with the extension's case from `PATHEXT` (14 P-20, 04a §14.6).
+#[cfg(test)]
+#[cfg(windows)]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn windows_pathext_is_directory_major() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a");
+        let b = d.path().join("b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(a.join("tool.cmd"), b"").unwrap();
+        std::fs::write(a.join("tool"), b"#!/bin/sh\n").unwrap();
+        std::fs::write(b.join("tool.exe"), b"").unwrap();
+        let mut path = a.clone().into_os_string();
+        path.push(";");
+        path.push(&b);
+        let env = Env::from_pairs([("Path", path), ("PATHEXT", OsString::from(".EXE;.CMD"))]);
+        // Directory-major: a\tool.CMD (second extension, first directory) beats b\tool.EXE; the extension's case
+        // comes from PATHEXT; the extension-less shim is tried last.
+        let got = find_executable(OsStr::new("tool"), &env, d.path()).unwrap();
+        assert_eq!(got, a.join("tool.CMD"));
     }
 }
 
@@ -354,5 +481,106 @@ mod tests {
     #[test]
     fn self_exe_is_absolute() {
         assert!(self_exe().unwrap().is_absolute());
+        assert_eq!(self_exe().unwrap(), self_exe().unwrap());
+    }
+
+    /// D-PLAT-02 (Windows semantics, exercised on every OS): a missing absolute shebang interpreter falls back to
+    /// its basename on PATH; a missing basename keeps pre-commit's message; explicit entry paths never fall back.
+    #[test]
+    fn d_plat_02_basename_fallback() {
+        let d = fixture();
+        let r = d.path();
+        file(&r.join("bin1/myinterp"), 0o755, b"");
+        file(&r.join("s.sh"), 0o755, b"#!/nonexistent/dir/myinterp -e\n");
+        file(&r.join("t.sh"), 0o755, b"#!/nonexistent/dir/nosuch\n");
+        let env = Env::from_pairs([("PATH", r.join("bin1"))]);
+        let got = normalize_cmd_impl(&[OsString::from("./s.sh")], &env, r, true).unwrap();
+        assert_eq!(
+            got,
+            [
+                r.join("bin1/myinterp").into_os_string(),
+                OsString::from("-e"),
+                OsString::from("./s.sh"),
+            ]
+        );
+        // pre-commit's behaviour (the POSIX default here).
+        let e = normalize_cmd_impl(&[OsString::from("./s.sh")], &env, r, false).unwrap_err();
+        assert_eq!(
+            e.message(),
+            "Executable `/nonexistent/dir/myinterp` not found"
+        );
+        let e = normalize_cmd_impl(&[OsString::from("./t.sh")], &env, r, true).unwrap_err();
+        assert_eq!(
+            e.message(),
+            "Executable `/nonexistent/dir/nosuch` not found"
+        );
+        // An explicit absolute entry is never rewritten.
+        let e = normalize_cmd_impl(
+            &[OsString::from("/nonexistent/dir/myinterp")],
+            &env,
+            r,
+            true,
+        )
+        .unwrap_err();
+        assert_eq!(
+            e.message(),
+            "Executable `/nonexistent/dir/myinterp` not found"
+        );
+    }
+
+    /// `os.access(X_OK)` is the real `access(2)`: on a `noexec` mount a 0755 file is not executable for pre-commit
+    /// (`Executable `./x` is not executable`, and a bare name is not found on PATH), so it is never run. Skipped
+    /// when no writable `noexec` mount exists.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn noexec_mount_is_not_executable() {
+        let Some(d) = ["/run/lock", "/dev/shm", "/dev/mqueue"]
+            .iter()
+            .filter(|m| {
+                rustix::fs::statvfs(**m)
+                    .is_ok_and(|v| v.f_flag.contains(rustix::fs::StatVfsMountFlags::NOEXEC))
+            })
+            .find_map(|m| tempfile::tempdir_in(m).ok())
+        else {
+            return;
+        };
+        let r = d.path();
+        file(&r.join("x"), 0o755, b"#!/bin/sh\necho hi\n");
+        file(&r.join("y"), 0o755, b"echo hi\n");
+        let env = Env::from_pairs([("PATH", r.as_os_str())]);
+        for name in ["./x", "./y"] {
+            let e =
+                normalize_cmd(&[OsString::from(name), OsString::from("A")], &env, r).unwrap_err();
+            assert_eq!(
+                e.message(),
+                format!("Executable `{name}` is not executable")
+            );
+        }
+        assert_eq!(find_executable(OsStr::new("x"), &env, r), None);
+        let e = normalize_cmd(&[OsString::from("x")], &env, r).unwrap_err();
+        assert_eq!(e.message(), "Executable `x` not found");
+        // The shebang is not read behind a failing X_OK either (identify returns ()).
+        assert_eq!(
+            parse_filename(Path::new("./x"), r).unwrap(),
+            Vec::<OsString>::new()
+        );
+    }
+
+    #[test]
+    fn unreadable_shebang_is_an_os_error_naming_the_file() {
+        if rustix::process::geteuid().is_root() {
+            return; // root reads anything
+        }
+        let d = fixture();
+        let r = d.path();
+        file(&r.join("noread.sh"), 0o311, b"#!/bin/sh\n");
+        let e = normalize_cmd(
+            &[OsString::from("./noread.sh")],
+            &Env::from_pairs([("PATH", "")]),
+            r,
+        )
+        .unwrap_err();
+        assert!(matches!(e, ExeError::Io(ref io) if io.kind() == io::ErrorKind::PermissionDenied));
+        assert_eq!(e.message(), "[Errno 13] Permission denied: './noread.sh'");
     }
 }

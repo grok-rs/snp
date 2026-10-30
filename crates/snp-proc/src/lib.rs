@@ -5,6 +5,7 @@
 //! Owner: WP-15.
 
 pub mod hookcmd;
+mod messages;
 pub mod pool;
 pub mod registry;
 pub mod resolve;
@@ -12,4 +13,5 @@ pub mod signals;
 pub mod spawn;
 #[cfg(feature = "testing")]
 pub mod spawn_log;
+mod trace;
 pub mod xargs;

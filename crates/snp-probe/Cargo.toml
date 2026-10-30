@@ -13,5 +13,13 @@ publish.workspace = true
 name = "snp-probe"
 path = "src/main.rs"
 
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+signal-hook.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+ctrlc.workspace = true
+winapi-util.workspace = true
+
 [lints]
 workspace = true
