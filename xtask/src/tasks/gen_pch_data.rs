@@ -4,7 +4,7 @@
 //! * `gen-pch-data [--check] <full clone of github.com/pre-commit/pre-commit-hooks>` reads the tags
 //!   v3.0.0…v6.0.0 of the clone (bare or not) with `git` and writes `crates/snp-hooks-data/src/generated/`:
 //!   per-tag manifests (verbatim `.pre-commit-hooks.yaml`), the tag → commit table (09 §5.1), per-hook
-//!   [`HookClass`](snp_hooks_data) and epoch (09 §1, §5.2 refined by the curated [`MODULES`] table below), the
+//!   `snp_hooks_data::HookClass` and epoch (09 §1, §5.2 refined by the curated [`MODULES`] table below), the
 //!   `VERIFIED_BLOBS` table (every module blob of every tag and its import closure, seeded and checked against
 //!   09 §5.4), the console-script → module map (`setup.cfg`), `BUILTIN_MANIFEST_YAML` (the v6.0.0 manifest
 //!   blocks of the ids `repo: builtin` serves), the initial parity-gate table and `GENERATED_FROM`. The output
