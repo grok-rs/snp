@@ -103,9 +103,9 @@ fn lang_rust_system_dependencies_in_config_order() {
 #[test]
 fn lang_rust_deps_variants_are_isolated() {
     let w = World::new();
-    let a = w.root.join("variant-a");
-    let b = w.root.join("variant-b");
-    for p in [&a, &b] {
+    let variant_a = w.root.join("variant-a");
+    let variant_b = w.root.join("variant-b");
+    for p in [&variant_a, &variant_b] {
         std::fs::create_dir_all(p).unwrap();
         std::fs::write(p.join("Cargo.toml"), "[package]\nname = \"hooks\"\n").unwrap();
     }
@@ -122,15 +122,15 @@ fn lang_rust_deps_variants_are_isolated() {
                 std::fs::write(manifest, body)
             }),
     );
-    install(&t, &a, "system", &["serde:1.0"]).unwrap();
-    install(&t, &b, "system", &[]).unwrap();
+    install(&t, &variant_a, "system", &["serde:1.0"]).unwrap();
+    install(&t, &variant_b, "system", &[]).unwrap();
     assert!(
-        std::fs::read_to_string(a.join("Cargo.toml"))
+        std::fs::read_to_string(variant_a.join("Cargo.toml"))
             .unwrap()
             .contains("serde")
     );
     assert_eq!(
-        std::fs::read_to_string(b.join("Cargo.toml")).unwrap(),
+        std::fs::read_to_string(variant_b.join("Cargo.toml")).unwrap(),
         "[package]\nname = \"hooks\"\n"
     );
     let c = t.runner.calls();

@@ -41,7 +41,7 @@ mod messages {
     }
 }
 
-/// `language: node`.
+/// `language: node` (`pre_commit/languages/node.py`).
 #[derive(Debug)]
 pub struct Node;
 

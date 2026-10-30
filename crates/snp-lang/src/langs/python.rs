@@ -8,7 +8,9 @@
 //! | local hook without deps: `pip install .` of the placeholder package | skipped (D-PERF-02) |
 //! | `health_check`: two interpreter spawns per environment and run | fingerprint fast path (zero spawns while the base interpreter is unchanged), else pre-commit's check accepting uv's `pyvenv.cfg` format |
 //!
-//! Activation (`get_env_patch`, `python.py:55-61`) and the run (`basic_run_hook`) are pre-commit's.
+//! Activation (`get_env_patch`, `python.py:55-61`) and the run (`basic_run_hook`) are pre-commit's. The `UV_*` strip
+//! list of 04a §11.5 applies to snp's own uv invocations only; the hook's environment keeps the user's variables, as
+//! in pre-commit (the recorded run goldens compare the delta exactly).
 //!
 //! Owner: WP-24.
 
@@ -36,7 +38,7 @@ use crate::{
     Language, PlanCtx, RunPlan, Support,
 };
 
-/// `language: python`.
+/// `language: python` (`pre_commit/languages/python.py`).
 #[derive(Debug)]
 pub struct Python;
 

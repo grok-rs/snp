@@ -17,6 +17,7 @@
 //! * rust: `cargo install` order (pre-commit iterates a `set`; snp keeps config order) — compared as a multiset.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -138,11 +139,7 @@ fn narrow_none(_: &GoldenCall) -> Option<&'static [&'static str]> {
 /// The managed-rust cargo calls: argv, cwd and `RUSTUP_TOOLCHAIN`.
 fn narrow_cargo(c: &GoldenCall) -> Option<&'static [&'static str]> {
     let a: Vec<&str> = c.argv.iter().map(String::as_str).collect();
-    matches!(
-        a.as_slice(),
-        ["cargo", "install", ..] | ["cargo", "add", ..]
-    )
-    .then_some(&["RUSTUP_TOOLCHAIN"][..])
+    matches!(a.as_slice(), ["cargo", "install" | "add", ..]).then_some(&["RUSTUP_TOOLCHAIN"][..])
 }
 
 /// The go.dev JSON of the default go version.
@@ -514,14 +511,16 @@ fn record(sc: &Sc, python: &Path) -> String {
     std::fs::write(w.repo.join("a.txt"), b"a\n").unwrap();
     let mut hook = format!("        -   id: {}\n", sc.hook);
     if let Some(v) = sc.version {
-        hook.push_str(&format!("            language_version: '{v}'\n"));
+        writeln!(hook, "            language_version: '{v}'").unwrap();
     }
     if !sc.deps.is_empty() {
         let d: Vec<String> = sc.deps.iter().map(|d| format!("'{d}'")).collect();
-        hook.push_str(&format!(
-            "            additional_dependencies: [{}]\n",
+        writeln!(
+            hook,
+            "            additional_dependencies: [{}]",
             d.join(", ")
-        ));
+        )
+        .unwrap();
     }
     let config = format!(
         "repos:\n-   repo: {}\n    rev: {rev}\n    hooks:\n{hook}",

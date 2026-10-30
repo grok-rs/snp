@@ -32,7 +32,7 @@ use crate::{
     RunPlan, Support,
 };
 
-/// `language: ruby`.
+/// `language: ruby` (`pre_commit/languages/ruby.py`).
 #[derive(Debug)]
 pub struct Ruby;
 

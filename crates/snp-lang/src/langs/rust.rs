@@ -26,7 +26,7 @@ use crate::{
     RunPlan, Support,
 };
 
-/// `language: rust`.
+/// `language: rust` (`pre_commit/languages/rust.py`).
 #[derive(Debug)]
 pub struct Rust;
 

@@ -32,19 +32,19 @@ fn have(env: &Env, tools: &[&str]) -> bool {
 /// Installs `lang` at `version` with `deps` into `prefix`, checks health, runs `entry` with the activated environment
 /// and returns its stdout.
 fn build_and_run(
-    w: &World,
-    env: Env,
+    world: &World,
+    env: &Env,
     lang: LanguageId,
     version: &str,
-    d: &[&str],
+    dependencies: &[&str],
     is_local: bool,
     entry: &str,
 ) -> String {
-    let t = TestHost::new(&w.repo, env.clone());
+    let t = TestHost::new(&world.repo, env.clone());
     let runner = ProcRunner {
         cancel: t.cancel.clone(),
     };
-    let fetch = snp_net::HttpFetch::from_env(&env);
+    let fetch = snp_net::HttpFetch::from_env(env);
     let host = Host {
         base_env: &t.env,
         cwd: &t.cwd,
@@ -63,33 +63,46 @@ fn build_and_run(
     } else {
         Arc::from(version)
     };
-    let d = deps(d);
-    check_support(lang, &version, &d, host.brand).unwrap();
-    let env_dir = w
+    let dependencies = deps(dependencies);
+    check_support(lang, &version, &dependencies, host.brand).unwrap();
+    let env_dir = world
         .prefix
         .join(format!("{}-{version}", lang.env_dir_base().unwrap()));
     let out = be
         .install(&install_ctx(
-            &host, &w.prefix, &version, &env_dir, &d, is_local,
+            &host,
+            &world.prefix,
+            &version,
+            &env_dir,
+            &dependencies,
+            is_local,
         ))
         .unwrap_or_else(|e| panic!("{lang:?} install: {e}"));
-    let ecx = env_ctx(&host, &w.prefix, &version, &env_dir);
+    let ecx = env_ctx(&host, &world.prefix, &version, &env_dir);
     assert_eq!(be.health(&ecx, None).unwrap(), Health::Healthy);
     assert!(!out.installer.is_empty());
     let run_env = t.env.patched(&be.activate(&ecx).unwrap());
     let plan = be
         .plan(&plan_ctx(
-            &host, &w.prefix, &version, &env_dir, &run_env, entry,
+            &host,
+            &world.prefix,
+            &version,
+            &env_dir,
+            &run_env,
+            entry,
         ))
         .unwrap();
-    let RunPlan::Xargs { cmd, env, .. } = plan else {
+    let RunPlan::Xargs {
+        cmd, env: hook_env, ..
+    } = plan
+    else {
         panic!("{plan:?}")
     };
-    let argv = snp_proc::resolve::normalize_cmd(&cmd, &env, &w.repo).unwrap();
-    let mut c = std::process::Command::new(&argv[0]);
-    c.args(&argv[1..]).current_dir(&w.repo);
-    env.apply_to(&mut c);
-    let o = c.output().unwrap();
+    let argv = snp_proc::resolve::normalize_cmd(&cmd, &hook_env, &world.repo).unwrap();
+    let mut command = std::process::Command::new(&argv[0]);
+    command.args(&argv[1..]).current_dir(&world.repo);
+    hook_env.apply_to(&mut command);
+    let o = command.output().unwrap();
     assert!(o.status.success(), "{o:?}");
     String::from_utf8_lossy(&o.stdout).into_owned()
 }
@@ -121,7 +134,7 @@ fn tc_python_uv_and_pip() {
         python_repo(&w);
         let out = build_and_run(
             &w,
-            env,
+            &env,
             LanguageId::Python,
             "default",
             &[],
@@ -171,7 +184,7 @@ fn tc_node_system() {
     }
     let out = build_and_run(
         &w,
-        env,
+        &env,
         LanguageId::Node,
         "system",
         &[],
@@ -196,7 +209,7 @@ fn tc_golang_system() {
         "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"hello from go\") }\n",
     )
     .unwrap();
-    let out = build_and_run(&w, env, LanguageId::Golang, "system", &[], false, "hooks");
+    let out = build_and_run(&w, &env, LanguageId::Golang, "system", &[], false, "hooks");
     assert_eq!(out, "hello from go\n");
 }
 
@@ -215,7 +228,7 @@ fn tc_rust_system() {
     .unwrap();
     let out = build_and_run(
         &w,
-        env,
+        &env,
         LanguageId::Rust,
         "system",
         &[],
@@ -247,7 +260,7 @@ fn tc_ruby_system() {
     .unwrap();
     let out = build_and_run(
         &w,
-        env,
+        &env,
         LanguageId::Ruby,
         "system",
         &[],

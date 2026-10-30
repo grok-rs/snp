@@ -8,7 +8,7 @@ use snp_lang::harness::{Reply, TestHost};
 use snp_lang::langs::golang::Golang;
 use snp_lang::{Health, InstallOutcome, LangError, Language};
 
-use crate::support::{FakeFetch, World, deps, env_ctx, exe, install_ctx, sha256_hex, tar_gz};
+use crate::support::{FakeFetch, World, deps, env_ctx, install_ctx, sha256_hex, tar_gz};
 
 /// The go archive of `version` for this host and the go.dev JSON listing it.
 fn go_release(version: &str) -> (String, Vec<u8>, String) {
@@ -73,12 +73,13 @@ fn lang_golang_download_is_verified_and_shared() {
     let mut t = w.host(w.isolated_env(&[("GOBIN", "/user/gobin"), ("GIT_DIR", "/x/.git")]));
     t.fetch = Some(Box::new(FakeFetch {
         texts: vec![("https://go.dev/dl/?mode=json&include=all".to_owned(), json)],
-        files: vec![(url.clone(), archive)],
+        files: vec![(url, archive)],
         ..FakeFetch::default()
     }));
     t.runner.reply(
         "go",
         Reply::ok(Vec::new()).sticky().with_effect(|rec| {
+            use std::os::unix::fs::PermissionsExt;
             let gopath = rec
                 .env_delta
                 .iter()
@@ -93,7 +94,6 @@ fn lang_golang_download_is_verified_and_shared() {
             }
             std::fs::create_dir_all(ro.parent().unwrap())?;
             std::fs::write(&ro, b"package x")?;
-            use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o444))?;
             std::fs::set_permissions(ro.parent().unwrap(), std::fs::Permissions::from_mode(0o555))?;
             Ok(())
@@ -215,5 +215,4 @@ fn lang_golang_system_install_and_activation() {
     assert_eq!(env.get("GOROOT").unwrap(), managed.join(".go").as_os_str());
     assert_eq!(env.get("GOTOOLCHAIN").unwrap(), "local");
     assert_eq!(Golang.id(), LanguageId::Golang);
-    let _unused = exe;
 }

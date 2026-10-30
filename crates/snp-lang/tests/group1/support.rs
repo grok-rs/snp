@@ -270,9 +270,8 @@ fn expand(t: &str, rec: &Recorded, base: &Env) -> PathBuf {
     for (i, a) in rec.argv.iter().enumerate().rev() {
         out = out.replace(&format!("{{arg{i}}}"), &a.to_string_lossy());
     }
-    while let Some(start) = out.find("{env:") {
-        let end = start + out[start..].find('}').unwrap();
-        let name = &out[start + 5..end];
+    while let Some((head, rest)) = out.split_once("{env:") {
+        let (name, tail) = rest.split_once('}').unwrap();
         let value = rec
             .env_delta
             .iter()
@@ -280,12 +279,7 @@ fn expand(t: &str, rec: &Recorded, base: &Env) -> PathBuf {
             .and_then(|(_, v)| v.clone())
             .or_else(|| base.get(name).map(OsStr::to_os_string))
             .unwrap_or_default();
-        out = format!(
-            "{}{}{}",
-            &out[..start],
-            value.to_string_lossy(),
-            &out[end + 1..]
-        );
+        out = format!("{head}{}{tail}", value.to_string_lossy());
     }
     PathBuf::from(out)
 }
@@ -369,7 +363,7 @@ pub(crate) struct FakeFetch {
 
 impl Fetch for FakeFetch {
     fn get_text(&self, url: &str, _max: u64) -> Result<String, NetError> {
-        self.asked.lock().unwrap().push(url.to_owned());
+        snp_core::sync::lock(&self.asked).push(url.to_owned());
         self.texts
             .iter()
             .find(|(u, _)| u == url)
@@ -388,7 +382,7 @@ impl Fetch for FakeFetch {
         file_name: &str,
         _cancel: &CancelToken,
     ) -> Result<PathBuf, NetError> {
-        self.asked.lock().unwrap().push(url.to_owned());
+        snp_core::sync::lock(&self.asked).push(url.to_owned());
         let bytes = self
             .files
             .iter()
@@ -400,7 +394,7 @@ impl Fetch for FakeFetch {
                 status: 404,
             })?;
         let Checksum::Sha256(want) = sum else {
-            panic!("unexpected checksum")
+            return Err(NetError::Offline);
         };
         let got: [u8; 32] = Sha256::digest(&bytes).into();
         if &got != want {
@@ -419,10 +413,11 @@ impl Fetch for FakeFetch {
 
 /// sha256 hex of `b`.
 pub(crate) fn sha256_hex(b: &[u8]) -> String {
-    Sha256::digest(b)
-        .iter()
-        .map(|x| format!("{x:02x}"))
-        .collect()
+    use std::fmt::Write as _;
+    Sha256::digest(b).iter().fold(String::new(), |mut s, x| {
+        write!(s, "{x:02x}").unwrap();
+        s
+    })
 }
 
 /// A `.tar.gz` holding `files` (`(path, body, mode)`, directories implied).
@@ -431,7 +426,7 @@ pub(crate) fn tar_gz(files: &[(&str, &[u8], u32)]) -> Vec<u8> {
     let mut b = tar::Builder::new(enc);
     for (path, body, mode) in files {
         let mut h = tar::Header::new_gnu();
-        h.set_size(body.len() as u64);
+        h.set_size(u64::try_from(body.len()).unwrap());
         h.set_mode(*mode);
         h.set_entry_type(tar::EntryType::Regular);
         b.append_data(&mut h, path, *body).unwrap();

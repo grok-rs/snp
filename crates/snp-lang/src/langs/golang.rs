@@ -36,7 +36,7 @@ mod messages {
     }
 }
 
-/// `language: golang`.
+/// `language: golang` (`pre_commit/languages/golang.py`).
 #[derive(Debug)]
 pub struct Golang;
 

@@ -100,7 +100,7 @@ fn state(out: &InstallOutcome) -> InstallState {
         language: Arc::from("python"),
         language_version: Arc::from("python3.12"),
         deps: Arc::from(Vec::<Arc<str>>::new()),
-        installer: out.installer.clone(),
+        installer: Arc::clone(&out.installer),
         fingerprint: out.fingerprint.clone(),
         snp_version: Arc::from("test"),
     }
@@ -339,17 +339,17 @@ fn lang_python_pip_configuration_is_translated() {
 /// Every fallback trigger selects the pip backend under `auto` (and fails under `uv`).
 #[test]
 fn lang_python_fallback_triggers_select_pip() {
-    let conf_target = |w: &World| {
-        let p = w.root.join("pip.conf");
-        std::fs::write(&p, "[install]\ntarget = /elsewhere\n").unwrap();
-        p.display().to_string()
-    };
     type Case = (
         &'static str,
         fn(&World) -> Vec<(String, String)>,
         &'static [&'static str],
         bool,
     );
+    let conf_target = |w: &World| {
+        let p = w.root.join("pip.conf");
+        std::fs::write(&p, "[install]\ntarget = /elsewhere\n").unwrap();
+        p.display().to_string()
+    };
     let cases: [Case; 5] = [
         (
             "PIP_USE_FEATURE",
