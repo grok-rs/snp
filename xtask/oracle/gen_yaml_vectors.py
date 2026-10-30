@@ -270,7 +270,10 @@ ERROR_DOCS = [
     'a: !!str [1]\n', 'a: !!null [1]\n', 'a: !!python/tuple [1]\n', "a: ! '*'\n", 'a: !!timestamp [1]\n',
     'a: [!!int x]\nb: !!int y\n', 'a: [!!int x, !!int z]\n', '- !!int x\n- [!!int y]\n',
     '- [!!int y]\n- !!int x\n', 'a: {b: !!int y}\nc: !!float q\n', 'a: [[!!int x]]\nb: [!!float y]\n',
-    'a: 9' + '9' * 4400 + '\n', 'a: !!int "1:' + '9' * 4400 + '"\n', 'a: !!float "' + ':'.join(['1'] * 180) + '"\n',
+    'a: 9' + '9' * 4400 + '\n', 'a: !!int "1:' + '9' * 4400 + '"\n',
+    # int(): trailing characters are rejected before the 4300-digit limit, trailing whitespace is not.
+    'k: !!int "' + '1' * 4301 + ' x"\n', 'k: !!int "' + '1' * 5000 + 'x"\n', 'k: !!int "' + '1' * 4301 + ' "\n',
+    'k: !!int "-' + '1' * 4400 + '-1"\n', 'a: !!float "' + ':'.join(['1'] * 180) + '"\n',
     # reader
     'a: \x00\n', 'a: 1\nb: \x01\nc: [\n', '\ufeffa: \x02\n', 'a: \x7f\n', 'a: \ufffe\n', 'a: b\x0c\n',
     'x' * 20000 + ': \x03\n', 'a: [\n' + 'x' * 20000 + '\x04\n',
@@ -491,6 +494,13 @@ def dump_vectors():
     for src in DUMP_SRCS:
         v = yaml.load(src, Loader=LOADER)
         out.append({'yaml': src, 'dump': yaml_dump(v)})
+    # str(int) beyond 4300 digits raises in the representer, so the autoupdate re-dump fails.
+    for src in ['a: 0x' + 'f' * 4000 + '\n', 'a: [1, -0b' + '1' * 14300 + ']\n']:
+        try:
+            yaml_dump(yaml.load(src, Loader=LOADER))
+            raise AssertionError('expected an error')
+        except ValueError as e:
+            out.append({'yaml': src, 'error': [type(e).__name__, str(e)]})
     rnd = random.Random(52)
     for _ in range(150):
         s = ''.join(rnd.choice('ab :#-\'"\n\t\xe9\u2028x01.') for _ in range(rnd.randint(0, 100)))

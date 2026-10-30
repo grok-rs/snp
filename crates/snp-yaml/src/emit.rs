@@ -8,7 +8,7 @@
 //!
 //! Owner: WP-14.
 
-use cfgv::Value;
+use cfgv::{MaxStrDigitsError, Value};
 
 use crate::base64::encodebytes;
 use crate::compose::NodeId;
@@ -42,14 +42,16 @@ pub fn dump(v: &Value) -> String {
 
 /// `yaml_dump(yaml_load(text))` — autoupdate's whole-file reformat (`autoupdate.py:134-137`, 03 §11.3) — byte
 /// exact, including the `&id001` / `*id001` anchors PyYAML writes for objects that occur more than once (a
-/// collection or a date reached through an alias or a merge key). Load errors are those of [`crate::load`].
+/// collection or a date reached through an alias or a merge key). Load errors are those of [`crate::load`]; an
+/// integer with more than 4300 decimal digits is PyYAML's `ValueError` from `str(int)` (unlike [`dump`], which
+/// cannot fail and writes it in hexadecimal).
 pub fn redump(text: &str, lim: &Limits) -> Result<String, YamlError> {
     let doc = compose(text, Schema::PyYaml11Safe, lim)?;
     let graph = construct_graph(&doc, Schema::PyYaml11Safe, lim)?;
     let mut em = Emitter::new();
     match graph.root {
         None => represent_value(&Value::Null, None, &mut em),
-        Some(root) => represent_graph(&graph, root, &mut em),
+        Some(root) => represent_graph(&graph, root, &mut em)?,
     }
     Ok(em.finish())
 }
@@ -343,7 +345,12 @@ enum GraphWork {
 
 /// `represent_data` + `CEmitter.serialize` over the constructed graph: the first occurrence of an anchored object
 /// carries `&idNNN`, later ones are `*idNNN` aliases.
-fn represent_graph(graph: &Graph, root: NodeId, em: &mut Emitter) {
+///
+/// # Errors
+///
+/// `ValueError` (CPython's `str(int)` text) for an integer with more than 4300 decimal digits: PyYAML's
+/// representer calls `str(data)`, so the whole re-dump fails before anything is written.
+fn represent_graph(graph: &Graph, root: NodeId, em: &mut Emitter) -> Result<(), YamlError> {
     let g = View { graph };
     let names = g.anchors(root);
     let mut serialized = vec![false; graph.built.len()];
@@ -384,6 +391,14 @@ fn represent_graph(graph: &Graph, root: NodeId, em: &mut Emitter) {
         }
         let start = match g.get(id) {
             Some(Built::Scalar(v)) => {
+                if let Value::BigInt(b) = v
+                    && b.exceeds_max_str_digits()
+                {
+                    return Err(YamlError::python(
+                        "ValueError",
+                        MaxStrDigitsError.to_string(),
+                    ));
+                }
                 if let Some(ev) = scalar_of(v, anchor.as_deref(), None) {
                     em.emit(&ev);
                 }
@@ -416,6 +431,7 @@ fn represent_graph(graph: &Graph, root: NodeId, em: &mut Emitter) {
         work.push(GraphWork::End(end));
         work.extend(g.rep_children(r).into_iter().rev().map(GraphWork::Node));
     }
+    Ok(())
 }
 
 #[cfg(test)]

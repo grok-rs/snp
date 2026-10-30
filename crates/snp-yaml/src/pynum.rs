@@ -46,8 +46,10 @@ fn digit_value(b: u8, base: u32) -> Option<u32> {
 /// CPython's `int(s, base)` for `base` in `{2, 8, 10, 16}`: the `Big` value or the `ValueError` text.
 ///
 /// `PyLong_FromString`: leading and trailing C whitespace, one sign, the base prefix (`0b`/`0o`/`0x`, any case)
-/// followed by at most one `_`, then digits with single `_` between them. In base 10 a digit run longer than
-/// 4300 digits fails with the `sys.set_int_max_str_digits()` message *before* trailing characters are checked.
+/// followed by at most one `_`, then digits with single `_` between them, then trailing whitespace. Trailing
+/// characters are rejected first (`invalid literal`); only then does a base-10 digit run longer than 4300 digits
+/// fail with the `sys.set_int_max_str_digits()` message (`int('1'*5000 + ' x')` is an invalid literal on CPython
+/// 3.12 and 3.13, `int('1'*5000 + ' ')` exceeds the limit).
 pub(crate) fn py_int(s: &str, base: u32) -> Result<Big, String> {
     let invalid = || invalid_int_literal(base, s);
     let ascii = to_ascii(s);
@@ -97,12 +99,6 @@ pub(crate) fn py_int(s: &str, base: u32) -> Result<Big, String> {
     if prev_underscore || digits.is_empty() {
         return Err(invalid());
     }
-    if base == 10 && digits.len() > BigInt::MAX_STR_DIGITS {
-        return Err(ParseBigIntError::ExceedsMaxStrDigits {
-            digits: digits.len(),
-        }
-        .to_string());
-    }
     while let [b, rest @ ..] = p
         && c_space(*b)
     {
@@ -110,6 +106,12 @@ pub(crate) fn py_int(s: &str, base: u32) -> Result<Big, String> {
     }
     if !p.is_empty() {
         return Err(invalid());
+    }
+    if base == 10 && digits.len() > BigInt::MAX_STR_DIGITS {
+        return Err(ParseBigIntError::ExceedsMaxStrDigits {
+            digits: digits.len(),
+        }
+        .to_string());
     }
     Ok(Big::from_ascii_digits(neg, &digits, base))
 }
@@ -163,8 +165,13 @@ mod tests {
             Err("invalid literal for int() with base 10: '1x'".into())
         );
         let many: String = std::iter::repeat_n('9', 4301).collect();
+        // Trailing characters first (CPython 3.12 and 3.13), then the digit limit.
+        for tail in ["x", " x", "-1"] {
+            let text = format!("{many}{tail}");
+            assert_eq!(int(&text, 10), Err(invalid_int_literal(10, &text)));
+        }
         assert_eq!(
-            int(&format!("{many}x"), 10),
+            int(&format!("{many} \t"), 10),
             Err("Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; \
                  use sys.set_int_max_str_digits() to increase the limit"
                 .into())

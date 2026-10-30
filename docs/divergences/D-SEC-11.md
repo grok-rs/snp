@@ -29,10 +29,14 @@ repository it does not control (ARCHITECTURE §11.1, §11.4). It therefore enfor
 * **512 levels** of nesting (`Limits::max_depth`), counted while composing (an iterative composer: nesting costs heap,
   never stack) and again on the value after aliases and merges are expanded:
   `found a node nested deeper than the limit of 512 levels` with the mark of the first collection beyond it;
-* **1,000,000 constructed nodes** (`Limits::max_constructed_nodes`), counting every node of the composed document, the
-  pairs `<<` merge keys copy, and every use of an alias in the expanded value — computed on the shared node graph
-  in linear time, before anything is copied: `found more than the limit of 1000000 nodes (aliases count at every
-  use)` with the mark of the node whose copies cross the limit;
+* **1,000,000 constructed nodes** (`Limits::max_constructed_nodes`), counting every node of the composed document
+  (and, for `compose_all`, every document), and every use of an alias in the expanded value — computed on the shared
+  node graph in linear time, before anything is copied: `found more than the limit of 1000000 nodes (aliases count at
+  every use)` with the mark of the node whose copies cross the limit. The same budget is charged with the work of
+  `<<` merge keys — one unit per merge key, per merged mapping flattened (also an empty one: `l: &L [{}, {}, …]`
+  merged by thousands of mappings copies nothing but would take K × M steps) and per pair copied — and with the
+  limb work of a sexagesimal `!!int "1:2:3:…"` (quadratic in CPython as well). Hex, octal and binary integers, which
+  CPython parses without a digit limit, are parsed in linear time;
 * a value that contains itself (`&a [*a]`, `&a {x: *a}`), which a tree cannot hold, is PyYAML's own constructor
   error for unconstructable recursion: `found unconstructable recursive node` at the recursive node.
 

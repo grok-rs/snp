@@ -91,11 +91,14 @@ impl ImplicitTag {
 ///   matches before a trailing `\n`. Quirks kept: `y`/`n` and mixed case (`yEs`) are strings, floats need a `.`
 ///   and a *signed* exponent (`1e3`, `1.0e3` are strings), `0o17` is a string, `09` is a string, `-.nan` is a
 ///   string, and `=` resolves to the `value` tag (which has no constructor).
-/// * [`Schema::Yaml12Core`] is the YAML 1.2.2 core schema (§10.3.2) as lefthook's go-yaml v3 reads it: only
-///   `true`/`True`/`TRUE`/`false`/… are booleans, `null`/`Null`/`NULL`/`~`/empty is null, ints are decimal
-///   (`[-+]?[0-9]+`), `0o` octal or `0x` hex, floats follow the core regex, `<<` is a merge key (go-yaml supports
-///   merge keys), and everything else — timestamps included, which go-yaml decodes into an untyped value as a
-///   string — is a string. The core regexes are matched exactly (no trailing-newline allowance).
+/// * [`Schema::Yaml12Core`] is what lefthook's YAML parser (go-yaml v3 through koanf) makes of a plain scalar —
+///   its `resolve()`, not the YAML 1.2 spec: only `true`/`True`/`TRUE`/`false`/… are booleans (`yes`/`on` are
+///   strings), `null`/`Null`/`NULL`/`~`/empty is null, `<<` is a merge key; a text starting with a sign or digit
+///   loses its `_` and is a Go base-0 int (`0777` is octal 511, `0b1`, `+0x1F`, `1_000` are ints; above `int64`
+///   a `uint64`), else a float when it matches `[-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?` and is in
+///   range (`08` is the float 8, `1e400` a string); a text starting with `.` is a float when `ParseFloat` takes it.
+///   Everything else is a string — timestamps too: go-yaml returns a `time.Time` there, which lefthook's
+///   weakly typed mapstructure decode rejects for its string fields; snp keeps the text instead of failing.
 pub fn resolve_plain(s: &str, schema: Schema) -> ImplicitTag {
     match schema {
         Schema::PyYaml11Safe => resolve_py11(s),
@@ -475,44 +478,166 @@ pub(crate) fn match_timestamp(value: &str) -> Option<TimestampParts<'_>> {
 
 /// The YAML 1.2 core schema (+ the `<<` merge key).
 fn resolve_core12(s: &str) -> ImplicitTag {
-    if matches!(s, "" | "~" | "null" | "Null" | "NULL") {
-        return ImplicitTag::Null;
-    }
-    if matches!(s, "true" | "True" | "TRUE" | "false" | "False" | "FALSE") {
-        return ImplicitTag::Bool;
-    }
-    if is_int12(s) {
-        return ImplicitTag::Int;
-    }
-    if is_float12(s) {
-        return ImplicitTag::Float;
-    }
+    // `resolve()` makes `<<` a string (`<` has no resolver hint); go-yaml's decoder treats a plain `<<` key as a
+    // merge key (`isMerge`), and the constructor reads `<<` elsewhere as the string.
     if s == "<<" {
         return ImplicitTag::Merge;
     }
-    ImplicitTag::Str
+    match go_resolve(s) {
+        GoScalar::Null => ImplicitTag::Null,
+        GoScalar::Bool(_) => ImplicitTag::Bool,
+        GoScalar::Int(_) | GoScalar::Uint(_) => ImplicitTag::Int,
+        GoScalar::Float(_) => ImplicitTag::Float,
+        GoScalar::Str => ImplicitTag::Str,
+    }
 }
 
-/// `[-+]?[0-9]+` | `0o[0-7]+` | `0x[0-9a-fA-F]+`.
-pub(crate) fn is_int12(s: &str) -> bool {
-    if let Some(oct) = s.strip_prefix("0o") {
-        return plus(oct, |c| matches!(c, '0'..='7'));
-    }
-    if let Some(hex) = s.strip_prefix("0x") {
-        return plus(hex, |c| c.is_ascii_hexdigit());
-    }
-    plus(strip_sign(s), digit)
+/// What go-yaml v3's `resolve(tag, in)` (`resolve.go:113-265`) makes of a scalar's text.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) enum GoScalar {
+    /// `!!null`.
+    Null,
+    /// `!!bool`.
+    Bool(bool),
+    /// `!!int` that fits an `int64`.
+    Int(i64),
+    /// `!!int` above `int64` (a Go `uint64`).
+    Uint(u64),
+    /// `!!float`.
+    Float(f64),
+    /// `!!str` (timestamps included, see [`resolve_plain`]).
+    Str,
 }
 
-/// `[-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?` | `[-+]?\.(inf|Inf|INF)` | `\.(nan|NaN|NAN)`.
-fn is_float12(s: &str) -> bool {
-    if matches!(s, ".nan" | ".NaN" | ".NAN") {
-        return true;
+impl GoScalar {
+    /// go-yaml's short tag of the result (`!!int`, …) for its `cannot decode` message.
+    pub(crate) const fn short_tag(self) -> &'static str {
+        match self {
+            Self::Null => "!!null",
+            Self::Bool(_) => "!!bool",
+            Self::Int(_) | Self::Uint(_) => "!!int",
+            Self::Float(_) => "!!float",
+            Self::Str => "!!str",
+        }
     }
+}
+
+/// go-yaml v3's `resolve("", in)` minus timestamps: the exact-match table (`true`/`True`/`TRUE`, `false`/…,
+/// `""`/`~`/`null`/`Null`/`NULL`, `±.inf` in three spellings, `.nan`/`.NaN`/`.NAN`; its `<<` entry is unreachable
+/// because `<` has no hint), then by the first
+/// character: `.` → `strconv.ParseFloat`; a sign or digit → `_` removed, `strconv.ParseInt(_, 0, 64)` (sign,
+/// `0x`/`0o`/`0b` in any case or a leading `0` for octal), `ParseUint(_, 0, 64)`, the `yamlStyleFloat` regex with
+/// `ParseFloat` (out of range stays a string), then `0b…`/`-0b…`/`0o…`/`-0o…` with a sign after the prefix; any
+/// other first character is a string.
+pub(crate) fn go_resolve(s: &str) -> GoScalar {
+    match s {
+        "true" | "True" | "TRUE" => return GoScalar::Bool(true),
+        "false" | "False" | "FALSE" => return GoScalar::Bool(false),
+        "" | "~" | "null" | "Null" | "NULL" => return GoScalar::Null,
+        ".nan" | ".NaN" | ".NAN" => return GoScalar::Float(f64::NAN),
+        ".inf" | ".Inf" | ".INF" | "+.inf" | "+.Inf" | "+.INF" => {
+            return GoScalar::Float(f64::INFINITY);
+        }
+        "-.inf" | "-.Inf" | "-.INF" => return GoScalar::Float(f64::NEG_INFINITY),
+        _ => {}
+    }
+    match s.as_bytes().first() {
+        Some(b'.') => go_parse_float(s).map_or(GoScalar::Str, GoScalar::Float),
+        Some(b'+' | b'-' | b'0'..=b'9') => go_resolve_number(s),
+        _ => GoScalar::Str,
+    }
+}
+
+/// The sign-or-digit branch of go-yaml's `resolve` (after the timestamp attempt, which never matches a text that
+/// one of these parses accepts).
+fn go_resolve_number(s: &str) -> GoScalar {
+    let plain: String = s.chars().filter(|c| *c != '_').collect();
+    if let Some(i) = go_parse_int(&plain, 0) {
+        return GoScalar::Int(i);
+    }
+    if let Some(u) = go_parse_uint(&plain, 0) {
+        return GoScalar::Uint(u);
+    }
+    if yaml_style_float(&plain)
+        && let Some(f) = go_parse_float(&plain)
+    {
+        return GoScalar::Float(f);
+    }
+    if let Some(rest) = plain.strip_prefix("0b") {
+        if let Some(i) = go_parse_int(rest, 2) {
+            return GoScalar::Int(i);
+        }
+        if let Some(u) = go_parse_uint(rest, 2) {
+            return GoScalar::Uint(u);
+        }
+    } else if let Some(rest) = plain.strip_prefix("-0b")
+        && let Some(i) = go_parse_int(&format!("-{rest}"), 2)
+    {
+        return GoScalar::Int(i);
+    }
+    if let Some(rest) = plain.strip_prefix("0o") {
+        if let Some(i) = go_parse_int(rest, 8) {
+            return GoScalar::Int(i);
+        }
+        if let Some(u) = go_parse_uint(rest, 8) {
+            return GoScalar::Uint(u);
+        }
+    } else if let Some(rest) = plain.strip_prefix("-0o")
+        && let Some(i) = go_parse_int(&format!("-{rest}"), 8)
+    {
+        return GoScalar::Int(i);
+    }
+    GoScalar::Str
+}
+
+/// `strconv.ParseUint(s, base, 64)` for a text without `_` (`base` 0 detects `0b`/`0o`/`0x` when at least one
+/// character follows, else a leading `0` means octal).
+fn go_parse_uint(s: &str, base: u32) -> Option<u64> {
+    if s.is_empty() {
+        return None;
+    }
+    let b = s.as_bytes();
+    let (radix, digits) = if base != 0 {
+        (base, b)
+    } else if let [b'0', x, rest @ ..] = b {
+        match (x.to_ascii_lowercase(), rest.is_empty()) {
+            (b'b', false) => (2, rest),
+            (b'o', false) => (8, rest),
+            (b'x', false) => (16, rest),
+            _ => (8, b.get(1..).unwrap_or_default()),
+        }
+    } else {
+        (10, b)
+    };
+    let mut n: u64 = 0;
+    for c in digits {
+        let d = char::from(*c).to_digit(36)?;
+        if d >= radix {
+            return None;
+        }
+        n = n.checked_mul(u64::from(radix))?.checked_add(u64::from(d))?;
+    }
+    Some(n)
+}
+
+/// `strconv.ParseInt(s, base, 64)` for a text without `_`: one optional sign, then [`go_parse_uint`] in range.
+fn go_parse_int(s: &str, base: u32) -> Option<i64> {
+    let (neg, rest) = match s.as_bytes().first() {
+        Some(b'+') => (false, s.get(1..)?),
+        Some(b'-') => (true, s.get(1..)?),
+        _ => (false, s),
+    };
+    let un = go_parse_uint(rest, base)?;
+    if neg {
+        0i64.checked_sub_unsigned(un)
+    } else {
+        i64::try_from(un).ok()
+    }
+}
+
+/// `^[-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?$` (go-yaml's `yamlStyleFloat`).
+fn yaml_style_float(s: &str) -> bool {
     let u = strip_sign(s);
-    if matches!(u, ".inf" | ".Inf" | ".INF") {
-        return true;
-    }
     let end = u.find(['e', 'E']).unwrap_or(u.len());
     let (mantissa, exp) = u.split_at_checked(end).unwrap_or((u, ""));
     let mantissa_ok = match mantissa.split_once('.') {
@@ -525,6 +650,69 @@ fn is_float12(s: &str) -> bool {
             .get(1..)
             .is_some_and(|e| plus(e.strip_prefix(['-', '+']).unwrap_or(e), digit));
     mantissa_ok && exp_ok
+}
+
+/// `strconv.ParseFloat(s, 64)` on a decimal text (the only kind go-yaml hands it here: the `.` branch and texts
+/// that match `yamlStyleFloat`): `readFloat`'s grammar — sign, digits and `_` with at most one `.`, at least one
+/// digit, an optional `e`/`E` exponent with a sign and digits or `_` — with `underscoreOK`'s rule that every `_`
+/// sits between digits; an out-of-range result (`ErrRange`) is `None`.
+fn go_parse_float(s: &str) -> Option<f64> {
+    let b = s.as_bytes();
+    let mut i = usize::from(matches!(b.first(), Some(b'+' | b'-')));
+    let mut saw_dot = false;
+    let mut saw_digits = false;
+    while let Some(c) = b.get(i) {
+        match c {
+            b'_' => {}
+            b'.' if !saw_dot => saw_dot = true,
+            b'0'..=b'9' => saw_digits = true,
+            _ => break,
+        }
+        i = i.saturating_add(1);
+    }
+    if !saw_digits {
+        return None;
+    }
+    if matches!(b.get(i), Some(b'e' | b'E')) {
+        i = i.saturating_add(1);
+        if matches!(b.get(i), Some(b'+' | b'-')) {
+            i = i.saturating_add(1);
+        }
+        if !b.get(i).is_some_and(u8::is_ascii_digit) {
+            return None;
+        }
+        while b.get(i).is_some_and(|c| c.is_ascii_digit() || *c == b'_') {
+            i = i.saturating_add(1);
+        }
+    }
+    if i != b.len() || !go_underscore_ok(s) {
+        return None;
+    }
+    let cleaned: String = s.chars().filter(|c| *c != '_').collect();
+    let x = cleaned.parse::<f64>().ok()?;
+    x.is_finite().then_some(x)
+}
+
+/// `strconv.underscoreOK` for a decimal text: each `_` follows a digit and is followed by a digit.
+fn go_underscore_ok(s: &str) -> bool {
+    // ^ start, 0 digit, _ underscore, ! anything else.
+    let mut saw = b'^';
+    for c in strip_sign(s).bytes() {
+        if c.is_ascii_digit() {
+            saw = b'0';
+        } else if c == b'_' {
+            if saw != b'0' {
+                return false;
+            }
+            saw = b'_';
+        } else {
+            if saw == b'_' {
+                return false;
+            }
+            saw = b'!';
+        }
+    }
+    saw != b'_'
 }
 
 #[cfg(test)]
@@ -617,6 +805,7 @@ mod tests {
         assert_eq!(py("\n"), ImplicitTag::Str);
     }
 
+    /// go-yaml v3 `resolve()` vectors (`tests/vectors/core12.json` has the full oracle table).
     #[test]
     fn core_schema() {
         let core = |s| resolve_plain(s, Schema::Yaml12Core);
@@ -627,9 +816,13 @@ mod tests {
             "y",
             "2020-01-01",
             "1:30",
-            "1_000",
-            "0b1",
             ".5e",
+            "1e400",
+            "_1",
+            "+.nan",
+            "0b2",
+            "0x",
+            "=",
         ] {
             assert_eq!(core(s), ImplicitTag::Str, "{s}");
         }
@@ -639,12 +832,50 @@ mod tests {
         for s in ["", "~", "null"] {
             assert_eq!(core(s), ImplicitTag::Null, "{s:?}");
         }
-        for s in ["0777", "-12", "0o17", "0x1F", "+0"] {
+        for s in [
+            "0777",
+            "-12",
+            "0o17",
+            "0x1F",
+            "+0",
+            "1_000",
+            "0b1",
+            "-0b1",
+            "+0x1F",
+            "1__0",
+            "1_",
+            "0x_1",
+            "0b-1",
+            "18446744073709551615",
+        ] {
             assert_eq!(core(s), ImplicitTag::Int, "{s}");
         }
-        for s in ["1e3", "1.5", ".5", "-.5", "1.", "+.inf", ".NaN", "1E+3"] {
+        for s in [
+            "1e3",
+            "1.5",
+            ".5",
+            "-.5",
+            "1.",
+            "+.inf",
+            ".NaN",
+            "1E+3",
+            "08",
+            "09",
+            "1_0.5",
+            "18446744073709551616",
+            ".5_0",
+        ] {
             assert_eq!(core(s), ImplicitTag::Float, "{s}");
         }
         assert_eq!(core("<<"), ImplicitTag::Merge);
+        assert_eq!(go_resolve("0777"), GoScalar::Int(511));
+        assert_eq!(go_resolve("-0x1F"), GoScalar::Int(-31));
+        assert_eq!(go_resolve("08"), GoScalar::Float(8.0));
+        assert_eq!(go_resolve("9223372036854775808"), GoScalar::Uint(1 << 63));
+        assert_eq!(
+            go_resolve("-9223372036854775809"),
+            GoScalar::Float(-9.223_372_036_854_776e18)
+        );
+        assert_eq!(go_resolve("<<"), GoScalar::Str);
     }
 }

@@ -7,6 +7,8 @@
 
 #[cfg(test)]
 mod acceptance {
+    use std::fmt::Write as _;
+
     use cfgv::{Map, Value, value_map};
     use snp_yaml::emit::{Quote, dump, scalar_for_rev};
     use snp_yaml::{
@@ -338,6 +340,19 @@ mod acceptance {
         );
         // The merge pair is deleted before the merged mapping is flattened: a self-merge is empty.
         assert_eq!(value("&a {<<: *a}\n").repr(), "{}");
+        // Cycles flatten the same mapping in a nested frame (PyYAML 6.0.3 values).
+        assert_eq!(
+            value("a: &a {x: 1, <<: *a, y: 2}\n").repr(),
+            "{'a': {'x': 1, 'y': 2}}"
+        );
+        assert_eq!(
+            value("a: &a {<<: *a, <<: {x: 1}}\n").repr(),
+            "{'a': {'x': 1}}"
+        );
+        assert_eq!(
+            value("b: &b {q: 1}\na: &a {p: 2, <<: [*b, &c {<<: *a, r: 3}], z: 0}\n").repr(),
+            "{'b': {'q': 1}, 'a': {'p': 2, 'z': 0, 'r': 3, 'q': 1}}"
+        );
         // `=` keys become strings.
         assert_eq!(value("{=: 1}\n").repr(), "{'=': 1}");
     }
@@ -449,16 +464,25 @@ mod acceptance {
     fn yaml12_core_schema() {
         let lim = Limits::default();
         let doc = compose(
-        "a: yes\nb: on\nc: true\nd: 0777\ne: 0o17\nf: 1e3\ng: 2020-01-01\nh: ~\ni: 1_000\nj: <<\n",
+        "a: yes\nb: on\nc: true\nd: 0777\ne: 0o17\nf: 1e3\ng: 2020-01-01\nh: ~\ni: 1_000\nj: <<\nk: 08\n\
+         l: 0b1\nm: 1e400\nn: !!int '0x1F'\nenv: {MODE: 0755}\n",
         Schema::Yaml12Core,
         &lim,
     )
     .expect("compose");
         let v = construct(&doc, Schema::Yaml12Core, &lim).expect("construct");
+        // go-yaml v3 (lefthook): `0777` is octal, `1_000` and `0b1` are ints, `08` a float, `1e400` a string.
         assert_eq!(
             v.repr(),
-            "{'a': 'yes', 'b': 'on', 'c': True, 'd': 777, 'e': 15, 'f': 1000.0, 'g': '2020-01-01', 'h': None, \
-         'i': '1_000', 'j': '<<'}"
+            "{'a': 'yes', 'b': 'on', 'c': True, 'd': 511, 'e': 15, 'f': 1000.0, 'g': '2020-01-01', 'h': None, \
+         'i': 1000, 'j': '<<', 'k': 8.0, 'l': 1, 'm': '1e400', 'n': 31, 'env': {'MODE': 493}}"
+        );
+        let doc = compose("a: !!bool yes\n", Schema::Yaml12Core, &lim).expect("compose");
+        let e = construct(&doc, Schema::Yaml12Core, &lim).expect_err("go-yaml rejects it");
+        assert!(
+            e.to_string()
+                .contains("cannot decode !!str `yes` as a !!bool"),
+            "{e}"
         );
     }
 
@@ -636,5 +660,72 @@ mod acceptance {
         let merge_bomb = "a: &a {k0: 0, k1: 1, k2: 2}\nb: &b {<<: [*a, *a, *a, *a]}\nc: {<<: [*b, *b, *b, *b]}\n";
         assert!(load(merge_bomb, &small).is_err());
         assert!(load_default(merge_bomb).is_ok());
+    }
+
+    /// D-SEC-11: merging empty mappings copies nothing, but every nested flatten is charged, so K mappings that
+    /// each merge a list of M `{}` are a limit error, not K·M unbounded steps.
+    #[test]
+    fn empty_merge_bomb_is_a_limit_error_d_sec_11() {
+        let text = format!("l: &L [{}]\n", vec!["{}"; 2_000].join(", "))
+            + &(0..2_000).fold(String::new(), |mut out, i| {
+                writeln!(out, "m{i}: {{<<: *L}}").unwrap();
+                out
+            });
+        let (class, message) = err(&text);
+        assert_eq!(class, "YAMLError");
+        assert!(
+            message.starts_with("found more than the limit of 1000000 nodes"),
+            "{message}"
+        );
+        // Below the budget the same shape loads.
+        let small = format!("l: &L [{}]\n", vec!["{}"; 100].join(", "))
+            + &(0..100).fold(String::new(), |mut out, i| {
+                writeln!(out, "m{i}: {{<<: *L}}").unwrap();
+                out
+            });
+        assert_eq!(value(&small).as_map().map(Map::len), Some(101));
+        // Many `<<` keys in one mapping load (each deletion is O(1)).
+        let many = format!("a: &a {{x: 1}}\nb:\n{}", rep("  <<: *a\n", 20_000));
+        assert_eq!(value(&many).repr(), "{'a': {'x': 1}, 'b': {'x': 1}}");
+    }
+
+    /// Hex/octal/binary ints have no digit limit in CPython and parse in linear time; a sexagesimal `!!int` is
+    /// charged to the node budget (D-SEC-11).
+    #[test]
+    fn huge_ints() {
+        let v = value(&format!("a: 0x1{}\n", rep("0", 50_000)));
+        let Some(Value::BigInt(b)) = v.as_map().and_then(|m| m.get(&Value::from("a"))) else {
+            panic!("{v:?}");
+        };
+        assert_eq!(b.bit_length(), 200_001);
+        let (class, message) = err(&format!("a: !!int \"{}\"\n", vec!["1"; 20_000].join(":")));
+        assert_eq!(class, "YAMLError");
+        assert!(
+            message.starts_with("found more than the limit"),
+            "{message}"
+        );
+        assert_eq!(value("a: !!int \"1:0:0\"\n").repr(), "{'a': 3600}");
+    }
+
+    /// `compose_all` counts every document against the node limit.
+    #[test]
+    fn compose_all_counts_documents() {
+        let small = Limits {
+            max_depth: 512,
+            max_constructed_nodes: 10,
+            max_bytes: 1 << 20,
+        };
+        assert_eq!(
+            compose_all(&rep("--- a\n", 5), Schema::PyYaml11Safe, &small)
+                .map(|d| d.len())
+                .ok(),
+            Some(5)
+        );
+        let e = compose_all(&rep("--- a\n", 6), Schema::PyYaml11Safe, &small).expect_err("limit");
+        assert!(
+            e.to_string()
+                .starts_with("found more than the limit of 10 nodes"),
+            "{e}"
+        );
     }
 }

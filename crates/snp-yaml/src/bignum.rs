@@ -44,14 +44,78 @@ impl Big {
     }
 
     /// The value of ASCII `digits` (already validated for `radix`) with the given sign.
+    ///
+    /// Radixes 2, 4, 8, 16 and 32 pack the bits into limbs from the least significant digit (linear: CPython has no
+    /// digit limit for them, so a 16 MiB `0x…` scalar must not be quadratic); other radixes multiply in by chunks
+    /// of as many digits as fit in a `u32` (CPython caps base 10 at 4300 digits).
     pub(crate) fn from_ascii_digits(neg: bool, digits: &[u8], radix: u32) -> Self {
-        let mut b = Self::zero();
-        for d in digits {
-            let v = char::from(*d).to_digit(radix).unwrap_or(0);
-            b.mul_add_small(radix, v);
-        }
+        let mut b = if radix.is_power_of_two() && radix > 1 {
+            Self::from_pow2_digits(digits, radix)
+        } else {
+            Self::from_digits_chunked(digits, radix)
+        };
+        b.trim();
         b.neg = neg && !b.mag.is_empty();
         b
+    }
+
+    /// `digits` in a power-of-two `radix`: each digit's bits go straight into place.
+    fn from_pow2_digits(digits: &[u8], radix: u32) -> Self {
+        let bits = radix.trailing_zeros();
+        let total = u64::try_from(digits.len())
+            .unwrap_or(u64::MAX)
+            .saturating_mul(u64::from(bits));
+        let limbs = usize::try_from(total.div_ceil(32)).unwrap_or(0);
+        let mut mag = vec![0u32; limbs];
+        let mut pos: u64 = 0;
+        for d in digits.iter().rev() {
+            let v = u64::from(char::from(*d).to_digit(radix).unwrap_or(0));
+            let limb = usize::try_from(pos / 32).unwrap_or(usize::MAX);
+            let shift = u32::try_from(pos % 32).unwrap_or(0);
+            // `v < 2^bits` and `shift + bits <= 31 + 5`: the digit spans at most two limbs.
+            let wide = v.wrapping_shl(shift);
+            if let Some(l) = mag.get_mut(limb) {
+                *l |= lo32(wide);
+            }
+            if let Some(l) = mag.get_mut(limb.saturating_add(1)) {
+                *l |= hi32(wide);
+            }
+            pos = pos.saturating_add(u64::from(bits));
+        }
+        Self { neg: false, mag }
+    }
+
+    /// `digits` in any `radix`, `k` digits per multiplication where `radix^k` fits in a `u32`.
+    fn from_digits_chunked(digits: &[u8], radix: u32) -> Self {
+        let mut per = 1usize;
+        let mut scale = radix;
+        while let Some(next) = scale.checked_mul(radix) {
+            scale = next;
+            per = per.saturating_add(1);
+        }
+        let mut b = Self::zero();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "per >= 1: it starts at 1 and only grows"
+        )]
+        let chunks = digits.chunks(per);
+        for chunk in chunks {
+            let mut m = 1u32;
+            let mut a = 0u32;
+            for d in chunk {
+                let v = char::from(*d).to_digit(radix).unwrap_or(0);
+                // At most `per` digits: `m <= scale` and `a < m`, both fit.
+                m = m.wrapping_mul(radix);
+                a = a.wrapping_mul(radix).wrapping_add(v);
+            }
+            b.mul_add_small(m, a);
+        }
+        b
+    }
+
+    /// The number of base-2³² limbs of the magnitude.
+    pub(crate) fn limbs(&self) -> usize {
+        self.mag.len()
     }
 
     /// `|self| = |self| * m + a` (the sign is kept).
@@ -278,6 +342,41 @@ mod tests {
             parse("-9223372036854775809").to_value().to_string(),
             "-9223372036854775809"
         );
+    }
+
+    /// The packed (power-of-two) and chunked parsers equal digit-by-digit `x * radix + d`.
+    #[test]
+    fn fast_parsers_equal_the_digit_loop() {
+        let mut seed = 0x2545_f491_u32;
+        for radix in [2u32, 4, 8, 10, 16, 32, 36] {
+            for len in [0usize, 1, 2, 7, 8, 9, 10, 31, 32, 33, 64, 65, 100, 257] {
+                let digits: Vec<u8> = (0..len)
+                    .map(|_| {
+                        seed ^= seed << 13;
+                        seed ^= seed >> 17;
+                        seed ^= seed << 5;
+                        let d = seed % radix;
+                        char::from_digit(d, radix).map_or(b'0', |c| u8::try_from(c).unwrap_or(b'0'))
+                    })
+                    .collect();
+                let mut slow = Big::zero();
+                for d in &digits {
+                    slow.mul_add_small(radix, char::from(*d).to_digit(radix).unwrap_or(0));
+                }
+                assert_eq!(
+                    Big::from_ascii_digits(false, &digits, radix),
+                    slow,
+                    "{radix} {len}"
+                );
+                let leading: Vec<u8> = [b'0'; 40].iter().chain(&digits).copied().collect();
+                assert_eq!(
+                    Big::from_ascii_digits(false, &leading, radix),
+                    slow,
+                    "{radix} 0…{len}"
+                );
+            }
+        }
+        assert_eq!(Big::from_ascii_digits(true, b"000", 16), Big::zero());
     }
 
     #[test]

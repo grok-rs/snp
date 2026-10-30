@@ -139,16 +139,29 @@ pub fn compose(text: &str, schema: Schema, lim: &Limits) -> Result<Document, Yam
 }
 
 /// `yaml.compose_all(text)`: every document of the stream (anchors are per document, as in PyYAML). The node
-/// and size limits apply to the stream as a whole.
+/// and size limits apply to the stream as a whole, and each document counts as one more node (a stream of
+/// one-node documents stays far below the 512 MB fuzzing RSS cap).
 pub fn compose_all(text: &str, schema: Schema, lim: &Limits) -> Result<Vec<Document>, YamlError> {
     let mut c = Composer::new(text, schema, lim)?;
     c.expect_stream_start()?;
     let mut docs = Vec::new();
+    let max = usize::try_from(lim.max_constructed_nodes).unwrap_or(usize::MAX);
     loop {
         let ev = c.next_event()?;
         match ev.kind {
             EventKind::StreamEnd => return Ok(docs),
-            EventKind::DocumentStart => docs.push(c.compose_document()?),
+            EventKind::DocumentStart => {
+                if c.total_nodes >= max {
+                    return Err(YamlError::limit(
+                        limit_nodes(lim.max_constructed_nodes),
+                        Some(mark(ev.start)),
+                    ));
+                }
+                c.total_nodes = c.total_nodes.saturating_add(1);
+                let mut doc = c.compose_document()?;
+                doc.nodes.shrink_to_fit();
+                docs.push(doc);
+            }
             _ => return Err(invalid(ev.start)),
         }
     }

@@ -17,7 +17,7 @@
 
 use std::borrow::Cow;
 
-use cfgv::{Date, DateError, DateTime, Map, Set, TzOffset, Value};
+use cfgv::{BigInt, Date, DateError, DateTime, Map, Set, TzOffset, Value};
 use indexmap::IndexMap;
 
 use crate::base64;
@@ -33,8 +33,9 @@ use crate::messages::{
 };
 use crate::pynum::{py_float, py_int, py_lower};
 use crate::resolve::{
-    BINARY_TAG, BOOL_TAG, FLOAT_TAG, INT_TAG, MAP_TAG, MERGE_TAG, NULL_TAG, OMAP_TAG, PAIRS_TAG,
-    SEQ_TAG, SET_TAG, STR_TAG, TIMESTAMP_TAG, Tz, VALUE_TAG, is_int12, match_timestamp,
+    BINARY_TAG, BOOL_TAG, FLOAT_TAG, GoScalar, INT_TAG, MAP_TAG, MERGE_TAG, NULL_TAG, OMAP_TAG,
+    PAIRS_TAG, SEQ_TAG, SET_TAG, STR_TAG, TIMESTAMP_TAG, Tz, VALUE_TAG, go_resolve,
+    match_timestamp,
 };
 use crate::{Limits, Mark, Schema, YamlError, compose};
 
@@ -162,7 +163,12 @@ fn ctor_for(tag: &str) -> Ctor {
 #[derive(Debug)]
 struct FlattenFrame {
     node: NodeId,
+    /// PyYAML's `index` into the live `node.value`.
     index: usize,
+    /// The position of `index` in the stored list (which holds [`TOMBSTONE`]s for deleted `<<` pairs), valid
+    /// while the list's version is `ver`.
+    raw: usize,
+    ver: u32,
     merge: Vec<(NodeId, NodeId)>,
     resume: Resume,
 }
@@ -174,13 +180,17 @@ enum Resume {
     Scan,
     /// `merge.extend(value_node.value)` for a mapping merged with `<<: *m`.
     MergedMap(NodeId),
-    /// `submerge.append(subnode.value)` for item `pos` of a merged sequence, then the next item.
+    /// `submerge.append(subnode.value)` for item `pos` of the merged sequence `seq`, then the next item.
     MergedSeqItem {
-        items: Vec<NodeId>,
+        seq: NodeId,
         pos: usize,
         submerge: Vec<Vec<(NodeId, NodeId)>>,
     },
 }
+
+/// A `<<` pair deleted from a stored `node.value` (`del node.value[index]` in O(1)); a frame skips it, and the
+/// list is compacted when the frame that flattens it returns.
+const TOMBSTONE: (NodeId, NodeId) = (NodeId(u32::MAX), NodeId(u32::MAX));
 
 /// Phase-1 state: PyYAML's constructor state over the arena.
 #[derive(Debug)]
@@ -196,7 +206,10 @@ struct State<'d> {
     str_tag: Vec<bool>,
     /// `state_generators` of the next round.
     queue: Vec<NodeId>,
-    /// Pairs copied by `flatten_mapping` (merge bombs count against `max_constructed_nodes`).
+    /// Bumped whenever a stored `node.value` is compacted or replaced (frames re-find their position).
+    version: Vec<u32>,
+    /// `flatten_mapping`'s merge work — nested flattens, `<<` keys, pairs copied — counted against
+    /// `max_constructed_nodes` (merge bombs, D-SEC-11).
     work: u64,
 }
 
@@ -211,6 +224,7 @@ impl<'d> State<'d> {
             pairs: vec![None; n],
             str_tag: vec![false; n],
             queue: Vec::new(),
+            version: vec![0; n],
             work: 0,
         }
     }
@@ -247,6 +261,42 @@ impl<'d> State<'d> {
         if let Some(slot) = self.pairs.get_mut(id.index()) {
             *slot = Some(value);
         }
+        self.bump(id);
+    }
+
+    /// The stored `node.value` of a mapping, copied from the node the first time it changes.
+    fn pairs_mut(&mut self, id: NodeId) -> Result<Option<&mut Vec<(NodeId, NodeId)>>, YamlError> {
+        let node = self.node(id)?;
+        let Some(slot) = self.pairs.get_mut(id.index()) else {
+            return Ok(None);
+        };
+        if slot.is_none() {
+            let NodeKind::Map(p) = &node.kind else {
+                return Ok(None);
+            };
+            *slot = Some(p.clone());
+        }
+        Ok(slot.as_mut())
+    }
+
+    /// The live pairs of `node.value` (without [`TOMBSTONE`]s).
+    fn live_pairs(&self, id: NodeId) -> Result<Vec<(NodeId, NodeId)>, YamlError> {
+        Ok(self
+            .pairs_of(id)?
+            .iter()
+            .copied()
+            .filter(|p| *p != TOMBSTONE)
+            .collect())
+    }
+
+    fn version_of(&self, id: NodeId) -> u32 {
+        self.version.get(id.index()).copied().unwrap_or(0)
+    }
+
+    fn bump(&mut self, id: NodeId) {
+        if let Some(v) = self.version.get_mut(id.index()) {
+            *v = v.wrapping_add(1);
+        }
     }
 
     fn set_built(&mut self, id: NodeId, b: Built) {
@@ -259,7 +309,7 @@ impl<'d> State<'d> {
         YamlError::limit(limit_nodes(self.lim.max_constructed_nodes), Some(mark))
     }
 
-    /// Counts `n` copied pairs against the node budget.
+    /// Counts `n` units of merge work against the node budget.
     fn spend(&mut self, n: usize, at: Mark) -> Result<(), YamlError> {
         self.work = self
             .work
@@ -299,6 +349,15 @@ impl<'d> State<'d> {
             ctor_for(tag)
         };
         let built = match ctor {
+            Ctor::Null | Ctor::Bool | Ctor::Int | Ctor::Float
+                if self.schema == Schema::Yaml12Core =>
+            {
+                Built::Scalar(construct_core12(
+                    self.construct_scalar(id)?,
+                    ctor,
+                    node.start,
+                )?)
+            }
             Ctor::Gen(g) => {
                 self.queue.push(id);
                 Built::Pending(g)
@@ -312,7 +371,11 @@ impl<'d> State<'d> {
             }
             Ctor::Str => Built::Scalar(Value::String(self.construct_scalar(id)?.to_owned())),
             Ctor::Bool => Built::Scalar(construct_bool(self.construct_scalar(id)?)?),
-            Ctor::Int => Built::Scalar(construct_int(self.construct_scalar(id)?, self.schema)?),
+            Ctor::Int => {
+                let text = self.construct_scalar(id)?;
+                let at = node.start;
+                Built::Scalar(construct_int(text, &mut |n| self.spend(n, at))?)
+            }
             Ctor::Float => Built::Scalar(construct_float(self.construct_scalar(id)?)?),
             Ctor::Binary => {
                 let text = self.construct_scalar(id)?;
@@ -485,11 +548,17 @@ impl<'d> State<'d> {
     /// `SafeConstructor.flatten_mapping(node)`, iteratively: `<<` pairs are deleted from `node.value` before the
     /// merged mapping is flattened (which is why `&a {<<: *a}` is `{}`), merged pairs go first, and earlier
     /// mappings of a merged sequence win over later ones; `=` keys become `str`.
+    ///
+    /// The work is linear in what it charges to the node budget: each nested flatten (a merged mapping or a
+    /// sequence item), each `<<` key and each pair copied costs one unit; a deletion is a [`TOMBSTONE`], and the
+    /// pairs a nested frame scans are the pairs it then copies.
     fn flatten_mapping(&mut self, root: NodeId) -> Result<(), YamlError> {
         let max_depth = usize::try_from(self.lim.max_depth).unwrap_or(usize::MAX);
         let mut stack = vec![FlattenFrame {
             node: root,
             index: 0,
+            raw: 0,
+            ver: self.version_of(root),
             merge: Vec::new(),
             resume: Resume::Scan,
         }];
@@ -500,7 +569,7 @@ impl<'d> State<'d> {
             match std::mem::replace(&mut frame.resume, Resume::Scan) {
                 Resume::Scan => {}
                 Resume::MergedMap(v) => {
-                    let p = self.pairs_of(v)?.to_vec();
+                    let p = self.live_pairs(v)?;
                     self.spend(p.len(), node_start)?;
                     let Some(frame) = stack.last_mut() else {
                         break;
@@ -508,13 +577,15 @@ impl<'d> State<'d> {
                     frame.merge.extend(p);
                 }
                 Resume::MergedSeqItem {
-                    items,
+                    seq,
                     pos,
                     mut submerge,
                 } => {
-                    let done = items.get(pos).copied();
-                    if let Some(done) = done {
-                        let p = self.pairs_of(done)?.to_vec();
+                    let NodeKind::Seq(items) = &self.node(seq)?.kind else {
+                        break;
+                    };
+                    if let Some(done) = items.get(pos).copied() {
+                        let p = self.live_pairs(done)?;
                         self.spend(p.len(), node_start)?;
                         submerge.push(p);
                     }
@@ -533,7 +604,7 @@ impl<'d> State<'d> {
                             break;
                         };
                         frame.resume = Resume::MergedSeqItem {
-                            items,
+                            seq,
                             pos: next,
                             submerge,
                         };
@@ -549,35 +620,40 @@ impl<'d> State<'d> {
                 }
             }
             // The scan step: one pair of `node.value`, or the end of the loop.
-            let Some(frame) = stack.last_mut() else {
-                break;
-            };
-            let index = frame.index;
-            let pair = self.pairs_of(node_id)?.get(index).copied();
-            let Some((key, value)) = pair else {
-                let merge = std::mem::take(&mut frame.merge);
-                stack.pop();
-                if !merge.is_empty() {
-                    let own = self.pairs_of(node_id)?.to_vec();
-                    self.spend(own.len(), node_start)?;
-                    let mut all = merge;
-                    all.extend(own);
-                    self.set_pairs(node_id, all);
+            let Some((key, value)) = self.scan_next(&mut stack, node_id, node_start)? else {
+                {
+                    let merge = stack.pop().map(|f| f.merge).unwrap_or_default();
+                    if !merge.is_empty() {
+                        let own = self.live_pairs(node_id)?;
+                        self.spend(own.len(), node_start)?;
+                        let mut all = merge;
+                        all.extend(own);
+                        self.set_pairs(node_id, all);
+                    } else if self
+                        .pairs
+                        .get(node_id.index())
+                        .is_some_and(|p| p.as_ref().is_some_and(|p| p.contains(&TOMBSTONE)))
+                    {
+                        // Compact the deleted `<<` pairs away.
+                        let own = self.live_pairs(node_id)?;
+                        self.set_pairs(node_id, own);
+                    }
+                    continue;
                 }
-                continue;
             };
             let key_tag = self.tag(key)?;
             if key_tag == MERGE_TAG {
-                // `del node.value[index]`
-                let mut own = self.pairs_of(node_id)?.to_vec();
-                if index < own.len() {
-                    #[expect(
-                        clippy::disallowed_methods,
-                        reason = "index < own.len() is checked above"
-                    )]
-                    own.remove(index);
+                self.spend(1, node_start)?;
+                // `del node.value[index]`: the stored pair at `raw` becomes a tombstone; `index` stays.
+                let raw = stack.last().map_or(0, |f| f.raw);
+                if let Some(list) = self.pairs_mut(node_id)?
+                    && let Some(slot) = list.get_mut(raw)
+                {
+                    *slot = TOMBSTONE;
                 }
-                self.set_pairs(node_id, own);
+                if let Some(frame) = stack.last_mut() {
+                    frame.raw = raw.saturating_add(1);
+                }
                 let value_node = self.node(value)?;
                 match &value_node.kind {
                     NodeKind::Map(_) => {
@@ -601,7 +677,7 @@ impl<'d> State<'d> {
                         }
                         if let Some(frame) = stack.last_mut() {
                             frame.resume = Resume::MergedSeqItem {
-                                items: items.clone(),
+                                seq: value,
                                 pos: 0,
                                 submerge: Vec::new(),
                             };
@@ -624,16 +700,65 @@ impl<'d> State<'d> {
                     *slot = true;
                 }
                 if let Some(frame) = stack.last_mut() {
-                    frame.index = index.saturating_add(1);
+                    frame.index = frame.index.saturating_add(1);
+                    frame.raw = frame.raw.saturating_add(1);
                 }
             }
         }
         Ok(())
     }
 
-    /// Starts a nested `flatten_mapping(node)`.
+    /// `node.value[index]` of the top frame (`None` past the end), skipping [`TOMBSTONE`]s; leaves the frame's
+    /// `raw` at the returned pair. When the list was compacted or replaced (a cycle flattened the same mapping
+    /// in a nested frame), the position is found again from `index`.
+    fn scan_next(
+        &mut self,
+        stack: &mut [FlattenFrame],
+        node_id: NodeId,
+        at: Mark,
+    ) -> Result<Option<(NodeId, NodeId)>, YamlError> {
+        let ver = self.version_of(node_id);
+        let nested = stack.len() > 1;
+        let Some(frame) = stack.last() else {
+            return Ok(None);
+        };
+        let (index, mut raw, stale) = (frame.index, frame.raw, frame.ver != ver);
+        let list = self.pairs_of(node_id)?;
+        let mut steps = if stale {
+            // The live index → stored position (O(len), charged).
+            let mut live = 0usize;
+            raw = 0;
+            while let Some(p) = list.get(raw) {
+                if *p != TOMBSTONE {
+                    if live == index {
+                        break;
+                    }
+                    live = live.saturating_add(1);
+                }
+                raw = raw.saturating_add(1);
+            }
+            raw
+        } else {
+            0
+        };
+        while list.get(raw) == Some(&TOMBSTONE) {
+            raw = raw.saturating_add(1);
+            steps = steps.saturating_add(1);
+        }
+        let pair = list.get(raw).copied();
+        if let Some(frame) = stack.last_mut() {
+            frame.raw = raw;
+            frame.ver = ver;
+        }
+        if nested || stale {
+            self.spend(steps, at)?;
+        }
+        Ok(pair)
+    }
+
+    /// Starts a nested `flatten_mapping(node)` (one unit of merge work).
     fn push_flatten(
-        &self,
+        &mut self,
         stack: &mut Vec<FlattenFrame>,
         node: NodeId,
         max_depth: usize,
@@ -642,9 +767,12 @@ impl<'d> State<'d> {
         if stack.len() >= max_depth {
             return Err(YamlError::limit(limit_depth(self.lim.max_depth), Some(at)));
         }
+        self.spend(1, at)?;
         stack.push(FlattenFrame {
             node,
             index: 0,
+            raw: 0,
+            ver: self.version_of(node),
             merge: Vec::new(),
             resume: Resume::Scan,
         });
@@ -959,19 +1087,47 @@ fn index_error() -> YamlError {
     YamlError::python("IndexError", STRING_INDEX_OUT_OF_RANGE)
 }
 
-/// `construct_yaml_int` (YAML 1.1); for [`Schema::Yaml12Core`] the core-schema forms (decimal with leading zeros,
-/// `0o…`, `0x…`) are read as such first.
-fn construct_int(value: &str, schema: Schema) -> Result<Value, YamlError> {
-    if schema == Schema::Yaml12Core && is_int12(value) {
-        let big = if let Some(oct) = value.strip_prefix("0o") {
-            py_int(oct, 8)
-        } else if let Some(hex) = value.strip_prefix("0x") {
-            py_int(hex, 16)
-        } else {
-            py_int(value, 10)
-        };
-        return big.map(|b| b.to_value()).map_err(value_error);
-    }
+/// go-yaml v3's `resolve(tag, text)` for an explicit or resolved `!!null`/`!!bool`/`!!int`/`!!float` in
+/// [`Schema::Yaml12Core`]: the text must resolve to that tag (an int is accepted as a float), else go-yaml's
+/// ``cannot decode !!str `yes` as a !!bool``.
+fn construct_core12(text: &str, ctor: Ctor, at: Mark) -> Result<Value, YamlError> {
+    let r = go_resolve(text);
+    let (value, want) = match (ctor, r) {
+        (Ctor::Null, GoScalar::Null) => (Some(Value::Null), "!!null"),
+        (Ctor::Bool, GoScalar::Bool(b)) => (Some(Value::Bool(b)), "!!bool"),
+        (Ctor::Int, GoScalar::Int(i)) => (Some(Value::Int(i)), "!!int"),
+        (Ctor::Int, GoScalar::Uint(u)) => (Some(Value::BigInt(BigInt::from(u))), "!!int"),
+        (Ctor::Float, GoScalar::Float(x)) => (Some(Value::Float(x)), "!!float"),
+        (Ctor::Float, GoScalar::Int(i)) => (Some(Value::Float(go_float64(i))), "!!float"),
+        (Ctor::Null, _) => (None, "!!null"),
+        (Ctor::Bool, _) => (None, "!!bool"),
+        (Ctor::Int, _) => (None, "!!int"),
+        _ => (None, "!!float"),
+    };
+    value.ok_or_else(|| {
+        YamlError::constructor(
+            format!("cannot decode {} `{text}` as a {want}", r.short_tag()),
+            at,
+        )
+    })
+}
+
+/// Go's `float64(i)`: round to nearest, ties to even — what Rust's `as` does.
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "the rounding conversion Go performs; no other API rounds an i64"
+)]
+const fn go_float64(i: i64) -> f64 {
+    i as f64
+}
+
+/// `construct_yaml_int` (YAML 1.1). A sexagesimal int charges its work (parts × limbs) to the node budget:
+/// CPython is quadratic there too, and nothing else bounds a 16 MiB `!!int "1:1:…"`.
+fn construct_int(
+    value: &str,
+    spend: &mut dyn FnMut(usize) -> Result<(), YamlError>,
+) -> Result<Value, YamlError> {
     let cleaned = value.replace('_', "");
     let first = cleaned.chars().next().ok_or_else(index_error)?;
     let negative = first == '-';
@@ -992,6 +1148,7 @@ fn construct_int(value: &str, schema: Schema) -> Result<Value, YamlError> {
         }
         let mut acc = Big::zero();
         for part in &parts {
+            spend(acc.limbs().saturating_add(1))?;
             acc.mul_add_small(60, 0);
             acc.add(part);
         }

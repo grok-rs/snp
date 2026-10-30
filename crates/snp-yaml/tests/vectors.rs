@@ -242,6 +242,20 @@ mod vectors {
                     continue;
                 }
             };
+            // The representer raises (`str(int)` beyond 4300 digits): the re-dump fails the same way.
+            if let Some(err) = v.get("error") {
+                let (ty, msg) = (
+                    err[0].as_str().expect("type"),
+                    err[1].as_str().expect("str"),
+                );
+                match redump(text, &Limits::default()) {
+                    Err(e) if e.py_type() == ty && e.to_string() == msg => {}
+                    other => failures.push(format!(
+                        "redump of {text:.40?}\n  expected {ty}: {msg}\n       got {other:.200?}"
+                    )),
+                }
+                continue;
+            }
             let expected = v["dump"].as_str().expect("dump");
             // `dump` writes a tree; PyYAML anchors shared objects, which only `redump` sees.
             if !expected.contains("&id0") {
@@ -284,6 +298,51 @@ mod vectors {
                         "redump {text:?}\n  expected {expected}\n       got {other:?}"
                     )),
                 }
+            }
+        }
+        report(&failures, vecs.len());
+    }
+
+    /// `Schema::Yaml12Core` against go-yaml v3 (lefthook's reader; `tests/oracle/goyaml_core12`): `k: <scalar>`
+    /// plain and with an explicit `!!int`/`!!float`/`!!bool`/`!!null`/`!!str` tag. go-yaml's `time.Time` for a
+    /// plain timestamp is kept as the text (see `resolve_plain`).
+    #[test]
+    fn core12_matches_go_yaml() {
+        let vecs = vectors("core12.json");
+        assert!(vecs.len() >= 3000, "{} vectors", vecs.len());
+        let lim = Limits::default();
+        let mut failures = Vec::new();
+        for v in &vecs {
+            let text = v["yaml"].as_str().expect("yaml");
+            let kind = v["kind"].as_str().expect("kind");
+            let want = v["value"].as_str().expect("value");
+            let got = compose(text, Schema::Yaml12Core, &lim)
+                .and_then(|doc| snp_yaml::construct(&doc, Schema::Yaml12Core, &lim));
+            let ok = match (kind, &got) {
+                ("error", Err(e)) => {
+                    // A decode error carries go-yaml's text; a syntax error only has to be an error.
+                    let decode = want.strip_prefix("yaml: ").unwrap_or(want);
+                    !decode.starts_with("cannot decode") || e.to_string().contains(decode)
+                }
+                (_, Ok(Value::Map(m))) => {
+                    let k = m.iter().next().map(|(_, value)| value);
+                    match (kind, k) {
+                        ("null", Some(Value::Null)) | ("time", Some(Value::String(_))) => true,
+                        ("bool", Some(Value::Bool(b))) => b.to_string() == want,
+                        ("int", Some(Value::Int(i))) => i.to_string() == want,
+                        ("int", Some(Value::BigInt(b))) => b.to_string() == want,
+                        ("float", Some(Value::Float(x))) => {
+                            u64::from_str_radix(want, 16).ok() == Some(x.to_bits())
+                                || (x.is_nan() && want == "7ff8000000000001")
+                        }
+                        ("str", Some(Value::String(s))) => s == want,
+                        _ => false,
+                    }
+                }
+                _ => false,
+            };
+            if !ok {
+                failures.push(format!("{text:?}: go-yaml {kind} {want:?}, snp {got:?}"));
             }
         }
         report(&failures, vecs.len());
