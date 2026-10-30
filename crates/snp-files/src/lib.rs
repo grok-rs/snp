@@ -5,6 +5,7 @@
 
 mod classifier;
 mod filter;
+mod messages;
 mod table;
 
 pub use classifier::Classifier;
