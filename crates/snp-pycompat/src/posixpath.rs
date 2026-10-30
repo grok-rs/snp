@@ -310,6 +310,15 @@ fn join_realpath(p: &[u8], cwd: &[u8], fs: &dyn LinkFs) -> std::io::Result<Vec<u
                 continue;
             }
             let newpath = join(&path, &[&name]);
+            if newpath.contains(&0) {
+                // `os.lstat(newpath)` raises `ValueError: embedded null byte` (not an OSError,
+                // so non-strict realpath does not swallow it); components after a symlink loop
+                // are never lstat'ed and keep their NUL.
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "embedded null byte",
+                ));
+            }
             if !fs.is_link(&on_disk(&newpath)) {
                 path = newpath;
                 continue;
@@ -377,7 +386,9 @@ impl LinkFs for RealFs {
 /// an explicit `cwd`: resolves symlinks component by component, applies `..` after resolution
 /// (`missing/../link_a` resolves `link_a`), follows dangling links to their target, leaves symlink
 /// loops unresolved and never fails for missing paths; the result goes through [`abspath`]. An
-/// error of `readlink` after `lstat` reported a link propagates. Used for the store directory
+/// error of `readlink` after `lstat` reported a link propagates, and a component holding a NUL
+/// byte that would be `lstat`ed is `InvalidInput` `embedded null byte` (CPython 3.12.3's
+/// `ValueError` from `os.lstat`). Used for the store directory
 /// (`store.py:36`) and `init-templatedir` (`init_templatedir.py:34`).
 #[cfg(unix)]
 pub fn realpath(p: &[u8], cwd: &[u8]) -> std::io::Result<Vec<u8>> {
@@ -548,6 +559,34 @@ mod tests {
             .join()
             .unwrap();
         assert_eq!(out, "/target/x");
+    }
+
+    #[test]
+    fn realpath_embedded_nul_is_lstats_value_error() {
+        let fs = fake(&[("/r/loop1", "loop1"), ("/r/lnk", "a")]);
+        let err = |p: &[u8]| {
+            join_realpath(p, b"/r", &fs)
+                .map_err(|e| (e.kind(), e.to_string()))
+                .unwrap_err()
+        };
+        let want = (
+            std::io::ErrorKind::InvalidInput,
+            "embedded null byte".to_owned(),
+        );
+        assert_eq!(err(b"a\0b"), want);
+        assert_eq!(err(b"lnk\0/x"), want);
+        assert_eq!(err(b"/\0"), want);
+        assert_eq!(err(b"lnk/x\0"), want);
+        // `.`/`..` are never lstat'ed and neither is the rest after a symlink loop
+        assert_eq!(rp(&fs, "/r/loop1/a\0b").as_bytes(), b"/r/loop1/a\0b");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn real_realpath_rejects_embedded_nul() {
+        let e = realpath(b"a\0b", b"/").unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(e.to_string(), "embedded null byte");
     }
 
     #[test]
