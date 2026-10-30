@@ -2,12 +2,10 @@
 //!
 //! Owner: WP-15.
 
-use std::cell::Cell;
 use std::num::NonZeroUsize;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::thread::ThreadId;
 use std::time::Duration;
 
 use snp_core::cancel::{CancelReason, CancelToken};
@@ -54,8 +52,14 @@ fn fd_budget_for(soft: Option<u64>) -> NonZeroUsize {
 }
 
 thread_local! {
-    /// Counted permits held by this thread (ADR-070 re-entrancy).
-    static HELD: Cell<usize> = const { Cell::new(0) };
+    /// Counted permits held by this thread (ADR-070 re-entrancy). Shared with the permits it acquired, so a permit
+    /// dropped on another thread still decrements the acquiring thread's count.
+    static HELD: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
+}
+
+/// This thread's held-permit counter (`None` while thread-local storage is being torn down).
+fn held_counter() -> Option<Arc<AtomicUsize>> {
+    HELD.try_with(Arc::clone).ok()
 }
 
 /// The FIFO state of a [`JobPool`].
@@ -76,8 +80,8 @@ struct PoolState {
 /// So `PRE_COMMIT_NO_CONCURRENCY=1` (N = 1) cannot deadlock a meta hook that classifies files.
 ///
 /// A permit holder that calls [`JobPool::acquire`] gets an uncounted nested permit at once (it already occupies a
-/// slot with its own thread), so a holder can never block there. Permits are released on the thread that acquired
-/// them.
+/// slot with its own thread), so a holder can never block there. A permit may be dropped on any thread: it always
+/// clears the acquiring thread's flag.
 #[derive(Debug)]
 pub struct JobPool {
     state: Mutex<PoolState>,
@@ -92,8 +96,8 @@ pub struct Permit<'a> {
     pool: &'a JobPool,
     /// Counted against the pool (false for a nested permit of a holder).
     counted: bool,
-    /// The acquiring thread (its thread-local flag is updated only there).
-    owner: ThreadId,
+    /// The acquiring thread's held-permit counter (counted permits only), decremented on drop on any thread.
+    held: Option<Arc<AtomicUsize>>,
 }
 
 impl Drop for Permit<'_> {
@@ -101,8 +105,9 @@ impl Drop for Permit<'_> {
         if !self.counted {
             return;
         }
-        if std::thread::current().id() == self.owner {
-            HELD.with(|h| h.set(h.get().saturating_sub(1)));
+        if let Some(h) = self.held.take() {
+            // Incremented when this permit was handed out, so it is at least 1.
+            h.fetch_sub(1, Ordering::AcqRel);
         }
         let mut st = sync::lock(&self.pool.state);
         st.available = st.available.saturating_add(1);
@@ -139,12 +144,11 @@ impl JobPool {
         if self.cancel.is_cancelled() {
             return None;
         }
-        let owner = std::thread::current().id();
         if Self::holds_permit() {
             return Some(Permit {
                 pool: self,
                 counted: false,
-                owner,
+                held: None,
             });
         }
         let mut st = sync::lock(&self.state);
@@ -165,11 +169,14 @@ impl JobPool {
                 st.serving = st.serving.wrapping_add(1);
                 drop(st);
                 self.cv.notify_all();
-                HELD.with(|h| h.set(h.get().saturating_add(1)));
+                let held = held_counter();
+                if let Some(h) = &held {
+                    h.fetch_add(1, Ordering::AcqRel);
+                }
                 return Some(Permit {
                     pool: self,
                     counted: true,
-                    owner,
+                    held,
                 });
             }
             st = match self.cv.wait_timeout(st, POLL) {
@@ -278,7 +285,8 @@ impl JobPool {
 
     /// The calling thread's flag (for nested callers).
     pub fn holds_permit() -> bool {
-        HELD.with(|h| h.get() > 0)
+        HELD.try_with(|h| h.load(Ordering::Acquire) > 0)
+            .unwrap_or(false)
     }
 }
 
@@ -442,6 +450,33 @@ mod tests {
         drop(a);
         assert!(!JobPool::holds_permit());
         assert_eq!(sync::lock(&pool.state).available, 2);
+    }
+
+    /// Regression: a permit moved to another thread and dropped there clears the acquiring thread's flag, so that
+    /// thread acquires counted permits (and is bounded by the pool) again.
+    #[test]
+    fn permit_dropped_on_another_thread_clears_the_owner_flag() {
+        let pool = JobPool::new(nz(1), CancelToken::new());
+        let p = pool.acquire().unwrap();
+        assert!(JobPool::holds_permit());
+        std::thread::scope(|s| {
+            std::thread::Builder::new()
+                .spawn_scoped(s, move || {
+                    assert!(!JobPool::holds_permit());
+                    drop(p);
+                })
+                .unwrap();
+        });
+        assert!(!JobPool::holds_permit());
+        assert_eq!(sync::lock(&pool.state).available, 1);
+        let again = pool.acquire().unwrap();
+        assert!(
+            again.counted,
+            "the owner thread must get a counted permit again"
+        );
+        assert_eq!(sync::lock(&pool.state).available, 0);
+        drop(again);
+        assert!(!JobPool::holds_permit());
     }
 
     #[test]
