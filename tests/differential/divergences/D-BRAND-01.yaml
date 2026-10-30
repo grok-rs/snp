@@ -1,5 +1,47 @@
 # D-BRAND-01 (BRAND, owner WP-12): snp brand: snp 2.0.0, the §3.3 substitutions and argparse texts rendered with prog snp; compat brand: byte-identical
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands` and `expect_divergence` (ARCHITECTURE §13.2).
+# Run in the snp brand against the unpatched pre-commit 4.6.2 oracle, the version line, the prog and the wrap points of
+# argparse texts differ (exact snp bytes: crates/snp-cli/tests/goldens/snp.json, docs/divergences/D-BRAND-01.md).
+name: divergences/D-BRAND-01
 expect_divergence: D-BRAND-01
-status: stub
+status: active
+since: "4.6.2"
+brands: [snp]
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos, windows], pty: false}
+repos: {}
+work:
+  files: {}
+  exec: []
+  symlinks: {}
+  config: |
+    repos: []
+  commit: [".pre-commit-config.yaml"]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  # `snp 2.0.0` instead of `pre-commit 4.6.2` (stdout, exit 0 in both).
+  - tool: [--version]
+    env: {COLUMNS: "80"}
+    stdin: ""
+    tty: false
+  # Continuation indent 28 instead of 35; the same help sections.
+  - tool: [init-templatedir, -h]
+    env: {COLUMNS: "80"}
+    stdin: ""
+    tty: false
+  # `usage: snp sample-config …` / `snp sample-config: error: …` (stderr, exit 2 in both).
+  - tool: [sample-config, --color, bogus]
+    env: {COLUMNS: "80"}
+    stdin: ""
+    tty: false
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore

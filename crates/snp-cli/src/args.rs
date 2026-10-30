@@ -1,4 +1,6 @@
-//! The typed CLI facade: one struct per command, one field per argparse dest of 12 §A.8.1.
+//! The typed CLI facade: one struct per command, one field per argparse dest of 12 §A.8.1 (`pre_commit/main.py`
+//! `argparse.Namespace` attributes, converted: `--color` to [`ColorSetting`], `--hook-stage` to [`Stage`], `-t` to
+//! [`HookType`]; argv strings stay `OsString`).
 //!
 //! Owner: WP-12.
 
@@ -8,7 +10,7 @@ use std::num::NonZeroUsize;
 use snp_core::output::ColorSetting;
 use snp_core::stage::{HookType, Stage};
 
-/// Result of [`crate::parse`].
+/// Result of [`crate::parse`]: what `main.py:366-375` does with argv before it touches the store.
 #[derive(Debug)]
 #[non_exhaustive]
 #[expect(
@@ -16,47 +18,47 @@ use snp_core::stage::{HookType, Stage};
     reason = "frozen §1.4.4 shape; built once per process"
 )]
 pub enum CliOutcome {
-    /// A command to dispatch.
+    /// A command to dispatch (`args.command` and its options).
     Cli(Cli),
-    /// Help or version text for stdout (exit 0).
+    /// Help or version text for stdout (argparse `print_help` / `version`, exit 0).
     Stdout(String),
-    /// Usage error text for stderr (exit 2).
+    /// Usage error text for stderr (argparse `error()`: usage block + `{prog}: error: …`, exit 2).
     Usage(String),
 }
 
-/// One parsed command (`args.command`).
+/// One parsed command (`args.command`, dispatched by `main.py:383-445`).
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Cli {
-    /// `run`.
+    /// `run` (`commands/run.py`).
     Run(RunArgs),
-    /// `try-repo`.
+    /// `try-repo` (`commands/try_repo.py`).
     TryRepo(TryRepoArgs),
-    /// `hook-impl` (hidden).
+    /// `hook-impl` (hidden; `commands/hook_impl.py`).
     HookImpl(HookImplArgs),
-    /// `install`.
+    /// `install` (`commands/install_uninstall.py:install`).
     Install(InstallArgs),
-    /// `uninstall`.
+    /// `uninstall` (`commands/install_uninstall.py:uninstall`).
     Uninstall(UninstallArgs),
-    /// `install-hooks`.
+    /// `install-hooks` (`commands/install_uninstall.py:install_hooks`).
     InstallHooks(InstallHooksArgs),
-    /// `init-templatedir`.
+    /// `init-templatedir` (`commands/init_templatedir.py`).
     InitTemplatedir(InitTemplatedirArgs),
-    /// `autoupdate`.
+    /// `autoupdate` (`commands/autoupdate.py`).
     Autoupdate(AutoupdateArgs),
-    /// `clean`.
+    /// `clean` (`commands/clean.py`).
     Clean(ColorArgs),
-    /// `gc`.
+    /// `gc` (`commands/gc.py`).
     Gc(ColorArgs),
-    /// `migrate-config`.
+    /// `migrate-config` (`commands/migrate_config.py`).
     MigrateConfig(ConfigArgs),
-    /// `sample-config`.
+    /// `sample-config` (`commands/sample_config.py`).
     SampleConfig(ColorArgs),
-    /// `validate-config`.
+    /// `validate-config` (`commands/validate_config.py`).
     ValidateConfig(ValidateArgs),
-    /// `validate-manifest`.
+    /// `validate-manifest` (`commands/validate_manifest.py`).
     ValidateManifest(ValidateArgs),
-    /// `hazmat`.
+    /// `hazmat` (`commands/hazmat.py`); the tool is required here (D-CRASH-22).
     Hazmat(HazmatArgs),
     /// `list` (snp brand only; absent from the compat brand's choices, help and parser, ADR-023).
     List(ListArgs),
@@ -74,14 +76,14 @@ pub enum Cli {
     Completions(Shell),
 }
 
-/// Commands with only `--color`.
+/// Commands with only `--color` (`clean`, `gc`, `sample-config`; `color.py:add_color_option`).
 #[derive(Clone, Debug)]
 pub struct ColorArgs {
     /// `--color`.
     pub color: ColorSetting,
 }
 
-/// Commands with `--color` and `-c/--config`.
+/// Commands with `--color` and `-c/--config` (`migrate-config`; `main.py:_add_config_option`).
 #[derive(Clone, Debug)]
 pub struct ConfigArgs {
     /// `--color`.
@@ -90,7 +92,9 @@ pub struct ConfigArgs {
     pub config: OsString,
 }
 
-/// One field per argparse dest of 12 §A.8.1; `Some("")` ref options normalised to None (Python truthiness).
+/// `run` / `try-repo` options (`main.py:_add_run_options`, 64-172): one field per argparse dest of 12 §A.8.1;
+/// `Some("")` ref options normalised to None (Python truthiness, `run.py:262-414`), `--commit-msg-filename` kept as
+/// given (`main.py:181` tests it with `is not None`).
 #[derive(Clone, Debug)]
 #[expect(
     clippy::struct_excessive_bools,
@@ -101,7 +105,7 @@ pub struct RunArgs {
     pub color: ColorSetting,
     /// `-c/--config`.
     pub config: OsString,
-    /// `hook` positional(s) (compat: ≤ 1).
+    /// `hook` positional(s) (compat: ≤ 1); empty ids dropped (`if not args.hook`, `run.py:427`).
     pub hooks: Vec<OsString>,
     /// `-v/--verbose`.
     pub verbose: bool,
@@ -147,10 +151,10 @@ pub struct RunArgs {
     pub ext: RunExt,
 }
 
-/// snp brand flags of `run` (§9.3); env equivalents applied by snp-run.
+/// snp brand flags of `run` / `try-repo` (ARCHITECTURE §9.3, COMPATIBILITY §8.1); env equivalents applied by snp-run.
 #[derive(Clone, Debug, Default)]
 pub struct RunExt {
-    /// `-j/--jobs`.
+    /// `-j/--jobs`; `None` when absent or ≤ 0 (the number of CPUs, like `autoupdate -j 0`).
     pub jobs: Option<NonZeroUsize>,
     /// `--group` (OR).
     pub groups: Vec<OsString>,
@@ -178,18 +182,18 @@ pub enum StdinFormat {
     Lines,
 }
 
-/// `try-repo`.
+/// `try-repo` (`main.py:316-330`, `commands/try_repo.py`).
 #[derive(Clone, Debug)]
 pub struct TryRepoArgs {
     /// `repo` positional.
     pub repo: OsString,
-    /// `--ref` / `--rev`.
+    /// `--ref` / `--rev` (kept when empty: `_repo_ref` tests `ref is not None`).
     pub rev: Option<OsString>,
     /// The `run` options.
     pub run: RunArgs,
 }
 
-/// `hook-impl` (hidden).
+/// `hook-impl` (hidden; `main.py:356-365`, `commands/hook_impl.py`).
 #[derive(Clone, Debug)]
 pub struct HookImplArgs {
     /// `--color`.
@@ -202,11 +206,11 @@ pub struct HookImplArgs {
     pub hook_dir: Option<OsString>,
     /// `--skip-on-missing-config`.
     pub skip_on_missing_config: bool,
-    /// Raw REMAINDER, `--` kept.
+    /// Raw REMAINDER, `--` kept; `main.py:408` passes `rest[1:]` to `hook_impl`.
     pub rest: Vec<OsString>,
 }
 
-/// `install`.
+/// `install` (`main.py:273-293`).
 #[derive(Clone, Debug)]
 #[expect(
     clippy::struct_excessive_bools,
@@ -221,7 +225,7 @@ pub struct InstallArgs {
     pub overwrite: bool,
     /// `--install-hooks`.
     pub install_hooks: bool,
-    /// `-t/--hook-type`.
+    /// `-t/--hook-type` (append; empty when not given, i.e. `None` in pre-commit).
     pub hook_types: Vec<HookType>,
     /// `--allow-missing-config`.
     pub allow_missing_config: bool,
@@ -229,7 +233,7 @@ pub struct InstallArgs {
     pub git_config_hooks: bool,
 }
 
-/// `uninstall`.
+/// `uninstall` (`main.py:333-338`).
 #[derive(Clone, Debug)]
 pub struct UninstallArgs {
     /// `--color`.
@@ -242,18 +246,18 @@ pub struct UninstallArgs {
     pub git_config_hooks: bool,
 }
 
-/// `install-hooks`.
+/// `install-hooks` (`main.py:295-303`).
 #[derive(Clone, Debug)]
 pub struct InstallHooksArgs {
     /// `--color`.
     pub color: ColorSetting,
     /// `-c/--config`.
     pub config: OsString,
-    /// snp brand `--with-fallback`.
+    /// snp brand `--with-fallback` (ARCHITECTURE §7.2: also provision the delegate environments of native hooks).
     pub with_fallback: bool,
 }
 
-/// `init-templatedir`.
+/// `init-templatedir` (`main.py:252-271`).
 #[derive(Clone, Debug)]
 pub struct InitTemplatedirArgs {
     /// `--color`.
@@ -262,13 +266,13 @@ pub struct InitTemplatedirArgs {
     pub config: OsString,
     /// `directory` positional.
     pub directory: OsString,
-    /// `--no-allow-missing-config`.
+    /// `--no-allow-missing-config` given (`store_false` into `allow_missing_config`).
     pub no_allow_missing_config: bool,
     /// `-t/--hook-type`.
     pub hook_types: Vec<HookType>,
 }
 
-/// `autoupdate`.
+/// `autoupdate` (`main.py:220-243`).
 #[derive(Clone, Debug)]
 pub struct AutoupdateArgs {
     /// `--color`.
@@ -281,11 +285,11 @@ pub struct AutoupdateArgs {
     pub freeze: bool,
     /// `--repo` (append).
     pub repos: Vec<OsString>,
-    /// `-j/--jobs`.
+    /// `-j/--jobs` (Python `int()`, saturated; default 1; autoupdate clamps it).
     pub jobs: i64,
 }
 
-/// `validate-config` / `validate-manifest`.
+/// `validate-config` / `validate-manifest` (`main.py:340-348`).
 #[derive(Clone, Debug)]
 pub struct ValidateArgs {
     /// `--color`.
@@ -298,7 +302,7 @@ pub struct ValidateArgs {
     pub portable: bool,
 }
 
-/// `hazmat`.
+/// `hazmat` (`main.py:247-250`, `commands/hazmat.py:add_parsers`).
 #[derive(Clone, Debug)]
 pub struct HazmatArgs {
     /// `--color`.
@@ -307,7 +311,7 @@ pub struct HazmatArgs {
     pub tool: HazmatTool,
 }
 
-/// `hazmat` sub-commands (03 H.8).
+/// `hazmat` sub-commands (03 H.8, `commands/hazmat.py:10-28`); `cmd` is the raw REMAINDER (`--` kept).
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum HazmatTool {
@@ -330,7 +334,7 @@ pub enum HazmatTool {
     },
 }
 
-/// `list` (snp brand).
+/// `list` (snp brand; ARCHITECTURE §9.3, the group selectors of ADR-080).
 #[derive(Clone, Debug)]
 pub struct ListArgs {
     /// `-c/--config`.
@@ -347,7 +351,7 @@ pub struct ListArgs {
     pub no_groups: Vec<OsString>,
 }
 
-/// `config` (snp brand).
+/// `config` (snp brand; ARCHITECTURE §9.3).
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum ConfigCmd {
@@ -364,7 +368,7 @@ pub enum ConfigCmd {
     Schema,
 }
 
-/// `cache` (snp brand).
+/// `cache` (snp brand; ARCHITECTURE §5.6, §9.3).
 #[derive(Clone, Debug)]
 pub struct CacheArgs {
     /// The action.
@@ -385,7 +389,7 @@ pub enum CacheAction {
     Clean,
 }
 
-/// `migrate` (snp brand).
+/// `migrate` (snp brand; 05 §19, 09 §7.1).
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum MigrateArgs {
@@ -420,7 +424,7 @@ pub enum MigrateArgs {
     },
 }
 
-/// `doctor` (snp brand).
+/// `doctor` (snp brand; 11 §A.15).
 #[derive(Clone, Debug)]
 pub struct DoctorArgs {
     /// `--fix`.
@@ -433,7 +437,7 @@ pub struct DoctorArgs {
     pub config: OsString,
 }
 
-/// `self` (snp brand).
+/// `self` (snp brand; 11 §A.9.2).
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum SelfArgs {
@@ -452,7 +456,7 @@ pub enum SelfArgs {
     Check,
 }
 
-/// `completions <shell>` (snp brand).
+/// `completions <shell>` (snp brand; the scripts of [`crate::COMPLETIONS`], ARCHITECTURE §9.1).
 #[derive(Copy, Clone, Debug)]
 #[non_exhaustive]
 pub enum Shell {
