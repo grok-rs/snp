@@ -1,5 +1,41 @@
-# D-MISC-07 (TIERB, owner WP-26): only the final traceback line (pre_commit.parse_shebang.ExecutableNotFoundError: Executable x not found)
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-MISC-07 (MISC, owner WP-26): an in-hook hazmat failure prints only the final traceback line.
+# `python -m pre_commit.commands.hazmat` has no error handler (full traceback, exit 1); `snp __hazmat` prints the
+# last line only, same exit code (docs/divergences/D-MISC-07.md).
+name: divergences/D-MISC-07
+since: "4.5.0"
 expect_divergence: D-MISC-07
-status: stub
+status: active
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files: {a.txt: "a\n"}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: hz
+            name: hazmat not found
+            entry: pre-commit hazmat n1 nope-not-here --
+            language: system
+  commit: [".pre-commit-config.yaml", a.txt]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - tool: [run, --all-files]
+    env: {PATH: "/usr/bin:/bin"}
+    stdin: ""
+    tty: false
+compare:
+  # The traceback frames differ (Tier B); the final line, the status line and the exit code agree.
+  stdout: tierB
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore

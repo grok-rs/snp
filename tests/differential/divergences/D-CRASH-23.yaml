@@ -1,5 +1,42 @@
-# D-CRASH-23 (CRASH, owner WP-26): passes (opens for writing only when a change is needed)
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-CRASH-23 (CRASH, owner WP-26): a read-only file that needs no change passes end-of-file-fixer.
+# pre-commit-hooks opens every file `rb+` (PermissionError crash, the partition stops); snp opens for writing only
+# when a change is needed (docs/divergences/D-CRASH-23.md). `require_serial` keeps one partition in file order.
+name: divergences/D-CRASH-23
+since: "4.1.0"
 expect_divergence: D-CRASH-23
-status: stub
+status: active
+requires: {git: ">=2.31", net: true, tools: [], os: [linux, macos], pty: false, not_root: true}
+repos:
+  pch: {url: "https://github.com/pre-commit/pre-commit-hooks", rev: v6.0.0}
+work:
+  files: {ro.txt: "ok\n", b.txt: "x"}
+  exec: []
+  symlinks: {}
+  chmod: {ro.txt: "0444"}
+  config: |
+    repos:
+    -   repo: https://github.com/pre-commit/pre-commit-hooks
+        rev: v6.0.0
+        hooks:
+        -   id: end-of-file-fixer
+            require_serial: true
+  commit: [".pre-commit-config.yaml", ro.txt, b.txt]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  # pre-commit: PermissionError traceback for ro.txt, b.txt untouched; snp: `Fixing b.txt`, b.txt = "x\n".
+  - tool: [run, --files, ro.txt, b.txt]
+    env: {}
+    stdin: ""
+    tty: false
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore

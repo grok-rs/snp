@@ -1,5 +1,55 @@
-# D-MISC-05 (TIERB, owner WP-26): one line in Python's form (re.error: … at position N), exit 1
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-MISC-05 (MISC, owner WP-26): an invalid pygrep entry fails the hook once with Python's last traceback line.
+# pre-commit prints one full traceback per xargs partition (exit 1); snp prints `re.PatternError: missing ),
+# unterminated subpattern at position 0` once (exit 1) (docs/divergences/D-MISC-05.md).
+name: divergences/D-MISC-05
+since: "4.1.0"
 expect_divergence: D-MISC-05
-status: stub
+status: active
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos, windows], pty: false}
+repos: {}
+work:
+  # 12 files: pygrep partitions are serial with max_args = max(4, ceil(n/1)) = 12 → one partition unless the
+  # command line is long; `PRE_COMMIT_NO_CONCURRENCY` does not matter for pygrep. The divergence is the traceback.
+  files:
+    f01.txt: "a\n"
+    f02.txt: "a\n"
+    f03.txt: "a\n"
+    f04.txt: "a\n"
+    f05.txt: "a\n"
+    f06.txt: "a\n"
+    f07.txt: "a\n"
+    f08.txt: "a\n"
+    f09.txt: "a\n"
+    f10.txt: "a\n"
+    f11.txt: "a\n"
+    f12.txt: "a\n"
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: grep
+            name: grep
+            entry: '('
+            language: pygrep
+  commit: [".pre-commit-config.yaml"]
+  stage: [f01.txt, f02.txt, f03.txt, f04.txt, f05.txt, f06.txt, f07.txt, f08.txt, f09.txt, f10.txt, f11.txt, f12.txt]
+  unstaged: {}
+  git_config: {}
+steps:
+  - tool: [run, --all-files]
+    env: {}
+    stdin: ""
+    tty: false
+compare:
+  # The hook block differs (traceback vs one line); the status line, exit code and repository state agree.
+  stdout: tierB
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
