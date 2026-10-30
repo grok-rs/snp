@@ -1,0 +1,44 @@
+{
+ "meta": {
+  "libyaml": "0.2.5",
+  "python": "3.12.3",
+  "pyyaml": "6.0.3"
+ },
+ "vectors": [
+  {
+   "kind": "flow_seq",
+   "n": 512,
+   "python": "loaded: 512 nodes when expanded"
+  },
+  {
+   "kind": "flow_seq",
+   "n": 513,
+   "python": "loaded: 513 nodes when expanded"
+  },
+  {
+   "kind": "flow_seq",
+   "n": 10000,
+   "python": "loaded: 10000 nodes when expanded"
+  },
+  {
+   "kind": "flow_map",
+   "n": 512,
+   "python": "loaded: 1025 nodes when expanded"
+  },
+  {
+   "kind": "flow_map",
+   "n": 513,
+   "python": "loaded: 1027 nodes when expanded"
+  },
+  {
+   "kind": "block_seq",
+   "n": 600,
+   "python": "loaded: 601 nodes when expanded"
+  },
+  {
+   "kind": "bomb",
+   "n": 10,
+   "python": "loaded: 12345679021 nodes when expanded"
+  }
+ ]
+}

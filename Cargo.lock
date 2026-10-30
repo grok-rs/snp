@@ -1393,6 +1393,9 @@ name = "snp-yaml"
 version = "2.0.0"
 dependencies = [
  "cfgv",
+ "dhat",
+ "indexmap",
+ "serde_json",
  "snp-core",
  "snp-pycompat",
 ]

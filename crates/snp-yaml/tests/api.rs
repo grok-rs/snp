@@ -103,4 +103,15 @@ mod api {
         has::<fn(&str, Quote) -> String>(emit::scalar_for_rev);
         has::<fn(&str, Schema) -> ImplicitTag>(snp_yaml::resolve_plain);
     }
+
+    /// Additive items beyond ARCHITECTURE §1.4.6 (WP-14): multi-document compose, the Python exception class of an
+    /// error, the `yaml` implicit tag and its tag string, and the identity-preserving re-dump of autoupdate.
+    #[test]
+    fn additive_items() {
+        has::<fn(&str, Schema, &Limits) -> Result<Vec<Document>, YamlError>>(snp_yaml::compose_all);
+        has::<fn(&YamlError) -> &'static str>(YamlError::py_type);
+        has::<fn(ImplicitTag) -> &'static str>(ImplicitTag::as_tag);
+        has::<ImplicitTag>(ImplicitTag::Yaml);
+        has::<fn(&str, &Limits) -> Result<String, YamlError>>(emit::redump);
+    }
 }
