@@ -31,7 +31,9 @@ fuzz_target!(|data: &[u8]| {
             let tokens = snp_pycompat::shlex::split(entry).unwrap_or_default();
             let hazmat = tokens.len() >= 2
                 && tokens.get(1).is_some_and(|t| t == "hazmat")
-                && tokens.first().is_some_and(|t| t == "pre-commit" || t == "snp");
+                && tokens
+                    .first()
+                    .is_some_and(|t| t == "pre-commit" || t == "snp");
             if hazmat {
                 assert_eq!(argv.first(), Some(&exe.as_os_str().to_os_string()));
                 assert_eq!(argv.get(1), Some(&OsString::from("__hazmat")));
