@@ -448,3 +448,106 @@ fn shadow_try_repo_commits_uncommitted_changes() {
         "the tried repo is unchanged"
     );
 }
+
+/// pre-commit resolves a relative local `repo:` against the project root (its cwd after `_adjust_args_and_chdir`);
+/// snp never reads the process cwd: a relative repo reaches `remote add` verbatim even when a directory of that name
+/// exists under the test's cwd (`tests/` of this crate), and the caller's root-resolved path is what gets stored.
+#[test]
+fn relative_local_repos_are_never_resolved_against_the_process_cwd() {
+    let sb = Sandbox::new();
+    assert!(
+        Path::new("tests").is_dir(),
+        "cargo runs tests in the crate dir"
+    );
+    let remote_add = |rec: &Recorder| -> Vec<String> {
+        rec.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(a, _)| a.iter().any(|x| x == "remote"))
+            .map(|(a, _)| a.last().unwrap().to_string_lossy().into_owned())
+            .collect()
+    };
+    let rec = Arc::new(Recorder::default());
+    let dest = sb.path("rel-clone");
+    std::fs::create_dir_all(&dest).unwrap();
+    OwnedRepo::clone_rev(
+        sb.exe(),
+        &sb.env,
+        &dest,
+        "tests",
+        "v1",
+        CloneMode::Foreground,
+        Arc::<Recorder>::clone(&rec),
+    )
+    .unwrap();
+    assert_eq!(remote_add(&rec), ["tests"]);
+
+    let rec = Arc::new(Recorder::default());
+    let tmp = sb.path("rel-autoupdate");
+    std::fs::create_dir_all(&tmp).unwrap();
+    OwnedRepo::open(sb.exe(), &sb.env, &tmp, Arc::<Recorder>::clone(&rec))
+        .rev_info("tests", false, false)
+        .unwrap();
+    assert_eq!(remote_add(&rec), ["tests"]);
+
+    // the caller joins `./hooks` to the project root: that repository is cloned, whatever the process cwd
+    let root = sb.init("root");
+    let (up, _, v2) = upstream(&sb);
+    std::fs::rename(&up, root.join("hooks")).unwrap();
+    let resolved = format!("{}/./hooks", root.display());
+    let dest = sb.path("abs-clone");
+    std::fs::create_dir_all(&dest).unwrap();
+    OwnedRepo::clone_rev(
+        sb.exe(),
+        &sb.env,
+        &dest,
+        &resolved,
+        "v2.0.0",
+        CloneMode::Foreground,
+        sb.backend(),
+    )
+    .unwrap();
+    assert_eq!(
+        sb.git_text(&dest, &["remote", "get-url", "origin"]),
+        root.join("hooks").display().to_string()
+    );
+    assert_eq!(sb.head(&dest), v2);
+}
+
+/// `_repo_ref`: `head_rev(repo)` with the repo string verbatim; only a repo that exists on disk (relative to the root)
+/// is probed with `git diff --quiet HEAD`; a URL comes back as `(repo, ref)`.
+#[test]
+#[cfg(unix)]
+fn shadow_try_repo_takes_urls_and_missing_paths_like_repo_ref() {
+    let sb = Sandbox::new();
+    let user = sb.init("user");
+    sb.commit(&user, "user");
+    let (git, _) = sb.discover(&user);
+    let (up, _, v2) = upstream(&sb);
+    sb.write(&up, "pkg/mod.py", b"dirty\n"); // a dirty work tree must not matter for a URL
+    let tmp = sb.path("tmp-url");
+    std::fs::create_dir_all(&tmp).unwrap();
+
+    let url = format!("file://{}", up.display());
+    let owned = OwnedRepo::open(sb.exe(), &sb.env, Path::new(&url), sb.backend());
+    assert_eq!(
+        owned.shadow_try_repo(&git, &tmp).unwrap(),
+        (std::path::PathBuf::from(&url), v2)
+    );
+    assert!(!tmp.join("shadow-repo").exists());
+
+    // a relative path (as `_adjust_args_and_chdir` leaves it): resolved against the root, echoed verbatim
+    let rel = OwnedRepo::open(sb.exe(), &sb.env, Path::new("../upstream"), sb.backend());
+    let (shadow, _) = rel.shadow_try_repo(&git, &tmp).unwrap();
+    assert_eq!(shadow, tmp.join("shadow-repo"), "dirty local repo: shadow");
+
+    let missing = OwnedRepo::open(sb.exe(), &sb.env, Path::new("nope"), sb.backend());
+    let e = missing.shadow_try_repo(&git, &tmp).unwrap_err();
+    let (ty, text) = crate::common::exc(&e);
+    assert_eq!(ty, "CalledProcessError");
+    assert!(
+        text.contains("'ls-remote', '--exit-code', 'nope', 'HEAD')"),
+        "{text}"
+    );
+}

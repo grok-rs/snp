@@ -118,6 +118,12 @@ impl OwnedRepo {
     /// `submodule update --init --recursive`, whose `CalledProcessError` is the error (X13-GIT-01). `dest` is
     /// owned by the caller (the store's scratch directory): it is never removed here, except that the D-SEC-06
     /// retry empties it before re-initialising.
+    ///
+    /// **Local repositories:** pre-commit resolves a relative `repo:` against its cwd, which `_adjust_args_and_chdir`
+    /// has set to the project root. snp-git has no root here and never reads the process cwd, so the caller passes
+    /// a local repository already joined to the project root (`ConfigSource::project_root`, the base
+    /// `RepoId::from_config` uses) whenever `<root>/<repo>` is a directory; URLs are passed verbatim. A relative
+    /// `repo` reaches `git remote add` unchanged.
     pub fn clone_rev(
         exe: Arc<GitExe>,
         base: &Env,
@@ -393,7 +399,8 @@ impl OwnedRepo {
     /// `--freeze` (an annotated tag freezes to the tag object), then `show <rev>:.pre-commit-hooks.yaml` +
     /// `checkout <rev> -- .pre-commit-hooks.yaml` (failures ignored). `hook_ids` is left empty: the manifest at
     /// `<dir>/.pre-commit-hooks.yaml` is loaded by the caller (snp-config owns manifest parsing and its
-    /// `InvalidManifestError` texts).
+    /// `InvalidManifestError` texts). A relative local `repo` must already be joined to the project root, as for
+    /// [`OwnedRepo::clone_rev`]; `RevInfo::repo` is `repo` as given.
     pub fn rev_info(&self, repo: &str, tags_only: bool, freeze: bool) -> Result<RevInfo, Failure> {
         let dir = self.dir.as_os_str().to_os_string();
         let git_c = |args: &[&str]| -> Vec<OsString> {
@@ -494,10 +501,12 @@ impl OwnedRepo {
 
     /// try-repo 03 §12: (shadow repo path, ref).
     ///
-    /// `try_repo._repo_ref` (`try_repo.py:21-48`) for a repository on disk (`self` = the repo being tried, relative
-    /// paths resolved against `user`'s root, pre-commit's cwd), with the sanitized env everywhere except the
-    /// deliberate `GIT_INDEX_FILE`/`GIT_OBJECT_DIRECTORY` of the shadow `add`s (02 G.6): `ref = ls-remote
-    /// --exit-code <repo> HEAD`; when `git diff --quiet --no-ext-diff HEAD` in the repo returns 1, the repo is cloned
+    /// `try_repo._repo_ref` (`try_repo.py:21-48`) for `self` = the repo being tried, as `args.repo` after
+    /// `_adjust_args_and_chdir` (a URL, or a path relative to `user`'s root, pre-commit's cwd), with the sanitized env
+    /// everywhere except the deliberate `GIT_INDEX_FILE`/`GIT_OBJECT_DIRECTORY` of the shadow `add`s (02 G.6): `ref =
+    /// ls-remote --exit-code <repo> HEAD` with `<repo>` verbatim in the root; a repo that does not exist on disk
+    /// relative to the root (`os.path.exists`: every URL) is `(repo, ref)` with no further call; when `git diff
+    /// --quiet --no-ext-diff HEAD` in the repo returns 1, the repo is cloned
     /// into `<tmp>/shadow-repo`, checked out as `_pc_tmp`, the staged files and `add -u` are written into the shadow
     /// index, committed as `pre-commit <asottile+pre-commit@umich.edu>`, and `(shadow, its HEAD)` is returned.
     /// Otherwise `(repo, ref)` comes back unchanged: the caller prints `[WARNING] Creating temporary repo with
@@ -510,7 +519,10 @@ impl OwnedRepo {
         } else {
             root.join(&self.dir)
         };
-        let reference = self.head_rev(root, repo.as_os_str())?;
+        let reference = self.head_rev(root, self.dir.as_os_str())?;
+        if !repo.exists() {
+            return Ok((self.dir.to_path_buf(), reference));
+        }
         let dirty = self.capture_in(
             &repo,
             &["diff", "--quiet", "--no-ext-diff", "HEAD"],
@@ -522,7 +534,7 @@ impl OwnedRepo {
         let shadow = tmp.join("shadow-repo");
         let clone = [
             os("clone"),
-            repo.as_os_str().to_os_string(),
+            self.dir.as_os_str().to_os_string(),
             shadow.as_os_str().to_os_string(),
         ];
         self.checked_in(root, &clone, &self.env)?;
@@ -602,14 +614,19 @@ impl OwnedRepo {
 }
 
 /// `<repo>` of `git remote add origin`: `os.path.abspath(repo)` when `os.path.isdir(repo)` (`git.py:186-187`).
-/// snp never changes its cwd, so relative paths are resolved against the process cwd, as Python does.
+///
+/// pre-commit evaluates both after `_adjust_args_and_chdir` moved its cwd to the project root (`main.py:188-189`).
+/// snp never changes its cwd and `clone_rev`/`rev_info` carry no root, so the caller resolves a relative local
+/// repository against the project root first (see [`OwnedRepo::clone_rev`]); here an absolute directory is
+/// normalised exactly like `abspath` (`.`/`..`/trailing `/`), and anything else, a relative path included, is passed
+/// verbatim. The process cwd is never consulted (S6).
 fn remote_arg(repo: &str) -> OsString {
     let p = Path::new(repo);
-    if !p.is_dir() {
-        return os(repo);
+    if p.is_absolute() && p.is_dir() {
+        snp_pycompat::ospath::abspath(p.as_os_str(), p).into_os_string()
+    } else {
+        os(repo)
     }
-    let cwd = std::env::current_dir().unwrap_or_default();
-    snp_pycompat::ospath::abspath(p.as_os_str(), &cwd).into_os_string()
 }
 
 /// `no_git_env(base)` + the fsmonitor injection when git understands `GIT_CONFIG_COUNT` (≥ 2.31).
@@ -628,19 +645,11 @@ fn owned_env(exe: &GitExe, base: &Env) -> Env {
 pub(crate) fn inject_fsmonitor(env: &Env) -> Env {
     let start: u32 = match env.get("GIT_CONFIG_COUNT") {
         None => 0,
-        Some(v) => {
-            let b = v.as_encoded_bytes();
-            if b.is_empty() {
-                0
-            } else if b.iter().all(u8::is_ascii_digit) {
-                match std::str::from_utf8(b).ok().and_then(|s| s.parse().ok()) {
-                    Some(n) => n,
-                    None => return env.clone(),
-                }
-            } else {
-                return env.clone();
-            }
-        }
+        Some(v) if v.is_empty() => 0,
+        Some(v) => match parse_config_count(v.as_encoded_bytes()) {
+            Some(n) => n,
+            None => return env.clone(),
+        },
     };
     let (Some(second), Some(count)) = (start.checked_add(1), start.checked_add(2)) else {
         return env.clone();
@@ -657,6 +666,34 @@ pub(crate) fn inject_fsmonitor(env: &Env) -> Env {
             .set(key("GIT_CONFIG_VALUE_", second), "false")
             .set(name_case("GIT_CONFIG_COUNT"), count.to_string()),
     )
+}
+
+/// git's `GIT_CONFIG_COUNT` parse (`config.c` `git_config_from_env`): `strtoul(env, &end, 10)` with trailing
+/// garbage and values above `INT_MAX` rejected. Like `strtoul`, leading C-locale whitespace and one `+`/`-` sign are
+/// accepted; a negated non-zero value wraps above `INT_MAX` (rejected), `-0` is 0. `None` = git reports it as bogus.
+fn parse_config_count(b: &[u8]) -> Option<u32> {
+    let start = b
+        .iter()
+        .position(|c| !matches!(c, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r'))?;
+    let rest = b.get(start..)?;
+    let (negative, digits) = match rest.split_first() {
+        Some((b'+', d)) => (false, d),
+        Some((b'-', d)) => (true, d),
+        _ => (false, rest),
+    };
+    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    let mut n: u32 = 0;
+    for d in digits {
+        n = n
+            .checked_mul(10)?
+            .checked_add(u32::from(d.wrapping_sub(b'0')))?;
+    }
+    if negative && n != 0 {
+        return None;
+    }
+    i32::try_from(n).is_ok().then_some(n)
 }
 
 /// ADR-064: the background prefetch environment.
@@ -760,12 +797,12 @@ pub fn no_git_env(env: &Env) -> Env {
         let name = k
             .to_str()
             .map_or_else(|| k.to_os_string(), |s| OsString::from(name_case(s)));
-        let keep = name.to_str().is_none_or(|n| {
-            !n.starts_with("GIT_")
-                || n.starts_with("GIT_CONFIG_KEY_")
-                || n.starts_with("GIT_CONFIG_VALUE_")
-                || NO_GIT_ENV_KEEP.contains(&n)
-        });
+        // on bytes: CPython decodes environ keys with surrogateescape, so a non-UTF-8 `GIT_…` name is still dropped
+        let b = name.as_encoded_bytes();
+        let keep = !b.starts_with(b"GIT_")
+            || b.starts_with(b"GIT_CONFIG_KEY_")
+            || b.starts_with(b"GIT_CONFIG_VALUE_")
+            || NO_GIT_ENV_KEEP.iter().any(|k| b == k.as_bytes());
         keep.then(|| (name, v.to_os_string()))
     }))
 }
@@ -813,7 +850,40 @@ mod tests {
             Some("core.useBuiltinFSMonitor")
         );
 
-        for bogus in ["x", " 1", "-1", "1.0", "99999999999"] {
+        // strtoul: leading whitespace and a sign are accepted, the rest must be digits up to INT_MAX
+        for (count, next) in [
+            (" 2", "4"),
+            ("+2", "4"),
+            ("\t\n2", "4"),
+            ("-0", "2"),
+            ("007", "9"),
+        ] {
+            let e = inject_fsmonitor(&env(&[("GIT_CONFIG_COUNT", count)]));
+            assert_eq!(
+                get(&e, "GIT_CONFIG_COUNT").as_deref(),
+                Some(next),
+                "{count:?}"
+            );
+            let first = next.parse::<u32>().unwrap() - 2;
+            assert_eq!(
+                get(&e, &format!("GIT_CONFIG_KEY_{first}")).as_deref(),
+                Some("core.fsmonitor"),
+                "{count:?}"
+            );
+        }
+        for bogus in [
+            "x",
+            "1 ",
+            " ",
+            "+",
+            "-",
+            "+-1",
+            "-1",
+            "1.0",
+            "0x1",
+            "2147483648",
+            "99999999999",
+        ] {
             let e = inject_fsmonitor(&env(&[("GIT_CONFIG_COUNT", bogus)]));
             assert_eq!(get(&e, "GIT_CONFIG_COUNT").as_deref(), Some(bogus));
             assert_eq!(get(&e, "GIT_CONFIG_KEY_0"), None);
@@ -822,6 +892,47 @@ mod tests {
         assert_eq!(get(&e, "GIT_CONFIG_COUNT").as_deref(), Some("2"));
         let e = inject_fsmonitor(&env(&[("GIT_CONFIG_COUNT", "2147483646")]));
         assert_eq!(get(&e, "GIT_CONFIG_COUNT").as_deref(), Some("2147483646"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn no_git_env_decides_non_utf8_names_on_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let raw = |b: &[u8]| OsStr::from_bytes(b).to_os_string();
+        let e = no_git_env(&Env::from_pairs([
+            (raw(b"GIT_\xffDIR"), raw(b"x")),
+            (raw(b"GIT_CONFIG_KEY_\xff"), raw(b"k")),
+            (raw(b"X_\xff"), raw(b"y")),
+            (raw(b"GIT_SSH"), raw(b"plink")),
+            (raw(b"GIT_DIR"), raw(b"/r/.git")),
+        ]));
+        let mut names: Vec<Vec<u8>> = e.iter().map(|(k, _)| k.as_bytes().to_vec()).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                b"GIT_CONFIG_KEY_\xff".to_vec(),
+                b"GIT_SSH".to_vec(),
+                b"X_\xff".to_vec()
+            ]
+        );
+    }
+
+    #[test]
+    fn remote_arg_never_reads_the_process_cwd() {
+        // `src` is a directory relative to this crate's cwd under `cargo test`: still passed verbatim
+        assert_eq!(remote_arg("src"), OsString::from("src"));
+        assert_eq!(remote_arg("https://h/x"), OsString::from("https://h/x"));
+        if !cfg!(unix) {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("hooks");
+        std::fs::create_dir_all(&sub).unwrap();
+        let messy = format!("{}/./hooks/", dir.path().display());
+        assert_eq!(remote_arg(&messy), sub.into_os_string());
+        let missing = format!("{}/nope", dir.path().display());
+        assert_eq!(remote_arg(&missing), OsString::from(&missing));
     }
 
     #[test]
