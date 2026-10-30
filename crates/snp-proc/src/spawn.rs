@@ -15,20 +15,22 @@
 //!
 //! Owner: WP-15.
 
+use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use snp_core::cancel::CancelToken;
 use snp_core::env::{Env, EnvPatch};
 use snp_core::failure::pyerr;
 use snp_core::spawnlock;
+use snp_core::sync;
 
 use crate::registry::{self, Cell, Proc};
 
@@ -113,8 +115,11 @@ pub struct PyStatus(pub i64);
 ///
 /// Accounting: every byte a [`merged`] capture keeps in memory is charged before it is appended. A capture that
 /// would exceed the remaining budget moves its bytes into an unnamed spill file and returns its charge; an output
-/// returned as [`Output::Memory`] keeps its charge (the caller may hold it until the end of the run), so the
-/// captured output resident in memory never exceeds the budget, whatever the number of partitions or CPUs (B12).
+/// returned as [`Output::Memory`] keeps its charge while it is alive (the run holds outputs until the head-of-line
+/// printer has written them) and returns it when it is dropped. So the captured output resident in memory never
+/// exceeds the budget, whatever the number of partitions or CPUs (B12), and a long run whose outputs are printed and
+/// dropped never starts spilling. (A held `Output::Memory` whose vector the caller regrows is released when the
+/// budget sees its old allocation reused; nothing in snp mutates outputs.)
 /// When neither `spill_dir` nor the OS temp dir accepts a spill file the output stays in memory (output is never
 /// lost).
 #[derive(Debug)]
@@ -123,15 +128,53 @@ pub struct OutputBudget {
     remaining: AtomicUsize,
     /// Where spill files are created.
     spill_dir: PathBuf,
+    /// This budget, for the leases of the outputs it charged.
+    me: Weak<Self>,
 }
+
+/// The charge an alive [`Output::Memory`] holds, keyed by its vector's allocation address.
+#[derive(Debug)]
+struct Lease {
+    /// The charging budget.
+    budget: Weak<OutputBudget>,
+    /// Bytes charged.
+    charge: usize,
+}
+
+/// Leases of alive in-memory outputs (allocation address → lease); [`Output`]'s `Drop` returns them.
+static LEASES: std::sync::LazyLock<Mutex<HashMap<usize, Lease>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 impl OutputBudget {
     /// A budget of `bytes` spilling into `spill_dir`.
     pub fn new(bytes: usize, spill_dir: PathBuf) -> Arc<Self> {
-        Arc::new(Self {
+        Arc::new_cyclic(|me| Self {
             remaining: AtomicUsize::new(bytes),
             spill_dir,
+            me: Weak::clone(me),
         })
+    }
+
+    /// Keeps `charge` charged while the output in `v` is alive (`Drop for Output` returns it).
+    fn lease(&self, v: &[u8], capacity: usize, charge: usize) {
+        if charge == 0 {
+            return;
+        }
+        if capacity == 0 {
+            self.give_back(charge);
+            return;
+        }
+        let stale = sync::lock(&LEASES).insert(
+            v.as_ptr().addr(),
+            Lease {
+                budget: Weak::clone(&self.me),
+                charge,
+            },
+        );
+        // The address was reused: the output that leased it gave up that allocation (it was regrown or freed).
+        if let Some(old) = stale {
+            old.release();
+        }
     }
 
     /// Charges `n` bytes; `false` (nothing charged) when fewer remain.
@@ -176,7 +219,18 @@ impl OutputBudget {
     }
 }
 
+impl Lease {
+    /// Returns the charge (nothing when the budget is gone).
+    fn release(self) {
+        if let Some(b) = self.budget.upgrade() {
+            b.give_back(self.charge);
+        }
+    }
+}
+
 /// Merged hook output, in memory or spilled.
+///
+/// An in-memory output holds its [`OutputBudget`] charge until it is dropped.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Output {
@@ -221,6 +275,20 @@ impl Output {
                     }
                 });
                 all && read.is_ok()
+            }
+        }
+    }
+}
+
+impl Drop for Output {
+    /// Returns the budget charge of an in-memory output.
+    fn drop(&mut self) {
+        if let Self::Memory(v) = self
+            && v.capacity() > 0
+        {
+            let lease = sync::lock(&LEASES).remove(&v.as_ptr().addr());
+            if let Some(l) = lease {
+                l.release();
             }
         }
     }
@@ -306,10 +374,72 @@ pub struct SpawnError {
 impl SpawnError {
     /// "[Errno 8] Exec format error: './x.sh'" / "[`WinError` N] …".
     ///
-    /// `str(OSError)` with the program as `filename` (13 X.2.1, 02 §11.8; `util.py:86-87`). An error that carries
-    /// no OS code (e.g. a batch argument with a line break, D-PLAT-03) renders its own message.
+    /// `str(OSError)` with the program as `filename` (13 X.2.1, 02 §11.8; `util.py:86-87`), or with the `cwd` when
+    /// the child's `chdir` failed (`subprocess.Popen` reports the cwd then, 15 §A4 "Exception texts"). An error that
+    /// carries no OS code (e.g. a batch argument with a line break, D-PLAT-03) renders its own message.
     pub fn python_text(&self) -> String {
+        if let Some(c) = self
+            .io
+            .get_ref()
+            .and_then(|e| e.downcast_ref::<ChdirFailed>())
+        {
+            return pyerr::os_error_text(&c.source, Some(&c.cwd), None);
+        }
         pyerr::os_error_text(&self.io, Some(&self.program), None)
+    }
+}
+
+/// A spawn that failed in the child's `chdir(cwd)` (POSIX): the OS error is `source`, the file name is `cwd`.
+///
+/// Carried inside [`SpawnError::io`] (same kind; the OS code is `source`'s). `Display` is the Python text.
+#[derive(Debug)]
+struct ChdirFailed {
+    /// The working directory as passed.
+    cwd: OsString,
+    /// The OS error.
+    source: io::Error,
+}
+
+impl std::fmt::Display for ChdirFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&pyerr::os_error_text(&self.source, Some(&self.cwd), None))
+    }
+}
+
+impl std::error::Error for ChdirFailed {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// `io` as a [`ChdirFailed`] when a POSIX spawn failed with `ENOENT`/`ENOTDIR`/`EACCES` and `cwd` is not an
+/// accessible directory (`chdir` runs before `exec`, so it is the failing call); `io` otherwise (and on Windows,
+/// where CPython reports `[WinError 267]` without a file name).
+fn attribute_to_cwd(io: io::Error, cwd: &Path) -> io::Error {
+    #[cfg(unix)]
+    {
+        use rustix::io::Errno;
+        let code = io.raw_os_error();
+        let chdir_like = [Errno::NOENT, Errno::NOTDIR, Errno::ACCESS]
+            .iter()
+            .any(|e| code == Some(e.raw_os_error()));
+        let cwd_ok = std::fs::metadata(cwd).is_ok_and(|m| m.is_dir())
+            && rustix::fs::access(cwd, rustix::fs::Access::EXEC_OK).is_ok();
+        if chdir_like && !cwd_ok {
+            return io::Error::new(
+                io.kind(),
+                ChdirFailed {
+                    cwd: cwd.as_os_str().to_os_string(),
+                    source: io,
+                },
+            );
+        }
+        io
+    }
+    #[cfg(not(unix))]
+    {
+        let _: &Path = cwd;
+        io
     }
 }
 
@@ -526,6 +656,7 @@ impl<'b> Collector<'b> {
         false
     }
 
+    /// The output: an in-memory one keeps its charge as a lease until it is dropped; the spill path holds none.
     fn finish(self) -> Output {
         match self.spill {
             Some((file, len)) if self.mem.is_empty() => {
@@ -541,6 +672,8 @@ impl<'b> Collector<'b> {
                     all.extend_from_slice(c);
                     Ok(())
                 });
+                // The charge covered `mem` only; `all` is not charged (rare, never lose output).
+                self.budget.give_back(self.charged);
                 if read.is_ok() {
                     all.extend_from_slice(&self.mem);
                     Output::Memory(all)
@@ -548,7 +681,11 @@ impl<'b> Collector<'b> {
                     Output::Memory(self.mem)
                 }
             }
-            None => Output::Memory(self.mem),
+            None => {
+                self.budget
+                    .lease(&self.mem, self.mem.capacity(), self.charged);
+                Output::Memory(self.mem)
+            }
         }
     }
 }
@@ -1052,7 +1189,9 @@ fn start(
         let _lock = spawnlock::guard();
         spawn_platform(cmd, spec.role, group)
     };
-    let (proc_, pid, stdin, out, err) = spawned.map_err(fail)?;
+    let (proc_, pid, stdin, out, err) = spawned
+        .map_err(|io| attribute_to_cwd(io, spec.cwd))
+        .map_err(fail)?;
     let cell = registry::register(proc_, pid, spec.role, group, spec.cancel.clone());
     drop(gate);
     let started = Started {
@@ -1606,6 +1745,45 @@ mod tests {
         assert_eq!(e.io.kind(), io::ErrorKind::InvalidInput);
     }
 
+    /// `subprocess.Popen` names the cwd when the child's chdir fails (CPython 3.12:
+    /// `[Errno 2] No such file or directory: '/nonexistent-dir'`, `[Errno 20] Not a directory: '/etc/passwd'`), even
+    /// when the program is missing too (chdir runs first).
+    #[cfg(unix)]
+    #[test]
+    fn spawn_error_names_a_failing_cwd() {
+        let d = tempfile::tempdir().unwrap();
+        let (env, cancel) = (env(), CancelToken::new());
+        let missing = d.path().join("nonexistent-dir");
+        let file = d.path().join("plain");
+        std::fs::write(&file, b"").unwrap();
+        let text = |prog: &str, cwd: &Path| {
+            let argv = [OsString::from(prog)];
+            let e = capture(&spec(&argv, &env, cwd, &cancel)).unwrap_err();
+            (e.python_text(), e.io.kind())
+        };
+        let m = missing.to_str().unwrap();
+        assert_eq!(
+            text("/bin/true", &missing),
+            (
+                format!("[Errno 2] No such file or directory: '{m}'"),
+                io::ErrorKind::NotFound
+            )
+        );
+        assert_eq!(
+            text("/nonexistent/prog", &missing).0,
+            format!("[Errno 2] No such file or directory: '{m}'")
+        );
+        assert_eq!(
+            text("/bin/true", &file).0,
+            format!("[Errno 20] Not a directory: '{}'", file.to_str().unwrap())
+        );
+        // A valid cwd keeps the program as the file name.
+        assert_eq!(
+            text("/nonexistent/prog", d.path()).0,
+            "[Errno 2] No such file or directory: '/nonexistent/prog'"
+        );
+    }
+
     #[test]
     fn batch_line_break_refusal() {
         let args = [OsString::from("ok"), OsString::from("a\nb")];
@@ -1620,14 +1798,14 @@ mod tests {
     }
 
     #[test]
-    fn collector_keeps_memory_charged_and_refunds_spills() {
+    fn collector_keeps_memory_charged_until_dropped_and_refunds_spills() {
         let b = budget(100);
         let mut c = Collector::new(&b);
         c.push(&[b'x'; 60]);
         assert_eq!(b.remaining.load(Ordering::Relaxed), 40);
-        let out = c.finish();
-        assert!(matches!(out, Output::Memory(ref v) if v.len() == 60));
-        // Memory outputs keep their charge.
+        let held = c.finish();
+        assert!(matches!(held, Output::Memory(ref v) if v.len() == 60));
+        // A held memory output keeps its charge.
         assert_eq!(b.remaining.load(Ordering::Relaxed), 40);
         let mut c = Collector::new(&b);
         c.push(&[b'y'; 30]);
@@ -1636,5 +1814,43 @@ mod tests {
         let out = c.finish();
         assert!(matches!(out, Output::Spilled { len: 60, .. }));
         assert_eq!(bytes_of(&out), [vec![b'y'; 30], vec![b'z'; 30]].concat());
+        drop(out);
+        assert_eq!(b.remaining.load(Ordering::Relaxed), 40);
+        // Dropping the memory output returns its charge.
+        drop(held);
+        assert_eq!(b.remaining.load(Ordering::Relaxed), 100);
+        // An output that outlives its budget drops cleanly.
+        let gone = budget(10);
+        let mut c = Collector::new(&gone);
+        c.push(b"abc");
+        let out = c.finish();
+        drop(gone);
+        drop(out);
+    }
+
+    /// Regression: sequential captures, each below the budget but together far above it, all stay in memory once
+    /// the previous output was dropped (the budget is not a cap on the run's total output).
+    #[cfg(unix)]
+    #[test]
+    fn sequential_captures_below_the_budget_never_spill() {
+        let d = tempfile::tempdir().unwrap();
+        let env = Env::from_pairs([("PATH", "/usr/bin:/bin")]);
+        let cancel = CancelToken::new();
+        let b = budget(4096);
+        let argv = [
+            OsString::from("/bin/sh"),
+            OsString::from("-c"),
+            OsString::from("head -c 1500 /dev/zero"),
+        ];
+        for i in 0..5 {
+            let m = merged(&spec(&argv, &env, d.path(), &cancel), false, &b).unwrap();
+            assert!(
+                matches!(m.output, Output::Memory(ref v) if v.len() == 1500),
+                "capture {i} spilled: {:?}",
+                m.output
+            );
+            drop(m);
+        }
+        assert_eq!(b.remaining.load(Ordering::Relaxed), 4096);
     }
 }
