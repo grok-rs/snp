@@ -12,10 +12,22 @@ publish.workspace = true
 [dependencies]
 snp-core.workspace = true
 snp-pycompat.workspace = true
+fancy-regex.workspace = true
+indexmap.workspace = true
+memchr.workspace = true
+regex.workspace = true
+regex-syntax.workspace = true
+unicode-ident.workspace = true
+unicode_names2 = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest.workspace = true
+serde_json.workspace = true
 
 [features]
 default = ["py-re-names"]
-py-re-names = []
+# `\N{name}` escapes (01 Addendum §A.5.4); without it they are rejected as `Unsupported` (§A.6.13 D3).
+py-re-names = ["dep:unicode_names2"]
 
 [lints]
 workspace = true
