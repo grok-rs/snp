@@ -155,6 +155,15 @@ mod messages {
             int::parse_version("1.x").unwrap_err().to_string(),
             "invalid literal for int() with base 10: 'x'"
         );
+        // CPython 3.12.3 `int('1' * 4301)` (`sys.get_int_max_str_digits()` == 4300)
+        assert_eq!(
+            IntParseError {
+                literal: std::iter::repeat_n('1', 4301).collect(),
+            }
+            .to_string(),
+            "Exceeds the limit (4300 digits) for integer string conversion: value has 4301 \
+             digits; use sys.set_int_max_str_digits() to increase the limit"
+        );
         assert_eq!(
             ShlexError::NoClosingQuotation.to_string(),
             "No closing quotation"

@@ -33,6 +33,20 @@ pub(crate) const INT_LITERAL_PREFIX: &str = "invalid literal for int() with base
 /// How many characters of the literal's repr `%.200R` keeps.
 pub(crate) const INT_LITERAL_REPR_CHARS: usize = 200;
 
+/// `int()` of a well-formed literal over `sys.get_int_max_str_digits()` (`Objects/longobject.c`
+/// `_MAX_STR_DIGITS_ERROR_FMT_TO_INT`).
+pub(crate) fn int_digit_limit(
+    f: &mut fmt::Formatter<'_>,
+    limit: usize,
+    digits: usize,
+) -> fmt::Result {
+    write!(
+        f,
+        "Exceeds the limit ({limit} digits) for integer string conversion: value has {digits} \
+         digits; use sys.set_int_max_str_digits() to increase the limit"
+    )
+}
+
 /// The `reason` of CPython's UTF-8 decoder (`Objects/stringlib/codecs.h`).
 pub(crate) const INVALID_START_BYTE: &str = "invalid start byte";
 /// See [`INVALID_START_BYTE`].
