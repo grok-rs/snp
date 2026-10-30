@@ -1,5 +1,51 @@
-# D-PERF-02 (PERF, owner WP-24): placeholder install skipped
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-PERF-02 (PERF, owner WP-24): a local python hook without additional_dependencies does not install the
+# placeholder package of the local template.
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3. The hook lists the installed distributions whose name
+# contains `placeholder`: pre-commit installed `pre_commit_placeholder_package`, snp did not.
 expect_divergence: D-PERF-02
-status: stub
+name: divergences/D-PERF-02-no-placeholder-install
+since: "4.6.2"
+requires: {git: ">=2.31", net: true, tools: [python3], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files: {}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: placeholder
+            name: placeholder
+            entry: python -c "import importlib.metadata as m; print(sorted(d.metadata['Name'].replace('-', '_') for d in m.distributions() if 'placeholder' in d.metadata['Name']))"
+            language: python
+            pass_filenames: false
+            verbose: true
+  commit: [".pre-commit-config.yaml"]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - tool: [run, --all-files]
+    env: {}
+    stdin: ""
+    tty: false
+# pre-commit 4.6.2: `['pre_commit_placeholder_package']`, exit 0.
+# snp: `[]`, exit 0.
+compare:
+  stdout: tierB
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    exit: 0
+    stdout_contains: "['pre_commit_placeholder_package']"
+  snp:
+    exit: 0
+    stdout_contains: "\n[]\n"

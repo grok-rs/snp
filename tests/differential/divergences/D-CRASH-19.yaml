@@ -1,5 +1,54 @@
-# D-CRASH-19 (CRASH, owner WP-24): uv-managed download into the store (SNP_PYTHON_DOWNLOADS=never restores the failure)
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-CRASH-19 (CRASH, owner WP-24): an explicitly requested Python that is not installed is downloaded by uv into the
+# store instead of failing the install (SNP_PYTHON_DOWNLOADS=never restores the failure).
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3. Precondition beyond `requires`: no CPython 3.11 on PATH
+# and none uv-managed in uv's default directory (pre-commit's virtualenv 21 and snp's `uv python find` both discover
+# those); the CI images carry 3.12 and 3.13 only, and the harness skips the scenario when 3.11 is found.
 expect_divergence: D-CRASH-19
-status: stub
+name: divergences/D-CRASH-19-missing-interpreter-download
+since: "4.6.2"
+requires: {git: ">=2.31", net: true, tools: [python3, uv], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files: {}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: py311
+            name: py311
+            entry: python -c "import sys; print('%d.%d' % sys.version_info[:2])"
+            language: python
+            language_version: python3.11
+            pass_filenames: false
+            verbose: true
+  commit: [".pre-commit-config.yaml"]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - tool: [run, --all-files]
+    env: {}
+    stdin: ""
+    tty: false
+# pre-commit 4.6.2: the four install lines, `An unexpected error has occurred: CalledProcessError: …` with virtualenv's
+#   `failed to find interpreter for Builtin discover of python_spec='python3.11'`, exit 3.
+# snp: the four install lines, `py311….Passed` and `3.11`, exit 0.
+compare:
+  stdout: tierB
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    exit: 3
+    stdout_contains: "failed to find interpreter for Builtin discover of python_spec='python3.11'"
+  snp:
+    exit: 0
+    stdout_contains: "\n3.11\n"
