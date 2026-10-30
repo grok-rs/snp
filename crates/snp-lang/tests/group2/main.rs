@@ -17,15 +17,21 @@
 //!
 //! Owner: WP-25.
 
-#[cfg(all(test, feature = "testing"))]
+#[cfg(test)]
+#[cfg(feature = "testing")]
 mod docker;
-#[cfg(all(test, feature = "testing"))]
+#[cfg(test)]
+#[cfg(feature = "testing")]
 mod langs;
-#[cfg(all(test, feature = "testing"))]
+#[cfg(test)]
+#[cfg(feature = "testing")]
 mod oracle;
-#[cfg(all(test, feature = "testing"))]
+#[cfg(test)]
+#[cfg(feature = "testing")]
 mod support;
-#[cfg(all(test, feature = "testing"))]
+#[cfg(test)]
+#[cfg(feature = "testing")]
 mod toolchain;
-#[cfg(all(test, feature = "testing"))]
+#[cfg(test)]
+#[cfg(feature = "testing")]
 mod util;

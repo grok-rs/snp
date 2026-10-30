@@ -130,7 +130,8 @@ const SCENARIOS: [Scenario; 11] = [
 
 /// The fake tools behind the wrapper.
 const TOOLS: [&str; 11] = [
-    "conda", "cs", "dart", "dotnet", "cabal", "julia", "luarocks", "cpan", "Rscript", "swift", "docker",
+    "conda", "cs", "dart", "dotnet", "cabal", "julia", "luarocks", "cpan", "Rscript", "swift",
+    "docker",
 ];
 
 /// The nuspec of the fake `dotnet pack`.
@@ -139,7 +140,7 @@ const NUSPEC: &str = "<?xml version=\"1.0\" encoding=\"utf-8\"?><package \
                       <version>1.0.0</version></metadata></package>";
 
 /// The side-effect wrapper of the pre-commit side (runs the effect, then execs the WP-16 logger of the same name).
-const WRAPPER_PY: &str = r#"
+const WRAPPER_PY: &str = r"
 import os
 import sys
 import zipfile
@@ -187,7 +188,7 @@ def main():
 
 
 main()
-"#;
+";
 
 /// The scripted answers (both sides).
 const LUA_VERSION: &str = "5.4\n";
@@ -216,20 +217,18 @@ fn normalize_tmp(calls: &mut [GoldenCall]) {
     let mut fix = |s: &mut String| {
         let mut out = String::new();
         let mut rest = s.as_str();
-        while let Some(pos) = rest.find("{TMP}/") {
-            out.push_str(&rest[..pos + 6]);
-            let tail = &rest[pos + 6..];
+        while let Some((head, tail)) = rest.split_once("{TMP}/") {
+            out.push_str(head);
+            out.push_str("{TMP}/");
             let end = tail.find(['/', ':', ';', ' ']).unwrap_or(tail.len());
-            let name = &tail[..end];
-            let idx = match names.iter().position(|n| n == name) {
-                Some(i) => i,
-                None => {
-                    names.push(name.to_owned());
-                    names.len() - 1
-                }
-            };
-            out.push_str(&format!("T{}", idx + 1));
-            rest = &tail[end..];
+            let (name, after) = tail.split_at_checked(end).unwrap();
+            let idx = names.iter().position(|n| n == name).unwrap_or_else(|| {
+                names.push(name.to_owned());
+                names.len() - 1
+            });
+            out.push('T');
+            out.push_str(&(idx + 1).to_string());
+            rest = after;
         }
         out.push_str(rest);
         *s = out;
@@ -246,6 +245,7 @@ fn normalize_tmp(calls: &mut [GoldenCall]) {
 }
 
 /// The `-u` value of docker runs.
+#[cfg_attr(unix, expect(clippy::unnecessary_wraps, reason = "None on Windows"))]
 fn uid_gid() -> Option<String> {
     #[cfg(unix)]
     {
@@ -340,7 +340,9 @@ fn snp_side(s: &Scenario) -> (Vec<GoldenCall>, Captures) {
     fx.tool("cs");
     runner.reply(
         "luarocks",
-        Reply::ok(LUA_VERSION).when(["config", "--lua-ver"]).sticky(),
+        Reply::ok(LUA_VERSION)
+            .when(["config", "--lua-ver"])
+            .sticky(),
     );
     runner.reply(
         "docker",
@@ -423,7 +425,10 @@ fn snp_side(s: &Scenario) -> (Vec<GoldenCall>, Captures) {
     let before = runner.calls().len();
     let plan = fx.plan(id, s.entry, s.args, true, &env).unwrap();
     let RunPlan::Xargs {
-        cmd, env: run_env, pre, ..
+        cmd,
+        env: run_env,
+        pre,
+        ..
     } = plan
     else {
         panic!("{plan:?}")
@@ -565,7 +570,7 @@ fn record(s: &Scenario) -> (Vec<GoldenCall>, Captures) {
         "run `cargo xtask oracle install` or set SNP_ORACLE_PC462"
     );
     let d = tempfile::tempdir().unwrap();
-    let root = std::fs::canonicalize(d.path()).unwrap();
+    let root = snp_pycompat::ospath::realpath(d.path().as_os_str(), d.path()).unwrap();
     let repo = root.join("repo");
     let shims = root.join("shims");
     let real = root.join("shims-real");

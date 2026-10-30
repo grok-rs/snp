@@ -57,7 +57,7 @@ impl Fx {
     /// A fixture with an empty or templated prefix.
     pub(crate) fn with_template(extra: &[(&str, &str)], template: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let root = snp_pycompat::ospath::realpath(dir.path().as_os_str(), dir.path()).unwrap();
         let repo = root.join("repo");
         let prefix = root.join("store").join("src");
         let envs = root.join("store").join("envs");
@@ -148,7 +148,11 @@ impl Fx {
     }
 
     /// `install` of the default version.
-    pub(crate) fn install(&self, id: LanguageId, deps: &[&str]) -> Result<InstallOutcome, LangError> {
+    pub(crate) fn install(
+        &self,
+        id: LanguageId,
+        deps: &[&str],
+    ) -> Result<InstallOutcome, LangError> {
         self.install_v(id, "default", deps)
     }
 
