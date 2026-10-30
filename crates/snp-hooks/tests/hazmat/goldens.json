@@ -1,0 +1,295 @@
+{
+ "python": "3.13.14",
+ "results": {
+  "A10-cd-subdir-only": {
+   "code": 1,
+   "crashed": false,
+   "out": "hazmat entry must end with `--`\n"
+  },
+  "A11-cd-help": {
+   "code": 0,
+   "crashed": false,
+   "out": "usage: hazmat.py cd [-h] subdir ...\n\npositional arguments:\n  subdir\n  cmd\n\noptions:\n  -h, --help  show this help message and exit\n"
+  },
+  "A13-relative-under-cd": {
+   "code": 2,
+   "crashed": false,
+   "out": "/bin/sh: 0: cannot open ./tool.sh: No such file\n"
+  },
+  "A14-subonly": {
+   "code": 1,
+   "crashed": true,
+   "out": "pre_commit.parse_shebang.ExecutableNotFoundError: Executable `./subonly.sh` not found\n"
+  },
+  "A15-noshebang-root-only": {
+   "code": 1,
+   "crashed": true,
+   "out": "FileNotFoundError: [Errno 2] No such file or directory: './noshebang.sh'\n"
+  },
+  "A16-trailing-slash": {
+   "code": 1,
+   "crashed": false,
+   "out": "unexpected file without prefix='sub//': sub/a.txt\n"
+  },
+  "A17-separator-after-subdir": {
+   "code": 0,
+   "crashed": false,
+   "out": "a.txt\n"
+  },
+  "A18-separator-before-subdir": {
+   "code": 0,
+   "crashed": false,
+   "out": "a.txt\n"
+  },
+  "A19-repr-quote": {
+   "code": 1,
+   "crashed": false,
+   "out": "unexpected file without prefix=\"it's/\": sub/a.txt\n"
+  },
+  "A2-first-bad-file": {
+   "code": 1,
+   "crashed": false,
+   "out": "unexpected file without prefix='sub/': b.txt\n"
+  },
+  "A3-not-found": {
+   "code": 1,
+   "crashed": true,
+   "out": "pre_commit.parse_shebang.ExecutableNotFoundError: Executable `nope-not-here` not found\n"
+  },
+  "A4-is-a-directory": {
+   "code": 1,
+   "crashed": true,
+   "out": "pre_commit.parse_shebang.ExecutableNotFoundError: Executable `./sub` is a directory\n"
+  },
+  "A4b-bare-directory": {
+   "code": 1,
+   "crashed": true,
+   "out": "pre_commit.parse_shebang.ExecutableNotFoundError: Executable `sub` not found\n"
+  },
+  "A5-not-executable": {
+   "code": 1,
+   "crashed": true,
+   "out": "pre_commit.parse_shebang.ExecutableNotFoundError: Executable `./noexec.sh` is not executable\n"
+  },
+  "A6-no-separator": {
+   "code": 1,
+   "crashed": false,
+   "out": "hazmat entry must end with `--`\n"
+  },
+  "A7-missing-subdir": {
+   "code": 1,
+   "crashed": true,
+   "out": "FileNotFoundError: [Errno 2] No such file or directory: 'nosuch'\n"
+  },
+  "A8-separator-eaten": {
+   "code": 1,
+   "crashed": false,
+   "out": "hazmat entry must end with `--`\n"
+  },
+  "A9-cd-usage": {
+   "code": 2,
+   "crashed": false,
+   "out": "usage: hazmat.py cd [-h] subdir ...\nhazmat.py cd: error: the following arguments are required: subdir\n"
+  },
+  "B10-empty-command": {
+   "code": 1,
+   "crashed": true,
+   "out": "IndexError: tuple index out of range\n"
+  },
+  "B11-leading-separator-kept": {
+   "code": 1,
+   "crashed": true,
+   "out": "pre_commit.parse_shebang.ExecutableNotFoundError: Executable `--` not found\n"
+  },
+  "B12-option-after-command": {
+   "code": 0,
+   "crashed": false,
+   "out": "-h b.txt\n"
+  },
+  "B13-exec-format-error": {
+   "code": 1,
+   "crashed": true,
+   "out": "OSError: [Errno 8] Exec format error: './noshebang.sh'\n"
+  },
+  "B2-or": {
+   "code": 3,
+   "crashed": false,
+   "out": ""
+  },
+  "B2b-or-same": {
+   "code": 2,
+   "crashed": false,
+   "out": ""
+  },
+  "B3-not-found": {
+   "code": 1,
+   "crashed": true,
+   "out": "pre_commit.parse_shebang.ExecutableNotFoundError: Executable `nope-not-here` not found\n"
+  },
+  "B4-directory": {
+   "code": 1,
+   "crashed": true,
+   "out": "pre_commit.parse_shebang.ExecutableNotFoundError: Executable `./sub` is a directory\n"
+  },
+  "B5-not-executable": {
+   "code": 1,
+   "crashed": true,
+   "out": "pre_commit.parse_shebang.ExecutableNotFoundError: Executable `./noexec.sh` is not executable\n"
+  },
+  "B6-no-separator": {
+   "code": 1,
+   "crashed": false,
+   "out": "hazmat entry must end with `--`\n"
+  },
+  "B7-sigkill": {
+   "code": 247,
+   "crashed": false,
+   "out": ""
+  },
+  "B7b-sigkill-or-8": {
+   "code": 255,
+   "crashed": false,
+   "out": ""
+  },
+  "B7c-sigterm": {
+   "code": 241,
+   "crashed": false,
+   "out": ""
+  },
+  "B8-n1-help": {
+   "code": 0,
+   "crashed": false,
+   "out": "usage: hazmat.py n1 [-h] ...\n\npositional arguments:\n  cmd\n\noptions:\n  -h, --help  show this help message and exit\n"
+  },
+  "B9-n1-alone": {
+   "code": 1,
+   "crashed": false,
+   "out": "hazmat entry must end with `--`\n"
+  },
+  "C1-ignore-passes-separator": {
+   "code": 0,
+   "crashed": false,
+   "out": "<--><b.txt><bin/reltool>\n"
+  },
+  "C2-ignore-not-found": {
+   "code": 1,
+   "crashed": true,
+   "out": "pre_commit.parse_shebang.ExecutableNotFoundError: Executable `nope-not-here` not found\n"
+  },
+  "C5-ignore-sigkill": {
+   "code": 0,
+   "crashed": false,
+   "out": ""
+  },
+  "C6-ignore-help": {
+   "code": 0,
+   "crashed": false,
+   "out": "usage: hazmat.py ignore-exit-code [-h] ...\n\npositional arguments:\n  cmd\n\noptions:\n  -h, --help  show this help message and exit\n"
+  },
+  "C7-ignore-empty": {
+   "code": 1,
+   "crashed": true,
+   "out": "IndexError: tuple index out of range\n"
+  },
+  "C7b-ignore-file-as-program": {
+   "code": 1,
+   "crashed": true,
+   "out": "pre_commit.parse_shebang.ExecutableNotFoundError: Executable `b.txt` not found\n"
+  },
+  "C8-ignore-exec-format": {
+   "code": 1,
+   "crashed": true,
+   "out": "OSError: [Errno 8] Exec format error: './noshebang.sh'\n"
+  },
+  "D1-no-tool": {
+   "code": 1,
+   "crashed": true,
+   "out": "AttributeError: 'Namespace' object has no attribute 'cmd'\n"
+  },
+  "D2-invalid-choice": {
+   "code": 2,
+   "crashed": false,
+   "out": "usage: hazmat.py [-h] {cd,ignore-exit-code,n1} ...\nhazmat.py: error: argument tool: invalid choice: 'bogus' (choose from 'cd', 'ignore-exit-code', 'n1')\n"
+  },
+  "D3-top-help": {
+   "code": 0,
+   "crashed": false,
+   "out": "usage: hazmat.py [-h] {cd,ignore-exit-code,n1} ...\n\npositional arguments:\n  {cd,ignore-exit-code,n1}\n    cd                  cd to a subdir and run the command\n    ignore-exit-code    run the command but ignore the exit code\n    n1                  run the command once per filename\n\noptions:\n  -h, --help            show this help message and exit\n"
+  },
+  "D3b-help-prefix": {
+   "code": 0,
+   "crashed": false,
+   "out": "usage: hazmat.py [-h] {cd,ignore-exit-code,n1} ...\n\npositional arguments:\n  {cd,ignore-exit-code,n1}\n    cd                  cd to a subdir and run the command\n    ignore-exit-code    run the command but ignore the exit code\n    n1                  run the command once per filename\n\noptions:\n  -h, --help            show this help message and exit\n"
+  },
+  "D4-file-as-tool": {
+   "code": 2,
+   "crashed": false,
+   "out": "usage: hazmat.py [-h] {cd,ignore-exit-code,n1} ...\nhazmat.py: error: argument tool: invalid choice: 'b.txt' (choose from 'cd', 'ignore-exit-code', 'n1')\n"
+  },
+  "D9-color-unknown": {
+   "code": 2,
+   "crashed": false,
+   "out": "usage: hazmat.py [-h] {cd,ignore-exit-code,n1} ...\nhazmat.py: error: argument tool: invalid choice: 'never' (choose from 'cd', 'ignore-exit-code', 'n1')\n"
+  },
+  "D9b-color-valid-tool": {
+   "code": 2,
+   "crashed": false,
+   "out": "usage: hazmat.py [-h] {cd,ignore-exit-code,n1} ...\nhazmat.py: error: unrecognized arguments: --color\n"
+  },
+  "F2-args-after-separator": {
+   "code": 0,
+   "crashed": false,
+   "out": "--fix\nb.txt\n"
+  },
+  "G1-unrecognized": {
+   "code": 2,
+   "crashed": false,
+   "out": "usage: hazmat.py [-h] {cd,ignore-exit-code,n1} ...\nhazmat.py: error: unrecognized arguments: -x\n"
+  },
+  "T10-HAZ-01-last-separator": {
+   "code": 0,
+   "crashed": false,
+   "out": "<--><arg><f1>\n<--><arg><f2>\n"
+  },
+  "T10-HAZ-01-no-separator": {
+   "code": 1,
+   "crashed": false,
+   "out": "hazmat entry must end with `--`\n"
+  },
+  "T10-HAZ-02-prefix": {
+   "code": 1,
+   "crashed": false,
+   "out": "unexpected file without prefix='sub/': not-sub/2\n"
+  },
+  "T10-HAZ-03-cd": {
+   "code": 0,
+   "crashed": false,
+   "out": "<root>/sub\n<a.txt><x y.txt>\n"
+  },
+  "T10-HAZ-04-ignore-exit-code": {
+   "code": 0,
+   "crashed": false,
+   "out": "bye\n"
+  },
+  "T10-HAZ-05-n1": {
+   "code": 0,
+   "crashed": false,
+   "out": "[1] foo\n[1] bar\n[1] baz\n"
+  },
+  "T10-HAZ-05-n1-failure": {
+   "code": 1,
+   "crashed": false,
+   "out": ""
+  },
+  "cd-option-after-subdir": {
+   "code": 1,
+   "crashed": true,
+   "out": "pre_commit.parse_shebang.ExecutableNotFoundError: Executable `-x` not found\n"
+  },
+  "cd-option-before-subdir": {
+   "code": 2,
+   "crashed": false,
+   "out": "usage: hazmat.py [-h] {cd,ignore-exit-code,n1} ...\nhazmat.py: error: unrecognized arguments: -x\n"
+  }
+ }
+}
