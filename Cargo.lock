@@ -1854,6 +1854,7 @@ version = "2.0.0"
 name = "snp-pyparsers"
 version = "2.0.0"
 dependencies = [
+ "serde_json",
  "snp-core",
  "snp-pycompat",
 ]
