@@ -614,3 +614,48 @@ fn linked_worktrees_have_their_own_lock() {
         (b"main\n".to_vec(), b"linked\n".to_vec())
     );
 }
+
+/// D-DATA-17 against a real git < 2.19 (the CI 2.18.5 container): `SNP_TEST_GIT_2_18=<dir holding that git>`.
+#[test]
+#[ignore = "needs a git < 2.19: SNP_TEST_GIT_2_18=<bin dir>"]
+fn old_git_container_refuses_only_a_non_empty_stash() {
+    let process = snp_core::env::Env::capture_process();
+    let Some(dir) = process.get("SNP_TEST_GIT_2_18") else {
+        return;
+    };
+    let sb = Sandbox::new();
+    let env = sb
+        .env
+        .patched(&EnvPatch::default().prepend_path("PATH", [std::path::PathBuf::from(dir)]));
+    let repo = sb.foo_staged("r");
+    let exe = Arc::new(snp_git::GitExe::resolve(&env, &repo, None).unwrap());
+    let floor = snp_git::GitVersion {
+        major: 2,
+        minor: 19,
+        patch: 0,
+    };
+    let old = exe.caps.version.is_some_and(|v| v < floor);
+    assert!(old, "{:?}", exe.caps.version);
+    let ctx = || {
+        let backend: Arc<dyn snp_git::GitBackend> = Arc::new(snp_git::ProcBackend {
+            cancel: snp_core::cancel::CancelToken::new(),
+            role: snp_proc::spawn::Role::Critical,
+        });
+        let (git, info) = snp_git::Git::discover(Arc::clone(&exe), &env, &repo, backend).unwrap();
+        let (mut cx, out, _) = sb.ctx_with(git.with_brand(snp_core::brand::Brand::PreCommit), info);
+        cx.old_git = old;
+        (cx, out)
+    };
+    let (cx, _) = ctx();
+    snp_stash::enter(cx).unwrap().restore().unwrap();
+    sb.write(&repo, "foo", b"herp\n");
+    let (cx, out) = ctx();
+    let e = snp_stash::enter(cx).unwrap_err();
+    assert!(
+        exc(&e)
+            .1
+            .contains("cannot stash intent-to-add files safely")
+    );
+    assert_eq!(out.text(), "");
+    assert_eq!(sb.read(&repo, "foo"), b"herp\n");
+}

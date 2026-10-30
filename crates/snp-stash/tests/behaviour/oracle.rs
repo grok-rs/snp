@@ -434,9 +434,12 @@ fn randomized_soundness_against_real_git_diff() {
     #[cfg(unix)]
     std::os::unix::fs::symlink(sb.path("global-attrs"), xdg.join("git/attributes")).unwrap();
     let (mut o, truth_git, _) = oracle(&sb, &repo, &env, None);
-    if !stat_mode_possible(&repo) {
-        assert_eq!(o.mode(), DiffMode::Git);
-    }
+    let expected_mode = if stat_mode_possible(&repo) {
+        DiffMode::Stat
+    } else {
+        DiffMode::Git
+    };
+    assert_eq!(o.mode(), expected_mode);
     let mut rng = Rng(seed);
     let mut truth: DiffFingerprint = truth_git.diff_fingerprint().unwrap();
     let mut misses = Vec::new();
@@ -455,6 +458,8 @@ fn randomized_soundness_against_real_git_diff() {
             misses.push((i, what, got, want));
         }
     }
+    // The oracle stayed in its mode for the whole run (no input made Stat mode impossible).
+    assert_eq!(o.mode(), expected_mode);
     assert!(
         misses.is_empty(),
         "mode {:?}: {} mismatches, first: {:?}",
