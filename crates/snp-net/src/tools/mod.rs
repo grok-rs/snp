@@ -149,7 +149,7 @@ pub fn resolve(
     target: &str,
     f: &dyn Fetch,
 ) -> Result<Artifact, NetError> {
-    let version = resolve_version(tool, version, f)?;
+    let version = resolve_version(tool, version, target, f)?;
     match tool {
         Tool::Uv => uv(&version, target),
         Tool::Node => node(&version, target, f),
@@ -159,15 +159,23 @@ pub fn resolve(
     }
 }
 
-/// The concrete version an alias stands for: `default`/`latest`/`""` (every tool), node `lts`; `v`/`go` prefixes are
-/// dropped. uv's default is [`UV_PINNED`]; node's is `index.json[0]` (latest Current, nodeenv parity) and `lts` the
-/// newest LTS; go's is the first stable release of the go.dev list (`golang.py` `_infer_go_version`); rustup's is the
-/// current `release-stable.toml` version; the ruby helpers have exactly one (embedded) version each.
-pub fn resolve_version(tool: Tool, requested: &str, f: &dyn Fetch) -> Result<String, NetError> {
+/// The concrete version an alias stands for on `target`: `default`/`latest`/`""` (every tool), node `lts`; `v`/`go`
+/// prefixes are dropped. uv's default is [`UV_PINNED`]; node's is the newest release of `index.json` that is not a
+/// pre-release (no `-` in the version) and lists a build for `target` (nodeenv 1.11.0 `_get_last_node_version`:
+/// `_is_prerelease`, `_has_platform_build`), `lts` the newest such LTS; musl and the unofficial-only architectures
+/// read the unofficial builds' `index.json` (arm64-musl exists only there). go's is the first stable release of the
+/// go.dev list (`golang.py` `_infer_go_version`); rustup's is the current `release-stable.toml` version; the ruby
+/// helpers have exactly one (embedded) version each. Only node's aliases depend on `target`.
+pub fn resolve_version(
+    tool: Tool,
+    requested: &str,
+    target: &str,
+    f: &dyn Fetch,
+) -> Result<String, NetError> {
     let alias = matches!(requested, "" | "default" | "latest");
     let v = match tool {
         Tool::Uv if alias => UV_PINNED.to_owned(),
-        Tool::Node if alias || requested == "lts" => node_alias(requested == "lts", f)?,
+        Tool::Node if alias || requested == "lts" => node_alias(requested == "lts", target, f)?,
         Tool::Node => requested.strip_prefix('v').unwrap_or(requested).to_owned(),
         Tool::Go if alias => go_latest(f)?,
         Tool::Go => requested.strip_prefix("go").unwrap_or(requested).to_owned(),
@@ -388,24 +396,48 @@ fn shasums_lookup(sums: &str, file: &str) -> Option<Checksum> {
     })
 }
 
-/// `index.json[0]` (latest Current) or the newest LTS, without the `v`.
-fn node_alias(lts: bool, f: &dyn Fetch) -> Result<String, NetError> {
-    let url = format!("{NODE_DIST}/index.json");
+/// The key of `index.json`'s `files` for node's file-name platform `plat` (`linux-x64`, `osx-arm64-tar`,
+/// `win-x64-zip`, `linux-arm64-musl`, …).
+fn node_index_key(plat: &str) -> String {
+    if let Some(rest) = plat.strip_prefix("darwin-") {
+        format!("osx-{rest}-tar")
+    } else if plat.starts_with("win-") {
+        format!("{plat}-zip")
+    } else {
+        plat.to_owned()
+    }
+}
+
+/// The newest non-pre-release (or LTS) node with a build for `target`, without the `v`; `Unsupported` when none.
+fn node_alias(lts: bool, target: &str, f: &dyn Fetch) -> Result<String, NetError> {
+    let p = platform(target).ok_or_else(|| unsupported(Tool::Node, target))?;
+    let (plat, unofficial) = node_platform(p).ok_or_else(|| unsupported(Tool::Node, target))?;
+    let key = node_index_key(&plat);
+    let base = if unofficial {
+        NODE_UNOFFICIAL
+    } else {
+        NODE_DIST
+    };
+    let url = format!("{base}/index.json");
     let text = f.get_text(&url, MAX_NODE_INDEX)?;
     let index: Value =
         serde_json::from_str(&text).map_err(|_| malformed(&url, "node index.json"))?;
     let releases = index
         .as_array()
         .ok_or_else(|| malformed(&url, "node index.json"))?;
-    let pick = releases.iter().find(|r| {
-        !lts || r
+    let pick = releases.iter().find_map(|r| {
+        let v = r.get("version")?.as_str()?;
+        let is_lts = r
             .get("lts")
-            .is_some_and(|l| !matches!(l, Value::Bool(false) | Value::Null))
+            .is_some_and(|l| !matches!(l, Value::Bool(false) | Value::Null));
+        let has_build = r
+            .get("files")?
+            .as_array()?
+            .iter()
+            .any(|f| f.as_str() == Some(key.as_str()));
+        (!v.contains('-') && (!lts || is_lts) && has_build).then_some(v)
     });
-    let v = pick
-        .and_then(|r| r.get("version"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| malformed(&url, "node index.json"))?;
+    let v = pick.ok_or_else(|| unsupported(Tool::Node, target))?;
     Ok(v.strip_prefix('v').unwrap_or(v).to_owned())
 }
 
@@ -715,6 +747,17 @@ mod tests {
             node_platform(platform("aarch64-pc-windows-msvc").unwrap()),
             Some(("win-arm64".to_owned(), false))
         );
+        // The `files` keys of node's `index.json` (official and unofficial builds, 2026).
+        for (plat, key) in [
+            ("linux-x64", "linux-x64"),
+            ("linux-arm64-musl", "linux-arm64-musl"),
+            ("darwin-x64", "osx-x64-tar"),
+            ("darwin-arm64", "osx-arm64-tar"),
+            ("win-x64", "win-x64-zip"),
+            ("win-arm64", "win-arm64-zip"),
+        ] {
+            assert_eq!(node_index_key(plat), key);
+        }
         assert_eq!(
             go_platform(platform("x86_64-pc-windows-msvc").unwrap()),
             Some(("windows", "amd64"))

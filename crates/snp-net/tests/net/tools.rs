@@ -34,30 +34,51 @@ struct Canned {
 }
 
 const NODE: &str = "22.11.0";
+/// The host-independent target of the alias tests.
+const GNU: &str = "x86_64-unknown-linux-gnu";
 const GO: &str = "1.23.2";
 const RUSTUP: &str = "1.28.2";
 
-fn node_files(musl: bool) -> Vec<String> {
-    let plats: &[&str] = if musl {
-        &["linux-x64-musl", "linux-arm64-musl"]
-    } else {
-        &["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"]
+/// The only version of the canned unofficial builds with an arm64-musl build (as upstream, where arm64-musl exists
+/// only for some versions; 22.11.0 has linux-x64-musl only).
+const NODE_ARM64_MUSL: &str = "21.7.3";
+
+fn node_files(version: &str, unofficial: bool) -> Vec<String> {
+    let plats: &[&str] = match (unofficial, version == NODE_ARM64_MUSL) {
+        (true, true) => &["linux-x64-musl", "linux-arm64-musl"],
+        (true, false) => &["linux-x64-musl"],
+        (false, _) => &["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"],
     };
     let mut v: Vec<String> = plats
         .iter()
         .flat_map(|p| {
             [
-                format!("node-v{NODE}-{p}.tar.gz"),
-                format!("node-v{NODE}-{p}.tar.xz"),
+                format!("node-v{version}-{p}.tar.gz"),
+                format!("node-v{version}-{p}.tar.xz"),
             ]
         })
         .collect();
-    if !musl {
-        v.push(format!("node-v{NODE}-win-x64.zip"));
-        v.push(format!("node-v{NODE}-win-arm64.zip"));
+    if !unofficial {
+        v.push(format!("node-v{version}-win-x64.zip"));
+        v.push(format!("node-v{version}-win-arm64.zip"));
     }
     v
 }
+
+/// The official `index.json`: a pre-release first (no darwin-x64 build, like `v27.0.0-alpha.0.0.0` in 2026), then a
+/// Current without a darwin-x64 build, then the LTS [`NODE`].
+const NODE_INDEX: &str = r#"[
+  {"version": "v24.0.0-rc.1", "lts": false, "files": ["linux-x64", "linux-arm64", "osx-arm64-tar", "win-x64-zip", "win-arm64-zip", "linux-x64-musl"]},
+  {"version": "v23.1.0", "lts": false, "files": ["linux-x64", "linux-arm64", "osx-arm64-tar", "win-x64-zip", "win-arm64-zip", "linux-x64-musl"]},
+  {"version": "v22.11.0", "lts": "Jod", "files": ["linux-x64", "linux-arm64", "osx-x64-tar", "osx-arm64-tar", "win-x64-zip", "win-arm64-zip", "linux-x64-musl"]}
+]"#;
+
+/// The unofficial builds' `index.json`: arm64-musl only for an older non-LTS release.
+const NODE_UNOFFICIAL_INDEX: &str = r#"[
+  {"version": "v24.0.0-rc.1", "lts": false, "files": ["linux-x64-musl", "linux-arm64-musl"]},
+  {"version": "v22.11.0", "lts": "Jod", "files": ["linux-x64-musl"]},
+  {"version": "v21.7.3", "lts": false, "files": ["linux-x64-musl", "linux-arm64-musl"]}
+]"#;
 
 fn go_json() -> String {
     let mut files = Vec::new();
@@ -98,18 +119,26 @@ impl Fetch for Canned {
         };
         let text = match url {
             u if u == format!("https://nodejs.org/dist/v{NODE}/SHASUMS256.txt") => {
-                shasums(node_files(false))
+                shasums(node_files(NODE, false))
             }
             u if u
                 == format!(
                     "https://unofficial-builds.nodejs.org/download/release/v{NODE}/SHASUMS256.txt"
                 ) =>
             {
-                shasums(node_files(true))
+                shasums(node_files(NODE, true))
             }
-            "https://nodejs.org/dist/index.json" => format!(
-                r#"[{{"version": "v23.1.0", "lts": false}}, {{"version": "v{NODE}", "lts": "Iron"}}]"#
-            ),
+            u if u
+                == format!(
+                    "https://unofficial-builds.nodejs.org/download/release/v{NODE_ARM64_MUSL}/SHASUMS256.txt"
+                ) =>
+            {
+                shasums(node_files(NODE_ARM64_MUSL, true))
+            }
+            "https://nodejs.org/dist/index.json" => NODE_INDEX.to_owned(),
+            "https://unofficial-builds.nodejs.org/download/release/index.json" => {
+                NODE_UNOFFICIAL_INDEX.to_owned()
+            }
             "https://go.dev/dl/?mode=json&include=all" => go_json(),
             "https://go.dev/dl/?mode=json" => {
                 format!(r#"[{{"version": "go{GO}", "stable": true}}]"#)
@@ -176,7 +205,14 @@ fn every_tool_resolves_for_every_release_target() {
         ));
         assert_eq!(windows, matches!(uv.layout, Layout::Zip { .. }), "{target}");
 
-        let node = tools::resolve(Tool::Node, NODE, target, &f).unwrap();
+        // arm64-musl has no 22.11.0 build (as upstream): its `default` falls back to the newest version with one.
+        let arm64_musl = target == "aarch64-unknown-linux-musl";
+        let (requested, version) = if arm64_musl {
+            ("default", NODE_ARM64_MUSL)
+        } else {
+            (NODE, NODE)
+        };
+        let node = tools::resolve(Tool::Node, requested, target, &f).unwrap();
         let file = node.url.rsplit('/').next().unwrap().to_owned();
         assert_eq!(hex(&node.checksum), digest(&file), "{target}");
         let musl = target.contains("musl");
@@ -187,10 +223,14 @@ fn every_tool_resolves_for_every_release_target() {
         };
         assert!(
             node.url
-                .starts_with(&format!("{base}/v{NODE}/node-v{NODE}-")),
+                .starts_with(&format!("{base}/v{version}/node-v{version}-")),
             "{}",
             node.url
         );
+        if arm64_musl {
+            let e = tools::resolve(Tool::Node, NODE, target, &f).unwrap_err();
+            assert!(matches!(e, NetError::Http { status: 404, .. }), "{e:?}");
+        }
         if windows {
             assert!(
                 Path::new(&file).extension().is_some_and(|e| e == "zip")
@@ -250,33 +290,31 @@ fn every_tool_resolves_for_every_release_target() {
 fn version_aliases() {
     let f = Canned::default();
     assert_eq!(
-        tools::resolve_version(Tool::Uv, "default", &f).unwrap(),
+        tools::resolve_version(Tool::Uv, "default", GNU, &f).unwrap(),
         tools::UV_PINNED
     );
     assert_eq!(
-        tools::resolve_version(Tool::Node, "default", &f).unwrap(),
-        "23.1.0"
-    );
-    assert_eq!(tools::resolve_version(Tool::Node, "lts", &f).unwrap(), NODE);
-    assert_eq!(
-        tools::resolve_version(Tool::Node, "v18.0.0", &f).unwrap(),
+        tools::resolve_version(Tool::Node, "v18.0.0", GNU, &f).unwrap(),
         "18.0.0"
     );
-    assert_eq!(tools::resolve_version(Tool::Go, "default", &f).unwrap(), GO);
     assert_eq!(
-        tools::resolve_version(Tool::Go, "go1.21.0", &f).unwrap(),
+        tools::resolve_version(Tool::Go, "default", GNU, &f).unwrap(),
+        GO
+    );
+    assert_eq!(
+        tools::resolve_version(Tool::Go, "go1.21.0", GNU, &f).unwrap(),
         "1.21.0"
     );
     assert_eq!(
-        tools::resolve_version(Tool::Rustup, "latest", &f).unwrap(),
+        tools::resolve_version(Tool::Rustup, "latest", GNU, &f).unwrap(),
         RUSTUP
     );
     assert_eq!(
-        tools::resolve_version(Tool::Rbenv, "default", &f).unwrap(),
+        tools::resolve_version(Tool::Rbenv, "default", GNU, &f).unwrap(),
         "1.3.2"
     );
     assert_eq!(
-        tools::resolve_version(Tool::RubyBuild, "", &f).unwrap(),
+        tools::resolve_version(Tool::RubyBuild, "", GNU, &f).unwrap(),
         "20251023"
     );
     let go = tools::resolve(Tool::Go, "default", "x86_64-unknown-linux-gnu", &f).unwrap();
@@ -284,6 +322,88 @@ fn version_aliases() {
         go.url,
         format!("https://dl.google.com/go/go{GO}.linux-amd64.tar.gz")
     );
+}
+
+/// node's `default`/`latest`/`lts` (nodeenv 1.11.0 `_get_last_node_version`): never a pre-release, and always a
+/// version with a build for the target; musl reads the unofficial builds' index.
+#[test]
+fn node_aliases_skip_pre_releases_and_versions_without_a_build() {
+    let f = Canned::default();
+    let node = |alias: &str, target: &str| tools::resolve_version(Tool::Node, alias, target, &f);
+    for alias in ["default", "latest", ""] {
+        // index.json[0] is a pre-release: skipped.
+        assert_eq!(node(alias, GNU).unwrap(), "23.1.0");
+        assert_eq!(node(alias, "aarch64-pc-windows-msvc").unwrap(), "23.1.0");
+        // 23.1.0 has no darwin-x64 build: the newest version that has one.
+        assert_eq!(node(alias, "x86_64-apple-darwin").unwrap(), NODE);
+        assert_eq!(node(alias, "aarch64-apple-darwin").unwrap(), "23.1.0");
+        // musl: the unofficial index (23.1.0 is not there; arm64-musl only for an older release).
+        assert_eq!(node(alias, "x86_64-unknown-linux-musl").unwrap(), NODE);
+        assert_eq!(
+            node(alias, "aarch64-unknown-linux-musl").unwrap(),
+            NODE_ARM64_MUSL
+        );
+    }
+    for target in RELEASE_TARGETS
+        .iter()
+        .filter(|t| **t != "aarch64-unknown-linux-musl")
+    {
+        assert_eq!(node("lts", target).unwrap(), NODE, "{target}");
+    }
+    // No LTS has an arm64-musl build: Unsupported, never a 404 at download time.
+    let e = node("lts", "aarch64-unknown-linux-musl").unwrap_err();
+    assert!(
+        matches!(&e, NetError::Io(io) if io.kind() == std::io::ErrorKind::Unsupported),
+        "{e:?}"
+    );
+    // The resolved artifact exists in the manifest.
+    let a = tools::resolve(Tool::Node, "default", "x86_64-apple-darwin", &f).unwrap();
+    assert!(
+        a.url
+            .contains(&format!("/v{NODE}/node-v{NODE}-darwin-x64.")),
+        "{}",
+        a.url
+    );
+    assert!(
+        f.asked.lock().unwrap().iter().all(|u| !u.contains("-rc.")),
+        "a pre-release was looked at"
+    );
+}
+
+/// An index whose entries all lack the target's build, or that is not an array, is refused.
+#[test]
+fn node_alias_without_any_matching_release() {
+    #[derive(Debug)]
+    struct Index(&'static str);
+    impl Fetch for Index {
+        fn get_text(&self, _url: &str, _max: u64) -> Result<String, NetError> {
+            Ok(self.0.to_owned())
+        }
+        fn get_verified(
+            &self,
+            url: &str,
+            _sum: &Checksum,
+            _dest_dir: &Path,
+            _file_name: &str,
+            _cancel: &CancelToken,
+        ) -> Result<PathBuf, NetError> {
+            Err(NetError::Insecure(url.to_owned()))
+        }
+    }
+    let only_pre =
+        Index(r#"[{"version": "v27.0.0-alpha.0.0.0", "lts": false, "files": ["linux-x64"]}]"#);
+    let e = tools::resolve_version(Tool::Node, "default", GNU, &only_pre).unwrap_err();
+    assert!(
+        matches!(&e, NetError::Io(io) if io.kind() == std::io::ErrorKind::Unsupported),
+        "{e:?}"
+    );
+    let no_files = Index(r#"[{"version": "v26.0.0", "lts": "X"}]"#);
+    assert!(tools::resolve_version(Tool::Node, "lts", GNU, &no_files).is_err());
+    let not_array = Index(r#"{"version": "v26.0.0"}"#);
+    assert!(matches!(
+        tools::resolve_version(Tool::Node, "default", GNU, &not_array).unwrap_err(),
+        NetError::Transport { .. }
+    ));
 }
 
 #[test]
