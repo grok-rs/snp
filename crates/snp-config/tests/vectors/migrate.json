@@ -187,6 +187,32 @@
    "exc": null
   },
   {
+   "name": "tagged stages",
+   "input": "default_stages: [!!str commit]\nrepos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: system\n        stages:\n        - !!str push\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "default_stages: [pre-commit]\nrepos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: system\n        stages:\n        - pre-push\n",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "tagged sha key",
+   "input": "repos:\n-   repo: https://x/r\n    !!str sha: v1\n    hooks: []\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "repos:\n-   repo: https://x/r\n    rev: v1\n    hooks: []\n",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "anchored sha key",
+   "input": "repos:\n-   repo: https://x/r\n    &k sha: v1\n    hooks: []\nx: *k\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "repos:\n-   repo: https://x/r\n    rev: v1\n    hooks: []\nx: *k\n",
+   "error": null,
+   "exc": null,
+   "divergence": "D-DATA-14",
+   "snp_output": "repos:\n-   repo: https://x/r\n    &k rev: v1\n    hooks: []\nx: *k\n"
+  },
+  {
    "name": "system is not migrated",
    "input": "repos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: system\n",
    "stdout": "Configuration is already migrated.\n",

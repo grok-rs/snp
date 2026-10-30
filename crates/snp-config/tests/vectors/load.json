@@ -2128,7 +2128,10 @@
    "exc": null,
    "future_warnings": [
     "Possible set difference at position 2"
-   ]
+   ],
+   "divergence": "D-MISC-04",
+   "snp_future_warnings": [],
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: files\n=====> '[a--b]' is not a valid python regex"
   },
   {
    "name": "X13-SM-03 hook and top dedupe",
@@ -2141,6 +2144,68 @@
    "future_warnings": [
     "Possible nested set at position 1",
     "Possible set intersection at position 2"
+   ]
+  },
+  {
+   "name": "X13-SM-03 hook before top",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        files: '[[a]'\nfiles: 'a[b&&c]'\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": [
+    "Possible nested set at position 1",
+    "Possible set intersection at position 3"
+   ]
+  },
+  {
+   "name": "X13-SM-03 top first in the file",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: 'a[b&&c]'\nrepos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        exclude: '[[a]'\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": [
+    "Possible nested set at position 1",
+    "Possible set intersection at position 3"
+   ]
+  },
+  {
+   "name": "X13-SM-03 before a later error",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        files: '[[a]'\nfail_fast: 3\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: fail_fast\n=====> Expected bool got int",
+   "exc": null,
+   "future_warnings": [
+    "Possible nested set at position 1"
+   ]
+  },
+  {
+   "name": "X13-SM-03 same hook later error",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        files: '[a||b]'\n        types: [nonsense]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='a')\n==> At key: types\n==> At index 0\n=====> Type tag 'nonsense' is not recognized.  Try upgrading identify and pre-commit?",
+   "exc": null,
+   "future_warnings": [
+    "Possible set union at position 2"
+   ]
+  },
+  {
+   "name": "X13-SM-03 manifest before error",
+   "kind": "manifest",
+   "file": "cfg.yaml",
+   "input": "- {id: a, name: a, entry: a, language: system, exclude: '[a~~b]'}\n- {id: b, name: b, entry: b, language: bogus}\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Hook(id='b')\n==> At key: language\n=====> Expected one of conda, coursier, dart, docker, docker_image, dotnet, fail, golang, haskell, julia, lua, node, perl, pygrep, python, r, ruby, rust, swift, unsupported, unsupported_script but got: 'bogus'",
+   "exc": null,
+   "future_warnings": [
+    "Possible set symmetric difference at position 2"
    ]
   },
   {

@@ -328,9 +328,17 @@ for pat in ['(?a)(?u)x', '(?u)(?a)x']:
          snp_error=f"\n==> File cfg.yaml\n==> At Config()\n==> At key: exclude\n=====> '{pat}' is not a valid python regex")
 case('X13-CFG-07 (?au)x', "exclude: '(?au)x'\nrepos: []\n")
 case('X13-CFG-07 (?u)(?a:x)', "exclude: '(?u)(?a:x)'\nrepos: []\n")
-for pat in ['[[]', '[[:alpha:]]', '[a&&b]', '[a||b]', '[a~~b]', '[a--b]']:
+for pat in ['[[]', '[[:alpha:]]', '[a&&b]', '[a||b]', '[a~~b]']:
     case(f'X13-SM-03 {pat}', f"files: '{pat}'\nrepos: []\n")
+# `[a--b]` is an invalid range: CPython warns while parsing and then raises `re.error`; snp reports only the
+# validation error (snp-pyre returns no warnings for a pattern that fails to parse; D-MISC-04).
+case('X13-SM-03 [a--b]', "files: '[a--b]'\nrepos: []\n", divergence='D-MISC-04', snp_future_warnings=[])
 case('X13-SM-03 hook and top dedupe', "files: '[[]'\nrepos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        files: '[[]'\n        exclude: '[a&&b]'\n")
+case('X13-SM-03 hook before top', "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        files: '[[a]'\nfiles: 'a[b&&c]'\n")
+case('X13-SM-03 top first in the file', "files: 'a[b&&c]'\nrepos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        exclude: '[[a]'\n")
+case('X13-SM-03 before a later error', "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        files: '[[a]'\nfail_fast: 3\n")
+case('X13-SM-03 same hook later error', "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        files: '[a||b]'\n        types: [nonsense]\n")
+case('X13-SM-03 manifest before error', "- {id: a, name: a, entry: a, language: system, exclude: '[a~~b]'}\n- {id: b, name: b, entry: b, language: bogus}\n", kind='manifest')
 case('X13-CFG-13 manifest crash rows', "- {id: a, name: a, entry: a, language: [x]}\n", kind='manifest', divergence='D-CRASH-03',
      snp_error="\n==> File cfg.yaml\n==> At Hook(id='a')\n==> At key: language\n=====> Expected one of conda, coursier, dart, docker, docker_image, dotnet, fail, golang, haskell, julia, lua, node, perl, pygrep, python, r, ruby, rust, swift, unsupported, unsupported_script but got: ['x']")
 case('X13-CFG-13 manifest overflow', "- {id: a, name: a, entry: a, language: system, files: 'a{4294967296}'}\n", kind='manifest', divergence='D-CRASH-04',
@@ -367,6 +375,9 @@ def gen_load() -> list[dict]:
         for k in ('divergence', 'snp_error', 'snp_warnings', 'ext'):
             if k in c:
                 entry[k] = c[k]
+        if 'snp_future_warnings' in c:
+            entry['snp_future_warnings'] = c['snp_future_warnings']
+            entry.setdefault('snp_error', res['error'])
         if 'snp_ctx' in c:
             assert res['exc'] and res['exc'].startswith('ValueError: '), (c['name'], res)
             entry['snp_error'] = c['snp_ctx'] + '=====> ' + res['exc'][len('ValueError: '):]
@@ -440,6 +451,20 @@ MERGE_CASES = [
         'manifest': '- {id: hello, name: hello, entry: echo, language: system}\n',
     },
     {
+        'name': 'remote repo: every _hook before any Hook.create',
+        'config': 'default_language_version: {pygrep: p}\nrepos:\n-   repo: https://x/r\n    rev: v1\n    hooks:\n    -   id: a\n        zz: 1\n    -   id: b\n    -   id: c\n',
+        'manifest': '- {id: a, name: a, entry: a, language: system, x-a: 3}\n- {id: b, name: b, entry: b, language: system, x-a: 3}\n- {id: c, name: c, entry: c, language: pygrep}\n',
+    },
+    {
+        'name': 'remote repo: W11 after every hook merged',
+        'config': 'repos:\n-   repo: https://x/r\n    rev: v1\n    hooks:\n    -   id: a\n        zz: 1\n    -   id: b\n',
+        'manifest': '- {id: a, name: a, entry: a, language: system}\n- {id: b, name: b, entry: b, language: system, x-a: 3}\n',
+    },
+    {
+        'name': 'local repo: Hook.create per hook',
+        'config': 'repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        zz: 1\n    -   id: b\n        name: b\n        entry: b\n        language: system\n        language_version: x\n',
+    },
+    {
         'name': 'duplicate manifest ids: last wins',
         'config': 'repos:\n-   repo: https://example.com/r\n    rev: v1\n    hooks:\n    -   id: a\n',
         'manifest': '- {id: a, name: first, entry: one, language: system}\n- {id: a, name: second, entry: two, language: system}\n',
@@ -479,7 +504,11 @@ def gen_merge() -> list[dict]:
                     for repo in root['repos']:
                         src = repo['repo']
                         if src in ('local', 'meta'):
-                            dcts = [repository._hook(hook, root_config=root) for hook in repo['hooks']]
+                            # `_non_cloned_repository_hooks`: `_hook` and `Hook.create` per hook, interleaved.
+                            for hook in repo['hooks']:
+                                hk = Hook.create(src, Prefix('.'), repository._hook(hook, root_config=root))
+                                result['hooks'].append({k: getattr(hk, k) for k in sorted(repository_keys)})
+                            continue
                         else:
                             by_id = {hk['id']: hk for hk in manifest}
                             for hook in repo['hooks']:
@@ -528,12 +557,17 @@ MIGRATE_CASES = [
     ('empty file', ''),
     ('scalar root', 'foo\n'),
     ('quoted sha key', "repos:\n-   repo: https://example.com/r\n    'sha': v1\n    hooks: []\n"),
+    ('tagged stages', 'default_stages: [!!str commit]\nrepos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: system\n        stages:\n        - !!str push\n'),
+    ('tagged sha key', 'repos:\n-   repo: https://x/r\n    !!str sha: v1\n    hooks: []\n'),
+    ('anchored sha key', 'repos:\n-   repo: https://x/r\n    &k sha: v1\n    hooks: []\nx: *k\n'),
     ('system is not migrated', 'repos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: system\n'),
 ]
 
 MIGRATE_SNP = {
     # D-DATA-14: one rewrite per aliased node.
     'MC4 alias stages': ('D-DATA-14', 'default_stages: &s [pre-commit]\nrepos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: system\n        stages: *s\n'),
+    # D-DATA-14: a rewritten node keeps its anchor (pre-commit drops it; the later alias is then undefined).
+    'anchored sha key': ('D-DATA-14', 'repos:\n-   repo: https://x/r\n    &k rev: v1\n    hooks: []\nx: *k\n'),
     # D-DATA-15: a block scalar becomes a plain scalar.
     'MC4 folded python_venv': ('D-DATA-15', 'repos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: python\n        files: a\n'),
     # D-DATA-09: each line keeps its own ending.

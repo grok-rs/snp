@@ -121,9 +121,14 @@ mod vectors {
                             failures.push(format!("{tag}: manifest flag {}", e.manifest));
                         }
                     }
-                    if want_error.is_none() {
+                    {
                         let mut want_fw: Vec<String> = Vec::new();
-                        for m in strs(&c["future_warnings"]) {
+                        let fw = if divergent && c.get("snp_future_warnings").is_some() {
+                            &c["snp_future_warnings"]
+                        } else {
+                            &c["future_warnings"]
+                        };
+                        for m in strs(fw) {
                             if !want_fw.contains(&m) {
                                 want_fw.push(m);
                             }
@@ -225,55 +230,67 @@ mod vectors {
                 let mut logs: Vec<Json> = Vec::new();
                 let mut hooks: Vec<Json> = Vec::new();
                 let mut exit = Json::Null;
+                // pre-commit's order: a local/meta hook is merged and created (W11) one at a time; a cloned repo
+                // runs `_hook` for all its hooks before any `Hook.create`, so its W11s are buffered per repo and
+                // dropped on an error (`merge_hook`'s "Warning order").
+                let mut fail = |logs: &mut Vec<Json>, e: &snp_config::MergeError| {
+                    logs.push(serde_json::json!(["ERROR", e.message(brand)]));
+                    exit = Json::from(1);
+                };
                 'repos: for repo in &cfg.repos {
-                    let built: Vec<Result<HookDef, snp_config::MergeError>> = match repo {
-                        RepoConfig::Local { hooks } => hooks
-                            .iter()
-                            .map(|h| finalize_local(h, &cfg, "local", None, &warn))
-                            .collect(),
-                        RepoConfig::Meta { hooks } => hooks
-                            .iter()
-                            .map(|h| finalize_local(h, &cfg, "meta", None, &warn))
-                            .collect(),
-                        RepoConfig::Remote { repo, hooks, .. } => {
+                    match repo {
+                        RepoConfig::Local { hooks: local } | RepoConfig::Meta { hooks: local } => {
+                            let src = if matches!(repo, RepoConfig::Local { .. }) {
+                                "local"
+                            } else {
+                                "meta"
+                            };
+                            for h in local {
+                                let b = finalize_local(h, &cfg, src, None, &warn);
+                                for w in warn.take() {
+                                    logs.push(serde_json::json!(["WARNING", w]));
+                                }
+                                match b {
+                                    Ok(h) => hooks.push(hook_json(&h)),
+                                    Err(e) => {
+                                        fail(&mut logs, &e);
+                                        break 'repos;
+                                    }
+                                }
+                            }
+                        }
+                        RepoConfig::Remote {
+                            repo,
+                            hooks: remote,
+                            ..
+                        } => {
                             let m = manifest.as_ref().expect("manifest");
-                            if let Some(missing) = hooks.iter().find(|h| m.get(&h.id).is_none()) {
+                            if let Some(missing) = remote.iter().find(|h| m.get(&h.id).is_none()) {
                                 let e = snp_config::MergeError::UnknownId {
                                     id: std::sync::Arc::clone(&missing.id),
                                     repo: std::sync::Arc::clone(repo),
                                 };
-                                logs.push(serde_json::json!(["ERROR", e.message(brand)]));
-                                exit = Json::from(1);
+                                fail(&mut logs, &e);
                                 break 'repos;
                             }
-                            hooks
-                                .iter()
-                                .map(|h| {
-                                    merge_hook(
-                                        m.get(&h.id).expect("hook"),
-                                        h,
-                                        &cfg,
-                                        repo,
-                                        None,
-                                        &warn,
-                                    )
-                                })
-                                .collect()
-                        }
-                        _ => Vec::new(),
-                    };
-                    for b in built {
-                        for w in warn.take() {
-                            logs.push(serde_json::json!(["WARNING", w]));
-                        }
-                        match b {
-                            Ok(h) => hooks.push(hook_json(&h)),
-                            Err(e) => {
-                                logs.push(serde_json::json!(["ERROR", e.message(brand)]));
-                                exit = Json::from(1);
-                                break 'repos;
+                            let buffer = CollectWarnings::new();
+                            let mut merged = Vec::new();
+                            for h in remote {
+                                let m = m.get(&h.id).expect("hook");
+                                match merge_hook(m, h, &cfg, repo, None, &buffer) {
+                                    Ok(h) => merged.push(h),
+                                    Err(e) => {
+                                        fail(&mut logs, &e);
+                                        break 'repos;
+                                    }
+                                }
                             }
+                            for w in buffer.take() {
+                                logs.push(serde_json::json!(["WARNING", w]));
+                            }
+                            hooks.extend(merged.iter().map(hook_json));
                         }
+                        _ => {}
                     }
                 }
                 let want_logs: Vec<Json> = c["logs"]

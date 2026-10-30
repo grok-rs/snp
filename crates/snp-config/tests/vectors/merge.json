@@ -411,6 +411,169 @@
    "exit": 1
   },
   {
+   "name": "remote repo: every _hook before any Hook.create",
+   "config": "default_language_version: {pygrep: p}\nrepos:\n-   repo: https://x/r\n    rev: v1\n    hooks:\n    -   id: a\n        zz: 1\n    -   id: b\n    -   id: c\n",
+   "manifest": "- {id: a, name: a, entry: a, language: system, x-a: 3}\n- {id: b, name: b, entry: b, language: system, x-a: 3}\n- {id: c, name: c, entry: c, language: pygrep}\n",
+   "hooks": [],
+   "logs": [
+    [
+     "ERROR",
+     "The hook `c` specifies `language_version` but is using language `pygrep` which does not install an environment.  Perhaps you meant to use a specific language?"
+    ]
+   ],
+   "exit": 1
+  },
+  {
+   "name": "remote repo: W11 after every hook merged",
+   "config": "repos:\n-   repo: https://x/r\n    rev: v1\n    hooks:\n    -   id: a\n        zz: 1\n    -   id: b\n",
+   "manifest": "- {id: a, name: a, entry: a, language: system}\n- {id: b, name: b, entry: b, language: system, x-a: 3}\n",
+   "hooks": [
+    {
+     "additional_dependencies": [],
+     "alias": "",
+     "always_run": false,
+     "args": [],
+     "description": "",
+     "entry": "a",
+     "exclude": "^$",
+     "exclude_types": [],
+     "fail_fast": false,
+     "files": "",
+     "id": "a",
+     "language": "unsupported",
+     "language_version": "default",
+     "log_file": "",
+     "minimum_pre_commit_version": "0",
+     "name": "a",
+     "pass_filenames": true,
+     "require_serial": false,
+     "stages": [
+      "commit-msg",
+      "post-checkout",
+      "post-commit",
+      "post-merge",
+      "post-rewrite",
+      "pre-commit",
+      "pre-merge-commit",
+      "pre-push",
+      "pre-rebase",
+      "prepare-commit-msg",
+      "manual"
+     ],
+     "types": [
+      "file"
+     ],
+     "types_or": [],
+     "verbose": false
+    },
+    {
+     "additional_dependencies": [],
+     "alias": "",
+     "always_run": false,
+     "args": [],
+     "description": "",
+     "entry": "b",
+     "exclude": "^$",
+     "exclude_types": [],
+     "fail_fast": false,
+     "files": "",
+     "id": "b",
+     "language": "unsupported",
+     "language_version": "default",
+     "log_file": "",
+     "minimum_pre_commit_version": "0",
+     "name": "b",
+     "pass_filenames": true,
+     "require_serial": false,
+     "stages": [
+      "commit-msg",
+      "post-checkout",
+      "post-commit",
+      "post-merge",
+      "post-rewrite",
+      "pre-commit",
+      "pre-merge-commit",
+      "pre-push",
+      "pre-rebase",
+      "prepare-commit-msg",
+      "manual"
+     ],
+     "types": [
+      "file"
+     ],
+     "types_or": [],
+     "verbose": false
+    }
+   ],
+   "logs": [
+    [
+     "WARNING",
+     "Unexpected key(s) present on https://x/r => a: zz"
+    ],
+    [
+     "WARNING",
+     "Unexpected key(s) present on https://x/r => b: x-a"
+    ]
+   ],
+   "exit": null
+  },
+  {
+   "name": "local repo: Hook.create per hook",
+   "config": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        zz: 1\n    -   id: b\n        name: b\n        entry: b\n        language: system\n        language_version: x\n",
+   "manifest": null,
+   "hooks": [
+    {
+     "additional_dependencies": [],
+     "alias": "",
+     "always_run": false,
+     "args": [],
+     "description": "",
+     "entry": "a",
+     "exclude": "^$",
+     "exclude_types": [],
+     "fail_fast": false,
+     "files": "",
+     "id": "a",
+     "language": "unsupported",
+     "language_version": "default",
+     "log_file": "",
+     "minimum_pre_commit_version": "0",
+     "name": "a",
+     "pass_filenames": true,
+     "require_serial": false,
+     "stages": [
+      "commit-msg",
+      "post-checkout",
+      "post-commit",
+      "post-merge",
+      "post-rewrite",
+      "pre-commit",
+      "pre-merge-commit",
+      "pre-push",
+      "pre-rebase",
+      "prepare-commit-msg",
+      "manual"
+     ],
+     "types": [
+      "file"
+     ],
+     "types_or": [],
+     "verbose": false
+    }
+   ],
+   "logs": [
+    [
+     "WARNING",
+     "Unexpected key(s) present on local => a: zz"
+    ],
+    [
+     "ERROR",
+     "The hook `b` specifies `language_version` but is using language `unsupported` which does not install an environment.  Perhaps you meant to use a specific language?"
+    ]
+   ],
+   "exit": 1
+  },
+  {
    "name": "duplicate manifest ids: last wins",
    "config": "repos:\n-   repo: https://example.com/r\n    rev: v1\n    hooks:\n    -   id: a\n",
    "manifest": "- {id: a, name: first, entry: one, language: system}\n- {id: a, name: second, entry: two, language: system}\n",
