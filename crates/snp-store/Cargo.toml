@@ -13,6 +13,20 @@ publish.workspace = true
 snp-core.workspace = true
 snp-os.workspace = true
 snp-pycompat.workspace = true
+blake3.workspace = true
+memchr.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+rustix.workspace = true
 
 [lints]
 workspace = true
