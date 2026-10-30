@@ -21,12 +21,13 @@ use std::fmt;
 use std::fs::File;
 use std::io::{self, Read};
 use std::num::NonZeroUsize;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use file_identify::{Classification, ExecPolicy, FileKind, Meta, Pending, TagSet};
-use snp_core::failure::{PyExc, pyerr};
+use snp_core::failure::{Failure, PyExc, pyerr};
 use snp_core::path::RepoPath;
 use snp_os as _;
 use snp_proc::pool::JobPool;
@@ -450,26 +451,11 @@ impl FileTable {
         if !n.any() || ids.is_empty() {
             return;
         }
-        let work = |chunk: &[FileId]| {
-            for &id in chunk {
+        let _done: Result<Vec<()>, Failure> = par_chunks(pool, ids.len(), |range| {
+            for &id in ids.get(range).unwrap_or_default() {
                 let _outcome: TagOutcome<'_> = self.tags(id, n);
             }
-        };
-        let permits = pool.permits();
-        if ids.len() < PARALLEL_MIN || permits.get() == 1 || JobPool::holds_permit() {
-            work(ids);
-            return;
-        }
-        let per = ids
-            .len()
-            .div_ceil(permits.get().saturating_mul(4))
-            .max(CHUNK_MIN);
-        let chunks = ids.len().div_ceil(per);
-        let _done = pool.map_ordered(permits, chunks, |k| {
-            let start = k.saturating_mul(per);
-            let end = start.saturating_add(per).min(ids.len());
-            work(ids.get(start..end).unwrap_or_default());
-            Ok(())
+            Ok(Vec::new())
         });
     }
 
@@ -549,33 +535,32 @@ impl FileTable {
         }
     }
 
-    /// Sets the stat tier of entry `i` from an earlier `lexists` meta (when not computed yet).
-    pub(crate) fn adopt_stat(&self, i: usize, meta: Meta) {
-        let n = self.len();
-        if let Some(c) = self.stat.cell(n, i) {
-            let _set: Result<(), StatTier> = c.set(StatTier::Present(self.classify(i, meta)));
-        }
-    }
-
     /// Records the `lexists` metas of a fresh `Classifier::new` (index-aligned with the table).
     pub(crate) fn set_pending(&self, metas: Box<[Option<Meta>]>) {
         *snp_core::sync::lock(&self.pending) = Some(metas);
     }
 
-    /// Adopts the pending `lexists` metas for `ids` (once: the first hook after `Classifier::new`). pre-commit
-    /// identifies a file the first time a hook's `files`/`exclude` pass it; adopting the `lstat` taken moments
-    /// before for exactly those files is that same observation, while every other file keeps a fresh `lstat` at its
-    /// first use (so a file deleted by an earlier hook is seen as gone, X13-CLS-01).
-    pub(crate) fn adopt_pending(&self, ids: &[FileId]) {
-        let Some(metas) = snp_core::sync::lock(&self.pending).take() else {
+    /// Takes the pending `lexists` metas (once: the first hook after `Classifier::new` adopts them).
+    ///
+    /// pre-commit identifies a file the first time a hook's `files`/`exclude` pass it; adopting the `lstat` taken
+    /// moments before (by `Classifier::new`) for exactly those files is that same observation, while every other
+    /// file keeps a fresh `lstat` at its first use, so a file deleted by an earlier hook is seen as gone
+    /// (X13-CLS-01).
+    pub(crate) fn take_pending(&self) -> Option<Box<[Option<Meta>]>> {
+        snp_core::sync::lock(&self.pending).take()
+    }
+
+    /// Sets the stat tier of `id` from its pending `lexists` meta, when it has one and the tier is not computed.
+    pub(crate) fn adopt(&self, id: FileId, pending: &[Option<Meta>]) {
+        let Some(i) = self.index(id) else { return };
+        let Some(Some(meta)) = pending.get(i) else {
             return;
         };
-        for &id in ids {
-            if let Some(i) = self.index(id)
-                && let Some(Some(meta)) = metas.get(i)
-            {
-                self.adopt_stat(i, *meta);
-            }
+        let n = self.len();
+        if let Some(c) = self.stat.cell(n, i)
+            && c.get().is_none()
+        {
+            let _set: Result<(), StatTier> = c.set(StatTier::Present(self.classify(i, *meta)));
         }
     }
 
@@ -646,6 +631,33 @@ impl FileTable {
         }
         tags
     }
+}
+
+/// Runs `f` over `0..n` in ordered partitions of at least 64 indices on the pool (`JobPool::map_ordered`, one
+/// permit each) and concatenates the results in index order; the first error in index order wins. A small `n`, a
+/// single-permit pool or a caller that already holds a permit runs inline (ADR-070 re-entrancy).
+pub(crate) fn par_chunks<T: Send>(
+    pool: &JobPool,
+    n: usize,
+    f: impl Fn(Range<usize>) -> Result<Vec<T>, Failure> + Sync,
+) -> Result<Vec<T>, Failure> {
+    let permits = pool.permits();
+    if n < PARALLEL_MIN || permits.get() == 1 || JobPool::holds_permit() {
+        return f(0..n);
+    }
+    let per = n
+        .div_ceil(permits.get().saturating_mul(4))
+        .max(CHUNK_MIN);
+    let chunks = n.div_ceil(per);
+    let parts = pool.map_ordered(permits, chunks, |k| {
+        let start = k.saturating_mul(per);
+        f(start..start.saturating_add(per).min(n))
+    });
+    let mut out = Vec::new();
+    for part in parts {
+        out.extend(part?);
+    }
+    Ok(out)
 }
 
 /// Runs `f(0..n)` and collects the flags, on a few scoped threads for large tables (`lstat` latency dominates).
@@ -800,7 +812,7 @@ mod tests {
     fn retain_lexists_keeps_trusted_and_compacts() {
         let mut t = table(&["keep.py", "gone.py", "keep2.py"]);
         t.set_trusted_modes(vec![(&b"keep.py"[..], 0o100_644), (&b"keep2.py"[..], 0o100_755)]);
-        let _ = t.tags(FileId(2), Needs::default());
+        let _name: TagOutcome<'_> = t.tags(FileId(2), Needs::default());
         t.retain_lexists();
         assert_eq!(t.len(), 2);
         assert_eq!(t.bytes(FileId(1)), b"keep2.py");

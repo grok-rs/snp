@@ -369,21 +369,23 @@ mod tests {
     #[test]
     fn keys_are_domain_separated_and_order_sensitive() {
         let url = RepoId::Url(Arc::from("https://github.com/pre-commit/pre-commit-hooks"));
-        let a = remote_key(&url, "v6.0.0", &deps(&["a", "b"]));
-        let b = remote_key(&url, "v6.0.0", &deps(&["b", "a"]));
-        let c = remote_key(&url, "v6.0.0", &[]);
-        let d = remote_key(&url, "v5.0.0", &[]);
-        assert_ne!(a, b);
-        assert_ne!(a, c);
-        assert_ne!(c, d);
+        let ab = remote_key(&url, "v6.0.0", &deps(&["a", "b"]));
+        let ba = remote_key(&url, "v6.0.0", &deps(&["b", "a"]));
+        let none = remote_key(&url, "v6.0.0", &[]);
+        let older = remote_key(&url, "v5.0.0", &[]);
+        assert_ne!(ab, ba);
+        assert_ne!(ab, none);
+        assert_ne!(none, older);
         // Concatenation is unambiguous: ("ab", "c") != ("a", "bc").
-        let e = remote_key(&RepoId::Url(Arc::from("ab")), "c", &[]);
-        let f = remote_key(&RepoId::Url(Arc::from("a")), "bc", &[]);
-        assert_ne!(e, f);
+        assert_ne!(
+            remote_key(&RepoId::Url(Arc::from("ab")), "c", &[]),
+            remote_key(&RepoId::Url(Arc::from("a")), "bc", &[])
+        );
         // A local path never collides with the URL spelling of the same string.
-        let p = remote_key(&RepoId::LocalPath(PathBuf::from("/x")), "r", &[]);
-        let u = remote_key(&RepoId::Url(Arc::from("/x")), "r", &[]);
-        assert_ne!(p, u);
+        assert_ne!(
+            remote_key(&RepoId::LocalPath(PathBuf::from("/x")), "r", &[]),
+            remote_key(&RepoId::Url(Arc::from("/x")), "r", &[])
+        );
         assert_ne!(local_key(&[]), local_key(&deps(&["six"])));
         assert_eq!(local_key(&deps(&["six"])), local_key(&deps(&["six"])));
     }
