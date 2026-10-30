@@ -27,15 +27,52 @@ fn sci(digits: &str, exp: i32) -> String {
     format!("{first}.{}e{exp}", cs.as_str())
 }
 
+/// Whether finite `x` can lie exactly halfway between two `n`-digit decimals whose first digit
+/// is at decimal exponent `exp`, i.e. whether `2 * x * 10^k` (`k = n - 1 - exp`) is an odd
+/// integer. With `x = m * 2^q` (`m` odd) that is `m * 2^(q + 1 + k) * 5^k`: odd and integral only
+/// when `q + 1 + k == 0` and, for `k < 0`, `5^-k` divides `m`. O(1); it lets [`even_tie`] skip
+/// the exact (up to 767-digit) expansion for every value that cannot be a tie.
+fn can_be_midpoint(value: f64, n_digits: usize, exp: i32) -> bool {
+    let bits = value.to_bits();
+    let fraction = bits & ((1_u64 << 52) - 1);
+    let biased = i64::try_from((bits >> 52) & 0x7ff).unwrap_or(0);
+    let (mut mantissa, mut bin_exp) = if biased == 0 {
+        (fraction, -1074_i64)
+    } else {
+        (fraction | (1_u64 << 52), biased.saturating_sub(1075))
+    };
+    if mantissa == 0 {
+        return false;
+    }
+    let zeros = mantissa.trailing_zeros();
+    mantissa >>= zeros;
+    bin_exp = bin_exp.saturating_add(i64::from(zeros));
+    let scale = i64::try_from(n_digits)
+        .unwrap_or(i64::MAX)
+        .saturating_sub(1)
+        .saturating_sub(i64::from(exp));
+    if bin_exp.saturating_add(1).saturating_add(scale) != 0 {
+        return false;
+    }
+    if scale >= 0 {
+        return true;
+    }
+    u32::try_from(scale.unsigned_abs())
+        .ok()
+        .and_then(|e| 5_u64.checked_pow(e))
+        .is_some_and(|five_pow| mantissa.checked_rem(five_pow) == Some(0))
+}
+
 /// dtoa mode 0 breaks an exact tie between the two closest shortest candidates by the even last
 /// digit (`_Py_dg_dtoa`: `if (j1 > 0 || (j1 == 0 && dig & 1))` round up); Rust's shortest
 /// formatting can round such a tie up (`1078486155042150.25` → Python `…150.2`, Rust `…150.3`).
-/// A tie needs at least 16 significant digits (the decimal step must undercut the binary ulp), so
-/// only long outputs are checked against the exact expansion.
+/// A tie needs at least 16 significant digits (the decimal step must undercut the binary ulp) and
+/// a value that is an exact decimal midpoint ([`can_be_midpoint`]); only those are checked against
+/// the exact expansion.
 fn even_tie(x: f64, digits: String, exp: i32) -> (String, i32) {
     let n = digits.len();
     let odd_last = digits.as_bytes().last().is_some_and(|d| d % 2 == 1);
-    if n < 15 || !odd_last {
+    if n < 15 || !odd_last || !can_be_midpoint(x, n, exp) {
         return (digits, exp);
     }
     // every double's exact expansion has at most 767 significant digits
@@ -201,6 +238,18 @@ mod tests {
         assert_eq!(repr(-x), "-1078486155042150.2");
         assert_eq!(increment("129"), "130");
         assert_eq!(increment("99"), "100");
+        // the tie partner …150.2 reads back as x; a non-tie odd long value has no such neighbour
+        assert!(can_be_midpoint(x, 17, 15));
+        assert!(!can_be_midpoint(0.1 + 0.2, 17, -1));
+        assert!(!can_be_midpoint(0.0, 17, 0));
+        assert!(!can_be_midpoint(f64::from_bits(1), 17, -324));
+        assert!(can_be_midpoint(2.5, 1, 0));
+        assert!(can_be_midpoint(25.0, 1, 1));
+        assert!(!can_be_midpoint(35.0, 1, 0));
+        assert!(!can_be_midpoint(75.0, 1, 2));
+        assert!(can_be_midpoint(750.0, 1, 2));
+        assert!(!can_be_midpoint(750.0, 2, 2));
+        assert_eq!(repr(0.1 + 0.2), "0.30000000000000004");
     }
 
     #[test]
