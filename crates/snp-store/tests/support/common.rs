@@ -72,13 +72,7 @@ pub(crate) fn exc_text(f: &Failure) -> (String, String) {
 }
 
 /// Whether the tests run as root (permission tests are meaningless then).
+#[cfg(unix)]
 pub(crate) fn is_root() -> bool {
-    #[cfg(unix)]
-    {
-        rustix::process::geteuid().is_root()
-    }
-    #[cfg(not(unix))]
-    {
-        false
-    }
+    rustix::process::geteuid().is_root()
 }

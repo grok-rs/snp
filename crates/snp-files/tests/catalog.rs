@@ -8,11 +8,11 @@ mod catalog {
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
+    #[cfg(unix)]
     use std::time::Duration;
 
     use file_identify::TagSet;
     use snp_core::cancel::CancelToken;
-    use snp_core::failure::Failure;
     use snp_files::{Classifier, FileId, FileTable, HookFilter, Needs, TagOutcome};
     use snp_proc::pool::JobPool;
     use snp_pyre::{Options, RegexCache};
@@ -59,6 +59,7 @@ mod catalog {
             .collect()
     }
 
+    #[cfg(unix)]
     fn is_root() -> bool {
         #[cfg(unix)]
         {
@@ -125,7 +126,7 @@ mod catalog {
         // `types: [text]` over noext: fail closed with the identify open error.
         let err = c.for_hook(&filter("", &["text"], &cache), &pool).unwrap_err();
         assert_eq!(err.exit_code(), 3);
-        let Failure::Exc { exc, .. } = err else {
+        let snp_core::failure::Failure::Exc { exc, .. } = err else {
             panic!("not an exception")
         };
         assert_eq!(&*exc.ty, "PermissionError");
@@ -139,6 +140,7 @@ mod catalog {
     }
 
     /// Runs `f` on a thread and fails the test if it does not finish within 5 s (a blocking open would hang).
+    #[cfg(unix)]
     fn within_5s<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::Builder::new()

@@ -23,7 +23,9 @@ use snp_store::{
     MarkerKey, RepoHandle, RepoId, RepoKind, RepoMeta, Store, StoreSource, ToolRef, resolve_location,
 };
 
-use crate::common::{exc_text, fake_clone, is_root, materialize, new_store, remote, store_at};
+#[cfg(unix)]
+use crate::common::is_root;
+use crate::common::{exc_text, fake_clone, materialize, new_store, remote, store_at};
 
 const URL: &str = "https://example.invalid/hooks";
 

@@ -20,15 +20,21 @@ mod catalog {
 
     use snp_core::brand::Brand;
     use snp_core::cancel::CancelToken;
+    #[cfg(unix)]
     use snp_core::env::Env;
     use snp_core::failure::Failure;
     use snp_core::output::CollectWarnings;
-    use snp_store::{Store, StoreSource, TrackedConfig, resolve_location};
+    #[cfg(unix)]
+    use snp_store::{StoreSource, resolve_location};
+    use snp_store::{Store, TrackedConfig};
 
-    use crate::common::{exc_text, fake_clone, is_root, materialize, new_store, remote, store_at};
+    #[cfg(unix)]
+    use crate::common::{exc_text, fake_clone, is_root};
+    use crate::common::{materialize, new_store, remote, store_at};
 
     const URL: &str = "https://example.invalid/catalog";
 
+    #[cfg(unix)]
     fn env(pairs: &[(&str, &str)]) -> Env {
         Env::from_pairs(pairs.iter().map(|(k, v)| (*k, *v)))
     }

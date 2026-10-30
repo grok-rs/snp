@@ -97,7 +97,7 @@ pub(crate) fn readme_first_line(dir: &Path) -> Option<Vec<u8>> {
     Some(line.strip_suffix(b"\r").unwrap_or(line).to_vec())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
@@ -105,7 +105,6 @@ mod tests {
         Env::from_pairs(pairs.iter().map(|(k, v)| (*k, *v)))
     }
 
-    #[cfg(unix)]
     #[test]
     fn precedence_and_relative_values() {
         let cwd = Path::new("/work/proj");
@@ -139,7 +138,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn refuses_pre_commit_store_by_path() {
         let cwd = Path::new("/w");
