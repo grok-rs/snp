@@ -426,6 +426,12 @@ pub(crate) fn normalize_root(s: &str) -> Option<RepoPath> {
     if parts.contains(&"..") {
         return None;
     }
+    // A `:` in the first component is a Windows drive (`C:/x`, `C:x`), a `\\?\` / `//?/` device path or an NTFS
+    // stream: on Windows it escapes the repository or resolves against a drive's cwd. Rejected everywhere, so a
+    // config means the same on every platform.
+    if parts.first().is_some_and(|p| p.contains(':')) {
+        return None;
+    }
     let mut joined = String::new();
     for (i, p) in parts.iter().enumerate() {
         if i > 0 {
@@ -921,6 +927,19 @@ mod tests {
         assert_eq!(n("/abs"), None);
         assert_eq!(n("."), None);
         assert_eq!(n(""), None);
+        for drive in [
+            "C:/Windows",
+            "C:x",
+            "c:\\x",
+            "//?/C:/x",
+            "\\\\?\\C:\\x",
+            "./C:/x",
+            "a:b",
+            "x::$DATA",
+        ] {
+            assert_eq!(n(drive), None, "{drive}");
+        }
+        assert_eq!(n("a/b:c"), Some("a/b:c".to_owned()));
     }
 
     #[test]
