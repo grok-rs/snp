@@ -128,7 +128,7 @@ mod fi {
             crate::common::Buf,
         ) {
             let b = Arc::new(ScriptedBackend::new());
-            let backend: Arc<dyn GitBackend> = Arc::clone(&b) as Arc<dyn GitBackend>;
+            let backend: Arc<dyn GitBackend> = Arc::<ScriptedBackend>::clone(&b);
             let (git, info) = self.sb.discover(&self.repo);
             let (cx, out, err) = self.sb.ctx_with(git.with_backend(backend), info);
             (b, cx, out, err)
@@ -393,20 +393,19 @@ mod fi {
                 g.restore()
             }));
             disarm();
-            match n {
-                // 6/7: inside stage_fixed; 1–5 inside enter; 8 is the rollback (not reached); 9/10 in the restore.
-                8 => assert!(
+            // 1–5 fire inside enter, 6/7 inside stage_fixed, 9/10 in the restore; 8 is the rollback (not reached).
+            if n == 8 {
+                assert!(
                     matches!(r, Ok(Ok(()))),
                     "StashState(8) is not reached without a conflict"
-                ),
-                _ => {
-                    let payload = r.unwrap_err();
-                    let msg = payload
-                        .downcast_ref::<String>()
-                        .cloned()
-                        .unwrap_or_default();
-                    assert_eq!(msg, format!("snp fault injection: StashState({n})"));
-                }
+                );
+            } else {
+                let payload = r.unwrap_err();
+                let msg = payload
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .unwrap_or_default();
+                assert_eq!(msg, format!("snp fault injection: StashState({n})"));
             }
             // The worktree always gets the user's change back, and the intent-to-add entry.
             assert_eq!(

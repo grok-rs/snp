@@ -33,9 +33,9 @@ impl Buf {
 }
 
 impl Write for Buf {
-    fn write(&mut self, b: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(b);
-        Ok(b.len())
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        snp_core::sync::lock(&self.0).extend_from_slice(buf);
+        Ok(buf.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -213,6 +213,10 @@ impl Sandbox {
         );
     }
 
+    #[expect(
+        clippy::unused_self,
+        reason = "a method for symmetry with the other sandbox helpers"
+    )]
     pub(crate) fn write(&self, repo: &Path, rel: &str, bytes: &[u8]) {
         let p = repo.join(rel);
         if let Some(parent) = p.parent() {
@@ -221,6 +225,10 @@ impl Sandbox {
         std::fs::write(p, bytes).unwrap();
     }
 
+    #[expect(
+        clippy::unused_self,
+        reason = "a method for symmetry with the other sandbox helpers"
+    )]
     pub(crate) fn read(&self, repo: &Path, rel: &str) -> Vec<u8> {
         std::fs::read(repo.join(rel)).unwrap()
     }
@@ -399,12 +407,15 @@ pub(crate) enum Reply {
     TtyStop,
 }
 
+/// `(argument prefix, only the n-th match, matches seen, action)`.
+type Rule<T> = (Vec<String>, Option<usize>, usize, T);
+
 /// A real Critical backend with argument-prefix rules (`n`-th match only, or every match), side effects and a call
 /// log.
 pub(crate) struct Spy {
     real: ProcBackend,
-    rules: Mutex<Vec<(Vec<String>, Option<usize>, usize, Reply)>>,
-    effects: Mutex<Vec<(Vec<String>, Option<usize>, usize, Effect)>>,
+    rules: Mutex<Vec<Rule<Reply>>>,
+    effects: Mutex<Vec<Rule<Effect>>>,
     calls: Mutex<Vec<Vec<OsString>>>,
 }
 

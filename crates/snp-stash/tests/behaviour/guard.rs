@@ -61,10 +61,12 @@ fn second_run_proceeds_when_the_first_releases() {
     let (cx, _, _) = sb.ctx(&repo);
     let first = snp_stash::enter(cx).unwrap();
     let (cx2, _, err2) = sb.ctx(&repo);
-    let t = std::thread::spawn(move || {
-        let g = snp_stash::enter(cx2).unwrap();
-        g.restore().unwrap();
-    });
+    let t = std::thread::Builder::new()
+        .spawn(move || {
+            let g = snp_stash::enter(cx2).unwrap();
+            g.restore().unwrap();
+        })
+        .unwrap();
     std::thread::sleep(Duration::from_millis(300));
     first.restore().unwrap();
     t.join().unwrap();
@@ -193,7 +195,7 @@ fn journal_and_pointer_are_durable_before_the_checkout() {
             }),
         );
     }
-    let (git, info) = sb.discover_with(&repo, spy.clone());
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
     let (cx, _, _) = sb.ctx_with(git, info);
     let original = sb.unstaged_diff(&repo);
     let tree = sb.git_text(&repo, &["write-tree"]);
@@ -257,7 +259,7 @@ fn autosave_between_diff_index_and_checkout_is_caught() {
             Box::new(move |_| std::fs::write(repo.join("foo"), b"herp\nautosaved\n").unwrap()),
         );
     }
-    let (git, info) = sb.discover_with(&repo, spy.clone());
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
     let (cx, _, _) = sb.ctx_with(git, info);
     let g = snp_stash::enter(cx).unwrap();
     let p = patch_of(&g);
@@ -298,7 +300,7 @@ fn files_that_keep_changing_abort_before_any_mutation() {
             }),
         );
     }
-    let (git, info) = sb.discover_with(&repo, spy.clone());
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
     let (cx, out, _) = sb.ctx_with(git, info);
     let e = snp_stash::enter(cx).unwrap_err();
     let (ty, text, _) = exc(&e);
@@ -384,7 +386,7 @@ fn old_git_refuses_a_non_empty_stash_before_any_mutation() {
         None,
         Reply::Exit(0, b"git version 2.18.5\n".to_vec(), Vec::new()),
     );
-    let (git, info) = sb.discover_with(&repo, spy.clone());
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
     let (mut cx, out, _) = sb.ctx_with(git, info);
     cx.old_git = true;
     let e = snp_stash::enter(cx).unwrap_err();
@@ -401,7 +403,7 @@ fn old_git_refuses_a_non_empty_stash_before_any_mutation() {
     );
     assert_eq!(out.text(), "");
     assert!(!spy.calls().iter().any(|c| c.contains("checkout")));
-    assert!(sb.patch_files().is_empty());
+    assert!(sb.patch_files().is_empty(), "{:?}", sb.patch_files());
     assert_eq!(sb.read(&repo, "foo"), b"herp\n");
 }
 
@@ -417,7 +419,7 @@ fn a_tty_stopped_restore_is_reported_and_the_k_plus_path_keeps_the_patch() {
         None,
         Reply::TtyStop,
     );
-    let (git, info) = sb.discover_with(&repo, spy.clone());
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
     let (cx, out, err) = sb.ctx_with(git, info);
     let g = snp_stash::enter(cx).unwrap();
     let p = patch_of(&g);
@@ -462,7 +464,7 @@ fn snp_stash_verify_warns_without_changing_the_outcome() {
         None,
         Reply::Exit(0, Vec::new(), Vec::new()),
     );
-    let (git, info) = sb.discover_with(&repo, spy.clone());
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
     let (mut cx, _, err) = sb.ctx_with(git, info);
     cx.verify = true;
     let g = snp_stash::enter(cx).unwrap();

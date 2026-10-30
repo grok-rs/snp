@@ -1,6 +1,6 @@
 //! WP-23's catalog rows (`tests/catalog/index.tsv`): pre-commit's `tests/staged_files_only_test.py` (T10-SFO-01…17)
 //! and the 13 X.4 rows X13-ST-04, X13-GIT-09 and X13-STASH-01…03 — against real git in a hermetic sandbox. Behaviour
-//! tests beyond the catalog (lock, journal, recovery, `stage_fixed`, hazards, DiffOracle) live in `behaviour/`.
+//! tests beyond the catalog (lock, journal, recovery, `stage_fixed`, hazards, `DiffOracle`) live in `behaviour/`.
 //!
 //! Owner: WP-23.
 
@@ -434,7 +434,7 @@ mod rows {
             assert_eq!(sb.read(&repo, &i.to_string()), b"new contents");
         }
         // No patch, journal or pointer left behind; the lock is free again.
-        assert!(sb.patch_files().is_empty());
+        assert!(sb.patch_files().is_empty(), "{:?}", sb.patch_files());
         assert!(!repo.join(".git/snp-stash.journal").exists());
         assert!(snp_stash::recovery_scan(&repo.join(".git"), &sb.patches(), &repo).is_empty());
     }
@@ -483,7 +483,7 @@ mod rows {
             None,
             Reply::Exit(128, Vec::new(), b"fatal: boom\n".to_vec()),
         );
-        let (git, info) = sb.discover_with(&repo, spy.clone());
+        let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
         let (cx, out, _) = sb.ctx_with(git, info);
         let e = snp_stash::enter(cx).unwrap_err();
         let (ty, text, hint) = exc(&e);
@@ -513,7 +513,7 @@ mod rows {
             Some(1),
             Reply::Exit(1, Vec::new(), b"error: boom\n".to_vec()),
         );
-        let (git, info) = sb.discover_with(&repo, spy.clone());
+        let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
         let (cx, out, _) = sb.ctx_with(git, info);
         let e = snp_stash::enter(cx).unwrap_err();
         let (ty, text, _) = exc(&e);
@@ -549,7 +549,7 @@ mod rows {
             None,
             Reply::Exit(1, Vec::new(), b"error: patch failed: foo:1\n".to_vec()),
         );
-        let (git, info) = sb.discover_with(&repo, spy.clone());
+        let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
         let (cx, out, _) = sb.ctx_with(git, info);
         let guard = snp_stash::enter(cx).unwrap();
         let Stashed::Patch(patch) = guard.stashed().clone() else {

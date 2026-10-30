@@ -481,7 +481,7 @@ mod tests {
         ] {
             assert_eq!(JournalData::parse(bad), None, "{bad:?}");
         }
-        let deep = "[".repeat(100_000);
+        let deep: String = std::iter::repeat_n('[', 100_000).collect();
         assert_eq!(JournalData::parse(deep.as_bytes()), None);
         let ok = b"{\"v\":1,\"state\":\"s\",\"worktree\":{\"hex\":\"2F72\"}}";
         assert_eq!(

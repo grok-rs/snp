@@ -107,16 +107,23 @@ struct Inner {
     token: String,
     /// The intent-to-add paths cleared with `git rm --cached`.
     ita: ZList,
-    /// `git rm --cached` was attempted: the re-add is due.
-    ita_cleared: bool,
     tree: Option<ObjectId>,
     patch: Option<PathBuf>,
-    /// The checkout was attempted: the patch must be re-applied.
-    stash_active: bool,
     journal: Option<Journal>,
     staged_fixed: Vec<RepoPath>,
     /// The SIGTTIN/SIGTTOU notice was printed.
     tty_noted: bool,
+    /// Which restore steps are due.
+    flags: Steps,
+}
+
+/// The restore steps still due (each is cleared when done, so a resumed `finish` skips it).
+#[derive(Debug, Default, Clone, Copy)]
+struct Steps {
+    /// `git rm --cached` was attempted: the intent-to-add re-add is due.
+    ita_cleared: bool,
+    /// The checkout was attempted: the patch must be re-applied.
+    stash_active: bool,
     /// The restore failed (K+): the journal is kept.
     restore_failed: bool,
 }
@@ -284,14 +291,12 @@ pub fn enter(cx: StashCtx) -> Result<StashGuard, Failure> {
             lock,
             token,
             ita: ZList::default(),
-            ita_cleared: false,
             tree: None,
             patch: None,
-            stash_active: false,
             journal: None,
             staged_fixed: Vec::new(),
             tty_noted: false,
-            restore_failed: false,
+            flags: Steps::default(),
         })),
     };
     fault::hit(Point::StashState(1));
@@ -312,11 +317,9 @@ pub fn enter(cx: StashCtx) -> Result<StashGuard, Failure> {
             Ok(guard)
         }
         Err(e) => {
-            if let Some(Inner {
-                patch: Some(p),
-                stash_active: true,
-                ..
-            }) = guard.inner.as_deref()
+            if let Some(inner) = guard.inner.as_deref()
+                && inner.flags.stash_active
+                && let Some(p) = &inner.patch
             {
                 guard.stashed = Stashed::Patch(p.clone());
             }
@@ -508,7 +511,7 @@ impl Inner {
             self.ita = ita;
             self.create_journal(State::Started, true)?;
             fault::hit(Point::StashState(2));
-            self.ita_cleared = true;
+            self.flags.ita_cleared = true;
             self.git().rm_cached(&self.ita, Group::Isolated)?;
             fault::hit(Point::StashState(3));
         }
@@ -651,7 +654,7 @@ impl Inner {
             .log(Level::Warning, messages::UNSTAGED_DETECTED);
         self.printer().log(Level::Info, &messages::stashing(&path));
         // 8. checkout (pre-commit's `try` starts here: a failing checkout still restores).
-        self.stash_active = true;
+        self.flags.stash_active = true;
         self.git().checkout_all(true, Group::Isolated)?;
         fault::hit(Point::StashState(5));
         Ok(StashOutcome::Patch(path))
@@ -662,7 +665,7 @@ impl Inner {
         let _ignored = std::fs::remove_file(path);
         self.patch = None;
         if let Some(j) = &mut self.journal {
-            if self.ita_cleared {
+            if self.flags.ita_cleared {
                 j.data.patch = None;
                 j.data.tree = None;
                 let _ignored = j.update(State::Started);
@@ -780,7 +783,7 @@ impl Inner {
         if paths.is_empty() {
             return Ok(true);
         }
-        let Some(patch) = self.patch.clone().filter(|_| self.stash_active) else {
+        let Some(patch) = self.patch.clone().filter(|_| self.flags.stash_active) else {
             // Nothing stashed: the index can take the fixes directly (no user content to protect).
             self.git().add_literal(paths, Group::Isolated)?;
             self.staged_fixed.extend_from_slice(paths);
@@ -874,25 +877,25 @@ impl Inner {
     fn finish(&mut self) -> Result<(), Failure> {
         let shield = self.cx.signals.as_ref().map(|s| s.shield());
         let mut result = Ok(());
-        if self.stash_active
+        if self.flags.stash_active
             && let Some(patch) = self.patch.clone()
         {
             let restored = self.restore_patch(&patch);
-            self.stash_active = false;
+            self.flags.stash_active = false;
             if let Err(e) = restored {
-                self.restore_failed = true;
+                self.flags.restore_failed = true;
                 result = Err(e);
             }
         }
-        if self.ita_cleared {
+        if self.flags.ita_cleared {
             fault::hit(Point::RestoreCommand(6));
             let readd = self.git().add_intent_to_add(&self.ita, Group::Isolated);
-            self.ita_cleared = false;
+            self.flags.ita_cleared = false;
             if let (Err(e), Ok(())) = (readd, &result) {
                 result = Err(e);
             }
         }
-        if !self.restore_failed
+        if !self.flags.restore_failed
             && let Some(j) = self.journal.take()
         {
             // Done. (K+: patch, journal and pointer are kept forever, never gc'd.)

@@ -1,0 +1,4 @@
+[43;30m[WARNING][m Unstaged files detected.
+[INFO][m Stashing unstaged files to <PATCH>.
+[43;30m[WARNING][m Stashed changes conflicted with hook auto-fixes... Rolling back fixes...
+[INFO][m Restored changes from <PATCH>.

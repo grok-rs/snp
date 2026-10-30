@@ -1,4 +1,4 @@
-//! The DiffOracle (ARCHITECTURE §3.7, ADR-027, ADR-078): mode selection, zero spawns for unchanged hooks, native
+//! The `DiffOracle` (ARCHITECTURE §3.7, ADR-027, ADR-078): mode selection, zero spawns for unchanged hooks, native
 //! fixer semantics, the show-diff gate, and the 10 000-iteration randomized soundness test against real `git diff`.
 
 use std::path::{Path, PathBuf};
@@ -84,25 +84,25 @@ fn mode_selection() {
         DiffMode::Git
     };
     assert_eq!(
-        mode(&env, Some(tracked.clone()), Some(origins.clone())),
+        mode(&env, Some(Arc::clone(&tracked)), Some(Arc::clone(&origins))),
         expect
     );
-    assert_eq!(mode(&env, None, Some(origins.clone())), DiffMode::Git);
-    assert_eq!(mode(&env, Some(tracked.clone()), None), DiffMode::Git);
+    assert_eq!(mode(&env, None, Some(Arc::clone(&origins))), DiffMode::Git);
+    assert_eq!(mode(&env, Some(Arc::clone(&tracked)), None), DiffMode::Git);
     let with = |k: &'static str, v: &str| env.patched(&EnvPatch::default().set(k, v));
     assert_eq!(
         mode(
             &with("SNP_DIFF_MODE", "git"),
-            Some(tracked.clone()),
-            Some(origins.clone())
+            Some(Arc::clone(&tracked)),
+            Some(Arc::clone(&origins))
         ),
         DiffMode::Git
     );
     assert_eq!(
         mode(
             &with("GIT_ATTR_SOURCE", "HEAD"),
-            Some(tracked.clone()),
-            Some(origins.clone())
+            Some(Arc::clone(&tracked)),
+            Some(Arc::clone(&origins))
         ),
         DiffMode::Git
     );
@@ -119,12 +119,15 @@ fn unchanged_hooks_cost_zero_spawns_in_stat_mode() {
     }
     sb.write(&repo, "a.txt", b"pre-existing unstaged\n");
     let spy = Spy::new();
-    let (mut o, _git, _) = oracle(&sb, &repo, &sb.env, Some(spy.clone()));
+    let (mut o, _git, _) = oracle(&sb, &repo, &sb.env, Some(Arc::<Spy>::clone(&spy)));
     assert_eq!(o.mode(), DiffMode::Stat);
     for _ in 0..50 {
         o.before_hook().unwrap();
         // A hook that reads files and writes an untracked one.
-        assert!(!std::fs::read(repo.join("b.txt")).unwrap().is_empty());
+        assert!(
+            !std::fs::read(repo.join("b.txt")).unwrap().is_empty(),
+            "the hook reads"
+        );
         sb.write(&repo, "untracked.log", b"x");
         assert_eq!(o.after_hook().unwrap(), Change::Unchanged);
     }
@@ -159,7 +162,7 @@ fn git_mode_diffs_every_hook() {
         .env
         .patched(&EnvPatch::default().set("SNP_DIFF_MODE", "git"));
     let spy = Spy::new();
-    let (mut o, _, _) = oracle(&sb, &repo, &env, Some(spy.clone()));
+    let (mut o, _, _) = oracle(&sb, &repo, &env, Some(Arc::<Spy>::clone(&spy)));
     assert_eq!(o.mode(), DiffMode::Git);
     o.before_hook().unwrap();
     assert_eq!(o.after_hook().unwrap(), Change::Unchanged);
@@ -187,14 +190,14 @@ fn native_fixers_and_the_show_diff_gate() {
             ),
         );
         let spy = Spy::new();
-        let (mut o, _, _) = oracle(&sb, &repo, &env, Some(spy.clone()));
+        let (mut o, _, _) = oracle(&sb, &repo, &env, Some(Arc::<Spy>::clone(&spy)));
         assert!(!o.non_empty().unwrap());
         // No modified paths: unchanged, no spawn.
         assert_eq!(o.after_native(false, false).unwrap(), Change::Unchanged);
         // Exact tracked paths reported: changed, no spawn; the digest is stale.
         sb.write(&repo, "a.txt", b"fixed\n");
         assert_eq!(o.after_native(true, false).unwrap(), Change::Changed);
-        assert!(spy.calls().is_empty());
+        assert!(spy.calls().is_empty(), "{:?}", spy.calls());
         // The next comparison refreshes it lazily (one diff), then the caveat path diffs for real.
         o.before_hook().unwrap();
         assert_eq!(spy.calls().len(), 1);
@@ -280,8 +283,8 @@ fn mutate(sb: &Sandbox, repo: &Path, rng: &mut Rng) -> &'static str {
         2 => {
             // Same-size rewrite with the mtime restored.
             if let Ok(md) = std::fs::metadata(&file) {
-                let old = std::fs::read(&file).unwrap_or_default();
-                let mut new = old.clone();
+                let mut new = std::fs::read(&file).unwrap_or_default();
+
                 if let Some(b) = new.first_mut() {
                     *b = if *b == b'X' { b'Y' } else { b'X' };
                 }

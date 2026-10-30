@@ -38,7 +38,7 @@ fn check_then_durable_journal_then_add_then_restore() {
             }),
         );
     }
-    let (git, info) = sb.discover_with(&repo, spy.clone());
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
     let (cx, out, _) = sb.ctx_with(git, info);
     let mut g = snp_stash::enter(cx).unwrap();
     let Stashed::Patch(patch) = g.stashed().clone() else {
@@ -182,7 +182,7 @@ fn kill_at_staging_fixed_is_recoverable_by_the_hint() {
             }),
         );
     }
-    let (git, info) = sb.discover_with(&repo, spy.clone());
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
     let (cx, _, _) = sb.ctx_with(git, info);
     let mut g = snp_stash::enter(cx).unwrap();
     sb.write(&repo, "fixme", b"z\n");
