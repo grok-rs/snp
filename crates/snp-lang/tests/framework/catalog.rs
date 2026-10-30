@@ -219,12 +219,8 @@ fn t10_xrg_22_environment_dir_and_assertions() {
     for (id, base) in expected {
         assert_eq!(id.env_dir_base(), base, "{id:?}");
     }
-    let prefix = Path::new("/store/repo");
-    let base = LanguageId::Docker.env_dir_base().unwrap();
-    assert_eq!(
-        prefix.join(format!("{base}-default")),
-        Path::new("/store/repo/docker-default")
-    );
+    // The `{prefix}/{base}-{version}` join itself is `snp_store::Store::env_dir` (WP-31, a W0 stub here); its own
+    // test covers that half of T10-XRG-22. This crate owns the per-language bases above.
 
     let e = check_support(LanguageId::Docker, "1.2.3", &[], Brand::PreCommit).unwrap_err();
     assert_eq!(

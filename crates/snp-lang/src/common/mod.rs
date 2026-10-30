@@ -176,7 +176,9 @@ fn pw_current_home() -> Option<OsString> {
 /// quoting) becomes `[self_exe, "__hazmat"]`; then `args`.
 ///
 /// The same contract as `snp_proc::hookcmd::hook_cmd` (WP-15), on the W0 `snp_pycompat::shlex` baseline. `Empty`:
-/// the entry and the args produce no token at all.
+/// the entry and the args produce no token at all. Once WP-15 has merged this body becomes a call of
+/// `snp_proc::hookcmd::hook_cmd` (one implementation, so `plan` and the hook runner cannot drift);
+/// `tests/envless/plans.rs` stays the regression check.
 pub(crate) fn hook_cmd(
     entry: &str,
     args: &[Arc<str>],
