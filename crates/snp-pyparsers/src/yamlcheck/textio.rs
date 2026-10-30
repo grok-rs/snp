@@ -73,7 +73,8 @@ impl<'a> TextIo<'a> {
         self.dpos = end.max(self.dpos);
     }
 
-    /// `textiowrapper_read_chunk`: one raw read of 8192 bytes and its decode; `false` at EOF.
+    /// `textiowrapper_read_chunk`: one raw read of 8192 bytes and its decode; `false` at EOF when the final decode
+    /// produced nothing.
     fn read_chunk(&mut self) -> R<bool> {
         let end = self.pos.saturating_add(CHUNK).min(self.bytes.len());
         let chunk = self.bytes.get(self.pos..end).unwrap_or_default();
@@ -121,9 +122,12 @@ impl<'a> TextIo<'a> {
                 chars.push(c);
             }
         }
+        // `if (nchars > 0) eof = 0;`: the final decode can still produce characters (a held-back `\r`), and
+        // they are returned by this read, not lost.
+        let more = !eof || !chars.is_empty();
         self.decoded = chars;
         self.dpos = 0;
-        Ok(!eof)
+        Ok(more)
     }
 }
 
@@ -158,6 +162,26 @@ mod tests {
             read_all(&euro, 4096).ok().map(|s| s.chars().count()),
             Some(8192)
         );
+    }
+
+    #[test]
+    fn trailing_cr_at_a_read_boundary_is_kept() {
+        // `read(4096)` satisfied exactly, then EOF with the held-back `\r`: CPython returns it as `\n`.
+        for len in [4097_usize, 8193, 65537] {
+            let mut b = vec![b'x'; len - 1];
+            b.push(b'\r');
+            let mut t = TextIo::new(&b);
+            let mut out = String::new();
+            loop {
+                let got = t.read(4096, || Ok(())).ok().unwrap_or_default();
+                if got.is_empty() {
+                    break;
+                }
+                out.extend(got);
+            }
+            assert_eq!(out.len(), len, "{len}");
+            assert!(out.ends_with("x\n"), "{len}");
+        }
     }
 
     #[test]

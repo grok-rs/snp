@@ -8,7 +8,7 @@ use snp_pycompat::repr::repr_str;
 
 use super::construct::{Node, NodeId, NodeKind, TagCache};
 use super::parser::{EvId, Event};
-use super::{Fail, Loader, R, marked};
+use super::{Fail, Loader, R, YamlWarning, marked};
 
 /// A collection under construction on the explicit stack.
 enum Work {
@@ -178,12 +178,36 @@ impl Loader<'_, '_> {
         }
         let ev = self.c_peek()?;
         if let Some(a) = &ev.anchor
-            && self.anchors.contains_key(a)
+            && let Some(&first) = self.anchors.get(a)
         {
-            // ReusedAnchorWarning: the first display imports what linecache needs.
+            // ReusedAnchorWarning (stacklevel=2: attributed to the `compose_node` call site of the caller).
             self.touch(1)?; // Mark.__str__ in the f-string
-            self.touch(if self.st.warned { 6 } else { 23 })?;
-            self.st.warned = true;
+            let mut first_mark = Vec::new();
+            self.st.cons.node(first).start.render(&mut first_mark);
+            let mut second_mark = Vec::new();
+            ev.start.render(&mut second_mark);
+            let (lineno, source_line) = match stack.last() {
+                None => (100, "node = self.compose_node(None, None)"),
+                Some((Work::Seq(_), _)) => {
+                    (188, "node.value.append(self.compose_node(node, index))")
+                }
+                Some((Work::Map(_, None), _)) => (222, "item_key = self.compose_node(node, None)"),
+                Some((Work::Map(_, Some(_)), _)) => {
+                    (227, "item_value = self.compose_node(node, item_key)")
+                }
+            };
+            self.warn(YamlWarning {
+                class: "ReusedAnchorWarning",
+                module: "ruamel/yaml/composer.py",
+                lineno,
+                message: format!(
+                    "\nfound duplicate anchor {}\nfirst occurrence {}\nsecond occurrence {}",
+                    repr_str(a),
+                    String::from_utf8_lossy(&first_mark),
+                    String::from_utf8_lossy(&second_mark)
+                ),
+                source_line,
+            })?;
         }
         self.c_resolver()?;
         self.touch(1)?; // descend_resolver

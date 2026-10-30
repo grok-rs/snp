@@ -26,9 +26,15 @@ fuzz_target!(|data: &[u8]| {
     } else {
         PyMinor::P312
     };
-    let split = rest.windows(2).position(|w| w == [0, 0]);
+    let split = rest
+        .iter()
+        .zip(rest.iter().skip(1))
+        .position(|(a, b)| *a == 0 && *b == 0);
     let (first, second) = match split {
-        Some(i) => (rest.get(..i).unwrap_or_default(), rest.get(i + 2..).unwrap_or_default()),
+        Some(i) => (
+            rest.get(..i).unwrap_or_default(),
+            rest.get(i.saturating_add(2)..).unwrap_or_default(),
+        ),
         None => (rest, &[][..]),
     };
     let mut c = Checker::new(mode, minor);

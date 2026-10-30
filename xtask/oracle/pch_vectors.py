@@ -83,6 +83,41 @@ def script(name: str) -> str:
     return os.path.join(os.path.dirname(sys.executable), name)
 
 
+# `check_json.py` v3.0.0-v3.4.0 (epoch 1) verbatim, run as `python -I -c` so its call stack (`<module>`, `main`,
+# `json.load`) is the console script's.
+CHECK_JSON_V3 = """\
+import argparse
+import json
+import sys
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('filenames', nargs='*', help='Filenames to check.')
+    args = parser.parse_args(argv)
+
+    retval = 0
+    for filename in args.filenames:
+        with open(filename, 'rb') as f:
+            try:
+                json.load(f)
+            except ValueError as exc:
+                print(f'{filename}: Failed to json decode ({exc})')
+                retval = 1
+    return retval
+
+
+sys.exit(main())
+"""
+
+
+def command(name: str) -> list[str]:
+    """The argv prefix that runs hook `name` (`check-json-v3` is the epoch-1 check-json)."""
+    if name == 'check-json-v3':
+        return [sys.executable, '-I', '-c', CHECK_JSON_V3]
+    return [script(name)]
+
+
 def write_json(out: str, name: str, data: dict[str, Any]) -> None:
     path = os.path.join(out, name)
     with open(path, 'w', encoding='utf-8', newline='\n') as f:
@@ -116,6 +151,17 @@ def raise_duplicate_keys(ordered_pairs):  # check_json.py (v4.0.0+), verbatim se
 def check_json_result(data: bytes) -> dict[str, Any]:
     try:
         json.load(io.BytesIO(data), object_pairs_hook=raise_duplicate_keys)
+    except ValueError as exc:
+        return reported(str(exc))
+    except Exception as exc:  # noqa: BLE001 - every other exception is the crash path
+        return crash(exc)
+    return {'ok': True}
+
+
+def check_json_v3_result(data: bytes) -> dict[str, Any]:
+    """check_json.py v3.x: `json.load(f)`, no hook."""
+    try:
+        json.load(io.BytesIO(data))
     except ValueError as exc:
         return reported(str(exc))
     except Exception as exc:  # noqa: BLE001 - every other exception is the crash path
@@ -305,7 +351,7 @@ def measure(script_name: str, make: Any, classify: Any, lo: int, hi: int) -> int
             p = os.path.join(d, 'f.json')
             with open(p, 'w', encoding='utf-8') as f:
                 f.write(make(n))
-            r = subprocess.run([script(script_name), p], capture_output=True, text=True)
+            r = subprocess.run([*command(script_name), p], capture_output=True, text=True)
         return classify(r.stdout + r.stderr)
 
     assert not crashes(lo), (script_name, lo)
@@ -347,6 +393,7 @@ def json_limits() -> dict[str, int]:
     lim = {}
     for prefix, name, shapes in [
         ('check', 'check-json', ['arrays', 'stop', 'errmsg', 'errmsg_str', 'int', 'const', 'hook', 'hook_raise']),
+        ('check_v3', 'check-json-v3', ['arrays', 'stop', 'errmsg', 'int', 'objects']),
         ('pretty', 'pretty-format-json', ['stop', 'errmsg', 'errmsg_str', 'int', 'const', 'hook', 'arrays',
                                           'objects']),
     ]:
@@ -361,14 +408,14 @@ def json_hook_outcome(script_name: str, doc: str) -> dict[str, Any]:
         p = os.path.join(d, 'f.json')
         with open(p, 'w', encoding='utf-8') as f:
             f.write(doc)
-        r = subprocess.run([script(script_name), p], capture_output=True, text=True)
+        r = subprocess.run([*command(script_name), p], capture_output=True, text=True)
     out = (r.stdout + r.stderr).strip()
     if 'Traceback' in out or 'Normalization failed' in out:
         line = [ln for ln in out.splitlines() if ln.startswith('RecursionError')]
         return {'crash': ['RecursionError', line[-1].split(': ', 1)[1] if line else '']}
     if r.returncode == 0:
         return {'ok': True}
-    if script_name == 'check-json':
+    if script_name in ('check-json', 'check-json-v3'):
         prefix = f'{p}: Failed to json decode ('
         assert out.startswith(prefix) and out.endswith(')'), out
         return {'reported': out[len(prefix):-1]}
@@ -384,7 +431,7 @@ def json_depth_cases(lim: dict[str, int]) -> list[dict[str, Any]]:
     ns = set()
     for b in set(lim.values()):
         ns.update({b - 1, b, b + 1, b + 2})
-    for mode, name in [('check', 'check-json'), ('pretty', 'pretty-format-json')]:
+    for mode, name in [('check', 'check-json'), ('check_v3', 'check-json-v3'), ('pretty', 'pretty-format-json')]:
         for shape in SHAPES:
             if mode == 'pretty' and shape == 'hook_raise':
                 continue
@@ -445,7 +492,8 @@ def json_vectors(corpora: str) -> dict[str, Any]:
                 raw.append((f'suite-{fn}', f.read()))
     raw += json_handcrafted()
     inputs = [
-        {'name': n, **blob(b), 'check': check_json_result(b), 'loads': loads_result(b)} for n, b in raw
+        {'name': n, **blob(b), 'check': check_json_result(b), 'check_v3': check_json_v3_result(b),
+         'loads': loads_result(b)} for n, b in raw
     ]
 
     pretty = []
@@ -1035,6 +1083,11 @@ def yaml_bytes_cases() -> list[tuple[str, bytes]]:
             out.append((f'crlf-at-{pos}', body + b'\r\nz: 1\r\n'))
             out.append((f'cr-at-{pos}', body + b'\rz: 1\r'))
             out.append((f'trunc-at-{pos}', body + b'\xe2\x82'))
+    # A lone trailing `\r` just past a 4096-character read: only the final EOF decode yields it.
+    for total in (4096, 4097, 4098, 8192, 8193, 65536, 65537):
+        out.append((f'quoted-trailing-cr-{total}', b'- "' + b'x' * (total - 4) + b'\r'))
+        out.append((f'plain-trailing-cr-{total}', b'- ' + b'x' * (total - 3) + b'\r'))
+        out.append((f'key-trailing-cr-{total}', b'a: ' + b'x' * (total - 4) + b'\r'))
     big = b''.join(b'k%d: v%d\n' % (i, i) for i in range(3000))
     out.append(('big-dup', big + b'k1: again\n'))
     out.append(('big-nonprintable-late', b'a: b: c\n' + big + b'\x01'))

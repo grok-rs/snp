@@ -227,6 +227,12 @@ impl Default for ConsState {
 }
 
 impl ConsState {
+    /// The arena sizes (nodes, objects), for the memory tests.
+    #[cfg(test)]
+    pub(super) const fn arena_len(&self) -> (usize, usize) {
+        (self.nodes.len(), self.objs.v.len())
+    }
+
     /// Drops the arenas when nothing refers to them any more.
     pub(super) fn gc(&mut self) {
         if self.generators.is_empty() && self.constructed.is_empty() && self.recursive.is_empty() {
@@ -586,6 +592,9 @@ impl Loader<'_, '_> {
         self.st.cons.constructed.clear();
         self.st.cons.recursive.clear();
         self.st.cons.deep = false;
+        // Python drops the document here: nothing refers to its nodes or objects any more (the composer clears
+        // its anchors before the next document), so the arenas do not grow with the number of documents.
+        self.st.cons.gc();
         Ok(())
     }
 
@@ -725,21 +734,25 @@ impl Loader<'_, '_> {
                 idx,
                 items,
             } => {
-                let n = self.st.cons.node(g.node).clone();
+                // Only the next child id is read: cloning the node here would copy its child list once per
+                // child (quadratic in the sequence length).
                 if inner.is_none() {
                     // data.extend(self.construct_sequence(node))
                     *inner = Some(self.push_frame()?);
+                    let n = self.st.cons.node(g.node);
                     if !matches!(n.kind, NodeKind::Seq(_)) {
                         let p = format!("expected a sequence node, but found {}", n.kind.id());
-                        return self.cons_err(None, None, p.as_bytes(), &n.start);
+                        let start = n.start.clone();
+                        return self.cons_err(None, None, p.as_bytes(), &start);
                     }
                 } else if let Some(r) = ret {
                     items.push(r);
                 }
-                let NodeKind::Seq(children) = &n.kind else {
-                    return Ok(Step::Done(*saved));
+                let next = match &self.st.cons.node(g.node).kind {
+                    NodeKind::Seq(children) => children.get(*idx).copied(),
+                    _ => return Ok(Step::Done(*saved)),
                 };
-                if let Some(&c) = children.get(*idx) {
+                if let Some(c) = next {
                     *idx = idx.saturating_add(1);
                     return Ok(Step::Call(c, false));
                 }
@@ -763,10 +776,16 @@ impl Loader<'_, '_> {
                 } else {
                     "while constructing pairs"
                 };
-                let n = self.st.cons.node(g.node).clone();
-                let NodeKind::Seq(subs) = &n.kind else {
+                let n = self.st.cons.node(g.node);
+                let n_start = n.start.clone();
+                if !matches!(n.kind, NodeKind::Seq(_)) {
                     let p = format!("expected a sequence, but found {}", n.kind.id());
-                    return self.cons_err(Some(what), Some(&n.start), p.as_bytes(), &n.start);
+                    return self.cons_err(Some(what), Some(&n_start), p.as_bytes(), &n_start);
+                }
+                // The child at `i` (borrowed per step: no copy of the child list).
+                let sub_at = |s: &Self, i: usize| match &s.st.cons.node(g.node).kind {
+                    NodeKind::Seq(subs) => subs.get(i).copied(),
+                    _ => None,
                 };
                 if *started {
                     let r = ret.unwrap_or(0);
@@ -788,7 +807,7 @@ impl Loader<'_, '_> {
                             let value_node = match &self
                                 .st
                                 .cons
-                                .node(subs.get(idx.saturating_sub(1)).copied().unwrap_or(0))
+                                .node(sub_at(self, idx.saturating_sub(1)).unwrap_or(0))
                                 .kind
                             {
                                 NodeKind::Map(p) => p.first().map_or(0, |e| e.1),
@@ -818,23 +837,23 @@ impl Loader<'_, '_> {
                     }
                 }
                 *started = true;
-                let Some(&sub) = subs.get(*idx) else {
+                let Some(sub) = sub_at(self, *idx) else {
                     return Ok(Step::Done(*saved));
                 };
                 *idx = idx.saturating_add(1);
-                let sn = self.st.cons.node(sub).clone();
-                let NodeKind::Map(pairs) = &sn.kind else {
-                    let p = format!("expected a mapping of length 1, but found {}", sn.kind.id());
-                    return self.cons_err(Some(what), Some(&n.start), p.as_bytes(), &sn.start);
+                let sn = self.st.cons.node(sub);
+                let problem = match &sn.kind {
+                    NodeKind::Map(pairs) => match pairs.as_slice() {
+                        [(key_node, _)] => return Ok(Step::Call(*key_node, false)),
+                        _ => format!(
+                            "expected a single mapping item, but found {} items",
+                            pairs.len()
+                        ),
+                    },
+                    other => format!("expected a mapping of length 1, but found {}", other.id()),
                 };
-                let [(key_node, _)] = pairs.as_slice() else {
-                    let p = format!(
-                        "expected a single mapping item, but found {} items",
-                        pairs.len()
-                    );
-                    return self.cons_err(Some(what), Some(&n.start), p.as_bytes(), &sn.start);
-                };
-                Ok(Step::Call(*key_node, false))
+                let sn_start = sn.start.clone();
+                self.cons_err(Some(what), Some(&n_start), problem.as_bytes(), &sn_start)
             }
         }
     }
@@ -1134,8 +1153,28 @@ impl Loader<'_, '_> {
             if !mantissa.contains(&b'.') {
                 // MantissaNoDotYAML1_1Warning(node, value_so) and its display
                 self.touch(1)?;
-                self.touch(if self.st.warned { 6 } else { 23 })?;
-                self.st.warned = true;
+                let start = &self.st.cons.node(node).start;
+                let message = format!(
+                    "\nIn YAML 1.1 floating point values should have a dot ('.') in their mantissa.\n\
+                     See the Floating-Point Language-Independent Type for YAML\u{2122} Version 1.1 specification\n\
+                     ( http://yaml.org/type/float.html ). This dot is not required for JSON nor for YAML 1.2\n\
+                     \n\
+                     Correct your float: \"{}\" on line: {}, column: {}\n\
+                     \n\
+                     or alternatively include the following in your code:\n\
+                     \n  import warnings\n  \
+                     warnings.simplefilter('ignore', ruamel.yaml.error.MantissaNoDotYAML1_1Warning)\n\n",
+                    pystr::to_string_lossy(&value_so),
+                    start.line,
+                    start.column
+                );
+                self.warn(super::YamlWarning {
+                    class: "MantissaNoDotYAML1_1Warning",
+                    module: "ruamel/yaml/constructor.py",
+                    lineno: 508,
+                    message,
+                    source_line: "warnings.warn(MantissaNoDotYAML1_1Warning(node, value_so), stacklevel=1)",
+                })?;
             }
         }
         Ok(Obj::Float(
@@ -1363,24 +1402,27 @@ impl Loader<'_, '_> {
                     {
                         sub.push(vals.clone());
                     }
-                    let subs = match &self.st.cons.node(*value_node).kind {
-                        NodeKind::Seq(items) => items.clone(),
-                        _ => Vec::new(),
+                    // Borrow the merge list and copy out only the next id (no per-step copy of the list or
+                    // of the sub-mapping, which made merge chains blow up).
+                    let subnode = match &self.st.cons.node(*value_node).kind {
+                        NodeKind::Seq(items) => items.get(*next).copied(),
+                        _ => None,
                     };
-                    if let Some(&subnode) = subs.get(*next) {
+                    if let Some(subnode) = subnode {
                         *next = next.saturating_add(1);
-                        let sn = self.st.cons.node(subnode).clone();
+                        let sn = self.st.cons.node(subnode);
                         if !matches!(sn.kind, NodeKind::Map(_)) {
                             let p = format!(
                                 "expected a mapping for merging, but found {}",
                                 sn.kind.id()
                             );
+                            let sn_start = sn.start.clone();
                             let ms = self.st.cons.node(f.node).start.clone();
                             return self.cons_err(
                                 Some("while constructing a mapping"),
                                 Some(&ms),
                                 p.as_bytes(),
-                                &sn.start,
+                                &sn_start,
                             );
                         }
                         *waiting = Some(subnode);
@@ -1398,18 +1440,18 @@ impl Loader<'_, '_> {
                 Pending::None => {}
             }
             let node = f.node;
-            let pairs = match &self.st.cons.node(node).kind {
-                NodeKind::Map(p) => p.clone(),
-                _ => Vec::new(),
+            let pair = match &self.st.cons.node(node).kind {
+                NodeKind::Map(p) => p.get(f.index).copied(),
+                _ => None,
             };
-            let Some(&(key_node, value_node)) = pairs.get(f.index) else {
+            let Some((key_node, value_node)) = pair else {
                 // end of the while loop
                 if !f.merge.is_empty() {
                     let merge = std::mem::take(&mut f.merge);
                     let n = self.st.cons.node_mut(node);
                     if let NodeKind::Map(vals) = &mut n.kind {
                         let mut all = merge.clone();
-                        all.extend(vals.iter().copied());
+                        all.append(vals);
                         *vals = all;
                     }
                     n.merge = Some(merge);
@@ -1419,8 +1461,9 @@ impl Loader<'_, '_> {
                 continue;
             };
             self.tag_access(key_node)?;
-            let key_tag = self.st.cons.node(key_node).tag.clone();
-            if key_tag == MERGE {
+            let key_tag = &self.st.cons.node(key_node).tag;
+            let (is_merge, is_value) = (key_tag == MERGE, key_tag == VALUE);
+            if is_merge {
                 if !f.merge.is_empty() {
                     let ms = self.st.cons.node(node).start.clone();
                     let km = self.st.cons.node(key_node).start.clone();
@@ -1443,16 +1486,17 @@ impl Loader<'_, '_> {
                         .map(|(_, &p)| p)
                         .collect();
                 }
-                let vn = self.st.cons.node(value_node).clone();
+                let vn = self.st.cons.node(value_node);
+                let (vn_id, vn_start) = (vn.kind.id(), vn.start.clone());
                 let Some(f) = stack.last_mut() else {
                     break;
                 };
-                match vn.kind {
-                    NodeKind::Map(_) => {
+                match vn_id {
+                    "mapping" => {
                         f.pending = Pending::Map(value_node);
                         call(self, &mut stack, value_node)?;
                     }
-                    NodeKind::Seq(_) => {
+                    "sequence" => {
                         f.pending = Pending::Seq {
                             value_node,
                             next: 0,
@@ -1460,23 +1504,22 @@ impl Loader<'_, '_> {
                             sub: Vec::new(),
                         };
                     }
-                    NodeKind::Scalar(_) => {
+                    _ => {
                         let p = format!(
-                            "expected a mapping or list of mappings for merging, but found {}",
-                            vn.kind.id()
+                            "expected a mapping or list of mappings for merging, but found {vn_id}"
                         );
                         let ms = self.st.cons.node(node).start.clone();
                         return self.cons_err(
                             Some("while constructing a mapping"),
                             Some(&ms),
                             p.as_bytes(),
-                            &vn.start,
+                            &vn_start,
                         );
                     }
                 }
             } else {
                 self.tag_access(key_node)?;
-                if key_tag == VALUE {
+                if is_value {
                     self.touch(2)?; // the tag setter -> Tag.__init__
                     let kn = self.st.cons.node_mut(key_node);
                     STR.clone_into(&mut kn.tag);

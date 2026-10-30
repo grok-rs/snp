@@ -82,3 +82,140 @@ fn catalogue() {
     );
     assert_eq!(run("a: !foo 1\nb: *x\nc: 1\nc: 2", Mode::Unsafe), Ok(()));
 }
+
+/// `s` repeated `n` times.
+fn rep(s: &str, n: usize) -> String {
+    std::iter::repeat_n(s, n).collect()
+}
+
+/// `k0: 0\nk1: 1\n…` with `n` keys.
+fn flat_mapping(n: usize) -> String {
+    use std::fmt::Write as _;
+    (0..n).fold(String::new(), |mut s, i| {
+        writeln!(s, "k{i}: {i}").unwrap_or_default();
+        s
+    })
+}
+
+/// A document of `n` entries.
+type Shape = fn(usize) -> String;
+
+/// The fastest of three runs of `check-yaml` on `doc`, which must pass.
+fn best_time(doc: &str, m: Mode) -> std::time::Duration {
+    (0..3)
+        .map(|_| {
+            let t = std::time::Instant::now();
+            assert_eq!(run(doc, m), Ok(()));
+            t.elapsed()
+        })
+        .min()
+        .unwrap_or_default()
+}
+
+/// Construction is linear in the length of one collection: 4× the entries may cost at most 8× the time (the old
+/// per-child node clones made it 16×). Covers block and flow sequences, mappings and merge-key lists.
+#[test]
+fn construction_is_linear_in_collection_length() {
+    let shapes: [(&str, Shape); 4] = [
+        ("block seq", |n| rep("- i\n", n)),
+        ("flow seq", |n| {
+            let items: Vec<String> = (0..n).map(|i| i.to_string()).collect();
+            format!("[{}]\n", items.join(", "))
+        }),
+        ("mapping", flat_mapping),
+        ("merge list", |n| {
+            let refs: Vec<&str> = std::iter::repeat_n("*a", n).collect();
+            format!("a: &a {{x: 1}}\nb:\n  <<: [{}]\n  y: 2\n", refs.join(", "))
+        }),
+    ];
+    for (name, make) in shapes {
+        for m in [Mode::Safe, Mode::AllowMultipleDocuments] {
+            let small = best_time(&make(20_000), m);
+            let big = best_time(&make(80_000), m);
+            let ratio = big.as_secs_f64() / small.as_secs_f64().max(1e-6);
+            assert!(
+                ratio < 8.0,
+                "{name} {m:?}: 20k {small:?}, 80k {big:?} (×{ratio:.1})"
+            );
+        }
+    }
+}
+
+/// A chain of merges whose `<<` lists double each level stays near Python's cost (it was ~16× slower).
+#[test]
+fn merge_chains_do_not_copy_per_step() {
+    use std::fmt::Write as _;
+    let mut doc = String::from("a0: &a0 {k0: 1}\n");
+    for i in 1..14 {
+        writeln!(
+            doc,
+            "a{i}: &a{i} {{<<: [*a{p}, *a{p}], k{i}: 1}}",
+            p = i - 1
+        )
+        .unwrap_or_default();
+    }
+    let t = best_time(&doc, Mode::Safe);
+    assert!(t < std::time::Duration::from_secs(20), "{t:?}");
+}
+
+/// `--allow-multiple-documents` drops each document after constructing it (ruamel's memory profile): the
+/// arenas hold one document, not the whole file.
+#[test]
+fn documents_are_dropped_after_construction() {
+    let doc = rep("---\na: 1\nb: [1, 2]\n", 2000);
+    let mut c = Checker::new(Mode::AllowMultipleDocuments, PyMinor::P313);
+    assert!(c.check_text(&doc, "f.yaml").is_ok());
+    let (nodes, objs) = c.st.cons.arena_len();
+    assert!(nodes <= 8 && objs <= 8, "nodes {nodes}, objects {objs}");
+    // A document that fails construction keeps its state for the next file, as in Python.
+    let bad = "---\na: 1\n---\nb: 1\nb: 2\n";
+    assert!(c.check_text(bad, "g.yaml").is_err());
+    assert!(c.st.cons.arena_len().0 > 0);
+    assert!(c.check_text("a: 1\n", "h.yaml").is_ok());
+}
+
+/// 300k-entry collections in release mode, 3× over the measured times (sequence ~0.5 s, mapping ~1.9 s; ruamel
+/// needs ~9 s for 100k keys and the old quadratic constructor ~50 s for 300k).
+#[test]
+#[ignore = "perf"]
+fn large_collections_perf() {
+    let seq = rep("- i\n", 300_000);
+    let map = flat_mapping(300_000);
+    for (name, doc, budget) in [("sequence", &seq, 1.6), ("mapping", &map, 5.7)] {
+        for m in [Mode::Safe, Mode::AllowMultipleDocuments] {
+            let t = best_time(doc, m);
+            assert!(t.as_secs_f64() < budget, "{name} {m:?}: {t:?}");
+        }
+    }
+}
+
+/// `check-yaml -m s1.yaml … s6.yaml` under both oracles writes exactly `tests/vectors/yaml_warnings.txt` to stderr
+/// (site-packages path replaced by `SP`; identical in 3.12 and 3.13): every `compose_node` call site, a message
+/// seen twice in one process shown once, `MantissaNoDotYAML1_1Warning` per distinct message.
+#[test]
+fn warnings_match_ruamel() {
+    let files: [(&str, &str); 7] = [
+        ("s1.yaml", "&x a: &x [&x 1, &x 2]\n"),
+        ("s2.yaml", "&r [1, &r 2]\n"),
+        ("s3.yaml", "a: &x 1\nb: &x 2\n"),
+        ("s3.yaml", "a: &x 1\nb: &x 2\n"),
+        (
+            "s4.yaml",
+            "%YAML 1.1\n---\n[!!float 1e5, !!float 1e5, !!float 1E5, 1e5]\n",
+        ),
+        ("s5.yaml", "%YAML 1.1\n---\n- !!float 1e5\n"),
+        ("s6.yaml", "a: &k 1\n&k b: 2\n"),
+    ];
+    let want = include_str!("../../tests/vectors/yaml_warnings.txt");
+    for v in [PyMinor::P312, PyMinor::P313] {
+        let mut c = Checker::new(Mode::AllowMultipleDocuments, v);
+        let mut got = String::new();
+        for (name, text) in files {
+            assert!(c.check_text(text, name).is_ok(), "{name}");
+            for w in c.take_warnings() {
+                got.push_str(&w.render("SP"));
+            }
+        }
+        assert_eq!(got, want, "{v:?}");
+    }
+}

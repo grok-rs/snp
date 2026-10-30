@@ -1,0 +1,100 @@
+SP/ruamel/yaml/composer.py:227: ReusedAnchorWarning: 
+found duplicate anchor 'x'
+first occurrence   in "s1.yaml", line 1, column 1
+second occurrence   in "s1.yaml", line 1, column 7
+  item_value = self.compose_node(node, item_key)
+SP/ruamel/yaml/composer.py:188: ReusedAnchorWarning: 
+found duplicate anchor 'x'
+first occurrence   in "s1.yaml", line 1, column 7
+second occurrence   in "s1.yaml", line 1, column 11
+  node.value.append(self.compose_node(node, index))
+SP/ruamel/yaml/composer.py:188: ReusedAnchorWarning: 
+found duplicate anchor 'x'
+first occurrence   in "s1.yaml", line 1, column 11
+second occurrence   in "s1.yaml", line 1, column 17
+  node.value.append(self.compose_node(node, index))
+SP/ruamel/yaml/composer.py:188: ReusedAnchorWarning: 
+found duplicate anchor 'r'
+first occurrence   in "s2.yaml", line 1, column 1
+second occurrence   in "s2.yaml", line 1, column 8
+  node.value.append(self.compose_node(node, index))
+SP/ruamel/yaml/composer.py:227: ReusedAnchorWarning: 
+found duplicate anchor 'x'
+first occurrence   in "s3.yaml", line 1, column 4
+second occurrence   in "s3.yaml", line 2, column 4
+  item_value = self.compose_node(node, item_key)
+SP/ruamel/yaml/constructor.py:508: MantissaNoDotYAML1_1Warning: 
+In YAML 1.1 floating point values should have a dot ('.') in their mantissa.
+See the Floating-Point Language-Independent Type for YAML™ Version 1.1 specification
+( http://yaml.org/type/float.html ). This dot is not required for JSON nor for YAML 1.2
+
+Correct your float: "1e5" on line: 2, column: 1
+
+or alternatively include the following in your code:
+
+  import warnings
+  warnings.simplefilter('ignore', ruamel.yaml.error.MantissaNoDotYAML1_1Warning)
+
+
+  warnings.warn(MantissaNoDotYAML1_1Warning(node, value_so), stacklevel=1)
+SP/ruamel/yaml/constructor.py:508: MantissaNoDotYAML1_1Warning: 
+In YAML 1.1 floating point values should have a dot ('.') in their mantissa.
+See the Floating-Point Language-Independent Type for YAML™ Version 1.1 specification
+( http://yaml.org/type/float.html ). This dot is not required for JSON nor for YAML 1.2
+
+Correct your float: "1e5" on line: 2, column: 14
+
+or alternatively include the following in your code:
+
+  import warnings
+  warnings.simplefilter('ignore', ruamel.yaml.error.MantissaNoDotYAML1_1Warning)
+
+
+  warnings.warn(MantissaNoDotYAML1_1Warning(node, value_so), stacklevel=1)
+SP/ruamel/yaml/constructor.py:508: MantissaNoDotYAML1_1Warning: 
+In YAML 1.1 floating point values should have a dot ('.') in their mantissa.
+See the Floating-Point Language-Independent Type for YAML™ Version 1.1 specification
+( http://yaml.org/type/float.html ). This dot is not required for JSON nor for YAML 1.2
+
+Correct your float: "1E5" on line: 2, column: 27
+
+or alternatively include the following in your code:
+
+  import warnings
+  warnings.simplefilter('ignore', ruamel.yaml.error.MantissaNoDotYAML1_1Warning)
+
+
+  warnings.warn(MantissaNoDotYAML1_1Warning(node, value_so), stacklevel=1)
+SP/ruamel/yaml/constructor.py:508: MantissaNoDotYAML1_1Warning: 
+In YAML 1.1 floating point values should have a dot ('.') in their mantissa.
+See the Floating-Point Language-Independent Type for YAML™ Version 1.1 specification
+( http://yaml.org/type/float.html ). This dot is not required for JSON nor for YAML 1.2
+
+Correct your float: "1e5" on line: 2, column: 40
+
+or alternatively include the following in your code:
+
+  import warnings
+  warnings.simplefilter('ignore', ruamel.yaml.error.MantissaNoDotYAML1_1Warning)
+
+
+  warnings.warn(MantissaNoDotYAML1_1Warning(node, value_so), stacklevel=1)
+SP/ruamel/yaml/constructor.py:508: MantissaNoDotYAML1_1Warning: 
+In YAML 1.1 floating point values should have a dot ('.') in their mantissa.
+See the Floating-Point Language-Independent Type for YAML™ Version 1.1 specification
+( http://yaml.org/type/float.html ). This dot is not required for JSON nor for YAML 1.2
+
+Correct your float: "1e5" on line: 2, column: 2
+
+or alternatively include the following in your code:
+
+  import warnings
+  warnings.simplefilter('ignore', ruamel.yaml.error.MantissaNoDotYAML1_1Warning)
+
+
+  warnings.warn(MantissaNoDotYAML1_1Warning(node, value_so), stacklevel=1)
+SP/ruamel/yaml/composer.py:222: ReusedAnchorWarning: 
+found duplicate anchor 'k'
+first occurrence   in "s6.yaml", line 1, column 4
+second occurrence   in "s6.yaml", line 2, column 1
+  item_key = self.compose_node(node, None)

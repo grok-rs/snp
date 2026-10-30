@@ -17,10 +17,11 @@
 //! per type; past the limit the run crashes with `RecursionError` exactly where Python's would. The Rust side is
 //! iterative where Python's recursion is unbounded in the input (composer, mapping keys, `repr`).
 //!
-//! Not reproduced (messages only, never acceptance): the warnings ruamel prints to stderr
-//! (`ReusedAnchorWarning`, `MantissaNoDotYAML1_1Warning`), and the iteration order of a `set` printed inside a
-//! duplicate-key message (CPython's is hash order, randomised per process for strings; snp prints insertion
-//! order).
+//! The warnings ruamel writes to stderr (`ReusedAnchorWarning`, `MantissaNoDotYAML1_1Warning`) are collected with
+//! Python's per-process de-duplication ([`Checker::take_warnings`], [`YamlWarning`]).
+//!
+//! Not reproduced (messages only, never acceptance): the iteration order of a `set` printed inside a duplicate-key
+//! message (CPython's is hash order, randomised per process for strings; snp prints insertion order).
 //!
 //! Owner: WP-17.
 
@@ -119,6 +120,15 @@ impl Checker {
         self.st.warned = true;
     }
 
+    /// The warnings displayed since the last call, in order: what the hook process writes to stderr while
+    /// loading (`warnings.showwarning`), after Python's de-duplication — a `ReusedAnchorWarning` (action
+    /// `default`) is shown once per process per (message, call site), a `MantissaNoDotYAML1_1Warning` (action
+    /// `once`) once per message. Python writes them to the unbuffered stderr as they happen, the hook's own
+    /// messages to the buffered stdout.
+    pub fn take_warnings(&mut self) -> Vec<YamlWarning> {
+        std::mem::take(&mut self.st.warnings)
+    }
+
     /// The deepest Python frame (`main` = 2) the last call of [`Checker::check_file`] reached, as modelled.
     #[doc(hidden)]
     pub fn frame_peak(&self) -> u32 {
@@ -138,6 +148,35 @@ impl Checker {
                 Err(CheckError::Reported(pystr::to_string_lossy(&msg)))
             }
         }
+    }
+}
+
+/// A warning ruamel issued while loading, as `warnings.formatwarning` shows it on stderr (ARCHITECTURE §1.4.11
+/// addition): `{filename}:{lineno}: {class}: {message}` and the stripped source line. `filename` is the absolute
+/// path of the ruamel module in the hook's virtualenv, a Python-install detail (Tier B), hence [`Self::render`]'s
+/// `site_packages` parameter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct YamlWarning {
+    /// The category: `ReusedAnchorWarning` or `MantissaNoDotYAML1_1Warning`.
+    pub class: &'static str,
+    /// The module of the frame the warning is attributed to, relative to `site-packages`.
+    pub module: &'static str,
+    /// Its line number in ruamel.yaml 0.19.1.
+    pub lineno: u32,
+    /// `str(message)` (it starts with a newline).
+    pub message: String,
+    /// The source line at `module:lineno`, stripped (`linecache`).
+    pub source_line: &'static str,
+}
+
+impl YamlWarning {
+    /// `warnings.formatwarning(...)` with `filename = {site_packages}/{module}`: the exact stderr text.
+    pub fn render(&self, site_packages: &str) -> String {
+        format!(
+            "{site_packages}/{}:{}: {}: {}\n  {}\n",
+            self.module, self.lineno, self.class, self.message, self.source_line
+        )
     }
 }
 
@@ -367,6 +406,10 @@ pub(super) struct State {
     peak: u32,
     /// Whether a warning was displayed already (the first display imports what `linecache` needs).
     warned: bool,
+    /// Displayed warnings not yet taken.
+    warnings: Vec<YamlWarning>,
+    /// The `__warningregistry__` / `onceregistry` keys: (class, call-site line, message).
+    warning_registry: std::collections::HashSet<(&'static str, u32, String)>,
     /// Whether the YAML object's components exist (the first file creates them).
     created: bool,
     cons: construct::ConsState,
@@ -384,6 +427,8 @@ impl Default for State {
             peak: 0,
             default_tags_cached: [false; 3],
             warned: false,
+            warnings: Vec::new(),
+            warning_registry: std::collections::HashSet::new(),
             created: false,
             cons: construct::ConsState::default(),
         }
@@ -458,6 +503,20 @@ impl<'a, 's> Loader<'a, 's> {
         } else {
             Ok(())
         }
+    }
+
+    /// `warnings.warn(…)`: unless the registry has seen it, the display (`showwarning` and, the first time, the
+    /// imports `linecache` needs) runs below the caller and the warning is recorded.
+    pub(super) fn warn(&mut self, w: YamlWarning) -> R<()> {
+        let key = (w.class, w.lineno, w.message.clone());
+        if self.st.warning_registry.contains(&key) {
+            return Ok(());
+        }
+        self.touch(if self.st.warned { 6 } else { 23 })?;
+        self.st.warned = true;
+        self.st.warning_registry.insert(key);
+        self.st.warnings.push(w);
+        Ok(())
     }
 
     /// `regexp.match(…)` / `.search(…)` through `LazyEval` (compiling the pattern on first use).
