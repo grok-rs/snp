@@ -64,24 +64,88 @@ fn main() {
         ("spec_and_help", spec_and_help),
         ("support_links", support::link_all),
     ];
-    let filter: Vec<String> = std::env::args()
-        .skip(1)
-        .filter(|a| !a.starts_with('-'))
-        .collect();
+    let args = Args::parse(std::env::args().skip(1));
+    if args.list {
+        // libtest's list protocol (`--list --format terse`, what `cargo nextest` reads): `name: test` per test;
+        // nothing is ignored, so `--ignored` lists nothing.
+        let mut out = std::io::stdout().lock();
+        if !args.ignored {
+            for (name, _) in &tests {
+                if args.selects(name) {
+                    writeln!(out, "{name}: test").unwrap();
+                }
+            }
+        }
+        return;
+    }
     let mut failed = 0_u32;
+    let mut ran = 0_u32;
     let mut out = std::io::stdout().lock();
     for (name, test) in tests {
-        if !filter.is_empty() && !filter.iter().any(|f| name.contains(f.as_str())) {
+        if args.ignored || !args.selects(name) {
             continue;
         }
+        ran += 1;
         let ok = !cfg!(unix) || std::panic::catch_unwind(test).is_ok();
         writeln!(out, "test {name} ... {}", if ok { "ok" } else { "FAILED" }).unwrap();
         if !ok {
             failed += 1;
         }
     }
-    writeln!(out, "test result: {failed} failed").unwrap();
+    writeln!(
+        out,
+        "\ntest result: {}. {ran} run; {failed} failed",
+        if failed == 0 { "ok" } else { "FAILED" }
+    )
+    .unwrap();
     assert_eq!(failed, 0, "{failed} hazmat tests failed");
+}
+
+/// The libtest command line this harness honours (`cargo test`, `cargo nextest`): filters, `--exact`, `--skip`,
+/// `--list`, `--ignored`; other flags (and their values) are accepted and ignored.
+#[derive(Default)]
+struct Args {
+    filters: Vec<String>,
+    skip: Vec<String>,
+    exact: bool,
+    list: bool,
+    ignored: bool,
+}
+
+impl Args {
+    fn parse(argv: impl Iterator<Item = String>) -> Self {
+        let mut a = Self::default();
+        let mut argv = argv.peekable();
+        while let Some(arg) = argv.next() {
+            match arg.as_str() {
+                "--list" => a.list = true,
+                "--exact" => a.exact = true,
+                "--ignored" => a.ignored = true,
+                "--skip" => a.skip.extend(argv.next()),
+                // Flags of libtest that take a separate value.
+                "--format" | "--logfile" | "--test-threads" | "--color" | "-Z"
+                | "--report-time" => {
+                    if argv.peek().is_some_and(|v| !v.starts_with('-')) {
+                        argv.next();
+                    }
+                }
+                _ if arg.starts_with('-') => {}
+                _ => a.filters.push(arg),
+            }
+        }
+        a
+    }
+
+    fn selects(&self, name: &str) -> bool {
+        let hit = |f: &String| {
+            if self.exact {
+                name == f
+            } else {
+                name.contains(f.as_str())
+            }
+        };
+        (self.filters.is_empty() || self.filters.iter().any(hit)) && !self.skip.iter().any(hit)
+    }
 }
 
 /// The fixture tree of `cases.json` in a fresh directory (the work tree of the hook).
