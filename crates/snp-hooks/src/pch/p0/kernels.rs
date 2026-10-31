@@ -98,26 +98,39 @@ pub fn end_of_file(tail: &[u8], len: u64) -> EofAction {
     if len == 0 || tail.is_empty() {
         return EofAction::Keep;
     }
-    let is_eol = |b: &u8| *b == b'\n' || *b == b'\r';
-    let run = tail.iter().rev().take_while(|b| is_eol(b)).count();
+    let run = tail.iter().rev().take_while(|b| is_eol(**b)).count();
+    let start = tail.len().saturating_sub(run);
+    let head = tail
+        .get(start..start.saturating_add(2).min(tail.len()))
+        .unwrap_or_default();
+    end_of_file_run(head, u64::try_from(run).unwrap_or(u64::MAX), len)
+}
+
+/// `\r` or `\n`.
+const fn is_eol(b: u8) -> bool {
+    b == b'\n' || b == b'\r'
+}
+
+/// The action for a non-empty file of `len` bytes that ends in a run of `run` `\r`/`\n` bytes whose first
+/// `min(run, 2)` bytes are `head` (all [`end_of_file`] needs, so a caller can scan the tail in constant memory).
+pub fn end_of_file_run(head: &[u8], run: u64, len: u64) -> EofAction {
+    if len == 0 {
+        return EofAction::Keep;
+    }
     if run == 0 {
         return EofAction::Append;
     }
-    let run64 = u64::try_from(run).unwrap_or(u64::MAX);
-    if run64 >= len {
+    if run >= len {
         // `tell() == 1` after reading offset 0: the whole file is line endings.
         return EofAction::Truncate(0);
     }
-    let remaining = tail
-        .get(tail.len().saturating_sub(run)..)
-        .unwrap_or_default();
-    let position = len.saturating_sub(run64);
+    let position = len.saturating_sub(run);
     for seq in [&b"\n"[..], b"\r\n", b"\r"] {
-        if remaining == seq {
-            return EofAction::Keep;
-        }
-        if remaining.starts_with(seq) {
+        if head.starts_with(seq) {
             let keep = u64::try_from(seq.len()).unwrap_or(0);
+            if run == keep {
+                return EofAction::Keep;
+            }
             return EofAction::Truncate(position.saturating_add(keep));
         }
     }
