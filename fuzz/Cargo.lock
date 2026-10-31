@@ -1104,6 +1104,7 @@ dependencies = [
  "cfgv",
  "file-identify",
  "memchr",
+ "signal-hook",
  "snp-argparse",
  "snp-cli",
  "snp-core",

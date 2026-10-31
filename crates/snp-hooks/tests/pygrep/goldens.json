@@ -1,0 +1,280 @@
+{
+ "python": "3.13.14",
+ "results": {
+  "abbrev-ign": {
+   "code": 1,
+   "crashed": false,
+   "out": "c.txt:2:TODO crlf\n"
+  },
+  "abbrev-multi": {
+   "code": 0,
+   "crashed": false,
+   "out": ""
+  },
+  "abbrev-neg": {
+   "code": 1,
+   "crashed": false,
+   "out": "b.txt\n"
+  },
+  "ascii-fold": {
+   "code": 0,
+   "crashed": false,
+   "out": ""
+  },
+  "ascii-w": {
+   "code": 0,
+   "crashed": false,
+   "out": ""
+  },
+  "binary-bytes": {
+   "code": 1,
+   "crashed": false,
+   "out": "bin.dat:1:a\u00ffb\nbin.dat:2:\u0000\u00fe\n"
+  },
+  "directory": {
+   "code": 1,
+   "crashed": true,
+   "out": "a.txt:1:hello TODO world\nIsADirectoryError: [Errno 21] Is a directory: '.'\n"
+  },
+  "dollar-line": {
+   "code": 1,
+   "crashed": false,
+   "out": "a.txt:2:foo\nmulti.txt:1:x foo foo\nmulti.txt:3:foo\n"
+  },
+  "empty-all-modes": {
+   "code": 0,
+   "crashed": false,
+   "out": ""
+  },
+  "empty-ml": {
+   "code": 1,
+   "crashed": false,
+   "out": "empty.txt:1:\n"
+  },
+  "entry-flag-i": {
+   "code": 1,
+   "crashed": false,
+   "out": "a.txt:1:hello TODO world\nc.txt:2:TODO crlf\n"
+  },
+  "entry-flag-i-no-files": {
+   "code": 2,
+   "crashed": false,
+   "out": "usage: pygrep.py [-h] [-i] [--multiline] [--negate] pattern [filenames ...]\npygrep.py: error: the following arguments are required: pattern\n"
+  },
+  "entry-flag-negate": {
+   "code": 1,
+   "crashed": false,
+   "out": "b.txt\n"
+  },
+  "entry-flag-unknown": {
+   "code": 2,
+   "crashed": false,
+   "out": "usage: pygrep.py [-h] [-i] [--multiline] [--negate] pattern [filenames ...]\npygrep.py: error: unrecognized arguments: -foo\n"
+  },
+  "explicit-arg-error": {
+   "code": 2,
+   "crashed": false,
+   "out": "usage: pygrep.py [-h] [-i] [--multiline] [--negate] pattern [filenames ...]\npygrep.py: error: argument --multiline: ignored explicit argument '1'\n"
+  },
+  "file-named-dash-i": {
+   "code": 2,
+   "crashed": false,
+   "out": "usage: pygrep.py [-h] [-i] [--multiline] [--negate] pattern [filenames ...]\npygrep.py: error: unrecognized arguments: multi.txt\n"
+  },
+  "file-named-dash-x": {
+   "code": 2,
+   "crashed": false,
+   "out": "usage: pygrep.py [-h] [-i] [--multiline] [--negate] pattern [filenames ...]\npygrep.py: error: unrecognized arguments: -x.py\n"
+  },
+  "file-named-negate": {
+   "code": 1,
+   "crashed": false,
+   "out": "b.txt\n"
+  },
+  "foo-multi": {
+   "code": 1,
+   "crashed": false,
+   "out": "multi.txt:1:x foo foo\nmulti.txt:3:foo\n"
+  },
+  "help": {
+   "code": 0,
+   "crashed": false,
+   "out": "usage: pygrep.py [-h] [-i] [--multiline] [--negate] pattern [filenames ...]\n\ngrep-like finder using python regexes. Unlike grep, this tool returns nonzero\nwhen it finds a match and zero otherwise. The idea here being that matches are\n\"problems\".\n\npositional arguments:\n  pattern            python regex pattern.\n  filenames\n\noptions:\n  -h, --help         show this help message and exit\n  -i, --ignore-case\n  --multiline\n  --negate\n"
+  },
+  "help-cluster": {
+   "code": 0,
+   "crashed": false,
+   "out": "usage: pygrep.py [-h] [-i] [--multiline] [--negate] pattern [filenames ...]\n\ngrep-like finder using python regexes. Unlike grep, this tool returns nonzero\nwhen it finds a match and zero otherwise. The idea here being that matches are\n\"problems\".\n\npositional arguments:\n  pattern            python regex pattern.\n  filenames\n\noptions:\n  -h, --help         show this help message and exit\n  -i, --ignore-case\n  --multiline\n  --negate\n"
+  },
+  "ignore-case": {
+   "code": 1,
+   "crashed": false,
+   "out": "multi.txt:1:x foo foo\nmulti.txt:3:foo\ncrlf.txt:2:foo bar\n"
+  },
+  "invalid-ascii-locale": {
+   "code": 1,
+   "crashed": true,
+   "out": "ValueError: ASCII and LOCALE flags are incompatible\n"
+  },
+  "invalid-lookbehind": {
+   "code": 1,
+   "crashed": true,
+   "out": "re.PatternError: look-behind requires fixed-width pattern\n"
+  },
+  "invalid-multiline-pos": {
+   "code": 1,
+   "crashed": true,
+   "out": "re.PatternError: missing ), unterminated subpattern at position 2 (line 2, column 1)\n"
+  },
+  "invalid-overflow": {
+   "code": 1,
+   "crashed": true,
+   "out": "OverflowError: the repetition number is too large\n"
+  },
+  "invalid-paren": {
+   "code": 1,
+   "crashed": true,
+   "out": "re.PatternError: missing ), unterminated subpattern at position 0\n"
+  },
+  "invalid-u-flag": {
+   "code": 1,
+   "crashed": true,
+   "out": "re.PatternError: bad inline flags: cannot use 'u' flag with a bytes pattern at position 3\n"
+  },
+  "last-line": {
+   "code": 1,
+   "crashed": false,
+   "out": "last.txt:2:last line no newline\n"
+  },
+  "missing-file": {
+   "code": 1,
+   "crashed": true,
+   "out": "a.txt:1:hello TODO world\nFileNotFoundError: [Errno 2] No such file or directory: 'nope.txt'\n"
+  },
+  "ml-caret": {
+   "code": 1,
+   "crashed": false,
+   "out": "d.txt:1:abc\n"
+  },
+  "ml-def-ghi": {
+   "code": 1,
+   "crashed": false,
+   "out": "d.txt:2:def\nghi\n"
+  },
+  "ml-dollar": {
+   "code": 1,
+   "crashed": false,
+   "out": "multi.txt:1:x foo foo\n"
+  },
+  "ml-dollar-scoped-off": {
+   "code": 1,
+   "crashed": false,
+   "out": "multi.txt:3:foo\n"
+  },
+  "ml-dotall": {
+   "code": 1,
+   "crashed": false,
+   "out": "crlf.txt:2:foo bar\r\nbaz\r\n\n"
+  },
+  "ml-leading-nl": {
+   "code": 1,
+   "crashed": false,
+   "out": "nl.txt:1:ab\ncd\n"
+  },
+  "negate": {
+   "code": 1,
+   "crashed": false,
+   "out": "b.txt\nempty.txt\n"
+  },
+  "negate-empty": {
+   "code": 1,
+   "crashed": false,
+   "out": "empty.txt\n"
+  },
+  "negate-ml-empty": {
+   "code": 1,
+   "crashed": false,
+   "out": "empty.txt\nd.txt\n"
+  },
+  "pgh-blanket-noqa": {
+   "code": 1,
+   "crashed": false,
+   "out": "py.py:1:import os  # noqa\n"
+  },
+  "pgh-blanket-type-ignore": {
+   "code": 1,
+   "crashed": false,
+   "out": "py.py:7:w = 2  # type: ignore\n"
+  },
+  "pgh-mock-methods": {
+   "code": 1,
+   "crashed": false,
+   "out": "py.py:10:assert m.not_called()\n"
+  },
+  "pgh-no-eval": {
+   "code": 1,
+   "crashed": false,
+   "out": "py.py:3:y = eval('1')\n"
+  },
+  "pgh-no-log-warn": {
+   "code": 1,
+   "crashed": false,
+   "out": "py.py:4:log.warn('x')\n"
+  },
+  "pgh-replacement-char": {
+   "code": 1,
+   "crashed": false,
+   "out": "doc.rst:7:replacement \u00ef\u00bf\u00bd char\n"
+  },
+  "pgh-rst-backticks": {
+   "code": 1,
+   "crashed": false,
+   "out": "doc.rst:1:Use `code` here\n"
+  },
+  "pgh-rst-directive-colons": {
+   "code": 1,
+   "crashed": false,
+   "out": "doc.rst:3:.. note:\ndoc.rst:4:.. warning ::\n"
+  },
+  "pgh-rst-inline-touching": {
+   "code": 1,
+   "crashed": false,
+   "out": "doc.rst:6:x``y\n"
+  },
+  "pgh-type-annotations": {
+   "code": 1,
+   "crashed": false,
+   "out": "py.py:6:z = 1  # type: int\n"
+  },
+  "positional-in-args": {
+   "code": 0,
+   "crashed": false,
+   "out": ""
+  },
+  "positional-then-option": {
+   "code": 0,
+   "crashed": false,
+   "out": ""
+  },
+  "short-cluster": {
+   "code": 1,
+   "crashed": false,
+   "out": "a.txt:1:hello TODO world\n"
+  },
+  "todo": {
+   "code": 1,
+   "crashed": false,
+   "out": "a.txt:1:hello TODO world\nc.txt:2:TODO crlf\n"
+  },
+  "unknown-option": {
+   "code": 2,
+   "crashed": false,
+   "out": "usage: pygrep.py [-h] [-i] [--multiline] [--negate] pattern [filenames ...]\npygrep.py: error: unrecognized arguments: --foo\n"
+  },
+  "utf8-literal": {
+   "code": 1,
+   "crashed": false,
+   "out": "u.bin:1:caf\u00c3\u00a9 x\n"
+  }
+ }
+}

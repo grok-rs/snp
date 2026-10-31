@@ -1,0 +1,390 @@
+{
+ "python": "3.13.14",
+ "scripts": {
+  "check-added-large-files": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: check-added-large-files [-h] [--enforce-all] [--maxkb MAXKB]\n                               [filenames ...]\n\npositional arguments:\n  filenames      Filenames pre-commit believes are changed.\n\noptions:\n  -h, --help     show this help message and exit\n  --enforce-all  Enforce all files are checked, not just staged files.\n  --maxkb MAXKB  Maximum allowable KB for added files\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: check-added-large-files [-h] [--enforce-all] [--maxkb MAXKB]\n                               [filenames ...]\ncheck-added-large-files: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "check-ast": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: check-ast [-h] [filenames ...]\n\npositional arguments:\n  filenames\n\noptions:\n  -h, --help  show this help message and exit\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: check-ast [-h] [filenames ...]\ncheck-ast: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "check-builtin-literals": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: check-builtin-literals [-h] [--ignore IGNORE] [--allow-dict-kwargs |\n                              --no-allow-dict-kwargs]\n                              [filenames ...]\n\npositional arguments:\n  filenames\n\noptions:\n  -h, --help            show this help message and exit\n  --ignore IGNORE\n  --allow-dict-kwargs\n  --no-allow-dict-kwargs\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: check-builtin-literals [-h] [--ignore IGNORE] [--allow-dict-kwargs |\n                              --no-allow-dict-kwargs]\n                              [filenames ...]\ncheck-builtin-literals: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "check-byte-order-marker": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: check-byte-order-marker [-h] [filenames ...]\n\npositional arguments:\n  filenames   Filenames to check\n\noptions:\n  -h, --help  show this help message and exit\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: check-byte-order-marker [-h] [filenames ...]\ncheck-byte-order-marker: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "check-case-conflict": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: check-case-conflict [-h] [filenames ...]\n\npositional arguments:\n  filenames   Filenames pre-commit believes are changed.\n\noptions:\n  -h, --help  show this help message and exit\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: check-case-conflict [-h] [filenames ...]\ncheck-case-conflict: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "check-docstring-first": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: check-docstring-first [-h] [filenames ...]\n\npositional arguments:\n  filenames\n\noptions:\n  -h, --help  show this help message and exit\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: check-docstring-first [-h] [filenames ...]\ncheck-docstring-first: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "check-executables-have-shebangs": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: check-executables-have-shebangs [-h] [filenames ...]\n\nCheck that executable text files have a shebang.\n\npositional arguments:\n  filenames\n\noptions:\n  -h, --help  show this help message and exit\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: check-executables-have-shebangs [-h] [filenames ...]\ncheck-executables-have-shebangs: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "check-json": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: check-json [-h] [filenames ...]\n\npositional arguments:\n  filenames   Filenames to check.\n\noptions:\n  -h, --help  show this help message and exit\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: check-json [-h] [filenames ...]\ncheck-json: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "check-merge-conflict": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: check-merge-conflict [-h] [--assume-in-merge] [filenames ...]\n\npositional arguments:\n  filenames\n\noptions:\n  -h, --help         show this help message and exit\n  --assume-in-merge\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: check-merge-conflict [-h] [--assume-in-merge] [filenames ...]\ncheck-merge-conflict: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "check-shebang-scripts-are-executable": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: check-shebang-scripts-are-executable [-h] [filenames ...]\n\nCheck that text files with a shebang are executable.\n\npositional arguments:\n  filenames\n\noptions:\n  -h, --help  show this help message and exit\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: check-shebang-scripts-are-executable [-h] [filenames ...]\ncheck-shebang-scripts-are-executable: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "check-symlinks": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: check-symlinks [-h] [filenames ...]\n\nChecks for broken symlinks.\n\npositional arguments:\n  filenames   Filenames to check\n\noptions:\n  -h, --help  show this help message and exit\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: check-symlinks [-h] [filenames ...]\ncheck-symlinks: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "check-toml": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: check-toml [-h] [filenames ...]\n\npositional arguments:\n  filenames   Filenames to check.\n\noptions:\n  -h, --help  show this help message and exit\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: check-toml [-h] [filenames ...]\ncheck-toml: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "check-vcs-permalinks": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: check-vcs-permalinks [-h]\n                            [--additional-github-domain ADDITIONAL_GITHUB_DOMAINS]\n                            [filenames ...]\n\npositional arguments:\n  filenames\n\noptions:\n  -h, --help            show this help message and exit\n  --additional-github-domain ADDITIONAL_GITHUB_DOMAINS\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: check-vcs-permalinks [-h]\n                            [--additional-github-domain ADDITIONAL_GITHUB_DOMAINS]\n                            [filenames ...]\ncheck-vcs-permalinks: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "check-xml": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: check-xml [-h] [filenames ...]\n\npositional arguments:\n  filenames   XML filenames to check.\n\noptions:\n  -h, --help  show this help message and exit\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: check-xml [-h] [filenames ...]\ncheck-xml: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "check-yaml": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: check-yaml [-h] [-m] [--unsafe] [filenames ...]\n\npositional arguments:\n  filenames             Filenames to check.\n\noptions:\n  -h, --help            show this help message and exit\n  -m, --multi, --allow-multiple-documents\n  --unsafe              Instead of loading the files, simply parse them for\n                        syntax. A syntax-only check enables extensions and\n                        unsafe contstructs which would otherwise be forbidden.\n                        Using this option removes all guarantees of\n                        portability to other yaml implementations. Implies\n                        --allow-multiple-documents\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: check-yaml [-h] [-m] [--unsafe] [filenames ...]\ncheck-yaml: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "debug-statement-hook": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: debug-statement-hook [-h] [filenames ...]\n\npositional arguments:\n  filenames   Filenames to run\n\noptions:\n  -h, --help  show this help message and exit\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: debug-statement-hook [-h] [filenames ...]\ndebug-statement-hook: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "destroyed-symlinks": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: destroyed-symlinks [-h] [filenames ...]\n\npositional arguments:\n  filenames   Filenames to check.\n\noptions:\n  -h, --help  show this help message and exit\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: destroyed-symlinks [-h] [filenames ...]\ndestroyed-symlinks: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "detect-aws-credentials": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: detect-aws-credentials [-h] [--credentials-file CREDENTIALS_FILE]\n                              [--allow-missing-credentials]\n                              filenames [filenames ...]\n\npositional arguments:\n  filenames             Filenames to run\n\noptions:\n  -h, --help            show this help message and exit\n  --credentials-file CREDENTIALS_FILE\n                        Location of additional AWS credential file from which\n                        to get secret keys. Can be passed multiple times.\n  --allow-missing-credentials\n                        Allow hook to pass when no credentials are detected.\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: detect-aws-credentials [-h] [--credentials-file CREDENTIALS_FILE]\n                              [--allow-missing-credentials]\n                              filenames [filenames ...]\ndetect-aws-credentials: error: the following arguments are required: filenames\n"
+   }
+  },
+  "detect-private-key": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: detect-private-key [-h] [filenames ...]\n\npositional arguments:\n  filenames   Filenames to check\n\noptions:\n  -h, --help  show this help message and exit\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: detect-private-key [-h] [filenames ...]\ndetect-private-key: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "double-quote-string-fixer": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: double-quote-string-fixer [-h] [filenames ...]\n\npositional arguments:\n  filenames   Filenames to fix\n\noptions:\n  -h, --help  show this help message and exit\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: double-quote-string-fixer [-h] [filenames ...]\ndouble-quote-string-fixer: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "end-of-file-fixer": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: end-of-file-fixer [-h] [filenames ...]\n\npositional arguments:\n  filenames   Filenames to fix\n\noptions:\n  -h, --help  show this help message and exit\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: end-of-file-fixer [-h] [filenames ...]\nend-of-file-fixer: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "file-contents-sorter": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: file-contents-sorter [-h] [--ignore-case] [--unique]\n                            filenames [filenames ...]\n\npositional arguments:\n  filenames      Files to sort\n\noptions:\n  -h, --help     show this help message and exit\n  --ignore-case  fold lower case to upper case characters\n  --unique       ensure each line is unique\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: file-contents-sorter [-h] [--ignore-case] [--unique]\n                            filenames [filenames ...]\nfile-contents-sorter: error: the following arguments are required: filenames\n"
+   }
+  },
+  "fix-byte-order-marker": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: fix-byte-order-marker [-h] [filenames ...]\n\npositional arguments:\n  filenames   Filenames to check\n\noptions:\n  -h, --help  show this help message and exit\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: fix-byte-order-marker [-h] [filenames ...]\nfix-byte-order-marker: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "fix-encoding-pragma": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: Fixes the encoding pragma of python files [-h] [--pragma PRAGMA]\n                                                 [--remove]\n                                                 [filenames ...]\n\npositional arguments:\n  filenames        Filenames to fix\n\noptions:\n  -h, --help       show this help message and exit\n  --pragma PRAGMA  The encoding pragma to use. Default: # -*- coding: utf-8\n                   -*-\n  --remove         Remove the encoding pragma (Useful in a python3-only\n                   codebase)\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: Fixes the encoding pragma of python files [-h] [--pragma PRAGMA]\n                                                 [--remove]\n                                                 [filenames ...]\nFixes the encoding pragma of python files: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "forbid-new-submodules": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: forbid-new-submodules [-h] [filenames ...]\n\npositional arguments:\n  filenames\n\noptions:\n  -h, --help  show this help message and exit\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: forbid-new-submodules [-h] [filenames ...]\nforbid-new-submodules: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "mixed-line-ending": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: mixed-line-ending [-h] [-f {auto,no,cr,crlf,lf}] [filenames ...]\n\npositional arguments:\n  filenames             Filenames to fix\n\noptions:\n  -h, --help            show this help message and exit\n  -f, --fix {auto,no,cr,crlf,lf}\n                        Replace line ending with the specified. Default is\n                        \"auto\"\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: mixed-line-ending [-h] [-f {auto,no,cr,crlf,lf}] [filenames ...]\nmixed-line-ending: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "name-tests-test": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: name-tests-test [-h] [--django] [filenames ...]\n\npositional arguments:\n  filenames\n\noptions:\n  -h, --help  show this help message and exit\n  --django    Use Django-style test naming pattern (test*.py)\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: name-tests-test [-h] [--django] [filenames ...]\nname-tests-test: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "no-commit-to-branch": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: no-commit-to-branch [-h] [-b BRANCH] [-p PATTERN]\n\noptions:\n  -h, --help            show this help message and exit\n  -b, --branch BRANCH   branch to disallow commits to, may be specified\n                        multiple times\n  -p, --pattern PATTERN\n                        regex pattern for branch name to disallow commits to,\n                        may be specified multiple times\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: no-commit-to-branch [-h] [-b BRANCH] [-p PATTERN]\nno-commit-to-branch: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "pretty-format-json": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: pretty-format-json [-h] [--autofix] [--indent INDENT]\n                          [--no-ensure-ascii] [--no-sort-keys]\n                          [--top-keys TOP_KEYS]\n                          [filenames ...]\n\npositional arguments:\n  filenames            Filenames to fix\n\noptions:\n  -h, --help           show this help message and exit\n  --autofix            Automatically fixes encountered not-pretty-formatted\n                       files\n  --indent INDENT      The number of indent spaces or a string to be used as\n                       delimiter for indentation level e.g. 4 or \" \" (Default:\n                       2)\n  --no-ensure-ascii    Do NOT convert non-ASCII characters to Unicode escape\n                       sequences (\\uXXXX)\n  --no-sort-keys       Keep JSON nodes in the same order\n  --top-keys TOP_KEYS  Ordered list of keys to keep at the top of JSON hashes\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: pretty-format-json [-h] [--autofix] [--indent INDENT]\n                          [--no-ensure-ascii] [--no-sort-keys]\n                          [--top-keys TOP_KEYS]\n                          [filenames ...]\npretty-format-json: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "requirements-txt-fixer": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: requirements-txt-fixer [-h] [filenames ...]\n\npositional arguments:\n  filenames   Filenames to fix\n\noptions:\n  -h, --help  show this help message and exit\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: requirements-txt-fixer [-h] [filenames ...]\nrequirements-txt-fixer: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "sort-simple-yaml": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: sort-simple-yaml [-h] [filenames ...]\n\npositional arguments:\n  filenames   Filenames to fix\n\noptions:\n  -h, --help  show this help message and exit\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: sort-simple-yaml [-h] [filenames ...]\nsort-simple-yaml: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  },
+  "trailing-whitespace-fixer": {
+   "help": {
+    "code": 0,
+    "crashed": false,
+    "out": "usage: trailing-whitespace-fixer [-h]\n                                 [--markdown-linebreak-ext *|EXT[,EXT,...]]\n                                 [--chars CHARS]\n                                 [filenames ...]\n\npositional arguments:\n  filenames             Filenames to fix\n\noptions:\n  -h, --help            show this help message and exit\n  --markdown-linebreak-ext *|EXT[,EXT,...]\n                        Markdown extensions (or *) to not strip linebreak\n                        spaces. default: []\n  --chars CHARS         The set of characters to strip from the end of lines.\n                        Defaults to all whitespace characters.\n"
+   },
+   "usage": {
+    "code": 2,
+    "crashed": false,
+    "out": "usage: trailing-whitespace-fixer [-h]\n                                 [--markdown-linebreak-ext *|EXT[,EXT,...]]\n                                 [--chars CHARS]\n                                 [filenames ...]\ntrailing-whitespace-fixer: error: unrecognized arguments: --snp-no-such-option\n"
+   }
+  }
+ },
+ "version": "4.2.0"
+}

@@ -15,10 +15,6 @@ mod registry;
 
 use cfgv as _;
 use file_identify as _;
-use snp_os as _;
-use snp_proc as _;
-use snp_pycompat as _;
-use snp_pyparsers as _;
 
 pub use hook::{HookCx, NativeHook, Outcome};
 pub use registry::native;

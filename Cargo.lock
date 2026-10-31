@@ -1754,6 +1754,8 @@ dependencies = [
  "cfgv",
  "file-identify",
  "memchr",
+ "serde_json",
+ "signal-hook",
  "snp-argparse",
  "snp-cli",
  "snp-core",
@@ -1764,6 +1766,7 @@ dependencies = [
  "snp-pycompat",
  "snp-pyparsers",
  "snp-pyre",
+ "tempfile",
 ]
 
 [[package]]
