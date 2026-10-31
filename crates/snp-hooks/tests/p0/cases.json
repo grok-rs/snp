@@ -180,6 +180,9 @@
     {"name": "ehs-filemode-False", "script": "check-executables-have-shebangs", "hook": "check-executables-have-shebangs",
      "steps": [["git", "config", "core.fileMode", "False"], ["w", "e.sh", "echo"], ["git", "add", "e.sh"]],
      "argv": ["e.sh"]},
+    {"name": "ehs-fm-false-tab", "script": "check-executables-have-shebangs", "hook": "check-executables-have-shebangs",
+     "steps": [["git", "config", "core.fileMode", "false"], ["w", "a", "echo"], ["w", "t\tab", "echo"], ["w", "z", "echo"], ["git", "add", "a", "t\tab", "z"], ["git", "update-index", "--chmod=+x", "a", "t\tab", "z"]],
+     "argv": ["a", "t\tab", "z"]},
     {"name": "ehs-missing-crash", "script": "check-executables-have-shebangs", "hook": "check-executables-have-shebangs",
      "steps": [["w", "a.sh", "echo"]], "argv": ["a.sh", "nope", "a.sh"]}
   ]

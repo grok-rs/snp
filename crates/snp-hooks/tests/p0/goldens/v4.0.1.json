@@ -205,6 +205,16 @@
    },
    "out": "m.sh: marked executable but has no (or invalid) shebang!\n  If it isn't supposed to be executable, try: `chmod -x m.sh`\n  If it is supposed to be executable, double-check its shebang.\ne.sh: marked executable but has no (or invalid) shebang!\n  If it isn't supposed to be executable, try: `chmod -x e.sh`\n  If it is supposed to be executable, double-check its shebang.\nu.sh: marked executable but has no (or invalid) shebang!\n  If it isn't supposed to be executable, try: `chmod -x u.sh`\n  If it is supposed to be executable, double-check its shebang.\n"
   },
+  "ehs-fm-false-tab": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a": "echo",
+    "t\tab": "echo",
+    "z": "echo"
+   },
+   "out": "a: marked executable but has no (or invalid) shebang!\n  If it isn't supposed to be executable, try: `chmod -x a`\n  If it is supposed to be executable, double-check its shebang.\nt\tab: marked executable but has no (or invalid) shebang!\n  If it isn't supposed to be executable, try: `chmod -x 't\tab'`\n  If it is supposed to be executable, double-check its shebang.\nz: marked executable but has no (or invalid) shebang!\n  If it isn't supposed to be executable, try: `chmod -x z`\n  If it is supposed to be executable, double-check its shebang.\n"
+  },
   "ehs-missing-crash": {
    "code": 1,
    "crashed": true,

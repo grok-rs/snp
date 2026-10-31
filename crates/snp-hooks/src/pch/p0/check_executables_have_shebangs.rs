@@ -76,12 +76,15 @@ type Entry = (String, String);
 
 /// `git_ls_files(paths)` / `_check_git_filemode`'s listing: `-z` (epoch ≥ 3) or `splitlines` (epoch 2), every
 /// record split on its single tab (`ValueError` otherwise, as Python's tuple unpacking).
+///
+/// Python's `git_ls_files` is a generator: the records before a malformed one are checked (and reported) before
+/// the `ValueError` is raised, so the entries parsed so far come back together with the pending error.
 fn ls_files(
     cx: &HookCx<'_>,
     paths: &[&OsStr],
     epoch: u16,
     literal: bool,
-) -> Result<Vec<Entry>, PyExc> {
+) -> Result<(Vec<Entry>, Option<PyExc>), PyExc> {
     let mut args: Vec<OsString> = vec!["ls-files".into()];
     if epoch >= 3 {
         args.push("-z".into());
@@ -114,19 +117,22 @@ fn ls_files(
         let mut parts = rec.split('\t');
         let (Some(meta), Some(path), None) = (parts.next(), parts.next(), parts.next()) else {
             let n = rec.split('\t').count();
-            return Err(PyExc::new(
-                "ValueError",
-                if n > 2 {
-                    "too many values to unpack (expected 2)".to_owned()
-                } else {
-                    format!("not enough values to unpack (expected 2, got {n})")
-                },
+            return Ok((
+                entries,
+                Some(PyExc::new(
+                    "ValueError",
+                    if n > 2 {
+                        "too many values to unpack (expected 2)".to_owned()
+                    } else {
+                        format!("not enough values to unpack (expected 2, got {n})")
+                    },
+                )),
             ));
         };
         let mode = meta.split(' ').next().unwrap_or_default().to_owned();
         entries.push((mode, path.to_owned()));
     }
-    Ok(entries)
+    Ok((entries, None))
 }
 
 impl CheckExecutablesHaveShebangs {
@@ -177,18 +183,23 @@ impl NativeHook for CheckExecutablesHaveShebangs {
             Err(e) => return framework::crashed(out, &e),
         };
         let mut outcome = if git_path {
-            let entries = match ls_files(cx, &files, epoch, self.builtin) {
+            let (entries, mut pending) = match ls_files(cx, &files, epoch, self.builtin) {
                 Ok(e) => e,
                 Err(e) => return framework::crashed(out, &e),
             };
             let mut seen: HashSet<String> = HashSet::new();
-            let names: Vec<OsString> = entries.iter().map(|(_, p)| os_from(p.as_bytes())).collect();
+            let mut names: Vec<OsString> =
+                entries.iter().map(|(_, p)| os_from(p.as_bytes())).collect();
+            if pending.is_some() {
+                // The malformed record's turn: the generator raises there.
+                names.push(OsString::new());
+            }
             let refs: Vec<&OsStr> = names.iter().map(OsString::as_os_str).collect();
             let mut i = 0_usize;
             let builtin = self.builtin;
             let mut step = |name: &OsStr, out: &mut PyOut| {
                 let Some((mode, path)) = entries.get(i) else {
-                    return FileStep::Unchanged;
+                    return pending.take().map_or(FileStep::Unchanged, FileStep::Crash);
                 };
                 i = i.saturating_add(1);
                 let tail = mode.get(mode.len().saturating_sub(3)..).unwrap_or(mode);

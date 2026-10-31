@@ -215,6 +215,16 @@
    },
    "out": "e.sh: marked executable but has no (or invalid) shebang!\n  If it isn't supposed to be executable, try: `chmod -x e.sh`\n  If on Windows, you may also need to: `git add --chmod=-x e.sh`\n  If it is supposed to be executable, double-check its shebang.\n"
   },
+  "ehs-fm-false-tab": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a": "echo",
+    "t\tab": "echo",
+    "z": "echo"
+   },
+   "out": "a: marked executable but has no (or invalid) shebang!\n  If it isn't supposed to be executable, try: `chmod -x a`\n  If on Windows, you may also need to: `git add --chmod=-x a`\n  If it is supposed to be executable, double-check its shebang.\nValueError: too many values to unpack (expected 2)\n"
+  },
   "ehs-missing-crash": {
    "code": 1,
    "crashed": true,
