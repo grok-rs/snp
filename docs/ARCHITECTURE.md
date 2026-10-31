@@ -1766,7 +1766,7 @@ impl Store {
     pub fn all_repos(&self) -> Vec<RepoHandle>;
     pub fn retire_repo(&self, key: &RepoKey) -> io::Result<()>;
     pub fn sweep(&self, now: std::time::SystemTime) -> SweepReport;               // scratch/trash orphans, old restored patches, tools no `.snp-tools.json` references
-    pub fn clean(&self) -> Result<(), Failure>;                                   // retire the whole store
+    pub fn clean(&self) -> Result<(), Failure>;                                   // retire snp's layout (keeps recovery data, .lock, unknown files: D-DATA-04)
     pub fn patches_dir(&self) -> PathBuf; pub fn spill_dir(&self) -> PathBuf; pub fn scratch_dir(&self) -> PathBuf;
     pub fn crash_log(&self, brand: Brand) -> PathBuf;                             // <store>/pre-commit.log | snp.log
     pub fn tool_dir(&self, tool: &str, version: &str) -> PathBuf; pub fn cache_dir(&self, name: &str) -> PathBuf;
@@ -2280,6 +2280,9 @@ a partial set cached by an earlier hook that needed only the name tier. A run to
      non-regular files (X13-CLS-03).
   The filter outcome depends only on membership of referenced tags, so evaluating with a partial set whose pending
   categories are irrelevant is exact (S13; property test against full identification).
+  A filter referencing only name-derived tags (`python`, `yaml`, …) still needs the stat tier: identify tags a
+  symlink, directory or socket with its type tag alone (`link.py` is not `python`), so the name tier alone answers
+  only filters that reference no tag at all.
 * **git-mode fast path.** When the file list is the staged list *after* the stash (worktree == index), on Unix, with
   `core.fileMode=true` and `core.symlinks=true`, `Meta::from_git_mode_with(mode, PythonCompat)` gives kind/executable
   with zero syscalls (`ls-files -s -z`, or the staged-only `diff --staged --raw -z` when Stat mode is impossible, ran
@@ -2876,7 +2879,8 @@ directory` (snp brand) once per process, then waits (cancel observed every 50 ms
   `(db_repo_name, rev)` keys that are neither present nor Tier-A-loadable, snp 1.x leftovers only when the README
   carries the 1.x signature (an snp-only stderr line `Removed snp 1.x cache data from {store}.`, D-DIAG-05).
   Output: `{n} repo(s) removed.` (n counts `(db_repo_name, rev)` keys, like pre-commit's rows).
-* **clean** (exclusive): retire the whole store; always prints `Cleaned {store}.` (pre-commit re-creates its store
+* **clean** (exclusive): retire snp's whole layout — every journal, the patches of unrestored journals, `patch*`
+  files younger than an hour, `.lock` and files outside snp's layout are kept (D-DATA-04); always prints `Cleaned {store}.` (pre-commit re-creates its store
   before `clean` and always prints, 03 §10; ADR-030). Never touches `~/.pre-commit` or pre-commit's store (D-STORE-02).
 * **Crash log** `<store>/<brand.crash_log_name()>` (ADR-013): pre-commit's skeleton (§10.3). If the store cannot be
   created/written: `Failed to write to log at …` and the body on stdout (parity branch, never a double fault).
