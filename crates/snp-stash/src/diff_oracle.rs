@@ -12,6 +12,7 @@
 
 mod gitconfig;
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -330,16 +331,20 @@ fn build_inputs(
     }
     seeds.extend(env_facts.config_files.iter().cloned());
     let facts = gitconfig::collect(&seeds, &info.root, env);
-    if facts.attr_tree {
+    if facts.attr_tree || facts.overflow {
         return None;
     }
     let mut inputs: Vec<(PathBuf, InputKind)> = Vec::new();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
     let mut push = |p: PathBuf, k: InputKind| {
-        if !inputs.iter().any(|(q, _)| *q == p) {
+        if seen.insert(p.clone()) {
             inputs.push((p, k));
         }
     };
     push(info.index_file.clone(), InputKind::Index);
+    // `$GIT_DIR/HEAD`: `includeIf "onbranch:…"` makes the effective config depend on it, and `git branch -m` or
+    // `git symbolic-ref` change it without touching the index.
+    push(info.git_dir.join("HEAD"), InputKind::Config);
     for c in facts.config_files {
         push(c, InputKind::Config);
     }
@@ -365,57 +370,60 @@ fn build_inputs(
         info.git_dir.join("info").join("attributes"),
         InputKind::Other,
     );
+    // The directories are distinct (`tracked_paths`), so only the fixed inputs above can collide with them.
     for d in dirs {
-        push(d.join(".gitattributes"), InputKind::Other);
+        let p = d.join(".gitattributes");
+        if !seen.contains(&p) {
+            inputs.push((p, InputKind::Other));
+        }
     }
     Some(inputs)
 }
 
-/// `lstat` every path (parallel chunks above [`PARALLEL_STAT`]).
-fn stat_all(paths: &[PathBuf]) -> Vec<St> {
-    if paths.len() <= PARALLEL_STAT {
-        return paths.iter().map(|p| St::lstat(p)).collect();
+/// `f` over every item, in parallel chunks above [`PARALLEL_STAT`] items (a refused or failed thread's chunk is done
+/// here).
+fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    if items.len() <= PARALLEL_STAT {
+        return items.iter().map(&f).collect();
     }
     let workers = std::thread::available_parallelism()
         .map_or(4, std::num::NonZeroUsize::get)
         .clamp(2, 8);
-    let chunk = paths.len().div_ceil(workers).max(1);
-    let mut out: Vec<St> = Vec::new();
-    let joined = std::thread::scope(|s| {
+    let chunk = items.len().div_ceil(workers).max(1);
+    let f = &f;
+    let mut out: Vec<R> = Vec::new();
+    std::thread::scope(|s| {
         let mut handles = Vec::new();
         let mut start = 0_usize;
-        while start < paths.len() {
-            let end = start.saturating_add(chunk).min(paths.len());
-            let part = paths.get(start..end).unwrap_or_default();
+        while start < items.len() {
+            let end = start.saturating_add(chunk).min(items.len());
+            let part = items.get(start..end).unwrap_or_default();
             let h = std::thread::Builder::new()
                 .name("snp-diff-stat".to_owned())
                 .stack_size(256 * 1024)
-                .spawn_scoped(s, move || {
-                    part.iter().map(|p| St::lstat(p)).collect::<Vec<St>>()
-                });
+                .spawn_scoped(s, move || part.iter().map(f).collect::<Vec<R>>());
             handles.push((start, end, h));
             start = end;
         }
-        let mut ok = true;
         for (start, end, h) in handles {
             if let Ok(v) = h.map_err(drop).and_then(|h| h.join().map_err(drop)) {
                 out.extend(v);
             } else {
-                // A refused or failed thread: stat that chunk here.
-                ok = false;
-                out.extend(
-                    paths
-                        .get(start..end)
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|p| St::lstat(p)),
-                );
+                out.extend(items.get(start..end).unwrap_or_default().iter().map(f));
             }
         }
-        ok
     });
-    let _: bool = joined;
     out
+}
+
+/// `lstat` every path (parallel chunks above [`PARALLEL_STAT`]).
+fn stat_all(paths: &[PathBuf]) -> Vec<St> {
+    par_map(paths, |p| St::lstat(p))
+}
+
+/// `(lstat, stat)` of every input (parallel chunks above [`PARALLEL_STAT`]).
+fn stat_inputs(inputs: &[(PathBuf, InputKind)]) -> Vec<(St, St)> {
+    par_map(inputs, |(p, _)| (St::lstat(p), St::stat(p)))
 }
 
 fn snapshot_with(
@@ -424,10 +432,7 @@ fn snapshot_with(
     path_stats: Vec<St>,
     taken: i128,
 ) -> Snapshot {
-    let input_stats: Vec<(St, St)> = inputs
-        .iter()
-        .map(|(p, _)| (St::lstat(p), St::stat(p)))
-        .collect();
+    let input_stats = stat_inputs(inputs);
     let racy_paths = path_stats
         .iter()
         .enumerate()
@@ -524,10 +529,20 @@ impl StatState {
                 }
             }
         }
-        for (i, ((p, kind), before)) in self.inputs.iter().zip(&snap.inputs).enumerate() {
-            let now = (St::lstat(p), St::stat(p));
+        let now_inputs = stat_inputs(&self.inputs);
+        for (i, (((p, kind), before), now)) in self
+            .inputs
+            .iter()
+            .zip(&snap.inputs)
+            .zip(now_inputs)
+            .enumerate()
+        {
             let mut changed = now != *before;
-            if !changed && let Some((_, h)) = snap.racy_inputs.iter().find(|(j, _)| *j == i) {
+            // `racy_inputs` is in input order.
+            if !changed
+                && let Ok(k) = snap.racy_inputs.binary_search_by_key(&i, |(j, _)| *j)
+                && let Some((_, h)) = snap.racy_inputs.get(k)
+            {
                 changed = content_hash(p, now.1.kind, true) != *h;
             }
             if changed {

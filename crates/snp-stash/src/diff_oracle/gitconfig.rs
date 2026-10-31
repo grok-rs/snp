@@ -10,6 +10,7 @@
 //!
 //! Owner: WP-23.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use snp_core::env::Env;
@@ -157,6 +158,9 @@ pub(crate) struct Facts {
     pub(crate) attributes_files: Vec<PathBuf>,
     /// `attr.tree` is set (Stat mode impossible).
     pub(crate) attr_tree: bool,
+    /// More include targets (or `core.attributesFile` values) than [`MAX_FILES`]: the inputs are not known
+    /// completely (Stat mode impossible).
+    pub(crate) overflow: bool,
 }
 
 /// Expands a config path value (`~/`, `~user/`; relative to `base` when relative).
@@ -179,25 +183,43 @@ fn config_path(raw: &[u8], base: &Path, env: &Env) -> Option<PathBuf> {
 
 /// The largest config file read.
 const CONFIG_CAP: u64 = 4 * 1024 * 1024;
-/// At most this many config files are followed (include loops, hostile configs).
+/// At most this many config files are watched (seeds and include targets together) and this many
+/// `core.attributesFile` values kept; more means Git mode (include loops, hostile configs).
 const MAX_FILES: usize = 256;
 
 /// Reads `seeds` (and, transitively, every include target) and collects the [`Facts`]. `root` resolves a relative
 /// `core.attributesFile`.
+///
+/// Linear in the total config size: queued paths are deduplicated with a hash set, and more than [`MAX_FILES`]
+/// distinct files (or attributes files) stops the walk with [`Facts::overflow`] set, so an input it never read can
+/// never be missed.
 pub(crate) fn collect(seeds: &[PathBuf], root: &Path, env: &Env) -> Facts {
     let mut facts = Facts::default();
     let mut queue: Vec<PathBuf> = Vec::new();
+    let mut queued: HashSet<PathBuf> = HashSet::new();
+    let mut attrs: HashSet<PathBuf> = HashSet::new();
+    let mut enqueue = |p: PathBuf, queue: &mut Vec<PathBuf>, facts: &mut Facts| {
+        if queued.contains(&p) {
+            return true;
+        }
+        if queue.len() >= MAX_FILES {
+            facts.overflow = true;
+            return false;
+        }
+        queued.insert(p.clone());
+        queue.push(p);
+        true
+    };
     for s in seeds {
-        if !queue.contains(s) {
-            queue.push(s.clone());
+        if !enqueue(s.clone(), &mut queue, &mut facts) {
+            break;
         }
     }
     let mut next = 0_usize;
-    while let Some(file) = queue.get(next).cloned() {
+    'files: while !facts.overflow
+        && let Some(file) = queue.get(next).cloned()
+    {
         next = next.saturating_add(1);
-        if next > MAX_FILES {
-            break;
-        }
         let Ok(text) = snp_os::fs::read_capped(&file, CONFIG_CAP) else {
             continue;
         };
@@ -208,15 +230,20 @@ pub(crate) fn collect(seeds: &[PathBuf], root: &Path, env: &Env) -> Facts {
             match (section.as_str(), key.as_str(), value) {
                 ("include" | "includeif", "path", Some(v)) => {
                     if let Some(p) = config_path(&v, &base, env)
-                        && !queue.contains(&p)
+                        && !enqueue(p, &mut queue, &mut facts)
                     {
-                        queue.push(p);
+                        break 'files;
                     }
                 }
                 ("core", "attributesfile", Some(v)) => {
                     if let Some(p) = config_path(&v, root, env)
-                        && !facts.attributes_files.contains(&p)
+                        && !attrs.contains(&p)
                     {
+                        if attrs.len() >= MAX_FILES {
+                            facts.overflow = true;
+                            break 'files;
+                        }
+                        attrs.insert(p.clone());
                         facts.attributes_files.push(p);
                     }
                 }
@@ -351,6 +378,48 @@ mod tests {
         );
         assert_eq!(f.attributes_files, vec![root.join("attrs")]);
         assert!(!f.attr_tree);
+    }
+
+    #[test]
+    fn a_huge_include_list_returns_quickly_and_overflows() {
+        use std::fmt::Write as _;
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path();
+        let mut cfg = String::from("[include]\n");
+        for i in 0..30_000 {
+            writeln!(cfg, "path = missing{i}").unwrap();
+        }
+        std::fs::write(root.join("config"), cfg).unwrap();
+        let env = Env::from_pairs([("HOME", "/h")]);
+        let t = std::time::Instant::now();
+        let f = collect(&[root.join("config")], root, &env);
+        assert!(
+            t.elapsed() < std::time::Duration::from_secs(2),
+            "{:?}",
+            t.elapsed()
+        );
+        assert!(f.overflow);
+        assert!(f.config_files.len() <= MAX_FILES);
+    }
+
+    #[test]
+    fn a_long_include_chain_overflows() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path();
+        for i in 0..300 {
+            std::fs::write(
+                root.join(format!("c{i}.cfg")),
+                format!("[include]\npath = c{}.cfg\n", i + 1),
+            )
+            .unwrap();
+        }
+        let env = Env::from_pairs([("HOME", "/h")]);
+        let f = collect(&[root.join("c0.cfg")], root, &env);
+        assert!(f.overflow);
+        // A chain within the cap is followed completely.
+        let f = collect(&[root.join("c200.cfg")], root, &env);
+        assert!(!f.overflow);
+        assert_eq!(f.config_files.len(), 101);
     }
 
     #[test]

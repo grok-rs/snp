@@ -273,7 +273,7 @@ fn set_mtime(p: &Path, t: SystemTime) {
 /// One random "hook": a mutation of the worktree, the index, the attributes or the config.
 fn mutate(sb: &Sandbox, repo: &Path, rng: &mut Rng) -> &'static str {
     let file = repo.join(rng.pick(&FILES));
-    match rng.below(16) {
+    match rng.below(17) {
         0 | 1 => {
             ign(std::fs::create_dir_all(file.parent().unwrap()));
             ign(std::fs::remove_file(&file));
@@ -387,6 +387,12 @@ fn mutate(sb: &Sandbox, repo: &Path, rng: &mut Rng) -> &'static str {
             ign(std::fs::write(sb.path("global-attrs"), rng.pick(&ATTRS)));
             "xdg attributes"
         }
+        15 => {
+            // HEAD moves without an index write (an `includeIf "onbranch:other"` target sets core.autocrlf).
+            let to = *rng.pick(&["refs/heads/other", "refs/heads/main"]);
+            drop(sb.git_status(repo, &["symbolic-ref", "HEAD", to]));
+            "symbolic-ref"
+        }
         _ => "noop",
     }
 }
@@ -423,6 +429,15 @@ fn randomized_soundness_against_real_git_diff() {
             std::ffi::OsStr::new("config"),
             "core.attributesFile".as_ref(),
             sb.path("attrs").as_os_str(),
+        ],
+    );
+    std::fs::write(sb.path("onbranch.cfg"), "[core]\n\tautocrlf = true\n").unwrap();
+    sb.git(
+        &repo,
+        &[
+            std::ffi::OsStr::new("config"),
+            "includeIf.onbranch:other.path".as_ref(),
+            sb.path("onbranch.cfg").as_os_str(),
         ],
     );
     let xdg = sb.path("xdg");
@@ -466,5 +481,103 @@ fn randomized_soundness_against_real_git_diff() {
         o.mode(),
         misses.len(),
         &misses[..misses.len().min(10)]
+    );
+}
+
+/// `includeIf "onbranch:…"`: moving HEAD (`git symbolic-ref`, `git branch -m`) changes the effective config — and
+/// `git diff` — without touching the index; `$GIT_DIR/HEAD` is an input.
+#[test]
+fn a_head_move_under_an_onbranch_include_is_seen() {
+    for mv in [
+        &["symbolic-ref", "HEAD", "refs/heads/other"][..],
+        &["branch", "-m", "other"][..],
+    ] {
+        let sb = Sandbox::new();
+        let repo = repo_with_files(&sb);
+        sb.write(&repo, "a.txt", b"alpha\r\n");
+        std::fs::write(sb.path("inc.cfg"), "[core]\n\tautocrlf = true\n").unwrap();
+        sb.git(
+            &repo,
+            &[
+                std::ffi::OsStr::new("config"),
+                "includeIf.onbranch:other.path".as_ref(),
+                sb.path("inc.cfg").as_os_str(),
+            ],
+        );
+        let env = sb.env.clone();
+        let (mut o, git, _) = oracle(&sb, &repo, &env, None);
+        let before = git.diff_fingerprint().unwrap();
+        assert!(before.non_empty);
+        if stat_mode_possible(&repo) {
+            assert_eq!(o.mode(), DiffMode::Stat);
+        }
+        o.before_hook().unwrap();
+        sb.git(&repo, mv);
+        // The oracle first: a real `git diff` may refresh (rewrite) the index, which the oracle would then see.
+        let got = o.after_hook().unwrap();
+        let after = git.diff_fingerprint().unwrap();
+        assert_ne!(before, after, "{mv:?}: the real diff changed");
+        assert_eq!(got, Change::Changed, "{mv:?}");
+    }
+}
+
+/// ADR-078 sizes: `DiffOracle::new` (+ one unchanged hook) on 16 384 index entries in distinct directories stays
+/// linear (target 200 ms; 3x margin here).
+#[test]
+#[ignore = "perf"]
+fn perf_new_with_16384_entries_in_distinct_directories() {
+    use std::fmt::Write as _;
+    use std::io::Write as _;
+    let sb = Sandbox::new();
+    let repo = sb.init("r");
+    sb.write(&repo, "empty", b"");
+    let blob = sb.git_text(&repo, &["hash-object", "-w", "empty"]);
+    let mut input = String::new();
+    for i in 0..16_384 {
+        writeln!(input, "100644 {blob}\td{}/e{}/f", i / 64, i).unwrap();
+    }
+    let exe =
+        snp_proc::resolve::find_executable(std::ffi::OsStr::new("git"), &sb.env, &repo).unwrap();
+    let mut child = std::process::Command::new(exe)
+        .args(["update-index", "--index-info"])
+        .current_dir(&repo)
+        .env_clear()
+        .envs(sb.env.iter())
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    assert!(child.wait().unwrap().success());
+    let (git, info) = sb.discover(&repo);
+    let (tracked, origins) = fanout(&git);
+    assert_eq!(tracked.paths.len(), 16_384);
+    let baseline = git.diff_fingerprint().unwrap();
+    let t = std::time::Instant::now();
+    let mut o = DiffOracle::new(
+        &git,
+        &info,
+        &sb.env,
+        Some(baseline),
+        Some(tracked),
+        Some(origins),
+    )
+    .unwrap();
+    o.before_hook().unwrap();
+    let change = o.after_hook().unwrap();
+    let took = t.elapsed();
+    assert_eq!(change, Change::Unchanged);
+    if stat_mode_possible(&repo) {
+        // The cost measured is Stat mode's (Git mode would hide a quadratic input build).
+        assert_eq!(o.mode(), DiffMode::Stat);
+    }
+    assert!(
+        took < Duration::from_millis(600),
+        "{took:?} ({:?})",
+        o.mode()
     );
 }
