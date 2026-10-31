@@ -16,10 +16,13 @@ use libfuzzer_sys::fuzz_target;
 use snp_core::lang::LanguageId;
 use snp_store::{RepoHandle, RepoKey, RepoKind, RepoMeta, Store, StoreLocation, StoreSource};
 
+/// The oracle of ADR-009's safe-component rule, with the alias exclusions: no trailing `.` (Win32 strips it) and no
+/// upper-case ASCII where the default filesystems fold case (Windows, macOS).
 fn safe(v: &str) -> bool {
     (1..=64).contains(&v.len())
-        && v != "."
-        && v != ".."
+        && !v.ends_with('.')
+        && !(cfg!(any(windows, target_vendor = "apple"))
+            && v.bytes().any(|b| b.is_ascii_uppercase()))
         && v.bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'+' | b'-'))
 }
