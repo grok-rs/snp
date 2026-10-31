@@ -9,7 +9,10 @@
 //! byte. Output is written through `output.write`/`write_line_b` (flushed at once), so it is in program order; an
 //! unreadable file ends the partition with the traceback's last line (`FileNotFoundError: [Errno 2] No such file
 //! or directory: 'x'`), exit 1. An invalid pattern fails the hook once with Python's last line (`re.error: …`,
-//! `OverflowError: …`), not once per partition (D-MISC-05).
+//! `OverflowError: …`), not once per partition (D-MISC-05); an entry that is not the pattern of `args + [entry]`
+//! (`-i`, `--negate`, `-foo`) is decided per partition. The pattern's `FutureWarning`s start each partition's
+//! output (`[WARNING] regex {pattern!r}: {msg} (Python FutureWarning)`, D-MISC-05); a backtracking-limit hit is the
+//! D-SEC-10 line, exit 1.
 //!
 //! Owner: WP-26.
 
@@ -77,20 +80,28 @@ impl Key {
 }
 
 /// Parsed `args + [entry]` and the compiled `PyRegex` for that parse (manual `Debug`: shows the source and flags).
+///
+/// `pre`: `None` when `args + [entry]` alone does not parse with `entry` as the pattern (an entry such as `-i`,
+/// `--negate` or `-foo`): only the partition's full argv decides then (Python parses `args + [entry] + files`
+/// once per partition, so a file name may become the pattern, ADR-072), and each partition compiles through the
+/// [`RegexCache`].
 pub struct Compiled {
-    key: Key,
-    regex: Arc<PyRegex>,
+    pre: Option<(Key, Arc<PyRegex>)>,
     /// argparse's columns for the partitions' usage errors.
     columns: usize,
 }
 
 impl fmt::Debug for Compiled {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Compiled")
-            .field("pattern", &self.key.pattern)
-            .field("ignore_case", &self.key.ignore_case)
-            .field("multiline", &self.key.multiline)
-            .finish_non_exhaustive()
+        let mut d = f.debug_struct("Compiled");
+        match &self.pre {
+            Some((k, _)) => d
+                .field("pattern", &k.pattern)
+                .field("ignore_case", &k.ignore_case)
+                .field("multiline", &k.multiline),
+            None => d.field("deferred", &true),
+        };
+        d.finish_non_exhaustive()
     }
 }
 
@@ -126,19 +137,28 @@ fn compile_error(e: &snp_pyre::PyReError) -> Vec<u8> {
     framework::crash_line(&framework::re_exc(e))
 }
 
-/// `Err((code, output))` = argparse error text (exit 2) or `re.error: …` line (exit 1) — reported once for the hook.
+/// `Err((code, output))` = the `re.error: …` line (exit 1) of an invalid entry — reported once for the hook.
 ///
-/// `-h` among the args is `Err((0, help))`: the hook prints the help and passes.
+/// `-h` among the args is `Err((0, help))`: the hook prints the help and passes. When `args + [entry]` is an
+/// argparse error or parses with another pattern (the entry looks like a flag), nothing is decided here: Python's
+/// parse includes the files, which may supply the pattern, so [`run_partition`] parses and compiles per
+/// partition.
 pub fn prepare(args: &[Arc<str>], entry: &str, columns: usize) -> Result<Compiled, (i32, Vec<u8>)> {
     let mut argv: Vec<&OsStr> = args.iter().map(|a| OsStr::new(&**a)).collect();
     argv.push(OsStr::new(entry));
-    let ns = parse(&argv, columns)?;
-    let key = key(&ns).map_err(|line| (1, line))?;
+    let ns = match parse(&argv, columns) {
+        Ok(ns) => ns,
+        Err((0, help)) => return Err((0, help)),
+        Err(_) => return Ok(Compiled { pre: None, columns }),
+    };
+    let key = match key(&ns) {
+        Ok(k) if k.pattern == entry => k,
+        _ => return Ok(Compiled { pre: None, columns }),
+    };
     let regex =
         PyRegex::compile(&key.pattern, key.options()).map_err(|e| (1, compile_error(&e)))?;
     Ok(Compiled {
-        key,
-        regex: Arc::new(regex),
+        pre: Some((key, Arc::new(regex))),
         columns,
     })
 }
@@ -169,13 +189,12 @@ pub fn run_partition(
         Ok(k) => k,
         Err(line) => return failed(1, line),
     };
-    let regex = if key == c.key {
-        Arc::clone(&c.regex)
-    } else {
-        match cache.get(&key.pattern, key.options()) {
+    let regex = match &c.pre {
+        Some((k, r)) if *k == key => Arc::clone(r),
+        _ => match cache.get(&key.pattern, key.options()) {
             Ok(r) => r,
             Err(e) => return failed(1, compile_error(&e)),
-        }
+        },
     };
     let negate = ns.flag("negate");
     let files: Vec<&OsStr> = ns
@@ -183,7 +202,8 @@ pub fn run_partition(
         .iter()
         .map(OsString::as_os_str)
         .collect();
-    let mut out = Vec::new();
+    // `re.compile`'s FutureWarnings reach stderr (merged into the output) before any match line, once per process.
+    let mut out = framework::regex_warnings(&regex);
     let mut code = 0;
     for name in files {
         if cancel.is_cancelled() {
@@ -210,11 +230,8 @@ pub fn run_partition(
             (true, true) => at_once_negated(&regex, fname, &content, &mut out),
         };
         let Ok(rc) = r else {
-            out.extend_from_slice(
-                b"snp: pygrep: regular expression backtracking limit exceeded in ",
-            );
-            out.extend_from_slice(fname);
-            out.push(b'\n');
+            // D-SEC-10: CPython would hang; the hook fails.
+            out.extend_from_slice(&framework::backtrack_line(&key.pattern, name));
             return crate::Outcome {
                 code: 1,
                 output: out,

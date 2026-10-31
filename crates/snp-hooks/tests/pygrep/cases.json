@@ -71,6 +71,10 @@
     {"name": "pgh-rst-backticks", "args": [], "entry": "^(?!    ).*(^| )`[^`]+`([^_]|$)", "files": ["doc.rst"]},
     {"name": "pgh-rst-directive-colons", "args": [], "entry": "^\\s*\\.\\. [a-z]+(| | :):$", "files": ["doc.rst"]},
     {"name": "pgh-rst-inline-touching", "args": [], "entry": "\\w``\\w", "files": ["doc.rst"]},
-    {"name": "pgh-replacement-char", "args": [], "entry": "\ufffd", "files": ["doc.rst", "py.py"]}
+    {"name": "pgh-replacement-char", "args": [], "entry": "\ufffd", "files": ["doc.rst", "py.py"]},
+    {"name": "entry-flag-i", "args": [], "entry": "-i", "files": ["todo", "a.txt", "c.txt"]},
+    {"name": "entry-flag-negate", "args": [], "entry": "--negate", "files": ["TODO", "a.txt", "b.txt", "c.txt"]},
+    {"name": "entry-flag-unknown", "args": [], "entry": "-foo", "files": ["a.txt"]},
+    {"name": "entry-flag-i-no-files", "args": [], "entry": "-i", "files": []}
   ]
 }

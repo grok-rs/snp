@@ -58,3 +58,23 @@ re.PatternError: missing ), unterminated subpattern at position 0
 
 The scenario in `tests/differential/divergences/D-MISC-05.yaml` runs this hook over enough files for several
 partitions.
+
+## Related hook-time regex messages (pygrep, no-commit-to-branch)
+
+Two further hook-time regex texts of the natives follow from the same rule (the problem is reported in snp's own
+one-line form because Python's text names interpreter files). Until the integration lead extends the register row
+(D-MISC-04 covers only cfgv's config-time warnings), they are documented here:
+
+* **`FutureWarning`s** (`[[`, `[a&&b]`, …). Python writes
+  `<site-packages>/pre_commit/languages/pygrep.py:123: FutureWarning: Possible nested set at position 1` plus the
+  source line `  pattern = re.compile(args.pattern.encode(), flags)` to stderr, which the runner merges into the
+  hook output, once per process (once per xargs partition); no-commit-to-branch prints
+  `…/no_commit_to_branch.py:23: FutureWarning: …` plus `  re.match(p, branch_name) for p in patterns` for each
+  pattern it compiles. snp writes the D-MISC-04 form at the same place in the output (before any match line):
+  `[WARNING] regex '[[x]': Possible nested set at position 1 (Python FutureWarning)`. no-commit-to-branch honours
+  `SNP_PYTHON_WARNINGS=0`; `pygrep::run_partition` has no environment in its frozen signature (ARCH §1.4.19), so
+  pygrep always prints them. Exit codes and match lines are unchanged.
+* **Backtracking limit** (D-SEC-10). A pattern that exceeds snp-pyre's limit (CPython would hang) ends the
+  partition with `snp: regular expression {pattern!r} exceeded the backtracking limit on {path!r}`, exit 1, after
+  the match lines printed so far. no-commit-to-branch fails **closed** the same way (`… on {branch!r}`, exit 1): a
+  hanging CPython never let the commit through either.

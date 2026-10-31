@@ -51,6 +51,26 @@
    "crashed": false,
    "out": "empty.txt:1:\n"
   },
+  "entry-flag-i": {
+   "code": 1,
+   "crashed": false,
+   "out": "a.txt:1:hello TODO world\nc.txt:2:TODO crlf\n"
+  },
+  "entry-flag-i-no-files": {
+   "code": 2,
+   "crashed": false,
+   "out": "usage: pygrep.py [-h] [-i] [--multiline] [--negate] pattern [filenames ...]\npygrep.py: error: the following arguments are required: pattern\n"
+  },
+  "entry-flag-negate": {
+   "code": 1,
+   "crashed": false,
+   "out": "b.txt\n"
+  },
+  "entry-flag-unknown": {
+   "code": 2,
+   "crashed": false,
+   "out": "usage: pygrep.py [-h] [-i] [--multiline] [--negate] pattern [filenames ...]\npygrep.py: error: unrecognized arguments: -foo\n"
+  },
   "explicit-arg-error": {
    "code": 2,
    "crashed": false,
