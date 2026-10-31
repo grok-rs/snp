@@ -85,20 +85,27 @@ pub fn parser_error(
     text
 }
 
-/// `TextIOWrapper` newline translation of a text-mode write: `\n` → `os.linesep` (`\r\n` on Windows only).
-fn text_mode(b: &[u8]) -> Vec<u8> {
+/// `TextIOWrapper` newline translation of a text-mode write: `\n` → `os.linesep` (`\r\n` on Windows only), appended
+/// to `dst` (no intermediate allocation on the hot `print` path).
+fn push_text(dst: &mut Vec<u8>, b: &[u8]) {
     if cfg!(windows) {
-        let mut out = Vec::new();
+        dst.reserve(b.len());
         for &c in b {
             if c == b'\n' {
-                out.push(b'\r');
+                dst.push(b'\r');
             }
-            out.push(c);
+            dst.push(c);
         }
-        out
     } else {
-        b.to_vec()
+        dst.extend_from_slice(b);
     }
+}
+
+/// [`push_text`] into a new buffer (argparse texts, once per parse).
+fn text_mode(b: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    push_text(&mut out, b);
+    out
 }
 
 /// `TextIOWrapper._CHUNK_SIZE` (8192): pending text is pushed to the buffer once it reaches this size.
@@ -177,7 +184,7 @@ impl PyOut {
 
     /// `sys.stderr.write(…)` of already-encoded text (line-buffered: it reaches the pipe at once).
     pub fn eprint_bytes(&mut self, b: &[u8]) {
-        self.out.extend_from_slice(&text_mode(b));
+        push_text(&mut self.out, b);
     }
 
     /// An uncaught exception ends a console script: stdout is flushed, then the traceback's last line
@@ -194,7 +201,7 @@ impl PyOut {
     }
 
     fn text_write(&mut self, b: &[u8]) {
-        self.pending.extend_from_slice(&text_mode(b));
+        push_text(&mut self.pending, b);
         if self.pending.len() >= TEXT_CHUNK {
             let pending = std::mem::take(&mut self.pending);
             self.buffer_write(&pending);
@@ -348,6 +355,41 @@ pub(crate) fn re_exc(e: &snp_pyre::PyReError) -> PyExc {
         other => other,
     };
     PyExc::new(ty, e.to_string())
+}
+
+/// D-SEC-10: a tier-2 match of `pattern` on `subject` (a path or branch name) exceeded snp-pyre's backtracking limit
+/// (CPython would hang): `snp: regular expression {pattern!r} exceeded the backtracking limit on {subject!r}\n`.
+pub(crate) fn backtrack_line(pattern: &str, subject: &OsStr) -> Vec<u8> {
+    format!(
+        "snp: regular expression {} exceeded the backtracking limit on {}\n",
+        snp_pycompat::repr::repr_str(pattern),
+        snp_pycompat::repr::repr_os(subject)
+    )
+    .into_bytes()
+}
+
+/// The `FutureWarning`s `re.compile(pattern)` emits (`Possible nested set at position 1`), in the D-MISC-04 form,
+/// one line per warning: `[WARNING] regex {pattern!r}: {msg} (Python FutureWarning)\n`. Python writes them to
+/// stderr, which the hook runner merges into the hook's output; the warning's source location cannot be
+/// reproduced (it names the interpreter's files), so the line is snp's (Tier B, D-MISC-05).
+pub(crate) fn regex_warnings(re: &snp_pyre::PyRegex) -> Vec<u8> {
+    let mut out = Vec::new();
+    for w in re.warnings() {
+        out.extend_from_slice(
+            format!(
+                "[WARNING] regex {}: {} (Python FutureWarning)\n",
+                snp_pycompat::repr::repr_str(re.source()),
+                w.msg
+            )
+            .as_bytes(),
+        );
+    }
+    out
+}
+
+/// `true` unless `SNP_PYTHON_WARNINGS=0` (D-MISC-04) silences emulated Python warnings.
+pub(crate) fn python_warnings(env: &Env) -> bool {
+    env.get("SNP_PYTHON_WARNINGS").is_none_or(|v| v != "0")
 }
 
 /// The outcome of a console script that died of `exc` before touching a file.
