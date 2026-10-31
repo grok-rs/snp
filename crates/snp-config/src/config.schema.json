@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/grok-rs/snp/config.schema.json",
+  "title": ".pre-commit-config.yaml (pre-commit 4.6.2 + snp extension keys)",
+  "description": "pre-commit's CONFIG_SCHEMA (clientlib.py) plus snp's extension keys (docs/COMPATIBILITY.md §7). Unknown keys are allowed: pre-commit and snp only warn about them.",
+  "type": "object",
+  "required": ["repos"],
+  "properties": {
+    "minimum_pre_commit_version": {"type": "string", "default": "0"},
+    "repos": {"type": "array", "items": {"$ref": "#/$defs/repo"}},
+    "default_install_hook_types": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/hookType"},
+      "default": ["pre-commit"]
+    },
+    "default_language_version": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/languageName"},
+      "additionalProperties": {"type": "string"},
+      "default": {}
+    },
+    "default_stages": {"type": "array", "items": {"$ref": "#/$defs/stage"}},
+    "files": {"type": "string", "description": "Python regular expression (re.search) on repo-relative paths", "default": ""},
+    "exclude": {"type": "string", "description": "Python regular expression (re.search) on repo-relative paths", "default": "^$"},
+    "fail_fast": {"type": "boolean", "default": false},
+    "ci": {"type": "object", "description": "pre-commit.ci settings (not validated)"},
+    "minimum_snp_version": {"type": "string", "pattern": "^[0-9]+(\\.[0-9]+){0,2}$"},
+    "priorities": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/u32"}
+    },
+    "fail_on_changes": {"$ref": "#/$defs/failOnChanges"},
+    "skip": {"$ref": "#/$defs/conditions"},
+    "only": {"$ref": "#/$defs/conditions"},
+    "allow_disable": {"type": "boolean", "default": true},
+    "fast_path": {"enum": ["off", "exact", "auto"], "default": "auto"},
+    "fast_path_exclude": {"type": "array", "items": {"type": "string"}},
+    "fast_path_coalesce": {"type": "boolean", "default": false},
+    "output": {"enum": ["default", "summary", "quiet"], "default": "default"}
+  },
+  "$defs": {
+    "u32": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+    "hookType": {
+      "enum": ["commit-msg", "post-checkout", "post-commit", "post-merge", "post-rewrite", "pre-commit",
+               "pre-merge-commit", "pre-push", "pre-rebase", "prepare-commit-msg"]
+    },
+    "stage": {
+      "enum": ["commit-msg", "post-checkout", "post-commit", "post-merge", "post-rewrite", "pre-commit",
+               "pre-merge-commit", "pre-push", "pre-rebase", "prepare-commit-msg", "manual",
+               "commit", "merge-commit", "push"]
+    },
+    "languageName": {
+      "enum": ["conda", "coursier", "dart", "docker", "docker_image", "dotnet", "fail", "golang", "haskell",
+               "julia", "lua", "node", "perl", "pygrep", "python", "r", "ruby", "rust", "swift", "unsupported",
+               "unsupported_script"]
+    },
+    "language": {
+      "anyOf": [
+        {"$ref": "#/$defs/languageName"},
+        {"enum": ["system", "script"]}
+      ]
+    },
+    "failOnChanges": {"anyOf": [{"type": "boolean"}, {"enum": ["always", "never", "ci", "non-ci"]}]},
+    "conditionItem": {
+      "anyOf": [
+        {"enum": ["merge", "rebase", "merge-commit", "cherry-pick", "revert", "bisect"]},
+        {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "ref": {"type": "string"},
+            "env": {"type": "string", "minLength": 1},
+            "ci": {"type": "boolean"},
+            "run": {"type": "string", "minLength": 1}
+          }
+        }
+      ]
+    },
+    "conditions": {
+      "anyOf": [
+        {"type": "boolean"},
+        {"$ref": "#/$defs/conditionItem"},
+        {"type": "array", "items": {"$ref": "#/$defs/conditionItem"}}
+      ]
+    },
+    "hookKeys": {
+      "type": "object",
+      "properties": {
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "entry": {"type": "string"},
+        "language": {"$ref": "#/$defs/language"},
+        "alias": {"type": "string"},
+        "files": {"type": "string"},
+        "exclude": {"type": "string"},
+        "types": {"type": "array", "items": {"type": "string"}},
+        "types_or": {"type": "array", "items": {"type": "string"}},
+        "exclude_types": {"type": "array", "items": {"type": "string"}},
+        "additional_dependencies": {"type": "array", "items": {"type": "string"}},
+        "args": {"type": "array", "items": {"type": "string"}},
+        "always_run": {"type": "boolean"},
+        "fail_fast": {"type": "boolean"},
+        "pass_filenames": {"type": "boolean"},
+        "description": {"type": "string"},
+        "language_version": {"type": "string"},
+        "log_file": {"type": "string"},
+        "minimum_pre_commit_version": {"type": "string"},
+        "require_serial": {"type": "boolean"},
+        "stages": {"type": "array", "items": {"$ref": "#/$defs/stage"}},
+        "verbose": {"type": "boolean"},
+        "priority": {"anyOf": [{"$ref": "#/$defs/u32"}, {"type": "string", "minLength": 1}]},
+        "env": {"type": "object", "additionalProperties": {"type": "string"}},
+        "groups": {"type": "array", "items": {"type": "string", "pattern": "^[^@\\s][^\\s]*$"}},
+        "stage_fixed": {"anyOf": [{"type": "boolean"}, {"enum": ["verify", "trust"]}]},
+        "skip": {"$ref": "#/$defs/conditions"},
+        "only": {"$ref": "#/$defs/conditions"},
+        "timeout": {"type": "string", "description": "Go duration, e.g. 30s, 1m30s, 500ms (0 < t <= 24h)"},
+        "fail_text": {"type": "string"},
+        "root": {"type": "string", "description": "relative directory inside the repository"},
+        "use_stdin": {"type": "boolean"},
+        "fail_on_changes": {"$ref": "#/$defs/failOnChanges"}
+      }
+    },
+    "remoteHook": {"allOf": [{"$ref": "#/$defs/hookKeys"}], "required": ["id"]},
+    "localHook": {"allOf": [{"$ref": "#/$defs/hookKeys"}], "required": ["id", "name", "entry", "language"]},
+    "metaHook": {
+      "allOf": [{"$ref": "#/$defs/hookKeys"}],
+      "required": ["id"],
+      "properties": {
+        "id": {"enum": ["check-hooks-apply", "check-useless-excludes", "identity"]},
+        "language": {"enum": ["unsupported"]}
+      },
+      "not": {"required": ["entry"]}
+    },
+    "builtinHook": {
+      "allOf": [{"$ref": "#/$defs/hookKeys"}],
+      "required": ["id"],
+      "properties": {"language": {"enum": ["system", "unsupported"]}},
+      "not": {"anyOf": [{"required": ["entry"]}, {"required": ["additional_dependencies"]}]}
+    },
+    "repo": {
+      "type": "object",
+      "required": ["repo", "hooks"],
+      "oneOf": [
+        {
+          "properties": {"repo": {"const": "local"}, "hooks": {"type": "array", "items": {"$ref": "#/$defs/localHook"}}},
+          "not": {"required": ["rev"]}
+        },
+        {
+          "properties": {"repo": {"const": "meta"}, "hooks": {"type": "array", "items": {"$ref": "#/$defs/metaHook"}}},
+          "not": {"required": ["rev"]}
+        },
+        {
+          "properties": {"repo": {"const": "builtin"}, "hooks": {"type": "array", "items": {"$ref": "#/$defs/builtinHook"}}},
+          "not": {"required": ["rev"]}
+        },
+        {
+          "required": ["rev"],
+          "properties": {
+            "repo": {"type": "string", "not": {"enum": ["local", "meta", "builtin"]}},
+            "rev": {"type": "string"},
+            "hooks": {"type": "array", "items": {"$ref": "#/$defs/remoteHook"}}
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,5 +1,26 @@
 # D-CRASH-25 (CRASH, owner WP-21): UTF-8 always (see D-DATA-09)
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# Scenario in the schema of docs/research/10-test-strategy.md §7.4.3; `expected` states how each side
+# must differ (WP-35's harness fails when the difference stops reproducing).
 expect_divergence: D-CRASH-25
-status: stub
+name: divergences/D-CRASH-25-migrate-non-utf8
+since: "4.6.2"
+requires: {git: ">=2.19", net: false, tools: [], os: [linux, macos], pty: false}
+work:
+  files:
+    .pre-commit-config.yaml: !!binary cmVwb3M6IFtdCiMgY2Fm6SBhdSBsYWl0Cg==
+  commit: [".pre-commit-config.yaml"]
+steps:
+  - tool: [migrate-config]
+    env: {LANG: C.UTF-8, LC_ALL: C.UTF-8}
+compare:
+  stdout: tierB
+  stderr: exact
+  exit: exact
+  config_file: exact
+expected:
+  oracle:
+    exit: 3
+    stdout_starts_with: "An unexpected error has occurred: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9 in position 15: invalid continuation byte\n"
+  snp:
+    exit: 1
+    stdout_starts_with: "An error has occurred: InvalidConfigError: \n==> File .pre-commit-config.yaml\n=====> 'utf-8' codec can't decode byte 0xe9 in position 15: invalid continuation byte\n"

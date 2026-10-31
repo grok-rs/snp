@@ -1,0 +1,224 @@
+{
+ "generator": "crates/snp-config/tests/oracle/gen_config_vectors.py",
+ "pre_commit": "4.6.2",
+ "python": "3.12.3",
+ "cases": [
+  {
+   "name": "T10-MIG-01 list root",
+   "input": "-   repo: local\n    hooks:\n    -   id: foo\n        name: foo\n        entry: ./bin/foo.sh\n        language: script\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "repos:\n-   repo: local\n    hooks:\n    -   id: foo\n        name: foo\n        entry: ./bin/foo.sh\n        language: script\n",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "T10-MIG-02 header",
+   "input": "# comment\n\n---\n-   repo: local\n    hooks:\n    -   id: foo\n        name: foo\n        entry: ./bin/foo.sh\n        language: script\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "# comment\n\n---\nrepos:\n-   repo: local\n    hooks:\n    -   id: foo\n        name: foo\n        entry: ./bin/foo.sh\n        language: script\n",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "T10-MIG-03 flow list",
+   "input": "[{\n    repo: local,\n    hooks: [{\n        id: foo, name: foo, entry: ./bin/foo.sh,\n        language: script,\n    }]\n}]",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "repos:\n    [{\n        repo: local,\n        hooks: [{\n            id: foo, name: foo, entry: ./bin/foo.sh,\n            language: script,\n        }]\n    }]",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "T10-MIG-04 already migrated",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: foo\n        name: foo\n        entry: ./bin/foo.sh\n        language: script\n",
+   "stdout": "Configuration is already migrated.\n",
+   "output": "repos:\n-   repo: local\n    hooks:\n    -   id: foo\n        name: foo\n        entry: ./bin/foo.sh\n        language: script\n",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "T10-MIG-05 sha",
+   "input": "repos:\n-   repo: https://github.com/pre-commit/pre-commit-hooks\n    sha: v1.2.0\n    hooks: []\n-   repo: https://github.com/pre-commit/pre-commit-hooks\n    sha: v1.2.0\n    hooks: []\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "repos:\n-   repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v1.2.0\n    hooks: []\n-   repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v1.2.0\n    hooks: []\n",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "T10-MIG-05 sha json",
+   "input": "{\"repos\": [{\n    \"repo\": \"https://github.com/pre-commit/pre-commit-hooks\",\n    \"sha\": \"v1.2.0\",\n    \"hooks\": []\n}]}\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "{\"repos\": [{\n    \"repo\": \"https://github.com/pre-commit/pre-commit-hooks\",\n    \"rev\": \"v1.2.0\",\n    \"hooks\": []\n}]}\n",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "T10-MIG-06 python_venv",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: example\n        name: example\n        entry: example\n        language: python_venv\n    -   id: example\n        name: example\n        entry: example\n        language: system\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "repos:\n-   repo: local\n    hooks:\n    -   id: example\n        name: example\n        entry: example\n        language: python\n    -   id: example\n        name: example\n        entry: example\n        language: system\n",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "T10-MIG-06 quoted python_venv",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: example\n        name: example\n        entry: example\n        language: \"python_venv\"\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "repos:\n-   repo: local\n    hooks:\n    -   id: example\n        name: example\n        entry: example\n        language: \"python\"\n",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "T10-MIG-07 default stages",
+   "input": "default_stages: [commit, push, merge-commit, commit-msg]\nrepos: []\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "default_stages: [pre-commit, pre-push, pre-merge-commit, commit-msg]\nrepos: []\n",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "T10-MIG-07 hook stages",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: example\n        name: example\n        entry: example\n        language: system\n        stages: [\"commit\", \"push\", \"merge-commit\", \"commit-msg\"]\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "repos:\n-   repo: local\n    hooks:\n    -   id: example\n        name: example\n        entry: example\n        language: system\n        stages: [\"pre-commit\", \"pre-push\", \"pre-merge-commit\", \"commit-msg\"]\n",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "T10-MIG-08 invalid yaml",
+   "input": "[",
+   "stdout": "",
+   "output": "[",
+   "error": "\n==> File .pre-commit-config.yaml\n=====> while parsing a flow node\ndid not find expected node content\n  in \"<unicode string>\", line 2, column 1",
+   "exc": null
+  },
+  {
+   "name": "MC1 header list root",
+   "input": "# comment header\n---\n\n-   repo: https://example.com/r\n    sha: v1.0.0\n    hooks:\n    -   id: x\n        stages: [commit, \"push\", 'merge-commit', manual]\n        language: python_venv\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "# comment header\n---\n\nrepos:\n-   repo: https://example.com/r\n    rev: v1.0.0\n    hooks:\n    -   id: x\n        stages: [pre-commit, \"pre-push\", 'pre-merge-commit', manual]\n        language: python\n",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "MC2 flow list root",
+   "input": "[{repo: local, hooks: [{id: x, name: x, entry: x, language: \"python_venv\", stages: ['commit']}]}]\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "repos:\n    [{repo: local, hooks: [{id: x, name: x, entry: x, language: \"python\", stages: ['pre-commit']}]}]\n",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "MC3 invalid yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: x\n        args: [\n",
+   "stdout": "",
+   "output": "repos:\n-   repo: local\n    hooks:\n    -   id: x\n        args: [\n",
+   "error": "\n==> File .pre-commit-config.yaml\n=====> while parsing a flow node\ndid not find expected node content\n  in \"<unicode string>\", line 6, column 1",
+   "exc": null
+  },
+  {
+   "name": "MC4 alias stages",
+   "input": "default_stages: &s [commit]\nrepos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: system\n        stages: *s\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "default_stages: &s [pre-commitpre-commit]\nrepos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: system\n        stages: *s\n",
+   "error": null,
+   "exc": null,
+   "divergence": "D-DATA-14",
+   "snp_output": "default_stages: &s [pre-commit]\nrepos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: system\n        stages: *s\n"
+  },
+  {
+   "name": "MC4 folded python_venv",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: >-\n            python_venv\n        files: a\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "repos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: >python>        files: a\n",
+   "error": null,
+   "exc": null,
+   "divergence": "D-DATA-15",
+   "snp_output": "repos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: python\n        files: a\n"
+  },
+  {
+   "name": "CRLF migration",
+   "input": "-   repo: local\r\n    hooks:\r\n    -   id: x\r\n        name: x\r\n        entry: x\r\n        language: system\r\n        stages: [commit]\r\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "repos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: system\n        stages: [pre-commit]\n",
+   "error": null,
+   "exc": null,
+   "divergence": "D-DATA-09",
+   "snp_output": "repos:\r\n-   repo: local\r\n    hooks:\r\n    -   id: x\r\n        name: x\r\n        entry: x\r\n        language: system\r\n        stages: [pre-commit]\r\n"
+  },
+  {
+   "name": "CRLF already migrated",
+   "input": "repos:\r\n-   repo: local\r\n    hooks: []\r\n",
+   "stdout": "Configuration is already migrated.\n",
+   "output": "repos:\r\n-   repo: local\r\n    hooks: []\r\n",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "X13-CFG-12 fallback invalid",
+   "input": "%YAML 1.1\n---\n-   repo: local\n    hooks: []\n",
+   "stdout": "",
+   "output": "%YAML 1.1\n---\n-   repo: local\n    hooks: []\n",
+   "error": null,
+   "exc": "ScannerError: while scanning for the next token\nfound character that cannot start any token\n  in \"<unicode string>\", line 2, column 5",
+   "divergence": "D-CRASH-07"
+  },
+  {
+   "name": "empty file",
+   "input": "",
+   "stdout": "Configuration is already migrated.\n",
+   "output": "",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "scalar root",
+   "input": "foo\n",
+   "stdout": "Configuration is already migrated.\n",
+   "output": "foo\n",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "quoted sha key",
+   "input": "repos:\n-   repo: https://example.com/r\n    'sha': v1\n    hooks: []\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "repos:\n-   repo: https://example.com/r\n    'rev': v1\n    hooks: []\n",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "tagged stages",
+   "input": "default_stages: [!!str commit]\nrepos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: system\n        stages:\n        - !!str push\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "default_stages: [pre-commit]\nrepos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: system\n        stages:\n        - pre-push\n",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "tagged sha key",
+   "input": "repos:\n-   repo: https://x/r\n    !!str sha: v1\n    hooks: []\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "repos:\n-   repo: https://x/r\n    rev: v1\n    hooks: []\n",
+   "error": null,
+   "exc": null
+  },
+  {
+   "name": "anchored sha key",
+   "input": "repos:\n-   repo: https://x/r\n    &k sha: v1\n    hooks: []\nx: *k\n",
+   "stdout": "Configuration has been migrated.\n",
+   "output": "repos:\n-   repo: https://x/r\n    rev: v1\n    hooks: []\nx: *k\n",
+   "error": null,
+   "exc": null,
+   "divergence": "D-DATA-14",
+   "snp_output": "repos:\n-   repo: https://x/r\n    &k rev: v1\n    hooks: []\nx: *k\n"
+  },
+  {
+   "name": "system is not migrated",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: system\n",
+   "stdout": "Configuration is already migrated.\n",
+   "output": "repos:\n-   repo: local\n    hooks:\n    -   id: x\n        name: x\n        entry: x\n        language: system\n",
+   "error": null,
+   "exc": null
+  }
+ ]
+}

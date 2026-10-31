@@ -314,6 +314,27 @@ mod api {
         has::<fn(FileKind, &OsStr, &LoadOpts<'_>, bool) -> Option<String>>(validate::validate_file);
     }
 
+    /// Additive items of WP-21 (not in the frozen §1.4.15 listing; reported as contract additions).
+    #[test]
+    fn additive_items() {
+        has::<for<'a> fn(&'a ConfigError) -> Option<(&'a str, &'a str)>>(ConfigError::uncaught);
+        has::<fn(&ConfigError) -> &'static str>(ConfigError::py_type);
+        has::<fn(&MergeError, Brand) -> String>(MergeError::message);
+        has::<for<'a> fn(&'a Overlay) -> &'a Path>(Overlay::path);
+        has::<fn(&str) -> String>(overlay::unknown_hook_note);
+        has::<fn(&Path, &OsStr) -> Result<Vec<u8>, ConfigError>>(migrate::read_config);
+        has::<[&str; 2]>([migrate::MIGRATED, migrate::ALREADY_MIGRATED]);
+        has::<fn(&[u8], &[RevUpdate], ExtMode) -> Result<Rewrite, ConfigError>>(
+            revline::rewrite_with,
+        );
+        has::<fn(FileKind, &OsStr, &LoadOpts<'_>, bool) -> Result<(), ConfigError>>(
+            validate::validate,
+        );
+        error_type::<MergeError>();
+    }
+
+    fn error_type<T: std::fmt::Display + std::error::Error>() {}
+
     #[test]
     fn sample_dump_schema() {
         let sample: &str = snp_config::SAMPLE_CONFIG;

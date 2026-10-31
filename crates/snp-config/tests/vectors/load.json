@@ -1,0 +1,2376 @@
+{
+ "generator": "crates/snp-config/tests/oracle/gen_config_vectors.py",
+ "pre_commit": "4.6.2",
+ "python": "3.12.3",
+ "cases": [
+  {
+   "name": "V1 repos empty",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V3 not a file",
+   "kind": "config",
+   "file": "nonexist.yaml",
+   "missing": true,
+   "warnings": [],
+   "error": "\n=====> nonexist.yaml is not a file",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V4 empty file",
+   "kind": "config",
+   "file": "empty.yaml",
+   "input": "",
+   "warnings": [],
+   "error": "\n==> File empty.yaml\n=====> Expected a Config map but got a NoneType",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V4 comment only",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "# just a comment\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n=====> Expected a Config map but got a NoneType",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V4 scalar",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "foo\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n=====> Expected a Config map but got a str",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V4 list root",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "-   repo: local\n    hooks: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n=====> Expected a Config map but got a list",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V5 local missing name",
+   "kind": "config",
+   "file": "local_missing.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        entry: a\n        language: system\n",
+   "warnings": [],
+   "error": "\n==> File local_missing.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='a')\n=====> Missing required key: name",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V6 bogus language",
+   "kind": "config",
+   "file": "a1.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: bogus\n",
+   "warnings": [],
+   "error": "\n==> File a1.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='a')\n==> At key: language\n=====> Expected one of conda, coursier, dart, docker, docker_image, dotnet, fail, golang, haskell, julia, lua, node, perl, pygrep, python, r, ruby, rust, swift, unsupported, unsupported_script but got: 'bogus'",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V7 bogus stage",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        stages: [commit, push, bogus]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='a')\n==> At key: stages\n==> At index 2\n=====> Expected one of commit-msg, manual, post-checkout, post-commit, post-merge, post-rewrite, pre-commit, pre-merge-commit, pre-push, pre-rebase, prepare-commit-msg but got: 'bogus'",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V8 invalid files regex",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        files: '['\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='a')\n==> At key: files\n=====> '[' is not a valid python regex",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V9 unknown type tag",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        types: [python, nonsense]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='a')\n==> At key: types\n==> At index 1\n=====> Type tag 'nonsense' is not recognized.  Try upgrading identify and pre-commit?",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V10 warnings only",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n- repo: https://github.com/pre-commit/pre-commit-hooks\n  rev: main\n  hooks:\n  - id: trailing-whitespace\n    stages: [commit]\n    files: 'foo/*'\n    exclude: 'a[\\\\/]b'\n    language: system\n    foo: bar\n  extra: 1\ndefault_stages: [commit, push]\nfiles: '/*'\nexclude: '[/\\\\]'\nbogus_top: 1\nci: {skip: [x]}\n",
+   "warnings": [
+    "The 'files' field in hook 'trailing-whitespace' is a regex, not a glob -- matching '/*' probably isn't what you want here",
+    "pre-commit normalizes slashes in the 'exclude' field in hook 'trailing-whitespace' to forward slashes, so you can use / instead of [\\\\/]",
+    "hook id `trailing-whitespace` uses deprecated stage names (commit) which will be removed in a future version.  run: `pre-commit migrate-config` to automatically fix this.",
+    "The 'rev' field of repo 'https://github.com/pre-commit/pre-commit-hooks' appears to be a mutable reference (moving tag / branch).  Mutable references are never updated after first install and are not supported.  See https://pre-commit.com/#using-the-latest-version-for-a-repository for more details.  Hint: `pre-commit autoupdate` often fixes this.",
+    "Unexpected key(s) present on https://github.com/pre-commit/pre-commit-hooks: extra",
+    "top-level `default_stages` uses deprecated stage names (commit, push) which will be removed in a future version.  run: `pre-commit migrate-config` to automatically fix this.",
+    "Unexpected key(s) present at root: bogus_top",
+    "The top-level 'files' field is a regex, not a glob -- matching '/*' probably isn't what you want here",
+    "pre-commit normalizes the slashes in the top-level 'exclude' field to forward slashes, so you can use / instead of [/\\\\]"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 missing rev",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    hooks: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='https://x/y')\n=====> Missing required key: rev",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 rev on local",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    rev: v1\n    hooks: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n=====> Expected rev to be absent when repo is any of ('local', 'meta'), found rev: 'v1'",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 float rev on local",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    rev: 1.0\n    hooks: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n=====> Expected rev to be absent when repo is any of ('local', 'meta'), found rev: 1.0",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 missing hooks",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: v1\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='https://x/y')\n=====> Missing required key: hooks",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 missing repo",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   rev: v1\n    hooks: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo=MISSING)\n=====> Missing required key: repo",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 repos map",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos: {}\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n=====> Expected array but got 'dict'",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 repos scalars",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos: [foo]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n=====> Expected a Repository map but got a str",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 repo int",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: 123\n    rev: v1\n    hooks: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo=123)\n==> At key: repo\n=====> Expected string got int",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 rev 1.10",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: 1.10\n    hooks: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='https://x/y')\n==> At key: rev\n=====> Expected string got float",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 rev 2020-01-01",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: 2020-01-01\n    hooks: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='https://x/y')\n==> At key: rev\n=====> Expected string got date",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 rev 0123",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: 0123\n    hooks: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='https://x/y')\n==> At key: rev\n=====> Expected string got int",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 rev ~",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: ~\n    hooks: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='https://x/y')\n==> At key: rev\n=====> Expected string got NoneType",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 rev 1234567",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: 1234567\n    hooks: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='https://x/y')\n==> At key: rev\n=====> Expected string got int",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 rev 0700",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: 0700\n    hooks: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='https://x/y')\n==> At key: rev\n=====> Expected string got int",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 rev \"\"",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: \"\"\n    hooks: []\n",
+   "warnings": [
+    "The 'rev' field of repo 'https://x/y' appears to be a mutable reference (moving tag / branch).  Mutable references are never updated after first install and are not supported.  See https://pre-commit.com/#using-the-latest-version-for-a-repository for more details.  Hint: `pre-commit autoupdate` often fixes this."
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 rev 1e3456",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: 1e3456\n    hooks: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 rev 0800",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: 0800\n    hooks: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 rev 123456789012345678901234567890123",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: 123456789012345678901234567890123\n    hooks: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='https://x/y')\n==> At key: rev\n=====> Expected string got int",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 hook id int",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: v1\n    hooks: [{id: 1}]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='https://x/y')\n==> At key: hooks\n==> At Hook(id=1)\n==> At key: id\n=====> Expected string got int",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 hooks scalars",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: v1\n    hooks: [foo]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='https://x/y')\n==> At key: hooks\n=====> Expected a Hook map but got a str",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 hooks map",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: v1\n    hooks: {}\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='https://x/y')\n==> At key: hooks\n=====> Expected array but got 'dict'",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V11 hook missing id",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: v1\n    hooks: [{name: x}]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='https://x/y')\n==> At key: hooks\n==> At Hook(id=MISSING)\n=====> Missing required key: id",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 min version 99",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "minimum_pre_commit_version: \"99\"\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 99 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 min version before repos",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "minimum_pre_commit_version: \"99\"\nrepos: 5\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 99 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 min version float",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "minimum_pre_commit_version: 1.0\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> Expected string got float",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 min version ok",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "minimum_pre_commit_version: \"4.6.2\"\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 min version 4.6.2.0",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "minimum_pre_commit_version: \"4.6.2.0\"\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 4.6.2.0 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 min version unicode digit",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "minimum_pre_commit_version: \"٤\"\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 min version spaces",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "minimum_pre_commit_version: \" 4 \"\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 min version underscore",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "minimum_pre_commit_version: \"4_0\"\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 4_0 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 install hook types legacy",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "default_install_hook_types: [pre-commit, commit]\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: default_install_hook_types\n==> At index 1\n=====> Expected one of commit-msg, post-checkout, post-commit, post-merge, post-rewrite, pre-commit, pre-merge-commit, pre-push, pre-rebase, prepare-commit-msg but got: 'commit'",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 install hook types str",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "default_install_hook_types: pre-push\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: default_install_hook_types\n=====> Expected array but got 'str'",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 dlv unknown",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "default_language_version: {python: python3.11, rubyx: \"2\"}\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: default_language_version\n==> At DefaultLanguageVersion()\n=====> Additional keys found: rubyx.  Only these keys are allowed: conda, coursier, dart, docker, docker_image, dotnet, fail, golang, haskell, julia, lua, node, perl, pygrep, python, r, ruby, rust, swift, unsupported, unsupported_script",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 dlv system",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "default_language_version: {python_venv: x, system: y}\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: default_language_version\n==> At DefaultLanguageVersion()\n=====> Additional keys found: python_venv, system.  Only these keys are allowed: conda, coursier, dart, docker, docker_image, dotnet, fail, golang, haskell, julia, lua, node, perl, pygrep, python, r, ruby, rust, swift, unsupported, unsupported_script",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 dlv float",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "default_language_version: {python: 3.11}\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: default_language_version\n==> At DefaultLanguageVersion()\n==> At key: python\n=====> Expected string got float",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 dlv list",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "default_language_version: [python]\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: default_language_version\n=====> Expected a DefaultLanguageVersion map but got a list",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 default stages bogus",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "default_stages: [commit, manual, bogus]\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: default_stages\n==> At index 2\n=====> Expected one of commit-msg, manual, post-checkout, post-commit, post-merge, post-rewrite, pre-commit, pre-merge-commit, pre-push, pre-rebase, prepare-commit-msg but got: 'bogus'",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 default stages str",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "default_stages: commit\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: default_stages\n=====> Expected array but got 'str'",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 fail_fast yes",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "fail_fast: yes\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 fail_fast str",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "fail_fast: \"true\"\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: fail_fast\n=====> Expected bool got str",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 fail_fast int",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "fail_fast: 1\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: fail_fast\n=====> Expected bool got int",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 exclude bad regex",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "exclude: \"(?P<x\"\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: exclude\n=====> '(?P<x' is not a valid python regex",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 ci list",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "ci: [1]\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: ci\n=====> Expected dict got list",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 ci null",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "ci: ~\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: ci\n=====> Expected dict got NoneType",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V12 default stages empty",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "default_stages: []\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V13 meta bogus id",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: meta\n    hooks:\n    -   id: bogus\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='meta')\n==> At key: hooks\n==> At Hook(id='bogus')\n==> At key: id\n=====> Expected one of check-hooks-apply, check-useless-excludes, identity but got: 'bogus'",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V13 meta entry",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: meta\n    hooks:\n    -   id: identity\n        entry: echo\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='meta')\n==> At key: hooks\n==> At Hook(id='identity')\n=====> 'entry' cannot be overridden",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V13 meta language system",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: meta\n    hooks:\n    -   id: identity\n        language: system\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='meta')\n==> At key: hooks\n==> At Hook(id='identity')\n==> At key: language\n=====> Expected one of unsupported but got: 'system'",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V13 meta warnings",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: meta\n    hooks:\n    -   id: check-hooks-apply\n        files: \"x/*\"\n        stages: [commit]\n        foo: 1\n",
+   "warnings": [
+    "The 'files' field in hook 'check-hooks-apply' is a regex, not a glob -- matching '/*' probably isn't what you want here",
+    "hook id `check-hooks-apply` uses deprecated stage names (commit) which will be removed in a future version.  run: `pre-commit migrate-config` to automatically fix this."
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V14 manifest valid",
+   "kind": "manifest",
+   "file": "cfg.yaml",
+   "input": "- {id: a, name: a, entry: a, language: system}\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V14 manifest map",
+   "kind": "manifest",
+   "file": "h2.yaml",
+   "input": "hooks:\n  - id: a\n",
+   "warnings": [],
+   "error": "\n==> File h2.yaml\n=====> \n=====> pre-commit version 5 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V14 manifest missing language",
+   "kind": "manifest",
+   "file": "h3.yaml",
+   "input": "- {id: a, name: a, entry: a}\n",
+   "warnings": [],
+   "error": "\n==> File h3.yaml\n==> At Hook(id='a')\n=====> Missing required key: language",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V14 manifest min version",
+   "kind": "manifest",
+   "file": "cfg.yaml",
+   "input": "- {id: a, name: a, entry: a, language: system, minimum_pre_commit_version: \"99.0\"}\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Hook(id='a')\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 99.0 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V14 manifest empty list",
+   "kind": "manifest",
+   "file": "cfg.yaml",
+   "input": "[]\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V14 manifest empty",
+   "kind": "manifest",
+   "file": "h6.yaml",
+   "input": "",
+   "warnings": [],
+   "error": "\n==> File h6.yaml\n=====> Expected array but got 'NoneType'",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V14 manifest no warnings",
+   "kind": "manifest",
+   "file": "cfg.yaml",
+   "input": "- {id: a, name: a, entry: a, language: system, foo: 1, stages: [commit], files: \"a/*\"}\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V14 manifest duplicate ids",
+   "kind": "manifest",
+   "file": "cfg.yaml",
+   "input": "- {id: a, name: a, entry: a, language: system}\n- {id: a, name: b, entry: b, language: system}\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 flow node",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos: [\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n=====> while parsing a flow node\ndid not find expected node content\n  in \"<unicode string>\", line 2, column 1",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 tab",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos: []\n\tfoo: 1\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n=====> while scanning for the next token\nfound character that cannot start any token\n  in \"<unicode string>\", line 2, column 1",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 two documents",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos: []\n---\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n=====> expected a single document in the stream\n  in \"<unicode string>\", line 1, column 1\nbut found another document\n  in \"<unicode string>\", line 2, column 1",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 value tag",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        args: [=]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n=====> could not determine a constructor for the tag 'tag:yaml.org,2002:value'\n  in \"<unicode string>\", line 8, column 16",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 bad month",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos: []\nfoo: 2020-13-45\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n=====> month must be in 1..12",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 utf16",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input_hex": "fffefffe7200650070006f0073003a0020005b005d000a00",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n=====> 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 bad continuation",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input_hex": "2320636f6d6d656e7420e9780a7265706f733a205b5d0a",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n=====> 'utf-8' codec can't decode byte 0xe9 in position 10: invalid continuation byte",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 bom",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "﻿repos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 duplicate key",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos: []\nrepos: [1]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n=====> Expected a Repository map but got a int",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 binary repos",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos: !!binary aGVsbG8=\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n=====> Expected array but got 'bytes'",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 set files",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: !!set {a}\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: files\n=====> Expected string got set",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 anchors and merge",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "x: &x {repo: local, hooks: []}\nrepos: [*x, {<<: *x, hooks: [{id: a, name: a, entry: a, language: system, <<: {files: \"^b\"}}]}]\n",
+   "warnings": [
+    "Unexpected key(s) present at root: x"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 yaml 1.2 directive",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "%YAML 1.2\n---\nrepos: []\nfail_fast: on\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 crlf",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\r\n-   repo: local\r\n    hooks:\r\n    -   id: a\r\n        name: a\r\n        entry: a\r\n        language: bogus\r\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='a')\n==> At key: language\n=====> Expected one of conda, coursier, dart, docker, docker_image, dotnet, fail, golang, haskell, julia, lua, node, perl, pygrep, python, r, ruby, rust, swift, unsupported, unsupported_script but got: 'bogus'",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 nan id",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: v1\n    hooks: [{id: .nan}]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='https://x/y')\n==> At key: hooks\n==> At Hook(id=nan)\n==> At key: id\n=====> Expected string got float",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 date id",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: v1\n    hooks: [{id: 2020-01-01}]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='https://x/y')\n==> At key: hooks\n==> At Hook(id=datetime.date(2020, 1, 1))\n==> At key: id\n=====> Expected string got date",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 list id",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: v1\n    hooks: [{id: [1, \"x\"]}]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='https://x/y')\n==> At key: hooks\n==> At Hook(id=[1, 'x'])\n==> At key: id\n=====> Expected string got list",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 map id",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: v1\n    hooks: [{id: {a: 1}}]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='https://x/y')\n==> At key: hooks\n==> At Hook(id={'a': 1})\n==> At key: id\n=====> Expected string got dict",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 bytes id",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: v1\n    hooks: [{id: !!binary aGk=}]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='https://x/y')\n==> At key: hooks\n==> At Hook(id=b'hi')\n==> At key: id\n=====> Expected string got bytes",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 quote id",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://x/y\n    rev: v1\n    hooks: [{id: \"it's\"}]\n",
+   "warnings": [
+    "The 'rev' field of repo 'https://x/y' appears to be a mutable reference (moving tag / branch).  Mutable references are never updated after first install and are not supported.  See https://pre-commit.com/#using-the-latest-version-for-a-repository for more details.  Hint: `pre-commit autoupdate` often fixes this."
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 language yes",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: yes\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='a')\n==> At key: language\n=====> Expected one of conda, coursier, dart, docker, docker_image, dotnet, fail, golang, haskell, julia, lua, node, perl, pygrep, python, r, ruby, rust, swift, unsupported, unsupported_script but got: True",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "V15 language float",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: 1.5\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='a')\n==> At key: language\n=====> Expected one of conda, coursier, dart, docker, docker_image, dotnet, fail, golang, haskell, julia, lua, node, perl, pygrep, python, r, ruby, rust, swift, unsupported, unsupported_script but got: 1.5",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-01 bad tags",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        types: [definitely-not-a-tag]\n        types_or: [fiel]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='a')\n==> At key: types\n==> At index 0\n=====> Type tag 'definitely-not-a-tag' is not recognized.  Try upgrading identify and pre-commit?",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-01 file tag",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        types: [file]\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-02 valid",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: git@github.com:pre-commit/pre-commit-hooks\n    rev: cd74dc150c142c3be70b24eaf0b02cae9d235f37\n    hooks:\n    -   id: pyflakes\n        files: '\\.py$'\n        args: [foo, bar, baz]\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-03 exclude 0",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: git@github.com:pre-commit/pre-commit-hooks\n    rev: cd74dc150c142c3be70b24eaf0b02cae9d235f37\n    hooks:\n    -   id: pyflakes\n        files: '\\.py$'\n        exclude: 0\n        args: [foo, bar, baz]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='git@github.com:pre-commit/pre-commit-hooks')\n==> At key: hooks\n==> At Hook(id='pyflakes')\n==> At key: exclude\n=====> Expected string got int",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-04 local rev",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    rev: foo\n    hooks:\n    -   id: do_not_commit\n        name: Block if \"DO NOT COMMIT\" is found\n        entry: DO NOT COMMIT\n        language: pygrep\n        files: ^(.*)$\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n=====> Expected rev to be absent when repo is any of ('local', 'meta'), found rev: 'foo'",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-05 sample local",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: do_not_commit\n        name: Block if \"DO NOT COMMIT\" is found\n        entry: DO NOT COMMIT\n        language: pygrep\n        files: ^(.*)$\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-07 ci and meta",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "ci: {skip: [foo]}\nrepos: [{repo: meta, hooks: [{id: identity}]}]\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-07 ci string",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "ci: invalid\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: ci\n=====> Expected dict got str",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-08 rev v0.12.4",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: v0.12.4\n    hooks: [{id: flake8}]\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-08 rev b27f281",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: b27f281\n    hooks: [{id: flake8}]\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-08 rev b27f281eb9398fc8504415d7fbdabf119ea8c5e1",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: b27f281eb9398fc8504415d7fbdabf119ea8c5e1\n    hooks: [{id: flake8}]\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-08 rev 19.10b0",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: 19.10b0\n    hooks: [{id: flake8}]\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-08 rev 4.3.21-2",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: 4.3.21-2\n    hooks: [{id: flake8}]\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-08 rev ''",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: ''\n    hooks: [{id: flake8}]\n",
+   "warnings": [
+    "The 'rev' field of repo 'https://gitlab.com/pycqa/flake8' appears to be a mutable reference (moving tag / branch).  Mutable references are never updated after first install and are not supported.  See https://pre-commit.com/#using-the-latest-version-for-a-repository for more details.  Hint: `pre-commit autoupdate` often fixes this."
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-08 rev HEAD",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: HEAD\n    hooks: [{id: flake8}]\n",
+   "warnings": [
+    "The 'rev' field of repo 'https://gitlab.com/pycqa/flake8' appears to be a mutable reference (moving tag / branch).  Mutable references are never updated after first install and are not supported.  See https://pre-commit.com/#using-the-latest-version-for-a-repository for more details.  Hint: `pre-commit autoupdate` often fixes this."
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-08 rev stable",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: stable\n    hooks: [{id: flake8}]\n",
+   "warnings": [
+    "The 'rev' field of repo 'https://gitlab.com/pycqa/flake8' appears to be a mutable reference (moving tag / branch).  Mutable references are never updated after first install and are not supported.  See https://pre-commit.com/#using-the-latest-version-for-a-repository for more details.  Hint: `pre-commit autoupdate` often fixes this."
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-08 rev master",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: master\n    hooks: [{id: flake8}]\n",
+   "warnings": [
+    "The 'rev' field of repo 'https://gitlab.com/pycqa/flake8' appears to be a mutable reference (moving tag / branch).  Mutable references are never updated after first install and are not supported.  See https://pre-commit.com/#using-the-latest-version-for-a-repository for more details.  Hint: `pre-commit autoupdate` often fixes this."
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-08 rev some_branch_name",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: some_branch_name\n    hooks: [{id: flake8}]\n",
+   "warnings": [
+    "The 'rev' field of repo 'https://gitlab.com/pycqa/flake8' appears to be a mutable reference (moving tag / branch).  Mutable references are never updated after first install and are not supported.  See https://pre-commit.com/#using-the-latest-version-for-a-repository for more details.  Hint: `pre-commit autoupdate` often fixes this."
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-08 rev deadbeef",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: deadbeef\n    hooks: [{id: flake8}]\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-08 rev abc",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: abc\n    hooks: [{id: flake8}]\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-08 rev v1",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: v1\n    hooks: [{id: flake8}]\n",
+   "warnings": [
+    "The 'rev' field of repo 'https://gitlab.com/pycqa/flake8' appears to be a mutable reference (moving tag / branch).  Mutable references are never updated after first install and are not supported.  See https://pre-commit.com/#using-the-latest-version-for-a-repository for more details.  Hint: `pre-commit autoupdate` often fixes this."
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-08 rev main",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: main\n    hooks: [{id: flake8}]\n",
+   "warnings": [
+    "The 'rev' field of repo 'https://gitlab.com/pycqa/flake8' appears to be a mutable reference (moving tag / branch).  Mutable references are never updated after first install and are not supported.  See https://pre-commit.com/#using-the-latest-version-for-a-repository for more details.  Hint: `pre-commit autoupdate` often fixes this."
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-09 meta rev",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: meta\n    rev: 3.7.7\n    hooks: [{id: identity}]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='meta')\n=====> Expected rev to be absent when repo is any of ('local', 'meta'), found rev: '3.7.7'",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-10 files none",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        files: ~\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='a')\n==> At key: files\n=====> Expected string got NoneType",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-10 files empty",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files:\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: files\n=====> Expected string got NoneType",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-11 remote dir/*.py",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: v1.0.0\n    hooks:\n    -   id: flake8\n        files: 'dir/*.py'\n        exclude: 'dir/*.py'\n",
+   "warnings": [
+    "The 'files' field in hook 'flake8' is a regex, not a glob -- matching '/*' probably isn't what you want here",
+    "The 'exclude' field in hook 'flake8' is a regex, not a glob -- matching '/*' probably isn't what you want here"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-11 local dir/*.py",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: do_not_commit\n        name: Block if \"DO NOT COMMIT\" is found\n        entry: DO NOT COMMIT\n        language: pygrep\n        files: 'dir/*.py'\n",
+   "warnings": [
+    "The 'files' field in hook 'do_not_commit' is a regex, not a glob -- matching '/*' probably isn't what you want here"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-11 meta dir/*.py",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: meta\n    hooks:\n    -   id: identity\n        files: 'dir/*.py'\n",
+   "warnings": [
+    "The 'files' field in hook 'identity' is a regex, not a glob -- matching '/*' probably isn't what you want here"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-12 top dir/*.py",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: 'dir/*.py'\nexclude: 'dir/*.py'\nrepos: []\n",
+   "warnings": [
+    "The top-level 'files' field is a regex, not a glob -- matching '/*' probably isn't what you want here",
+    "The top-level 'exclude' field is a regex, not a glob -- matching '/*' probably isn't what you want here"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-11 remote dir[\\/].*\\.py",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: v1.0.0\n    hooks:\n    -   id: flake8\n        files: 'dir[\\/].*\\.py'\n        exclude: 'dir[\\/].*\\.py'\n",
+   "warnings": [
+    "pre-commit normalizes slashes in the 'files' field in hook 'flake8' to forward slashes, so you can use / instead of [\\/]",
+    "pre-commit normalizes slashes in the 'exclude' field in hook 'flake8' to forward slashes, so you can use / instead of [\\/]"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-11 local dir[\\/].*\\.py",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: do_not_commit\n        name: Block if \"DO NOT COMMIT\" is found\n        entry: DO NOT COMMIT\n        language: pygrep\n        files: 'dir[\\/].*\\.py'\n",
+   "warnings": [
+    "pre-commit normalizes slashes in the 'files' field in hook 'do_not_commit' to forward slashes, so you can use / instead of [\\/]"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-11 meta dir[\\/].*\\.py",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: meta\n    hooks:\n    -   id: identity\n        files: 'dir[\\/].*\\.py'\n",
+   "warnings": [
+    "pre-commit normalizes slashes in the 'files' field in hook 'identity' to forward slashes, so you can use / instead of [\\/]"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-12 top dir[\\/].*\\.py",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: 'dir[\\/].*\\.py'\nexclude: 'dir[\\/].*\\.py'\nrepos: []\n",
+   "warnings": [
+    "pre-commit normalizes the slashes in the top-level 'files' field to forward slashes, so you can use / instead of [\\/]",
+    "pre-commit normalizes the slashes in the top-level 'exclude' field to forward slashes, so you can use / instead of [\\/]"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-11 remote dir[/\\\\].*\\.py",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: v1.0.0\n    hooks:\n    -   id: flake8\n        files: 'dir[/\\\\].*\\.py'\n        exclude: 'dir[/\\\\].*\\.py'\n",
+   "warnings": [
+    "pre-commit normalizes slashes in the 'files' field in hook 'flake8' to forward slashes, so you can use / instead of [/\\\\]",
+    "pre-commit normalizes slashes in the 'exclude' field in hook 'flake8' to forward slashes, so you can use / instead of [/\\\\]"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-11 local dir[/\\\\].*\\.py",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: do_not_commit\n        name: Block if \"DO NOT COMMIT\" is found\n        entry: DO NOT COMMIT\n        language: pygrep\n        files: 'dir[/\\\\].*\\.py'\n",
+   "warnings": [
+    "pre-commit normalizes slashes in the 'files' field in hook 'do_not_commit' to forward slashes, so you can use / instead of [/\\\\]"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-11 meta dir[/\\\\].*\\.py",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: meta\n    hooks:\n    -   id: identity\n        files: 'dir[/\\\\].*\\.py'\n",
+   "warnings": [
+    "pre-commit normalizes slashes in the 'files' field in hook 'identity' to forward slashes, so you can use / instead of [/\\\\]"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-12 top dir[/\\\\].*\\.py",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: 'dir[/\\\\].*\\.py'\nexclude: 'dir[/\\\\].*\\.py'\nrepos: []\n",
+   "warnings": [
+    "pre-commit normalizes the slashes in the top-level 'files' field to forward slashes, so you can use / instead of [/\\\\]",
+    "pre-commit normalizes the slashes in the top-level 'exclude' field to forward slashes, so you can use / instead of [/\\\\]"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-11 remote dir[\\\\/].*\\.py",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: v1.0.0\n    hooks:\n    -   id: flake8\n        files: 'dir[\\\\/].*\\.py'\n        exclude: 'dir[\\\\/].*\\.py'\n",
+   "warnings": [
+    "pre-commit normalizes slashes in the 'files' field in hook 'flake8' to forward slashes, so you can use / instead of [\\\\/]",
+    "pre-commit normalizes slashes in the 'exclude' field in hook 'flake8' to forward slashes, so you can use / instead of [\\\\/]"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-11 local dir[\\\\/].*\\.py",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: do_not_commit\n        name: Block if \"DO NOT COMMIT\" is found\n        entry: DO NOT COMMIT\n        language: pygrep\n        files: 'dir[\\\\/].*\\.py'\n",
+   "warnings": [
+    "pre-commit normalizes slashes in the 'files' field in hook 'do_not_commit' to forward slashes, so you can use / instead of [\\\\/]"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-11 meta dir[\\\\/].*\\.py",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: meta\n    hooks:\n    -   id: identity\n        files: 'dir[\\\\/].*\\.py'\n",
+   "warnings": [
+    "pre-commit normalizes slashes in the 'files' field in hook 'identity' to forward slashes, so you can use / instead of [\\\\/]"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-12 top dir[\\\\/].*\\.py",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: 'dir[\\\\/].*\\.py'\nexclude: 'dir[\\\\/].*\\.py'\nrepos: []\n",
+   "warnings": [
+    "pre-commit normalizes the slashes in the top-level 'files' field to forward slashes, so you can use / instead of [\\\\/]",
+    "pre-commit normalizes the slashes in the top-level 'exclude' field to forward slashes, so you can use / instead of [\\\\/]"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-11 remote [\\\\/][/\\\\]x/*",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: v1.0.0\n    hooks:\n    -   id: flake8\n        files: '[\\\\/][/\\\\]x/*'\n        exclude: '[\\\\/][/\\\\]x/*'\n",
+   "warnings": [
+    "The 'files' field in hook 'flake8' is a regex, not a glob -- matching '/*' probably isn't what you want here",
+    "pre-commit normalizes slashes in the 'files' field in hook 'flake8' to forward slashes, so you can use / instead of [\\\\/]",
+    "pre-commit normalizes slashes in the 'files' field in hook 'flake8' to forward slashes, so you can use / instead of [/\\\\]",
+    "The 'exclude' field in hook 'flake8' is a regex, not a glob -- matching '/*' probably isn't what you want here",
+    "pre-commit normalizes slashes in the 'exclude' field in hook 'flake8' to forward slashes, so you can use / instead of [\\\\/]",
+    "pre-commit normalizes slashes in the 'exclude' field in hook 'flake8' to forward slashes, so you can use / instead of [/\\\\]"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-11 local [\\\\/][/\\\\]x/*",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: do_not_commit\n        name: Block if \"DO NOT COMMIT\" is found\n        entry: DO NOT COMMIT\n        language: pygrep\n        files: '[\\\\/][/\\\\]x/*'\n",
+   "warnings": [
+    "The 'files' field in hook 'do_not_commit' is a regex, not a glob -- matching '/*' probably isn't what you want here",
+    "pre-commit normalizes slashes in the 'files' field in hook 'do_not_commit' to forward slashes, so you can use / instead of [\\\\/]",
+    "pre-commit normalizes slashes in the 'files' field in hook 'do_not_commit' to forward slashes, so you can use / instead of [/\\\\]"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-11 meta [\\\\/][/\\\\]x/*",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: meta\n    hooks:\n    -   id: identity\n        files: '[\\\\/][/\\\\]x/*'\n",
+   "warnings": [
+    "The 'files' field in hook 'identity' is a regex, not a glob -- matching '/*' probably isn't what you want here",
+    "pre-commit normalizes slashes in the 'files' field in hook 'identity' to forward slashes, so you can use / instead of [\\\\/]",
+    "pre-commit normalizes slashes in the 'files' field in hook 'identity' to forward slashes, so you can use / instead of [/\\\\]"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-12 top [\\\\/][/\\\\]x/*",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: '[\\\\/][/\\\\]x/*'\nexclude: '[\\\\/][/\\\\]x/*'\nrepos: []\n",
+   "warnings": [
+    "The top-level 'files' field is a regex, not a glob -- matching '/*' probably isn't what you want here",
+    "pre-commit normalizes the slashes in the top-level 'files' field to forward slashes, so you can use / instead of [\\\\/]",
+    "pre-commit normalizes the slashes in the top-level 'files' field to forward slashes, so you can use / instead of [/\\\\]",
+    "The top-level 'exclude' field is a regex, not a glob -- matching '/*' probably isn't what you want here",
+    "pre-commit normalizes the slashes in the top-level 'exclude' field to forward slashes, so you can use / instead of [\\\\/]",
+    "pre-commit normalizes the slashes in the top-level 'exclude' field to forward slashes, so you can use / instead of [/\\\\]"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-13 invalid stage",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: do_not_commit\n        name: Block if \"DO NOT COMMIT\" is found\n        entry: DO NOT COMMIT\n        language: pygrep\n        files: ^(.*)$\n        stages: [invalid]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='do_not_commit')\n==> At key: stages\n==> At index 0\n=====> Expected one of commit-msg, manual, post-checkout, post-commit, post-merge, post-rewrite, pre-commit, pre-merge-commit, pre-push, pre-rebase, prepare-commit-msg but got: 'invalid'",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-14 hook legacy stages",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: do_not_commit\n        name: Block if \"DO NOT COMMIT\" is found\n        entry: DO NOT COMMIT\n        language: pygrep\n        files: ^(.*)$\n        stages: [commit, push]\n",
+   "warnings": [
+    "hook id `do_not_commit` uses deprecated stage names (commit, push) which will be removed in a future version.  run: `pre-commit migrate-config` to automatically fix this."
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-14 top legacy stages",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "default_stages: [commit, push]\nrepos: []\n",
+   "warnings": [
+    "top-level `default_stages` uses deprecated stage names (commit, push) which will be removed in a future version.  run: `pre-commit migrate-config` to automatically fix this."
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-14 modern stages",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "default_stages: [pre-commit, pre-push]\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-15 system and script",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: do_not_commit\n        name: Block if \"DO NOT COMMIT\" is found\n        entry: DO NOT COMMIT\n        language: system\n        files: ^(.*)$\n-   repo: local\n    hooks:\n    -   id: do_not_commit\n        name: Block if \"DO NOT COMMIT\" is found\n        entry: DO NOT COMMIT\n        language: script\n        files: ^(.*)$\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-15 missing language",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: do_not_commit\n        name: Block if \"DO NOT COMMIT\" is found\n        entry: DO NOT COMMIT\n        files: ^(.*)$\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='do_not_commit')\n=====> Missing required key: language",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-16 manifest python",
+   "kind": "manifest",
+   "file": "cfg.yaml",
+   "input": "- {id: a, name: b, entry: c, language: python, files: '\\.py$'}\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-16 manifest version",
+   "kind": "manifest",
+   "file": "cfg.yaml",
+   "input": "- {id: a, name: b, entry: c, language: python, language_version: python3.4, files: '\\.py$'}\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-16 manifest always run",
+   "kind": "manifest",
+   "file": "cfg.yaml",
+   "input": "- {id: a, name: b, entry: c, language: python, files: '', always_run: true}\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-17 meta missing id",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: meta\n    hooks:\n    -   id: i-dont-exist\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='meta')\n==> At key: hooks\n==> At Hook(id='i-dont-exist')\n==> At key: id\n=====> Expected one of check-hooks-apply, check-useless-excludes, identity but got: 'i-dont-exist'",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-17 meta python",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: meta\n    hooks:\n    -   id: identity\n        language: python\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='meta')\n==> At key: hooks\n==> At Hook(id='identity')\n==> At key: language\n=====> Expected one of unsupported but got: 'python'",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-17 meta name false",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: meta\n    hooks:\n    -   id: identity\n        name: False\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='meta')\n==> At key: hooks\n==> At Hook(id='identity')\n==> At key: name\n=====> Expected string got bool",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-17 meta entry",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: meta\n    hooks:\n    -   id: identity\n        entry: echo hi\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='meta')\n==> At key: hooks\n==> At Hook(id='identity')\n=====> 'entry' cannot be overridden",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-18 meta defaults",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: meta\n    hooks:\n    -   id: check-hooks-apply\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-19 dlv pony",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "default_language_version: {pony: '1.0'}\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: default_language_version\n==> At DefaultLanguageVersion()\n=====> Additional keys found: pony.  Only these keys are allowed: conda, coursier, dart, docker, docker_image, dotnet, fail, golang, haskell, julia, lua, node, perl, pygrep, python, r, ruby, rust, swift, unsupported, unsupported_script",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-19 dlv int",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "default_language_version: {python: 3}\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: default_language_version\n==> At DefaultLanguageVersion()\n==> At key: python\n=====> Expected string got int",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-21 top",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "minimum_pre_commit_version: '999'\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 999 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-21 hook",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: do_not_commit\n        name: Block if \"DO NOT COMMIT\" is found\n        entry: DO NOT COMMIT\n        language: pygrep\n        files: ^(.*)$\n        minimum_pre_commit_version: '999'\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='do_not_commit')\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 999 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-21 repos 5",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "minimum_pre_commit_version: '999'\nrepos: 5\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 999 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-21 zero",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "minimum_pre_commit_version: '0'\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-22 root",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos: []\nfoo: 1\n",
+   "warnings": [
+    "Unexpected key(s) present at root: foo"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-22 repo",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://gitlab.com/pycqa/flake8\n    rev: 3.7.7\n    hooks: [{id: flake8}]\n    args: [foo]\n",
+   "warnings": [
+    "Unexpected key(s) present on https://gitlab.com/pycqa/flake8: args"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-23 default stages",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "default_stages: [commit-msg, push, commit, merge-commit]\nrepos: []\n",
+   "warnings": [
+    "top-level `default_stages` uses deprecated stage names (push, commit, merge-commit) which will be removed in a future version.  run: `pre-commit migrate-config` to automatically fix this."
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-24 manifest hooks map",
+   "kind": "manifest",
+   "file": ".pre-commit-hooks.yaml",
+   "input": "hooks: {}",
+   "warnings": [],
+   "error": "\n==> File .pre-commit-hooks.yaml\n=====> \n=====> pre-commit version 5 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-25 yaml bools",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        always_run: yes\n        pass_filenames: off\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-26 rev float",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://example.com/r\n    rev: 1.10\n    hooks: [{id: h}]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='https://example.com/r')\n==> At key: rev\n=====> Expected string got float",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-27 duplicate repos",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos: []\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-28 anchors",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "x-common: &common\n    language: system\n    entry: echo\nrepos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        <<: *common\n",
+   "warnings": [
+    "Unexpected key(s) present at root: x-common"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "T10-CFG-29 missing name",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: x\n        entry: x\n        language: system\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='x')\n=====> Missing required key: name",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "X13-CFG-01 min version 'abc'",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "minimum_pre_commit_version: \"abc\"\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": "ValueError: invalid literal for int() with base 10: 'abc'",
+   "future_warnings": [],
+   "divergence": "D-CRASH-01",
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> invalid literal for int() with base 10: 'abc'"
+  },
+  {
+   "name": "X13-CFG-01 min version ''",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "minimum_pre_commit_version: \"\"\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": "ValueError: invalid literal for int() with base 10: ''",
+   "future_warnings": [],
+   "divergence": "D-CRASH-01",
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> invalid literal for int() with base 10: ''"
+  },
+  {
+   "name": "X13-CFG-01 min version '4.'",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "minimum_pre_commit_version: \"4.\"\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": "ValueError: invalid literal for int() with base 10: ''",
+   "future_warnings": [],
+   "divergence": "D-CRASH-01",
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> invalid literal for int() with base 10: ''"
+  },
+  {
+   "name": "X13-CFG-01 min version '4.6.3rc1'",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "minimum_pre_commit_version: \"4.6.3rc1\"\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": "ValueError: invalid literal for int() with base 10: '3rc1'",
+   "future_warnings": [],
+   "divergence": "D-CRASH-01",
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> invalid literal for int() with base 10: '3rc1'"
+  },
+  {
+   "name": "X13-CFG-01 min version '4..6'",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "minimum_pre_commit_version: \"4..6\"\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": "ValueError: invalid literal for int() with base 10: ''",
+   "future_warnings": [],
+   "divergence": "D-CRASH-01",
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> invalid literal for int() with base 10: ''"
+  },
+  {
+   "name": "X13-CFG-01 min version '0x10'",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "minimum_pre_commit_version: \"0x10\"\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": "ValueError: invalid literal for int() with base 10: '0x10'",
+   "future_warnings": [],
+   "divergence": "D-CRASH-01",
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> invalid literal for int() with base 10: '0x10'"
+  },
+  {
+   "name": "X13-CFG-01 min version '1.x'",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "minimum_pre_commit_version: \"1.x\"\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": "ValueError: invalid literal for int() with base 10: 'x'",
+   "future_warnings": [],
+   "divergence": "D-CRASH-01",
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> invalid literal for int() with base 10: 'x'"
+  },
+  {
+   "name": "X13-CFG-01 hook min version",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        minimum_pre_commit_version: abc\n",
+   "warnings": [],
+   "error": null,
+   "exc": "ValueError: invalid literal for int() with base 10: 'abc'",
+   "future_warnings": [],
+   "divergence": "D-CRASH-01",
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='a')\n==> At key: minimum_pre_commit_version\n=====> invalid literal for int() with base 10: 'abc'"
+  },
+  {
+   "name": "X13-CFG-02 int root key",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos: []\n1: x\n",
+   "warnings": [],
+   "error": null,
+   "exc": "TypeError: sequence item 0: expected str instance, int found",
+   "future_warnings": [],
+   "divergence": "D-CRASH-02",
+   "snp_warnings": [
+    "Unexpected key(s) present at root: 1"
+   ]
+  },
+  {
+   "name": "X13-CFG-03 mixed root keys",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos: []\n1: x\nfoo: y\n",
+   "warnings": [],
+   "error": null,
+   "exc": "TypeError: '<' not supported between instances of 'str' and 'int'",
+   "future_warnings": [],
+   "divergence": "D-CRASH-02",
+   "snp_warnings": [
+    "Unexpected key(s) present at root: 1, foo"
+   ]
+  },
+  {
+   "name": "X13-CFG-03 bool and none keys",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos: []\ntrue: x\n~: y\nbar: z\n",
+   "warnings": [],
+   "error": null,
+   "exc": "TypeError: '<' not supported between instances of 'bool' and 'NoneType'",
+   "future_warnings": [],
+   "divergence": "D-CRASH-02",
+   "snp_warnings": [
+    "Unexpected key(s) present at root: None, True, bar"
+   ]
+  },
+  {
+   "name": "X13-CFG-04 stages list",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        stages: [[a]]\n",
+   "warnings": [],
+   "error": null,
+   "exc": "TypeError: unhashable type: 'list'",
+   "future_warnings": [],
+   "divergence": "D-CRASH-03",
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='a')\n==> At key: stages\n==> At index 0\n=====> Expected one of commit-msg, manual, post-checkout, post-commit, post-merge, post-rewrite, pre-commit, pre-merge-commit, pre-push, pre-rebase, prepare-commit-msg but got: ['a']"
+  },
+  {
+   "name": "X13-CFG-04 language list",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: [x]\n",
+   "warnings": [],
+   "error": null,
+   "exc": "TypeError: unhashable type: 'list'",
+   "future_warnings": [],
+   "divergence": "D-CRASH-03",
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='a')\n==> At key: language\n=====> Expected one of conda, coursier, dart, docker, docker_image, dotnet, fail, golang, haskell, julia, lua, node, perl, pygrep, python, r, ruby, rust, swift, unsupported, unsupported_script but got: ['x']"
+  },
+  {
+   "name": "X13-CFG-04 types list",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        types: [[a]]\n",
+   "warnings": [],
+   "error": null,
+   "exc": "TypeError: unhashable type: 'list'",
+   "future_warnings": [],
+   "divergence": "D-CRASH-03",
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='a')\n==> At key: types\n==> At index 0\n=====> Type tag ['a'] is not recognized.  Try upgrading identify and pre-commit?"
+  },
+  {
+   "name": "X13-CFG-05 a{4294967295}",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: 'a{4294967295}'\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": "OverflowError: the repetition number is too large",
+   "future_warnings": [],
+   "divergence": "D-CRASH-04",
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: files\n=====> 'a{4294967295}' is not a valid python regex"
+  },
+  {
+   "name": "X13-CFG-05 a{4294967296}",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: 'a{4294967296}'\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": "OverflowError: the repetition number is too large",
+   "future_warnings": [],
+   "divergence": "D-CRASH-04",
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: files\n=====> 'a{4294967296}' is not a valid python regex"
+  },
+  {
+   "name": "X13-CFG-05 a{0,4294967295}",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: 'a{0,4294967295}'\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": "OverflowError: the repetition number is too large",
+   "future_warnings": [],
+   "divergence": "D-CRASH-04",
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: files\n=====> 'a{0,4294967295}' is not a valid python regex"
+  },
+  {
+   "name": "X13-CFG-05 a{99999999999,}",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: 'a{99999999999,}'\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": "OverflowError: the repetition number is too large",
+   "future_warnings": [],
+   "divergence": "D-CRASH-04",
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: files\n=====> 'a{99999999999,}' is not a valid python regex"
+  },
+  {
+   "name": "X13-CFG-05 a{4294967294}",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: 'a{4294967294}'\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "X13-CFG-06 nesting 485",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: '((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((()))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))'\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": [],
+   "divergence": "D-CRASH-04",
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: files\n=====> '((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((()))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))' is not a valid python regex"
+  },
+  {
+   "name": "X13-CFG-06 nesting 484",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: '(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))'\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "X13-CFG-07 (?a)(?u)x",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "exclude: '(?a)(?u)x'\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": "ValueError: ASCII and UNICODE flags are incompatible",
+   "future_warnings": [],
+   "divergence": "D-CRASH-04",
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: exclude\n=====> '(?a)(?u)x' is not a valid python regex"
+  },
+  {
+   "name": "X13-CFG-07 (?u)(?a)x",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "exclude: '(?u)(?a)x'\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": "ValueError: ASCII and UNICODE flags are incompatible",
+   "future_warnings": [],
+   "divergence": "D-CRASH-04",
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: exclude\n=====> '(?u)(?a)x' is not a valid python regex"
+  },
+  {
+   "name": "X13-CFG-07 (?au)x",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "exclude: '(?au)x'\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: exclude\n=====> '(?au)x' is not a valid python regex",
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "X13-CFG-07 (?u)(?a:x)",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "exclude: '(?u)(?a:x)'\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "X13-SM-03 [[]",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: '[[]'\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": [
+    "Possible nested set at position 1"
+   ]
+  },
+  {
+   "name": "X13-SM-03 [[:alpha:]]",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: '[[:alpha:]]'\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": [
+    "Possible nested set at position 1"
+   ]
+  },
+  {
+   "name": "X13-SM-03 [a&&b]",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: '[a&&b]'\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": [
+    "Possible set intersection at position 2"
+   ]
+  },
+  {
+   "name": "X13-SM-03 [a||b]",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: '[a||b]'\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": [
+    "Possible set union at position 2"
+   ]
+  },
+  {
+   "name": "X13-SM-03 [a~~b]",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: '[a~~b]'\nrepos: []\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": [
+    "Possible set symmetric difference at position 2"
+   ]
+  },
+  {
+   "name": "X13-SM-03 [a--b]",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: '[a--b]'\nrepos: []\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: files\n=====> '[a--b]' is not a valid python regex",
+   "exc": null,
+   "future_warnings": [
+    "Possible set difference at position 2"
+   ],
+   "divergence": "D-MISC-04",
+   "snp_future_warnings": [],
+   "snp_error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: files\n=====> '[a--b]' is not a valid python regex"
+  },
+  {
+   "name": "X13-SM-03 hook and top dedupe",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: '[[]'\nrepos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        files: '[[]'\n        exclude: '[a&&b]'\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": [
+    "Possible nested set at position 1",
+    "Possible set intersection at position 2"
+   ]
+  },
+  {
+   "name": "X13-SM-03 hook before top",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        files: '[[a]'\nfiles: 'a[b&&c]'\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": [
+    "Possible nested set at position 1",
+    "Possible set intersection at position 3"
+   ]
+  },
+  {
+   "name": "X13-SM-03 top first in the file",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "files: 'a[b&&c]'\nrepos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        exclude: '[[a]'\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": [
+    "Possible nested set at position 1",
+    "Possible set intersection at position 3"
+   ]
+  },
+  {
+   "name": "X13-SM-03 before a later error",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        files: '[[a]'\nfail_fast: 3\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: fail_fast\n=====> Expected bool got int",
+   "exc": null,
+   "future_warnings": [
+    "Possible nested set at position 1"
+   ]
+  },
+  {
+   "name": "X13-SM-03 same hook later error",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        files: '[a||b]'\n        types: [nonsense]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='a')\n==> At key: types\n==> At index 0\n=====> Type tag 'nonsense' is not recognized.  Try upgrading identify and pre-commit?",
+   "exc": null,
+   "future_warnings": [
+    "Possible set union at position 2"
+   ]
+  },
+  {
+   "name": "X13-SM-03 manifest before error",
+   "kind": "manifest",
+   "file": "cfg.yaml",
+   "input": "- {id: a, name: a, entry: a, language: system, exclude: '[a~~b]'}\n- {id: b, name: b, entry: b, language: bogus}\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Hook(id='b')\n==> At key: language\n=====> Expected one of conda, coursier, dart, docker, docker_image, dotnet, fail, golang, haskell, julia, lua, node, perl, pygrep, python, r, ruby, rust, swift, unsupported, unsupported_script but got: 'bogus'",
+   "exc": null,
+   "future_warnings": [
+    "Possible set symmetric difference at position 2"
+   ]
+  },
+  {
+   "name": "X13-CFG-13 manifest crash rows",
+   "kind": "manifest",
+   "file": "cfg.yaml",
+   "input": "- {id: a, name: a, entry: a, language: [x]}\n",
+   "warnings": [],
+   "error": null,
+   "exc": "TypeError: unhashable type: 'list'",
+   "future_warnings": [],
+   "divergence": "D-CRASH-03",
+   "snp_error": "\n==> File cfg.yaml\n==> At Hook(id='a')\n==> At key: language\n=====> Expected one of conda, coursier, dart, docker, docker_image, dotnet, fail, golang, haskell, julia, lua, node, perl, pygrep, python, r, ruby, rust, swift, unsupported, unsupported_script but got: ['x']"
+  },
+  {
+   "name": "X13-CFG-13 manifest overflow",
+   "kind": "manifest",
+   "file": "cfg.yaml",
+   "input": "- {id: a, name: a, entry: a, language: system, files: 'a{4294967296}'}\n",
+   "warnings": [],
+   "error": null,
+   "exc": "OverflowError: the repetition number is too large",
+   "future_warnings": [],
+   "divergence": "D-CRASH-04",
+   "snp_error": "\n==> File cfg.yaml\n==> At Hook(id='a')\n==> At key: files\n=====> 'a{4294967296}' is not a valid python regex"
+  },
+  {
+   "name": "X13-CFG-13 manifest min version",
+   "kind": "manifest",
+   "file": "cfg.yaml",
+   "input": "- {id: a, name: a, entry: a, language: system, minimum_pre_commit_version: x}\n",
+   "warnings": [],
+   "error": null,
+   "exc": "ValueError: invalid literal for int() with base 10: 'x'",
+   "future_warnings": [],
+   "divergence": "D-CRASH-01",
+   "snp_error": "\n==> File cfg.yaml\n==> At Hook(id='a')\n==> At key: minimum_pre_commit_version\n=====> invalid literal for int() with base 10: 'x'"
+  },
+  {
+   "name": "EXT root keys",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos: []\npriorities: {early: 1}\noutput: summary\nx-anchor: 1\n",
+   "warnings": [
+    "Unexpected key(s) present at root: output, priorities, x-anchor"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": [],
+   "ext": true
+  },
+  {
+   "name": "EXT repo key",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    x-group: 1\n    hooks: []\n",
+   "warnings": [
+    "Unexpected key(s) present on local: x-group"
+   ],
+   "error": null,
+   "exc": null,
+   "future_warnings": [],
+   "ext": true
+  },
+  {
+   "name": "EXT hook keys",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        priority: 1\n        env: {A: b}\n        stage_fixed: true\n        x-snp: 1\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": [],
+   "ext": true
+  },
+  {
+   "name": "EXT builtin",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: builtin\n    hooks: [{id: trailing-whitespace}]\n",
+   "warnings": [],
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='builtin')\n=====> Missing required key: rev",
+   "exc": null,
+   "future_warnings": [],
+   "ext": true
+  },
+  {
+   "name": "corpus pre-commit/.pre-commit-config.yaml",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v6.0.0\n    hooks:\n    -   id: trailing-whitespace\n    -   id: end-of-file-fixer\n    -   id: check-yaml\n    -   id: debug-statements\n    -   id: double-quote-string-fixer\n    -   id: name-tests-test\n    -   id: requirements-txt-fixer\n-   repo: https://github.com/asottile/setup-cfg-fmt\n    rev: v3.2.0\n    hooks:\n    -   id: setup-cfg-fmt\n-   repo: https://github.com/asottile/reorder-python-imports\n    rev: v3.17.0\n    hooks:\n    -   id: reorder-python-imports\n        exclude: ^pre_commit/resources/\n        args: [--py310-plus, --add-import, 'from __future__ import annotations']\n-   repo: https://github.com/asottile/add-trailing-comma\n    rev: v4.0.0\n    hooks:\n    -   id: add-trailing-comma\n-   repo: https://github.com/asottile/pyupgrade\n    rev: v3.21.2\n    hooks:\n    -   id: pyupgrade\n        args: [--py310-plus]\n-   repo: https://github.com/hhatto/autopep8\n    rev: v2.3.2\n    hooks:\n    -   id: autopep8\n-   repo: https://github.com/PyCQA/flake8\n    rev: 7.4.1\n    hooks:\n    -   id: flake8\n-   repo: https://github.com/pre-commit/mirrors-mypy\n    rev: v2.4.0\n    hooks:\n    -   id: mypy\n        additional_dependencies: [types-pyyaml]\n        exclude: ^testing/resources/\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "corpus pre-commit/.pre-commit-hooks.yaml",
+   "kind": "manifest",
+   "file": "cfg.yaml",
+   "input": "-   id: validate_manifest\n    name: validate pre-commit manifest\n    description: This validator validates a pre-commit hooks manifest file\n    entry: pre-commit validate-manifest\n    language: python\n    files: ^\\.pre-commit-hooks\\.yaml$\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "corpus pre-commit-hooks/.pre-commit-config.yaml",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v6.0.0\n    hooks:\n    -   id: trailing-whitespace\n    -   id: end-of-file-fixer\n    -   id: check-yaml\n    -   id: debug-statements\n    -   id: double-quote-string-fixer\n    -   id: name-tests-test\n    -   id: requirements-txt-fixer\n-   repo: https://github.com/asottile/setup-cfg-fmt\n    rev: v3.2.0\n    hooks:\n    -   id: setup-cfg-fmt\n-   repo: https://github.com/asottile/reorder-python-imports\n    rev: v3.17.0\n    hooks:\n    -   id: reorder-python-imports\n        args: [--py310-plus, --add-import, 'from __future__ import annotations']\n-   repo: https://github.com/asottile/add-trailing-comma\n    rev: v4.0.0\n    hooks:\n    -   id: add-trailing-comma\n-   repo: https://github.com/asottile/pyupgrade\n    rev: v3.21.2\n    hooks:\n    -   id: pyupgrade\n        args: [--py310-plus]\n-   repo: https://github.com/hhatto/autopep8\n    rev: v2.3.2\n    hooks:\n    -   id: autopep8\n-   repo: https://github.com/PyCQA/flake8\n    rev: 7.4.1\n    hooks:\n    -   id: flake8\n-   repo: https://github.com/pre-commit/mirrors-mypy\n    rev: v2.4.0\n    hooks:\n    -   id: mypy\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "corpus pre-commit-hooks/.pre-commit-hooks.yaml",
+   "kind": "manifest",
+   "file": "cfg.yaml",
+   "input": "-   id: check-added-large-files\n    name: check for added large files\n    description: prevents giant files from being committed.\n    entry: check-added-large-files\n    language: python\n    stages: [pre-commit, pre-push, manual]\n    minimum_pre_commit_version: 3.2.0\n-   id: check-ast\n    name: check python ast\n    description: simply checks whether the files parse as valid python.\n    entry: check-ast\n    language: python\n    types: [python]\n-   id: check-byte-order-marker\n    name: check-byte-order-marker (removed)\n    description: (removed) use fix-byte-order-marker instead.\n    entry: pre-commit-hooks-removed check-byte-order-marker fix-byte-order-marker https://github.com/pre-commit/pre-commit-hooks\n    language: python\n    types: [text]\n-   id: check-builtin-literals\n    name: check builtin type constructor use\n    description: requires literal syntax when initializing empty or zero python builtin types.\n    entry: check-builtin-literals\n    language: python\n    types: [python]\n-   id: check-case-conflict\n    name: check for case conflicts\n    description: checks for files that would conflict in case-insensitive filesystems.\n    entry: check-case-conflict\n    language: python\n-   id: check-docstring-first\n    name: check docstring is first (deprecated)\n    description: checks a common error of defining a docstring after code.\n    entry: check-docstring-first\n    language: python\n    types: [python]\n-   id: check-executables-have-shebangs\n    name: check that executables have shebangs\n    description: ensures that (non-binary) executables have a shebang.\n    entry: check-executables-have-shebangs\n    language: python\n    types: [text, executable]\n    stages: [pre-commit, pre-push, manual]\n    minimum_pre_commit_version: 3.2.0\n-   id: check-illegal-windows-names\n    name: check illegal windows names\n    entry: Illegal Windows filenames detected\n    language: fail\n    files: '(?i)((^|/)(CON|PRN|AUX|NUL|COM[\\d¹²³]|LPT[\\d¹²³])(\\.|/|$)|[<>:\\\"\\\\|?*\\x00-\\x1F]|/[^/]*[\\.\\s]/|[^/]*[\\.\\s]$)'\n-   id: check-json\n    name: check json\n    description: checks json files for parseable syntax.\n    entry: check-json\n    language: python\n    types: [json]\n-   id: check-shebang-scripts-are-executable\n    name: check that scripts with shebangs are executable\n    description: ensures that (non-binary) files with a shebang are executable.\n    entry: check-shebang-scripts-are-executable\n    language: python\n    types: [text]\n    stages: [pre-commit, pre-push, manual]\n    minimum_pre_commit_version: 3.2.0\n-   id: pretty-format-json\n    name: pretty format json\n    description: sets a standard for formatting json files.\n    entry: pretty-format-json\n    language: python\n    types: [json]\n-   id: check-merge-conflict\n    name: check for merge conflicts\n    description: checks for files that contain merge conflict strings.\n    entry: check-merge-conflict\n    language: python\n    types: [text]\n-   id: check-symlinks\n    name: check for broken symlinks\n    description: checks for symlinks which do not point to anything.\n    entry: check-symlinks\n    language: python\n    types: [symlink]\n-   id: check-toml\n    name: check toml\n    description: checks toml files for parseable syntax.\n    entry: check-toml\n    language: python\n    types: [toml]\n-   id: check-vcs-permalinks\n    name: check vcs permalinks\n    description: ensures that links to vcs websites are permalinks.\n    entry: check-vcs-permalinks\n    language: python\n    types: [text]\n-   id: check-xml\n    name: check xml\n    description: checks xml files for parseable syntax.\n    entry: check-xml\n    language: python\n    types: [xml]\n-   id: check-yaml\n    name: check yaml\n    description: checks yaml files for parseable syntax.\n    entry: check-yaml\n    language: python\n    types: [yaml]\n-   id: debug-statements\n    name: debug statements (python)\n    description: checks for debugger imports and py37+ `breakpoint()` calls in python source.\n    entry: debug-statement-hook\n    language: python\n    types: [python]\n-   id: destroyed-symlinks\n    name: detect destroyed symlinks\n    description: detects symlinks which are changed to regular files with a content of a path which that symlink was pointing to.\n    entry: destroyed-symlinks\n    language: python\n    types: [file]\n    stages: [pre-commit, pre-push, manual]\n-   id: detect-aws-credentials\n    name: detect aws credentials\n    description: detects *your* aws credentials from the aws cli credentials file.\n    entry: detect-aws-credentials\n    language: python\n    types: [text]\n-   id: detect-private-key\n    name: detect private key\n    description: detects the presence of private keys.\n    entry: detect-private-key\n    language: python\n    types: [text]\n-   id: double-quote-string-fixer\n    name: fix double quoted strings\n    description: replaces double quoted strings with single quoted strings.\n    entry: double-quote-string-fixer\n    language: python\n    types: [python]\n-   id: end-of-file-fixer\n    name: fix end of files\n    description: ensures that a file is either empty, or ends with one newline.\n    entry: end-of-file-fixer\n    language: python\n    types: [text]\n    stages: [pre-commit, pre-push, manual]\n    minimum_pre_commit_version: 3.2.0\n-   id: file-contents-sorter\n    name: file contents sorter\n    description: sorts the lines in specified files (defaults to alphabetical). you must provide list of target files as input in your .pre-commit-config.yaml file.\n    entry: file-contents-sorter\n    language: python\n    files: '^$'\n-   id: fix-byte-order-marker\n    name: fix utf-8 byte order marker\n    description: removes utf-8 byte order marker.\n    entry: fix-byte-order-marker\n    language: python\n    types: [text]\n-   id: fix-encoding-pragma\n    name: fix python encoding pragma (removed)\n    description: (removed) use pyupgrade instead.\n    entry: pre-commit-hooks-removed fix-encoding-pragma pyupgrade https://github.com/asottile/pyupgrade\n    language: python\n    types: [python]\n-   id: forbid-new-submodules\n    name: forbid new submodules\n    description: prevents addition of new git submodules.\n    language: python\n    entry: forbid-new-submodules\n    types: [directory]\n-   id: forbid-submodules\n    name: forbid submodules\n    description: forbids any submodules in the repository\n    language: fail\n    entry: 'submodules are not allowed in this repository:'\n    types: [directory]\n-   id: mixed-line-ending\n    name: mixed line ending\n    description: replaces or checks mixed line ending.\n    entry: mixed-line-ending\n    language: python\n    types: [text]\n    stages: [pre-commit, pre-push, manual]\n-   id: name-tests-test\n    name: python tests naming\n    description: verifies that test files are named correctly.\n    entry: name-tests-test\n    language: python\n    files: (^|/)tests/.+\\.py$\n-   id: no-commit-to-branch\n    name: \"don't commit to branch\"\n    entry: no-commit-to-branch\n    language: python\n    pass_filenames: false\n    always_run: true\n-   id: requirements-txt-fixer\n    name: fix requirements.txt\n    description: sorts entries in requirements.txt.\n    entry: requirements-txt-fixer\n    language: python\n    files: (requirements|constraints).*\\.txt$\n-   id: sort-simple-yaml\n    name: sort simple yaml files\n    description: sorts simple yaml files which consist only of top-level keys, preserving comments and blocks.\n    language: python\n    entry: sort-simple-yaml\n    files: '^$'\n-   id: trailing-whitespace\n    name: trim trailing whitespace\n    description: trims trailing whitespace.\n    entry: trailing-whitespace-fixer\n    language: python\n    types: [text]\n    stages: [pre-commit, pre-push, manual]\n    minimum_pre_commit_version: 3.2.0\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "corpus cfgv/.pre-commit-config.yaml",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v6.0.0\n    hooks:\n    -   id: trailing-whitespace\n    -   id: end-of-file-fixer\n    -   id: check-yaml\n    -   id: debug-statements\n    -   id: double-quote-string-fixer\n    -   id: name-tests-test\n    -   id: requirements-txt-fixer\n-   repo: https://github.com/asottile/setup-cfg-fmt\n    rev: v3.2.0\n    hooks:\n    -   id: setup-cfg-fmt\n-   repo: https://github.com/asottile/reorder-python-imports\n    rev: v3.17.0\n    hooks:\n    -   id: reorder-python-imports\n        args: [--py310-plus, --add-import, 'from __future__ import annotations']\n-   repo: https://github.com/asottile/add-trailing-comma\n    rev: v4.0.0\n    hooks:\n    -   id: add-trailing-comma\n-   repo: https://github.com/asottile/pyupgrade\n    rev: v3.21.2\n    hooks:\n    -   id: pyupgrade\n        args: [--py310-plus]\n-   repo: https://github.com/hhatto/autopep8\n    rev: v2.3.2\n    hooks:\n    -   id: autopep8\n-   repo: https://github.com/PyCQA/flake8\n    rev: 7.4.1\n    hooks:\n    -   id: flake8\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "corpus identify/.pre-commit-config.yaml",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v6.0.0\n    hooks:\n    -   id: trailing-whitespace\n    -   id: end-of-file-fixer\n    -   id: check-yaml\n    -   id: debug-statements\n    -   id: double-quote-string-fixer\n    -   id: name-tests-test\n    -   id: requirements-txt-fixer\n-   repo: https://github.com/asottile/setup-cfg-fmt\n    rev: v3.2.0\n    hooks:\n    -   id: setup-cfg-fmt\n-   repo: https://github.com/asottile/reorder-python-imports\n    rev: v3.17.0\n    hooks:\n    -   id: reorder-python-imports\n        args: [--py310-plus, --add-import, 'from __future__ import annotations']\n-   repo: https://github.com/asottile/add-trailing-comma\n    rev: v4.0.0\n    hooks:\n    -   id: add-trailing-comma\n-   repo: https://github.com/asottile/pyupgrade\n    rev: v3.21.2\n    hooks:\n    -   id: pyupgrade\n        args: [--py310-plus]\n-   repo: https://github.com/hhatto/autopep8\n    rev: v2.3.2\n    hooks:\n    -   id: autopep8\n-   repo: https://github.com/PyCQA/flake8\n    rev: 7.4.1\n    hooks:\n    -   id: flake8\n        exclude: ^identify/vendor/licenses\\.py$\n-   repo: https://github.com/pre-commit/mirrors-mypy\n    rev: v2.4.0\n    hooks:\n    -   id: mypy\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "corpus pygrep-hooks/.pre-commit-config.yaml",
+   "kind": "config",
+   "file": "cfg.yaml",
+   "input": "repos:\n-   repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v6.0.0\n    hooks:\n    -   id: trailing-whitespace\n    -   id: end-of-file-fixer\n    -   id: check-yaml\n    -   id: debug-statements\n    -   id: double-quote-string-fixer\n    -   id: name-tests-test\n    -   id: requirements-txt-fixer\n-   repo: https://github.com/asottile/reorder-python-imports\n    rev: v3.17.0\n    hooks:\n    -   id: reorder-python-imports\n        args: [--py310-plus, --add-import, 'from __future__ import annotations']\n-   repo: https://github.com/asottile/add-trailing-comma\n    rev: v4.0.0\n    hooks:\n    -   id: add-trailing-comma\n-   repo: https://github.com/asottile/pyupgrade\n    rev: v3.21.2\n    hooks:\n    -   id: pyupgrade\n        args: [--py310-plus]\n-   repo: https://github.com/hhatto/autopep8\n    rev: v2.3.2\n    hooks:\n    -   id: autopep8\n-   repo: https://github.com/PyCQA/flake8\n    rev: 7.4.1\n    hooks:\n    -   id: flake8\n-   repo: https://github.com/pre-commit/mirrors-mypy\n    rev: v2.4.0\n    hooks:\n    -   id: mypy\n        additional_dependencies: [types-pyyaml]\n-   repo: local\n    hooks:\n    -   id: generate-readme\n        name: generate readme\n        entry: ./generate-readme\n        language: python\n        additional_dependencies: [pyyaml]\n        files: ^(\\.pre-commit-hooks.yaml|generate-readme)$\n        pass_filenames: false\n    -   id: run-tests\n        name: run tests\n        entry: pytest tests\n        language: python\n        additional_dependencies: [pre-commit, pytest]\n        always_run: true\n        pass_filenames: false\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  },
+  {
+   "name": "corpus pygrep-hooks/.pre-commit-hooks.yaml",
+   "kind": "manifest",
+   "file": "cfg.yaml",
+   "input": "-   id: python-check-blanket-noqa\n    name: check blanket noqa\n    description: 'Enforce that `noqa` annotations always occur with specific codes. Sample annotations: `# noqa: F401`, `# noqa: F401,W203`'\n    entry: '(?i)# noqa(?!: )'\n    language: pygrep\n    types: [python]\n-   id: python-check-blanket-type-ignore\n    name: check blanket type ignore\n    description: 'Enforce that `# type: ignore` annotations always occur with specific codes. Sample annotations: `# type: ignore[attr-defined]`, `# type: ignore[attr-defined, name-defined]`'\n    entry: '# type:? *ignore(?!\\[|\\w)'\n    language: pygrep\n    types: [python]\n-   id: python-check-mock-methods\n    name: check for not-real mock methods\n    description: >-\n        Prevent common mistakes of `assert mck.not_called()`, `assert mck.called_once_with(...)`\n        and `mck.assert_called`.\n    language: pygrep\n    entry: >\n        (?x)(\n            assert .*\\.(\n                not_called|\n                called_\n            )|\n            # ''.join(rf'(?<!\\b{s})' for s in dir(mock) if s.endswith('Mock')))\n            (?<!\\bAsyncMock)(?<!\\bMagicMock)(?<!\\bMock)(?<!\\bNonCallableMagicMock)(?<!\\bNonCallableMock)(?<!\\bPropertyMock)\n            \\.assert_(\n                any_call|\n                called|\n                called_once|\n                called_once_with|\n                called_with|\n                has_calls|\n                not_called\n            )($|[^(\\w])\n        )\n    types: [python]\n-   id: python-no-eval\n    name: check for eval()\n    description: 'A quick check for the `eval()` built-in function'\n    entry: '\\beval\\('\n    language: pygrep\n    types: [python]\n-   id: python-no-log-warn\n    name: use logger.warning(\n    description: 'A quick check for the deprecated `.warn()` method of python loggers'\n    entry: '(?<!warnings)\\.warn\\('\n    language: pygrep\n    types: [python]\n-   id: python-use-type-annotations\n    name: type annotations not comments\n    description: 'Enforce that python3.6+ type annotations are used instead of type comments'\n    entry: '# type(?!: *ignore([^a-zA-Z0-9]|$))'\n    language: pygrep\n    types: [python]\n-   id: rst-backticks\n    name: rst ``code`` is two backticks\n    description: 'Detect common mistake of using single backticks when writing rst'\n    entry: '^(?!    ).*(^| )`[^`]+`([^_]|$)'\n    language: pygrep\n    types: [rst]\n-   id: rst-directive-colons\n    name: rst directives end with two colons\n    description: 'Detect mistake of rst directive not ending with double colon or space before the double colon'\n    entry: '^\\s*\\.\\. [a-z]+(| | :):$'\n    language: pygrep\n    types: [rst]\n-   id: rst-inline-touching-normal\n    name: rst ``inline code`` next to normal text\n    description: 'Detect mistake of inline code touching normal text in rst'\n    entry: '\\w``\\w'\n    language: pygrep\n    types: [rst]\n-   id: text-unicode-replacement-char\n    name: no unicode replacement chars\n    description: 'Forbid files which have a UTF-8 Unicode replacement character'\n    entry: \"\\uFFFD\"\n    language: pygrep\n    types: [text]\n",
+   "warnings": [],
+   "error": null,
+   "exc": null,
+   "future_warnings": []
+  }
+ ]
+}

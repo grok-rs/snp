@@ -1,5 +1,35 @@
 # D-DATA-15 (DATA, owner WP-21): block scalars rewritten safely
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# Scenario in the schema of docs/research/10-test-strategy.md §7.4.3; `expected` states how each side
+# must differ (WP-35's harness fails when the difference stops reproducing).
 expect_divergence: D-DATA-15
-status: stub
+name: divergences/D-DATA-15-migrate-block-scalar
+since: "4.6.2"
+requires: {git: ">=2.19", net: false, tools: [], os: [linux, macos, windows], pty: false}
+work:
+  files: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: x
+            name: x
+            entry: x
+            language: >-
+                python_venv
+            files: a
+  commit: [".pre-commit-config.yaml"]
+steps:
+  - tool: [migrate-config]
+  - tool: [validate-config, .pre-commit-config.yaml]
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  config_file: exact
+expected:
+  oracle:
+    config_file_contains: "language: >python>"
+    exit_of_step_2: 1
+  snp:
+    config_file_contains: "        language: python\n        files: a\n"
+    exit_of_step_2: 0

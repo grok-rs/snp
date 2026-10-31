@@ -1,5 +1,27 @@
 # D-DATA-16 (DATA, owner WP-21): end of file treated as a line end; comments kept
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# Scenario in the schema of docs/research/10-test-strategy.md §7.4.3; `expected` states how each side
+# must differ (WP-35's harness fails when the difference stops reproducing).
 expect_divergence: D-DATA-16
-status: stub
+name: divergences/D-DATA-16-no-final-newline
+since: "4.6.2"
+requires: {git: ">=2.19", net: false, tools: [], os: [linux, macos, windows], pty: false}
+repos:
+  hooks: {fixture: script_hooks_repo, tags: [v2.0.0]}
+work:
+  files: {}
+  config: "# keep me\nrepos:\n-   repo: ${repo:hooks}\n    hooks:\n    -   id: bash_hook\n    rev: ${rev:hooks}  # c"
+  commit: [".pre-commit-config.yaml"]
+steps:
+  - tool: [autoupdate]
+    env: {GIT_ALLOW_PROTOCOL: file}
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  config_file: exact
+expected:
+  oracle:
+    config_file_not_contains: "# keep me"
+  snp:
+    config_file_starts_with: "# keep me\n"
+    config_file_ends_with: "  # c"

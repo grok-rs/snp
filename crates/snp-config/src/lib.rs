@@ -4,10 +4,13 @@
 //!
 //! Owner: WP-21.
 
+mod convert;
 mod dump;
 pub mod ext;
+mod items;
 mod load;
 mod merge;
+mod messages;
 pub mod migrate;
 mod model;
 pub mod overlay;

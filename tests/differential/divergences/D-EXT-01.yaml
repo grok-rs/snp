@@ -1,5 +1,32 @@
 # D-EXT-01 (EXT, owner WP-21): recognised extension keys (§7) produce no Unexpected key(s) warning and take effect
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# Scenario in the schema of docs/research/10-test-strategy.md §7.4.3; `expected` states how each side
+# must differ (WP-35's harness fails when the difference stops reproducing).
 expect_divergence: D-EXT-01
-status: stub
+name: divergences/D-EXT-01-extension-keys-silent
+since: "4.6.2"
+requires: {git: ">=2.19", net: false, tools: [], os: [linux, macos, windows], pty: false}
+work:
+  files: {a.txt: "a\n"}
+  config: |
+    priorities: {early: 1}
+    repos:
+    -   repo: local
+        hooks:
+        -   id: fmt
+            name: fmt
+            entry: echo fmt
+            language: system
+            priority: early
+            groups: [fast]
+  commit: [".pre-commit-config.yaml", a.txt]
+steps:
+  - tool: [run, --all-files]
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+expected:
+  oracle:
+    stdout_starts_with: "[WARNING] Unexpected key(s) present at root: priorities\n[WARNING] Unexpected key(s) present on local => fmt: groups, priority\n"
+  snp:
+    stdout_starts_with: "fmt....."
