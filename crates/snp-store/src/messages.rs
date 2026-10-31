@@ -2,7 +2,8 @@
 //!
 //! The store is snp's own (FD-2): pre-commit has none of these texts, so they read the same in both brands except
 //! the lock-contention line, which reproduces `store.py:105-106` (`Locking pre-commit directory`) and names the tool
-//! by brand (`brand_map`).
+//! by brand (`brand_map`), and M7, which ARCHITECTURE §5.1 writes with `{prog}`. The ownership refusals (D-SEC-13,
+//! ADR-044) are written with a literal `snp` in §5.1 and keep it in both brands.
 //!
 //! Owner: WP-22.
 
@@ -19,11 +20,12 @@ pub fn locking_message(brand: Brand) -> &'static str {
     }
 }
 
-/// M7 (ADR-011, ARCHITECTURE §5.1): the resolved store is pre-commit's own store. `resolve_location` has no brand,
-/// so the text names the product (`snp`) in both brands, like every other snp-only store text (D-SEC-13).
-pub(crate) fn refuse_pre_commit_store(path: &Path) -> String {
+/// M7 (ADR-011, ARCHITECTURE §5.1): `{prog} refuses to use pre-commit's cache directory {path}; set SNP_HOME to
+/// another directory`, `{prog}` by brand (`pre-commit` | `snp`).
+pub(crate) fn refuse_pre_commit_store(brand: Brand, path: &Path) -> String {
     format!(
-        "snp refuses to use pre-commit's cache directory {}; set SNP_HOME to another directory",
+        "{} refuses to use pre-commit's cache directory {}; set SNP_HOME to another directory",
+        brand.prog(),
         path.display()
     )
 }
@@ -86,8 +88,13 @@ mod tests {
         );
         assert_eq!(locking_message(Brand::Snp), "Locking snp directory");
         assert_eq!(
-            refuse_pre_commit_store(Path::new("/h/.cache/pre-commit")),
+            refuse_pre_commit_store(Brand::Snp, Path::new("/h/.cache/pre-commit")),
             "snp refuses to use pre-commit's cache directory /h/.cache/pre-commit; set SNP_HOME to another directory"
+        );
+        assert_eq!(
+            refuse_pre_commit_store(Brand::PreCommit, Path::new("/h/.cache/pre-commit")),
+            "pre-commit refuses to use pre-commit's cache directory /h/.cache/pre-commit; set SNP_HOME to another \
+             directory"
         );
         assert_eq!(
             refuse_foreign_store_as_root(1000, Path::new("/cache/snp")),

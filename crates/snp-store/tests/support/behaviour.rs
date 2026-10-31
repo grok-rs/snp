@@ -33,7 +33,12 @@ const URL: &str = "https://example.invalid/hooks";
 // ----- child processes -----
 
 fn child(role: &str, root: &Path, extra: &[(&str, &Path)]) -> Command {
-    let mut c = Command::new(std::env::current_exe().unwrap());
+    child_as(&std::env::current_exe().unwrap(), role, root, extra)
+}
+
+/// [`child`] started through `exe` (argv[0]).
+fn child_as(exe: &Path, role: &str, root: &Path, extra: &[(&str, &Path)]) -> Command {
+    let mut c = Command::new(exe);
     c.args([
         "--exact",
         "behaviour::child_entry",
@@ -142,8 +147,24 @@ fn child_entry() {
             }
             println!("WAITS {}", waits.load(Ordering::SeqCst));
         }
+        "m7" => {
+            let pc = get("SNP_STORE_PC");
+            let e = Env::from_pairs([
+                ("HOME", root.to_str().unwrap()),
+                ("PRE_COMMIT_HOME", pc.to_str().unwrap()),
+                ("SNP_HOME", pc.to_str().unwrap()),
+            ]);
+            let err = resolve_location(&e, &root).unwrap_err();
+            println!("M7 {}", exc_text(&err).1);
+        }
         other => panic!("unknown child role {other}"),
     }
+}
+
+/// Moves `path`'s mtime `by` into the past.
+fn age_by(path: &Path, by: Duration) {
+    let f = std::fs::File::options().write(true).open(path).unwrap();
+    f.set_modified(SystemTime::now() - by).unwrap();
 }
 
 // ----- location -----
@@ -277,6 +298,32 @@ fn m7_refuses_pre_commit_store_by_path_and_by_readme() {
         ("SNP_HOME", own.to_str().unwrap()),
     ]);
     assert_eq!(resolve_location(&e, &base).unwrap().path, own);
+}
+
+/// M7 names the program by brand: run as `pre-commit` (argv[0], ADR-023) the text starts with `pre-commit refuses`.
+#[cfg(unix)]
+#[test]
+fn m7_names_the_program_by_brand() {
+    let d = tempfile::tempdir().unwrap();
+    let base = snp_os::realpath::realpath_nonstrict(d.path(), Path::new("/")).unwrap();
+    let pc = base.join("pc");
+    let link = base.join("pre-commit");
+    std::os::unix::fs::symlink(std::env::current_exe().unwrap(), &link).unwrap();
+    for (exe, prog) in [
+        (link, "pre-commit"),
+        (std::env::current_exe().unwrap(), "snp"),
+    ] {
+        // `Command::new(path)` passes the path as given as argv[0] (the symlink, not its target).
+        let mut c = child_as(&exe, "m7", &base, &[("SNP_STORE_PC", &pc)]);
+        let out = finish(c.spawn().unwrap_or_else(|e| panic!("{exe:?}: {e}")));
+        assert!(
+            out.contains(&format!(
+                "M7 {prog} refuses to use pre-commit's cache directory {}; set SNP_HOME to another directory",
+                pc.display()
+            )),
+            "{out}"
+        );
+    }
 }
 
 // ----- materialisation -----
@@ -470,6 +517,9 @@ fn env_dir_names_are_sanitized_or_hashed() {
         "a/b",
         long.as_str(),
         "../../../sentinel",
+        // Win32 strips trailing dots: `py_env-3.12.` would open `py_env-3.12`.
+        "3.12.",
+        "...",
     ] {
         let d = s.env_dir(&h, LanguageId::Python, v);
         assert_eq!(d.parent().unwrap(), h.envs, "{v:?}");
@@ -486,6 +536,19 @@ fn env_dir_names_are_sanitized_or_hashed() {
         s.env_dir(&h, LanguageId::Python, "../../x"),
         s.env_dir(&h, LanguageId::Python, "/abs")
     );
+    // Versions differing only in case never share a directory on a case-folding filesystem.
+    let upper = s.env_dir(&h, LanguageId::Python, "3.12A");
+    let lower = s.env_dir(&h, LanguageId::Python, "3.12a");
+    assert!(lower.ends_with("py_env-3.12a"));
+    assert_ne!(upper, lower);
+    if cfg!(any(windows, target_vendor = "apple")) {
+        assert_ne!(
+            upper.file_name().unwrap().to_ascii_lowercase(),
+            lower.file_name().unwrap().to_ascii_lowercase()
+        );
+    } else {
+        assert!(upper.ends_with("py_env-3.12A"), "case-sensitive: verbatim");
+    }
     assert!(sentinel.join("keep").exists());
     assert!(h.src.join(".pre-commit-hooks.yaml").exists());
 }
@@ -625,6 +688,19 @@ fn sweep_keeps_unrestored_patches_and_referenced_tools() {
     let patches = s.patches_dir();
     std::fs::write(patches.join("patch1700000000-41"), b"restored").unwrap();
     std::fs::write(patches.join("patch1700000000-42"), b"unrestored").unwrap();
+    std::fs::write(
+        patches.join("patch1700000000-43"),
+        b"restored, crash before cleanup",
+    )
+    .unwrap();
+    std::fs::write(
+        patches.join("run-43-abcd.snp-journal"),
+        format!(
+            r#"{{"v":1,"state":"restored","patch":"{}"}}"#,
+            patches.join("patch1700000000-43").display()
+        ),
+    )
+    .unwrap();
     let journal = patches.join("run-42-abcd.snp-journal");
     std::fs::write(
         &journal,
@@ -662,8 +738,13 @@ fn sweep_keeps_unrestored_patches_and_referenced_tools() {
     assert!(s.tool_dir("uv", "0.5.0").exists());
     drop(uv_lock);
     let r = s.sweep(now + Duration::from_hours(31 * 24));
-    assert_eq!(r.removed_patches, 1);
+    assert_eq!(r.removed_patches, 2);
     assert!(!patches.join("patch1700000000-41").exists());
+    assert!(
+        !patches.join("patch1700000000-43").exists(),
+        "restored: 30-day rule"
+    );
+    assert!(patches.join("run-43-abcd.snp-journal").exists());
     assert!(patches.join("patch1700000000-42").exists());
     assert!(journal.exists());
     assert!(!s.tool_dir("uv", "0.5.0").exists());
@@ -743,11 +824,22 @@ fn clean_retires_the_layout_but_keeps_unknown_and_recovery_data() {
     let patches = s.patches_dir();
     std::fs::write(patches.join("patch1-1"), b"restored").unwrap();
     std::fs::write(patches.join("patch2-2"), b"kept").unwrap();
+    std::fs::write(patches.join("patch3-3"), b"restored, journal left behind").unwrap();
     std::fs::write(
         patches.join("run-2-x.snp-journal"),
         b"{\"patch\":\"/p/patch2-2\"}",
     )
     .unwrap();
+    std::fs::write(
+        patches.join("run-3-x.snp-journal"),
+        b"{\"state\":\"restored\",\"patch\":\"/p/patch3-3\"}",
+    )
+    .unwrap();
+    for p in ["patch1-1", "patch2-2", "patch3-3"] {
+        age_by(&patches.join(p), Duration::from_hours(2));
+    }
+    // A run in another worktree just wrote its patch and has not journaled it yet.
+    std::fs::write(patches.join("patch4-4"), b"stashing right now").unwrap();
     s.clean().unwrap();
     for gone in [
         "repos-v1",
@@ -767,7 +859,16 @@ fn clean_retires_the_layout_but_keeps_unknown_and_recovery_data() {
     assert!(root.join("user-notes.txt").exists());
     assert!(!patches.join("patch1-1").exists());
     assert!(patches.join("patch2-2").exists());
+    assert!(
+        !patches.join("patch3-3").exists(),
+        "a restored journal protects nothing"
+    );
+    assert!(
+        patches.join("patch4-4").exists(),
+        "a fresh unjournaled patch is kept"
+    );
     assert!(patches.join("run-2-x.snp-journal").exists());
+    assert!(patches.join("run-3-x.snp-journal").exists());
     // The store comes back on demand.
     s.ensure_created(Brand::Snp, &CollectWarnings::new())
         .unwrap();
@@ -824,6 +925,100 @@ fn ephemeral_store_keeps_repos_inside_and_reads_tools_from_the_shared_store() {
             .starts_with(tmp.path().join("alone"))
     );
     assert!(main_root.join("tools-v1").exists());
+}
+
+/// An ephemeral store over a main store that does not exist yet: `ensure_created` creates the main store with its
+/// README, `store-v1.json` and layout (its ownership policy applied), and the shared lock covers it.
+#[test]
+fn ephemeral_store_creates_its_main_store_through_ensure_created() {
+    let d = tempfile::tempdir().unwrap();
+    let base = snp_os::realpath::realpath_nonstrict(d.path(), Path::new("/")).unwrap();
+    let main = store_at(&base.join("main"));
+    let e = Store::ephemeral(&base.join("eph"), Some(&main));
+    // Locks never create a store implicitly.
+    let err = e
+        .tool_lock("node", &mut || {}, &CancelToken::new())
+        .unwrap_err();
+    assert_eq!(exc_text(&err).0, "FileNotFoundError");
+    let (key, _) = remote(URL, "x", &[]);
+    assert!(e.repo_lock(&key, &mut || {}, &CancelToken::new()).is_err());
+    assert!(!base.join("main").exists() && !base.join("eph").exists());
+
+    e.ensure_created(Brand::Snp, &CollectWarnings::new())
+        .unwrap();
+    let guard = e.shared(&mut || {}, &CancelToken::new()).unwrap();
+    let lock = e
+        .tool_lock("node", &mut || {}, &CancelToken::new())
+        .unwrap();
+    let main_root = base.join("main");
+    assert!(main_root.join("README").is_file(), "README");
+    assert!(main_root.join("store-v1.json").is_file(), "store-v1.json");
+    assert!(main_root.join("tools-v1/node.lock").exists());
+    assert!(!base.join("eph/README").exists());
+    // gc on the main store is excluded while the ephemeral store is in use.
+    let c = CancelToken::new();
+    c.cancel(CancelReason::Interrupt);
+    assert!(main.exclusive(&mut || {}, &c).is_err());
+    drop((guard, lock));
+    // The main store is a regular store: a fresh handle needs nothing more.
+    let again = store_at(&main_root);
+    again
+        .ensure_created(Brand::Snp, &CollectWarnings::new())
+        .unwrap();
+    assert_eq!(again.relocated_from(), None);
+}
+
+/// A store that never ran `ensure_created` is not created by a repository lock or a materialisation.
+#[test]
+fn locks_never_create_the_store_root() {
+    let d = tempfile::tempdir().unwrap();
+    let root = d.path().join("lazy");
+    let s = store_at(&root);
+    let (key, meta) = remote(URL, "lazy", &[]);
+    assert!(s.repo_lock(&key, &mut || {}, &CancelToken::new()).is_err());
+    assert!(
+        s.materialize(&key, meta, &mut fake_clone, &mut || {}, &CancelToken::new())
+            .is_err()
+    );
+    assert!(s.tool_lock("go", &mut || {}, &CancelToken::new()).is_err());
+    assert!(!root.exists());
+}
+
+/// A transient error reading an entry (EACCES here) fails the materialisation and leaves the entry alone: another
+/// process may be running hooks from it. Only a definitively broken entry is replaced.
+#[cfg(unix)]
+#[test]
+fn transient_entry_errors_never_retire_the_entry() {
+    use std::os::unix::fs::PermissionsExt;
+    if is_root() {
+        return;
+    }
+    let (_g, root, s) = new_store();
+    let (key, meta) = remote(URL, "busy", &[]);
+    let h = materialize(&s, &key, meta.clone());
+    let dir = root.join("repos-v1").join(key.hex());
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let mut fills = 0;
+    let r = s.materialize(
+        &key,
+        meta.clone(),
+        &mut |src| {
+            fills += 1;
+            fake_clone(src)
+        },
+        &mut || {},
+        &CancelToken::new(),
+    );
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let err = r.unwrap_err();
+    assert_eq!(exc_text(&err).0, "PermissionError");
+    assert_eq!(fills, 0);
+    assert!(h.src.join(".git").exists(), "the entry in use survives");
+    assert!(s.lookup(&key).is_some());
+    // A definitively broken entry (checkout gone) is replaced.
+    std::fs::remove_dir_all(h.src.join(".git")).unwrap();
+    let h2 = materialize(&s, &key, meta);
+    assert!(h2.src.join(".git").exists());
 }
 
 /// `keys-v1` markers: `create_new`, exists, retained by the caller's decision.
@@ -898,6 +1093,44 @@ fn relocated_store_is_detected() {
         .ensure_created(Brand::Snp, &CollectWarnings::new())
         .unwrap();
     assert_eq!(again.relocated_from(), None);
+}
+
+/// Relocation invalidates the environments durably: the first process after the move removes every install state
+/// before it records the new path, so a second process (which no longer sees the move) never trusts an environment
+/// with the old absolute paths baked in. The clone itself is kept.
+#[test]
+fn relocation_invalidates_environments_for_every_later_process() {
+    let (g, root, s) = new_store();
+    let h = handle(&s);
+    let env_dir = s.env_dir(&h, LanguageId::Python, "3.12");
+    std::fs::create_dir_all(&env_dir).unwrap();
+    Store::commit_install_marker(&env_dir, b"{\"v\":1}", &[]).unwrap();
+    drop(s);
+    let moved = g.path().join("moved");
+    std::fs::rename(&root, &moved).unwrap();
+    let moved = snp_os::realpath::realpath_nonstrict(&moved, Path::new("/")).unwrap();
+    let moved_env = moved
+        .join("repos-v1")
+        .join(h.key.hex())
+        .join("envs")
+        .join(env_dir.file_name().unwrap());
+    assert!(Store::read_install_marker(&moved_env).is_some());
+
+    // Process 1 (e.g. `snp gc`) creates the store and consumes the notice.
+    let first = store_at(&moved);
+    first
+        .ensure_created(Brand::Snp, &CollectWarnings::new())
+        .unwrap();
+    assert_eq!(first.relocated_from().as_deref(), Some(root.as_path()));
+    // Process 2 sees no move, and no valid environment.
+    let second = store_at(&moved);
+    second
+        .ensure_created(Brand::Snp, &CollectWarnings::new())
+        .unwrap();
+    assert_eq!(second.relocated_from(), None);
+    assert_eq!(Store::read_install_marker(&moved_env), None);
+    let (key, _) = remote(URL, "env", &[]);
+    assert!(second.lookup(&key).is_some(), "the clone is kept");
 }
 
 /// Store paths: crash log by brand, spill/patches/scratch dirs, lazy `new`.

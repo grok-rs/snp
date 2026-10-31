@@ -6,3 +6,4 @@ expect_divergence: D-DATA-04
 status: unit
 unit_tests:
   - crates/snp-store/tests/support/behaviour.rs::sweep_keeps_unrestored_patches_and_referenced_tools
+  - crates/snp-store/tests/support/behaviour.rs::clean_retires_the_layout_but_keeps_unknown_and_recovery_data

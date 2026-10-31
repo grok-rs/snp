@@ -72,6 +72,39 @@ pub(crate) fn retain_markers(dir: &Path, keep: &mut dyn FnMut(&MarkerKey) -> boo
     removed
 }
 
+/// The journals of `patches/` that still protect their patch: every journal except those whose `state` is
+/// `restored` or `done` (the patch's content is back in the worktree; ARCHITECTURE §5.6 protects only
+/// journaled-unrestored patches). A journal that cannot be parsed protects (it may be a half-written recovery record).
+fn protecting_journals(patches: &Path) -> Vec<Vec<u8>> {
+    entries(patches)
+        .iter()
+        .filter(|e| is_journal(e))
+        .filter_map(|e| snp_os::fs::read_capped(&e.path(), marker::META_CAP).ok())
+        .filter(|bytes| !journal_restored(bytes))
+        .collect()
+}
+
+/// Whether `e` is a stash journal (`*.snp-journal`).
+fn is_journal(e: &fs::DirEntry) -> bool {
+    e.file_name()
+        .as_encoded_bytes()
+        .ends_with(layout::JOURNAL_SUFFIX.as_bytes())
+}
+
+/// Whether a journal records a completed restore (`"state": "restored" | "done"`). Bounded: the bytes are capped by
+/// the caller and `serde_json` keeps its default recursion limit.
+fn journal_restored(bytes: &[u8]) -> bool {
+    #[derive(serde::Deserialize)]
+    struct State<'a> {
+        #[serde(borrow)]
+        state: Option<std::borrow::Cow<'a, str>>,
+    }
+    serde_json::from_slice::<State<'_>>(bytes)
+        .ok()
+        .and_then(|j| j.state)
+        .is_some_and(|st| st == "restored" || st == "done")
+}
+
 /// Whether a journal mentions the patch `name` as a whole path component.
 fn mentioned(name: &[u8], journals: &[Vec<u8>]) -> bool {
     journals.iter().any(|j| {
@@ -133,18 +166,10 @@ pub(crate) fn sweep(root: &Path, tools_root: &Path, now: SystemTime) -> SweepRep
         }
     }
 
-    // 4. Restored stash patches older than 30 days; journals and the patches they mention stay forever.
+    // 4. Restored stash patches older than 30 days; journals and the patches of unrestored journals stay forever.
     let patches = root.join(layout::PATCHES);
     let all = entries(&patches);
-    let journals: Vec<Vec<u8>> = all
-        .iter()
-        .filter(|e| {
-            e.file_name()
-                .as_encoded_bytes()
-                .ends_with(layout::JOURNAL_SUFFIX.as_bytes())
-        })
-        .filter_map(|e| snp_os::fs::read_capped(&e.path(), marker::META_CAP).ok())
-        .collect();
+    let journals = protecting_journals(&patches);
     for e in &all {
         let name = e.file_name();
         let bytes = name.as_encoded_bytes();
@@ -305,27 +330,23 @@ pub(crate) fn clean(root: &Path) -> Result<(), Failure> {
         snp_os::fs::retire_dir(d, &trash).map_err(|e| io_err(&e, d))?;
     }
 
-    // Stash recovery data survives: every journal and the patches journals mention.
+    // Stash recovery data survives: every journal, the patches of unrestored journals, and every patch younger than
+    // an hour — a run stashing in another worktree creates its patch before it journals it (ARCHITECTURE §4 steps
+    // 5–6) and takes the shared store lock only at its first repository use, so a fresh unjournaled patch may be
+    // about to be restored. The journals are re-read right before each removal.
     let patches = root.join(layout::PATCHES);
-    let all = entries(&patches);
-    let journals: Vec<Vec<u8>> = all
-        .iter()
-        .filter(|e| {
-            e.file_name()
-                .as_encoded_bytes()
-                .ends_with(layout::JOURNAL_SUFFIX.as_bytes())
-        })
-        .filter_map(|e| snp_os::fs::read_capped(&e.path(), marker::META_CAP).ok())
-        .collect();
-    for e in &all {
+    let now = SystemTime::now();
+    for e in &entries(&patches) {
         let name = e.file_name();
         let bytes = name.as_encoded_bytes();
-        let keep =
-            bytes.ends_with(layout::JOURNAL_SUFFIX.as_bytes()) || mentioned(bytes, &journals);
-        if !keep {
-            let path = e.path();
-            snp_os::fs::remove_tree_within(&path, &patches).map_err(|err| io_err(&err, &path))?;
+        let path = e.path();
+        if is_journal(e)
+            || age(&path, now).is_none_or(|a| a < ORPHAN_AGE)
+            || mentioned(bytes, &protecting_journals(&patches))
+        {
+            continue;
         }
+        snp_os::fs::remove_tree_within(&path, &patches).map_err(|err| io_err(&err, &path))?;
     }
     let _empty_removed: io::Result<()> = fs::remove_dir(&patches);
 
@@ -351,6 +372,26 @@ pub(crate) fn clean(root: &Path) -> Result<(), Failure> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restored_journals_do_not_protect() {
+        assert!(journal_restored(
+            br#"{"v":1,"state":"restored","patch":"/p/patch1-1"}"#
+        ));
+        assert!(journal_restored(br#"{"state":"done"}"#));
+        for protecting in [
+            &br#"{"state":"stashed","patch":"/p/patch1-1"}"#[..],
+            br#"{"state":"failed"}"#,
+            br#"{"patch":"/p/patch1-1"}"#,
+            br#"{"state":"resto"#,
+            b"[[[[[[[[[[[[[[[[[[[[",
+            b"",
+        ] {
+            assert!(!journal_restored(protecting), "{protecting:?}");
+        }
+        let deep: String = std::iter::repeat_n('[', 100_000).collect();
+        assert!(!journal_restored(deep.as_bytes()));
+    }
 
     #[test]
     fn journal_mentions_are_whole_names() {

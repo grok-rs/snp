@@ -75,15 +75,22 @@ pub(crate) fn random_name() -> String {
     format!("{v:016x}")
 }
 
-/// Whether `name` is a safe single path component: `^[A-Za-z0-9._+-]{1,64}$` and not `.`/`..` (ADR-009).
+/// Whether `name` is a safe single path component: `^[A-Za-z0-9._+-]{1,64}$`, not `.`/`..` (ADR-009), and not
+/// aliased to another name by the filesystem: no trailing `.` (Win32 strips trailing dots, so `3.12.` would open
+/// `3.12`) and, on the case-insensitive defaults of Windows and macOS, no upper-case ASCII (`3.12A` and `3.12a`
+/// would share one directory). An aliasable name is hashed instead, so distinct versions never share an
+/// environment.
 pub(crate) fn is_safe_component(name: &str) -> bool {
     (1..=64).contains(&name.len())
-        && name != "."
-        && name != ".."
+        && !name.ends_with('.')
+        && !(CASE_INSENSITIVE_FS && name.bytes().any(|b| b.is_ascii_uppercase()))
         && name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'+' | b'-'))
 }
+
+/// Whether the platform's default filesystems fold ASCII case (NTFS, APFS/HFS+ as installed).
+pub(crate) const CASE_INSENSITIVE_FS: bool = cfg!(any(windows, target_vendor = "apple"));
 
 /// `name` itself when it is a safe component, else `h<hex16(blake3(name))>`: never a separator, never `..`.
 pub(crate) fn safe_component(name: &str) -> String {
@@ -154,6 +161,9 @@ mod tests {
             "a\0b",
             "a b",
             "é",
+            "3.12.",
+            "3.12 ",
+            "...",
             long.as_str(),
         ] {
             assert!(!is_safe_component(bad), "{bad:?}");
@@ -162,6 +172,11 @@ mod tests {
             assert!(is_safe_component(&h));
         }
         assert_ne!(safe_component("../../x"), safe_component("/abs"));
+        assert_ne!(safe_component("3.12."), "3.12");
+        // Case aliases: hashed where the filesystem folds case, kept verbatim elsewhere.
+        assert_eq!(is_safe_component("3.12A"), !CASE_INSENSITIVE_FS);
+        assert!(is_safe_component("3.12a"));
+        assert_ne!(safe_component("3.12A"), safe_component("3.12a"));
     }
 
     #[test]

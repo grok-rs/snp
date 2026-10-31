@@ -48,7 +48,7 @@ pub struct StoreGuard(
 );
 
 /// What `ensure_created` established (once per `Store`).
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Created {
     /// `store-v1.json` recorded another path.
     relocated_from: Option<PathBuf>,
@@ -63,8 +63,9 @@ pub struct Store {
     loc: StoreLocation,
     /// Where `tools-v1` and `cache-v1` live (the store itself, or the main store of an ephemeral one).
     tools_root: PathBuf,
-    /// An ephemeral store's main store (its shared lock is held with ours).
-    shared_root: Option<PathBuf>,
+    /// An ephemeral store's main store: created and policy-checked by our `ensure_created`, its shared lock held
+    /// with ours.
+    shared: Option<Box<Self>>,
     /// try-repo's throwaway store (ADR-059): no README, no ownership policy, no relocation tracking.
     ephemeral: bool,
     /// Set by a successful `ensure_created`.
@@ -81,7 +82,7 @@ impl Store {
         Self {
             loc,
             tools_root,
-            shared_root: None,
+            shared: None,
             ephemeral: false,
             created: OnceLock::new(),
         }
@@ -98,14 +99,14 @@ impl Store {
             path: root.to_path_buf(),
             source: StoreSource::SnpHome,
         };
-        let (tools_root, shared_root) = match shared {
-            Some(s) => (s.tools_root.clone(), Some(s.loc.path.clone())),
+        let (tools_root, shared) = match shared {
+            Some(s) => (s.tools_root.clone(), Some(Box::new(s.handle_copy()))),
             None => (root.to_path_buf(), None),
         };
         Self {
             loc,
             tools_root,
-            shared_root,
+            shared,
             ephemeral: true,
             created: OnceLock::new(),
         }
@@ -134,15 +135,26 @@ impl Store {
     /// the store path in `store-v1.json`; a different recorded path is reported by [`Store::relocated_from`]. A
     /// read-only store is accepted as it is (parity, 03 §7.9). Idempotent; cheap after the first success.
     ///
+    /// When the recorded path differs (the store was moved, 11 §A.10.4), every environment's install state is
+    /// removed under its repository lock *before* the new path is recorded, so the invalidation is durable: no later
+    /// process uses an environment with the old absolute paths baked in, and a crash in between repeats it.
+    ///
+    /// An ephemeral store first runs its main store's `ensure_created` (layout, README, ownership policy), whose
+    /// tools it uses.
+    ///
     /// # Errors
     ///
     /// The `OSError` of the failing `mkdir` (`PermissionError: [Errno 13] Permission denied: '<dir>'`, exit 3,
     /// X13-ST-01), `NotADirectoryError` for a store path that is a file (X13-ST-02), or the `FatalError` refusals
     /// above (exit 1).
     pub fn ensure_created(&self, brand: Brand, diag: &dyn DiagSink) -> Result<(), Failure> {
+        // The store's texts are brand-independent (messages.rs); the brand is only passed on to the main store.
         let _: Brand = brand;
         if self.created.get().is_some() {
             return Ok(());
+        }
+        if let Some(main) = &self.shared {
+            main.ensure_created(brand, diag)?;
         }
         let root = self.root();
         let existed = match fs::metadata(root) {
@@ -186,7 +198,7 @@ impl Store {
         .iter()
         .map(|d| root.join(d))
         .collect();
-        if self.shared_root.is_none() {
+        if self.shared.is_none() {
             dirs.push(self.tools_root.join(layout::TOOLS));
             dirs.push(self.tools_root.join(layout::CACHE));
         }
@@ -204,7 +216,8 @@ impl Store {
     /// The shared global lock (runs using repos).
     ///
     /// `on_wait` runs at most once per process across every store lock (the `[INFO] Locking … directory` line,
-    /// `store.py:105-106`, [`crate::locking_message`]); the wait observes `c` every 50 ms.
+    /// `store.py:105-106`, [`crate::locking_message`]); the wait observes `c` every 50 ms. An ephemeral store also
+    /// takes its main store's shared lock (created by `ensure_created`), so gc there cannot remove tools in use.
     ///
     /// # Errors
     ///
@@ -221,11 +234,9 @@ impl Store {
             on_wait,
             c,
         )?];
-        if let Some(main) = &self.shared_root
-            && main.is_dir()
-        {
+        if let Some(main) = &self.shared {
             held.push(lock_at(
-                &main.join(layout::LOCK),
+                &main.root().join(layout::LOCK),
                 LockMode::Shared,
                 on_wait,
                 c,
@@ -306,18 +317,21 @@ impl Store {
                 format!("snp: store key {} does not match its metadata", key.hex()),
             ));
         }
-        if let Some(h) = self.load(key) {
+        if let Load::Present(h) = self.load_entry(key) {
             return Ok(h);
         }
         let _lock = self.repo_lock(key, on_wait, c)?;
-        if let Some(h) = self.load(key) {
-            return Ok(h);
+        match self.load_entry(key) {
+            Load::Present(h) => return Ok(h),
+            // Not definitively broken (EIO, EMFILE, EACCES, …): another process may be running hooks from it.
+            Load::Error(e, p) => return Err(Failure::from_io(&e, Some(p.as_os_str()), None)),
+            Load::Absent => {}
         }
         if c.is_cancelled() {
             return Err(interrupted(c));
         }
         let dest = self.repo_dir(key);
-        // A broken entry (no or bad marker, checkout gone): replace it, under the lock.
+        // A definitively broken entry (no or bad marker, checkout gone): replace it, under the lock.
         if fs::symlink_metadata(&dest).is_ok() {
             snp_os::fs::retire_dir(&dest, &self.root().join(layout::TRASH))
                 .map_err(|e| Failure::from_io(&e, Some(dest.as_os_str()), None))?;
@@ -363,50 +377,52 @@ impl Store {
     /// The per-repository lock.
     ///
     /// `repos-v1/<key>.lock`, exclusive: held for the clone and every environment install of that prefix, so distinct
-    /// repositories clone and install in parallel (pre-commit serialises everything behind `<store>/.lock`).
+    /// repositories clone and install in parallel (pre-commit serialises everything behind `<store>/.lock`). Never
+    /// creates the store root: a store that skipped `ensure_created` would escape its ownership policy and README.
     ///
     /// # Errors
     ///
-    /// As [`Store::shared`].
+    /// As [`Store::shared`]; `FileNotFoundError` naming the lock file when the store does not exist yet.
     pub fn repo_lock(
         &self,
         key: &RepoKey,
         on_wait: &mut dyn FnMut(),
         c: &CancelToken,
     ) -> Result<FileLock, Failure> {
-        let repos = self.root().join(layout::REPOS);
-        mkdir_private(&repos).map_err(|e| mkdir_failure(&repos, &e))?;
         let mut name = key.hex();
         name.push_str(".lock");
-        lock_at(&repos.join(name), LockMode::Exclusive, on_wait, c)
+        let path = bucket_in_existing(self.root(), layout::REPOS, &name)?;
+        lock_at(&path, LockMode::Exclusive, on_wait, c)
     }
 
     /// `tools-v1/<tool>.lock`.
     ///
     /// Exclusive, for a toolchain bootstrap (one download per tool). An unsafe `tool` name is hashed (never a path).
+    /// Like [`Store::repo_lock`] it never creates the store root (that is `ensure_created`'s job, with its policy).
     ///
     /// # Errors
     ///
-    /// As [`Store::shared`].
+    /// As [`Store::shared`]; `FileNotFoundError` naming the lock file when the store does not exist yet.
     pub fn tool_lock(
         &self,
         tool: &str,
         on_wait: &mut dyn FnMut(),
         c: &CancelToken,
     ) -> Result<FileLock, Failure> {
-        let tools = self.tools_root.join(layout::TOOLS);
-        mkdir_private(&tools).map_err(|e| mkdir_failure(&tools, &e))?;
         let mut name = layout::safe_component(tool);
         name.push_str(".lock");
-        lock_at(&tools.join(name), LockMode::Exclusive, on_wait, c)
+        let path = bucket_in_existing(&self.tools_root, layout::TOOLS, &name)?;
+        lock_at(&path, LockMode::Exclusive, on_wait, c)
     }
 
     /// Sanitized-or-hashed environment directory (§5.4).
     ///
     /// pre-commit's `lang_base.environment_dir` is `normpath(join(prefix, f'{ENVIRONMENT_DIR}-{version}'))`
     /// (`lang_base.py:90-91`, 03 §8.3), so `language_version: ../../x` escapes the prefix and the install step deletes
-    /// it (D-SEC-01). snp uses `<ENV_DIR>-<version>` only when `version` matches `^[A-Za-z0-9._+-]{1,64}$` and is not
-    /// `.`/`..`, else `<ENV_DIR>-h<hex16(blake3(version))>` (ADR-009): the name is one component inside `repo.envs`.
+    /// it (D-SEC-01). snp uses `<ENV_DIR>-<version>` only when `version` matches `^[A-Za-z0-9._+-]{1,64}$` and cannot
+    /// alias another name (no trailing `.`; no upper-case ASCII on the case-folding filesystems of Windows and macOS),
+    /// else `<ENV_DIR>-h<hex16(blake3(version))>` (ADR-009): the name is one component inside `repo.envs`, and two
+    /// distinct versions never share a directory.
     /// Env-less languages (no `ENVIRONMENT_DIR`) use their language name as the base.
     pub fn env_dir(&self, repo: &RepoHandle, lang: LanguageId, version: &str) -> PathBuf {
         let base = lang.env_dir_base().unwrap_or_else(|| lang.as_str());
@@ -575,7 +591,8 @@ impl Store {
     /// snp-only maintenance run by gc under the exclusive lock (ARCHITECTURE §5.6): scratch and trash entries older
     /// than an hour; tool versions older than an hour that no environment's `.snp-tools.json` references and whose
     /// tool lock is free (nothing is removed when a sidecar is unreadable); stash patches older than 30 days that no
-    /// journal mentions (unrestored patches and every journal are kept, D-DATA-04); orphan repository lock files;
+    /// unrestored journal mentions (a journal in state `restored`/`done` protects nothing; unrestored patches and
+    /// every journal are kept, D-DATA-04); orphan repository lock files;
     /// buckets of another format version; snp 1.x leftovers behind the 1.x README signature (D-DIAG-05). Never
     /// fails: what cannot be removed stays.
     pub fn sweep(&self, now: SystemTime) -> SweepReport {
@@ -585,10 +602,11 @@ impl Store {
     /// Retires the whole store.
     ///
     /// pre-commit's `clean` `rmtree`s its store (`commands/clean.py:10-16`). snp removes every entry of its own
-    /// layout (snp 1.x leftovers included behind their README signature) and nothing else: unknown files a user put
-    /// into `SNP_HOME` survive, the unrestored stash patches and their journals survive (recovery data, ARCHITECTURE
-    /// §4), and `.lock` stays so that processes waiting on it keep excluding each other. A missing store is `Ok` and
-    /// nothing is created. Never touches pre-commit's directories (D-STORE-02).
+    /// layout (snp 1.x leftovers included behind their README signature) and nothing else (D-DATA-04): unknown files
+    /// a user put into `SNP_HOME` survive, every journal, the patches of unrestored journals and every patch younger
+    /// than an hour survive (recovery data and runs stashing right now, ARCHITECTURE §4), and `.lock` stays so that
+    /// processes waiting on it keep excluding each other. A missing store is `Ok` and nothing is created. Never
+    /// touches pre-commit's directories (D-STORE-02).
     ///
     /// # Errors
     ///
@@ -674,6 +692,17 @@ impl Store {
 
     // ----- private -----
 
+    /// A not-yet-created handle on the same store (an ephemeral store's copy of its main store).
+    fn handle_copy(&self) -> Self {
+        Self {
+            loc: self.loc.clone(),
+            tools_root: self.tools_root.clone(),
+            shared: self.shared.as_ref().map(|s| Box::new(s.handle_copy())),
+            ephemeral: self.ephemeral,
+            created: self.created.clone(),
+        }
+    }
+
     /// The store root.
     fn root(&self) -> &Path {
         &self.loc.path
@@ -686,19 +715,45 @@ impl Store {
 
     /// A complete entry: marker parses, derives `key`, checkout present.
     fn load(&self, key: &RepoKey) -> Option<RepoHandle> {
+        match self.load_entry(key) {
+            Load::Present(h) => Some(h),
+            Load::Absent | Load::Error(..) => None,
+        }
+    }
+
+    /// [`Store::load`] telling a definitively missing or broken entry from a transient I/O failure.
+    fn load_entry(&self, key: &RepoKey) -> Load {
         let dir = self.repo_dir(key);
-        let bytes =
-            snp_os::fs::read_capped(&dir.join(layout::REPO_MARKER), marker::META_CAP).ok()?;
-        let meta = marker::decode_repo_meta(&bytes)?;
+        let marker_path = dir.join(layout::REPO_MARKER);
+        let bytes = match snp_os::fs::read_capped(&marker_path, marker::META_CAP) {
+            Ok(b) => b,
+            Err(e) if definitive(&e) => return Load::Absent,
+            Err(e) => return Load::Error(e, marker_path),
+        };
+        let Some(meta) = marker::decode_repo_meta(&bytes) else {
+            return Load::Absent;
+        };
         if meta.key() != *key {
-            return None;
+            return Load::Absent;
         }
         let src = dir.join("src");
-        let present = match meta.kind {
-            RepoKind::Remote { .. } => fs::symlink_metadata(src.join(".git")).is_ok(),
-            RepoKind::Local => fs::metadata(&src).is_ok_and(|m| m.is_dir()),
+        let (probe, checked) = match meta.kind {
+            RepoKind::Remote { .. } => {
+                let git = src.join(".git");
+                let r = fs::symlink_metadata(&git).map(|_| true);
+                (git, r)
+            }
+            RepoKind::Local => (src.clone(), fs::metadata(&src).map(|m| m.is_dir())),
         };
-        present.then(|| RepoHandle {
+        let present = match checked {
+            Ok(p) => p,
+            Err(e) if definitive(&e) => false,
+            Err(e) => return Load::Error(e, probe),
+        };
+        if !present {
+            return Load::Absent;
+        }
+        Load::Present(RepoHandle {
             key: *key,
             envs: dir.join("envs"),
             src,
@@ -755,6 +810,10 @@ impl Store {
     }
 
     /// Records the store path in `store-v1.json`; returns the previously recorded path when it differs.
+    ///
+    /// A moved store's environments are invalidated first (their install states removed under each repository
+    /// lock); the new path is recorded only when every invalidation succeeded, so an interrupted or failed one is
+    /// repeated by the next process.
     fn track_location(&self) -> Option<PathBuf> {
         let root = self.root();
         let file = root.join(layout::STORE_FILE);
@@ -764,9 +823,52 @@ impl Store {
         if old.as_deref() == Some(root) {
             return None;
         }
+        if old.is_some() && !self.invalidate_environments() {
+            return old;
+        }
         let _written: io::Result<()> =
             snp_os::fs::atomic_replace(&file, &marker::encode_store_file(root), None);
         old
+    }
+
+    /// Removes every `repos-v1/<key>/envs/*/.snp-install-state.json`, each repository under its lock (installs
+    /// commit their state under that lock, so none is half-written). `false` when a removal failed.
+    fn invalidate_environments(&self) -> bool {
+        let repos = self.root().join(layout::REPOS);
+        let Ok(rd) = fs::read_dir(&repos) else {
+            return true;
+        };
+        let mut ok = true;
+        for e in rd.filter_map(Result::ok) {
+            let Some(key) = RepoKey::from_hex(e.file_name().as_encoded_bytes()) else {
+                continue;
+            };
+            let mut lock_name = key.hex();
+            lock_name.push_str(".lock");
+            // Not `lock_at`: this internal wait must not consume the once-per-process `Locking …` notice.
+            let Ok(lock) = FileLock::acquire(
+                &repos.join(lock_name),
+                LockMode::Exclusive,
+                &mut || {},
+                &CancelToken::new(),
+                None,
+            ) else {
+                ok = false;
+                continue;
+            };
+            let Ok(envs) = fs::read_dir(e.path().join("envs")) else {
+                continue;
+            };
+            for env in envs.filter_map(Result::ok) {
+                match fs::remove_file(env.path().join(layout::INSTALL_STATE)) {
+                    Ok(()) => {}
+                    Err(err) if definitive(&err) => {}
+                    Err(_) => ok = false,
+                }
+            }
+            drop(lock);
+        }
+        ok
     }
 }
 
@@ -781,6 +883,40 @@ pub struct SweepReport {
     pub removed_patches: usize,
     /// Whether the legacy v1 layout was removed.
     pub legacy_v1_removed: bool,
+}
+
+/// The outcome of reading a repository entry.
+enum Load {
+    /// Complete and usable.
+    Present(RepoHandle),
+    /// Definitively missing or broken (no marker, a malformed or foreign marker, the checkout gone).
+    Absent,
+    /// A transient failure (the entry may be fine and in use): the error and the path it names.
+    Error(io::Error, PathBuf),
+}
+
+/// An error that proves the entry is not there (`ENOENT`, `ENOTDIR`, truncated or invalid data).
+fn definitive(e: &io::Error) -> bool {
+    matches!(
+        e.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory | io::ErrorKind::InvalidData
+    )
+}
+
+/// `<store_root>/<bucket>/<name>`, creating the bucket (0700) but never the store root itself.
+fn bucket_in_existing(store_root: &Path, bucket: &str, name: &str) -> Result<PathBuf, Failure> {
+    let dir = store_root.join(bucket);
+    let path = dir.join(name);
+    if !store_root.is_dir() {
+        return Err(Failure::from_io(
+            // ENOENT (Unix) / ERROR_FILE_NOT_FOUND (Windows): both 2.
+            &io::Error::from_raw_os_error(2),
+            Some(path.as_os_str()),
+            None,
+        ));
+    }
+    mkdir_private(&dir).map_err(|e| mkdir_failure(&dir, &e))?;
+    Ok(path)
 }
 
 /// Acquires a store lock; `on_wait` runs at most once per process.
@@ -836,6 +972,10 @@ fn not_a_directory() -> io::Error {
 }
 
 /// `os.access(dir, os.W_OK)` is false (`store.py:65-68`: `readonly`).
+///
+/// Only ever asked about an existing directory. On Windows CPython's `os.access` reports every directory writable
+/// (`os_access_impl` ignores `FILE_ATTRIBUTE_READONLY` when `FILE_ATTRIBUTE_DIRECTORY` is set; `store.py` marks the
+/// branch `# pragma: win32 no cover`), and Explorer sets that attribute on customised folders, so snp does the same.
 fn is_readonly(dir: &Path) -> bool {
     #[cfg(unix)]
     {
@@ -843,7 +983,7 @@ fn is_readonly(dir: &Path) -> bool {
     }
     #[cfg(not(unix))]
     {
-        fs::metadata(dir).is_ok_and(|m| m.permissions().readonly())
+        fs::metadata(dir).is_ok_and(|m| !m.is_dir() && m.permissions().readonly())
     }
 }
 
@@ -892,4 +1032,28 @@ fn only_lock_inside(dir: &Path) -> bool {
         rd.filter_map(Result::ok)
             .all(|e| e.file_name() == layout::LOCK)
     })
+}
+
+#[cfg(test)]
+#[cfg(windows)]
+mod tests {
+    use super::*;
+
+    /// CPython's `os.access(dir, os.W_OK)` ignores `FILE_ATTRIBUTE_READONLY` on directories (Explorer sets it on
+    /// customised folders), so such a store is not read-only.
+    #[test]
+    fn readonly_attribute_on_a_directory_is_not_readonly() {
+        let d = tempfile::tempdir().unwrap();
+        let mut perms = fs::metadata(d.path()).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(d.path(), perms.clone()).unwrap();
+        assert!(fs::metadata(d.path()).unwrap().permissions().readonly());
+        assert!(!is_readonly(d.path()));
+        #[expect(
+            clippy::permissions_set_readonly_false,
+            reason = "Windows: clears FILE_ATTRIBUTE_READONLY so the temp dir can be removed"
+        )]
+        perms.set_readonly(false);
+        fs::set_permissions(d.path(), perms).unwrap();
+    }
 }

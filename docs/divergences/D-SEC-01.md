@@ -22,8 +22,10 @@ then `clean_path_on_failure` when the install fails (`repository.py:72-89`). A c
 delete any directory the user can write (04b §5.1, verified); an absolute version nests directories, and a Windows
 `C:` version breaks the path.
 
-snp's `Store::env_dir` (ADR-009) uses `<ENV_DIR>-<version>` only when the version matches `^[A-Za-z0-9._+-]{1,64}$`
-and is not `.`/`..`; anything else becomes `<ENV_DIR>-h<hex16(blake3(version))>`. The name is always one component
+snp's `Store::env_dir` (ADR-009) uses `<ENV_DIR>-<version>` only when the version matches `^[A-Za-z0-9._+-]{1,64}$`,
+is not `.`/`..` and cannot alias another name on the filesystem (no trailing `.`, which Win32 strips, so `3.12.` would
+open `3.12`; on Windows and macOS, whose default filesystems fold case, no upper-case ASCII, so `3.12A` and `3.12a` never
+share an environment); anything else becomes `<ENV_DIR>-h<hex16(blake3(version))>`. The name is always one component
 directly inside `<repo>/envs`, and environment removal goes through `remove_tree_within(env_dir, <repo>/envs)`
 (fd-relative on Unix, never following a symlink). Every real version string (`python3.12`, `3.12.1`, `system`,
 `default`, `22.11.0`) keeps its readable name.

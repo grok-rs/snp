@@ -8,6 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
+use snp_core::brand::Brand;
 use snp_core::env::Env;
 use snp_core::failure::Failure;
 
@@ -64,10 +65,16 @@ pub fn resolve_location(env: &Env, invocation_cwd: &Path) -> Result<StoreLocatio
     if is_pre_commit_store(&path, env, invocation_cwd) {
         return Err(Failure::fatal(
             "FatalError",
-            messages::refuse_pre_commit_store(&path),
+            messages::refuse_pre_commit_store(process_brand(), &path),
         ));
     }
     Ok(StoreLocation { path, source })
+}
+
+/// The brand of this process for M7's `{prog}`: `resolve_location` takes no `Brand` (frozen §1.4.16), so it applies
+/// the binary's own rule, `Brand::detect(argv[0])` (ADR-023), to the process arguments (immutable, read once).
+fn process_brand() -> Brand {
+    Brand::detect(std::env::args_os().next().as_deref())
 }
 
 /// pre-commit's own store directory (`store.py:25-36`), realpath'd; `None` when `~` cannot be expanded.
