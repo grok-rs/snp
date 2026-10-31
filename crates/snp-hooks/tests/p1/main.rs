@@ -165,3 +165,36 @@ fn sorter_rewrite_preserves_inode_and_mode() {
     assert_eq!(after.mode() & 0o777, 0o640);
     assert_eq!(std::fs::read(ctx.sb.path("r.txt")).unwrap(), b"a\nb\n");
 }
+
+/// Windows text mode (09 §2.7): `--autofix` writes through `open(f, 'w')`, so every `\n` becomes `\r\n`; a CRLF
+/// file that is otherwise pretty passes on every platform (universal newlines on read).
+#[test]
+fn pretty_format_json_windows_text_writes() {
+    let sb = Sandbox::new(true);
+    sb.write("a.json", b"{\"a\":1}");
+    sb.write("b.json", b"{\r\n  \"a\": 1\r\n}\r\n");
+    let ctx = Ctx::new(sb);
+    let h = snp_hooks::native(NativeSource::PreCommitHooks, "pretty-format-json").unwrap();
+    let cx = snp_hooks::HookCx {
+        windows: true,
+        ..ctx.cx(Epoch(2))
+    };
+    let o = h.run(
+        &cx,
+        &[
+            OsStr::new("--autofix"),
+            OsStr::new("a.json"),
+            OsStr::new("b.json"),
+        ],
+    );
+    assert_eq!(o.code, 1);
+    assert_eq!(o.modified.len(), 1);
+    assert_eq!(
+        std::fs::read(ctx.sb.path("a.json")).unwrap(),
+        b"{\r\n  \"a\": 1\r\n}\r\n"
+    );
+    assert_eq!(
+        std::fs::read(ctx.sb.path("b.json")).unwrap(),
+        b"{\r\n  \"a\": 1\r\n}\r\n"
+    );
+}

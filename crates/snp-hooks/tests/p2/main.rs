@@ -100,3 +100,27 @@ fn sort_simple_yaml_newline_quirk() {
     }
     assert_eq!(std::fs::read(ctx.sb.path("a.yaml")).unwrap(), b"\n");
 }
+
+/// Windows text mode (09 §2.7): sort-simple-yaml writes `\r\n`; a CRLF file already in order is untouched.
+#[test]
+fn sort_simple_yaml_windows_text_writes() {
+    let sb = Sandbox::new(true);
+    sb.write("a.yaml", b"b: 1\n\na: 2\n");
+    sb.write("b.yaml", b"a: 1\r\n\r\nb: 2\r\n");
+    let ctx = Ctx::new(sb);
+    let h = snp_hooks::native(NativeSource::PreCommitHooks, "sort-simple-yaml").unwrap();
+    let cx = snp_hooks::HookCx {
+        windows: true,
+        ..ctx.cx(Epoch(1))
+    };
+    let o = h.run(&cx, &[OsStr::new("a.yaml"), OsStr::new("b.yaml")]);
+    assert_eq!(o.code, 1);
+    assert_eq!(
+        std::fs::read(ctx.sb.path("a.yaml")).unwrap(),
+        b"a: 2\r\n\r\nb: 1\r\n"
+    );
+    assert_eq!(
+        std::fs::read(ctx.sb.path("b.yaml")).unwrap(),
+        b"a: 1\r\n\r\nb: 2\r\n"
+    );
+}
