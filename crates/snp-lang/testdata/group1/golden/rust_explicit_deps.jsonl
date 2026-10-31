@@ -1,0 +1,5 @@
+{"argv":["rustup","toolchain","install","--no-self-update","1.79.0"],"cwd":"{REPO}","env":{"CARGO_HOME":"{PREFIX}/rustenv-1.79.0","PATH":"{PREFIX}/rustenv-1.79.0/bin:{SHIMS}:/usr/bin:/bin","RUSTUP_HOME":"{TMP}","RUSTUP_TOOLCHAIN":"1.79.0"}}
+{"argv":["cargo","add","serde@1.0"],"cwd":"{PREFIX}","env":{"PATH":"{PREFIX}/rustenv-1.79.0/bin:{SHIMS}:/usr/bin:/bin","RUSTUP_HOME":"{TMP}","RUSTUP_TOOLCHAIN":"1.79.0"}}
+{"argv":["cargo","install","--bins","--root","{PREFIX}/rustenv-1.79.0","--path","."],"cwd":"{PREFIX}","env":{"PATH":"{PREFIX}/rustenv-1.79.0/bin:{SHIMS}:/usr/bin:/bin","RUSTUP_HOME":"{TMP}","RUSTUP_TOOLCHAIN":"1.79.0"}}
+{"argv":["cargo","install","--bins","--root","{PREFIX}/rustenv-1.79.0","shellharden","--version","4.2.0"],"cwd":"{PREFIX}","env":{"PATH":"{PREFIX}/rustenv-1.79.0/bin:{SHIMS}:/usr/bin:/bin","RUSTUP_HOME":"{TMP}","RUSTUP_TOOLCHAIN":"1.79.0"}}
+{"argv":["rust-hello","a.txt"],"cwd":"{REPO}","env":{"PATH":"{PREFIX}/rustenv-1.79.0/bin:{SHIMS}:/usr/bin:/bin","RUSTUP_TOOLCHAIN":"1.79.0"}}

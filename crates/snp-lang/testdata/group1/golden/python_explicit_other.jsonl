@@ -1,0 +1,4 @@
+{"argv":["python","-mvirtualenv","{PREFIX}/py_env-python3.13","-p","python3.13"],"cwd":"/","env":{}}
+{"argv":["python","-mpip","install","."],"cwd":"{PREFIX}","env":{"PATH":"{PREFIX}/py_env-python3.13/bin:{SHIMS}:/usr/bin:/bin","PIP_DISABLE_PIP_VERSION_CHECK":"1","VIRTUAL_ENV":"{PREFIX}/py_env-python3.13"}}
+{"argv":["python","-S","-c","import sys;print(\".\".join(str(p) for p in sys.version_info))"],"cwd":"{REPO}","env":{}}
+{"argv":["py-hello","--flag","a.txt"],"cwd":"{REPO}","env":{"PATH":"{PREFIX}/py_env-python3.13/bin:{SHIMS}:/usr/bin:/bin","PIP_DISABLE_PIP_VERSION_CHECK":"1","VIRTUAL_ENV":"{PREFIX}/py_env-python3.13"}}

@@ -63,6 +63,11 @@ struct Sc {
     skip: fn(&GoldenCall) -> bool,
     /// Variables compared for the calls `narrow` selects.
     narrow: fn(&GoldenCall) -> Option<&'static [&'static str]>,
+    /// `PATH` holds only the shims directory (plus `git` for pre-commit), so the host's toolchains (a system ruby)
+    /// do not steer the default version.
+    bare_path: bool,
+    /// Maps one of snp's calls to pre-commit's equivalent (documented differences of form).
+    rewrite: fn(GoldenCall) -> GoldenCall,
 }
 
 /// The pyvenv.cfg the fake environment creators write.
@@ -107,13 +112,46 @@ fn python_snp_replies() -> Vec<R> {
     ]
 }
 
-/// The environment-creation calls and snp's reference probe.
+/// The environment-creation calls (`virtualenv`, `-m venv`, `uv venv`) and snp's reference probe.
 fn skip_python(c: &GoldenCall) -> bool {
     let a: Vec<&str> = c.argv.iter().map(String::as_str).collect();
     matches!(
         a.as_slice(),
-        ["python", "-mvirtualenv", ..] | ["python3", "-m", "venv", ..]
+        ["python", "-mvirtualenv", ..]
+            | ["python3" | "python3.13", "-m", "venv", ..]
+            | ["uv", "venv", ..]
     ) || (a.first() == Some(&"python3") && a.get(1) == Some(&"-S"))
+}
+
+/// snp's uv backend (D-PERF-01): `uv pip install --python <env python> --no-config [.] *deps` with the isolated uv
+/// cache stands for pre-commit's `python -mpip install . *deps` in the same activated environment; the rest of the
+/// argv and the environment delta must match exactly.
+fn rewrite_uv(mut c: GoldenCall) -> GoldenCall {
+    if c.argv.get(..3) == Some(&["uv".to_owned(), "pip".to_owned(), "install".to_owned()][..]) {
+        assert_eq!(c.argv.get(3).map(String::as_str), Some("--python"), "{c:?}");
+        assert_eq!(
+            c.argv.get(5).map(String::as_str),
+            Some("--no-config"),
+            "{c:?}"
+        );
+        let rest: Vec<String> = c.argv.get(6..).unwrap_or_default().to_vec();
+        c.argv = ["python", "-mpip", "install"]
+            .into_iter()
+            .map(str::to_owned)
+            .chain(rest)
+            .collect();
+        assert_eq!(
+            c.env.remove("UV_CACHE_DIR"),
+            Some(Some("{TOOLS}/cache/uv".to_owned())),
+            "the isolated uv cache"
+        );
+    }
+    c
+}
+
+/// No rewriting.
+fn rewrite_none(c: GoldenCall) -> GoldenCall {
+    c
 }
 
 /// nodeenv.
@@ -144,8 +182,27 @@ fn narrow_cargo(c: &GoldenCall) -> Option<&'static [&'static str]> {
 
 /// The go.dev JSON of the default go version.
 const GO_LATEST: &str = r#"[{"version": "go1.27.1", "stable": true, "files": []}]"#;
+/// node's index.json with several 20.x releases (the newest first, like nodejs.org).
+const NODE_INDEX_20: &str = r#"[{"version": "v21.0.0", "lts": false, "files": ["linux-x64", "osx-arm64-tar", "osx-x64-tar", "win-x64-zip", "linux-x64-musl"]},
+{"version": "v20.11.1", "lts": "Iron", "files": ["linux-x64", "osx-arm64-tar", "osx-x64-tar", "win-x64-zip", "linux-x64-musl"]},
+{"version": "v20.9.0", "lts": "Iron", "files": ["linux-x64", "osx-arm64-tar", "osx-x64-tar", "win-x64-zip", "linux-x64-musl"]}]"#;
 /// node's index.json.
 const NODE_INDEX: &str = r#"[{"version": "v26.1.0", "lts": false, "files": ["linux-x64", "linux-arm64", "osx-arm64-tar", "osx-x64-tar", "win-x64-zip", "win-arm64-zip", "linux-x64-musl", "linux-arm64-musl"]}]"#;
+
+/// nodeenv (faked), `npm install` and `node --version`.
+fn node_replies() -> Vec<R> {
+    vec![
+        R {
+            effects: vec![Eff::Mkdir("{arg4}/bin")],
+            ..r("python", &["-mnodeenv"], 0, "")
+        },
+        R {
+            effects: vec![Eff::Exe("{env:NODE_VIRTUAL_ENV}/bin/node-hello")],
+            ..r("npm", &["install"], 0, "")
+        },
+        r("node", &["--version"], 0, "v20.11.1\n"),
+    ]
+}
 
 /// The scenarios.
 fn scenarios() -> Vec<Sc> {
@@ -170,6 +227,8 @@ fn scenarios() -> Vec<Sc> {
         fetch: &[],
         skip: skip_none,
         narrow: narrow_none,
+        rewrite: rewrite_none,
+        bare_path: false,
     };
     vec![
         Sc {
@@ -191,6 +250,59 @@ fn scenarios() -> Vec<Sc> {
             snp_env: &[("SNP_PYTHON_INSTALLER", "pip")],
             skip: skip_python,
             ..base("python_default", "py-hook", LanguageId::Python)
+        },
+        // An explicit interpreter other than the reference one: pre-commit passes `-p python3.13` to virtualenv,
+        // snp creates the environment with that interpreter.
+        Sc {
+            version: Some("python3.13"),
+            resolved: "python3.13",
+            entry: "py-hello --flag",
+            replies: python_replies(),
+            snp_replies: {
+                let mut v = python_snp_replies();
+                v.push(R {
+                    effects: vec![
+                        Eff::Mkdir("{arg3}/bin"),
+                        Eff::Exe("{arg3}/bin/python"),
+                        Eff::Write("{arg3}/pyvenv.cfg", PYVENV),
+                    ],
+                    ..r("python3.13", &["-m", "venv"], 0, "")
+                });
+                v
+            },
+            snp_env: &[("SNP_PYTHON_INSTALLER", "pip")],
+            shims: &["python3.13"],
+            skip: skip_python,
+            ..base("python_explicit_other", "py-hook", LanguageId::Python)
+        },
+        // The default installer (uv): the install's activated environment and the hook run equal pre-commit's pip
+        // install and run.
+        Sc {
+            version: Some("python3.12"),
+            resolved: "python3.12",
+            deps: &["six"],
+            entry: "py-hello --flag",
+            replies: python_replies(),
+            snp_replies: {
+                let mut v = python_snp_replies();
+                v.push(R {
+                    effects: vec![
+                        Eff::Mkdir("{arg2}/bin"),
+                        Eff::Exe("{arg2}/bin/python"),
+                        Eff::Write("{arg2}/pyvenv.cfg", PYVENV),
+                    ],
+                    ..r("uv", &["venv"], 0, "")
+                });
+                v.push(R {
+                    effects: vec![Eff::Exe("{env:VIRTUAL_ENV}/bin/py-hello")],
+                    ..r("uv", &["pip", "install"], 0, "")
+                });
+                v
+            },
+            snp_env: &[("SNP_PYTHON_INSTALLER", "uv"), ("SNP_UV", "uv")],
+            skip: skip_python,
+            rewrite: rewrite_uv,
+            ..base("python_uv_deps", "py-hook", LanguageId::Python)
         },
         Sc {
             version: Some("system"),
@@ -229,6 +341,27 @@ fn scenarios() -> Vec<Sc> {
             fetch: &[("https://nodejs.org/dist/index.json", NODE_INDEX)],
             skip: skip_node,
             ..base("node_default", "node-hook", LanguageId::Node)
+        },
+        Sc {
+            version: Some("20.11.1"),
+            resolved: "20.11.1",
+            entry: "node-hello",
+            replies: node_replies(),
+            tools: &[("node", "20.11.1", &["bin/node", "bin/npm"])],
+            skip: skip_node,
+            ..base("node_explicit", "node-hook", LanguageId::Node)
+        },
+        // nodeenv 1.11.0 resolves a range against index.json: `20` is the newest 20.x release.
+        Sc {
+            version: Some("20"),
+            resolved: "20",
+            deps: &["prettier@3"],
+            entry: "node-hello",
+            replies: node_replies(),
+            tools: &[("node", "20.11.1", &["bin/node", "bin/npm"])],
+            fetch: &[("https://nodejs.org/dist/index.json", NODE_INDEX_20)],
+            skip: skip_node,
+            ..base("node_range_deps", "node-hook", LanguageId::Node)
         },
         Sc {
             version: Some("system"),
@@ -298,6 +431,36 @@ fn scenarios() -> Vec<Sc> {
             ..base("rust_default", "rust-hook", LanguageId::Rust)
         },
         Sc {
+            version: Some("1.79.0"),
+            resolved: "1.79.0",
+            deps: &["cli:shellharden:4.2.0", "serde:1.0"],
+            entry: "rust-hello",
+            replies: vec![
+                R {
+                    effects: vec![Eff::Exe("{arg4}/bin/rust-hello")],
+                    ..r("cargo", &["install"], 0, "")
+                },
+                r("cargo", &["add"], 0, ""),
+            ],
+            shims: &["rustup"],
+            skip: skip_rustup,
+            narrow: narrow_cargo,
+            ..base("rust_explicit_deps", "rust-hook", LanguageId::Rust)
+        },
+        Sc {
+            resolved: "default",
+            entry: "ruby-hello",
+            replies: vec![
+                ruby_gem(),
+                R {
+                    effects: vec![Eff::Exe("{env:GEM_HOME}/bin/ruby-hello")],
+                    ..r("gem", &["install"], 0, "")
+                },
+            ],
+            bare_path: true,
+            ..base("ruby_default", "ruby-hook", LanguageId::Ruby)
+        },
+        Sc {
             version: Some("system"),
             resolved: "system",
             deps: &["rake"],
@@ -343,7 +506,13 @@ fn snp_side(sc: &Sc) -> Vec<GoldenCall> {
     for s in sc.shims {
         w.shim(s);
     }
-    let mut t = w.host(w.env(sc.snp_env));
+    let env = if sc.bare_path {
+        w.env(sc.snp_env)
+            .patched(&snp_core::env::EnvPatch::default().set("PATH", w.shims.as_os_str()))
+    } else {
+        w.env(sc.snp_env)
+    };
+    let mut t = w.host(env);
     script(&t, &sc.replies);
     script(&t, &sc.snp_replies);
     for (tool, version, files) in sc.tools {
@@ -424,23 +593,31 @@ fn normalize(sc: &Sc, calls: Vec<GoldenCall>) -> Vec<GoldenCall> {
     let mut out: Vec<GoldenCall> = calls
         .into_iter()
         .filter(|c| !(sc.skip)(c))
+        .map(sc.rewrite)
         .map(|c| match (sc.narrow)(&c) {
             Some(keep) => c.only_env(keep),
             None => c,
         })
         .collect();
-    // pre-commit iterates `cargo install` packages from a set.
-    let start = out
-        .iter()
-        .position(|c| c.argv.get(..2) == Some(&["cargo".to_owned(), "install".to_owned()][..]));
-    if let Some(s) = start {
-        let end = out[s..]
-            .iter()
-            .position(|c| c.argv.get(..2) != Some(&["cargo".to_owned(), "install".to_owned()][..]))
-            .map_or(out.len(), |n| s + n);
-        out[s..end].sort_by(|a, b| a.argv.cmp(&b.argv));
-    }
+    sort_cargo_installs(&mut out);
     out
+}
+
+/// pre-commit iterates `cargo install` packages from a set, whose order follows the string hashes: the run of
+/// `cargo install` calls is sorted. The recorder runs under `python -I` (which implies `-E`, so `PYTHONHASHSEED`
+/// is ignored and the order differs between recordings); goldens are written sorted.
+fn sort_cargo_installs(out: &mut [GoldenCall]) {
+    let is_install =
+        |c: &GoldenCall| c.argv.get(..2) == Some(&["cargo".to_owned(), "install".to_owned()][..]);
+    if let Some(s) = out.iter().position(is_install) {
+        let end = out
+            .get(s..)
+            .and_then(|rest| rest.iter().position(|c| !is_install(c)))
+            .map_or(out.len(), |n| s + n);
+        if let Some(run) = out.get_mut(s..end) {
+            run.sort_by(|a, b| a.argv.cmp(&b.argv));
+        }
+    }
 }
 
 #[test]
@@ -460,7 +637,7 @@ fn snp_matches_the_pre_commit_goldens() {
 }
 
 /// The oracle venv: `target/oracle/pc462-py312`, or `$SNP_ORACLE_PY312`.
-fn oracle_root() -> PathBuf {
+pub(crate) fn oracle_root() -> PathBuf {
     #[expect(
         clippy::disallowed_methods,
         reason = "test switch selecting the oracle venv"
@@ -543,6 +720,26 @@ fn record(sc: &Sc, python: &Path) -> String {
             );
         }
     }
+    if sc.bare_path {
+        use std::os::unix::fs::PermissionsExt as _;
+        let git_exe = ["/usr/bin/git", "/bin/git", "/usr/local/bin/git"]
+            .into_iter()
+            .map(Path::new)
+            .find(|p| p.is_file())
+            .expect("git");
+        // git's own helpers (`git submodule` is a shell script) get the usual PATH back.
+        let wrapper = w.shims.join("git");
+        std::fs::write(
+            &wrapper,
+            format!(
+                "#!/bin/sh\nPATH=/usr/bin:/bin exec {} \"$@\"\n",
+                git_exe.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        env.insert("PATH".into(), w.shims.display().to_string());
+    }
     env.insert("PRE_COMMIT_HOME".into(), store.display().to_string());
     env.insert("TMPDIR".into(), tmp.display().to_string());
     env.insert("PYTHONHASHSEED".into(), "0".into());
@@ -591,7 +788,7 @@ fn record(sc: &Sc, python: &Path) -> String {
     let subst = w.subst().with(clone.as_os_str(), "{PREFIX}");
     let calls = parse_log(&std::fs::read_to_string(&log).unwrap(), &subst).unwrap();
     // pre-commit's temporary `RUSTUP_HOME`s.
-    let calls: Vec<GoldenCall> = calls
+    let mut calls: Vec<GoldenCall> = calls
         .into_iter()
         .map(|mut c| {
             for v in c.env.values_mut().flatten() {
@@ -602,6 +799,7 @@ fn record(sc: &Sc, python: &Path) -> String {
             c
         })
         .collect();
+    sort_cargo_installs(&mut calls);
     render_log(&calls)
 }
 
