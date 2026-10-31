@@ -7,7 +7,7 @@ use std::sync::Arc;
 use file_identify::Meta;
 use snp_core::failure::{ExcKind, Failure};
 use snp_proc::pool::JobPool;
-use snp_pyre::{MatchError, PyRegex};
+use snp_pyre::{MatchError, MatchKind, PyRegex};
 
 use crate::table::par_chunks;
 use crate::{FileId, FileTable, HookFilter, TagOutcome, messages};
@@ -132,6 +132,11 @@ impl Classifier {
 
 /// The type filter for one file: `Ok(false)` drops it (no match, or gone), `Err` fails the run (unreadable).
 fn keep(table: &FileTable, id: FileId, f: &HookFilter) -> Result<bool, Failure> {
+    // No type filter at all (`types: []`, the default `types_or`/`exclude_types`): every tag set matches, so only a
+    // file already known to be gone is dropped; no tag needs computing.
+    if f.types.is_empty() && f.types_or.is_empty() && f.exclude_types.is_empty() {
+        return Ok(!table.known_vanished(id));
+    }
     match table.tags(id, f.needs) {
         TagOutcome::Tags(tags) => Ok(tags.matches_types(&f.types, &f.types_or, &f.exclude_types)),
         TagOutcome::Vanished => Ok(false),
@@ -150,11 +155,23 @@ fn passes(
     exclude: &PyRegex,
 ) -> Result<bool, Failure> {
     let view = table.match_view(id);
-    let search = |re: &PyRegex| {
-        re.search(view)
-            .map_err(|_: MatchError| backtrack(table, id, re))
+    let search = |re: &PyRegex| match trivial_search(re, view) {
+        Some(hit) => Ok(hit),
+        None => re
+            .search(view)
+            .map_err(|_: MatchError| backtrack(table, id, re)),
     };
     Ok(search(include)? && !search(exclude)?)
+}
+
+/// `re.search` of the two patterns nearly every hook leaves at their defaults, answered without a regex call:
+/// `''` matches everything, `^$` exactly `""` and `"\n"` (`$` also matches before a final newline).
+fn trivial_search(re: &PyRegex, view: &str) -> Option<bool> {
+    match re.kind() {
+        MatchKind::All => Some(true),
+        MatchKind::EmptyOrNewline => Some(view.is_empty() || view == "\n"),
+        _ => None,
+    }
 }
 
 /// D-SEC-10: `An error has occurred: snp: regular expression {pattern!r} exceeded the backtracking limit on
@@ -176,6 +193,25 @@ mod tests {
     use std::path::Path;
 
     use super::*;
+
+    /// The trivial-pattern shortcut agrees with `re.search` on the edge views.
+    #[test]
+    fn trivial_patterns_agree_with_search() {
+        let views = ["", "\n", "\n\n", "a", "a\n", "\na", " ", "src/x.py"];
+        for src in ["", "^$", "(?:)", "\\A\\Z", "x"] {
+            let re = PyRegex::compile(src, snp_pyre::Options::CONFIG).unwrap();
+            for v in views {
+                if let Some(hit) = trivial_search(&re, v) {
+                    assert_eq!(hit, re.search(v).unwrap(), "{src:?} on {v:?}");
+                }
+            }
+        }
+        let all = PyRegex::compile("", snp_pyre::Options::CONFIG).unwrap();
+        let none = PyRegex::compile("^$", snp_pyre::Options::CONFIG).unwrap();
+        assert_eq!(trivial_search(&all, "x"), Some(true));
+        assert_eq!(trivial_search(&none, "\n"), Some(true));
+        assert_eq!(trivial_search(&none, "x"), Some(false));
+    }
 
     #[test]
     fn backtrack_failure_text() {

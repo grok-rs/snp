@@ -428,9 +428,7 @@ impl FileTable {
         let Some(i) = self.index(id) else {
             return TagOutcome::Vanished;
         };
-        if matches!(self.head.peek(i), Some(Head::Vanished))
-            || matches!(self.stat.peek(i), Some(StatTier::Vanished))
-        {
+        if self.known_vanished(id) {
             return TagOutcome::Vanished;
         }
         if !n.any() {
@@ -451,6 +449,15 @@ impl FileTable {
                 }
             }
         }
+    }
+
+    /// Whether entry `id` is already known to be gone (a computed stat or head tier said so); no I/O.
+    pub(crate) fn known_vanished(&self, id: FileId) -> bool {
+        let Some(i) = self.index(id) else {
+            return true;
+        };
+        matches!(self.head.peek(i), Some(Head::Vanished))
+            || matches!(self.stat.peek(i), Some(StatTier::Vanished))
     }
 
     /// Fills the required tiers on the pool (runs inline when the caller holds a permit, §1.4.8).
@@ -512,8 +519,12 @@ impl FileTable {
         Meta::from_git_mode_with(mode, ExecPolicy::PythonCompat)
     }
 
-    /// `os.path.lexists` with the `lstat` meta: the trusted mode, else one `lstat`.
+    /// `os.path.lexists` with the `lstat` meta: the trusted mode, else one `lstat`. An empty name does not exist
+    /// (`os.lstat('')` raises `FileNotFoundError`; `root.join("")` would be the root directory itself).
     pub(crate) fn lexists_meta(&self, i: usize) -> Option<Meta> {
+        if self.bytes_at(i).is_empty() {
+            return None;
+        }
         if let Some(m) = self.trusted_meta(i) {
             return Some(m);
         }
@@ -584,6 +595,10 @@ impl FileTable {
 
     /// One non-blocking `open` + bounded read through `Pending::finish`.
     fn read_head(&self, i: usize, pending: Pending) -> Head {
+        // `open('')` raises `FileNotFoundError` (the root directory is not what was named).
+        if self.bytes_at(i).is_empty() {
+            return Head::Vanished;
+        }
         let path = self.fs_path(i);
         let file = match open_nonblocking(&path) {
             Ok(f) => f,

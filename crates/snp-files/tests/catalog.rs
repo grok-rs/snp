@@ -218,7 +218,10 @@ mod catalog {
     }
 
     /// X13-CLS-04: an `lstat` error other than ENOENT (ENOTDIR, ENAMETOOLONG, EACCES on a parent) counts as gone
-    /// (identify maps every `OSError` to `does not exist.`): dropped by `lexists`, `Vanished` for tags.
+    /// (identify maps every `OSError` to `does not exist.`): dropped by `lexists`, `Vanished` for tags. The empty
+    /// name is gone too (`os.lstat('')` raises `FileNotFoundError`; it is not the repository root), as is `plain/`
+    /// for a regular file (`ENOTDIR`): Python's `[os.path.lexists(p) for p in ['', 'a.txt', 'a.txt/']]` is
+    /// `[False, True, False]`.
     #[test]
     fn x13_cls_04_lstat_errors_other_than_enoent_count_as_vanished() {
         let (_g, root) = root();
@@ -227,10 +230,12 @@ mod catalog {
         let names = vec![
             OsString::from("plain/child"),
             OsString::from(long),
+            OsString::from(""),
+            OsString::from("plain/"),
             OsString::from("plain"),
         ];
         let table = FileTable::from_args(names.clone(), &root);
-        for i in 0..2 {
+        for i in 0..4 {
             assert!(matches!(table.tags(FileId(i), FULL), TagOutcome::Vanished));
         }
         let mut table = FileTable::from_args(names, &root);
