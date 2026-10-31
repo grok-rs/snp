@@ -1,5 +1,35 @@
-# D-DIAG-05 (DIAG, owner WP-22): store notices: the foreign-owner warning (ADR-044), Removed snp 1.x cache data from {store}. (gc)
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-DIAG-05 (DIAG, owner WP-22): snp-only store notices on stderr. gc next to an snp 1.x store removes its leftovers
+# (only behind the 1.x README signature) and says so on stderr; stdout and the exit code equal pre-commit's.
 expect_divergence: D-DIAG-05
-status: stub
+name: divergences/D-DIAG-05-snp1-leftovers
+since: "4.6.2"
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos, windows], pty: false}
+repos: {}
+work:
+  files:
+    snpstore/README: |
+      This directory is maintained by the SNP (Shell Not Pass) project.
+      Learn more: https://github.com/devops247-online/snp
+    snpstore/db.db: "SQLite format 3\u0000"
+    snpstore/repos/repo_0123456789abcdef/x.txt: "x\n"
+  config: |
+    repos: []
+  commit: [".pre-commit-config.yaml"]
+  stage: []
+steps:
+  - tool: [gc]
+    env:
+      SNP_HOME: "${work}/snpstore"
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+expected:
+  oracle:
+    exit: 0
+    stdout: "0 repo(s) removed.\n"
+    stderr: ""
+  snp:
+    exit: 0
+    stdout: "0 repo(s) removed.\n"
+    stderr: "Removed snp 1.x cache data from ${work}/snpstore.\n"

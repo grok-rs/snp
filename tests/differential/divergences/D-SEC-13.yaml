@@ -1,5 +1,8 @@
-# D-SEC-13 (SEC, owner WP-22): as root (euid 0), a store owned by a non-root uid is refused with An error has occurred: FatalError: snp refuses to run as root from a store owned by uid <n>:…
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-SEC-13 (SEC, owner WP-22): as root, a store owned by a non-root uid is refused unless SNP_ALLOW_FOREIGN_STORE=1.
+# Needs root and a store chowned to another uid, which the differential harness cannot arrange portably (see
+# docs/divergences/D-SEC-13.md). Pinned by a posix unit test that runs as root in the CI container; WP-35's harness
+# treats `status: unit` as "covered elsewhere".
 expect_divergence: D-SEC-13
-status: stub
+status: unit
+unit_tests:
+  - crates/snp-store/tests/support/behaviour.rs::foreign_store_as_root_is_refused_unless_allowed

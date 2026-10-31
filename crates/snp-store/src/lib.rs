@@ -4,7 +4,11 @@
 //! Owner: WP-22.
 
 mod keys;
+mod layout;
 mod location;
+mod maintenance;
+mod marker;
+mod messages;
 mod store;
 
 pub use keys::{
@@ -12,4 +16,5 @@ pub use keys::{
     db_repo_name,
 };
 pub use location::{StoreLocation, StoreSource, resolve_location};
+pub use messages::locking_message;
 pub use store::{Store, StoreGuard, SweepReport};

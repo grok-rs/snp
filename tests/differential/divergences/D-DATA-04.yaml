@@ -1,5 +1,9 @@
-# D-DATA-04 (STORE, owner WP-22): gc removes *restored* patches older than 30 days (never unrestored ones) — class STORE
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-DATA-04 (STORE, owner WP-22): gc removes restored stash patches older than 30 days, never unrestored ones.
+# Not reproducible through the CLI within a test run (the patch must be 30 days old; see docs/divergences/D-DATA-04.md).
+# Pinned by a unit test that drives Store::sweep with a clock 31 days ahead; WP-35's harness treats `status: unit` as
+# "covered elsewhere".
 expect_divergence: D-DATA-04
-status: stub
+status: unit
+unit_tests:
+  - crates/snp-store/tests/support/behaviour.rs::sweep_keeps_unrestored_patches_and_referenced_tools
+  - crates/snp-store/tests/support/behaviour.rs::clean_retires_the_layout_but_keeps_unknown_and_recovery_data

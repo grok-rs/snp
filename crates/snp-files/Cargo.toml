@@ -17,5 +17,17 @@ snp-pycompat.workspace = true
 snp-pyre.workspace = true
 file-identify.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+[dev-dependencies]
+dhat.workspace = true
+proptest.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+rustix.workspace = true
+
 [lints]
 workspace = true

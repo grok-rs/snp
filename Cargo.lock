@@ -1718,12 +1718,17 @@ dependencies = [
 name = "snp-files"
 version = "2.0.0"
 dependencies = [
+ "dhat",
  "file-identify",
+ "proptest",
+ "rustix",
+ "serde_json",
  "snp-core",
  "snp-os",
  "snp-proc",
  "snp-pycompat",
  "snp-pyre",
+ "tempfile",
 ]
 
 [[package]]
@@ -1947,9 +1952,16 @@ dependencies = [
 name = "snp-store"
 version = "2.0.0"
 dependencies = [
+ "blake3",
+ "memchr",
+ "proptest",
+ "rustix",
+ "serde",
+ "serde_json",
  "snp-core",
  "snp-os",
  "snp-pycompat",
+ "tempfile",
 ]
 
 [[package]]

@@ -1,5 +1,41 @@
-# D-SEC-01 (SEC, owner WP-22): sanitized-or-hashed env dir names; deletion contained in the repo's envs/
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-SEC-01 (SEC, owner WP-22): environment directory names are sanitised or hashed; deletion stays inside envs/.
+# `language_version` climbs 40 levels (normpath stops at `/`) and comes back down into the worktree's `victim/`
+# directory. pre-commit 4.6.2 computes that directory as the environment and removes it when the install fails
+# (clean_path_on_failure): the committed `victim/keep.txt` disappears. snp names the environment
+# `py_env-h<hex16>` inside the store entry; the install fails the same way and the worktree is untouched.
 expect_divergence: D-SEC-01
-status: stub
+name: divergences/D-SEC-01-language-version-traversal
+since: "4.6.2"
+requires: {git: ">=2.31", net: false, tools: [python3], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files: {victim/keep.txt: "precious\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: py
+            name: py
+            entry: python -c "print(1)"
+            language: python
+            language_version: "../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../${work}/victim"
+            pass_filenames: false
+            always_run: true
+  commit: [".pre-commit-config.yaml", victim/keep.txt]
+  stage: []
+steps:
+  - tool: [run, --all-files]
+compare:
+  stdout: tierB
+  stderr: tierB
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+expected:
+  oracle:
+    exit: 3
+    tree_missing: [victim/keep.txt]
+  snp:
+    exit: 3
+    tree_has: [victim/keep.txt]

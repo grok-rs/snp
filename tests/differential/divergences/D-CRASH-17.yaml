@@ -1,5 +1,36 @@
-# D-CRASH-17 (CRASH, owner WP-22): marker-based store never needs repair; commands that do not need the store work; the error handler never double-faults
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-CRASH-17 (CRASH, owner WP-22, contributing WP-33): commands that do not need the store work, and the error
+# handler never double-faults. The store path lies below a regular file, so it can be created by nobody (root
+# included): pre-commit 4.6.2 builds Store() for every command and its error handler builds it again (two
+# tracebacks on stderr, exit 1); snp's validate-config never touches the store. Stale-entry and gc ENOENT cases need
+# a store edit between steps and are unit-tested (crates/snp-store/tests/catalog.rs, x13_st_10_*).
 expect_divergence: D-CRASH-17
-status: stub
+name: divergences/D-CRASH-17-store-not-creatable
+since: "4.6.2"
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files: {a.txt: "a\n"}
+  config: |
+    repos: []
+  commit: [".pre-commit-config.yaml", a.txt]
+  stage: []
+steps:
+  - tool: [validate-config]
+    env:
+      PRE_COMMIT_HOME: "${work}/a.txt/store"
+      SNP_HOME: "${work}/a.txt/store"
+compare:
+  stdout: exact
+  stderr: tierB
+  exit: exact
+  tree: true
+expected:
+  oracle:
+    exit: 1
+    stdout: |
+      An unexpected error has occurred: NotADirectoryError: [Errno 20] Not a directory: '${work}/a.txt/store'
+    stderr_contains: "During handling of the above exception, another exception occurred:"
+  snp:
+    exit: 0
+    stdout: ""
+    stderr: ""

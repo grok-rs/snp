@@ -1,5 +1,58 @@
-# D-DATA-08 (DATA, owner WP-22): keyed by the canonical absolute path; messages unchanged
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-DATA-08 (DATA, owner WP-22): local-path repos are keyed by their canonical absolute path.
+# Extensions of the 10 §7.4.3 schema: `repos.<name>.path` places a hook repository at a path relative to the
+# scenario root, and `projects` runs the same steps in several work repositories sharing one store, in order.
+# pre-commit 4.6.2 keys the cache by the string `../tools`, so project two runs project one's hook.
 expect_divergence: D-DATA-08
-status: stub
+name: divergences/D-DATA-08-relative-local-repo
+since: "4.6.2"
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos, windows], pty: false}
+repos:
+  tools_one:
+    path: one/tools
+    files:
+      .pre-commit-hooks.yaml: |
+        -   id: which
+            name: which
+            entry: echo tools of project one
+            language: system
+            pass_filenames: false
+            always_run: true
+            verbose: true
+  tools_two:
+    path: two/tools
+    files:
+      .pre-commit-hooks.yaml: |
+        -   id: which
+            name: which
+            entry: echo tools of project two
+            language: system
+            pass_filenames: false
+            always_run: true
+            verbose: true
+projects: [one/proj, two/proj]
+work:
+  files: {}
+  config: |
+    repos:
+    -   repo: ../tools
+        rev: HEAD
+        hooks:
+        -   id: which
+  commit: [".pre-commit-config.yaml"]
+  stage: []
+steps:
+  - tool: [run, --all-files]
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+expected:
+  oracle:
+    project: two/proj
+    exit: 0
+    stdout_contains: "tools of project one"
+  snp:
+    project: two/proj
+    exit: 0
+    stdout_contains: "[INFO] Initializing environment for ../tools.\nwhich"
+    stdout_contains_2: "tools of project two"

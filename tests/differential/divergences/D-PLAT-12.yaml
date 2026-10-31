@@ -1,5 +1,45 @@
-# D-PLAT-12 (PLAT, owner WP-22): tagged symlink (reading the reparse tag needs unsafe)
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-PLAT-12 (PLAT, owner WP-22): on Windows a directory junction is tagged `symlink` (pre-commit: `directory`).
+# Extension of the 10 §7.4.3 schema: `junctions` (Windows) maps a junction name to its target directory, created with
+# `mklink /J` after the commit (git cannot store junctions).
 expect_divergence: D-PLAT-12
-status: stub
+name: divergences/D-PLAT-12-junction
+since: "4.6.2"
+requires: {git: ">=2.31", net: false, tools: [], os: [windows], pty: false}
+repos: {}
+work:
+  files: {subdir/x.txt: "x\n"}
+  junctions: {j: subdir}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: dirs
+            name: dirs
+            entry: echo
+            language: system
+            types: [directory]
+            verbose: true
+        -   id: links
+            name: links
+            entry: echo
+            language: system
+            types: [symlink]
+            verbose: true
+  commit: [".pre-commit-config.yaml", subdir/x.txt]
+  stage: []
+steps:
+  - tool: [run, --files, j]
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+expected:
+  oracle:
+    exit: 0
+    stdout_contains: "links................................................(no files to check)Skipped"
+  snp:
+    exit: 0
+    stdout_contains: "dirs.................................................(no files to check)Skipped"
