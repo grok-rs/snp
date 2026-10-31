@@ -1,5 +1,67 @@
-# D-PERF-04 (PERF, owner WP-25): skipped when the tagged image exists (SNP_DOCKER_ALWAYS_BUILD=1 restores it)
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-PERF-04 (PERF, owner WP-25): the per-run `docker build` of `language: docker` is skipped when the tagged image
+# exists (`docker image inspect <tag>` succeeds); SNP_DOCKER_ALWAYS_BUILD=1 restores pre-commit's rebuild.
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3. `${work}` is the materialised worktree root and
+# `${PATH}` the hermetic PATH of §7.3.2 (both substituted by WP-35's materialiser).
 expect_divergence: D-PERF-04
-status: stub
+name: divergences/D-PERF-04-docker-rebuild-skipped
+since: "4.6.2"
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files:
+    # A fake docker that logs the verbs it receives to $DOCKER_LOG (`build`, `build --pull`, `image inspect`,
+    # `run`); every command succeeds, `system info` prints an empty JSON object (not rootless).
+    tools/docker: |
+      #!/bin/sh
+      p=
+      for a; do [ "$a" = --pull ] && p=' --pull'; done
+      case "$1" in
+        build) echo "build$p" >> "$DOCKER_LOG" ;;
+        image) echo "image $2" >> "$DOCKER_LOG" ;;
+        run) echo "run" >> "$DOCKER_LOG" ;;
+        system) echo '{}' ;;
+      esac
+      exit 0
+    .gitignore: "docker.log\n"
+  exec: [tools/docker]
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: fake-docker
+            name: fake docker
+            entry: "true"
+            language: docker
+            pass_filenames: false
+  commit: [".pre-commit-config.yaml", .gitignore, tools/docker]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - tool: [run, --all-files]
+    env:
+      PATH: "${work}/tools:${PATH}"
+      DOCKER_LOG: "${work}/docker.log"
+    stdin: ""
+    tty: false
+  - tool: [run, --all-files]
+    env:
+      PATH: "${work}/tools:${PATH}"
+      DOCKER_LOG: "${work}/docker.log"
+    stdin: ""
+    tty: false
+# Both tools print the same transcript (install lines, then `fake docker….Passed` twice) and exit 0; the worktree
+# differs in docker.log:
+#   pre-commit 4.6.2: build --pull / build / run / build / run   (recorded with pc462-py312)
+#   snp:              build --pull / image inspect / run / image inspect / run
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore

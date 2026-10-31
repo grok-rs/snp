@@ -1,5 +1,52 @@
-# D-CRASH-21 (CRASH, owner WP-25): treated as "not rootless"
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-CRASH-21 (CRASH, owner WP-25): a failing rootless probe means "not rootless" instead of crashing.
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3. `${work}` is the materialised worktree root and
+# `${PATH}` the hermetic PATH of §7.3.2 (both substituted by WP-35's materialiser).
 expect_divergence: D-CRASH-21
-status: stub
+name: divergences/D-CRASH-21-docker-rootless-probe-fails
+since: "4.6.2"
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files:
+    # A fake docker: `docker system info …` fails like an unreachable daemon; `docker run …` succeeds and prints
+    # its arguments (so the `-u <uid>:<gid>` snp passes is visible with --verbose).
+    tools/docker: |
+      #!/bin/sh
+      if [ "$1" = system ]; then echo 'Cannot connect to the Docker daemon' >&2; exit 1; fi
+      if [ "$1" = run ]; then echo "$@"; exit 0; fi
+      exit 0
+  exec: [tools/docker]
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: fake-docker
+            name: fake docker
+            entry: alpine:3 true
+            language: docker_image
+            pass_filenames: false
+  commit: [".pre-commit-config.yaml", tools/docker]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - tool: [run, --all-files]
+    env:
+      PATH: "${work}/tools:${PATH}"
+    stdin: ""
+    tty: false
+# pre-commit 4.6.2: `fake docker….An unexpected error has occurred: CalledProcessError: command: ('/bin/sh', '…/tools/docker',
+#   'system', 'info', '--format', '{{ json . }}')` / `return code: 1` / `stdout: (none)` / `stderr:` /
+#   `    Cannot connect to the Docker daemon`, `Check the log at …`, exit 3.
+# snp: `fake docker….Passed`, exit 0.
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore

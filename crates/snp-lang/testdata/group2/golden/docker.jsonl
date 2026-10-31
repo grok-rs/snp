@@ -1,0 +1,4 @@
+{"argv":["docker","build","--tag","{TAG}","--label","PRE_COMMIT","--pull","."],"cwd":"{PREFIX}","env":{}}
+{"argv":["docker","build","--tag","{TAG}","--label","PRE_COMMIT","."],"cwd":"{PREFIX}","env":{}}
+{"argv":["docker","system","info","--format","{{ json . }}"],"cwd":"{REPO}","env":{}}
+{"argv":["docker","run","--rm","-u","{UID}:{GID}","-v","{REPO}:/src:rw,Z","--workdir","/src","--entrypoint","fakehook","{TAG}","--flag","a b","a.txt"],"cwd":"{REPO}","env":{}}

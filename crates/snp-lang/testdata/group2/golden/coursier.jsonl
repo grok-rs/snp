@@ -1,0 +1,3 @@
+{"argv":["cs","fetch","scalafmt:3.6.1","other"],"cwd":"{PREFIX}","env":{"COURSIER_CACHE":"{ENV}/.cs-cache","PATH":"{ENV}:{SHIMS}:/usr/bin:/bin"}}
+{"argv":["cs","install","--dir","{ENV}","scalafmt:3.6.1","other"],"cwd":"{PREFIX}","env":{"COURSIER_CACHE":"{ENV}/.cs-cache","PATH":"{ENV}:{SHIMS}:/usr/bin:/bin"}}
+{"argv":["fakehook","--flag","a.txt"],"cwd":"{REPO}","env":{"COURSIER_CACHE":"{ENV}/.cs-cache","PATH":"{ENV}:{SHIMS}:/usr/bin:/bin"}}

@@ -1,0 +1,9 @@
+21 27 0:19 / /sys rw,nosuid,nodev,noexec,relatime shared:7 - sysfs sysfs rw
+22 27 0:20 / /proc rw,nosuid,nodev,noexec,relatime shared:14 - proc proc rw
+23 27 0:5 / /dev rw,nosuid,relatime shared:2 - devtmpfs udev rw,size=10219484k,nr_inodes=2554871,mode=755,inode64
+24 23 0:21 / /dev/pts rw,nosuid,noexec,relatime shared:3 - devpts devpts rw,gid=5,mode=620,ptmxmode=000
+25 27 0:22 / /run rw,nosuid,nodev,noexec,relatime shared:5 - tmpfs tmpfs rw,size=2047768k,mode=755,inode64
+27 1 8:2 / / rw,relatime shared:1 - ext4 /dev/sda2 rw,errors=remount-ro
+28 21 0:6 / /sys/kernel/security rw,nosuid,nodev,noexec,relatime shared:8 - securityfs securityfs rw
+29 23 0:24 / /dev/shm rw,nosuid,nodev shared:4 - tmpfs tmpfs rw,inode64
+30 25 0:25 / /run/lock rw,nosuid,nodev,noexec,relatime shared:6 - tmpfs tmpfs rw,size=5120k,inode64
