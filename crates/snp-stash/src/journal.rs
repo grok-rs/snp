@@ -120,6 +120,8 @@ pub(crate) struct PointerData {
     pub(crate) worktree: Option<PathBuf>,
     /// The paths `stage_fixed` stages.
     pub(crate) staged_fixed: Vec<Vec<u8>>,
+    /// The intent-to-add paths cleared from the index (git order; absent in older pointers).
+    pub(crate) ita: Vec<Vec<u8>>,
 }
 
 // ---- byte-string codec ----
@@ -330,6 +332,7 @@ impl PointerData {
             enc_opt_path(self.worktree.as_deref()),
         );
         m.insert("staged_fixed".to_owned(), enc_list(&self.staged_fixed));
+        m.insert("ita".to_owned(), enc_list(&self.ita));
         let mut out = Value::Object(m).to_string().into_bytes();
         out.push(b'\n');
         out
@@ -349,6 +352,7 @@ impl PointerData {
             state: get_str(m, "state")?,
             worktree: get_opt_path(m, "worktree").ok()?,
             staged_fixed: get_list(m, "staged_fixed")?,
+            ita: get_list(m, "ita")?,
         })
     }
 }
@@ -381,7 +385,7 @@ pub(crate) fn new_file(path: &Path) -> io::Result<File> {
 }
 
 /// temp file in the same directory + rename over `path` (ADR-026 "written temp+rename"); `durable` adds the file
-/// `sync_all` before the rename.
+/// `sync_all` before the rename and a directory fsync after it (the rename itself must survive a power loss).
 pub(crate) fn replace(path: &Path, bytes: &[u8], durable: bool) -> io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let name = path
@@ -393,9 +397,10 @@ pub(crate) fn replace(path: &Path, bytes: &[u8], durable: bool) -> io::Result<()
         let tmp = dir.join(format!(".{name}.tmp-{}", crate::lock::random_hex(8)));
         match write_new(&tmp, bytes, durable) {
             Ok(()) => {
-                return snp_os::fs::rename_with_retry(&tmp, path).inspect_err(|_| {
+                snp_os::fs::rename_with_retry(&tmp, path).inspect_err(|_| {
                     let _ignored = std::fs::remove_file(&tmp);
-                });
+                })?;
+                return if durable { sync_dir(dir) } else { Ok(()) };
             }
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => last = e,
             Err(e) => return Err(e),
@@ -462,6 +467,7 @@ mod tests {
             state: "started".to_owned(),
             worktree: Some(PathBuf::from("/r")),
             staged_fixed: Vec::new(),
+            ita: vec![b"n".to_vec(), b"\xff".to_vec()],
         };
         assert_eq!(PointerData::parse(&p.to_bytes()), Some(p));
     }

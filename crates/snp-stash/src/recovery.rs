@@ -38,15 +38,151 @@ impl Unrestored {
     /// The exact stderr notice (§4.6).
     ///
     /// `snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in <patch> (index
-    /// tree <tree>). Restore with: git apply --3way <patch>`, with `git reset -q <tree> -- <paths…> && ` (or
-    /// `git read-tree <tree> && ` for a long list) before the apply in the `staging-fixed` state.
+    /// tree <tree>). Restore with: git --literal-pathspecs checkout <tree> -- <patch paths…> && git apply --3way
+    /// <patch> && git --literal-pathspecs reset -q <tree> -- <patch paths…> <staged paths…>`: the patch's paths are
+    /// first put back to their stash-time contents (after the stash checkout the worktree holds only staged content
+    /// and hook edits there, so `git apply` would refuse them), then the patch is applied and the index of those paths
+    /// and of the `stage_fixed` paths is reset to the stash-time tree. A long list (or an unreadable patch) uses
+    /// `git read-tree <tree> && git checkout-index -f -a && git apply --3way <patch> && git read-tree <tree>`. The
+    /// intent-to-add paths the run cleared are re-added last (`&& git --literal-pathspecs add --intent-to-add -- …`).
+    ///
+    /// The patch's paths are read from the patch (`diff --git` headers) and the intent-to-add list from the store
+    /// journal next to it, so the text is complete for any `Unrestored`.
     pub fn hint(&self) -> String {
-        let staged: &[RepoPath] = if &*self.state == "staging-fixed" {
-            &self.staged_fixed
+        let paths = patch_paths(&self.patch);
+        let journal = journal_for(&self.patch);
+        let staged: Vec<Vec<u8>> = self
+            .staged_fixed
+            .iter()
+            .map(|r| r.as_bytes().to_vec())
+            .collect();
+        messages::recovery_notice(&messages::Recovery {
+            patch: &self.patch,
+            tree: self.tree.as_deref(),
+            patch_paths: paths.as_deref(),
+            staged_fixed: &staged,
+            ita: journal.as_ref().map_or(&[], |(_, d)| d.ita.as_slice()),
+            journal: journal.as_ref().map(|(p, _)| p.as_path()),
+        })
+    }
+}
+
+/// The store journal of `patch` (same directory, `data.patch == patch`).
+fn journal_for(patch: &Path) -> Option<(PathBuf, JournalData)> {
+    let dir = patch.parent()?;
+    store_journals(dir).into_iter().find_map(|j| {
+        let data = journal::read_small(&j).and_then(|b| JournalData::parse(&b))?;
+        (data.patch.as_deref() == Some(patch)).then_some((j, data))
+    })
+}
+
+/// The paths a `git diff-index --binary` patch touches, from its `diff --git a/<p> b/<p>` headers (C-quoted names
+/// included; no renames: plumbing never detects them), each with whether the patch creates it (`new file mode`: not
+/// in the stash-time tree). Stops after [`messages::LIST_MAX_PATHS`] + 1 paths (the hint then uses the whole-index
+/// form). `None` when the patch is unreadable or a header does not parse.
+pub(crate) fn patch_paths(patch: &Path) -> Option<Vec<(Vec<u8>, bool)>> {
+    use std::io::BufRead;
+    let f = std::fs::File::open(patch).ok()?;
+    let mut r = std::io::BufReader::new(f);
+    let mut out: Vec<(Vec<u8>, bool)> = Vec::new();
+    let mut line = Vec::new();
+    // Inside the extended header lines of the last `diff --git` (until `---`, `Binary`, `GIT binary patch` or `@@`).
+    let mut in_header = false;
+    loop {
+        line.clear();
+        if r.read_until(b'\n', &mut line).ok()? == 0 {
+            break;
+        }
+        if let Some(rest) = line.strip_prefix(b"diff --git ") {
+            if out.len() > messages::LIST_MAX_PATHS {
+                break;
+            }
+            let rest = rest.strip_suffix(b"\n").unwrap_or(rest);
+            out.push((diff_git_name(rest)?, false));
+            in_header = true;
+        } else if in_header {
+            if line.starts_with(b"new file mode ") {
+                if let Some(last) = out.last_mut() {
+                    last.1 = true;
+                }
+            } else if !(line.starts_with(b"old mode ")
+                || line.starts_with(b"new mode ")
+                || line.starts_with(b"deleted file mode ")
+                || line.starts_with(b"index "))
+            {
+                in_header = false;
+            }
+        }
+    }
+    Some(out)
+}
+
+/// `a/<p> b/<p>` (both sides equal: no renames) or the C-quoted form `"a/<p>" "b/<p>"` → `<p>`.
+fn diff_git_name(rest: &[u8]) -> Option<Vec<u8>> {
+    if rest.first() == Some(&b'"') {
+        let (a, used) = c_unquote(rest)?;
+        let b_side = rest.get(used..)?.strip_prefix(b" ")?;
+        let b = if b_side.first() == Some(&b'"') {
+            c_unquote(b_side)?.0
         } else {
-            &[]
+            b_side.to_vec()
         };
-        messages::recovery_notice(&self.patch, self.tree.as_deref(), staged)
+        let a = a.strip_prefix(b"a/")?.to_vec();
+        return (b.strip_prefix(b"b/")? == a.as_slice()).then_some(a);
+    }
+    // Unquoted: `a/` + p + ` b/` + p, so p has (len - 5) / 2 bytes.
+    let n = rest.len().checked_sub(5)?;
+    if n % 2 != 0 {
+        return None;
+    }
+    let half = n / 2;
+    let a = rest.get(2..half.checked_add(2)?)?;
+    let b = rest.get(half.checked_add(5)?..)?;
+    (rest.starts_with(b"a/")
+        && rest.get(half.checked_add(2)?..half.checked_add(5)?)? == b" b/"
+        && a == b)
+        .then(|| a.to_vec())
+}
+
+/// git's `unquote_c_style`: the quoted string at the start of `s` → (bytes, bytes consumed).
+fn c_unquote(quoted: &[u8]) -> Option<(Vec<u8>, usize)> {
+    let mut out = Vec::new();
+    let mut pos = 1_usize;
+    loop {
+        let byte = *quoted.get(pos)?;
+        pos = pos.checked_add(1)?;
+        match byte {
+            b'"' => return Some((out, pos)),
+            b'\\' => {
+                let esc = *quoted.get(pos)?;
+                pos = pos.checked_add(1)?;
+                let value = match esc {
+                    b'a' => 0x07,
+                    b'b' => 0x08,
+                    b'f' => 0x0c,
+                    b'n' => b'\n',
+                    b'r' => b'\r',
+                    b't' => b'\t',
+                    b'v' => 0x0b,
+                    b'\\' | b'"' => esc,
+                    b'0'..=b'3' => {
+                        let mid = *quoted.get(pos)?;
+                        let low = *quoted.get(pos.checked_add(1)?)?;
+                        if !(b'0'..=b'7').contains(&mid) || !(b'0'..=b'7').contains(&low) {
+                            return None;
+                        }
+                        pos = pos.checked_add(2)?;
+                        esc.wrapping_sub(b'0')
+                            .wrapping_mul(64)
+                            .wrapping_add(mid.wrapping_sub(b'0').wrapping_mul(8))
+                            .wrapping_add(low.wrapping_sub(b'0'))
+                    }
+                    _ => return None,
+                };
+                out.push(value);
+            }
+            _ => out.push(byte),
+        }
     }
 }
 
@@ -58,6 +194,20 @@ pub(crate) struct Scan {
     /// Journals and pointers of this worktree that protect nothing (restored, or no patch): safe to delete while
     /// holding the lock.
     pub(crate) stale: Vec<PathBuf>,
+    /// Runs with no unrestored patch whose intent-to-add re-add may not have run. Reported once (no unstaged
+    /// content is at risk), then deleted.
+    pub(crate) ita_only: Vec<ItaOnly>,
+}
+
+/// A run whose only leftover is its cleared intent-to-add list.
+#[derive(Debug)]
+pub(crate) struct ItaOnly {
+    /// The intent-to-add paths.
+    pub(crate) paths: Vec<Vec<u8>>,
+    /// The file that lists them (store journal, else pointer).
+    pub(crate) listed: Option<PathBuf>,
+    /// Every file of the run (deleted after the notice).
+    pub(crate) files: Vec<PathBuf>,
 }
 
 /// The pointers in a git dir: `snp-stash.journal` and `snp-stash-<n>.journal`.
@@ -140,6 +290,29 @@ impl Run {
         };
         raw.iter().filter_map(|b| RepoPath::new(b)).collect()
     }
+
+    /// The intent-to-add paths and the file that lists them (the store journal, else the pointer).
+    fn ita(&self) -> (Vec<Vec<u8>>, Option<PathBuf>) {
+        let store = || self.files.iter().find(|f| is_store_journal(f)).cloned();
+        match (&self.data, &self.pointer) {
+            (Some(d), Some(p)) if d.ita.is_empty() && !p.ita.is_empty() => (
+                p.ita.clone(),
+                self.files.iter().find(|f| !is_store_journal(f)).cloned(),
+            ),
+            (Some(d), _) => (d.ita.clone(), store()),
+            (None, Some(p)) => (
+                p.ita.clone(),
+                self.files.iter().find(|f| !is_store_journal(f)).cloned(),
+            ),
+            (None, None) => (Vec::new(), None),
+        }
+    }
+}
+
+/// `run-*.snp-journal` (a store journal, not a git-dir pointer).
+fn is_store_journal(p: &Path) -> bool {
+    p.file_name()
+        .is_some_and(|n| n.to_string_lossy().ends_with(journal::JOURNAL_SUFFIX))
 }
 
 /// Same path, compared literally (both sides come from the same discovery).
@@ -206,7 +379,20 @@ pub(crate) fn scan(git_dir: &Path, patches_dir: &Path, worktree_root: &Path) -> 
                 staged_fixed: run.staged_fixed(),
                 state: state.into_boxed_str(),
             }),
-            _ => out.stale.extend(run.files),
+            _ => {
+                // The journal is removed only after the intent-to-add re-add: a leftover one with a list (state
+                // `started`, or a kill after `restored`) means the re-add may not have run.
+                let (ita, listed) = run.ita();
+                if ita.is_empty() {
+                    out.stale.extend(run.files);
+                } else {
+                    out.ita_only.push(ItaOnly {
+                        paths: ita,
+                        listed,
+                        files: run.files,
+                    });
+                }
+            }
         }
     }
     out.unrestored.sort_by(|a, b| a.patch.cmp(&b.patch));
@@ -252,4 +438,56 @@ pub fn verify_restored(git: &Git, patch: &Path) -> Result<bool, Failure> {
         patch.as_os_str(),
     ])?;
     Ok(c.status.0 == 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diff_git_names() {
+        assert_eq!(diff_git_name(b"a/x b/x"), Some(b"x".to_vec()));
+        assert_eq!(
+            diff_git_name(b"a/d/a b c b/d/a b c"),
+            Some(b"d/a b c".to_vec())
+        );
+        assert_eq!(diff_git_name(b"a/x b/y"), None);
+        assert_eq!(diff_git_name(b"a/x b/"), None);
+        assert_eq!(diff_git_name(b""), None);
+        assert_eq!(
+            diff_git_name(br#""a/q\"t\303\251\\n" "b/q\"t\303\251\\n""#),
+            Some(b"q\"t\xc3\xa9\\n".to_vec())
+        );
+        assert_eq!(
+            diff_git_name(br#""a/x\tz" "b/x\tz""#),
+            Some(b"x\tz".to_vec())
+        );
+        assert_eq!(diff_git_name(br#""a/x" "b/y""#), None);
+        assert_eq!(diff_git_name(br#""a/x"#), None);
+        assert_eq!(diff_git_name(br#""a/\9" "b/\9""#), None);
+    }
+
+    #[test]
+    fn patch_paths_marks_created_files() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("patch");
+        std::fs::write(
+            &p,
+            b"diff --git a/foo b/foo\nindex 1..2 100644\n--- a/foo\n+++ b/foo\n@@ -1 +1 @@\n-a\n+b\n\
+              diff --git a/new file b/new file\nnew file mode 100644\nindex 0..3\nGIT binary patch\nliteral 1\n\
+              diff --git a/gone b/gone\ndeleted file mode 100644\nindex 4..0\n",
+        )
+        .unwrap();
+        assert_eq!(
+            patch_paths(&p),
+            Some(vec![
+                (b"foo".to_vec(), false),
+                (b"new file".to_vec(), true),
+                (b"gone".to_vec(), false)
+            ])
+        );
+        assert_eq!(patch_paths(&d.path().join("missing")), None);
+        std::fs::write(&p, b"diff --git a/x b/y\n").unwrap();
+        assert_eq!(patch_paths(&p), None);
+    }
 }

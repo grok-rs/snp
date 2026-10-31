@@ -65,8 +65,9 @@ mod fi {
             let repo = sb.init("r");
             sb.write(&repo, "foo", FOO.as_bytes());
             sb.write(&repo, "fixme", b"x  \n");
+            sb.write(&repo, "other", b"o\n");
             sb.write(&repo, "n", b"new\n");
-            sb.git(&repo, &["add", "foo", "fixme"]);
+            sb.git(&repo, &["add", "foo", "fixme", "other"]);
             sb.git(&repo, &["add", "--intent-to-add", "n"]);
             sb.write(&repo, "foo", FOO.replace('3', "three").as_bytes());
             let diff = sb.unstaged_diff(&repo);
@@ -140,7 +141,8 @@ mod fi {
             assert_eq!(self.sb.index(&self.repo), self.index, "index");
         }
 
-        /// The restore did not complete: the recovery notice names the patch, which reconstructs the unstaged diff.
+        /// The restore did not complete: the recovery notice names the patch, which reconstructs the unstaged diff,
+        /// and its commands, run exactly as printed, give back the pre-run worktree and index.
         fn assert_recoverable(&self) {
             let found =
                 snp_stash::find_unrestored(&self.repo.join(".git"), &self.sb.patches(), &self.repo);
@@ -149,13 +151,29 @@ mod fi {
             assert_eq!(u.tree.as_deref(), Some(self.tree.as_str()));
             assert!(
                 u.hint()
-                    .ends_with(&format!("git apply --3way {}", u.patch.display()))
+                    .contains(&format!(" git apply --3way {} ", u.patch.display()))
             );
             assert_eq!(
                 std::fs::read(&u.patch).unwrap(),
                 self.patch_diff,
                 "the patch is the unstaged diff"
             );
+            let hint = u.hint();
+            let cmds = hint.split("Restore with: ").nth(1).unwrap();
+            let out = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(cmds)
+                .current_dir(&self.repo)
+                .env_clear()
+                .envs(self.sb.env.iter())
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{cmds}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            self.assert_pre_run_state();
         }
 
         fn ok() -> Response {
@@ -384,10 +402,12 @@ mod fi {
         let _s = serial();
         for n in 1..=10_u8 {
             let c = Case::new();
-            let (_b, cx, _, _) = c.scripted();
+            let (_b, cx, out, _) = c.scripted();
             arm(&format!("StashState({n})"));
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let mut g = snp_stash::enter(cx)?;
+                // An unstaged hook fix in another tracked file: no restore path may discard it.
+                c.sb.write(&c.repo, "other", b"hook fixed\n");
                 c.sb.write(&c.repo, "fixme", b"x\n");
                 g.stage_fixed(&[rp("fixme")])?;
                 g.restore()
@@ -414,6 +434,19 @@ mod fi {
                 "StashState({n})"
             );
             assert_eq!(c.sb.status_of(&c.repo, "n"), "A", "StashState({n})");
+            if n >= 6 {
+                // The restore (or its `Drop` resumption) applied the patch exactly once: no rollback.
+                assert_eq!(
+                    c.sb.read(&c.repo, "other"),
+                    b"hook fixed\n",
+                    "StashState({n})"
+                );
+                assert!(
+                    !out.text().contains("Rolling back"),
+                    "StashState({n}): {}",
+                    out.text()
+                );
+            }
             match n {
                 1..=5 => c.assert_pre_run_state(),
                 // The panic hit before the add: nothing staged.

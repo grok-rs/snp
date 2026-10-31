@@ -43,29 +43,41 @@ fn orphan(sb: &Sandbox, repo: &Path) -> PathBuf {
 
 #[test]
 fn hint_texts() {
+    let d = tempfile::tempdir().unwrap();
+    let patch = d.path().join("patch1-2");
+    std::fs::write(
+        &patch,
+        b"diff --git a/foo b/foo\nindex 1..2 100644\n--- a/foo\n+++ b/foo\n",
+    )
+    .unwrap();
     let u = Unrestored {
-        patch: PathBuf::from("/s/patches/patch1-2"),
+        patch: patch.clone(),
         tree: Some("abc".to_owned()),
         worktree: PathBuf::from("/r"),
         pid: 2,
         state: Box::from("stashed"),
-        staged_fixed: vec![RepoPath::new(b"x").unwrap()],
+        staged_fixed: vec![RepoPath::new(b"x*").unwrap()],
     };
-    // staged_fixed only matters in the staging-fixed state.
+    // The patch's paths are checked out and reset; the staged paths are reset too (literal pathspecs).
     assert_eq!(
         u.hint(),
-        "snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in \
-         /s/patches/patch1-2 (index tree abc). Restore with: git apply --3way /s/patches/patch1-2"
+        format!(
+            "snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in {0} \
+             (index tree abc). Restore with: git --literal-pathspecs checkout abc -- foo && git apply --3way {0} && \
+             git --literal-pathspecs reset -q abc -- foo 'x*'",
+            patch.display()
+        )
     );
+    // An unreadable patch: the whole-index form.
     let u = Unrestored {
-        state: Box::from("staging-fixed"),
+        patch: PathBuf::from("/s/patches/patch1-2"),
         ..u
     };
     assert_eq!(
         u.hint(),
         "snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in \
-         /s/patches/patch1-2 (index tree abc). Restore with: git reset -q abc -- x && git apply --3way \
-         /s/patches/patch1-2"
+         /s/patches/patch1-2 (index tree abc). Restore with: git read-tree abc && git checkout-index -f -a && git \
+         apply --3way /s/patches/patch1-2 && git read-tree abc"
     );
 }
 
@@ -92,7 +104,8 @@ fn next_run_prints_the_notice_and_keeps_the_orphan() {
         err.text(),
         format!(
             "snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in {0} \
-             (index tree {tree}). Restore with: git apply --3way {0}\n",
+             (index tree {tree}). Restore with: git --literal-pathspecs checkout {tree} -- foo && git apply --3way \
+             {0} && git --literal-pathspecs reset -q {tree} -- foo\n",
             p.display()
         )
     );

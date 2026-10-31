@@ -36,8 +36,19 @@ snp adds, with no change to any byte pre-commit prints on a working path (ARCHIT
   every mutation (fsynced for the data-protecting states), deleted when the run is done;
 * the next run in the worktree (any store: the pointer is in the git dir) prints, on stderr, for every orphaned
   journal: `snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in <patch>
-  (index tree <tree>). Restore with: git apply --3way <patch>` — preceded by `git reset -q <tree> -- <paths…> && `
-  when `stage_fixed` had already staged fixes. Nothing is ever applied automatically.
+  (index tree <tree>). Restore with: git --literal-pathspecs checkout <tree> -- <patch paths…> && git apply --3way
+  <patch> && git --literal-pathspecs reset -q <tree> -- <patch paths…> <stage_fixed paths…>`. After the stash
+  checkout the worktree holds only staged content and hook edits in the patch's paths (the user's work is in the
+  patch), so they are first put back to their stash-time contents — otherwise `git apply` refuses a path a hook or
+  `stage_fixed` touched (`does not match index`); the final reset gives back the pre-run index (the `--3way` apply
+  stages, and `stage_fixed` may have staged fixes). Paths are literal pathspecs. A long list (more than 64 paths or
+  4096 bytes) or an unparseable patch uses `git read-tree <tree> && git checkout-index -f -a && git apply --3way
+  <patch> && git read-tree <tree>`. Intent-to-add paths the run cleared are re-added last
+  (`&& git --literal-pathspecs add --intent-to-add -- <paths…>`). A run killed after clearing intent-to-add entries
+  but with no patch at risk (before the patch, or after the restore) gets one notice `snp: an earlier run was
+  interrupted before it re-added its intent-to-add files. Restore with: git --literal-pathspecs add --intent-to-add
+  -- <paths…>`, printed once. Nothing is ever applied automatically. (The checkout discards hook edits — and any
+  later edits — in the patch's paths, as pre-commit's own rollback does.)
 
 Why it is safe: stdout and exit codes of every run that works in pre-commit are unchanged; the only visible
 differences are waiting (instead of corrupting a concurrent run) and stderr notices about work pre-commit would
@@ -53,7 +64,7 @@ snp: waiting for another snp run in this worktree…
 An error has occurred: FatalError: snp: another snp run in this worktree still holds /r/.git/snp-stash.lock after 60 s; set SNP_STASH_LOCK_TIMEOUT (seconds, at most 3600) to wait longer
 
 # the run after a `kill -9` during the hooks (stderr)
-snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in /s/patches/patch1791403656-1781218 (index tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904). Restore with: git apply --3way /s/patches/patch1791403656-1781218
+snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in /s/patches/patch1791403656-1781218 (index tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904). Restore with: git --literal-pathspecs checkout 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -- foo && git apply --3way /s/patches/patch1791403656-1781218 && git --literal-pathspecs reset -q 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -- foo
 ```
 
 Proof: `crates/snp-stash/tests/behaviour/{guard,recovery}.rs` (lock, nested token, stale token, autosave, patch

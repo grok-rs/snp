@@ -37,7 +37,7 @@ stdout or the exit code.
 snp: waiting for another snp run in this worktree…
 snp: restoring stashed changes, please wait
 snp: git needed the terminal during the restore and was stopped
-snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in /s/patches/patch1791403656-1781218 (index tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904). Restore with: git apply --3way /s/patches/patch1791403656-1781218
+snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in /s/patches/patch1791403656-1781218 (index tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904). Restore with: git --literal-pathspecs checkout 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -- foo && git apply --3way /s/patches/patch1791403656-1781218 && git --literal-pathspecs reset -q 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -- foo
 ```
 
 Proof: `crates/snp-stash/src/messages.rs` (goldens), `tests/behaviour/guard.rs::{concurrent_second_run_waits_once_…,

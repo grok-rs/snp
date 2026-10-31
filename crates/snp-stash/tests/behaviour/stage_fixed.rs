@@ -198,25 +198,60 @@ fn kill_at_staging_fixed_is_recoverable_by_the_hint() {
         u.hint(),
         format!(
             "snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in {0} \
-             (index tree {tree}). Restore with: git reset -q {tree} -- fixme && git apply --3way {0}",
+             (index tree {tree}). Restore with: git --literal-pathspecs checkout {tree} -- foo && git apply --3way {0} \
+             && git --literal-pathspecs reset -q {tree} -- foo fixme",
             u.patch.display()
         )
     );
-    // Emulate the kill right after the add: run the hinted commands on the post-add state.
-    let patch = u.patch.clone();
-    drop(g); // (the in-process guard restores; reconstruct from the snapshot state instead)
-    sb.git(&repo, &["reset", "-q", &tree, "--", "fixme"]);
-    sb.git(&repo, &["checkout", "--", "."]);
-    sb.git(
-        &repo,
-        &[
-            std::ffi::OsStr::new("apply"),
-            "--3way".as_ref(),
-            patch.as_os_str(),
-        ],
-    );
-    // The staged fix is undone and the unstaged work is back (`--3way` also stages it: data, not index, parity).
+    // The kill right after the add: no restore runs (the leaked guard keeps its lock, which the hint never needs).
+    let _leaked = std::mem::ManuallyDrop::new(g);
+    run_hint(&sb, &repo, &u.hint());
+    // Exactly the pre-run index and unstaged work; the hook fix stays in the worktree, unstaged.
+    assert_eq!(sb.index(&repo), index_before);
     assert_eq!(sb.git(&repo, &["show", ":fixme"]), b"z  \n");
+    assert_eq!(sb.read(&repo, "fixme"), b"z\n");
     assert_eq!(sb.read(&repo, "foo"), format!("{FOO}9\n").as_bytes());
-    assert!(index_before.contains("fixme"));
+}
+
+/// Runs the commands after `Restore with: ` exactly as printed.
+fn run_hint(sb: &Sandbox, repo: &std::path::Path, hint: &str) {
+    let cmds = hint.split("Restore with: ").nth(1).unwrap();
+    let out = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(cmds)
+        .current_dir(repo)
+        .env_clear()
+        .envs(sb.env.iter())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{cmds}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn kill_at_staging_fixed_of_a_file_in_the_patch_is_recoverable_by_the_hint() {
+    // The fixer rewrote a file the user has partially staged: the stage-fixed path is also in the patch.
+    let sb = Sandbox::new();
+    let repo = sb.init("r");
+    let staged = "1  \n2\n3\n4\n5\n6\n7\n8\n";
+    sb.write(&repo, "x", staged.as_bytes());
+    sb.git(&repo, &["add", "x"]);
+    let user = staged.replace("8\n", "USER\n");
+    sb.write(&repo, "x", user.as_bytes());
+    let index_before = sb.index(&repo);
+    let diff_before = sb.unstaged_diff(&repo);
+    let (cx, _, _) = sb.ctx(&repo);
+    let mut g = snp_stash::enter(cx).unwrap();
+    sb.write(&repo, "x", staged.replace("1  ", "1").as_bytes());
+    assert!(g.stage_fixed(&[rp("x")]).unwrap());
+    let found = snp_stash::find_unrestored(&repo.join(".git"), &sb.patches(), &repo);
+    assert_eq!(found.len(), 1);
+    let _leaked = std::mem::ManuallyDrop::new(g);
+    run_hint(&sb, &repo, &found[0].hint());
+    assert_eq!(sb.read(&repo, "x"), user.as_bytes());
+    assert_eq!(sb.index(&repo), index_before);
+    assert_eq!(sb.unstaged_diff(&repo), diff_before);
 }

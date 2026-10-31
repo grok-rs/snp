@@ -183,6 +183,7 @@ fn run(
     }
     let hook_env = env.patched(&hook_env);
     let mut result: Result<(), Failure> = Ok(());
+    let mut hook_signalled = false;
     if !args.hook.is_empty() {
         printer.flush();
         let spec = Spec {
@@ -195,9 +196,16 @@ fn run(
             deadline: None,
             cancel,
         };
-        if let Err(e) = spawn::inherit(&spec) {
-            printer.py_eprint(&e.python_text());
+        match spawn::inherit(&spec) {
+            // Python returncode -n: the hook died of signal n (SIGINT 2, SIGHUP 1, SIGTERM 15).
+            Ok(st) => hook_signalled = matches!(st.0, -2 | -1 | -15),
+            Err(e) => printer.py_eprint(&e.python_text()),
         }
+    }
+    if hook_signalled {
+        // A terminal ^C reaches the hook and snp together, but snp's handler runs on its own thread: give it a moment
+        // so the cancel path (not the stage-fixed path) is taken.
+        wait_for_cancel(cancel, Duration::from_millis(200));
     }
     if let Some(reason) = cancel.reason() {
         // The cancel path: kill what the cancelled hooks left behind before touching the worktree (§10.4).
@@ -211,8 +219,36 @@ fn run(
         }
     }
     let restored = guard.restore();
-    match (restored, result) {
-        (Err(e), _) | (Ok(()), Err(e)) => report(&e, printer),
-        (Ok(()), Ok(())) => 0,
+    report_merged(merge_results(result, restored, cancel), printer)
+}
+
+/// Polls the run token for up to `limit`.
+fn wait_for_cancel(cancel: &CancelToken, limit: Duration) {
+    let start = std::time::Instant::now();
+    while cancel.reason().is_none() && start.elapsed() < limit {
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// ARCHITECTURE §4.4 error merging: a restore failure wins over the run's result; otherwise a cancel reason wins over
+/// success — also one recorded only after the run decided (the signal thread may cancel the token after the hook
+/// already died of the same ^C, while the restore runs), so an interrupted run never reports success.
+fn merge_results(
+    run: Result<(), Failure>,
+    restored: Result<(), Failure>,
+    cancel: &CancelToken,
+) -> Result<(), Failure> {
+    match (restored, run) {
+        (Err(e), _) | (Ok(()), Err(e)) => Err(e),
+        (Ok(()), Ok(())) => cancel
+            .reason()
+            .map_or(Ok(()), |r| Err(Failure::Interrupted(r))),
+    }
+}
+
+fn report_merged(r: Result<(), Failure>, printer: &Printer) -> u8 {
+    match r {
+        Ok(()) => 0,
+        Err(e) => report(&e, printer),
     }
 }

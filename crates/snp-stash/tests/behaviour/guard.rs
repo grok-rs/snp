@@ -444,6 +444,53 @@ fn a_tty_stopped_restore_is_reported_and_the_k_plus_path_keeps_the_patch() {
 }
 
 #[test]
+fn a_tty_stopped_rollback_checkout_alone_is_reported() {
+    // Only the rollback checkout is stopped (an LFS smudge filter asking for credentials): it fails with the notice,
+    // and the K+ path keeps the patch.
+    let sb = Sandbox::new();
+    let repo = sb.foo_staged("r");
+    sb.write(&repo, "foo", b"herp\n");
+    let spy = Spy::new();
+    spy.on(&["apply"], None, Reply::Exit(1, Vec::new(), Vec::new()));
+    spy.on(
+        &["-c", "core.autocrlf=false", "apply"],
+        None,
+        Reply::Exit(1, Vec::new(), Vec::new()),
+    );
+    // The first checkout is the stash's own; the second is the rollback.
+    spy.on(
+        &["-c", "submodule.recurse=0", "checkout"],
+        Some(2),
+        Reply::TtyStop,
+    );
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+    let (cx, out, err) = sb.ctx_with(git, info);
+    let g = snp_stash::enter(cx).unwrap();
+    let p = patch_of(&g);
+    let e = g.restore().unwrap_err();
+    assert_eq!(e.exit_code(), 3);
+    let (ty, text, hint) = exc(&e);
+    assert_eq!(ty, "CalledProcessError");
+    assert!(
+        text.contains("'checkout', '--', '.')\nreturn code: -9"),
+        "{text}"
+    );
+    assert!(
+        hint.unwrap()
+            .starts_with("[ERROR] Your unstaged changes are saved in ")
+    );
+    assert_eq!(
+        err.text(),
+        "snp: git needed the terminal during the restore and was stopped\n"
+    );
+    assert!(out.text().contains("Rolling back fixes..."));
+    assert!(p.is_file());
+    // No second apply pair after a failed rollback checkout.
+    let applies = spy.calls().iter().filter(|c| c.contains("apply")).count();
+    assert_eq!(applies, 2, "{:?}", spy.calls());
+}
+
+#[test]
 fn snp_stash_verify_warns_without_changing_the_outcome() {
     let sb = Sandbox::new();
     let repo = sb.foo_staged("r");

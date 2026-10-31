@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use snp_core::cancel::CancelToken;
 use snp_core::clock::Clock;
-use snp_core::env::Env;
+use snp_core::env::{Env, EnvPatch};
 use snp_core::failure::Failure;
 use snp_core::fault::{self, Point};
 use snp_core::output::{Level, Printer};
@@ -113,6 +113,8 @@ struct Inner {
     staged_fixed: Vec<RepoPath>,
     /// The SIGTTIN/SIGTTOU notice was printed.
     tty_noted: bool,
+    /// `normalize_cmd(('git',))`: the argv prefix the `CalledProcessError` texts of the restore commands show.
+    argv0: Option<Vec<OsString>>,
     /// Which restore steps are due.
     flags: Steps,
 }
@@ -122,10 +124,28 @@ struct Inner {
 struct Steps {
     /// `git rm --cached` was attempted: the intent-to-add re-add is due.
     ita_cleared: bool,
-    /// The checkout was attempted: the patch must be re-applied.
-    stash_active: bool,
+    /// Whether the patch must be re-applied, and how far that got.
+    patch: PatchStep,
     /// The restore failed (K+): the journal is kept.
     restore_failed: bool,
+}
+
+/// The re-apply of the patch (each step marks itself done, so a resumed `finish` continues where it stopped).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum PatchStep {
+    /// Nothing to re-apply (no checkout yet, or an apply already succeeded or finally failed).
+    #[default]
+    Idle,
+    /// The checkout was attempted: the patch must be re-applied.
+    Due,
+    /// The rollback checkout ran: a resumed restore goes straight to the second pair of applies.
+    RolledBack,
+}
+
+impl PatchStep {
+    const fn active(self) -> bool {
+        !matches!(self, Self::Idle)
+    }
 }
 
 /// The journal of this run: the store journal (optional when the store is read-only and only intent-to-add files are
@@ -146,6 +166,7 @@ impl Journal {
             state: self.data.state.clone(),
             worktree: Some(self.data.worktree.clone()),
             staged_fixed: self.data.staged_fixed.clone(),
+            ita: self.data.ita.clone(),
         }
     }
 
@@ -296,6 +317,7 @@ pub fn enter(cx: StashCtx) -> Result<StashGuard, Failure> {
             journal: None,
             staged_fixed: Vec::new(),
             tty_noted: false,
+            argv0: None,
             flags: Steps::default(),
         })),
     };
@@ -318,7 +340,7 @@ pub fn enter(cx: StashCtx) -> Result<StashGuard, Failure> {
         }
         Err(e) => {
             if let Some(inner) = guard.inner.as_deref()
-                && inner.flags.stash_active
+                && inner.flags.patch.active()
                 && let Some(p) = &inner.patch
             {
                 guard.stashed = Stashed::Patch(p.clone());
@@ -356,6 +378,13 @@ impl Inner {
         }
         for u in &scan.unrestored {
             self.printer().diag(&u.hint());
+        }
+        for run in &scan.ita_only {
+            self.printer()
+                .diag(&messages::ita_notice(&run.paths, run.listed.as_deref()));
+            for f in &run.files {
+                let _ignored = std::fs::remove_file(f);
+            }
         }
     }
 
@@ -465,6 +494,19 @@ impl Inner {
         if j.pointer.is_none() {
             j.remove();
             return Err(Failure::from_io(&last, Some(git_dir.as_os_str()), None));
+        }
+        if durable {
+            // The new directory entries must survive a power loss too (ADR-067).
+            let synced = j
+                .file
+                .as_ref()
+                .map_or(Ok(()), |_| journal::sync_dir(&self.cx.patches_dir))
+                .map_err(|e| (e, self.cx.patches_dir.clone()))
+                .and_then(|()| journal::sync_dir(git_dir).map_err(|e| (e, git_dir.clone())));
+            if let Err((e, dir)) = synced {
+                j.remove();
+                return Err(Failure::from_io(&e, Some(dir.as_os_str()), None));
+            }
         }
         self.journal = Some(j);
         Ok(())
@@ -654,7 +696,7 @@ impl Inner {
             .log(Level::Warning, messages::UNSTAGED_DETECTED);
         self.printer().log(Level::Info, &messages::stashing(&path));
         // 8. checkout (pre-commit's `try` starts here: a failing checkout still restores).
-        self.flags.stash_active = true;
+        self.flags.patch = PatchStep::Due;
         self.git().checkout_all(true, Group::Isolated)?;
         fault::hit(Point::StashState(5));
         Ok(StashOutcome::Patch(path))
@@ -783,7 +825,7 @@ impl Inner {
         if paths.is_empty() {
             return Ok(true);
         }
-        let Some(patch) = self.patch.clone().filter(|_| self.flags.stash_active) else {
+        let Some(patch) = self.patch.clone().filter(|_| self.flags.patch.active()) else {
             // Nothing stashed: the index can take the fixes directly (no user content to protect).
             self.git().add_literal(paths, Group::Isolated)?;
             self.staged_fixed.extend_from_slice(paths);
@@ -800,60 +842,162 @@ impl Inner {
         Ok(true)
     }
 
-    /// One plain `git apply --whitespace=nowarn <patch>` attempt; a SIGTTIN/SIGTTOU stop is reported once.
-    fn apply_plain(&mut self, patch: &Path) -> bool {
-        let args = [
-            OsStr::new("apply"),
-            OsStr::new("--whitespace=nowarn"),
-            patch.as_os_str(),
-        ];
-        match self.git().run_raw(&args) {
+    /// The argv prefix of every git call (`GitExe::argv0` = `normalize_cmd(('git',))`), for error texts.
+    fn argv0(&mut self) -> Vec<OsString> {
+        if let Some(a) = &self.argv0 {
+            return a.clone();
+        }
+        let a = snp_proc::resolve::normalize_cmd(
+            &[OsString::from("git")],
+            self.git().env(),
+            self.git().root(),
+        )
+        .unwrap_or_else(|_| vec![OsString::from("git")]);
+        self.argv0 = Some(a.clone());
+        a
+    }
+
+    /// One restore command (`Role::Critical`, unchecked): `cmd_output_b`'s `(returncode, stdout, stderr)`, a spawn
+    /// failure as returncode 1 with the `OSError` text on stdout (`util.py:85-86`). A command stopped by
+    /// SIGTTIN/SIGTTOU (its group killed) counts as failed and prints the one stderr notice (ARCHITECTURE §4.2 step 10).
+    fn restore_cmd(&mut self, args: &[&OsStr], skip_post_checkout: bool) -> RawOut {
+        let git = if skip_post_checkout {
+            let env = self
+                .git()
+                .env()
+                .patched(&EnvPatch::default().set("_PRE_COMMIT_SKIP_POST_CHECKOUT", "1"));
+            self.git().with_env(env)
+        } else {
+            self.git().clone()
+        };
+        match git.run_raw(args) {
             Ok(c) => {
                 if c.stopped_by_tty && !self.tty_noted {
                     self.tty_noted = true;
                     self.printer().diag(messages::TTY_STOPPED);
                 }
-                c.status.0 == 0
+                RawOut {
+                    status: if c.stopped_by_tty && c.status.0 == 0 {
+                        -9
+                    } else {
+                        c.status.0
+                    },
+                    stdout: c.stdout,
+                    stderr: Some(c.stderr),
+                }
             }
-            Err(_) => false,
+            Err(f) => {
+                let mut text = match f {
+                    Failure::Exc { exc, .. } => String::from_utf8_lossy(&exc.text).into_owned(),
+                    _ => String::new(),
+                };
+                while text.ends_with('\n') {
+                    text.pop();
+                }
+                text.push('\n');
+                RawOut {
+                    status: 1,
+                    stdout: text.into_bytes(),
+                    stderr: None,
+                }
+            }
         }
     }
 
-    /// `_git_apply` (`staged_files_only.py:26-33`): plain, then `-c core.autocrlf=false`; the second failure is its
-    /// `CalledProcessError`.
+    /// `CalledProcessError` (format A) of a failed restore command.
+    fn called_process_error(&mut self, args: &[&OsStr], out: &RawOut) -> Failure {
+        let mut argv = self.argv0();
+        argv.extend(args.iter().map(|a| a.to_os_string()));
+        Failure::unexpected(
+            "CalledProcessError",
+            snp_core::failure::pyerr::called_process_a(
+                &argv,
+                out.status,
+                Some(&out.stdout),
+                out.stderr.as_deref(),
+            ),
+        )
+    }
+
+    /// `_git_apply` (`staged_files_only.py:26-33`): `git apply --whitespace=nowarn <patch>`, then
+    /// `git -c core.autocrlf=false apply --whitespace=nowarn <patch>`; the second failure is its `CalledProcessError`.
     fn git_apply(&mut self, patch: &Path, first: u8) -> Result<(), Failure> {
         fault::hit(Point::RestoreCommand(first));
-        if self.apply_plain(patch) {
+        let plain = [
+            OsStr::new("apply"),
+            OsStr::new("--whitespace=nowarn"),
+            patch.as_os_str(),
+        ];
+        if self.restore_cmd(&plain, false).status == 0 {
             return Ok(());
         }
         fault::hit(Point::RestoreCommand(first.saturating_add(1)));
-        match self.git().apply(patch, true, Group::Isolated) {
-            Ok(true) => Ok(()),
-            Ok(false) => Err(Failure::unexpected(
-                "CalledProcessError",
-                "git apply failed",
-            )),
-            Err(e) => Err(e),
+        let crlf = [
+            OsStr::new("-c"),
+            OsStr::new("core.autocrlf=false"),
+            OsStr::new("apply"),
+            OsStr::new("--whitespace=nowarn"),
+            patch.as_os_str(),
+        ];
+        let out = self.restore_cmd(&crlf, false);
+        if out.status == 0 {
+            Ok(())
+        } else {
+            Err(self.called_process_error(&crlf, &out))
+        }
+    }
+
+    /// The rollback checkout `git -c submodule.recurse=0 checkout -- .` with `_PRE_COMMIT_SKIP_POST_CHECKOUT=1`
+    /// (checked, `staged_files_only.py:95`).
+    fn rollback_checkout(&mut self) -> Result<(), Failure> {
+        let args = [
+            OsStr::new("-c"),
+            OsStr::new("submodule.recurse=0"),
+            OsStr::new("checkout"),
+            OsStr::new("--"),
+            OsStr::new("."),
+        ];
+        let out = self.restore_cmd(&args, true);
+        if out.status == 0 {
+            Ok(())
+        } else {
+            Err(self.called_process_error(&args, &out))
         }
     }
 
     /// Step 10 a–e: re-apply the patch (rollback on conflict); the K+ hint on final failure.
+    ///
+    /// The patch step is cleared the moment an apply succeeds, so a panic in the steps after it (the log line, the
+    /// journal, the verify) never makes the `Drop` fallback apply the patch a second time.
     fn restore_patch(&mut self, patch: &Path) -> Result<(), Failure> {
-        let first = self.git_apply(patch, 1);
+        let first = if self.flags.patch == PatchStep::RolledBack {
+            Err(Failure::Exit(1))
+        } else {
+            self.git_apply(patch, 1)
+        };
         let result = if first.is_ok() {
             Ok(())
         } else {
-            self.journal_best_effort(State::RollingBack);
-            fault::hit(Point::StashState(8));
-            self.printer()
-                .log(Level::Warning, messages::CONFLICT_ROLLBACK);
-            fault::hit(Point::RestoreCommand(3));
-            self.git()
-                .checkout_all(true, Group::Isolated)
-                .and_then(|()| self.git_apply(patch, 4))
+            if self.flags.patch != PatchStep::RolledBack {
+                self.journal_best_effort(State::RollingBack);
+                fault::hit(Point::StashState(8));
+                self.printer()
+                    .log(Level::Warning, messages::CONFLICT_ROLLBACK);
+                fault::hit(Point::RestoreCommand(3));
+            }
+            let checkout = if self.flags.patch == PatchStep::RolledBack {
+                Ok(())
+            } else {
+                self.rollback_checkout()
+            };
+            checkout.and_then(|()| {
+                self.flags.patch = PatchStep::RolledBack;
+                self.git_apply(patch, 4)
+            })
         };
         match result {
             Ok(()) => {
+                self.flags.patch = PatchStep::Idle;
                 self.printer().log(Level::Info, &messages::restored(patch));
                 self.journal_best_effort(State::Restored);
                 fault::hit(Point::StashState(9));
@@ -864,6 +1008,8 @@ impl Inner {
                 Ok(())
             }
             Err(e) => {
+                self.flags.patch = PatchStep::Idle;
+                self.flags.restore_failed = true;
                 self.journal_best_effort(State::Failed);
                 Err(with_hint(e, &messages::k_plus_hint(patch)))
             }
@@ -877,11 +1023,11 @@ impl Inner {
     fn finish(&mut self) -> Result<(), Failure> {
         let shield = self.cx.signals.as_ref().map(|s| s.shield());
         let mut result = Ok(());
-        if self.flags.stash_active
+        if self.flags.patch.active()
             && let Some(patch) = self.patch.clone()
         {
             let restored = self.restore_patch(&patch);
-            self.flags.stash_active = false;
+            self.flags.patch = PatchStep::Idle;
             if let Err(e) = restored {
                 self.flags.restore_failed = true;
                 result = Err(e);
@@ -908,6 +1054,13 @@ impl Inner {
         drop(shield);
         result
     }
+}
+
+/// `cmd_output_b`'s `(returncode, stdout, stderr)`; `stderr` is `None` when the spawn itself failed.
+struct RawOut {
+    status: i64,
+    stdout: Vec<u8>,
+    stderr: Option<Vec<u8>>,
 }
 
 /// `Failure` with the K+ hint attached (exceptions only).
@@ -952,8 +1105,8 @@ impl StashGuard {
     ///
     /// snp-only (05 §18.4 A4/A5): `git apply --check --whitespace=nowarn <patch>` against the hook-fixed worktree; when
     /// it applies, the `staging-fixed` state is journaled durably *before* the add, so a kill leaves a recoverable state
-    /// (`git reset -q <tree> -- <paths>` + `git apply --3way <patch>`). Without a stashed patch the paths are staged
-    /// directly.
+    /// ([`crate::Unrestored::hint`] resets these paths to the stash-time tree). Without a stashed patch the paths are
+    /// staged directly.
     pub fn stage_fixed(&mut self, paths: &[RepoPath]) -> Result<bool, Failure> {
         match self.inner.as_deref_mut() {
             Some(inner) => inner.stage_fixed(paths),
