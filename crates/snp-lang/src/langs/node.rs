@@ -10,6 +10,8 @@
 //!
 //! Owner: WP-24.
 
+mod semver;
+
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -72,9 +74,11 @@ fn env_patch(env_dir: &Path) -> EnvPatch {
 }
 
 /// nodeenv's version choice for `default` (no `-n`): `Config._load` reads `[nodeenv] node=` from `~/.nodeenvrc`,
-/// `./setup.cfg`, `./tox.ini` (later files win) and then the first line of `./.node-version`, all relative to the cwd
-/// pre-commit runs nodeenv in — the user's repository (nodeenv 1.x, 04a §3.4, Q9). `None`: nodeenv's own default
-/// (`latest`).
+/// `./setup.cfg`, `./tox.ini` (later files win) and then, when `./.node-version` exists, its first line stripped and
+/// with leading `v`s removed (an empty first line resets the choice to nodeenv's default), all relative to the cwd
+/// pre-commit runs nodeenv in — the user's repository (nodeenv 1.11.0, 04a §3.4, Q9). `None`: nodeenv's own default
+/// (`latest`). The other `[nodeenv]` keys (`mirror`, `prefer_system`, …) are not read: downloads come only from the
+/// verified sources of D-SEC-08 (not yet a register entry of its own; COMPATIBILITY.md is not WP-24's to edit).
 pub(crate) fn nodeenv_default(h: &Host<'_>) -> Option<String> {
     let home = PathBuf::from(crate::common::home_dir(h.base_env));
     let mut node: Option<String> = None;
@@ -86,23 +90,26 @@ pub(crate) fn nodeenv_default(h: &Host<'_>) -> Option<String> {
         let Some(ini) = read_ini(&file) else {
             continue;
         };
-        if let Some(v) = shared::ini_section(&ini, "nodeenv")
-            .and_then(|s| s.iter().find(|(k, _)| k == "node"))
-            .map(|(_, v)| v.clone())
-        {
-            node = Some(v);
+        if let Some(v) = ini.get("nodeenv", "node") {
+            node = Some(v.to_owned());
         }
     }
     if let Ok(bytes) = snp_os::fs::read_capped(&h.cwd.join(".node-version"), shared::MAX_INI) {
+        // `v_file.readline().strip().lstrip("v")` in text mode (universal newlines).
         let text = String::from_utf8_lossy(&bytes);
-        if let Some(first) = snp_pycompat::text::splitlines(&text).next() {
-            node = Some(snp_pycompat::text::strip(first).to_owned());
-        }
+        let text = snp_pycompat::textio::universal_newlines(&text);
+        let first = text.split('\n').next().unwrap_or_default();
+        node = Some(
+            snp_pycompat::text::strip(first)
+                .trim_start_matches('v')
+                .to_owned(),
+        );
     }
     node.filter(|v| !v.is_empty())
 }
 
-/// The node version to download for `language_version` (`None`: a system environment).
+/// The node version to download for `language_version` (`None`: a system environment); an npm-style range is kept
+/// as written and resolved by [`resolve_range`].
 fn requested_node(h: &Host<'_>, version: &str) -> Option<String> {
     let v = if version == "default" {
         nodeenv_default(h).unwrap_or_else(|| "latest".to_owned())
@@ -115,6 +122,109 @@ fn requested_node(h: &Host<'_>, version: &str) -> Option<String> {
         "lts" => Some("lts".to_owned()),
         _ => Some(v),
     }
+}
+
+/// The `files` key of `index.json` for `target` and the index that lists it (snp-net's choice: the unofficial
+/// builds for musl and the architectures only they cover); `None` for a target without node builds.
+fn index_for(target: &str) -> Option<(&'static str, Vec<String>)> {
+    let (arch, rest) = target.split_once('-')?;
+    let os = if rest.contains("linux") {
+        "linux"
+    } else if rest.contains("apple-darwin") {
+        "darwin"
+    } else if rest.contains("windows") {
+        "win"
+    } else {
+        return None;
+    };
+    let arch = match (arch, os) {
+        ("x86_64", _) => "x64",
+        ("aarch64", _) => "arm64",
+        ("i686" | "i586", "win") => "x86",
+        ("armv7", "linux") => "armv7l",
+        ("arm", "linux") => "armv6l",
+        ("riscv64gc" | "riscv64", "linux") => "riscv64",
+        ("powerpc64le", "linux") => "ppc64le",
+        ("s390x", "linux") => "s390x",
+        ("loongarch64", "linux") => "loong64",
+        _ => return None,
+    };
+    let musl = rest.contains("musl");
+    let unofficial = musl || matches!(arch, "riscv64" | "loong64" | "armv6l");
+    let keys = match os {
+        // nodeenv retries an arm64 build that does not exist with x64 (old releases under Rosetta).
+        "darwin" if arch == "arm64" => vec!["osx-arm64-tar".to_owned(), "osx-x64-tar".to_owned()],
+        "darwin" => vec![format!("osx-{arch}-tar")],
+        "win" => vec![format!("win-{arch}-zip")],
+        _ => vec![format!("linux-{arch}{}", if musl { "-musl" } else { "" })],
+    };
+    let base = if unofficial {
+        "https://unofficial-builds.nodejs.org/download/release"
+    } else {
+        "https://nodejs.org/dist"
+    };
+    Some((base, keys))
+}
+
+/// Cap on node's `index.json` (~300 KB in 2026).
+const MAX_NODE_INDEX: u64 = 16 << 20;
+
+/// nodeenv 1.11.0's `args.node` handling for a value that is not `latest`/`lts`/`system`: an exact version
+/// (`_is_exact_version`) or a string that is not a range is used as written; a range (`20`, `18.19`, `^20.1`,
+/// `>=18 <20`, …) resolves to the highest release of `index.json` that has a build for the host and matches
+/// (`resolve_node_version`); no match is nodeenv's `No available node.js version matches '<spec>'` (exit 1).
+fn resolve_range(h: &Host<'_>, cx: &InstallCtx<'_>, spec: &str) -> Result<String, LangError> {
+    if matches!(spec, "latest" | "lts") || semver::is_exact(spec) {
+        return Ok(spec.to_owned());
+    }
+    let Some(ranges) = semver::parse_range(spec) else {
+        return Ok(spec.to_owned());
+    };
+    let target = tools::host_target();
+    let Some((base, keys)) = index_for(target) else {
+        return Ok(spec.to_owned());
+    };
+    let fetch = shared::fetcher(h)?;
+    let url = format!("{base}/index.json");
+    let text = fetch.get_text(&url, MAX_NODE_INDEX)?;
+    let index: serde_json::Value = serde_json::from_str(&text).map_err(|_| {
+        LangError::Net(NetError::Transport {
+            url: url.clone(),
+            msg: "malformed node index.json".to_owned(),
+        })
+    })?;
+    let best = index
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| {
+            let has_build = r
+                .get("files")?
+                .as_array()?
+                .iter()
+                .any(|f| f.as_str().is_some_and(|f| keys.iter().any(|k| k == f)));
+            let v = semver::index_version(r.get("version")?.as_str()?)?;
+            (has_build && semver::matches(v, &ranges)).then_some(v)
+        })
+        .max();
+    if let Some([a, b, c]) = best {
+        return Ok(format!("{a}.{b}.{c}"));
+    }
+    let mut cmd: Vec<OsString> = ["nodeenv", "--prebuilt", "--clean-src"]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+    cmd.push(cx.cx.env_dir.as_os_str().to_os_string());
+    if cx.cx.version != "default" {
+        cmd.push(OsString::from("-n"));
+        cmd.push(OsString::from(cx.cx.version));
+    }
+    Err(LangError::CalledProcess {
+        cmd,
+        rc: 1,
+        stdout: Vec::new(),
+        stderr: format!("No available node.js version matches '{spec}'\n").into_bytes(),
+    })
 }
 
 /// The node toolchain for `requested` from the shared tools, retrying an arm64 macOS build that does not exist with
@@ -204,6 +314,7 @@ fn install_env(cx: &InstallCtx<'_>) -> Result<InstallOutcome, LangError> {
     mkdirs(&env_dir.join(lib_dir).join("node_modules"))?;
     let mut tools_used: Vec<(Arc<str>, Arc<str>)> = Vec::new();
     if let Some(requested) = requested_node(h, cx.cx.version) {
+        let requested = resolve_range(h, cx, &requested)?;
         let (tool, name) = node_toolchain(h, &requested)?;
         link_toolchain(&tool.dir, env_dir)?;
         tools_used.push((Arc::from(name), Arc::from(tool.version.as_str())));

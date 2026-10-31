@@ -5,7 +5,9 @@
 //!
 //! Owner: WP-24.
 
+use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
+use std::hash::{BuildHasher, RandomState};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -179,8 +181,7 @@ pub(crate) fn ensure_tool(
     requested: &str,
     target: &str,
 ) -> Result<SharedTool, LangError> {
-    let concrete = !matches!(requested, "" | "default" | "latest" | "lts");
-    if concrete {
+    if is_version_component(requested) {
         let dir = h.tools.tool_dir(name, requested);
         if dir.is_dir() {
             return Ok(SharedTool {
@@ -206,6 +207,18 @@ pub(crate) fn ensure_tool(
     let artifact = tools::resolve(tool, &version, target, fetch)?;
     install_artifact(h, fetch, &artifact, &dir)?;
     Ok(SharedTool { dir, version })
+}
+
+/// Whether `requested` can name a `tools-v1/<tool>/<version>` directory as it is: a concrete version made of
+/// `[0-9A-Za-z._+-]` (at most 64 bytes, snp-net's version alphabet), not an alias and not `.`/`..`. Anything else
+/// (`../../usr`, a path, a range) goes through [`tools::resolve_version`], which rejects what it does not know, so a
+/// `language_version` or `.node-version` value never selects a directory outside the shared tools.
+pub(crate) fn is_version_component(requested: &str) -> bool {
+    !matches!(requested, "" | "." | ".." | "default" | "latest" | "lts")
+        && requested.len() <= 64
+        && requested
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b".-_+".contains(&b))
 }
 
 /// Downloads `artifact` and unpacks it at `dest` (which must not exist).
@@ -249,9 +262,7 @@ fn unpack(file: &Path, layout: &Layout, dest: &Path, file_name: &str) -> Result<
         Layout::Zip { strip } => archive::zip(file, dest, &opts(*strip))?,
         Layout::Executable => {
             // One executable: `<dest>/<file name>`, made executable, renamed into place as a whole directory.
-            let part = dest.with_extension(format!("part-{}", std::process::id()));
-            let _ignored = std::fs::remove_dir_all(&part);
-            mkdirs(&part)?;
+            let part = part_dir(dest)?;
             let target = part.join(file_name);
             std::fs::copy(file, &target).map_err(|e| io_err("copy download", &target, e))?;
             make_executable(&target)?;
@@ -268,6 +279,36 @@ fn unpack(file: &Path, layout: &Layout, dest: &Path, file_name: &str) -> Result<
         }
     }
     Ok(())
+}
+
+/// A fresh, empty `<dest>.part-<rand>` directory next to `dest` (the version is kept whole: `1.28.2` becomes
+/// `1.28.2.part-…`, the name snp-net's archive extraction and the store's sweep use).
+fn part_dir(dest: &Path) -> Result<PathBuf, LangError> {
+    let name = dest.file_name().unwrap_or_else(|| OsStr::new("tool"));
+    let parent = dest.parent().unwrap_or(dest);
+    let mut last = None;
+    for attempt in 0_u32..8 {
+        // `RandomState` has per-process random keys; the clock and the attempt vary the value within a process.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let rand = RandomState::new().hash_one((std::process::id(), nanos, attempt));
+        let mut n = name.to_os_string();
+        n.push(format!(".part-{rand:016x}"));
+        let part = parent.join(n);
+        #[expect(
+            clippy::create_dir,
+            reason = "the directory must be new: an existing one is a name collision and retried"
+        )]
+        let created = std::fs::create_dir(&part);
+        match created {
+            Ok(()) => return Ok(part),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => last = Some((part, e)),
+            Err(e) => return Err(io_err("create directory", &part, e)),
+        }
+    }
+    let (part, e) = last.unwrap_or_else(|| (dest.to_path_buf(), io::Error::other("no name")));
+    Err(io_err("create directory", &part, e))
 }
 
 /// `util.make_executable` (`chmod +x`); a no-op on Windows.
@@ -312,84 +353,219 @@ pub(crate) fn symlink(target: &Path, link: &Path, dir: bool) -> io::Result<()> {
     }
 }
 
-/// One `configparser` section: `(option, value)` in file order, option names lower-cased (`optionxform`).
-pub(crate) type IniSection = Vec<(String, String)>;
+/// One `configparser` section: `(option, value)` in file order (option names lower-cased, `optionxform`), with an
+/// index used only for lookups (never iterated, so the file order stays the only order; S11).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct IniSection {
+    /// `(option, value)` in the order the options first appeared.
+    opts: Vec<(String, String)>,
+    /// option → position in `opts`.
+    index: HashMap<String, usize>,
+}
+
+impl IniSection {
+    /// The value of `option` defined in this section itself.
+    fn get(&self, option: &str) -> Option<&str> {
+        self.index
+            .get(option)
+            .and_then(|&i| self.opts.get(i))
+            .map(|(_, v)| v.as_str())
+    }
+}
+
+/// A parsed INI file: its sections in file order (without `DEFAULT`) and the `DEFAULT` section.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct Ini {
+    /// `(name, options)` in the order the sections first appeared.
+    sections: Vec<(String, IniSection)>,
+    /// section name → position in `sections`.
+    index: HashMap<String, usize>,
+    /// `[DEFAULT]`, merged into every section by [`Ini::items`].
+    defaults: IniSection,
+}
+
+impl Ini {
+    /// `parser.sections()`.
+    pub(crate) fn sections(&self) -> impl Iterator<Item = &str> {
+        self.sections.iter().map(|(n, _)| n.as_str())
+    }
+
+    /// `parser.items(section)` of `RawConfigParser`: the `DEFAULT` options (in their order, overridden by the
+    /// section's values), then the section's own other options; `None` when the section does not exist
+    /// (`NoSectionError`; `DEFAULT` itself is not a section).
+    pub(crate) fn items(&self, section: &str) -> Option<Vec<(&str, &str)>> {
+        let own = &self.sections.get(*self.index.get(section)?)?.1;
+        let mut out: Vec<(&str, &str)> = Vec::new();
+        for (k, v) in &self.defaults.opts {
+            out.push((k.as_str(), own.get(k).unwrap_or(v.as_str())));
+        }
+        for (k, v) in &own.opts {
+            if !self.defaults.index.contains_key(k) {
+                out.push((k.as_str(), v.as_str()));
+            }
+        }
+        Some(out)
+    }
+
+    /// `parser.has_option(section, option)` and `parser.get(section, option)` (raw: no interpolation).
+    pub(crate) fn get(&self, section: &str, option: &str) -> Option<&str> {
+        let own = &self.sections.get(*self.index.get(section)?)?.1;
+        own.get(option).or_else(|| self.defaults.get(option))
+    }
+}
 
 /// Cap on an INI file read by a backend.
 pub(crate) const MAX_INI: u64 = 1 << 20;
 
-/// A lenient `configparser.ConfigParser().read(...)` of `text`: `[section]` headers, `key = value` / `key: value`
-/// options (split at the first `=` or `:`, both sides stripped, the key lower-cased), indented continuation lines
-/// appended with `\n`, full-line `#`/`;` comments and blank lines skipped (a blank line ends a value; configparser
-/// keeps it and strips it at the end, which yields the same value), no inline comments, no interpolation. A repeated
-/// section continues the first one and a later duplicate option overrides the earlier one. Lines outside a section
-/// and lines without a delimiter are skipped: configparser raises (`MissingSectionHeaderError`, `ParsingError`,
-/// strict-mode duplicates), which crashes nodeenv and makes pip refuse the file; snp never crashes on a user's
-/// configuration file.
-pub(crate) fn parse_ini(text: &str) -> Vec<(String, IniSection)> {
+/// A section being read: `(option, value lines)` plus the lookup index.
+#[derive(Default)]
+struct RawSection {
+    /// `(option, lines)` in first-appearance order.
+    opts: Vec<(String, Vec<String>)>,
+    /// option → position.
+    index: HashMap<String, usize>,
+}
+
+impl RawSection {
+    /// `cursect[optname] = [optval]`: a repeated option keeps its first position (a `dict`); returns its position.
+    fn set(&mut self, name: String, value: String) -> usize {
+        if let Some(&i) = self.index.get(&name) {
+            if let Some(slot) = self.opts.get_mut(i) {
+                slot.1 = vec![value];
+            }
+            return i;
+        }
+        let i = self.opts.len();
+        self.index.insert(name.clone(), i);
+        self.opts.push((name, vec![value]));
+        i
+    }
+
+    /// `_join_multiline_values`: `'\n'.join(lines).rstrip()`.
+    fn finish(self) -> IniSection {
+        let opts = self
+            .opts
+            .into_iter()
+            .map(|(k, lines)| {
+                let joined = lines.join("\n");
+                let v = snp_pycompat::text::rstrip(&joined).to_owned();
+                (k, v)
+            })
+            .collect();
+        IniSection {
+            opts,
+            index: self.index,
+        }
+    }
+}
+
+/// `configparser.RawConfigParser(strict=False).read(path)` over `text` (CPython 3.12/3.13 `_read`): lines split at
+/// `\n` after universal-newline translation; `#`/`;` full-line comments (after stripping) are skipped without ending
+/// a value; an empty line is kept inside the current value (`empty_lines_in_values`); a line indented deeper than
+/// the line that opened the current option continues it; a `[header]` is matched as a prefix (`\[(?P<header>.+)\]`
+/// on the stripped line, so `[install] ; x` opens `install`); `name = value` / `name: value` splits at the first
+/// delimiter, the name right-stripped and lower-cased, the value stripped; a repeated section continues the first
+/// one and a repeated option overrides the earlier value at its first position; `[DEFAULT]` options apply to every
+/// section ([`Ini::items`]); values are joined with `\n` and right-stripped. No inline comments, no interpolation.
+///
+/// Where configparser raises — options before any section header (`MissingSectionHeaderError`, which stops
+/// reading), lines without a delimiter (`ParsingError`, raised after the whole file was read) and strict-mode
+/// duplicates — snp is lenient: the offending line is ignored and reading goes on, so the result is the parser's
+/// state as if the error had not been raised. pip refuses such a file and nodeenv crashes; snp never crashes on a
+/// user's configuration file. Every lookup is hashed: the parse is linear in the file size.
+pub(crate) fn parse_ini(text: &str) -> Ini {
     let text = snp_pycompat::textio::universal_newlines(text);
-    let mut out: Vec<(String, IniSection)> = Vec::new();
-    // The section being read.
-    let mut cur: Option<usize> = None;
-    // Whether the previous line was an option (continuations attach to it).
-    let mut in_option = false;
-    for line in text.split('\n') {
+    // Position 0 is `DEFAULT`.
+    let mut raw: Vec<(String, RawSection)> = vec![(String::from("DEFAULT"), RawSection::default())];
+    let mut sect_index: HashMap<String, usize> = HashMap::new();
+    let mut cursect: Option<usize> = None;
+    // The current option (`optname` when non-empty) as a position in the current section.
+    let mut optname: Option<usize> = None;
+    let mut indent_level: usize = 0;
+    for line in text.split_inclusive('\n') {
         let stripped = snp_pycompat::text::strip(line);
-        if stripped.is_empty() {
-            in_option = false;
-            continue;
-        }
-        if stripped.starts_with('#') || stripped.starts_with(';') {
-            continue;
-        }
-        if line.starts_with([' ', '\t']) && in_option {
-            if let Some((_, opts)) = cur.and_then(|i| out.get_mut(i))
-                && let Some((_, v)) = opts.last_mut()
+        let comment = stripped.starts_with('#') || stripped.starts_with(';');
+        let value = if comment { "" } else { stripped };
+        if value.is_empty() {
+            // `empty_lines_in_values`: an empty line (not a comment) is part of the current value.
+            if !comment
+                && let (Some(s), Some(o)) = (cursect, optname)
+                && let Some((_, lines)) = raw.get_mut(s).and_then(|(_, r)| r.opts.get_mut(o))
             {
-                if !v.is_empty() {
-                    v.push('\n');
-                }
-                v.push_str(stripped);
+                lines.push(String::new());
             }
             continue;
         }
-        in_option = false;
-        if let Some(name) = stripped.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-            cur = Some(if let Some(i) = out.iter().position(|(n, _)| n == name) {
-                i
-            } else {
-                out.push((name.to_owned(), Vec::new()));
-                out.len().saturating_sub(1)
-            });
+        let cur_indent_level = line
+            .chars()
+            .position(|c| !snp_pycompat::chars::is_space(c))
+            .unwrap_or(0);
+        if let (Some(s), Some(o)) = (cursect, optname)
+            && cur_indent_level > indent_level
+        {
+            if let Some((_, lines)) = raw.get_mut(s).and_then(|(_, r)| r.opts.get_mut(o)) {
+                lines.push(value.to_owned());
+            }
             continue;
         }
-        let Some((_, opts)) = cur.and_then(|i| out.get_mut(i)) else {
+        indent_level = cur_indent_level;
+        if let Some(header) = section_header(value) {
+            let i = if header == "DEFAULT" {
+                0
+            } else if let Some(&i) = sect_index.get(header) {
+                i
+            } else {
+                let i = raw.len();
+                sect_index.insert(header.to_owned(), i);
+                raw.push((header.to_owned(), RawSection::default()));
+                i
+            };
+            cursect = Some(i);
+            optname = None;
+            continue;
+        }
+        let Some(s) = cursect else {
+            // `MissingSectionHeaderError`.
             continue;
         };
-        let Some(i) = stripped.find(['=', ':']) else {
+        let Some(d) = value.find(['=', ':']) else {
+            // `ParsingError` (raised at the end): the line is ignored, `optname` stays.
             continue;
         };
-        let key = snp_pycompat::text::strip(stripped.get(..i).unwrap_or_default()).to_lowercase();
-        let value =
-            snp_pycompat::text::strip(stripped.get(i.saturating_add(1)..).unwrap_or_default())
-                .to_owned();
-        opts.retain(|(k, _)| *k != key);
-        opts.push((key, value));
-        in_option = true;
+        let name = snp_pycompat::text::rstrip(value.get(..d).unwrap_or_default()).to_lowercase();
+        let val = snp_pycompat::text::strip(value.get(d.saturating_add(1)..).unwrap_or_default())
+            .to_owned();
+        let empty = name.is_empty();
+        let pos = raw.get_mut(s).map(|(_, r)| r.set(name, val));
+        // An empty option name is stored but is falsy: nothing continues it.
+        optname = if empty { None } else { pos };
     }
-    out
+    let mut it = raw.into_iter();
+    let defaults = it.next().map(|(_, r)| r.finish()).unwrap_or_default();
+    let mut sections: Vec<(String, IniSection)> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
+    for (name, r) in it {
+        index.insert(name.clone(), sections.len());
+        sections.push((name, r.finish()));
+    }
+    Ini {
+        sections,
+        index,
+        defaults,
+    }
 }
 
-/// The options of `section` in a parsed INI file.
-pub(crate) fn ini_section<'a>(
-    ini: &'a [(String, IniSection)],
-    section: &str,
-) -> Option<&'a IniSection> {
-    ini.iter().find(|(n, _)| n == section).map(|(_, s)| s)
+/// `SECTCRE.match(value)`: `\[(?P<header>.+)\]` at the start of the stripped line, the header running to the last
+/// `]` (greedy) and non-empty.
+fn section_header(value: &str) -> Option<&str> {
+    let rest = value.strip_prefix('[')?;
+    let end = rest.rfind(']')?;
+    let header = rest.get(..end)?;
+    (!header.is_empty()).then_some(header)
 }
 
 /// Reads an INI file (capped, lossy UTF-8); `None` when it cannot be read.
-pub(crate) fn read_ini(path: &Path) -> Option<Vec<(String, IniSection)>> {
+pub(crate) fn read_ini(path: &Path) -> Option<Ini> {
     let bytes = snp_os::fs::read_capped(path, MAX_INI).ok()?;
     Some(parse_ini(&String::from_utf8_lossy(&bytes)))
 }
@@ -442,32 +618,232 @@ mod tests {
         assert_eq!(n.get("PATH"), Some(OsStr::new("/bin")));
     }
 
+    fn items(ini: &Ini, section: &str) -> Vec<(String, String)> {
+        ini.items(section)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect()
+    }
+
+    fn pairs(v: &[(&str, &str)]) -> Vec<(String, String)> {
+        v.iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect()
+    }
+
     #[test]
     fn ini_parsing_follows_configparser() {
         let ini = parse_ini(
             "# c\n[global]\nindex-url = https://a/simple\nExtra-Index-URL =\n    https://b\n    https://c\n\
              ; x\n[install]\npre: true\n[global]\ntimeout=5\nbad line\n",
         );
-        let g = ini_section(&ini, "global").unwrap();
         assert_eq!(
-            g,
-            &vec![
-                ("index-url".to_owned(), "https://a/simple".to_owned()),
-                (
-                    "extra-index-url".to_owned(),
-                    "https://b\nhttps://c".to_owned()
-                ),
-                ("timeout".to_owned(), "5".to_owned()),
-            ]
+            items(&ini, "global"),
+            pairs(&[
+                ("index-url", "https://a/simple"),
+                ("extra-index-url", "\nhttps://b\nhttps://c"),
+                ("timeout", "5"),
+            ])
         );
-        let i = ini_section(&ini, "install").unwrap();
-        assert_eq!(i, &vec![("pre".to_owned(), "true".to_owned())]);
-        assert_eq!(parse_ini("no section = 1\n").len(), 0);
+        assert_eq!(items(&ini, "install"), pairs(&[("pre", "true")]));
+        assert_eq!(parse_ini("no section = 1\n").sections().count(), 0);
+        let ini = parse_ini("\r\n\r[x]\rk=v\r");
+        assert_eq!(items(&ini, "x"), pairs(&[("k", "v")]));
+    }
+
+    /// The reviewer's cases: indented options are options, not continuations; a blank line stays inside a
+    /// multi-line value; a header is a prefix match; `[DEFAULT]` applies to every section.
+    #[test]
+    fn ini_indentation_blank_lines_headers_and_defaults() {
+        let ini = parse_ini("[global]\n  index-url = https://corp/simple\n  trusted-host = corp\n");
+        assert_eq!(
+            items(&ini, "global"),
+            pairs(&[
+                ("index-url", "https://corp/simple"),
+                ("trusted-host", "corp")
+            ])
+        );
+        let ini = parse_ini("[global]\nextra-index-url =\n    https://a\n\n    https://b\n");
+        assert_eq!(
+            items(&ini, "global"),
+            pairs(&[("extra-index-url", "\nhttps://a\n\nhttps://b")])
+        );
+        let ini = parse_ini("[global]\na = 1\n[install] ; corp\nb = 2\n");
+        assert_eq!(items(&ini, "install"), pairs(&[("b", "2")]));
+        assert_eq!(items(&ini, "global"), pairs(&[("a", "1")]));
+        let ini = parse_ini("[DEFAULT]\nx = d\ny = d\n[s]\ny = s\nz = s\n");
+        assert_eq!(
+            items(&ini, "s"),
+            pairs(&[("x", "d"), ("y", "s"), ("z", "s")])
+        );
+        assert_eq!(ini.get("s", "x"), Some("d"));
+        assert!(ini.items("DEFAULT").is_none());
+        // A deeper-indented line after an error line continues the option before it; a comment does not end it.
+        let ini = parse_ini("[s]\n  a = 1\njunk\n # c\n x\n");
+        assert_eq!(items(&ini, "s"), pairs(&[("a", "1\nx")]));
+        // A repeated option keeps its first position.
+        let ini = parse_ini("[s]\na = 1\nb = 2\na = 3\n");
+        assert_eq!(items(&ini, "s"), pairs(&[("a", "3"), ("b", "2")]));
+    }
+
+    /// Linear time: 100k distinct keys and 100k section headers parse quickly.
+    #[test]
+    fn ini_parsing_is_linear() {
+        use std::fmt::Write as _;
+        let mut text = String::from("[global]\n");
+        for i in 0..100_000 {
+            writeln!(text, "k{i} = v").unwrap();
+        }
+        for i in 0..100_000 {
+            writeln!(text, "[s{i}]\nk = v").unwrap();
+        }
+        let start = std::time::Instant::now();
+        let ini = parse_ini(&text);
+        assert_eq!(ini.items("global").map(|v| v.len()), Some(100_000));
+        assert_eq!(ini.sections().count(), 100_001);
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    /// Differential against CPython's `RawConfigParser(strict=False)` (when `python3.12`/`python3.13` exists):
+    /// random files built from the atoms that matter (indentation, blank lines, comments, headers, delimiters,
+    /// `DEFAULT`, CR line ends).
+    #[test]
+    fn ini_matches_cpython_configparser() {
+        const ATOMS: [&str; 24] = [
+            "[global]",
+            "[install]",
+            "[DEFAULT]",
+            "[install] ; c",
+            "[a]b]",
+            "[]",
+            "  ",
+            "\t",
+            "key = v",
+            "Key: v",
+            "k=",
+            "x = 1 = 2",
+            "# c",
+            "; c",
+            "  # c",
+            "",
+            "junk",
+            "  cont",
+            "    deeper",
+            "\tk2 = t",
+            "=v",
+            " : v",
+            "\r",
+            "é = ü",
+        ];
+        let Some(py) = ["/usr/bin/python3.12", "/usr/bin/python3.13"]
+            .into_iter()
+            .map(Path::new)
+            .find(|p| p.is_file())
+        else {
+            return;
+        };
+        let d = tempfile::tempdir().unwrap();
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let mut inputs: Vec<String> = Vec::new();
+        for _ in 0..2000 {
+            let mut t = String::from("[global]\n");
+            let n = next() % 16;
+            for _ in 0..n {
+                let a = ATOMS[usize::try_from(next() % 24).unwrap_or(0)];
+                t.push_str(a);
+                t.push('\n');
+            }
+            inputs.push(t);
+        }
+        let mut files = Vec::new();
+        for (i, t) in inputs.iter().enumerate() {
+            let f = d.path().join(format!("{i}.ini"));
+            std::fs::write(&f, t).unwrap();
+            files.push(f);
+        }
+        let script = "import configparser, json, sys\n\
+            out = []\n\
+            for f in sys.argv[1:]:\n\
+            \x20   p = configparser.RawConfigParser(strict=False)\n\
+            \x20   try:\n\
+            \x20       p.read(f, encoding='utf-8')\n\
+            \x20   except configparser.Error:\n\
+            \x20       pass\n\
+            \x20   out.append([[s, [list(kv) for kv in p.items(s)]] for s in p.sections()])\n\
+            print(json.dumps(out))\n";
+        let out = std::process::Command::new(py)
+            .arg("-I")
+            .arg("-c")
+            .arg(script)
+            .args(&files)
+            .output()
+            .unwrap();
         assert!(
-            parse_ini("\r\n\r[x]\rk=v\r")
-                .first()
-                .is_some_and(|(n, s)| n == "x" && s.len() == 1)
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
         );
+        let want: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        for (i, t) in inputs.iter().enumerate() {
+            let ini = parse_ini(t);
+            let got: Vec<serde_json::Value> = ini
+                .sections()
+                .map(|s| serde_json::json!([s, items(&ini, s)]))
+                .collect();
+            assert_eq!(serde_json::Value::Array(got), want[i], "input {t:?}");
+        }
+    }
+
+    /// A single-executable download is staged in `<version>.part-<16 hex>` (the version kept whole), fresh each time.
+    #[test]
+    fn part_directories_keep_the_version() {
+        let d = tempfile::tempdir().unwrap();
+        let dest = d.path().join("1.28.2");
+        let a = part_dir(&dest).unwrap();
+        let b = part_dir(&dest).unwrap();
+        assert_ne!(a, b);
+        for p in [&a, &b] {
+            let name = p.file_name().unwrap().to_str().unwrap();
+            let hex = name.strip_prefix("1.28.2.part-").unwrap();
+            assert_eq!(hex.len(), 16, "{name}");
+            assert!(p.is_dir() && std::fs::read_dir(p).unwrap().next().is_none());
+        }
+    }
+
+    #[test]
+    fn version_components() {
+        for ok in [
+            "20.11.1",
+            "1.28.2",
+            "3.2.2",
+            "1.79.0",
+            "go1.22",
+            "v20.0.0+x",
+        ] {
+            assert!(is_version_component(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../../usr",
+            "a/b",
+            "a\\b",
+            "default",
+            "latest",
+            "lts",
+            "20 x",
+        ] {
+            assert!(!is_version_component(bad), "{bad}");
+        }
+        assert!(!is_version_component(&format!("{:9>65}", "")));
     }
 
     #[test]

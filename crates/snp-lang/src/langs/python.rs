@@ -118,6 +118,16 @@ const UV_STRIP: [&str; 18] = [
     "UV_NO_CONFIG",
 ];
 
+/// The variables removed from `uv venv` and `uv python find/install` besides [`UV_STRIP`] (04a §11.4 step 4): an
+/// active environment and the macOS framework launcher variables would change which interpreter uv picks or what
+/// it reports.
+const VENV_STRIP: [&str; 4] = [
+    "VIRTUAL_ENV",
+    "CONDA_PREFIX",
+    "__PYVENV_LAUNCHER__",
+    "PYTHONEXECUTABLE",
+];
+
 /// `win_exe('python')`.
 const fn python_exe() -> &'static str {
     if cfg!(windows) {
@@ -270,7 +280,7 @@ fn resolve_interpreter(
 /// uv discovery, then (for an explicitly requested version) a uv-managed download (D-CRASH-19).
 fn uv_find_python(cx: &InstallCtx<'_>, uv: &Uv, version: &str) -> Result<Interp, LangError> {
     let h = cx.cx.host;
-    let env = uv_env(h, &no_git_env(h.base_env)).without(&["VIRTUAL_ENV", "CONDA_PREFIX"]);
+    let env = uv_env(h, &no_git_env(h.base_env)).without(&VENV_STRIP);
     let request = (version != "default").then(|| interp::uv_request(version));
     let find_argv = |managed: bool| {
         let mut a = argv([
@@ -313,6 +323,16 @@ fn uv_find_python(cx: &InstallCtx<'_>, uv: &Uv, version: &str) -> Result<Interp,
         });
     };
     let install_dir = h.tools.tool_dir("python", "uv");
+    let env = shared::with_var(&env, "UV_PYTHON_INSTALL_DIR", install_dir.as_os_str());
+    // A CPython snp downloaded earlier: found without the lock or a download.
+    if install_dir.is_dir()
+        && let Some(p) = managed_find(h, &find_argv(true), &env)?
+    {
+        return Ok(Interp {
+            path: Some(p),
+            managed: true,
+        });
+    }
     let lock_path = install_dir.parent().unwrap_or(&install_dir).to_path_buf();
     let _lock = h.tools.lock_tool("python", h.cancel).map_err(|f| match f {
         snp_core::failure::Failure::Interrupted(_) => LangError::Interrupted,
@@ -322,7 +342,15 @@ fn uv_find_python(cx: &InstallCtx<'_>, uv: &Uv, version: &str) -> Result<Interp,
             std::io::Error::other(format!("{other:?}")),
         ),
     })?;
-    let env = shared::with_var(&env, "UV_PYTHON_INSTALL_DIR", install_dir.as_os_str());
+    // Re-checked under the lock: another process may have installed it meanwhile.
+    if install_dir.is_dir()
+        && let Some(p) = managed_find(h, &find_argv(true), &env)?
+    {
+        return Ok(Interp {
+            path: Some(p),
+            managed: true,
+        });
+    }
     setup_cmd(
         h.runner,
         &argv([
@@ -343,6 +371,13 @@ fn uv_find_python(cx: &InstallCtx<'_>, uv: &Uv, version: &str) -> Result<Interp,
         path: Some(PathBuf::from(p)),
         managed: true,
     })
+}
+
+/// `uv python find --managed-python …` in snp's `tools-v1/python/uv`: the interpreter when uv finds one.
+fn managed_find(h: &Host<'_>, argv: &[OsString], env: &Env) -> Result<Option<PathBuf>, LangError> {
+    let out = h.runner.run(argv, env, root_dir())?;
+    let p = stdout_text(&out.stdout);
+    Ok((out.status.0 == 0 && !p.is_empty()).then(|| PathBuf::from(p)))
 }
 
 /// Creates the environment and installs the hook repository and its dependencies.
@@ -376,7 +411,7 @@ fn install_env(cx: &InstallCtx<'_>) -> Result<InstallOutcome, LangError> {
                 "--no-config",
                 "--no-python-downloads",
             ]));
-            let venv_env = uv_env(h, &installer_env).without(&["VIRTUAL_ENV", "CONDA_PREFIX"]);
+            let venv_env = uv_env(h, &installer_env).without(&VENV_STRIP);
             setup_cmd(h.runner, &venv, &venv_env, root_dir())?;
         }
         Backend::Pip(_) => {

@@ -39,8 +39,31 @@ const fn exe_name() -> &'static str {
     if cfg!(windows) { "uv.exe" } else { "uv" }
 }
 
-/// Probe results per binary for this process: (realpath, fingerprint) → usable.
-static PATH_UV: Mutex<Vec<(PathBuf, Fingerprint, bool)>> = Mutex::new(Vec::new());
+/// One memoised probe: locked while its probe runs, so concurrent installs spawn once.
+type Slot = Arc<Mutex<Option<bool>>>;
+
+/// Probe results per binary for this process: (realpath, fingerprint) → usable. A process-wide memo (like
+/// pre-commit's `lru_cache`), bounded by [`MEMO_CAP`] distinct binaries; it holds facts about files, never
+/// configuration, and a changed binary (another fingerprint) is probed again. (ARCHITECTURE S6 wants this in
+/// `ToolProbe`, which WP-24 does not own; see the WP-24 report.)
+static PATH_UV: Mutex<Vec<(PathBuf, Fingerprint, Slot)>> = Mutex::new(Vec::new());
+
+/// Distinct `PATH` uv binaries memoised per process; more are probed every time.
+const MEMO_CAP: usize = 16;
+
+/// The memo slot of `(real, fp)`, created when there is room.
+fn slot(real: &Path, fp: &Fingerprint) -> Option<Slot> {
+    let mut memo = snp_core::sync::lock(&PATH_UV);
+    if let Some((_, _, s)) = memo.iter().find(|(p, f, _)| p == real && f == fp) {
+        return Some(Arc::clone(s));
+    }
+    if memo.len() >= MEMO_CAP {
+        return None;
+    }
+    let s: Slot = Arc::new(Mutex::new(None));
+    memo.push((real.to_path_buf(), fp.clone(), Arc::clone(&s)));
+    Some(s)
+}
 
 /// `uv X.Y.Z (…)` → `[X, Y, Z]`.
 pub(crate) fn parse_version(stdout: &[u8]) -> Option<[u64; 3]> {
@@ -69,14 +92,21 @@ fn path_uv_usable(h: &Host<'_>, exe: &Path) -> Result<bool, LangError> {
         h.cwd.join(exe)
     };
     let real = snp_pycompat::ospath::realpath(abs.as_os_str(), h.cwd).unwrap_or(abs);
-    let fp = h.probe.fingerprint(&real);
-    if let Some(fp) = &fp
-        && let Some(hit) = snp_core::sync::lock(&PATH_UV)
-            .iter()
-            .find(|(p, f, _)| *p == real && f == fp)
-    {
-        return Ok(hit.2);
+    let memo = h.probe.fingerprint(&real).and_then(|fp| slot(&real, &fp));
+    let Some(memo) = memo else {
+        return probe_uv(h, exe);
+    };
+    let mut guard = snp_core::sync::lock(&memo);
+    if let Some(hit) = *guard {
+        return Ok(hit);
     }
+    let usable = probe_uv(h, exe)?;
+    *guard = Some(usable);
+    Ok(usable)
+}
+
+/// `uv --version` and, when new enough, `uv venv --help`.
+fn probe_uv(h: &Host<'_>, exe: &Path) -> Result<bool, LangError> {
     let argv = |args: &[&str]| -> Vec<OsString> {
         let mut v = vec![exe.as_os_str().to_os_string()];
         v.extend(args.iter().map(OsString::from));
@@ -91,9 +121,6 @@ fn path_uv_usable(h: &Host<'_>, exe: &Path) -> Result<bool, LangError> {
         let text = String::from_utf8_lossy(&help.stdout);
         help.status.0 == 0 && VENV_FLAGS.iter().all(|f| text.contains(f))
     };
-    if let Some(fp) = fp {
-        snp_core::sync::lock(&PATH_UV).push((real, fp, usable));
-    }
     Ok(usable)
 }
 

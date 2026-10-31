@@ -3,6 +3,7 @@
 //!
 //! Owner: WP-24.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Cap on a `pyvenv.cfg` (a real one is ~300 bytes).
@@ -15,6 +16,8 @@ const MAX_PYVENV_CFG: u64 = 1 << 20;
 pub(crate) fn parse(text: &str) -> Vec<(String, String)> {
     let text = snp_pycompat::textio::universal_newlines(text);
     let mut ret: Vec<(String, String)> = Vec::new();
+    // key → position in `ret`; only for lookups (the vector keeps the order), so the parse is linear.
+    let mut index: HashMap<String, usize> = HashMap::new();
     for line in text.split_inclusive('\n') {
         let mut parts = line.split('=');
         let (Some(k), Some(v), None) = (parts.next(), parts.next(), parts.next()) else {
@@ -22,9 +25,11 @@ pub(crate) fn parse(text: &str) -> Vec<(String, String)> {
         };
         let k = snp_pycompat::text::strip(k).to_owned();
         let v = snp_pycompat::text::strip(v).to_owned();
-        match ret.iter_mut().find(|(key, _)| *key == k) {
-            Some(slot) => slot.1 = v,
-            None => ret.push((k, v)),
+        if let Some(slot) = index.get(&k).and_then(|&i| ret.get_mut(i)) {
+            slot.1 = v;
+        } else {
+            index.insert(k.clone(), ret.len());
+            ret.push((k, v));
         }
     }
     ret
@@ -101,6 +106,19 @@ mod tests {
                 ("d".to_owned(), "4".to_owned())
             ]
         );
+    }
+
+    /// Linear time (a 1 MiB file can hold ~110k distinct keys).
+    #[test]
+    fn many_keys_parse_quickly() {
+        use std::fmt::Write as _;
+        let mut text = String::new();
+        for i in 0..100_000 {
+            writeln!(text, "k{i} = v").unwrap();
+        }
+        let start = std::time::Instant::now();
+        assert_eq!(parse(&text).len(), 100_000);
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
     }
 
     #[test]

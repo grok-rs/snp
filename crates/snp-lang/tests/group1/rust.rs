@@ -99,7 +99,10 @@ fn lang_rust_system_dependencies_in_config_order() {
     }
 }
 
-/// ADR-025: `cargo add` edits the variant's own prefix; another variant of the same repository is untouched.
+/// ADR-025, the backend's half: `cargo add` runs in (and edits) only the prefix it is handed — never the user's
+/// repository (the run's cwd) or another directory — so the per-`(repo, rev, deps)` clones that snp-store creates
+/// (WP-22, `git clone --local` per variant; covered by the store's tests) stay independent. A variant without
+/// library dependencies runs no `cargo add`.
 #[test]
 fn lang_rust_deps_variants_are_isolated() {
     let w = World::new();
@@ -134,7 +137,13 @@ fn lang_rust_deps_variants_are_isolated() {
         "[package]\nname = \"hooks\"\n"
     );
     let c = t.runner.calls();
-    assert_eq!(c.iter().filter(|c| c.argv[1] == "add").count(), 1);
+    let adds: Vec<_> = c.iter().filter(|c| c.argv[1] == "add").collect();
+    assert_eq!(adds.len(), 1);
+    assert_eq!(adds[0].cwd, variant_a);
+    assert!(
+        !w.repo.join("Cargo.toml").exists(),
+        "the user's repository is untouched"
+    );
 }
 
 /// A managed toolchain: rustup from `PATH` with the persistent shared `RUSTUP_HOME`, `--profile minimal`.

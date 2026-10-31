@@ -289,3 +289,109 @@ fn lang_node_activation() {
     }
     assert_eq!(Node.id(), LanguageId::Node);
 }
+
+/// An index with several releases per major line (the newest first).
+const RANGE_INDEX: &str = r#"[{"version": "v21.0.0", "lts": false, "files": ["linux-x64", "linux-arm64", "osx-arm64-tar", "osx-x64-tar", "win-x64-zip", "win-arm64-zip", "linux-x64-musl"]},
+{"version": "v20.11.1", "lts": "Iron", "files": ["linux-x64", "linux-arm64", "osx-arm64-tar", "osx-x64-tar", "win-x64-zip", "win-arm64-zip", "linux-x64-musl"]},
+{"version": "v20.9.0", "lts": "Iron", "files": ["linux-x64", "linux-arm64", "osx-arm64-tar", "osx-x64-tar", "win-x64-zip", "win-arm64-zip", "linux-x64-musl"]},
+{"version": "v18.19.1", "lts": "Hydrogen", "files": ["linux-x64", "linux-arm64", "osx-arm64-tar", "osx-x64-tar", "win-x64-zip", "win-arm64-zip", "linux-x64-musl"]},
+{"version": "v18.17.0", "lts": "Hydrogen", "files": ["linux-x64", "linux-arm64", "osx-arm64-tar", "osx-x64-tar", "win-x64-zip", "win-arm64-zip", "linux-x64-musl"]}]"#;
+
+/// A host serving [`RANGE_INDEX`] (official and unofficial builds) with every release's toolchain pre-installed.
+fn range_world() -> (World, TestHost) {
+    let w = World::new();
+    for v in ["21.0.0", "20.11.1", "20.9.0", "18.19.1", "18.17.0"] {
+        node_tool(&w, v);
+    }
+    let mut t = w.host(w.isolated_env(&[]));
+    t.fetch = Some(Box::new(FakeFetch {
+        texts: vec![
+            (
+                "https://nodejs.org/dist/index.json".to_owned(),
+                RANGE_INDEX.to_owned(),
+            ),
+            (
+                "https://unofficial-builds.nodejs.org/download/release/index.json".to_owned(),
+                RANGE_INDEX.to_owned(),
+            ),
+        ],
+        ..FakeFetch::default()
+    }));
+    (w, t)
+}
+
+/// nodeenv 1.11.0 resolves partial versions and npm-style ranges to the highest matching release (the values
+/// nodeenv's `resolve_node_version` prints for this index); an exact version is used as written.
+#[test]
+fn lang_node_version_ranges_resolve_like_nodeenv() {
+    for (spec, want) in [
+        ("20", "20.11.1"),
+        ("18.19", "18.19.1"),
+        ("^20.1", "20.11.1"),
+        (">=18 <20", "18.19.1"),
+        ("20.x", "20.11.1"),
+        ("v18", "18.19.1"),
+        ("~20.9", "20.9.0"),
+        ("16 || 18.17", "18.17.0"),
+        ("20.9.0", "20.9.0"),
+    ] {
+        let (w, t) = range_world();
+        let out = install(&t, &w, spec, &[]).unwrap_or_else(|e| panic!("{spec}: {e}"));
+        assert_eq!(
+            out.tools,
+            vec![(Arc::from("node"), Arc::from(want))],
+            "{spec}"
+        );
+    }
+    // No release matches: nodeenv's message, exit 1.
+    let (w, t) = range_world();
+    let e = install(&t, &w, "19", &[]).unwrap_err();
+    assert_eq!(e.py_type(), "CalledProcessError");
+    let LangError::CalledProcess { rc, stderr, .. } = &e else {
+        panic!("{e:?}")
+    };
+    assert_eq!(*rc, 1);
+    assert_eq!(
+        String::from_utf8_lossy(stderr),
+        "No available node.js version matches '19'\n"
+    );
+}
+
+/// `.node-version` is read like nodeenv: the first line stripped and without leading `v`s, and a range resolves;
+/// an empty first line resets the choice to `latest` even when `setup.cfg` names a version.
+#[test]
+fn lang_node_node_version_file_values() {
+    let (w, t) = range_world();
+    std::fs::write(w.repo.join(".node-version"), "v20\n").unwrap();
+    let out = install(&t, &w, "default", &[]).unwrap();
+    assert_eq!(&*out.tools[0].1, "20.11.1");
+    let (w, t) = range_world();
+    std::fs::write(w.repo.join("setup.cfg"), "[nodeenv]\nnode = 18.17.0\n").unwrap();
+    std::fs::write(w.repo.join(".node-version"), "\n20\n").unwrap();
+    let out = install(&t, &w, "default", &[]).unwrap();
+    assert_eq!(&*out.tools[0].1, "21.0.0", "latest");
+    // `[DEFAULT]` options apply to `[nodeenv]` (configparser).
+    let (w, t) = range_world();
+    std::fs::write(
+        w.repo.join("tox.ini"),
+        "[DEFAULT]\nnode = 18.19\n[nodeenv]\njobs = 4\n",
+    )
+    .unwrap();
+    let out = install(&t, &w, "default", &[]).unwrap();
+    assert_eq!(&*out.tools[0].1, "18.19.1");
+}
+
+/// A `language_version` or `.node-version` that is not a plain version never selects a directory outside the
+/// shared tools, even when that directory exists.
+#[test]
+fn lang_node_version_is_not_a_path() {
+    let (w, t) = range_world();
+    let outside = w.root.join("usr");
+    exe(&outside.join("bin/node"));
+    let rel = "../../../../usr";
+    assert!(w.repo.join(".snp-tools/tools/node").join(rel).is_dir());
+    std::fs::write(w.repo.join(".node-version"), format!("{rel}\n")).unwrap();
+    let e = install(&t, &w, "default", &[]).unwrap_err();
+    assert!(e.to_string().contains("invalid"), "{e}");
+    assert!(!w.prefix.join("node_env-default/bin/node").exists());
+}

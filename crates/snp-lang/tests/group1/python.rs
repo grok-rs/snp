@@ -227,6 +227,11 @@ fn lang_python_uv_command_lines() {
             ("UV_CONSTRAINT", "/c.txt"),
             ("UV_INDEX", "https://keep/simple"),
             ("VIRTUAL_ENV", "/somewhere"),
+            (
+                "__PYVENV_LAUNCHER__",
+                "/Library/Frameworks/Python.framework/python",
+            ),
+            ("PYTHONEXECUTABLE", "/usr/local/bin/python3"),
         ],
     );
     let out = install(&t, &w, "python3.12", &["six", "--pre"], false).unwrap();
@@ -251,6 +256,8 @@ fn lang_python_uv_command_lines() {
     assert_eq!(venv_env.get("UV_PYTHON"), Some(&None));
     assert_eq!(venv_env.get("UV_CONSTRAINT"), Some(&None));
     assert_eq!(venv_env.get("VIRTUAL_ENV"), Some(&None));
+    assert_eq!(venv_env.get("__PYVENV_LAUNCHER__"), Some(&None));
+    assert_eq!(venv_env.get("PYTHONEXECUTABLE"), Some(&None));
     assert_eq!(venv_env.get("UV_INDEX"), None, "kept unchanged");
     assert_eq!(
         venv_env.get("UV_CACHE_DIR"),
@@ -523,6 +530,174 @@ fn lang_python_missing_interpreter_is_downloaded() {
             .iter()
             .any(|c| c[..3] == ["uv", "python", "install"])
     );
+}
+
+/// A CPython snp downloaded earlier is found by `uv python find --managed-python` in the shared tools: no lock, no
+/// `uv python install`.
+#[test]
+fn lang_python_downloaded_interpreter_is_reused() {
+    let w = World::new();
+    std::fs::create_dir_all(w.repo.join(".snp-tools/tools/python/uv")).unwrap();
+    let t = uv_setup(&w, &[]);
+    let managed = w.root.join("managed/bin/python3.11");
+    t.runner.reply(
+        "uv",
+        Reply::fail(2, "error: No interpreter found").when([
+            "python",
+            "find",
+            "--no-project",
+            "--no-config",
+            "--no-python-downloads",
+            "3.11",
+        ]),
+    );
+    t.runner.reply(
+        "uv",
+        Reply::ok(format!("{}\n", managed.display())).when([
+            "python",
+            "find",
+            "--no-project",
+            "--no-config",
+            "--no-python-downloads",
+            "--managed-python",
+            "3.11",
+        ]),
+    );
+    let out = install(&t, &w, "python3.11", &[], false).unwrap();
+    let c = calls(&t, &w);
+    let finds: Vec<&GoldenCall> = c
+        .iter()
+        .filter(|c| c.argv[..3] == ["uv", "python", "find"])
+        .collect();
+    assert_eq!(finds.len(), 2, "{c:?}");
+    assert_eq!(
+        finds[1].env.get("UV_PYTHON_INSTALL_DIR"),
+        Some(&Some("{TOOLS}/tools/python/uv".to_owned()))
+    );
+    assert!(
+        !c.iter().any(|c| c.argv[..3] == ["uv", "python", "install"]),
+        "{c:?}"
+    );
+    let venv = c.iter().find(|c| c.argv[..2] == ["uv", "venv"]).unwrap();
+    assert_eq!(venv.argv[4], managed.display().to_string());
+    assert!(out.tools.contains(&(Arc::from("python"), Arc::from("uv"))));
+}
+
+/// `language_version: system` is not special for python: pre-commit hands `-p system` to virtualenv, which fails;
+/// snp finds no interpreter named `system` and fails the same way (exit 3), creating nothing.
+#[test]
+fn lang_python_system_is_not_an_interpreter() {
+    let w = World::new();
+    let t = setup(&w, &[("SNP_PYTHON_INSTALLER", "pip")]);
+    let e = install(&t, &w, "system", &[], false).unwrap_err();
+    assert_eq!(
+        e.to_string(),
+        "failed to find interpreter for python_spec='system'"
+    );
+    assert!(
+        !argvs(&t, &w)
+            .iter()
+            .any(|c| c.get(1).is_some_and(|a| a == "-m"))
+    );
+    assert!(!w.prefix.join("py_env-system").exists());
+}
+
+/// A layering case: name, user file, site file, variables, expected `uv pip install` flags.
+#[cfg(not(any(windows, target_os = "macos")))]
+type LayerCase = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static [(&'static str, &'static str)],
+    &'static [&'static str],
+);
+
+/// pip's configuration layering pinned on the `uv pip install` argv (pip 26 `_get_ordered_configuration_items`):
+/// (a) a site file's `[install]` beats a user file's `[global]`; (b) an existing `$PIP_CONFIG_FILE` skips the user
+/// files; (c) empty values are ignored; (d) only upper-case `PIP_*` names count, `PIP_VERSION` is not an option;
+/// (e) a leading `--` of a key is dropped. Indented options are options (configparser), not continuations.
+#[cfg(not(any(windows, target_os = "macos")))]
+#[test]
+fn lang_python_pip_configuration_layering() {
+    if std::path::Path::new("/etc/pip.conf").exists() {
+        return;
+    }
+    let cases: [LayerCase; 6] = [
+        (
+            "a",
+            "[global]\nindex-url = https://user-global/simple\n",
+            "[install]\nindex-url = https://site-install/simple\n",
+            &[],
+            &["--default-index", "https://site-install/simple"],
+        ),
+        (
+            "b",
+            "[global]\nindex-url = https://user/simple\n",
+            "",
+            &[("PIP_CONFIG_FILE", "{XDG}/pip/pip.conf")],
+            &[],
+        ),
+        (
+            "c",
+            "[global]\nindex-url = https://user/simple\n",
+            "",
+            &[("PIP_INDEX_URL", "")],
+            &["--default-index", "https://user/simple"],
+        ),
+        (
+            "d",
+            "",
+            "",
+            &[
+                ("pip_index_url", "https://lower/simple"),
+                ("PIP_VERSION", "1"),
+            ],
+            &[],
+        ),
+        (
+            "e",
+            "[global]\n--index_url = https://dash/simple\n",
+            "",
+            &[],
+            &["--default-index", "https://dash/simple"],
+        ),
+        (
+            "indented",
+            "[global]\n  index-url = https://corp/simple\n  trusted-host = corp\n",
+            "",
+            &[],
+            &[
+                "--default-index",
+                "https://corp/simple",
+                "--allow-insecure-host",
+                "corp",
+            ],
+        ),
+    ];
+    for (name, user, site, extra, want) in cases {
+        let w = World::new();
+        let xdg = w.root.join("xdg");
+        std::fs::create_dir_all(xdg.join("pip")).unwrap();
+        std::fs::create_dir_all(w.home.join(".config/pip")).unwrap();
+        std::fs::write(xdg.join("pip/pip.conf"), site).unwrap();
+        std::fs::write(w.home.join(".config/pip/pip.conf"), user).unwrap();
+        let xdg_s = xdg.display().to_string();
+        let mut env: Vec<(String, String)> = vec![("XDG_CONFIG_DIRS".into(), xdg_s.clone())];
+        for (k, v) in extra {
+            env.push(((*k).to_owned(), v.replace("{XDG}", &xdg_s)));
+        }
+        env.push(("SNP_PYTHON_INSTALLER".into(), "uv".into()));
+        let pairs: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let t = uv_setup(&w, &pairs);
+        let out =
+            install(&t, &w, "python3.12", &[], false).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(&*out.installer, "uv", "{name}");
+        let c = calls(&t, &w);
+        let pip = c.iter().find(|c| c.argv[..2] == ["uv", "pip"]).unwrap();
+        let mut expect: Vec<&str> = want.to_vec();
+        expect.push(".");
+        assert_eq!(pip.argv[6..], expect, "{name}");
+    }
 }
 
 /// The pip backend has no discovery: an unknown interpreter is pre-commit's failure (exit 3).
@@ -895,4 +1070,163 @@ fn lang_python_activation_and_plan() {
     assert_eq!(Python.id(), LanguageId::Python);
     let s = Python.support();
     assert!(s.deps);
+}
+
+/// A pip differential case: user file, site file, variables.
+#[cfg(all(unix, not(target_os = "macos")))]
+type PipCase = (
+    &'static str,
+    &'static str,
+    &'static [(&'static str, &'static str)],
+);
+
+/// Differential against pip itself (the pip 26 wheel the oracle's virtualenv seeds, run by the oracle interpreter):
+/// `InstallCommand.parse_args([])` under the same files and variables gives the index options that snp's
+/// `uv pip install` flags must express.
+#[cfg(all(unix, not(target_os = "macos")))]
+#[test]
+#[ignore = "oracle"]
+fn oracle_pip_configuration_matches_pip() {
+    if std::path::Path::new("/etc/pip.conf").exists() {
+        return;
+    }
+    let root = crate::oracle::oracle_root();
+    let python = root.join("bin/python");
+    let embed = root.join("lib/python3.12/site-packages/virtualenv/seed/wheels/embed");
+    let wheel = std::fs::read_dir(&embed)
+        .unwrap_or_else(|e| panic!("{}: {e} (set SNP_ORACLE_PY312)", embed.display()))
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("pip-"))
+        .max()
+        .expect("a pip wheel");
+    let script = "import json, sys\n\
+        sys.path.insert(0, sys.argv[1])\n\
+        from pip._internal.commands import create_command\n\
+        o, _ = create_command('install').parse_args([])\n\
+        print(json.dumps([o.index_url, o.extra_index_urls, o.trusted_hosts, o.find_links, bool(o.pre)]))\n";
+    let cases: [PipCase; 12] = [
+        (
+            "[global]\nindex-url = https://user-global/simple\n",
+            "[install]\nindex-url = https://site-install/simple\n",
+            &[],
+        ),
+        (
+            "[global]\nindex-url = https://user/simple\n",
+            "",
+            &[("PIP_CONFIG_FILE", "{XDG}/pip/pip.conf")],
+        ),
+        (
+            "[global]\nindex-url = https://user/simple\n",
+            "",
+            &[("PIP_CONFIG_FILE", "{XDG}/missing.conf")],
+        ),
+        (
+            "[global]\nindex-url = https://user/simple\n",
+            "",
+            &[("PIP_INDEX_URL", "")],
+        ),
+        (
+            "",
+            "",
+            &[
+                ("pip_index_url", "https://lower/simple"),
+                ("PIP_VERSION", "1"),
+            ],
+        ),
+        ("[global]\n--index_url = https://dash/simple\n", "", &[]),
+        (
+            "[global]\n  index-url = https://corp/simple\n  trusted-host = corp\n",
+            "",
+            &[],
+        ),
+        (
+            "[global]\nextra-index-url =\n    https://a/simple\n\n    https://b/simple\n",
+            "",
+            &[],
+        ),
+        (
+            "[global]\nindex-url = https://g/simple\n[install] ; corp\nindex-url = https://i/simple\n",
+            "",
+            &[],
+        ),
+        (
+            "[DEFAULT]\ntrusted-host = d\n[install]\npre = yes\n",
+            "",
+            &[],
+        ),
+        (
+            "[global]\nfind-links = /w1 /w2\n",
+            "[global]\nfind-links = /site\n",
+            &[("PIP_PRE", "1")],
+        ),
+        (
+            "[install]\nextra-index-url = https://u/simple\n",
+            "[global]\nextra-index-url = https://s/simple\n",
+            &[("PIP_TRUSTED_HOST", "x y")],
+        ),
+    ];
+    for (i, (user, site, extra)) in cases.into_iter().enumerate() {
+        let w = World::new();
+        let xdg = w.root.join("xdg");
+        std::fs::create_dir_all(xdg.join("pip")).unwrap();
+        std::fs::create_dir_all(w.home.join(".config/pip")).unwrap();
+        std::fs::write(xdg.join("pip/pip.conf"), site).unwrap();
+        std::fs::write(w.home.join(".config/pip/pip.conf"), user).unwrap();
+        let xdg_s = xdg.display().to_string();
+        let mut env: Vec<(String, String)> = vec![("XDG_CONFIG_DIRS".into(), xdg_s.clone())];
+        for (k, v) in extra {
+            env.push(((*k).to_owned(), v.replace("{XDG}", &xdg_s)));
+        }
+        // pip.
+        let out = std::process::Command::new(&python)
+            .arg("-I")
+            .arg("-c")
+            .arg(script)
+            .arg(&wheel)
+            .env_clear()
+            .env("HOME", &w.home)
+            .env("PATH", "/usr/bin:/bin")
+            .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let pip: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        // snp.
+        env.push(("SNP_PYTHON_INSTALLER".into(), "uv".into()));
+        let pairs: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let t = uv_setup(&w, &pairs);
+        install(&t, &w, "python3.12", &[], false).unwrap_or_else(|e| panic!("case {i}: {e}"));
+        let c = calls(&t, &w);
+        let argv = &c
+            .iter()
+            .find(|c| c.argv[..2] == ["uv", "pip"])
+            .unwrap()
+            .argv;
+        let mut index_url = "https://pypi.org/simple".to_owned();
+        let (mut extra_urls, mut hosts, mut links) = (Vec::new(), Vec::new(), Vec::new());
+        let mut pre = false;
+        let mut it = argv[6..].iter();
+        while let Some(a) = it.next() {
+            let mut val = || it.next().cloned().unwrap_or_default();
+            match a.as_str() {
+                "--default-index" => index_url = val(),
+                "--index" => extra_urls.push(val()),
+                "--allow-insecure-host" => hosts.push(val()),
+                "--find-links" => links.push(val()),
+                "--prerelease" => pre = val() == "allow",
+                "--index-strategy" => assert_eq!(val(), "unsafe-best-match"),
+                "." => {}
+                other => panic!("case {i}: unexpected {other}"),
+            }
+        }
+        let ours = serde_json::json!([index_url, extra_urls, hosts, links, pre]);
+        assert_eq!(
+            ours, pip,
+            "case {i}: user {user:?} site {site:?} env {extra:?}"
+        );
+    }
 }
