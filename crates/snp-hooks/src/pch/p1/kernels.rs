@@ -375,6 +375,53 @@ pub fn shebang_scripts_message(path: &[u8], epoch: u16) -> Vec<u8> {
     m
 }
 
+/// The records of `git ls-files -z --stage` output (decoded) as `check_executables_have_shebangs.git_ls_files`
+/// reads them: `zsplit`, then `metadata, filename = out.split('\t')` and `mode, _, _ = metadata.split()`, giving
+/// `(mode, path)`. The entries before a malformed record come back with Python's unpacking `ValueError` for it.
+pub fn ls_files_records(outs: &str) -> (Vec<(String, String)>, Option<PyExc>) {
+    let mut entries = Vec::new();
+    let trimmed = outs.trim_matches('\0');
+    if trimmed.is_empty() {
+        return (entries, None);
+    }
+    for rec in trimmed.split('\0') {
+        let tabs = rec.split('\t').count();
+        let mut parts = rec.split('\t');
+        let (Some(meta), Some(path), None) = (parts.next(), parts.next(), parts.next()) else {
+            return (entries, Some(unpack_error(tabs, 2)));
+        };
+        let fields = snp_pycompat::text::split_whitespace(meta, None).collect::<Vec<&str>>();
+        let [mode, _, _] = fields.as_slice() else {
+            return (entries, Some(unpack_error(fields.len(), 3)));
+        };
+        entries.push(((*mode).to_owned(), path.to_owned()));
+    }
+    (entries, None)
+}
+
+/// Python's tuple-unpacking `ValueError` for `got` items into `expected` names.
+fn unpack_error(got: usize, expected: usize) -> PyExc {
+    PyExc::new(
+        "ValueError",
+        if got > expected {
+            format!("too many values to unpack (expected {expected})")
+        } else {
+            format!("not enough values to unpack (expected {expected}, got {got})")
+        },
+    )
+}
+
+/// `any(b in EXECUTABLE_VALUES for b in mode[-3:])` (`check_executables_have_shebangs.py`): an executable bit in
+/// the last three octal digits of an index mode.
+pub fn mode_is_executable(mode: &str) -> bool {
+    let tail = mode
+        .char_indices()
+        .rev()
+        .nth(2)
+        .map_or(mode, |(i, _)| mode.get(i..).unwrap_or(mode));
+    tail.chars().any(|c| matches!(c, '1' | '3' | '5' | '7'))
+}
+
 /// One `1 ` record of `git status --porcelain=v2 -z` that may be a destroyed symlink (`destroyed_symlinks.py:16-
 /// 66`): HEAD mode `120000`, index mode neither `120000` nor `000000`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -459,7 +506,8 @@ mod tests {
     use super::*;
 
     fn s(b: Option<Vec<u8>>) -> Option<String> {
-        b.map(|b| String::from_utf8(b).unwrap())
+        let b = b?;
+        Some(String::from_utf8(b).unwrap())
     }
 
     #[test]
@@ -576,7 +624,7 @@ zope==1\n# trailing\n"
                 "readme"
             ]
         );
-        assert!(case_conflicts(&repo, &[b"other"], &[], 3, false).is_empty());
+        assert_eq!(case_conflicts(&repo, &[b"other"], &[], 3, false).len(), 0);
         assert_eq!(py_lower("ÄΣ".as_bytes()), "äς".as_bytes());
         assert_eq!(py_str_cmp(b"\xff", "\u{e000}".as_bytes()), Ordering::Less);
     }

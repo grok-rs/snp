@@ -95,7 +95,7 @@ fn sort_simple_yaml_newline_quirk() {
     for _ in 0..2 {
         let o = h.run(&ctx.cx(Epoch(1)), &[OsStr::new("a.yaml")]);
         assert_eq!(o.code, 1);
-        assert!(o.modified.is_empty());
+        assert_eq!(o.modified.len(), 0);
         assert_eq!(show(&o.output), "Fixing file `a.yaml`\n");
     }
     assert_eq!(std::fs::read(ctx.sb.path("a.yaml")).unwrap(), b"\n");

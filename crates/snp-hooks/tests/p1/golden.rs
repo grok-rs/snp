@@ -6,7 +6,7 @@
 
 use std::ffi::{OsStr, OsString};
 
-use snp_core::env::{Env, EnvPatch};
+use snp_core::env::EnvPatch;
 use snp_hooks::{Epoch, HookCx, NativeSource, Outcome};
 
 use crate::support::{self, Ctx, Sandbox, argv_of, epoch_at, latin1, show};
@@ -94,11 +94,16 @@ pub(crate) fn native_epoch(tag: &str, hook: &str, args: &[OsString]) -> Option<E
     h.preflight(epoch, &args).is_ok().then_some(epoch)
 }
 
-/// Runs one case natively at `tag` (`None` when the native delegates there).
-pub(crate) fn run_case(case: &serde_json::Value, tag: &str) -> Option<Run> {
+/// The epoch a case runs at for `tag` (`None` when the native delegates there).
+pub(crate) fn case_epoch(case: &serde_json::Value, tag: &str) -> Option<Epoch> {
+    let hook_id = case["hook"].as_str()?;
+    native_epoch(tag, hook_id, &argv_of(&case["argv"]))
+}
+
+/// Runs one case natively at `epoch`.
+pub(crate) fn run_case(case: &serde_json::Value, epoch: Epoch) -> Run {
     let hook_id = case["hook"].as_str().unwrap();
     let argv = argv_of(&case["argv"]);
-    let epoch = native_epoch(tag, hook_id, &argv)?;
     let hook = snp_hooks::native(NativeSource::PreCommitHooks, hook_id).unwrap();
     if hook.prog() != "pre-commit-hooks-removed" {
         assert_eq!(hook.prog(), case["script"].as_str().unwrap(), "{hook_id}");
@@ -121,7 +126,7 @@ pub(crate) fn run_case(case: &serde_json::Value, tag: &str) -> Option<Run> {
             patch = patch.set(k.clone(), v.as_str().unwrap());
         }
     }
-    let env: Env = sb.env.patched(&patch);
+    let env = sb.env.patched(&patch);
     let root = sb.root.clone();
     let home = std::path::PathBuf::from(sb.env.get("HOME").unwrap());
     let ctx = Ctx::new(sb);
@@ -173,12 +178,12 @@ pub(crate) fn run_case(case: &serde_json::Value, tag: &str) -> Option<Run> {
         .filter(|(b, a)| b.1 != a.1)
         .map(|(b, _)| b.0.clone())
         .collect();
-    Some(Run {
+    Run {
         outcome,
         output,
         after,
         changed,
-    })
+    }
 }
 
 /// Lines of `out`, sorted (cases whose Python iterates a `set`).
@@ -205,9 +210,10 @@ pub(crate) fn replay(group: &str) -> usize {
             let Some(want) = goldens["results"].get(name) else {
                 continue;
             };
-            let Some(got) = run_case(case, tag) else {
+            let Some(epoch) = case_epoch(case, tag) else {
                 continue;
             };
+            let got = run_case(case, epoch);
             checked += 1;
             let want_out = latin1(want["out"].as_str().unwrap());
             let want_code = i32::try_from(want["code"].as_i64().unwrap()).unwrap();

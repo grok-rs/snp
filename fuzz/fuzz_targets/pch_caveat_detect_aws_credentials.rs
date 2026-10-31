@@ -1,10 +1,41 @@
-//! Fuzz target `pch_caveat_detect_aws_credentials`: the native `detect-aws-credentials` on arbitrary bytes.
+//! Fuzz target `pch_caveat_detect_aws_credentials`: the native `detect-aws-credentials` core: a credential file through the
+//! `configparser` subset, then the hidden form of every key found.
 //! Invariants (ARCHITECTURE §13.5): no panic, no hang > 5 s, ≤ 512 MB RSS, 256 KiB thread stacks.
 //!
-//! Owner: WP-27. W0 stub: accepts every input until WP-27 drives `snp_hooks` with it.
+//! Owner: WP-27.
 #![no_main]
 
-use libfuzzer_sys::fuzz_target;
-use snp_hooks as _;
+use std::ffi::OsStr;
 
-fuzz_target!(|_data: &[u8]| {});
+use libfuzzer_sys::fuzz_target;
+
+/// The console script's argparse over up to eight NUL-separated argv items taken from `data`.
+fn parse(group: &str, script: &str, epoch: u16, data: &[u8]) {
+    let argv: Vec<String> = data
+        .split(|&b| b == 0)
+        .take(8)
+        .map(|a| String::from_utf8_lossy(a).into_owned())
+        .collect();
+    let argv: Vec<&OsStr> = argv.iter().map(OsStr::new).collect();
+    let env = snp_core::env::Env::from_pairs(Vec::<(String, String)>::new());
+    let parsed = match group {
+        "p1" => snp_hooks::pch::p1::parse_console_script(script, epoch, &argv, &env),
+        "p2" => snp_hooks::pch::p2::parse_console_script(script, epoch, &argv, &env),
+        _ => snp_hooks::pch::caveats::parse_console_script(script, epoch, &argv, &env),
+    };
+    assert!(parsed.is_some());
+}
+
+fuzz_target!(|data: &[u8]| {
+    let text =
+        snp_pycompat::textio::universal_newlines(&String::from_utf8_lossy(data)).into_owned();
+    if let Ok(pairs) = snp_pyparsers::ini::aws_credentials_ex(&text, "creds.ini") {
+        for (_, key) in pairs {
+            assert_eq!(
+                snp_hooks::pch::caveats::hidden_key(&key).chars().count(),
+                28
+            );
+        }
+    }
+    parse("caveats", "detect-aws-credentials", 1, data);
+});

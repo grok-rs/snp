@@ -11,6 +11,7 @@ use std::ffi::{OsStr, OsString};
 use snp_core::failure::PyExc;
 use snp_pycompat::codec::decode_utf8;
 
+use super::kernels;
 use crate::HookCx;
 use crate::framework;
 use crate::pch::p0::common::{cmd_output, read_all};
@@ -124,48 +125,14 @@ pub(crate) fn git_ls_files(
     Ok(parse_ls_files(&outs))
 }
 
-/// The record parse of [`git_ls_files`] (pure; see there).
+/// The record parse of [`git_ls_files`] ([`kernels::ls_files_records`]).
 pub(crate) fn parse_ls_files(outs: &str) -> (Vec<LsFile>, Option<PyExc>) {
-    let mut entries = Vec::new();
-    let trimmed = outs.trim_matches('\0');
-    if trimmed.is_empty() {
-        return (entries, None);
-    }
-    for rec in trimmed.split('\0') {
-        let tabs = rec.split('\t').count();
-        let mut parts = rec.split('\t');
-        let (Some(meta), Some(path), None) = (parts.next(), parts.next(), parts.next()) else {
-            return (entries, Some(unpack_error(tabs, 2)));
-        };
-        let fields = snp_pycompat::text::split_whitespace(meta, None).collect::<Vec<&str>>();
-        let [mode, _, _] = fields.as_slice() else {
-            return (entries, Some(unpack_error(fields.len(), 3)));
-        };
-        entries.push(((*mode).to_owned(), path.to_owned()));
-    }
-    (entries, None)
+    kernels::ls_files_records(outs)
 }
 
-/// Python's tuple-unpacking `ValueError` for `got` items into `expected` names.
-pub(crate) fn unpack_error(got: usize, expected: usize) -> PyExc {
-    PyExc::new(
-        "ValueError",
-        if got > expected {
-            format!("too many values to unpack (expected {expected})")
-        } else {
-            format!("not enough values to unpack (expected {expected}, got {got})")
-        },
-    )
-}
-
-/// `any(b in EXECUTABLE_VALUES for b in mode[-3:])` (`check_executables_have_shebangs.py`).
+/// `any(b in EXECUTABLE_VALUES for b in mode[-3:])` ([`kernels::mode_is_executable`]).
 pub(crate) fn mode_is_executable(mode: &str) -> bool {
-    let tail = mode
-        .char_indices()
-        .rev()
-        .nth(2)
-        .map_or(mode, |(i, _)| mode.get(i..).unwrap_or(mode));
-    tail.chars().any(|c| matches!(c, '1' | '3' | '5' | '7'))
+    kernels::mode_is_executable(mode)
 }
 
 /// `has_shebang(path)`: `open(path, 'rb').read(2) == b'#!'`.
@@ -224,7 +191,7 @@ mod tests {
 
     #[test]
     fn ls_files_records() {
-        let (e, err) = parse_ls_files("100644 abc 0\ta b\0100755 def 0\tx\0");
+        let (e, err) = parse_ls_files("100644 abc 0\ta b\x00100755 def 0\tx\x00");
         assert!(err.is_none());
         assert_eq!(
             e,
@@ -233,13 +200,13 @@ mod tests {
                 ("100755".into(), "x".into())
             ]
         );
-        let (e, err) = parse_ls_files("100644 abc 0\ta\0100644 abc 0\tb\tc\0");
+        let (e, err) = parse_ls_files("100644 abc 0\ta\x00100644 abc 0\tb\tc\x00");
         assert_eq!(e.len(), 1);
         assert_eq!(
             String::from_utf8(err.unwrap().text).unwrap(),
             "too many values to unpack (expected 2)"
         );
-        assert!(parse_ls_files("").0.is_empty());
+        assert_eq!(parse_ls_files("").0.len(), 0);
         assert!(mode_is_executable("100755"));
         assert!(!mode_is_executable("100644"));
         assert!(!mode_is_executable(""));
