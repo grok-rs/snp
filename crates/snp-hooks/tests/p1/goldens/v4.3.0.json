@@ -1,0 +1,467 @@
+{
+ "python": "3.13.14",
+ "results": {
+  "cbom-missing-crash": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a": "\u00ef\u00bb\u00bfx",
+    "c": "\u00ef\u00bb\u00bfx"
+   },
+   "out": "a: Has a byte-order marker\nFileNotFoundError: [Errno 2] No such file or directory: 'nope'\n"
+  },
+  "cbom-table": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a": "\u00ef\u00bb\u00bfx",
+    "b": "x",
+    "c": "\u00ef\u00bb"
+   },
+   "out": "a: Has a byte-order marker\n"
+  },
+  "ccc-flag-file": {
+   "code": 2,
+   "crashed": false,
+   "files": {},
+   "out": "usage: check-case-conflict [-h] [filenames ...]\ncheck-case-conflict: error: unrecognized arguments: -x\n"
+  },
+  "ccc-no-conflict": {
+   "code": 0,
+   "crashed": false,
+   "files": {},
+   "out": ""
+  },
+  "ccc-non-ascii-invisible": {
+   "code": 0,
+   "crashed": false,
+   "files": {},
+   "out": ""
+  },
+  "ccc-partitions": {
+   "code": 1,
+   "crashed": false,
+   "files": {},
+   "out": "Case-insensitivity conflict found: F7\nCase-insensitivity conflict found: f7\nCase-insensitivity conflict found: F7\nCase-insensitivity conflict found: f7\n"
+  },
+  "ccc-passed-file-only": {
+   "code": 1,
+   "crashed": false,
+   "files": {},
+   "out": "Case-insensitivity conflict found: Bar\nCase-insensitivity conflict found: Foo.txt\nCase-insensitivity conflict found: bar\nCase-insensitivity conflict found: foo.txt\n"
+  },
+  "ccc-quotepath-false": {
+   "code": 1,
+   "crashed": false,
+   "files": {},
+   "out": "Case-insensitivity conflict found: \u00c3\u0084.txt\nCase-insensitivity conflict found: \u00c3\u00a4.txt\n"
+  },
+  "ccc-staged": {
+   "code": 1,
+   "crashed": false,
+   "files": {},
+   "out": "Case-insensitivity conflict found: Dir\nCase-insensitivity conflict found: NEW\nCase-insensitivity conflict found: README\nCase-insensitivity conflict found: dir\nCase-insensitivity conflict found: new\nCase-insensitivity conflict found: new/A.txt\nCase-insensitivity conflict found: new/a.txt\nCase-insensitivity conflict found: readme\n"
+  },
+  "csl-table": {
+   "code": 1,
+   "crashed": false,
+   "files": {},
+   "out": "bad: Broken symlink\nloop1: Broken symlink\n"
+  },
+  "dsl-destroyed": {
+   "code": 1,
+   "crashed": false,
+   "files": {},
+   "out": "Destroyed symlinks:\n- link\n- link two\nYou should unstage affected files:\n\tgit reset HEAD -- link 'link two'\nAnd retry commit. As a long term solution you may try to explicitly tell git that your environment does not support symlinks:\n\tgit config core.symlinks false\n"
+  },
+  "dsl-no-files": {
+   "code": 0,
+   "crashed": false,
+   "files": {},
+   "out": ""
+  },
+  "dsl-none": {
+   "code": 0,
+   "crashed": false,
+   "files": {},
+   "out": ""
+  },
+  "fcs-both-flags": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a": "b\nc\n"
+   },
+   "out": "Sorting a\n"
+  },
+  "fcs-directory-crash": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a": "b\na\n"
+   },
+   "out": "IsADirectoryError: [Errno 21] Is a directory: 'd'\n"
+  },
+  "fcs-ignore-case": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a": "A\na\nb\nB\n\u00c9\n\u00e9\n"
+   },
+   "out": "Sorting a\n"
+  },
+  "fcs-missing-crash": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a": "a\nb\n",
+    "c": "d\nc\n"
+   },
+   "out": "Sorting a\nFileNotFoundError: [Errno 2] No such file or directory: 'nope'\n"
+  },
+  "fcs-no-files": {
+   "code": 2,
+   "crashed": false,
+   "files": {},
+   "out": "usage: file-contents-sorter [-h] [--ignore-case] [--unique]\n                            filenames [filenames ...]\nfile-contents-sorter: error: the following arguments are required: filenames\n"
+  },
+  "fcs-partitions": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "f1": "a\nb\n",
+    "f2": "a\n",
+    "f3": "y\nz\n",
+    "f4": "1\n",
+    "f5": "p\nq\n",
+    "f6": "\n",
+    "f7": "x\n",
+    "f8": "m\nm\n",
+    "f9": "j\nk\n"
+   },
+   "out": "Sorting f5\nSorting f1\nSorting f9\nSorting f7\nSorting f3\n"
+  },
+  "fcs-readonly-sorted": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "c": "d\nc\n",
+    "ro": "a\nb\n"
+   },
+   "out": "PermissionError: [Errno 13] Permission denied: 'ro'\n"
+  },
+  "fcs-table": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a": "A\nB\na\nb\nc \n",
+    "b": "a\rc\rb\n",
+    "c": "\n",
+    "d": "\n",
+    "e": "a\nb\n",
+    "f": "\rz\ny\n"
+   },
+   "out": "Sorting a\nSorting b\nSorting c\nSorting d\nSorting f\n"
+  },
+  "fcs-unique": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a": "A\na\na \nb\n"
+   },
+   "out": "Sorting a\n"
+  },
+  "pfj-abbrev-autofix": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.json": "[]\n"
+   },
+   "out": "Fixing file a.json\n"
+  },
+  "pfj-autofix": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.json": "{\n  \"a\": 2,\n  \"b\": 1\n}\n",
+    "b.json": "[\n  1,\n  2.5,\n  100000.0,\n  0,\n  Infinity\n]\n"
+   },
+   "out": "Fixing file a.json\nFixing file b.json\n"
+  },
+  "pfj-big-diff": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.json": "[{\"k\":0,\"v\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"k\":1,\"v\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"k\":2,\"v\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]",
+    "bad.json": "["
+   },
+   "out": "Input File bad.json is not a valid JSON, consider using check-json\n"
+  },
+  "pfj-bom-invalid": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.json": "\u00ef\u00bb\u00bf{}"
+   },
+   "out": "Input File a.json is not a valid JSON, consider using check-json\n"
+  },
+  "pfj-crlf-pretty-passes": {
+   "code": 0,
+   "crashed": false,
+   "files": {
+    "a.json": "{\r\n  \"a\": 1\r\n}\r\n"
+   },
+   "out": ""
+  },
+  "pfj-default-diff": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.json": "{\"b\":1,\"a\":[1,2,{}],\"c\":\"\u00c3\u00a9\"}",
+    "ok.json": "{\n  \"a\": 1\n}\n"
+   },
+   "out": "--- a.json\n+++ a.json\n@@ -1 +1,9 @@\n-{\"b\":1,\"a\":[1,2,{}],\"c\":\"\u00c3\u00a9\"}+{\n+  \"a\": [\n+    1,\n+    2,\n+    {}\n+  ],\n+  \"b\": 1,\n+  \"c\": \"\\u00e9\"\n+}\n"
+  },
+  "pfj-duplicate-keys": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.json": "{\n  \"a\": 2,\n  \"x\": 1\n}\n",
+    "b.json": "{\"a\": 1, \"a\": {}}",
+    "c.json": "[]"
+   },
+   "out": "Fixing file a.json\nTypeError: '<' not supported between instances of 'dict' and 'int'\n"
+  },
+  "pfj-ensure-ascii": {
+   "code": 2,
+   "crashed": false,
+   "files": {
+    "a.json": "[\"\u00c3\u00a9\", \"\u00f0\u009f\u0098\u0080\", \"\\u007f\", \"\\ud800\"]",
+    "b.json": "[\"\u00c3\u00a9\", \"\\u2028\"]"
+   },
+   "out": "usage: pretty-format-json [-h] [--autofix] [--indent INDENT]\n                          [--no-ensure-ascii] [--no-sort-keys]\n                          [--top-keys TOP_KEYS]\n                          [filenames ...]\npretty-format-json: error: unrecognized arguments: b.json\n"
+  },
+  "pfj-flag-file": {
+   "code": 2,
+   "crashed": false,
+   "files": {
+    "-x.json": "{}",
+    "a.json": "{}"
+   },
+   "out": "usage: pretty-format-json [-h] [--autofix] [--indent INDENT]\n                          [--no-ensure-ascii] [--no-sort-keys]\n                          [--top-keys TOP_KEYS]\n                          [filenames ...]\npretty-format-json: error: unrecognized arguments: -x.json\n"
+  },
+  "pfj-indent-4": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.json": "{\"a\":[1,{\"b\":2}]}"
+   },
+   "out": "--- a.json\n+++ a.json\n@@ -1 +1,8 @@\n-{\"a\":[1,{\"b\":2}]}+{\n+    \"a\": [\n+        1,\n+        {\n+            \"b\": 2\n+        }\n+    ]\n+}\n"
+  },
+  "pfj-indent-negative-and-empty": {
+   "code": 2,
+   "crashed": false,
+   "files": {
+    "a.json": "{\"a\":[1,{\"b\":2}]}",
+    "b.json": "{\"a\":[1,{\"b\":2}]}"
+   },
+   "out": "usage: pretty-format-json [-h] [--autofix] [--indent INDENT]\n                          [--no-ensure-ascii] [--no-sort-keys]\n                          [--top-keys TOP_KEYS]\n                          [filenames ...]\npretty-format-json: error: unrecognized arguments: b.json\n"
+  },
+  "pfj-indent-options": {
+   "code": 2,
+   "crashed": false,
+   "files": {
+    "a.json": "{\"a\":[1,{\"b\":2}]}",
+    "b.json": "{\"a\":[1,{\"b\":2}]}",
+    "c.json": "{\"a\":[1,{\"b\":2}]}"
+   },
+   "out": "usage: pretty-format-json [-h] [--autofix] [--indent INDENT]\n                          [--no-ensure-ascii] [--no-sort-keys]\n                          [--top-keys TOP_KEYS]\n                          [filenames ...]\npretty-format-json: error: unrecognized arguments: b.json c.json\n"
+  },
+  "pfj-indent-string": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.json": "{\n 0x\"a\": [\n 0x 0x1\n 0x]\n}\n"
+   },
+   "out": "Fixing file a.json\n"
+  },
+  "pfj-indent-tab": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.json": "{\n\t\"a\": [\n\t\t1,\n\t\t{\n\t\t\t\"b\": 2\n\t\t}\n\t]\n}\n"
+   },
+   "out": "Fixing file a.json\n"
+  },
+  "pfj-invalid-then-valid": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "b.json": "{\"z\":1}",
+    "bad.json": "{\"a\": }"
+   },
+   "out": "Input File bad.json is not a valid JSON, consider using check-json\n"
+  },
+  "pfj-messages-after-diffs": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.json": "[1]",
+    "bad.json": "nope",
+    "c.json": "{\"x\":[]}"
+   },
+   "out": "--- a.json\n+++ a.json\n@@ -1 +1,3 @@\n-[1]+[\n+  1\n+]\nInput File bad.json is not a valid JSON, consider using check-json\n"
+  },
+  "pfj-missing-crash": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.json": "{\"b\":1}"
+   },
+   "out": "--- a.json\n+++ a.json\n@@ -1 +1,3 @@\n-{\"b\":1}+{\n+  \"b\": 1\n+}\nFileNotFoundError: [Errno 2] No such file or directory: 'nope.json'\n"
+  },
+  "pfj-no-ensure-ascii": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "b.json": "[\n  \"\u00c3\u00a9\",\n  \"\u00e2\u0080\u00a8\",\n  \"\\u0001\",\n  \"\u007f\"\n]\n"
+   },
+   "out": "Fixing file b.json\n"
+  },
+  "pfj-no-ensure-ascii-surrogate": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.json": "[\"x\", \"\\ud800\"]",
+    "b.json": "[2]"
+   },
+   "out": "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 67: surrogates not allowed\n"
+  },
+  "pfj-no-ensure-ascii-surrogate-autofix": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.json": "",
+    "b.json": "[2]"
+   },
+   "out": "Fixing file a.json\nUnicodeEncodeError: 'utf-8' codec can't encode character '\\ud801' in position 13: surrogates not allowed\n"
+  },
+  "pfj-not-utf8-crash": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.json": "[\n  1\n]\n",
+    "b.json": "[\"\u00ff\"]",
+    "c.json": "[2]"
+   },
+   "out": "Fixing file a.json\nUnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 2: invalid start byte\n"
+  },
+  "pfj-partial-diff": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.json": "{\n  \"a\": 1,\n  \"b\": 2,\n  \"c\": 3,\n  \"d\": 4,\n  \"e\": 5,\n  \"f\": 6,\n    \"g\": 7,\n  \"h\": 8\n}"
+   },
+   "out": "--- a.json\n+++ a.json\n@@ -5,6 +5,6 @@\n   \"d\": 4,\n   \"e\": 5,\n   \"f\": 6,\n-    \"g\": 7,\n+  \"g\": 7,\n   \"h\": 8\n-}+}\n"
+  },
+  "pfj-top-keys-no-sort": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.json": "{\n  \"name\": 4,\n  \"id\": 3,\n  \"z\": 1,\n  \"b\": {\n    \"id\": 2,\n    \"y\": 1\n  }\n}\n"
+   },
+   "out": "Fixing file a.json\n"
+  },
+  "pfj-type-error-crash": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.json": "{\"a\": 1, \"a\": \"x\"}",
+    "b.json": "[1]"
+   },
+   "out": "TypeError: '<' not supported between instances of 'str' and 'int'\n"
+  },
+  "rtf-big": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "requirements.txt": "# top comment\n\n-e git+https://g/x.git#egg=Alpha\nbar\nDjango[bcrypt]~=4\n# about flask\nFlask>=2  # x\nflask==1\nfoo \\\n  --hash=sha256:abc\nnumpy; python_version>\"3\"\nrequests @ https://x/r.zip\nzope==1\n# trailing\n"
+   },
+   "out": "Sorting requirements.txt\n"
+  },
+  "rtf-egg-case": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "r.txt": "-e git+x#EGG=Beta\nhttps://h/a.zip#egg=aa&egg=zz\n-e y&egg=Alpha\nzz\n"
+   },
+   "out": "Sorting r.txt\n"
+  },
+  "rtf-help": {
+   "code": 0,
+   "crashed": false,
+   "files": {
+    "r.txt": "b\na\n"
+   },
+   "out": "usage: requirements-txt-fixer [-h] [filenames ...]\n\npositional arguments:\n  filenames   Filenames to fix\n\noptions:\n  -h, --help  show this help message and exit\n"
+  },
+  "rtf-indented-crash": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.txt": "a\nb\n",
+    "r.txt": "b\n  flask==1\n",
+    "z.txt": "z\ny\n"
+   },
+   "out": "Sorting a.txt\nAssertionError\n"
+  },
+  "rtf-single-indented-passes": {
+   "code": 0,
+   "crashed": false,
+   "files": {
+    "r.txt": "  flask==1\n",
+    "s.txt": "# h\n\n;x\n"
+   },
+   "out": ""
+  },
+  "rtf-table": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "r1": "a==1\na==1\nb\n# c\nb\n",
+    "r10": "  # indented\na\nb\n",
+    "r11": "B==1\nb==1\n# z\nb==1\n",
+    "r12": "a!=1\nA~=2\na<3\na>=1\na===2\nab=1\n",
+    "r2": "a\n\nb\n",
+    "r3": "\na\n# c1\n# c2\nb\n",
+    "r4": "# hdr\n# hdr2\n\n\na\n# for z\nz\n# trailing\n\n",
+    "r5": "\na \\\n  --hash=x\nB\n",
+    "r6": "a\r\nb\r\npkg-resources==0.0.0\r\n",
+    "r7": "x\n",
+    "r8": " \n\t\n",
+    "r9": "a\nb\npkg_resources==0.0.0\n"
+   },
+   "out": "Sorting r1\nSorting r2\nSorting r3\nSorting r4\nSorting r5\nSorting r6\nSorting r7\nSorting r9\nSorting r10\n"
+  },
+  "sse-deleted-crash": {
+   "code": 1,
+   "crashed": true,
+   "files": {},
+   "out": "a.sh: has a shebang but is not marked executable!\n  If it is supposed to be executable, try: `chmod +x a.sh`\n  If on Windows, you may also need to: `git add --chmod=+x a.sh`\n  If it not supposed to be executable, double-check its shebang is wanted.\n\nFileNotFoundError: [Errno 2] No such file or directory: 'b.sh'\n"
+  },
+  "sse-glob-pathspec": {
+   "code": 1,
+   "crashed": false,
+   "files": {},
+   "out": "a1.sh: has a shebang but is not marked executable!\n  If it is supposed to be executable, try: `chmod +x a1.sh`\n  If on Windows, you may also need to: `git add --chmod=+x a1.sh`\n  If it not supposed to be executable, double-check its shebang is wanted.\n\na2.sh: has a shebang but is not marked executable!\n  If it is supposed to be executable, try: `chmod +x a2.sh`\n  If on Windows, you may also need to: `git add --chmod=+x a2.sh`\n  If it not supposed to be executable, double-check its shebang is wanted.\n\n"
+  },
+  "sse-table": {
+   "code": 1,
+   "crashed": false,
+   "files": {},
+   "out": "a.sh: has a shebang but is not marked executable!\n  If it is supposed to be executable, try: `chmod +x a.sh`\n  If on Windows, you may also need to: `git add --chmod=+x a.sh`\n  If it not supposed to be executable, double-check its shebang is wanted.\n\nit's.sh: has a shebang but is not marked executable!\n  If it is supposed to be executable, try: `chmod +x 'it'\"'\"'s.sh'`\n  If on Windows, you may also need to: `git add --chmod=+x 'it'\"'\"'s.sh'`\n  If it not supposed to be executable, double-check its shebang is wanted.\n\n"
+  }
+ },
+ "tag": "v4.3.0",
+ "version": "4.3.0"
+}

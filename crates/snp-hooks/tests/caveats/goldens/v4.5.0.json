@@ -1,0 +1,239 @@
+{
+ "python": "3.13.14",
+ "results": {
+  "aws-allow-missing": {
+   "code": 0,
+   "crashed": false,
+   "files": {
+    "a.txt": "x"
+   },
+   "out": ""
+  },
+  "aws-duplicate-section-crash": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.txt": "x",
+    "creds.ini": "[a]\nx = 1\n[a]\n"
+   },
+   "out": "configparser.DuplicateSectionError: While reading from 'creds.ini' [line  3]: section 'a' already exists\n"
+  },
+  "aws-env-file": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.txt": "TOKENDEFAULT",
+    "conf/c.cfg": "[DEFAULT]\naws_security_token = TOKENDEFAULT\n[s]\nx = 1\n"
+   },
+   "out": "AWS secret found in a.txt: TOKE************************\n"
+  },
+  "aws-env-secret": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.txt": "  ENVSECRET99  "
+   },
+   "out": "AWS secret found in a.txt: ENVS************************\n"
+  },
+  "aws-found": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.txt": "has SECRETKEY1234 inside\n",
+    "b.txt": "nothing\n",
+    "creds.ini": "[default]\naws_secret_access_key = SECRETKEY1234\n[other]\nAWS_SESSION_TOKEN: ab\n"
+   },
+   "out": "AWS secret found in a.txt: SECR************************\n"
+  },
+  "aws-home-default": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.txt": "HOMESECRETXYZ"
+   },
+   "out": "AWS secret found in a.txt: HOME************************\n"
+  },
+  "aws-interpolation-crash": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.txt": "x",
+    "creds.ini": "[a]\naws_secret_access_key = 100%bad\n"
+   },
+   "out": "configparser.InterpolationSyntaxError: '%' must be followed by '%' or '(', found: '%bad'\n"
+  },
+  "aws-missing-file-crash": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.txt": "KEYKEYKEY",
+    "creds.ini": "[a]\naws_secret_access_key = KEYKEYKEY\n"
+   },
+   "out": "FileNotFoundError: [Errno 2] No such file or directory: 'nope.txt'\n"
+  },
+  "aws-no-files": {
+   "code": 2,
+   "crashed": false,
+   "files": {},
+   "out": "usage: detect-aws-credentials [-h] [--credentials-file CREDENTIALS_FILE]\n                              [--allow-missing-credentials]\n                              filenames [filenames ...]\ndetect-aws-credentials: error: the following arguments are required: filenames\n"
+  },
+  "aws-no-keys": {
+   "code": 2,
+   "crashed": false,
+   "files": {
+    "a.txt": "x"
+   },
+   "out": "No AWS keys were found in the configured credential files and environment variables.\nPlease ensure you have the correct setting for --credentials-file\n"
+  },
+  "aws-no-section-header": {
+   "code": 2,
+   "crashed": false,
+   "files": {
+    "a.txt": "NOHEADER",
+    "creds.ini": "aws_secret_access_key = NOHEADER\n"
+   },
+   "out": "No AWS keys were found in the configured credential files and environment variables.\nPlease ensure you have the correct setting for --credentials-file\n"
+  },
+  "toml-crash-utf8": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.toml": "a =",
+    "b.toml": "a = '\u00ff'",
+    "c.toml": "a ="
+   },
+   "out": "a.toml: Invalid value (at end of document)\nUnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 5: invalid start byte\n"
+  },
+  "toml-table": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "01.toml": "a = 1\na = 2",
+    "02.toml": "a.b = 1\na = 2",
+    "03.toml": "a = ",
+    "04.toml": "x = [1,\n2,\n",
+    "05.toml": "\u00ef\u00bb\u00bfa = 1",
+    "06.toml": "a = { b = 1, }",
+    "07.toml": "[a]\n[a]",
+    "08.toml": "a = 1979-05-27T07:32",
+    "09.toml": "a = \"\\e\"",
+    "10.toml": "a = 1\rb = 2",
+    "empty.toml": "",
+    "ok.toml": "a = 99999999999999999999\r\n[t]\r\nb = 'x'\r\n"
+   },
+   "out": "01.toml: Cannot overwrite a value (at end of document)\n02.toml: Cannot overwrite a value (at end of document)\n03.toml: Invalid value (at end of document)\n04.toml: Invalid value (at end of document)\n05.toml: Invalid statement (at line 1, column 1)\n06.toml: Invalid initial character for a key part (at line 1, column 14)\n07.toml: Cannot declare ('a',) twice (at line 2, column 3)\n08.toml: Expected newline or end of document after a statement (at line 1, column 15)\n09.toml: Unescaped '\\' in a string (at line 1, column 8)\n10.toml: Expected newline or end of document after a statement (at line 1, column 6)\n"
+  },
+  "xml-multibyte-crash": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.xml": "<a",
+    "b.xml": "<?xml version=\"1.0\" encoding=\"shift_jis\"?><a/>",
+    "c.xml": "<a"
+   },
+   "out": "a.xml: Failed to xml parse (a.xml:1:0: unclosed token)\nValueError: multi-byte encodings are not supported\n"
+  },
+  "xml-table": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "01.xml": "",
+    "02.xml": "<a>",
+    "03.xml": "<a></b>",
+    "04.xml": "<a/><b/>",
+    "05.xml": "<a>\u00ff</a>",
+    "06.xml": "<a>&nope;</a>",
+    "07.xml": "<a b=\"1\" b=\"2\"/>",
+    "08.xml": "\n<?xml version=\"1.0\"?><a/>",
+    "09.xml": "<a>&#0;</a>",
+    "10.xml": "<!-- only comment -->",
+    "11.xml": "<a>\u00c3\u00a9\u00c3\u00a9\u00c3\u00a9<b></a>",
+    "ok.xml": "<?xml version=\"1.0\" encoding=\"latin-1\"?><y:c a=\"\u00e9\"/>",
+    "ok2.xml": "\u00ef\u00bb\u00bf<!DOCTYPE a [<!ENTITY e \"x\">]><a>&e;<![CDATA[<]]></a>"
+   },
+   "out": "01.xml: Failed to xml parse (01.xml:1:0: no element found)\n02.xml: Failed to xml parse (02.xml:1:3: no element found)\n03.xml: Failed to xml parse (03.xml:1:5: mismatched tag)\n04.xml: Failed to xml parse (04.xml:1:4: junk after document element)\n05.xml: Failed to xml parse (05.xml:1:3: not well-formed (invalid token))\n06.xml: Failed to xml parse (06.xml:1:3: undefined entity)\n07.xml: Failed to xml parse (07.xml:1:9: duplicate attribute)\n08.xml: Failed to xml parse (08.xml:2:0: XML or text declaration not at start of entity)\n09.xml: Failed to xml parse (09.xml:1:3: reference to invalid character number)\n10.xml: Failed to xml parse (10.xml:1:21: no element found)\n11.xml: Failed to xml parse (11.xml:1:11: mismatched tag)\n"
+  },
+  "yaml-crash-int": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.yaml": "a: !!int \"abc\"",
+    "b.yaml": "a: [1"
+   },
+   "out": "ValueError: invalid literal for int() with base 10: 'abc'\n"
+  },
+  "yaml-crash-utf8": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.yaml": "a: [1",
+    "b.yaml": "a: \u00ff",
+    "c.yaml": "a: [1"
+   },
+   "out": "while parsing a flow sequence\n  in \"a.yaml\", line 1, column 4\nexpected ',' or ']', but got '<stream end>'\n  in \"a.yaml\", line 1, column 6\nUnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 3: invalid start byte\n"
+  },
+  "yaml-help": {
+   "code": 0,
+   "crashed": false,
+   "files": {},
+   "out": "usage: check-yaml [-h] [-m] [--unsafe] [filenames ...]\n\npositional arguments:\n  filenames             Filenames to check.\n\noptions:\n  -h, --help            show this help message and exit\n  -m, --multi, --allow-multiple-documents\n  --unsafe              Instead of loading the files, simply parse them for\n                        syntax. A syntax-only check enables extensions and\n                        unsafe constructs which would otherwise be forbidden.\n                        Using this option removes all guarantees of\n                        portability to other yaml implementations. Implies\n                        --allow-multiple-documents\n"
+  },
+  "yaml-missing-crash": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.yaml": "a: [1"
+   },
+   "out": "while parsing a flow sequence\n  in \"a.yaml\", line 1, column 4\nexpected ',' or ']', but got '<stream end>'\n  in \"a.yaml\", line 1, column 6\nFileNotFoundError: [Errno 2] No such file or directory: 'nope.yaml'\n"
+  },
+  "yaml-multi": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.yaml": "a: 1\n---\nb: 2\n",
+    "b.yaml": "a: 1\n---\nb: !x 2\n"
+   },
+   "out": "could not determine a constructor for the tag '!x'\n  in \"b.yaml\", line 3, column 4\n"
+  },
+  "yaml-table": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "01.yaml": "a: 1\na: 2\n",
+    "02.yaml": "a: 1\n---\nb: 2\n",
+    "03.yaml": "a: !foo 1",
+    "04.yaml": "a: [1, 2\n",
+    "05.yaml": "a: b: c",
+    "06.yaml": "a: \"\u0007\"",
+    "07.yaml": "a: *nope",
+    "08.yaml": "key: value\n\tbad: tab",
+    "09.yaml": "<<: [1]",
+    "10.yaml": "{a: 1}: 2",
+    "11.yaml": "1: a\n1.0: b\n",
+    "empty.yaml": "",
+    "ok.yaml": "\u00ef\u00bb\u00bfa: 1\r\nb: [1, 2]\r\n"
+   },
+   "out": "while constructing a mapping\n  in \"01.yaml\", line 1, column 1\nfound duplicate key \"a\" with value \"2\" (original value: \"1\")\n  in \"01.yaml\", line 2, column 1\n\nTo suppress this check see:\n    https://yaml.dev/doc/ruamel.yaml/api/#Duplicate_keys\n\nexpected a single document in the stream\n  in \"02.yaml\", line 1, column 1\nbut found another document\n  in \"02.yaml\", line 2, column 1\ncould not determine a constructor for the tag '!foo'\n  in \"03.yaml\", line 1, column 4\nwhile parsing a flow sequence\n  in \"04.yaml\", line 1, column 4\nexpected ',' or ']', but got '<stream end>'\n  in \"04.yaml\", line 2, column 1\nmapping values are not allowed here\n  in \"05.yaml\", line 1, column 5\nunacceptable character #x0007: special characters are not allowed\n  in \"06.yaml\", position 4\nfound undefined alias 'nope'\n  in \"07.yaml\", line 1, column 4\nwhile scanning for the next token\nfound character '\\t' that cannot start any token\n  in \"08.yaml\", line 2, column 1\nwhile constructing a mapping\n  in \"09.yaml\", line 1, column 1\nexpected a mapping for merging, but found scalar\n  in \"09.yaml\", line 1, column 6\nwhile constructing a mapping\nfound unhashable key\n  in \"10.yaml\", line 1, column 1\nwhile constructing a mapping\n  in \"11.yaml\", line 1, column 1\nfound duplicate key \"1.0\" with value \"b\" (original value: \"a\")\n  in \"11.yaml\", line 2, column 1\n\nTo suppress this check see:\n    https://yaml.dev/doc/ruamel.yaml/api/#Duplicate_keys\n\n"
+  },
+  "yaml-unsafe": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.yaml": "a: !foo 1\na: 2\nb: *x\n",
+    "b.yaml": "a: [1"
+   },
+   "out": "while parsing a flow sequence\n  in \"b.yaml\", line 1, column 4\nexpected ',' or ']', but got '<stream end>'\n  in \"b.yaml\", line 1, column 6\n"
+  },
+  "yaml-version-leak": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.yaml": "%YAML 1.1\n---\na: yes\n",
+    "b.yaml": "yes: 1\ntrue: 2\n"
+   },
+   "out": "while constructing a mapping\n  in \"b.yaml\", line 1, column 1\nfound duplicate key \"True\" with value \"2\" (original value: \"1\")\n  in \"b.yaml\", line 2, column 1\n\nTo suppress this check see:\n    https://yaml.dev/doc/ruamel.yaml/api/#Duplicate_keys\n\n"
+  }
+ },
+ "tag": "v4.5.0",
+ "version": "4.5.0"
+}

@@ -1,0 +1,79 @@
+-   id: python-check-blanket-noqa
+    name: check blanket noqa
+    description: 'Enforce that `noqa` annotations always occur with specific codes. Sample annotations: `# noqa: F401`, `# noqa: F401,W203`'
+    entry: '(?i)# noqa(?!: )'
+    language: pygrep
+    types: [python]
+-   id: python-check-blanket-type-ignore
+    name: check blanket type ignore
+    description: 'Enforce that `# type: ignore` annotations always occur with specific codes. Sample annotations: `# type: ignore[attr-defined]`, `# type: ignore[attr-defined, name-defined]`'
+    entry: '# type:? *ignore(?!\[|\w)'
+    language: pygrep
+    types: [python]
+-   id: python-check-mock-methods
+    name: check for not-real mock methods
+    description: >-
+        Prevent common mistakes of `assert mck.not_called()`, `assert mck.called_once_with(...)`
+        and `mck.assert_called`.
+    language: pygrep
+    entry: >
+        (?x)(
+            assert .*\.(
+                not_called|
+                called_
+            )|
+            # ''.join(rf'(?<!\b{s})' for s in dir(mock) if s.endswith('Mock')))
+            (?<!\bAsyncMock)(?<!\bMagicMock)(?<!\bMock)(?<!\bNonCallableMagicMock)(?<!\bNonCallableMock)(?<!\bPropertyMock)
+            \.assert_(
+                any_call|
+                called|
+                called_once|
+                called_once_with|
+                called_with|
+                has_calls|
+                not_called
+            )($|[^(\w])
+        )
+    types: [python]
+-   id: python-no-eval
+    name: check for eval()
+    description: 'A quick check for the `eval()` built-in function'
+    entry: '\beval\('
+    language: pygrep
+    types: [python]
+-   id: python-no-log-warn
+    name: use logger.warning(
+    description: 'A quick check for the deprecated `.warn()` method of python loggers'
+    entry: '(?<!warnings)\.warn\('
+    language: pygrep
+    types: [python]
+-   id: python-use-type-annotations
+    name: type annotations not comments
+    description: 'Enforce that python3.6+ type annotations are used instead of type comments'
+    entry: '# type(?!: *ignore([^a-zA-Z0-9]|$))'
+    language: pygrep
+    types: [python]
+-   id: rst-backticks
+    name: rst ``code`` is two backticks
+    description: 'Detect common mistake of using single backticks when writing rst'
+    entry: '^(?!    ).*(^| )`[^`]+`([^_]|$)'
+    language: pygrep
+    types: [rst]
+-   id: rst-directive-colons
+    name: rst directives end with two colons
+    description: 'Detect mistake of rst directive not ending with double colon or space before the double colon'
+    entry: '^\s*\.\. [a-z]+(| | :):$'
+    language: pygrep
+    types: [rst]
+-   id: rst-inline-touching-normal
+    name: rst ``inline code`` next to normal text
+    description: 'Detect mistake of inline code touching normal text in rst'
+    entry: '\w``\w'
+    language: pygrep
+    types: [rst]
+-   id: text-unicode-replacement-char
+    name: no unicode replacement chars
+    description: 'Forbid files which have a UTF-8 Unicode replacement character'
+    entry: "\uFFFD"
+    language: pygrep
+    types: [text]

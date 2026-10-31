@@ -1,0 +1,176 @@
+site_name: prek
+site_description: A fast Git hook manager written in Rust, designed as a drop-in alternative to pre-commit, reimagined.
+site_author: j178
+site_url: https://prek.j178.dev/
+
+repo_name: j178/prek
+repo_url: https://github.com/j178/prek
+
+copyright: Copyright &copy; 2026 j178
+
+theme:
+  name: material
+  logo: assets/logo.png
+  favicon: assets/favicon.ico
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+  features:
+    - navigation.side
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.indexes
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.footer
+    - navigation.top
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - search.suggest
+    - search.highlight
+    - search.share
+
+plugins:
+  - search
+  - minify:
+      minify_html: true
+  - include-markdown
+  - llmstxt:
+      markdown_description: |
+        prek is a drop-in replacement for pre-commit, fully compatible with existing
+        `.pre-commit-config.yaml` files. It runs the same hooks faster, with better
+        toolchain management.
+
+        Key differences from pre-commit:
+        - Single binary, no Python runtime required
+        - Parallel hook execution by priority
+        - Built-in workspace/monorepo support
+        - Automatic toolchain installation (Python, Node, Go, Rust, Ruby)
+        - Integration with uv for Python environments
+
+        When fetching documentation, use explicit `index.md` paths for directories, e.g.,
+        `https://prek.j178.dev/configuration/index.md`. This returns clean markdown
+        instead of rendered HTML.
+      full_output: llms-full.txt
+      sections:
+        Getting Started:
+          - index.md
+          - installation.md
+          - quickstart.md
+          - migration.md
+        Usage:
+          - running-hooks.md
+          - configuration.md
+          - local-hooks.md
+          - built-in-hooks.md
+          - monorepos.md
+          - ci.md
+          - cookbook.md
+          - integrations.md
+        Authoring:
+          - authoring-hooks.md
+        Reference:
+          - reference/cli.md
+          - reference/configuration.md
+          - reference/built-in-hooks.md
+          - reference/language-support.md
+          - reference/workspace.md
+          - reference/environment-variables.md
+          - internals.md
+        Help:
+          - debugging.md
+          - faq.md
+        About:
+          - compatibility.md
+          - diff.md
+          - security.md
+          - benchmark.md
+          - changelog.md
+
+extra:
+  version:
+    provider: mike
+    default: latest
+    alias: true
+
+nav:
+  - Getting Started:
+    - Introduction: index.md
+    - Installation: installation.md
+    - Quickstart: quickstart.md
+    - Migrating from Other Tools: migration.md
+  - Usage:
+    - Running Hooks: running-hooks.md
+    - Configuration: configuration.md
+    - Local Hooks: local-hooks.md
+    - Built-in Hooks: built-in-hooks.md
+    - Monorepos: monorepos.md
+    - Continuous Integration: ci.md
+    - Cookbook: cookbook.md
+    - Integrations: integrations.md
+  - Authoring:
+    - Hook Repositories: authoring-hooks.md
+  - Reference:
+    - CLI Reference: reference/cli.md
+    - Configuration Reference: reference/configuration.md
+    - Built-in Hooks: reference/built-in-hooks.md
+    - Language Support: reference/language-support.md
+    - Workspace Reference: reference/workspace.md
+    - Environment Variables: reference/environment-variables.md
+    - Internals: internals.md
+  - Help:
+    - Debugging: debugging.md
+    - FAQ: faq.md
+  - About:
+    - Compatibility: compatibility.md
+    - Differences: diff.md
+    - Security: security.md
+    - Benchmark: benchmark.md
+    - Changelog: changelog.md
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+      combine_header_slug: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - admonition
+  - attr_list
+  - footnotes
+  - md_in_html
+  - meta
+  - tables
+  - toc:
+      permalink: true

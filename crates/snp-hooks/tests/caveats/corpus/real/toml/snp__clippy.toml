@@ -1,0 +1,114 @@
+# Clippy configuration (ARCHITECTURE §1.3, ADR-066). Every path below is verified to resolve:
+# an unresolvable path is a clippy warning, and CI runs with -Dwarnings.
+msrv = "1.98"
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-dbg-in-tests = true
+allow-print-in-tests = true
+# Proper names that `doc_markdown` would otherwise ask to put in backticks ("..": keep the defaults).
+doc-valid-idents = ["CPython", "PyYAML", "LibYAML", "PyPI", ".."]
+
+# Non-test code returns errors. `debug_assert*` expands to `assert*`, so a non-test `debug_assert*` is
+# flagged too and carries `#[expect(clippy::disallowed_macros, reason = "<invariant>")]` (ADR-081).
+# Test targets are linted with `-A clippy::disallowed_macros -A clippy::arithmetic_side_effects`
+# (ARCHITECTURE §1.3).
+disallowed-macros = [
+    { path = "std::assert", reason = "non-test code returns errors instead of asserting (S2)" },
+    { path = "std::assert_eq", reason = "non-test code returns errors instead of asserting (S2)" },
+    { path = "std::assert_ne", reason = "non-test code returns errors instead of asserting (S2)" },
+]
+
+disallowed-methods = [
+    # S6: no process-global mutable state; only `snp_core::env::Env::capture_process` reads the
+    # process environment (via #[expect]).
+    { path = "std::env::set_var", reason = "process-global state (S6): build child envs with snp_core::env::Env" },
+    { path = "std::env::remove_var", reason = "process-global state (S6): build child envs with snp_core::env::Env" },
+    { path = "std::env::set_current_dir", reason = "snp never chdirs (S6): pass explicit cwd paths" },
+    { path = "std::env::home_dir", reason = "use snp_os::home (Python expanduser semantics)" },
+    { path = "std::env::var", reason = "read the captured snp_core::env::Env snapshot instead (S6)" },
+    { path = "std::env::var_os", reason = "read the captured snp_core::env::Env snapshot instead (S6)" },
+    { path = "std::env::vars_os", reason = "only snp_core::env::Env::capture_process reads the process env (S6)" },
+    { path = "std::fs::canonicalize", reason = "use snp_os::realpath (Python realpath semantics; no \\\\?\\ prefixes)" },
+    { path = "std::process::exit", reason = "skips destructors (stash restore); only crates/snp/src/main.rs may exit" },
+    # ADR-066: panicking std APIs. A proven site carries #[expect(clippy::disallowed_methods, reason = "<proof>")].
+    { path = "std::time::Duration::from_secs_f64", reason = "panics on hostile input: use Duration::try_from_secs_f64 + an upper bound" },
+    { path = "std::time::Duration::from_secs_f32", reason = "panics on hostile input: use Duration::try_from_secs_f32 + an upper bound" },
+    { path = "std::time::Duration::mul_f64", reason = "panics on overflow/NaN" },
+    { path = "std::time::Duration::mul_f32", reason = "panics on overflow/NaN" },
+    { path = "std::time::Duration::div_f64", reason = "panics on overflow/NaN" },
+    { path = "std::time::Duration::div_f32", reason = "panics on overflow/NaN" },
+    { path = "slice::split_at", reason = "panics when mid > len: use split_at_checked" },
+    { path = "slice::split_at_mut", reason = "panics when mid > len: use split_at_mut_checked" },
+    { path = "slice::copy_from_slice", reason = "panics on length mismatch" },
+    { path = "slice::clone_from_slice", reason = "panics on length mismatch" },
+    { path = "slice::swap", reason = "panics on out-of-bounds indices" },
+    { path = "slice::chunks", reason = "panics on a zero chunk size" },
+    { path = "slice::chunks_exact", reason = "panics on a zero chunk size" },
+    { path = "slice::rchunks", reason = "panics on a zero chunk size" },
+    { path = "slice::windows", reason = "panics on a zero window size" },
+    { path = "slice::repeat", reason = "panics on capacity overflow" },
+    { path = "std::iter::Iterator::step_by", reason = "panics on a zero step" },
+    { path = "std::vec::Vec::remove", reason = "panics on out-of-bounds index" },
+    { path = "std::vec::Vec::insert", reason = "panics on out-of-bounds index" },
+    { path = "std::vec::Vec::drain", reason = "panics on an invalid range" },
+    { path = "std::vec::Vec::split_off", reason = "panics when at > len" },
+    { path = "std::vec::Vec::swap_remove", reason = "panics on out-of-bounds index" },
+    { path = "std::vec::Vec::with_capacity", reason = "panics on capacity overflow: use Vec::new + try_reserve" },
+    { path = "std::string::String::insert", reason = "panics off a char boundary" },
+    { path = "std::string::String::insert_str", reason = "panics off a char boundary" },
+    { path = "std::string::String::remove", reason = "panics off a char boundary / out of bounds" },
+    { path = "std::string::String::drain", reason = "panics off a char boundary" },
+    { path = "std::string::String::split_off", reason = "panics off a char boundary" },
+    { path = "std::string::String::truncate", reason = "panics off a char boundary" },
+    { path = "std::string::String::with_capacity", reason = "panics on capacity overflow: use String::new + try_reserve" },
+    { path = "str::repeat", reason = "panics on capacity overflow" },
+    { path = "std::cell::RefCell::borrow", reason = "panics when mutably borrowed: use try_borrow" },
+    { path = "std::cell::RefCell::borrow_mut", reason = "panics when borrowed: use try_borrow_mut" },
+    { path = "u8::pow", reason = "panics on overflow: use checked_pow" },
+    { path = "u16::pow", reason = "panics on overflow: use checked_pow" },
+    { path = "u32::pow", reason = "panics on overflow: use checked_pow" },
+    { path = "u64::pow", reason = "panics on overflow: use checked_pow" },
+    { path = "u128::pow", reason = "panics on overflow: use checked_pow" },
+    { path = "usize::pow", reason = "panics on overflow: use checked_pow" },
+    { path = "i8::pow", reason = "panics on overflow: use checked_pow" },
+    { path = "i16::pow", reason = "panics on overflow: use checked_pow" },
+    { path = "i32::pow", reason = "panics on overflow: use checked_pow" },
+    { path = "i64::pow", reason = "panics on overflow: use checked_pow" },
+    { path = "i128::pow", reason = "panics on overflow: use checked_pow" },
+    { path = "isize::pow", reason = "panics on overflow: use checked_pow" },
+    { path = "i8::abs", reason = "panics on MIN: use checked_abs / unsigned_abs" },
+    { path = "i16::abs", reason = "panics on MIN: use checked_abs / unsigned_abs" },
+    { path = "i32::abs", reason = "panics on MIN: use checked_abs / unsigned_abs" },
+    { path = "i64::abs", reason = "panics on MIN: use checked_abs / unsigned_abs" },
+    { path = "i128::abs", reason = "panics on MIN: use checked_abs / unsigned_abs" },
+    { path = "isize::abs", reason = "panics on MIN: use checked_abs / unsigned_abs" },
+    { path = "u8::div_euclid", reason = "panics on a zero divisor: use checked_div_euclid" },
+    { path = "u16::div_euclid", reason = "panics on a zero divisor: use checked_div_euclid" },
+    { path = "u32::div_euclid", reason = "panics on a zero divisor: use checked_div_euclid" },
+    { path = "u64::div_euclid", reason = "panics on a zero divisor: use checked_div_euclid" },
+    { path = "u128::div_euclid", reason = "panics on a zero divisor: use checked_div_euclid" },
+    { path = "usize::div_euclid", reason = "panics on a zero divisor: use checked_div_euclid" },
+    { path = "i8::div_euclid", reason = "panics on a zero divisor or overflow: use checked_div_euclid" },
+    { path = "i16::div_euclid", reason = "panics on a zero divisor or overflow: use checked_div_euclid" },
+    { path = "i32::div_euclid", reason = "panics on a zero divisor or overflow: use checked_div_euclid" },
+    { path = "i64::div_euclid", reason = "panics on a zero divisor or overflow: use checked_div_euclid" },
+    { path = "i128::div_euclid", reason = "panics on a zero divisor or overflow: use checked_div_euclid" },
+    { path = "isize::div_euclid", reason = "panics on a zero divisor or overflow: use checked_div_euclid" },
+    { path = "u8::rem_euclid", reason = "panics on a zero divisor: use checked_rem_euclid" },
+    { path = "u16::rem_euclid", reason = "panics on a zero divisor: use checked_rem_euclid" },
+    { path = "u32::rem_euclid", reason = "panics on a zero divisor: use checked_rem_euclid" },
+    { path = "u64::rem_euclid", reason = "panics on a zero divisor: use checked_rem_euclid" },
+    { path = "u128::rem_euclid", reason = "panics on a zero divisor: use checked_rem_euclid" },
+    { path = "usize::rem_euclid", reason = "panics on a zero divisor: use checked_rem_euclid" },
+    { path = "i8::rem_euclid", reason = "panics on a zero divisor or overflow: use checked_rem_euclid" },
+    { path = "i16::rem_euclid", reason = "panics on a zero divisor or overflow: use checked_rem_euclid" },
+    { path = "i32::rem_euclid", reason = "panics on a zero divisor or overflow: use checked_rem_euclid" },
+    { path = "i64::rem_euclid", reason = "panics on a zero divisor or overflow: use checked_rem_euclid" },
+    { path = "i128::rem_euclid", reason = "panics on a zero divisor or overflow: use checked_rem_euclid" },
+    { path = "isize::rem_euclid", reason = "panics on a zero divisor or overflow: use checked_rem_euclid" },
+    # S2 / ADR-066: an OS refusal to create a thread is a Failure, not a panic.
+    { path = "std::thread::spawn", reason = "panics when the OS refuses a thread: use std::thread::Builder::spawn" },
+    { path = "std::thread::Scope::spawn", reason = "panics when the OS refuses a thread: use std::thread::Builder::spawn_scoped" },
+]

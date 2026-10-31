@@ -1,0 +1,16 @@
+# Configuration for the zizmor static analysis tool, run via pre-commit in CI
+# https://woodruffw.github.io/zizmor/configuration/
+
+rules:
+  template-injection:
+    ignore:
+      - release.yml
+  excessive-permissions:
+    ignore:
+      - release.yml
+  secrets-inherit:
+    ignore:
+      - release.yml
+  secrets-outside-env:
+    ignore:
+      - ci.yml # CODECOV_TOKEN is not important

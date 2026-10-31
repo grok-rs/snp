@@ -1,0 +1,254 @@
+# snp — "You Shell Not Pass": a Rust drop-in replacement for pre-commit 4.6.2.
+#
+# Owned by WP-00 (integration lead). Nobody edits this file after wave 0: a new external
+# dependency needs an ADR in docs/DECISIONS.md and the integration lead adds it here
+# (docs/WBS.md, "Rules"). Versions follow docs/ARCHITECTURE.md §1.3 (07 §6 unless noted).
+
+[workspace]
+members = ["crates/*", "xtask"]
+# The research prototype vendored into crates/snp-pycompat (ADR-056) stays a standalone package.
+exclude = ["docs/research/pycompat-proto"]
+resolver = "3"
+
+[workspace.package]
+version = "2.0.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+authors = ["Serhii Kaliuzhnyi"]
+repository = "https://github.com/grok-rs/snp"
+publish = false
+
+[workspace.dependencies]
+# --- internal crates (ARCHITECTURE §1.1; edges are enforced by `cargo xtask check-dag`) ---
+snp-argparse = { path = "crates/snp-argparse", version = "2.0.0" }
+snp-cli = { path = "crates/snp-cli", version = "2.0.0" }
+snp-cmd = { path = "crates/snp-cmd", version = "2.0.0" }
+snp-config = { path = "crates/snp-config", version = "2.0.0" }
+snp-core = { path = "crates/snp-core", version = "2.0.0" }
+snp-files = { path = "crates/snp-files", version = "2.0.0" }
+snp-git = { path = "crates/snp-git", version = "2.0.0" }
+snp-hooks = { path = "crates/snp-hooks", version = "2.0.0" }
+snp-hooks-data = { path = "crates/snp-hooks-data", version = "2.0.0" }
+snp-lang = { path = "crates/snp-lang", version = "2.0.0" }
+snp-migrate = { path = "crates/snp-migrate", version = "2.0.0" }
+snp-net = { path = "crates/snp-net", version = "2.0.0" }
+snp-os = { path = "crates/snp-os", version = "2.0.0" }
+snp-proc = { path = "crates/snp-proc", version = "2.0.0" }
+snp-pycompat = { path = "crates/snp-pycompat", version = "2.0.0" }
+snp-pyparsers = { path = "crates/snp-pyparsers", version = "2.0.0" }
+snp-pyre = { path = "crates/snp-pyre", version = "2.0.0" }
+snp-repo = { path = "crates/snp-repo", version = "2.0.0" }
+snp-run = { path = "crates/snp-run", version = "2.0.0" }
+snp-stash = { path = "crates/snp-stash", version = "2.0.0" }
+snp-store = { path = "crates/snp-store", version = "2.0.0" }
+snp-testkit = { path = "crates/snp-testkit", version = "2.0.0" }
+snp-yaml = { path = "crates/snp-yaml", version = "2.0.0" }
+
+# --- the owner's crates: sibling checkouts on branch `snp-support`, pinned by deps.lock (ADR-061) ---
+cfgv = { path = "../cfgv-rs", version = "0.3", default-features = false }
+file-identify = { path = "../file-identify", version = "0.5", default-features = false }
+
+# --- YAML / regex / text ---
+libyaml-safer = "0.3.0"
+regex = "1.13.1"
+regex-syntax = "0.8.11"
+fancy-regex = "0.19.2"
+unicode-ident = "1"
+unicode_names2 = "=4.0.0"
+memchr = "2.8.3"
+bstr = { version = "1.13.1", default-features = false, features = ["std"] }
+globset = { version = "0.4.20", default-features = false }
+
+# --- collections / hashing ---
+indexmap = "2.14.2"
+foldhash = "0.2.0"
+smallvec = { version = "1.16.2", features = ["const_generics"] }
+blake3 = "1.8.7"
+sha2 = "0.11.0"
+md-5 = "0.11.0"
+
+# --- data formats (state files and JSON I/O only) ---
+serde = { version = "1.0.229", features = ["derive", "rc"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+toml = { version = "1.1.6", default-features = false, features = ["std", "parse", "display", "serde", "preserve_order"] }
+roxmltree = "0.21"
+
+# --- errors / diagnostics ---
+thiserror = "2.0.21"
+tracing = { version = "0.1.44", default-features = false, features = ["std", "attributes"] }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["std", "fmt", "ansi", "env-filter", "smallvec"] }
+
+# --- network and archives (language bootstrap only; snp-net) ---
+ureq = { version = "3.4.2", default-features = false, features = ["rustls", "platform-verifier", "gzip"] }
+flate2 = "1.1.10"
+tar = { version = "0.4.46", default-features = false }
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }
+liblzma = { version = "0.4.8", default-features = false, features = ["static"] }
+
+# --- filesystem / platform ---
+tempfile = "3.27.0"
+same-file = "1.0.6"
+rustix = { version = "1.1.5", default-features = false, features = ["std", "fs", "process", "pty", "termios", "thread", "stdio", "event"] }
+signal-hook = { version = "0.3.18", features = ["extended-siginfo"] }
+ctrlc = { version = "3.5", features = ["termination"] }
+winapi-util = "0.1.11"
+process-wrap = { version = "10.0.1", default-features = false, features = ["std", "job-object"] }
+mimalloc = { version = "0.1.52", default-features = false }
+
+# --- dev / test / bench ---
+insta = { version = "1.49", features = ["filters", "redactions", "json"] }
+proptest = "1.11"
+rstest = { version = "0.27", default-features = false }
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
+pretty_assertions = "1.4.1"
+dhat = "0.3"
+
+# --- build-time only (xtask) ---
+clap = { version = "4.6.7", default-features = false, features = ["std", "help", "usage", "error-context", "derive"] }
+clap_complete = "4.6.11"
+clap_mangen = "0.3.3"
+syn = { version = "2", features = ["full", "visit"] }
+anyhow = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+unused_lifetimes = "warn"
+redundant_lifetimes = "warn"
+let_underscore_drop = "warn"
+unit_bindings = "warn"
+non_ascii_idents = "deny"
+trivial_numeric_casts = "warn"
+meta_variable_misuse = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage_nightly)"] }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+# noisy group members turned off (07 §4.2)
+multiple_crate_versions = "allow"
+cargo_common_metadata = "allow"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+too_many_lines = "allow"
+similar_names = "allow"
+option_if_let_else = "allow"
+significant_drop_tightening = "allow"
+redundant_pub_crate = "allow"
+future_not_send = "allow"
+# W0 additions: stub bodies (`todo!()`) and frozen signatures make these pure noise
+missing_const_for_fn = "allow"
+too_long_first_doc_paragraph = "allow"
+# the frozen §1.4 contracts return `Result<_, snp_core::failure::Failure>` by value everywhere (cold error path)
+result_large_err = "allow"
+# S2: no panic reachable from input (ARCHITECTURE §1.3, ADR-066)
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+indexing_slicing = "deny"
+string_slice = "deny"
+arithmetic_side_effects = "deny"
+unchecked_time_subtraction = "deny"
+dbg_macro = "deny"
+mem_forget = "deny"
+exit = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+iter_over_hash_type = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+get_unwrap = "deny"
+unwrap_in_result = "deny"
+panic_in_result_fn = "deny"
+disallowed_methods = "deny"
+disallowed_macros = "deny"
+disallowed_types = "deny"
+# restriction picks (determinism, hygiene; 07 §4.2)
+rc_mutex = "warn"
+mutex_atomic = "warn"
+lossy_float_literal = "warn"
+float_cmp_const = "warn"
+fn_to_numeric_cast_any = "warn"
+format_push_string = "warn"
+if_then_some_else_none = "warn"
+infinite_loop = "warn"
+let_underscore_must_use = "warn"
+let_underscore_untyped = "warn"
+create_dir = "warn"
+verbose_file_reads = "warn"
+filetype_is_file = "warn"
+str_to_string = "warn"
+try_err = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+same_name_method = "warn"
+empty_drop = "warn"
+empty_structs_with_brackets = "warn"
+empty_enum_variants_with_brackets = "warn"
+error_impl_error = "warn"
+tests_outside_test_module = "warn"
+unused_result_ok = "warn"
+renamed_function_params = "warn"
+clone_on_ref_ptr = "warn"
+as_conversions = "warn"
+needless_raw_strings = "warn"
+redundant_type_annotations = "warn"
+unnecessary_self_imports = "warn"
+large_include_file = "warn"
+partial_pub_fields = "warn"
+multiple_inherent_impl = "warn"
+
+# FD-5 / ADR-015: `panic = "unwind"` in every profile is load-bearing (stash restore, exit 3).
+[profile.dev]
+panic = "unwind"
+
+[profile.dev.package.regex-automata]
+opt-level = 1
+
+[profile.dev.package.fancy-regex]
+opt-level = 1
+
+[profile.dev.package.libyaml-safer]
+opt-level = 1
+
+[profile.dev.package.blake3]
+opt-level = 1
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "unwind"
+overflow-checks = true
+debug = "line-tables-only"
+strip = "debuginfo"
+incremental = false
+
+[profile.dist]
+inherits = "release"
+strip = "symbols"
+
+[profile.profiling]
+inherits = "release"
+lto = "thin"
+debug = "full"
+strip = "none"
+codegen-units = 16
+
+# The `perf-smoke` CI job's release-mode `#[ignore = "perf"]` tests (3x margin, ADR-071): release semantics
+# (opt-level 3, panic = "unwind", overflow checks) without fat LTO's single-unit link of every test binary.
+# WP-36's bench gate measures the real `release`/`dist` builds (ADR-081).
+[profile.perf]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
