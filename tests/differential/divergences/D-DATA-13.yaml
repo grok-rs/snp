@@ -1,5 +1,59 @@
-# D-DATA-13 (DATA, owner WP-23): per-worktree lock (nested runs exempt via token only while the lock is held), durable journal + git-dir pointer, patch re-verified before the checkout,…
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-DATA-13 (DATA, owner WP-23): next-run recovery notice after a run killed during its hooks
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands`, `expect_divergence` and the `signal` step
+# key of ARCHITECTURE §13.2 (send `signal` to the tool `after` the marker file appears).
+# Step 1 is killed with SIGKILL while its hook runs (both tools leave the staged content in the worktree and the work
+# in the patch). Step 2 runs again: pre-commit says nothing; snp prints the recovery notice on stderr.
+name: divergences/D-DATA-13-recovery-notice
 expect_divergence: D-DATA-13
-status: stub
+status: active
+since: "4.6.2"
+brands: [compat, snp]
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files: {foo: "1\n2\n3\n"}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: slow
+            name: slow
+            entry: sh -c 'test -e .second-run || { touch .hook-started; exec sleep 30; }' --
+            language: system
+            files: ^foo$
+  commit: [".pre-commit-config.yaml"]
+  stage: [foo]
+  unstaged: {foo: "1\nTWO\n3\n"}
+  git_config: {}
+steps:
+  - tool: [run]
+    env: {}
+    stdin: ""
+    tty: false
+    signal: {name: KILL, after: .hook-started}
+  - shell: "touch .second-run"
+  - tool: [run]
+    env: {}
+    stdin: ""
+    tty: false
+compare:
+  stdout: tierB
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    steps:
+      2: {exit: 0, stderr: ""}
+  snp:
+    steps:
+      2:
+        exit: 0
+        stderr_matches: '^snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in (\S+) \(index tree [0-9a-f]{40}\)\. Restore with: git --literal-pathspecs checkout ([0-9a-f]{40}) -- foo && git apply --3way \1 && git --literal-pathspecs reset -q \2 -- foo\n$'

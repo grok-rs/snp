@@ -1,0 +1,7 @@
+[WARNING] Unstaged files detected.
+[INFO] Stashing unstaged files to <PATCH>.
+fixer....................................................................Failed
+- hook id: fixer
+- files were modified by this hook
+[WARNING] Stashed changes conflicted with hook auto-fixes... Rolling back fixes...
+[INFO] Restored changes from <PATCH>.

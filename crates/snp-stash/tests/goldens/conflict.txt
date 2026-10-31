@@ -1,0 +1,4 @@
+[WARNING] Unstaged files detected.
+[INFO] Stashing unstaged files to <PATCH>.
+[WARNING] Stashed changes conflicted with hook auto-fixes... Rolling back fixes...
+[INFO] Restored changes from <PATCH>.

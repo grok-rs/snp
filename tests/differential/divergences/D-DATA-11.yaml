@@ -1,5 +1,51 @@
-# D-DATA-11 (DATA, owner WP-23): GIT_DIFF_OPTS removed for the stash diff-index
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-DATA-11 (DATA, owner WP-23): GIT_DIFF_OPTS removed for the stash diff-index (02 G.0 hazard a)
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands` and `expect_divergence` (ARCHITECTURE §13.2).
+# With GIT_DIFF_OPTS=--unified=0 pre-commit's zero-context patch cannot be re-applied after a non-conflicting hook
+# fix (exit 3, work only in the patch); snp's patch has the default context and the restore succeeds.
+name: divergences/D-DATA-11-git-diff-opts
 expect_divergence: D-DATA-11
-status: stub
+status: active
+since: "4.6.2"
+brands: [compat, snp]
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos, windows], pty: false}
+repos: {}
+work:
+  files: {foo: "1\n2\n3\n4\n5\n6\n7\n8\n"}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: fixer
+            name: fixer
+            entry: sed -i s/8/eight/
+            language: system
+            files: ^foo$
+  commit: [".pre-commit-config.yaml"]
+  stage: [foo]
+  unstaged: {foo: "1\n2\n3\nfour\n5\n6\n7\n8\n"}
+  git_config: {}
+steps:
+  - tool: [run]
+    env: {GIT_DIFF_OPTS: "--unified=0"}
+    stdin: ""
+    tty: false
+compare:
+  stdout: tierB
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    exit: 3
+    stdout_contains: "Rolling back fixes..."
+  snp:
+    exit: 1
+    stdout_contains: "[INFO] Restored changes from "
+    tree: {foo: "1\n2\n3\nfour\n5\n6\n7\neight\n"}

@@ -15,6 +15,40 @@ snp-git.workspace = true
 snp-os.workspace = true
 snp-proc.workspace = true
 snp-pycompat.workspace = true
+blake3.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+snp-git = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+rustix.workspace = true
+
+[features]
+# The process-level test driver (`snp-stash-driver`): drives enter → hook → stage_fixed → restore under snp-proc's
+# signal handling for the signal, kill-9 and transcript matrices (WBS WP-23). Never part of a release.
+test-driver = ["snp-core/fault-injection"]
+# Test-only panic injection at the stash's transitions (`snp_core::fault`, ADR-066).
+fault-injection = ["snp-core/fault-injection"]
+
+[[bin]]
+name = "snp-stash-driver"
+path = "src/bin/snp-stash-driver.rs"
+required-features = ["test-driver"]
+test = false
+doc = false
+
+[[test]]
+name = "driver"
+path = "tests/driver.rs"
+required-features = ["test-driver"]
+
+[[test]]
+name = "fault"
+path = "tests/fault.rs"
+required-features = ["fault-injection"]
 
 [lints]
 workspace = true

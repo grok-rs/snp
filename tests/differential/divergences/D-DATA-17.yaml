@@ -1,5 +1,51 @@
-# D-DATA-17 (DATA, owner WP-23): a stash that would be non-empty on git < 2.19 is refused before any mutation: An error has occurred: FatalError: git <V> cannot stash intent-to-add files…
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-DATA-17 (DATA, owner WP-23): git < 2.19 refuses a non-empty stash before any mutation
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands` and `expect_divergence` (ARCHITECTURE §13.2).
+# Runs on the CI git 2.18.5 container (ADR-063). pre-commit misses the intent-to-add file and exits 3 after the
+# rollback with the work only in the patch; snp refuses with exit 1 and leaves worktree and index untouched.
+name: divergences/D-DATA-17-old-git-stash
 expect_divergence: D-DATA-17
-status: stub
+status: active
+since: "4.6.2"
+brands: [compat, snp]
+requires: {git: ">=2.5, <2.19", net: false, tools: [], os: [linux], pty: false}
+repos: {}
+work:
+  files: {b.txt: "b\n", n.txt: "new\n"}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: noop
+            name: noop
+            entry: "true"
+            language: system
+  commit: [".pre-commit-config.yaml", b.txt]
+  stage: []
+  unstaged: {b.txt: "b\nchanged\n"}
+  git_config: {}
+steps:
+  - git: [add, --intent-to-add, n.txt]
+  - tool: [run]
+    env: {SNP_ALLOW_OLD_GIT: "1"}
+    stdin: ""
+    tty: false
+compare:
+  stdout: tierB
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    exit: 3
+    stdout_contains: "already exists in working directory"
+  snp:
+    exit: 1
+    stdout_matches: '^An error has occurred: FatalError: git 2\.1[0-8]\.[0-9]+ cannot stash intent-to-add files safely; snp requires git 2\.19\.0 or newer to stash unstaged changes \(found \S+\)\.\n'
+    tree: {b.txt: "b\nchanged\n", n.txt: "new\n"}

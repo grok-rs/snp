@@ -1,5 +1,51 @@
-# D-DATA-01 (DATA, owner WP-23): one stderr line after the envelope: [ERROR] Your unstaged changes are saved in <patch>; restore them with: git apply --3way <patch> (X13-STASH-02)
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-DATA-01 (DATA, owner WP-23): the K+ recovery line on stderr after a failed stash restore (X13-STASH-02)
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands` and `expect_divergence` (ARCHITECTURE §13.2).
+# The hook replaces the unstaged-modified file with a directory: both applies fail, the rollback checkout cannot
+# replace the directory, and the restore fails with a CalledProcessError (exit 3) in both tools. pre-commit's stderr
+# is empty; snp adds the K+ line naming the patch and `git apply --3way` (docs/divergences/D-DATA-01.md).
+name: divergences/D-DATA-01-k-plus-hint
 expect_divergence: D-DATA-01
-status: stub
+status: active
+since: "4.6.2"
+brands: [compat, snp]
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files: {foo: "1\n2\n3\n"}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: clobber
+            name: clobber
+            entry: sh -c 'rm -f foo && mkdir foo && echo x > foo/x' --
+            language: system
+            files: ^foo$
+  commit: [".pre-commit-config.yaml"]
+  stage: [foo]
+  unstaged: {foo: "1\nTWO\n3\n"}
+  git_config: {}
+steps:
+  - tool: [run]
+    env: {}
+    stdin: ""
+    tty: false
+compare:
+  stdout: tierB
+  stderr: exact
+  exit: exact
+  tree: false
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    exit: 3
+    stderr: ""
+  snp:
+    exit: 3
+    stderr_matches: '^\[ERROR\] Your unstaged changes are saved in (\S+); restore them with: git apply --3way \1\n$'

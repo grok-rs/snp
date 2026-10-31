@@ -1,5 +1,53 @@
-# D-DATA-02 (DATA, owner WP-23): descendants of the cancelled hooks are killed (Linux subreaper, Windows job), then the stash is restored (restore messages printed), then death by the same…
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-DATA-02 (DATA, owner WP-23): SIGTERM during hooks restores the stash, then death by the same signal
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands`, `expect_divergence` and the `signal` step
+# key of ARCHITECTURE §13.2 (send `signal` to the tool `after` the marker file appears).
+# pre-commit 4.6.2 dies at once (status 143) leaving the worktree at the staged content; snp restores the unstaged
+# change, prints `[INFO] Restored changes from …`, and dies by SIGTERM too (docs/divergences/D-DATA-02.md).
+name: divergences/D-DATA-02-sigterm-restores
 expect_divergence: D-DATA-02
-status: stub
+status: active
+since: "4.6.2"
+brands: [compat, snp]
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files: {foo: "1\n2\n3\n"}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: slow
+            name: slow
+            entry: sh -c 'touch .hook-started; exec sleep 30' --
+            language: system
+            files: ^foo$
+  commit: [".pre-commit-config.yaml"]
+  stage: [foo]
+  unstaged: {foo: "1\nTWO\n3\n"}
+  git_config: {}
+steps:
+  - tool: [run]
+    env: {}
+    stdin: ""
+    tty: false
+    signal: {name: TERM, after: .hook-started}
+compare:
+  stdout: tierB
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    exit: -15
+    tree: {foo: "1\n2\n3\n"}
+  snp:
+    exit: -15
+    stdout_contains: "[INFO] Restored changes from "
+    tree: {foo: "1\nTWO\n3\n"}
