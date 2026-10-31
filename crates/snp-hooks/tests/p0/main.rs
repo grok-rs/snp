@@ -365,3 +365,55 @@ fn cancellation_between_files() {
     assert_eq!(o.code, 0);
     assert_eq!(std::fs::read(ctx.sb.path("a.txt")).unwrap(), b"a \n");
 }
+
+/// D-SEC-10: a `--pattern` that exceeds the backtracking limit fails the hook closed (exit 1, the register line);
+/// CPython would hang, so the commit never went through either.
+#[test]
+fn no_commit_to_branch_backtrack_fails_closed() {
+    let sb = Sandbox::new(true);
+    let branch = format!("{}b", std::iter::repeat_n('a', 40).collect::<String>());
+    sb.git(&["checkout", "-qb", branch.as_str()]);
+    let ctx = Ctx::new(sb);
+    let hook = snp_hooks::native(NativeSource::PreCommitHooks, "no-commit-to-branch").unwrap();
+    let pattern = "(?:(?=a)a+)+(?<!a)b";
+    let o = hook.run(&ctx.cx(Epoch(2)), &[OsStr::new("-p"), OsStr::new(pattern)]);
+    assert_eq!(o.code, 1);
+    assert!(o.crashed);
+    assert_eq!(
+        show(&o.output),
+        format!(
+            "snp: regular expression '{pattern}' exceeded the backtracking limit on '{branch}'\n"
+        )
+    );
+}
+
+/// `re.compile`'s `FutureWarning`s are part of the hook output (D-MISC-04 form); `SNP_PYTHON_WARNINGS=0` silences.
+#[test]
+fn no_commit_to_branch_future_warnings() {
+    let sb = Sandbox::new(true);
+    sb.git(&["checkout", "-qb", "dev"]);
+    let ctx = Ctx::new(sb);
+    let hook = snp_hooks::native(NativeSource::PreCommitHooks, "no-commit-to-branch").unwrap();
+    let argv = [
+        OsStr::new("-p"),
+        OsStr::new("[[:alpha:]]x"),
+        OsStr::new("-p"),
+        OsStr::new("(?a)\\w+"),
+    ];
+    let o = hook.run(&ctx.cx(Epoch(2)), &argv);
+    assert_eq!(o.code, 1);
+    assert_eq!(
+        show(&o.output),
+        "[WARNING] regex '[[:alpha:]]x': Possible nested set at position 1 (Python FutureWarning)\n"
+    );
+    let quiet = ctx
+        .sb
+        .env
+        .patched(&snp_core::env::EnvPatch::default().set("SNP_PYTHON_WARNINGS", "0"));
+    let cx = snp_hooks::HookCx {
+        env: &quiet,
+        ..ctx.cx(Epoch(2))
+    };
+    let o = hook.run(&cx, &argv);
+    assert_eq!((o.code, o.output.as_slice()), (1, &b""[..]));
+}

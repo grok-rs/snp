@@ -63,18 +63,48 @@ fn compile(p: &str) -> Result<PyRegex, PyReError> {
     PyRegex::compile(p, Options::CONFIG)
 }
 
-/// `is_on_branch(protected, patterns)` (`:12-24`).
-fn is_on_branch(cx: &HookCx<'_>, protected: &[&str], patterns: &[&str]) -> Result<bool, PyExc> {
-    let Some(branch) = cx.facts.current_branch().map_err(|f| facts_exc(f, false))? else {
+/// Why `is_on_branch` stopped without an answer.
+enum Stop {
+    /// An uncaught Python exception (an invalid pattern, a git failure).
+    Exc(PyExc),
+    /// D-SEC-10: a pattern exceeded the backtracking limit (CPython would hang, so the commit never goes through:
+    /// the hook fails closed, exit 1).
+    Backtrack(Vec<u8>),
+}
+
+/// `is_on_branch(protected, patterns)` (`:12-24`). Each pattern compiled emits its `FutureWarning`s into `warn`
+/// (stderr, merged into the hook output) unless `warnings` is off (`SNP_PYTHON_WARNINGS=0`).
+fn is_on_branch(
+    cx: &HookCx<'_>,
+    protected: &[&str],
+    patterns: &[&str],
+    warn: &mut Vec<u8>,
+) -> Result<bool, Stop> {
+    let Some(branch) = cx
+        .facts
+        .current_branch()
+        .map_err(|f| Stop::Exc(facts_exc(f, false)))?
+    else {
         return Ok(false);
     };
     if protected.contains(&branch.as_str()) {
         return Ok(true);
     }
+    let warnings = framework::python_warnings(cx.env);
     for p in patterns {
-        let re = compile(p).map_err(|e| framework::re_exc(&e))?;
-        if re.match_prefix(&branch).unwrap_or(false) {
-            return Ok(true);
+        let re = compile(p).map_err(|e| Stop::Exc(framework::re_exc(&e)))?;
+        if warnings {
+            warn.extend_from_slice(&framework::regex_warnings(&re));
+        }
+        match re.match_prefix(&branch) {
+            Ok(true) => return Ok(true),
+            Ok(false) => {}
+            Err(_) => {
+                return Err(Stop::Backtrack(framework::backtrack_line(
+                    p,
+                    OsStr::new(&branch),
+                )));
+            }
         }
     }
     Ok(false)
@@ -138,17 +168,28 @@ impl NativeHook for NoCommitToBranch {
                 patterns.push(p);
             }
         }
-        match is_on_branch(cx, &protected, &patterns) {
+        let mut warn = Vec::new();
+        let result = is_on_branch(cx, &protected, &patterns, &mut warn);
+        let mut out = PyOut::default();
+        out.eprint_bytes(&warn);
+        let mut o = match result {
             Ok(on) => Outcome {
                 code: i32::from(on),
-                reads_only: true,
+                output: out.finish(),
                 ..Outcome::default()
             },
-            Err(e) => {
-                let mut o = framework::crashed(PyOut::default(), &e);
-                o.reads_only = true;
-                o
+            Err(Stop::Exc(e)) => framework::crashed(out, &e),
+            Err(Stop::Backtrack(line)) => {
+                out.eprint_bytes(&line);
+                Outcome {
+                    code: 1,
+                    output: out.finish(),
+                    crashed: true,
+                    ..Outcome::default()
+                }
             }
-        }
+        };
+        o.reads_only = true;
+        o
     }
 }

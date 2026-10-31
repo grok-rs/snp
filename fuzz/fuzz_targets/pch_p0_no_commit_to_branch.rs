@@ -18,7 +18,7 @@ fuzz_target!(|data: &[u8]| {
     let pattern = String::from_utf8_lossy(parts.next().unwrap_or_default()).into_owned();
     let branch = String::from_utf8_lossy(parts.next().unwrap_or_default()).into_owned();
     if let Ok(re) = PyRegex::compile(&pattern, Options::CONFIG) {
-        drop(re.match_prefix(&branch));
+        let _ = re.match_prefix(&branch);
     }
     let argv: Vec<String> = parts
         .take(16)
