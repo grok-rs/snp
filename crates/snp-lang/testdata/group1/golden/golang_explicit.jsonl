@@ -1,0 +1,2 @@
+{"argv":["go","install","./..."],"cwd":"{PREFIX}","env":{"GOPATH":"{PREFIX}/golangenv-1.22.1","GOROOT":"{PREFIX}/golangenv-1.22.1/.go","GOTOOLCHAIN":"local","PATH":"{PREFIX}/golangenv-1.22.1/.go/bin:{SHIMS}:/usr/bin:/bin"}}
+{"argv":["go-hello","a.txt"],"cwd":"{REPO}","env":{"GOROOT":"{PREFIX}/golangenv-1.22.1/.go","GOTOOLCHAIN":"local","PATH":"{PREFIX}/golangenv-1.22.1/bin:{PREFIX}/golangenv-1.22.1/.go/bin:{SHIMS}:/usr/bin:/bin"}}

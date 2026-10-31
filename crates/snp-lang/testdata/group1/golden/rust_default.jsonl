@@ -1,0 +1,4 @@
+{"argv":["cargo","--version"],"cwd":"/","env":{}}
+{"argv":["rustup","toolchain","install","--no-self-update","stable"],"cwd":"{REPO}","env":{"CARGO_HOME":"{PREFIX}/rustenv-default","PATH":"{PREFIX}/rustenv-default/bin:{SHIMS}:/usr/bin:/bin","RUSTUP_HOME":"{TMP}","RUSTUP_TOOLCHAIN":"stable"}}
+{"argv":["cargo","install","--bins","--root","{PREFIX}/rustenv-default","--path","."],"cwd":"{PREFIX}","env":{"PATH":"{PREFIX}/rustenv-default/bin:{SHIMS}:/usr/bin:/bin","RUSTUP_HOME":"{TMP}","RUSTUP_TOOLCHAIN":"stable"}}
+{"argv":["rust-hello","a.txt"],"cwd":"{REPO}","env":{"PATH":"{PREFIX}/rustenv-default/bin:{SHIMS}:/usr/bin:/bin","RUSTUP_TOOLCHAIN":"stable"}}

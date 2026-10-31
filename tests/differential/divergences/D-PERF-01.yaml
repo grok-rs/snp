@@ -1,5 +1,51 @@
-# D-PERF-01 (PERF, owner WP-24): uv (--seed) with pip-config translation and a pip fallback; seeded packages may differ in version, and uv's resolver can differ on pre-releases, yanked…
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-PERF-01 (PERF, owner WP-24): python environments are built with uv (`--seed`), not virtualenv + pip.
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3. A local python hook with one dependency prints which
+# tool wrote its `pyvenv.cfg`: `virtualenv` (pre-commit), `uv` (snp, default installer).
 expect_divergence: D-PERF-01
-status: stub
+name: divergences/D-PERF-01-python-env-creator
+since: "4.6.2"
+requires: {git: ">=2.31", net: true, tools: [python3, uv], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files: {}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: creator
+            name: creator
+            entry: python -c "import pathlib, sys; cfg = pathlib.Path(sys.prefix, 'pyvenv.cfg').read_text(); print('uv' if '\nuv = ' in cfg else 'virtualenv' if 'virtualenv = ' in cfg else 'venv')"
+            language: python
+            additional_dependencies: [six]
+            pass_filenames: false
+            verbose: true
+  commit: [".pre-commit-config.yaml"]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - tool: [run, --all-files]
+    env: {}
+    stdin: ""
+    tty: false
+# pre-commit 4.6.2: the four install lines, `creator….Passed` and `virtualenv`, exit 0.
+# snp: the same lines with `uv` (`venv` under SNP_PYTHON_INSTALLER=pip), exit 0.
+compare:
+  stdout: tierB
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    exit: 0
+    stdout_contains: "\nvirtualenv\n"
+  snp:
+    exit: 0
+    stdout_contains: "\nuv\n"

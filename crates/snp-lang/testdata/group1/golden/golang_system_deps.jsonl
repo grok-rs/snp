@@ -1,0 +1,3 @@
+{"argv":["go","install","./..."],"cwd":"{PREFIX}","env":{"GOPATH":"{PREFIX}/golangenv-system"}}
+{"argv":["go","install","golang.org/x/tools/cmd/goimports@latest"],"cwd":"{PREFIX}","env":{"GOPATH":"{PREFIX}/golangenv-system"}}
+{"argv":["go-hello","a.txt"],"cwd":"{REPO}","env":{"PATH":"{PREFIX}/golangenv-system/bin:{SHIMS}:/usr/bin:/bin"}}

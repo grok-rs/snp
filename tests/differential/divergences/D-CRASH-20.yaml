@@ -1,5 +1,56 @@
-# D-CRASH-20 (CRASH, owner WP-24): shim-less system env
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-CRASH-20 (CRASH, owner WP-24): on Windows an explicit `language_version: system` node hook gets a shim-less
+# system environment instead of nodeenv's "not supported" failure.
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3. `${work}` is the materialised worktree root; the
+# dependency is an absolute path to a package in the repository, so npm needs no network.
 expect_divergence: D-CRASH-20
-status: stub
+name: divergences/D-CRASH-20-windows-node-system
+since: "4.6.2"
+requires: {git: ">=2.31", net: false, tools: [node, npm], os: [windows], pty: false}
+repos: {}
+work:
+  files:
+    pkg/package.json: "{\"name\": \"hello\", \"version\": \"0.0.0\", \"bin\": {\"hello\": \"hello.js\"}}\n"
+    pkg/hello.js: "#!/usr/bin/env node\nconsole.log('hello from node');\n"
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: hello
+            name: hello
+            entry: hello
+            language: node
+            language_version: system
+            additional_dependencies: ['${work}\pkg']
+            pass_filenames: false
+            verbose: true
+  commit: [".pre-commit-config.yaml", pkg/package.json, pkg/hello.js]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - tool: [run, --all-files]
+    env: {}
+    stdin: ""
+    tty: false
+# pre-commit 4.6.2: the install lines, `An unexpected error has occurred: CalledProcessError: …` (nodeenv:
+#   `Installing system node.js on win32 is not supported!`), exit 3.
+# snp: the install lines, `hello….Passed` and `hello from node`, exit 0.
+compare:
+  stdout: tierB
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    exit: 3
+    stdout_contains: "CalledProcessError"
+  snp:
+    exit: 0
+    stdout_contains: "hello from node"
