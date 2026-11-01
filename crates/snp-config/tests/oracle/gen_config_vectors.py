@@ -248,7 +248,7 @@ case('V15 language yes', local('').replace('language: system', 'language: yes'))
 case('V15 language float', local('').replace('language: system', 'language: 1.5'))
 
 # T10-CFG rows (10 §5.1)
-case('T10-CFG-01 bad tags', local('types: [definitely-not-a-tag]\ntypes_or: [fiel]'))
+case('T10-CFG-01 bad tags', local('types: [definitely-not-a-tag]\ntypes_or: [fiel]')) # spellchecker:disable-line
 case('T10-CFG-01 file tag', local('types: [file]'))
 case('T10-CFG-02 valid', "repos:\n-   repo: git@github.com:pre-commit/pre-commit-hooks\n    rev: cd74dc150c142c3be70b24eaf0b02cae9d235f37\n    hooks:\n    -   id: pyflakes\n        files: '\\.py$'\n        args: [foo, bar, baz]\n")
 case('T10-CFG-03 exclude 0', "repos:\n-   repo: git@github.com:pre-commit/pre-commit-hooks\n    rev: cd74dc150c142c3be70b24eaf0b02cae9d235f37\n    hooks:\n    -   id: pyflakes\n        files: '\\.py$'\n        exclude: 0\n        args: [foo, bar, baz]\n")

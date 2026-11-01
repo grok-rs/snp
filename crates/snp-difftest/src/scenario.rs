@@ -1921,7 +1921,7 @@ compare:
         }
         assert!(
             Scenario::parse(
-                "name: p\nrequires: {consol: pipe}\nsteps: [{tool: [run]}]\n",
+                "name: p\nrequires: {consol: pipe}\nsteps: [{tool: [run]}]\n", // spellchecker:disable-line
                 Path::new("p.yaml")
             )
             .is_err()

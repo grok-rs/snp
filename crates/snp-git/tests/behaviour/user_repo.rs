@@ -374,7 +374,7 @@ fn file_mode_is_memoised_until_the_config_changes() {
     let config = repo.join(".git/config");
     let before = std::fs::metadata(&config).unwrap().modified().unwrap();
     let text = std::fs::read_to_string(&config).unwrap();
-    std::fs::write(&config, text.replace("filemode = true", "filemode = fals")).unwrap();
+    std::fs::write(&config, text.replace("filemode = true", "filemode = fals")).unwrap(); // spellchecker:disable-line
     std::fs::File::options()
         .write(true)
         .open(&config)

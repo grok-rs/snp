@@ -556,7 +556,7 @@ pub(crate) fn report_locked(
     out
 }
 
-/// Non-blocking: try the worktree lock, run [`report_locked`], release (`run`/`hook-impl` start, ARCHITECTURE
+/// Non-blocking: try the worktree lock, run `report_locked`, release (`run`/`hook-impl` start, ARCHITECTURE
 /// §4.6). `None` when another run holds the lock (it owns the journals it is writing; a stash entered later reports
 /// once it holds the lock). The lock token is not written: the probe never exempts a nested run.
 pub fn recovery_report(
