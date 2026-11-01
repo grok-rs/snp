@@ -60,8 +60,10 @@ pub(crate) fn run(
     let mut out = PyOut::default();
     let code = match which {
         MetaHook::Identity => {
+            // `output.write_line(arg)`: the byte layer (`sys.stdout.buffer`), `\n` on every platform
             for a in &argv {
-                out.print_bytes_text(a.as_encoded_bytes());
+                out.write_bytes(a.as_encoded_bytes());
+                out.write_bytes(b"\n");
             }
             0
         }
