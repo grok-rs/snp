@@ -22,10 +22,8 @@ substitutions:
   # install / uninstall (install_uninstall.py:85,111,157)
   - from: "pre-commit installed at "
     to: "snp installed at "
-  # COMPATIBILITY §3.3 row. install_uninstall.py:157 prints `{hook_type} uninstalled`: only the default hook type's
-  # line (`pre-commit uninstalled`) names the tool and is branded; `pre-push uninstalled` & co. stay.
-  - from: "pre-commit uninstalled"
-    to: "snp uninstalled"
+  # install_uninstall.py:157 prints `{hook_type} uninstalled`: it names the hook type, so `pre-commit uninstalled` is
+  # not branded (ADR-084, COMPATIBILITY §3.3).
   - from: "Use -f to use only pre-commit."
     to: "Use -f to use only snp."
   # hook-impl missing config (hook_impl.py:56-65)

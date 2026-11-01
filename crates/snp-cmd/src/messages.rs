@@ -54,15 +54,10 @@ pub(crate) fn migration_mode(brand: Brand, legacy_path: &OsStr) -> Vec<u8> {
 /// `install_uninstall.py:124-128`: logged at ERROR (`[ERROR] …`), exit 1.
 pub(crate) const HOOKS_PATH_REFUSAL: &str = "Cowardly refusing to install hooks with `core.hooksPath` set.\nhint: `git config --unset-all core.hooksPath`";
 
-/// `install_uninstall.py:157`: `{hook_type} uninstalled`. The default type's line, `pre-commit uninstalled`, is
-/// branded (`snp uninstalled`, COMPATIBILITY §3.3, `brand_map.yaml`); `pre-push uninstalled` & co. never are.
-pub(crate) fn uninstalled(brand: Brand, hook_type: &str) -> Vec<u8> {
-    let name = if hook_type == "pre-commit" {
-        brand.prog()
-    } else {
-        hook_type
-    };
-    cat(&[name.as_bytes(), b" uninstalled"])
+/// `install_uninstall.py:157`: `{hook_type} uninstalled`, in both brands: it names the hook type, not the tool (ADR-084;
+/// branding the default type gave `snp uninstalled` next to `pre-push uninstalled`, as if snp itself was removed).
+pub(crate) fn uninstalled(_brand: Brand, hook_type: &str) -> Vec<u8> {
+    cat(&[hook_type.as_bytes(), b" uninstalled"])
 }
 
 /// `install_uninstall.py:161`: `Restored previous hooks to {hook_path}`.
@@ -447,7 +442,10 @@ mod tests {
             uninstalled(Brand::PreCommit, "pre-commit"),
             b"pre-commit uninstalled"
         );
-        assert_eq!(uninstalled(Brand::Snp, "pre-commit"), b"snp uninstalled");
+        assert_eq!(
+            uninstalled(Brand::Snp, "pre-commit"),
+            b"pre-commit uninstalled"
+        );
         assert_eq!(repos_removed(0), "0 repo(s) removed.");
         assert_eq!(cleaned(OsStr::new("/s")), b"Cleaned /s.");
         assert_eq!(

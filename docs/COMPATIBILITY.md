@@ -70,7 +70,7 @@ machine-readable form; the difftest applies it to the prog-patched oracle's outp
 | Compat text (pre-commit 4.6.2) | snp brand |
 |---|---|
 | `--version` / `-V` line `pre-commit 4.6.2` (whole-line rule: a plain substitution would give `snp 4.6.2`) | `snp 2.0.0` |
-| `pre-commit installed at {path}` / `pre-commit uninstalled` | `snp installed at {path}` / `snp uninstalled` |
+| `pre-commit installed at {path}` | `snp installed at {path}` (`{hook_type} uninstalled`, e.g. `pre-commit uninstalled`, names the hook type and is not branded, ADR-084) |
 | `Use -f to use only pre-commit.` | `Use -f to use only snp.` |
 | ``Skipping `pre-commit`.`` | ``Skipping `snp`.`` |
 | missing-config block lines 3–4 (`- To permanently silence this, install pre-commit with the --allow-missing-config option`, ``- To uninstall pre-commit run `pre-commit uninstall` ``) | `snp` substituted in both lines |
