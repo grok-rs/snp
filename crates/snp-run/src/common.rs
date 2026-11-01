@@ -151,9 +151,18 @@ pub(crate) fn apply_overlay(
     Ok(Some(ov))
 }
 
-/// Whether `p` is tracked (`git ls-files -- <p>` prints it).
+/// Whether `p` is tracked (`git ls-files -- :(literal)<p>` prints it): a literal pathspec, so glob characters in the
+/// repository or config path (`a[12]/`, `x*`) cannot match another tracked file. `p` names an existing regular file
+/// (`overlay::locate` checks `is_file`), so a literal pathspec matches at most that one entry.
 fn is_tracked(git: &Git, p: &Path) -> bool {
-    let args = [OsStr::new("ls-files"), OsStr::new("--"), p.as_os_str()];
+    let mut spec = OsString::from(":(literal)");
+    spec.push(p.as_os_str());
+    let args = [
+        OsStr::new("ls-files"),
+        OsStr::new("-z"),
+        OsStr::new("--"),
+        spec.as_os_str(),
+    ];
     git.run_raw(&args)
         .is_ok_and(|c| c.status.0 == 0 && !c.stdout.is_empty())
 }

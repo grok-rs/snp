@@ -141,12 +141,12 @@ fn load(m: &MetaCx<'_>, path: &OsStr, out: &mut PyOut) -> Result<Config, Failure
 fn classifier(m: &MetaCx<'_>, cfg: &Config) -> Result<(Classifier, Arc<FileTable>), Failure> {
     let root = m.git.root();
     let (buf, spans) = m.git.all_files()?.into_parts();
-    let all = Arc::new(FileTable::from_zbuf(buf.clone(), spans.clone(), root));
+    // one table: the classifier's own (`kept` is the filtered view; matching reads only the paths)
     let table = Arc::new(FileTable::from_zbuf(buf, spans, root));
     let include = regex(m, &cfg.files)?;
     let exclude = regex(m, &cfg.exclude)?;
-    let c = Classifier::new(table, &include, &exclude, &m.cx.pool)?;
-    Ok((c, all))
+    let c = Classifier::new(Arc::clone(&table), &include, &exclude, &m.cx.pool)?;
+    Ok((c, table))
 }
 
 fn regex(m: &MetaCx<'_>, pattern: &str) -> Result<Arc<snp_pyre::PyRegex>, Failure> {
