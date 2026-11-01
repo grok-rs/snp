@@ -243,7 +243,10 @@ mod tests {
             ),
             (PCH.to_owned(), "v6.0.0".to_owned(), tier_a),
         ] {
-            let key = Store::remote_key(&RepoId::from_config(&repo, &h.project), &rev, &[]);
+            let id = RepoId::from_config(&repo, &h.project);
+            let key = Store::remote_key(&id, &rev, &[]);
+            // the marker another process writes is keyed like its clone (ADR-082 item 4)
+            let marker = snp_store::marker_repo_name(&id, &repo, &[]);
             let held = h
                 .store
                 .repo_lock(&key, &mut || {}, &snp_core::cancel::CancelToken::new())
@@ -254,7 +257,7 @@ mod tests {
                     std::thread::sleep(std::time::Duration::from_millis(300));
                     // The other process's `_new_repo` inserted its row before releasing the lock.
                     Store::new(loc).set_marker(&MarkerKey::Initialized {
-                        db_repo_name: Arc::from(repo.as_str()),
+                        db_repo_name: Arc::from(marker.as_str()),
                         rev: Arc::from(rev.as_str()),
                     });
                     drop(held);
