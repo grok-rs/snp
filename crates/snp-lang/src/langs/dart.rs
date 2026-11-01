@@ -678,8 +678,47 @@ impl Reader {
         let Some(first) = body.get(p).copied() else {
             return self.block_value(li.saturating_add(1), owner, in_map, depth);
         };
+        // The recursion runs through this function: its frame stays small (256 KiB stacks), the scalar and flow
+        // cases live in their own functions.
         match first {
             '#' => self.block_value(li.saturating_add(1), owner, in_map, depth),
+            '[' | '{' => self.inline_flow(li, p, depth),
+            _ => self.inline_scalar(li, p, owner),
+        }
+    }
+
+    /// A flow collection starting at `body[p]` of line `li`, alone up to a trailing comment.
+    fn inline_flow(
+        &self,
+        li: usize,
+        p: usize,
+        depth: usize,
+    ) -> Result<(Node, usize), PubspecError> {
+        let mut cur = FlowCursor { li, pos: p };
+        let node = self.flow_node(&mut cur, depth)?;
+        let end_line = self
+            .line(cur.li)
+            .ok_or_else(|| self.err(cur.li, "no line"))?;
+        if !only_trailing_comment(&end_line.body, cur.pos) {
+            return Err(self.err(cur.li, "unexpected text after a flow collection"));
+        }
+        Ok((node, cur.li.saturating_add(1)))
+    }
+
+    /// A block scalar header, a quoted or a plain scalar starting at `body[p]` of line `li`.
+    #[inline(never)]
+    fn inline_scalar(
+        &self,
+        li: usize,
+        p: usize,
+        owner: usize,
+    ) -> Result<(Node, usize), PubspecError> {
+        let line = self.line(li).ok_or_else(|| self.err(li, "no line"))?;
+        let body = &line.body;
+        let Some(first) = body.get(p).copied() else {
+            return Err(self.err(li, "no value"));
+        };
+        match first {
             '|' | '>' => {
                 let mut q = p.saturating_add(1);
                 if matches!(body.get(q), Some('+' | '-')) {
@@ -695,17 +734,6 @@ impl Reader {
                     Node::Opaque,
                     self.block_scalar(li.saturating_add(1), owner)?,
                 ))
-            }
-            '[' | '{' => {
-                let mut cur = FlowCursor { li, pos: p };
-                let node = self.flow_node(&mut cur, depth)?;
-                let end_line = self
-                    .line(cur.li)
-                    .ok_or_else(|| self.err(cur.li, "no line"))?;
-                if !only_trailing_comment(&end_line.body, cur.pos) {
-                    return Err(self.err(cur.li, "unexpected text after a flow collection"));
-                }
-                Ok((node, cur.li.saturating_add(1)))
             }
             '\'' | '"' => {
                 let (value, end) = quoted_scalar(body, p, line)?;
@@ -800,7 +828,8 @@ impl Reader {
         Ok((resolve_plain(&value, Some(line))?, next))
     }
 
-    /// A flow node at the cursor.
+    /// A flow node at the cursor. The collections are separate functions so that the recursion's frames stay small
+    /// (the reader runs on 256 KiB stacks; one large `match` frame per level overflowed them in debug builds).
     fn flow_node(&self, cur: &mut FlowCursor, depth: usize) -> Result<Node, PubspecError> {
         if depth > MAX_NESTING {
             return Err(self.err(cur.li, "unsupported nesting depth"));
@@ -809,80 +838,96 @@ impl Reader {
         let line = self
             .line(cur.li)
             .ok_or_else(|| self.err(cur.li, "no line"))?;
+        match line.body.get(cur.pos).copied() {
+            None => Err(self.err(cur.li, "unterminated flow collection")),
+            Some('[') => self.flow_seq(cur, depth),
+            Some('{') => self.flow_map(cur, depth),
+            Some(_) => self.flow_scalar(cur),
+        }
+    }
+
+    /// A flow sequence at the cursor (`[`).
+    fn flow_seq(&self, cur: &mut FlowCursor, depth: usize) -> Result<Node, PubspecError> {
+        cur.pos = cur.pos.saturating_add(1);
+        let mut items = Vec::new();
+        loop {
+            self.flow_skip(cur)?;
+            if self.flow_peek(cur) == Some(']') {
+                cur.pos = cur.pos.saturating_add(1);
+                return Ok(Node::Seq(items));
+            }
+            items.push(self.flow_node(cur, depth.saturating_add(1))?);
+            let item_line = cur.li;
+            self.flow_skip(cur)?;
+            match self.flow_peek(cur) {
+                Some(',') => cur.pos = cur.pos.saturating_add(1),
+                Some(']') => {}
+                Some(':') if cur.li == item_line => {
+                    return Err(self.err(cur.li, "unsupported mapping inside a flow sequence"));
+                }
+                _ => return Err(self.err(cur.li, "expected ',' or ']' in a flow sequence")),
+            }
+        }
+    }
+
+    /// A flow mapping at the cursor (`{`).
+    fn flow_map(&self, cur: &mut FlowCursor, depth: usize) -> Result<Node, PubspecError> {
+        cur.pos = cur.pos.saturating_add(1);
+        let mut entries = Vec::new();
+        loop {
+            self.flow_skip(cur)?;
+            if self.flow_peek(cur) == Some('}') {
+                cur.pos = cur.pos.saturating_add(1);
+                return Ok(Node::Map(entries));
+            }
+            if matches!(self.flow_peek(cur), Some('[' | '{' | '?')) {
+                return Err(self.err(cur.li, "unsupported complex key in a flow mapping"));
+            }
+            let key = self.flow_node(cur, depth.saturating_add(1))?;
+            let key_line = cur.li;
+            self.flow_skip(cur)?;
+            let value = if self.flow_peek(cur) == Some(':') {
+                let line = self
+                    .line(cur.li)
+                    .ok_or_else(|| self.err(cur.li, "no line"))?;
+                if cur.li != key_line
+                    || line
+                        .body
+                        .get(cur.pos.saturating_add(1))
+                        .is_some_and(|n| *n != ' ')
+                {
+                    return Err(self.err(cur.li, "unsupported ':' in a flow mapping"));
+                }
+                cur.pos = cur.pos.saturating_add(1);
+                self.flow_skip(cur)?;
+                if matches!(self.flow_peek(cur), Some(',' | '}')) {
+                    Node::Null
+                } else {
+                    self.flow_node(cur, depth.saturating_add(1))?
+                }
+            } else {
+                Node::Null
+            };
+            entries.push((key, value));
+            self.flow_skip(cur)?;
+            match self.flow_peek(cur) {
+                Some(',') => cur.pos = cur.pos.saturating_add(1),
+                Some('}') => {}
+                _ => return Err(self.err(cur.li, "expected ',' or '}' in a flow mapping")),
+            }
+        }
+    }
+
+    /// A flow scalar at the cursor (quoted or plain).
+    #[inline(never)]
+    fn flow_scalar(&self, cur: &mut FlowCursor) -> Result<Node, PubspecError> {
+        let line = self
+            .line(cur.li)
+            .ok_or_else(|| self.err(cur.li, "no line"))?;
         let Some(c) = line.body.get(cur.pos).copied() else {
             return Err(self.err(cur.li, "unterminated flow collection"));
         };
         match c {
-            '[' => {
-                cur.pos = cur.pos.saturating_add(1);
-                let mut items = Vec::new();
-                loop {
-                    self.flow_skip(cur)?;
-                    if self.flow_peek(cur) == Some(']') {
-                        cur.pos = cur.pos.saturating_add(1);
-                        return Ok(Node::Seq(items));
-                    }
-                    items.push(self.flow_node(cur, depth.saturating_add(1))?);
-                    let item_line = cur.li;
-                    self.flow_skip(cur)?;
-                    match self.flow_peek(cur) {
-                        Some(',') => cur.pos = cur.pos.saturating_add(1),
-                        Some(']') => {}
-                        Some(':') if cur.li == item_line => {
-                            return Err(
-                                self.err(cur.li, "unsupported mapping inside a flow sequence")
-                            );
-                        }
-                        _ => return Err(self.err(cur.li, "expected ',' or ']' in a flow sequence")),
-                    }
-                }
-            }
-            '{' => {
-                cur.pos = cur.pos.saturating_add(1);
-                let mut entries = Vec::new();
-                loop {
-                    self.flow_skip(cur)?;
-                    if self.flow_peek(cur) == Some('}') {
-                        cur.pos = cur.pos.saturating_add(1);
-                        return Ok(Node::Map(entries));
-                    }
-                    if matches!(self.flow_peek(cur), Some('[' | '{' | '?')) {
-                        return Err(self.err(cur.li, "unsupported complex key in a flow mapping"));
-                    }
-                    let key = self.flow_node(cur, depth.saturating_add(1))?;
-                    let key_line = cur.li;
-                    self.flow_skip(cur)?;
-                    let value = if self.flow_peek(cur) == Some(':') {
-                        let line = self
-                            .line(cur.li)
-                            .ok_or_else(|| self.err(cur.li, "no line"))?;
-                        if cur.li != key_line
-                            || line
-                                .body
-                                .get(cur.pos.saturating_add(1))
-                                .is_some_and(|n| *n != ' ')
-                        {
-                            return Err(self.err(cur.li, "unsupported ':' in a flow mapping"));
-                        }
-                        cur.pos = cur.pos.saturating_add(1);
-                        self.flow_skip(cur)?;
-                        if matches!(self.flow_peek(cur), Some(',' | '}')) {
-                            Node::Null
-                        } else {
-                            self.flow_node(cur, depth.saturating_add(1))?
-                        }
-                    } else {
-                        Node::Null
-                    };
-                    entries.push((key, value));
-                    self.flow_skip(cur)?;
-                    match self.flow_peek(cur) {
-                        Some(',') => cur.pos = cur.pos.saturating_add(1),
-                        Some('}') => {}
-                        _ => return Err(self.err(cur.li, "expected ',' or '}' in a flow mapping")),
-                    }
-                }
-            }
             '\'' | '"' => {
                 let (value, end) = quoted_scalar(&line.body, cur.pos, line)?;
                 cur.pos = end;
