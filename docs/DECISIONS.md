@@ -8,7 +8,7 @@ approved by the integration lead and the owners of the affected packages; the am
 naming the amending ADR, which is normative where they differ. ADR-056…ADR-080 apply the second design review
 (2026-10-08); Appendix B lists every finding and its disposition. ADR-081 applies the verification of the W0 skeleton;
 ADR-082 the end-to-end integration of the merged packages; ADR-083 the verification of the integrated `main`; ADR-084
-the final multi-lens review; ADR-085 the `interactive` extension key.
+the final multi-lens review; ADR-085 the `interactive` extension key; ADR-087 the `.snp.yaml` config file name.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -1136,6 +1136,54 @@ own quotes (`test -n "{2}"` → `test -n "$PRE_COMMIT_COMMIT_MSG_SOURCE"`, was `
 and environment pages describe it; `snp_proc::tty`, `spawn::interactive` and `Stdin::Terminal` are new API (ARCHITECTURE
 §1.4); `snp_testkit::Session` runs commands on a pty that is their controlling terminal (util-linux `setsid --ctty`).
 Amends the Appendix A entry "05 item 11" (`interactive` → v1.1), which this ADR implements.
+
+### ADR-087 — `.snp.yaml`: discovering the config file
+
+**Context.** Every command that reads a config defaults `-c/--config` to `.pre-commit-config.yaml` (`main.py:50-54`,
+`C.CONFIG_FILE`); pre-commit accepts no other name (Appendix A, 01 Q6: no `.pre-commit-config.yml` fallback). Repos that
+use snp's extension keys (or come from lefthook through `snp migrate lefthook`) want a file named after the tool that
+reads them, and lefthook users expect a single short name. The compat brand must keep pre-commit's bytes (K2), the
+installed hook scripts embed an explicit `--config=<file>`, the local overlay is named after the config
+(`.pre-commit-config.local.y[a]ml`, ADR-070), and gc keeps the repos of every tracked config.
+**Decision.** (1) Without `-c/--config` (the facade's `snp_cli::ConfigArg { path, given }`: argparse's `was_given`, so
+`-c .pre-commit-config.yaml` is explicit) every command that reads the project's config — `run`, `hook-impl`,
+`try-repo` (tracking only), `install`/`uninstall` (hook types and the embedded name), `install-hooks`, `autoupdate`,
+`migrate-config`, `list`, `config dump`, `doctor` (also `--fast-path`), `migrate builtin|upstream` — discovers it in the
+repository root with `snp_config::discover`: snp brand `.snp.yaml`, `.snp.yml`, `.pre-commit-config.yaml`; compat brand
+`.pre-commit-config.yaml` whenever it exists, else `.snp.yaml`, `.snp.yml`. `.pre-commit-config.yaml` keeps pre-commit's
+lookup (the invocation cwd when it exists there, else the root); an snp name is always the root's file, rebased like an
+existing `-c` path (so it displays as `.snp.yaml`). (2) `.snp.yaml` and `.snp.yml` both present is `An error has
+occurred: FatalError: both .snp.yaml and .snp.yml exist; keep one, or choose with -c/--config` (exit 1) — unless the
+compat brand already chose `.pre-commit-config.yaml`. (3) snp brand, an snp name and `.pre-commit-config.yaml` both
+present: the snp name wins and one stderr line `snp: using .snp.yaml; ignoring .pre-commit-config.yaml (pass
+-c/--config to choose)` is printed, once per process (`install --install-hooks` discovers twice). The compat brand is
+silent: with `.pre-commit-config.yaml` it is pre-commit. (4) snp brand, nothing found: the error texts stay pre-commit's
+(`=====> .pre-commit-config.yaml is not a file`, `No .pre-commit-config.yaml file was found`; the brand map stays a pure
+substitution), and the commands that cannot work without a config (`run`, `hook-impl` without `--config`,
+`install-hooks`, `list`, `autoupdate`, `migrate-config`, `config dump`, `migrate builtin|upstream`) first print the
+stderr line `snp: no .snp.yaml or .pre-commit-config.yaml file was found in the repository root` (class DIAG, so the
+snp-brand differential comparison strips it). `install`, `uninstall` and `doctor` work without a config and print
+nothing. (5) Explicit `-c` always wins, unchanged; `SNP_COMPAT_STRICT=1` turns discovery off (pre-commit's lookup). (6)
+`install` embeds the discovered name relative to the root (`--config=.snp.yaml`, also in `--git-config-hooks`
+commands); a re-install after a rename rewrites the script; script identification (`# ID:` hashes, ADR-048) is
+unaffected. `init-templatedir` has no repository and keeps `.pre-commit-config.yaml` unless `-c` is given. (7) The local
+overlay of `.snp.yaml`/`.snp.yml` is `.snp.local.yaml`, then `.snp.local.yml`; every other config keeps
+`.pre-commit-config.local.y[a]ml`. (8) `snp migrate lefthook` writes `.snp.yaml` by default and `.pre-commit-config.yaml`
+with `--portable` (pre-commit must find it); `--local` writes the overlay paired with the output name. (9) The
+messages naming the config (`git add <config>` of the unstaged check, the `is not a file` error, hook-impl's missing
+config texts, autoupdate/migrate-config) name the file actually read; tracking records its realpath. (10) The meta hooks
+keep pre-commit's `files: ^\.pre-commit-config\.yaml$` and default argument (the existing `-c` quirk, Appendix A 01
+Q8): with `.snp.yaml` they need `files`/`args` overrides. No `.pre-commit-config.yml` fallback (01 Q6 stands).
+**Rationale.** The compat brand diverges only where pre-commit would fail (no `.pre-commit-config.yaml`), so a repo
+that works with pre-commit gets pre-commit's bytes from the `pre-commit` alias, and a repo with only `.snp.yaml` works
+with both entry points. Preferring the snp name in the snp brand makes the newer, snp-specific file authoritative when
+both exist (a portable copy for pre-commit users beside it); the note keeps that visible without failing. An error for
+two snp names avoids a silent, order-dependent choice. Keeping the missing-config texts and adding a DIAG line keeps
+every existing differential scenario byte-identical in both brands.
+**Consequences.** Registered as D-EXT-09 (discovery, the note, the error, the overlay names) and D-DIAG-06 (the
+missing-config line). `snp_cli::ConfigArg` replaces `OsString` for `-c` in the facade (ARCHITECTURE §1.4.4);
+`snp_run::doctor_fast_path` takes it; `snp_config::discover` is new API. The configuration, migration and README pages
+and COMPATIBILITY §5.7/§5.8/§7.4 describe it.
 
 ---
 

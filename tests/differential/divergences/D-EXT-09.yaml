@@ -1,0 +1,35 @@
+# D-EXT-09 (EXT, owner WP-21, ADR-087): the config file name. Without `-c`, a repository holding only `.snp.yaml` is
+# read by snp in both brands; pre-commit 4.6.2 reads only `.pre-commit-config.yaml` and fails.
+# Scenario in the schema of docs/research/10-test-strategy.md §7.4.3; `expected` states how each side
+# must differ (WP-35's harness fails when the difference stops reproducing).
+expect_divergence: D-EXT-09
+name: divergences/D-EXT-09-snp-yaml
+since: "4.6.2"
+requires: {git: ">=2.19", net: false, tools: [], os: [linux, macos], pty: false}
+work:
+  files:
+    a.txt: "a\n"
+    .snp.yaml: |
+      repos:
+      -   repo: local
+          hooks:
+          -   id: h
+              name: from-snp
+              entry: echo
+              language: system
+  config: null
+  commit: [.snp.yaml, a.txt]
+steps:
+  - tool: [run, --all-files]
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+expected:
+  oracle:
+    exit: 1
+    stdout_starts_with: "An error has occurred: InvalidConfigError: \n=====> .pre-commit-config.yaml is not a file\n"
+  snp:
+    exit: 0
+    stdout_starts_with: "from-snp....."
+    stderr: ""

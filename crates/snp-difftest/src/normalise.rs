@@ -767,6 +767,10 @@ pub const DIAG_LINES: &[(&str, &str)] = &[
     ("D-DIAG-04", "[WARNING] snp: a previous run"),
     ("D-DIAG-05", "[WARNING] snp store "),
     ("D-DIAG-05", "Removed snp 1.x cache data from "),
+    (
+        "D-DIAG-06",
+        "snp: no .snp.yaml or .pre-commit-config.yaml file was found",
+    ),
 ];
 
 /// Strips DIAG lines from snp's stderr; returns the remaining bytes and the IDs whose lines were removed. Lines of

@@ -1,7 +1,7 @@
 # Configuration
 
-snp reads `.pre-commit-config.yaml` (or the file named by `-c/--config`) and the `.pre-commit-hooks.yaml` manifests of
-hook repositories exactly as pre-commit 4.6.2 does: the same schema, the same defaults, the same validation messages,
+snp reads `.pre-commit-config.yaml` (or `.snp.yaml`, see [Config file name](#config-file-name), or the file named by
+`-c/--config`) and the `.pre-commit-hooks.yaml` manifests of hook repositories exactly as pre-commit 4.6.2 does: the same schema, the same defaults, the same validation messages,
 the same `[WARNING]` lines. pre-commit's documentation of
 [the config file](https://pre-commit.com/#plugins) and of
 [creating new hooks](https://pre-commit.com/#creating-new-hooks) applies unchanged and is not repeated here.
@@ -31,6 +31,35 @@ schema, for editor integration.
 
 On top of that, snp understands a small set of **extension keys**, all optional. Absent keys mean exact pre-commit
 behaviour.
+
+## Config file name
+
+Without `-c/--config`, snp looks in the repository root for, in this order:
+
+1. `.snp.yaml`
+2. `.snp.yml`
+3. `.pre-commit-config.yaml` (pre-commit's name, found as pre-commit finds it)
+
+Name the file `.snp.yaml` when the repository uses snp only, or keep `.pre-commit-config.yaml` when pre-commit users
+share it. Every command that reads the config uses the file found: `run`, `install` (the hook scripts embed
+`--config=.snp.yaml`; run `snp install` again after renaming the file), `install-hooks`, `autoupdate`, `migrate-config`,
+`list`, `config dump`, `doctor`, `migrate builtin|upstream`; messages such as ``git add .snp.yaml` to fix this`` name it.
+
+* Both `.snp.yaml` and `.snp.yml`: an error (`both .snp.yaml and .snp.yml exist; keep one, or choose with
+  -c/--config`).
+* `.snp.yaml` and `.pre-commit-config.yaml`: snp reads `.snp.yaml` and says once on stderr `snp: using .snp.yaml;
+  ignoring .pre-commit-config.yaml (pass -c/--config to choose)`.
+* Through the `pre-commit` alias snp behaves as pre-commit wherever pre-commit works: `.pre-commit-config.yaml`
+  always wins there, silently, and `.snp.yaml` is read only when `.pre-commit-config.yaml` does not exist (Python
+  pre-commit never reads `.snp.yaml`).
+* No config at all: pre-commit's error (`=====> .pre-commit-config.yaml is not a file`), preceded on stderr by
+  `snp: no .snp.yaml or .pre-commit-config.yaml file was found in the repository root`.
+* `-c/--config` always wins; `SNP_COMPAT_STRICT=1` turns the lookup off (only `.pre-commit-config.yaml`).
+* The [local overlay](#local-overlay) of `.snp.yaml` is `.snp.local.yaml`.
+* `init-templatedir` has no repository to look in: its scripts name `.pre-commit-config.yaml` unless `-c` is given.
+* The meta hooks (`check-hooks-apply`, `check-useless-excludes`) keep pre-commit's `files: ^\.pre-commit-config\.yaml$`
+  and default argument, as they do for any `-c` file: with `.snp.yaml` set `files: ^\.snp\.yaml$` and
+  `args: [.snp.yaml]` on them.
 
 ## Sharing a config with pre-commit
 
@@ -221,7 +250,8 @@ upstream, and `snp migrate builtin` prints why (`pre-commit-hooks (line N) not c
 ## Local overlay
 
 A personal, untracked file next to the config adjusts hooks for one working copy without touching the shared config:
-`.pre-commit-config.local.yaml` (or `.yml`) in the config's directory, or the file named by `SNP_LOCAL_CONFIG`.
+`.pre-commit-config.local.yaml` (or `.yml`) in the config's directory — `.snp.local.yaml` (or `.snp.local.yml`) when the
+config is `.snp.yaml` or `.snp.yml` —, or the file named by `SNP_LOCAL_CONFIG`.
 
 ```yaml
 # .pre-commit-config.local.yaml — add it to .git/info/exclude

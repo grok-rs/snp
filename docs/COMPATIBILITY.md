@@ -234,6 +234,7 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 | D-EXT-06 | `repo: builtin` (pre-commit rejects these configs) | 21, 26, 31 |
 | D-EXT-07 | snp-brand commands and flags (§8), including their presence in the snp brand's usage/help blocks | 12 |
 | D-EXT-08 | `interactive: true` hooks read and write the terminal directly: `{name}....(interactive)` before the hook, no captured output in its block, a singleton bucket; without a usable terminal one stderr note `snp: interactive: …; running '<id>' without a terminal` (ADR-085) | 32 |
+| D-EXT-09 | the config file name: without `-c`, `.snp.yaml`/`.snp.yml` in the repository root are read (snp brand: before `.pre-commit-config.yaml`, with the stderr note `snp: using .snp.yaml; ignoring .pre-commit-config.yaml (pass -c/--config to choose)`; compat brand: only when `.pre-commit-config.yaml` is absent, silently); both snp names ⇒ `FatalError: both .snp.yaml and .snp.yml exist; …`; their overlay is `.snp.local.y[a]ml`; `SNP_COMPAT_STRICT=1` turns it off (ADR-087) | 21, 32, 33 |
 
 ### 5.8 DIAG — always-on stderr diagnostics (stdout and exit codes unchanged)
 
@@ -244,6 +245,7 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 | D-DIAG-03 | `run` hint, only when stderr is a TTY, `SNP_NO_HINTS` unset/empty and `core.hooksPath` unset: ``hint: {hook_path} runs {owner}, not snp; run `{prog} install` to switch`` (11 §A.14) | 32 |
 | D-DIAG-04 | stash notices: the next-run recovery notice (§4.6), `snp: waiting for another snp run in this worktree…`, `snp: restoring stashed changes, please wait`, `snp: git needed the terminal during the restore and was stopped` | 23 |
 | D-DIAG-05 | store notices: the foreign-owner warning (ADR-044), `Removed snp 1.x cache data from {store}.` (gc) | 22 |
+| D-DIAG-06 | snp brand, `-c` not given and no config file in the repository: `snp: no .snp.yaml or .pre-commit-config.yaml file was found in the repository root` before the unchanged error of the commands that need a config (`run`, `install-hooks`, `list`, `autoupdate`, `migrate-config`, `config dump`, `migrate builtin\|upstream`, `hook-impl` without `--config`; once per process; ADR-087) | 32, 33 |
 
 ### 5.9 TIERB — Python-internal bytes
 
@@ -331,7 +333,8 @@ Unknown keys, including `x-*`, keep pre-commit's warnings in snp.
 
 ### 7.4 Local overlay
 
-`<config dir>/.pre-commit-config.local.yaml` (or `.yml`), or `SNP_LOCAL_CONFIG=<path>` (empty/`0` disables);
+`<config dir>/.pre-commit-config.local.yaml` (or `.yml`) — `.snp.local.yaml` (or `.yml`) beside an `.snp.yaml`/`.snp.yml`
+config (ADR-087, D-EXT-09) —, or `SNP_LOCAL_CONFIG=<path>` (empty/`0` disables);
 `--no-local-config` disables. Ignored (stderr note) when tracked by git or when `CI` is truthy, unless named by
 `SNP_LOCAL_CONFIG`. Schema:
 

@@ -30,6 +30,11 @@ unrelated snp 1.x releases of the crate.
   without a terminal it runs captured after a one-line note, and `SNP_NO_TTY=1` opts out. `snp migrate lefthook`
   keeps `interactive` (still dropped with `--portable`) and substitutes positional templates inside double quotes
   without extra quotes (`test -n "{2}"` → `test -n "$PRE_COMMIT_COMMIT_MSG_SOURCE"`).
+- `.snp.yaml` (or `.snp.yml`) as the config file name (ADR-087): without `-c`, every command reads `.snp.yaml`, then
+  `.snp.yml`, then `.pre-commit-config.yaml` from the repository root (through the `pre-commit` alias
+  `.pre-commit-config.yaml` keeps priority); `.snp.yaml` beside `.pre-commit-config.yaml` wins with a one-line note,
+  both snp names are an error, the hook scripts embed the file found, and its local overlay is `.snp.local.yaml`.
+  `snp migrate lefthook` writes `.snp.yaml` (`.pre-commit-config.yaml` with `--portable`).
 - Native implementations of the pre-commit-hooks hooks (tags v3.0.0 to v6.0.0) and of pygrep hooks, used
   automatically when they are verified identical (the fast path).
 - 21 language backends with verified toolchain downloads; Python environments created with uv by default.

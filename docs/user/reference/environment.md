@@ -47,8 +47,8 @@ for legacy hooks.
 | `SNP_SKIP_GROUPS` | — | Comma-separated hook groups to exclude (see `groups`). |
 | `SNP_OUTPUT` | `default` | `default`, `summary` or `quiet`, overriding the root `output` key. |
 | `SNP_NO_TTY` | — | `1`: `interactive` hooks run like any other hook — no terminal, output captured (lefthook's `no_tty`). |
-| `SNP_COMPAT_STRICT` | — | `1`: ignore every snp extension key, exactly as pre-commit does. |
-| `SNP_LOCAL_CONFIG` | `<config dir>/.pre-commit-config.local.yaml` | Path of the local overlay; empty or `0` disables it. |
+| `SNP_COMPAT_STRICT` | — | `1`: ignore every snp extension key, the local overlay and `.snp.yaml`, exactly as pre-commit does. |
+| `SNP_LOCAL_CONFIG` | `<config dir>/.pre-commit-config.local.yaml` (`.snp.local.yaml` beside `.snp.yaml`) | Path of the local overlay; empty or `0` disables it. |
 | `SNP_NO_HINTS` | — | Non-empty: no `hint: … runs …, not snp` line on `run` (it only appears when stderr is a terminal anyway). |
 | `SNP_NO_FAST_PATH` | — | `1`: never run pre-commit-hooks hooks natively (as `--no-fast-path`). |
 | `SNP_ALLOW_OLD_GIT` | — | `1`: no warning for git older than 2.31. |

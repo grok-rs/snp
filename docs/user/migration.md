@@ -142,9 +142,14 @@ Configs need nothing: snp never writes snp-only syntax into `.pre-commit-config.
 * **prek:** `snp install` recognises prek's hook scripts and replaces them in place; prek-only options the script used
   are reported (`Note: the replaced prek hook used prek-only options (…); they are not supported and were dropped`).
   prek recognises snp's script as well, so `prek install` switches back.
-* **lefthook:** `snp migrate lefthook` converts `lefthook.yml` into a `.pre-commit-config.yaml` that uses the snp
-  extension keys (priorities, groups, `env`, `stage_fixed`, conditions, `interactive`) and a local overlay for
-  `lefthook-local.yml`, and reports everything that could not be converted exactly. A job with `interactive: true`
+* **lefthook:** `snp migrate lefthook` converts `lefthook.yml` into a `.snp.yaml` that uses the snp extension keys
+  (priorities, groups, `env`, `stage_fixed`, conditions, `interactive`) and, with `--local`, `lefthook-local.yml` into
+  its local overlay `.snp.local.yaml`, and reports everything that could not be converted exactly. snp finds
+  `.snp.yaml` without `-c` (see [Config file name](configuration.md#config-file-name)); `--install` installs hook
+  scripts that name it. `--portable` writes `.pre-commit-config.yaml` (and `.pre-commit-config.local.yaml`) instead,
+  with only the keys pre-commit 4.x understands, for repositories that Python pre-commit also runs; `-o FILE` picks
+  any name, and the overlay follows it (`.snp.local.yaml` beside an `.snp.y[a]ml`, else
+  `.pre-commit-config.local.yaml`). A job with `interactive: true`
   (a commitizen prompt, say) keeps it: its prompt appears on the terminal during `git commit` (see
   [Interactive hooks](configuration.md#interactive-hooks)); `--portable` drops it as lossy. Positional templates are
   substituted with the variables pre-commit sets — `test -n "{2}"` in `prepare-commit-msg` becomes

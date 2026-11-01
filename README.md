@@ -48,6 +48,9 @@ snp install --install-hooks   # switch this repository's hook scripts to snp
 snp run --all-files           # exactly `pre-commit run --all-files`
 ```
 
+snp reads your `.pre-commit-config.yaml` as it is. A repository that uses snp only can name it `.snp.yaml` instead
+(snp looks for `.snp.yaml`, `.snp.yml`, then `.pre-commit-config.yaml`): [Config file name](docs/user/configuration.md#config-file-name).
+
 To keep scripts that call `pre-commit` working, create the opt-in alias: `snp self alias install`. Under that name snp
 behaves as pre-commit 4.6.2 to the byte.
 
@@ -61,7 +64,7 @@ The user documentation lives in [`docs/user`](docs/user/README.md):
 * [Installation](docs/user/installation.md)
 * [Migrating from pre-commit](docs/user/migration.md) — checklist, hook scripts, template directories, rollback
 * [CI integration](docs/user/ci.md) — snp-action, cache keys, GitLab/Azure/CircleCI, pre-commit.ci
-* [Configuration](docs/user/configuration.md) — extension keys, `repo: builtin`, the local overlay
+* [Configuration](docs/user/configuration.md) — `.snp.yaml`, extension keys, `repo: builtin`, the local overlay
 * [Troubleshooting](docs/user/troubleshooting.md) — `snp doctor`, logs, crash reports
 * [CLI reference](docs/user/reference/cli.md) and [environment variables](docs/user/reference/environment.md)
 * [Compatibility](docs/user/compatibility.md), [DIVERGENCES](docs/user/divergences.md) and

@@ -1,0 +1,27 @@
+# D-DIAG-06 (DIAG, owner WP-32, ADR-087): snp brand, no `-c` and no config file: one stderr line names both config
+# names before pre-commit's unchanged error; stdout and the exit code equal pre-commit's.
+# Scenario in the schema of docs/research/10-test-strategy.md §7.4.3.
+expect_divergence: D-DIAG-06
+name: divergences/D-DIAG-06-no-config-file
+since: "4.6.2"
+brands: [snp]
+requires: {git: ">=2.19", net: false, tools: [], os: [linux, macos, windows], pty: false}
+work:
+  files: {a.txt: "a\n"}
+  config: null
+  commit: [a.txt]
+steps:
+  - tool: [run, --all-files]
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+expected:
+  oracle:
+    exit: 1
+    stdout_starts_with: "An error has occurred: InvalidConfigError: \n=====> .pre-commit-config.yaml is not a file\n"
+    stderr: ""
+  snp:
+    exit: 1
+    stdout_starts_with: "An error has occurred: InvalidConfigError: \n=====> .pre-commit-config.yaml is not a file\n"
+    stderr: "snp: no .snp.yaml or .pre-commit-config.yaml file was found in the repository root\n"
