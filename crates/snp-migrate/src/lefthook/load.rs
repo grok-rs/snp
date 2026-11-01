@@ -254,7 +254,7 @@ fn hook_slices(hooks: &LMap, key: &str) -> Vec<(String, Vec<LValue>)> {
 }
 
 /// lefthook's `mergeHooks` (`loader.go:536-583`): `jobs` merged by name, `setup` appended, the rest `maps.Merge`.
-fn merge_hooks(src: LMap, dest: &mut LMap) {
+fn merge_hooks(src: LMap, dest: &mut LMap, budget: &mut usize) -> Result<(), LoadError> {
     let src_jobs = hook_slices(&src, "jobs");
     let mut dest_jobs: Vec<(String, Vec<LValue>)> = hook_slices(dest, "jobs");
     let src_setup = hook_slices(&src, "setup");
@@ -263,11 +263,11 @@ fn merge_hooks(src: LMap, dest: &mut LMap) {
         && (src_setup.is_empty() || dest_setup.is_empty())
     {
         maps_merge(src, dest);
-        return;
+        return Ok(());
     }
     for (hook, new_jobs) in src_jobs {
         match dest_jobs.iter_mut().find(|(n, _)| *n == hook) {
-            Some((_, old)) => *old = merge_jobs_slice(new_jobs, std::mem::take(old)),
+            Some((_, old)) => *old = merge_jobs_slice(new_jobs, std::mem::take(old), budget)?,
             None => dest_jobs.push((hook, new_jobs)),
         }
     }
@@ -288,6 +288,31 @@ fn merge_hooks(src: LMap, dest: &mut LMap) {
             h.insert("setup".to_owned(), LValue::List(setup));
         }
     }
+    Ok(())
+}
+
+/// How many bytes `{cmd}` substitutions may add over one whole load: each extends level can double a `run`
+/// (`run: '{cmd}{cmd}'`), so without a budget 40 small files would ask for gigabytes.
+pub(crate) const CMD_BUDGET: usize = value::MAX_BYTES;
+
+/// `strings.ReplaceAll(run, "{cmd}", earlier)` charged against `budget`.
+fn expand_cmd(
+    run: &str,
+    earlier: &str,
+    job: &str,
+    budget: &mut usize,
+) -> Result<String, LoadError> {
+    let n = run.matches(CMD).count();
+    let grown = n
+        .saturating_mul(earlier.len())
+        .saturating_sub(n.saturating_mul(CMD.len()));
+    if grown > *budget {
+        return Err(LoadError(format!(
+            "`{{cmd}}` expansion of job '{job}' makes the configuration larger than {CMD_BUDGET} bytes"
+        )));
+    }
+    *budget = budget.saturating_sub(grown);
+    Ok(run.replace(CMD, earlier))
 }
 
 /// `job["group"]["jobs"]` as a list, if present.
@@ -304,7 +329,11 @@ fn group_jobs(job: &LMap) -> Option<&Vec<LValue>> {
 /// lefthook's `mergeJobsSlice(src, dest)` (`loader.go:612-701`): `dest` order kept; a `src` job whose `name`
 /// equals a named `dest` job is deep-merged into it (`{cmd}` in its `run` replaced by the earlier `run`, group jobs
 /// merged recursively); other map entries are appended; non-map entries are dropped.
-pub(crate) fn merge_jobs_slice(src: Vec<LValue>, dest: Vec<LValue>) -> Vec<LValue> {
+pub(crate) fn merge_jobs_slice(
+    src: Vec<LValue>,
+    dest: Vec<LValue>,
+    budget: &mut usize,
+) -> Result<Vec<LValue>, LoadError> {
     let mut result: Vec<LMap> = Vec::new();
     let mut mergeable: HashMap<String, usize> = HashMap::new();
     for job in dest {
@@ -330,12 +359,16 @@ pub(crate) fn merge_jobs_slice(src: Vec<LValue>, dest: Vec<LValue>) -> Vec<LValu
         let mut sub_jobs = group_jobs(dest_job).cloned().unwrap_or_default();
         let src_sub = group_jobs(&src_job).cloned().unwrap_or_default();
         if !sub_jobs.is_empty() && !src_sub.is_empty() {
-            sub_jobs = merge_jobs_slice(src_sub, sub_jobs);
+            sub_jobs = merge_jobs_slice(src_sub, sub_jobs, budget)?;
         }
         if let (Some(LValue::Str(src_run)), Some(LValue::Str(dest_run))) =
             (src_job.get("run"), dest_job.get("run"))
         {
-            let new_run = src_run.replace(CMD, dest_run);
+            let name = match src_job.get("name") {
+                Some(LValue::Str(n)) => n.as_str(),
+                _ => "",
+            };
+            let new_run = expand_cmd(src_run, dest_run, name, budget)?;
             src_job.insert("run".to_owned(), LValue::Str(new_run));
         }
         maps_merge(src_job, dest_job);
@@ -346,7 +379,7 @@ pub(crate) fn merge_jobs_slice(src: Vec<LValue>, dest: Vec<LValue>) -> Vec<LValu
             g.insert("jobs".to_owned(), LValue::List(sub_jobs));
         }
     }
-    result.into_iter().map(LValue::Map).collect()
+    Ok(result.into_iter().map(LValue::Map).collect())
 }
 
 /// Go's `filepath.Match` error.
@@ -546,21 +579,27 @@ pub(crate) fn go_match(pattern: &str, name: &str) -> Result<bool, &'static str> 
     Ok(name.is_empty())
 }
 
-/// `hasMeta` on Unix.
+/// `hasMeta`: `*?[`, plus the `\\` escape on Unix (on Windows `\\` is a separator, not an escape).
 fn has_meta(p: &str) -> bool {
-    p.contains(['*', '?', '[', '\\'])
+    p.contains(['*', '?', '[']) || (cfg!(not(windows)) && p.contains('\\'))
 }
 
 /// The deepest directory recursion of [`go_glob`].
 const MAX_GLOB_DEPTH: usize = 32;
 
-/// Go's `filepath.Glob` (afero's copy): a pattern without metacharacters is returned when it exists (`Lstat`);
-/// otherwise every directory level with metacharacters is expanded, names sorted. Unreadable directories match
-/// nothing.
-pub(crate) fn go_glob(pattern: &str, depth: usize) -> Result<Vec<String>, &'static str> {
+/// Go's `filepath.Glob` (afero's copy) run from the directory `base` (lefthook globs the extends path as written,
+/// relative to the repository it runs in, so metacharacters in `base` itself are never read as a pattern): a
+/// pattern without metacharacters is returned when it exists (`Lstat`); otherwise every directory level with
+/// metacharacters is expanded, names sorted. Unreadable directories match nothing. Matches are spelled like the
+/// pattern (relative to `base` when it is relative).
+pub(crate) fn go_glob(
+    base: &Path,
+    pattern: &str,
+    depth: usize,
+) -> Result<Vec<String>, &'static str> {
     go_match(pattern, "")?;
     if !has_meta(pattern) {
-        return Ok(if std::fs::symlink_metadata(pattern).is_ok() {
+        return Ok(if std::fs::symlink_metadata(base.join(pattern)).is_ok() {
             vec![pattern.to_owned()]
         } else {
             Vec::new()
@@ -582,28 +621,30 @@ pub(crate) fn go_glob(pattern: &str, depth: usize) -> Result<Vec<String>, &'stat
         d => d.strip_suffix('/').unwrap_or(d).to_owned(),
     };
     if !has_meta(&dir) {
-        return glob_dir(&dir, file, Vec::new());
+        return glob_dir(base, &dir, file, Vec::new());
     }
     if dir == pattern {
         return Err(BAD_PATTERN);
     }
     let mut matches = Vec::new();
-    for d in go_glob(&dir, depth.saturating_add(1))? {
-        matches = glob_dir(&d, file, matches)?;
+    for d in go_glob(base, &dir, depth.saturating_add(1))? {
+        matches = glob_dir(base, &d, file, matches)?;
     }
     Ok(matches)
 }
 
 /// `glob(dir, pattern, matches)`: the sorted entries of `dir` matching `pattern`.
 fn glob_dir(
+    base: &Path,
     dir: &str,
     pattern: &str,
     mut matches: Vec<String>,
 ) -> Result<Vec<String>, &'static str> {
-    if !Path::new(dir).is_dir() {
+    let full = base.join(dir);
+    if !full.is_dir() {
         return Ok(matches);
     }
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = std::fs::read_dir(&full) else {
         return Ok(matches);
     };
     let mut names: Vec<String> = entries
@@ -631,6 +672,8 @@ struct Ctx<'a> {
     root: &'a Path,
     files: Vec<String>,
     warnings: Vec<String>,
+    /// What `{cmd}` substitutions may still add ([`CMD_BUDGET`]).
+    budget: usize,
 }
 
 impl Ctx<'_> {
@@ -638,8 +681,7 @@ impl Ctx<'_> {
     fn load_into(&mut self, k: &mut LMap, path: &Path) -> Result<(), LoadError> {
         let m = read_config(self.root, path)?;
         self.files.push(display(self.root, path));
-        merge_hooks(m, k);
-        Ok(())
+        merge_hooks(m, k, &mut self.budget)
     }
 
     /// `extend` / `extendRecursive` (`loader.go:333-376`); a path seen twice is a warning and skipped (05 §19.2).
@@ -654,14 +696,16 @@ impl Ctx<'_> {
             return Err(LoadError("extends are nested too deeply".to_owned()));
         }
         for p in extends {
-            let joined = if Path::new(p).is_absolute() {
-                p.clone()
+            // Windows' `filepath.Glob` reads `\\` as a separator; globbing works on `/`.
+            let pattern = if cfg!(windows) {
+                p.replace('\\', "/")
             } else {
-                self.root.join(p).to_string_lossy().into_owned()
+                p.clone()
             };
-            let paths = go_glob(&joined, 0)
-                .map_err(|e| LoadError(format!("bad glob syntax for '{joined}': {e}")))?;
-            for path in paths {
+            let paths = go_glob(self.root, &pattern, 0)
+                .map_err(|e| LoadError(format!("bad glob syntax for '{p}': {e}")))?;
+            for rel in paths {
+                let path = self.root.join(&rel).to_string_lossy().into_owned();
                 if visited.contains(&path) {
                     self.warnings.push(format!(
                         "possible recursion in extends: path {} is specified multiple times; skipped",
@@ -674,7 +718,7 @@ impl Ctx<'_> {
                 self.load_into(&mut extent, Path::new(&path))?;
                 let nested = strings(&extent, "extends");
                 self.extend(&mut extent, &nested, visited, depth.saturating_add(1))?;
-                merge_hooks(extent, k);
+                merge_hooks(extent, k, &mut self.budget)?;
             }
         }
         Ok(())
@@ -683,14 +727,18 @@ impl Ctx<'_> {
 
 /// `addHook` (`loader.go:418-492`): the final main ← secondary merge of one hook with the `{cmd}` replacement in
 /// commands and `setup` prepended.
-fn add_hook(main: Option<&LValue>, secondary: Option<&LValue>) -> LMap {
+fn add_hook(
+    main: Option<&LValue>,
+    secondary: Option<&LValue>,
+    budget: &mut usize,
+) -> Result<LMap, LoadError> {
     let mut dest = match main {
         Some(LValue::Map(m)) => m.clone(),
         _ => LMap::new(),
     };
     let src = match secondary {
         Some(LValue::Map(m)) => m.clone(),
-        _ => return dest,
+        _ => return Ok(dest),
     };
     let mut dest_commands: Vec<(String, String)> = Vec::new();
     if let Some(LValue::Map(cmds)) = dest.get("commands") {
@@ -706,7 +754,7 @@ fn add_hook(main: Option<&LValue>, secondary: Option<&LValue>) -> LMap {
         Some(LValue::List(l)) => l.clone(),
         _ => Vec::new(),
     };
-    let dest_jobs = merge_jobs_slice(list(&src, "jobs"), list(&dest, "jobs"));
+    let dest_jobs = merge_jobs_slice(list(&src, "jobs"), list(&dest, "jobs"), budget)?;
     let mut setup = list(&src, "setup");
     setup.extend(list(&dest, "setup"));
     maps_merge(src, &mut dest);
@@ -721,7 +769,7 @@ fn add_hook(main: Option<&LValue>, secondary: Option<&LValue>) -> LMap {
                     .iter()
                     .find(|(n, _)| n == name)
                     .map_or("", |(_, r)| r.as_str());
-                *run = run.replace(CMD, earlier);
+                *run = expand_cmd(run, earlier, name, budget)?;
             }
         }
     }
@@ -731,7 +779,7 @@ fn add_hook(main: Option<&LValue>, secondary: Option<&LValue>) -> LMap {
     if !setup.is_empty() {
         dest.insert("setup".to_owned(), LValue::List(setup));
     }
-    dest
+    Ok(dest)
 }
 
 /// Whether a top-level key is a custom hook (`^([^.]+)\.(?:scripts|commands|jobs)` over koanf's flattened keys).
@@ -756,6 +804,7 @@ pub(crate) fn load(
         root,
         files: Vec::new(),
         warnings: Vec::new(),
+        budget: CMD_BUDGET,
     };
     let main_path = locate_main(root, config)?;
     let local_path = locate_local(root);
@@ -800,7 +849,7 @@ pub(crate) fn load(
         if main.contains_key(name) || secondary.contains_key(name) {
             hooks.push(RawHook {
                 name: name.to_owned(),
-                map: add_hook(main.get(name), secondary.get(name)),
+                map: add_hook(main.get(name), secondary.get(name), &mut cx.budget)?,
             });
         }
     }
@@ -813,7 +862,7 @@ pub(crate) fn load(
     custom.sort();
     custom.dedup();
     for name in custom {
-        let map = add_hook(main.get(&name), secondary.get(&name));
+        let map = add_hook(main.get(&name), secondary.get(&name), &mut cx.budget)?;
         hooks.push(RawHook { name, map });
     }
     let hook_names: Vec<String> = hooks.iter().map(|h| h.name.clone()).collect();
@@ -860,7 +909,7 @@ mod tests {
         };
         let dest = parse("j: [{name: a, run: x}, {run: u}]");
         let src = parse("j: [{name: a, run: 'w {cmd}'}, {run: v}, {name: b, run: y}, 3]");
-        let out = merge_jobs_slice(src, dest);
+        let out = merge_jobs_slice(src, dest, &mut CMD_BUDGET.clone()).unwrap();
         let runs: Vec<_> = out
             .iter()
             .map(|j| j.as_map().unwrap()["run"].as_str().unwrap().to_owned())

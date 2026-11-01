@@ -1,6 +1,6 @@
 {
   "features.portable.yaml": {
-    "sha256": "3ca1771279aee4064a7268e2faa6f3bfd4ed51d46b6ced071c6107ac9fd73a35",
+    "sha256": "3a3fd9aefab3ff447da5eeb7583c64e8b191c0cef57d1c7b0c2c044a932a8a77",
     "validate": {
       "exit": 0,
       "stdout": "",
@@ -63,7 +63,7 @@
     "runs": []
   },
   "runnable.portable.yaml": {
-    "sha256": "173d679142684348f991e7ac0f858d1959c68d52207a74c668de95f661df8a98",
+    "sha256": "533c6a01fc35156ab693abdf2d6702e3a5b4d51fccf01c7e19d46ed9bf0429b9",
     "validate": {
       "exit": 0,
       "stdout": "",
@@ -237,7 +237,7 @@
     ]
   },
   "worked_example.portable.yaml": {
-    "sha256": "df8f826cd70e3042174614ab4c66c078fdbc8fc434d48b9cc5cfbb1f8741f4dc",
+    "sha256": "1a589f3478e830689c7750c2fde47566f83ee434419c2e5f560f9496bbb2b08c",
     "validate": {
       "exit": 0,
       "stdout": "",

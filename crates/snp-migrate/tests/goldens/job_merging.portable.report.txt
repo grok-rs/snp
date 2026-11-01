@@ -1,4 +1,4 @@
-snp-migrate: warning: lefthook.yml: pre-commit fails hooks that modify files; lefthook did not
+snp-migrate: lossy: lefthook.yml: pre-commit fails hooks that modify files; lefthook did not
 snp-migrate: lossy: pre-commit/child: stage_fixed dropped (portable mode): fixes are no longer staged
 snp-migrate: warning: pre-commit/echo: always skipped by lefthook; not converted
-Converted 13 jobs from 4 lefthook hooks into 12 hooks (2 warnings, 1 lossy conversions).
+Converted 13 jobs from 4 lefthook hooks into 12 hooks (1 warnings, 2 lossy conversions).

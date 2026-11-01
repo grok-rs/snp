@@ -1,11 +1,11 @@
-snp-migrate: warning: lefthook.yml: pre-commit fails hooks that modify files; lefthook did not
+snp-migrate: lossy: lefthook.yml: pre-commit fails hooks that modify files; lefthook did not
 snp-migrate: lossy: pre-commit/[4]: piped group: pre-commit fail_fast stops the whole run, lefthook piped only stopped its group
 snp-migrate: warning: pre-commit: parallelism reduced: a sequential group inside a parallel one is serialised
-snp-migrate: warning: pre-commit/text files are not empty: fail_text dropped (portable mode)
+snp-migrate: lossy: pre-commit/text files are not empty: fail_text dropped (portable mode)
 snp-migrate: lossy: pre-commit/text files are not empty: timeout dropped (portable mode)
 snp-migrate: lossy: pre-commit/text files are not empty: stage_fixed dropped (portable mode): fixes are no longer staged
 snp-migrate: lossy: pre-commit/in a root: skip/only conditions dropped (portable mode)
 snp-migrate: warning: pre-commit/listed files: best-effort: file list computed in shell
 snp-migrate: warning: pre-commit/every file: best-effort: file list computed in shell
-snp-migrate: warning: pre-commit/every file: tags dropped (portable mode)
-Converted 11 jobs from 5 lefthook hooks into 11 hooks (6 warnings, 4 lossy conversions).
+snp-migrate: lossy: pre-commit/every file: tags dropped (portable mode)
+Converted 11 jobs from 5 lefthook hooks into 11 hooks (3 warnings, 7 lossy conversions).

@@ -51,11 +51,10 @@ enum Tok {
     Alt(Vec<Vec<Self>>),
 }
 
-/// A recursive-descent parser over the pattern's characters.
+/// A recursive-descent parser over the pattern's characters (doublestar).
 struct Parser<'a> {
     chars: &'a [char],
     pos: usize,
-    matcher: Matcher,
 }
 
 impl Parser<'_> {
@@ -122,11 +121,10 @@ impl Parser<'_> {
         Ok(out)
     }
 
-    /// After `[`: `!` (and `^` for doublestar) negates; `a-z` ranges; `\x` escapes; `]` closes.
+    /// After `[` (doublestar): `!` or `^` negates; `a-z` ranges; `\x` escapes; `]` closes.
     fn class(&mut self) -> Result<Tok, GlobError> {
         let unclosed = || GlobError("unclosed '['".to_owned());
-        let negated = self.peek() == Some('!')
-            || (self.matcher == Matcher::Doublestar && self.peek() == Some('^'));
+        let negated = self.peek() == Some('!') || self.peek() == Some('^');
         if negated {
             self.bump();
         }
@@ -160,17 +158,177 @@ impl Parser<'_> {
 /// Parses `pattern` (already lowercased by the caller for `glob`).
 fn parse(pattern: &str, matcher: Matcher) -> Result<Vec<Tok>, GlobError> {
     let chars: Vec<char> = pattern.chars().collect();
+    if chars.contains(&'\0') {
+        // gobwas's lexer reads NUL as the end of input; never guess what such a pattern means.
+        return Err(GlobError("NUL character in the pattern".to_owned()));
+    }
+    if matcher == Matcher::Gobwas {
+        return Gobwas {
+            chars: &chars,
+            pos: 0,
+        }
+        .pattern();
+    }
     let mut p = Parser {
         chars: &chars,
         pos: 0,
-        matcher,
     };
     let seq = p.seq(0)?;
     if p.pos < chars.len() {
-        // A `,` or `}` outside braces is literal text for gobwas; `seq(0)` never stops on them.
+        // A `,` or `}` outside braces is literal text; `seq(0)` never stops on them.
         return Err(GlobError("unbalanced '}'".to_owned()));
     }
     Ok(seq)
+}
+
+/// gobwas/glob v0.2.3's lexer and parser (`syntax/lexer/lexer.go`, `syntax/ast/parser.go`), followed exactly:
+///
+/// * text runs stop at `?`, `*`, `[`, `{` (and, inside braces, `,` and `}`); `\x` is a literal `x`, a trailing `\`
+///   is dropped; `}` and `,` outside braces are literal;
+/// * `[` starts either exactly one range `[lo-hi]` / `[!lo-hi]` (`lo` and `hi` taken raw, then `]` is required) or a
+///   literal character list `[abc]` / `[!abc]` (escapes allowed, `-` literal): `[ab-z]` is {a, b, -, z} and
+///   `[a-z0-9]`, `[a-]`, `[]` are compile errors (lefthook's `glob.MustCompile` panics on them);
+/// * an unclosed `{` is closed at the end of the pattern.
+struct Gobwas<'a> {
+    chars: &'a [char],
+    pos: usize,
+}
+
+impl Gobwas<'_> {
+    fn peek_at(&self, k: usize) -> Option<char> {
+        self.chars.get(self.pos.saturating_add(k)).copied()
+    }
+
+    fn bump(&mut self) -> Option<char> {
+        let c = self.peek_at(0)?;
+        self.pos = self.pos.saturating_add(1);
+        Some(c)
+    }
+
+    /// `fetchText`: escaped text up to an unescaped breaker (not consumed) or the end.
+    fn text(&mut self, breakers: &[char]) -> Vec<char> {
+        let mut data = Vec::new();
+        while let Some(c) = self.peek_at(0) {
+            if c == '\\' {
+                self.bump();
+                if let Some(e) = self.bump() {
+                    data.push(e);
+                }
+                continue;
+            }
+            if breakers.contains(&c) {
+                break;
+            }
+            self.bump();
+            data.push(c);
+        }
+        data
+    }
+
+    /// `fetchRange` + `parserRange`, after the `[`.
+    fn range(&mut self) -> Result<Tok, GlobError> {
+        let eof = || GlobError("unclosed '['".to_owned());
+        let not = self.peek_at(0) == Some('!');
+        if not {
+            self.bump();
+        }
+        let first = self.peek_at(0).ok_or_else(eof)?;
+        if self.peek_at(1) == Some('-') {
+            self.pos = self.pos.saturating_add(2);
+            let hi = self.bump().ok_or_else(eof)?;
+            match self.bump() {
+                Some(']') => {}
+                Some(_) => return Err(GlobError("expected ']' after a range".to_owned())),
+                None => return Err(eof()),
+            }
+            if hi < first {
+                return Err(GlobError(format!("invalid range {first}-{hi}")));
+            }
+            return Ok(Tok::Class(not, vec![(first, hi)]));
+        }
+        let list = self.text(&[']']);
+        if self.bump() != Some(']') {
+            return Err(eof());
+        }
+        if list.is_empty() {
+            return Err(GlobError("empty character class".to_owned()));
+        }
+        Ok(Tok::Class(not, list.into_iter().map(|c| (c, c)).collect()))
+    }
+
+    /// The whole pattern: a stack of open brace groups (`{` … `,` … `}`).
+    fn pattern(&mut self) -> Result<Vec<Tok>, GlobError> {
+        const TEXT: [char; 4] = ['?', '*', '[', '{'];
+        const TERMS: [char; 6] = ['?', '*', '[', '{', '}', ','];
+        // Each open group: the alternatives finished so far; `cur` is the sequence being built.
+        let mut groups: Vec<(Vec<Tok>, Vec<Vec<Tok>>)> = Vec::new();
+        let mut cur: Vec<Tok> = Vec::new();
+        while let Some(c) = self.peek_at(0) {
+            match c {
+                '{' => {
+                    self.bump();
+                    if groups.len() >= MAX_NESTING {
+                        return Err(GlobError("braces are nested too deeply".to_owned()));
+                    }
+                    groups.push((std::mem::take(&mut cur), Vec::new()));
+                }
+                ',' if !groups.is_empty() => {
+                    self.bump();
+                    if let Some((_, alts)) = groups.last_mut() {
+                        alts.push(std::mem::take(&mut cur));
+                    }
+                }
+                '}' if !groups.is_empty() => {
+                    self.bump();
+                    if let Some((outer, mut alts)) = groups.pop() {
+                        alts.push(std::mem::take(&mut cur));
+                        cur = outer;
+                        cur.push(alt(alts)?);
+                    }
+                }
+                '[' => {
+                    self.bump();
+                    cur.push(self.range()?);
+                }
+                '?' => {
+                    self.bump();
+                    cur.push(Tok::Any);
+                }
+                '*' => {
+                    self.bump();
+                    let n = if self.peek_at(0) == Some('*') {
+                        self.bump();
+                        2
+                    } else {
+                        1
+                    };
+                    cur.push(Tok::Star(n));
+                }
+                _ => {
+                    let breakers: &[char] = if groups.is_empty() { &TEXT } else { &TERMS };
+                    cur.extend(self.text(breakers).into_iter().map(Tok::Lit));
+                }
+            }
+        }
+        while let Some((outer, mut alts)) = groups.pop() {
+            alts.push(std::mem::take(&mut cur));
+            cur = outer;
+            cur.push(alt(alts)?);
+        }
+        Ok(cur)
+    }
+}
+
+/// A finished gobwas brace group. One whose alternatives are all empty (`{}`, `{,}`) is refused: gobwas v0.2.3's
+/// compiler handles it inconsistently (`x{}` panics, `{}x` matches nothing, `{}*` matches everything), so no regex
+/// can stand for it.
+fn alt(alts: Vec<Vec<Tok>>) -> Result<Tok, GlobError> {
+    if alts.iter().all(Vec::is_empty) {
+        return Err(GlobError(
+            "a brace group with only empty alternatives ('{}', '{,}') has no consistent gobwas meaning".to_owned(),
+        ));
+    }
+    Ok(Tok::Alt(alts))
 }
 
 /// Python's `re.escape` of one character.
@@ -233,10 +391,12 @@ fn class(
             out.push(']');
         }
         Flavor::Ere => {
-            // POSIX brackets: no escapes; `]` first, `-` last, `^` never first.
+            // POSIX brackets: no escapes; `]` first, `-` last, `^` never first, and `[` only right before `^`, `-` or
+            // the closing `]` (so it never opens a `[:`, `[=` or `[.` class).
             let mut close = false;
             let mut dash = false;
             let mut caret = false;
+            let mut open = false;
             let mut body = String::new();
             for &(lo, hi) in items {
                 if lo == hi {
@@ -244,6 +404,7 @@ fn class(
                         ']' => close = true,
                         '-' => dash = true,
                         '^' => caret = true,
+                        '[' => open = true,
                         c => body.push(c),
                     }
                 } else if lo.is_ascii_alphanumeric() && hi.is_ascii_alphanumeric() {
@@ -256,7 +417,7 @@ fn class(
                     )));
                 }
             }
-            if !neg && !close && !dash && body.is_empty() && caret {
+            if !neg && !close && !dash && !open && body.is_empty() && caret {
                 out.push_str("\\^");
                 return Ok(());
             }
@@ -271,6 +432,9 @@ fn class(
                 out.push(']');
             }
             out.push_str(&body);
+            if open {
+                out.push('[');
+            }
             if caret {
                 out.push('^');
             }
@@ -394,7 +558,7 @@ pub(crate) fn files_regex(
         if k > 0 {
             out.push('|');
         }
-        let body = translate(&g.to_lowercase(), m, Flavor::Python)
+        let body = translate(&go_lower(g), m, Flavor::Python)
             .map_err(|e| GlobError(format!("glob {}: {}", quote(g), e.0)))?;
         write!(out, "(?:{body})").unwrap_or_default();
     }
@@ -434,11 +598,7 @@ pub(crate) fn ere(globs: &[String], m: Matcher, lower: bool) -> Result<Option<St
         if k > 0 {
             out.push('|');
         }
-        let src = if lower {
-            g.to_lowercase()
-        } else {
-            (*g).clone()
-        };
+        let src = if lower { go_lower(g) } else { (*g).clone() };
         out.push_str(
             &translate(&src, m, Flavor::Ere)
                 .map_err(|e| GlobError(format!("glob {}: {}", quote(g), e.0)))?,
@@ -446,6 +606,14 @@ pub(crate) fn ere(globs: &[String], m: Matcher, lower: bool) -> Result<Option<St
     }
     out.push_str(")$");
     Ok(Some(out))
+}
+
+/// Go's `strings.ToLower`: the simple (one-to-one) lowercase mapping of every character. Rust's full mapping turns
+/// `İ` (U+0130) into two characters; its first one is the simple mapping (`i`).
+pub(crate) fn go_lower(s: &str) -> String {
+    s.chars()
+        .map(|c| c.to_lowercase().next().unwrap_or(c))
+        .collect()
 }
 
 /// Rejects a regex Python's `re` would not compile (the translation is meant to always produce valid regexes).
@@ -493,10 +661,31 @@ mod tests {
         assert_eq!(py("\\*x"), "\\*x");
         assert_eq!(py("a b-c"), "a\\ b\\-c");
         assert_eq!(py("x,y}"), "x,y\\}");
-        assert!(translate("[", Matcher::Gobwas, Flavor::Python).is_err());
-        assert!(translate("{a", Matcher::Gobwas, Flavor::Python).is_err());
-        assert!(translate("a\\", Matcher::Gobwas, Flavor::Python).is_err());
-        assert!(translate("[]", Matcher::Gobwas, Flavor::Python).is_err());
+        // gobwas v0.2.3: one range or a literal list per bracket; an unclosed `{` ends with the pattern; a trailing
+        // `\` is dropped.
+        assert_eq!(py("[ab-z]"), "[ab\\-z]");
+        assert_eq!(py("[\\-a]"), "[\\\\-a]");
+        assert_eq!(py("[]-a]"), "[\\]-a]");
+        assert_eq!(py("[!a-c]"), "[^a-c]");
+        assert_eq!(py("[!!]"), "[^\\!]");
+        assert_eq!(py("{a"), "(?:a)");
+        assert_eq!(py("x{a,{b"), "x(?:a|(?:b))");
+        assert_eq!(py("a\\"), "a");
+        assert_eq!(py("x{a,}"), "x(?:a|)");
+        assert_eq!(py("[xa-c]"), "[xa\\-c]");
+        for bad in [
+            "{}", "x{,}y", "{a,{}}", "[", "[]", "[!]", "[a-z0-9]", "[a-]", "[c-a]", "[a\\", "a\0b",
+        ] {
+            assert!(
+                translate(bad, Matcher::Gobwas, Flavor::Python).is_err(),
+                "{bad:?}"
+            );
+        }
+        // doublestar keeps POSIX classes.
+        assert_eq!(
+            translate("[a-z0-9]", Matcher::Doublestar, Flavor::Python).unwrap(),
+            "[a-z0-9]"
+        );
     }
 
     #[test]
@@ -609,106 +798,184 @@ mod tests {
         assert!(translate("[*-/]", Matcher::Gobwas, Flavor::Ere).is_err());
     }
 
-    /// A reference gobwas matcher written independently of the translator: braces are expanded first, then a
-    /// backtracking wildcard match (`*` = any run, `?` = any character, `[…]` / `[!…]` classes, `\x` literal), both
-    /// sides lowercased like lefthook's `glob` filter.
-    mod reference {
-        fn expand(p: &[char]) -> Vec<Vec<char>> {
-            // The first top-level `{…}` (outside classes and escapes).
-            let mut i = 0;
-            let mut in_class = false;
-            while i < p.len() {
-                match p[i] {
-                    '\\' => i += 1,
-                    '[' => in_class = true,
-                    ']' => in_class = false,
-                    '{' if !in_class => {
-                        let mut depth = 0;
-                        let mut parts = Vec::new();
-                        let mut start = i + 1;
-                        let mut j = i;
-                        while j < p.len() {
-                            match p[j] {
-                                '\\' => j += 1,
-                                '{' => depth += 1,
-                                '}' => {
-                                    depth -= 1;
-                                    if depth == 0 {
-                                        parts.push(&p[start..j]);
-                                        break;
-                                    }
-                                }
-                                ',' if depth == 1 => {
-                                    parts.push(&p[start..j]);
-                                    start = j + 1;
-                                }
-                                _ => {}
-                            }
-                            j += 1;
-                        }
-                        let mut out = Vec::new();
-                        for part in parts {
-                            let mut v = p[..i].to_vec();
-                            v.extend_from_slice(part);
-                            v.extend_from_slice(&p[j + 1..]);
-                            out.extend(expand(&v));
-                        }
-                        return out;
-                    }
-                    _ => {}
-                }
-                i += 1;
-            }
-            vec![p.to_vec()]
-        }
+    /// One line of `tests/vectors/gobwas.jsonl`: a pattern, whether it is a `glob` (both sides lowercased) or an
+    /// `exclude` (case-sensitive), whether real gobwas/glob v0.2.3 compiles it (`MustCompile` without panicking),
+    /// and its verdict for each path.
+    struct Vector {
+        p: String,
+        lower: bool,
+        ok: bool,
+        paths: Vec<String>,
+        m: Option<Vec<bool>>,
+    }
 
-        fn class_len_and_match(p: &[char], c: char) -> (usize, bool) {
-            let mut i = 1;
-            let neg = p.get(1) == Some(&'!');
-            if neg {
-                i += 1;
-            }
-            let mut hit = false;
-            let mut first = true;
-            while i < p.len() && (p[i] != ']' || first) {
-                first = false;
-                if p[i] == '\\' {
-                    i += 1;
+    /// The vectors were produced by the real gobwas/glob v0.2.3 (lefthook's matcher) with
+    /// `tests/vectors/gobwas-oracle/` (`python3 gen.py 34 1000 | go run .`), so this is an independent reference.
+    fn vectors() -> Vec<Vector> {
+        include_str!("../../tests/vectors/gobwas.jsonl")
+            .lines()
+            .map(|l| {
+                let v: serde_json::Value = serde_json::from_str(l).unwrap();
+                let strs = |k: &str| -> Vec<String> {
+                    v[k].as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|x| x.as_str().unwrap().to_owned())
+                        .collect()
+                };
+                Vector {
+                    p: v["p"].as_str().unwrap().to_owned(),
+                    lower: v["lower"].as_bool().unwrap(),
+                    ok: v["ok"].as_bool().unwrap(),
+                    paths: strs("paths"),
+                    m: v["m"]
+                        .as_array()
+                        .map(|a| a.iter().map(|x| x.as_bool().unwrap()).collect()),
                 }
-                let lo = p[i];
-                let mut hi = lo;
-                if p.get(i + 1) == Some(&'-') && p.get(i + 2).is_some_and(|x| *x != ']') {
-                    hi = p[i + 2];
-                    i += 2;
-                }
-                if lo <= c && c <= hi {
-                    hit = true;
-                }
-                i += 1;
-            }
-            (i + 1, hit != neg)
-        }
+            })
+            .collect()
+    }
 
-        fn wild(p: &[char], s: &[char]) -> bool {
-            match p.first() {
-                None => s.is_empty(),
-                Some('*') => (0..=s.len()).any(|k| wild(&p[1..], &s[k..])),
-                Some('?') => !s.is_empty() && wild(&p[1..], &s[1..]),
-                Some('[') => {
-                    let Some(&c) = s.first() else { return false };
-                    let (n, hit) = class_len_and_match(p, c);
-                    hit && wild(&p[n..], &s[1..])
+    /// 05 §19.6: the `files` / `exclude` regex of a pattern ≡ gobwas; a pattern gobwas rejects is an error (the job
+    /// becomes a `fail` hook, as lefthook's `MustCompile` panics).
+    #[test]
+    fn gobwas_vectors() {
+        let all = vectors();
+        assert!(all.len() >= 2000);
+        let (mut compared, mut errors, mut unicode_bugs) = (0_usize, 0_usize, 0_usize);
+        for v in &all {
+            let pats = std::slice::from_ref(&v.p);
+            let re = if v.lower {
+                files_regex(pats, Matcher::Gobwas, None)
+            } else {
+                exclude_regex(pats, Matcher::Gobwas)
+            };
+            if let Err(e) = &re
+                && e.0.contains("only empty alternatives")
+            {
+                // Refused by design whatever gobwas does with it (see `alt`).
+                assert!(v.p.contains('{'), "{:?}", v.p);
+                continue;
+            }
+            if !v.ok {
+                assert!(
+                    re.is_err(),
+                    "gobwas rejects {:?}, the translation gives {re:?}",
+                    v.p
+                );
+                errors += 1;
+                continue;
+            }
+            let re = re
+                .unwrap_or_else(|e| panic!("gobwas accepts {:?}: {e:?}", v.p))
+                .unwrap();
+            let ere = ere(pats, Matcher::Gobwas, v.lower);
+            for (path, want) in v.paths.iter().zip(v.m.as_deref().unwrap()) {
+                if path.is_empty() {
+                    // lefthook never matches an empty path (gobwas's `?` would match it).
+                    continue;
                 }
-                Some('\\') => s.first() == p.get(1) && !s.is_empty() && wild(&p[2..], &s[1..]),
-                Some(c) => s.first() == Some(c) && wild(&p[1..], &s[1..]),
+                let got = matches(&re, path);
+                if got && !*want && !path.is_ascii() && v.p.contains(['?', '[']) {
+                    // gobwas measures some fixed-length runs in bytes, so a multi-byte character can fail a `?` or
+                    // `[…]` it should match (COMPATIBILITY.md, migrate glob divergences); snp matches characters.
+                    unicode_bugs += 1;
+                    continue;
+                }
+                assert_eq!(
+                    matches(&re, path),
+                    *want,
+                    "pattern {:?} (lower {}) regex {re:?} path {path:?}",
+                    v.p,
+                    v.lower
+                );
+                // The ERE form (the shell filter, `grep -iE` / `grep -vE`) agrees too, where it exists.
+                if let Ok(Some(e)) = &ere {
+                    let target = if v.lower {
+                        go_lower(path)
+                    } else {
+                        path.clone()
+                    };
+                    let py = regex_syntax_like(e, v.lower);
+                    assert_eq!(matches(&py, &target), *want, "ere {e:?} path {path:?}");
+                }
+                compared += 1;
             }
         }
+        assert!(
+            errors > 100 && compared > 9_000 && unicode_bugs < 20,
+            "{errors} {compared} {unicode_bugs}"
+        );
+    }
 
-        pub(super) fn matches(pattern: &str, path: &str) -> bool {
-            let p: Vec<char> = pattern.to_lowercase().chars().collect();
-            let s: Vec<char> = path.to_lowercase().chars().collect();
-            expand(&p).iter().any(|alt| wild(alt, &s))
+    /// The ERE forms run by GNU grep (`LC_ALL=C`, ASCII vectors only): bracket expressions such as `[[:]` must not
+    /// become POSIX class openers.
+    #[test]
+    fn ere_vectors_under_grep() {
+        let Ok(probe) = std::process::Command::new("grep").arg("--version").output() else {
+            return;
+        };
+        if !probe.status.success() {
+            return;
         }
+        let mut checked = 0_usize;
+        for v in vectors().iter().filter(|v| v.ok && v.p.is_ascii()) {
+            let Ok(Some(e)) = ere(std::slice::from_ref(&v.p), Matcher::Gobwas, v.lower) else {
+                continue;
+            };
+            let paths: Vec<(&String, bool)> = v
+                .paths
+                .iter()
+                .zip(v.m.as_deref().unwrap().iter().copied())
+                .filter(|(p, _)| p.is_ascii() && !p.is_empty())
+                .collect();
+            if paths.is_empty() {
+                continue;
+            }
+            let input: String = paths.iter().flat_map(|(p, _)| [p.as_str(), "\n"]).collect();
+            let mut cmd = std::process::Command::new("grep");
+            cmd.env("LC_ALL", "C")
+                .arg(if v.lower { "-iE" } else { "-E" })
+                .arg("--")
+                .arg(&e);
+            let out = run_with_stdin(cmd, &input);
+            assert!(out.0 <= 1, "grep -E {e:?} failed: {}", out.2);
+            let got: Vec<&str> = out.1.lines().collect();
+            for (p, want) in &paths {
+                assert_eq!(got.contains(&p.as_str()), *want, "ere {e:?} path {p:?}");
+            }
+            checked += 1;
+        }
+        assert!(checked > 300, "{checked}");
+        let e = ere(&["*[[:]x".to_owned()], Matcher::Gobwas, true)
+            .unwrap()
+            .unwrap();
+        let mut cmd = std::process::Command::new("grep");
+        cmd.env("LC_ALL", "C").arg("-iE").arg("--").arg(&e);
+        let out = run_with_stdin(cmd, "a:x\na[x\nax\n");
+        assert_eq!((out.0, out.1.as_str()), (0, "a:x\na[x\n"), "{e}: {}", out.2);
+    }
+
+    fn run_with_stdin(mut cmd: std::process::Command, input: &str) -> (i32, String, String) {
+        use std::io::Write as _;
+        let mut child = cmd
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
     }
 
     fn pattern() -> impl proptest::strategy::Strategy<Value = String> {
@@ -728,13 +995,21 @@ mod tests {
             Just("[!a]"),
             Just("[a-c]"),
             Just("[.]"),
+            Just("[ab-z]"),
+            Just("[a-z0-9]"),
+            Just("[a-]"),
+            Just("[]"),
+            Just("[[:]"),
+            Just("[]-a]"),
             Just("{a,b}"),
             Just("{x*,y,}"),
             Just("{a,{b,c}}"),
+            Just("{a"),
             Just("\\*"),
             Just("\\a"),
+            Just("\\"),
         ];
-        proptest::collection::vec(tok, 0..7).prop_map(|v| v.concat())
+        proptest::collection::vec(tok, 1..7).prop_map(|v| v.concat())
     }
 
     fn path() -> impl proptest::strategy::Strategy<Value = String> {
@@ -749,6 +1024,8 @@ mod tests {
                 Just('/'),
                 Just('*'),
                 Just('-'),
+                Just('['),
+                Just(':'),
                 Just('x'),
                 Just('y')
             ],
@@ -759,25 +1036,25 @@ mod tests {
 
     proptest::proptest! {
         #![proptest_config(proptest::prelude::ProptestConfig::with_cases(4000))]
-        /// 05 §19.6: the translated `files` regex ≡ the reference gobwas matcher.
+        /// The ERE form (the shell filter) and the Python form agree, and both exist or fail together.
         #[test]
-        fn gobwas_translation_matches_reference(pat in pattern(), p in path()) {
-            proptest::prop_assume!(!pat.is_empty());
-            let re = files_regex(std::slice::from_ref(&pat), Matcher::Gobwas, None).unwrap().unwrap();
-            let want = reference::matches(&pat, &p);
-            proptest::prop_assert_eq!(matches(&re, &p), want, "pattern {:?} regex {:?} path {:?}", pat, re, p);
-            // The ERE form (the shell filter) agrees with the Python form on the same inputs.
-            let ere = ere(std::slice::from_ref(&pat), Matcher::Gobwas, true).unwrap().unwrap();
-            let rust = regex_syntax_like(&ere);
-            proptest::prop_assert_eq!(matches(&rust, &p.to_lowercase()), want, "ere {:?}", ere);
+        fn ere_agrees_with_python(pat in pattern(), p in path()) {
+            let Ok(Some(re)) = files_regex(std::slice::from_ref(&pat), Matcher::Gobwas, None) else {
+                proptest::prop_assert!(translate(&pat, Matcher::Gobwas, Flavor::Ere).is_err());
+                return Ok(());
+            };
+            if let Ok(Some(e)) = ere(std::slice::from_ref(&pat), Matcher::Gobwas, true) {
+                let py = regex_syntax_like(&e, true);
+                proptest::prop_assert_eq!(matches(&py, &go_lower(&p)), matches(&re, &p), "ere {:?} regex {:?}", e, re);
+            }
         }
     }
 
     /// An ERE of [`ere`] as a Python regex: `(` → `(?:`, POSIX bracket expressions (a leading `]` and `^`-not-first
     /// are literal, a trailing `-` is literal, no escapes) re-written with Python escapes.
-    fn regex_syntax_like(ere: &str) -> String {
+    fn regex_syntax_like(ere: &str, fold: bool) -> String {
         let chars: Vec<char> = ere.chars().collect();
-        let mut out = String::from("(?i:");
+        let mut out = String::from(if fold { "(?i:" } else { "(?:" });
         let mut i = 0;
         while i < chars.len() {
             match chars[i] {

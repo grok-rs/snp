@@ -150,9 +150,28 @@ pub(crate) fn write_hook(out: &mut String, h: &OutHook, indent: usize) {
     }
 }
 
-/// A comment line never spans lines.
+/// YAML's printable set as PyYAML's reader enforces it (`[\t\n\r\x20-\x7E\x85\xA0-\uD7FF\uE000-\uFFFD\U00010000-]`).
+pub(crate) const fn yaml_printable(c: char) -> bool {
+    matches!(c, '\t' | '\n' | '\r' | ' '..='~' | '\u{85}' | '\u{A0}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}')
+        || c >= '\u{10000}'
+}
+
+/// The text of a comment line: every YAML line break (`\n`, `\r`, U+0085, U+2028, U+2029) becomes a space, so a
+/// value quoted in a note can never end the comment and start YAML; every other control or non-printable character
+/// (and the BOM) is written as `\u{…}`, which also keeps terminal escape sequences out of the report.
 pub(crate) fn one_line(s: &str) -> String {
-    s.replace(['\n', '\r'], " ")
+    let mut out = String::new();
+    for c in s.chars() {
+        match c {
+            '\n' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}' => out.push(' '),
+            '\t' => out.push(c),
+            c if c.is_control() || c == '\u{feff}' || !yaml_printable(c) => {
+                write!(out, "\\u{{{:x}}}", u32::from(c)).unwrap_or_default();
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// A `skip` / `only` value.
@@ -196,9 +215,16 @@ pub(crate) fn regex(s: &str) -> String {
     }
 }
 
+/// Whether a scalar must be double-quoted: it holds a control character, a line break, the BOM or a character
+/// outside YAML's printable set (U+FFFE, U+FFFF, lone C1 controls), which only escapes can carry.
 fn needs_double(s: &str) -> bool {
     s.chars().any(|c| {
-        c.is_control() || c == '\u{feff}' || c == '\u{2028}' || c == '\u{2029}' || c == '\u{85}'
+        c.is_control()
+            || c == '\u{feff}'
+            || c == '\u{2028}'
+            || c == '\u{2029}'
+            || c == '\u{85}'
+            || !yaml_printable(c)
     })
 }
 

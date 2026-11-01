@@ -69,13 +69,28 @@ pub(crate) fn is_var_name(s: &str) -> bool {
         && cs.all(|c| c == '_' || c.is_ascii_alphanumeric())
 }
 
+/// Shell reserved words and builtins that have no standalone executable (or whose executable cannot do what the
+/// builtin does in lefthook's `sh -c`): pre-commit would fail with "Executable `exit` not found".
+const SHELL_ONLY: [&str; 46] = [
+    "!", ":", ".", "break", "continue", "eval", "exec", "exit", "export", "readonly", "return",
+    "set", "shift", "times", "trap", "unset", "cd", "umask", "ulimit", "wait", "read", "alias",
+    "unalias", "command", "getopts", "hash", "type", "source", "local", "if", "then", "else",
+    "elif", "fi", "case", "esac", "for", "while", "until", "do", "done", "{", "}", "jobs", "fg",
+    "bg",
+];
+
 /// 05 §19.5 "simple": none of ``| & ; < > ( ) $ ` \ " ' * ? [ ] # ~ { }``, no newline, no leading `NAME=`
-/// assignment, and something left to run. pre-commit's `shlex.split` of a simple command equals `sh`'s parse.
+/// assignment, a first word that is not a shell-only builtin or reserved word ([`SHELL_ONLY`]), and something left
+/// to run. pre-commit's `shlex.split` of a simple command equals `sh`'s parse, and the program it execs is the
+/// one `sh` would run.
 pub(crate) fn is_simple(s: &str) -> bool {
     if s.trim().is_empty() || s.contains(|c: char| "|&;<>()$`\\\"'*?[]#~{}\n\r".contains(c)) {
         return false;
     }
     let first = s.split_whitespace().next().unwrap_or("");
+    if SHELL_ONLY.contains(&first) {
+        return false;
+    }
     match first.split_once('=') {
         Some((name, _)) => !is_var_name(name),
         None => true,
@@ -190,6 +205,29 @@ pub(crate) fn replace(s: &str, occs: &[Occ], mut f: impl FnMut(&Occ) -> String) 
     for o in occs {
         out.push_str(s.get(at..o.start).unwrap_or(""));
         out.push_str(&f(o));
+        at = o.end;
+    }
+    out.push_str(s.get(at..).unwrap_or(""));
+    out
+}
+
+/// [`replace`] for text that becomes shell code: when the occurrence follows an unescaped backslash, that backslash
+/// is dropped. lefthook substitutes first, so its backslash escapes the first character of the substituted value
+/// (a no-op for an ordinary character); kept in front of `"$@"` it would escape the quote and break the script.
+pub(crate) fn replace_sh(s: &str, occs: &[Occ], mut f: impl FnMut(&Occ) -> String) -> String {
+    let mut out = String::new();
+    let mut at = 0_usize;
+    for o in occs {
+        let before = s.get(at..o.start).unwrap_or("");
+        let original = s.get(o.start..o.end).unwrap_or("");
+        let value = f(o);
+        let backslashes = before.bytes().rev().take_while(|b| *b == b'\\').count();
+        if backslashes % 2 == 1 && value != original {
+            out.push_str(before.get(..before.len().saturating_sub(1)).unwrap_or(""));
+        } else {
+            out.push_str(before);
+        }
+        out.push_str(&value);
         at = o.end;
     }
     out.push_str(s.get(at..).unwrap_or(""));

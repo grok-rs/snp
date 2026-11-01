@@ -55,7 +55,11 @@ impl Note {
             Level::Warning => "warning",
             Level::Lossy => "lossy",
         };
-        format!("snp-migrate: {level}: {}: {}", self.scope, self.msg)
+        // One line without control characters: it is printed to a terminal and written into YAML comments.
+        super::emit::one_line(&format!(
+            "snp-migrate: {level}: {}: {}",
+            self.scope, self.msg
+        ))
     }
 }
 
@@ -311,7 +315,11 @@ fn list_pipeline(
     matcher: Matcher,
     notes: &mut Vec<(Level, String)>,
 ) -> String {
-    let mut p = format!("( {cmd} )");
+    let mut p = String::new();
+    if let Some(r) = i.list_root {
+        p.push_str(&root_pattern(r).0);
+    }
+    write!(p, "( {cmd} )").unwrap_or_default();
     match glob::ere(i.glob, matcher, true) {
         Ok(Some(e)) => write!(p, " | grep -iE {}", shell::sh_quote(&e)).unwrap_or_default(),
         Ok(None) => {}
@@ -336,7 +344,7 @@ fn list_pipeline(
                 shell::sh_quote(&format!("^{}/", glob::ere_literal(r)))
             )
             .unwrap_or_default();
-            format!("f=${{f#{r}/}}; ")
+            format!("f=${{f#{}}}; ", root_pattern(r).1)
         }
         None => String::new(),
     };
@@ -346,6 +354,20 @@ fn list_pipeline(
     )
     .unwrap_or_default();
     p
+}
+
+/// The `<root>/` prefix as the pattern of a `${f#…}` expansion, plus the assignment it needs: a root made of
+/// `shlex.quote`-safe characters is written as is (no glob or expansion character can occur); any other root is bound
+/// to `snp_r` once and used as `"$snp_r"`, which the shell matches literally (a root is a directory, never code or a
+/// pattern).
+fn root_pattern(r: &str) -> (String, String) {
+    let prefix = format!("{r}/");
+    let quoted = shell::sh_quote(&prefix);
+    if quoted == prefix {
+        (String::new(), prefix)
+    } else {
+        (format!("snp_r={quoted}; "), "\"$snp_r\"".to_owned())
+    }
 }
 
 /// 05 §19.5 rules R1–R7.
@@ -444,9 +466,10 @@ fn entry_rules(i: &EntryIn<'_>, matcher: Matcher) -> EntryOut {
     }
     prefix.push_str(i.env_prefix);
     if let (Some(r), true) = (i.cd_root, pass && !msg_file_stage(i.stage)) {
+        let (bind, pat) = root_pattern(r);
         write!(
             prefix,
-            "for f in \"$@\"; do set -- \"$@\" \"${{f#{r}/}}\"; shift; done; "
+            "{bind}for f in \"$@\"; do set -- \"$@\" \"${{f#{pat}}}\"; shift; done; "
         )
         .unwrap_or_default();
     }
@@ -473,7 +496,7 @@ fn entry_rules(i: &EntryIn<'_>, matcher: Matcher) -> EntryOut {
             write!(script, "[ -n \"$( {p})\" ] || exit 0; ").unwrap_or_default();
         }
         let mut notes = Vec::new();
-        let body = shell::replace(i.cmd, &occs, |o| match &o.tpl {
+        let body = shell::replace_sh(i.cmd, &occs, |o| match &o.tpl {
             t if t.is_file_list() => "\"$@\"".to_owned(),
             Tpl::Arg(n) => arg_text(*n, &mut notes),
             t => t.text(),
@@ -500,7 +523,8 @@ fn entry_rules(i: &EntryIn<'_>, matcher: Matcher) -> EntryOut {
         && i.cmd.get(only.end..).unwrap_or("").trim().is_empty()
     {
         let head = i.cmd.get(..only.start).unwrap_or("");
-        if shell::is_simple(head) {
+        // The template must start a word: `--edit={1}` or `x{staged_files}` glue the value to the text before it.
+        if head.ends_with(|c: char| c.is_ascii_whitespace()) && shell::is_simple(head) {
             head.trim().clone_into(&mut out.entry);
             out.plain = true;
             return out;
@@ -508,7 +532,7 @@ fn entry_rules(i: &EntryIn<'_>, matcher: Matcher) -> EntryOut {
     }
     // R3 / R6: a wrapper.
     let mut notes = Vec::new();
-    let body = shell::replace(i.cmd, &occs, |o| {
+    let body = shell::replace_sh(i.cmd, &occs, |o| {
         if is_main(o) {
             "\"$@\"".to_owned()
         } else {
@@ -600,6 +624,9 @@ fn cond_value(v: &LValue, top: bool, notes: &mut Vec<(Level, String)>) -> C {
     }
 }
 
+/// The most `only` items the AND of several levels may expand to (beyond it the conversion is lossy).
+const MAX_ONLY_PRODUCT: usize = 64;
+
 /// `skip` levels OR, `only` levels AND (05 §6.3, §8.1); an `only` that never matches skips the job.
 fn conditions(
     skips: &[LValue],
@@ -629,6 +656,11 @@ fn conditions(
             let mut acc: Vec<Vec<(String, String)>> = vec![Vec::new()];
             let mut ok = true;
             for level in &levels {
+                // Bounded while it is built: N nested levels of k items would otherwise allocate k^N maps.
+                if acc.len().saturating_mul(level.len()) > MAX_ONLY_PRODUCT {
+                    ok = false;
+                    break;
+                }
                 let mut next = Vec::new();
                 for a in &acc {
                     for item in level {
@@ -649,7 +681,7 @@ fn conditions(
                 }
                 acc = next;
             }
-            if ok && acc.len() <= 64 {
+            if ok {
                 Some(CondOut::Items(acc.into_iter().map(CondItem::Map).collect()))
             } else {
                 notes.push((
@@ -1145,7 +1177,8 @@ fn convert_leaf(
     }
     if portable {
         if !s.tags.is_empty() {
-            notes.push((Level::Warning, "tags dropped (portable mode)".to_owned()));
+            // Lossy (05 §19.1 `--strict`): `snp run --group` selection is gone.
+            notes.push((Level::Lossy, "tags dropped (portable mode)".to_owned()));
         }
     } else {
         out.groups = groups;
@@ -1153,10 +1186,7 @@ fn convert_leaf(
     // Per-job keys.
     if !j.fail_text.is_empty() {
         if portable {
-            notes.push((
-                Level::Warning,
-                "fail_text dropped (portable mode)".to_owned(),
-            ));
+            notes.push((Level::Lossy, "fail_text dropped (portable mode)".to_owned()));
         } else {
             out.fail_text = Some(j.fail_text.clone());
         }
@@ -1302,8 +1332,9 @@ pub(crate) fn convert(loaded: &Loaded, o: Opts<'_>) -> Result<Conversion, String
     let all_never = values.iter().all(|v| *v == "never");
     conv.root_never = !o.portable && all_never && !hooks.is_empty();
     if o.portable && values.contains(&"never") {
+        // Lossy (05 §19.1 `--strict`): a hook that modifies files now fails, which lefthook's default never did.
         cx.note(
-            Level::Warning,
+            Level::Lossy,
             &main_name,
             "pre-commit fails hooks that modify files; lefthook did not",
         );
@@ -1612,5 +1643,175 @@ mod tests {
         assert_eq!(skip, Some(CondOut::Always));
         let (skip, only) = conditions(&[], &[LValue::Bool(true)], &mut notes);
         assert!(skip.is_none() && only.is_none());
+    }
+
+    /// R2 only when the template starts a word; otherwise R3 keeps the glued text in the same argument.
+    #[test]
+    fn rule_r2_needs_a_word_start() {
+        let e = rules("commitlint --edit={1}", "commit-msg");
+        assert_eq!(e.entry, "sh -c 'commitlint --edit=\"$@\"' --");
+        assert!(e.pass_filenames && !e.plain);
+        let e = rules("argv x{staged_files}", "pre-commit");
+        assert_eq!(e.entry, "sh -c 'argv x\"$@\"' --");
+        let e = rules("lint --x={push_files}", "pre-push");
+        assert_eq!(e.entry, "sh -c 'lint --x=\"$@\"' --");
+        let e = rules("lint\t{staged_files}", "pre-commit");
+        assert_eq!(e.entry, "lint");
+    }
+
+    /// Shell-only builtins and reserved words run in `sh`, as lefthook runs every command.
+    #[test]
+    fn shell_builtins_are_wrapped() {
+        for cmd in [
+            "exit 0",
+            "source ./env",
+            "ulimit -n 100",
+            ". ./x",
+            ": ok",
+            "cd sub",
+            "! false",
+        ] {
+            let e = rules(cmd, "pre-commit");
+            assert_eq!(e.entry, shell::wrapper(cmd), "{cmd}");
+            assert!(!e.plain, "{cmd}");
+        }
+        let e = rules("exit {staged_files}", "pre-commit");
+        assert_eq!(e.entry, "sh -c 'exit \"$@\"' --");
+        assert_eq!(rules("exitcode 0", "pre-commit").entry, "exitcode 0");
+    }
+
+    /// A template after an unescaped backslash: the backslash goes (lefthook's would escape the substituted
+    /// value's first character), so the quote of `"$@"` is never escaped.
+    #[test]
+    fn backslash_before_a_template() {
+        let e = rules("argv x\\{staged_files}", "pre-commit");
+        assert_eq!(e.entry, "sh -c 'argv x\"$@\"' --");
+        let e = rules("argv x\\\\{staged_files}", "pre-commit");
+        assert_eq!(e.entry, "sh -c 'argv x\\\\\"$@\"' --");
+        let e = rules("echo \\{1}", "commit-msg");
+        assert_eq!(e.entry, "sh -c 'echo \"$@\"' --");
+        let e = rules("echo \\{unknown} {staged_files}", "pre-commit");
+        assert!(e.entry.contains("\\{unknown}"), "{}", e.entry);
+    }
+
+    /// The script of `sh -c '<script>' --` (the inverse of [`shell::wrapper`]).
+    fn script_of(entry: &str) -> String {
+        let quoted = entry
+            .strip_prefix("sh -c ")
+            .and_then(|s| s.strip_suffix(" --"))
+            .unwrap();
+        quoted
+            .strip_prefix('\'')
+            .and_then(|q| q.strip_suffix('\''))
+            .unwrap()
+            .replace("'\\''", "'")
+    }
+
+    #[cfg(unix)]
+    fn run_sh(dir: &Path, script: &str, args: &[&str]) -> String {
+        let out = std::process::Command::new("sh")
+            .current_dir(dir)
+            .arg("-c")
+            .arg(script)
+            .arg("--")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{script}: {out:?}");
+        String::from_utf8(out.stdout).unwrap()
+    }
+
+    /// The root is data: `*`, `[`, `}`, `"`, `$(…)` and spaces in it are matched literally by the `${f#…}` strip,
+    /// never run or used as a pattern (R5 and R7).
+    #[cfg(unix)]
+    #[test]
+    fn root_is_never_shell_code() {
+        let root = "a b*[x]}\"$(touch PWNED)";
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join(root).join("sub")).unwrap();
+        std::fs::write(d.path().join(root).join("f1.txt"), "").unwrap();
+        std::fs::write(d.path().join(root).join("sub/f2"), "").unwrap();
+        let (bind, pat) = root_pattern(root);
+        assert_eq!(pat, "\"$snp_r\"");
+        assert!(
+            bind.starts_with("snp_r='a b*[x]}\"$(touch PWNED)/'"),
+            "{bind}"
+        );
+        assert_eq!(
+            root_pattern("backend"),
+            (String::new(), "backend/".to_owned())
+        );
+        // R7: the `"$@"` paths lose the root prefix.
+        let e = entry_rules(
+            &EntryIn {
+                cmd: "printf '%s\\n' {staged_files}",
+                stage: "pre-commit",
+                files_cmd: "",
+                glob: &[],
+                exclude: &[],
+                cd_root: Some(root),
+                list_root: None,
+                env_prefix: "",
+                script: false,
+            },
+            Matcher::Gobwas,
+        );
+        let f1 = format!("{root}/f1.txt");
+        let f2 = format!("{root}/sub/f2");
+        assert_eq!(
+            run_sh(d.path(), &script_of(&e.entry), &[&f1, &f2, "other/x"]),
+            "f1.txt\nsub/f2\nother/x\n"
+        );
+        // R5: the shell file list is filtered by the root and stripped of it.
+        std::fs::write(
+            d.path().join("list.txt"),
+            format!("{f1}\n{f2}\nother/x\n{root}x/f1.txt\n"),
+        )
+        .unwrap();
+        let e = entry_rules(
+            &EntryIn {
+                cmd: "printf '%s\\n' {files}",
+                stage: "pre-commit",
+                files_cmd: "cat ../list.txt",
+                glob: &[],
+                exclude: &[],
+                cd_root: Some(root),
+                list_root: Some(root),
+                env_prefix: "",
+                script: false,
+            },
+            Matcher::Gobwas,
+        );
+        assert_eq!(
+            run_sh(d.path(), &script_of(&e.entry), &[]),
+            "f1.txt\nsub/f2\n"
+        );
+        assert!(!d.path().join("PWNED").exists());
+        assert!(!d.path().join(root).join("PWNED").exists());
+    }
+
+    /// N nested `only` levels of k items never build the k^N product (it stops at the bound and falls back).
+    #[test]
+    fn only_product_is_bounded() {
+        let level = |key: &str| {
+            LValue::List(
+                (0..4)
+                    .map(|i| {
+                        let mut m = super::super::value::LMap::new();
+                        m.insert(key.to_owned(), LValue::Str(format!("{key}{i}")));
+                        LValue::Map(m)
+                    })
+                    .collect(),
+            )
+        };
+        let levels = vec![level("ref"); 40];
+        let mut notes = Vec::new();
+        let (_, only) = conditions(&[], &levels, &mut notes);
+        assert!(notes.iter().any(|(l, _)| *l == Level::Lossy));
+        assert!(matches!(only, Some(CondOut::Items(i)) if i.len() == 4));
+        let mut notes = Vec::new();
+        let (_, only) = conditions(&[], &[level("ref"), level("run")], &mut notes);
+        assert!(matches!(only, Some(CondOut::Items(i)) if i.len() == 16));
+        assert_eq!(notes, Vec::new());
     }
 }

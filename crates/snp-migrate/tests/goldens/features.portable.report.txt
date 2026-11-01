@@ -4,7 +4,7 @@ snp-migrate: warning: lefthook.yml: option 'rc' dropped; source it in your shell
 snp-migrate: lossy: lefthook.yml: remote config https://github.com/example/shared-hooks@v1.2.0 not converted; convert its configs and add the hooks
 snp-migrate: warning: lefthook.yml: lefthook-local.yml not converted; use --local to turn it into the local overlay
 snp-migrate: warning: lefthook.yml: git-lfs detected: lefthook ran the git-lfs hooks itself; after `snp install` run `git lfs update --force` and `snp install` again (or use --install) so they are chained as legacy hooks
-snp-migrate: warning: lefthook.yml: pre-commit fails hooks that modify files; lefthook did not
+snp-migrate: lossy: lefthook.yml: pre-commit fails hooks that modify files; lefthook did not
 snp-migrate: lossy: pre-commit/lint group: piped group: pre-commit fail_fast stops the whole run, lefthook piped only stopped its group
 snp-migrate: warning: pre-commit: parallelism reduced: a sequential group inside a parallel one is serialised
 snp-migrate: lossy: pre-commit/eslint: no identify tag for MIME 'text/x-unknown'; filter dropped
@@ -18,9 +18,9 @@ snp-migrate: lossy: pre-commit/interactive one: timeout '48h' is longer than 24h
 snp-migrate: lossy: pre-commit/interactive one: use_stdin dropped (portable mode)
 snp-migrate: lossy: pre-commit/interactive one: interactive (TTY passthrough) is not supported yet; dropped
 snp-migrate: lossy: post-checkout: setup command not converted: npm ci
-snp-migrate: warning: pre-push/20_slow: tags dropped (portable mode)
+snp-migrate: lossy: pre-push/20_slow: tags dropped (portable mode)
 snp-migrate: warning: pre-push/missing.sh: script 'missing.sh' not found in the source directories; converted to a `fail` hook
 snp-migrate: lossy: pre-receive: git hook 'pre-receive' is not supported by pre-commit; converted to manual stage
 snp-migrate: lossy: pre-receive/guard: no pre-commit equivalent for {1} in stage 'manual'
 snp-migrate: warning: lint/all: always skipped by lefthook; not converted
-Converted 17 jobs from 6 lefthook hooks into 16 hooks (15 warnings, 10 lossy conversions).
+Converted 17 jobs from 6 lefthook hooks into 16 hooks (13 warnings, 12 lossy conversions).

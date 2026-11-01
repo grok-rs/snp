@@ -116,6 +116,68 @@ pub(crate) fn parse(text: &str, format: Format) -> Result<LMap, String> {
     }
 }
 
+/// The most bytes a YAML document may expand to once every alias is copied (twice the input limit).
+const MAX_EXPANDED: usize = MAX_BYTES.saturating_mul(2);
+
+/// The size of `doc` with every alias expanded: scalar bytes plus one per node, counted at every use. The node limit
+/// of the constructor counts nodes, not bytes, so 5 000 aliases of one 3 MiB scalar would otherwise be copied in full
+/// (the DAG is walked once, iteratively; a cycle counts as nothing and is left to the constructor's error).
+fn expanded_size(doc: &snp_yaml::Document) -> usize {
+    let Some(root) = doc.root else {
+        return 0;
+    };
+    let idx = |id: snp_yaml::NodeId| usize::try_from(id.0).unwrap_or(usize::MAX);
+    let n = doc.nodes.len();
+    let mut size: Vec<Option<usize>> = vec![None; n];
+    let mut open = vec![false; n];
+    let children = |i: usize| -> Vec<usize> {
+        match doc.nodes.get(i).map(|node| &node.kind) {
+            Some(snp_yaml::NodeKind::Seq(items)) => items.iter().map(|c| idx(*c)).collect(),
+            Some(snp_yaml::NodeKind::Map(pairs)) => {
+                pairs.iter().flat_map(|(k, v)| [idx(*k), idx(*v)]).collect()
+            }
+            _ => Vec::new(),
+        }
+    };
+    let mut stack = vec![(idx(root), false)];
+    while let Some((i, done)) = stack.pop() {
+        if size.get(i).copied().flatten().is_some() {
+            continue;
+        }
+        if let Some(snp_yaml::NodeKind::Scalar(text)) = doc.nodes.get(i).map(|node| &node.kind) {
+            if let Some(slot) = size.get_mut(i) {
+                *slot = Some(text.len().saturating_add(1));
+            }
+            continue;
+        }
+        if done {
+            let total = children(i).into_iter().fold(1_usize, |acc, c| {
+                acc.saturating_add(size.get(c).copied().flatten().unwrap_or(0))
+            });
+            if let Some(slot) = size.get_mut(i) {
+                *slot = Some(total);
+            }
+            if let Some(o) = open.get_mut(i) {
+                *o = false;
+            }
+            continue;
+        }
+        if open.get(i).copied().unwrap_or(true) {
+            continue;
+        }
+        if let Some(o) = open.get_mut(i) {
+            *o = true;
+        }
+        stack.push((i, true));
+        for c in children(i) {
+            if size.get(c).copied().flatten().is_none() && !open.get(c).copied().unwrap_or(true) {
+                stack.push((c, false));
+            }
+        }
+    }
+    size.get(idx(root)).copied().flatten().unwrap_or(0)
+}
+
 fn too_deep() -> String {
     format!("the configuration is nested deeper than {MAX_DEPTH} levels")
 }
@@ -134,6 +196,11 @@ fn from_yaml(text: &str) -> Result<LValue, String> {
     };
     let doc = snp_yaml::compose(text, snp_yaml::Schema::Yaml12Core, &limits)
         .map_err(|e| e.to_string())?;
+    if expanded_size(&doc) > MAX_EXPANDED {
+        return Err(format!(
+            "the configuration expands (through aliases) to more than {MAX_EXPANDED} bytes"
+        ));
+    }
     let v = snp_yaml::construct(&doc, snp_yaml::Schema::Yaml12Core, &limits)
         .map_err(|e| e.to_string())?;
     // snp-migrate has no direct cfgv edge (ARCHITECTURE §1.2): the constructed value is used through its methods,

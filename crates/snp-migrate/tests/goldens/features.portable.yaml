@@ -115,7 +115,7 @@ repos:
         pass_filenames: false
         stages: [pre-push]
         fail_fast: true
-      # snp-migrate: warning: pre-push/20_slow: tags dropped (portable mode)
+      # snp-migrate: lossy: pre-push/20_slow: tags dropped (portable mode)
       - id: 20-slow
         name: 20_slow
         language: system
