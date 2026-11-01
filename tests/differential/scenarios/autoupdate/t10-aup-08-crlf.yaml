@@ -1,0 +1,15 @@
+name: autoupdate/t10-aup-08-crlf
+covers: [T10-AUP-08]
+repos:
+  a:
+    fixture: script_hooks_repo
+    tags: [v1.0.0]
+    then:
+      - write: {x: "1\n"}
+      - commit: two
+      - tag: v1.1.0
+work:
+  config: "repos:\r\n-   repo: ${repo:a}\n    rev: v1.0.0\r\n    hooks:\r\n    -   id: bash_hook\n"
+steps:
+  - tool: [autoupdate]
+  - tool: [autoupdate]

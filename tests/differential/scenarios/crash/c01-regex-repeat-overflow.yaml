@@ -1,0 +1,18 @@
+name: crash/c01-regex-repeat-overflow
+description: '13 X.10 c01 — a{4294967296} in files (X13-CFG-05)'
+covers: [X13-CFG-05]
+tags: [crash-recipe]
+expect_divergence: D-CRASH-04
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: h, name: h, entry: 'true', language: system, files: "a{4294967296}"}
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [validate-config, .pre-commit-config.yaml]
+  - tool: [run, -a]
+compare:
+  stdout: tierB

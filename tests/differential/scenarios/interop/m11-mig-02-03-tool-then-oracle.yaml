@@ -1,0 +1,22 @@
+name: interop/m11-mig-02-03-tool-then-oracle
+description: '11 §A.20 MIG-02/03 — the tool installs, then the oracle installs over it and uninstalls it (no .legacy either way)'
+covers: [M11-MIG-02, M11-MIG-03]
+tags: [migration]
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: ok, name: ok, entry: 'true', language: system}
+  commit: [.pre-commit-config.yaml]
+  stage: [a.txt]
+steps:
+  - tool: [install]
+  - shell: ${oracle} install
+  - shell: ls .git/hooks | grep -v sample
+  - tool: [install]
+  - shell: ${oracle} uninstall
+  - shell: ls .git/hooks | grep -v sample; true
+compare:
+  hooks_dir: true

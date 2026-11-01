@@ -1,0 +1,13 @@
+name: seed/not-a-git-repo
+covers: [T10-RUN-57, T10-CLI-05]
+tags: [seed]
+work:
+  git: false
+  config: "repos: []\n"
+steps:
+  - tool: [run]
+  - tool: []
+compare:
+  tree: false
+  index: false
+  refs: false

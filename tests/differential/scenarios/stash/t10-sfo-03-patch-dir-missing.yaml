@@ -1,0 +1,16 @@
+name: stash/t10-sfo-03-patch-dir-missing
+covers: [T10-SFO-03]
+work:
+  files: {foo: "1\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: t, name: t, entry: 'true', language: system}
+  commit: [.pre-commit-config.yaml]
+  stage: [foo]
+  unstaged: {foo: "2\n"}
+steps:
+  - shell: rm -rf "${store}"
+  - tool: [run]
+  - git: [status, --porcelain]

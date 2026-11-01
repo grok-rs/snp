@@ -1,0 +1,18 @@
+name: config/t10-cfg-17-19-meta-and-language-version
+covers: [T10-CFG-17, T10-CFG-19]
+work:
+  config: null
+  files:
+    m1.yaml: "repos:\n-   repo: meta\n    hooks: [{id: i-dont-exist}]\n"
+    m2.yaml: "repos:\n-   repo: meta\n    hooks: [{id: identity, language: python}]\n"
+    m3.yaml: "repos:\n-   repo: meta\n    hooks: [{id: identity, name: False}]\n"
+    m4.yaml: "repos:\n-   repo: meta\n    hooks: [{id: identity, entry: echo hi}]\n"
+    l1.yaml: "default_language_version: {pony: '1.0'}\nrepos: []\n"
+    l2.yaml: "default_language_version: {python: 3}\nrepos: []\n"
+steps:
+  - tool: [validate-config, m1.yaml]
+  - tool: [validate-config, m2.yaml]
+  - tool: [validate-config, m3.yaml]
+  - tool: [validate-config, m4.yaml]
+  - tool: [validate-config, l1.yaml]
+  - tool: [validate-config, l2.yaml]

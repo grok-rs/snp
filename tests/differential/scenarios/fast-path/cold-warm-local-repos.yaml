@@ -1,0 +1,27 @@
+name: fast-path/cold-warm-local-repos
+description: 'cold and warm transcripts with file:// hook repositories: the first run initializes, the second is silent, clean makes it cold again'
+tags: [fast-path]
+repos:
+  a: {fixture: script_hooks_repo}
+  b: {fixture: modified_file_returns_zero_repo}
+work:
+  files: {foo.py: "", bar.py: ""}
+  config: |
+    repos:
+    -   repo: ${repo:a}
+        rev: ${rev:a}
+        hooks: [{id: bash_hook}]
+    -   repo: ${repo:b}
+        rev: ${rev:b}
+        hooks: [{id: bash_hook2}]
+    -   repo: meta
+        hooks: [{id: identity}]
+  commit: [.pre-commit-config.yaml, foo.py, bar.py]
+steps:
+  - tool: [run, -a]
+  - tool: [run, -a]
+  - tool: [clean]
+  - tool: [install-hooks]
+  - tool: [run, -a]
+compare:
+  store: true

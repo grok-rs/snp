@@ -1,0 +1,21 @@
+name: platform/w07-cmd-shim-quoting
+description: '14 §A.6.4 W07 — a `.cmd` shim receiving file names with `&`, `^`, `%PATH%`, parentheses and non-ASCII'
+tags: [platform]
+requires: {os: [windows], probe: true}
+expect_divergence: D-PLAT-03
+work:
+  files: {"a b.js": "", "a&b.js": "", "50%PATH%.js": "", "x^y.js": "", "p(1).js": "", "é.js": ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: shim, name: shim, entry: shim.cmd, language: system, verbose: true}
+  commit: [.pre-commit-config.yaml]
+  stage: ["a b.js", "a&b.js", "50%PATH%.js", "x^y.js", "p(1).js", "é.js"]
+  setup:
+    - shell: printf '@echo off\r\n"%s" args %%*\r\n' "${probe_path}" > shim.cmd
+steps:
+  - tool: [run]
+    env: {PATH_PREPEND: "${work}"}
+compare:
+  eol: insensitive

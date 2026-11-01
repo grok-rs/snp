@@ -1,0 +1,21 @@
+name: fast-path/pygrep-hooks-cold-warm
+description: 'pygrep-hooks (pygrep entries, no environment): cold and warm transcripts'
+tags: [fast-path]
+requires: {net: true}
+repos:
+  pg: {url: "https://github.com/pre-commit/pygrep-hooks", rev: v1.10.0}
+work:
+  files: {a.py: "eval('1')\nx = 1  # noqa\n", b.py: "import logging\nlogging.warn('x')\n"}
+  config: |
+    repos:
+    -   repo: ${repo:pg}
+        rev: ${rev:pg}
+        hooks:
+        -   id: python-no-eval
+        -   id: python-check-blanket-noqa
+        -   id: python-no-log-warn
+  commit: [.pre-commit-config.yaml]
+  stage: [a.py, b.py]
+steps:
+  - tool: [run]
+  - tool: [run]

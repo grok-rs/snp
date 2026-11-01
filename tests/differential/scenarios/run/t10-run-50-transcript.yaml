@@ -1,0 +1,25 @@
+name: run/t10-run-50-transcript
+covers: [T10-RUN-50, T10-RUN-51, T10-RUN-52, T10-RUN-53, T10-RUN-54]
+work:
+  files: {a.txt: "a\n", b.py: "b\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: pass, name: passing hook, entry: 'true', language: system}
+        -   {id: fail, name: failing hook, entry: "sh -c 'echo out; echo err >&2; exit 3' --", language: system}
+        -   {id: nomatch, name: nothing matches, entry: 'true', language: system, files: \.nomatch$}
+    -   repo: meta
+        hooks:
+        -   {id: identity, verbose: true}
+  commit: [.pre-commit-config.yaml]
+  stage: [a.txt, b.py]
+steps:
+  - tool: [run]
+  - tool: [run, --color, always]
+  - tool: [run]
+    env: {SKIP: "fail,identity"}
+  - tool: [run, --color, always]
+    env: {SKIP: "fail,identity"}
+  - tool: [run, --files, does-not-exist.txt]
+  - tool: [run, --color=never, --files, a.txt, pass]

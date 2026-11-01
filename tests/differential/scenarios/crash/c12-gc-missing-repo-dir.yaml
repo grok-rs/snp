@@ -1,0 +1,20 @@
+name: crash/c12-gc-missing-repo-dir
+description: '13 X.10 c12 — gc with a tracked repo dir that is missing (X13-CMD-07)'
+covers: [X13-CMD-07]
+tags: [crash-recipe]
+expect_divergence: D-CRASH-17
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook}]
+steps:
+  - tool: [install-hooks]
+  - shell: rm .pre-commit-config.yaml && rm -rf "${store}"/repo*
+  - tool: [gc]
+  - tool: [gc]
+compare:
+  stdout: tierB

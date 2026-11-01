@@ -1,0 +1,28 @@
+name: config/t10-cfg-07-08-ci-and-mutable-rev
+covers: [T10-CFG-07, T10-CFG-08]
+work:
+  config: null
+  files:
+    ci.yaml: |
+      ci: {skip: [foo]}
+      repos:
+      -   repo: meta
+          hooks: [{id: identity}]
+    ci-bad.yaml: |
+      ci: invalid
+      repos: []
+    revs.yaml: |
+      repos:
+      -   {repo: https://gitlab.com/pycqa/flake8, rev: v0.12.4, hooks: [{id: flake8}]}
+      -   {repo: https://gitlab.com/pycqa/flake8, rev: b27f281, hooks: [{id: flake8}]}
+      -   {repo: https://gitlab.com/pycqa/flake8, rev: 19.10b0, hooks: [{id: flake8}]}
+      -   {repo: https://gitlab.com/pycqa/flake8, rev: 4.3.21-2, hooks: [{id: flake8}]}
+      -   {repo: https://gitlab.com/pycqa/flake8, rev: '', hooks: [{id: flake8}]}
+      -   {repo: https://gitlab.com/pycqa/flake8, rev: HEAD, hooks: [{id: flake8}]}
+      -   {repo: https://gitlab.com/pycqa/flake8, rev: stable, hooks: [{id: flake8}]}
+      -   {repo: https://gitlab.com/pycqa/flake8, rev: master, hooks: [{id: flake8}]}
+      -   {repo: https://gitlab.com/pycqa/flake8, rev: some_branch_name, hooks: [{id: flake8}]}
+steps:
+  - tool: [validate-config, ci.yaml]
+  - tool: [validate-config, ci-bad.yaml]
+  - tool: [validate-config, revs.yaml]

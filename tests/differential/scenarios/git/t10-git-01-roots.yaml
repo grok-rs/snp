@@ -1,0 +1,17 @@
+name: git/t10-git-01-roots
+covers: [T10-GIT-01]
+work:
+  files: {deep/er/x.txt: ""}
+  config: "repos: []\n"
+  commit: [.pre-commit-config.yaml, deep/er/x.txt]
+steps:
+  - tool: [run]
+    cwd: deep/er
+  - tool: [run]
+    cwd: .git
+  - tool: [run]
+    cwd: .git/objects
+  - tool: [run]
+    cwd: ..
+compare:
+  stdout: exact

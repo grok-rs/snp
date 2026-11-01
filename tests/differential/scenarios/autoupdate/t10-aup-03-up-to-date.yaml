@@ -1,0 +1,19 @@
+name: autoupdate/t10-aup-03-up-to-date
+covers: [T10-AUP-03, T10-AUP-15, T10-AUP-14]
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks:
+        -   id: bash_hook
+    -   repo: local
+        hooks:
+        -   {id: l, name: l, entry: 'true', language: system}
+  files:
+    meta.yaml: "repos:\n-   repo: meta\n    hooks: [{id: identity}]\n"
+steps:
+  - tool: [autoupdate]
+  - tool: [autoupdate, -c, meta.yaml]

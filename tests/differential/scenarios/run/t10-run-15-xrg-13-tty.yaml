@@ -1,0 +1,22 @@
+name: run/t10-run-15-xrg-13-tty
+covers: [T10-RUN-15, T10-XRG-13, T10-REP-03]
+requires: {os: [linux, macos], probe: true}
+repos:
+  ss: {fixture: stdout_stderr_repo}
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: ${repo:ss}
+        rev: ${rev:ss}
+        hooks: [{id: stdout-stderr, verbose: true}, {id: tty-check, verbose: true}]
+    -   repo: local
+        hooks:
+        -   {id: tty, name: tty, entry: "${probe} tty", language: system, verbose: true, pass_filenames: false}
+        -   {id: inter, name: interleave, entry: "${probe} interleave 3", language: system, verbose: true, pass_filenames: false}
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [run, -a]
+  - tool: [run, -a, --color, always]
+  - tool: [run, -a, --color, auto]
+    tty: true

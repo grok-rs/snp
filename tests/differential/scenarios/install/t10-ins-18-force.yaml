@@ -1,0 +1,19 @@
+name: install/t10-ins-18-force
+covers: [T10-INS-18]
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook}]
+  commit: [.pre-commit-config.yaml]
+  setup:
+    - shell: mkdir -p .git/hooks && printf '#!/usr/bin/env bash\necho legacy hook\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+steps:
+  - tool: [install, -f]
+  - shell: ls .git/hooks | grep -v sample
+  - shell: touch foo && git add foo && git commit -m commit!
+compare:
+  hooks_dir: true

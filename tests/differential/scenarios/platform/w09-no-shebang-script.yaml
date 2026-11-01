@@ -1,0 +1,17 @@
+name: platform/w09-no-shebang-script
+description: '14 §A.6.4 W09 — `entry: ./noshebang.sh` without a shebang ([WinError 193])'
+tags: [platform]
+requires: {os: [windows]}
+work:
+  files: {noshebang.sh: "echo hi\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: n, name: n, entry: ./noshebang.sh, language: script, pass_filenames: false, always_run: true}
+  commit: [.pre-commit-config.yaml, noshebang.sh]
+steps:
+  - tool: [run]
+compare:
+  stdout: tierB
+  winerror_text: tierB

@@ -1,0 +1,20 @@
+name: crash/c19-huge-args
+description: '13 X.10 c19 — entry + args beyond the xargs limit (X13-EXE-03, X13-SM-06)'
+covers: [X13-EXE-03, X13-SM-06]
+tags: [crash-recipe]
+requires: {os: [linux, macos]}
+expect_divergence: D-CRASH-05
+work:
+  files: {a.txt: ""}
+  config: null
+  commit: [a.txt]
+  setup:
+    - shell: |
+        big=$(printf '%0140000d' 0 | tr 0 x)
+        printf 'repos:\n-   repo: local\n    hooks:\n    -   {id: h, name: h, entry: echo, language: system, args: [%s]}\n' "$big" > files.yaml
+        printf 'repos:\n-   repo: local\n    hooks:\n    -   {id: h, name: h, entry: echo, language: system, pass_filenames: false, args: [%s]}\n' "$big" > nofiles.yaml
+steps:
+  - tool: [run, -a, -c, files.yaml]
+  - tool: [run, -a, -c, nofiles.yaml]
+compare:
+  stdout: tierB

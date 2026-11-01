@@ -1,0 +1,9 @@
+name: platform/w15-other-drive
+description: '14 §A.6.4 W15 — `--files` / `-c` on another drive than the repository'
+tags: [platform]
+requires: {os: [windows], manual: "needs the repository and the file on two different drives (GitHub runner D:)"}
+expect_divergence: D-PLAT-06
+work:
+  config: "repos: []\n"
+steps:
+  - tool: [run, --files, 'C:\Windows\win.ini']

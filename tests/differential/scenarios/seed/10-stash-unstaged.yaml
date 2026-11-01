@@ -1,0 +1,18 @@
+name: seed/stash-unstaged
+covers: [T10-RUN-58]
+tags: [seed]
+work:
+  files: {a.txt: "one\n", b.txt: "two\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: cat, name: cat, entry: cat, language: system, verbose: true}
+  commit: [.pre-commit-config.yaml, a.txt, b.txt]
+  unstaged: {}
+  setup:
+    - write: {a.txt: "one staged\n"}
+    - git: [add, a.txt]
+    - write: {a.txt: "one staged\nand unstaged\n"}
+steps:
+  - tool: [run]

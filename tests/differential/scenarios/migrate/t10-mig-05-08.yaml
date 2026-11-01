@@ -1,0 +1,46 @@
+name: migrate/t10-mig-05-08
+covers: [T10-MIG-05, T10-MIG-06, T10-MIG-07, T10-MIG-08]
+work:
+  config: null
+  files:
+    sha.yaml: |
+      repos:
+      -   repo: https://github.com/pre-commit/pre-commit-hooks
+          sha: v1.2.0
+          hooks: []
+      -   "repo": "https://github.com/pre-commit/pre-commit-hooks"
+          "sha": "v1.2.0"
+          "hooks": []
+    venv.yaml: |
+      repos:
+      -   repo: local
+          hooks:
+          -   id: a
+              name: a
+              entry: a
+              language: python_venv
+          -   id: b
+              name: b
+              entry: b
+              language: "python_venv"
+          -   id: c
+              name: c
+              entry: c
+              language: system
+    stages.yaml: |
+      default_stages: [commit, push, merge-commit, commit-msg]
+      repos:
+      -   repo: local
+          hooks:
+          -   id: a
+              name: a
+              entry: a
+              language: system
+              stages: ["commit", "push", "merge-commit", "commit-msg"]
+    broken.yaml: "[\n"
+steps:
+  - tool: [migrate-config, -c, sha.yaml]
+  - tool: [migrate-config, -c, venv.yaml]
+  - tool: [migrate-config, -c, stages.yaml]
+  - tool: [migrate-config, -c, broken.yaml]
+  - shell: cat sha.yaml venv.yaml stages.yaml

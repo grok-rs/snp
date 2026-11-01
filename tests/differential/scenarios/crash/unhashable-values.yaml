@@ -1,0 +1,17 @@
+name: crash/unhashable-values
+description: '13 X.4 — unhashable stages / language / types (X13-CFG-04)'
+covers: [X13-CFG-04, X13-CFG-13]
+tags: [crash-recipe]
+expect_divergence: D-CRASH-03
+work:
+  config: null
+  setup:
+    - write: {stages.yaml: "repos:\n-   repo: local\n    hooks:\n    -   {id: h, name: h, entry: x, language: system, stages: [[a]]}\n"}
+    - write: {language.yaml: "repos:\n-   repo: local\n    hooks:\n    -   {id: h, name: h, entry: x, language: [x]}\n"}
+    - write: {types.yaml: "repos:\n-   repo: local\n    hooks:\n    -   {id: h, name: h, entry: x, language: system, types: [[a]]}\n"}
+steps:
+  - tool: [validate-config, stages.yaml]
+  - tool: [validate-config, language.yaml]
+  - tool: [validate-config, types.yaml]
+compare:
+  stdout: tierB

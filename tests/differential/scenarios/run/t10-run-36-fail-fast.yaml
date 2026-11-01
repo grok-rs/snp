@@ -1,0 +1,36 @@
+name: run/t10-run-36-fail-fast
+covers: [T10-RUN-36]
+repos:
+  hooks: {fixture: failing_hook_repo}
+work:
+  files: {foo.py: "", ff.yaml: "", hook-ff.yaml: ""}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: failing_hook}, {id: failing_hook}]
+  commit: [.pre-commit-config.yaml]
+  stage: [foo.py]
+  setup:
+    - write:
+        ff.yaml: |
+          fail_fast: true
+          repos:
+          -   repo: ${repo:hooks}
+              rev: ${rev:hooks}
+              hooks: [{id: failing_hook}, {id: failing_hook}]
+    - write:
+        hook-ff.yaml: |
+          repos:
+          -   repo: meta
+              hooks:
+              -   {id: identity, fail_fast: true}
+              -   {id: identity, name: run me!}
+          -   repo: ${repo:hooks}
+              rev: ${rev:hooks}
+              hooks: [{id: failing_hook, fail_fast: true}, {id: failing_hook}]
+steps:
+  - tool: [run]
+  - tool: [run, --fail-fast]
+  - tool: [run, -c, ff.yaml]
+  - tool: [run, -c, hook-ff.yaml]

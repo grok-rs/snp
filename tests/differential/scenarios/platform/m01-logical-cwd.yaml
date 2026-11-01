@@ -1,0 +1,18 @@
+name: platform/m01-logical-cwd
+description: '14 §A.6.4 M01 — a repository under a symlinked path entered logically; `--files` with the logical absolute path'
+tags: [platform]
+requires: {os: [macos, linux], probe: true}
+work:
+  dir: real/repo
+  files: {a.py: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: args, name: args, entry: "${probe} args", language: system, verbose: true}
+  commit: [.pre-commit-config.yaml, a.py]
+  setup:
+    - shell: ln -s real "${root}/logical"
+steps:
+  - shell: cd "${root}/logical/repo" && "$PRE_COMMIT" run --files "${root}/logical/repo/a.py"
+  - shell: cd "${root}" && "$PRE_COMMIT" run

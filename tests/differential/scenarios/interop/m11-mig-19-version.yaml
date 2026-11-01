@@ -1,0 +1,14 @@
+name: interop/m11-mig-19-version
+description: '11 §A.20 MIG-19 — `--version` through the alias and as snp'
+covers: [M11-MIG-19]
+tags: [migration]
+work:
+  git: false
+  config: null
+steps:
+  - tool: [--version]
+  - tool: [-V]
+compare:
+  tree: false
+  index: false
+  refs: false

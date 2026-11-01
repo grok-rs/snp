@@ -1,0 +1,17 @@
+name: run/t10-run-59-bad-color-env
+covers: [T10-RUN-59, T10-OUT-03]
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: t, name: t, entry: 'false', language: system}
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [run, -a]
+    env: {PRE_COMMIT_COLOR: bogus}
+  - tool: [run, -a]
+    env: {PRE_COMMIT_COLOR: always}
+  - tool: [run, -a, --color, auto]
+  - tool: [run, -a, --color, bogus]

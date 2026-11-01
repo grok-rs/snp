@@ -1,0 +1,17 @@
+name: platform/w13-crlf-outputs
+description: '14 §A.6.4 W13 — CRLF in Python''s text streams and migrate-config writes on Windows'
+tags: [platform]
+requires: {os: [windows]}
+expect_divergence: D-DATA-05
+work:
+  files: {bad.yaml: "repos: 5\n"}
+  config: |
+    -   repo: local
+        hooks:
+        -   {id: x, name: x, entry: x, language: system}
+steps:
+  - shell: '"$PRE_COMMIT" sample-config > out.yaml'
+  - tool: [validate-config, bad.yaml]
+  - tool: [migrate-config]
+compare:
+  eol: insensitive

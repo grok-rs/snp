@@ -1,0 +1,25 @@
+name: git/t10-git-05-06-conflicted-files
+covers: [T10-GIT-05, T10-GIT-06, T10-GIT-10, T10-GIT-14]
+work:
+  files: {conflict_file: "base\n", placeholder: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: show, name: show, entry: echo, language: system, verbose: true}
+  commit: [.pre-commit-config.yaml, conflict_file, placeholder]
+  setup:
+    - git: [checkout, -q, -b, foo]
+    - write: {conflict_file: "foo\n", foo_only_file: "f\n"}
+    - commit: foo
+    - git: [checkout, -q, "-"]
+    - write: {conflict_file: "bar\n", bar_only_file: "b\n", HEAD: "h\n"}
+    - commit: bar
+    - shell: git merge -q foo >/dev/null 2>&1 || true
+    - write: {conflict_file: "resolved\n", other_file: "o\n"}
+    - git: [add, conflict_file, other_file]
+    - write: {placeholder: "unstaged edit\n"}
+steps:
+  - tool: [run]
+  - tool: [run, --all-files]
+  - shell: cat .git/MERGE_MSG

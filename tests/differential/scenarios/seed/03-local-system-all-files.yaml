@@ -1,0 +1,22 @@
+name: seed/local-system-all-files
+tags: [seed]
+work:
+  files: {a.txt: "a\n", b.py: "print(1)\n", "dir/c.txt": "c\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: echo
+            name: echo
+            entry: echo
+            language: system
+        -   id: txt-only
+            name: txt only
+            entry: echo txt
+            language: system
+            files: \.txt$
+            verbose: true
+  commit: [.pre-commit-config.yaml, a.txt, b.py, dir/c.txt]
+steps:
+  - tool: [run, --all-files]
+  - tool: [run, --all-files, --verbose]

@@ -1,0 +1,24 @@
+name: autoupdate/t10-aup-06-repo-filter
+covers: [T10-AUP-06]
+repos:
+  a:
+    fixture: script_hooks_repo
+    tags: [v1.0.0]
+    then:
+      - write: {x: "1\n"}
+      - commit: two
+      - tag: v1.1.0
+work:
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: l, name: l, entry: 'true', language: system}
+    -   repo: file://${repo:a}
+        rev: v1.0.0
+        hooks:
+        -   id: bash_hook
+steps:
+  - tool: [autoupdate, --repo, dne, --repo, foo]
+  - tool: [autoupdate, --repo, "file://${repo:a}"]
+  - shell: cat .pre-commit-config.yaml

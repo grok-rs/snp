@@ -1,0 +1,38 @@
+name: crash/c13-read-only-store
+description: '13 X.10 c13 / c22 — read-only store, cached and new clones, with unstaged changes (X13-ST-01, X13-ST-03, X13-ST-04)'
+covers: [X13-ST-01, X13-ST-03, X13-ST-04]
+tags: [crash-recipe]
+requires: {os: [linux, macos], not_root: true}
+expect_divergence: D-CRASH-17
+repos:
+  hooks: {fixture: script_hooks_repo}
+  other: {fixture: failing_hook_repo}
+work:
+  files: {a.txt: "", other.yaml: ""}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook}]
+  commit: [.pre-commit-config.yaml, a.txt]
+  setup:
+    - write:
+        other.yaml: |
+          repos:
+          -   repo: ${repo:other}
+              rev: ${rev:other}
+              hooks: [{id: failing_hook}]
+steps:
+  - tool: [run, -a]
+  - shell: chmod 555 "${store}"
+  - tool: [run, -a]
+  - tool: [run, -a, -c, other.yaml]
+  - shell: echo x > a.txt && git add a.txt && echo y >> a.txt
+  - tool: [run]
+  - shell: chmod 755 "${store}"
+  - shell: mkdir -p "${root}/ro" && chmod 555 "${root}/ro"
+  - tool: [run, -a]
+    env: {PRE_COMMIT_HOME: "${root}/ro/pch"}
+  - shell: chmod 755 "${root}/ro"
+compare:
+  stdout: tierB

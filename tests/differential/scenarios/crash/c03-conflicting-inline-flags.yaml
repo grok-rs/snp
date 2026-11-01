@@ -1,0 +1,15 @@
+name: crash/c03-conflicting-inline-flags
+description: '13 X.10 c03 — (?a)(?u)x (X13-CFG-07)'
+covers: [X13-CFG-07]
+tags: [crash-recipe]
+expect_divergence: D-CRASH-04
+work:
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: h, name: h, entry: x, language: system, files: "(?a)(?u)x"}
+steps:
+  - tool: [validate-config, .pre-commit-config.yaml]
+compare:
+  stdout: tierB

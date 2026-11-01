@@ -1,0 +1,17 @@
+name: platform/w23-absolute-language-version
+description: '14 §A.6.4 W23 — `language_version: <abs python.exe>` (env dir name)'
+tags: [platform]
+requires: {os: [windows], net: true}
+expect_divergence: D-SEC-01
+work:
+  files: {a.py: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: p, name: p, entry: python -c "print(1)", language: python, language_version: 'C:\Windows\py.exe', pass_filenames: false}
+  commit: [.pre-commit-config.yaml, a.py]
+steps:
+  - tool: [run, -a]
+compare:
+  stdout: tierB

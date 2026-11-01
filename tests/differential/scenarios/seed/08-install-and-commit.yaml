@@ -1,0 +1,18 @@
+name: seed/install-and-commit
+covers: [T10-INS-03]
+tags: [seed]
+work:
+  files: {a.txt: "hello\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: ok, name: ok, entry: 'true', language: system}
+  commit: [.pre-commit-config.yaml]
+  stage: [a.txt]
+steps:
+  - tool: [install]
+  - git: [commit, -q, -m, add a]
+  - tool: [uninstall]
+compare:
+  hooks_dir: true

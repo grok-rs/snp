@@ -1,0 +1,11 @@
+name: crash/c11-hazmat-no-tool
+description: '13 X.10 c11 — `pre-commit hazmat` with no tool (X13-HZ-01)'
+covers: [X13-HZ-01]
+tags: [crash-recipe]
+expect_divergence: D-CRASH-22
+work:
+  config: "repos: []\n"
+steps:
+  - tool: [hazmat]
+compare:
+  stdout: tierB

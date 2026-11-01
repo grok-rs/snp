@@ -1,0 +1,18 @@
+name: run/t10-out-05-colors
+covers: [T10-OUT-04, T10-OUT-05]
+work:
+  files: {a.txt: "a\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: mod, name: modifies, entry: "sh -c 'for f; do echo x >> \"$f\"; done' --", language: system}
+        -   {id: t, name: t, entry: 'true', language: system}
+  commit: [.pre-commit-config.yaml, a.txt]
+  setup:
+    - write: {a.txt: "a\nb\n"}
+    - git: [add, a.txt]
+    - write: {a.txt: "a\nb\nunstaged\n"}
+steps:
+  - tool: [run, --color, always]
+  - tool: [run, --color, always, --all-files]

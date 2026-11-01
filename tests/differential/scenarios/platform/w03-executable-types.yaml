@@ -1,0 +1,17 @@
+name: platform/w03-executable-types
+description: '14 §A.6.4 W03 — executable / non-executable / python / shell tags on Windows (mode bits come from git)'
+tags: [platform]
+requires: {probe: true}
+work:
+  files: {noext: "#!/usr/bin/env python\n", script.sh: "#!/bin/sh\necho\n", b.bin: !!binary "AAEC"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: exe, name: executable, entry: "${probe} args", language: system, types: [executable], verbose: true}
+        -   {id: nonexe, name: non-executable, entry: "${probe} args", language: system, types: [non-executable], verbose: true}
+        -   {id: py, name: python, entry: "${probe} args", language: system, types: [python], verbose: true}
+        -   {id: sh, name: shell, entry: "${probe} args", language: system, types: [shell], verbose: true}
+  commit: [.pre-commit-config.yaml, noext, script.sh, b.bin]
+steps:
+  - tool: [run, -a]

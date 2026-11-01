@@ -1,0 +1,23 @@
+name: meta/t10-met-01-08
+covers: [T10-MET-01, T10-MET-02, T10-MET-03, T10-MET-04, T10-MET-05, T10-MET-08]
+work:
+  files: {a.py: "", changelog/x.md: "", changelog/y.rst: ""}
+  config: |
+    exclude: foo
+    repos:
+    -   repo: meta
+        hooks:
+        -   id: check-hooks-apply
+        -   id: check-useless-excludes
+    -   repo: local
+        hooks:
+        -   {id: yaml, name: yaml, entry: 'true', language: system, files: \.yaml$}
+        -   {id: changelog, name: changelog, entry: x, language: fail, files: 'changelog/.*(?<!\.rst)$'}
+        -   {id: always, name: always, entry: 'true', language: system, always_run: true, files: ^$}
+        -   {id: nopy, name: nopy, entry: 'true', language: system, files: foo}
+        -   {id: ex, name: ex, entry: 'true', language: system, exclude: foo}
+        -   {id: ex-types, name: ex-types, entry: 'true', language: system, exclude: .pre-commit-config.yaml, types: [python]}
+  commit: [.pre-commit-config.yaml, a.py, changelog/x.md, changelog/y.rst]
+steps:
+  - tool: [run, --all-files]
+  - tool: [run, --all-files, check-hooks-apply]

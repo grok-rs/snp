@@ -1,0 +1,23 @@
+name: store/t10-sto-01-02-store-location
+covers: [T10-STO-01, T10-STO-02, T10-STO-09]
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook}]
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [install-hooks]
+  - shell: cat "${store}/README"
+  - tool: [install-hooks]
+    env: {PRE_COMMIT_HOME: null}
+  - shell: ls "${home}/.cache"
+  - tool: [install-hooks]
+    env: {PRE_COMMIT_HOME: null, XDG_CACHE_HOME: "${root}/xdg"}
+  - shell: ls "${root}/xdg"
+compare:
+  store: true

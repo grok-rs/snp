@@ -1,0 +1,29 @@
+name: crash/c10-pre-push-stdin
+description: '13 X.10 c10 — malformed pre-push stdin lines and hook-impl argument errors (X13-HI-01..03, X13-HI-05, X13-SM-05)'
+covers: [X13-HI-01, X13-HI-02, X13-HI-03, X13-HI-05, X13-SM-05]
+tags: [crash-recipe]
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: h, name: h, entry: echo, language: system, stages: [pre-push], verbose: true}
+  commit: [.pre-commit-config.yaml, a.txt]
+  setup:
+    - git: [remote, add, origin, /nonexistent/remote]
+steps:
+  - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=pre-push, --hook-dir, "${work}/.git/hooks", --, origin, /nonexistent/remote]
+    stdin: "refs/heads/master 1234567890123456789012345678901234567890 refs/heads/master 0000000000000000000000000000000000000000\n"
+  - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=pre-push, --hook-dir, "${work}/.git/hooks", --, origin, /nonexistent/remote]
+    stdin: "refs/heads/master ${head} refs/heads/master 1234567890123456789012345678901234567890\n"
+  - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=pre-push, --hook-dir, "${work}/.git/hooks", --, origin, /nonexistent/remote]
+    stdin: "two fields\n"
+  - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=pre-push, --hook-dir, "${work}/.git/hooks", --, origin, /nonexistent/remote]
+    stdin: "zzzz\n"
+  - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=pre-push, --hook-dir, "${work}/.git/hooks", --, origin, /nonexistent/remote]
+    stdin: "(delete) 0000000000000000000000000000000000000000 refs/heads/x ${head}\n\n"
+  - tool: [hook-impl, --hook-type=bogus, --]
+  - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=pre-push, --hook-dir, "${work}/.git/hooks", --, origin]
+compare:
+  stdout: tierB

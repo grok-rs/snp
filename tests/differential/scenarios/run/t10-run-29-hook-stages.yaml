@@ -1,0 +1,19 @@
+name: run/t10-run-29-hook-stages
+covers: [T10-RUN-29, T10-CLI-06]
+work:
+  files: {a.txt: "x\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: h1, name: hook 1, entry: DO NOT MATCH, language: pygrep, stages: [pre-commit]}
+        -   {id: h2, name: hook 2, entry: DO NOT MATCH, language: pygrep, stages: [pre-push]}
+        -   {id: h3, name: hook 3, entry: DO NOT MATCH, language: pygrep, stages: [manual]}
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [run, -a, --hook-stage, pre-commit]
+  - tool: [run, -a, --hook-stage, pre-push]
+  - tool: [run, -a, --hook-stage, manual]
+  - tool: [run, -a, --hook-stage, commit]
+  - tool: [run, -a, --hook-stage, push]
+  - tool: [run, -a, --hook-stage, bogus]

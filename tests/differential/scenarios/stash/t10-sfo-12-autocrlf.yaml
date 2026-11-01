@@ -1,0 +1,18 @@
+name: stash/t10-sfo-12-autocrlf
+covers: [T10-SFO-12, T10-SFO-13, T10-SFO-14, T10-SFO-15]
+work:
+  files: {foo: "1\r\n2\r\n3\r\n"}
+  git_config: {core.autocrlf: "true", apply.whitespace: error}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: t, name: t, entry: 'true', language: system}
+  commit: [.pre-commit-config.yaml]
+  stage: [foo]
+  unstaged: {foo: "1\n2\n3\n"}
+steps:
+  - tool: [run]
+  - shell: printf '1\n2\n' > foo && git add foo && printf '3\n4\n\n' > foo
+  - tool: [run]
+  - git: [status, --porcelain]

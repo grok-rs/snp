@@ -1,0 +1,29 @@
+name: install/t10-ins-24-pre-push
+covers: [T10-INS-24, T10-INS-25, T10-INS-26, T10-HKI-06]
+repos:
+  failing: {fixture: failing_hook_repo}
+  remote: {bare: true}
+work:
+  config: |
+    repos:
+    -   repo: ${repo:failing}
+        rev: ${rev:failing}
+        hooks: [{id: failing_hook, stages: [pre-push]}]
+    -   repo: local
+        hooks:
+        -   {id: name, name: remote name, entry: "sh -c 'echo remote: $PRE_COMMIT_REMOTE_NAME' --", language: system, verbose: true, stages: [pre-push], always_run: true, pass_filenames: false}
+  commit: [.pre-commit-config.yaml]
+  setup:
+    - git: [remote, add, origin, "${repo:remote}"]
+    - git: [push, -q, origin, HEAD:main]
+steps:
+  - tool: [install, -t, pre-push]
+  - shell: touch foo && git add foo && git commit -q -m foo && touch zzz && git add zzz && git commit -q -m zzz
+  - git: [push, origin, HEAD:new_branch]
+  - git: [push, origin, HEAD:main]
+  - git: [remote, rename, origin, origin2]
+  - git: [push, --no-verify, origin2, HEAD:main]
+  - git: [push, origin2, HEAD:main]
+compare:
+  hooks_dir: true
+  stderr: lines-unordered

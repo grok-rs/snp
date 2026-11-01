@@ -1,0 +1,12 @@
+name: install/t10-ins-06-dangling-symlink
+covers: [T10-INS-06]
+requires: {os: [linux, macos]}
+work:
+  config: "repos: []\n"
+  setup:
+    - shell: mkdir -p .git/hooks && ln -s /fake/baz .git/hooks/pre-commit
+steps:
+  - tool: [install]
+  - shell: ls -l .git/hooks | awk '{print $1, $NF}' | grep -v '^total'
+compare:
+  hooks_dir: true

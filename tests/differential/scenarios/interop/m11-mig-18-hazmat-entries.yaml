@@ -1,0 +1,19 @@
+name: interop/m11-mig-18-hazmat-entries
+description: '11 §A.20 MIG-18 — hazmat entries: n1 with a missing exe, an unknown tool, cd without `--`'
+covers: [M11-MIG-18]
+tags: [migration]
+expect_divergence: D-MISC-07
+work:
+  files: {sub/a: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: a, name: n1 nope, entry: pre-commit hazmat n1 nope --, language: system}
+        -   {id: b, name: bogus, entry: pre-commit hazmat bogus, language: system}
+        -   {id: c, name: cd no dashes, entry: pre-commit hazmat cd sub echo, language: system}
+  commit: [.pre-commit-config.yaml, sub/a]
+steps:
+  - tool: [run, -a]
+compare:
+  stdout: tierB

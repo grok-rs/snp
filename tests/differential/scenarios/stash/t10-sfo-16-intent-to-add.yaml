@@ -1,0 +1,16 @@
+name: stash/t10-sfo-16-intent-to-add
+covers: [T10-SFO-16, T10-GIT-11]
+work:
+  files: {foo: "1\n", bar: "b\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: t, name: t, entry: 'true', language: system}
+  commit: [.pre-commit-config.yaml]
+  stage: [bar]
+  setup:
+    - git: [add, --intent-to-add, foo]
+steps:
+  - tool: [run]
+  - git: [status, --porcelain]

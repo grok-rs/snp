@@ -1,0 +1,14 @@
+name: run/t10-run-27-many-long-names
+covers: [T10-RUN-27]
+work:
+  generated: {count: 400, pattern: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa{i}", content: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: t, name: t, entry: 'true', language: system, files: ''}
+  commit: [.pre-commit-config.yaml]
+  stage: ["."]
+steps:
+  - tool: [install]
+  - git: [commit, -q, -m, many]

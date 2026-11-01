@@ -1,0 +1,17 @@
+name: stash/t10-sfo-04-diff-external-color
+covers: [T10-SFO-04]
+work:
+  files: {foo: "1\n2\n", ext.sh: "#!/bin/sh\necho EXTERNAL DIFF\n"}
+  exec: [ext.sh]
+  git_config: {color.diff: always, diff.external: "${work}/ext.sh"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: cat, name: cat, entry: cat, language: system, verbose: true, files: ^foo$}
+  commit: [.pre-commit-config.yaml, ext.sh]
+  stage: [foo]
+  unstaged: {foo: "herp\nderp\n"}
+steps:
+  - tool: [run]
+  - git: [status, --porcelain]

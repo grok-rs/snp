@@ -1,0 +1,25 @@
+name: repo/t10-rep-08-09-overrides
+covers: [T10-REP-08, T10-REP-09, T10-REP-11]
+repos:
+  a:
+    fixture: script_hooks_repo
+    tags: [v1.1]
+  b:
+    fixture: failing_hook_repo
+    tags: [v1.1]
+work:
+  files: {foo.py: "", bar.txt: ""}
+  config: |
+    default_stages: [manual]
+    repos:
+    -   repo: ${repo:a}
+        rev: v1.1
+        hooks: [{id: bash_hook, files: \.py$, verbose: true}]
+    -   repo: ${repo:b}
+        rev: v1.1
+        hooks: [{id: failing_hook, stages: [pre-commit]}]
+  commit: [.pre-commit-config.yaml]
+  stage: [foo.py, bar.txt]
+steps:
+  - tool: [run]
+  - tool: [run, --hook-stage, manual]

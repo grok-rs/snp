@@ -1,0 +1,13 @@
+name: seed/try-repo
+covers: [T10-TRY-01]
+tags: [seed]
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  files: {a.txt: ""}
+  config: "repos: []\n"
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [try-repo, "${repo:hooks}", --all-files]
+compare:
+  stdout: tierB

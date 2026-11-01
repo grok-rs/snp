@@ -1,0 +1,17 @@
+name: seed/modified-file-returns-zero
+description: 'three script hooks from a file:// repo; two modify files (10 §7.4.3 example)'
+covers: [T10-RUN-12]
+tags: [seed]
+repos:
+  hooks: {fixture: modified_file_returns_zero_repo}
+work:
+  files: {foo.py: "", bar.py: ""}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook}, {id: bash_hook2}, {id: bash_hook3}]
+  commit: [.pre-commit-config.yaml]
+  stage: [foo.py, bar.py]
+steps:
+  - tool: [run]

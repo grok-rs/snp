@@ -1,0 +1,26 @@
+name: repo/x13-sm-01-02-python-env
+description: 'a python hook repo with additional_dependencies, install-hooks cold then warm (needs the network for pip/uv) (X13-SM-01, X13-SM-02, T10-REP-10, T10-GC-03)'
+covers: [X13-SM-01, X13-SM-02, T10-REP-10, T10-GC-03, X13-ENV-01]
+requires: {net: true, tools: [python3]}
+expect_divergence: D-PERF-01
+repos:
+  py:
+    fixture: python_hooks_repo
+    tags: [v1.0.0]
+work:
+  files: {a.py: ""}
+  config: |
+    repos:
+    -   repo: ${repo:py}
+        rev: v1.0.0
+        hooks: [{id: foo, additional_dependencies: [six]}]
+    -   repo: local
+        hooks:
+        -   {id: lp, name: local python, entry: python -c "import six; print('six ok')", language: python, additional_dependencies: [six], pass_filenames: false, verbose: true}
+  commit: [.pre-commit-config.yaml, a.py]
+steps:
+  - tool: [install-hooks]
+  - tool: [run, -a]
+  - tool: [gc]
+compare:
+  stdout: tierB

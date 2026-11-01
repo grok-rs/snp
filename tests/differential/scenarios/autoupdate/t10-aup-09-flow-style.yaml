@@ -1,0 +1,14 @@
+name: autoupdate/t10-aup-09-flow-style
+covers: [T10-AUP-09]
+repos:
+  a:
+    fixture: script_hooks_repo
+    tags: [v1.0.0]
+    then:
+      - write: {x: "1\n"}
+      - commit: two
+work:
+  config: "repos: [{repo: '${repo:a}', rev: v1.0.0, hooks: [# A comment!\n {id: bash_hook}]}]\n"
+steps:
+  - tool: [autoupdate, --bleeding-edge]
+  - shell: cat .pre-commit-config.yaml

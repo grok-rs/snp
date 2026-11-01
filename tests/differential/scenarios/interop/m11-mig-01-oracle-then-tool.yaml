@@ -1,0 +1,21 @@
+name: interop/m11-mig-01-oracle-then-tool
+description: '11 §A.20 MIG-01 — the oracle installs, then the tool under test installs over it (snp: M1 on stderr, no .legacy)'
+covers: [M11-MIG-01]
+tags: [migration]
+expect_divergence: D-DIAG-02
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: ok, name: ok, entry: 'true', language: system}
+  commit: [.pre-commit-config.yaml]
+  stage: [a.txt]
+steps:
+  - shell: ${oracle} install
+  - tool: [install]
+  - shell: ls .git/hooks | grep -v sample
+  - git: [commit, -q, -m, mig01]
+compare:
+  hooks_dir: true

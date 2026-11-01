@@ -1,0 +1,18 @@
+name: seed/meta-hooks
+covers: [T10-MET-02, T10-MET-06]
+tags: [seed]
+work:
+  files: {a.py: "", b.txt: ""}
+  config: |
+    repos:
+    -   repo: meta
+        hooks:
+        -   id: check-hooks-apply
+        -   id: check-useless-excludes
+        -   id: identity
+    -   repo: local
+        hooks:
+        -   {id: py, name: py, entry: 'true', language: system, files: \.py$}
+  commit: [.pre-commit-config.yaml, a.py, b.txt]
+steps:
+  - tool: [run, --all-files]

@@ -1,0 +1,15 @@
+name: seed/migrate-config
+covers: [T10-MIG-01]
+tags: [seed]
+work:
+  config: |
+    -   repo: local
+        hooks:
+        -   id: x
+            name: x
+            entry: 'true'
+            language: system
+            stages: [commit, push]
+steps:
+  - tool: [migrate-config]
+  - tool: [migrate-config]

@@ -1,0 +1,37 @@
+name: autoupdate/t10-aup-04-missing-manifest-at-old-rev
+covers: [T10-AUP-04, T10-AUP-12]
+repos:
+  hooks:
+    fixture: script_hooks_repo
+    then:
+      - git: [mv, .pre-commit-hooks.yaml, nope.yaml]
+      - commit: rename manifest
+      - tag: old
+      - git: [mv, nope.yaml, .pre-commit-hooks.yaml]
+      - commit: restore manifest
+  gone:
+    fixture: script_hooks_repo
+    tags: [v1]
+    then:
+      - shell: git rm -q -r .
+      - commit: delete everything
+work:
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: old
+        hooks:
+        -   id: bash_hook
+  files:
+    gone.yaml: |
+      repos:
+      -   repo: ${repo:gone}
+          rev: v1
+          hooks:
+          -   id: bash_hook
+steps:
+  - tool: [autoupdate, --bleeding-edge]
+  - tool: [autoupdate, --bleeding-edge, -c, gone.yaml]
+  - shell: cat gone.yaml
+compare:
+  stdout: tierB

@@ -1,0 +1,15 @@
+name: run/t10-run-28-no-textconv
+covers: [T10-RUN-28]
+requires: {os: [linux, macos]}
+work:
+  files: {.gitattributes: "*.jpeg diff=empty\n", img.jpeg: !!binary "/9j/4AAQSkZJRgABAQ=="}
+  git_config: {diff.empty.textconv: "true"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: nul, name: append nul, entry: "sh -c 'for f; do printf \"\\000\" >> \"$f\"; done' --", language: system, types: [jpeg]}
+  commit: [.pre-commit-config.yaml, .gitattributes]
+  stage: [img.jpeg]
+steps:
+  - tool: [run]

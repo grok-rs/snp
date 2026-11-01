@@ -1,0 +1,23 @@
+name: crash/c15-missing-repo
+description: '13 X.10 c15 — a nonexistent repo for run, autoupdate and try-repo; an unreadable config (X13-GIT-01..03, X13-CFG-09)'
+covers: [X13-GIT-01, X13-GIT-03, X13-CFG-09, X13-GIT-04]
+tags: [crash-recipe]
+requires: {not_root: true}
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: /nonexistent/repo
+        rev: v1.0.0
+        hooks: [{id: x}]
+  commit: [a.txt]
+steps:
+  - tool: [run, -a]
+  - tool: [try-repo, /nonexistent/repo]
+  - tool: [run, --from-ref, bogus, --to-ref, HEAD]
+  - shell: chmod 000 .pre-commit-config.yaml
+  - tool: [run, -a]
+  - tool: [validate-config, .pre-commit-config.yaml]
+  - shell: chmod 644 .pre-commit-config.yaml
+compare:
+  stdout: tierB

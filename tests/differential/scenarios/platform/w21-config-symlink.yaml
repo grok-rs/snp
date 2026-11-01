@@ -1,0 +1,22 @@
+name: platform/w21-config-symlink
+description: '14 §A.6.4 W21 — `.pre-commit-config.yaml` committed as a symlink, cloned with core.symlinks=false'
+tags: [platform]
+repos:
+  src:
+    files: {cfg/real.yaml: "repos: []\n"}
+    then:
+      - shell: ln -s cfg/real.yaml .pre-commit-config.yaml
+      - commit: config symlink
+work:
+  git: false
+  config: null
+  setup:
+    - git: [-c, core.symlinks=false, clone, -q, "${repo:src}", "${root}/nolinks"]
+steps:
+  - tool: [run, -a]
+    cwd: ../nolinks
+requires: {os: [linux, macos, windows]}
+compare:
+  tree: false
+  index: false
+  refs: false

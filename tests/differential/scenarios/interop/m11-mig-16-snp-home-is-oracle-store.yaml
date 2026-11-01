@@ -1,0 +1,21 @@
+name: interop/m11-mig-16-snp-home-is-oracle-store
+description: '11 §A.20 MIG-16 — SNP_HOME pointing at pre-commit''s store (snp refuses it: M7, nothing written)'
+covers: [M11-MIG-16]
+tags: [migration]
+expect_divergence: D-STORE-01
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook}]
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - shell: ${oracle} install-hooks
+  - tool: [run, -a]
+    env: {SNP_HOME: "${store}"}
+compare:
+  store: false

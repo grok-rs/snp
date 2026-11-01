@@ -1,0 +1,17 @@
+name: platform/w16-stdin-kind
+description: '14 §A.6.4 W16 — what a hook''s stdin is (pipe, not a tty) on every OS'
+tags: [platform]
+requires: {probe: true}
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: k, name: stdin kind, entry: "${probe} stdin-kind", language: system, verbose: true, pass_filenames: false}
+        -   {id: t, name: tty, entry: "${probe} tty", language: system, verbose: true, pass_filenames: false}
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [run, -a]
+  - tool: [run, -a]
+    stdin: "ignored\n"

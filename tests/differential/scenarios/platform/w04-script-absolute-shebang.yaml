@@ -1,0 +1,16 @@
+name: platform/w04-script-absolute-shebang
+description: '14 §A.6.4 W04 — `language: script` with `#!/bin/bash`: pre-commit fails, snp falls back to the basename on PATH'
+tags: [platform]
+requires: {os: [windows]}
+expect_divergence: D-PLAT-02
+work:
+  files: {s.sh: "#!/bin/bash\necho ran\n"}
+  exec: [s.sh]
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: s, name: s, entry: ./s.sh, language: script, pass_filenames: false, always_run: true, verbose: true}
+  commit: [.pre-commit-config.yaml, s.sh]
+steps:
+  - tool: [run]

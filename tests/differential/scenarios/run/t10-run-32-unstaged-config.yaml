@@ -1,0 +1,16 @@
+name: run/t10-run-32-unstaged-config
+covers: [T10-RUN-32]
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: t, name: t, entry: 'true', language: system}
+  commit: [.pre-commit-config.yaml, a.txt]
+  setup:
+    - shell: printf '# changed\n' >> .pre-commit-config.yaml
+steps:
+  - tool: [run]
+  - tool: [run, --all-files]
+  - tool: [run, --files, .pre-commit-config.yaml]

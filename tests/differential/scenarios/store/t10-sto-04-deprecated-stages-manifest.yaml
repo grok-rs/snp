@@ -1,0 +1,53 @@
+name: store/t10-sto-04-deprecated-stages-manifest
+covers: [T10-STO-04, T10-STO-05, T10-STO-08]
+repos:
+  hooks:
+    fixture: script_hooks_repo
+    then:
+      - write:
+          .pre-commit-hooks.yaml: |
+            -   id: bash_hook
+                name: Bash hook
+                entry: bin/hook.sh
+                language: script
+                stages: [commit, push, merge-commit]
+            -   id: other
+                name: other
+                entry: bin/hook.sh
+                language: script
+                stages: [commit]
+      - commit: deprecated stages
+      - git: [checkout, -q, -b, temp]
+      - write: {t: "t\n"}
+      - commit: tagged on a deleted branch
+      - tag: only-on-deleted
+      - git: [checkout, -q, master]
+      - git: [branch, -q, -D, temp]
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook}, {id: other}]
+  setup:
+    - write:
+        tag.yaml: |
+          repos:
+          -   repo: ${repo:hooks}
+              rev: only-on-deleted
+              hooks: [{id: bash_hook}]
+        nope.yaml: |
+          repos:
+          -   repo: /i_dont_exist_lol
+              rev: v1
+              hooks: [{id: x}]
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [run, -a]
+  - tool: [run, -a]
+  - tool: [run, -a, -c, tag.yaml]
+  - tool: [run, -a, -c, nope.yaml]
+  - shell: ls "${store}" | grep -c '^repo' || true
+compare:
+  stdout: tierB

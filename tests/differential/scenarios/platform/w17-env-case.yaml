@@ -1,0 +1,22 @@
+name: platform/w17-env-case
+description: '14 §A.6.4 W17 — a lower-case `git_index_file` and a mixed-case variable; install-hooks clones under no_git_env'
+tags: [platform]
+requires: {os: [windows], probe: true}
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook}]
+    -   repo: local
+        hooks:
+        -   {id: names, name: names, entry: "${probe} envnames", language: system, verbose: true, pass_filenames: false}
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [install-hooks]
+    env: {git_index_file: 'C:\nonexistent\idx', MyVar: "1"}
+  - tool: [run, -a, names]
+    env: {MyVar: "1"}

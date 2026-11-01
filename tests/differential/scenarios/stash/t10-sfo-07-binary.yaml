@@ -1,0 +1,15 @@
+name: stash/t10-sfo-07-binary
+covers: [T10-SFO-07]
+work:
+  files: {img.jpg: !!binary "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP////8="}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: t, name: t, entry: 'true', language: system}
+  commit: [.pre-commit-config.yaml]
+  stage: [img.jpg]
+  unstaged: {img.jpg: !!binary "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="}
+steps:
+  - tool: [run]
+  - git: [status, --porcelain]

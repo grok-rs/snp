@@ -1,0 +1,19 @@
+name: install/t10-ins-22-install-hooks
+covers: [T10-INS-22, T10-INS-23]
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook}]
+  commit: [.pre-commit-config.yaml]
+steps:
+  - tool: [install, --install-hooks]
+  - shell: touch foo && git add foo && git commit -m commit!
+  - tool: [install-hooks]
+  - shell: touch bar && git add bar && env PATH=/usr/bin:/bin git commit -m commit!
+compare:
+  hooks_dir: true
+  store: true

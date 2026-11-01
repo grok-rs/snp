@@ -1,0 +1,17 @@
+name: repo/t10-rep-04-cwd
+covers: [T10-REP-04]
+repos:
+  cwd: {fixture: prints_cwd_repo}
+work:
+  files: {sub/x.sh: "", y.sh: ""}
+  config: |
+    repos:
+    -   repo: ${repo:cwd}
+        rev: ${rev:cwd}
+        hooks: [{id: prints_cwd, verbose: true}]
+  commit: [.pre-commit-config.yaml]
+  stage: [sub/x.sh, y.sh]
+steps:
+  - tool: [run]
+  - tool: [run]
+    cwd: sub

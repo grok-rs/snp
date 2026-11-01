@@ -1,0 +1,17 @@
+name: xargs/t10-xrg-21-non-utf8-output
+covers: [T10-XRG-21, T10-UTL-03]
+requires: {os: [linux, macos]}
+work:
+  files: {a.txt: "", noshebang: "echo hi\n"}
+  exec: [noshebang]
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: bytes, name: bytes, entry: "sh -c 'printf \"\\201\\376\\n\" >&2; exit 1' --", language: system}
+        -   {id: dne, name: dne, entry: dne, language: system}
+        -   {id: nosb, name: no shebang, entry: ./noshebang, language: script, pass_filenames: false}
+  commit: [.pre-commit-config.yaml, noshebang]
+  stage: [a.txt]
+steps:
+  - tool: [run]

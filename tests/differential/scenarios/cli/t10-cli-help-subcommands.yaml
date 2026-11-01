@@ -1,0 +1,28 @@
+name: cli/t10-cli-help-subcommands
+covers: [T10-CLI-03]
+work:
+  git: false
+  config: null
+steps:
+  - tool: [autoupdate, --help]
+  - tool: [clean, --help]
+  - tool: [gc, --help]
+  - tool: [install, --help]
+  - tool: [install-hooks, --help]
+  - tool: [migrate-config, --help]
+  - tool: [run, --help]
+  - tool: [sample-config, --help]
+  - tool: [try-repo, --help]
+  - tool: [uninstall, --help]
+  - tool: [validate-config, --help]
+  - tool: [validate-manifest, --help]
+  - tool: [init-templatedir, --help]
+  - tool: [hook-impl, --help]
+  - tool: [help, install]
+  - tool: [run, --files]
+  - tool: [install, -t, bogus]
+  - tool: [run, --show-diff-on-failure, --all-files, --files, x]
+compare:
+  tree: false
+  index: false
+  refs: false

@@ -1,0 +1,22 @@
+name: install/t10-ins-09-10-commit-variants
+covers: [T10-INS-09, T10-INS-10, T10-INS-20]
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  files: {unstaged: "1\n"}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook}]
+  commit: [.pre-commit-config.yaml, unstaged]
+steps:
+  - tool: [install]
+  - shell: echo 2 > unstaged && git commit -a -m commit-a
+  - shell: git checkout -q -b feature && touch f && git add f && git commit -q -m f && git checkout -q -
+  - shell: git merge --no-ff --no-commit -m ☃ feature && git commit --no-edit
+  - shell: sed 's/138fd403232d2ddd5efb44317e38bf03/e358c9dae00eac5d06b38dfdb1e33a8c/' .git/hooks/pre-commit > h && cat h > .git/hooks/pre-commit && rm h
+  - tool: [install]
+  - shell: ls .git/hooks | grep -v sample
+compare:
+  hooks_dir: true

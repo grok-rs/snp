@@ -1,0 +1,7 @@
+name: seed/sample-config
+covers: [T10-VAL-04]
+tags: [seed]
+work:
+  config: null
+steps:
+  - tool: [sample-config]

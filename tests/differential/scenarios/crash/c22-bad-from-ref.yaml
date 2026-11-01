@@ -1,0 +1,23 @@
+name: crash/c22-bad-from-ref
+description: '13 X.10 c22 — a read-only db.db in a writable store (X13-ST-09)'
+covers: [X13-ST-09]
+tags: [crash-recipe]
+requires: {os: [linux, macos], not_root: true}
+expect_divergence: D-CRASH-17
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook}]
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [run, -a]
+  - shell: chmod 444 "${store}/db.db"
+  - tool: [run, -a]
+  - tool: [gc]
+compare:
+  stdout: tierB

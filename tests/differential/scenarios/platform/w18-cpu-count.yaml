@@ -1,0 +1,8 @@
+name: platform/w18-cpu-count
+description: '14 §A.6.4 W18 — cpu_count parity (via `xtask platform-facts`)'
+tags: [platform]
+requires: {os: [windows, macos], manual: "asserted by `cargo xtask platform-facts`, not by a differential run"}
+work:
+  config: "repos: []\n"
+steps:
+  - tool: [run]

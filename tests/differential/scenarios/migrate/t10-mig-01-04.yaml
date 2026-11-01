@@ -1,0 +1,30 @@
+name: migrate/t10-mig-01-04
+covers: [T10-MIG-01, T10-MIG-02, T10-MIG-03, T10-MIG-04, T10-AUP-16]
+work:
+  config: null
+  files:
+    list.yaml: |
+      -   repo: local
+          hooks:
+          -   id: foo
+              name: foo
+              entry: ./bin/foo.sh
+              language: script
+    header.yaml: |
+      # comment
+
+      ---
+      -   repo: local
+          hooks:
+          -   id: foo
+              name: foo
+              entry: ./bin/foo.sh
+              language: script
+    flow.yaml: "[{\n    repo: local,\n    hooks: [{\n        id: foo, name: foo, entry: ./bin/foo.sh,\n        language: script,\n    }]\n}]"
+    already.yaml: "repos: []\n"
+steps:
+  - tool: [migrate-config, -c, list.yaml]
+  - tool: [migrate-config, -c, header.yaml]
+  - tool: [migrate-config, -c, flow.yaml]
+  - tool: [migrate-config, -c, already.yaml]
+  - shell: cat list.yaml header.yaml flow.yaml already.yaml

@@ -1,0 +1,21 @@
+name: autoupdate/t10-aup-13-hook-renamed
+covers: [T10-AUP-13]
+repos:
+  a:
+    fixture: script_hooks_repo
+    tags: [v1.0.0]
+    then:
+      - shell: |
+            sed 's/id: bash_hook/id: bar/' .pre-commit-hooks.yaml > m && mv m .pre-commit-hooks.yaml
+      - commit: rename the hook
+      - tag: v2.0.0
+work:
+  config: |
+    repos:
+    -   repo: ${repo:a}
+        rev: v1.0.0
+        hooks:
+        -   id: bash_hook
+steps:
+  - tool: [autoupdate]
+  - shell: cat .pre-commit-config.yaml

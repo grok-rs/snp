@@ -1,0 +1,15 @@
+name: git/t10-git-03-staged-deletion
+covers: [T10-GIT-03]
+work:
+  files: {a.txt: "a\n", b.txt: "b\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: show, name: show, entry: echo, language: system, verbose: true}
+  commit: [.pre-commit-config.yaml, a.txt, b.txt]
+  setup:
+    - git: [rm, -q, --cached, a.txt]
+    - git: [rm, -q, b.txt]
+steps:
+  - tool: [run]

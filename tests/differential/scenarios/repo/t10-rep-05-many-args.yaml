@@ -1,0 +1,15 @@
+name: repo/t10-rep-05-many-args
+covers: [T10-REP-05, T10-XRG-01]
+requires: {probe: true}
+work:
+  generated: {count: 15000, pattern: "f{i:05}", content: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: count, name: count, entry: "${probe} count", language: system, require_serial: true, verbose: true}
+  commit: [.pre-commit-config.yaml]
+  stage: ["."]
+steps:
+  - tool: [run]
+    env: {PRE_COMMIT_NO_CONCURRENCY: "1"}

@@ -1,0 +1,17 @@
+name: platform/m04-many-files-partitions
+description: '14 §A.6.4 M04 — 5000 files through the probe''s `count`; partitions follow ARG_MAX and the job count'
+tags: [platform]
+requires: {probe: true}
+work:
+  generated: {count: 5000, pattern: "dir/file-{i:05}.txt", content: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: c, name: count, entry: "${probe} count", language: system, verbose: true}
+  commit: [.pre-commit-config.yaml]
+  stage: ["."]
+steps:
+  - tool: [run]
+compare:
+  stdout: lines-unordered

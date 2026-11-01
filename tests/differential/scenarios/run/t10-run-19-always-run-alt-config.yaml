@@ -1,0 +1,19 @@
+name: run/t10-run-19-always-run-alt-config
+covers: [T10-RUN-19]
+work:
+  files:
+    alternate_config.yaml: |
+      repos:
+      -   repo: local
+          hooks:
+          -   {id: hi, name: hello, entry: echo Hello World, language: system, always_run: true, verbose: true}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: always, name: always, entry: echo always, language: system, always_run: true}
+  commit: [.pre-commit-config.yaml, alternate_config.yaml]
+steps:
+  - tool: [run]
+  - tool: [run, -c, alternate_config.yaml]
+  - tool: [run, --config, alternate_config.yaml, --verbose]

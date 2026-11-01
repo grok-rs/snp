@@ -1,0 +1,23 @@
+name: config/t10-cfg-22-unexpected-keys
+covers: [T10-CFG-22, T10-REP-07]
+work:
+  files: {a.txt: ""}
+  config: |
+    foo: bar
+    repos:
+    -   repo: https://gitlab.com/pycqa/flake8
+        rev: 3.7.7
+        args: [x]
+        hooks: [{id: flake8}]
+  setup:
+    - write:
+        local.yaml: |
+          repos:
+          -   repo: local
+              hooks:
+              -   {id: too-much, name: x, entry: 'true', language: system, foo: 1, hello: 2}
+  commit: [a.txt]
+steps:
+  - tool: [validate-config]
+  - tool: [validate-config, .pre-commit-config.yaml]
+  - tool: [run, -c, local.yaml, --all-files]

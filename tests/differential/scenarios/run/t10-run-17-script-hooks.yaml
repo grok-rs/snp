@@ -1,0 +1,23 @@
+name: run/t10-run-17-script-hooks
+covers: [T10-RUN-17, T10-RUN-24]
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  files: {foo.py: ""}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook}]
+  commit: [.pre-commit-config.yaml]
+  stage: [foo.py]
+steps:
+  - tool: [run]
+  - tool: [run, --verbose]
+  - tool: [run, bash_hook]
+  - tool: [run, nope]
+  - tool: [run, --hook-stage, pre-push, nope]
+  - tool: [run, --all-files, --verbose]
+  - tool: [run, --files, foo.py, --verbose]
+  - git: [commit, -q, -m, foo]
+  - tool: [run]

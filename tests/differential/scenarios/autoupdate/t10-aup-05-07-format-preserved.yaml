@@ -1,0 +1,32 @@
+name: autoupdate/t10-aup-05-07-format-preserved
+covers: [T10-AUP-05, T10-AUP-07, T10-AUP-17]
+repos:
+  a:
+    fixture: script_hooks_repo
+    tags: [v1.0.0]
+    then:
+      - write: {x: "1\n"}
+      - commit: two
+      - tag: v1.1.0
+  b:
+    fixture: script_hooks_repo
+    tags: [v2.0.0]
+work:
+  config: |
+    repos:
+    # leading comment
+    -   repo: ${repo:a}
+        rev: v1.0.0  # definitely the version I want!
+        hooks:
+        -   id: bash_hook
+            args: [foo, bar, baz]
+    -   repo: ${repo:b}
+        rev: "v2.0.0"
+        hooks:
+        -   id: bash_hook
+    -   repo: ${repo:a}
+        rev: 'v1.0.0'
+        hooks: [{id: bash_hook}]
+steps:
+  - tool: [autoupdate]
+  - shell: cat .pre-commit-config.yaml

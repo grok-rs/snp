@@ -1,0 +1,22 @@
+name: crash/install-hook-dir-states
+description: '13 X.4 — install when the hook path is a directory or the hooks dir is read-only; uninstall failures (X13-CMD-01..04)'
+covers: [X13-CMD-01, X13-CMD-02, X13-CMD-03, X13-CMD-04]
+tags: [crash-recipe]
+requires: {os: [linux, macos], not_root: true}
+work:
+  config: "repos: []\n"
+steps:
+  - shell: mkdir -p .git/hooks/pre-commit
+  - tool: [install]
+  - shell: rmdir .git/hooks/pre-commit && mkdir .git/hooks/pre-commit.legacy
+  - tool: [install, -f]
+  - shell: rmdir .git/hooks/pre-commit.legacy; rm -f .git/hooks/pre-commit; chmod 555 .git/hooks
+  - tool: [install]
+  - shell: chmod 755 .git/hooks
+  - tool: [install]
+  - shell: chmod 555 .git/hooks
+  - tool: [uninstall]
+  - shell: chmod 755 .git/hooks
+compare:
+  stdout: tierB
+  hooks_dir: true

@@ -1,0 +1,28 @@
+name: autoupdate/t10-aup-10-11-freeze
+covers: [T10-AUP-10, T10-AUP-11, T10-AUP-02]
+repos:
+  a:
+    fixture: script_hooks_repo
+    then:
+      - write: {x: "1\n"}
+      - commit: two
+      - tag: v1.2.3
+      - tag: latest
+      - write: {x: "2\n"}
+      - commit: after the tag
+work:
+  config: |
+    repos:
+    -   repo: ${repo:a}
+        rev: ${rev:a}
+        hooks:
+        -   id: bash_hook
+steps:
+  - tool: [autoupdate]
+  - tool: [autoupdate, --freeze]
+  - shell: cat .pre-commit-config.yaml
+  - tool: [autoupdate]
+  - shell: cat .pre-commit-config.yaml
+  - tool: [autoupdate, --bleeding-edge]
+  - tool: [autoupdate, --tags-only]
+  - tool: [autoupdate, --bleeding-edge, --freeze]

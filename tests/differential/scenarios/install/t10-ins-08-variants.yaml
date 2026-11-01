@@ -1,0 +1,28 @@
+name: install/t10-ins-08-variants
+covers: [T10-INS-08, T10-INS-13]
+repos:
+  hooks: {fixture: script_hooks_repo}
+  failing: {fixture: failing_hook_repo}
+work:
+  files:
+    custom.yaml: |
+      repos:
+      -   repo: ${repo:hooks}
+          rev: ${rev:hooks}
+          hooks: [{id: bash_hook}]
+    fail.yaml: |
+      repos:
+      -   repo: ${repo:failing}
+          rev: ${rev:failing}
+          hooks: [{id: failing_hook}]
+  config: null
+  commit: [custom.yaml, fail.yaml]
+steps:
+  - tool: [install, -c, custom.yaml]
+  - shell: touch foo && git add foo
+  - git: [commit, -m, commit!]
+  - tool: [install, -f, -c, fail.yaml]
+  - shell: touch bar && git add bar
+  - git: [commit, -m, commit!]
+compare:
+  hooks_dir: true

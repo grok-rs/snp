@@ -1,0 +1,16 @@
+name: platform/w02-launchers
+description: '14 §A.6.4 W02 — git-cmd / git-pwsh / git-bash launchers × path profiles; the probe prints PATH TERM MSYSTEM HOME'
+tags: [platform]
+requires: {os: [windows], probe: true, launcher: git-cmd, path_profile: user-minimal}
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: env, name: env, entry: "${probe} env TERM MSYSTEM HOME", language: system, verbose: true}
+  commit: [.pre-commit-config.yaml]
+  stage: [a.txt]
+steps:
+  - tool: [install]
+  - git: [commit, -q, -m, w02]

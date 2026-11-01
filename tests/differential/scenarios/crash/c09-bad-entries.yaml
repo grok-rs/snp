@@ -1,0 +1,25 @@
+name: crash/c09-bad-entries
+description: '13 X.10 c09 — empty / blank / quoted-empty / comment / unterminated entries (X13-EXE-01, X13-EXE-02, X13-SM-07)'
+covers: [X13-EXE-01, X13-EXE-02, X13-SM-07]
+tags: [crash-recipe]
+expect_divergence: D-CRASH-05
+work:
+  files: {a.txt: ""}
+  config: null
+  commit: [a.txt]
+  setup:
+    - write: {e1.yaml: "repos:\n-   repo: local\n    hooks:\n    -   {id: h, name: h, entry: '', language: system}\n"}
+    - write: {e2.yaml: "repos:\n-   repo: local\n    hooks:\n    -   {id: h, name: h, entry: '   ', language: system}\n"}
+    - write: {e3.yaml: "repos:\n-   repo: local\n    hooks:\n    -   {id: h, name: h, entry: \"''\", language: system}\n"}
+    - write: {e4.yaml: "repos:\n-   repo: local\n    hooks:\n    -   {id: h, name: h, entry: '#', language: system}\n"}
+    - write: {e5.yaml: "repos:\n-   repo: local\n    hooks:\n    -   {id: h, name: h, entry: '', args: [echo, hi], language: system}\n"}
+    - write: {e6.yaml: "repos:\n-   repo: local\n    hooks:\n    -   {id: h, name: h, entry: \"echo 'unterminated\", language: system}\n"}
+steps:
+  - tool: [run, -a, -c, e1.yaml]
+  - tool: [run, -a, -c, e2.yaml]
+  - tool: [run, -a, -c, e3.yaml]
+  - tool: [run, -a, -c, e4.yaml]
+  - tool: [run, -a, -c, e5.yaml]
+  - tool: [run, -a, -c, e6.yaml]
+compare:
+  stdout: tierB

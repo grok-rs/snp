@@ -1,0 +1,8 @@
+name: run/t10-run-40-skip-post-checkout
+covers: [T10-RUN-40]
+work:
+  config: null
+steps:
+  - tool: [run, --hook-stage, post-checkout]
+    env: {_PRE_COMMIT_SKIP_POST_CHECKOUT: "1"}
+  - tool: [run, --hook-stage, post-checkout]

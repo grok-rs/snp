@@ -1,0 +1,9 @@
+name: run/t10-run-55-empty-repos
+covers: [T10-RUN-55]
+work:
+  files: {a.txt: ""}
+  config: "repos: []\n"
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [run]
+  - tool: [run, -a]

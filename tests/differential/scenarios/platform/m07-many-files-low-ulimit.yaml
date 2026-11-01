@@ -1,0 +1,17 @@
+name: platform/m07-many-files-low-ulimit
+description: '14 §A.6.4 M07 — `ulimit -n 256`, 20 000 files, 8 jobs'
+tags: [platform]
+requires: {os: [macos, linux], probe: true}
+work:
+  generated: {count: 20000, pattern: "f{i:05}", content: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: c, name: count, entry: "${probe} count", language: system}
+  commit: [.pre-commit-config.yaml]
+  stage: ["."]
+steps:
+  - shell: ulimit -n 256 && "$PRE_COMMIT" run
+compare:
+  stdout: exact

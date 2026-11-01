@@ -1,0 +1,25 @@
+name: autoupdate/autoupdate-jobs
+covers: [T10-AUP-05]
+repos:
+  a:
+    fixture: script_hooks_repo
+    tags: [v1.0.0]
+    then: [{write: {x: "1\n"}}, {commit: two}, {tag: v1.1.0}]
+  b:
+    fixture: script_hooks_repo
+    tags: [v1.0.0]
+    then: [{write: {x: "1\n"}}, {commit: two}, {tag: v1.2.0}]
+  c:
+    fixture: script_hooks_repo
+    tags: [v3.0.0]
+work:
+  config: |
+    repos:
+    -   {repo: '${repo:a}', rev: v1.0.0, hooks: [{id: bash_hook}]}
+    -   {repo: '${repo:b}', rev: v1.0.0, hooks: [{id: bash_hook}]}
+    -   {repo: '${repo:c}', rev: v3.0.0, hooks: [{id: bash_hook}]}
+steps:
+  - tool: [autoupdate, -j, "3"]
+  - shell: cat .pre-commit-config.yaml
+compare:
+  stdout: lines-unordered

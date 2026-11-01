@@ -1,0 +1,16 @@
+name: crash/c21-log-is-directory
+description: '13 X.10 c21 — the crash log path is a directory (X13-EH-02, X13-EH-01)'
+covers: [X13-EH-01]
+tags: [crash-recipe]
+expect_divergence: D-CRASH-17
+work:
+  files: {a.txt: ""}
+  config: |
+    minimum_pre_commit_version: "abc"
+    repos: []
+  commit: [a.txt]
+steps:
+  - shell: mkdir -p "${store}/pre-commit.log"
+  - tool: [run, -a]
+compare:
+  stdout: tierB

@@ -1,0 +1,23 @@
+name: run/t10-run-22-merge-conflict
+covers: [T10-RUN-22, T10-GIT-04]
+work:
+  files: {f.txt: "base\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: show, name: show, entry: echo, language: system, verbose: true}
+  commit: [.pre-commit-config.yaml, f.txt]
+  setup:
+    - git: [checkout, -q, -b, other]
+    - write: {f.txt: "other\n"}
+    - commit: other
+    - git: [checkout, -q, "-"]
+    - write: {f.txt: "mine\n"}
+    - commit: mine
+    - shell: git merge -q other >/dev/null 2>&1 || true
+steps:
+  - tool: [run]
+  - tool: [run, --files, f.txt]
+  - shell: printf 'resolved\n' > f.txt && git add f.txt
+  - tool: [run]

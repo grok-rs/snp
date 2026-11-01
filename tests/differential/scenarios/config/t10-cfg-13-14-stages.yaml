@@ -1,0 +1,20 @@
+name: config/t10-cfg-13-14-stages
+covers: [T10-CFG-13, T10-CFG-14]
+work:
+  config: null
+  files:
+    invalid.yaml: |
+      repos:
+      -   repo: local
+          hooks:
+          -   {id: do_not_commit, name: x, entry: x, language: pygrep, stages: [invalid]}
+    deprecated.yaml: |
+      default_stages: [commit, push]
+      repos:
+      -   repo: local
+          hooks:
+          -   {id: do_not_commit, name: x, entry: x, language: pygrep, stages: [commit, push]}
+          -   {id: fine, name: x, entry: x, language: pygrep, stages: [pre-commit, pre-push]}
+steps:
+  - tool: [validate-config, invalid.yaml]
+  - tool: [validate-config, deprecated.yaml]

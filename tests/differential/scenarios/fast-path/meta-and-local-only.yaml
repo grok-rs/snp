@@ -1,0 +1,19 @@
+name: fast-path/meta-and-local-only
+description: 'meta and local hooks only: no clone, no Initializing line, identical cold and warm'
+tags: [fast-path]
+work:
+  files: {a.py: "", b.txt: "TODO\n"}
+  config: |
+    repos:
+    -   repo: meta
+        hooks: [{id: check-hooks-apply}, {id: identity}]
+    -   repo: local
+        hooks:
+        -   {id: todo, name: todo, entry: TODO, language: pygrep}
+        -   {id: fail, name: no txt, entry: no text files, language: fail, files: \.txt$}
+  commit: [.pre-commit-config.yaml, a.py, b.txt]
+steps:
+  - tool: [run, -a]
+  - tool: [run, -a]
+compare:
+  store: true

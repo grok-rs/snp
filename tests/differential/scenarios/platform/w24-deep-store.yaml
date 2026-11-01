@@ -1,0 +1,8 @@
+name: platform/w24-deep-store
+description: '14 §A.6.4 W24 — a store path near 200 characters, node hook install'
+tags: [platform]
+requires: {os: [windows], net: true, manual: "records the oracle's MAX_PATH behaviour; snp must work"}
+work:
+  config: "repos: []\n"
+steps:
+  - tool: [run]

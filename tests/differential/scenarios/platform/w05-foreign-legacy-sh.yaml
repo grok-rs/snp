@@ -1,0 +1,19 @@
+name: platform/w05-foreign-legacy-sh
+description: '14 §A.6.4 W05 — a foreign `#!/bin/sh` hook migrated to .legacy, then a commit'
+tags: [platform]
+requires: {os: [windows]}
+expect_divergence: D-PLAT-02
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: ok, name: ok, entry: 'true', language: system}
+  commit: [.pre-commit-config.yaml]
+  stage: [a.txt]
+  setup:
+    - shell: mkdir -p .git/hooks && printf '#!/bin/sh\necho legacy\n' > .git/hooks/pre-commit
+steps:
+  - tool: [install]
+  - git: [commit, -q, -m, w05]

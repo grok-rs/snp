@@ -1,0 +1,20 @@
+name: crash/c05-file-deleted-by-earlier-hook
+description: '13 X.10 c05 — an always_run hook deletes a file before its tags are computed (X13-CLS-01)'
+covers: [X13-CLS-01]
+tags: [crash-recipe]
+expect_divergence: D-CRASH-08
+work:
+  files: {a.txt: "", b.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: rm, name: rm, entry: rm -f b.txt, files: ^a\.txt$, pass_filenames: false, always_run: true, language: system}
+        -   {id: echo, name: echo, entry: echo, language: system, verbose: true}
+  commit: [.pre-commit-config.yaml, a.txt, b.txt]
+steps:
+  - tool: [run, -a]
+  - shell: git checkout -q b.txt && echo x >> a.txt && echo x >> b.txt && git add a.txt b.txt
+  - tool: [run]
+compare:
+  stdout: tierB

@@ -1,0 +1,21 @@
+name: crash/c18-epipe
+description: '13 X.10 c18 / c23 — stdout closed early, with and without a stash (X13-EH-03, X13-STASH-03, X13-SM-08)'
+covers: [X13-EH-03, X13-STASH-03, X13-SM-08]
+tags: [crash-recipe]
+requires: {os: [linux, macos], probe: true}
+expect_divergence: D-CRASH-24
+work:
+  files: {a.txt: "a\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: big, name: big, entry: "${probe} fill 2000000", language: system, verbose: true, pass_filenames: false, always_run: true}
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - shell: '"$PRE_COMMIT" run -a | head -c 20; echo'
+  - shell: echo b >> a.txt && git add a.txt && echo c >> a.txt
+  - shell: '"$PRE_COMMIT" run | head -c 20; echo'
+  - shell: cat a.txt; git status --porcelain
+compare:
+  stderr: tierB

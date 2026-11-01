@@ -1,0 +1,17 @@
+name: install/t10-ins-03-04-install-types
+covers: [T10-INS-03, T10-INS-04, T10-INS-07]
+work:
+  config: "repos: []\n"
+steps:
+  - tool: [uninstall]
+  - tool: [install]
+  - tool: [install, --hook-type, pre-push]
+  - tool: [uninstall]
+  - tool: [uninstall, -t, pre-push]
+  - shell: rm -rf .git/hooks
+  - tool: [install, -t, pre-commit, -t, pre-push]
+  - shell: ls .git/hooks && test -x .git/hooks/pre-commit && test -x .git/hooks/pre-push
+  - tool: [uninstall, -t, pre-commit, -t, pre-push]
+  - shell: ls .git/hooks
+compare:
+  hooks_dir: true

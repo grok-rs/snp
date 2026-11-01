@@ -1,0 +1,22 @@
+name: config/t10-cfg-21-minimum-version
+covers: [T10-CFG-21, T10-CFG-24]
+work:
+  config: null
+  files:
+    top.yaml: "minimum_pre_commit_version: '999'\nrepos: []\n"
+    top-bad-repos.yaml: "minimum_pre_commit_version: '999'\nrepos: 5\n"
+    zero.yaml: "minimum_pre_commit_version: '0'\nrepos: []\n"
+    hook.yaml: |
+      repos:
+      -   repo: local
+          hooks:
+          -   {id: do_not_commit, name: x, entry: x, language: pygrep, minimum_pre_commit_version: '999'}
+    manifest.yaml: "hooks: {}\n"
+steps:
+  - tool: [validate-config, top.yaml]
+  - tool: [validate-config, top-bad-repos.yaml]
+  - tool: [validate-config, zero.yaml]
+  - tool: [validate-config, hook.yaml]
+  - tool: [validate-manifest, manifest.yaml]
+  - tool: [run]
+    env: {}

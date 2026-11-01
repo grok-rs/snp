@@ -1,0 +1,19 @@
+name: stash/t10-sfo-17-unreadable
+covers: [T10-SFO-17]
+requires: {os: [linux, macos], not_root: true}
+work:
+  files: {"1": "a\n", "2": "b\n", "3": "c\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: t, name: t, entry: 'true', language: system}
+  commit: [.pre-commit-config.yaml, "1", "2", "3"]
+  setup:
+    - write: {"1": "a2\n", "2": "b2\n", "3": "c2\n"}
+    - git: [add, "1", "2", "3"]
+    - write: {"1": "a3\n", "2": "b3\n", "3": "c3\n"}
+  chmod: {"1": "0o000"}
+steps:
+  - tool: [run]
+  - shell: chmod 644 1 && git status --porcelain && cat 1 2 3

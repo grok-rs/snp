@@ -1,0 +1,15 @@
+name: install/t10-ins-12-not-found
+covers: [T10-INS-12]
+requires: {os: [linux, macos]}
+work:
+  files: {a.txt: ""}
+  config: "repos: []\n"
+  commit: [.pre-commit-config.yaml]
+  stage: [a.txt]
+steps:
+  - tool: [install]
+  - shell: sed 's|^INSTALL_PYTHON=.*|INSTALL_PYTHON=/dne|' .git/hooks/pre-commit > h && cat h > .git/hooks/pre-commit && rm h
+  - git: [commit, -q, -m, x]
+    env: {PATH: "/usr/bin:/bin"}
+compare:
+  hooks_dir: true

@@ -1,0 +1,10 @@
+name: install/t10-itd-03-04-templatedir-variants
+covers: [T10-ITD-03, T10-ITD-04]
+work:
+  git_config: {core.hooksPath: hooks}
+  config: "repos: []\n"
+steps:
+  - tool: [init-templatedir, ., -t, pre-commit]
+    cwd: ../home
+  - tool: [init-templatedir, "${root}/tmpl"]
+  - shell: ls "${root}/tmpl/hooks"

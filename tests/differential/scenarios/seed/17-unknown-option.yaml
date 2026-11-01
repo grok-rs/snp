@@ -1,0 +1,9 @@
+name: seed/unknown-option
+covers: [T10-CLI-07, T10-RUN-59]
+tags: [seed]
+work:
+  config: "repos: []\n"
+steps:
+  - tool: [--bogus]
+  - tool: [run, --bogus]
+  - tool: [bogus-command]

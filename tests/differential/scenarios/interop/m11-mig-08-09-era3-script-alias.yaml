@@ -1,0 +1,20 @@
+name: interop/m11-mig-08-09-era3-script-alias
+description: '11 §A.20 MIG-08 — an era-3 pre-commit script whose INSTALL_PYTHON is gone falls back to `pre-commit` on PATH (the alias)'
+covers: [M11-MIG-08]
+tags: [migration]
+brands: [compat]
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: ok, name: ok, entry: 'true', language: system}
+  commit: [.pre-commit-config.yaml]
+  stage: [a.txt]
+steps:
+  - shell: ${oracle} install
+  - shell: sed 's|^INSTALL_PYTHON=.*|INSTALL_PYTHON=/nonexistent|' .git/hooks/pre-commit > h && cat h > .git/hooks/pre-commit && rm h
+  - git: [commit, -q, -m, mig08]
+compare:
+  hooks_dir: true

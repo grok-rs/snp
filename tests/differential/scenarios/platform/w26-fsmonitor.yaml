@@ -1,0 +1,25 @@
+name: platform/w26-fsmonitor
+description: '14 §A.6.4 W26 — global core.fsmonitor=true with autoupdate, try-repo and gc'
+tags: [platform]
+requires: {os: [windows, macos]}
+repos:
+  hooks:
+    fixture: script_hooks_repo
+    tags: [v1.0.0]
+    then: [{write: {x: "1\n"}}, {commit: two}, {tag: v1.1.0}]
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: v1.0.0
+        hooks: [{id: bash_hook}]
+  commit: [a.txt]
+  setup:
+    - shell: git config --global core.fsmonitor true
+steps:
+  - tool: [autoupdate]
+  - tool: [try-repo, "${repo:hooks}", -a]
+  - tool: [gc]
+compare:
+  stdout: tierB

@@ -1,0 +1,8 @@
+name: platform/w20-subst-drive
+description: '14 §A.6.4 W20 — running from a `subst` drive keeps the drive in every printed path'
+tags: [platform]
+requires: {os: [windows], manual: "needs `subst X:` on the runner"}
+work:
+  config: "repos: []\n"
+steps:
+  - tool: [install]
