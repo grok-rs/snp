@@ -506,7 +506,8 @@ fn uninstall_one(cx: &CmdCtx<'_>, dir: &HooksDir, t: HookType) -> Result<(), Fai
         return Ok(());
     }
     fs::remove_file(&hook).map_err(|e| io_fail(&e, &hook_disp))?;
-    cx.printer.write_line(&messages::uninstalled(t.as_str()));
+    cx.printer
+        .write_line(&messages::uninstalled(cx.brand, t.as_str()));
     if exists(&legacy) {
         let lowner = classify(&legacy).unwrap_or(Owner::Foreign);
         match lowner {

@@ -22,7 +22,8 @@ fn uninstall_manager_rules() {
     write_hook(&r.join(".git/hooks/pre-commit.legacy"), &script);
     let out = snp(&env, &r, &["uninstall"]);
     assert_code(&out, 0);
-    assert_eq!(text(&out.stdout), "pre-commit uninstalled\n");
+    // COMPATIBILITY §3.3: the default type's line is branded
+    assert_eq!(text(&out.stdout), "snp uninstalled\n");
     assert_eq!(
         text(&out.stderr),
         "Removed .git/hooks/pre-commit.legacy: it is a hook script from snp, not a user hook\n"

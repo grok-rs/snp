@@ -1633,7 +1633,7 @@ fn m11_mig_24_doctor_on_the_fixtures() {
 }
 
 /// D-DIAG-02 goldens: M1 (+ the Python suffix), M1b, M2, M3 and M12 are stderr-only in both brands, `{prog}` follows
-/// the brand, and stdout keeps pre-commit's `… installed at …` / `… uninstalled` lines.
+/// the brand, and stdout keeps pre-commit's `… installed at …` / `… uninstalled` lines (branded, COMPATIBILITY §3.3).
 #[test]
 fn migration_note_goldens_in_both_brands() {
     for (brand, prog) in [("compat", "pre-commit"), ("snp", "snp")] {
@@ -1701,7 +1701,11 @@ fn migration_note_goldens_in_both_brands() {
         write_hook(&legacy(&r, "pre-commit"), &ours);
         let out = run(&["uninstall"]);
         assert_code(&out, 0);
-        assert_eq!(text(&out.stdout), "pre-commit uninstalled\n", "{brand}");
+        assert_eq!(
+            text(&out.stdout),
+            format!("{prog} uninstalled\n"),
+            "{brand}"
+        );
         assert_eq!(
             text(&out.stderr),
             "Removed .git/hooks/pre-commit.legacy: it is a hook script from snp, not a user hook\n",
