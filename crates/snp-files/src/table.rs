@@ -865,6 +865,9 @@ mod tests {
         );
     }
 
+    // POSIX only: on Windows `os.access(X_OK)` holds for every file, so identify (and snp) never take
+    // `executable` from a mode there.
+    #[cfg(unix)]
     #[test]
     fn trusted_modes_match_duplicates_by_path() {
         let mut t = table(&["x.sh", "a.py", "x.sh", "gone"]);

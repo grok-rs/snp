@@ -1488,7 +1488,10 @@ fn m11_mig_17_snp_v1_layout() {
     assert_eq!(text(&out.stdout), "0 repo(s) removed.\n");
     assert_eq!(
         text(&out.stderr),
-        format!("Removed snp 1.x cache data from {}.\n", st.display())
+        slashed(&format!(
+            "Removed snp 1.x cache data from {}.\n",
+            st.display()
+        ))
     );
     assert!(!st.join("db.db").exists() && !st.join("resource-pools").exists());
 }

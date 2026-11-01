@@ -54,7 +54,7 @@ fn t10_err_01_banners_and_exit_codes() {
     let r = hook_is_a_directory(&env);
     let out = compat(&env, &r, &["install"]);
     assert_code(&out, 3);
-    assert!(text(&out.stdout).starts_with("An unexpected error has occurred: IsADirectoryError: "));
+    assert!(text(&out.stdout).starts_with(is_a_directory_line()));
     // success → nothing
     let out = compat(&env, env.root(), &["sample-config"]);
     assert_code(&out, 0);

@@ -1193,6 +1193,11 @@ mod tests {
     /// become POSIX class openers.
     #[test]
     fn ere_vectors_under_grep() {
+        // Not against Git for Windows' MSYS grep: its argv conversion rewrites some vectors before grep sees them
+        // (the converted EREs are checked against GNU grep on Linux).
+        if cfg!(windows) {
+            return;
+        }
         let Ok(probe) = std::process::Command::new("grep").arg("--version").output() else {
             return;
         };

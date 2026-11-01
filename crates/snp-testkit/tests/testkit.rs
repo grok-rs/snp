@@ -253,7 +253,8 @@ mod testkit {
             cfg,
             format!(
                 "repos:\n-   repo: file://{}\n    rev: {rev}\n    hooks:\n    -   id: bash_hook\n",
-                hooks.display()
+                // the fixture's URL is `/`-separated (Windows too)
+                hooks.to_string_lossy().replace('\\', "/")
             )
         );
 
@@ -321,7 +322,8 @@ mod testkit {
         let env = TestEnv::new(no_bins());
         let filters = env.filters();
         assert!(filters.len() >= 12);
-        let root = env.root().display().to_string();
+        // the `/`-separated spelling (Windows git and `file://` URLs), one of the spellings the filters cover
+        let root = env.root().to_string_lossy().replace('\\', "/");
         let sample = format!(
             "Check the log at {root}/store/pre-commit.log\n[INFO] Initializing environment for file://{root}/repos/x.\n\
              [WARNING] Stashing unstaged files to {root}/store/patch1791403647-1780651.\r\n- duration: 0.12s\n\
@@ -362,10 +364,12 @@ mod testkit {
         };
         assert_eq!((out.code, out.stdout.as_slice()), (0, version));
         let out = env.snp_as_pre_commit(env.root()).arg("--version").output();
-        assert_eq!(
-            (out.code, out.stdout.as_slice()),
-            (0, &b"pre-commit 4.6.2\n"[..])
-        );
+        let version: &[u8] = if cfg!(windows) {
+            b"pre-commit 4.6.2\r\n"
+        } else {
+            b"pre-commit 4.6.2\n"
+        };
+        assert_eq!((out.code, out.stdout.as_slice()), (0, version));
         snp_testkit::snp_snapshot!(env, out, @"
         exit_code: 0
         ----- stdout -----
