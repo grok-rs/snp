@@ -20,7 +20,7 @@ snp 1.x) while the user types `snp run` (or `pre-commit run` through the snp ali
 commit uses the old tool, and the two can disagree. When `snp run` is started directly (not through `hook-impl`), it
 classifies `<common-dir>/hooks/<T>` for each `T` in the config's `default_install_hook_types` (bounded reads, 11
 §A.5.1) and, for a script owned by pre-commit, prek or snp 1.x, prints one line per type on stderr before any other
-output: ``hint: .git/hooks/pre-commit runs pre-commit, not snp; run `snp install` to switch``.
+output: ``hint: .git/hooks/pre-commit runs Python pre-commit, not snp; run `snp install` to switch``.
 
 It is printed only when stderr is a terminal, `SNP_NO_HINTS` is unset or empty and `core.hooksPath` is unset: CI logs,
 the differential harness, scripts and pipes stay byte-identical with pre-commit, and stdout never changes.
@@ -30,7 +30,7 @@ the differential harness, scripts and pipes stay byte-identical with pre-commit,
 ```text
 $ pre-commit install            # Python pre-commit's script
 $ snp run                       # on a terminal
-hint: .git/hooks/pre-commit runs pre-commit, not snp; run `snp install` to switch
+hint: .git/hooks/pre-commit runs Python pre-commit, not snp; run `snp install` to switch
 passing..................................................................Passed
 $ snp run 2>&1 | cat            # not a terminal: no hint
 passing..................................................................Passed

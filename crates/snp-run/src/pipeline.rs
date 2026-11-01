@@ -552,8 +552,13 @@ fn run_hint(cx: &RunCtx, git: &Git, info: &RepoInfo, cfg: &Config) {
         ) {
             continue;
         }
-        let Some(name) = owner.owner_name() else {
-            continue;
+        // 11 §A.16.1: "In M4 the owner is rendered as `Python pre-commit` for `PreCommit`."
+        let name = match owner {
+            snp_git::hookscripts::Owner::PreCommit { .. } => "Python pre-commit",
+            _ => match owner.owner_name() {
+                Some(n) => n,
+                None => continue,
+            },
         };
         let shown = path.strip_prefix(&info.root).unwrap_or(&path);
         cx.printer.diag(&messages::run_hint(
