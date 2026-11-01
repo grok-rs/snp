@@ -85,7 +85,10 @@ impl Verdict {
     fn copy(&self) -> Self {
         match self {
             Self::Same => Self::Same,
-            Self::Diverged { id, diff } => Self::Diverged { id: id.clone(), diff: diff.clone() },
+            Self::Diverged { id, diff } => Self::Diverged {
+                id: id.clone(),
+                diff: diff.clone(),
+            },
             Self::StaleDivergence(id) => Self::StaleDivergence(id.clone()),
         }
     }
@@ -124,11 +127,21 @@ impl Options {
     pub fn detect(r: &Runner) -> Result<Self, String> {
         let parent = Env::capture_process();
         let exe = std::env::consts::EXE_SUFFIX;
-        let probe = r.snp_bin.parent().map(|d| d.join(format!("snp-probe{exe}"))).filter(|p| p.is_file());
+        let probe = r
+            .snp_bin
+            .parent()
+            .map(|d| d.join(format!("snp-probe{exe}")))
+            .filter(|p| p.is_file());
         let python = r
             .oracle_bin
             .parent()
-            .map(|d| d.join(if cfg!(windows) { "python.exe" } else { "python" }))
+            .map(|d| {
+                d.join(if cfg!(windows) {
+                    "python.exe"
+                } else {
+                    "python"
+                })
+            })
             .filter(|p| p.exists());
         Ok(Self {
             probe,
@@ -153,7 +166,9 @@ fn detect_taskset(parent: &Env) -> Option<(PathBuf, String)> {
     }
     let ts = exec::which("taskset", parent)?;
     let truth = exec::which("true", parent)?;
-    let n = std::thread::available_parallelism().map_or(1, std::num::NonZero::get).min(4);
+    let n = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZero::get)
+        .min(4);
     let cpus = format!("0-{}", n.saturating_sub(1));
     let out = exec::run(&Invocation {
         program: ts.clone(),
@@ -199,7 +214,11 @@ pub struct Variant {
 impl Variant {
     /// `compat`, `snp`, `compat+strict`, `snp+strict`.
     pub fn label(self) -> String {
-        if self.strict { format!("{}+strict", self.brand.name()) } else { self.brand.name().to_owned() }
+        if self.strict {
+            format!("{}+strict", self.brand.name())
+        } else {
+            self.brand.name().to_owned()
+        }
     }
 }
 
@@ -255,12 +274,19 @@ pub struct Outcome {
     pub variants: Vec<VariantReport>,
     /// The combined verdict (worst variant).
     pub verdict: Verdict,
+    /// The run was an oracle self-check (every scenario must be identical).
+    pub self_check: bool,
 }
 
 impl Outcome {
     /// Whether the scenario passes: skipped, identical, or diverging exactly as registered.
     pub fn passed(&self) -> bool {
-        self.error.is_none() && (self.skipped.is_some() || self.verdict.is_pass(self.expect_divergence.as_deref()))
+        let expect = if self.self_check {
+            None
+        } else {
+            self.expect_divergence.as_deref()
+        };
+        self.error.is_none() && (self.skipped.is_some() || self.verdict.is_pass(expect))
     }
 
     /// A human report: the verdict line plus every difference and failed expectation.
@@ -273,23 +299,25 @@ impl Outcome {
         } else {
             self.verdict.label()
         };
-        let _ = writeln!(o, "{}: {status}", self.name);
+        writeln!(o, "{}: {status}", self.name).unwrap_or_default();
         for v in &self.variants {
-            if v.verdict.is_pass(self.expect_divergence.as_deref()) && !matches!(v.verdict, Verdict::Same) {
+            if v.verdict.is_pass(self.expect_divergence.as_deref())
+                && !matches!(v.verdict, Verdict::Same)
+            {
                 continue;
             }
             if matches!(v.verdict, Verdict::Same) && self.expect_divergence.is_none() {
                 continue;
             }
-            let _ = writeln!(o, "  [{}] {}", v.variant.label(), v.verdict.label());
+            writeln!(o, "  [{}] {}", v.variant.label(), v.verdict.label()).unwrap_or_default();
             for d in &v.differences {
-                let _ = writeln!(o, "  --- {} (oracle -, snp +)", d.what);
+                writeln!(o, "  --- {} (oracle -, snp +)", d.what).unwrap_or_default();
                 for line in d.diff.lines() {
-                    let _ = writeln!(o, "    {line}");
+                    writeln!(o, "    {line}").unwrap_or_default();
                 }
             }
             for f in &v.expectation_failures {
-                let _ = writeln!(o, "  expectation failed: {f}");
+                writeln!(o, "  expectation failed: {f}").unwrap_or_default();
             }
         }
         o
@@ -326,7 +354,10 @@ impl Runner {
     pub fn run(&self, s: &Scenario) -> Verdict {
         match Options::detect(self) {
             Ok(opts) => self.run_with(s, &opts).verdict,
-            Err(e) => Verdict::Diverged { id: None, diff: format!("harness error: {e}") },
+            Err(e) => Verdict::Diverged {
+                id: None,
+                diff: format!("harness error: {e}"),
+            },
         }
     }
 
@@ -339,6 +370,7 @@ impl Runner {
             error: None,
             variants: Vec::new(),
             verdict: Verdict::Same,
+            self_check: opts.self_check,
         };
         if out.skipped.is_some() {
             return out;
@@ -347,8 +379,12 @@ impl Runner {
             Ok(r) => r,
             Err(e) => return errored(out, e),
         };
-        let brands: Vec<Brand> =
-            s.brands.iter().copied().filter(|b| opts.brands.is_empty() || opts.brands.contains(b)).collect();
+        let brands: Vec<Brand> = s
+            .brands
+            .iter()
+            .copied()
+            .filter(|b| opts.brands.is_empty() || opts.brands.contains(b))
+            .collect();
         if brands.is_empty() {
             out.skipped = Some(String::from("no selected brand"));
             return out;
@@ -358,15 +394,29 @@ impl Runner {
                 Ok(r) => r,
                 Err(e) => return errored(out, format!("[{}] oracle: {e}", brand.name())),
             };
-            let stricts: &[bool] = if s.strict_variants && !opts.self_check { &[false, true] } else { &[false] };
+            let stricts: &[bool] = if s.strict_variants && !opts.self_check {
+                &[false, true]
+            } else {
+                &[false]
+            };
             for &strict in stricts {
                 let snp = match self.run_side(s, &root, brand, Side::Snp, strict, opts) {
                     Ok(r) => r,
                     Err(e) => {
-                        return errored(out, format!("[{}] snp: {e}", Variant { brand, strict }.label()));
+                        return errored(
+                            out,
+                            format!("[{}] snp: {e}", Variant { brand, strict }.label()),
+                        );
                     }
                 };
-                out.variants.push(judge(s, Variant { brand, strict }, &oracle, snp, &root, opts));
+                out.variants.push(judge(
+                    s,
+                    Variant { brand, strict },
+                    &oracle,
+                    snp,
+                    &root,
+                    opts,
+                ));
             }
         }
         out.verdict = combine(&out.variants);
@@ -385,7 +435,8 @@ impl Runner {
 
     /// `R` for `s`: `<root>/<16 hex digits of the name's hash>`, canonical (both tools see the same bytes).
     pub fn scenario_root(&self, s: &Scenario) -> Result<PathBuf, String> {
-        std::fs::create_dir_all(&self.root).map_err(|e| format!("creating {}: {e}", self.root.display()))?;
+        std::fs::create_dir_all(&self.root)
+            .map_err(|e| format!("creating {}: {e}", self.root.display()))?;
         let base = materialise::canonical(&self.root)?;
         Ok(base.join(format!("{:016x}", fnv64(s.name.as_bytes()))))
     }
@@ -411,7 +462,8 @@ impl Runner {
         materialise::reset_root(root)?;
         let mut w = materialise::materialise(s, root, opts.probe.as_deref(), &opts.parent)?;
         let tool = link_tool(&w, self.program(brand, side, opts), brand)?;
-        w.vars.push((String::from("tool"), tool.to_string_lossy().into_owned()));
+        w.vars
+            .push((String::from("tool"), tool.to_string_lossy().into_owned()));
         let work = w.layout.work.clone();
         let want = Wanted {
             tree: s.compare.tree || needs_tree(s),
@@ -421,29 +473,83 @@ impl Runner {
             git_config: true,
             store: s.compare.store,
         };
-        let store_kind = if side == Side::Snp && !opts.self_check { StoreKind::Snp } else { StoreKind::PreCommit };
-        let mut report =
-            SideReport { steps: Vec::new(), initial_git_config: std::fs::read(work.join(".git/config")).ok() };
-        for step in &s.steps {
+        let store_kind = if side == Side::Snp && !opts.self_check {
+            StoreKind::Snp
+        } else {
+            StoreKind::PreCommit
+        };
+        let mut report = SideReport {
+            steps: Vec::new(),
+            initial_git_config: std::fs::read(work.join(".git/config")).ok(),
+        };
+        for (project, step) in flat_steps(s) {
+            if let Some(p) = project {
+                w.layout.work = root.join(p);
+            }
             let inv = step_invocation(&mut w, step, &tool, side == Side::Snp && strict, opts)?;
             let captured = exec::run(&inv)?;
             let state = snapshot::capture(&mut w, want, store_kind, opts.python.as_deref())?;
             report.steps.push(StepReport { captured, state });
+        }
+        if let Some(first) = s.projects.first() {
+            w.layout.work = root.join(first);
         }
         Ok(SideRun { report, world: w })
     }
 }
 
 fn errored(mut out: Outcome, e: String) -> Outcome {
-    out.verdict = Verdict::Diverged { id: None, diff: format!("harness error: {e}") };
+    out.verdict = Verdict::Diverged {
+        id: None,
+        diff: format!("harness error: {e}"),
+    };
     out.error = Some(e);
     out
+}
+
+/// The steps in execution order: every step once, or (with `projects:`) every step per project.
+fn flat_steps(s: &Scenario) -> Vec<(Option<&str>, &Step)> {
+    if s.projects.is_empty() {
+        s.steps.iter().map(|st| (None, st)).collect()
+    } else {
+        s.projects
+            .iter()
+            .flat_map(|p| s.steps.iter().map(move |st| (Some(p.as_str()), st)))
+            .collect()
+    }
+}
+
+/// The flat index of step `n` (1-based) of the project an expectation names (`project:`), if any.
+fn flat_index(
+    s: &Scenario,
+    n: usize,
+    checks: &[(String, crate::yamlv::Yv)],
+) -> Result<usize, String> {
+    let i = n.checked_sub(1).ok_or("step 0")?;
+    let project = checks
+        .iter()
+        .find(|(k, _)| k == "project")
+        .and_then(|(_, v)| v.to_text());
+    match project {
+        None => Ok(i),
+        Some(p) => {
+            let pi = s
+                .projects
+                .iter()
+                .position(|x| *x == p)
+                .ok_or_else(|| format!("unknown project {p:?}"))?;
+            Ok(pi.saturating_mul(s.steps.len()).saturating_add(i))
+        }
+    }
 }
 
 /// Whether an `expected:` check needs the tree snapshot although `compare.tree` is off.
 fn needs_tree(s: &Scenario) -> bool {
     s.expected.as_ref().is_some_and(|e| {
-        e.oracle.iter().chain(&e.snp).any(|(_, se)| se.checks.iter().any(|(k, _)| k.starts_with("tree")))
+        e.oracle
+            .iter()
+            .chain(&e.snp)
+            .any(|(_, se)| se.checks.iter().any(|(k, _)| k.starts_with("tree")))
     })
 }
 
@@ -451,7 +557,12 @@ fn needs_tree(s: &Scenario) -> bool {
 fn skip_reason(s: &Scenario, opts: &Options) -> Option<String> {
     match s.status {
         Status::Stub => return Some(String::from("stub divergence file")),
-        Status::Unit => return Some(format!("covered by unit tests: {}", s.unit_tests.join(", "))),
+        Status::Unit => {
+            return Some(format!(
+                "covered by unit tests: {}",
+                s.unit_tests.join(", ")
+            ));
+        }
         Status::Active => {}
     }
     if !s.unsupported.is_empty() {
@@ -470,13 +581,23 @@ fn skip_reason(s: &Scenario, opts: &Options) -> Option<String> {
     } else {
         "linux"
     };
-    if !r.os.is_empty() && !r.os.iter().any(|o| o == os || (o == "posix" && !cfg!(windows))) {
+    if !r.os.is_empty()
+        && !r
+            .os
+            .iter()
+            .any(|o| o == os || (o == "posix" && !cfg!(windows)))
+    {
         return Some(format!("os {os} not in {:?}", r.os));
     }
     if !r.git.terms.is_empty() {
         match opts.git_version {
             Some(v) if r.git.matches(v) => {}
-            Some(v) => return Some(format!("git {}.{}.{} does not satisfy the requirement", v[0], v[1], v[2])),
+            Some(v) => {
+                return Some(format!(
+                    "git {}.{}.{} does not satisfy the requirement",
+                    v[0], v[1], v[2]
+                ));
+            }
             None => return Some(String::from("git version unknown")),
         }
     }
@@ -489,13 +610,21 @@ fn skip_reason(s: &Scenario, opts: &Options) -> Option<String> {
     if r.probe && opts.probe.is_none() {
         return Some(String::from("needs snp-probe"));
     }
-    if let Some(t) = r.tools.iter().find(|t| exec::which(t, &opts.parent).is_none()) {
+    if let Some(t) = r
+        .tools
+        .iter()
+        .find(|t| exec::which(t, &opts.parent).is_none())
+    {
         return Some(format!("tool {t:?} not on PATH"));
     }
     if let Some(want_root) = r.root
         && is_root() != want_root
     {
-        return Some(String::from(if want_root { "needs root" } else { "must not run as root" }));
+        return Some(String::from(if want_root {
+            "needs root"
+        } else {
+            "must not run as root"
+        }));
     }
     if let Some(min) = r.logical_cpus_min {
         let n = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
@@ -526,15 +655,21 @@ fn link_tool(w: &World, program: &Path, brand: Brand) -> Result<PathBuf, String>
     #[cfg(unix)]
     {
         let link = w.layout.bin.join(name);
-        std::os::unix::fs::symlink(program, &link).map_err(|e| format!("linking {}: {e}", link.display()))?;
+        std::os::unix::fs::symlink(program, &link)
+            .map_err(|e| format!("linking {}: {e}", link.display()))?;
         Ok(link)
     }
     #[cfg(not(unix))]
     {
         // A pip console-script launcher only works from its own Scripts directory: the oracle runs in place.
-        if program.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")) && program.ends_with("snp.exe") {
+        if program
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+            && program.ends_with("snp.exe")
+        {
             let copy = w.layout.bin.join(format!("{name}.exe"));
-            std::fs::copy(program, &copy).map_err(|e| format!("copying {}: {e}", program.display()))?;
+            std::fs::copy(program, &copy)
+                .map_err(|e| format!("copying {}: {e}", program.display()))?;
             Ok(copy)
         } else {
             let _: &World = w;
@@ -580,7 +715,8 @@ fn step_invocation(
     };
     let (program, args) = match &opts.taskset {
         Some((ts, cpus)) => {
-            let mut a: Vec<std::ffi::OsString> = vec!["-c".into(), cpus.into(), program.into_os_string()];
+            let mut a: Vec<std::ffi::OsString> =
+                vec!["-c".into(), cpus.into(), program.into_os_string()];
             a.extend(args);
             (ts.clone(), a)
         }
@@ -592,7 +728,8 @@ fn step_invocation(
     };
     let signal = match &step.signal {
         Some(sig) => Some((
-            exec::signal_number(&sig.name).ok_or_else(|| format!("unknown signal {:?}", sig.name))?,
+            exec::signal_number(&sig.name)
+                .ok_or_else(|| format!("unknown signal {:?}", sig.name))?,
             exec::Trigger {
                 file: sig.after_file.as_ref().map(|f| cwd.join(f)),
                 delay: Duration::from_millis(sig.after_ms),
@@ -607,13 +744,27 @@ fn step_invocation(
         cwd,
         stdin: w.subst_bytes(&step.stdin)?,
         tty: step.tty,
-        timeout: step.timeout_ms.map_or(exec::DEFAULT_TIMEOUT, Duration::from_millis),
+        timeout: step
+            .timeout_ms
+            .map_or(exec::DEFAULT_TIMEOUT, Duration::from_millis),
         signal,
     })
 }
 
+/// Substituted step arguments. An argument whose `\xNN` escapes make it invalid UTF-8 is a byte name (posix: the
+/// raw bytes, as `files_bytes` and `commit` entries); any other argument is passed literally.
 fn subst_all(w: &World, a: &[String]) -> Result<Vec<std::ffi::OsString>, String> {
-    a.iter().map(|x| w.subst(x).map(Into::into)).collect()
+    a.iter()
+        .map(|x| {
+            let t = w.subst(x)?;
+            let bytes = crate::text::expand_byte_escapes(&t);
+            if std::str::from_utf8(&bytes).is_err() {
+                materialise::os_from_bytes(&bytes)
+            } else {
+                Ok(t.into())
+            }
+        })
+        .collect()
 }
 
 /// A step's short description for reports: `tool run --all-files`.
@@ -630,14 +781,24 @@ fn describe(step: &Step) -> String {
     d
 }
 
-/// The normalisation of one stream for one side.
-fn norm_stream(mode: StreamMode, bytes: &[u8], map: &BrandMap, stores: &[&[u8]], eol: bool) -> Vec<u8> {
+/// The normalisation of one stream for one side. `reduce`: the brand map whose snp-only parser blocks are reduced
+/// (both sides of snp-brand runs).
+fn norm_stream(
+    mode: StreamMode,
+    bytes: &[u8],
+    (map, reduce): (&BrandMap, Option<&BrandMap>),
+    stores: &[&[u8]],
+    eol: bool,
+) -> Vec<u8> {
     let tier = match mode {
         StreamMode::Raw | StreamMode::Ignore => Tier::A,
         StreamMode::Exact | StreamMode::LinesUnordered => Tier::C,
         StreamMode::TierB => Tier::B,
     };
     let mut b = normalise::normalise(tier, bytes, map);
+    if let Some(r) = reduce {
+        b = r.reduce_snp_only_parsers(&b);
+    }
     if !matches!(mode, StreamMode::Raw) {
         b = normalise::mask_paths(&b, stores);
     }
@@ -647,15 +808,17 @@ fn norm_stream(mode: StreamMode, bytes: &[u8], map: &BrandMap, stores: &[&[u8]],
     b
 }
 
-fn stream_diff(
-    out: &mut Vec<Difference>,
-    what: String,
-    mode: StreamMode,
-    (a, b): (&[u8], &[u8]),
-) {
+fn stream_diff(out: &mut Vec<Difference>, what: String, mode: StreamMode, (a, b): (&[u8], &[u8])) {
     if !compare::streams_equal(mode, a, b) {
-        let (x, y) = if matches!(mode, StreamMode::LinesUnordered) { (sorted_lines(a), sorted_lines(b)) } else { (a.to_vec(), b.to_vec()) };
-        out.push(Difference { what, diff: compare::unified(&x, &y) });
+        let (x, y) = if matches!(mode, StreamMode::LinesUnordered) {
+            (sorted_lines(a), sorted_lines(b))
+        } else {
+            (a.to_vec(), b.to_vec())
+        };
+        out.push(Difference {
+            what,
+            diff: compare::unified(&x, &y),
+        });
     }
 }
 
@@ -666,33 +829,63 @@ fn sorted_lines(b: &[u8]) -> Vec<u8> {
 }
 
 /// Compares one variant and evaluates its expectations.
-fn judge(s: &Scenario, variant: Variant, oracle: &SideRun, snp: SideRun, root: &Path, opts: &Options) -> VariantReport {
+#[expect(
+    clippy::many_single_char_names,
+    reason = "s(cenario), c(ompare), a/b (the two sides' steps)"
+)]
+fn judge(
+    s: &Scenario,
+    variant: Variant,
+    oracle: &SideRun,
+    snp: SideRun,
+    root: &Path,
+    opts: &Options,
+) -> VariantReport {
     let c: &Compare = &s.compare;
     let store_a = root.join("store");
     let store_b = root.join("snp-store");
-    let stores: [&[u8]; 2] = [store_a.as_os_str().as_encoded_bytes(), store_b.as_os_str().as_encoded_bytes()];
+    let stores: [&[u8]; 2] = [
+        store_a.as_os_str().as_encoded_bytes(),
+        store_b.as_os_str().as_encoded_bytes(),
+    ];
     let identity = BrandMap::identity();
     let (map_oracle, map_snp) = match (variant.brand, opts.self_check) {
         (Brand::Compat, _) => (&identity, &identity),
         (Brand::Snp, false) => (&opts.brand_map, &identity),
         (Brand::Snp, true) => (&opts.brand_map, &opts.brand_map),
     };
+    let reduce = (variant.brand == Brand::Snp && !opts.self_check).then_some(&opts.brand_map);
+    let (map_oracle, map_snp) = ((map_oracle, reduce), (map_snp, reduce));
     let keep_diag = s.expect_divergence.as_deref().filter(|_| s.is_diag());
     let mut diffs = Vec::new();
     let mut stripped: Vec<&'static str> = Vec::new();
-    for (i, step) in s.steps.iter().enumerate() {
-        let n = i.saturating_add(1);
-        let label = format!("step {n} ({})", describe(step));
-        let (Some(a), Some(b)) = (oracle.report.steps.get(i), snp.report.steps.get(i)) else { continue };
+    for (i, (project, step)) in flat_steps(s).into_iter().enumerate() {
+        let n = i
+            .checked_rem(s.steps.len().max(1))
+            .unwrap_or(i)
+            .saturating_add(1);
+        let label = match project {
+            Some(p) => format!("{p}: step {n} ({})", describe(step)),
+            None => format!("step {n} ({})", describe(step)),
+        };
+        let (Some(a), Some(b)) = (oracle.report.steps.get(i), snp.report.steps.get(i)) else {
+            continue;
+        };
         let (ca, cb) = (&a.captured, &b.captured);
         if ca.timed_out != cb.timed_out {
             diffs.push(Difference {
                 what: format!("{label} timeout"),
-                diff: format!("-timed out: {}\n+timed out: {}\n", ca.timed_out, cb.timed_out),
+                diff: format!(
+                    "-timed out: {}\n+timed out: {}\n",
+                    ca.timed_out, cb.timed_out
+                ),
             });
         }
         if !compare::exits_equal(c.exit, ca.exit, cb.exit) {
-            diffs.push(Difference { what: format!("{label} exit"), diff: format!("-{:?}\n+{:?}\n", ca.exit, cb.exit) });
+            diffs.push(Difference {
+                what: format!("{label} exit"),
+                diff: format!("-{:?}\n+{:?}\n", ca.exit, cb.exit),
+            });
         }
         // snp's foreign DIAG lines are stripped from stderr (and from the merged stream under a pty).
         let (snp_err, ids) = normalise::strip_diag(&cb.stderr, keep_diag);
@@ -709,13 +902,19 @@ fn judge(s: &Scenario, variant: Variant, oracle: &SideRun, snp: SideRun, root: &
             &mut diffs,
             format!("{label} stdout"),
             c.stdout,
-            (&norm_stream(c.stdout, &ca.stdout, map_oracle, &stores, eol), &norm_stream(c.stdout, &snp_out, map_snp, &stores, eol)),
+            (
+                &norm_stream(c.stdout, &ca.stdout, map_oracle, &stores, eol),
+                &norm_stream(c.stdout, &snp_out, map_snp, &stores, eol),
+            ),
         );
         stream_diff(
             &mut diffs,
             format!("{label} stderr"),
             c.stderr,
-            (&norm_stream(c.stderr, &ca.stderr, map_oracle, &stores, eol), &norm_stream(c.stderr, &snp_err, map_snp, &stores, eol)),
+            (
+                &norm_stream(c.stderr, &ca.stderr, map_oracle, &stores, eol),
+                &norm_stream(c.stderr, &snp_err, map_snp, &stores, eol),
+            ),
         );
         state_diffs(&mut diffs, &label, c, &a.state, &b.state);
     }
@@ -724,11 +923,17 @@ fn judge(s: &Scenario, variant: Variant, oracle: &SideRun, snp: SideRun, root: &
     let mut failures = Vec::new();
     if let Some(e) = &s.expected {
         let snp_map = (variant.brand == Brand::Snp && !opts.self_check).then_some(&opts.brand_map);
-        for (side_name, checks, run, map) in
-            [("oracle", &e.oracle, oracle, None), ("snp", &e.snp, &snp, snp_map)]
-        {
+        // Self-check runs the oracle on both sides: only pre-commit's expectations apply (to either side).
+        let snp_checks = if opts.self_check { &e.oracle } else { &e.snp };
+        for (side_name, checks, run, map) in [
+            ("oracle", &e.oracle, oracle, None),
+            ("snp", snp_checks, &snp, snp_map),
+        ] {
             for (n, se) in checks {
-                let Some(st) = n.checked_sub(1).and_then(|i| run.report.steps.get(i)) else {
+                let Some(st) = flat_index(s, *n, &se.checks)
+                    .ok()
+                    .and_then(|i| run.report.steps.get(i))
+                else {
                     failures.push(format!("{side_name} step {n}: no such step"));
                     continue;
                 };
@@ -746,7 +951,14 @@ fn judge(s: &Scenario, variant: Variant, oracle: &SideRun, snp: SideRun, root: &
             }
         }
     }
-    let verdict = variant_verdict(s, variant, &diffs, &failures);
+    let verdict = if opts.self_check {
+        // Oracle against itself: every scenario, registered or not, must show no difference.
+        let mut plain = Scenario::new(&s.name);
+        plain.expect_divergence = None;
+        variant_verdict(&plain, variant, &diffs, &failures)
+    } else {
+        variant_verdict(s, variant, &diffs, &failures)
+    };
     VariantReport {
         variant,
         differences: diffs,
@@ -758,38 +970,75 @@ fn judge(s: &Scenario, variant: Variant, oracle: &SideRun, snp: SideRun, root: &
     }
 }
 
+#[expect(
+    clippy::many_single_char_names,
+    reason = "a/b are the oracle/snp states, x/y their renderings, c the compare block"
+)]
 fn state_diffs(diffs: &mut Vec<Difference>, label: &str, c: &Compare, a: &State, b: &State) {
-    let eolfix = |v: &[u8]| if c.eol_insensitive { replace_bytes(v, b"\r\n", b"\n") } else { v.to_vec() };
+    let eolfix = |v: &[u8]| {
+        if c.eol_insensitive {
+            replace_bytes(v, b"\r\n", b"\n")
+        } else {
+            v.to_vec()
+        }
+    };
     if c.tree && a.tree != b.tree {
-        let (x, y) = (snapshot::render_tree(&a.tree), snapshot::render_tree(&b.tree));
+        let (x, y) = (
+            snapshot::render_tree(&a.tree),
+            snapshot::render_tree(&b.tree),
+        );
         if !c.eol_insensitive || eolfix(&x) != eolfix(&y) {
-            diffs.push(Difference { what: format!("{label} tree"), diff: compare::unified(&x, &y) });
+            diffs.push(Difference {
+                what: format!("{label} tree"),
+                diff: compare::unified(&x, &y),
+            });
         }
     }
     if c.index && a.index != b.index {
-        diffs.push(Difference { what: format!("{label} index"), diff: compare::unified(&a.index, &b.index) });
+        diffs.push(Difference {
+            what: format!("{label} index"),
+            diff: compare::unified(&a.index, &b.index),
+        });
     }
     if c.refs && a.refs != b.refs {
-        diffs.push(Difference { what: format!("{label} refs"), diff: compare::unified(&a.refs, &b.refs) });
+        diffs.push(Difference {
+            what: format!("{label} refs"),
+            diff: compare::unified(&a.refs, &b.refs),
+        });
     }
     if c.hooks_dir && a.hooks != b.hooks {
-        diffs.push(Difference { what: format!("{label} hooks"), diff: format!("-{:?}\n+{:?}\n", a.hooks, b.hooks) });
+        diffs.push(Difference {
+            what: format!("{label} hooks"),
+            diff: format!("-{:?}\n+{:?}\n", a.hooks, b.hooks),
+        });
     }
     if !matches!(c.config_file, StreamMode::Ignore) {
         let x = eolfix(a.config_file.as_deref().unwrap_or(b"<absent>"));
         let y = eolfix(b.config_file.as_deref().unwrap_or(b"<absent>"));
         if !compare::streams_equal(c.config_file, &x, &y) {
-            diffs.push(Difference { what: format!("{label} config file"), diff: compare::unified(&x, &y) });
+            diffs.push(Difference {
+                what: format!("{label} config file"),
+                diff: compare::unified(&x, &y),
+            });
         }
     }
     if c.git_config && a.git_config != b.git_config {
-        let (x, y) = (a.git_config.clone().unwrap_or_default(), b.git_config.clone().unwrap_or_default());
-        diffs.push(Difference { what: format!("{label} .git/config"), diff: compare::unified(&x, &y) });
+        let (x, y) = (
+            a.git_config.clone().unwrap_or_default(),
+            b.git_config.clone().unwrap_or_default(),
+        );
+        diffs.push(Difference {
+            what: format!("{label} .git/config"),
+            diff: compare::unified(&x, &y),
+        });
     }
     if c.store && a.store != b.store {
         let x = a.store.join("\n");
         let y = b.store.join("\n");
-        diffs.push(Difference { what: format!("{label} store"), diff: compare::unified(x.as_bytes(), y.as_bytes()) });
+        diffs.push(Difference {
+            what: format!("{label} store"),
+            diff: compare::unified(x.as_bytes(), y.as_bytes()),
+        });
     }
 }
 
@@ -801,32 +1050,51 @@ fn is_stderr(d: &Difference) -> bool {
 fn render_diffs(diffs: &[Difference], failures: &[String]) -> String {
     let mut o = String::new();
     for d in diffs {
-        let _ = writeln!(o, "--- {}", d.what);
+        writeln!(o, "--- {}", d.what).unwrap_or_default();
         o.push_str(&d.diff);
     }
     for f in failures {
-        let _ = writeln!(o, "expectation failed: {f}");
+        writeln!(o, "expectation failed: {f}").unwrap_or_default();
     }
     o
 }
 
-fn variant_verdict(s: &Scenario, variant: Variant, diffs: &[Difference], failures: &[String]) -> Verdict {
+fn variant_verdict(
+    s: &Scenario,
+    variant: Variant,
+    diffs: &[Difference],
+    failures: &[String],
+) -> Verdict {
     let id = s.expect_divergence.as_deref();
     // The strict variant of an extension scenario must equal pre-commit: SNP_COMPAT_STRICT turns the extension off.
-    let id = if variant.strict && id.is_some_and(|i| i.starts_with("D-EXT-")) { None } else { id };
+    let id = if variant.strict && id.is_some_and(|i| i.starts_with("D-EXT-")) {
+        None
+    } else {
+        id
+    };
     let rendered = render_diffs(diffs, failures);
     match id {
         None if diffs.is_empty() && failures.is_empty() => Verdict::Same,
-        None => Verdict::Diverged { id: None, diff: rendered },
+        None => Verdict::Diverged {
+            id: None,
+            diff: rendered,
+        },
         Some(id) => {
             if id.starts_with("D-DIAG-") && diffs.iter().any(|d| !is_stderr(d)) {
-                let outside: Vec<Difference> = diffs.iter().filter(|d| !is_stderr(d)).cloned().collect();
-                return Verdict::Diverged { id: None, diff: render_diffs(&outside, &[]) };
+                let outside: Vec<Difference> =
+                    diffs.iter().filter(|d| !is_stderr(d)).cloned().collect();
+                return Verdict::Diverged {
+                    id: None,
+                    diff: render_diffs(&outside, &[]),
+                };
             }
             if diffs.is_empty() || !failures.is_empty() {
                 Verdict::StaleDivergence(id.to_owned())
             } else {
-                Verdict::Diverged { id: Some(id.to_owned()), diff: rendered }
+                Verdict::Diverged {
+                    id: Some(id.to_owned()),
+                    diff: rendered,
+                }
             }
         }
     }
@@ -840,15 +1108,32 @@ fn combine(vs: &[VariantReport]) -> Verdict {
         Verdict::Diverged { id: Some(_), .. } => 1,
         Verdict::Same => 0,
     };
-    vs.iter().map(|v| &v.verdict).max_by_key(|v| rank(v)).map_or(Verdict::Same, Verdict::copy)
+    vs.iter()
+        .map(|v| &v.verdict)
+        .max_by_key(|v| rank(v))
+        .map_or(Verdict::Same, Verdict::copy)
 }
 
 /// A file-system-safe directory name for a scenario.
 pub(crate) fn safe_name(name: &str) -> String {
-    name.chars().map(|c| if c.is_ascii_alphanumeric() || "-_.".contains(c) { c } else { '_' }).collect()
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || "-_.".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
-fn write_artifacts(dir: &Path, s: &Scenario, out: &Outcome, r: &Runner, root: &Path) -> Result<(), String> {
+fn write_artifacts(
+    dir: &Path,
+    s: &Scenario,
+    out: &Outcome,
+    r: &Runner,
+    root: &Path,
+) -> Result<(), String> {
     let base = dir.join(safe_name(&s.name));
     if base.exists() {
         std::fs::remove_dir_all(&base).map_err(|e| format!("{}: {e}", base.display()))?;
@@ -860,25 +1145,41 @@ fn write_artifacts(dir: &Path, s: &Scenario, out: &Outcome, r: &Runner, root: &P
         let vd = base.join(v.variant.label());
         for (side, rep) in [(Side::Oracle, &v.oracle), (Side::Snp, &v.snp)] {
             for (i, st) in rep.steps.iter().enumerate() {
-                let p = vd.join(side.name()).join(format!("step-{}", i.saturating_add(1)));
+                let p = vd
+                    .join(side.name())
+                    .join(format!("step-{}", i.saturating_add(1)));
                 w(p.join("stdout"), &st.captured.stdout)?;
                 w(p.join("stderr"), &st.captured.stderr)?;
-                let exit = format!("{:?}{}\n", st.captured.exit, if st.captured.timed_out { " (timed out)" } else { "" });
+                let exit = format!(
+                    "{:?}{}\n",
+                    st.captured.exit,
+                    if st.captured.timed_out {
+                        " (timed out)"
+                    } else {
+                        ""
+                    }
+                );
                 w(p.join("exit"), exit.as_bytes())?;
                 w(p.join("tree.txt"), &snapshot::render_tree(&st.state.tree))?;
                 w(p.join("index.txt"), &st.state.index)?;
                 w(p.join("refs.txt"), &st.state.refs)?;
             }
         }
-        w(vd.join("diff.txt"), render_diffs(&v.differences, &v.expectation_failures).as_bytes())?;
+        w(
+            vd.join("diff.txt"),
+            render_diffs(&v.differences, &v.expectation_failures).as_bytes(),
+        )?;
     }
     let script = crate::shrink::repro_script(s, r, root);
     w(base.join("repro.sh"), script.as_bytes())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(base.join("repro.sh"), std::fs::Permissions::from_mode(0o755))
-            .map_err(|e| format!("chmod repro.sh: {e}"))?;
+        std::fs::set_permissions(
+            base.join("repro.sh"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .map_err(|e| format!("chmod repro.sh: {e}"))?;
     }
     Ok(())
 }
@@ -888,7 +1189,10 @@ mod tests {
     use super::*;
 
     fn diff(what: &str) -> Difference {
-        Difference { what: what.to_owned(), diff: String::from("-a\n+b\n") }
+        Difference {
+            what: what.to_owned(),
+            diff: String::from("-a\n+b\n"),
+        }
     }
 
     fn sc(id: Option<&str>) -> Scenario {
@@ -897,27 +1201,57 @@ mod tests {
         s
     }
 
-    const PLAIN: Variant = Variant { brand: Brand::Compat, strict: false };
+    const PLAIN: Variant = Variant {
+        brand: Brand::Compat,
+        strict: false,
+    };
 
     #[test]
     fn verdicts() {
-        assert!(matches!(variant_verdict(&sc(None), PLAIN, &[], &[]), Verdict::Same));
-        assert!(matches!(variant_verdict(&sc(None), PLAIN, &[diff("step 1 (x) stdout")], &[]), Verdict::Diverged { id: None, .. }));
-        let listed = variant_verdict(&sc(Some("D-CRASH-04")), PLAIN, &[diff("step 1 (x) stdout")], &[]);
+        assert!(matches!(
+            variant_verdict(&sc(None), PLAIN, &[], &[]),
+            Verdict::Same
+        ));
+        assert!(matches!(
+            variant_verdict(&sc(None), PLAIN, &[diff("step 1 (x) stdout")], &[]),
+            Verdict::Diverged { id: None, .. }
+        ));
+        let listed = variant_verdict(
+            &sc(Some("D-CRASH-04")),
+            PLAIN,
+            &[diff("step 1 (x) stdout")],
+            &[],
+        );
         assert!(matches!(&listed, Verdict::Diverged { id: Some(i), .. } if i == "D-CRASH-04"));
         assert!(listed.is_pass(Some("D-CRASH-04")));
         assert!(!listed.is_pass(None));
-        assert!(matches!(variant_verdict(&sc(Some("D-CRASH-04")), PLAIN, &[], &[]), Verdict::StaleDivergence(_)));
-        let failed = variant_verdict(&sc(Some("D-CRASH-04")), PLAIN, &[diff("step 1 (x) stdout")], &[String::from("x")]);
+        assert!(matches!(
+            variant_verdict(&sc(Some("D-CRASH-04")), PLAIN, &[], &[]),
+            Verdict::StaleDivergence(_)
+        ));
+        let failed = variant_verdict(
+            &sc(Some("D-CRASH-04")),
+            PLAIN,
+            &[diff("step 1 (x) stdout")],
+            &[String::from("x")],
+        );
         assert!(matches!(failed, Verdict::StaleDivergence(_)));
     }
 
     #[test]
     fn diag_may_differ_on_stderr_only() {
         let d = sc(Some("D-DIAG-02"));
-        assert!(matches!(variant_verdict(&d, PLAIN, &[diff("step 1 (x) stderr")], &[]), Verdict::Diverged { id: Some(_), .. }));
         assert!(matches!(
-            variant_verdict(&d, PLAIN, &[diff("step 1 (x) stderr"), diff("step 1 (x) exit")], &[]),
+            variant_verdict(&d, PLAIN, &[diff("step 1 (x) stderr")], &[]),
+            Verdict::Diverged { id: Some(_), .. }
+        ));
+        assert!(matches!(
+            variant_verdict(
+                &d,
+                PLAIN,
+                &[diff("step 1 (x) stderr"), diff("step 1 (x) exit")],
+                &[]
+            ),
             Verdict::Diverged { id: None, .. }
         ));
     }
@@ -925,10 +1259,26 @@ mod tests {
     #[test]
     fn strict_extension_variant_must_be_identical() {
         let e = sc(Some("D-EXT-02"));
-        let strict = Variant { brand: Brand::Snp, strict: true };
-        assert!(matches!(variant_verdict(&e, strict, &[], &[]), Verdict::Same));
-        assert!(matches!(variant_verdict(&e, strict, &[diff("step 1 (x) stdout")], &[]), Verdict::Diverged { id: None, .. }));
-        assert!(Variant { brand: Brand::Snp, strict: true }.label() == "snp+strict");
+        let strict = Variant {
+            brand: Brand::Snp,
+            strict: true,
+        };
+        assert!(matches!(
+            variant_verdict(&e, strict, &[], &[]),
+            Verdict::Same
+        ));
+        assert!(matches!(
+            variant_verdict(&e, strict, &[diff("step 1 (x) stdout")], &[]),
+            Verdict::Diverged { id: None, .. }
+        ));
+        assert_eq!(
+            Variant {
+                brand: Brand::Snp,
+                strict: true
+            }
+            .label(),
+            "snp+strict"
+        );
     }
 
     #[test]
@@ -942,7 +1292,11 @@ mod tests {
             oracle: SideReport::default(),
             snp: SideReport::default(),
         };
-        let v = combine(&[mk(Verdict::Same), mk(Verdict::StaleDivergence(String::from("D-X-01"))), mk(Verdict::Same)]);
+        let v = combine(&[
+            mk(Verdict::Same),
+            mk(Verdict::StaleDivergence(String::from("D-X-01"))),
+            mk(Verdict::Same),
+        ]);
         assert!(matches!(v, Verdict::StaleDivergence(_)));
         assert!(matches!(combine(&[]), Verdict::Same));
     }

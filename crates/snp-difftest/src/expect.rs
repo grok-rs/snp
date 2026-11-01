@@ -62,7 +62,9 @@ fn by_brand(v: &Yv, brand: Brand) -> &Yv {
 
 /// The bytes of a text value after substitution (and the brand map when asked).
 fn text_value(v: &Yv, cx: &CheckCx<'_>, mapped: bool) -> Result<Vec<u8>, String> {
-    let raw = v.to_bytes().ok_or_else(|| format!("expected a string, got a {}", v.kind()))?;
+    let raw = v
+        .to_bytes()
+        .ok_or_else(|| format!("expected a string, got a {}", v.kind()))?;
     let b = cx.world.subst_bytes(&raw)?;
     Ok(match (mapped, cx.map) {
         (true, Some(m)) => m.apply(&b),
@@ -71,7 +73,8 @@ fn text_value(v: &Yv, cx: &CheckCx<'_>, mapped: bool) -> Result<Vec<u8>, String>
 }
 
 fn int_value(v: &Yv) -> Result<i64, String> {
-    v.as_i64().ok_or_else(|| format!("expected an integer, got {v:?}"))
+    v.as_i64()
+        .ok_or_else(|| format!("expected an integer, got {v:?}"))
 }
 
 fn path_list(v: &Yv, cx: &CheckCx<'_>) -> Result<Vec<String>, String> {
@@ -81,7 +84,11 @@ fn path_list(v: &Yv, cx: &CheckCx<'_>) -> Result<Vec<String>, String> {
     };
     items
         .into_iter()
-        .map(|i| i.to_text().ok_or_else(|| String::from("expected a list of paths")).and_then(|t| cx.world.subst(&t)))
+        .map(|i| {
+            i.to_text()
+                .ok_or_else(|| String::from("expected a list of paths"))
+                .and_then(|t| cx.world.subst(&t))
+        })
         .collect()
 }
 
@@ -93,12 +100,29 @@ fn base_key(key: &str) -> &str {
     }
 }
 
-fn stream<'a>(name: &str, cx: &'a CheckCx<'_>) -> Option<Option<&'a [u8]>> {
+/// A checkable stream: present bytes, or absent (no config file).
+#[derive(Debug, Clone, Copy)]
+enum Stream<'a> {
+    Present(&'a [u8]),
+    Absent,
+}
+
+impl<'a> Stream<'a> {
+    const fn bytes(self) -> Option<&'a [u8]> {
+        match self {
+            Self::Present(b) => Some(b),
+            Self::Absent => None,
+        }
+    }
+}
+
+fn stream<'a>(name: &str, cx: &'a CheckCx<'_>) -> Option<Stream<'a>> {
+    let opt = |o: Option<&'a [u8]>| o.map_or(Stream::Absent, Stream::Present);
     match name {
-        "stdout" => Some(Some(&cx.cap.stdout)),
-        "stderr" => Some(Some(&cx.cap.stderr)),
-        "config_file" => Some(cx.state.config_file.as_deref()),
-        "git_config" => Some(cx.state.git_config.as_deref()),
+        "stdout" => Some(Stream::Present(&cx.cap.stdout)),
+        "stderr" => Some(Stream::Present(&cx.cap.stderr)),
+        "config_file" => Some(opt(cx.state.config_file.as_deref())),
+        "git_config" => Some(opt(cx.state.git_config.as_deref())),
         _ => None,
     }
 }
@@ -122,21 +146,39 @@ fn check(key: &str, value: &Yv, cx: &CheckCx<'_>) -> Result<(), String> {
         "exit" => {
             let want = int_value(v)?;
             let got = cx.cap.exit.map(i64::from);
-            if got == Some(want) { Ok(()) } else { Err(format!("want {want}, got {got:?}")) }
+            if got == Some(want) {
+                Ok(())
+            } else {
+                Err(format!("want {want}, got {got:?}"))
+            }
         }
         "exit_not" => {
             let not = int_value(v)?;
             let got = cx.cap.exit.map(i64::from);
-            if got == Some(not) { Err(format!("got {not}")) } else { Ok(()) }
+            if got == Some(not) {
+                Err(format!("got {not}"))
+            } else {
+                Ok(())
+            }
         }
+        // Consumed by the runner (selects the project whose step the checks apply to).
+        "project" => Ok(()),
         "timed_out" => {
             let want = v.as_bool().ok_or("expected a boolean")?;
-            if cx.cap.timed_out == want { Ok(()) } else { Err(format!("want {want}, got {}", cx.cap.timed_out)) }
+            if cx.cap.timed_out == want {
+                Ok(())
+            } else {
+                Err(format!("want {want}, got {}", cx.cap.timed_out))
+            }
         }
         "git_config_unchanged" => {
             let want = v.as_bool().ok_or("expected a boolean")?;
             let same = cx.state.git_config.as_deref() == cx.initial_git_config;
-            if same == want { Ok(()) } else { Err(format!("unchanged = {same}")) }
+            if same == want {
+                Ok(())
+            } else {
+                Err(format!("unchanged = {same}"))
+            }
         }
         "tree" => {
             let m = v.as_map().ok_or("expected a mapping path → contents")?;
@@ -158,7 +200,10 @@ fn check(key: &str, value: &Yv, cx: &CheckCx<'_>) -> Result<(), String> {
             for p in path_list(v, cx)? {
                 let present = cx.state.tree.contains_key(p.as_bytes());
                 if present != want_present {
-                    return Err(format!("{p}: {}", if present { "present" } else { "missing" }));
+                    return Err(format!(
+                        "{p}: {}",
+                        if present { "present" } else { "missing" }
+                    ));
                 }
             }
             Ok(())
@@ -176,22 +221,38 @@ fn check(key: &str, value: &Yv, cx: &CheckCx<'_>) -> Result<(), String> {
 }
 
 fn stream_check(key: &str, v: &Yv, cx: &CheckCx<'_>, mapped: bool) -> Result<(), String> {
-    const OPS: [&str; 5] = ["_not_contains", "_contains", "_starts_with", "_ends_with", "_matches"];
+    const OPS: [&str; 5] = [
+        "_not_contains",
+        "_contains",
+        "_starts_with",
+        "_ends_with",
+        "_matches",
+    ];
     let (name, op) = OPS
         .iter()
         .find_map(|op| key.strip_suffix(op).map(|n| (n, *op)))
         .unwrap_or((key, ""));
-    let Some(got) = stream(name, cx) else { return Err(String::from("unknown check")) };
+    let Some(got) = stream(name, cx).map(Stream::bytes) else {
+        return Err(String::from("unknown check"));
+    };
     if op == "_matches" {
         let pat = v.to_text().ok_or("expected a pattern")?;
         let re = Regex::new(&pat).map_err(|e| format!("bad pattern {pat:?}: {e}"))?;
         let got = got.ok_or("absent")?;
         let text = show(got);
-        return if re.search(&text)? { Ok(()) } else { Err(format!("{pat:?} does not match {}", shown(got))) };
+        return if re.search(&text)? {
+            Ok(())
+        } else {
+            Err(format!("{pat:?} does not match {}", shown(got)))
+        };
     }
     let want = text_value(v, cx, mapped)?;
     let Some(got) = got else {
-        return if op == "_not_contains" { Ok(()) } else { Err(String::from("absent")) };
+        return if op == "_not_contains" {
+            Ok(())
+        } else {
+            Err(String::from("absent"))
+        };
     };
     let ok = match op {
         "" => got == want.as_slice(),
@@ -200,7 +261,16 @@ fn stream_check(key: &str, v: &Yv, cx: &CheckCx<'_>, mapped: bool) -> Result<(),
         "_starts_with" => got.starts_with(&want),
         _ => got.ends_with(&want),
     };
-    if ok { Ok(()) } else { Err(format!("want {}{}, got {}", op.trim_start_matches('_'), shown(&want), shown(got))) }
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "want {}{}, got {}",
+            op.trim_start_matches('_'),
+            shown(&want),
+            shown(got)
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -224,11 +294,24 @@ mod tests {
         }
     }
 
-    fn run(yaml: &str, cap: &Captured, state: &State, brand: Brand, map: Option<&BrandMap>) -> Vec<String> {
+    fn run(
+        yaml: &str,
+        cap: &Captured,
+        state: &State,
+        brand: Brand,
+        map: Option<&BrandMap>,
+    ) -> Vec<String> {
         let w = world();
         let doc = Yv::parse(yaml).unwrap();
         let checks = doc.as_map().unwrap().to_vec();
-        let cx = CheckCx { cap, state, initial_git_config: Some(b"[core]\n"), world: &w, brand, map };
+        let cx = CheckCx {
+            cap,
+            state,
+            initial_git_config: Some(b"[core]\n"),
+            world: &w,
+            brand,
+            map,
+        };
         evaluate(&checks, &cx)
     }
 
@@ -240,29 +323,51 @@ mod tests {
             exit: Some(3),
             timed_out: false,
         };
-        let mut state = State { config_file: Some(b"repos: []\n".to_vec()), ..State::default() };
+        let mut state = State {
+            config_file: Some(b"repos: []\n".to_vec()),
+            ..State::default()
+        };
         state.git_config = Some(b"[core]\n".to_vec());
-        state.tree.insert(b"foo".to_vec(), Entry::File { bytes: b"1\n".to_vec(), exec: false });
+        state.tree.insert(
+            b"foo".to_vec(),
+            Entry::File {
+                bytes: b"1\n".to_vec(),
+                exec: false,
+            },
+        );
         let ok = "exit: 3\nexit_not: 1\ntimed_out: false\nstdout_ends_with: \"${work}/store/pre-commit.log\\n\"\n\
                   stdout_contains: Check\nstdout_contains_2: log\nstdout_not_contains: nope\n\
                   stderr_matches: '^saved in (\\S+); apply \\1\\n$'\nconfig_file: \"repos: []\\n\"\n\
                   git_config_unchanged: true\ntree: {foo: \"1\\n\"}\ntree_has: [foo]\ntree_missing: [bar]\n\
                   absent: [\"${work}/definitely/not/here\"]\n";
-        assert_eq!(run(ok, &cap, &state, Brand::Compat, None), Vec::<String>::new());
+        assert_eq!(
+            run(ok, &cap, &state, Brand::Compat, None),
+            Vec::<String>::new()
+        );
         let bad = "exit: 1\nstdout_starts_with: nope\nbogus_key: 1\ntree: {foo: x}\nconfig_file_contains: zzz\n";
         assert_eq!(run(bad, &cap, &state, Brand::Compat, None).len(), 5);
     }
 
     #[test]
     fn brand_values_and_map() {
-        let cap = Captured { stdout: b"Check the log at /s/snp.log\n".to_vec(), ..Captured::default() };
+        let cap = Captured {
+            stdout: b"Check the log at /s/snp.log\n".to_vec(),
+            ..Captured::default()
+        };
         let state = State::default();
-        let per_brand = "stdout_ends_with: {compat: \"/pre-commit.log\\n\", snp: \"/snp.log\\n\"}\n";
-        assert!(run(per_brand, &cap, &state, Brand::Snp, None).is_empty());
+        let per_brand =
+            "stdout_ends_with: {compat: \"/pre-commit.log\\n\", snp: \"/snp.log\\n\"}\n";
+        assert_eq!(
+            run(per_brand, &cap, &state, Brand::Snp, None),
+            Vec::<String>::new()
+        );
         assert_eq!(run(per_brand, &cap, &state, Brand::Compat, None).len(), 1);
         let map = BrandMap::workspace().unwrap();
         let plain = "stdout_ends_with: \"/pre-commit.log\\n\"\n";
-        assert!(run(plain, &cap, &state, Brand::Snp, Some(&map)).is_empty());
+        assert_eq!(
+            run(plain, &cap, &state, Brand::Snp, Some(&map)),
+            Vec::<String>::new()
+        );
         assert_eq!(run(plain, &cap, &state, Brand::Snp, None).len(), 1);
     }
 }

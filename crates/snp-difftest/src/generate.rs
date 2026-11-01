@@ -50,12 +50,12 @@ impl Rng {
         if n64 == 0 {
             return 0;
         }
-        usize::try_from(self.next_u64() % n64).unwrap_or(0)
+        usize::try_from(self.next_u64().checked_rem(n64).unwrap_or(0)).unwrap_or(0)
     }
 
     /// `true` with probability `num / den`.
     pub fn chance(&mut self, num: u64, den: u64) -> bool {
-        den != 0 && self.next_u64() % den < num
+        self.next_u64().checked_rem(den).is_some_and(|v| v < num)
     }
 
     /// One element of `items`.
@@ -93,27 +93,48 @@ const NAMES: &[&str] = &[
     "nonl.txt",
 ];
 
-const TAGS: &[&str] =
-    &["text", "binary", "python", "shell", "executable", "non-executable", "symlink", "markdown", "json", "yaml", "file"];
+const TAGS: &[&str] = &[
+    "text",
+    "binary",
+    "python",
+    "shell",
+    "executable",
+    "non-executable",
+    "symlink",
+    "markdown",
+    "json",
+    "yaml",
+    "file",
+];
 
 const REGEXES: &[&str] = &[
     r"\.py$",
     r"\.txt$",
-    r"^src/",
-    r"^docs/",
+    "^src/",
+    "^docs/",
     r"\.(md|txt)$",
-    r"(^|/)test_",
+    "(^|/)test_",
     r"[a-c]\.py$",
-    r"^(?!src/)",
+    "^(?!src/)",
     r"\.ya?ml$",
-    r"интервью",
-    r"^$",
-    r".",
+    "\u{0438}\u{043d}\u{0442}\u{0435}\u{0440}\u{0432}\u{044c}\u{044e}",
+    "^$",
+    ".",
     r"\s",
     r"^\[",
 ];
 
-const PYGREP: &[&str] = &[r"TODO", r"^import ", r"\s+$", r"[A-Z]{3}", r"(?i)fixme", r"\t", r"^#!", r"x{2,}", "\u{00e9}"];
+const PYGREP: &[&str] = &[
+    "TODO",
+    "^import ",
+    r"\s+$",
+    "[A-Z]{3}",
+    "(?i)fixme",
+    r"\t",
+    "^#!",
+    "x{2,}",
+    "\u{00e9}",
+];
 
 fn content(r: &mut Rng, name: &str) -> (Vec<u8>, bool) {
     let mut exec = false;
@@ -132,11 +153,13 @@ fn content(r: &mut Rng, name: &str) -> (Vec<u8>, bool) {
         5 => b"trailing   \nTODO: fix\n\ttab\n".to_vec(),
         6 => b"no final newline".to_vec(),
         7 => b"{\"a\": [1, 2], \"b\": null}\n".to_vec(),
-        8 => "caf\u{e9} \u{65e5}\u{672c} \u{0438}\u{043d}\n".as_bytes().to_vec(),
+        8 => "caf\u{e9} \u{65e5}\u{672c} \u{0438}\u{043d}\n"
+            .as_bytes()
+            .to_vec(),
         _ => {
             let mut s = String::new();
             for i in 0..r.below(8).saturating_add(1) {
-                let _ = writeln!(s, "{name} {i} xx");
+                writeln!(s, "{name} {i} xx").unwrap_or_default();
             }
             s.into_bytes()
         }
@@ -174,16 +197,34 @@ fn tags(r: &mut Rng) -> String {
 }
 
 fn args(r: &mut Rng) -> String {
-    const ARGS: &[&str] = &["--flag", "with space", "it's", "{}", "\u{0436}\u{0443}\u{043a}", "\"q\"", "-x=1", ""];
+    const ARGS: &[&str] = &[
+        "--flag",
+        "with space",
+        "it's",
+        "{}",
+        "\u{0436}\u{0443}\u{043a}",
+        "\"q\"",
+        "-x=1",
+        "",
+    ];
     let n = r.below(3).saturating_add(1);
-    let v: Vec<String> = (0..n).map(|_| sq(r.pick(ARGS).copied().unwrap_or("x"))).collect();
+    let v: Vec<String> = (0..n)
+        .map(|_| sq(r.pick(ARGS).copied().unwrap_or("x")))
+        .collect();
     format!("[{}]", v.join(", "))
 }
 
 /// One local hook as a flow mapping (one line).
+#[expect(
+    clippy::literal_string_with_formatting_args,
+    reason = "`${probe}` is the materialiser's substitution"
+)]
 fn local_hook(r: &mut Rng, i: usize, probe: bool) -> String {
     let id = format!("h{i}");
-    let mut kv: Vec<String> = vec![format!("id: {id}"), format!("name: {}", sq(&format!("hook {i}")))];
+    let mut kv: Vec<String> = vec![
+        format!("id: {id}"),
+        format!("name: {}", sq(&format!("hook {i}"))),
+    ];
     match r.below(10) {
         0..=5 => {
             let entry = if probe {
@@ -206,10 +247,18 @@ fn local_hook(r: &mut Rng, i: usize, probe: bool) -> String {
             kv.push(String::from("language: system"));
         }
         6..=8 => {
-            kv.push(format!("entry: {}", sq(r.pick(PYGREP).copied().unwrap_or("TODO"))));
+            kv.push(format!(
+                "entry: {}",
+                sq(r.pick(PYGREP).copied().unwrap_or("TODO"))
+            ));
             kv.push(String::from("language: pygrep"));
             if r.chance(1, 4) {
-                kv.push(format!("args: [{}]", r.pick(&["--ignore-case", "--negate", "--multiline"]).copied().unwrap_or("--negate")));
+                kv.push(format!(
+                    "args: [{}]",
+                    r.pick(&["--ignore-case", "--negate", "--multiline"])
+                        .copied()
+                        .unwrap_or("--negate")
+                ));
             }
         }
         _ => {
@@ -230,11 +279,26 @@ fn local_hook(r: &mut Rng, i: usize, probe: bool) -> String {
         _ => {}
     }
     if r.chance(1, 8) {
-        kv.push(format!("stages: [{}]", r.pick(&["pre-commit", "manual", "pre-push", "commit-msg"]).copied().unwrap_or("manual")));
+        kv.push(format!(
+            "stages: [{}]",
+            r.pick(&["pre-commit", "manual", "pre-push", "commit-msg"])
+                .copied()
+                .unwrap_or("manual")
+        ));
     }
-    for (key, num) in [("always_run", 1), ("pass_filenames", 1), ("require_serial", 1), ("verbose", 1), ("fail_fast", 1)] {
+    for (key, num) in [
+        ("always_run", 1),
+        ("pass_filenames", 1),
+        ("require_serial", 1),
+        ("verbose", 1),
+        ("fail_fast", 1),
+    ] {
         if r.chance(num, 8) {
-            let v = if key == "pass_filenames" { "false" } else { "true" };
+            let v = if key == "pass_filenames" {
+                "false"
+            } else {
+                "true"
+            };
             kv.push(format!("{key}: {v}"));
         }
     }
@@ -252,17 +316,29 @@ fn local_hook(r: &mut Rng, i: usize, probe: bool) -> String {
 
 /// The case `index` of the suite seeded with `seed`. `probe`: entries may use `${probe}` (the scenario then
 /// requires snp-probe).
+#[expect(
+    clippy::literal_string_with_formatting_args,
+    reason = "`${repo:hooks}` is the materialiser's substitution"
+)]
 pub fn generate(seed: u64, index: u64, probe: bool) -> Scenario {
     let mut r = Rng::new(seed ^ index.wrapping_mul(0xa076_1d64_78bd_642f));
     let mut s = Scenario::new(&format!("generated/{seed}-{index}"));
     s.tags = vec![String::from("generated")];
     s.requires.os = vec![String::from("linux"), String::from("macos")];
     // File tree.
-    let n_files = if r.chance(1, 20) { r.below(120) } else { r.below(12) };
+    let n_files = if r.chance(1, 20) {
+        r.below(120)
+    } else {
+        r.below(12)
+    };
     let mut names: Vec<String> = Vec::new();
     for k in 0..n_files {
         let base = r.pick(NAMES).copied().unwrap_or("f.txt");
-        let name = if names.iter().any(|n| n == base) { format!("gen{k}/{base}") } else { base.to_owned() };
+        let name = if names.iter().any(|n| n == base) {
+            format!("gen{k}/{base}")
+        } else {
+            base.to_owned()
+        };
         if names.contains(&name) {
             continue;
         }
@@ -274,19 +350,24 @@ pub fn generate(seed: u64, index: u64, probe: bool) -> Scenario {
         names.push(name);
     }
     if r.chance(1, 8) {
-        let target = names.first().cloned().unwrap_or_else(|| String::from("missing-target"));
+        let target = names
+            .first()
+            .cloned()
+            .unwrap_or_else(|| String::from("missing-target"));
         s.work.symlinks.push((String::from("link"), target));
         if r.chance(1, 2) {
-            s.work.symlinks.push((String::from("dangling"), String::from("does/not/exist")));
+            s.work
+                .symlinks
+                .push((String::from("dangling"), String::from("does/not/exist")));
         }
     }
     // Config.
     let mut cfg = String::new();
     if r.chance(1, 6) {
-        let _ = writeln!(cfg, "files: {}", sq(&regex(&mut r)));
+        writeln!(cfg, "files: {}", sq(&regex(&mut r))).unwrap_or_default();
     }
     if r.chance(1, 6) {
-        let _ = writeln!(cfg, "exclude: {}", sq(&regex(&mut r)));
+        writeln!(cfg, "exclude: {}", sq(&regex(&mut r))).unwrap_or_default();
     }
     if r.chance(1, 8) {
         cfg.push_str("fail_fast: true\n");
@@ -301,8 +382,11 @@ pub fn generate(seed: u64, index: u64, probe: bool) -> Scenario {
     }
     if r.chance(1, 6) {
         cfg.push_str("-   repo: meta\n    hooks:\n");
-        let id = r.pick(&["check-hooks-apply", "check-useless-excludes", "identity"]).copied().unwrap_or("identity");
-        let _ = writeln!(cfg, "    - {{id: {id}}}");
+        let id = r
+            .pick(&["check-hooks-apply", "check-useless-excludes", "identity"])
+            .copied()
+            .unwrap_or("identity");
+        writeln!(cfg, "    - {{id: {id}}}").unwrap_or_default();
     }
     if r.chance(1, 8) {
         s.repos.push(RepoSpec {
@@ -310,7 +394,9 @@ pub fn generate(seed: u64, index: u64, probe: bool) -> Scenario {
             fixture: Some(String::from("script_hooks_repo")),
             ..RepoSpec::default()
         });
-        cfg.push_str("-   repo: ${repo:hooks}\n    rev: ${rev:hooks}\n    hooks:\n    - {id: bash_hook}\n");
+        cfg.push_str(
+            "-   repo: ${repo:hooks}\n    rev: ${rev:hooks}\n    hooks:\n    - {id: bash_hook}\n",
+        );
     }
     s.work.config = Some(cfg);
     // Git state.
@@ -328,27 +414,56 @@ pub fn generate(seed: u64, index: u64, probe: bool) -> Scenario {
             staged.push(l.clone().into_bytes());
         }
     }
-    s.work.commit = committed.clone();
-    s.work.stage = staged.clone();
+    s.work.commit.clone_from(&committed);
+    s.work.stage.clone_from(&staged);
     for n in &names {
         let nb = n.as_bytes();
         if (committed.iter().any(|c| c == nb) || staged.iter().any(|c| c == nb)) && r.chance(1, 5) {
-            s.work.unstaged.push((n.clone(), if r.chance(1, 4) { None } else { Some(b"changed later\n".to_vec()) }));
+            s.work.unstaged.push((
+                n.clone(),
+                if r.chance(1, 4) {
+                    None
+                } else {
+                    Some(b"changed later\n".to_vec())
+                },
+            ));
         }
     }
     if r.chance(1, 10)
-        && let Some(n) = names.iter().find(|n| !committed.iter().chain(&staged).any(|c| c == n.as_bytes()))
+        && let Some(n) = names
+            .iter()
+            .find(|n| !committed.iter().chain(&staged).any(|c| c == n.as_bytes()))
     {
-        s.work.setup.push(Op::Git(vec![String::from("add"), String::from("-N"), String::from("--"), n.clone()]));
+        s.work.setup.push(Op::Git(vec![
+            String::from("add"),
+            String::from("-N"),
+            String::from("--"),
+            n.clone(),
+        ]));
     }
     if r.chance(1, 10)
-        && let Some(n) = committed.iter().skip(1).find(|c| !s.work.unstaged.iter().any(|(u, _)| u.as_bytes() == c.as_slice()))
+        && let Some(n) = committed.iter().skip(1).find(|c| {
+            !s.work
+                .unstaged
+                .iter()
+                .any(|(u, _)| u.as_bytes() == c.as_slice())
+        })
     {
         let n = String::from_utf8_lossy(n).into_owned();
-        s.work.setup.push(Op::Git(vec![String::from("rm"), String::from("-q"), String::from("--cached"), String::from("--"), n]));
+        s.work.setup.push(Op::Git(vec![
+            String::from("rm"),
+            String::from("-q"),
+            String::from("--cached"),
+            String::from("--"),
+            n,
+        ]));
     }
     if r.chance(1, 15) {
-        s.work.setup.push(Op::Git(vec![String::from("checkout"), String::from("-q"), String::from("--detach")]));
+        s.work.setup.push(Op::Git(vec![
+            String::from("checkout"),
+            String::from("-q"),
+            String::from("--detach"),
+        ]));
     }
     // Invocations.
     let step = |kind: StepKind, env: Vec<(String, Option<String>)>| Step {
@@ -362,13 +477,27 @@ pub fn generate(seed: u64, index: u64, probe: bool) -> Scenario {
     };
     match r.below(10) {
         0 => {
-            s.steps.push(step(StepKind::Tool(vec![String::from("install")]), Vec::new()));
             s.steps.push(step(
-                StepKind::Git(vec![String::from("commit"), String::from("-q"), String::from("-m"), String::from("msg")]),
+                StepKind::Tool(vec![String::from("install")]),
+                Vec::new(),
+            ));
+            s.steps.push(step(
+                StepKind::Git(vec![
+                    String::from("commit"),
+                    String::from("-q"),
+                    String::from("-m"),
+                    String::from("msg"),
+                ]),
                 Vec::new(),
             ));
         }
-        1 => s.steps.push(step(StepKind::Tool(vec![String::from("validate-config"), String::from(".pre-commit-config.yaml")]), Vec::new())),
+        1 => s.steps.push(step(
+            StepKind::Tool(vec![
+                String::from("validate-config"),
+                String::from(".pre-commit-config.yaml"),
+            ]),
+            Vec::new(),
+        )),
         _ => {
             let mut a = vec![String::from("run")];
             match r.below(5) {
@@ -404,11 +533,19 @@ pub fn generate(seed: u64, index: u64, probe: bool) -> Scenario {
             }
             if r.chance(1, 4) {
                 a.push(String::from("--color"));
-                a.push(r.pick(&["always", "never"]).copied().unwrap_or("never").to_owned());
+                a.push(
+                    r.pick(&["always", "never"])
+                        .copied()
+                        .unwrap_or("never")
+                        .to_owned(),
+                );
             }
             let mut env = Vec::new();
             if r.chance(1, 5) {
-                env.push((String::from("SKIP"), Some(format!("h{},nonexistent", r.below(n_hooks)))));
+                env.push((
+                    String::from("SKIP"),
+                    Some(format!("h{},nonexistent", r.below(n_hooks))),
+                ));
             }
             s.steps.push(step(StepKind::Tool(a), env));
         }
@@ -434,10 +571,13 @@ mod tests {
             let back = Scenario::parse(&a.to_yaml(), Path::new("g.yaml")).unwrap();
             assert_eq!(back.work, a.work, "case {i}");
             assert_eq!(back.steps, a.steps, "case {i}");
-            assert!(!a.steps.is_empty());
+            assert_ne!(a.steps.len(), 0);
             assert!(crate::shrink::hook_count(&a) >= 1);
         }
-        assert_ne!(generate(1, 0, true).to_yaml(), generate(2, 0, true).to_yaml());
+        assert_ne!(
+            generate(1, 0, true).to_yaml(),
+            generate(2, 0, true).to_yaml()
+        );
     }
 
     #[test]

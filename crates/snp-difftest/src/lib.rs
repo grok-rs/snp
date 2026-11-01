@@ -39,14 +39,18 @@ use snp_testkit as _;
 
 pub use compare::Difference;
 pub use exec::Captured;
-pub use snapshot::{Entry, State};
-pub use yamlv::{YamlLoadError, Yv};
-pub use normalise::{BrandMap, DIAG_LINES, Rule, Tier, mask_paths, normalise, strip_diag};
-pub use runner::{Options, Outcome, Runner, SideReport, StepReport, Variant, VariantReport, Verdict};
+pub use normalise::{
+    BrandMap, DIAG_LINES, Rule, Tier, canonical_usage, mask_paths, normalise, strip_diag,
+};
+pub use runner::{
+    Options, Outcome, Runner, SideReport, StepReport, Variant, VariantReport, Verdict,
+};
 pub use scenario::{
     Brand, Compare, ExitMode, Expected, Op, RepoSpec, Requires, Scenario, SignalSpec, Status, Step,
     StepExpect, StepKind, StreamMode, VersionReq, Work, load_scenarios, parse_version,
 };
+pub use snapshot::{Entry, State};
+pub use yamlv::{YamlLoadError, Yv};
 
 /// The workspace root of this checkout (the harness reads its committed data files from there).
 pub fn workspace_root() -> PathBuf {

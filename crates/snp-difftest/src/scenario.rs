@@ -76,6 +76,10 @@ pub enum ExitMode {
 
 /// The `compare:` block.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one switch per compared effect, as in the YAML schema"
+)]
 pub struct Compare {
     /// stdout comparison.
     pub stdout: StreamMode,
@@ -89,7 +93,7 @@ pub struct Compare {
     pub index: bool,
     /// `git for-each-ref`, `HEAD` and the stash list.
     pub refs: bool,
-    /// `.git/hooks`: compared by name and exec bit (bytes differ by design: INSTALL_PYTHON vs `SNP_EXE`).
+    /// `.git/hooks`: compared by name and exec bit (bytes differ by design: `INSTALL_PYTHON` vs `SNP_EXE`).
     pub hooks_dir: bool,
     /// `.pre-commit-config.yaml` bytes after each step.
     pub config_file: StreamMode,
@@ -132,12 +136,17 @@ impl VersionReq {
         let mut terms = Vec::new();
         for part in s.split(',').map(str::trim).filter(|p| !p.is_empty()) {
             let op_len = part.bytes().take_while(|c| b"<>=!".contains(c)).count();
-            let (op, ver) = part.split_at_checked(op_len).ok_or_else(|| format!("bad version term {part:?}"))?;
+            let (op, ver) = part
+                .split_at_checked(op_len)
+                .ok_or_else(|| format!("bad version term {part:?}"))?;
             let op = if op.is_empty() { "==" } else { op };
             if !matches!(op, ">=" | ">" | "<=" | "<" | "==" | "!=") {
                 return Err(format!("bad version operator {op:?}"));
             }
-            terms.push((op.to_owned(), parse_version(ver.trim()).ok_or_else(|| format!("bad version {ver:?}"))?));
+            terms.push((
+                op.to_owned(),
+                parse_version(ver.trim()).ok_or_else(|| format!("bad version {ver:?}"))?,
+            ));
         }
         Ok(Self { terms })
     }
@@ -230,6 +239,9 @@ pub struct RepoSpec {
     pub bare: bool,
     /// `git init --object-format=<f>`.
     pub object_format: Option<String>,
+    /// `url:` + `rev:`: an externally hosted repository (not materialised; `${repo:x}` / `${rev:x}` are these
+    /// values and the scenario needs the network).
+    pub external: Option<(String, String)>,
 }
 
 /// The `work:` block: the repository both tools run in.
@@ -241,7 +253,7 @@ pub struct Work {
     pub exec: Vec<String>,
     /// Symlinks (posix): name → target.
     pub symlinks: Vec<(String, String)>,
-    /// Explicit modes (octal) applied after the files are written: name → mode.
+    /// Explicit modes (octal) applied right after the commit (before staging): name → mode.
     pub modes: Vec<(String, u32)>,
     /// Modes applied after commit and staging (e.g. a read-only file): name → mode.
     pub chmod: Vec<(String, u32)>,
@@ -363,6 +375,10 @@ pub struct Scenario {
     pub unsupported: Vec<String>,
     /// `unit_tests:` (`status: unit`): `path::test_name` entries that pin the behaviour instead.
     pub unit_tests: Vec<String>,
+    /// `projects: [one/proj, two/proj]`: the work block is materialised in each of these directories (relative to the
+    /// root, sharing one store) and every step runs in each, project by project. Expectations select a project with
+    /// `project: <dir>`. Empty: one work directory (`work.dir`, default `work`).
+    pub projects: Vec<String>,
 }
 
 impl Scenario {
@@ -380,18 +396,24 @@ impl Scenario {
             tags: Vec::new(),
             requires: Requires::default(),
             repos: Vec::new(),
-            work: Work { git: true, ..Work::default() },
+            work: Work {
+                git: true,
+                ..Work::default()
+            },
             steps: Vec::new(),
             compare: Compare::default(),
             expected: None,
             unsupported: Vec::new(),
             unit_tests: Vec::new(),
+            projects: Vec::new(),
         }
     }
 
     /// Whether the scenario's register ID is of class DIAG (stderr-only differences).
     pub fn is_diag(&self) -> bool {
-        self.expect_divergence.as_deref().is_some_and(|id| id.starts_with("D-DIAG-"))
+        self.expect_divergence
+            .as_deref()
+            .is_some_and(|id| id.starts_with("D-DIAG-"))
     }
 
     /// Parses one scenario file's text. `path` is used in messages and for `name` defaults.
@@ -436,7 +458,9 @@ fn collect_yaml(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     for entry in entries {
         let entry = entry.map_err(|e| format!("{}: {e}", dir.display()))?;
         let p = entry.path();
-        let ft = entry.file_type().map_err(|e| format!("{}: {e}", p.display()))?;
+        let ft = entry
+            .file_type()
+            .map_err(|e| format!("{}: {e}", p.display()))?;
         if ft.is_dir() {
             collect_yaml(&p, out)?;
         } else if p.extension().is_some_and(|e| e == "yaml" || e == "yml") {
@@ -472,14 +496,16 @@ const ROOT_KEYS: &[&str] = &[
 ];
 
 fn s(v: &Yv, what: &str) -> Result<String, String> {
-    v.to_text().ok_or_else(|| format!("{what}: expected a string, got a {}", v.kind()))
+    v.to_text()
+        .ok_or_else(|| format!("{what}: expected a string, got a {}", v.kind()))
 }
 
 fn bool_of(v: &Yv, what: &str) -> Result<bool, String> {
     if v.is_null() {
         return Ok(false);
     }
-    v.as_bool().ok_or_else(|| format!("{what}: expected a boolean"))
+    v.as_bool()
+        .ok_or_else(|| format!("{what}: expected a boolean"))
 }
 
 fn str_list(v: &Yv, what: &str) -> Result<Vec<String>, String> {
@@ -500,16 +526,21 @@ fn map_of<'a>(v: &'a Yv, what: &str) -> Result<&'a [(String, Yv)], String> {
 }
 
 fn bytes_of(v: &Yv, what: &str) -> Result<Vec<u8>, String> {
-    v.to_bytes().ok_or_else(|| format!("{what}: expected a string or !!binary"))
+    v.to_bytes()
+        .ok_or_else(|| format!("{what}: expected a string or !!binary"))
 }
 
 fn ms_of(v: &Yv, what: &str) -> Result<u64, String> {
     let t = s(v, what)?;
-    let secs: f64 = t.trim_end_matches('s').parse().map_err(|_| format!("{what}: expected seconds"))?;
+    let secs: f64 = t
+        .trim_end_matches('s')
+        .parse()
+        .map_err(|_| format!("{what}: expected seconds"))?;
     if !(0.0..=86_400.0).contains(&secs) {
         return Err(format!("{what}: out of range"));
     }
-    let d = std::time::Duration::try_from_secs_f64(secs).map_err(|_| format!("{what}: out of range"))?;
+    let d = std::time::Duration::try_from_secs_f64(secs)
+        .map_err(|_| format!("{what}: out of range"))?;
     u64::try_from(d.as_millis()).map_err(|_| format!("{what}: out of range"))
 }
 
@@ -521,7 +552,10 @@ fn mode_of(v: &Yv, what: &str) -> Result<u32, String> {
 
 fn parse_doc(doc: &Yv, path: &Path) -> Result<Scenario, String> {
     let root = map_of(doc, "scenario")?;
-    let default_name = path.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let default_name = path
+        .file_stem()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let mut sc = Scenario::new(&default_name);
     sc.path = path.to_path_buf();
     for (k, _) in root {
@@ -541,7 +575,9 @@ fn parse_doc(doc: &Yv, path: &Path) -> Result<Scenario, String> {
         let id = s(v, "expect_divergence")?;
         if !id.is_empty() {
             if !is_register_id(&id) {
-                return Err(format!("expect_divergence: {id:?} is not a register ID (D-<CLASS>-nn)"));
+                return Err(format!(
+                    "expect_divergence: {id:?} is not a register ID (D-<CLASS>-nn)"
+                ));
             }
             sc.expect_divergence = Some(id);
         }
@@ -549,22 +585,37 @@ fn parse_doc(doc: &Yv, path: &Path) -> Result<Scenario, String> {
     if let Some(v) = doc.get("name") {
         sc.name = s(v, "name")?;
     } else if sc.status != Status::Active {
-        sc.name = format!("divergences/{}", sc.expect_divergence.clone().unwrap_or(default_name));
+        sc.name = format!(
+            "divergences/{}",
+            sc.expect_divergence.clone().unwrap_or(default_name)
+        );
     }
     if let Some(v) = doc.get("unit_tests") {
         sc.unit_tests = str_list(v, "unit_tests")?;
     }
-    match sc.status {
-        Status::Stub => return Ok(sc),
-        Status::Unit if sc.unit_tests.is_empty() => {
-            return Err(String::from("status: unit needs a non-empty `unit_tests:` list"));
-        }
-        Status::Unit => return Ok(sc),
-        Status::Active => {}
+    if sc.status == Status::Unit && sc.unit_tests.is_empty() {
+        return Err(String::from(
+            "status: unit needs a non-empty `unit_tests:` list",
+        ));
     }
-    for key in ["projects", "fixtures"] {
-        if doc.get(key).is_some() {
-            sc.unsupported.push(format!("`{key}:` is not executed by the harness"));
+    if sc.status != Status::Active {
+        return Ok(sc);
+    }
+    if doc.get("fixtures").is_some() {
+        sc.unsupported.push(String::from(
+            "`fixtures:` (network fixtures such as a MITM proxy) is not executed by the harness",
+        ));
+    }
+    if let Some(v) = doc.get("projects") {
+        sc.projects = str_list(v, "projects")?;
+        if sc
+            .projects
+            .iter()
+            .any(|p| p.is_empty() || p.starts_with('/') || p.split('/').any(|c| c == ".."))
+        {
+            return Err(String::from(
+                "projects: entries are relative paths below the scenario root",
+            ));
         }
     }
     if let Some(v) = doc.get("since") {
@@ -610,9 +661,18 @@ fn parse_doc(doc: &Yv, path: &Path) -> Result<Scenario, String> {
     if let Some(v) = doc.get("work") {
         sc.work = parse_work(v, &mut sc.unsupported)?;
     }
+    if sc.repos.iter().any(|r| r.external.is_some()) {
+        sc.requires.net = true;
+    }
     let steps = doc.get("steps").ok_or("missing key \"steps\"")?;
-    for (i, st) in steps.as_seq().ok_or("steps: expected a list")?.iter().enumerate() {
-        sc.steps.push(parse_step(st, i.saturating_add(1), &mut sc.unsupported)?);
+    for (i, st) in steps
+        .as_seq()
+        .ok_or("steps: expected a list")?
+        .iter()
+        .enumerate()
+    {
+        sc.steps
+            .push(parse_step(st, i.saturating_add(1), &mut sc.unsupported)?);
     }
     if sc.steps.is_empty() {
         return Err(String::from("steps: empty"));
@@ -633,8 +693,12 @@ fn parse_doc(doc: &Yv, path: &Path) -> Result<Scenario, String> {
 pub(crate) fn is_register_id(id: &str) -> bool {
     let mut parts = id.split('-');
     parts.next() == Some("D")
-        && parts.next().is_some_and(|c| !c.is_empty() && c.bytes().all(|b| b.is_ascii_uppercase()))
-        && parts.next().is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        && parts
+            .next()
+            .is_some_and(|c| !c.is_empty() && c.bytes().all(|b| b.is_ascii_uppercase()))
+        && parts
+            .next()
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
         && parts.next().is_none()
 }
 
@@ -656,7 +720,10 @@ fn parse_requires(v: &Yv, sc: &mut Scenario) -> Result<(), String> {
     for (k, val) in map_of(v, "requires")? {
         let what = format!("requires.{k}");
         match k.as_str() {
-            "git" => sc.requires.git = VersionReq::parse(&s(val, &what)?).map_err(|e| format!("{what}: {e}"))?,
+            "git" => {
+                sc.requires.git =
+                    VersionReq::parse(&s(val, &what)?).map_err(|e| format!("{what}: {e}"))?
+            }
             "net" => sc.requires.net = bool_of(val, &what)?,
             "tools" => sc.requires.tools = str_list(val, &what)?,
             "os" => sc.requires.os = str_list(val, &what)?,
@@ -673,16 +740,22 @@ fn parse_requires(v: &Yv, sc: &mut Scenario) -> Result<(), String> {
                 }
             }
             "logical_cpus_min" => {
-                let n = val.as_i64().ok_or_else(|| format!("{what}: expected an integer"))?;
-                sc.requires.logical_cpus_min = Some(u32::try_from(n).map_err(|_| format!("{what}: out of range"))?);
+                let n = val
+                    .as_i64()
+                    .ok_or_else(|| format!("{what}: expected an integer"))?;
+                sc.requires.logical_cpus_min =
+                    Some(u32::try_from(n).map_err(|_| format!("{what}: out of range"))?);
             }
             "path_profile" => {
                 let p = s(val, &what)?;
                 if p != "runner" {
-                    sc.unsupported.push(format!("requires.path_profile {p:?} (only `runner`)"));
+                    sc.unsupported
+                        .push(format!("requires.path_profile {p:?} (only `runner`)"));
                 }
             }
-            "sandbox" => sc.unsupported.push(String::from("requires.sandbox (a sandboxed runner)")),
+            "sandbox" => sc
+                .unsupported
+                .push(String::from("requires.sandbox (a sandboxed runner)")),
             other => return Err(format!("requires: unknown key {other:?}")),
         }
     }
@@ -725,7 +798,10 @@ fn parse_ops(v: &Yv, what: &str, unsupported: &mut Vec<String>) -> Result<Vec<Op
 }
 
 fn parse_repo(name: &str, v: &Yv, unsupported: &mut Vec<String>) -> Result<RepoSpec, String> {
-    let mut r = RepoSpec { name: name.to_owned(), ..RepoSpec::default() };
+    let mut r = RepoSpec {
+        name: name.to_owned(),
+        ..RepoSpec::default()
+    };
     for (k, val) in map_of(v, "repos")? {
         let what = format!("repos.{name}.{k}");
         match k.as_str() {
@@ -741,30 +817,75 @@ fn parse_repo(name: &str, v: &Yv, unsupported: &mut Vec<String>) -> Result<RepoS
             "path" => r.path = Some(s(val, &what)?),
             "bare" => r.bare = bool_of(val, &what)?,
             "object_format" => r.object_format = Some(s(val, &what)?),
-            "url" | "rev" => unsupported.push(format!("{what} (an externally hosted repository)")),
+            "url" => {
+                let rev = r.external.take().map(|(_, rev)| rev).unwrap_or_default();
+                r.external = Some((s(val, &what)?, rev));
+            }
+            "rev" => {
+                let url = r.external.take().map(|(u, _)| u).unwrap_or_default();
+                r.external = Some((url, s(val, &what)?));
+            }
             other => return Err(format!("{what}: unknown key {other:?}")),
         }
+    }
+    if let Some((url, rev)) = &r.external
+        && (url.is_empty() || rev.is_empty())
+    {
+        return Err(format!(
+            "repos.{name}: an external repository needs both `url` and `rev`"
+        ));
     }
     Ok(r)
 }
 
+/// `{generate: {prefix, repeat, count, suffix}}` file contents: `prefix + repeat × count + suffix`.
+fn generated_content(v: &Yv, what: &str) -> Result<Vec<u8>, String> {
+    let part = |k: &str| -> Result<Vec<u8>, String> {
+        v.get(k)
+            .map_or(Ok(Vec::new()), |x| bytes_of(x, &format!("{what}.{k}")))
+    };
+    let count = v
+        .get("count")
+        .and_then(Yv::as_i64)
+        .ok_or_else(|| format!("{what}: count must be an integer"))?;
+    let unit = part("repeat")?;
+    let total = usize::try_from(count)
+        .ok()
+        .and_then(|c| c.checked_mul(unit.len()))
+        .filter(|n| *n <= 64 * 1024 * 1024)
+        .ok_or_else(|| format!("{what}: generated contents out of range (at most 64 MiB)"))?;
+    let mut out = part("prefix")?;
+    out.try_reserve(total).map_err(|e| format!("{what}: {e}"))?;
+    for _ in 0..count {
+        out.extend_from_slice(&unit);
+    }
+    out.extend(part("suffix")?);
+    Ok(out)
+}
+
 fn parse_work(v: &Yv, unsupported: &mut Vec<String>) -> Result<Work, String> {
-    let mut w = Work { git: true, ..Work::default() };
+    let mut w = Work {
+        git: true,
+        ..Work::default()
+    };
     for (k, val) in map_of(v, "work")? {
         let what = format!("work.{k}");
         match k.as_str() {
             "files" => {
                 for (p, c) in map_of(val, &what)? {
                     if p == "generated" && c.get("pattern").is_some() {
-                        w.files.extend(generated_files(c, &format!("{what}.generated"))?);
+                        w.files
+                            .extend(generated_files(c, &format!("{what}.generated"))?);
                         continue;
                     }
-                    if let Some(m) = c.as_map() {
-                        if m.iter().any(|(k2, _)| k2 == "generate") {
-                            unsupported.push(format!("{what}.{p}: generated contents"));
-                        } else {
-                            return Err(format!("{what}.{p}: expected contents"));
-                        }
+                    if c.as_map().is_some() {
+                        let g = c
+                            .get("generate")
+                            .ok_or_else(|| format!("{what}.{p}: expected contents"))?;
+                        w.files.push((
+                            expand_byte_escapes(p),
+                            generated_content(g, &format!("{what}.{p}"))?,
+                        ));
                         continue;
                     }
                     w.files.push((expand_byte_escapes(p), bytes_of(c, &what)?));
@@ -792,12 +913,35 @@ fn parse_work(v: &Yv, unsupported: &mut Vec<String>) -> Result<Work, String> {
                 }
             }
             "fifos" => w.fifos = str_list(val, &what)?,
-            "config" => w.config = if val.is_null() { None } else { Some(s(val, &what)?) },
-            "commit" => w.commit = str_list(val, &what)?.iter().map(|p| expand_byte_escapes(p)).collect(),
-            "stage" => w.stage = str_list(val, &what)?.iter().map(|p| expand_byte_escapes(p)).collect(),
+            "config" => {
+                w.config = if val.is_null() {
+                    None
+                } else {
+                    Some(s(val, &what)?)
+                }
+            }
+            "commit" => {
+                w.commit = str_list(val, &what)?
+                    .iter()
+                    .map(|p| expand_byte_escapes(p))
+                    .collect()
+            }
+            "stage" => {
+                w.stage = str_list(val, &what)?
+                    .iter()
+                    .map(|p| expand_byte_escapes(p))
+                    .collect()
+            }
             "unstaged" => {
                 for (p, c) in map_of(val, &what)? {
-                    w.unstaged.push((p.clone(), if c.is_null() { None } else { Some(bytes_of(c, &what)?) }));
+                    w.unstaged.push((
+                        p.clone(),
+                        if c.is_null() {
+                            None
+                        } else {
+                            Some(bytes_of(c, &what)?)
+                        },
+                    ));
                 }
             }
             "git_config" => {
@@ -806,25 +950,41 @@ fn parse_work(v: &Yv, unsupported: &mut Vec<String>) -> Result<Work, String> {
                 }
             }
             "setup" => w.setup = parse_ops(val, &what, unsupported)?,
-            "git" => w.git = val.as_bool().ok_or_else(|| format!("{what}: expected a boolean"))?,
+            "git" => {
+                w.git = val
+                    .as_bool()
+                    .ok_or_else(|| format!("{what}: expected a boolean"))?
+            }
             "object_format" => w.object_format = Some(s(val, &what)?),
             "dir" => w.dir = Some(s(val, &what)?),
-            "generated" => unsupported.push(String::from("work.generated (generated file sets)")),
-            "junctions" => unsupported.push(String::from("work.junctions (Windows directory junctions)")),
+            "generated" => w.files.extend(generated_files(val, &what)?),
+            "junctions" => {
+                unsupported.push(String::from("work.junctions (Windows directory junctions)"))
+            }
             other => return Err(format!("{what}: unknown key {other:?}")),
         }
     }
     Ok(w)
 }
 
+/// A file name and its contents, both raw bytes.
+type NamedBytes = (Vec<u8>, Vec<u8>);
+
 /// Upper bound on `generated:` file counts.
 const MAX_GENERATED: i64 = 100_000;
 
 /// `generated: {pattern: "a b{i:04}", count: 1000, content: "x\n"}`: `count` files named by `pattern`, where `{i}` is
 /// the index and `{i:0N}` the index zero-padded to `N` digits.
-fn generated_files(v: &Yv, what: &str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
-    let pattern = s(v.get("pattern").ok_or_else(|| format!("{what}: missing pattern"))?, what)?;
-    let count = v.get("count").and_then(Yv::as_i64).ok_or_else(|| format!("{what}: count must be an integer"))?;
+fn generated_files(v: &Yv, what: &str) -> Result<Vec<NamedBytes>, String> {
+    let pattern = s(
+        v.get("pattern")
+            .ok_or_else(|| format!("{what}: missing pattern"))?,
+        what,
+    )?;
+    let count = v
+        .get("count")
+        .and_then(Yv::as_i64)
+        .ok_or_else(|| format!("{what}: count must be an integer"))?;
     if !(0..=MAX_GENERATED).contains(&count) {
         return Err(format!("{what}: count out of range (0..={MAX_GENERATED})"));
     }
@@ -833,26 +993,56 @@ fn generated_files(v: &Yv, what: &str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String
         None => Vec::new(),
     };
     let (head, spec, tail) = {
-        let start = pattern.find("{i").ok_or_else(|| format!("{what}: pattern needs {{i}} or {{i:0N}}"))?;
+        let start = pattern
+            .find("{i")
+            .ok_or_else(|| format!("{what}: pattern needs {{i}} or {{i:0N}}"))?;
         let (head, rest) = pattern.split_at_checked(start).ok_or("bad pattern")?;
-        let end = rest.find('}').ok_or_else(|| format!("{what}: unterminated {{i"))?;
+        let end = rest
+            .find('}')
+            .ok_or_else(|| format!("{what}: unterminated {{i"))?;
         let (spec, tail) = rest.split_at_checked(end).ok_or("bad pattern")?;
-        (head.to_owned(), spec.to_owned(), tail.get(1..).unwrap_or_default().to_owned())
+        (
+            head.to_owned(),
+            spec.to_owned(),
+            tail.get(1..).unwrap_or_default().to_owned(),
+        )
     };
     let width: usize = match spec.strip_prefix("{i") {
         Some("") => 0,
-        Some(f) => f.strip_prefix(":0").and_then(|n| n.parse().ok()).filter(|n| *n <= 12).ok_or_else(|| format!("{what}: bad index format {spec:?}"))?,
+        Some(f) => f
+            .strip_prefix(":0")
+            .and_then(|n| n.parse().ok())
+            .filter(|n| *n <= 12)
+            .ok_or_else(|| format!("{what}: bad index format {spec:?}"))?,
         None => return Err(format!("{what}: bad pattern")),
     };
-    Ok((0..count).map(|i| (format!("{head}{i:0width$}{tail}").into_bytes(), content.clone())).collect())
+    Ok((0..count)
+        .map(|i| {
+            (
+                format!("{head}{i:0width$}{tail}").into_bytes(),
+                content.clone(),
+            )
+        })
+        .collect())
 }
 
+#[expect(
+    clippy::many_single_char_names,
+    reason = "schema-walking locals: v(alue), m(ap), k/w (key, what), s (the string helper)"
+)]
 fn parse_step(v: &Yv, n: usize, unsupported: &mut Vec<String>) -> Result<Step, String> {
     let what = format!("steps[{n}]");
     let m = map_of(v, &what)?;
     let mut kind = None;
-    let mut step =
-        Step { kind: StepKind::Tool(Vec::new()), env: Vec::new(), stdin: Vec::new(), tty: false, timeout_ms: None, cwd: None, signal: None };
+    let mut step = Step {
+        kind: StepKind::Tool(Vec::new()),
+        env: Vec::new(),
+        stdin: Vec::new(),
+        tty: false,
+        timeout_ms: None,
+        cwd: None,
+        signal: None,
+    };
     for (k, val) in m {
         let w = format!("{what}.{k}");
         match k.as_str() {
@@ -861,7 +1051,10 @@ fn parse_step(v: &Yv, n: usize, unsupported: &mut Vec<String>) -> Result<Step, S
             "shell" => kind = Some(StepKind::Shell(s(val, &w)?)),
             "env" => {
                 for (ek, ev) in map_of(val, &w)? {
-                    step.env.push((ek.clone(), if ev.is_null() { None } else { Some(s(ev, &w)?) }));
+                    step.env.push((
+                        ek.clone(),
+                        if ev.is_null() { None } else { Some(s(ev, &w)?) },
+                    ));
                 }
             }
             "stdin" => step.stdin = bytes_of(val, &w)?,
@@ -872,7 +1065,11 @@ fn parse_step(v: &Yv, n: usize, unsupported: &mut Vec<String>) -> Result<Step, S
             "timeout" => step.timeout_ms = Some(ms_of(val, &w)?),
             "cwd" => step.cwd = Some(s(val, &w)?),
             "signal" => {
-                let name = s(val.get("name").ok_or_else(|| format!("{w}: missing name"))?, &w)?;
+                let name = s(
+                    val.get("name")
+                        .ok_or_else(|| format!("{w}: missing name"))?,
+                    &w,
+                )?;
                 let (after_ms, after_file) = match val.get("after") {
                     Some(a) => match ms_of(a, &w) {
                         Ok(ms) => (ms, None),
@@ -883,7 +1080,11 @@ fn parse_step(v: &Yv, n: usize, unsupported: &mut Vec<String>) -> Result<Step, S
                 if after_file.as_deref().is_some_and(str::is_empty) {
                     return Err(format!("{w}: empty `after`"));
                 }
-                step.signal = Some(SignalSpec { name, after_ms, after_file });
+                step.signal = Some(SignalSpec {
+                    name,
+                    after_ms,
+                    after_file,
+                });
             }
             "compare" | "comment" => {}
             other => {
@@ -897,7 +1098,11 @@ fn parse_step(v: &Yv, n: usize, unsupported: &mut Vec<String>) -> Result<Step, S
 
 fn stream_mode(v: &Yv, what: &str) -> Result<StreamMode, String> {
     if let Some(b) = v.as_bool() {
-        return Ok(if b { StreamMode::Exact } else { StreamMode::Ignore });
+        return Ok(if b {
+            StreamMode::Exact
+        } else {
+            StreamMode::Ignore
+        });
     }
     match s(v, what)?.as_str() {
         "exact" => Ok(StreamMode::Exact),
@@ -942,7 +1147,10 @@ fn parse_compare(v: &Yv, unsupported: &mut Vec<String>) -> Result<Compare, Strin
                 };
             }
             "config_file" => c.config_file = stream_mode(val, &what)?,
-            "git_config" => c.git_config = bool_of(val, &what).or_else(|_| Ok::<bool, String>(s(val, &what)? == "exact"))?,
+            "git_config" => {
+                c.git_config = bool_of(val, &what)
+                    .or_else(|_| Ok::<bool, String>(s(val, &what)? == "exact"))?
+            }
             "store" => {
                 c.store = match val.as_bool() {
                     Some(b) => b,
@@ -974,12 +1182,19 @@ fn parse_side(v: &Yv, steps: usize, what: &str) -> Result<Vec<(usize, StepExpect
             for (k, val) in m {
                 if k == "steps" {
                     for (n, sv) in map_of(val, what)? {
-                        let idx: usize = n.parse().map_err(|_| format!("{what}.steps: bad step number {n:?}"))?;
+                        let idx: usize = n
+                            .parse()
+                            .map_err(|_| format!("{what}.steps: bad step number {n:?}"))?;
                         out.push((idx, side_checks(sv, what)?));
                     }
                 } else if let Some(n) = k.strip_prefix("exit_of_step_") {
                     let idx: usize = n.parse().map_err(|_| format!("{what}: bad key {k:?}"))?;
-                    out.push((idx, StepExpect { checks: vec![(String::from("exit"), val.clone())] }));
+                    out.push((
+                        idx,
+                        StepExpect {
+                            checks: vec![(String::from("exit"), val.clone())],
+                        },
+                    ));
                 } else {
                     last.checks.push((k.clone(), val.clone()));
                 }
@@ -995,7 +1210,9 @@ fn parse_side(v: &Yv, steps: usize, what: &str) -> Result<Vec<(usize, StepExpect
 }
 
 fn side_checks(v: &Yv, what: &str) -> Result<StepExpect, String> {
-    Ok(StepExpect { checks: map_of(v, what)?.to_vec() })
+    Ok(StepExpect {
+        checks: map_of(v, what)?.to_vec(),
+    })
 }
 
 fn parse_expected(v: &Yv, steps: usize) -> Result<Expected, String> {
@@ -1033,7 +1250,7 @@ fn byte_name(b: &[u8]) -> String {
                 if c.is_ascii_graphic() && c != b'\\' || c == b' ' {
                     out.push(char::from(c));
                 } else {
-                    let _ = write!(out, "\\x{c:02x}");
+                    write!(out, "\\x{c:02x}").unwrap_or_default();
                 }
             }
             out
@@ -1045,24 +1262,30 @@ fn emit_ops(out: &mut String, indent: &str, ops: &[Op]) {
     for op in ops {
         match op {
             Op::Git(a) => {
-                let _ = write!(out, "{indent}- git: ");
+                write!(out, "{indent}- git: ").unwrap_or_default();
                 emit_list(out, a);
                 out.push('\n');
             }
             Op::Write(p, b) => {
-                let _ = writeln!(out, "{indent}- write: {{{}: {}}}", yaml_quote(p), yaml_bytes(b));
+                writeln!(
+                    out,
+                    "{indent}- write: {{{}: {}}}",
+                    yaml_quote(p),
+                    yaml_bytes(b)
+                )
+                .unwrap_or_default();
             }
             Op::Remove(p) => {
-                let _ = writeln!(out, "{indent}- remove: {}", yaml_quote(p));
+                writeln!(out, "{indent}- remove: {}", yaml_quote(p)).unwrap_or_default();
             }
             Op::Shell(c) => {
-                let _ = writeln!(out, "{indent}- shell: {}", yaml_quote(c));
+                writeln!(out, "{indent}- shell: {}", yaml_quote(c)).unwrap_or_default();
             }
             Op::Commit(m) => {
-                let _ = writeln!(out, "{indent}- commit: {}", yaml_quote(m));
+                writeln!(out, "{indent}- commit: {}", yaml_quote(m)).unwrap_or_default();
             }
             Op::Tag(t) => {
-                let _ = writeln!(out, "{indent}- tag: {}", yaml_quote(t));
+                writeln!(out, "{indent}- tag: {}", yaml_quote(t)).unwrap_or_default();
             }
         }
     }
@@ -1080,9 +1303,9 @@ const fn mode_name(m: StreamMode) -> &'static str {
 
 fn emit(sc: &Scenario) -> String {
     let mut o = String::new();
-    let _ = writeln!(o, "name: {}", yaml_quote(&sc.name));
+    writeln!(o, "name: {}", yaml_quote(&sc.name)).unwrap_or_default();
     if let Some(v) = &sc.since {
-        let _ = writeln!(o, "since: {}", yaml_quote(v));
+        writeln!(o, "since: {}", yaml_quote(v)).unwrap_or_default();
     }
     match sc.status {
         Status::Stub => o.push_str("status: stub\n"),
@@ -1090,7 +1313,7 @@ fn emit(sc: &Scenario) -> String {
         Status::Active => {}
     }
     if let Some(id) = &sc.expect_divergence {
-        let _ = writeln!(o, "expect_divergence: {id}");
+        writeln!(o, "expect_divergence: {id}").unwrap_or_default();
     }
     let brands: Vec<String> = sc.brands.iter().map(|b| b.name().to_owned()).collect();
     o.push_str("brands: ");
@@ -1115,15 +1338,22 @@ fn emit(sc: &Scenario) -> String {
         .git
         .terms
         .iter()
-        .map(|(op, v)| format!("{op}{}.{}.{}", v.first().unwrap_or(&0), v.get(1).unwrap_or(&0), v.get(2).unwrap_or(&0)))
+        .map(|(op, v)| {
+            format!(
+                "{op}{}.{}.{}",
+                v.first().unwrap_or(&0),
+                v.get(1).unwrap_or(&0),
+                v.get(2).unwrap_or(&0)
+            )
+        })
         .collect();
-    let _ = writeln!(o, "  git: {}", yaml_quote(&git.join(", ")));
-    let _ = writeln!(o, "  net: {}", sc.requires.net);
+    writeln!(o, "  git: {}", yaml_quote(&git.join(", "))).unwrap_or_default();
+    writeln!(o, "  net: {}", sc.requires.net).unwrap_or_default();
     o.push_str("  tools: ");
     emit_list(&mut o, &sc.requires.tools);
     o.push_str("\n  os: ");
     emit_list(&mut o, &sc.requires.os);
-    let _ = writeln!(o, "\n  pty: {}", sc.requires.pty);
+    writeln!(o, "\n  pty: {}", sc.requires.pty).unwrap_or_default();
     if sc.requires.probe {
         o.push_str("  probe: true\n");
     }
@@ -1133,7 +1363,7 @@ fn emit(sc: &Scenario) -> String {
         None => {}
     }
     if let Some(n) = sc.requires.logical_cpus_min {
-        let _ = writeln!(o, "  logical_cpus_min: {n}");
+        writeln!(o, "  logical_cpus_min: {n}").unwrap_or_default();
     }
     if sc.repos.is_empty() {
         o.push_str("repos: {}\n");
@@ -1141,14 +1371,14 @@ fn emit(sc: &Scenario) -> String {
         o.push_str("repos:\n");
     }
     for r in &sc.repos {
-        let _ = writeln!(o, "  {}:", yaml_quote(&r.name));
+        writeln!(o, "  {}:", yaml_quote(&r.name)).unwrap_or_default();
         if let Some(f) = &r.fixture {
-            let _ = writeln!(o, "    fixture: {}", yaml_quote(f));
+            writeln!(o, "    fixture: {}", yaml_quote(f)).unwrap_or_default();
         }
         if !r.files.is_empty() {
             o.push_str("    files:\n");
             for (p, b) in &r.files {
-                let _ = writeln!(o, "      {}: {}", yaml_quote(p), yaml_bytes(b));
+                writeln!(o, "      {}: {}", yaml_quote(p), yaml_bytes(b)).unwrap_or_default();
             }
         }
         if !r.exec.is_empty() {
@@ -1166,17 +1396,37 @@ fn emit(sc: &Scenario) -> String {
             emit_ops(&mut o, "      ", &r.then);
         }
         if let Some(p) = &r.path {
-            let _ = writeln!(o, "    path: {}", yaml_quote(p));
+            writeln!(o, "    path: {}", yaml_quote(p)).unwrap_or_default();
         }
         if r.bare {
             o.push_str("    bare: true\n");
         }
         if let Some(f) = &r.object_format {
-            let _ = writeln!(o, "    object_format: {}", yaml_quote(f));
+            writeln!(o, "    object_format: {}", yaml_quote(f)).unwrap_or_default();
         }
-        if r.fixture.is_none() && r.files.is_empty() && !r.bare && r.tags.is_empty() && r.then.is_empty() {
+        if let Some((url, rev)) = &r.external {
+            writeln!(
+                o,
+                "    url: {}\n    rev: {}",
+                yaml_quote(url),
+                yaml_quote(rev)
+            )
+            .unwrap_or_default();
+            continue;
+        }
+        if r.fixture.is_none()
+            && r.files.is_empty()
+            && !r.bare
+            && r.tags.is_empty()
+            && r.then.is_empty()
+        {
             o.push_str("    files: {}\n");
         }
+    }
+    if !sc.projects.is_empty() {
+        o.push_str("projects: ");
+        emit_list(&mut o, &sc.projects);
+        o.push('\n');
     }
     let w = &sc.work;
     o.push_str("work:\n");
@@ -1184,24 +1434,27 @@ fn emit(sc: &Scenario) -> String {
         o.push_str("  git: false\n");
     }
     if let Some(d) = &w.dir {
-        let _ = writeln!(o, "  dir: {}", yaml_quote(d));
+        writeln!(o, "  dir: {}", yaml_quote(d)).unwrap_or_default();
     }
     if let Some(f) = &w.object_format {
-        let _ = writeln!(o, "  object_format: {}", yaml_quote(f));
+        writeln!(o, "  object_format: {}", yaml_quote(f)).unwrap_or_default();
     }
-    let (plain, bytes): (Vec<_>, Vec<_>) = w.files.iter().partition(|(p, _)| std::str::from_utf8(p).is_ok_and(|s| !s.contains('\\')));
+    let (plain, bytes): (Vec<_>, Vec<_>) = w
+        .files
+        .iter()
+        .partition(|(p, _)| std::str::from_utf8(p).is_ok_and(|s| !s.contains('\\')));
     if plain.is_empty() {
         o.push_str("  files: {}\n");
     } else {
         o.push_str("  files:\n");
         for (p, b) in plain {
-            let _ = writeln!(o, "    {}: {}", yaml_quote(&byte_name(p)), yaml_bytes(b));
+            writeln!(o, "    {}: {}", yaml_quote(&byte_name(p)), yaml_bytes(b)).unwrap_or_default();
         }
     }
     if !bytes.is_empty() {
         o.push_str("  files_bytes:\n");
         for (p, b) in bytes {
-            let _ = writeln!(o, "    {}: {}", yaml_quote(&byte_name(p)), yaml_bytes(b));
+            writeln!(o, "    {}: {}", yaml_quote(&byte_name(p)), yaml_bytes(b)).unwrap_or_default();
         }
     }
     if !w.exec.is_empty() {
@@ -1211,17 +1464,17 @@ fn emit(sc: &Scenario) -> String {
     }
     for (key, pairs) in [("symlinks", &w.symlinks)] {
         if !pairs.is_empty() {
-            let _ = writeln!(o, "  {key}:");
+            writeln!(o, "  {key}:").unwrap_or_default();
             for (p, t) in pairs {
-                let _ = writeln!(o, "    {}: {}", yaml_quote(p), yaml_quote(t));
+                writeln!(o, "    {}: {}", yaml_quote(p), yaml_quote(t)).unwrap_or_default();
             }
         }
     }
     for (key, pairs) in [("modes", &w.modes), ("chmod", &w.chmod)] {
         if !pairs.is_empty() {
-            let _ = writeln!(o, "  {key}:");
+            writeln!(o, "  {key}:").unwrap_or_default();
             for (p, m) in pairs {
-                let _ = writeln!(o, "    {}: \"{m:o}\"", yaml_quote(p));
+                writeln!(o, "    {}: \"{m:o}\"", yaml_quote(p)).unwrap_or_default();
             }
         }
     }
@@ -1231,7 +1484,7 @@ fn emit(sc: &Scenario) -> String {
         o.push('\n');
     }
     if let Some(c) = &w.config {
-        let _ = writeln!(o, "  config: {}", yaml_quote(c));
+        writeln!(o, "  config: {}", yaml_quote(c)).unwrap_or_default();
     }
     let names = |v: &[Vec<u8>]| v.iter().map(|p| byte_name(p)).collect::<Vec<_>>();
     o.push_str("  commit: ");
@@ -1242,13 +1495,20 @@ fn emit(sc: &Scenario) -> String {
     if !w.unstaged.is_empty() {
         o.push_str("  unstaged:\n");
         for (p, b) in &w.unstaged {
-            let _ = writeln!(o, "    {}: {}", yaml_quote(p), b.as_ref().map_or_else(|| String::from("null"), |b| yaml_bytes(b)));
+            writeln!(
+                o,
+                "    {}: {}",
+                yaml_quote(p),
+                b.as_ref()
+                    .map_or_else(|| String::from("null"), |b| yaml_bytes(b))
+            )
+            .unwrap_or_default();
         }
     }
     if !w.git_config.is_empty() {
         o.push_str("  git_config:\n");
         for (k, v) in &w.git_config {
-            let _ = writeln!(o, "    {}: {}", yaml_quote(k), yaml_quote(v));
+            writeln!(o, "    {}: {}", yaml_quote(k), yaml_quote(v)).unwrap_or_default();
         }
     }
     if !w.setup.is_empty() {
@@ -1275,43 +1535,57 @@ fn emit(sc: &Scenario) -> String {
         if !st.env.is_empty() {
             o.push_str("    env:\n");
             for (k, v) in &st.env {
-                let _ = writeln!(o, "      {}: {}", yaml_quote(k), v.as_ref().map_or_else(|| String::from("null"), |v| yaml_quote(v)));
+                writeln!(
+                    o,
+                    "      {}: {}",
+                    yaml_quote(k),
+                    v.as_ref()
+                        .map_or_else(|| String::from("null"), |v| yaml_quote(v))
+                )
+                .unwrap_or_default();
             }
         }
         if !st.stdin.is_empty() {
-            let _ = writeln!(o, "    stdin: {}", yaml_bytes(&st.stdin));
+            writeln!(o, "    stdin: {}", yaml_bytes(&st.stdin)).unwrap_or_default();
         }
         if st.tty {
             o.push_str("    tty: true\n");
         }
         if let Some(t) = st.timeout_ms {
-            let _ = writeln!(o, "    timeout: \"{}.{:03}\"", t / 1000, t % 1000);
+            writeln!(o, "    timeout: \"{}.{:03}\"", t / 1000, t % 1000).unwrap_or_default();
         }
         if let Some(c) = &st.cwd {
-            let _ = writeln!(o, "    cwd: {}", yaml_quote(c));
+            writeln!(o, "    cwd: {}", yaml_quote(c)).unwrap_or_default();
         }
         if let Some(sig) = &st.signal {
             match &sig.after_file {
                 Some(f) => {
-                    let _ = writeln!(o, "    signal: {{name: {}, after: {}}}", yaml_quote(&sig.name), yaml_quote(f));
+                    writeln!(
+                        o,
+                        "    signal: {{name: {}, after: {}}}",
+                        yaml_quote(&sig.name),
+                        yaml_quote(f)
+                    )
+                    .unwrap_or_default();
                 }
                 None => {
-                    let _ = writeln!(
+                    writeln!(
                         o,
                         "    signal: {{name: {}, after: \"{}.{:03}\"}}",
                         yaml_quote(&sig.name),
                         sig.after_ms / 1000,
                         sig.after_ms % 1000
-                    );
+                    )
+                    .unwrap_or_default();
                 }
             }
         }
     }
     let c = &sc.compare;
     o.push_str("compare:\n");
-    let _ = writeln!(o, "  stdout: {}", mode_name(c.stdout));
-    let _ = writeln!(o, "  stderr: {}", mode_name(c.stderr));
-    let _ = writeln!(
+    writeln!(o, "  stdout: {}", mode_name(c.stdout)).unwrap_or_default();
+    writeln!(o, "  stderr: {}", mode_name(c.stderr)).unwrap_or_default();
+    writeln!(
         o,
         "  exit: {}",
         match c.exit {
@@ -1319,14 +1593,20 @@ fn emit(sc: &Scenario) -> String {
             ExitMode::NonzeroEqual => "nonzero-equal",
             ExitMode::Ignore => "ignore",
         }
-    );
-    let _ = writeln!(o, "  tree: {}", c.tree);
-    let _ = writeln!(o, "  index: {}", c.index);
-    let _ = writeln!(o, "  refs: {}", c.refs);
-    let _ = writeln!(o, "  hooks_dir: {}", if c.hooks_dir { "behavior" } else { "ignore" });
-    let _ = writeln!(o, "  config_file: {}", mode_name(c.config_file));
-    let _ = writeln!(o, "  git_config: {}", c.git_config);
-    let _ = writeln!(o, "  store: {}", if c.store { "logical" } else { "ignore" });
+    )
+    .unwrap_or_default();
+    writeln!(o, "  tree: {}", c.tree).unwrap_or_default();
+    writeln!(o, "  index: {}", c.index).unwrap_or_default();
+    writeln!(o, "  refs: {}", c.refs).unwrap_or_default();
+    writeln!(
+        o,
+        "  hooks_dir: {}",
+        if c.hooks_dir { "behavior" } else { "ignore" }
+    )
+    .unwrap_or_default();
+    writeln!(o, "  config_file: {}", mode_name(c.config_file)).unwrap_or_default();
+    writeln!(o, "  git_config: {}", c.git_config).unwrap_or_default();
+    writeln!(o, "  store: {}", if c.store { "logical" } else { "ignore" }).unwrap_or_default();
     if c.eol_insensitive {
         o.push_str("  eol: insensitive\n");
     }
@@ -1396,7 +1676,7 @@ compare:
         assert_eq!(sc.compare.stderr, StreamMode::LinesUnordered);
         assert_eq!(sc.compare.exit, ExitMode::NonzeroEqual);
         assert!(sc.compare.hooks_dir && sc.compare.store && !sc.compare.refs);
-        assert!(sc.unsupported.is_empty());
+        assert_eq!(sc.unsupported, Vec::<String>::new());
     }
 
     #[test]
@@ -1414,7 +1694,11 @@ compare:
 
     #[test]
     fn stubs_and_errors() {
-        let st = Scenario::parse("expect_divergence: D-CRASH-05\nstatus: stub\n", Path::new("D-CRASH-05.yaml")).unwrap();
+        let st = Scenario::parse(
+            "expect_divergence: D-CRASH-05\nstatus: stub\n",
+            Path::new("D-CRASH-05.yaml"),
+        )
+        .unwrap();
         assert_eq!(st.status, Status::Stub);
         assert_eq!(st.name, "divergences/D-CRASH-05");
         for bad in [
@@ -1431,11 +1715,18 @@ compare:
     }
 
     #[test]
+    #[expect(
+        clippy::literal_string_with_formatting_args,
+        reason = "`{i:04}` is the generated-files pattern syntax"
+    )]
     fn generated_files_and_marker_signals() {
         let text = "name: g\nwork:\n  files:\n    keep.txt: k\n    generated: {pattern: \"a b{i:04}\", count: 3, content: \"x\\n\"}\nsteps:\n  - tool: [run]\n    signal: {name: TERM, after: .hook-started}\n  - tool: [run]\n    signal: {name: INT, after: 1.5}\n";
         let sc = Scenario::parse(text, Path::new("g.yaml")).unwrap();
         let names: Vec<&[u8]> = sc.work.files.iter().map(|(p, _)| p.as_slice()).collect();
-        assert_eq!(names, vec![&b"keep.txt"[..], b"a b0000", b"a b0001", b"a b0002"]);
+        assert_eq!(
+            names,
+            vec![&b"keep.txt"[..], b"a b0000", b"a b0001", b"a b0002"]
+        );
         assert_eq!(sc.work.files[1].1, b"x\n");
         let sig = sc.steps[0].signal.clone().unwrap();
         assert_eq!(sig.after_file.as_deref(), Some(".hook-started"));

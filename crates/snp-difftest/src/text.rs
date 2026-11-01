@@ -43,8 +43,7 @@ pub(crate) fn base64_decode(s: &str) -> Option<Vec<u8>> {
 pub(crate) fn base64_encode(bytes: &[u8]) -> String {
     let mut out = String::new();
     let mut it = bytes.iter();
-    loop {
-        let Some(&a) = it.next() else { break };
+    while let Some(&a) = it.next() {
         let b = it.next().copied();
         let c = it.next().copied();
         let n = (u32::from(a) << 16) | (u32::from(b.unwrap_or(0)) << 8) | u32::from(c.unwrap_or(0));
@@ -70,7 +69,9 @@ pub(crate) fn expand_byte_escapes(s: &str) -> Vec<u8> {
         if c == b'\\' {
             if b.get(i.saturating_add(1)) == Some(&b'x') {
                 let hex = b.get(i.saturating_add(2)..i.saturating_add(4));
-                if let Some(v) = hex.and_then(|h| std::str::from_utf8(h).ok()).and_then(|h| u8::from_str_radix(h, 16).ok())
+                if let Some(v) = hex
+                    .and_then(|h| std::str::from_utf8(h).ok())
+                    .and_then(|h| u8::from_str_radix(h, 16).ok())
                 {
                     out.push(v);
                     i = i.saturating_add(4);
@@ -90,7 +91,10 @@ pub(crate) fn expand_byte_escapes(s: &str) -> Vec<u8> {
 
 /// POSIX shell single-quoting (`shlex.quote`).
 pub(crate) fn sh_quote(s: &str) -> String {
-    if !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || b"@%+=:,./-_".contains(&c)) {
+    if !s.is_empty()
+        && s.bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"@%+=:,./-_".contains(&c))
+    {
         return s.to_owned();
     }
     format!("'{}'", s.replace('\'', "'\"'\"'"))
@@ -103,7 +107,7 @@ pub(crate) fn sh_quote_bytes(b: &[u8]) -> String {
         _ => {
             let mut out = String::from("\"$(printf '");
             for &c in b {
-                let _ = write!(out, "\\{c:03o}");
+                write!(out, "\\{c:03o}").unwrap_or_default();
             }
             out.push_str("')\"");
             out
@@ -124,10 +128,10 @@ pub(crate) fn yaml_quote(s: &str) -> String {
             '\r' => out.push_str("\\r"),
             '\0' => out.push_str("\\0"),
             c if u32::from(c) < 0x20 || u32::from(c) == 0x7f => {
-                let _ = write!(out, "\\x{:02x}", u32::from(c));
+                write!(out, "\\x{:02x}", u32::from(c)).unwrap_or_default();
             }
             c if ('\u{80}'..='\u{9f}').contains(&c) || c == '\u{feff}' => {
-                let _ = write!(out, "\\u{:04x}", u32::from(c));
+                write!(out, "\\u{:04x}", u32::from(c)).unwrap_or_default();
             }
             c => out.push(c),
         }
@@ -149,16 +153,15 @@ pub(crate) fn lines_with_ends(b: &[u8]) -> Vec<&[u8]> {
     let mut out = Vec::new();
     let mut rest = b;
     while !rest.is_empty() {
-        match rest.iter().position(|&c| c == b'\n') {
-            Some(p) => {
-                let (line, tail) = rest.split_at_checked(p.saturating_add(1)).unwrap_or((rest, &[]));
-                out.push(line);
-                rest = tail;
-            }
-            None => {
-                out.push(rest);
-                rest = &[];
-            }
+        if let Some(p) = rest.iter().position(|&c| c == b'\n') {
+            let (line, tail) = rest
+                .split_at_checked(p.saturating_add(1))
+                .unwrap_or((rest, &[]));
+            out.push(line);
+            rest = tail;
+        } else {
+            out.push(rest);
+            rest = &[];
         }
     }
     out
@@ -249,7 +252,7 @@ mod tests {
     #[test]
     fn line_helpers() {
         assert_eq!(lines_with_ends(b"a\nb"), vec![&b"a\n"[..], b"b"]);
-        assert!(lines_with_ends(b"").is_empty());
+        assert_eq!(lines_with_ends(b""), Vec::<&[u8]>::new());
         assert_eq!(replace_bytes(b"aXbXc", b"X", b"YY"), b"aYYbYYc");
         assert!(contains_bytes(b"hello", b"ell"));
         assert_eq!(find_bytes(b"hello", b"lo"), Some(3));

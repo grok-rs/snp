@@ -53,6 +53,13 @@ pub struct BrandMap {
     substitutions: Vec<Rule>,
     /// Texts a rule must never touch (validated at load).
     never: Vec<String>,
+    /// Substring rules applied **inside** argparse blocks only: the top-level parser's command list, which snp's
+    /// extra commands lengthen (the rendering stays on one line at any width ≥ 80, so a substitution is exact).
+    argparse_subs: Vec<Rule>,
+    /// Sub-commands whose parsers have snp-only options: their usage blocks cannot come from the oracle at all; both
+    /// sides' blocks are reduced to the first usage line's command and the `error:` line (the full renderings are
+    /// pinned by WP-12's `crates/snp-cli/tests/goldens/snp.json`).
+    snp_only_parsers: Vec<String>,
 }
 
 impl BrandMap {
@@ -63,7 +70,7 @@ impl BrandMap {
 
     /// Whether the map changes nothing.
     pub fn is_identity(&self) -> bool {
-        self.whole_line.is_empty() && self.substitutions.is_empty()
+        self.whole_line.is_empty() && self.substitutions.is_empty() && self.argparse_subs.is_empty()
     }
 
     /// Parses the YAML text of `brand_map.yaml` and validates it: `version: 1`, non-empty rules, and no rule whose
@@ -75,33 +82,76 @@ impl BrandMap {
             _ => return Err(String::from("brand_map: `version: 1` expected")),
         }
         let rules = |key: &str| -> Result<Vec<Rule>, String> {
-            let Some(list) = doc.get(key) else { return Ok(Vec::new()) };
-            let items = list.as_seq().ok_or_else(|| format!("brand_map.{key}: expected a list"))?;
+            let Some(list) = doc.get(key) else {
+                return Ok(Vec::new());
+            };
+            let items = list
+                .as_seq()
+                .ok_or_else(|| format!("brand_map.{key}: expected a list"))?;
             let mut out = Vec::new();
             for it in items {
-                let from = it.get("from").and_then(Yv::as_str).ok_or_else(|| format!("brand_map.{key}: rule without `from`"))?;
-                let to = it.get("to").and_then(Yv::as_str).ok_or_else(|| format!("brand_map.{key}: rule without `to`"))?;
+                let from = it
+                    .get("from")
+                    .and_then(Yv::as_str)
+                    .ok_or_else(|| format!("brand_map.{key}: rule without `from`"))?;
+                let to = it
+                    .get("to")
+                    .and_then(Yv::as_str)
+                    .ok_or_else(|| format!("brand_map.{key}: rule without `to`"))?;
                 if from.is_empty() || from.contains('\n') {
                     return Err(format!("brand_map.{key}: bad `from` {from:?}"));
                 }
-                out.push(Rule { from: from.to_owned(), to: to.to_owned() });
+                out.push(Rule {
+                    from: from.to_owned(),
+                    to: to.to_owned(),
+                });
             }
             Ok(out)
         };
         let whole_line = rules("whole_line")?;
         let substitutions = rules("substitutions")?;
+        let argparse_subs = rules("argparse_substitutions")?;
+        let mut snp_only_parsers = Vec::new();
+        if let Some(list) = doc.get("snp_only_option_parsers") {
+            for it in list
+                .as_seq()
+                .ok_or("brand_map.snp_only_option_parsers: expected a list")?
+            {
+                snp_only_parsers.push(
+                    it.as_str()
+                        .ok_or("brand_map.snp_only_option_parsers: expected strings")?
+                        .to_owned(),
+                );
+            }
+        }
         let mut never = Vec::new();
         if let Some(list) = doc.get("never") {
             for it in list.as_seq().ok_or("brand_map.never: expected a list")? {
-                never.push(it.as_str().ok_or("brand_map.never: expected strings")?.to_owned());
+                never.push(
+                    it.as_str()
+                        .ok_or("brand_map.never: expected strings")?
+                        .to_owned(),
+                );
             }
         }
         for r in &substitutions {
-            if let Some(n) = never.iter().find(|n| n.contains(r.from.as_str()) || r.from.contains(n.as_str())) {
-                return Err(format!("brand_map: rule {:?} would touch the protected text {n:?}", r.from));
+            if let Some(n) = never
+                .iter()
+                .find(|n| n.contains(r.from.as_str()) || r.from.contains(n.as_str()))
+            {
+                return Err(format!(
+                    "brand_map: rule {:?} would touch the protected text {n:?}",
+                    r.from
+                ));
             }
         }
-        Ok(Self { whole_line, substitutions, never })
+        Ok(Self {
+            whole_line,
+            substitutions,
+            never,
+            argparse_subs,
+            snp_only_parsers,
+        })
     }
 
     /// Loads `path`.
@@ -130,6 +180,46 @@ impl BrandMap {
         &self.whole_line
     }
 
+    /// The argparse-block rules.
+    pub fn argparse_substitutions(&self) -> &[Rule] {
+        &self.argparse_subs
+    }
+
+    /// The sub-commands whose snp-brand parsers have snp-only options.
+    pub fn snp_only_option_parsers(&self) -> &[String] {
+        &self.snp_only_parsers
+    }
+
+    /// Reduces the usage blocks of [`BrandMap::snp_only_option_parsers`] (`usage: snp run …` through the
+    /// `snp run: error: …` line) to `usage: snp run [SNP-ONLY OPTIONS]` plus the error line. Applied to both sides
+    /// of snp-brand runs.
+    pub fn reduce_snp_only_parsers(&self, bytes: &[u8]) -> Vec<u8> {
+        if self.snp_only_parsers.is_empty() {
+            return bytes.to_vec();
+        }
+        let mut out = Vec::new();
+        let mut skipping = false;
+        for line in lines_with_ends(bytes) {
+            if skipping {
+                if is_argparse_error_line(line) {
+                    skipping = false;
+                    out.extend_from_slice(line);
+                }
+                continue;
+            }
+            if let Some(cmd) = self.snp_only_parsers.iter().find(|c| {
+                line.starts_with(format!("usage: snp {c} ").as_bytes())
+                    || line == format!("usage: snp {c}\n").as_bytes()
+            }) {
+                out.extend_from_slice(format!("usage: snp {cmd} [SNP-ONLY OPTIONS]\n").as_bytes());
+                skipping = true;
+                continue;
+            }
+            out.extend_from_slice(line);
+        }
+        out
+    }
+
     /// Compat text → snp-brand text (outside argparse blocks).
     pub fn apply(&self, bytes: &[u8]) -> Vec<u8> {
         self.map_text(bytes, false)
@@ -152,7 +242,16 @@ impl BrandMap {
                 in_argparse = true;
             }
             if in_argparse {
-                out.extend_from_slice(line);
+                let mut cur = line.to_vec();
+                for r in &self.argparse_subs {
+                    let (from, to) = if inverse {
+                        (&r.to, &r.from)
+                    } else {
+                        (&r.from, &r.to)
+                    };
+                    cur = replace_bytes(&cur, from.as_bytes(), to.as_bytes());
+                }
+                out.extend_from_slice(&cur);
                 if is_argparse_error_line(line) {
                     in_argparse = false;
                 }
@@ -166,7 +265,11 @@ impl BrandMap {
     fn map_line(&self, line: &[u8], inverse: bool) -> Vec<u8> {
         let (body, end) = split_eol(line);
         for r in &self.whole_line {
-            let (from, to) = if inverse { (&r.to, &r.from) } else { (&r.from, &r.to) };
+            let (from, to) = if inverse {
+                (&r.to, &r.from)
+            } else {
+                (&r.from, &r.to)
+            };
             if body == from.as_bytes() {
                 let mut v = to.as_bytes().to_vec();
                 v.extend_from_slice(end);
@@ -200,7 +303,8 @@ fn split_eol(line: &[u8]) -> (&[u8], &[u8]) {
     } else {
         usize::from(line.ends_with(b"\n"))
     };
-    line.split_at_checked(line.len().saturating_sub(n)).unwrap_or((line, &[]))
+    line.split_at_checked(line.len().saturating_sub(n))
+        .unwrap_or((line, &[]))
 }
 
 /// Applies the tier's rules (and the brand map for snp-brand runs) to `bytes`.
@@ -212,9 +316,43 @@ pub fn normalise(tier: Tier, bytes: &[u8], map: &BrandMap) -> Vec<u8> {
     let mapped = map.apply(bytes);
     match tier {
         Tier::A => mapped,
-        Tier::C => tier_c(&mapped),
-        Tier::B => tier_b(&tier_c(&mapped)),
+        Tier::C => tier_c(&canonical_usage(&mapped)),
+        Tier::B => tier_b(&tier_c(&canonical_usage(&mapped))),
     }
+}
+
+/// CPython 3.12 → 3.13 argparse rendering (research 12 §A.4.1): 3.12 puts the `...` of a sub-command usage on its
+/// own line after the choices (`{autoupdate,…,hook-impl}` / `...`); 3.13 renders `{…} ...` on one line. Inside an
+/// argparse block, a line of indentation plus `...` that follows a line ending in `}` is joined onto it. Applied to
+/// both sides in every tier but A (the py312 runtime oracle vs snp's canonical 3.13 rendering).
+pub fn canonical_usage(bytes: &[u8]) -> Vec<u8> {
+    let lines = lines_with_ends(bytes);
+    let mut out: Vec<u8> = Vec::new();
+    let mut in_usage = false;
+    let mut prev_closes = false;
+    for line in lines {
+        if line.starts_with(b"usage: ") {
+            in_usage = true;
+        }
+        let trimmed = line.strip_suffix(b"\n").unwrap_or(line);
+        let is_dots = in_usage
+            && !trimmed.is_empty()
+            && trimmed.trim_ascii_start() == b"..."
+            && trimmed.starts_with(b" ");
+        if is_dots && prev_closes && out.ends_with(b"\n") {
+            out.pop();
+            out.extend_from_slice(b" ...");
+            out.extend_from_slice(line.get(trimmed.len()..).unwrap_or_default());
+            prev_closes = false;
+            continue;
+        }
+        prev_closes = in_usage && trimmed.ends_with(b"}");
+        if in_usage && (is_argparse_error_line(line) || trimmed.is_empty()) {
+            in_usage = false;
+        }
+        out.extend_from_slice(line);
+    }
+    out
 }
 
 /// Replaces the scenario root's store directories (`<root>/store`, `<root>/snp-store`) with `[STORE]` and the
@@ -283,10 +421,15 @@ fn is_status_line(line: &[u8]) -> bool {
 /// `- duration: 0.03s` → `- duration: [D]s` (and the coloured variant with the subtle escape).
 fn mask_duration(line: &[u8]) -> Vec<u8> {
     let key = b"- duration: ";
-    let Some(start) = crate::text::find_bytes(line, key) else { return line.to_vec() };
+    let Some(start) = crate::text::find_bytes(line, key) else {
+        return line.to_vec();
+    };
     let after = start.saturating_add(key.len());
     let rest = line.get(after..).unwrap_or_default();
-    let num = rest.iter().take_while(|c| c.is_ascii_digit() || **c == b'.').count();
+    let num = rest
+        .iter()
+        .take_while(|c| c.is_ascii_digit() || **c == b'.')
+        .count();
     if num == 0 || rest.get(num) != Some(&b's') {
         return line.to_vec();
     }
@@ -311,7 +454,12 @@ fn mask_numbered(line: &[u8], prefix: &[u8], repl: &[u8], with_pid: bool) -> Vec
             let mut ok = d1 > 0;
             if ok && with_pid {
                 if tail.get(d1) == Some(&b'-') {
-                    let d2 = tail.get(d1.saturating_add(1)..).unwrap_or_default().iter().take_while(|c| c.is_ascii_digit()).count();
+                    let d2 = tail
+                        .get(d1.saturating_add(1)..)
+                        .unwrap_or_default()
+                        .iter()
+                        .take_while(|c| c.is_ascii_digit())
+                        .count();
                     ok = d2 > 0;
                     used = d1.saturating_add(1).saturating_add(d2);
                 } else {
@@ -340,7 +488,10 @@ fn mask_rand(line: &[u8], prefix: &[u8], repl: &[u8]) -> Vec<u8> {
         if rest.is_empty() {
             break;
         }
-        let boundary = i.checked_sub(1).and_then(|p| line.get(p)).is_none_or(|c| !c.is_ascii_alphanumeric());
+        let boundary = i
+            .checked_sub(1)
+            .and_then(|p| line.get(p))
+            .is_none_or(|c| !c.is_ascii_alphanumeric());
         if boundary && rest.starts_with(prefix) {
             let tail = rest.get(prefix.len()..).unwrap_or_default();
             let n = tail.iter().take_while(|c| is_rand(c)).count();
@@ -403,7 +554,9 @@ fn tier_b(b: &[u8]) -> Vec<u8> {
 /// `[WinError 32] <localized text>: 'path'` → `[WinError 32] [TEXT]: 'path'`.
 fn mask_winerror(line: &[u8]) -> Vec<u8> {
     let key = b"[WinError ";
-    let Some(start) = crate::text::find_bytes(line, key) else { return line.to_vec() };
+    let Some(start) = crate::text::find_bytes(line, key) else {
+        return line.to_vec();
+    };
     let after = start.saturating_add(key.len());
     let rest = line.get(after..).unwrap_or_default();
     let d = rest.iter().take_while(|c| c.is_ascii_digit()).count();
@@ -412,7 +565,10 @@ fn mask_winerror(line: &[u8]) -> Vec<u8> {
     }
     let text_start = after.saturating_add(d).saturating_add(1);
     let text = line.get(text_start..).unwrap_or_default();
-    let end = crate::text::find_bytes(text, b": ").unwrap_or_else(|| text.len().saturating_sub(usize::from(text.ends_with(b"\n"))));
+    let end = crate::text::find_bytes(text, b": ").unwrap_or_else(|| {
+        text.len()
+            .saturating_sub(usize::from(text.ends_with(b"\n")))
+    });
     let mut out = line.get(..text_start).unwrap_or_default().to_vec();
     out.extend_from_slice(b" [TEXT]");
     out.extend_from_slice(text.get(end..).unwrap_or_default());
@@ -457,7 +613,12 @@ fn version_len(b: &[u8]) -> usize {
             }
             i = i.saturating_add(1);
         }
-        let d = b.get(i..).unwrap_or_default().iter().take_while(|c| c.is_ascii_digit()).count();
+        let d = b
+            .get(i..)
+            .unwrap_or_default()
+            .iter()
+            .take_while(|c| c.is_ascii_digit())
+            .count();
         if d == 0 {
             return 0;
         }
@@ -478,9 +639,15 @@ pub const DIAG_LINES: &[(&str, &str)] = &[
     ("D-DIAG-02", "Removed "),
     ("D-DIAG-02", "Note: "),
     ("D-DIAG-03", "hint: "),
-    ("D-DIAG-04", "snp: waiting for another snp run in this worktree"),
+    (
+        "D-DIAG-04",
+        "snp: waiting for another snp run in this worktree",
+    ),
     ("D-DIAG-04", "snp: restoring stashed changes, please wait"),
-    ("D-DIAG-04", "snp: git needed the terminal during the restore and was stopped"),
+    (
+        "D-DIAG-04",
+        "snp: git needed the terminal during the restore and was stopped",
+    ),
     ("D-DIAG-04", "[WARNING] snp: a previous run"),
     ("D-DIAG-05", "[WARNING] snp store "),
     ("D-DIAG-05", "Removed snp 1.x cache data from "),
@@ -492,7 +659,9 @@ pub fn strip_diag(stderr: &[u8], keep: Option<&str>) -> (Vec<u8>, Vec<&'static s
     let mut out = Vec::new();
     let mut ids: Vec<&'static str> = Vec::new();
     for line in lines_with_ends(stderr) {
-        let hit = DIAG_LINES.iter().find(|(id, prefix)| Some(*id) != keep && line.starts_with(prefix.as_bytes()) && diag_shape(id, line));
+        let hit = DIAG_LINES.iter().find(|(id, prefix)| {
+            Some(*id) != keep && line.starts_with(prefix.as_bytes()) && diag_shape(id, line)
+        });
         match hit {
             Some((id, _)) => {
                 if !ids.contains(id) {
@@ -510,7 +679,9 @@ fn diag_shape(id: &str, line: &[u8]) -> bool {
     match id {
         "D-DIAG-01" => contains_bytes(line, b"is older than 2.31.0"),
         "D-DIAG-02" => {
-            contains_bytes(line, b"hook script from ") || contains_bytes(line, b"still runs ") || contains_bytes(line, b"Replaced hook script")
+            contains_bytes(line, b"hook script from ")
+                || contains_bytes(line, b"still runs ")
+                || contains_bytes(line, b"Replaced hook script")
         }
         "D-DIAG-03" => contains_bytes(line, b", not snp; run `"),
         _ => true,
@@ -529,7 +700,11 @@ mod tests {
     fn workspace_map_loads_and_validates() {
         let m = map();
         assert!(!m.is_identity());
-        assert!(m.whole_line().iter().any(|r| r.from == "pre-commit 4.6.2" && r.to == "snp 2.0.0"));
+        assert!(
+            m.whole_line()
+                .iter()
+                .any(|r| r.from == "pre-commit 4.6.2" && r.to == "snp 2.0.0")
+        );
         assert!(m.whole_line().iter().any(|r| r.from == "snp 4.6.2"));
         assert!(m.never().iter().any(|n| n == ".pre-commit-config.yaml"));
         let bad = "version: 1\nsubstitutions:\n  - {from: \"pre-commit-config\", to: \"x\"}\nnever: [\".pre-commit-config.yaml\"]\n";
@@ -544,7 +719,10 @@ mod tests {
         assert_eq!(m.apply(b"pre-commit 4.6.2\n"), b"snp 2.0.0\n");
         assert_eq!(m.apply(b"snp 4.6.2\n"), b"snp 2.0.0\n");
         // Not a plain substring rule: inside a sentence it stays.
-        assert_eq!(m.apply(b"see pre-commit 4.6.2 docs\n"), b"see pre-commit 4.6.2 docs\n");
+        assert_eq!(
+            m.apply(b"see pre-commit 4.6.2 docs\n"),
+            b"see pre-commit 4.6.2 docs\n"
+        );
     }
 
     #[test]
@@ -581,10 +759,17 @@ mod tests {
     #[test]
     fn apply_invert_round_trip() {
         let m = map();
-        let mut corpus: Vec<Vec<u8>> = m.substitutions().iter().map(|r| format!("x {} y\n", r.from).into_bytes()).collect();
+        let mut corpus: Vec<Vec<u8>> = m
+            .substitutions()
+            .iter()
+            .map(|r| format!("x {} y\n", r.from).into_bytes())
+            .collect();
         corpus.push(b"pre-commit 4.6.2\n".to_vec());
         corpus.push(b"plain text with nothing to map\r\n".to_vec());
-        corpus.push(b"An error has occurred: FatalError: x\nCheck the log at /tmp/r/store/pre-commit.log\n".to_vec());
+        corpus.push(
+            b"An error has occurred: FatalError: x\nCheck the log at /tmp/r/store/pre-commit.log\n"
+                .to_vec(),
+        );
         corpus.push(b"usage: snp [-h]\nsnp: error: argument: invalid choice: 'x'\n".to_vec());
         for t in &corpus {
             let forward = m.apply(t);
@@ -594,7 +779,55 @@ mod tests {
             let snp = format!("{}\n", r.to).into_bytes();
             assert_eq!(m.apply(&m.invert(&snp)), snp, "{}", r.to);
         }
-        assert_eq!(BrandMap::identity().apply(b"pre-commit 4.6.2\n"), b"pre-commit 4.6.2\n");
+        assert_eq!(
+            BrandMap::identity().apply(b"pre-commit 4.6.2\n"),
+            b"pre-commit 4.6.2\n"
+        );
+    }
+
+    #[test]
+    fn py312_usage_is_canonicalised() {
+        let py312 = b"usage: pre-commit [-h] [-V]\n                  {autoupdate,run,help,hook-impl}\n                  ...\npre-commit: error: unrecognized arguments: --bogus\n";
+        let py313 = b"usage: pre-commit [-h] [-V]\n                  {autoupdate,run,help,hook-impl} ...\npre-commit: error: unrecognized arguments: --bogus\n";
+        assert_eq!(canonical_usage(py312), py313.to_vec());
+        assert_eq!(canonical_usage(py313), py313.to_vec());
+        assert_eq!(canonical_usage(b"}\n   ...\n"), b"}\n   ...\n");
+    }
+
+    #[test]
+    fn snp_only_parsers_and_top_level_choices() {
+        let m = map();
+        let oracle = b"usage: snp [-h] [-V]\n           {autoupdate,clean,gc,hazmat,init-templatedir,install,install-hooks,migrate-config,run,sample-config,try-repo,uninstall,validate-config,validate-manifest,help,hook-impl} ...\nsnp: error: unrecognized arguments: --bogus\n";
+        let snp = b"usage: snp [-h] [-V]\n           {autoupdate,cache,clean,completions,config,doctor,gc,hazmat,init-templatedir,install,install-hooks,list,migrate,migrate-config,run,sample-config,self,try-repo,uninstall,validate-config,validate-manifest,help,hook-impl} ...\nsnp: error: unrecognized arguments: --bogus\n";
+        assert_eq!(m.apply(oracle), snp.to_vec());
+        assert_eq!(m.invert(snp), oracle.to_vec());
+        let run = b"usage: snp run [-h] [--color {auto,always,never}]\n               [hook]\nsnp run: error: argument --hook-stage: invalid choice: 'x'\nafter\n";
+        assert_eq!(
+            m.reduce_snp_only_parsers(run),
+            b"usage: snp run [SNP-ONLY OPTIONS]\nsnp run: error: argument --hook-stage: invalid choice: 'x'\nafter\n".to_vec()
+        );
+        let gc = b"usage: snp gc [-h]\nsnp gc: error: x\n";
+        assert_eq!(m.reduce_snp_only_parsers(gc), gc.to_vec());
+    }
+
+    /// The argparse rules agree with WP-12's snp-brand goldens (the source of truth for snp-only parsers).
+    #[test]
+    fn argparse_rules_match_the_snp_cli_goldens() {
+        let m = map();
+        let goldens = std::fs::read_to_string(
+            crate::workspace_root().join("crates/snp-cli/tests/goldens/snp.json"),
+        )
+        .unwrap();
+        for r in m.argparse_substitutions() {
+            assert!(
+                goldens.contains(&r.to.replace('\'', "\\u0027")) || goldens.contains(&r.to),
+                "{}",
+                r.to
+            );
+        }
+        for p in m.snp_only_option_parsers() {
+            assert!(goldens.contains(&format!("usage: snp {p} ")), "{p}");
+        }
     }
 
     #[test]
@@ -613,27 +846,46 @@ mod tests {
             normalise(Tier::C, chatter, &BrandMap::identity()),
             b"[INFO] Installing environment for x.\n[INFO] Once installed this environment will be reused.\nh.......Passed\n"
         );
-        assert_eq!(normalise(Tier::A, b"- duration: 0.03s\n", &BrandMap::identity()), b"- duration: 0.03s\n");
+        assert_eq!(
+            normalise(Tier::A, b"- duration: 0.03s\n", &BrandMap::identity()),
+            b"- duration: 0.03s\n"
+        );
     }
 
     #[test]
     fn tier_b_reduces_semantically() {
         let tb = b"Traceback (most recent call last):\n  File \"x.py\", line 1, in <module>\n    boom()\nValueError: boom\n";
-        assert_eq!(normalise(Tier::B, tb, &BrandMap::identity()), b"ValueError: boom\n");
+        assert_eq!(
+            normalise(Tier::B, tb, &BrandMap::identity()),
+            b"ValueError: boom\n"
+        );
         let usage = b"usage: pre-commit run [-h] [--color {auto,always,never}]\n                      [-c CONFIG]\npre-commit run: error: unrecognized arguments: --bogus\n";
-        assert_eq!(normalise(Tier::B, usage, &BrandMap::identity()), b"usage: [USAGE]\npre-commit run: error: unrecognized arguments: --bogus\n");
+        assert_eq!(
+            normalise(Tier::B, usage, &BrandMap::identity()),
+            b"usage: [USAGE]\npre-commit run: error: unrecognized arguments: --bogus\n"
+        );
         let yaml = b"==> File x.yaml\n=====> while parsing a flow node\ndid not find expected node content\n  in \"<unicode string>\", line 2, column 1\n";
         assert_eq!(normalise(Tier::B, yaml, &BrandMap::identity()), b"==> File x.yaml\n=====> while parsing a flow node\ndid not find expected node content\n");
         assert_eq!(
-            normalise(Tier::B, b"PermissionError: [WinError 32] Der Prozess kann nicht: 'C:\\\\x'\n", &BrandMap::identity()),
+            normalise(
+                Tier::B,
+                b"PermissionError: [WinError 32] Der Prozess kann nicht: 'C:\\\\x'\n",
+                &BrandMap::identity()
+            ),
             b"PermissionError: [WinError 32] [TEXT]: 'C:\\\\x'\n"
         );
-        assert_eq!(normalise(Tier::B, b"pre-commit 4.6.2\n", &BrandMap::identity()), b"pre-commit [VERSION]\n");
+        assert_eq!(
+            normalise(Tier::B, b"pre-commit 4.6.2\n", &BrandMap::identity()),
+            b"pre-commit [VERSION]\n"
+        );
     }
 
     #[test]
     fn store_paths_are_masked() {
-        let out = mask_paths(b"/r/snp-store/patches/patch[TP] /r/store/pre-commit.log", &[b"/r/store", b"/r/snp-store"]);
+        let out = mask_paths(
+            b"/r/snp-store/patches/patch[TP] /r/store/pre-commit.log",
+            &[b"/r/store", b"/r/snp-store"],
+        );
         assert_eq!(out, b"[STORE]/patch[TP] [STORE]/pre-commit.log");
     }
 
@@ -645,8 +897,14 @@ mod tests {
         assert_eq!(ids, vec!["D-DIAG-01"]);
         let (kept, ids) = strip_diag(err, Some("D-DIAG-01"));
         assert_eq!(kept, err);
-        assert!(ids.is_empty());
-        let (rest, _) = strip_diag(b"[WARNING] git said something else\nRemoved nothing\n", None);
-        assert_eq!(rest, b"[WARNING] git said something else\nRemoved nothing\n");
+        assert_eq!(ids, Vec::<&str>::new());
+        let (rest, _) = strip_diag(
+            b"[WARNING] git said something else\nRemoved nothing\n",
+            None,
+        );
+        assert_eq!(
+            rest,
+            b"[WARNING] git said something else\nRemoved nothing\n"
+        );
     }
 }

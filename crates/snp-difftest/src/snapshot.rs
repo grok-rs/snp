@@ -49,6 +49,10 @@ pub struct State {
 
 /// Which parts to capture.
 #[derive(Debug, Clone, Copy, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one switch per captured effect"
+)]
 pub(crate) struct Wanted {
     /// Worktree.
     pub tree: bool,
@@ -75,7 +79,12 @@ pub(crate) enum StoreKind {
 }
 
 /// Captures the state of `w` (the work repository is `w.layout.work`).
-pub(crate) fn capture(w: &mut World, want: Wanted, store: StoreKind, python: Option<&Path>) -> Result<State, String> {
+pub(crate) fn capture(
+    w: &mut World,
+    want: Wanted,
+    store: StoreKind,
+    python: Option<&Path>,
+) -> Result<State, String> {
     let work = w.layout.work.clone();
     let mut st = State::default();
     if want.tree {
@@ -86,10 +95,18 @@ pub(crate) fn capture(w: &mut World, want: Wanted, store: StoreKind, python: Opt
         st.index = w.git(&work, &["ls-files", "-s"])?.stdout;
     }
     if is_repo && want.refs {
-        let mut refs = w.git(&work, &["for-each-ref", "--format=%(refname) %(objectname)"])?.stdout;
+        let mut refs = w
+            .git(
+                &work,
+                &["for-each-ref", "--format=%(refname) %(objectname)"],
+            )?
+            .stdout;
         refs.extend_from_slice(b"HEAD ");
         refs.extend(w.git(&work, &["symbolic-ref", "-q", "HEAD"])?.stdout);
-        refs.extend(w.git(&work, &["rev-parse", "-q", "--verify", "HEAD"])?.stdout);
+        refs.extend(
+            w.git(&work, &["rev-parse", "-q", "--verify", "HEAD"])?
+                .stdout,
+        );
         refs.extend_from_slice(b"stash:\n");
         refs.extend(w.git(&work, &["stash", "list", "--format=%gd %s"])?.stdout);
         st.refs = refs;
@@ -98,12 +115,12 @@ pub(crate) fn capture(w: &mut World, want: Wanted, store: StoreKind, python: Opt
     if want.git_config {
         st.git_config = std::fs::read(work.join(".git/config")).ok();
     }
-    if want.hooks {
-        if let Ok(rd) = std::fs::read_dir(work.join(".git/hooks")) {
-            for e in rd.flatten() {
-                let name = e.file_name().to_string_lossy().into_owned();
-                st.hooks.insert(name, is_exec(&e.path()));
-            }
+    if want.hooks
+        && let Ok(rd) = std::fs::read_dir(work.join(".git/hooks"))
+    {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            st.hooks.insert(name, is_exec(&e.path()));
         }
     }
     if want.store {
@@ -140,6 +157,10 @@ fn is_exec(p: &Path) -> bool {
     }
 }
 
+#[expect(
+    clippy::filetype_is_file,
+    reason = "FIFOs, sockets and devices are recorded as Special, never read"
+)]
 fn walk(base: &Path, dir: &Path, out: &mut BTreeMap<Vec<u8>, Entry>) -> Result<(), String> {
     let Ok(rd) = std::fs::read_dir(dir) else {
         // An unreadable directory (a scenario's chmod 000) is recorded, not fatal.
@@ -156,14 +177,23 @@ fn walk(base: &Path, dir: &Path, out: &mut BTreeMap<Vec<u8>, Entry>) -> Result<(
         let rel = rel_bytes(base, &p);
         if ft.is_symlink() {
             let t = std::fs::read_link(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-            out.insert(rel, Entry::Symlink(t.as_os_str().as_encoded_bytes().to_vec()));
+            out.insert(
+                rel,
+                Entry::Symlink(t.as_os_str().as_encoded_bytes().to_vec()),
+            );
         } else if ft.is_dir() {
             out.insert(rel, Entry::Dir);
             walk(base, &p, out)?;
         } else if ft.is_file() {
             // An unreadable file (chmod 000) is recorded by its mode only.
             let bytes = std::fs::read(&p).unwrap_or_else(|_| b"<unreadable>".to_vec());
-            out.insert(rel, Entry::File { bytes, exec: is_exec(&p) });
+            out.insert(
+                rel,
+                Entry::File {
+                    bytes,
+                    exec: is_exec(&p),
+                },
+            );
         } else {
             out.insert(rel, Entry::Special);
         }
@@ -178,7 +208,11 @@ fn precommit_store(store: &Path, python: Option<&Path>, w: &World) -> Result<Vec
     if !db.is_file() {
         return Ok(Vec::new());
     }
-    let Some(py) = python else { return Ok(vec![String::from("<pre-commit store present; no python to read it>")]) };
+    let Some(py) = python else {
+        return Ok(vec![String::from(
+            "<pre-commit store present; no python to read it>",
+        )]);
+    };
     let script = "import sqlite3,sys\nc=sqlite3.connect(sys.argv[1])\nfor r,f in sorted(c.execute('SELECT repo, ref FROM repos')):\n    print(f'{r}@{f}')\n";
     let out = crate::exec::run(&crate::exec::Invocation {
         program: py.to_path_buf(),
@@ -191,9 +225,15 @@ fn precommit_store(store: &Path, python: Option<&Path>, w: &World) -> Result<Vec
         signal: None,
     })?;
     if out.exit != Some(0) {
-        return Ok(vec![format!("<unreadable pre-commit store: {}>", String::from_utf8_lossy(&out.stderr).trim_end())]);
+        return Ok(vec![format!(
+            "<unreadable pre-commit store: {}>",
+            String::from_utf8_lossy(&out.stderr).trim_end()
+        )]);
     }
-    Ok(String::from_utf8_lossy(&out.stdout).lines().map(normalise_local).collect())
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(normalise_local)
+        .collect())
 }
 
 /// pre-commit names local repositories `local` / `local:dep1,dep2` with `ref` = the template version; snp's
@@ -208,10 +248,14 @@ fn normalise_local(line: &str) -> String {
 /// snp's store: one entry per committed `repos-v1/<key>/.snp-repo.json`.
 fn snp_store(store: &Path) -> Vec<String> {
     let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir(store.join("repos-v1")) else { return out };
+    let Ok(rd) = std::fs::read_dir(store.join("repos-v1")) else {
+        return out;
+    };
     for e in rd.flatten() {
         let marker = e.path().join(".snp-repo.json");
-        let Ok(bytes) = std::fs::read(&marker) else { continue };
+        let Ok(bytes) = std::fs::read(&marker) else {
+            continue;
+        };
         let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
             out.push(String::from("<corrupt snp marker>"));
             continue;
@@ -219,7 +263,12 @@ fn snp_store(store: &Path) -> Vec<String> {
         let deps: Vec<String> = v
             .get("deps")
             .and_then(serde_json::Value::as_array)
-            .map(|a| a.iter().filter_map(serde_json::Value::as_str).map(str::to_owned).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
             .unwrap_or_default();
         let repo = match v.get("kind").and_then(serde_json::Value::as_str) {
             Some("local") => String::from("local"),
@@ -229,11 +278,18 @@ fn snp_store(store: &Path) -> Vec<String> {
                 None => String::from("?"),
             },
         };
-        let name = if deps.is_empty() { repo.clone() } else { format!("{repo}:{}", deps.join(",")) };
+        let name = if deps.is_empty() {
+            repo.clone()
+        } else {
+            format!("{repo}:{}", deps.join(","))
+        };
         let rev = if repo == "local" {
             String::from("local")
         } else {
-            v.get("rev").and_then(serde_json::Value::as_str).unwrap_or("?").to_owned()
+            v.get("rev")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("?")
+                .to_owned()
         };
         out.push(format!("{name}@{rev}"));
     }
@@ -248,7 +304,11 @@ pub(crate) fn render_tree(tree: &BTreeMap<Vec<u8>, Entry>) -> Vec<u8> {
         out.extend_from_slice(p);
         match e {
             Entry::File { bytes, exec } => {
-                out.extend_from_slice(if *exec { b" (file, +x)\n" } else { b" (file)\n" });
+                out.extend_from_slice(if *exec {
+                    b" (file, +x)\n"
+                } else {
+                    b" (file)\n"
+                });
                 for line in crate::text::lines_with_ends(bytes) {
                     out.extend_from_slice(b"    | ");
                     out.extend_from_slice(line);
@@ -275,7 +335,10 @@ mod tests {
 
     #[test]
     fn local_entries_normalise() {
-        assert_eq!(normalise_local("local@1"), "local@1".replace("@1", "@local"));
+        assert_eq!(
+            normalise_local("local@1"),
+            "local@1".replace("@1", "@local")
+        );
         assert_eq!(normalise_local("local:six@1"), "local:six@local");
         assert_eq!(normalise_local("/r/repos/h@abc"), "/r/repos/h@abc");
     }
@@ -288,8 +351,18 @@ mod tests {
         std::fs::write(k.join(".snp-repo.json"), br#"{"format":1,"kind":"remote","repo_type":"url","repo":"https://x/y","rev":"v1","deps":["six"]}"#).unwrap();
         let l = d.path().join("repos-v1/loc");
         std::fs::create_dir_all(&l).unwrap();
-        std::fs::write(l.join(".snp-repo.json"), br#"{"format":1,"kind":"local","deps":[]}"#).unwrap();
-        assert_eq!(snp_store(d.path()), vec![String::from("https://x/y:six@v1"), String::from("local@local")]);
+        std::fs::write(
+            l.join(".snp-repo.json"),
+            br#"{"format":1,"kind":"local","deps":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            snp_store(d.path()),
+            vec![
+                String::from("https://x/y:six@v1"),
+                String::from("local@local")
+            ]
+        );
     }
 
     #[test]
@@ -303,6 +376,9 @@ mod tests {
         let keys: Vec<&[u8]> = t.keys().map(Vec::as_slice).collect();
         assert_eq!(keys, vec![&b"sub"[..], b"sub/a.txt", b"sub/empty"]);
         let r = render_tree(&t);
-        assert!(crate::text::contains_bytes(&r, b"sub/a.txt (file)\n    | a\n    | b\\ no newline\n"));
+        assert!(crate::text::contains_bytes(
+            &r,
+            b"sub/a.txt (file)\n    | a\n    | b\\ no newline\n"
+        ));
     }
 }

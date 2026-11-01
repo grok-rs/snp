@@ -64,13 +64,24 @@ impl Regex {
     /// Compiles `pattern`.
     pub(crate) fn new(pattern: &str) -> Result<Self, String> {
         let chars: Vec<char> = pattern.chars().collect();
-        let mut ps = Parser { p: &chars, pos: 0, groups: 0, multiline: false, dotall: false };
+        let mut ps = Parser {
+            p: &chars,
+            pos: 0,
+            groups: 0,
+            multiline: false,
+            dotall: false,
+        };
         let alts = ps.alts(0)?;
         if ps.pos != chars.len() {
             return Err(format!("unbalanced parenthesis at position {}", ps.pos));
         }
         check_backrefs(&alts, ps.groups)?;
-        Ok(Self { alts, groups: ps.groups, multiline: ps.multiline, dotall: ps.dotall })
+        Ok(Self {
+            alts,
+            groups: ps.groups,
+            multiline: ps.multiline,
+            dotall: ps.dotall,
+        })
     }
 
     /// `re.search(pattern, text) is not None`; an exhausted step budget is `Err`.
@@ -78,7 +89,13 @@ impl Regex {
         let chars: Vec<char> = text.chars().collect();
         let mut caps = Vec::new();
         caps.resize_with(self.groups.saturating_add(1), || Cell::new(None));
-        let cx = Ctx { t: &chars, budget: Cell::new(BUDGET), caps, multiline: self.multiline, dotall: self.dotall };
+        let cx = Ctx {
+            t: &chars,
+            budget: Cell::new(BUDGET),
+            caps,
+            multiline: self.multiline,
+            dotall: self.dotall,
+        };
         for start in 0..=chars.len() {
             let mut k = |_: usize| true;
             if self.alts.iter().any(|alt| seq(alt, &cx, start, &mut k)) {
@@ -93,7 +110,9 @@ impl Regex {
 }
 
 fn check_backrefs(alts: &[Vec<Node>], groups: usize) -> Result<(), String> {
-    alts.iter().flatten().try_for_each(|n| check_node(n, groups))
+    alts.iter()
+        .flatten()
+        .try_for_each(|n| check_node(n, groups))
 }
 
 fn check_node(n: &Node, groups: usize) -> Result<(), String> {
@@ -133,7 +152,9 @@ impl Parser<'_> {
                     alts.push(Vec::new());
                 }
                 _ => {
-                    let Some(atom) = self.atom(depth)? else { continue };
+                    let Some(atom) = self.atom(depth)? else {
+                        continue;
+                    };
                     let atom = self.quant(atom)?;
                     if let Some(cur) = alts.last_mut() {
                         cur.push(atom);
@@ -151,16 +172,24 @@ impl Parser<'_> {
             Some('?') => (0, Some(1)),
             Some('{') => {
                 let rest = self.p.get(self.pos..).unwrap_or_default();
-                let Some(close) = rest.iter().position(|&c| c == '}') else { return Ok(atom) };
+                let Some(close) = rest.iter().position(|&c| c == '}') else {
+                    return Ok(atom);
+                };
                 let body: String = rest.get(1..close).unwrap_or_default().iter().collect();
                 let parsed = match body.split_once(',') {
                     Some((a, b)) => a.parse::<u32>().ok().and_then(|a| {
-                        if b.is_empty() { Some((a, None)) } else { b.parse::<u32>().ok().map(|b| (a, Some(b))) }
+                        if b.is_empty() {
+                            Some((a, None))
+                        } else {
+                            b.parse::<u32>().ok().map(|b| (a, Some(b)))
+                        }
                     }),
                     None => body.parse::<u32>().ok().map(|n| (n, Some(n))),
                 };
                 // Python: a `{` that does not start a valid repeat is a literal.
-                let Some((a, b)) = parsed else { return Ok(atom) };
+                let Some((a, b)) = parsed else {
+                    return Ok(atom);
+                };
                 if a > MAX_REPEAT || b.is_some_and(|b| b > MAX_REPEAT || b < a) {
                     return Err(String::from("bad repeat bounds"));
                 }
@@ -193,7 +222,9 @@ impl Parser<'_> {
                     let mut n = usize::try_from(d).unwrap_or(0);
                     if let Some(d2) = self.peek().and_then(|c| c.to_digit(10)) {
                         self.pos = self.pos.saturating_add(1);
-                        n = n.saturating_mul(10).saturating_add(usize::try_from(d2).unwrap_or(0));
+                        n = n
+                            .saturating_mul(10)
+                            .saturating_add(usize::try_from(d2).unwrap_or(0));
                     }
                     Node::Backref(n)
                 } else {
@@ -231,12 +262,10 @@ impl Parser<'_> {
                         _ => return Err(String::from("unsupported group extension")),
                     }
                 }
-                let number = if capture {
+                let number = capture.then(|| {
                     self.groups = self.groups.saturating_add(1);
-                    Some(self.groups)
-                } else {
-                    None
-                };
+                    self.groups
+                });
                 let alts = self.alts(depth.saturating_add(1))?;
                 if self.bump() != Some(')') {
                     return Err(String::from("missing ), unterminated subpattern"));
@@ -333,10 +362,16 @@ fn seq(nodes: &[Node], cx: &Ctx<'_>, pos: usize, k: &mut dyn FnMut(usize) -> boo
     if !tick(&cx.budget) {
         return false;
     }
-    let Some((first, rest)) = nodes.split_first() else { return k(pos) };
+    let Some((first, rest)) = nodes.split_first() else {
+        return k(pos);
+    };
     one(first, cx, pos, &mut |p| seq(rest, cx, p, k))
 }
 
+#[expect(
+    clippy::many_single_char_names,
+    reason = "matcher notation: t(ext), k(ontinuation), p(osition)"
+)]
 fn one(node: &Node, cx: &Ctx<'_>, pos: usize, k: &mut dyn FnMut(usize) -> bool) -> bool {
     if !tick(&cx.budget) {
         return false;
@@ -346,9 +381,12 @@ fn one(node: &Node, cx: &Ctx<'_>, pos: usize, k: &mut dyn FnMut(usize) -> bool) 
     match node {
         Node::Char(c) => t.get(pos) == Some(c) && k(next),
         Node::Any => t.get(pos).is_some_and(|&c| cx.dotall || c != '\n') && k(next),
-        Node::Class(items, neg) => t.get(pos).is_some_and(|&c| class_hit(items, c) != *neg) && k(next),
+        Node::Class(items, neg) => {
+            t.get(pos).is_some_and(|&c| class_hit(items, c) != *neg) && k(next)
+        }
         Node::Start => {
-            let ok = pos == 0 || (cx.multiline && pos.checked_sub(1).and_then(|p| t.get(p)) == Some(&'\n'));
+            let ok = pos == 0
+                || (cx.multiline && pos.checked_sub(1).and_then(|p| t.get(p)) == Some(&'\n'));
             ok && k(pos)
         }
         Node::End => {
@@ -359,7 +397,9 @@ fn one(node: &Node, cx: &Ctx<'_>, pos: usize, k: &mut dyn FnMut(usize) -> bool) 
         }
         Node::Group(alts, None) => alts.iter().any(|alt| seq(alt, cx, pos, k)),
         Node::Group(alts, Some(n)) => {
-            let Some(slot) = cx.caps.get(*n) else { return false };
+            let Some(slot) = cx.caps.get(*n) else {
+                return false;
+            };
             let saved = slot.get();
             let hit = alts.iter().any(|alt| {
                 seq(alt, cx, pos, &mut |end| {
@@ -379,8 +419,12 @@ fn one(node: &Node, cx: &Ctx<'_>, pos: usize, k: &mut dyn FnMut(usize) -> bool) 
         }
         Node::Backref(n) => {
             // Python: a reference to a group that did not participate fails to match.
-            let Some((s, e)) = cx.caps.get(*n).and_then(Cell::get) else { return false };
-            let Some(want) = t.get(s..e) else { return false };
+            let Some((s, e)) = cx.caps.get(*n).and_then(Cell::get) else {
+                return false;
+            };
+            let Some(want) = t.get(s..e) else {
+                return false;
+            };
             let len = want.len();
             t.get(pos..).is_some_and(|rest| rest.starts_with(want)) && k(pos.saturating_add(len))
         }
@@ -435,7 +479,10 @@ mod tests {
         assert!(!s("^[a-c]+$", "abcd"));
         assert!(s(r"[\d.]+x", "1.2x"));
         assert!(s("colou?r", "color"));
-        assert!(s(r"^\[WARNING\] git 2\.(19|2[0-9]|30)\.[0-9]+ is older than 2\.31\.0\n$", "[WARNING] git 2.30.1 is older than 2.31.0\n"));
+        assert!(s(
+            r"^\[WARNING\] git 2\.(19|2[0-9]|30)\.[0-9]+ is older than 2\.31\.0\n$",
+            "[WARNING] git 2.30.1 is older than 2.31.0\n"
+        ));
         assert!(s("a{2,}", "caaat"));
         assert!(s(".*?x", "abx"));
         assert!(s("(a*)*b", "aaab"));
@@ -444,8 +491,14 @@ mod tests {
 
     #[test]
     fn backrefs_and_flags() {
-        assert!(s(r"^saved in (\S+); apply \1\n$", "saved in /p/x; apply /p/x\n"));
-        assert!(!s(r"^saved in (\S+); apply \1\n$", "saved in /p/x; apply /p/y\n"));
+        assert!(s(
+            r"^saved in (\S+); apply \1\n$",
+            "saved in /p/x; apply /p/x\n"
+        ));
+        assert!(!s(
+            r"^saved in (\S+); apply \1\n$",
+            "saved in /p/x; apply /p/y\n"
+        ));
         assert!(s(r"(a)|b\1", "a"));
         assert!(!s(r"^(?:(a)|b)\1$", "b"));
         assert!(s("(?m)^[0-9a-f]{4}$", "head\nab12\ntail\n"));
@@ -456,11 +509,13 @@ mod tests {
 
     #[test]
     fn errors_and_budget() {
-        for bad in ["(", "a)", "[a", "*a", "a{3,1}", "(?P<n>x)", "\\", "(a)\\2", "(?i)x"] {
+        for bad in [
+            "(", "a)", "[a", "*a", "a{3,1}", "(?P<n>x)", "\\", "(a)\\2", "(?i)x",
+        ] {
             assert!(Regex::new(bad).is_err(), "{bad}");
         }
         let r = Regex::new("(a|a)*(a|a)*(a|a)*(a|a)*c").unwrap();
-        let t = "a".repeat(40);
+        let t: String = std::iter::repeat_n('a', 40).collect();
         assert!(r.search(&t).is_err());
     }
 }

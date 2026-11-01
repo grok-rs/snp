@@ -50,8 +50,8 @@ impl Yv {
     /// Parses one YAML document (PyYAML 1.1 safe resolution; an empty stream is [`Yv::Null`]).
     pub fn parse(text: &str) -> Result<Self, YamlLoadError> {
         let lim = Limits::default();
-        let doc =
-            snp_yaml::compose(text, Schema::PyYaml11Safe, &lim).map_err(|e| YamlLoadError(e.to_string()))?;
+        let doc = snp_yaml::compose(text, Schema::PyYaml11Safe, &lim)
+            .map_err(|e| YamlLoadError(e.to_string()))?;
         match doc.root {
             None => Ok(Self::Null),
             Some(root) => convert(&doc, root, 0),
@@ -86,9 +86,10 @@ impl Yv {
     /// A YAML 1.1 boolean (`true`/`yes`/`on`/… as PyYAML resolves them).
     pub fn as_bool(&self) -> Option<bool> {
         match self {
-            Self::Scalar { text, tag } if tag == BOOL_TAG => {
-                Some(matches!(text.as_str(), "yes" | "Yes" | "YES" | "true" | "True" | "TRUE" | "on" | "On" | "ON"))
-            }
+            Self::Scalar { text, tag } if tag == BOOL_TAG => Some(matches!(
+                text.as_str(),
+                "yes" | "Yes" | "YES" | "true" | "True" | "TRUE" | "on" | "On" | "ON"
+            )),
             _ => None,
         }
     }
@@ -119,7 +120,11 @@ impl Yv {
 
     /// The value of `key` in a mapping (the last occurrence wins, as in PyYAML).
     pub fn get(&self, key: &str) -> Option<&Self> {
-        self.as_map()?.iter().rev().find(|(k, _)| k == key).map(|(_, v)| v)
+        self.as_map()?
+            .iter()
+            .rev()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v)
     }
 
     /// Whether this is null.
@@ -160,7 +165,10 @@ fn convert(doc: &Document, id: NodeId, depth: u32) -> Result<Yv, YamlLoadError> 
                     .map(Yv::Bytes)
                     .ok_or_else(|| YamlLoadError(String::from("invalid !!binary scalar")))
             } else {
-                Ok(Yv::Scalar { text: text.to_string(), tag: node.tag.to_string() })
+                Ok(Yv::Scalar {
+                    text: text.to_string(),
+                    tag: node.tag.to_string(),
+                })
             }
         }
         NodeKind::Seq(items) => {
@@ -177,7 +185,10 @@ fn convert(doc: &Document, id: NodeId, depth: u32) -> Result<Yv, YamlLoadError> 
                     Yv::Null => String::from("null"),
                     Yv::Scalar { text, .. } => text,
                     other => {
-                        return Err(YamlLoadError(format!("unsupported {} mapping key", other.kind())));
+                        return Err(YamlLoadError(format!(
+                            "unsupported {} mapping key",
+                            other.kind()
+                        )));
                     }
                 };
                 out.push((key, convert(doc, *v, next)?));

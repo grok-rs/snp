@@ -68,8 +68,14 @@ pub(crate) fn run(inv: &Invocation) -> Result<Captured, String> {
     }
     let mut cmd = Command::new(&inv.program);
     inv.env.apply_to(&mut cmd);
-    cmd.args(&inv.args).current_dir(&inv.cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("spawning {}: {e}", inv.program.display()))?;
+    cmd.args(&inv.args)
+        .current_dir(&inv.cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("spawning {}: {e}", inv.program.display()))?;
     let feeder = feed(&mut child, inv.stdin.clone())?;
     let out_reader = reader(child.stdout.take())?;
     let err_reader = reader(child.stderr.take())?;
@@ -77,7 +83,12 @@ pub(crate) fn run(inv: &Invocation) -> Result<Captured, String> {
     let stdout = join_bytes(out_reader)?;
     let stderr = join_bytes(err_reader)?;
     join_unit(feeder);
-    Ok(Captured { stdout, stderr, exit, timed_out })
+    Ok(Captured {
+        stdout,
+        stderr,
+        exit,
+        timed_out,
+    })
 }
 
 type BytesHandle = std::thread::JoinHandle<std::io::Result<Vec<u8>>>;
@@ -106,7 +117,9 @@ fn join_bytes(h: Option<BytesHandle>) -> Result<Vec<u8>, String> {
 }
 
 fn feed(child: &mut Child, bytes: Vec<u8>) -> Result<Option<std::thread::JoinHandle<()>>, String> {
-    let Some(mut stdin) = child.stdin.take() else { return Ok(None) };
+    let Some(mut stdin) = child.stdin.take() else {
+        return Ok(None);
+    };
     std::thread::Builder::new()
         .name(String::from("difftest-stdin"))
         .spawn(move || {
@@ -135,13 +148,20 @@ fn status_code(status: std::process::ExitStatus) -> Option<i32> {
     status.code()
 }
 
-fn wait(child: &mut Child, timeout: Duration, signal: Option<&(i32, Trigger)>) -> Result<(Option<i32>, bool), String> {
+fn wait(
+    child: &mut Child,
+    timeout: Duration,
+    signal: Option<&(i32, Trigger)>,
+) -> Result<(Option<i32>, bool), String> {
     let start = Instant::now();
     let mut signalled = false;
     // When the marker file appeared (the delay counts from there).
     let mut armed: Option<Instant> = None;
     loop {
-        if let Some(status) = child.try_wait().map_err(|e| format!("waiting for the child: {e}"))? {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|e| format!("waiting for the child: {e}"))?
+        {
             return Ok((status_code(status), false));
         }
         let elapsed = start.elapsed();
@@ -167,8 +187,12 @@ fn wait(child: &mut Child, timeout: Duration, signal: Option<&(i32, Trigger)>) -
 
 #[cfg(unix)]
 fn send_signal(pid: u32, sig: i32) -> Result<(), String> {
-    let pid = i32::try_from(pid).ok().and_then(rustix::process::Pid::from_raw).ok_or("bad child pid")?;
-    let sig = rustix::process::Signal::from_named_raw(sig).ok_or_else(|| format!("unknown signal {sig}"))?;
+    let pid = i32::try_from(pid)
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+        .ok_or("bad child pid")?;
+    let sig = rustix::process::Signal::from_named_raw(sig)
+        .ok_or_else(|| format!("unknown signal {sig}"))?;
     rustix::process::kill_process(pid, sig).map_err(|e| format!("kill: {e}"))
 }
 
@@ -193,9 +217,16 @@ pub(crate) fn signal_number(name: &str) -> Option<i32> {
 pub(crate) fn which(name: &str, env: &Env) -> Option<PathBuf> {
     let path = env.get("PATH")?;
     let exts: Vec<String> = if cfg!(windows) {
-        env.get("PATHEXT")
-            .map(|p| p.to_string_lossy().split(';').filter(|e| !e.is_empty()).map(str::to_owned).collect())
-            .unwrap_or_else(|| vec![String::from(".exe")])
+        env.get("PATHEXT").map_or_else(
+            || vec![String::from(".exe")],
+            |p| {
+                p.to_string_lossy()
+                    .split(';')
+                    .filter(|e| !e.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            },
+        )
     } else {
         vec![String::new()]
     };
@@ -208,7 +239,9 @@ pub(crate) fn which(name: &str, env: &Env) -> Option<PathBuf> {
 }
 
 fn is_executable(p: &Path) -> bool {
-    let Ok(md) = std::fs::metadata(p) else { return false };
+    let Ok(md) = std::fs::metadata(p) else {
+        return false;
+    };
     if !md.is_file() {
         return false;
     }
@@ -237,17 +270,24 @@ mod pty {
     pub(super) fn run(inv: &Invocation) -> Result<Captured, String> {
         let master = {
             let _guard = snp_core::spawnlock::guard();
-            let m = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY).map_err(|e| format!("openpt: {e}"))?;
-            rustix::io::fcntl_setfd(&m, rustix::io::FdFlags::CLOEXEC).map_err(|e| format!("FD_CLOEXEC: {e}"))?;
+            let m = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY)
+                .map_err(|e| format!("openpt: {e}"))?;
+            rustix::io::fcntl_setfd(&m, rustix::io::FdFlags::CLOEXEC)
+                .map_err(|e| format!("FD_CLOEXEC: {e}"))?;
             m
         };
         grantpt(&master).map_err(|e| format!("grantpt: {e}"))?;
         unlockpt(&master).map_err(|e| format!("unlockpt: {e}"))?;
         let name = ptsname(&master, Vec::new()).map_err(|e| format!("ptsname: {e}"))?;
-        let slave = rustix::fs::open(name.as_c_str(), OFlags::RDWR | OFlags::NOCTTY | OFlags::CLOEXEC, Mode::empty())
-            .map_err(|e| format!("opening the pty slave: {e}"))?;
+        let slave = rustix::fs::open(
+            name.as_c_str(),
+            OFlags::RDWR | OFlags::NOCTTY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|e| format!("opening the pty slave: {e}"))?;
         let mut t = tcgetattr(&slave).map_err(|e| format!("tcgetattr: {e}"))?;
-        t.output_modes.remove(OutputModes::OPOST | OutputModes::ONLCR);
+        t.output_modes
+            .remove(OutputModes::OPOST | OutputModes::ONLCR);
         tcsetattr(&slave, OptionalActions::Now, &t).map_err(|e| format!("tcsetattr: {e}"))?;
         let slave = std::fs::File::from(slave);
         let mut cmd = Command::new(&inv.program);
@@ -255,9 +295,13 @@ mod pty {
         cmd.args(&inv.args)
             .current_dir(&inv.cwd)
             .stdin(Stdio::piped())
-            .stdout(Stdio::from(slave.try_clone().map_err(|e| format!("dup: {e}"))?))
+            .stdout(Stdio::from(
+                slave.try_clone().map_err(|e| format!("dup: {e}"))?,
+            ))
             .stderr(Stdio::from(slave));
-        let mut child = cmd.spawn().map_err(|e| format!("spawning {}: {e}", inv.program.display()))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("spawning {}: {e}", inv.program.display()))?;
         drop(cmd);
         let feeder = feed(&mut child, inv.stdin.clone())?;
         let mut master = std::fs::File::from(master);
@@ -278,9 +322,16 @@ mod pty {
             })
             .map_err(|e| format!("starting the pty reader: {e}"))?;
         let (exit, timed_out) = wait(&mut child, inv.timeout, inv.signal.as_ref())?;
-        let stdout = reader.join().map_err(|_| String::from("the pty reader panicked"))?;
+        let stdout = reader
+            .join()
+            .map_err(|_| String::from("the pty reader panicked"))?;
         join_unit(feeder);
-        Ok(Captured { stdout, stderr: Vec::new(), exit, timed_out })
+        Ok(Captured {
+            stdout,
+            stderr: Vec::new(),
+            exit,
+            timed_out,
+        })
     }
 }
 
@@ -335,7 +386,13 @@ mod tests {
         assert_eq!(c.exit, None);
         inv.timeout = Duration::from_secs(30);
         inv.args = vec!["-c".into(), "exec sleep 5".into()];
-        inv.signal = Some((15, Trigger { file: None, delay: Duration::from_millis(100) }));
+        inv.signal = Some((
+            15,
+            Trigger {
+                file: None,
+                delay: Duration::from_millis(100),
+            },
+        ));
         let c = run(&inv).unwrap();
         assert_eq!(c.exit, Some(-15));
     }
@@ -357,7 +414,7 @@ mod tests {
         };
         let c = run(&inv).unwrap();
         assert_eq!(c.stdout, b"tty\nerr\n");
-        assert!(c.stderr.is_empty());
+        assert_eq!(c.stderr, b"");
     }
 
     #[test]

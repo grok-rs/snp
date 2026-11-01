@@ -46,10 +46,15 @@ const MAX_CELLS: usize = 4_000_000;
 pub(crate) fn unified(a: &[u8], b: &[u8]) -> String {
     let x = lines_with_ends(a);
     let y = lines_with_ends(b);
-    let n = x.len();
-    let m = y.len();
-    let cells = n.saturating_add(1).saturating_mul(m.saturating_add(1));
-    let ops = if cells <= MAX_CELLS { lcs_ops(&x, &y) } else { fallback_ops(&x, &y) };
+    let cells = x
+        .len()
+        .saturating_add(1)
+        .saturating_mul(y.len().saturating_add(1));
+    let ops = if cells <= MAX_CELLS {
+        lcs_ops(&x, &y)
+    } else {
+        fallback_ops(&x, &y)
+    };
     render(&ops)
 }
 
@@ -60,6 +65,10 @@ enum Op<'a> {
     Add(&'a [u8]),
 }
 
+#[expect(
+    clippy::many_single_char_names,
+    reason = "the textbook LCS notation (x, y, n, m, i, j)"
+)]
 fn lcs_ops<'a>(x: &[&'a [u8]], y: &[&'a [u8]]) -> Vec<Op<'a>> {
     let n = x.len();
     let m = y.len();
@@ -70,9 +79,20 @@ fn lcs_ops<'a>(x: &[&'a [u8]], y: &[&'a [u8]]) -> Vec<Op<'a>> {
         for j in (0..m).rev() {
             let here = i.saturating_mul(w).saturating_add(j);
             let v = if x.get(i) == y.get(j) {
-                table.get((i.saturating_add(1)).saturating_mul(w).saturating_add(j.saturating_add(1))).copied().unwrap_or(0).saturating_add(1)
+                table
+                    .get(
+                        (i.saturating_add(1))
+                            .saturating_mul(w)
+                            .saturating_add(j.saturating_add(1)),
+                    )
+                    .copied()
+                    .unwrap_or(0)
+                    .saturating_add(1)
             } else {
-                let down = table.get(i.saturating_add(1).saturating_mul(w).saturating_add(j)).copied().unwrap_or(0);
+                let down = table
+                    .get(i.saturating_add(1).saturating_mul(w).saturating_add(j))
+                    .copied()
+                    .unwrap_or(0);
                 let right = table.get(here.saturating_add(1)).copied().unwrap_or(0);
                 down.max(right)
             };
@@ -81,7 +101,12 @@ fn lcs_ops<'a>(x: &[&'a [u8]], y: &[&'a [u8]]) -> Vec<Op<'a>> {
             }
         }
     }
-    let at = |i: usize, j: usize| table.get(i.saturating_mul(w).saturating_add(j)).copied().unwrap_or(0);
+    let at = |i: usize, j: usize| {
+        table
+            .get(i.saturating_mul(w).saturating_add(j))
+            .copied()
+            .unwrap_or(0)
+    };
     let mut ops = Vec::new();
     let (mut i, mut j) = (0_usize, 0_usize);
     while i < n || j < m {
@@ -112,11 +137,31 @@ fn lcs_ops<'a>(x: &[&'a [u8]], y: &[&'a [u8]]) -> Vec<Op<'a>> {
 /// For huge inputs: common prefix and suffix kept, the middle shown as one deletion and one addition.
 fn fallback_ops<'a>(x: &[&'a [u8]], y: &[&'a [u8]]) -> Vec<Op<'a>> {
     let pre = x.iter().zip(y).take_while(|(a, b)| a == b).count();
-    let suf = x.iter().rev().zip(y.iter().rev()).take(x.len().min(y.len()).saturating_sub(pre)).take_while(|(a, b)| a == b).count();
+    let suf = x
+        .iter()
+        .rev()
+        .zip(y.iter().rev())
+        .take(x.len().min(y.len()).saturating_sub(pre))
+        .take_while(|(a, b)| a == b)
+        .count();
     let mut ops: Vec<Op<'a>> = x.iter().take(pre).map(|l| Op::Keep(l)).collect();
-    ops.extend(x.iter().skip(pre).take(x.len().saturating_sub(pre).saturating_sub(suf)).map(|l| Op::Del(l)));
-    ops.extend(y.iter().skip(pre).take(y.len().saturating_sub(pre).saturating_sub(suf)).map(|l| Op::Add(l)));
-    ops.extend(x.iter().skip(x.len().saturating_sub(suf)).map(|l| Op::Keep(l)));
+    ops.extend(
+        x.iter()
+            .skip(pre)
+            .take(x.len().saturating_sub(pre).saturating_sub(suf))
+            .map(|l| Op::Del(l)),
+    );
+    ops.extend(
+        y.iter()
+            .skip(pre)
+            .take(y.len().saturating_sub(pre).saturating_sub(suf))
+            .map(|l| Op::Add(l)),
+    );
+    ops.extend(
+        x.iter()
+            .skip(x.len().saturating_sub(suf))
+            .map(|l| Op::Keep(l)),
+    );
     ops
 }
 
@@ -141,7 +186,12 @@ fn escape_line(l: &[u8]) -> String {
 const CONTEXT: usize = 3;
 
 fn render(ops: &[Op<'_>]) -> String {
-    let changed: Vec<usize> = ops.iter().enumerate().filter(|(_, o)| !matches!(o, Op::Keep(_))).map(|(i, _)| i).collect();
+    let changed: Vec<usize> = ops
+        .iter()
+        .enumerate()
+        .filter(|(_, o)| !matches!(o, Op::Keep(_)))
+        .map(|(i, _)| i)
+        .collect();
     if changed.is_empty() {
         return String::new();
     }
@@ -161,7 +211,10 @@ fn render(ops: &[Op<'_>]) -> String {
                 break;
             }
         }
-        let end = last.saturating_add(CONTEXT).saturating_add(1).min(ops.len());
+        let end = last
+            .saturating_add(CONTEXT)
+            .saturating_add(1)
+            .min(ops.len());
         if start > shown_until || start == 0 {
             out.push_str("@@\n");
         }
@@ -196,8 +249,16 @@ mod tests {
     fn modes() {
         assert!(streams_equal(StreamMode::Exact, b"a\n", b"a\n"));
         assert!(!streams_equal(StreamMode::Exact, b"a\n", b"a"));
-        assert!(streams_equal(StreamMode::LinesUnordered, b"a\nb\n", b"b\na\n"));
-        assert!(!streams_equal(StreamMode::LinesUnordered, b"a\nb\n", b"b\nb\n"));
+        assert!(streams_equal(
+            StreamMode::LinesUnordered,
+            b"a\nb\n",
+            b"b\na\n"
+        ));
+        assert!(!streams_equal(
+            StreamMode::LinesUnordered,
+            b"a\nb\n",
+            b"b\nb\n"
+        ));
         assert!(streams_equal(StreamMode::Ignore, b"x", b"y"));
         assert!(exits_equal(ExitMode::NonzeroEqual, Some(1), Some(3)));
         assert!(!exits_equal(ExitMode::NonzeroEqual, Some(0), Some(3)));
@@ -212,7 +273,9 @@ mod tests {
         assert_eq!(unified(b"same\n", b"same\n"), "");
         let d = unified(b"\x1b[41mFailed\x1b[m\r\n", b"Failed\n");
         assert!(d.contains("\\u{1b}[41mFailed\\u{1b}[m\\r"), "{d}");
-        let a: Vec<u8> = (0..30).flat_map(|i| format!("{i}\n").into_bytes()).collect();
+        let a: Vec<u8> = (0..30)
+            .flat_map(|i| format!("{i}\n").into_bytes())
+            .collect();
         let mut b = a.clone();
         b.extend_from_slice(b"x\n");
         let d = unified(&a, &b);
@@ -224,6 +287,14 @@ mod tests {
         let x: Vec<&[u8]> = vec![b"a\n", b"b\n", b"c\n"];
         let y: Vec<&[u8]> = vec![b"a\n", b"X\n", b"c\n"];
         let ops = fallback_ops(&x, &y);
-        assert_eq!(ops, vec![Op::Keep(b"a\n"), Op::Del(b"b\n"), Op::Add(b"X\n"), Op::Keep(b"c\n")]);
+        assert_eq!(
+            ops,
+            vec![
+                Op::Keep(b"a\n"),
+                Op::Del(b"b\n"),
+                Op::Add(b"X\n"),
+                Op::Keep(b"c\n")
+            ]
+        );
     }
 }

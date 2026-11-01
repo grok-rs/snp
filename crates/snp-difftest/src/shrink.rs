@@ -39,7 +39,10 @@ pub struct Shrunk {
 
 /// Hooks in a scenario's config (`id:` occurrences): the size measure of the shrinker's acceptance test.
 pub fn hook_count(s: &Scenario) -> usize {
-    s.work.config.as_deref().map_or(0, |c| c.matches("id:").count())
+    s.work
+        .config
+        .as_deref()
+        .map_or(0, |c| c.matches("id:").count())
 }
 
 /// `ddmin`: a 1-minimal sublist of `items` for which `test` holds (assuming it holds for `items`).
@@ -95,8 +98,16 @@ impl Budget<'_> {
 
 /// Reduces `s` while `still_fails` holds, spending at most `max_runs` evaluations. `still_fails(s)` is assumed
 /// to hold for the input.
-pub fn shrink(s: &Scenario, still_fails: &mut dyn FnMut(&Scenario) -> bool, max_runs: usize) -> Shrunk {
-    let mut b = Budget { pred: still_fails, runs: 0, max: max_runs };
+pub fn shrink(
+    s: &Scenario,
+    still_fails: &mut dyn FnMut(&Scenario) -> bool,
+    max_runs: usize,
+) -> Shrunk {
+    let mut b = Budget {
+        pred: still_fails,
+        runs: 0,
+        max: max_runs,
+    };
     let mut cur = s.clone();
     loop {
         let before = cur.to_yaml();
@@ -107,7 +118,11 @@ pub fn shrink(s: &Scenario, still_fails: &mut dyn FnMut(&Scenario) -> bool, max_
         }
     }
     let budget_exhausted = b.runs >= b.max;
-    Shrunk { scenario: cur, runs: b.runs, budget_exhausted }
+    Shrunk {
+        scenario: cur,
+        runs: b.runs,
+        budget_exhausted,
+    }
 }
 
 /// Reduces one list field of the scenario with `ddmin`.
@@ -161,18 +176,40 @@ fn model_pass(cur: Scenario, b: &mut Budget<'_>) -> Scenario {
         }
     }
     let mut cur = reduce_list(cur, b, |s| s.repos.clone(), |s, v| s.repos = v, 0);
-    cur = reduce_list(cur, b, |s| s.work.unstaged.clone(), |s, v| s.work.unstaged = v, 0);
-    cur = reduce_list(cur, b, |s| s.work.symlinks.clone(), |s, v| s.work.symlinks = v, 0);
+    cur = reduce_list(
+        cur,
+        b,
+        |s| s.work.unstaged.clone(),
+        |s, v| s.work.unstaged = v,
+        0,
+    );
+    cur = reduce_list(
+        cur,
+        b,
+        |s| s.work.symlinks.clone(),
+        |s, v| s.work.symlinks = v,
+        0,
+    );
     cur = reduce_list(cur, b, |s| s.work.modes.clone(), |s, v| s.work.modes = v, 0);
     cur = reduce_list(cur, b, |s| s.work.chmod.clone(), |s, v| s.work.chmod = v, 0);
     cur = reduce_list(cur, b, |s| s.work.setup.clone(), |s, v| s.work.setup = v, 0);
-    cur = reduce_list(cur, b, |s| s.work.git_config.clone(), |s, v| s.work.git_config = v, 0);
+    cur = reduce_list(
+        cur,
+        b,
+        |s| s.work.git_config.clone(),
+        |s, v| s.work.git_config = v,
+        0,
+    );
     cur = reduce_list(cur, b, |s| s.work.fifos.clone(), |s, v| s.work.fifos = v, 0);
     cur = reduce_list(cur, b, |s| s.work.exec.clone(), |s, v| s.work.exec = v, 0);
     cur = reduce_list(cur, b, |s| s.work.stage.clone(), |s, v| s.work.stage = v, 0);
     for i in 0..cur.steps.len() {
         let base = cur.clone();
-        let env = base.steps.get(i).map(|st| st.env.clone()).unwrap_or_default();
+        let env = base
+            .steps
+            .get(i)
+            .map(|st| st.env.clone())
+            .unwrap_or_default();
         if env.is_empty() {
             continue;
         }
@@ -207,7 +244,10 @@ fn with_files(s: &Scenario, files: &[(Vec<u8>, Vec<u8>)]) -> Scenario {
 }
 
 fn split_lines(s: &[u8]) -> Vec<Vec<u8>> {
-    crate::text::lines_with_ends(s).into_iter().map(<[u8]>::to_vec).collect()
+    crate::text::lines_with_ends(s)
+        .into_iter()
+        .map(<[u8]>::to_vec)
+        .collect()
 }
 
 fn dd_pass(cur: Scenario, b: &mut Budget<'_>) -> Scenario {
@@ -238,7 +278,9 @@ fn dd_pass(cur: Scenario, b: &mut Budget<'_>) -> Scenario {
     }
     // File contents, line by line.
     for i in 0..cur.work.files.len() {
-        let Some((_, content)) = cur.work.files.get(i) else { continue };
+        let Some((_, content)) = cur.work.files.get(i) else {
+            continue;
+        };
         let lines = split_lines(content);
         if lines.len() < 2 {
             continue;
@@ -265,7 +307,10 @@ fn dd_pass(cur: Scenario, b: &mut Budget<'_>) -> Scenario {
 
 /// The shell variable holding a repository's rev (`REV_<sanitised name>`).
 fn rev_var(name: &str) -> String {
-    let n: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    let n: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
     format!("REV_{n}")
 }
 
@@ -284,12 +329,12 @@ fn static_subst(s: &str, vars: &[(String, String)]) -> String {
             continue;
         };
         let (name, after) = tail.split_at_checked(end).unwrap_or((tail, ""));
-        if let Some(repo) = name.strip_prefix("rev:") {
-            let _ = write!(out, "@@{}@@", rev_var(repo));
-        } else if let Some((_, v)) = vars.iter().find(|(k, _)| k == name) {
+        if let Some((_, v)) = vars.iter().find(|(k, _)| k == name) {
             out.push_str(v);
+        } else if let Some(repo) = name.strip_prefix("rev:") {
+            write!(out, "@@{}@@", rev_var(repo)).unwrap_or_default();
         } else {
-            let _ = write!(out, "${{{name}}}");
+            write!(out, "${{{name}}}").unwrap_or_default();
         }
         rest = after.get(1..).unwrap_or_default();
     }
@@ -307,7 +352,7 @@ fn emit_write(o: &mut String, dir: &str, rel: &[u8], content: &[u8], vars: &[(St
         Err(_) => content.to_vec(),
     };
     let rel_q = sh_quote_bytes(rel);
-    let _ = writeln!(o, "  wr {} {rel_q} {}", sh_quote(dir), printf_arg(&content));
+    writeln!(o, "  wr {} {rel_q} {}", sh_quote(dir), printf_arg(&content)).unwrap_or_default();
 }
 
 /// A `printf '%b'`-safe octal-escaped argument for arbitrary bytes.
@@ -317,7 +362,7 @@ fn printf_arg(b: &[u8]) -> String {
         if c.is_ascii_alphanumeric() || b" .,:;_-+=/@#%^&*()[]{}<>?!~|\"".contains(&c) {
             s.push(char::from(c));
         } else {
-            let _ = write!(s, "\\0{c:03o}");
+            write!(s, "\\0{c:03o}").unwrap_or_default();
         }
     }
     s.push('\'');
@@ -328,27 +373,45 @@ fn emit_ops(o: &mut String, dir: &str, ops: &[Op], vars: &[(String, String)]) {
     for op in ops {
         match op {
             Op::Git(a) => {
-                let args: Vec<String> = a.iter().map(|x| sh_quote(&static_subst(x, vars))).collect();
-                let _ = writeln!(o, "  (cd {} && g {})", sh_quote(dir), args.join(" "));
+                let args: Vec<String> =
+                    a.iter().map(|x| sh_quote(&static_subst(x, vars))).collect();
+                writeln!(o, "  (cd {} && g {})", sh_quote(dir), args.join(" ")).unwrap_or_default();
             }
             Op::Write(p, c) => emit_write(o, dir, p.as_bytes(), c, vars),
             Op::Remove(p) => {
-                let _ = writeln!(o, "  rm -rf {}/{}", sh_quote(dir), sh_quote(p));
+                writeln!(o, "  rm -rf {}/{}", sh_quote(dir), sh_quote(p)).unwrap_or_default();
             }
             Op::Shell(c) => {
-                let _ = writeln!(o, "  (cd {} && hermetic sh -c {})", sh_quote(dir), sh_quote(&static_subst(c, vars)));
+                writeln!(
+                    o,
+                    "  (cd {} && hermetic sh -c {})",
+                    sh_quote(dir),
+                    sh_quote(&static_subst(c, vars))
+                )
+                .unwrap_or_default();
             }
             Op::Commit(m) => {
-                let _ = writeln!(o, "  (cd {} && g add -A && g commit -q --allow-empty -m {})", sh_quote(dir), sh_quote(m));
+                writeln!(
+                    o,
+                    "  (cd {} && g add -A && g commit -q --allow-empty -m {})",
+                    sh_quote(dir),
+                    sh_quote(m)
+                )
+                .unwrap_or_default();
             }
             Op::Tag(t) => {
-                let _ = writeln!(o, "  (cd {} && g tag {})", sh_quote(dir), sh_quote(t));
+                writeln!(o, "  (cd {} && g tag {})", sh_quote(dir), sh_quote(t))
+                    .unwrap_or_default();
             }
         }
     }
 }
 
 /// A self-contained POSIX shell script reproducing `s` at `root` with the runner's binaries (see the module docs).
+#[expect(
+    clippy::many_single_char_names,
+    reason = "s(cenario), r(unner), l(ayout), o(utput), w(ork): the script renderer's vocabulary"
+)]
 pub fn repro_script(s: &Scenario, r: &Runner, root: &Path) -> String {
     let l = Layout::new(root, &s.work);
     let mut vars = vec![
@@ -360,36 +423,90 @@ pub fn repro_script(s: &Scenario, r: &Runner, root: &Path) -> String {
         (String::from("probe"), String::from("$PROBE")),
         (String::from("probe_path"), String::from("$PROBE")),
         (String::from("tool"), String::from("$TOOL")),
+        (
+            String::from("z40"),
+            String::from("0000000000000000000000000000000000000000"),
+        ),
+        (
+            String::from("z64"),
+            String::from("0000000000000000000000000000000000000000000000000000000000000000"),
+        ),
     ];
     let repo_dir = |name: &str, path: Option<&str>| -> PathBuf {
         path.map_or_else(|| l.repos.join(name), |p| l.root.join(p))
     };
     for rp in &s.repos {
+        if let Some((url, rev)) = &rp.external {
+            vars.push((format!("repo:{}", rp.name), url.clone()));
+            vars.push((format!("url:{}", rp.name), url.clone()));
+            vars.push((format!("rev:{}", rp.name), rev.clone()));
+            continue;
+        }
         let d = slash(&repo_dir(&rp.name, rp.path.as_deref()));
         vars.push((format!("repo:{}", rp.name), d.clone()));
         vars.push((format!("url:{}", rp.name), format!("file://{d}")));
     }
     let mut o = String::new();
-    let _ = writeln!(o, "#!/bin/sh");
-    let _ = writeln!(o, "# repro.sh: generated by snp-difftest for scenario {:?}.", s.name);
-    let _ = writeln!(o, "# Materialises the scenario at a fixed root, runs it under the oracle and under snp, and diffs");
-    let _ = writeln!(o, "# the streams and exit codes (Tier-C masks applied). Exit 1 = the sides differ.");
-    let _ = writeln!(o, "# Override BRAND=compat|snp, SNP_BIN, ORACLE_BIN, ORACLE_SNP_PROG, PROBE, OUT.");
-    let _ = writeln!(o, "# Not reproduced here: ptys (tty steps run on pipes), step deadlines.");
+    writeln!(o, "#!/bin/sh").unwrap_or_default();
+    writeln!(
+        o,
+        "# repro.sh: generated by snp-difftest for scenario {:?}.",
+        s.name
+    )
+    .unwrap_or_default();
+    writeln!(o, "# Materialises the scenario at a fixed root, runs it under the oracle and under snp, and diffs").unwrap_or_default();
+    writeln!(
+        o,
+        "# the streams and exit codes (Tier-C masks applied). Exit 1 = the sides differ."
+    )
+    .unwrap_or_default();
+    writeln!(
+        o,
+        "# Override BRAND=compat|snp, SNP_BIN, ORACLE_BIN, ORACLE_SNP_PROG, PROBE, OUT."
+    )
+    .unwrap_or_default();
+    writeln!(o, "# Not reproduced here: ptys (tty steps run on pipes), step deadlines, the store comparison.").unwrap_or_default();
+    if !s.projects.is_empty() {
+        writeln!(
+            o,
+            "# `projects:` only the work directory {:?} is materialised and run.",
+            s.work.dir.as_deref().unwrap_or("work")
+        )
+        .unwrap_or_default();
+    }
     o.push_str("set -u\n");
-    let _ = writeln!(o, "ROOT={}", sh_quote(&slash(&l.root)));
-    let _ = writeln!(o, "SNP_BIN=${{SNP_BIN:-{}}}", sh_quote(&slash(&r.snp_bin)));
-    let _ = writeln!(o, "ORACLE_BIN=${{ORACLE_BIN:-{}}}", sh_quote(&slash(&r.oracle_bin)));
-    let _ = writeln!(o, "ORACLE_SNP_PROG=${{ORACLE_SNP_PROG:-{}}}", sh_quote(&slash(&r.oracle_snp_prog)));
-    let probe = r.snp_bin.parent().map(|d| slash(&d.join("snp-probe"))).unwrap_or_default();
-    let _ = writeln!(o, "PROBE=${{PROBE:-{}}}", sh_quote(&probe));
-    let _ = writeln!(o, "BRAND=${{BRAND:-{}}}", s.brands.first().copied().unwrap_or(Brand::Compat).name());
-    let _ = writeln!(o, "OUT=${{OUT:-$ROOT.repro}}");
-    let _ = writeln!(o, "FIXTURES={}", sh_quote(&slash(&fixture_dir(""))));
+    writeln!(o, "ROOT={}", sh_quote(&slash(&l.root))).unwrap_or_default();
+    writeln!(o, "SNP_BIN=${{SNP_BIN:-{}}}", sh_quote(&slash(&r.snp_bin))).unwrap_or_default();
+    writeln!(
+        o,
+        "ORACLE_BIN=${{ORACLE_BIN:-{}}}",
+        sh_quote(&slash(&r.oracle_bin))
+    )
+    .unwrap_or_default();
+    writeln!(
+        o,
+        "ORACLE_SNP_PROG=${{ORACLE_SNP_PROG:-{}}}",
+        sh_quote(&slash(&r.oracle_snp_prog))
+    )
+    .unwrap_or_default();
+    let probe = r
+        .snp_bin
+        .parent()
+        .map(|d| slash(&d.join("snp-probe")))
+        .unwrap_or_default();
+    writeln!(o, "PROBE=${{PROBE:-{}}}", sh_quote(&probe)).unwrap_or_default();
+    writeln!(
+        o,
+        "BRAND=${{BRAND:-{}}}",
+        s.brands.first().copied().unwrap_or(Brand::Compat).name()
+    )
+    .unwrap_or_default();
+    writeln!(o, "OUT=${{OUT:-$ROOT.repro}}").unwrap_or_default();
+    writeln!(o, "FIXTURES={}", sh_quote(&slash(&fixture_dir("")))).unwrap_or_default();
     o.push_str(REPRO_PRELUDE);
-    let _ = writeln!(o, "  BASE_DATE={BASE_DATE}");
+    writeln!(o, "  BASE_DATE={BASE_DATE}").unwrap_or_default();
     o.push_str("  tick=0\n");
-    for rp in &s.repos {
+    for rp in s.repos.iter().filter(|r| r.external.is_none()) {
         let d = slash(&repo_dir(&rp.name, rp.path.as_deref()));
         let dq = sh_quote(&d);
         let mut init = String::from("g init -q");
@@ -397,92 +514,114 @@ pub fn repro_script(s: &Scenario, r: &Runner, root: &Path) -> String {
             init.push_str(" --bare");
         }
         if let Some(f) = &rp.object_format {
-            let _ = write!(init, " --object-format={}", sh_quote(f));
+            write!(init, " --object-format={}", sh_quote(f)).unwrap_or_default();
         }
-        let _ = writeln!(o, "  mkdir -p {dq} && (cd {dq} && {init} .)");
+        writeln!(o, "  mkdir -p {dq} && (cd {dq} && {init} .)").unwrap_or_default();
         if rp.bare {
             continue;
         }
         if let Some(f) = &rp.fixture {
-            let _ = writeln!(o, "  cp -R \"$FIXTURES\"/{}/. {dq}/", sh_quote(f));
+            writeln!(o, "  cp -R \"$FIXTURES\"/{}/. {dq}/", sh_quote(f)).unwrap_or_default();
         }
         for (p, c) in &rp.files {
             emit_write(&mut o, &d, p.as_bytes(), c, &vars);
-            let _ = writeln!(o, "  fill_revs {dq}/{}", sh_quote(p));
+            writeln!(o, "  fill_revs {dq}/{}", sh_quote(p)).unwrap_or_default();
         }
         for p in &rp.exec {
-            let _ = writeln!(o, "  chmod +x {dq}/{}", sh_quote(p));
+            writeln!(o, "  chmod +x {dq}/{}", sh_quote(p)).unwrap_or_default();
         }
-        let _ = writeln!(o, "  (cd {dq} && g add -A)");
+        writeln!(o, "  (cd {dq} && g add -A)").unwrap_or_default();
         for p in &rp.exec {
-            let _ = writeln!(o, "  (cd {dq} && g update-index --chmod=+x -- {})", sh_quote(p));
+            writeln!(
+                o,
+                "  (cd {dq} && g update-index --chmod=+x -- {})",
+                sh_quote(p)
+            )
+            .unwrap_or_default();
         }
-        let _ = writeln!(o, "  (cd {dq} && g commit -q --allow-empty -m 'Add hooks')");
+        writeln!(o, "  (cd {dq} && g commit -q --allow-empty -m 'Add hooks')").unwrap_or_default();
         for t in &rp.tags {
-            let _ = writeln!(o, "  (cd {dq} && g tag {})", sh_quote(t));
+            writeln!(o, "  (cd {dq} && g tag {})", sh_quote(t)).unwrap_or_default();
         }
         emit_ops(&mut o, &d, &rp.then, &vars);
-        let _ = writeln!(o, "  {}=$(cd {dq} && g rev-parse HEAD)", rev_var(&rp.name));
+        writeln!(o, "  {}=$(cd {dq} && g rev-parse HEAD)", rev_var(&rp.name)).unwrap_or_default();
     }
     let w = &s.work;
     let wd = slash(&l.work);
     let wq = sh_quote(&wd);
-    let _ = writeln!(o, "  mkdir -p {wq}");
+    writeln!(o, "  mkdir -p {wq}").unwrap_or_default();
     if w.git {
         let mut init = String::from("g init -q");
         if let Some(f) = &w.object_format {
-            let _ = write!(init, " --object-format={}", sh_quote(f));
+            write!(init, " --object-format={}", sh_quote(f)).unwrap_or_default();
         }
-        let _ = writeln!(o, "  (cd {wq} && {init} .)");
+        writeln!(o, "  (cd {wq} && {init} .)").unwrap_or_default();
         for (k, v) in &w.git_config {
-            let _ = writeln!(o, "  (cd {wq} && g config {} {})", sh_quote(k), sh_quote(&static_subst(v, &vars)));
+            writeln!(
+                o,
+                "  (cd {wq} && g config {} {})",
+                sh_quote(k),
+                sh_quote(&static_subst(v, &vars))
+            )
+            .unwrap_or_default();
         }
     }
     for (p, c) in &w.files {
         emit_write(&mut o, &wd, p, c, &vars);
-        let _ = writeln!(o, "  fill_revs {wq}/{}", sh_quote_bytes(p));
+        writeln!(o, "  fill_revs {wq}/{}", sh_quote_bytes(p)).unwrap_or_default();
     }
     if let Some(c) = &w.config {
         emit_write(&mut o, &wd, b".pre-commit-config.yaml", c.as_bytes(), &vars);
-        let _ = writeln!(o, "  fill_revs {wq}/.pre-commit-config.yaml");
+        writeln!(o, "  fill_revs {wq}/.pre-commit-config.yaml").unwrap_or_default();
     }
     for p in &w.exec {
-        let _ = writeln!(o, "  chmod +x {wq}/{}", sh_quote(p));
-    }
-    for (p, m) in &w.modes {
-        let _ = writeln!(o, "  chmod {m:o} {wq}/{}", sh_quote(p));
+        writeln!(o, "  chmod +x {wq}/{}", sh_quote(p)).unwrap_or_default();
     }
     for (link, target) in &w.symlinks {
-        let _ = writeln!(o, "  ln -s {} {wq}/{}", sh_quote(&static_subst(target, &vars)), sh_quote(link));
+        writeln!(
+            o,
+            "  ln -s {} {wq}/{}",
+            sh_quote(&static_subst(target, &vars)),
+            sh_quote(link)
+        )
+        .unwrap_or_default();
     }
     if w.git && !w.commit.is_empty() {
         let paths: Vec<String> = w.commit.iter().map(|p| sh_quote_bytes(p)).collect();
-        let _ = writeln!(o, "  (cd {wq} && g add -- {})", paths.join(" "));
+        writeln!(o, "  (cd {wq} && g add -- {})", paths.join(" ")).unwrap_or_default();
         for p in &w.exec {
             if w.commit.iter().any(|c| c == p.as_bytes()) {
-                let _ = writeln!(o, "  (cd {wq} && g update-index --chmod=+x -- {})", sh_quote(p));
+                writeln!(
+                    o,
+                    "  (cd {wq} && g update-index --chmod=+x -- {})",
+                    sh_quote(p)
+                )
+                .unwrap_or_default();
             }
         }
-        let _ = writeln!(o, "  (cd {wq} && g commit -q -m init)");
+        writeln!(o, "  (cd {wq} && g commit -q -m init)").unwrap_or_default();
+    }
+    for (p, m) in &w.modes {
+        writeln!(o, "  chmod {m:o} {wq}/{}", sh_quote(p)).unwrap_or_default();
     }
     if w.git && !w.stage.is_empty() {
         let paths: Vec<String> = w.stage.iter().map(|p| sh_quote_bytes(p)).collect();
-        let _ = writeln!(o, "  (cd {wq} && g add -- {})", paths.join(" "));
+        writeln!(o, "  (cd {wq} && g add -- {})", paths.join(" ")).unwrap_or_default();
     }
     for (p, c) in &w.unstaged {
         match c {
             Some(c) => emit_write(&mut o, &wd, p.as_bytes(), c, &vars),
             None => {
-                let _ = writeln!(o, "  rm -f {wq}/{}", sh_quote(p));
+                writeln!(o, "  rm -f {wq}/{}", sh_quote(p)).unwrap_or_default();
             }
         }
     }
     for f in &w.fifos {
-        let _ = writeln!(o, "  mkfifo {wq}/{}", sh_quote(f));
+        writeln!(o, "  mkfifo {wq}/{}", sh_quote(f)).unwrap_or_default();
     }
     emit_ops(&mut o, &wd, &w.setup, &vars);
     for (p, m) in &w.chmod {
-        let _ = writeln!(o, "  chmod {m:o} {wq}/{}", sh_quote(p));
+        writeln!(o, "  chmod {m:o} {wq}/{}", sh_quote(p)).unwrap_or_default();
     }
     o.push_str("}\n\nrun_side() {\n  side=$1; prog=$2\n  materialise\n");
     o.push_str("  ln -s \"$prog\" \"$ROOT/bin/$NAME\"\n  TOOL=\"$ROOT/bin/$NAME\"\n  mkdir -p \"$OUT/$side\"\n");
@@ -493,33 +632,56 @@ pub fn repro_script(s: &Scenario, r: &Runner, root: &Path) -> String {
         for (k, v) in &st.env {
             match v {
                 Some(v) if k == "PATH_PREPEND" => {
-                    let _ = write!(env, " PATH={}:\"$ROOT/bin:$PATH\"", sh_quote(&static_subst(v, &vars)));
+                    write!(
+                        env,
+                        " PATH={}:\"$ROOT/bin:$PATH\"",
+                        sh_quote(&static_subst(v, &vars))
+                    )
+                    .unwrap_or_default();
                 }
                 Some(v) => {
-                    let _ = write!(env, " {k}={}", sh_quote(&static_subst(v, &vars)));
+                    write!(env, " {k}={}", sh_quote(&static_subst(v, &vars))).unwrap_or_default();
                 }
                 None => {
-                    let _ = write!(unset, " -u {k}");
+                    write!(unset, " -u {k}").unwrap_or_default();
                 }
             }
         }
         let cmd = match &st.kind {
             StepKind::Tool(a) => {
-                let args: Vec<String> = a.iter().map(|x| sh_quote(&static_subst(x, &vars))).collect();
+                let args: Vec<String> = a
+                    .iter()
+                    .map(|x| sh_quote(&static_subst(x, &vars)))
+                    .collect();
                 format!("\"$TOOL\" {}", args.join(" "))
             }
             StepKind::Git(a) => {
-                let args: Vec<String> = a.iter().map(|x| sh_quote(&static_subst(x, &vars))).collect();
+                let args: Vec<String> = a
+                    .iter()
+                    .map(|x| sh_quote(&static_subst(x, &vars)))
+                    .collect();
                 format!("git {}", args.join(" "))
             }
             StepKind::Shell(c) => format!("sh -c {}", sh_quote(&static_subst(c, &vars))),
         };
-        let cwd = st.cwd.as_ref().map_or_else(|| wd.clone(), |c| format!("{wd}/{c}"));
-        let _ = writeln!(o, "  # step {n}");
-        let _ = writeln!(o, "  tick=$((tick + 1)); d=\"$((BASE_DATE + tick)) +0000\"");
-        let stdin = if st.stdin.is_empty() { String::from("</dev/null") } else { format!("< \"$OUT/$side/stdin-{n}\"") };
+        let cwd = st
+            .cwd
+            .as_ref()
+            .map_or_else(|| wd.clone(), |c| format!("{wd}/{c}"));
+        writeln!(o, "  # step {n}").unwrap_or_default();
+        writeln!(o, "  tick=$((tick + 1)); d=\"$((BASE_DATE + tick)) +0000\"").unwrap_or_default();
+        let stdin = if st.stdin.is_empty() {
+            String::from("</dev/null")
+        } else {
+            format!("< \"$OUT/$side/stdin-{n}\"")
+        };
         if !st.stdin.is_empty() {
-            let _ = writeln!(o, "  printf '%b' {} > \"$OUT/$side/stdin-{n}\"", printf_arg(&st.stdin));
+            writeln!(
+                o,
+                "  printf '%b' {} > \"$OUT/$side/stdin-{n}\"",
+                printf_arg(&st.stdin)
+            )
+            .unwrap_or_default();
         }
         let run = format!(
             "(cd {} && hermetic env{unset} GIT_AUTHOR_DATE=\"$d\" GIT_COMMITTER_DATE=\"$d\" PRE_COMMIT=\"$TOOL\"{env} {cmd}) {stdin} > \"$OUT/$side/step-{n}.stdout\" 2> \"$OUT/$side/step-{n}.stderr\"",
@@ -527,25 +689,25 @@ pub fn repro_script(s: &Scenario, r: &Runner, root: &Path) -> String {
         );
         match &st.signal {
             Some(sig) => {
-                let _ = writeln!(o, "  {run} &\n  pid=$!");
+                writeln!(o, "  {run} &\n  pid=$!").unwrap_or_default();
                 if let Some(f) = &sig.after_file {
-                    let _ = writeln!(
+                    writeln!(
                         o,
                         "  n=0; while [ ! -e {}/{} ] && [ $n -lt 1200 ]; do sleep 0.05; n=$((n + 1)); done",
                         sh_quote(&cwd),
                         sh_quote(f)
-                    );
+                    ).unwrap_or_default();
                 }
-                let _ = writeln!(
+                writeln!(
                     o,
                     "  sleep {}.{:03}; kill -{} \"$pid\" 2>/dev/null; wait \"$pid\"; echo $? > \"$OUT/$side/step-{n}.exit\"",
                     sig.after_ms / 1000,
                     sig.after_ms % 1000,
                     sig.name.trim_start_matches("SIG")
-                );
+                ).unwrap_or_default();
             }
             None => {
-                let _ = writeln!(o, "  {run}; echo $? > \"$OUT/$side/step-{n}.exit\"");
+                writeln!(o, "  {run}; echo $? > \"$OUT/$side/step-{n}.exit\"").unwrap_or_default();
             }
         }
     }
@@ -566,7 +728,7 @@ hermetic() {
     XDG_CACHE_HOME="$ROOT/home/.cache" GIT_TEMPLATE_DIR="$ROOT/git-template" GIT_CONFIG_NOSYSTEM=1 \
     GIT_AUTHOR_NAME=test GIT_COMMITTER_NAME=test GIT_AUTHOR_EMAIL=test@example.com \
     GIT_COMMITTER_EMAIL=test@example.com GIT_AUTHOR_DATE="$BASE_DATE +0000" GIT_COMMITTER_DATE="$BASE_DATE +0000" \
-    GIT_ALLOW_PROTOCOL=file LC_ALL=C.UTF-8 LANG=C.UTF-8 TZ=UTC VIRTUALENV_NO_DOWNLOAD=1 "$@"
+    GIT_ALLOW_PROTOCOL=file LC_ALL=C.UTF-8 LANG=C.UTF-8 TZ=UTC VIRTUALENV_NO_DOWNLOAD=1 PYTHONHASHSEED=0 "$@"
 }
 
 g() {
@@ -632,7 +794,7 @@ mod tests {
         assert_eq!(kept, vec![17, 42]);
         assert!(runs < 200, "{runs}");
         let none = ddmin(&items, &mut |_: &[u32]| true);
-        assert!(none.is_empty());
+        assert_eq!(none, Vec::<u32>::new());
         let one = ddmin(&[1_u8], &mut |c: &[u8]| !c.is_empty());
         assert_eq!(one, vec![1]);
     }
@@ -640,41 +802,73 @@ mod tests {
     #[test]
     fn shrinks_files_hooks_and_steps() {
         let mut s = Scenario::new("x");
-        s.work.files = (0..40).map(|i| (format!("f{i}.txt").into_bytes(), format!("a\nb{i}\nc\n").into_bytes())).collect();
+        s.work.files = (0..40)
+            .map(|i| {
+                (
+                    format!("f{i}.txt").into_bytes(),
+                    format!("a\nb{i}\nc\n").into_bytes(),
+                )
+            })
+            .collect();
         s.work.stage = s.work.files.iter().map(|(p, _)| p.clone()).collect();
         let mut cfg = String::from("repos:\n-   repo: local\n    hooks:\n");
         for i in 0..12 {
-            let _ = writeln!(cfg, "    - {{id: h{i}, name: h{i}, entry: x, language: system}}");
+            writeln!(
+                cfg,
+                "    - {{id: h{i}, name: h{i}, entry: x, language: system}}"
+            )
+            .unwrap_or_default();
         }
         s.work.config = Some(cfg);
-        s.steps = (0..5).map(|_| crate::scenario::Step {
-            kind: StepKind::Tool(vec![String::from("run")]),
-            env: vec![(String::from("SKIP"), Some(String::from("x")))],
-            stdin: Vec::new(),
-            tty: false,
-            timeout_ms: None,
-            cwd: None,
-            signal: None,
-        }).collect();
+        s.steps = (0..5)
+            .map(|_| crate::scenario::Step {
+                kind: StepKind::Tool(vec![String::from("run")]),
+                env: vec![(String::from("SKIP"), Some(String::from("x")))],
+                stdin: Vec::new(),
+                tty: false,
+                timeout_ms: None,
+                cwd: None,
+                signal: None,
+            })
+            .collect();
         // The "divergence": file f7.txt containing b7 staged, and hook h3 configured.
         let mut pred = |c: &Scenario| {
-            c.work.files.iter().any(|(p, b)| p == b"f7.txt" && crate::text::contains_bytes(b, b"b7"))
+            c.work
+                .files
+                .iter()
+                .any(|(p, b)| p == b"f7.txt" && crate::text::contains_bytes(b, b"b7"))
                 && c.work.stage.iter().any(|p| p == b"f7.txt")
-                && c.work.config.as_deref().is_some_and(|t| t.contains("id: h3,"))
+                && c.work
+                    .config
+                    .as_deref()
+                    .is_some_and(|t| t.contains("id: h3,"))
                 && !c.steps.is_empty()
         };
         let out = shrink(&s, &mut pred, 5000);
         assert!(!out.budget_exhausted);
-        assert_eq!(out.scenario.work.files, vec![(b"f7.txt".to_vec(), b"b7\n".to_vec())]);
+        assert_eq!(
+            out.scenario.work.files,
+            vec![(b"f7.txt".to_vec(), b"b7\n".to_vec())]
+        );
         assert_eq!(hook_count(&out.scenario), 1);
         assert_eq!(out.scenario.steps.len(), 1);
-        assert!(out.scenario.steps[0].env.is_empty());
+        assert_eq!(out.scenario.steps[0].env, Vec::new());
     }
 
     #[test]
+    #[expect(
+        clippy::literal_string_with_formatting_args,
+        reason = "`${…}` is the materialiser's substitution syntax"
+    )]
     fn static_substitution() {
-        let vars = vec![(String::from("work"), String::from("/r/work")), (String::from("repo:h"), String::from("/r/repos/h"))];
-        assert_eq!(static_subst("${work}/a ${repo:h} ${rev:h} ${nope}", &vars), "/r/work/a /r/repos/h @@REV_h@@ ${nope}");
+        let vars = vec![
+            (String::from("work"), String::from("/r/work")),
+            (String::from("repo:h"), String::from("/r/repos/h")),
+        ];
+        assert_eq!(
+            static_subst("${work}/a ${repo:h} ${rev:h} ${nope}", &vars),
+            "/r/work/a /r/repos/h @@REV_h@@ ${nope}"
+        );
         assert_eq!(printf_arg(b"a'b\n\xff"), "'a\\0047b\\0012\\0377'");
     }
 }

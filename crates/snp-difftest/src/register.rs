@@ -52,10 +52,26 @@ pub fn parse_register(md: &str) -> Vec<Entry> {
         if !in_register || !line.starts_with("| D-") {
             continue;
         }
-        let cells: Vec<&str> = line.trim().trim_matches('|').split(" | ").map(str::trim).collect();
-        let (Some(id), Some(wp)) = (cells.first(), cells.last()) else { continue };
-        let summary = cells.len().checked_sub(2).and_then(|i| cells.get(i)).copied().unwrap_or_default();
-        let class = section.split_whitespace().nth(1).unwrap_or_default().to_owned();
+        let cells: Vec<&str> = line
+            .trim()
+            .trim_matches('|')
+            .split(" | ")
+            .map(str::trim)
+            .collect();
+        let (Some(id), Some(wp)) = (cells.first(), cells.last()) else {
+            continue;
+        };
+        let summary = cells
+            .len()
+            .checked_sub(2)
+            .and_then(|i| cells.get(i))
+            .copied()
+            .unwrap_or_default();
+        let class = section
+            .split_whitespace()
+            .nth(1)
+            .unwrap_or_default()
+            .to_owned();
         let owners = wp
             .split(',')
             .map(str::trim)
@@ -113,7 +129,12 @@ impl Report {
         let mut m: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for s in &self.ids {
             if s.scenario == FileState::Stub || !s.doc_filled {
-                let owner = s.entry.owners.first().cloned().unwrap_or_else(|| String::from("?"));
+                let owner = s
+                    .entry
+                    .owners
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| String::from("?"));
                 m.entry(owner).or_default().push(s.entry.id.clone());
             }
         }
@@ -129,7 +150,7 @@ impl Report {
     pub fn render(&self) -> String {
         let mut o = String::new();
         let count = |f: &dyn Fn(&IdStatus) -> bool| self.ids.iter().filter(|s| f(s)).count();
-        let _ = writeln!(
+        writeln!(
             o,
             "divergence register: {} IDs; scenarios: {} active, {} unit-pinned, {} stub, {} missing; rationales: {} filled",
             self.ids.len(),
@@ -138,21 +159,31 @@ impl Report {
             count(&|s| s.scenario == FileState::Stub),
             count(&|s| s.scenario == FileState::Missing),
             count(&|s| s.doc_filled),
-        );
+        ).unwrap_or_default();
         let stubs = self.stubs_by_owner();
         if !stubs.is_empty() {
-            let _ = writeln!(o, "unfilled (scenario or rationale still a stub), by owner:");
+            writeln!(
+                o,
+                "unfilled (scenario or rationale still a stub), by owner:"
+            )
+            .unwrap_or_default();
             for (owner, ids) in &stubs {
-                let _ = writeln!(o, "  {owner}: {}", ids.join(", "));
+                writeln!(o, "  {owner}: {}", ids.join(", ")).unwrap_or_default();
             }
         }
         for s in &self.ids {
             if let FileState::Unit(tests) = &s.scenario {
-                let _ = writeln!(o, "  {} pinned by unit tests: {}", s.entry.id, tests.join(", "));
+                writeln!(
+                    o,
+                    "  {} pinned by unit tests: {}",
+                    s.entry.id,
+                    tests.join(", ")
+                )
+                .unwrap_or_default();
             }
         }
         for p in &self.problems {
-            let _ = writeln!(o, "PROBLEM: {p}");
+            writeln!(o, "PROBLEM: {p}").unwrap_or_default();
         }
         o
     }
@@ -165,7 +196,9 @@ fn doc_is_stub(text: &str) -> bool {
 
 /// Whether `path::name` (or `path::mod::name`) names an existing test function.
 fn unit_test_exists(root: &Path, spec: &str) -> bool {
-    let Some((file, rest)) = spec.split_once("::") else { return false };
+    let Some((file, rest)) = spec.split_once("::") else {
+        return false;
+    };
     let name = rest.rsplit("::").next().unwrap_or(rest);
     std::fs::read_to_string(root.join(file)).is_ok_and(|t| t.contains(&format!("fn {name}(")))
 }
@@ -176,7 +209,10 @@ pub fn check(root: &Path) -> Result<Report, String> {
     let md = std::fs::read_to_string(&compat).map_err(|e| format!("{}: {e}", compat.display()))?;
     let entries = parse_register(&md);
     if entries.is_empty() {
-        return Err(format!("{}: no register rows found in §5", compat.display()));
+        return Err(format!(
+            "{}: no register rows found in §5",
+            compat.display()
+        ));
     }
     let scen_dir = root.join("tests/differential/divergences");
     let doc_dir = root.join("docs/divergences");
@@ -184,13 +220,17 @@ pub fn check(root: &Path) -> Result<Report, String> {
     let mut seen: Vec<&str> = Vec::new();
     for e in &entries {
         if seen.contains(&e.id.as_str()) {
-            report.problems.push(format!("{} appears twice in COMPATIBILITY §5", e.id));
+            report
+                .problems
+                .push(format!("{} appears twice in COMPATIBILITY §5", e.id));
         }
         seen.push(&e.id);
         let yaml = scen_dir.join(format!("{}.yaml", e.id));
         let scenario = match std::fs::read_to_string(&yaml) {
             Err(_) => {
-                report.problems.push(format!("{}: missing {}", e.id, yaml.display()));
+                report
+                    .problems
+                    .push(format!("{}: missing {}", e.id, yaml.display()));
                 FileState::Missing
             }
             Ok(text) => match Scenario::parse(&text, &yaml) {
@@ -212,7 +252,9 @@ pub fn check(root: &Path) -> Result<Report, String> {
                         Status::Unit => {
                             for t in &s.unit_tests {
                                 if !unit_test_exists(root, t) {
-                                    report.problems.push(format!("{}: unit test {t} not found", e.id));
+                                    report
+                                        .problems
+                                        .push(format!("{}: unit test {t} not found", e.id));
                                 }
                             }
                             FileState::Unit(s.unit_tests)
@@ -223,20 +265,31 @@ pub fn check(root: &Path) -> Result<Report, String> {
             },
         };
         let doc = doc_dir.join(format!("{}.md", e.id));
-        let doc_filled = match std::fs::read_to_string(&doc) {
-            Ok(t) => !doc_is_stub(&t),
-            Err(_) => {
-                report.problems.push(format!("{}: missing {}", e.id, doc.display()));
-                false
-            }
+        let doc_filled = if let Ok(t) = std::fs::read_to_string(&doc) {
+            !doc_is_stub(&t)
+        } else {
+            report
+                .problems
+                .push(format!("{}: missing {}", e.id, doc.display()));
+            false
         };
-        report.ids.push(IdStatus { entry: e.clone(), scenario, doc_filled });
+        report.ids.push(IdStatus {
+            entry: e.clone(),
+            scenario,
+            doc_filled,
+        });
     }
     for (dir, ext) in [(&scen_dir, "yaml"), (&doc_dir, "md")] {
         for f in list(dir, ext)? {
-            let stem = f.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+            let stem = f
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
             if stem != "README" && !entries.iter().any(|e| e.id == stem) {
-                report.problems.push(format!("{}: no register row {stem} in COMPATIBILITY §5", f.display()));
+                report.problems.push(format!(
+                    "{}: no register row {stem} in COMPATIBILITY §5",
+                    f.display()
+                ));
             }
         }
     }
@@ -245,7 +298,10 @@ pub fn check(root: &Path) -> Result<Report, String> {
 
 fn list(dir: &Path, ext: &str) -> Result<Vec<PathBuf>, String> {
     let mut v = Vec::new();
-    for e in std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?.flatten() {
+    for e in std::fs::read_dir(dir)
+        .map_err(|e| format!("{}: {e}", dir.display()))?
+        .flatten()
+    {
         let p = e.path();
         if p.extension().is_some_and(|x| x == ext) {
             v.push(p);
@@ -270,7 +326,10 @@ mod tests {
         assert_eq!(r[0].id, "D-CRASH-01");
         assert_eq!(r[0].class, "CRASH");
         assert_eq!(r[0].summary, "snp text");
-        assert_eq!(r[1].owners, vec![String::from("WP-21"), String::from("WP-13")]);
+        assert_eq!(
+            r[1].owners,
+            vec![String::from("WP-21"), String::from("WP-13")]
+        );
         assert_eq!(r[2].class, "DIAG");
         assert_eq!(r[2].summary, "warn");
     }
@@ -281,16 +340,30 @@ mod tests {
         let rep = check(&root).unwrap();
         assert!(rep.problems.is_empty(), "{}", rep.render());
         assert!(rep.ids.len() >= 80);
-        assert!(rep.ids.iter().any(|s| s.entry.id == "D-DIAG-05" && s.scenario == FileState::Active));
-        assert!(rep.ids.iter().any(|s| matches!(s.scenario, FileState::Unit(_))));
+        assert!(
+            rep.ids
+                .iter()
+                .any(|s| s.entry.id == "D-DIAG-05" && s.scenario == FileState::Active)
+        );
+        assert!(
+            rep.ids
+                .iter()
+                .any(|s| matches!(s.scenario, FileState::Unit(_)))
+        );
         assert!(rep.render().starts_with("divergence register: "));
     }
 
     #[test]
     fn unit_test_lookup() {
         let root = crate::workspace_root();
-        assert!(unit_test_exists(&root, "crates/snp-difftest/src/register.rs::tests::unit_test_lookup"));
-        assert!(!unit_test_exists(&root, "crates/snp-difftest/src/register.rs::no_such_test"));
+        assert!(unit_test_exists(
+            &root,
+            "crates/snp-difftest/src/register.rs::tests::unit_test_lookup"
+        ));
+        assert!(!unit_test_exists(
+            &root,
+            "crates/snp-difftest/src/register.rs::no_such_test"
+        ));
         assert!(!unit_test_exists(&root, "no-separator"));
         assert!(doc_is_stub("To be written by WP-32: why"));
     }
