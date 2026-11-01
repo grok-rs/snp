@@ -27,7 +27,13 @@ fn x13_sm_04_bare_warnings_inside_meta_output() {
     let got: String = o
         .stdout
         .lines()
-        .map(|l| if l.starts_with("- duration: ") { "- duration: Xs" } else { l })
+        .map(|l| {
+            if l.starts_with("- duration: ") {
+                "- duration: Xs"
+            } else {
+                l
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n");
     let want = "[WARNING] Unexpected key(s) present at root: bogus_root
@@ -85,7 +91,8 @@ fn t10_met_01_check_hooks_apply_reports_itself() {
         let o = h.run(all());
         assert_eq!(o.code, 1, "{extra}: {}", o.stdout);
         assert!(
-            o.stdout.contains("check-useless-excludes does not apply to this repository"),
+            o.stdout
+                .contains("check-useless-excludes does not apply to this repository"),
             "{extra}: {}",
             o.stdout
         );
@@ -102,7 +109,10 @@ fn t10_met_02_fail_and_always_run_hooks_are_exempt() {
     ));
     let o = h.run(all());
     assert_eq!(o.code, 0, "{}", o.stdout);
-    assert!(o.stdout.contains(&line("Check hooks apply to the repository", "Passed")));
+    assert!(
+        o.stdout
+            .contains(&line("Check hooks apply to the repository", "Passed"))
+    );
 }
 
 #[test]
@@ -114,7 +124,12 @@ fn t10_met_03_useless_global_exclude() {
     ));
     let o = h.run(all());
     assert_eq!(o.code, 1);
-    assert!(o.stdout.contains("\n\nThe global exclude pattern 'foo' does not match any files\n\n"), "{}", o.stdout);
+    assert!(
+        o.stdout
+            .contains("\n\nThe global exclude pattern 'foo' does not match any files\n\n"),
+        "{}",
+        o.stdout
+    );
 }
 
 #[test]
@@ -126,9 +141,11 @@ fn t10_met_04_useless_hook_exclude() {
     ));
     let o = h.run(all());
     assert_eq!(o.code, 1);
-    assert!(o.stdout.contains(
-        "The exclude pattern 'foo' for check-useless-excludes does not match any files"
-    ));
+    assert!(
+        o.stdout.contains(
+            "The exclude pattern 'foo' for check-useless-excludes does not match any files"
+        )
+    );
 }
 
 #[test]
@@ -138,12 +155,21 @@ fn t10_met_05_exclude_after_type_filter() {
     h.config_staged(&format!(
         "repos:\n{}{}",
         meta("    -   id: check-useless-excludes\n        verbose: true\n"),
-        local(&sys("l", "l", "'true'", "exclude: .pre-commit-config.yaml\ntypes: [python]"))
-            .trim_start_matches("repos:\n"),
+        local(&sys(
+            "l",
+            "l",
+            "'true'",
+            "exclude: .pre-commit-config.yaml\ntypes: [python]"
+        ))
+        .trim_start_matches("repos:\n"),
     ));
     let o = h.run(all());
     assert_eq!(o.code, 1, "{}", o.stdout);
-    assert!(o.stdout.contains("The exclude pattern '.pre-commit-config.yaml' for l does not match any files"));
+    assert!(
+        o.stdout.contains(
+            "The exclude pattern '.pre-commit-config.yaml' for l does not match any files"
+        )
+    );
 }
 
 #[test]
@@ -156,7 +182,10 @@ fn t10_met_06_no_or_matching_excludes() {
     let o = h.run(all());
     assert_eq!(o.code, 0, "{}", o.stdout);
     let h = H::new();
-    h.config_staged(&format!("repos:\n{}", meta("    -   id: check-useless-excludes\n")));
+    h.config_staged(&format!(
+        "repos:\n{}",
+        meta("    -   id: check-useless-excludes\n")
+    ));
     assert_eq!(h.run(all()).code, 0);
 }
 
@@ -166,7 +195,13 @@ fn t10_met_07_broken_symlink_excluded() {
     h.config_staged(&format!(
         "repos:\n{}{}",
         meta("    -   id: check-useless-excludes\n"),
-        local(&sys("l", "l", "'true'", "exclude: ^broken$\ntypes: [symlink]")).trim_start_matches("repos:\n"),
+        local(&sys(
+            "l",
+            "l",
+            "'true'",
+            "exclude: ^broken$\ntypes: [symlink]"
+        ))
+        .trim_start_matches("repos:\n"),
     ));
     std::os::unix::fs::symlink("nowhere", h.path("broken")).unwrap();
     h.stage("broken");
@@ -190,17 +225,27 @@ fn t10_met_08_identity_prints_its_argv() {
 fn meta_hooks_read_the_default_config_not_dash_c() {
     let h = H::new();
     // `.pre-commit-config.yaml` has a useless exclude; `-c other.yaml` only runs the meta hook
-    h.config_staged(&format!("exclude: nomatch\nrepos:\n{}", meta("    -   id: identity\n")));
+    h.config_staged(&format!(
+        "exclude: nomatch\nrepos:\n{}",
+        meta("    -   id: identity\n")
+    ));
     h.write(
         "other.yaml",
-        format!("repos:\n{}", meta("    -   id: check-useless-excludes\n        verbose: true\n")).as_bytes(),
+        format!(
+            "repos:\n{}",
+            meta("    -   id: check-useless-excludes\n        verbose: true\n")
+        )
+        .as_bytes(),
     );
     h.stage("other.yaml");
     let mut a = all();
     a.config = "other.yaml".into();
     let o = h.run(a);
     assert_eq!(o.code, 1, "{}", o.stdout);
-    assert!(o.stdout.contains("The global exclude pattern 'nomatch' does not match any files"));
+    assert!(
+        o.stdout
+            .contains("The global exclude pattern 'nomatch' does not match any files")
+    );
 }
 
 #[test]

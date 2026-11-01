@@ -1276,3 +1276,47 @@ fn exec_errors_render_like_pre_commit() {
         assert!(o.stdout.contains(want), "{want:?} in {}", o.stdout);
     }
 }
+
+#[test]
+fn interrupt_restores_the_stash_and_reports_interrupted() {
+    let mut h = fixer();
+    h.config(&local(&sys(
+        "slow",
+        "slow",
+        "sleep 20",
+        "pass_filenames: false",
+    )));
+    h.write("a.txt", b"a\nstaged2\n");
+    h.stage("a.txt");
+    h.write("a.txt", b"a\nstaged2\nunstaged\n");
+    h.cancel_after = Some(Duration::from_millis(500));
+    let t0 = std::time::Instant::now();
+    let o = h.run(args());
+    assert!(t0.elapsed() < Duration::from_secs(15), "{:?}", t0.elapsed());
+    assert_eq!(o.code, 130, "{o:?}");
+    assert!(matches!(
+        o.failure,
+        Some(snp_core::failure::Failure::Interrupted(
+            snp_core::cancel::CancelReason::Interrupt
+        ))
+    ));
+    assert!(
+        o.stdout.contains("[INFO] Restored changes from "),
+        "{}",
+        o.stdout
+    );
+    assert_eq!(h.read("a.txt"), "a\nstaged2\nunstaged\n");
+}
+
+#[test]
+fn epipe_stops_the_run_and_restores_the_stash() {
+    let mut h = fixer();
+    h.broken_stdout = true;
+    let o = h.run(args());
+    assert_eq!(o.code, 120, "{o:?}");
+    assert!(matches!(
+        o.failure,
+        Some(snp_core::failure::Failure::StdoutClosed)
+    ));
+    assert_eq!(h.read("a.txt"), "a\nstaged\nunstaged\n");
+}

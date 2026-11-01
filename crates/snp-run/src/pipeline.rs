@@ -92,11 +92,13 @@ pub(crate) fn run_pipeline(a: &RunArgs, cx: &RunCtx, inv: &Invocation<'_>) -> Re
         None => Ok(()),
     };
     drop(st.store_guard.take());
-    match (body, restored, cancelled) {
+    // a restore failure replaces everything (an exception raised in a Python `finally`); after a cancellation the
+    // body's own error is an artefact of it (a git call killed by the escalation), so the cancellation is reported
+    match (body, restored, cancelled.or_else(|| cx.cancel.reason())) {
         (_, Err(r), _) => Err(r),
-        (Err(f), Ok(()), _) => Err(f),
-        (Ok(_), Ok(()), Some(CancelReason::StdoutClosed)) => Err(Failure::StdoutClosed),
-        (Ok(_), Ok(()), Some(r)) => Err(Failure::Interrupted(r)),
+        (_, Ok(()), Some(CancelReason::StdoutClosed)) => Err(Failure::StdoutClosed),
+        (_, Ok(()), Some(r)) => Err(Failure::Interrupted(r)),
+        (Err(f), Ok(()), None) => Err(f),
         (Ok(code), Ok(()), None) => Ok(code),
     }
 }

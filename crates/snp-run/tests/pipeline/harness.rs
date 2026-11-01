@@ -51,6 +51,18 @@ impl Sink {
     }
 }
 
+/// A stdout whose reader went away.
+struct Broken;
+
+impl Write for Broken {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+    }
+}
+
 /// What the fake resolver should do at install time.
 #[derive(Debug, Default)]
 pub(crate) struct Installs {
@@ -213,6 +225,10 @@ pub(crate) struct H {
     pub(crate) color: bool,
     pub(crate) cwd: Option<PathBuf>,
     pub(crate) jobs: usize,
+    /// Cancel the run (as the signal thread would on SIGINT) after this long.
+    pub(crate) cancel_after: Option<Duration>,
+    /// stdout fails with EPIPE (a closed pager).
+    pub(crate) broken_stdout: bool,
 }
 
 impl H {
@@ -248,6 +264,8 @@ impl H {
             color: false,
             cwd: None,
             jobs: 4,
+            cancel_after: None,
+            broken_stdout: false,
         };
         h.git(&["init", "-q", "-b", "main"]);
         h.git(&["config", "commit.gpgsign", "false"]);
@@ -331,8 +349,22 @@ impl H {
         let env = Env::from_pairs(self.env.iter().cloned());
         let cancel = CancelToken::new();
         let cwd = self.cwd.clone().unwrap_or_else(|| self.root.clone());
+        if let Some(d) = self.cancel_after {
+            let c = cancel.clone();
+            std::thread::Builder::new()
+                .spawn(move || {
+                    std::thread::sleep(d);
+                    c.cancel(snp_core::cancel::CancelReason::Interrupt);
+                })
+                .unwrap();
+        }
+        let out: Box<dyn Write + Send> = if self.broken_stdout {
+            Box::new(Broken)
+        } else {
+            Box::new(stdout.clone())
+        };
         let printer = Arc::new(Printer::new(
-            Box::new(stdout.clone()),
+            out,
             Box::new(stderr.clone()),
             PrinterOpts {
                 brand: self.brand,

@@ -19,7 +19,10 @@ fn hooks_dir(h: &H) -> std::path::PathBuf {
 fn t10_hki_08_nothing_staged() {
     let h = H::new();
     h.config(SAMPLE);
-    let o = h.hook_impl(hook_impl_args("pre-commit", &["--"], Some(&hooks_dir(&h))), b"");
+    let o = h.hook_impl(
+        hook_impl_args("pre-commit", &["--"], Some(&hooks_dir(&h))),
+        b"",
+    );
     assert_eq!(o.code, 0, "{o:?}");
     assert_eq!(
         o.stdout,
@@ -55,10 +58,22 @@ fn t10_hki_01_missing_config() {
     b.config = "DNE.yaml".into();
     b.skip_on_missing_config = true;
     let o = h.hook_impl(b, b"");
-    assert_eq!((o.code, o.stdout.as_str()), (123, "`DNE.yaml` config file not found. Skipping `pre-commit`.\n"));
+    assert_eq!(
+        (o.code, o.stdout.as_str()),
+        (
+            123,
+            "`DNE.yaml` config file not found. Skipping `pre-commit`.\n"
+        )
+    );
     h.env_set("PRE_COMMIT_ALLOW_NO_CONFIG", "1");
     let o = h.hook_impl(a, b"");
-    assert_eq!((o.code, o.stdout.as_str()), (0, "`DNE.yaml` config file not found. Skipping `pre-commit`.\n"));
+    assert_eq!(
+        (o.code, o.stdout.as_str()),
+        (
+            0,
+            "`DNE.yaml` config file not found. Skipping `pre-commit`.\n"
+        )
+    );
 }
 
 #[test]
@@ -69,7 +84,11 @@ fn t10_hki_02_legacy_hook() {
     let log = h.path("legacy.log");
     h.exec(
         ".git/hooks/pre-commit.legacy",
-        format!("#!/bin/sh\necho \"hi $* $PRE_COMMIT_RUNNING_LEGACY\" > '{}'\nexit 1\n", log.display()).as_bytes(),
+        format!(
+            "#!/bin/sh\necho \"hi $* $PRE_COMMIT_RUNNING_LEGACY\" > '{}'\nexit 1\n",
+            log.display()
+        )
+        .as_bytes(),
     );
     let o = h.hook_impl(hook_impl_args("pre-commit", &["--"], Some(&dir)), b"");
     assert_eq!(o.code, 1, "{o:?}");
@@ -85,7 +104,10 @@ fn t10_hki_02_legacy_hook() {
     );
     let z = "0".repeat(40);
     let stdin = format!("(delete) {z} refs/heads/b {}\n", "1".repeat(40));
-    let o = h.hook_impl(hook_impl_args("pre-push", &["--", "origin", "url"], Some(&dir)), stdin.as_bytes());
+    let o = h.hook_impl(
+        hook_impl_args("pre-push", &["--", "origin", "url"], Some(&dir)),
+        stdin.as_bytes(),
+    );
     assert_eq!(o.code, 0, "{o:?}");
     assert_eq!(std::fs::read_to_string(&got).unwrap(), stdin);
 }
@@ -141,10 +163,16 @@ fn x13_hi_02_wrong_argument_count() {
         other => panic!("{other:?}"),
     }
     // `rest[1:]` drops the first token whatever it is
-    let o = h.hook_impl(hook_impl_args("commit-msg", &[".git/COMMIT_EDITMSG"], None), b"");
+    let o = h.hook_impl(
+        hook_impl_args("commit-msg", &[".git/COMMIT_EDITMSG"], None),
+        b"",
+    );
     match o.failure {
         Some(Failure::SystemExit { stderr, .. }) => {
-            assert_eq!(stderr, b"hook-impl for commit-msg expected 1 argument but got 0: []\n");
+            assert_eq!(
+                stderr,
+                b"hook-impl for commit-msg expected 1 argument but got 0: []\n"
+            );
         }
         other => panic!("{other:?}"),
     }
@@ -179,7 +207,10 @@ fn d_data_07_cdpath_doubled_hook_dir() {
         format!("#!/bin/sh\ntouch '{}'\n", marker.display()).as_bytes(),
     );
     let doubled = format!("{0}\n{0}", dir.display());
-    let o = h.hook_impl(hook_impl_args("pre-commit", &["--"], Some(Path::new(&doubled))), b"");
+    let o = h.hook_impl(
+        hook_impl_args("pre-commit", &["--"], Some(Path::new(&doubled))),
+        b"",
+    );
     assert_eq!(o.code, 0, "{o:?}");
     assert!(marker.exists());
 }
@@ -195,7 +226,10 @@ fn d_sec_12_huge_pre_push_stdin_fails_closed_before_the_legacy_hook() {
         format!("#!/bin/sh\ntouch '{}'\n", marker.display()).as_bytes(),
     );
     let big = vec![b'x'; 65 << 20];
-    let o = h.hook_impl(hook_impl_args("pre-push", &["--", "origin", "url"], Some(&dir)), &big);
+    let o = h.hook_impl(
+        hook_impl_args("pre-push", &["--", "origin", "url"], Some(&dir)),
+        &big,
+    );
     assert_eq!(o.code, 1);
     assert!(!marker.exists());
     match o.failure {
@@ -218,21 +252,39 @@ fn d_ext_05_kill_switch() {
     let marker = h.path("ran");
     h.exec(
         ".git/hooks/pre-push.legacy",
-        format!("#!/bin/sh\ncat > /dev/null; touch '{}'; exit 4\n", marker.display()).as_bytes(),
+        format!(
+            "#!/bin/sh\ncat > /dev/null; touch '{}'; exit 4\n",
+            marker.display()
+        )
+        .as_bytes(),
     );
     h.env_set("SNP", "0");
-    let o = h.hook_impl(hook_impl_args("pre-push", &["--", "origin", "url"], Some(&dir)), b"");
+    let o = h.hook_impl(
+        hook_impl_args("pre-push", &["--", "origin", "url"], Some(&dir)),
+        b"",
+    );
     assert_eq!((o.code, o.stdout.as_str()), (4, ""));
-    assert!(marker.exists(), "a git-lfs-like legacy pre-push hook still runs");
+    assert!(
+        marker.exists(),
+        "a git-lfs-like legacy pre-push hook still runs"
+    );
     // allow_disable: false overrides
     h.config(&format!(
         "allow_disable: false\n{}",
-        local(&sys("p", "passing", "'true'", "always_run: true\nstages: [pre-commit]"))
+        local(&sys(
+            "p",
+            "passing",
+            "'true'",
+            "always_run: true\nstages: [pre-commit]"
+        ))
     ));
     let o = h.hook_impl(hook_impl_args("pre-commit", &["--"], None), b"");
     assert_eq!(o.code, 0, "{o:?}");
     assert_eq!(o.stdout, line("passing", "Passed"));
-    assert_eq!(o.stderr, "snp: SNP=0 ignored: .pre-commit-config.yaml sets allow_disable: false\n");
+    assert_eq!(
+        o.stderr,
+        "snp: SNP=0 ignored: .pre-commit-config.yaml sets allow_disable: false\n"
+    );
 }
 
 /// A repo with a remote `origin` holding the first commit (HKI-06/07, X13-HI-05).
@@ -252,11 +304,17 @@ fn pushed() -> (H, String, String) {
         .unwrap();
     h.git(&["remote", "add", "origin", &remote.to_string_lossy()]);
     h.git(&["push", "-q", "origin", "main"]);
-    let first = String::from_utf8(h.git(&["rev-parse", "HEAD"]).stdout).unwrap().trim().to_owned();
+    let first = String::from_utf8(h.git(&["rev-parse", "HEAD"]).stdout)
+        .unwrap()
+        .trim()
+        .to_owned();
     h.write("b", b"b");
     h.stage("b");
     h.commit("second");
-    let second = String::from_utf8(h.git(&["rev-parse", "HEAD"]).stdout).unwrap().trim().to_owned();
+    let second = String::from_utf8(h.git(&["rev-parse", "HEAD"]).stdout)
+        .unwrap()
+        .trim()
+        .to_owned();
     (h, first, second)
 }
 
@@ -264,17 +322,36 @@ fn pushed() -> (H, String, String) {
 fn t10_hki_06_pre_push_namespaces() {
     let (h, first, second) = pushed();
     let stdin = format!("refs/heads/main {second} refs/heads/main {first}\n");
-    let o = h.hook_impl(hook_impl_args("pre-push", &["--", "origin", "url"], None), stdin.as_bytes());
+    let o = h.hook_impl(
+        hook_impl_args("pre-push", &["--", "origin", "url"], None),
+        stdin.as_bytes(),
+    );
     assert_eq!(o.code, 0, "{o:?}");
-    assert!(o.stdout.contains(&format!("\n\n{first}..{second} origin refs/heads/main\n\n")), "{}", o.stdout);
+    assert!(
+        o.stdout
+            .contains(&format!("\n\n{first}..{second} origin refs/heads/main\n\n")),
+        "{}",
+        o.stdout
+    );
     // a new branch: from = the parent of the first commit not on the remote
     let z = "0".repeat(40);
     let stdin = format!("refs/heads/feat {second} refs/heads/feat {z}\n");
-    let o = h.hook_impl(hook_impl_args("pre-push", &["--", "origin", "url"], None), stdin.as_bytes());
-    assert!(o.stdout.contains(&format!("\n\n{first}..{second} origin refs/heads/feat\n\n")), "{}", o.stdout);
+    let o = h.hook_impl(
+        hook_impl_args("pre-push", &["--", "origin", "url"], None),
+        stdin.as_bytes(),
+    );
+    assert!(
+        o.stdout
+            .contains(&format!("\n\n{first}..{second} origin refs/heads/feat\n\n")),
+        "{}",
+        o.stdout
+    );
     // a new branch at an already pushed revision: nothing to push, no run
     let stdin = format!("refs/heads/old {first} refs/heads/old {z}\n");
-    let o = h.hook_impl(hook_impl_args("pre-push", &["--", "origin", "url"], None), stdin.as_bytes());
+    let o = h.hook_impl(
+        hook_impl_args("pre-push", &["--", "origin", "url"], None),
+        stdin.as_bytes(),
+    );
     assert_eq!((o.code, o.stdout.as_str()), (0, ""));
 }
 
@@ -283,7 +360,10 @@ fn t10_hki_07_delete_branch_push_prints_nothing() {
     let (h, first, _) = pushed();
     let z = "0".repeat(40);
     let stdin = format!("(delete) {z} refs/heads/b {first}\n");
-    let o = h.hook_impl(hook_impl_args("pre-push", &["--", "origin", "url"], None), stdin.as_bytes());
+    let o = h.hook_impl(
+        hook_impl_args("pre-push", &["--", "origin", "url"], None),
+        stdin.as_bytes(),
+    );
     assert_eq!((o.code, o.stdout.as_str(), o.stderr.as_str()), (0, "", ""));
 }
 
@@ -293,7 +373,10 @@ fn x13_hi_05_unknown_local_sha() {
     let z = "0".repeat(40);
     let bad = "1234567890".repeat(4);
     let stdin = format!("refs/heads/x {bad} refs/heads/x {z}\n");
-    let o = h.hook_impl(hook_impl_args("pre-push", &["--", "origin", "url"], None), stdin.as_bytes());
+    let o = h.hook_impl(
+        hook_impl_args("pre-push", &["--", "origin", "url"], None),
+        stdin.as_bytes(),
+    );
     assert_eq!(o.code, 3);
     match o.failure {
         Some(Failure::Exc { exc, .. }) => {
@@ -320,7 +403,10 @@ fn hook_impl_commit_msg_runs_on_the_message_file() {
         "stages: [commit-msg]\nverbose: true",
     )));
     h.write(".git/COMMIT_EDITMSG", b"hello\n");
-    let o = h.hook_impl(hook_impl_args("commit-msg", &["--", ".git/COMMIT_EDITMSG"], None), b"");
+    let o = h.hook_impl(
+        hook_impl_args("commit-msg", &["--", ".git/COMMIT_EDITMSG"], None),
+        b"",
+    );
     assert_eq!(o.code, 0, "{o:?}");
     assert!(o.stdout.ends_with("\n\nhello\n\n"), "{}", o.stdout);
 }
