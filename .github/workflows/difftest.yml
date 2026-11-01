@@ -1,0 +1,125 @@
+# Differential tests against pre-commit 4.6.2 (WBS WP-35; ARCHITECTURE §13.2; research 10 §7.4, §7.12).
+# Owned by WP-35.
+#
+# * harness   — every push: the harness's own acceptance (oracle-vs-oracle self-consistency of the seed scenarios,
+#               the planted-divergence shrinker test, corpus integrity), the divergence-register report and the
+#               catalog-status table. Needs the oracles but no snp behaviour, so it is a hard gate from day one.
+# * curated   — every push: the curated corpus (tests/differential/scenarios) and the per-ID divergence files in both
+#               brands on Linux, macOS and Windows, release binaries against the oracle. A scenario that cannot run
+#               on a runner (os, pty, network, a manual setup) is reported as skipped with its reason.
+# * generated — nightly: 2,000 generated cases (seed = run id, so a failure is replayed with
+#               `cargo xtask difftest --suite generated --seed <id> --case <i>`); failures are shrunk and their
+#               scenario.yaml + repro.sh uploaded.
+#
+# Layout as in ci.yml: the repository at $GITHUB_WORKSPACE/snp, the user crates next to it at the deps.lock commits.
+name: difftest
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: generated cases
+        default: "2000"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: difftest-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
+defaults:
+  run:
+    shell: bash
+    working-directory: snp
+
+jobs:
+  harness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: snp }
+      - uses: astral-sh/setup-uv@v6
+      - run: cargo xtask oracle install
+      - name: corpus integrity and unit tests
+        run: cargo test -p snp-difftest --locked
+      - name: seed self-consistency and the planted-divergence shrinker
+        run: cargo test -p snp-difftest --test oracle --locked -- --ignored
+      - name: curated corpus, oracle against itself
+        run: cargo xtask difftest --debug --suite curated --self-check
+      - name: divergence register
+        run: cargo xtask difftest --debug register
+      - name: divergence book
+        run: cargo xtask divergence-book --check
+      - name: catalog status
+        run: cargo xtask catalog-status
+
+  curated:
+    name: curated (${{ matrix.os }})
+    needs: harness
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: snp }
+      - uses: astral-sh/setup-uv@v6
+      - run: cargo xtask oracle install
+      - name: curated scenarios and divergence files, both brands
+        run: cargo xtask difftest --suite all --out target/difftest/out
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: difftest-curated-${{ matrix.os }}
+          path: snp/target/difftest/out
+          retention-days: 14
+
+  generated:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: harness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: snp }
+      - uses: astral-sh/setup-uv@v6
+      - run: cargo xtask oracle install
+      - name: generated suite
+        run: >-
+          cargo xtask difftest --suite generated --cases "${{ github.event.inputs.cases || '2000' }}"
+          --seed "$GITHUB_RUN_ID" --out target/difftest/out
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: difftest-generated-${{ github.run_id }}
+          path: snp/target/difftest/out
+          retention-days: 30
