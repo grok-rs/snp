@@ -402,3 +402,17 @@ Exported to hooks: exactly pre-commit's set (02 §6.1) plus `_SNP_STASH_LOCK` wh
 * Configs need no change. Extension keys keep configs usable by pre-commit (with warnings); `repo: builtin` does not.
 * `entry: pre-commit hazmat …` works without a `pre-commit` executable; other `pre-commit …` entries need the alias
   (`snp self alias install`) exactly as they need Python pre-commit today.
+* `snp migrate lefthook` known limits (each is reported or refused, never silent):
+  * glob patterns follow gobwas/glob v0.2.3 exactly (one range or a literal list per `[…]`, a trailing `\` dropped, an
+    unclosed `{` closed at the end; checked against vectors from the real library), except where gobwas itself is
+    inconsistent: a brace group whose alternatives are all empty (`{}`, `{,}`) is refused (the job becomes a `fail`
+    hook, `lossy`), and gobwas's byte-length bugs on multi-byte characters under `?` / `[…]` are not reproduced
+    (snp matches characters);
+  * lefthook lowercases pattern and path (`strings.ToLower`); the converted `files` regex uses `(?i:…)` and the shell
+    filter `grep -i`, which also fold `ſ`↔`s`, `ı`↔`i`, `µ`↔`μ` and a few Greek letter variants. Paths containing
+    those letters can match a converted `glob` that lefthook's would not;
+  * `--mode portable` reports as `lossy` (so `--strict` exits 2) every behaviour change it cannot express: lefthook's
+    default `fail_on_changes: never`, `fail_text`, `tags`, `skip`/`only`, `stage_fixed`, `timeout`, `use_stdin`;
+  * `snp migrate builtin` → `snp migrate upstream` restores the original bytes when `rev` directly follows `repo`;
+    a `rev` written before `repo` or after `hooks` comes back right after `repo` (same parsed config). A `repo`/`rev`
+    whose value is on the line after its key stays upstream.

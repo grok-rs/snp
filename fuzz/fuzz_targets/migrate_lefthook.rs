@@ -3,7 +3,8 @@
 //!
 //! The first byte selects the config format (`.yml`, `.json`, `.jsonc`, `.toml`) and the flags (portable, local,
 //! strict); the rest is the config text, split at the first `\n#local\n` into `lefthook.<ext>` and
-//! `lefthook-local.yml`. `snp_migrate::lefthook` must either fail with exit 1 (load error) / exit 2 (`--strict`) or
+//! `lefthook-local.yml`; the main part is split again at every `\n#extend\n` into the main file and `e/0.yml`,
+//! `e/1.yml`, … (reachable with `extends: [e/*.yml]`), so multi-file merges (`{cmd}` chains) are fuzzed too. `snp_migrate::lefthook` must either fail with exit 1 (load error) / exit 2 (`--strict`) or
 //! produce YAML that snp-yaml loads, an overlay that loads, and a report ending in the summary line. The same bytes
 //! also go through `to_builtin` / `to_upstream`, whose output must stay loadable YAML.
 //!
@@ -38,6 +39,12 @@ fuzz_target!(|data: &[u8]| {
         None => (text.into_owned(), None),
     };
     let dir = workdir();
+    let mut parts = main.split("\n#extend\n");
+    let main = parts.next().unwrap_or("").to_owned();
+    std::fs::create_dir_all(dir.join("e")).expect("extends dir");
+    for (i, part) in parts.take(64).enumerate() {
+        std::fs::write(dir.join(format!("e/{i}.yml")), part).expect("write extends");
+    }
     std::fs::write(dir.join(format!("lefthook.{ext}")), &main).expect("write config");
     if let Some(l) = &local {
         std::fs::write(dir.join("lefthook-local.yml"), l).expect("write local config");
