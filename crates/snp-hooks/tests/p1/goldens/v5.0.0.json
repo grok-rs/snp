@@ -415,6 +415,16 @@
    },
    "out": "Sorting a.txt\nAssertionError\n"
   },
+  "rtf-only-pkg-resources": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "r1": "",
+    "r2": "",
+    "r3": ""
+   },
+   "out": "Sorting r1\nSorting r2\nSorting r3\n"
+  },
   "rtf-single-indented-passes": {
    "code": 0,
    "crashed": false,

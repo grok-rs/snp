@@ -28,8 +28,10 @@ fn parse(group: &str, script: &str, epoch: u16, data: &[u8]) {
 
 fuzz_target!(|data: &[u8]| {
     for epoch in 1..=4 {
+        // A rewrite always differs from the input; it may be empty (a lone `pkg-resources==0.0.0` line is removed
+        // and the file truncated, as the Python hook does).
         if let Ok(Some(fixed)) = requirements_fix(data, epoch) {
-            assert!(!fixed.is_empty());
+            assert_ne!(fixed.as_slice(), data);
         }
     }
     drop(requirement_name(data));

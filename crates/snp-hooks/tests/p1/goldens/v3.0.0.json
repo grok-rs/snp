@@ -397,6 +397,16 @@
    },
    "out": "Sorting a.txt\nSorting r.txt\nSorting z.txt\n"
   },
+  "rtf-only-pkg-resources": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "r1": "",
+    "r2": "pkg_resources==0.0.0\n",
+    "r3": ""
+   },
+   "out": "Sorting r1\nSorting r3\n"
+  },
   "rtf-single-indented-passes": {
    "code": 0,
    "crashed": false,
