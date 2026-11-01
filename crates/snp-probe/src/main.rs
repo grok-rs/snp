@@ -326,29 +326,37 @@ fn daemonize(rest: &[OsString]) -> Result<i32, End> {
     let exe = std::env::current_exe().map_err(|e| End::Usage(format!("daemonize: {e}")))?;
     // Windows: a Rust child inherits every inheritable handle of its parent (`bInheritHandles`), including the
     // probe's own stdout/stderr pipes, so a "detached" copy would hold the hook's output open. A daemoniser that
-    // lets go of them (CPython's `close_fds`, a shell's `start`) is started through PowerShell's `Start-Process`,
-    // which inherits no handles.
+    // lets go of them (CPython's `close_fds`, a shell's `start`) is started through PowerShell with .NET's
+    // `Process.Start` and `UseShellExecute` (ShellExecuteEx inherits no handles). No cmdlet is called: in the
+    // test's hermetic environment a `Start-Process` (module autoloading) took about 50 s on the CI runners.
     #[cfg(windows)]
     if !hold {
         let script = format!(
-            "(Start-Process -WindowStyle Hidden -PassThru -FilePath '{}' -ArgumentList '__daemon','{secs}').Id",
+            "$i = New-Object System.Diagnostics.ProcessStartInfo; $i.FileName = '{}'; $i.Arguments = '__daemon {secs}'; \
+             $i.UseShellExecute = $true; $i.WindowStyle = 'Hidden'; [System.Diagnostics.Process]::Start($i).Id",
             exe.to_string_lossy().replace('\'', "''")
         );
-        // The hook's environment is the test's hermetic one (a POSIX `PATH`, no `SystemRoot`): PowerShell is
-        // named by its absolute path and gets the `SystemRoot` it needs to start.
+        // PowerShell is named by its absolute path (the hermetic `PATH` is POSIX) and gets the `SystemRoot` it
+        // needs to start.
         let root = system_root();
         let powershell =
             std::path::Path::new(&root).join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
         let o = std::process::Command::new(powershell)
             .env("SystemRoot", &root)
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &script,
+            ])
             .stdin(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .output()
             .map_err(|e| End::Usage(format!("daemonize: {e}")))?;
         let pid = String::from_utf8_lossy(&o.stdout).trim().to_owned();
         if !o.status.success() || pid.is_empty() {
-            return Err(End::Usage("daemonize: Start-Process failed".to_owned()));
+            return Err(End::Usage("daemonize: Process.Start failed".to_owned()));
         }
         line(format!("daemon {pid}"));
         return Ok(0);
