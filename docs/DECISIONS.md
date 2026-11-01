@@ -1115,6 +1115,14 @@ macOS shim.
 **Consequences.** No divergence from pre-commit: (1), (2) and (4) restore parity on macOS, (3) applies 11 §A.19.3.
 COMPATIBILITY §6.3 notes (1).
 
+**Amendment to ADR-043 (micro limits on shared runners).** The micro gate's absolute WP-22 limit, classification of
+50 k files with 10 filters in ≤ 40 ms, was set on the reference machine (29 ms there); the 4-vCPU GitHub runners
+measure 44–52 ms for the same binary, dominated by the 50 k `lstat` calls `Classifier::new` makes (pre-commit's
+`os.path.lexists` filter). A `[[micro]]` threshold may carry `reference_only = true`: `cargo xtask bench gate --micro
+--reference` (the reference machine) keeps it hard, every other run reports a breach as a warning. The other micro
+limits stay hard everywhere, and the release-mode `perf_classify*` smoke test still fails a 3× regression on every
+runner (ADR-071).
+
 ---
 
 ## Appendix A — Open questions of the research documents, resolved

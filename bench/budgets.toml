@@ -230,6 +230,9 @@ source = "WP-13: tier-1 path searches >= 1,000,000/s"
 id = "classify/50k_files_10_filters"
 max_ns = 40000000.0
 source = "WP-22: classification of 50 k files with 10 typical filters <= 40 ms"
+# 50 k lstat calls: the 4-vCPU shared runners measure 44-52 ms where the reference machine measures 29 ms. Hard with
+# `--reference` (the reference machine), a warning elsewhere (ADR-086).
+reference_only = true
 
 [[micro]]
 id = "yaml/alias_bomb_10x10_rejected"
