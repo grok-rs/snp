@@ -100,7 +100,8 @@ mod skeleton {
             &[("SNP_FAULT", "PrinterWrite")],
         );
         assert_eq!(out.status.code(), Some(3));
-        let stdout = String::from_utf8_lossy(&out.stdout);
+        // CRLF folded: the panic path prints through the text-mode Printer (ADR-029)
+        let stdout = String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n");
         let (line1, rest) = stdout.split_once('\n').unwrap_or_default();
         assert_eq!(
             line1,

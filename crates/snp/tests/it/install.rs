@@ -1362,10 +1362,13 @@ fn m11_mig_12_pre_commit_script_cdpath_legacy_via_alias() {
     );
     write_hook(&legacy(&r, "pre-commit"), b"#!/bin/sh\necho legacy ran\n");
     compat(&env, &r, &["--version"]);
-    let env = env.with_env("CDPATH", ".").with_env(
-        "PATH",
-        format!("{}:/usr/bin:/bin", env.root().join("bin").display()),
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    let path = format!(
+        "{}{sep}{}",
+        env.root().join("bin").display(),
+        crate::cli::path_without_snp(&env)
     );
+    let env = env.with_env("CDPATH", ".").with_env("PATH", path);
     let (_, out) = commit_file(&env, &r, "foo", "x");
     assert!(out.contains("legacy ran"), "{out}");
 }
@@ -1592,10 +1595,14 @@ fn m11_mig_22_run_hint_only_on_a_terminal() {
     );
     let piped = snp(&env, &r, &["run", "--all-files"]);
     assert!(!text(&piped.stderr).contains("hint:"));
-    let tty = env.snp(&r).args(["run", "--all-files"]).tty().output();
-    assert!(
-        text(&tty.stdout).contains("hint: .git/hooks/pre-commit runs Python pre-commit, not snp")
-    );
+    // The terminal half needs a pty, which snp-testkit has on POSIX only (plain pipes on Windows).
+    if cfg!(unix) {
+        let tty = env.snp(&r).args(["run", "--all-files"]).tty().output();
+        assert!(
+            text(&tty.stdout)
+                .contains("hint: .git/hooks/pre-commit runs Python pre-commit, not snp")
+        );
+    }
 }
 
 #[test]

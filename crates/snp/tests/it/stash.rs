@@ -57,6 +57,9 @@ fn a_panic_after_a_hook_still_restores_the_stash() {
     );
 }
 
+// POSIX only: the interrupt is `kill -INT <pid>` (Git for Windows' MSYS `kill` cannot signal a native Windows
+// process). The Windows console CTRL_C path is snp-proc's `windows_ctrl_c_reaches_inherit_children_only`.
+#[cfg(unix)]
 #[test]
 fn sigint_during_a_hook_restores_the_stash() {
     let env = env();

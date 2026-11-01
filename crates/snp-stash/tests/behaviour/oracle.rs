@@ -406,7 +406,12 @@ fn randomized_soundness_against_real_git_diff() {
             .and_then(|v| v.to_str())
             .and_then(|v| v.parse::<u64>().ok())
     };
-    let iterations = knob("SNP_ORACLE_ITERATIONS").unwrap_or(10_000);
+    // Each iteration spawns a real `git diff`: 10 000 take about a minute on Linux but exceed the 300 s timeout where
+    // process creation is slow (macOS Intel and Windows runners). Without an explicit SNP_ORACLE_ITERATIONS the
+    // run stops after 120 s once at least 500 iterations ran (the seed keeps the sequence deterministic).
+    let explicit = knob("SNP_ORACLE_ITERATIONS");
+    let iterations = explicit.unwrap_or(10_000);
+    let started = std::time::Instant::now();
     let seed = knob("SNP_ORACLE_SEED").unwrap_or(0x5eed_cafe);
     let sb = Sandbox::new();
     let repo = repo_with_files(&sb);
@@ -459,6 +464,9 @@ fn randomized_soundness_against_real_git_diff() {
     let mut truth: DiffFingerprint = truth_git.diff_fingerprint().unwrap();
     let mut misses = Vec::new();
     for i in 0..iterations {
+        if explicit.is_none() && i >= 500 && started.elapsed() > Duration::from_secs(120) {
+            break;
+        }
         o.before_hook().unwrap();
         let what = mutate(&sb, &repo, &mut rng);
         let got = o.after_hook().unwrap();

@@ -130,12 +130,14 @@ fn construction_is_linear_in_collection_length() {
     ];
     for (name, make) in shapes {
         for m in [Mode::Safe, Mode::AllowMultipleDocuments] {
-            let small = best_time(&make(20_000), m);
-            let big = best_time(&make(80_000), m);
+            // 5 k / 20 k entries: big enough to dominate the fixed costs, small enough for a debug build on a slow
+            // runner (20 k / 80 k took ~2 minutes on macOS Intel)
+            let small = best_time(&make(5_000), m);
+            let big = best_time(&make(20_000), m);
             let ratio = big.as_secs_f64() / small.as_secs_f64().max(1e-6);
             assert!(
                 ratio < 8.0,
-                "{name} {m:?}: 20k {small:?}, 80k {big:?} (×{ratio:.1})"
+                "{name} {m:?}: 5k {small:?}, 20k {big:?} (×{ratio:.1})"
             );
         }
     }

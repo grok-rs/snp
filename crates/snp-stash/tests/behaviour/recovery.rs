@@ -474,7 +474,15 @@ fn a_long_intent_to_add_list_survives_the_retirement() {
         .lines()
         .find(|l| l.contains("re-added its intent-to-add files"))
         .unwrap_or_else(|| panic!("{err}"));
-    let file = ita.split("--pathspec-from-file=").nth(1).unwrap();
+    // the shell word may be quoted (a Windows path is) and the notice may continue after it
+    let file = err
+        .split("--pathspec-from-file=")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .map_or_else(
+            || panic!("{err}"),
+            |w| w.trim_matches(|c| c == '\'' || c == ';'),
+        );
     assert!(Path::new(file).is_file(), "{ita}");
     // The journal is gone; running the notice re-adds every entry.
     assert!(snp_stash::find_unrestored(&repo.join(".git"), &sb.patches(), &repo).is_empty());

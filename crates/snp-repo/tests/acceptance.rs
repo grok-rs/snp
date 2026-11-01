@@ -107,7 +107,8 @@ mod tests {
         assert!(
             calls
                 .iter()
-                .all(|c| c.argv.get(1).is_some_and(|a| a == "-S")),
+                // `python3 -S -c …`, or `py -3 -S -c …` through the Windows launcher
+                .all(|c| c.argv.iter().skip(1).take(2).any(|a| a == "-S")),
             "nothing is installed: {calls:?}"
         );
         for hk in &hooks {
