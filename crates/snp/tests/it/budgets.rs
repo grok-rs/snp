@@ -21,8 +21,9 @@
 //!
 //! Every count is taken on the second of two identical runs (the first warms the store), as the bounds describe the
 //! warm path. The run-pipeline shapes need snp-run (WP-32) and the spawn-log arming in the binary's entry (WP-33);
-//! they are `#[ignore = "needs WP-32"]` until those packages merge. B1's zero count is asserted only after a
-//! positive control proved the log armed, so it waits for the same packages. Without `--features testing` the spawn log does not exist,
+//! they are ignored ("needs WP-32 and WP-33") until both packages merge — today no spawn-count test runs in any
+//! configuration. B1's zero count is asserted only after a positive control proved the log armed, so it waits for the
+//! same packages. Without `--features testing` the spawn log does not exist,
 //! so those tests are ignored with a reason that says so.
 //!
 //! Owner: WP-36.
@@ -218,7 +219,10 @@ fn b1_version_spawns_nothing() {
 
 /// B2: one `always_run` noop hook, nothing staged: ≤ 8 spawns (7 git + 1 hook).
 #[test]
-#[cfg_attr(feature = "testing", ignore = "needs WP-32")]
+#[cfg_attr(
+    feature = "testing",
+    ignore = "needs WP-32 and WP-33 (the binary entry arms SNP_TEST_SPAWN_LOG)"
+)]
 #[cfg_attr(
     not(feature = "testing"),
     ignore = "needs a `--features testing` build (spawn log)"
@@ -238,7 +242,10 @@ fn b2_one_noop_hook_within_8_spawns() {
 
 /// B3: ten `always_run` noop hooks, nothing staged: ≤ 17 spawns (7 git + 10 hooks, no `git diff`).
 #[test]
-#[cfg_attr(feature = "testing", ignore = "needs WP-32")]
+#[cfg_attr(
+    feature = "testing",
+    ignore = "needs WP-32 and WP-33 (the binary entry arms SNP_TEST_SPAWN_LOG)"
+)]
 #[cfg_attr(
     not(feature = "testing"),
     ignore = "needs a `--features testing` build (spawn log)"
@@ -268,7 +275,10 @@ fn b3_ten_noop_hooks_within_17_spawns() {
 /// B3 must not grow with unrelated tracked files: 2 000 tracked files change no count (the run lists no files when
 /// every hook is `always_run` with `pass_filenames: false`, P17).
 #[test]
-#[cfg_attr(feature = "testing", ignore = "needs WP-32")]
+#[cfg_attr(
+    feature = "testing",
+    ignore = "needs WP-32 and WP-33 (the binary entry arms SNP_TEST_SPAWN_LOG)"
+)]
 #[cfg_attr(
     not(feature = "testing"),
     ignore = "needs a `--features testing` build (spawn log)"
@@ -295,7 +305,10 @@ fn b3_spawns_do_not_grow_with_tracked_files() {
 /// B4 shape: `run --all-files`, one hook with filenames over 2 000 files and one job: exactly one partition, so one
 /// hook spawn; no per-file process of any kind.
 #[test]
-#[cfg_attr(feature = "testing", ignore = "needs WP-32")]
+#[cfg_attr(
+    feature = "testing",
+    ignore = "needs WP-32 and WP-33 (the binary entry arms SNP_TEST_SPAWN_LOG)"
+)]
 #[cfg_attr(
     not(feature = "testing"),
     ignore = "needs a `--features testing` build (spawn log)"
@@ -346,7 +359,10 @@ const B6_HOOKS: [&str; 13] = [
 /// B6 shape: 13 pre-commit-hooks hooks at a known tag take the Tier A fast path — no clone, no Python, no hook
 /// process; only the fixed git queries plus the per-run pre-commit-hooks facts: ≤ 13 spawns.
 #[test]
-#[cfg_attr(feature = "testing", ignore = "needs WP-32")]
+#[cfg_attr(
+    feature = "testing",
+    ignore = "needs WP-32 and WP-33 (the binary entry arms SNP_TEST_SPAWN_LOG)"
+)]
 #[cfg_attr(
     not(feature = "testing"),
     ignore = "needs a `--features testing` build (spawn log)"
@@ -376,7 +392,11 @@ fn b6_shape_fast_path_within_13_spawns() {
         };
     }
     let repo = b.stage_all().commit("init").build();
-    let (out, log) = run_logged(&env, &repo, &["run", "--all-files"], &[]);
+    // hermetic: a regressed fast path that tries to clone fails at once instead of reaching GitHub (or hanging
+    // offline), since git refuses every transport but file://. TestEnv sets this already; it is restated here because
+    // this test's correctness depends on it.
+    let no_network = [("GIT_ALLOW_PROTOCOL", "file")];
+    let (out, log) = run_logged(&env, &repo, &["run", "--all-files"], &no_network);
     assert_bounds("B6", &out, &log, WARM_RUN_GIT + 4 + 2, 0);
     assert!(
         log.spawns.iter().all(Spawn::is_git),
@@ -396,7 +416,10 @@ fn b6_shape_fast_path_within_13_spawns() {
 
 /// The spawn log records the group of each spawn; a hook never runs in the `critical` role.
 #[test]
-#[cfg_attr(feature = "testing", ignore = "needs WP-32")]
+#[cfg_attr(
+    feature = "testing",
+    ignore = "needs WP-32 and WP-33 (the binary entry arms SNP_TEST_SPAWN_LOG)"
+)]
 #[cfg_attr(
     not(feature = "testing"),
     ignore = "needs a `--features testing` build (spawn log)"
