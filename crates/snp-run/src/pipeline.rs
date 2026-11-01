@@ -252,6 +252,10 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     // step 12: selection
     let strict = common::ext_mode(&cx.env) == snp_config::ExtMode::Strict;
     let groups = GroupFilter::new(&a.ext.groups, &a.ext.require_groups, &a.ext.no_groups);
+    if let Some((missing, known)) = groups.unknown(&all) {
+        printer.write_line(messages::no_group(missing, &known).as_bytes());
+        return Ok(1);
+    }
     let selectors: Vec<OsString> = a.hooks.iter().filter(|h| !h.is_empty()).cloned().collect();
     let hooks: Vec<&ResolvedHook> =
         match crate::select::select(&all, &selectors, a.hook_stage, &groups) {

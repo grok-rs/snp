@@ -3097,7 +3097,7 @@ mechanics.
 | hook | `priority` (u32 or alias) | lower first; equal ⇒ same bucket ⇒ concurrent (§3.4); implicit = flattened index |
 | root | `priorities` (map name→u32) | aliases for `priority` |
 | hook | `env` (map str→str) | literal values (no `$VAR` expansion, prek parity); applied after language activation (user wins); names validated (no `=`, NUL) |
-| hook | `groups` (list) | prek semantics (ADR-080): names non-empty, no whitespace, no leading `@` (reserved for selectors); `--group G` (repeatable, OR), `--require-group G` (repeatable, AND), `--no-group G` (exclusion wins), the selector `@ungrouped` (hooks without groups) in all three; `SNP_SKIP_GROUPS`/overlay `skip_groups` (exclusion) |
+| hook | `groups` (list) | prek semantics (ADR-080): names non-empty, no whitespace, no leading `@` (reserved for selectors); `--group G` (repeatable, OR), `--require-group G` (repeatable, AND), `--no-group G` (exclusion wins), the selector `@ungrouped` (hooks without groups) in all three; a `--group`/`--require-group` name no hook carries fails with ``No hook in group `G` (known groups: …)``, exit 1 (ADR-084); `SNP_SKIP_GROUPS`/overlay `skip_groups` (exclusion) |
 | hook | `stage_fixed` (`true` = `verify` \| `trust` \| `false`) | §8.3 |
 | hook, root | `skip` / `only` (condition or list) | `merge`, `rebase`, `merge-commit`, `cherry-pick`, `revert`, `bisect`, `{ref: glob}`, `{env: NAME}`, `{ci: bool}`, `{run: cmd}` (sh -c, 30 s, cached per run); keys in one map AND, list items OR; skipped hooks print the yellow `Skipped` line |
 | hook | `timeout` (Go duration) | whole-hook wall clock; isolated process group; TERM → 2 s → KILL; `Failed` + `- hook timed out after <d>`; counts for fail_fast |

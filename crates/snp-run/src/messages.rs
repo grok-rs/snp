@@ -29,6 +29,20 @@ pub(crate) fn no_hook(hook: &str, stage: &str) -> String {
     format!("No hook with id `{hook}` in stage `{stage}`")
 }
 
+/// snp extension (ADR-080, ADR-084): a `--group`/`--require-group` name that no hook of the config carries — in the
+/// style of [`no_hook`], so a typo fails instead of selecting nothing and passing.
+pub(crate) fn no_group(group: &str, known: &[&str]) -> String {
+    if known.is_empty() {
+        format!("No hook in group `{group}`: the config defines no groups")
+    } else {
+        let names: Vec<String> = known.iter().map(|g| format!("`{g}`")).collect();
+        format!(
+            "No hook in group `{group}` (known groups: {})",
+            names.join(", ")
+        )
+    }
+}
+
 /// `git.py:115` (`logger.info`).
 pub(crate) const MERGE_CONFLICT_ONLY: &str = "Checking merge-conflict files only.";
 

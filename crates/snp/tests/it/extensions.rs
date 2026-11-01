@@ -52,6 +52,37 @@ fn selectors_and_groups_on_the_command_line() {
     assert_eq!(text(&out.stdout), line("slow", "Passed"));
 }
 
+/// ADR-084: a `--group`/`--require-group` typo fails like an unknown hook id instead of selecting nothing and
+/// passing.
+#[test]
+fn an_unknown_group_fails() {
+    let env = env();
+    let dir = repo(&env, "e", CFG);
+    for flag in ["--group", "--require-group"] {
+        let out = env
+            .snp(&dir)
+            .args(["run", "--all-files", flag, "nope"])
+            .output();
+        assert_eq!(out.code, 1, "{flag}");
+        assert_eq!(
+            text(&out.stdout),
+            "No hook in group `nope` (known groups: `lint`, `slow`)\n",
+            "{flag}"
+        );
+    }
+    let out = env
+        .snp(&dir)
+        .args(["run", "--group", "lint", "--require-group", "@ungrouped"])
+        .output();
+    assert_eq!(out.code, 1);
+    // Known groups whose intersection is empty are not a typo: nothing runs, exit 0.
+    let out = env
+        .snp(&dir)
+        .args(["run", "--require-group", "lint", "--require-group", "slow"])
+        .output();
+    assert_eq!((out.code, text(&out.stdout)), (0, String::new()));
+}
+
 #[test]
 fn jobs_do_not_change_the_output() {
     let env = env();

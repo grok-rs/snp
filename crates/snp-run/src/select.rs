@@ -42,6 +42,28 @@ impl GroupFilter {
         }
     }
 
+    /// The first `--group`/`--require-group` name that no hook of `hooks` carries (`@ungrouped` counts as carried
+    /// by the hooks without groups), and every group name the hooks carry, sorted (ADR-084).
+    pub(crate) fn unknown<'h>(&self, hooks: &'h [ResolvedHook]) -> Option<(&str, Vec<&'h str>)> {
+        let carried = |g: &str| {
+            hooks.iter().any(|h| {
+                if g == UNGROUPED {
+                    h.def.ext.groups.is_empty()
+                } else {
+                    h.def.ext.groups.iter().any(|x| &**x == g)
+                }
+            })
+        };
+        let missing = self.any.iter().chain(&self.all).find(|g| !carried(g))?;
+        let mut known: Vec<&str> = hooks
+            .iter()
+            .flat_map(|h| h.def.ext.groups.iter().map(|g| &**g))
+            .collect();
+        known.sort_unstable();
+        known.dedup();
+        Some((missing.as_str(), known))
+    }
+
     /// The truth table of ADR-080.
     pub(crate) fn matches(&self, groups: &[Arc<str>]) -> bool {
         let has = |g: &String| -> bool {
