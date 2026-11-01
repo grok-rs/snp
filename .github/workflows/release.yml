@@ -330,7 +330,10 @@ jobs:
             test -f "target/distrib/$a.sha256" || { echo "::error::missing $a.sha256"; exit 1; }
           done
           ls target/distrib
-          ls target/distrib | grep -Eq '\.cdx\.xml$' || { echo "::error::no CycloneDX SBOM"; exit 1; }
+          # cargo-cyclonedx writes the SBOM next to the package manifest (crates/snp/snp.cdx.xml), not into
+          # target/distrib: take its path from the global manifest's upload list.
+          sbom="$(jq --raw-output '.upload_files[]' dist-manifest.json | grep -E '\.cdx\.xml$' | head -n 1)"
+          [ -n "$sbom" ] && [ -f "$sbom" ] || { echo "::error::no CycloneDX SBOM (upload list: $sbom)"; exit 1; }
           test -f target/distrib/snp-installer.sh && test -f target/distrib/snp-installer.ps1
       - uses: actions/upload-artifact@v4
         with:
