@@ -392,6 +392,7 @@ fn random_suffix(attempt: u32) -> String {
 }
 
 fn create_private_dir(p: &Path) -> std::io::Result<()> {
+    #[cfg_attr(not(unix), expect(unused_mut, reason = "the mode is Unix-only"))]
     let mut b = std::fs::DirBuilder::new();
     #[cfg(unix)]
     {

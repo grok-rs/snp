@@ -312,6 +312,13 @@ fn part_dir(dest: &Path) -> Result<PathBuf, LangError> {
 }
 
 /// `util.make_executable` (`chmod +x`); a no-op on Windows.
+#[cfg_attr(
+    not(unix),
+    expect(
+        clippy::unnecessary_wraps,
+        reason = "fallible on Unix, a no-op elsewhere"
+    )
+)]
 pub(crate) fn make_executable(path: &Path) -> Result<(), LangError> {
     #[cfg(unix)]
     {

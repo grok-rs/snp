@@ -276,7 +276,8 @@ mod imp {
         }
     }
 
-    /// The `SigIgn:` hex mask of a `/proc/<pid>/status` text.
+    /// The `SigIgn:` hex mask of a `/proc/<pid>/status` text (procfs only: Linux/Android, and the unit test).
+    #[cfg(any(target_os = "linux", target_os = "android", test))]
     pub(super) fn parse_sig_ign(status: &[u8]) -> Option<u64> {
         let line = status
             .split(|b| *b == b'\n')

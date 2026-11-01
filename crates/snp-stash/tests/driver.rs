@@ -202,6 +202,10 @@ mod process {
         signal_during_hook(Signal::HUP, 1);
     }
 
+    // Linux only: the test needs util-linux `setsid --ctty` (not on macOS/BSD) and rustix's atomic `O_CLOEXEC`
+    // for the pty master (Linux-only in rustix). The handler itself is the same on every Unix and is covered by
+    // the sent-signal tests above.
+    #[cfg(target_os = "linux")]
     #[test]
     fn sighup_from_a_terminal_hangup_restores_and_dies_by_signal() {
         use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};

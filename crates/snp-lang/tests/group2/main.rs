@@ -17,6 +17,14 @@
 //! needs the `testing` feature (the shim harness).
 //!
 //! Owner: WP-25.
+#![cfg_attr(
+    windows,
+    allow(
+        dead_code,
+        unused_imports,
+        reason = "most cases are posix-only (sh scripts, modes, signals): on Windows their shared helpers go unused"
+    )
+)]
 
 #[cfg(test)]
 #[cfg(feature = "testing")]

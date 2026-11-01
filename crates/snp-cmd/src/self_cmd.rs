@@ -86,16 +86,27 @@ fn default_dir(cx: &CmdCtx<'_>) -> PathBuf {
 
 /// How the alias was made.
 #[derive(Debug, Clone, Copy)]
-#[cfg_attr(
-    unix,
-    expect(
-        dead_code,
-        reason = "hard links and copies are the Windows alias forms"
-    )
-)]
 enum Made {
+    #[cfg_attr(
+        not(unix),
+        expect(dead_code, reason = "the symlink is the Unix alias form")
+    )]
     Symlink,
+    #[cfg_attr(
+        unix,
+        expect(
+            dead_code,
+            reason = "hard links and copies are the Windows alias forms"
+        )
+    )]
     HardLink,
+    #[cfg_attr(
+        unix,
+        expect(
+            dead_code,
+            reason = "hard links and copies are the Windows alias forms"
+        )
+    )]
     Copy,
 }
 

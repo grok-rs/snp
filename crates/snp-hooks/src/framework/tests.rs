@@ -3,6 +3,7 @@
 use super::*;
 
 /// Index of the stderr marker `E` in the merged output of `ops` followed by `sys.stderr.write('E\n')`.
+#[cfg(not(windows))]
 fn marker(ops: &[(&str, usize)]) -> usize {
     let mut o = PyOut::default();
     for &(kind, n) in ops {

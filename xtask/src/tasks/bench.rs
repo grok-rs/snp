@@ -739,6 +739,13 @@ fn write_file(dir: &Path, rel: &str, bytes: &[u8]) -> anyhow::Result<()> {
 }
 
 /// Marks `path` executable (Unix; git records the mode).
+#[cfg_attr(
+    not(unix),
+    expect(
+        clippy::unnecessary_wraps,
+        reason = "fallible on Unix, a no-op elsewhere"
+    )
+)]
 fn make_executable(path: &Path) -> anyhow::Result<()> {
     #[cfg(unix)]
     {

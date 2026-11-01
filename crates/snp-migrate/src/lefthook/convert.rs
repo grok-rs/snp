@@ -1725,6 +1725,7 @@ mod tests {
     }
 
     /// The script of `sh -c '<script>' --` (the inverse of [`shell::wrapper`]).
+    #[cfg(unix)]
     fn script_of(entry: &str) -> String {
         let quoted = entry
             .strip_prefix("sh -c ")

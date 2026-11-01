@@ -188,8 +188,8 @@ impl Report {
             .collect()
     }
 
-    /// Whether a gate whose name starts with `gate_prefix` failed (used by the tests).
-    #[cfg(test)]
+    /// Whether a gate whose name starts with `gate_prefix` failed (used by the Unix-only gate tests).
+    #[cfg(all(test, unix))]
     fn failed(&self, gate_prefix: &str) -> bool {
         self.rows
             .iter()
@@ -631,6 +631,7 @@ pub(crate) fn private_scratch(prefix: &str) -> Result<PathBuf, String> {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.subsec_nanos());
         let dir = base.join(format!("{prefix}-{}-{n}-{nanos:08x}", std::process::id()));
+        #[cfg_attr(not(unix), expect(unused_mut, reason = "the mode is Unix-only"))]
         let mut builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
         std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
@@ -862,8 +863,8 @@ fn changelog_section<'a>(text: &'a str, version: &str) -> Option<&'a str> {
     start.and_then(|s| text.get(s..))
 }
 
-/// Renders a report for humans (used by the tests).
-#[cfg(test)]
+/// Renders a report for humans (used by the Unix-only gate tests).
+#[cfg(all(test, unix))]
 fn render(report: &Report) -> String {
     let mut s = report.lines().join("\n");
     s.push('\n');

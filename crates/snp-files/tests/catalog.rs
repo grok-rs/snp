@@ -160,14 +160,14 @@ mod catalog {
 
     #[cfg(unix)]
     fn mkfifo(p: &Path, mode: u32) {
-        rustix::fs::mknodat(
-            rustix::fs::CWD,
-            p,
-            rustix::fs::FileType::Fifo,
-            rustix::fs::Mode::from_raw_mode(mode),
-            0,
-        )
-        .unwrap();
+        // mkfifo(1) is POSIX; rustix has no mknodat on Apple targets.
+        let st = std::process::Command::new("mkfifo")
+            .arg("-m")
+            .arg(format!("{mode:o}"))
+            .arg(p)
+            .status()
+            .unwrap();
+        assert!(st.success(), "mkfifo {}: {st}", p.display());
     }
 
     /// X13-CLS-03: a FIFO passed via `--files` never blocks (pre-commit hangs forever): opened `O_NONBLOCK`, an empty

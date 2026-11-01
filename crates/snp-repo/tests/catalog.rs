@@ -5,6 +5,14 @@
 //! end through the binary in `crates/snp/tests/it/repository.rs`.
 //!
 //! Owner: WP-31.
+#![cfg_attr(
+    windows,
+    allow(
+        dead_code,
+        unused_imports,
+        reason = "most cases are posix-only (sh scripts, modes, signals): on Windows their shared helpers go unused"
+    )
+)]
 
 #[cfg(test)]
 mod support;

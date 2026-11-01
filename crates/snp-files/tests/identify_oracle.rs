@@ -76,14 +76,12 @@ mod oracle {
                 }
                 "fifo" => {
                     let mode = u32::try_from(e["mode"].as_u64().unwrap()).unwrap();
-                    rustix::fs::mknodat(
-                        rustix::fs::CWD,
-                        &p,
-                        rustix::fs::FileType::Fifo,
-                        rustix::fs::Mode::from_raw_mode(mode),
-                        0,
-                    )
-                    .unwrap();
+                    // mkfifo(1) is POSIX; rustix has no mknodat on Apple targets.
+                    let st = std::process::Command::new("mkfifo")
+                        .arg(&p)
+                        .status()
+                        .unwrap();
+                    assert!(st.success(), "mkfifo {}: {st}", p.display());
                     std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode)).unwrap();
                 }
                 "socket" => socks.push(std::os::unix::net::UnixListener::bind(&p).unwrap()),
