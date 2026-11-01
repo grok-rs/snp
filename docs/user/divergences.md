@@ -2,7 +2,7 @@
 
 # DIVERGENCES
 
-snp reproduces pre-commit 4.6.2 byte for byte. This book lists **every** deliberate difference (85
+snp reproduces pre-commit 4.6.2 byte for byte. This book lists **every** deliberate difference (86
 entries): each one is admissible only because pre-commit crashes, loses data or has a security bug there, or
 because an owner decision forces it (snp's own store, its name, no `unsafe`, performance), or because it is
 visible only when you use an snp extension. Every entry has a differential test that fails the build when the
@@ -11,15 +11,12 @@ difference stops reproducing, so this list is complete and current.
 The policy, the comparison tiers and the branding rules are summarised in [Compatibility](compatibility.md);
 the normative register is `docs/COMPATIBILITY.md` §5 in the repository.
 
-18 of the 85 entries do not have their rationale and examples written yet; their register
-entry (what pre-commit does, what snp does) is shown and is normative.
-
 ## Classes
 
 | Class | Entries |
 |---|---|
 | [5.1 CRASH — pre-commit crashes or hangs; snp behaves and fails closed](#51-crash--pre-commit-crashes-or-hangs-snp-behaves-and-fails-closed) | [D-CRASH-01](#d-crash-01) [D-CRASH-02](#d-crash-02) [D-CRASH-03](#d-crash-03) [D-CRASH-04](#d-crash-04) [D-CRASH-05](#d-crash-05) [D-CRASH-06](#d-crash-06) [D-CRASH-07](#d-crash-07) [D-CRASH-08](#d-crash-08) [D-CRASH-09](#d-crash-09) [D-CRASH-10](#d-crash-10) [D-CRASH-11](#d-crash-11) [D-CRASH-12](#d-crash-12) [D-CRASH-13](#d-crash-13) [D-CRASH-14](#d-crash-14) [D-CRASH-15](#d-crash-15) [D-CRASH-16](#d-crash-16) [D-CRASH-17](#d-crash-17) [D-CRASH-18](#d-crash-18) [D-CRASH-19](#d-crash-19) [D-CRASH-20](#d-crash-20) [D-CRASH-21](#d-crash-21) [D-CRASH-22](#d-crash-22) [D-CRASH-23](#d-crash-23) [D-CRASH-24](#d-crash-24) [D-CRASH-25](#d-crash-25) [D-CRASH-26](#d-crash-26) |
-| [5.2 DATA — pre-commit loses or corrupts user data](#52-data--pre-commit-loses-or-corrupts-user-data) | [D-DATA-01](#d-data-01) [D-DATA-02](#d-data-02) [D-DATA-03](#d-data-03) [D-DATA-05](#d-data-05) [D-DATA-07](#d-data-07) [D-DATA-08](#d-data-08) [D-DATA-09](#d-data-09) [D-DATA-10](#d-data-10) [D-DATA-11](#d-data-11) [D-DATA-12](#d-data-12) [D-DATA-13](#d-data-13) [D-DATA-14](#d-data-14) [D-DATA-15](#d-data-15) [D-DATA-16](#d-data-16) [D-DATA-17](#d-data-17) |
+| [5.2 DATA — pre-commit loses or corrupts user data](#52-data--pre-commit-loses-or-corrupts-user-data) | [D-DATA-01](#d-data-01) [D-DATA-02](#d-data-02) [D-DATA-03](#d-data-03) [D-DATA-05](#d-data-05) [D-DATA-07](#d-data-07) [D-DATA-08](#d-data-08) [D-DATA-09](#d-data-09) [D-DATA-10](#d-data-10) [D-DATA-11](#d-data-11) [D-DATA-12](#d-data-12) [D-DATA-13](#d-data-13) [D-DATA-14](#d-data-14) [D-DATA-15](#d-data-15) [D-DATA-16](#d-data-16) [D-DATA-17](#d-data-17) [D-DATA-18](#d-data-18) |
 | [5.3 SEC — security](#53-sec--security) | [D-SEC-01](#d-sec-01) [D-SEC-05](#d-sec-05) [D-SEC-06](#d-sec-06) [D-SEC-07](#d-sec-07) [D-SEC-08](#d-sec-08) [D-SEC-09](#d-sec-09) [D-SEC-10](#d-sec-10) [D-SEC-11](#d-sec-11) [D-SEC-12](#d-sec-12) [D-SEC-13](#d-sec-13) |
 | [5.4 STORE and BRAND — forced by FD-2 and FD-1](#54-store-and-brand--forced-by-fd-2-and-fd-1) | [D-STORE-01](#d-store-01) [D-STORE-02](#d-store-02) [D-DATA-04](#d-data-04) [D-BRAND-01](#d-brand-01) [D-BRAND-02](#d-brand-02) [D-MISC-02](#d-misc-02) |
 | [5.5 PLAT — platform](#55-plat--platform) | [D-PLAT-02](#d-plat-02) [D-PLAT-03](#d-plat-03) [D-PLAT-06](#d-plat-06) [D-PLAT-08](#d-plat-08) [D-PLAT-09](#d-plat-09) [D-PLAT-10](#d-plat-10) [D-PLAT-12](#d-plat-12) |
@@ -252,8 +249,54 @@ the hook fails (Executable not found, ValueError: No closing quotation, [Errno 7
 |---|---|
 | empty `entry`, shlex errors, `ArgumentTooLong`, unreadable entry script → exit 3 (X13-EXE-01…04) | the hook fails (`Executable `` not found`, `ValueError: No closing quotation`, `[Errno 7] Argument list too long: '<exe>'`, …), the run continues |
 
-*The rationale and examples of this divergence are not written yet; the register entry above is
-normative.*
+##### Rationale
+
+pre-commit lets four configuration mistakes escape `run_hook` as Python exceptions: an empty `entry` (`IndexError`
+from `cmd[0]`), an `entry` that `shlex.split` rejects (`ValueError`), a command that is too long for one partition
+(`ArgumentTooLongError`) and an entry script it cannot read for its shebang (`PermissionError`). Each aborts the whole
+run with exit 3 after a dangling `name....` segment, and the crash log points at pre-commit's own traceback, not at
+the hook that is misconfigured.
+
+snp reports them as what they are: a broken hook. The hook gets the `Failed` status, exit code 1 and a one-line
+output naming the problem in the form pre-commit already uses for its own C-hook errors (``Executable `x` not
+found``, `[Errno 7] Argument list too long: '/usr/bin/echo'` — the text pre-commit prints when `exec` itself fails
+with `E2BIG`, X13-SM-06). The other hooks still run and the stash is restored as usual (13 R2, "C-hook").
+
+Why it is safe: the run still fails (exit 1 instead of 3), so a commit is still blocked; nothing is skipped silently;
+only the error's shape changes from a crash to a hook failure, which is strictly more informative.
+
+##### Examples
+
+```text
+$ cat .pre-commit-config.yaml
+repos:
+-   repo: local
+    hooks:
+    -   id: empty
+        name: empty entry
+        entry: ''
+        language: system
+    -   id: after
+        name: after
+        entry: 'true'
+        language: system
+$ pre-commit run -a; echo $?
+empty entry..............................................................An unexpected error has occurred: IndexError: tuple index out of range
+Check the log at ~/.cache/pre-commit/pre-commit.log
+3
+$ snp run -a; echo $?
+empty entry..............................................................Failed
+- hook id: empty
+- exit code: 1
+
+Executable `` not found
+
+after....................................................................Passed
+1
+```
+
+Proof: `crates/snp-run/tests/pipeline/run.rs` (`x13_exe_01_…`, `x13_exe_02_…`, `x13_exe_03_…`, `x13_exe_04_…`,
+`x13_sm_07_…`); the scenario `tests/differential/divergences/D-CRASH-05.yaml`.
 
 ### D-CRASH-06
 
@@ -267,8 +310,65 @@ per-repo [{repo}] <error> lines, the others are updated and written, exit 1
 |---|---|
 | `autoupdate`: one unreachable repo → `CalledProcessError` exit 3, nothing written (X13-GIT-02) | per-repo `[{repo}] <error>` lines, the others are updated and written, exit 1 |
 
-*The rationale and examples of this divergence are not written yet; the register entry above is
-normative.*
+##### Rationale
+
+pre-commit's `autoupdate` (`commands/autoupdate.py:183-214`) runs `_update_repo` for each repository in turn and
+catches only `RepositoryCannotBeUpdatedError`. A git command that fails inside `RevInfo.update`
+(`git fetch origin HEAD --tags` against an unreachable or deleted remote) raises `CalledProcessError`, which escapes
+the loop: the error handler prints the `An unexpected error has occurred: CalledProcessError: …` block, writes the
+crash log and exits 3. Repositories already resolved are lost — nothing is written, although their new revs were
+printed as `updating … -> …` lines just before (X13-GIT-02).
+
+snp treats a failing git command of one repository like pre-commit's own per-repository failure: the repository's
+line is `[{repo}] ` followed by the same `CalledProcessError` block pre-commit would have printed (command,
+`return code:`, `stdout:`, `stderr:`), the return value becomes 1, and every other repository is still resolved,
+printed and written (rev lines rewritten in place, as for a successful run). With `-j N` the per-repository lines
+appear in completion order, as they do for pre-commit's own failures.
+
+Why it is safe: the stdout lines of every successful repository and the file bytes they produce are the ones
+pre-commit writes when no repository fails; the failing repository is reported with the same text pre-commit
+shows, and the run still fails (exit 1, never 0), so CI notices. The only behaviour lost is "an unreachable remote
+throws the whole update away", which is the hazard this row removes. No crash log is written because nothing
+crashed.
+
+##### Examples
+
+One reachable repository with a newer tag, one deleted remote (paths shortened):
+
+```text
+$ pre-commit autoupdate        # pre-commit 4.6.2
+[/w/hooks] updating v1 -> v2
+An unexpected error has occurred: CalledProcessError: command: ('/usr/bin/git', '-c', 'core.useBuiltinFSMonitor=false', '-C', '/tmp/tmp_vls6xdv', 'fetch', 'origin', 'HEAD', '--quiet', '--filter=blob:none', '--tags')
+return code: 128
+stdout: (none)
+stderr:
+    fatal: '/w/gone' does not appear to be a git repository
+    fatal: Could not read from remote repository.
+
+    Please make sure you have the correct access rights
+    and the repository exists.
+Check the log at /home/u/.cache/pre-commit/pre-commit.log
+$ echo $?
+3                              # .pre-commit-config.yaml unchanged: both revs still v1
+```
+
+```text
+$ snp autoupdate
+[/w/hooks] updating v1 -> v2
+[/w/gone] command: ('/usr/bin/git', '-c', 'core.useBuiltinFSMonitor=false', '-C', '/tmp/tmpxBsvle', 'fetch', 'origin', 'HEAD', '--quiet', '--filter=blob:none', '--tags')
+return code: 128
+stdout: (none)
+stderr:
+    fatal: '/w/gone' does not appear to be a git repository
+    fatal: Could not read from remote repository.
+
+    Please make sure you have the correct access rights
+    and the repository exists.
+$ echo $?
+1                              # /w/hooks is now at rev v2, /w/gone stays at v1
+```
+
+The scenario `tests/differential/divergences/D-CRASH-06.yaml` runs this configuration in both brands.
 
 ### D-CRASH-07
 
@@ -680,8 +780,36 @@ stderr message, legacy rc 1, snp's hooks still run
 |---|---|
 | broken legacy hook (missing shebang interpreter, directory) → exit 3 (X13-HI-07) | stderr message, legacy rc 1, snp's hooks still run |
 
-*The rationale and examples of this divergence are not written yet; the register entry above is
-normative.*
+##### Rationale
+
+`hook-impl` runs `<hook-dir>/<type>.legacy` first (migration mode: the hook that was there before `install`). When
+that file cannot be executed — its `#!` interpreter does not exist, or it is a directory (which passes
+`os.access(X_OK)`) — pre-commit's `normalize_cmd` raises `ExecutableNotFoundError` out of `hook_impl`, and the git hook
+dies with exit 3 before any of the configured hooks has run.
+
+git itself treats a broken hook as a failed hook, not as a crash. snp does the same: the message
+(``Executable `/nonexistent/interp` not found``) goes to stderr, the legacy return code is 1, and snp's hooks run as
+usual; the hook's exit code is `1 | run`, so the commit is still refused (13 X13-HI-07, decision C-err).
+
+Why it is safe: the result is still a failure (non-zero), the cause is printed, and the user's configured hooks get to
+check the commit instead of being skipped by an unrelated crash.
+
+##### Examples
+
+```text
+$ printf '#!/nonexistent/interp\n' > .git/hooks/pre-commit.legacy; chmod +x .git/hooks/pre-commit.legacy
+$ pre-commit hook-impl --config=.pre-commit-config.yaml --hook-type=pre-commit --hook-dir "$PWD/.git/hooks" --; echo $?
+An unexpected error has occurred: ExecutableNotFoundError: Executable `/nonexistent/interp` not found
+Check the log at ~/.cache/pre-commit/pre-commit.log
+3
+$ snp hook-impl --config=.pre-commit-config.yaml --hook-type=pre-commit --hook-dir "$PWD/.git/hooks" --; echo $?
+Executable `/nonexistent/interp` not found          (stderr)
+passing..................................................................Passed
+1
+```
+
+Proof: `crates/snp-run/tests/pipeline/hook_impl.rs::x13_hi_07_broken_legacy_hook_fails_but_hooks_run`; the scenario
+`tests/differential/divergences/D-CRASH-14.yaml`.
 
 ### D-CRASH-15
 
@@ -695,8 +823,42 @@ output printed, [WARNING] line, run continues
 |---|---|
 | unwritable `log_file` → exit 3 and the hook output is lost (X13-EXE-05) | output printed, `[WARNING]` line, run continues |
 
-*The rationale and examples of this divergence are not written yet; the register entry above is
-normative.*
+##### Rationale
+
+`output.write_line_b(out.strip(), logfile_name=hook.log_file)` opens the log file (`open(logfile, 'ab')`) **before** it
+writes anything, so a `log_file` whose directory does not exist, which is a directory, or which is not writable raises
+`OSError` in the middle of a failing hook's block: the run aborts with exit 3 and the hook's output — the one thing the
+user needs to fix the failure — is never printed (X13-EXE-05).
+
+snp prints the output block first, exactly as pre-commit would have, then appends to the log file; a failure there
+becomes one `[WARNING] Could not write to log_file <path>: <OSError text>` line inside the block and the run continues
+with its normal exit code (decision F of 13 X.4).
+
+Why it is safe: the hook's result and the run's exit code are unchanged; only a logging side channel degrades, and it
+does so visibly.
+
+##### Examples
+
+```text
+$ pre-commit run -a        # log_file: nodir/x.log
+logged...................................................................Failed
+- hook id: l
+- exit code: 1
+
+An unexpected error has occurred: FileNotFoundError: [Errno 2] No such file or directory: 'nodir/x.log'
+Check the log at ~/.cache/pre-commit/pre-commit.log
+$ snp run -a
+logged...................................................................Failed
+- hook id: l
+- exit code: 1
+
+some-output
+[WARNING] Could not write to log_file nodir/x.log: [Errno 2] No such file or directory: 'nodir/x.log'
+
+```
+
+Proof: `crates/snp-run/tests/pipeline/run.rs::x13_exe_05_unwritable_log_file_warns_and_keeps_the_output`; the scenario
+`tests/differential/divergences/D-CRASH-15.yaml`.
 
 ### D-CRASH-16
 
@@ -1220,8 +1382,65 @@ silent, exit 120, stash restored
 |---|---|
 | stdout closed (EPIPE) → chained Python tracebacks on stderr, exit 120 (X13-EH-03) | silent, exit 120, stash restored |
 
-*The rationale and examples of this divergence are not written yet; the register entry above is
-normative.*
+##### Rationale
+
+When the reader of pre-commit's stdout goes away (`pre-commit run | head -c 20`, a GUI that closes git's stderr
+pipe, which carries hook output), the next `stream.flush()` raises `BrokenPipeError`. The error handler then tries to
+print the error on the same closed stdout, which raises again, and CPython's shutdown flush fails a third time:
+stderr receives two or three chained tracebacks plus `Exception ignored on flushing sys.stdout:` /
+`BrokenPipeError: [Errno 32] Broken pipe`, and the interpreter exits 120 (13 X.2 EH-03, X13-SM-08). The remaining
+hooks do not run and the stash is restored by the `staged_files_only` context manager.
+
+snp keeps the semantics and drops the noise: the `Printer` latches `closed` on the first `EPIPE`, cancels the run
+token (`StdoutClosed`), starts no further hook, still runs the stash restore, and the envelope exits 120 without
+writing anything to stderr and without a crash log (ARCHITECTURE §10.3; S4 "fail closed": the exit status is never
+0). An `EPIPE` on stderr is ignored the same way.
+
+Any other stdout write error is treated the same way: ENOSPC (`> /dev/full`), EIO or EAGAIN latch the Printer as
+EPIPE does (`snp::envelope::FailClosedStdout`), so the command exits 120 silently instead of 0 with its output lost.
+pre-commit 4.6.2 also exits 120 there (CPython's shutdown flush fails: `Exception ignored in: <_io.TextIOWrapper
+name='<stdout>' ...>` / `OSError: [Errno 28] No space left on device`). Test: `errors::x13_eh_03_stdout_full`.
+
+A stdout that is already closed when the process starts (`snp sample-config >&-`) is not a write error for snp: the
+Rust runtime reopens fds 0-2 on `/dev/null` before `main` (so no file snp opens can become fd 1 and receive output),
+and the command behaves as under `> /dev/null` (exit 0). pre-commit 4.6.2 exits 1 with an import-time traceback
+(`sys.stdout` is `None`), an interpreter crash rather than a designed status. Test:
+`errors::x13_eh_03_stdout_closed_at_start_is_dev_null`.
+
+Why it is safe: the exit status (120) and every effect on the repository are pre-commit's; what disappears is a
+Python traceback that describes the interpreter's own failure to report a closed pipe and that no tool parses.
+
+##### Examples
+
+```text
+$ { sleep 0.5; pre-commit sample-config; } | true          # pre-commit 4.6.2
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+$ # exit 120
+$ { sleep 0.5; pre-commit run --all-files; } | true        # stderr (abridged)
+Traceback (most recent call last):
+  File ".../pre_commit/error_handler.py", line 73, in error_handler
+  ...
+  File ".../pre_commit/output.py", line 11, in write
+    stream.flush()
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  ...
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+$ # exit 120
+```
+
+```text
+$ { sleep 0.5; snp sample-config; } | true                 # nothing on stderr, exit 120
+$ { sleep 0.5; snp run --all-files; } | true               # nothing on stderr, exit 120, unstaged changes restored
+```
+
+The scenario `tests/differential/divergences/D-CRASH-24.yaml` closes stdout before the tool starts.
 
 ### D-CRASH-25
 
@@ -1428,8 +1647,54 @@ refused unless -f; a .legacy that is itself a manager script is removed
 |---|---|
 | `install` silently overwrites an existing foreign `.legacy` hook | refused unless `-f`; a `.legacy` that is itself a manager script is removed |
 
-*The rationale and examples of this divergence are not written yet; the register entry above is
-normative.*
+##### Rationale
+
+pre-commit's `_install_hook_script` (`commands/install_uninstall.py:74-85`) moves a foreign hook to `<type>.legacy`
+with `shutil.move`, which silently replaces an existing `<type>.legacy`: a user hook that pre-commit itself parked
+there on an earlier install is destroyed when a second foreign hook (git-lfs rewriting `pre-push`, a teammate's
+script) appears and `pre-commit install` runs again. The data loss is silent; stdout only says `Running in migration
+mode …`.
+
+snp refuses that move: when the current hook is foreign **and** a foreign `<type>.legacy` exists, `install` stops
+with `An error has occurred: FatalError: refusing to overwrite existing {legacy}; use -f to discard it` (exit 1)
+before touching either file; `-f` keeps pre-commit's semantics (the legacy is discarded). A `<type>.legacy` that is
+itself a manager script (pre-commit, prek, snp 1.x or snp — hook-script identity, 11 §A.5.2) is not a user hook:
+running it would run a second manager on every commit or, for a pre-commit script, fail every commit (chains C1–C4).
+snp deletes it with the M2 note on stderr (D-DIAG-02) instead of printing the migration-mode lines.
+
+Why it is safe: no user file is ever lost without `-f`; the refusal names the file and the flag. A deleted `.legacy`
+is only ever a hook script generated by a manager, which carries no user content and is re-created by that manager's
+own `install`.
+
+##### Examples
+
+A foreign `pre-commit` hook and a foreign `pre-commit.legacy`:
+
+```text
+$ pre-commit install           # pre-commit 4.6.2, exit 0: the old pre-commit.legacy ("echo legacy") is gone
+Running in migration mode with existing hooks at .git/hooks/pre-commit.legacy
+Use -f to use only pre-commit.
+pre-commit installed at .git/hooks/pre-commit
+$ snp install                  # exit 1, both hooks untouched
+An error has occurred: FatalError: refusing to overwrite existing .git/hooks/pre-commit.legacy; use -f to discard it
+Check the log at /home/u/.cache/snp/snp.log
+$ snp install -f               # exit 0: pre-commit's -f semantics, no .legacy left
+snp installed at .git/hooks/pre-commit
+```
+
+A pre-commit script parked in `pre-commit.legacy` (stdout in pre-commit; stderr in snp):
+
+```text
+$ pre-commit install
+Running in migration mode with existing hooks at .git/hooks/pre-commit.legacy
+Use -f to use only pre-commit.
+pre-commit installed at .git/hooks/pre-commit
+$ snp install
+Removed .git/hooks/pre-commit.legacy: it is a hook script from pre-commit, not a user hook
+snp installed at .git/hooks/pre-commit
+```
+
+The scenario `tests/differential/divergences/D-DATA-03.yaml` reproduces the first case.
 
 ### D-DATA-05
 
@@ -1443,8 +1708,54 @@ POSIX sh template, LF everywhere, atomic write that replaces a symlink instead o
 |---|---|
 | hook script: bash template written through symlinks, CRLF on Windows | POSIX `sh` template, LF everywhere, atomic write that replaces a symlink instead of writing through it (template identity: BRAND) |
 
-*The rationale and examples of this divergence are not written yet; the register entry above is
-normative.*
+##### Rationale
+
+pre-commit writes its hook script with `open(hook_path, 'w')` (`commands/install_uninstall.py:89-100`): text mode,
+so `\r\n` line endings on Windows, and through a symlink — a `.git/hooks/pre-commit` that links to a tracked
+`tools/hook` (a common way to share hooks) has the **tracked file** rewritten, which shows up as a modification in
+`git status` and can be committed by accident. A crash mid-write leaves a truncated script. The template is bash
+(`#!/usr/bin/env bash`, bash arrays), which needs bash on every machine that commits.
+
+snp renders a POSIX `sh` template (ARCHITECTURE §9.7: `SNP_EXE` selection, kill-switch branch, `CDPATH=` safe
+`cd`), always with LF, and writes it atomically: a temporary file in the hooks directory, `fsync`, mode 0755, then a
+rename over `hook_path` (`rename_with_retry` on Windows). The rename replaces a symlink at `hook_path` instead of
+following it, so the symlink's target is never modified. The template's identity lines (`# File generated by snp`,
+plus the compat IDs that keep pre-commit's and prek's `is_our_script` checks working) are the BRAND part of the row.
+
+Why it is safe: git runs the hook through `sh` either way, the script is byte-identical on every platform, readers
+never see a partial script, and a symlink target outside `.git/hooks` stays exactly as committed. Users who share
+hooks through a symlink keep sharing the configuration file, which is what the script reads.
+
+##### Examples
+
+```text
+$ ls -l .git/hooks/pre-commit
+.git/hooks/pre-commit -> ../../tools/hook      # tools/hook: a tracked pre-commit script, INSTALL_PYTHON=/old/python
+$ pre-commit install                           # pre-commit 4.6.2
+pre-commit installed at .git/hooks/pre-commit
+$ git status --short
+ M tools/hook                                  # rewritten through the link
+$ snp install
+Replaced hook script from pre-commit at .git/hooks/pre-commit (Python: /old/python)
+snp installed at .git/hooks/pre-commit
+$ git status --short                           # clean; .git/hooks/pre-commit is now a regular 0755 file
+```
+
+First lines of the two templates:
+
+```text
+#!/usr/bin/env bash                            # pre-commit
+# File generated by pre-commit: https://pre-commit.com
+# ID: 138fd403232d2ddd5efb44317e38bf03
+
+#!/bin/sh                                      # snp
+# File generated by snp: https://github.com/grok-rs/snp
+# ID: 5bb9bd89cf6c92c58fee7677ceaf4fc3
+# pre-commit compat ID: 138fd403232d2ddd5efb44317e38bf03
+# prek compat ID: 182c10f181da4464a3eec51b83331688
+```
+
+The scenario `tests/differential/divergences/D-DATA-05.yaml` installs over the symlinked, tracked script.
 
 ### D-DATA-07
 
@@ -1458,8 +1769,32 @@ value repaired (all lines equal and an existing directory ⇒ use one line)
 |---|---|
 | an exported `CDPATH` corrupts `--hook-dir`; legacy hooks (git-lfs pre-push) are silently skipped | value repaired (all lines equal and an existing directory ⇒ use one line) |
 
-*The rationale and examples of this divergence are not written yet; the register entry above is
-normative.*
+##### Rationale
+
+The installed hook script computes its directory with `HERE="$(cd "$(dirname "$0")" && pwd)"`. With an exported
+`CDPATH` that matches, bash's `cd` prints the directory it changed to, so `HERE` holds it twice (`/r/.git/hooks` +
+newline + `/r/.git/hooks`). pre-commit receives that as `--hook-dir`, looks for
+`/r/.git/hooks\n/r/.git/hooks/pre-push.legacy`, does not find it, and silently skips the legacy hook — for git-lfs users
+this means `git push` no longer uploads LFS objects, and nothing says so.
+
+snp repairs exactly that shape: when the value contains newlines, every non-empty line is identical and that line is
+an existing directory, the line is used. Any other value is kept verbatim (it then behaves as in pre-commit).
+
+Why it is safe: the repaired value is the directory the script meant to pass; the condition cannot match a legitimate
+directory name (a path made of two identical newline-separated copies of an existing directory is not a real hook
+directory); every other input is untouched.
+
+##### Examples
+
+```text
+$ export CDPATH=.            # the script's `cd` now echoes the directory
+$ git push                   # pre-push.legacy = git-lfs's hook
+# pre-commit: the legacy hook is skipped, LFS objects are not pushed
+# snp: --hook-dir is repaired, the legacy hook runs, then snp's pre-push hooks
+```
+
+Proof: `crates/snp-run/tests/pipeline/hook_impl.rs::d_data_07_cdpath_doubled_hook_dir` and the unit test
+`snp_run::hook_impl::tests::d_data_07_cdpath_repair`; the scenario `tests/differential/divergences/D-DATA-07.yaml`.
 
 ### D-DATA-08
 
@@ -1742,6 +2077,12 @@ snp adds, with no change to any byte pre-commit prints on a working path (ARCHIT
   interrupted before it re-added its intent-to-add files. Restore with: git --literal-pathspecs add --intent-to-add
   -- <paths…>`, printed once. Nothing is ever applied automatically. (The checkout discards hook edits — and any
   later edits — in the patch's paths, as pre-commit's own rollback does.)
+* the notices are printed once per run, at its start (before any preflight check can end it), followed by `snp: this
+  notice repeats until those changes are back in the worktree; to dismiss it and keep the patch, run: snp doctor
+  --fix --stash`. Once the patch's changes are back (`git apply --check --reverse <patch>` succeeds: the user ran the
+  printed command), the next run retires the journal and says so once: `snp: the unstaged changes saved in <patch>
+  are back in the worktree; the recovery notice of that interrupted run is retired`. `snp doctor --fix --stash`
+  dismisses every orphan of the worktree explicitly. Neither deletes the patch (ADR-083).
 
 Why it is safe: stdout and exit codes of every run that works in pre-commit are unchanged; the only visible
 differences are waiting (instead of corrupting a concurrent run) and stderr notices about work pre-commit would
@@ -1758,12 +2099,20 @@ An error has occurred: FatalError: snp: another snp run in this worktree still h
 
 # the run after a `kill -9` during the hooks (stderr)
 snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in /s/patches/patch1791403656-1781218 (index tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904). Restore with: git --literal-pathspecs checkout 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -- foo && git apply --3way /s/patches/patch1791403656-1781218 && git --literal-pathspecs reset -q 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -- foo
+snp: this notice repeats until those changes are back in the worktree; to dismiss it and keep the patch, run: snp doctor --fix --stash
+
+# the run after the user ran that command (stderr, once)
+snp: the unstaged changes saved in /s/patches/patch1791403656-1781218 are back in the worktree; the recovery notice of that interrupted run is retired
 ```
 
 Proof: `crates/snp-stash/tests/behaviour/{guard,recovery}.rs` (lock, nested token, stale token, autosave, patch
 names, pointer with another store), `tests/driver.rs::kill_9_at_every_transition_…` (the next run prints exactly
 `Unrestored::hint`, and the hinted commands restore the work); the scenario
-`tests/differential/divergences/D-DATA-13.yaml`.
+`tests/differential/divergences/D-DATA-13.yaml`; the dismissal paths:
+`crates/snp-stash/tests/behaviour/recovery.rs::{an_applied_orphan_is_retired_once,
+dismissal_keeps_the_patch_and_silences_the_notice}` and `crates/snp/tests/it/stash.rs::{
+an_orphaned_stash_is_reported_once_on_every_path, following_the_recovery_notice_retires_it,
+doctor_fix_stash_dismisses_the_notice_and_keeps_the_patch}`.
 
 ### D-DATA-14
 
@@ -1946,6 +2295,57 @@ An error has occurred: FatalError: git 2.18.5 cannot stash intent-to-add files s
 Proof: `crates/snp-stash/tests/behaviour/guard.rs::old_git_refuses_a_non_empty_stash_before_any_mutation` (the
 refusal comes before any patch or checkout; a clean run proceeds); the scenario
 `tests/differential/divergences/D-DATA-17.yaml` runs on the CI git 2.18.5 container.
+
+### D-DATA-18
+
+a SIGINT sent with kill(2) to the tool is forwarded to the running hooks before the stash is restored
+
+* **Class:** DATA (COMPATIBILITY §5.2)
+
+##### Register entry (COMPATIBILITY §5.2)
+
+| pre-commit 4.6.2 | snp |
+|---|---|
+| a SIGINT sent to pre-commit alone (`kill -INT <pid>`: an IDE or CI cancel) becomes `KeyboardInterrupt` in its own process only: the running hook never sees it and keeps running, orphaned, after the stash was restored (X13-EH-04) | the sent SIGINT is forwarded to every running hook (ARCHITECTURE §10.4, ADR-065), leftover descendants are killed (Linux), then the stash is restored and the run exits 130 as before; a terminal ^C (kernel origin) is not re-sent |
+
+##### Rationale
+
+Python turns SIGINT into `KeyboardInterrupt` in the main thread. pre-commit's `cmd_output_b` (`util.py`) waits in
+`proc.communicate()`; the exception unwinds through it without signalling or waiting for the child, through
+`staged_files_only`'s `finally` (the restore) and `error_handler` (`Interrupted (^C): KeyboardInterrupt:`, exit 130).
+With a terminal ^C that is harmless: the kernel delivered the SIGINT to the whole foreground process group, hooks
+included. A SIGINT *sent* to pre-commit's pid alone (an IDE's commit cancel, a CI step's cancel, `timeout -s INT`,
+`kill -INT`) reaches only Python: the hook — a formatter, a code generator — keeps running after pre-commit restored
+the user's unstaged changes, and whatever it writes then lands on top of them (or after the commit the user retries).
+
+snp classifies every signal by origin (`SignalsInfo<WithOrigin>`, ARCHITECTURE §10.4, ADR-065): a kernel-origin
+SIGINT is not re-sent (the hooks already have it, parity), a process-sent one is forwarded to every Hook/Tool child.
+After the grace (`SNP_KILL_GRACE`) the remaining children are killed and, on Linux, every leftover descendant is reaped
+(`registry::quiesce`) before the restore; Critical git commands of the stash are never signalled.
+
+Why it is safe: the exit status (130), the `Interrupted (^C): KeyboardInterrupt: ` line and the restore are pre-commit's;
+the only difference is that the hook is told to stop — exactly what a terminal ^C does to it under both tools — so no
+hook writes into the worktree after the restore. A hook that traps SIGINT sees one more signal than under pre-commit.
+
+##### Examples
+
+A `trap` hook that appends the name of each signal it receives to `.hook-started`; `kill -INT <tool pid>` once it runs
+(`tests/differential/divergences/D-DATA-18.yaml`, also `tests/differential/scenarios/run/x13-eh-04-interrupt.yaml`):
+
+```text
+# pre-commit 4.6.2: exit 130, .hook-started was never written (the hook got no signal and kept running)
+$ echo signals:; cat .hook-started
+signals:
+
+# snp: exit 130, the hook got the forwarded SIGINT and stopped before the restore
+$ echo signals:; cat .hook-started
+signals:
+INT
+```
+
+Process-level proof: `crates/snp-proc/tests/suite/signals.rs::{signal_matrix_sent_sigint, signal_matrix_kernel_sigint}`
+(a sent SIGINT reaches Inherit hooks, a kernel one is not re-sent) and
+`crates/snp/tests/it/stash.rs::sigint_during_a_hook_restores_the_stash`.
 
 ## 5.3 SEC — security
 
@@ -2466,8 +2866,31 @@ more than 64 MiB fails closed before the legacy hook and the hooks run: An error
 |---|---|
 | pre-push stdin (and the `use_stdin` copy) is read without a limit | more than 64 MiB fails closed before the legacy hook and the hooks run: `An error has occurred: FatalError: snp: hook stdin exceeds 64 MiB; refusing to run hooks on a truncated ref list` (exit 1); never truncated |
 
-*The rationale and examples of this divergence are not written yet; the register entry above is
-normative.*
+##### Rationale
+
+`hook-impl` reads the pre-push ref list with `sys.stdin.buffer.read()` before anything else and keeps it in memory for
+the legacy hook and the namespace parse. An unbounded stdin is an unbounded allocation in a process that holds the
+user's stash and the store lock (ADR-076). A real push produces one line per ref (~100 bytes); 64 MiB is several
+hundred thousand refs.
+
+snp reads at most 64 MiB + 1 byte. More than 64 MiB is refused — before the legacy hook runs and before any hook — with
+a `FatalError` (exit 1). It is never truncated: running the hooks on the first N refs would check a different push
+than the one git is about to perform.
+
+Why it is safe: the push is refused (fail closed), the message says why, and no realistic push comes near the limit.
+
+##### Examples
+
+```text
+$ head -c 68157440 /dev/zero | tr '\0' x | snp hook-impl --config=.pre-commit-config.yaml --hook-type=pre-push -- origin url
+An error has occurred: FatalError: snp: hook stdin exceeds 64 MiB; refusing to run hooks on a truncated ref list
+```
+
+pre-commit reads the whole input (and then fails to unpack the first line, exit 3).
+
+Proof: `crates/snp-run/tests/pipeline/hook_impl.rs::d_sec_12_huge_pre_push_stdin_fails_closed_before_the_legacy_hook`
+and `snp_run::hook_impl::tests::d_sec_12_stdin_cap`; the scenario `tests/differential/divergences/D-SEC-12.yaml`
+(stdin generated by the harness: `stdin_generate`).
 
 ### D-SEC-13
 
@@ -2582,8 +3005,37 @@ snp never touches pre-commit's directories; clean always prints Cleaned {snp sto
 |---|---|
 | `clean` also removes `~/.pre-commit`; `gc`/`clean` operate on pre-commit's store | snp never touches pre-commit's directories; `clean` always prints `Cleaned {snp store}.` |
 
-*The rationale and examples of this divergence are not written yet; the register entry above is
-normative.*
+##### Rationale
+
+pre-commit's `clean` (`commands/clean.py:10-16`) removes its store and the pre-1.0 store `~/.pre-commit`, and prints
+`Cleaned {dir}.` for each one that exists; because `main()` constructs `Store()` (which creates the directory) before
+dispatching, the store line always prints. `gc` sweeps pre-commit's store.
+
+snp has its own store (D-STORE-01: `SNP_HOME` > `$XDG_CACHE_HOME/snp` > `~/.cache/snp`) and is meant to be installed
+next to pre-commit during a migration, so it never deletes or even opens another tool's directories: `clean` retires
+snp's own store under the exclusive store lock and prints `Cleaned {snp store}.` — always, also when the store did
+not exist (snp does not create it just to delete it, ADR-030) — and `gc` only marks and sweeps snp's store. Neither
+`~/.pre-commit` nor `~/.cache/pre-commit` is touched.
+
+Why it is safe: pre-commit users who switch to snp can still switch back without re-installing every environment, and
+two tools never race on one store. The printed line keeps pre-commit's shape (`Cleaned {path}.`), so scripts that
+check for it keep working; only the path differs, which the differential harness treats as a store root (Tier C).
+
+##### Examples
+
+```text
+$ ls -a ~ ~/.cache
+.pre-commit  .cache            # ~/.pre-commit exists, ~/.cache/pre-commit exists
+$ pre-commit clean             # pre-commit 4.6.2
+Cleaned /home/u/.cache/pre-commit.
+Cleaned /home/u/.pre-commit.
+$ snp clean                    # both pre-commit directories stay
+Cleaned /home/u/.cache/snp.
+$ snp clean                    # again: the store is gone, the line still prints
+Cleaned /home/u/.cache/snp.
+```
+
+The scenario `tests/differential/divergences/D-STORE-02.yaml` runs `clean` with a pre-1.0 `~/.pre-commit` present.
 
 ### D-DATA-04
 
@@ -2725,8 +3177,45 @@ prek and snp 1.x scripts are manager scripts (hook-script identity): replaced in
 |---|---|
 | `install` treats prek and snp 1.x hook scripts as foreign: moves them to `.legacy` and prints `Running in migration mode with existing hooks at …` / `Use -f to use only pre-commit.` (both tools then run on every commit; a pre-commit script in `.legacy` blocks every commit, 11 §A.5.2 chains C1–C4) | prek and snp 1.x scripts are manager scripts (hook-script identity): replaced in place, no `.legacy`, no migration-mode lines; `uninstall` still restores a `PreCommit`/`Prek` `.legacy` (rollback) |
 
-*The rationale and examples of this divergence are not written yet; the register entry above is
-normative.*
+##### Rationale
+
+pre-commit's `is_our_script` knows only its own template hashes, so the hook scripts of prek
+(`# File generated by prek`) and of snp 1.x (`# Generated by SNP (Shell Not Pass)`) are foreign to it: `install`
+moves them to `<type>.legacy`, prints `Running in migration mode with existing hooks at …` / `Use -f to use only
+pre-commit.`, and from then on every commit runs both managers. If the parked script is a pre-commit-compatible
+script that no longer finds its tool, every commit fails (11 §A.5.2, chains C1–C4).
+
+snp's hook-script classifier (`snp_git::hookscripts::classify`) recognises pre-commit (all three template eras),
+prek, snp 1.x and snp scripts as **manager scripts**. A manager script is replaced in place: no `.legacy`, no
+migration-mode lines; the M1 note `Replaced hook script from {owner} at {hook_path}` (D-DIAG-02) goes to stderr, and
+the stdout line is pre-commit's `… installed at …`. Its options (`--config`, `--skip-on-missing-config`, prek-only
+flags noted by M1b) are parsed by the era parsers of 11 §A.5.3 for `doctor --fix`. `uninstall` still restores a
+`PreCommit` or `Prek` `.legacy` left by an earlier pre-commit-style install, so rolling back to that tool works.
+
+Why it is safe: snp runs the same configuration those managers ran, so replacing their script keeps every hook
+running exactly once instead of twice; nothing user-written is moved or deleted (foreign scripts still go to
+`.legacy` as in pre-commit).
+
+##### Examples
+
+```text
+$ head -2 .git/hooks/pre-commit
+#!/bin/sh
+# File generated by prek: https://github.com/j178/prek
+$ pre-commit install           # pre-commit 4.6.2: hooks/ now holds pre-commit and pre-commit.legacy (prek)
+Running in migration mode with existing hooks at .git/hooks/pre-commit.legacy
+Use -f to use only pre-commit.
+pre-commit installed at .git/hooks/pre-commit
+$ snp install                  # hooks/ holds only pre-commit
+Replaced hook script from prek at .git/hooks/pre-commit
+snp installed at .git/hooks/pre-commit
+```
+
+The same over an snp 1.x script prints `Replaced hook script from snp 1.x at .git/hooks/pre-commit`. In the compat
+brand (`pre-commit install` through snp's alias) stdout is `pre-commit installed at .git/hooks/pre-commit` and the
+note is on stderr.
+
+The scenario `tests/differential/divergences/D-BRAND-02.yaml` installs over a prek script.
 
 ### D-MISC-02
 
@@ -2740,8 +3229,34 @@ argv[1] == "__hazmat" is reserved (in-hook hazmat entry, both brands) — class 
 |---|---|
 | `pre-commit __hazmat …` → `invalid choice: '__hazmat'`, exit 2 | `argv[1] == "__hazmat"` is reserved (in-hook hazmat entry, both brands) — class BRAND |
 
-*The rationale and examples of this divergence are not written yet; the register entry above is
-normative.*
+##### Rationale
+
+pre-commit 4.6.2 has a public `hazmat` command whose rewritten entries run `pre-commit hazmat …` inside hooks; its
+top-level parser rejects anything else, so `pre-commit __hazmat …` is a usage error (`invalid choice: '__hazmat'`,
+exit 2). snp reserves `argv[1] == "__hazmat"` in both brands as the in-hook hazmat entry: dispatch hands the
+remaining arguments to `snp_hooks::hazmat::cli` before the argparse model is consulted (12 §A.17), so a hook entry
+that snp rewrites (`cd`, `ignore-exit-code`, `n1`) runs without parsing the whole CLI and without depending on how
+the public command is spelled in a given brand. Its parser texts use prog `hazmat.py`, like pre-commit's module.
+
+Why it is safe: `__hazmat` is not a name a user types — it starts with two underscores, appears in no help text, and
+in pre-commit it is only ever an error. The public `hazmat` command keeps pre-commit's behaviour byte for byte
+(X13-HZ-01…05).
+
+##### Examples
+
+```text
+$ pre-commit __hazmat n1 echo -- a b          # pre-commit 4.6.2, stderr, exit 2
+usage: pre-commit [-h] [-V]
+                  {autoupdate,clean,gc,hazmat,init-templatedir,install,install-hooks,migrate-config,run,sample-config,try-repo,uninstall,validate-config,validate-manifest,help,hook-impl} ...
+pre-commit: error: argument command: invalid choice: '__hazmat' (choose from 'autoupdate', 'clean', 'gc', 'hazmat', 'init-templatedir', 'install', 'install-hooks', 'migrate-config', 'run', 'sample-config', 'try-repo', 'uninstall', 'validate-config', 'validate-manifest', 'help', 'hook-impl')
+$ pre-commit __hazmat n1 echo -- a b          # snp (either brand), exit 0
+a
+b
+$ snp __hazmat n1 echo                         # stderr, exit 1
+hazmat entry must end with `--`
+```
+
+The scenario `tests/differential/divergences/D-MISC-02.yaml` runs the first command in both brands.
 
 ## 5.5 PLAT — platform
 
@@ -2849,8 +3364,29 @@ absolute path kept
 |---|---|
 | Windows: config/`--files` on another drive → `ValueError` (relpath) exit 3 | absolute path kept |
 
-*The rationale and examples of this divergence are not written yet; the register entry above is
-normative.*
+##### Rationale
+
+`_adjust_args_and_chdir` makes `--config`, `--files` and `--commit-msg-filename` absolute against the invocation
+directory and then relative to the repository root with `os.path.relpath`. On Windows, `relpath` between two drives
+raises `ValueError: path is on mount 'D:', start on mount 'C:'`, so `pre-commit run --files D:\\x.txt` from a
+repository on `C:` crashes with exit 3.
+
+snp keeps the absolute path in that case. Every consumer accepts an absolute path (git, the classifier, hooks), so the
+file is simply handled from where it is; on Unix and on one drive nothing changes.
+
+Why it is safe: the path still names the same file; no output that pre-commit produces on a working invocation changes.
+
+##### Examples
+
+```text
+C:\repo> pre-commit run --files D:\data\x.txt
+An unexpected error has occurred: ValueError: path is on mount 'D:', start on mount 'C:'
+C:\repo> snp run --files D:\data\x.txt
+… hooks run with D:/data/x.txt
+```
+
+Proof: the unit tests of `snp_run::common` (`rebase_keeps_order_and_dots`); the scenario
+`tests/differential/divergences/D-PLAT-06.yaml` (Windows runner with a second drive).
 
 ### D-PLAT-08
 
@@ -3191,8 +3727,63 @@ native implementations (fast path, ADR-031); output byte-identical; Tier A repos
 |---|---|
 | pre-commit-hooks run from a cloned venv | native implementations (fast path, ADR-031); output byte-identical; Tier A repos are never cloned (FD-8) |
 
-*The rationale and examples of this divergence are not written yet; the register entry above is
-normative.*
+##### Rationale
+
+`pre-commit/pre-commit-hooks` is by far the most used hook repository. pre-commit 4.6.2 clones it, builds a
+virtualenv, `pip install`s the package and then starts one CPython interpreter per xargs partition for every hook. The
+owner decision FD-8 makes snp run these hooks natively instead (ARCHITECTURE §7.2, ADR-031): no clone, no venv, no
+interpreter start-up, and — for Tier A revisions (a known tag or its full commit) — no network at all.
+
+The divergence is confined to **what is on disk and what is spawned**; everything a user or a script can read from the
+run is unchanged:
+
+* hook output, exit codes, file modifications and their order are byte-identical (every native hook passes its
+  parity corpus against the pinned upstream module; caveat hooks stay delegated until their CI parity gate passes);
+* the cold transcript is byte-identical too: `[INFO] Initializing environment for {repo}.` prints when pre-commit
+  would insert its `db.db` row (a `keys-v1` marker records the first sight of `(repo, rev)`), and the `Installing
+  environment` triplet prints exactly once for the python environment pre-commit would have built — a *virtual*
+  install (ADR-032). The warm transcript prints neither;
+* any doubt delegates to pre-commit's behaviour: a Tier B revision is cloned and its module plus import closure must
+  match `VERIFIED_BLOBS`; a hook whose config or local overlay sets `language`, `entry` or non-empty
+  `additional_dependencies` (G4), whose arguments the native preflight does not accept (G5), whose epoch predates
+  v3.0.0 (G6), or that the user excluded (`--no-fast-path`, `SNP_NO_FAST_PATH`, `fast_path: off`,
+  `fast_path_exclude`, G1) is cloned and installed exactly like pre-commit, at pre-commit's step.
+
+It is safe because the only observable differences are the store contents (no `repo*` clone, no `py_env-*`) and the
+absence of the child python processes — neither is part of pre-commit's documented interface, and both make the run
+faster and offline-capable without changing a byte of output. A moved upstream tag cannot inject code: Tier A uses the
+embedded manifest and profile, Tier B reads only blob ids.
+
+##### Examples
+
+```yaml
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+    -   id: trailing-whitespace
+    -   id: end-of-file-fixer
+    -   id: check-json
+```
+
+`run --all-files` over `a.json` = `{}\n` on a cold store. pre-commit 4.6.2 (pc462-py312) and snp print the same bytes,
+exit 0 (`crates/snp-repo/tests/goldens/pc462-py312-pch-v6-cold.txt`):
+
+```
+[INFO] Initializing environment for https://github.com/pre-commit/pre-commit-hooks.
+[INFO] Installing environment for https://github.com/pre-commit/pre-commit-hooks.
+[INFO] Once installed this environment will be reused.
+[INFO] This may take a few minutes...
+trim trailing whitespace.................................................Passed
+fix end of files.........................................................Passed
+check json...............................................................Passed
+```
+
+The stores differ. pre-commit's `$PRE_COMMIT_HOME` afterwards holds `db.db`, `README` and one `repo<random>/` with
+the clone and its `py_env-python3/`; `git fetch` of the upstream URL ran. snp's store holds no
+`repos-v1/` entry and no environment directory — only the `keys-v1` markers — and spawned neither git nor python.
+The scenario in `tests/differential/divergences/D-PERF-03.yaml` asserts exactly that: identical stdout/stderr/exit,
+different store.
 
 ### D-PERF-04
 
@@ -3439,8 +4030,38 @@ SNP=0/false makes hook-impl skip snp's hooks (the legacy hook still runs)
 |---|
 | `SNP=0`/`false` makes `hook-impl` skip snp's hooks (the legacy hook still runs) |
 
-*The rationale and examples of this divergence are not written yet; the register entry above is
-normative.*
+##### Rationale
+
+lefthook's `LEFTHOOK=0` kill switch (05 §18.4) lets a user bypass the managed hooks for one command without
+`--no-verify`, which would also skip every other hook git runs. snp offers the same as `SNP=0` (or `false`, any case),
+read by `hook-impl` only, after the legacy phase: the migration-mode hook (`<type>.legacy`, e.g. git-lfs's `pre-push`)
+still runs and its return code is the hook's result, so `SNP=0 git push` still uploads LFS objects.
+
+A team can forbid it with `allow_disable: false` at the root of the config; the config is read leniently here (a
+missing or invalid config counts as `true`, so a broken config can never trap a user). When it is forbidden, one stderr
+line `snp: SNP=0 ignored: <config> sets allow_disable: false` explains why the hooks ran anyway. `SNP_COMPAT_STRICT=1`
+disables the switch (pre-commit semantics).
+
+Why it is safe: it is opt-in per command, visible in the environment, never active unless set, overridable by the
+repository, and it never skips the legacy hook.
+
+##### Examples
+
+```text
+$ SNP=0 git commit -m wip                 # hook-impl --hook-type=pre-commit: legacy hook only, rc = legacy rc
+$ SNP=0 git push                          # git-lfs's pre-push.legacy still runs
+$ cat .pre-commit-config.yaml
+allow_disable: false
+…
+$ SNP=0 git commit -m wip
+snp: SNP=0 ignored: .pre-commit-config.yaml sets allow_disable: false
+passing..................................................................Passed
+```
+
+pre-commit ignores `SNP` and runs its hooks.
+
+Proof: `crates/snp-run/tests/pipeline/hook_impl.rs::d_ext_05_kill_switch`; the scenario
+`tests/differential/divergences/D-EXT-05.yaml`.
 
 ### D-EXT-06
 
@@ -3634,8 +4255,48 @@ install/uninstall/init-templatedir/doctor --fix notes when replacing other manag
 |---|
 | `install`/`uninstall`/`init-templatedir`/`doctor --fix` notes when replacing other managers' scripts: M1 `Replaced hook script from {owner} at {hook_path}` [+ ` (Python: {INSTALL_PYTHON})`], M1b, M2 `Removed {legacy_path}: it is a hook script from {owner}, not a user hook`, M3 ``Note: {hook_path} still runs {owner}; run `{prog} install -t {T}` to switch it to snp``, M12 (11 §A.5.4) — both brands |
 
-*The rationale and examples of this divergence are not written yet; the register entry above is
-normative.*
+##### Rationale
+
+When snp replaces another manager's hook script (D-BRAND-02), deletes a manager script parked in `.legacy`
+(D-DATA-03) or leaves another hook type still pointing at another manager, the user should learn what changed:
+otherwise a replaced prek or pre-commit script, or a hook type that still runs the old tool, is invisible. pre-commit
+prints nothing of the kind (it has no such cases: it moves the scripts to `.legacy`).
+
+The notes of 11 §A.5.4 are written to **stderr** in both brands, never stdout, so the stdout of `install`,
+`uninstall`, `init-templatedir` and `doctor --fix` stays pre-commit's line for line (`pre-commit installed at …`,
+`Running in migration mode …`) and tools that parse it are unaffected:
+
+* M1 `Replaced hook script from {owner} at {hook_path}`, with ` (Python: {INSTALL_PYTHON})` for a pre-commit script
+  whose `INSTALL_PYTHON` was parsed (so the user can find the interpreter that used to run hooks), or ` (could not
+  read its options; defaults used)` from `doctor --fix`;
+* M1b `Note: the replaced prek hook used prek-only options ({opts}); they are not supported and were dropped`;
+* M2 `Removed {legacy_path}: it is a hook script from {owner}, not a user hook`;
+* M3 ``Note: {hook_path} still runs {owner}; run `{prog} install -t {T}` to switch it to snp`` (`{prog}` follows the
+  brand);
+* M12 `Removed {legacy_path}: it is a hook script from snp, not a user hook` (`uninstall`).
+
+Why it is safe: stderr-only diagnostics change no exit code, no stdout byte and no file; the differential harness
+strips class DIAG lines from stderr only through this scenario (ARCHITECTURE §13.2).
+
+##### Examples
+
+`pre-commit` holds a pre-commit script (`INSTALL_PYTHON=/old/python`), `pre-push` a prek script:
+
+```text
+$ pre-commit install           # pre-commit 4.6.2: stdout, stderr empty
+pre-commit installed at .git/hooks/pre-commit
+$ pre-commit install           # snp, compat brand: the same stdout; stderr:
+Replaced hook script from pre-commit at .git/hooks/pre-commit (Python: /old/python)
+Note: .git/hooks/pre-push still runs prek; run `pre-commit install -t pre-push` to switch it to snp
+$ snp install                  # snp brand: stdout "snp installed at .git/hooks/pre-commit"; stderr:
+Replaced hook script from pre-commit at .git/hooks/pre-commit (Python: /old/python)
+Note: .git/hooks/pre-push still runs prek; run `snp install -t pre-push` to switch it to snp
+```
+
+With a pre-commit script also parked in `pre-commit.legacy`, snp adds (M2, stderr)
+`Removed .git/hooks/pre-commit.legacy: it is a hook script from pre-commit, not a user hook`.
+
+The scenario `tests/differential/divergences/D-DIAG-02.yaml` runs the first case in both brands.
 
 ### D-DIAG-03
 
@@ -3649,8 +4310,31 @@ run hint, only when stderr is a TTY, SNP_NO_HINTS unset/empty and core.hooksPath
 |---|
 | `run` hint, only when stderr is a TTY, `SNP_NO_HINTS` unset/empty and `core.hooksPath` unset: ``hint: {hook_path} runs {owner}, not snp; run `{prog} install` to switch`` (11 §A.14) |
 
-*The rationale and examples of this divergence are not written yet; the register entry above is
-normative.*
+##### Rationale
+
+The most confusing state of a migration is a repository whose git hooks still run Python pre-commit (or prek, or
+snp 1.x) while the user types `snp run` (or `pre-commit run` through the snp alias): the manual run uses snp, the
+commit uses the old tool, and the two can disagree. When `snp run` is started directly (not through `hook-impl`), it
+classifies `<common-dir>/hooks/<T>` for each `T` in the config's `default_install_hook_types` (bounded reads, 11
+§A.5.1) and, for a script owned by pre-commit, prek or snp 1.x, prints one line per type on stderr before any other
+output: ``hint: .git/hooks/pre-commit runs Python pre-commit, not snp; run `snp install` to switch``.
+
+It is printed only when stderr is a terminal, `SNP_NO_HINTS` is unset or empty and `core.hooksPath` is unset: CI logs,
+the differential harness, scripts and pipes stay byte-identical with pre-commit, and stdout never changes.
+
+##### Examples
+
+```text
+$ pre-commit install            # Python pre-commit's script
+$ snp run                       # on a terminal
+hint: .git/hooks/pre-commit runs Python pre-commit, not snp; run `snp install` to switch
+passing..................................................................Passed
+$ snp run 2>&1 | cat            # not a terminal: no hint
+passing..................................................................Passed
+```
+
+Proof: the scenario `tests/differential/divergences/D-DIAG-03.yaml` (a pty step); the conditions are in
+`snp_run::pipeline::run_hint`.
 
 ### D-DIAG-04
 
@@ -3670,7 +4354,9 @@ Each notice reports a situation pre-commit cannot be in (it has no lock, journal
 or handles silently to the user's loss:
 
 * **recovery notice** — an earlier run never restored; where the work is and the command that restores it
-  (D-DATA-13, ARCHITECTURE §4.6). Printed by the next stash in the worktree, once per orphaned journal.
+  (D-DATA-13, ARCHITECTURE §4.6). Printed at the start of every later run in the worktree, once per orphaned journal,
+  followed once by how to dismiss it (`snp doctor --fix --stash`); when the patch's changes are back in the worktree
+  the journal is retired with one last notice (ADR-083).
 * **`snp: waiting for another snp run in this worktree…`** — printed once when the worktree lock is contended
   (D-DATA-13), so a waiting commit does not look hung.
 * **`snp: restoring stashed changes, please wait`** — printed once when a further signal arrives while the restore
@@ -3689,6 +4375,8 @@ snp: waiting for another snp run in this worktree…
 snp: restoring stashed changes, please wait
 snp: git needed the terminal during the restore and was stopped
 snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in /s/patches/patch1791403656-1781218 (index tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904). Restore with: git --literal-pathspecs checkout 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -- foo && git apply --3way /s/patches/patch1791403656-1781218 && git --literal-pathspecs reset -q 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -- foo
+snp: this notice repeats until those changes are back in the worktree; to dismiss it and keep the patch, run: snp doctor --fix --stash
+snp: the unstaged changes saved in /s/patches/patch1791403656-1781218 are back in the worktree; the recovery notice of that interrupted run is retired
 ```
 
 Proof: `crates/snp-stash/src/messages.rs` (goldens), `tests/behaviour/guard.rs::{concurrent_second_run_waits_once_…,
@@ -4033,5 +4721,69 @@ error source chain / Rust backtrace (crash-log body is Tier B)
 |---|---|
 | Python tracebacks in the crash log body | error source chain / Rust backtrace (crash-log body is Tier B) |
 
-*The rationale and examples of this divergence are not written yet; the register entry above is
-normative.*
+##### Rationale
+
+pre-commit's crash log (`error_handler.py:_log_and_exit`) ends with `traceback.format_exc()` — a Python traceback
+through pre-commit's own modules. snp has no Python stack; reproducing one would be fiction. ADR-013 keeps
+pre-commit's skeleton byte for byte up to and including the `### error information` block with line 1, so log
+scrapers that read the version block or the error line keep working, and replaces the traceback block with what
+explains an snp failure: the error's source chain (`Failure` → cause → …, one line per level), for a panic the
+`panicked at {file}:{line}:{col}` location, the Rust backtrace and the bug-report hint naming
+`https://github.com/grok-rs/snp/issues`; `(no further details)` when the failure carries none. The log is written
+`O_NOFOLLOW` and truncated, named by brand (`pre-commit.log` / `snp.log`, D-STORE-01); an unwritable log prints
+`Failed to write to log at …` and the body on stdout instead of faulting twice.
+
+Why it is safe: the terminal output (line 1 and `Check the log at …`) and the exit code are pre-commit's; the log body
+below the version block is Tier B by design (ADR-013), read by people filing bugs, never parsed by tools.
+
+##### Examples
+
+`pre-commit install` with `.git/hooks/pre-commit` being a directory (both: exit 3, same two stdout lines):
+
+~~~text
+### error information                                   # pre-commit 4.6.2 log, abridged
+
+```
+An unexpected error has occurred: IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-commit'
+```
+
+```
+Traceback (most recent call last):
+  File ".../pre_commit/error_handler.py", line 73, in error_handler
+    yield
+  ...
+  File ".../pre_commit/commands/install_uninstall.py", line 59, in is_our_script
+    with open(filename, 'rb') as f:
+IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-commit'
+```
+~~~
+
+~~~text
+### version information                                 # snp log (compat brand)
+
+```
+pre-commit version: 4.6.2
+git --version: git version 2.43.0
+sys.version:
+    snp 2.0.0 (rustc 1.99.0) [x86_64-linux]
+sys.executable: /usr/local/bin/snp
+os.name: posix
+sys.platform: linux
+```
+
+### error information
+
+```
+An unexpected error has occurred: IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-commit'
+```
+
+```
+(no further details)
+```
+~~~
+
+A panic (`SNP_FAULT=PrinterWrite` in a `testing` build) ends the log with `panicked at crates/…:L:C`, the
+`stack backtrace:` lines and `snp panicked: this is a bug. Please report it at https://github.com/grok-rs/snp/issues
+with this log.`
+
+The scenario `tests/differential/divergences/D-MISC-08.yaml` produces this crash in both tools.

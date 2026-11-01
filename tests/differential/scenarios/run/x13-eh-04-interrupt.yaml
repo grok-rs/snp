@@ -1,5 +1,7 @@
 name: run/x13-eh-04-interrupt
 description: 'SIGINT while a hook runs with a stash held: Interrupted (^C), exit 130, the stash restored (X13-EH-04)'
+# snp forwards a kill(2)-sent SIGINT to the hook, pre-commit does not: the trap hook's record differs (D-DATA-18)
+expect_divergence: D-DATA-18
 covers: [X13-EH-04]
 requires: {os: [linux, macos], probe: true}
 work:
@@ -17,8 +19,8 @@ work:
 steps:
   - tool: [run]
     signal: {name: SIGINT, after: .hook-started.ready}
-  # the trap hook records the signals it got in .hook-started: snp forwards a kill(2)-sent SIGINT to its hooks
-  # (ARCHITECTURE §10.4, ADR-065), pre-commit does not; this scenario pins the restore, so only a.txt is listed
-  - shell: cat a.txt; git status --porcelain -- a.txt
+  # the trap hook records the signals it got in .hook-started (created on the first one): snp forwards a
+  # kill(2)-sent SIGINT to its hooks (ARCHITECTURE §10.4, ADR-065), pre-commit does not (D-DATA-18)
+  - shell: 'cat a.txt; git status --porcelain; echo signals:; cat .hook-started 2>/dev/null || true'
 compare:
   tree: false

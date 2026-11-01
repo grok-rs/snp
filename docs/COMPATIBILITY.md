@@ -173,6 +173,7 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 | D-DATA-15 | migrate-config turns a folded `language: >-\n  python_venv` into invalid YAML | block scalars rewritten safely | 21 |
 | D-DATA-16 | autoupdate: a config without a final newline triggers a full PyYAML re-dump that drops all comments | end of file treated as a line end; comments kept | 21 |
 | D-DATA-17 | git < 2.19 does not report intent-to-add files: a stash with an ITA file fails after the rollback (`already exists in working directory`, exit 3), leaving the unstaged work only in the patch (02 G.3); runs without a stash work | a stash that would be non-empty on git < 2.19 is refused before any mutation: `An error has occurred: FatalError: git <V> cannot stash intent-to-add files safely; snp requires git 2.19.0 or newer to stash unstaged changes (found <git>).` (exit 1); every run that needs no stash works as in pre-commit | 23, 18 |
+| D-DATA-18 | a SIGINT sent to pre-commit alone (`kill -INT <pid>`: an IDE or CI cancel) becomes `KeyboardInterrupt` in its own process only: the running hook never sees it and keeps running, orphaned, after the stash was restored (X13-EH-04) | the sent SIGINT is forwarded to every running hook (ARCHITECTURE §10.4, ADR-065), leftover descendants are killed (Linux), then the stash is restored and the run exits 130 as before; a terminal ^C (kernel origin) is not re-sent | 15, 32 |
 
 ### 5.3 SEC — security
 

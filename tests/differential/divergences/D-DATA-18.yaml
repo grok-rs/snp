@@ -1,0 +1,42 @@
+# D-DATA-18 (DATA, owner WP-15): a SIGINT sent to the tool with kill(2) is forwarded to the running hooks
+# pre-commit 4.6.2 turns the SIGINT into KeyboardInterrupt in its own process only: the hook never sees it and keeps
+# running (orphaned) after pre-commit restored the stash and exited 130. snp forwards a process-sent SIGINT to every
+# hook child (ARCHITECTURE §10.4, ADR-065, ADR-083), so the hook stops before the restore (docs/divergences/D-DATA-18.md).
+# The trap hook appends the name of each signal it gets to `.hook-started`.
+name: divergences/D-DATA-18-sent-sigint-forwarded
+expect_divergence: D-DATA-18
+status: active
+since: "4.6.2"
+brands: [compat, snp]
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: false, probe: true}
+repos: {}
+work:
+  files: {a.txt: "a\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: trap, name: trap, entry: "${probe} trap .hook-started 100 20000", language: system, pass_filenames: false, always_run: true}
+  commit: [.pre-commit-config.yaml, a.txt]
+  setup:
+    - write: {a.txt: "b\n"}
+    - git: [add, a.txt]
+    - write: {a.txt: "c\n"}
+steps:
+  - tool: [run]
+    signal: {name: SIGINT, after: .hook-started.ready}
+  - shell: 'echo signals:; cat .hook-started 2>/dev/null || true'
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: false
+expected:
+  oracle:
+    steps:
+      1: {exit: 130}
+      2: {stdout: "signals:\n"}
+  snp:
+    steps:
+      1: {exit: 130}
+      2: {stdout: "signals:\nINT\n"}
