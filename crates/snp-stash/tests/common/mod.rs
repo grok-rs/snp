@@ -334,6 +334,7 @@ impl Sandbox {
                 lock_timeout: Duration::from_secs(5),
                 verify: false,
                 old_git: false,
+                report_recovery: true,
             },
             out,
             err,

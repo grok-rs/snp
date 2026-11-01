@@ -80,7 +80,7 @@ complete -c snp -n "__fish_snp_using_subcommand doctor" -s c -l config -d 'Path 
 complete -c snp -n "__fish_snp_using_subcommand doctor" -s h -l help -d 'show this help message and exit'
 complete -c snp -n "__fish_snp_using_subcommand doctor" -l fix -d 'Repair this repository\'s hook scripts, then check again.'
 complete -c snp -n "__fish_snp_using_subcommand doctor" -l fast-path -d 'Explain the native fast-path decision of every hook.'
-complete -c snp -n "__fish_snp_using_subcommand doctor" -l stash -d 'Verify that a stash of unstaged changes round-trips.'
+complete -c snp -n "__fish_snp_using_subcommand doctor" -l stash -d 'Check orphaned stashes against the worktree; with --fix, dismiss their notices.'
 complete -c snp -n "__fish_snp_using_subcommand gc" -l color -d 'Whether to use color in output. Defaults to `auto`.' -r
 complete -c snp -n "__fish_snp_using_subcommand gc" -s h -l help -d 'show this help message and exit'
 complete -c snp -n "__fish_snp_using_subcommand hazmat; and not __fish_seen_subcommand_from cd ignore-exit-code n1" -l color -d 'Whether to use color in output. Defaults to `auto`.' -r

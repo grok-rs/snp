@@ -138,12 +138,18 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         common::mark_config_used(&cx.store, &src.path, &root);
     }
     let stash = !a.all_files && cli_files.is_empty();
-    // A stashing run reports orphaned stashes inside `snp_stash::enter`, which holds the worktree lock anyway
-    // (ARCHITECTURE §4.6); scanning here as well printed every notice twice.
-    if !stash && cx.env.get("_SNP_STASH_LOCK").is_none() {
-        for u in snp_stash::recovery_scan(&info.git_dir, &cx.store.patches_dir(), &root) {
-            printer.diag(&u.hint());
-        }
+    // Every non-nested run reports orphaned stashes here, before any preflight can end it (ARCHITECTURE §4.6,
+    // ADR-083). When the lock probe fails (another run holds it), a stash reports once it holds the lock instead:
+    // each notice is printed exactly once per run on every path.
+    let recovery = cx
+        .env
+        .get("_SNP_STASH_LOCK")
+        .is_none()
+        .then(|| snp_stash::recovery_report(&git0, &info.git_dir, &cx.store.patches_dir(), &root))
+        .flatten();
+    let recovery_reported = recovery.is_some();
+    for line in recovery.unwrap_or_default() {
+        printer.diag(&line);
     }
     // step 6: the speculative config load (warnings buffered) beside the read-only preflight git calls
     let buffered = Buffered::default();
@@ -208,7 +214,14 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     let mut run_env = runenv::run_env(&cx.env, a);
     // step 9: the stash guard
     if stash {
-        let guard = snp_stash::enter(stash_ctx(cx, inv.store, &git0, &info, &run_env))?;
+        let guard = snp_stash::enter(stash_ctx(
+            cx,
+            inv.store,
+            &git0,
+            &info,
+            &run_env,
+            !recovery_reported,
+        ))?;
         if let Some((k, v)) = guard.child_env_token() {
             run_env = run_env.patched(&EnvPatch::default().set(k, v));
         }
@@ -409,7 +422,14 @@ fn regex(cx: &RunCtx, pattern: &str) -> Result<Arc<snp_pyre::PyRegex>, Failure> 
 /// The stash's context: a Critical-role backend on a token that is never cancelled (ADR-065). The patch lives in
 /// the run's store: try-repo's throwaway store keeps `patches/` in its temp dir, as pre-commit's `Store(tempdir)`
 /// does (ADR-059), so `[INFO] Stashing unstaged files to <path>.` names the same kind of path.
-fn stash_ctx(cx: &RunCtx, store: &Store, git: &Git, info: &RepoInfo, run_env: &Env) -> StashCtx {
+fn stash_ctx(
+    cx: &RunCtx,
+    store: &Store,
+    git: &Git,
+    info: &RepoInfo,
+    run_env: &Env,
+    report_recovery: bool,
+) -> StashCtx {
     let backend = Arc::new(ProcBackend {
         cancel: snp_core::cancel::CancelToken::new(),
         role: Role::Critical,
@@ -431,6 +451,7 @@ fn stash_ctx(cx: &RunCtx, store: &Store, git: &Git, info: &RepoInfo, run_env: &E
                 patch: 0,
             }
         }),
+        report_recovery,
     }
 }
 
@@ -664,6 +685,7 @@ mod tests {
             lock_timeout: Duration::from_secs(5),
             verify: false,
             old_git: false,
+            report_recovery: true,
         })
         .unwrap();
         // the stash took the unstaged line away; a "hook" modified the file

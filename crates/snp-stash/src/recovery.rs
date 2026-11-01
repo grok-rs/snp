@@ -190,13 +190,24 @@ fn c_unquote(quoted: &[u8]) -> Option<(Vec<u8>, usize)> {
 #[derive(Debug, Default)]
 pub(crate) struct Scan {
     /// Runs whose patch was never restored.
-    pub(crate) unrestored: Vec<Unrestored>,
+    pub(crate) unrestored: Vec<Orphan>,
     /// Journals and pointers of this worktree that protect nothing (restored, or no patch): safe to delete while
     /// holding the lock.
     pub(crate) stale: Vec<PathBuf>,
     /// Runs with no unrestored patch whose intent-to-add re-add may not have run. Reported once (no unstaged
     /// content is at risk), then deleted.
     pub(crate) ita_only: Vec<ItaOnly>,
+}
+
+/// A run whose patch was never restored, with the files that journal it.
+#[derive(Debug)]
+pub(crate) struct Orphan {
+    /// What the notice describes.
+    pub(crate) unrestored: Unrestored,
+    /// The intent-to-add paths the run cleared and the file that lists them.
+    pub(crate) ita: (Vec<Vec<u8>>, Option<PathBuf>),
+    /// The run's journal and pointer files (never the patch).
+    pub(crate) files: Vec<PathBuf>,
 }
 
 /// A run whose only leftover is its cleared intent-to-add list.
@@ -371,13 +382,17 @@ pub(crate) fn scan(git_dir: &Path, patches_dir: &Path, worktree_root: &Path) -> 
         let state = run.state();
         let patch = run.patch().filter(|p| p.is_file());
         match patch {
-            Some(patch) if journal::is_unrestored(&state) => out.unrestored.push(Unrestored {
-                patch,
-                tree: run.tree(),
-                worktree: worktree_root.to_path_buf(),
-                pid: run.data.as_ref().map_or(0, |d| d.pid),
-                staged_fixed: run.staged_fixed(),
-                state: state.into_boxed_str(),
+            Some(patch) if journal::is_unrestored(&state) => out.unrestored.push(Orphan {
+                unrestored: Unrestored {
+                    patch,
+                    tree: run.tree(),
+                    worktree: worktree_root.to_path_buf(),
+                    pid: run.data.as_ref().map_or(0, |d| d.pid),
+                    staged_fixed: run.staged_fixed(),
+                    state: state.into_boxed_str(),
+                },
+                ita: run.ita(),
+                files: run.files,
             }),
             _ => {
                 // The journal is removed only after the intent-to-add re-add: a leftover one with a list (state
@@ -395,7 +410,8 @@ pub(crate) fn scan(git_dir: &Path, patches_dir: &Path, worktree_root: &Path) -> 
             }
         }
     }
-    out.unrestored.sort_by(|a, b| a.patch.cmp(&b.patch));
+    out.unrestored
+        .sort_by(|a, b| a.unrestored.patch.cmp(&b.unrestored.patch));
     out
 }
 
@@ -410,7 +426,123 @@ pub fn find_unrestored(
     patches_dir: &Path,
     worktree_root: &Path,
 ) -> Vec<Unrestored> {
-    scan(git_dir, patches_dir, worktree_root).unrestored
+    scan(git_dir, patches_dir, worktree_root)
+        .unrestored
+        .into_iter()
+        .map(|o| o.unrestored)
+        .collect()
+}
+
+/// Retires an orphaned run: its journal and pointer files are removed, so no notice names it again. The patch is
+/// kept and its modification time reset, so `gc`'s 30-day retention of unjournaled patches (D-DATA-04) counts from
+/// the retirement, not from the interrupted run.
+fn retire(o: &Orphan) {
+    for f in &o.files {
+        let _ignored = std::fs::remove_file(f);
+    }
+    if let Ok(f) = std::fs::File::options()
+        .write(true)
+        .open(&o.unrestored.patch)
+    {
+        let _ignored = f.set_modified(std::time::SystemTime::now());
+    }
+}
+
+/// One recovery pass with the worktree lock held (ARCHITECTURE §4.6, ADR-083): the stderr notices, in order.
+///
+/// Stale journals and pointers are removed. An orphaned run whose patch is already applied to the worktree (`git apply
+/// --check --reverse`: the user followed the notice, or restored the changes another way) is retired with a one-time
+/// notice; every other orphan gets its recovery notice, followed once by how to dismiss it. A run with only a cleared
+/// intent-to-add list (or a retired one with such a list) gets the intent-to-add notice once.
+pub(crate) fn report_locked(
+    git: &Git,
+    git_dir: &Path,
+    patches_dir: &Path,
+    worktree_root: &Path,
+) -> Vec<String> {
+    let scan = scan(git_dir, patches_dir, worktree_root);
+    for stale in &scan.stale {
+        let _ignored = std::fs::remove_file(stale);
+    }
+    let mut out = Vec::new();
+    let mut pending = false;
+    for o in &scan.unrestored {
+        let patch = &o.unrestored.patch;
+        if matches!(verify_restored(git, patch), Ok(true)) {
+            out.push(messages::retired_notice(patch));
+            let (ita, listed) = &o.ita;
+            if !ita.is_empty() {
+                out.push(messages::ita_notice(ita, listed.as_deref()));
+            }
+            retire(o);
+        } else {
+            out.push(o.unrestored.hint());
+            pending = true;
+        }
+    }
+    if pending {
+        out.push(messages::DISMISS_HINT.to_owned());
+    }
+    for run in &scan.ita_only {
+        out.push(messages::ita_notice(&run.paths, run.listed.as_deref()));
+        for f in &run.files {
+            let _ignored = std::fs::remove_file(f);
+        }
+    }
+    out
+}
+
+/// Non-blocking: try the worktree lock, run [`report_locked`], release (`run`/`hook-impl` start, ARCHITECTURE
+/// §4.6). `None` when another run holds the lock (it owns the journals it is writing; a stash entered later reports
+/// once it holds the lock). The lock token is not written: the probe never exempts a nested run.
+pub fn recovery_report(
+    git: &Git,
+    git_dir: &Path,
+    patches_dir: &Path,
+    worktree_root: &Path,
+) -> Option<Vec<String>> {
+    let held = lock::try_probe(git_dir)?;
+    let notices = report_locked(git, git_dir, patches_dir, worktree_root);
+    drop(held);
+    Some(notices)
+}
+
+/// An orphaned run that [`dismiss_unrestored`] retired.
+#[derive(Debug, Clone)]
+pub struct Dismissed {
+    /// The kept patch.
+    pub patch: PathBuf,
+    /// Whether its changes were already present in the worktree.
+    pub present: bool,
+    /// The intent-to-add notice of the run, when it had cleared intent-to-add entries.
+    pub ita_notice: Option<String>,
+}
+
+/// `snp doctor --fix --stash` (ARCHITECTURE §4.6, ADR-083): the explicit dismissal. With the worktree lock probed
+/// (empty when another run holds it), every orphaned run of this worktree is retired — its recovery notice stops —
+/// whether or not its changes are back; the patch is never deleted (the caller prints where it is).
+pub fn dismiss_unrestored(
+    git: &Git,
+    git_dir: &Path,
+    patches_dir: &Path,
+    worktree_root: &Path,
+) -> Vec<Dismissed> {
+    let Some(held) = lock::try_probe(git_dir) else {
+        return Vec::new();
+    };
+    let scan = scan(git_dir, patches_dir, worktree_root);
+    let mut out = Vec::new();
+    for o in &scan.unrestored {
+        let (ita, listed) = &o.ita;
+        out.push(Dismissed {
+            patch: o.unrestored.patch.clone(),
+            present: matches!(verify_restored(git, &o.unrestored.patch), Ok(true)),
+            ita_notice: (!ita.is_empty()).then(|| messages::ita_notice(ita, listed.as_deref())),
+        });
+        retire(o);
+    }
+    drop(held);
+    out
 }
 
 /// Non-blocking: try the worktree lock, scan, release (run/hook-impl start; skipped for nested runs and when held).

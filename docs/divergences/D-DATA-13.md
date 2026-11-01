@@ -49,6 +49,12 @@ snp adds, with no change to any byte pre-commit prints on a working path (ARCHIT
   interrupted before it re-added its intent-to-add files. Restore with: git --literal-pathspecs add --intent-to-add
   -- <paths…>`, printed once. Nothing is ever applied automatically. (The checkout discards hook edits — and any
   later edits — in the patch's paths, as pre-commit's own rollback does.)
+* the notices are printed once per run, at its start (before any preflight check can end it), followed by `snp: this
+  notice repeats until those changes are back in the worktree; to dismiss it and keep the patch, run: snp doctor
+  --fix --stash`. Once the patch's changes are back (`git apply --check --reverse <patch>` succeeds: the user ran the
+  printed command), the next run retires the journal and says so once: `snp: the unstaged changes saved in <patch>
+  are back in the worktree; the recovery notice of that interrupted run is retired`. `snp doctor --fix --stash`
+  dismisses every orphan of the worktree explicitly. Neither deletes the patch (ADR-083).
 
 Why it is safe: stdout and exit codes of every run that works in pre-commit are unchanged; the only visible
 differences are waiting (instead of corrupting a concurrent run) and stderr notices about work pre-commit would
@@ -65,9 +71,17 @@ An error has occurred: FatalError: snp: another snp run in this worktree still h
 
 # the run after a `kill -9` during the hooks (stderr)
 snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in /s/patches/patch1791403656-1781218 (index tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904). Restore with: git --literal-pathspecs checkout 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -- foo && git apply --3way /s/patches/patch1791403656-1781218 && git --literal-pathspecs reset -q 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -- foo
+snp: this notice repeats until those changes are back in the worktree; to dismiss it and keep the patch, run: snp doctor --fix --stash
+
+# the run after the user ran that command (stderr, once)
+snp: the unstaged changes saved in /s/patches/patch1791403656-1781218 are back in the worktree; the recovery notice of that interrupted run is retired
 ```
 
 Proof: `crates/snp-stash/tests/behaviour/{guard,recovery}.rs` (lock, nested token, stale token, autosave, patch
 names, pointer with another store), `tests/driver.rs::kill_9_at_every_transition_…` (the next run prints exactly
 `Unrestored::hint`, and the hinted commands restore the work); the scenario
-`tests/differential/divergences/D-DATA-13.yaml`.
+`tests/differential/divergences/D-DATA-13.yaml`; the dismissal paths:
+`crates/snp-stash/tests/behaviour/recovery.rs::{an_applied_orphan_is_retired_once,
+dismissal_keeps_the_patch_and_silences_the_notice}` and `crates/snp/tests/it/stash.rs::{
+an_orphaned_stash_is_reported_once_on_every_path, following_the_recovery_notice_retires_it,
+doctor_fix_stash_dismisses_the_notice_and_keeps_the_patch}`.

@@ -48,6 +48,7 @@ mod api {
             lock_timeout: Duration::from_secs(60),
             verify: false,
             old_git: false,
+            report_recovery: true,
         }
     }
 

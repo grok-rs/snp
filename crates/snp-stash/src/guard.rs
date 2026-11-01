@@ -65,6 +65,9 @@ pub struct StashCtx {
     pub verify: bool,
     /// `caps.version < 2.19`: refuse to stash (D-DATA-17).
     pub old_git: bool,
+    /// Report orphaned stashes once the lock is held (§4.6). `false` when the run already reported them at its start
+    /// ([`crate::recovery_report`] got the lock), so every notice is printed exactly once per run.
+    pub report_recovery: bool,
 }
 
 impl StashCtx {
@@ -322,7 +325,10 @@ pub fn enter(cx: StashCtx) -> Result<StashGuard, Failure> {
         })),
     };
     fault::hit(Point::StashState(1));
-    if !nested && let Some(inner) = guard.inner.as_deref() {
+    if !nested
+        && let Some(inner) = guard.inner.as_deref()
+        && inner.cx.report_recovery
+    {
         inner.recovery_notices();
     }
     let outcome = match guard.inner.as_deref_mut() {
@@ -372,19 +378,10 @@ impl Inner {
     /// (restored, or never stashed) are removed.
     fn recovery_notices(&self) {
         let info = &self.cx.info;
-        let scan = recovery::scan(&info.git_dir, &self.cx.patches_dir, &info.root);
-        for stale in &scan.stale {
-            let _ignored = std::fs::remove_file(stale);
-        }
-        for u in &scan.unrestored {
-            self.printer().diag(&u.hint());
-        }
-        for run in &scan.ita_only {
-            self.printer()
-                .diag(&messages::ita_notice(&run.paths, run.listed.as_deref()));
-            for f in &run.files {
-                let _ignored = std::fs::remove_file(f);
-            }
+        for line in
+            recovery::report_locked(self.git(), &info.git_dir, &self.cx.patches_dir, &info.root)
+        {
+            self.printer().diag(&line);
         }
     }
 

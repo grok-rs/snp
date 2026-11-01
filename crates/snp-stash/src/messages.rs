@@ -188,6 +188,20 @@ fn push_ita(s: &mut String, ita: &[Vec<u8>], journal: Option<&Path>) {
     }
 }
 
+/// D-DATA-13 (ARCHITECTURE §4.6, ADR-083): printed once after the recovery notices of a pass — how a notice stops.
+pub(crate) const DISMISS_HINT: &str = "snp: this notice repeats until those changes are back in the worktree; to \
+                                       dismiss it and keep the patch, run: snp doctor --fix --stash";
+
+/// D-DATA-13 (ARCHITECTURE §4.6, ADR-083): the changes of an orphaned run are back in the worktree (`git apply
+/// --check --reverse` of its patch succeeds); its journal is retired. Printed once.
+pub(crate) fn retired_notice(patch: &Path) -> String {
+    format!(
+        "snp: the unstaged changes saved in {} are back in the worktree; the recovery notice of that interrupted run \
+         is retired",
+        shown(patch)
+    )
+}
+
 /// D-DATA-13 (ARCHITECTURE §4.6): a run was interrupted after it cleared intent-to-add entries and before it saved a
 /// patch (state `started`): no unstaged content is at risk, only the intent-to-add marks. Printed once.
 pub(crate) fn ita_notice(ita: &[Vec<u8>], journal: Option<&Path>) -> String {

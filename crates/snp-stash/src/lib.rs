@@ -11,4 +11,7 @@ mod messages;
 mod recovery;
 
 pub use guard::{StashCtx, StashGuard, Stashed, enter};
-pub use recovery::{Unrestored, find_unrestored, recovery_scan, verify_restored};
+pub use recovery::{
+    Dismissed, Unrestored, dismiss_unrestored, find_unrestored, recovery_report, recovery_scan,
+    verify_restored,
+};

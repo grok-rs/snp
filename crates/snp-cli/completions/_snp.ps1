@@ -131,7 +131,7 @@ Register-ArgumentCompleter -Native -CommandName 'snp' -ScriptBlock {
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'show this help message and exit')
             [CompletionResult]::new('--fix', '--fix', [CompletionResultType]::ParameterName, 'Repair this repository''s hook scripts, then check again.')
             [CompletionResult]::new('--fast-path', '--fast-path', [CompletionResultType]::ParameterName, 'Explain the native fast-path decision of every hook.')
-            [CompletionResult]::new('--stash', '--stash', [CompletionResultType]::ParameterName, 'Verify that a stash of unstaged changes round-trips.')
+            [CompletionResult]::new('--stash', '--stash', [CompletionResultType]::ParameterName, 'Check orphaned stashes against the worktree; with --fix, dismiss their notices.')
             break
         }
         'snp;gc' {

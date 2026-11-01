@@ -258,7 +258,8 @@ options:
   -c, --config CONFIG  Path to alternate config file
   --fix                Repair this repository's hook scripts, then check again.
   --fast-path          Explain the native fast-path decision of every hook.
-  --stash              Verify that a stash of unstaged changes round-trips.
+  --stash              Check orphaned stashes against the worktree; with --fix, dismiss their
+                       notices.
 ```
 
 ## snp gc

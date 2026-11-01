@@ -105,7 +105,8 @@ fn next_run_prints_the_notice_and_keeps_the_orphan() {
         format!(
             "snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in {0} \
              (index tree {tree}). Restore with: git --literal-pathspecs checkout {tree} -- foo && git apply --3way \
-             {0} && git --literal-pathspecs reset -q {tree} -- foo\n",
+             {0} && git --literal-pathspecs reset -q {tree} -- foo\nsnp: this notice repeats until those changes are \
+             back in the worktree; to dismiss it and keep the patch, run: snp doctor --fix --stash\n",
             p.display()
         )
     );
@@ -216,4 +217,62 @@ fn a_missing_patch_is_not_reported() {
     let p = orphan(&sb, &repo);
     std::fs::remove_file(&p).unwrap();
     assert!(snp_stash::find_unrestored(&repo.join(".git"), &sb.patches(), &repo).is_empty());
+}
+
+/// ADR-083: once the patch's changes are back in the worktree, the next stash retires the orphan's journal with a
+/// one-time notice (the patch is kept); the stash after that is silent.
+#[test]
+fn an_applied_orphan_is_retired_once() {
+    let sb = Sandbox::new();
+    let repo = sb.foo_staged("r");
+    let p = orphan(&sb, &repo);
+    // The K+ failure left the worktree at the staged content; put the unstaged change back by hand.
+    sb.git(&repo, &["checkout", "--", "."]);
+    sb.git(&repo, &["apply", p.to_str().unwrap()]);
+    let (cx, _, err) = sb.ctx(&repo);
+    let g = snp_stash::enter(cx).unwrap();
+    g.restore().unwrap();
+    assert_eq!(
+        err.text(),
+        format!(
+            "snp: the unstaged changes saved in {} are back in the worktree; the recovery notice of that interrupted \
+             run is retired\n",
+            p.display()
+        )
+    );
+    assert!(p.is_file());
+    assert!(snp_stash::find_unrestored(&repo.join(".git"), &sb.patches(), &repo).is_empty());
+    assert!(!repo.join(".git/snp-stash.journal").exists());
+    let (cx, _, err) = sb.ctx(&repo);
+    snp_stash::enter(cx).unwrap().restore().unwrap();
+    assert_eq!(err.text(), "");
+}
+
+/// ADR-083: `dismiss_unrestored` retires an orphan whose changes are not back, keeps the patch (with a fresh
+/// modification time, so gc's 30 days count from the dismissal) and later stashes are silent.
+#[test]
+fn dismissal_keeps_the_patch_and_silences_the_notice() {
+    let sb = Sandbox::new();
+    let repo = sb.foo_staged("r");
+    let p = orphan(&sb, &repo);
+    sb.git(&repo, &["checkout", "--", "."]);
+    let old = std::time::SystemTime::now() - std::time::Duration::from_hours(40 * 24);
+    std::fs::File::options()
+        .write(true)
+        .open(&p)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    let (git, _info) = sb.discover(&repo);
+    let gone = snp_stash::dismiss_unrestored(&git, &repo.join(".git"), &sb.patches(), &repo);
+    assert_eq!(gone.len(), 1);
+    assert_eq!(gone[0].patch, p);
+    assert!(!gone[0].present);
+    assert!(p.is_file());
+    let age = std::fs::metadata(&p).unwrap().modified().unwrap();
+    assert!(age > old + std::time::Duration::from_hours(24));
+    assert!(snp_stash::find_unrestored(&repo.join(".git"), &sb.patches(), &repo).is_empty());
+    let (cx, _, err) = sb.ctx(&repo);
+    snp_stash::enter(cx).unwrap().restore().unwrap();
+    assert_eq!(err.text(), "");
 }

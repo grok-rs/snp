@@ -19,7 +19,9 @@ Each notice reports a situation pre-commit cannot be in (it has no lock, journal
 or handles silently to the user's loss:
 
 * **recovery notice** — an earlier run never restored; where the work is and the command that restores it
-  (D-DATA-13, ARCHITECTURE §4.6). Printed by the next stash in the worktree, once per orphaned journal.
+  (D-DATA-13, ARCHITECTURE §4.6). Printed at the start of every later run in the worktree, once per orphaned journal,
+  followed once by how to dismiss it (`snp doctor --fix --stash`); when the patch's changes are back in the worktree
+  the journal is retired with one last notice (ADR-083).
 * **`snp: waiting for another snp run in this worktree…`** — printed once when the worktree lock is contended
   (D-DATA-13), so a waiting commit does not look hung.
 * **`snp: restoring stashed changes, please wait`** — printed once when a further signal arrives while the restore
@@ -38,6 +40,8 @@ snp: waiting for another snp run in this worktree…
 snp: restoring stashed changes, please wait
 snp: git needed the terminal during the restore and was stopped
 snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in /s/patches/patch1791403656-1781218 (index tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904). Restore with: git --literal-pathspecs checkout 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -- foo && git apply --3way /s/patches/patch1791403656-1781218 && git --literal-pathspecs reset -q 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -- foo
+snp: this notice repeats until those changes are back in the worktree; to dismiss it and keep the patch, run: snp doctor --fix --stash
+snp: the unstaged changes saved in /s/patches/patch1791403656-1781218 are back in the worktree; the recovery notice of that interrupted run is retired
 ```
 
 Proof: `crates/snp-stash/src/messages.rs` (goldens), `tests/behaviour/guard.rs::{concurrent_second_run_waits_once_…,

@@ -913,7 +913,7 @@ static DOCTOR: ParserSpec = parser(
         store_true(
             &["--stash"],
             "stash",
-            Some("Verify that a stash of unstaged changes round-trips."),
+            Some("Check orphaned stashes against the worktree; with --fix, dismiss their notices."),
         ),
     ],
 );

@@ -3611,7 +3611,7 @@
         "COLUMNS": "10"
       },
       "exit": 0,
-      "stdout": "usage: snp doctor\n       [-h]\n       [-c CONFIG]\n       [--fix]\n       [--fast-path]\n       [--stash]\n\noptions:\n  -h, --help\n    show this\n    help\n    message and\n    exit\n  -c, --config CONFIG\n    Path to\n    alternate\n    config file\n  --fix\n    Repair this\n    repository'\n    s hook\n    scripts,\n    then check\n    again.\n  --fast-path\n    Explain the\n    native\n    fast-path\n    decision of\n    every hook.\n  --stash\n    Verify that\n    a stash of\n    unstaged\n    changes\n    round-\n    trips.\n",
+      "stdout": "usage: snp doctor\n       [-h]\n       [-c CONFIG]\n       [--fix]\n       [--fast-path]\n       [--stash]\n\noptions:\n  -h, --help\n    show this\n    help\n    message and\n    exit\n  -c, --config CONFIG\n    Path to\n    alternate\n    config file\n  --fix\n    Repair this\n    repository'\n    s hook\n    scripts,\n    then check\n    again.\n  --fast-path\n    Explain the\n    native\n    fast-path\n    decision of\n    every hook.\n  --stash\n    Check\n    orphaned\n    stashes\n    against the\n    worktree;\n    with --fix,\n    dismiss\n    their\n    notices.\n",
       "stderr": "",
       "ns": null
     },
@@ -3625,7 +3625,7 @@
         "COLUMNS": "40"
       },
       "exit": 0,
-      "stdout": "usage: snp doctor [-h] [-c CONFIG]\n                  [--fix]\n                  [--fast-path]\n                  [--stash]\n\noptions:\n  -h, --help      show this help\n                  message and exit\n  -c, --config CONFIG\n                  Path to alternate\n                  config file\n  --fix           Repair this\n                  repository's hook\n                  scripts, then check\n                  again.\n  --fast-path     Explain the native\n                  fast-path decision\n                  of every hook.\n  --stash         Verify that a stash\n                  of unstaged changes\n                  round-trips.\n",
+      "stdout": "usage: snp doctor [-h] [-c CONFIG]\n                  [--fix]\n                  [--fast-path]\n                  [--stash]\n\noptions:\n  -h, --help      show this help\n                  message and exit\n  -c, --config CONFIG\n                  Path to alternate\n                  config file\n  --fix           Repair this\n                  repository's hook\n                  scripts, then check\n                  again.\n  --fast-path     Explain the native\n                  fast-path decision\n                  of every hook.\n  --stash         Check orphaned\n                  stashes against the\n                  worktree; with\n                  --fix, dismiss their\n                  notices.\n",
       "stderr": "",
       "ns": null
     },
@@ -3639,7 +3639,7 @@
         "COLUMNS": "60"
       },
       "exit": 0,
-      "stdout": "usage: snp doctor [-h] [-c CONFIG] [--fix] [--fast-path]\n                  [--stash]\n\noptions:\n  -h, --help           show this help message and exit\n  -c, --config CONFIG  Path to alternate config file\n  --fix                Repair this repository's hook\n                       scripts, then check again.\n  --fast-path          Explain the native fast-path\n                       decision of every hook.\n  --stash              Verify that a stash of unstaged\n                       changes round-trips.\n",
+      "stdout": "usage: snp doctor [-h] [-c CONFIG] [--fix] [--fast-path]\n                  [--stash]\n\noptions:\n  -h, --help           show this help message and exit\n  -c, --config CONFIG  Path to alternate config file\n  --fix                Repair this repository's hook\n                       scripts, then check again.\n  --fast-path          Explain the native fast-path\n                       decision of every hook.\n  --stash              Check orphaned stashes against the\n                       worktree; with --fix, dismiss their\n                       notices.\n",
       "stderr": "",
       "ns": null
     },
@@ -3653,7 +3653,7 @@
         "COLUMNS": "80"
       },
       "exit": 0,
-      "stdout": "usage: snp doctor [-h] [-c CONFIG] [--fix] [--fast-path] [--stash]\n\noptions:\n  -h, --help           show this help message and exit\n  -c, --config CONFIG  Path to alternate config file\n  --fix                Repair this repository's hook scripts, then check\n                       again.\n  --fast-path          Explain the native fast-path decision of every hook.\n  --stash              Verify that a stash of unstaged changes round-trips.\n",
+      "stdout": "usage: snp doctor [-h] [-c CONFIG] [--fix] [--fast-path] [--stash]\n\noptions:\n  -h, --help           show this help message and exit\n  -c, --config CONFIG  Path to alternate config file\n  --fix                Repair this repository's hook scripts, then check\n                       again.\n  --fast-path          Explain the native fast-path decision of every hook.\n  --stash              Check orphaned stashes against the worktree; with\n                       --fix, dismiss their notices.\n",
       "stderr": "",
       "ns": null
     },
@@ -3667,7 +3667,7 @@
         "COLUMNS": "100"
       },
       "exit": 0,
-      "stdout": "usage: snp doctor [-h] [-c CONFIG] [--fix] [--fast-path] [--stash]\n\noptions:\n  -h, --help           show this help message and exit\n  -c, --config CONFIG  Path to alternate config file\n  --fix                Repair this repository's hook scripts, then check again.\n  --fast-path          Explain the native fast-path decision of every hook.\n  --stash              Verify that a stash of unstaged changes round-trips.\n",
+      "stdout": "usage: snp doctor [-h] [-c CONFIG] [--fix] [--fast-path] [--stash]\n\noptions:\n  -h, --help           show this help message and exit\n  -c, --config CONFIG  Path to alternate config file\n  --fix                Repair this repository's hook scripts, then check again.\n  --fast-path          Explain the native fast-path decision of every hook.\n  --stash              Check orphaned stashes against the worktree; with --fix, dismiss their\n                       notices.\n",
       "stderr": "",
       "ns": null
     },
@@ -3681,7 +3681,7 @@
         "COLUMNS": "120"
       },
       "exit": 0,
-      "stdout": "usage: snp doctor [-h] [-c CONFIG] [--fix] [--fast-path] [--stash]\n\noptions:\n  -h, --help           show this help message and exit\n  -c, --config CONFIG  Path to alternate config file\n  --fix                Repair this repository's hook scripts, then check again.\n  --fast-path          Explain the native fast-path decision of every hook.\n  --stash              Verify that a stash of unstaged changes round-trips.\n",
+      "stdout": "usage: snp doctor [-h] [-c CONFIG] [--fix] [--fast-path] [--stash]\n\noptions:\n  -h, --help           show this help message and exit\n  -c, --config CONFIG  Path to alternate config file\n  --fix                Repair this repository's hook scripts, then check again.\n  --fast-path          Explain the native fast-path decision of every hook.\n  --stash              Check orphaned stashes against the worktree; with --fix, dismiss their notices.\n",
       "stderr": "",
       "ns": null
     },
@@ -3695,7 +3695,7 @@
         "COLUMNS": "200"
       },
       "exit": 0,
-      "stdout": "usage: snp doctor [-h] [-c CONFIG] [--fix] [--fast-path] [--stash]\n\noptions:\n  -h, --help           show this help message and exit\n  -c, --config CONFIG  Path to alternate config file\n  --fix                Repair this repository's hook scripts, then check again.\n  --fast-path          Explain the native fast-path decision of every hook.\n  --stash              Verify that a stash of unstaged changes round-trips.\n",
+      "stdout": "usage: snp doctor [-h] [-c CONFIG] [--fix] [--fast-path] [--stash]\n\noptions:\n  -h, --help           show this help message and exit\n  -c, --config CONFIG  Path to alternate config file\n  --fix                Repair this repository's hook scripts, then check again.\n  --fast-path          Explain the native fast-path decision of every hook.\n  --stash              Check orphaned stashes against the worktree; with --fix, dismiss their notices.\n",
       "stderr": "",
       "ns": null
     },

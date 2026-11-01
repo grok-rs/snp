@@ -38,7 +38,7 @@ What it checks:
 
 `snp doctor --fix` switches every hook type of the repository to snp (the same as `snp install` for each installed
 type, keeping its options) and checks again. `snp doctor --fast-path` explains for every hook whether it runs natively
-and why not; `snp doctor --stash` checks that a stash of the current unstaged changes would round-trip.
+and why not; `snp doctor --stash` checks the stashes of interrupted runs against the worktree (see below).
 
 ## Common problems
 
@@ -79,9 +79,13 @@ Two runs in the same worktree serialise on the stash of unstaged changes; the se
 
 ### Unstaged changes after a crash or a killed run
 
-snp journals the stash of unstaged changes before touching the worktree and restores it on the next run, even after
-`kill -9` or a power loss; the restore is announced on stderr. The patch file is kept in snp's cache until the restore
-has succeeded.
+snp journals the stash of unstaged changes before touching the worktree. When a run is interrupted before it could
+restore them (`kill -9`, a power loss), every later run in that worktree prints, on stderr, where the changes are
+saved and the exact command that restores them; snp never applies the patch by itself (you may have kept working).
+Once you have run that command, the next run notices that the changes are back, says so once and stops printing the
+notice. To dismiss a notice without restoring (or after restoring the work some other way), run
+`snp doctor --fix --stash`: it names each patch it dismisses and keeps it, so `git apply --3way <patch>` still works
+later (`snp cache gc` removes such a patch after 30 days).
 
 ### Warnings about old git
 

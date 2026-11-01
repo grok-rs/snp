@@ -3,7 +3,8 @@
 //! 11 §A.15: read-only by default; one line per finding, `{level:<5} {subject}: {message}` with `level` in
 //! `ok|info|warn|error` (Tier B, not a stable API); exit 1 when any `error`. `--fix` performs the "doctor --fix"
 //! column of 11 §A.5.2 for the current repository (replace other managers' scripts keeping their parsed options,
-//! rewrite stale snp scripts, delete manager scripts found in `.legacy`) and then re-runs the checks.
+//! rewrite stale snp scripts, delete manager scripts found in `.legacy`) and then re-runs the checks; with `--stash`
+//! it also dismisses the notices of orphaned stashes, keeping their patches (ARCHITECTURE §4.6, ADR-083).
 //!
 //! Owner: WP-33.
 
@@ -370,7 +371,7 @@ fn hook_check(
 }
 
 /// Checks 7–13 for the repository at `f`.
-fn repo_checks(cx: &CmdCtx<'_>, f: &Frame, dir: &HooksDir, stash: bool, r: &mut Report) {
+fn repo_checks(cx: &CmdCtx<'_>, f: &Frame, dir: &HooksDir, stash: bool, fix: bool, r: &mut Report) {
     let hooks_path = f.git.hooks_path().ok().flatten();
     if let Some(hp) = &hooks_path {
         let v = hp.to_string_lossy();
@@ -484,7 +485,7 @@ fn repo_checks(cx: &CmdCtx<'_>, f: &Frame, dir: &HooksDir, stash: bool, r: &mut 
         }
     }
     config_check(cx, f, r);
-    stash_checks(cx, f, stash, r);
+    stash_checks(cx, f, stash, fix, r);
 }
 
 /// Check 12: `minimum_pre_commit_version` above 4.6.2 and `pre-commit …` entries that need the name on PATH.
@@ -557,9 +558,31 @@ fn version_gt(left: &str, right: &str) -> bool {
 }
 
 /// The built-in stash-recovery check: journaled runs of this worktree that never restored; with `--stash`, each
-/// one's patch is also verified against the worktree (`git apply --check --reverse`).
-fn stash_checks(cx: &CmdCtx<'_>, f: &Frame, verify: bool, r: &mut Report) {
+/// one's patch is also verified against the worktree (`git apply --check --reverse`). With `--fix --stash` every
+/// such run is dismissed first (ARCHITECTURE §4.6, ADR-083): its journal is retired so the recovery notice stops,
+/// and the patch is kept and named.
+fn stash_checks(cx: &CmdCtx<'_>, f: &Frame, verify: bool, fix: bool, r: &mut Report) {
     let patches = cx.store.patches_dir();
+    if fix && verify {
+        for d in snp_stash::dismiss_unrestored(&f.git, &f.info.git_dir, &patches, f.root()) {
+            let state = if d.present {
+                "its changes are in the worktree"
+            } else {
+                "its changes are NOT in the worktree"
+            };
+            r.add(
+                Lvl::Ok,
+                format!("stash {}", lossy(&d.patch)),
+                format!(
+                    "recovery notice dismissed ({state}); the patch is kept: git apply --3way {} still applies it",
+                    lossy(&d.patch)
+                ),
+            );
+            if let Some(ita) = d.ita_notice {
+                r.add(Lvl::Info, "stash intent-to-add", ita);
+            }
+        }
+    }
     let found = snp_stash::recovery_scan(&f.info.git_dir, &patches, f.root());
     if found.is_empty() {
         r.add(Lvl::Ok, "stash", "no unrestored stash");
@@ -571,7 +594,8 @@ fn stash_checks(cx: &CmdCtx<'_>, f: &Frame, verify: bool, r: &mut Report) {
             r.add(
                 Lvl::Warn,
                 subject,
-                "its changes are present in the worktree; the journal is stale",
+                "its changes are present in the worktree; the next run retires the journal (or `snp doctor --fix \
+                 --stash` now)",
             );
             continue;
         }
@@ -579,7 +603,8 @@ fn stash_checks(cx: &CmdCtx<'_>, f: &Frame, verify: bool, r: &mut Report) {
             Lvl::Error,
             subject,
             format!(
-                "unrestored changes (state {}): {}",
+                "unrestored changes (state {}): {}; `snp doctor --fix --stash` dismisses the notice and keeps the \
+                 patch",
                 u.state,
                 u.hint().trim_end()
             ),
@@ -684,7 +709,7 @@ pub fn doctor(a: &DoctorArgs, cx: &CmdCtx<'_>, extra: &[&dyn DoctorCheck]) -> Re
     let mut r = Report::default();
     global_checks(cx, &mut r);
     match (&frame, &dir) {
-        (Some(f), Some(d)) => repo_checks(cx, f, d, a.stash, &mut r),
+        (Some(f), Some(d)) => repo_checks(cx, f, d, a.stash, a.fix, &mut r),
         _ => r.add(Lvl::Info, "repository", "not inside a git repository"),
     }
     for c in extra {

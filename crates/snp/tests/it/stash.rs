@@ -122,3 +122,177 @@ fn an_orphaned_stash_is_reported_once() {
         .count();
     assert_eq!(notices, 1, "{err}");
 }
+
+/// The hook of [`orphaned`]: on the first run it marks its start and sleeps until killed; later runs pass.
+#[cfg(unix)]
+const ORPHAN_CFG: &str = "repos:\n-   repo: local\n    hooks:\n    -   id: slow\n        name: slow\n        entry: sh -c 'test -e .second-run || { touch .hook-started; exec sleep 30; }' --\n        language: system\n";
+
+/// A [`dirty`] repository whose first `snp run` was killed with SIGKILL while its stash was held: the worktree is at
+/// the staged content and the unstaged line is only in the orphaned patch.
+#[cfg(unix)]
+fn orphaned(env: &TestEnv) -> PathBuf {
+    let dir = dirty(env, ORPHAN_CFG);
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_snp"))
+        .arg("run")
+        .current_dir(&dir)
+        .env_clear()
+        .envs(env.env().iter())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let started = std::time::Instant::now();
+    while !dir.join(".hook-started").exists() {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(20),
+            "the hook never started"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    child.kill().unwrap();
+    child.wait().unwrap();
+    std::fs::write(dir.join(".second-run"), b"").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "a\nstaged\n"
+    );
+    dir
+}
+
+const NOTICE: &str = "an earlier run was interrupted before it restored your unstaged changes";
+
+/// The shell command of the recovery notice in `stderr` (the text after `Restore with: ` on its line).
+#[cfg(unix)]
+fn restore_command(stderr: &str) -> String {
+    let line = stderr
+        .lines()
+        .find(|l| l.contains(NOTICE))
+        .unwrap_or_else(|| panic!("no notice in {stderr}"));
+    line.split_once("Restore with: ").unwrap().1.to_owned()
+}
+
+/// ADR-083: a run that ends in a preflight check before the stash (here: an unstaged config) or that does not stash
+/// (`--all-files`) still reports the orphan, exactly once each.
+#[cfg(unix)]
+#[test]
+fn an_orphaned_stash_is_reported_once_on_every_path() {
+    let env = env();
+    let dir = orphaned(&env);
+    let mut cfg = ORPHAN_CFG.to_owned();
+    cfg.push_str("# edited\n");
+    std::fs::write(dir.join(".pre-commit-config.yaml"), cfg).unwrap();
+    let out = env.snp(&dir).arg("run").output();
+    let err = text(&out.stderr);
+    assert_eq!(out.code, 1, "{err}");
+    assert!(
+        text(&out.stdout).contains("Your pre-commit configuration is unstaged."),
+        "{}",
+        text(&out.stdout)
+    );
+    assert_eq!(err.matches(NOTICE).count(), 1, "{err}");
+    std::fs::write(dir.join(".pre-commit-config.yaml"), ORPHAN_CFG).unwrap();
+    let out = env.snp(&dir).args(["run", "--all-files"]).output();
+    let err = text(&out.stderr);
+    assert_eq!(out.code, 0, "{err}");
+    assert_eq!(err.matches(NOTICE).count(), 1, "{err}");
+    assert_eq!(err.matches("snp doctor --fix --stash").count(), 1, "{err}");
+}
+
+/// ADR-083: once the notice's own command has put the changes back, the next run retires the journal with a
+/// one-time notice and later runs are silent; the patch file is kept.
+#[cfg(unix)]
+#[test]
+fn following_the_recovery_notice_retires_it() {
+    let env = env();
+    let dir = orphaned(&env);
+    let out = env.snp(&dir).arg("run").output();
+    let err = text(&out.stderr);
+    assert_eq!(err.matches(NOTICE).count(), 1, "{err}");
+    let cmd = restore_command(&err);
+    let patch = err
+        .split_once("they are saved in ")
+        .unwrap()
+        .1
+        .split_once(" (index tree")
+        .unwrap()
+        .0
+        .to_owned();
+    let st = std::process::Command::new("sh")
+        .args(["-c", &cmd])
+        .current_dir(&dir)
+        .env_clear()
+        .envs(env.env().iter())
+        .status()
+        .unwrap();
+    assert!(st.success(), "{cmd}");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "a\nstaged\nunstaged\n"
+    );
+    let out = env.snp(&dir).arg("run").output();
+    let err = text(&out.stderr);
+    assert_eq!(out.code, 0, "{err}");
+    assert_eq!(err.matches(NOTICE).count(), 0, "{err}");
+    assert_eq!(
+        err.matches(
+            "are back in the worktree; the recovery notice of that interrupted run is retired"
+        )
+        .count(),
+        1,
+        "{err}"
+    );
+    let out = env.snp(&dir).arg("run").output();
+    let err = text(&out.stderr);
+    assert!(!err.contains("snp: "), "{err}");
+    assert!(std::path::Path::new(&patch).is_file(), "{patch}");
+    // The unstaged line survived both runs.
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "a\nstaged\nunstaged\n"
+    );
+}
+
+/// ADR-083: `snp doctor --fix --stash` dismisses a notice whose changes are not back, keeps and names the patch, and
+/// the patch still restores the work afterwards.
+#[cfg(unix)]
+#[test]
+fn doctor_fix_stash_dismisses_the_notice_and_keeps_the_patch() {
+    let env = env();
+    let dir = orphaned(&env);
+    let out = env.snp(&dir).args(["doctor", "--stash"]).output();
+    let stdout = text(&out.stdout);
+    assert!(stdout.contains("unrestored changes"), "{stdout}");
+    let out = env.snp(&dir).args(["doctor", "--fix", "--stash"]).output();
+    let stdout = text(&out.stdout);
+    let line = stdout
+        .lines()
+        .find(|l| l.contains("recovery notice dismissed"))
+        .unwrap_or_else(|| panic!("{stdout}"));
+    assert!(line.contains("NOT in the worktree"), "{line}");
+    assert!(!stdout.contains("unrestored changes"), "{stdout}");
+    let patch = line
+        .split_once("git apply --3way ")
+        .unwrap()
+        .1
+        .split_once(" still")
+        .unwrap()
+        .0
+        .to_owned();
+    assert!(std::path::Path::new(&patch).is_file(), "{patch}");
+    let out = env.snp(&dir).arg("run").output();
+    let err = text(&out.stderr);
+    assert_eq!(out.code, 0, "{err}");
+    assert!(!err.contains("snp: "), "{err}");
+    let st = std::process::Command::new("git")
+        .args(["apply", "--3way", &patch])
+        .current_dir(&dir)
+        .env_clear()
+        .envs(env.env().iter())
+        .status()
+        .unwrap();
+    assert!(st.success());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "a\nstaged\nunstaged\n"
+    );
+}
