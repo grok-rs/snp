@@ -13,6 +13,9 @@ use snp_pycompat::chars::PyChar;
 use snp_pycompat::text::{bytes_lstrip, bytes_rstrip, bytes_strip};
 use snp_pyparsers::json::{DumpOpts, PyMinor};
 
+/// The text-mode read helpers the natives share (strict whole-file decode; chunk-relative line-read errors).
+pub use super::util::{chunked_decode_error, text_read, text_read_lines};
+
 /// `list(f)` of a binary file: lines split after each `\n` (a lone `\r` is not a break); the last line may lack
 /// its `\n`.
 pub fn binary_lines(content: &[u8]) -> Vec<&[u8]> {
@@ -271,8 +274,11 @@ pub fn pretty_json_text(contents: &str, opts: &DumpOpts, minor: PyMinor) -> Opti
     }
     let k = extra / 4;
     let indent = probe.get(2..k.checked_add(2)?)?;
+    let mut spaces = String::new();
+    spaces.try_reserve_exact(k).ok()?;
+    spaces.extend(std::iter::repeat_n(' ', k));
     let spaced = DumpOpts {
-        indent: " ".repeat(k),
+        indent: spaces,
         ensure_ascii: true,
         ..opts.clone()
     };
@@ -284,7 +290,8 @@ pub fn pretty_json_text(contents: &str, opts: &DumpOpts, minor: PyMinor) -> Opti
         let digits: String = ascii.get(at..at.checked_add(4)?)?.iter().collect();
         u32::from_str_radix(&digits, 16).ok()
     };
-    let mut out = Vec::with_capacity(ascii.len());
+    let mut out: Vec<u32> = Vec::new();
+    out.try_reserve(ascii.len()).ok()?;
     let mut i = 0_usize;
     while let Some(&c) = ascii.get(i) {
         i = i.saturating_add(1);
@@ -297,11 +304,11 @@ pub fn pretty_json_text(contents: &str, opts: &DumpOpts, minor: PyMinor) -> Opti
                     m = m.saturating_add(1);
                     i = i.saturating_add(1);
                 }
-                if k > 0 {
-                    if m % k != 0 {
+                if let Some(levels) = m.checked_div(k) {
+                    if levels.checked_mul(k) != Some(m) {
                         return None;
                     }
-                    for _ in 0..m / k {
+                    for _ in 0..levels {
                         out.extend(indent.iter().map(|&c| u32::from(c)));
                     }
                 }
@@ -327,7 +334,8 @@ pub fn pretty_json_text(contents: &str, opts: &DumpOpts, minor: PyMinor) -> Opti
                     && ascii.get(i.saturating_add(1)) == Some(&'u');
                 match pair.then(|| hex4(i.saturating_add(2))).flatten() {
                     Some(lo) if (0xDC00..0xE000).contains(&lo) => {
-                        out.push(0x1_0000 + ((v - 0xD800) << 10) + (lo - 0xDC00));
+                        let hi = v.saturating_sub(0xD800) << 10;
+                        out.push(0x1_0000_u32.saturating_add(hi).saturating_add(lo.saturating_sub(0xDC00)));
                         i = i.saturating_add(6);
                     }
                     _ => out.push(v),
@@ -365,7 +373,7 @@ pub fn pretty_json_crash_position(
         return first.checked_add(newlines);
     }
     let in_block = |base: u32, c: u32| (base..base.saturating_add(0x800)).contains(&c);
-    let base = (0xF_0000_u32..0x11_0000).step_by(0x800).find(|&base| {
+    let base = (0x1E0_u32..0x220).map(|block| block << 11).find(|&base| {
         !text.iter().any(|&c| in_block(base, c))
             && !contents.chars().chain(file.chars()).any(|c| in_block(base, u32::from(c)))
     })?;
@@ -391,7 +399,7 @@ pub fn pretty_json_crash_position(
 /// rule (`handle_capital_sigma`) included; undecodable bytes (lone surrogates in Python, neither cased nor
 /// case-ignorable, so they end a sigma context scan exactly as a chunk boundary does) stay as they are.
 pub fn py_lower(s: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(s.len());
+    let mut out = Vec::new();
     let mut buf = [0_u8; 4];
     for chunk in s.utf8_chunks() {
         let valid = chunk.valid();
@@ -855,7 +863,7 @@ zope==1\n# trailing\n"
         assert_eq!(py_lower(b"A\xce\xa3\xff"), b"a\xcf\x82\xff");
         assert_eq!(py_lower(b"A\xffB"), b"a\xffb");
         let pair: &[&[u8]] = &["\u{1C89}.txt".as_bytes(), "\u{1C8A}.txt".as_bytes()];
-        assert!(case_conflicts(&[], pair, &[], 3, false).is_empty());
+        assert_eq!(case_conflicts(&[], pair, &[], 3, false), Vec::<Vec<u8>>::new());
     }
 
     /// Every code point (alone and as `A<c>Σ` and `Σ<c>`, exercising the final-sigma context) against
@@ -877,7 +885,9 @@ zope==1\n# trailing\n"
                 let line = lines.next().unwrap();
                 let text = std::str::from_utf8(line).unwrap();
                 let mut parts = text.split(' ').map(|h| {
-                    (0..h.len() / 2).map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap()).collect::<Vec<u8>>()
+                    (0..h.len() / 2)
+                        .map(|i| u8::from_str_radix(h.get(2 * i..2 * i + 2).unwrap(), 16).unwrap())
+                        .collect::<Vec<u8>>()
                 });
                 let alone = c.to_string();
                 assert_eq!(py_lower(alone.as_bytes()), parts.next().unwrap(), "{py} U+{cp:04X}");

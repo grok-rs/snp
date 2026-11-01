@@ -39,7 +39,7 @@ fn decode_exc(e: &snp_pycompat::codec::Utf8DecodeError) -> PyExc {
 
 /// `open(f, encoding='UTF-8').read()`: the whole file decoded at once (strict UTF-8, a BOM kept as U+FEFF), then
 /// universal newlines (`\r\n` and `\r` → `\n`). `Err` is the `UnicodeDecodeError` with positions in the file.
-pub(crate) fn text_read(bytes: &[u8]) -> Result<String, PyExc> {
+pub fn text_read(bytes: &[u8]) -> Result<String, PyExc> {
     let s = decode_utf8(bytes).map_err(|e| decode_exc(&e))?;
     Ok(snp_pycompat::textio::universal_newlines(s).into_owned())
 }
@@ -48,7 +48,7 @@ pub(crate) fn text_read(bytes: &[u8]) -> Result<String, PyExc> {
 /// CPython's `TextIOWrapper` decodes 8192-byte chunks with the incremental UTF-8 decoder, which holds back an
 /// incomplete trailing sequence; the error's positions are relative to the decoder call's input (held-back bytes
 /// plus the chunk), and a sequence still incomplete at end of file fails in the final, empty decode.
-pub(crate) fn chunked_decode_error(bytes: &[u8]) -> Option<PyExc> {
+pub fn chunked_decode_error(bytes: &[u8]) -> Option<PyExc> {
     if core::str::from_utf8(bytes).is_ok() {
         return None;
     }
@@ -74,7 +74,7 @@ pub(crate) fn chunked_decode_error(bytes: &[u8]) -> Option<PyExc> {
 
 /// A text-mode line read of a whole file (`open(f).readlines()` / iteration, UTF-8 locale): the decoded text with
 /// universal newlines, or the chunk-relative `UnicodeDecodeError` ([`chunked_decode_error`]).
-pub(crate) fn text_read_lines(bytes: &[u8]) -> Result<String, PyExc> {
+pub fn text_read_lines(bytes: &[u8]) -> Result<String, PyExc> {
     if let Some(e) = chunked_decode_error(bytes) {
         return Err(e);
     }
