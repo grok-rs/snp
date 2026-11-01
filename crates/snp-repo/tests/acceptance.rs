@@ -55,7 +55,9 @@ mod tests {
             .append(true)
             .open(h.t.root().join("home/.gitconfig"))
             .unwrap();
-        write!(f, "[url \"{url}\"]\n\tinsteadOf = {PCH}\n").unwrap();
+        // A git-config subsection name is a quoted string: `\` and `"` are escaped (Windows paths).
+        let quoted = url.replace('\\', "\\\\").replace('"', "\\\"");
+        write!(f, "[url \"{quoted}\"]\n\tinsteadOf = {PCH}\n").unwrap();
     }
 
     /// The deprecated-stage warning of the upstream repository at a pre-v5 tag.
@@ -219,7 +221,7 @@ mod tests {
     /// `Locking` line (once per process), never a second Initializing line — for a clone and for a Tier A
     /// repository that is never cloned.
     #[test]
-    fn a_run_that_waited_for_another_processs_entry_prints_no_initializing_line() {
+    fn a_run_that_waited_for_another_process_entry_prints_no_initializing_line() {
         use snp_store::{MarkerKey, RepoId, Store};
         let h = H::new();
         let (dir, sha) = h.hook_repo(

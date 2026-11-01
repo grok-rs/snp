@@ -81,7 +81,30 @@ impl Sandbox {
         .unwrap();
         let process = Env::capture_process();
         let mut pairs: Vec<(OsString, OsString)> = Vec::new();
+        // The goldens were recorded without git-lfs; a host git-lfs (CI runners ship one) changes what
+        // `git lfs status --json` reports (check-added-large-files before v4.1.0). A `git-lfs` stub ahead of the
+        // host's on `PATH` answers like a missing one.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let bin = home.join("bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            let stub = bin.join("git-lfs");
+            std::fs::write(
+                &stub,
+                "#!/bin/sh\necho \"git: 'lfs' is not a git command. See 'git --help'.\" >&2\nexit 1\n",
+            )
+            .unwrap();
+            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let mut path = bin.into_os_string();
+            if let Some(host) = process.get("PATH") {
+                path.push(":");
+                path.push(host);
+            }
+            pairs.push(("PATH".into(), path));
+        }
         for k in [
+            #[cfg(not(unix))]
             "PATH",
             "SYSTEMROOT",
             "PATHEXT",

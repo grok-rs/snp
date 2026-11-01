@@ -148,6 +148,9 @@ impl TestEnv {
             ("LANG", "C.UTF-8"),
             ("TZ", "UTC"),
             ("VIRTUALENV_NO_DOWNLOAD", "1"),
+            // The suite also runs against older git (platform.yml's git axis): the once-per-process "older than
+            // 2.31.0" warning (D-DIAG-01) would prefix every expected output. snp-git's own tests cover it.
+            ("SNP_ALLOW_OLD_GIT", "1"),
         ] {
             pairs.push((k.into(), v.into()));
         }

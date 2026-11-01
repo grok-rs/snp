@@ -119,6 +119,7 @@ mod testkit {
             ("GIT_AUTHOR_DATE", "1577836800 +0000"),
             ("GIT_ALLOW_PROTOCOL", "file"),
             ("VIRTUALENV_NO_DOWNLOAD", "1"),
+            ("SNP_ALLOW_OLD_GIT", "1"),
         ] {
             assert_eq!(get(k).as_deref(), Some(want), "{k}");
         }
@@ -150,6 +151,7 @@ mod testkit {
             "LANG",
             "TZ",
             "VIRTUALENV_NO_DOWNLOAD",
+            "SNP_ALLOW_OLD_GIT",
             "GIT_CEILING_DIRECTORIES",
         ];
         for (k, _) in &vars {
