@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/logo.svg" alt="snp — You Shell Not Pass: a wizard guards the bridge against a failing commit" width="640">
+  <img src="docs/assets/logo.gif" alt="snp — You Shell Not Pass: a pixel-art wizard holds the bridge between the repository and production, stopping a failing commit while Ferris the crab waits by the campfire" width="960">
 </p>
 
 # snp — You Shell Not Pass
