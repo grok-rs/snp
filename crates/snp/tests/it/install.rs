@@ -584,7 +584,22 @@ fn t10_ins_22_install_hooks_then_commit_prints_no_initializing() {
 
 #[test]
 fn t10_ins_23_commit_without_snp_on_path() {
-    let env = tenv().with_env("PATH", "/usr/bin:/bin");
+    // A PATH with git but without snp: the system directories (POSIX), or git's own directory (Windows).
+    let path = if cfg!(windows) {
+        let base = tenv();
+        let found = base
+            .env()
+            .get("PATH")
+            .map(std::env::split_paths)
+            .into_iter()
+            .flatten()
+            .find(|d| d.join("git.exe").is_file())
+            .expect("git on PATH");
+        found.to_string_lossy().into_owned()
+    } else {
+        "/usr/bin:/bin".to_owned()
+    };
+    let env = tenv().with_env("PATH", &path);
     let r = env.fixture_repo(Fixture::ConsumingRepo("script_hooks_repo"));
     assert_code(&compat(&env, &r, &["install"]), 0);
     let (code, out) = commit_file(&env, &r, "foo", "commit!");
