@@ -3658,12 +3658,8 @@ mod tests {
         let b8 = b.limits.iter().find(|x| x.scenario == "B8").unwrap();
         assert!(b8.plus <= mib_of_mb(2.0));
         assert_eq!(hard("B1", Metric::Syscalls), Some(64.0));
-        // ARCHITECTURE §12.3: committed syscall ceilings on B1 and B3 (B3 provisional and soft until WP-32)
-        assert!(
-            b.limits
-                .iter()
-                .any(|x| x.os == "linux" && x.scenario == "B3" && x.metric == Metric::Syscalls)
-        );
+        // ARCHITECTURE §12.3: committed, hard syscall ceilings on B1 and B3 (B3 measured + ~10 %, ADR-083)
+        assert_eq!(hard("B3", Metric::Syscalls), Some(4230.0));
         let micro = |id: &str| b.micro.iter().find(|t| t.id == id).cloned();
         assert_eq!(
             micro("argparse/hook_impl_cli_compat").unwrap().max_ns,

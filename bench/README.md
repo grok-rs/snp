@@ -61,7 +61,7 @@ succeeded, so an interrupted setup leaves nothing for `run` to measure.
 |---|---|---|---|
 | B1 | `noop10` | `--version` | time; nightly: syscalls (`strace -f -c`, ceiling 64) |
 | B2 | `noop10`: 10 local `true` hooks, `always_run`, `pass_filenames: false` (prek's corpus) | `run noop-01` | time |
-| B3 | `noop10` | `run` | time, RSS; nightly: dhat total allocation (≤ 2 MB = 1.907 MiB) |
+| B3 | `noop10` | `run` | time, RSS; nightly: syscalls (`strace -f -c` over the whole tree, ceiling 4230) and dhat total allocation (≤ 2 MB = 1.907 MiB) |
 | B4 | `files50k`: 50 000 tracked files, one `true` hook with filenames | `run --all-files` | time, RSS (B12 ≤ 30 MB = 28.61 MiB) |
 | B5 | `files50k` with `types`/`types_or`/`exclude_types` | `run --all-files --config types.yaml` | time (≤ 1.3× B4) |
 | B6 | `pch960`: 960 clean files, 13 pre-commit-hooks hooks at v6.0.0 (prek's medium corpus) | `run --all-files` | time, RSS (B12 ≤ 25 MB = 23.84 MiB) |

@@ -141,14 +141,15 @@ metric = "syscalls"
 max = 64.0
 hard = true
 
-# B3's ceiling is provisional and soft: `strace -f` also counts the 7 git and 10 hook children, and `snp run` (WP-32)
-# does not exist yet to measure it. WP-32 replaces it with its measured value (+ ~10 % headroom) and `hard = true`.
+# B3's ceiling counts the whole tree under `strace -f`: snp, its 8 git children and the 10 hook processes. Measured on
+# the dist build after integration (ADR-083): 3842-3845 syscalls in three runs (Linux 7.0, glibc 2.39, git 2.43);
+# the ceiling is that value + ~10 % headroom.
 [[budget]]
 os = "linux"
 scenario = "B3"
 metric = "syscalls"
-max = 4000.0
-hard = false
+max = 4230.0
+hard = true
 
 [[budget]]
 os = "linux"
