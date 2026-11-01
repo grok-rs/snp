@@ -4,22 +4,27 @@
 //!
 //! Owner: WP-32.
 
+mod common;
 mod ctx;
 mod doctor;
+mod exec;
+mod files;
 mod hook_impl;
+mod hookout;
 mod install_hooks;
 mod list;
+mod messages;
+mod meta;
+mod pipeline;
 pub mod render;
 mod run;
+mod runenv;
+mod sched;
+mod select;
+mod stamp;
 mod try_repo;
 
-use snp_config as _;
-use snp_files as _;
-use snp_hooks as _;
-use snp_os as _;
-use snp_pycompat as _;
-use snp_stash as _;
-use snp_yaml as _;
+use snp_net as _;
 
 pub use ctx::RunCtx;
 pub use doctor::doctor_fast_path;
