@@ -139,7 +139,7 @@ jobs:
         include:
           # ADR-063, by each scenario's `requires.git`: the stash refusal (D-DATA-17, >=2.5 <2.19) on 2.18.5; the
           # warning (D-DIAG-01) and the --deduplicate fallback (D-CRASH-26), both >=2.19 <2.31, on 2.30.
-          # The tests that still assume a newer git (17 on 2.18.5, 5 on 2.30.9, owners WP-18 and WP-23) are listed one
+          # The tests that still assume a newer git (owners WP-18 and WP-23; the spawn budgets, autoupdate) are listed one
           # by one in packaging/ci/git-known-failures/<version>.txt; every other test is blocking on every version.
           - { git: 2.18.5, divergences: "D-DATA-17" }
           - { git: 2.30.9, divergences: "D-CRASH-26 D-DIAG-01" }

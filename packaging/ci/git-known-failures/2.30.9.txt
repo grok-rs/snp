@@ -6,3 +6,10 @@ package(snp-git) & binary(catalog) & test(=behaviour::owned::owned_env_is_saniti
 package(snp-git) & binary(catalog) & test(=behaviour::user_repo::dedup_fallback_equals_ls_files_deduplicate)
 package(snp-git) & binary(catalog) & test(=rows::t10_git_08_zsplit)
 package(snp-testkit) & binary(guard) & test(=guard::real_caches_are_untouched_by_the_suite)
+# The spawn budgets (bench/README.md "Spawn budgets") are stated for the tested git range (>= 2.31): older git
+# takes fallback paths that spawn more git.
+package(snp) & binary(it) & test(=budgets::b2_one_noop_hook_within_8_spawns)
+package(snp) & binary(it) & test(=budgets::b3_spawns_do_not_grow_with_tracked_files)
+package(snp) & binary(it) & test(=budgets::b3_ten_noop_hooks_within_18_spawns)
+package(snp) & binary(it) & test(=budgets::b4_shape_one_partition_no_per_file_spawns)
+package(snp) & binary(it) & test(=budgets::b6_shape_fast_path_within_13_spawns)
