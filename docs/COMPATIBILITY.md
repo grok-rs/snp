@@ -233,6 +233,7 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 | D-EXT-05 | `SNP=0`/`false` makes `hook-impl` skip snp's hooks (the legacy hook still runs) | 32 |
 | D-EXT-06 | `repo: builtin` (pre-commit rejects these configs) | 21, 26, 31 |
 | D-EXT-07 | snp-brand commands and flags (§8), including their presence in the snp brand's usage/help blocks | 12 |
+| D-EXT-08 | `interactive: true` hooks read and write the terminal directly: `{name}....(interactive)` before the hook, no captured output in its block, a singleton bucket; without a usable terminal one stderr note `snp: interactive: …; running '<id>' without a terminal` (ADR-085) | 32 |
 
 ### 5.8 DIAG — always-on stderr diagnostics (stdout and exit codes unchanged)
 
@@ -305,7 +306,8 @@ Unknown keys, including `x-*`, keep pre-commit's warnings in snp.
 | `root` | relative directory | — | normalised, no `..`, not absolute | cwd = `<repo>/<root>`; only files under it (boundary-aware) are passed, relative to it; missing directory ⇒ `Failed` + `- root directory '<r>' does not exist` |
 | `use_stdin` | bool | `false` | — | the hook receives a copy of the git hook's stdin (pre-push ref lines); stdin over 64 MiB fails closed (D-SEC-12) |
 | `fail_on_changes` | `always` \| `never` \| `ci` \| `non-ci` (+ `true`/`false`) | root value | — | `never`: modifications do not fail the hook; `ci`: only when `CI` is non-empty and not `0`/`false` |
-| `interactive`, `follow` | bool | `false` | reserved | rejected with "not available in this version" until v1.1 |
+| `interactive` | bool | `false` | `true` refused for hooks that never spawn a process (meta, `repo: builtin`, `language: fail`/`pygrep`) | ADR-085: the hook's stdin is the terminal (snp's stdin when it is one, else `/dev/tty`; Windows `CONIN$`), stdout/stderr inherited (never captured), snp's process group; a singleton bucket (nothing else runs), partitions one after another; `{name}....(interactive)` before, the usual status line after (no output section); `timeout` signals the child process only; no usable terminal ⇒ one stderr note and a normal captured run; `SNP_NO_TTY=1` ⇒ normal captured run; a pre-commit-hooks hook with it is never run natively (D-EXT-08) |
+| `follow` | bool | `false` | reserved | rejected with "not available in this version" |
 
 ### 7.2 Root-level keys
 
@@ -373,7 +375,7 @@ pre-commit's, unchanged: `SKIP`, `PRE_COMMIT_COLOR`, `TERM`, `PRE_COMMIT_NO_CONC
 `COLUMNS`. `PRE_COMMIT_HOME` is read only to refuse pre-commit's store. `CI` is read only by extensions.
 
 snp-only: `SNP_HOME`, `SNP` (`0`/`false` kill switch), `SNP_BIN` (hook script), `SNP_RUNNING_LEGACY`,
-`SNP_ALLOW_NO_CONFIG`, `SNP_JOBS`, `SNP_SKIP_GROUPS`, `SNP_OUTPUT`, `SNP_NO_FAST_PATH`, `SNP_COMPAT_STRICT`,
+`SNP_ALLOW_NO_CONFIG`, `SNP_JOBS`, `SNP_SKIP_GROUPS`, `SNP_OUTPUT`, `SNP_NO_TTY` (`interactive` hooks run captured, ADR-085), `SNP_NO_FAST_PATH`, `SNP_COMPAT_STRICT`,
 `SNP_LOCAL_CONFIG`, `SNP_NO_HINTS`, `SNP_LOG`, `SNP_LOG_FILE`, `SNP_OFFLINE`, `SNP_UV`, `SNP_PYTHON_DOWNLOADS`,
 `SNP_NODE_MIRROR`, `SNP_ALLOW_INSECURE_MIRROR`, `SNP_DOCKER_ALWAYS_BUILD`, `SNP_PREFER_SYSTEM_TOOLCHAINS`,
 `SNP_ALLOW_OLD_GIT`, `SNP_STASH_LOCK_TIMEOUT`, `SNP_STASH_VERIFY`, `SNP_KILL_GRACE`, `SNP_DIFF_MODE`,

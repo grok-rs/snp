@@ -2,7 +2,7 @@
 
 # DIVERGENCES
 
-snp reproduces pre-commit 4.6.2 byte for byte. This book lists **every** deliberate difference (86
+snp reproduces pre-commit 4.6.2 byte for byte. This book lists **every** deliberate difference (87
 entries): each one is admissible only because pre-commit crashes, loses data or has a security bug there, or
 because an owner decision forces it (snp's own store, its name, no `unsafe`, performance), or because it is
 visible only when you use an snp extension. Every entry has a differential test that fails the build when the
@@ -21,7 +21,7 @@ the normative register is `docs/COMPATIBILITY.md` §5 in the repository.
 | [5.4 STORE and BRAND — forced by FD-2 and FD-1](#54-store-and-brand--forced-by-fd-2-and-fd-1) | [D-STORE-01](#d-store-01) [D-STORE-02](#d-store-02) [D-DATA-04](#d-data-04) [D-BRAND-01](#d-brand-01) [D-BRAND-02](#d-brand-02) [D-MISC-02](#d-misc-02) |
 | [5.5 PLAT — platform](#55-plat--platform) | [D-PLAT-02](#d-plat-02) [D-PLAT-03](#d-plat-03) [D-PLAT-06](#d-plat-06) [D-PLAT-08](#d-plat-08) [D-PLAT-09](#d-plat-09) [D-PLAT-10](#d-plat-10) [D-PLAT-12](#d-plat-12) |
 | [5.6 PERF — forced by FD-7/FD-8, invisible in hook output](#56-perf--forced-by-fd-7fd-8-invisible-in-hook-output) | [D-PERF-01](#d-perf-01) [D-PERF-02](#d-perf-02) [D-PERF-03](#d-perf-03) [D-PERF-04](#d-perf-04) |
-| [5.7 EXT — observable only when an snp extension is used](#57-ext--observable-only-when-an-snp-extension-is-used) | [D-EXT-01](#d-ext-01) [D-EXT-02](#d-ext-02) [D-EXT-03](#d-ext-03) [D-EXT-04](#d-ext-04) [D-EXT-05](#d-ext-05) [D-EXT-06](#d-ext-06) [D-EXT-07](#d-ext-07) |
+| [5.7 EXT — observable only when an snp extension is used](#57-ext--observable-only-when-an-snp-extension-is-used) | [D-EXT-01](#d-ext-01) [D-EXT-02](#d-ext-02) [D-EXT-03](#d-ext-03) [D-EXT-04](#d-ext-04) [D-EXT-05](#d-ext-05) [D-EXT-06](#d-ext-06) [D-EXT-07](#d-ext-07) [D-EXT-08](#d-ext-08) |
 | [5.8 DIAG — always-on stderr diagnostics (stdout and exit codes unchanged)](#58-diag--always-on-stderr-diagnostics-stdout-and-exit-codes-unchanged) | [D-DIAG-01](#d-diag-01) [D-DIAG-02](#d-diag-02) [D-DIAG-03](#d-diag-03) [D-DIAG-04](#d-diag-04) [D-DIAG-05](#d-diag-05) |
 | [5.9 TIERB — Python-internal bytes](#59-tierb--python-internal-bytes) | [D-MISC-04](#d-misc-04) [D-MISC-05](#d-misc-05) [D-MISC-06](#d-misc-06) [D-MISC-07](#d-misc-07) [D-MISC-08](#d-misc-08) |
 
@@ -4204,6 +4204,70 @@ usage: snp run [-h] [--color {auto,always,never}] [-c CONFIG] [--verbose]
 
 The scenario `tests/differential/divergences/D-EXT-07.yaml` runs `snp -h`, `snp run -h` and `snp run a b` against the
 oracle, where they must keep differing.
+
+### D-EXT-08
+
+`interactive: true` hooks read and write the terminal directly: `{name}....(interactive)` before the hook, no captured
+output in its block, a singleton bucket; without a usable terminal one stderr note
+`snp: interactive: …; running '<id>' without a terminal` (ADR-085)
+
+* **Class:** EXT (COMPATIBILITY §5.7)
+
+##### Register entry (COMPATIBILITY §5.7)
+
+| Divergence |
+|---|
+| `interactive: true` hooks read and write the terminal directly: `{name}....(interactive)` before the hook, no captured output in its block, a singleton bucket; without a usable terminal one stderr note `snp: interactive: …; running '<id>' without a terminal` (ADR-085) |
+
+##### Rationale
+
+pre-commit has no way to run a hook that prompts: every hook gets an empty stdin and its output is captured and shown
+after it ends. lefthook's `interactive: true` gives the job the terminal; `snp migrate lefthook` keeps the key, and a
+commitizen-style `prepare-commit-msg` hook (`test -n "$PRE_COMMIT_COMMIT_MSG_SOURCE" || cz --hook`) then prompts during
+`git commit`.
+
+For pre-commit `interactive` is an unknown key: it prints `[WARNING] Unexpected key(s) present on local => <id>:
+interactive` and runs the hook as usual (D-EXT-01). snp, with a usable terminal (snp's stdin, or `/dev/tty` when stdin
+is `/dev/null` as in a git hook; snp's process group must be the terminal's foreground group):
+
+* prints `{name}{dots}(interactive)` (aligned with the status lines) and flushes it, then runs the hook with stdin on
+  the terminal and stdout/stderr inherited, in snp's process group;
+* prints the usual status line when the hook ends; the failure block has no output section (nothing was captured);
+* runs it alone (a singleton bucket) and its xargs partitions one after another.
+
+Without a usable terminal (CI, cron, a background job) it prints one stderr line and runs the hook exactly as without
+the key — stdin an empty pipe, output captured. `SNP_NO_TTY=1` does the same without the line. The divergence is
+therefore observable only in a config that uses the key; `SNP_COMPAT_STRICT=1` restores pre-commit's behaviour.
+
+Why it is safe: only configs that opt in change; the opt-in key is lefthook's, with lefthook's semantics (terminal
+stdin, no capture, the child in the parent's process group); a missing terminal never hangs the hook.
+
+##### Examples
+
+```yaml
+repos:
+-   repo: local
+    hooks:
+    -   id: ask
+        name: ask
+        entry: echo asked
+        language: system
+        interactive: true
+        verbose: true
+```
+
+`run --all-files` without a terminal (the differential harness runs the tools in their own process group):
+pre-commit 4.6.2 prints `[WARNING] Unexpected key(s) present on local => ask: interactive` and the hook's block; snp
+prints `snp: interactive: …; running 'ask' without a terminal` on stderr and the same block, without the warning. On a
+terminal (`crates/snp/tests/it/interactive.rs`):
+
+```text
+ask...............................................................(interactive)
+asked
+ask......................................................................Passed
+```
+
+The scenario `tests/differential/divergences/D-EXT-08.yaml` checks the no-terminal case against the oracle.
 
 ## 5.8 DIAG — always-on stderr diagnostics (stdout and exit codes unchanged)
 

@@ -143,5 +143,9 @@ Configs need nothing: snp never writes snp-only syntax into `.pre-commit-config.
   are reported (`Note: the replaced prek hook used prek-only options (…); they are not supported and were dropped`).
   prek recognises snp's script as well, so `prek install` switches back.
 * **lefthook:** `snp migrate lefthook` converts `lefthook.yml` into a `.pre-commit-config.yaml` that uses the snp
-  extension keys (priorities, groups, `env`, `stage_fixed`, conditions) and a local overlay for `lefthook-local.yml`,
-  and reports everything that could not be converted exactly.
+  extension keys (priorities, groups, `env`, `stage_fixed`, conditions, `interactive`) and a local overlay for
+  `lefthook-local.yml`, and reports everything that could not be converted exactly. A job with `interactive: true`
+  (a commitizen prompt, say) keeps it: its prompt appears on the terminal during `git commit` (see
+  [Interactive hooks](configuration.md#interactive-hooks)); `--portable` drops it as lossy. Positional templates are
+  substituted with the variables pre-commit sets — `test -n "{2}"` in `prepare-commit-msg` becomes
+  `test -n "$PRE_COMMIT_COMMIT_MSG_SOURCE"`.

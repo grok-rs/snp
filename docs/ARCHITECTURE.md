@@ -1028,7 +1028,7 @@ pub fn same_file(a: &Path, b: &Path) -> io::Result<bool>;
 use std::{ffi::{OsStr, OsString}, io, num::NonZeroUsize, path::{Path, PathBuf}, sync::Arc};
 use snp_core::{cancel::CancelToken, env::Env, failure::Failure};
 pub mod spawn {
-    #[derive(Clone, Debug)] pub enum Stdin { EmptyPipe, Null, Bytes(Arc<[u8]>), Inherit }
+    #[derive(Clone, Debug)] pub enum Stdin { EmptyPipe, Null, Bytes(Arc<[u8]>), Inherit, Terminal(tty::Terminal) /* ADR-085 */ }
     /// Inherit: child stays in snp's process group (terminal ^C reaches it, parity).
     /// Isolated: Unix `process_group(0)`, Windows `CREATE_NEW_PROCESS_GROUP` — hooks with a `timeout` and every
     /// `Role::Critical` command (ADR-026). Both keep std's posix_spawn path (no `pre_exec`).
@@ -1080,6 +1080,18 @@ pub mod spawn {
     /// stdout streamed into `sink` (diff hashing, stash patch), stderr captured. Returns status and stderr.
     pub fn stream(spec: &Spec<'_>, sink: &mut dyn io::Write) -> Result<(PyStatus, Vec<u8>), SpawnError>;
     pub fn inherit(spec: &Spec<'_>) -> Result<PyStatus, SpawnError>;   // legacy hooks, show-diff, hazmat children
+    /// ADR-085 `interactive` hooks: stdin per spec (`Stdin::Terminal`), stdout/stderr inherited, supervised like any
+    /// Hook child (the caller passes Group::Inherit, so a deadline signals the child process only); terminal modes saved
+    /// before and restored when the child was killed or died of a signal.
+    #[derive(Debug)] pub struct Interactive { pub status: PyStatus, pub timed_out: bool, pub interrupted: bool }
+    pub fn interactive(spec: &Spec<'_>) -> Result<Interactive, SpawnError>;
+}
+pub mod tty {
+    /// ADR-085: snp's stdin when it is a terminal, else `/dev/tty` (Windows `CONIN$`); Unix: `Err(Background)` unless
+    /// `tcgetpgrp(terminal) == getpgrp()`. snp never calls `tcsetpgrp`.
+    #[derive(Clone, Debug)] pub struct Terminal { /* Option<Arc<File>> */ }
+    #[derive(Debug)] pub enum NoTerminal { Unavailable(io::Error), Background }
+    impl Terminal { pub fn open() -> Result<Self, NoTerminal>; }
 }
 pub mod pool {
     /// N (S7, ADR-065): `explicit` (`-j`/`SNP_JOBS`) when given, else min(target, available_parallelism()) — cgroup-aware,
@@ -2419,8 +2431,10 @@ startup Env (captured once in main, minus __PYVENV_LAUNCHER__/PYTHONEXECUTABLE)
 * **Default (no extension keys):** hooks strictly sequential in config order — pre-commit semantics. Parallelism exists
   only across xargs partitions of one hook (and across native partitions).
 * **`priority` extension (prek semantics):** implicit priority = index in the flattened config; hooks are bucketed by
-  priority ascending; a bucket is a barrier; hooks inside a bucket run concurrently; `interactive` (v1.1) hooks are
-  singleton buckets. `fail_fast` inside a bucket lets running hooks finish (their lines print), later buckets don't start.
+  priority ascending; a bucket is a barrier; hooks inside a bucket run concurrently; `interactive` hooks are
+  singleton buckets (ADR-085: the members of their priority before them form one bucket, the ones after another; their
+  partitions run one at a time; every finished block prints before their `(interactive)` line and their own block
+  prints as soon as it is done). `fail_fast` inside a bucket lets running hooks finish (their lines print), later buckets don't start.
 * **One global `JobPool`** (snp-proc) with `N` permits bounds *all* concurrently running child processes and native
   partitions (S7, fixes prek #2272). `N = pool_size(--jobs | SNP_JOBS, target_concurrency())`: an explicit value as
   given, otherwise `min(target_concurrency(), available_parallelism())` — `target_concurrency` follows pre-commit
@@ -3105,13 +3119,13 @@ mechanics.
 | hook | `root` (relative dir) | cwd = `<repo>/<root>`, files filtered by boundary-aware prefix and passed relative to root; missing ⇒ `Failed` + `- root directory '<r>' does not exist` |
 | hook | `use_stdin` (bool) | gets a copy of the git hook's stdin (cap 64 MiB) instead of an empty pipe |
 | hook, root | `fail_on_changes` (`always` \| `never` \| `ci` \| `non-ci`) | `ci` = `CI` non-empty and not `0`/`false` |
+| hook | `interactive` (bool) | ADR-085: stdin = the terminal (snp's stdin when it is a terminal, else `/dev/tty`; Windows `CONIN$`), stdout/stderr inherited, never captured; the child stays in snp's process group (the terminal's foreground group, checked with `tcgetpgrp`), so raw-mode prompts are never stopped by SIGTTIN/SIGTTOU and ^C reaches it once from the kernel (`registry::forward` never re-sends a tty-generated signal to an Inherit child); singleton bucket (§3.4); `{name}{dots}(interactive)` written and flushed before it, its usual status line and a block without an output section after (a line break first when it was killed); `timeout` signals the child process only (no group), terminal modes restored after a killed hook; no usable terminal (none, or snp in a background group) ⇒ stderr `snp: interactive: …; running '<id>' without a terminal` and a normal captured run; `SNP_NO_TTY=1` ⇒ a normal captured run; `true` refused for meta, `repo: builtin`, `language: fail`/`pygrep`; G4 delegates such a pre-commit-hooks hook (never native) |
 | root | `minimum_snp_version` (semver) | `snp {v} is required but snp {SNP_VERSION} is installed.` exit 1 |
 | root | `allow_disable` (bool, default true) | `false` ⇒ `SNP=0` is ignored (stderr note) |
 | root | `fast_path` (`off`\|`exact`\|`auto`), `fast_path_exclude` (ids), `fast_path_coalesce` (bool) | §7.2 |
 | root | `output` (`default`\|`summary`\|`quiet`) | `summary`: footer with wall time, per-hook durations, counts (stdout, after the last hook); `quiet`: failures only. Default output unchanged |
 
-`interactive` and `follow` (COULD) are reserved names that validate but are rejected with "not available in this
-version" until v1.1.
+`follow` (COULD) is a reserved name that validates but is rejected with "not available in this version".
 
 ### 8.3 `stage_fixed` (fix → verify → stage, 05 §18.4 A4)
 

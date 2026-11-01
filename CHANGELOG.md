@@ -23,8 +23,13 @@ unrelated snp 1.x releases of the crate.
 - Config extension keys, all optional and ignored (with pre-commit's usual warning) by Python pre-commit: `priority`
   and root `priorities` (parallel buckets), `env`, `groups` (`--group`, `--require-group`, `--no-group`,
   `SNP_SKIP_GROUPS`), `stage_fixed`, `skip`/`only` conditions, `timeout`, `fail_text`, `root`, `use_stdin`,
-  `fail_on_changes`, `minimum_snp_version`, `allow_disable`, `fast_path*`, `output`; `repo: builtin`; the local
-  overlay `.pre-commit-config.local.yaml`.
+  `fail_on_changes`, `interactive`, `minimum_snp_version`, `allow_disable`, `fast_path*`, `output`; `repo: builtin`;
+  the local overlay `.pre-commit-config.local.yaml`.
+- `interactive: true` hooks (lefthook's TTY passthrough, ADR-085): the hook reads the terminal (`/dev/tty` when git
+  gives it `/dev/null`) and writes to it directly, runs alone, and is announced with a `name....(interactive)` line;
+  without a terminal it runs captured after a one-line note, and `SNP_NO_TTY=1` opts out. `snp migrate lefthook`
+  keeps `interactive` (still dropped with `--portable`) and substitutes positional templates inside double quotes
+  without extra quotes (`test -n "{2}"` → `test -n "$PRE_COMMIT_COMMIT_MSG_SOURCE"`).
 - Native implementations of the pre-commit-hooks hooks (tags v3.0.0 to v6.0.0) and of pygrep hooks, used
   automatically when they are verified identical (the fast path).
 - 21 language backends with verified toolchain downloads; Python environments created with uv by default.

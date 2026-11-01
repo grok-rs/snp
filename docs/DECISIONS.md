@@ -8,7 +8,7 @@ approved by the integration lead and the owners of the affected packages; the am
 naming the amending ADR, which is normative where they differ. ADR-056…ADR-080 apply the second design review
 (2026-10-08); Appendix B lists every finding and its disposition. ADR-081 applies the verification of the W0 skeleton;
 ADR-082 the end-to-end integration of the merged packages; ADR-083 the verification of the integrated `main`; ADR-084
-the final multi-lens review.
+the final multi-lens review; ADR-085 the `interactive` extension key.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -1088,6 +1088,55 @@ poll(2) loop instead of two reader threads per spawn, the B4 path copies, and th
 §8, the user configuration and troubleshooting pages state the new behaviour. Amends ADR-065 (forwarding), ADR-067
 (recovery commands) and ADR-083 (retirement check).
 
+### ADR-085 — `interactive` hooks (TTY passthrough)
+
+**Context.** `interactive` was reserved for v1.1 (Appendix A, 05 item 11: "v1.1, Unix only"; COMPATIBILITY §7.1) and
+`snp migrate lefthook` dropped it as lossy. Real configs need it: a monorepo's `prepare-commit-msg` job `commitzen:
+{interactive: true, run: test -n "{2}" || bun x cz --hook}` must show commitizen's prompts and read the keyboard during
+`git commit`, although git runs hooks with stdin on `/dev/null`. lefthook (`exec_unix.go`) opens `/dev/tty` when its
+stdin is not a terminal (an open failure is logged and the job runs with its normal input), gives the job the terminal's
+stdin and its own stdout/stderr, does not `setpgid` it, kills only the direct child on cancellation, and ignores
+`interactive` under `no_tty`. Two process-group designs were possible: (a) keep the child in snp's process group; (b)
+put it in its own group and hand it the terminal with `tcsetpgrp`, taking it back afterwards.
+**Decision.** (1) `interactive: true` is a hook-level bool (also in the local overlay). `true` is refused at validation
+for hooks that never spawn a process — meta hooks, `repo: builtin` hooks, `language: fail` / `pygrep` (`interactive:
+true needs a hook that runs a process; <kind> hooks run inside snp`); a remote hook whose manifest language is
+`fail`/`pygrep` ignores it; G4 of the fast path treats it as a user override, so a pre-commit-hooks hook with it runs
+its real process. `SNP_COMPAT_STRICT=1` ignores it like every extension key; both brands behave the same (the texts are
+snp's, like `timeout`'s). (2) Terminal: snp's stdin when it is a terminal (inherited), else `/dev/tty` opened read-write
+(Windows: `CONIN$`). On Unix it must be usable: `tcgetpgrp(terminal) == getpgrp()`. stdout and stderr are inherited,
+never captured. (3) Process group: design (a), lefthook's. The child stays in snp's group, which is the terminal's
+foreground group (git, run by the shell as a foreground job, runs hooks in its own group), so reads and `tcsetattr`
+(raw-mode prompt libraries) never raise SIGTTIN/SIGTTOU, ^C is delivered once by the kernel to snp and the hook
+(`registry::forward` never re-sends a kernel-origin signal to an Inherit child, §10.4), and snp never owns or transfers
+the terminal, so it can never leave it owned by a dead group. Design (b) was rejected: between the spawn and `tcsetpgrp`
+the child can already read and be stopped (it needs a `SIGCONT` dance); taking the terminal back from a background group
+needs SIGTTOU blocked or ignored in snp, which no safe wrapper offers (`unsafe_code = forbid`, no `pre_exec`); and ^C
+would reach only the hook, so snp would have to infer the interruption from its exit. The price of (a): `timeout` (TERM,
+grace, KILL) and the cancellation escalation signal the hook's own process, not its descendants (lefthook's behaviour
+too); the docs advise `exec` in `sh -c` entries. snp saves the terminal modes before the spawn and restores them when
+the hook was killed (deadline, cancellation) or died of a signal. (4) Scheduling: an interactive hook is a singleton
+bucket — the members of its priority before it in config order form one bucket, the ones after it another — and its
+xargs partitions run one at a time. Before it starts, every finished block is printed (with `priority`, also blocks
+still waiting for config order), then `{name}{dots}(interactive)` (aligned with the status lines; also in `quiet` mode)
+is written and flushed; when it ends its usual status line and details print at once (a line break first when it was
+killed, since its prompt was cut off). The block has no output section: hook id, exit code, `- hook timed out after …`,
+`fail_text`, the verbose duration. Config order is kept (lefthook 2.2.0 does not reorder interactive jobs either,
+despite its docs; 05 "docs vs. code" item 6). (5) No usable terminal (no controlling terminal, `/dev/tty` unopenable, or
+snp in a background group): one stderr line `snp: interactive: no terminal is available; running '<id>' without a
+terminal` (or `…: snp is not in the terminal's foreground process group; …`) and a normal captured run — clearer than
+lefthook's error-and-continue, and it never hangs. `SNP_NO_TTY=1` (lefthook's `no_tty`) runs interactive hooks as normal
+captured hooks without a note. No `--no-tty` flag (it would change the snp-brand `run` parser and its goldens for no
+gain over the variable). (6) Windows: compiled and supported best-effort: the console is inherited, `CONIN$` replaces
+`/dev/tty` when stdin is redirected, no foreground check and no mode restore; the child is in snp's console group, so
+`CTRL_C` reaches it once. (7) `snp migrate lefthook` maps `interactive: true` to `interactive: true`; with `--portable`
+it stays lossy (dropped, the old note). A positional template inside a double-quoted string is substituted without its
+own quotes (`test -n "{2}"` → `test -n "$PRE_COMMIT_COMMIT_MSG_SOURCE"`, was `""$…""`, field-split).
+**Consequences.** Registered as D-EXT-08. COMPATIBILITY §7.1, ARCHITECTURE §3.4 and §8.2, the configuration, migration
+and environment pages describe it; `snp_proc::tty`, `spawn::interactive` and `Stdin::Terminal` are new API (ARCHITECTURE
+§1.4); `snp_testkit::Session` runs commands on a pty that is their controlling terminal (util-linux `setsid --ctty`).
+Amends the Appendix A entry "05 item 11" (`interactive` → v1.1), which this ADR implements.
+
 ---
 
 ## Appendix A — Open questions of the research documents, resolved
@@ -1160,7 +1209,7 @@ tracked or in CI unless named by `SNP_LOCAL_CONFIG`. 3 `env` expansion → liter
 index (prek). 5 `stage_fixed` UX → `Passed` + `- files were modified by this hook and staged`, verify re-run, pre-commit
 stage only, `trust` opt-in. 6 non-pre-commit git hooks → not v1. 7 remote `extends` → not v1. 8 CI detection → `CI`
 non-empty and not `0`/`false`. 9 `{all_files}` sources → v1.1. 10 parallel output → config-order head-of-line. 11
-`interactive` → v1.1, Unix only. 12 Windows `sh` for migrated entries → Git-for-Windows `sh` lookup (as D-PLAT-02). 13
+`interactive` → v1.1, Unix only (implemented by ADR-085, Unix and best-effort Windows). 12 Windows `sh` for migrated entries → Git-for-Windows `sh` lookup (as D-PLAT-02). 13
 timeout scope → whole hook. 14 `SNP=0` → ADR-038. 15 LFS → legacy chaining. 16 AI-agent hooks (`ai:`, `snp install
 --agent`) → out of v1 scope (COULD, 05 C9); revisit after v1.1. §18.4 A5 item 6 `SNP_STASH_BACKUP` → rejected (ADR-067).
 Groups (`--require-group`, `@ungrouped`) → prek semantics (ADR-080).

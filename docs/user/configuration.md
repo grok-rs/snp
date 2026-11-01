@@ -67,8 +67,9 @@ Unknown keys, including `x-*` keys, keep pre-commit's warnings in snp too.
 | `root` | relative directory | — | The hook runs in `<repo>/<root>` and receives only the files under it, relative to it. A missing directory fails the hook with `- root directory '<r>' does not exist`. |
 | `use_stdin` | boolean | `false` | The hook receives a copy of the git hook's stdin (e.g. the ref lines of `pre-push`); more than 64 MiB fails closed. |
 | `fail_on_changes` | `always`, `never`, `ci`, `non-ci` (or `true`/`false`) | the root value | Whether modifying files fails the hook. `ci` fails only when `CI` is set to something other than empty, `0` or `false`. |
+| `interactive` | boolean | `false` | The hook talks to you on the terminal (a commit-message prompt such as `cz --hook`): it reads the keyboard and its output appears live instead of being captured. See [Interactive hooks](#interactive-hooks). |
 
-`interactive` and `follow` are reserved and rejected with "not available in this version".
+`follow` is reserved and rejected with "not available in this version".
 
 ```yaml
 repos:
@@ -121,6 +122,57 @@ skip:
   - merge
   - {ref: "release/*", env: HOTFIX}   # on a release branch *and* HOTFIX set
 ```
+
+### Interactive hooks
+
+`interactive: true` (lefthook's key of the same name) is for hooks that prompt — commitizen's `cz --hook` in
+`prepare-commit-msg`, a confirmation before a push:
+
+```yaml
+      - id: commitizen
+        name: commitizen
+        language: system
+        entry: sh -c 'test -n "$PRE_COMMIT_COMMIT_MSG_SOURCE" || exec npx cz --hook' --
+        stages: [prepare-commit-msg]
+        always_run: true
+        pass_filenames: false
+        interactive: true
+```
+
+* **Input.** The hook's stdin is the terminal: snp's own stdin when that is a terminal, otherwise the controlling
+  terminal `/dev/tty` (git runs hooks with stdin on `/dev/null`; on Windows the console input, `CONIN$`). Prompt
+  libraries that switch the terminal to raw mode work: the hook runs in snp's process group, which is the terminal's
+  foreground group, so job control never stops it.
+* **Output.** stdout and stderr go straight to the terminal; nothing is captured. snp prints the hook's name before it
+  starts and its usual status line when it ends:
+
+  ```text
+  commitizen........................................................(interactive)
+  ? Select the type of change that you're committing: feat
+  commitizen...............................................................Passed
+  ```
+
+  The failure block has what snp knows without the output: `- hook id`, `- exit code`, `- hook timed out after …`,
+  your `fail_text`, and the duration with `--verbose`. A hook that was killed (timeout, signal) gets a line break before
+  its status line, since its prompt was cut off. The `(interactive)` line is printed in `quiet` output mode too.
+* **Scheduling.** An interactive hook runs alone: hooks of the same `priority` before it in the config finish first,
+  the ones after it start after it, and a hook split into xargs partitions runs them one after another. Everything that
+  finished earlier is printed before its line (with `priority`, also blocks that would otherwise wait for config
+  order), and its own block prints as soon as it ends. It never runs on the fast path.
+* **Ctrl-C** at the prompt reaches the hook once (from the terminal, as for any hook) and ends the run like any
+  interruption: the stash is restored, exit code 130.
+* **`timeout`** still applies, but the hook stays in snp's process group (an isolated group could not read the
+  terminal), so the TERM and the KILL reach the hook's own process, not processes it started: write
+  `exec npx cz --hook` rather than `npx cz --hook` in a `sh -c` entry. After a killed hook snp puts the terminal modes
+  back.
+* **No terminal** (CI, cron, an IDE without one, `git commit &` in the background): snp prints one line on stderr,
+  `snp: interactive: no terminal is available; running 'commitizen' without a terminal`, and runs the hook like any
+  other: stdin is an empty pipe and the output is captured. `SNP_NO_TTY=1` does the same without the note (lefthook's
+  `no_tty`).
+* **Hooks without a process.** `interactive: true` is refused for meta hooks, `repo: builtin` hooks and `language:
+  fail` / `pygrep` hooks (`interactive: true needs a hook that runs a process; meta hooks run inside snp`); a remote
+  hook whose manifest says `fail` or `pygrep` ignores it.
+* With `use_stdin` as well, the terminal wins. `SNP_COMPAT_STRICT=1` ignores the key like every extension key.
 
 ## Root-level extension keys
 
