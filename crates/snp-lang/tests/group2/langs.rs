@@ -520,6 +520,29 @@ fn lang_dotnet_nuspec_parsing() {
     );
 }
 
+/// The fuzzing invariant (256 KiB thread stacks): deeply nested elements are read without recursion (roxmltree
+/// >= 0.21.2 parses nested elements iteratively; 0.21.1 overflowed on the fuzz smoke's input).
+#[test]
+fn lang_dotnet_nuspec_deep_nesting_fits_a_small_stack() {
+    let ns = "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd";
+    let deep = format!(
+        "<package xmlns=\"{ns}\">{}<id>x</id>{}</package>",
+        "<a>".repeat(5000),
+        "</a>".repeat(5000)
+    );
+    let unclosed = "<C>".repeat(5000);
+    let worker = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(move || {
+            (
+                nuspec_tool_id(&deep).ok(),
+                nuspec_tool_id(&unclosed).is_err(),
+            )
+        })
+        .unwrap();
+    assert_eq!(worker.join().unwrap(), (Some("x".to_owned()), true));
+}
+
 #[test]
 fn lang_dotnet_nuspec_entry_rules_and_cap() {
     let d = tempfile::tempdir().unwrap();
