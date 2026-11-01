@@ -50,9 +50,12 @@ impl State {
 /// The state signals are dispatched to.
 static ACTIVE: Mutex<Option<Arc<State>>> = Mutex::new(None);
 
-/// Unix: one signal-hook iterator thread over `SignalsInfo<WithOrigin>` for SIGINT/SIGTERM/SIGHUP (caught, never
-/// `SIG_IGN`, so children get default dispositions). Windows: ctrlc with `termination` (`CTRL_C`/`CTRL_BREAK` →
-/// Interrupt; `CTRL_CLOSE`/`LOGOFF`/`SHUTDOWN`: Windows ends the process when the handler returns, so these are
+/// Unix: one signal-hook iterator thread over `SignalsInfo<WithOrigin>` for SIGINT/SIGTERM/SIGHUP (caught, so
+/// children get default dispositions). A signal the process inherited as `SIG_IGN` (`nohup`, a non-interactive
+/// shell's `&` job) is left ignored, neither caught nor forwarded, so children inherit `SIG_IGN` too: CPython only
+/// installs its SIGINT handler over `SIG_DFL` (`signal_install_handlers`) and pre-commit catches nothing else.
+/// Detected on Linux/Android from `SigIgn:` of `/proc/self/status`; elsewhere every signal is caught. Windows:
+/// ctrlc with `termination` (`CTRL_C`/`CTRL_BREAK` → Interrupt; `CTRL_CLOSE`/`LOGOFF`/`SHUTDOWN`: Windows ends the process when the handler returns, so these are
 /// journal-recovered events, §4.3). On the first signal: cancel(token, reason) and `registry::forward` per the §10.4
 /// table; after `SNP_KILL_GRACE` (2 s; parsed with `try_from_secs_f64`, ≤ 60 s) `registry::escalate`. While a
 /// `RestoreShield` is alive, further signals only print "snp: restoring stashed changes, please wait" (stderr) once.
@@ -229,7 +232,15 @@ mod imp {
     }
 
     fn start() -> io::Result<()> {
-        let mut signals = SignalsInfo::<WithOrigin>::new([SIGINT, SIGTERM, SIGHUP])?;
+        let ignored = inherited_ignored();
+        let wanted: Vec<i32> = [SIGINT, SIGTERM, SIGHUP]
+            .into_iter()
+            .filter(|s| !is_set(ignored, *s))
+            .collect();
+        if wanted.is_empty() {
+            return Ok(());
+        }
+        let mut signals = SignalsInfo::<WithOrigin>::new(wanted)?;
         std::thread::Builder::new()
             .name("snp-signals".to_owned())
             .stack_size(256 * 1024)
@@ -248,6 +259,39 @@ mod imp {
                 }
             })
             .map(drop)
+    }
+
+    /// The inherited `SIG_IGN` set as a bit mask (bit `n - 1` for signal `n`); 0 where it cannot be read.
+    fn inherited_ignored() -> u64 {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            std::fs::read("/proc/self/status")
+                .ok()
+                .and_then(|s| parse_sig_ign(&s))
+                .unwrap_or(0)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            0
+        }
+    }
+
+    /// The `SigIgn:` hex mask of a `/proc/<pid>/status` text.
+    pub(super) fn parse_sig_ign(status: &[u8]) -> Option<u64> {
+        let line = status
+            .split(|b| *b == b'\n')
+            .find_map(|l| l.strip_prefix(b"SigIgn:"))?;
+        let hex = std::str::from_utf8(line).ok()?.trim();
+        u64::from_str_radix(hex, 16).ok()
+    }
+
+    /// Whether signal `sig` is in `mask`.
+    pub(super) fn is_set(mask: u64, sig: i32) -> bool {
+        u32::try_from(sig)
+            .ok()
+            .and_then(|s| s.checked_sub(1))
+            .and_then(|bit| 1_u64.checked_shl(bit))
+            .is_some_and(|b| mask & b != 0)
     }
 
     /// `si_code`/`si_pid` → §10.4 origin: `SI_KERNEL` (Linux) is Kernel, `SI_USER`/`SI_QUEUE`/`SI_TKILL` is Sent
@@ -296,6 +340,18 @@ mod tests {
     use std::ffi::OsStr;
 
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn sig_ign_mask_parsing() {
+        use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+        let st = b"Name:\tsnp\nSigBlk:\t0000000000000000\nSigIgn:\t0000000000000003\nSigCgt:\t0\n";
+        let m = imp::parse_sig_ign(st).unwrap();
+        assert!(imp::is_set(m, SIGHUP) && imp::is_set(m, SIGINT));
+        assert!(!imp::is_set(m, SIGTERM));
+        assert!(!imp::is_set(m, 0) && !imp::is_set(m, 99));
+        assert_eq!(imp::parse_sig_ign(b"Name:\tx\n"), None);
+    }
 
     #[test]
     fn grace_parsing() {

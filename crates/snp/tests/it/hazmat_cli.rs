@@ -46,10 +46,13 @@ fn x13_hz_03_empty_command() {
         &["hazmat", "n1", "--"][..],
     ] {
         let out = compat(&env, env.root(), args);
-        // An exit-3 crash through the envelope (never a panic, never 101).
+        // An exit-3 crash through the envelope (never a panic, never 101), byte parity with the oracle's
+        // `normalize_cmd(())` IndexError (docs/research/README.md errata: the 13 X.4 snp column is not used).
         assert_code(&out, 3);
         assert!(
-            text(&out.stdout).starts_with("An unexpected error has occurred: "),
+            text(&out.stdout).starts_with(
+                "An unexpected error has occurred: IndexError: tuple index out of range\nCheck the log at "
+            ),
             "{}",
             text(&out.stdout)
         );
@@ -97,4 +100,56 @@ fn reserved_in_hook_entry() {
         "{}",
         text(&out.stderr)
     );
+}
+
+/// A signal inherited as `SIG_IGN` (`nohup`) stays ignored: snp neither cancels nor dies, and the child (which
+/// inherits `SIG_IGN`) finishes, as under pre-commit (CPython keeps an inherited `SIG_IGN`).
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn inherited_sig_ign_is_kept() {
+    use std::io::Read as _;
+    let env = tenv();
+    for (sig, name) in [("HUP", "SIGHUP"), ("INT", "SIGINT"), ("TERM", "SIGTERM")] {
+        let mut cmd = std::process::Command::new("/bin/sh");
+        env.env().apply_to(&mut cmd);
+        let script = format!(
+            "trap '' {sig}; exec \"$0\" hazmat ignore-exit-code sh -c 'sleep 1; echo child-finished'"
+        );
+        // Its own process group, signalled as a whole (a hangup reaches the whole foreground group).
+        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+        let mut child = cmd
+            .arg("-c")
+            .arg(script)
+            .arg(env!("CARGO_BIN_EXE_snp"))
+            .current_dir(env.root())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let st = std::process::Command::new("kill")
+            .arg(format!("-{sig}"))
+            .arg("--")
+            .arg(format!("-{}", child.id()))
+            .status()
+            .unwrap();
+        assert!(st.success());
+        let mut out = String::new();
+        child
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_string(&mut out)
+            .unwrap();
+        let mut err = String::new();
+        child
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut err)
+            .unwrap();
+        let status = child.wait().unwrap();
+        assert_eq!(status.code(), Some(0), "{name}: {out}{err}");
+        assert_eq!(out, "child-finished\n", "{name}: {err}");
+    }
 }
