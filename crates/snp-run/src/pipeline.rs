@@ -137,12 +137,14 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     if inv.track_config {
         common::mark_config_used(&cx.store, &src.path, &root);
     }
-    if cx.env.get("_SNP_STASH_LOCK").is_none() {
+    let stash = !a.all_files && cli_files.is_empty();
+    // A stashing run reports orphaned stashes inside `snp_stash::enter`, which holds the worktree lock anyway
+    // (ARCHITECTURE §4.6); scanning here as well printed every notice twice.
+    if !stash && cx.env.get("_SNP_STASH_LOCK").is_none() {
         for u in snp_stash::recovery_scan(&info.git_dir, &cx.store.patches_dir(), &root) {
             printer.diag(&u.hint());
         }
     }
-    let stash = !a.all_files && cli_files.is_empty();
     // step 6: the speculative config load (warnings buffered) beside the read-only preflight git calls
     let buffered = Buffered::default();
     let (loaded, unmerged, unstaged) = std::thread::scope(|s| {

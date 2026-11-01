@@ -84,3 +84,41 @@ fn sigint_during_a_hook_restores_the_stash() {
         "a\nstaged\nunstaged\n"
     );
 }
+
+/// A run killed with SIGKILL while its stash is held leaves the patch; the next stashing run reports it exactly once
+/// on stderr (ARCHITECTURE §4.6: the scan inside `snp_stash::enter` is the only one of a stashing run).
+#[cfg(unix)]
+#[test]
+fn an_orphaned_stash_is_reported_once() {
+    let env = env();
+    let dir = dirty(
+        &env,
+        "repos:\n-   repo: local\n    hooks:\n    -   id: slow\n        name: slow\n        entry: sh -c 'test -e .second-run || { touch .hook-started; exec sleep 30; }' --\n        language: system\n",
+    );
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_snp"))
+        .arg("run")
+        .current_dir(&dir)
+        .env_clear()
+        .envs(env.env().iter())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let started = std::time::Instant::now();
+    while !dir.join(".hook-started").exists() {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(20),
+            "the hook never started"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    child.kill().unwrap();
+    child.wait().unwrap();
+    std::fs::write(dir.join(".second-run"), b"").unwrap();
+    let out = env.snp(&dir).arg("run").output();
+    let err = text(&out.stderr);
+    let notices = err
+        .matches("an earlier run was interrupted before it restored your unstaged changes")
+        .count();
+    assert_eq!(notices, 1, "{err}");
+}
