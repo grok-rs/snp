@@ -288,7 +288,8 @@ mod catalog {
         std::fs::write(&cfg, b"").unwrap();
         let start = std::time::Instant::now();
         s.mark_config_used(&cfg, g.path());
-        assert!(start.elapsed() < std::time::Duration::from_secs(2));
+        // A lock wait would last the full lock timeout (60 s); allow slow fsyncs on a loaded machine.
+        assert!(start.elapsed() < std::time::Duration::from_secs(20));
         assert_eq!(s.tracked_configs().len(), 1);
     }
 
