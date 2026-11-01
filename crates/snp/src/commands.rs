@@ -358,6 +358,12 @@ impl DoctorCheck for FastPathCheck<'_> {
         let rows = run_ctx(self.session, None)
             .and_then(|rcx| snp_run::doctor_fast_path(&self.config, &rcx));
         match rows {
+            // A config without remote or builtin hooks has no decision to show; say so instead of printing nothing.
+            Ok(rows) if rows.is_empty() => vec![DoctorLine {
+                ok: true,
+                text: "no remote or builtin hooks".to_owned(),
+                fix: None,
+            }],
             Ok(rows) => rows
                 .into_iter()
                 .map(|(ok, text)| DoctorLine {
