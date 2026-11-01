@@ -1,0 +1,94 @@
+# Every converter rule of 05 §19 in one configuration.
+min_version: 1.10.0
+colors: false
+rc: ~/.lefthookrc
+glob_matcher: gobwas
+templates:
+  wrap: docker compose run --rm app
+remotes:
+  - git_url: https://github.com/example/shared-hooks
+    ref: v1.2.0
+    configs: [lefthook.yml]
+
+pre-commit:
+  parallel: true
+  exclude: ["vendor/*"]
+  jobs:
+    - name: lint group
+      glob: "*.{js,jsx}"
+      env: {NODE_ENV: test}
+      group:
+        piped: true
+        jobs:
+          - name: prettier
+            run: npx prettier --write {staged_files} && git add {staged_files}
+          - name: eslint
+            run: "{wrap} eslint {staged_files}"
+            glob: ["*.ts"]
+            file_types: [text, not executable, text/javascript, text/x-unknown]
+    - name: changed go files
+      files: git diff --name-only HEAD~1
+      glob: "*.go"
+      run: gofmt -l {files}
+    - name: all python
+      run: ruff check {all_files}
+      glob: "*.py"
+    - name: env and root
+      root: "./services/api/"
+      env: {PATH: "$HOME/bin:$PATH", LEVEL: "2"}
+      run: make lint
+      skip:
+        - merge
+        - ref: release/*
+          run: test -f .skip-lint
+      only: [{ref: main}]
+    - name: broken
+      run: echo a
+      script: b.sh
+    - name: empty group
+      group: {jobs: []}
+    - name: interactive one
+      run: ./confirm.sh
+      interactive: true
+      use_stdin: true
+      timeout: 48h
+    - name: "Lint: names & symbols!"
+      run: echo "{lefthook_job_name}" {unknown}
+
+pre-push:
+  piped: true
+  commands:
+    20_slow:
+      run: make test-slow {1} {2}
+      tags: [slow tests]
+    3_fast:
+      run: make test-fast
+      priority: 2
+  scripts:
+    "check-branch.sh":
+      runner: bash
+    "missing.sh":
+      runner: sh
+
+commit-msg:
+  scripts:
+    "verify.sh": {}
+
+post-checkout:
+  follow: true
+  setup:
+    - run: npm ci
+  commands:
+    deps:
+      run: yarn install {0}
+
+pre-receive:
+  commands:
+    guard:
+      run: ./guard {1}
+
+lint:
+  commands:
+    all:
+      run: yarn lint
+      only: false

@@ -1,0 +1,80 @@
+# Upstream-form configs for the builtin ⇄ upstream round trip (WP-34 acceptance), separated by `---8<---` lines.
+# Each one must survive to_builtin then to_upstream byte for byte.
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+    -   id: trailing-whitespace
+    -   id: end-of-file-fixer
+    -   id: check-yaml
+    -   id: check-added-large-files
+---8<---
+# A comment before the repos.
+default_stages: [pre-commit]
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0  # frozen: 4a2b7d5d4f7e2b0f0b4c1bc0f8e5c0f9e3d4b1a2
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      # a comment between hooks
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+        exclude: ^docs/
+  - repo: local
+    hooks:
+      - id: x
+        name: x
+        entry: 'true'
+        language: system
+---8<---
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks.git
+  rev: 'v5.0.0'
+  hooks:
+  - id: check-json
+  - id: pretty-format-json
+    args: [--autofix, --no-sort-keys]
+- repo: https://github.com/psf/black
+  rev: 24.1.0
+  hooks:
+  - id: black
+- repo: git@github.com:pre-commit/pre-commit-hooks
+  rev: "v4.6.0"
+  hooks:
+  - id: no-commit-to-branch
+    args: [--branch, main]
+---8<---
+repos:
+- {repo: 'https://github.com/pre-commit/pre-commit-hooks', rev: v6.0.0, hooks: [{id: check-json}, {id: check-toml}]}
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v3.4.0
+  hooks:
+  - id: check-ast
+---8<---
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+    -   id: check-yaml
+        additional_dependencies: [ruamel.yaml]
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+    -   id: detect-private-key
+        language: system
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks: []
+---8<---
+repos: [{repo: https://github.com/pre-commit/pre-commit-hooks, rev: v6.0.0, hooks: [{id: check-json}]}, {repo: https://github.com/pre-commit/pre-commit-hooks, rev: v6.0.0, hooks: [{id: check-xml}]}]
+---8<---
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+    -   id: check-merge-conflict
+        stages: [pre-commit, pre-push]
+-   repo: meta
+    hooks:
+    -   id: check-hooks-apply

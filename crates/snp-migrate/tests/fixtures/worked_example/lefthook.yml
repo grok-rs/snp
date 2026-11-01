@@ -1,0 +1,25 @@
+pre-commit:
+  parallel: true
+  jobs:
+    - name: eslint
+      glob: "*.{js,ts}"
+      run: yarn eslint --fix {staged_files}
+      stage_fixed: true
+    - name: rubocop
+      root: backend/
+      glob: "*.rb"
+      exclude: [config/routes.rb]
+      run: bundle exec rubocop -A --force-exclusion -- {staged_files}
+      env: {RUBOCOP_OPTS: "--parallel"}
+      tags: [backend, style]
+commit-msg:
+  commands:
+    lint-msg:
+      run: npx commitlint --edit {1}
+      skip: [merge, rebase]
+pre-push:
+  commands:
+    test:
+      run: yarn test
+      fail_text: "Run `yarn test` locally"
+      timeout: 5m

@@ -1,0 +1,23 @@
+e1:
+  commands:
+    echo:
+      run: e1
+e2:
+  commands:
+    echo:
+      run: e2
+e3:
+  commands:
+    echo:
+      run: e3
+extends:
+  - extends/e1.yml
+pre-commit:
+  commands:
+    echo:
+      run: echo 2
+      skip: true
+      tags:
+        - backend
+      glob:
+        - "3"

@@ -1,0 +1,10 @@
+pre-commit:
+  jobs:
+    - name: all python
+      run: "{wrap} {cmd}"
+    - name: personal
+      run: echo personal
+pre-push:
+  commands:
+    3_fast:
+      skip: true

@@ -1,0 +1,30 @@
+# builtin-form configs for the builtin ⇄ upstream round trip (WP-34 acceptance), separated by `---8<---` lines.
+# Each one must survive to_upstream then to_builtin byte for byte.
+repos:
+-   repo: builtin
+    hooks:
+    -   id: trailing-whitespace
+    -   id: end-of-file-fixer
+---8<---
+repos:
+  # was: https://github.com/pre-commit/pre-commit-hooks@v4.5.0  # frozen: 4a2b7d5d4f7e2b0f0b4c1bc0f8e5c0f9e3d4b1a2
+  - repo: builtin
+    hooks:
+      - id: check-yaml
+        args: [--unsafe]
+  - repo: local
+    hooks:
+      - {id: y, name: y, entry: 'false', language: fail}
+---8<---
+repos:
+- {repo: builtin, hooks: [{id: check-json}]}
+- repo: builtin  # trailing comment
+  hooks:
+  - id: check-toml
+---8<---
+fail_fast: true
+repos:
+    -   repo: builtin
+        hooks:
+            -   id: no-commit-to-branch
+                args: [--branch, main, --pattern, 'release/.*']

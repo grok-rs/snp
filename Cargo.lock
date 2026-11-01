@@ -1804,11 +1804,19 @@ name = "snp-migrate"
 version = "2.0.0"
 dependencies = [
  "file-identify",
+ "globset",
+ "indexmap",
+ "proptest",
+ "serde_json",
+ "sha2",
  "snp-config",
  "snp-core",
  "snp-hooks-data",
  "snp-pyre",
+ "snp-testkit",
  "snp-yaml",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]

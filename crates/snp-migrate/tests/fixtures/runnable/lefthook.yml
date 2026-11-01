@@ -1,0 +1,49 @@
+# Commands that exist everywhere, so the converted config runs under pre-commit 4.6.2 and snp.
+pre-commit:
+  parallel: true
+  jobs:
+    - name: text files are not empty
+      glob: "*.txt"
+      run: grep -q . {staged_files}
+      stage_fixed: true
+      fail_text: "add some text"
+      timeout: 30s
+    - name: wrapper
+      run: wc -l {staged_files} > /dev/null && echo counted
+      exclude: ["*.md"]
+    - name: env with expansion
+      env: {GREETING: "hel${NOTHING}lo"}
+      run: test "$GREETING" = hello
+    - name: in a root
+      root: sub/
+      run: "true"
+      skip: [merge]
+    - group:
+        piped: true
+        jobs:
+          - name: listed files
+            files: git ls-files
+            glob: "*.txt"
+            run: grep -q . {files}
+          - name: every file
+            run: ls {all_files} > /dev/null
+            tags: [slow]
+  scripts:
+    ok.sh:
+      runner: sh
+commit-msg:
+  commands:
+    message:
+      run: grep -q . {1}
+pre-push:
+  commands:
+    remote:
+      run: test -n {1}
+post-checkout:
+  commands:
+    refs:
+      run: test -n {1} && test -n {3}
+lint:
+  commands:
+    all:
+      run: echo lint
