@@ -81,6 +81,10 @@ pub(crate) fn run(inv: &Invocation) -> Result<Captured, String> {
     if inv.tty {
         return pty::run(inv);
     }
+    #[cfg(not(unix))]
+    if inv.tty {
+        return Err("tty invocations are posix-only in the harness".to_owned());
+    }
     let mut cmd = Command::new(&inv.program);
     inv.env.apply_to(&mut cmd);
     cmd.args(&inv.args)
@@ -502,6 +506,7 @@ mod pty {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     fn env() -> Env {
         let p = Env::capture_process();
         Env::from_pairs(p.get("PATH").map(|v| ("PATH", v.to_os_string())))

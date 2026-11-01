@@ -106,7 +106,7 @@ pub(crate) fn reset_root(root: &Path) -> Result<(), String> {
             ));
         }
         make_writable(root);
-        std::fs::remove_dir_all(root).map_err(|e| format!("removing {}: {e}", root.display()))?;
+        remove_tree(root)?;
     }
     std::fs::create_dir_all(root).map_err(|e| format!("creating {}: {e}", root.display()))?;
     std::fs::write(root.join(MARKER), b"").map_err(|e| format!("{}: {e}", root.display()))
@@ -121,7 +121,50 @@ pub(crate) fn remove_root(root: &Path) -> Result<(), String> {
         ));
     }
     make_writable(root);
-    std::fs::remove_dir_all(root).map_err(|e| format!("removing {}: {e}", root.display()))
+    remove_tree(root)
+}
+
+/// `remove_dir_all(root)`. A scenario that enables `core.fsmonitor` (Windows, macOS) leaves git's fsmonitor daemons
+/// watching its repositories, and Windows refuses to delete a directory a process holds open: on failure the
+/// daemons of the repositories below `root` are stopped and the removal is retried a few times.
+fn remove_tree(root: &Path) -> Result<(), String> {
+    let mut last = match std::fs::remove_dir_all(root) {
+        Ok(()) => return Ok(()),
+        Err(e) => e,
+    };
+    if cfg!(any(windows, target_os = "macos")) {
+        stop_fsmonitor_daemons(root, 3);
+        for _ in 0..10 {
+            std::thread::sleep(Duration::from_millis(200));
+            match std::fs::remove_dir_all(root) {
+                Ok(()) => return Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(e) => last = e,
+            }
+        }
+    }
+    Err(format!("removing {}: {last}", root.display()))
+}
+
+/// `git fsmonitor--daemon stop` in every repository (a directory holding `.git`) at most `depth` levels below `dir`.
+fn stop_fsmonitor_daemons(dir: &Path, depth: usize) {
+    if dir.join(".git").exists() {
+        let _ignored: std::io::Result<std::process::Output> = std::process::Command::new("git")
+            .args(["fsmonitor--daemon", "stop"])
+            .current_dir(dir)
+            .stdin(std::process::Stdio::null())
+            .output();
+    }
+    let Some(next) = depth.checked_sub(1) else {
+        return;
+    };
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            if e.file_type().is_ok_and(|t| t.is_dir()) && e.file_name() != ".git" {
+                stop_fsmonitor_daemons(&e.path(), next);
+            }
+        }
+    }
 }
 
 /// chmod u+rwx every directory below `p` (a scenario may leave `chmod 000` directories), never following symlinks.
@@ -156,7 +199,7 @@ fn make_writable(p: &Path) {
             reason = "Windows: clear the read-only attribute before deletion"
         )]
         perm.set_readonly(false);
-        let _ = std::fs::set_permissions(p, perm);
+        let _ignored: std::io::Result<()> = std::fs::set_permissions(p, perm);
         if md.is_dir()
             && let Ok(rd) = std::fs::read_dir(p)
         {
@@ -568,6 +611,13 @@ pub(crate) fn write_file(p: &Path, bytes: &[u8]) -> Result<(), String> {
     std::fs::write(p, bytes).map_err(|e| format!("writing {}: {e}", p.display()))
 }
 
+#[cfg_attr(
+    not(unix),
+    expect(
+        clippy::unnecessary_wraps,
+        reason = "fallible on Unix, a no-op elsewhere"
+    )
+)]
 fn set_mode(p: &Path, mode: u32) -> Result<(), String> {
     #[cfg(unix)]
     {
@@ -582,6 +632,13 @@ fn set_mode(p: &Path, mode: u32) -> Result<(), String> {
     }
 }
 
+#[cfg_attr(
+    not(unix),
+    expect(
+        clippy::unnecessary_wraps,
+        reason = "fallible on Unix, a no-op elsewhere"
+    )
+)]
 fn make_exec(p: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
@@ -810,12 +867,18 @@ fn symlink(target: &str, link: &Path) -> Result<(), String> {
 fn mkfifo(w: &World, dir: &Path, name: &str) -> Result<(), String> {
     #[cfg(unix)]
     {
-        rustix::fs::mkfifoat(
-            rustix::fs::CWD,
-            confined(&w.layout.root, dir, name)?,
-            rustix::fs::Mode::from_raw_mode(0o644),
-        )
-        .map_err(|e| format!("mkfifo {name}: {e}"))
+        // mkfifo(1) is POSIX; rustix has no mkfifoat/mknodat on Apple targets.
+        let path = confined(&w.layout.root, dir, name)?;
+        let st = std::process::Command::new("mkfifo")
+            .args(["-m", "644"])
+            .arg(&path)
+            .status()
+            .map_err(|e| format!("mkfifo {name}: {e}"))?;
+        if st.success() {
+            Ok(())
+        } else {
+            Err(format!("mkfifo {name}: mkfifo(1) exited with {st}"))
+        }
     }
     #[cfg(not(unix))]
     {

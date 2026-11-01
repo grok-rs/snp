@@ -414,8 +414,10 @@ pub fn mask_paths(bytes: &[u8], stores: &[&[u8]]) -> Vec<u8> {
             cur = replace_bytes(&cur, s, b"[STORE]");
         }
     }
-    // snp keeps its patches in `patches/` (ARCHITECTURE §5.2): `[STORE]/patches/patch…` ≡ `[STORE]/patch…`.
-    replace_bytes(&cur, b"[STORE]/patches/patch", b"[STORE]/patch")
+    // snp keeps its patches in `patches/` (ARCHITECTURE §5.2): `[STORE]/patches/patch…` ≡ `[STORE]/patch…` (and
+    // `[STORE]\patches\patch…` ≡ `[STORE]\patch…` on Windows).
+    let cur = replace_bytes(&cur, b"[STORE]/patches/patch", b"[STORE]/patch");
+    replace_bytes(&cur, b"[STORE]\\patches\\patch", b"[STORE]\\patch")
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1022,7 +1024,7 @@ mod tests {
         assert_eq!(
             normalise(
                 Tier::B,
-                b"PermissionError: [WinError 32] Der Prozess kann nicht: 'C:\\\\x'\n",
+                b"PermissionError: [WinError 32] Der Prozess kann nicht: 'C:\\\\x'\n", // spellchecker:disable-line
                 &BrandMap::identity()
             ),
             b"PermissionError: [WinError 32] [TEXT]: 'C:\\\\x'\n"
@@ -1040,6 +1042,11 @@ mod tests {
             &[b"/r/store", b"/r/snp-store"],
         );
         assert_eq!(out, b"[STORE]/patch[TP] [STORE]/pre-commit.log");
+        let out = mask_paths(
+            b"C:\\r\\snp-store\\patches\\patch[TP]",
+            &[b"C:\\r\\snp-store"],
+        );
+        assert_eq!(out, b"[STORE]\\patch[TP]");
     }
 
     #[test]

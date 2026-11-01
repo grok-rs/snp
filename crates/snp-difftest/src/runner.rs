@@ -878,10 +878,12 @@ fn judge(
         .expect_divergence
         .as_deref()
         .is_some_and(|i| i.starts_with("D-BRAND-"));
-    let (map_oracle, reduce) = if brand_id {
-        (&identity, None)
+    // (Both sides: under --self-check the snp side is the oracle too, and mapping only one of them would invent the
+    // very difference the scenario registers.)
+    let (map_oracle, map_snp, reduce) = if brand_id {
+        (&identity, &identity, None)
     } else {
-        (map_oracle, reduce)
+        (map_oracle, map_snp, reduce)
     };
     let (map_oracle, map_snp) = ((map_oracle, reduce), (map_snp, reduce));
     let keep_diag = s.expect_divergence.as_deref().filter(|_| s.is_diag());
