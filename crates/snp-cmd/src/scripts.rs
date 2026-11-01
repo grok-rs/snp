@@ -106,7 +106,21 @@ pub fn select_exe(brand: Brand, arg0: Option<&OsStr>, env: &Env, current: &Path)
     cands
         .into_iter()
         .find(|c| is_file(c) && snp_os::same_file(c, current).unwrap_or(false))
-        .unwrap_or_else(|| current.to_path_buf())
+        .unwrap_or_else(|| without_dot_dot(current))
+}
+
+/// `current` itself, or its canonical path when it holds a `..`: macOS's `current_exe()` is the invoked path made
+/// absolute (`<repo>/../pbin/snp`), not the kernel's resolved one as on Linux, and a `..` must never be embedded.
+fn without_dot_dot(current: &Path) -> PathBuf {
+    let dotted = current
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir));
+    if dotted {
+        snp_os::realpath::realpath_nonstrict(current, Path::new("/"))
+            .unwrap_or_else(|_| current.to_path_buf())
+    } else {
+        current.to_path_buf()
+    }
 }
 
 /// BLAKE3 of a file's bytes, streamed.
@@ -370,6 +384,12 @@ mod tests {
         assert_eq!(
             select_exe(Brand::Snp, Some(exe.as_os_str()), &none, &exe),
             exe
+        );
+        // macOS: `current_exe()` itself may be the dotted invocation path; the fallback is then its canonical path.
+        let canonical = snp_os::realpath::realpath_nonstrict(&exe, Path::new("/")).unwrap();
+        assert_eq!(
+            select_exe(Brand::Snp, Some(dotted.as_os_str()), &none, &dotted),
+            canonical
         );
     }
 
