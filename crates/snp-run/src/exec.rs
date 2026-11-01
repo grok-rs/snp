@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use snp_core::env::{Env, EnvPatch};
 use snp_core::failure::{Failure, pyerr};
+use snp_core::fault::{self, Point};
 use snp_core::path::RepoPath;
 use snp_git::Git;
 use snp_git::pch_facts::PchFacts;
@@ -194,13 +195,13 @@ fn run_plan(
             let serial = serial || h.def.require_serial;
             let jobs = xargs::target_concurrency(&env, serial, e.cpu);
             let order = shuffled(files, shuffle && !serial);
-            Ok(run_xargs(e, h, &cmd, &order, &env, cwd, jobs))
+            run_xargs(e, h, &cmd, &order, &env, cwd, jobs)
         }
         RunPlan::Fail { entry } => {
             let names: Vec<&[u8]> = files.iter().map(|f| os_bytes(f)).collect();
             Ok(Ran::error(1, snp_hooks::fail::output(&entry, &names)))
         }
-        RunPlan::Pygrep { args, entry } => Ok(run_pygrep(e, &args, &entry, files, cwd)),
+        RunPlan::Pygrep { args, entry } => run_pygrep(e, &args, &entry, files, cwd),
         RunPlan::Error { code, output } => Ok(Ran::error(i64::from(code), output)),
         _ => Err(Failure::unexpected("AssertionError", "unexpected run plan")),
     }
@@ -270,11 +271,11 @@ fn run_xargs(
     env: &Env,
     cwd: &Path,
     jobs: NonZeroUsize,
-) -> Ran {
+) -> Result<Ran, Failure> {
     // `normalize_cmd` once per hook, before partitioning (`xargs.py:149-152`).
     let cmd = match snp_proc::resolve::normalize_cmd(cmd, env, cwd) {
         Ok(c) => c,
-        Err(err) => return Ran::error(1, err.message().into_bytes()),
+        Err(err) => return Ok(Ran::error(1, err.message().into_bytes())),
     };
     let max_len = batch_budget(&cmd, env, cwd).unwrap_or(e.max_len);
     // C-hook (X13-EXE-03, D-CRASH-05): the text pre-commit prints when exec fails with E2BIG.
@@ -283,7 +284,10 @@ fn run_xargs(
             .first()
             .map(|c| snp_pycompat::repr::repr_os(c))
             .unwrap_or_default();
-        return Ran::error(1, messages::argument_list_too_long(&exe).into_bytes());
+        return Ok(Ran::error(
+            1,
+            messages::argument_list_too_long(&exe).into_bytes(),
+        ));
     };
     let timeout = h.def.ext.timeout;
     let deadline = timeout.and_then(|t| Instant::now().checked_add(t));
@@ -300,6 +304,7 @@ fn run_xargs(
     let pty = e.color && cfg!(unix) && stdin.is_none();
     let threads = NonZeroUsize::new(parts.len().min(jobs.get())).unwrap_or(NonZeroUsize::MIN);
     let results = e.cx.pool.map_ordered(threads, parts.len(), |i| {
+        fault::hit(Point::WorkerPartition);
         let range = parts.get(i).cloned().unwrap_or(0..0);
         let mut argv = cmd.clone();
         argv.extend(
@@ -349,21 +354,32 @@ fn run_xargs(
                 timed_out |= p.timed_out;
                 out.push(p.output);
             }
-            // a refused permit (cancellation) or a worker failure: report what pre-commit would see from a dead
-            // partition; the caller turns a cancellation into `Interrupted`
-            Err(f) => {
+            // a refused permit (cancellation): report what pre-commit would see from a dead partition; the caller
+            // turns the cancellation into `Interrupted`
+            Err(f) if cancelled(&f) => {
                 codes.push(PyStatus(1));
                 out.push_bytes(failure_text(&f).into_bytes());
+            }
+            // a panicking worker is joined as `PanicException` (ARCHITECTURE §3.4): the run fails (exit 3) and the
+            // main thread restores the stash before the banner
+            Err(f) => {
+                snp_os::term::ensure_vt();
+                return Err(f);
             }
         }
     }
     snp_os::term::ensure_vt();
-    Ran {
+    Ok(Ran {
         code: xargs::aggregate(codes).0,
         out,
         timed_out: timeout.filter(|_| timed_out),
         ..Ran::default()
-    }
+    })
+}
+
+/// A partition refused by cancellation (as opposed to a panicking or unstartable worker).
+fn cancelled(f: &Failure) -> bool {
+    matches!(f, Failure::Interrupted(_) | Failure::StdoutClosed)
 }
 
 /// The one-line text of a worker failure.
@@ -453,6 +469,7 @@ fn run_native(
     };
     let threads = NonZeroUsize::new(parts.len().min(jobs.get())).unwrap_or(NonZeroUsize::MIN);
     let results = e.cx.pool.map_ordered(threads, parts.len(), |i| {
+        fault::hit(Point::WorkerPartition);
         let range = parts.get(i).cloned().unwrap_or(0..0);
         let mut argv: Vec<&OsStr> = args.iter().map(|a| OsStr::new(&**a)).collect();
         argv.extend(order.get(range).unwrap_or_default().iter().copied());
@@ -486,11 +503,11 @@ fn run_pygrep(
     entry: &str,
     files: &[OsString],
     cwd: &Path,
-) -> Ran {
+) -> Result<Ran, Failure> {
     let columns = snp_hooks::columns(e.run_env, None);
     let compiled = match snp_hooks::pygrep::prepare(args, entry, columns) {
         Ok(c) => c,
-        Err((code, out)) => return Ran::error(i64::from(code), out),
+        Err((code, out)) => return Ok(Ran::error(i64::from(code), out)),
     };
     let order: Vec<&OsStr> = files.iter().map(OsString::as_os_str).collect();
     let mut cmd = vec![
@@ -501,14 +518,15 @@ fn run_pygrep(
     cmd.extend(args.iter().map(|a| OsString::from(&**a)));
     cmd.push(OsString::from(entry));
     let Ok(parts) = xargs::partition(&cmd, &order, NonZeroUsize::MIN, e.max_len) else {
-        return Ran::error(
+        return Ok(Ran::error(
             1,
             messages::argument_list_too_long("'/usr/bin/python3'").into_bytes(),
-        );
+        ));
     };
     let jobs = xargs::target_concurrency(e.run_env, false, e.cpu);
     let threads = NonZeroUsize::new(parts.len().min(jobs.get())).unwrap_or(NonZeroUsize::MIN);
     let results = e.cx.pool.map_ordered(threads, parts.len(), |i| {
+        fault::hit(Point::WorkerPartition);
         let range = parts.get(i).cloned().unwrap_or(0..0);
         let mut argv: Vec<&OsStr> = args.iter().map(|a| OsStr::new(&**a)).collect();
         argv.push(OsStr::new(entry));
@@ -529,18 +547,19 @@ fn run_pygrep(
                 codes.push(PyStatus(i64::from(o.code)));
                 out.push_bytes(o.output);
             }
-            Err(f) => {
+            Err(f) if cancelled(&f) => {
                 codes.push(PyStatus(1));
                 out.push_bytes(failure_text(&f).into_bytes());
             }
+            Err(f) => return Err(f),
         }
     }
-    Ran {
+    Ok(Ran {
         code: xargs::aggregate(codes).0,
         out,
         reads_only: true,
         ..Ran::default()
-    }
+    })
 }
 
 #[cfg(test)]
