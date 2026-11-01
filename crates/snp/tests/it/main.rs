@@ -23,6 +23,8 @@ mod cli; // WP-33
 #[cfg(test)]
 mod config; // WP-33
 #[cfg(test)]
+mod config_discovery; // WP-33 (ADR-087)
+#[cfg(test)]
 mod doctor; // WP-33
 #[cfg(test)]
 mod errors; // WP-33
