@@ -379,7 +379,11 @@ fn lfs_files_memo_agrees_with_check_attr() {
         .unwrap();
     assert_eq!(
         again,
-        vec![b"sub/b.dat".to_vec(), b"a.dat".to_vec(), b"sub/b.dat".to_vec()]
+        vec![
+            b"sub/b.dat".to_vec(),
+            b"a.dat".to_vec(),
+            b"sub/b.dat".to_vec()
+        ]
     );
     // a nested `.gitattributes` written by an earlier hook is honoured
     sb.write(&repo, "sub/.gitattributes", b"*.bin filter=lfs\n");
