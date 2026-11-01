@@ -130,7 +130,7 @@ fn stage_fixed_verify_stages_the_fixes() {
     assert_eq!(
         o.stdout,
         format!(
-            "{}- hook id: fix\n- files were modified by this hook and staged\n",
+            "{}- hook id: fix\n- files were modified by this hook (stage_fixed: staged after the last hook)\n",
             line("fix", "Passed")
         )
     );
@@ -758,7 +758,8 @@ fn stage_fixed_works_inside_a_priority_bucket() {
     staged(&h, "c.txt", b"c\n");
     let o = h.run(args());
     assert_eq!(o.code, 0, "{o:?}");
-    let staged_line = "- files were modified by this hook and staged\n";
+    let staged_line =
+        "- files were modified by this hook (stage_fixed: staged after the last hook)\n";
     assert_eq!(
         o.stdout,
         format!(
@@ -796,8 +797,9 @@ fn stage_fixed_combines_with_fail_on_changes() {
         assert_eq!(o.code, i32::from(fails), "{key} CI={ci}: {o:?}");
         assert!(
             o.stdout.starts_with(&line("fix", status))
-                && o.stdout
-                    .contains("- files were modified by this hook and staged\n"),
+                && o.stdout.contains(
+                    "- files were modified by this hook (stage_fixed: staged after the last hook)\n"
+                ),
             "{key} CI={ci}: {}",
             o.stdout
         );
@@ -843,7 +845,7 @@ fn stage_fixed_counts_further_changes_to_already_dirty_files() {
     let o = h.run(args());
     assert_eq!(o.code, 1, "{o:?}");
     assert!(o.stdout.contains(&line("fx", "Failed")), "{}", o.stdout);
-    assert!(!o.stdout.contains("and staged"), "{}", o.stdout);
+    assert!(!o.stdout.contains("(stage_fixed: staged"), "{}", o.stdout);
     assert_eq!(cached(&h, "a.txt"), "bad\n");
     assert_eq!(cached(&h, "b.txt"), "b\n");
 }

@@ -3119,7 +3119,7 @@ Active only for the `pre-commit` stage on the staged file set with a stash (othe
 Per hook H with staged inputs I: `M` = files in I changed by H (stat + blake3), `O` = other changed tracked files.
 `O ≠ ∅` ⇒ normal failure. `M = ∅` ⇒ normal result. `M ≠ ∅ ∧ rc = 0` ⇒ accepted. `M ≠ ∅ ∧ rc ≠ 0` ⇒ `verify`: re-run
 H on I once; passes (rc 0, no new changes) ⇒ accepted, else Failed with the second output (`trust` skips the re-run).
-Accepted ⇒ status `Passed` plus `- files were modified by this hook and staged`; staging happens once after all hooks
+Accepted ⇒ status `Passed` plus `- files were modified by this hook (stage_fixed: staged after the last hook)`; staging happens once after all hooks
 via `StashGuard::stage_fixed` (apply-check first, §4.5); files also modified by a non-`stage_fixed` hook are never
 staged. `fail_on_changes` combines (e.g. stage locally, fail in CI).
 

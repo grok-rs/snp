@@ -168,7 +168,10 @@ pub(crate) fn timed_out(d: Duration) -> String {
 }
 
 /// ARCHITECTURE §8.3 `stage_fixed`: the accepted fixer's detail line.
-pub(crate) const STAGED_FIXES: &str = "- files were modified by this hook and staged";
+/// It states the intent only: the staging runs once after every hook, and its refusal (`STAGE_FIXED_REFUSED`) or a
+/// withdrawal (`stage_fixed_withdrawn`) is reported then (ADR-084).
+pub(crate) const STAGED_FIXES: &str =
+    "- files were modified by this hook (stage_fixed: staged after the last hook)";
 
 /// `fail_text` (ARCHITECTURE §8.2): `- <fail_text>`.
 pub(crate) fn fail_text(text: &str) -> String {
