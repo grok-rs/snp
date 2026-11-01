@@ -23,7 +23,9 @@ inputs:
     required: false
     default: latest
   cache:
-    description: Cache snp's cache directory (`~/.cache/snp`) between runs (`true` or `false`)
+    description: >-
+      Cache snp's cache directory between runs (`true` or `false`): `SNP_HOME`, else `$XDG_CACHE_HOME/snp`, else
+      `~/.cache/snp`, as snp resolves it
     required: false
     default: "true"
 
@@ -96,16 +98,23 @@ runs:
     # Key scheme `snp-1` (11 §A.11.1): runner OS and architecture because environments hold platform binaries,
     # pythonLocation for Python hooks set up by actions/setup-python (empty otherwise), the config hash. No snp
     # version: the cache is versioned internally.
+    - name: snp's cache directory
+      id: cache-dir
+      if: ${{ inputs.cache == 'true' }}
+      shell: bash
+      run: echo "path=$("$GITHUB_ACTION_PATH/cache-dir.sh")" >> "$GITHUB_OUTPUT"
+
     - name: Cache snp's cache directory
       if: ${{ inputs.cache == 'true' }}
       uses: actions/cache@v4
       with:
-        path: ~/.cache/snp
+        path: ${{ steps.cache-dir.outputs.path }}
         key: snp-1|${{ runner.os }}|${{ runner.arch }}|${{ env.pythonLocation }}|${{ hashFiles('.pre-commit-config.yaml') }}
 
     - name: Run snp
       shell: bash
       env:
         SNP_ACTION_EXTRA_ARGS: ${{ inputs.extra_args }}
-      # Word splitting of the extra arguments is intended (pre-commit/action does the same).
-      run: snp run --show-diff-on-failure --color=always $SNP_ACTION_EXTRA_ARGS
+      # run.sh has bash parse extra_args as shell words (quotes, `$VAR`, `$(...)`), exactly as pre-commit/action's
+      # interpolation of the input into its script does; the input reaches it through the environment.
+      run: '"$GITHUB_ACTION_PATH/run.sh"'

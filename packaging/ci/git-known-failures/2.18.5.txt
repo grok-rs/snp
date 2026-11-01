@@ -1,0 +1,20 @@
+# Tests that fail on git 2.18.5 because they assume a newer git (measured with packaging/ci/git-tests.sh 2.18.5).
+# Owners: snp-git and snp-testkit WP-18, snp-stash WP-23; each owner gates its tests by git version and removes the
+# line. platform.yml runs every other test blocking, and these alone non-blocking, warning about any that pass.
+package(snp-git) & binary(catalog) & test(=behaviour::exe::version_cache_trusts_only_passing_entries)
+package(snp-git) & binary(catalog) & test(=behaviour::hazards::hazard_b_an_intent_to_add_rename_pair_is_restored)
+package(snp-git) & binary(catalog) & test(=behaviour::hazards::hazard_c_git_dir_never_redirects_autoupdate_into_the_user_repo)
+package(snp-git) & binary(catalog) & test(=behaviour::hazards::hazard_d_object_format_mismatch_is_retried_once)
+package(snp-git) & binary(catalog) & test(=behaviour::owned::owned_env_is_sanitized_and_carries_the_fsmonitor_injection)
+package(snp-git) & binary(catalog) & test(=behaviour::owned::rev_info_tags_freeze_and_bleeding_edge)
+package(snp-git) & binary(catalog) & test(=behaviour::user_repo::dedup_fallback_equals_ls_files_deduplicate)
+package(snp-git) & binary(catalog) & test(=rows::t10_git_02_bare_worktree_git_dir_and_worktree_in_git)
+package(snp-git) & binary(catalog) & test(=rows::t10_git_08_zsplit)
+package(snp-git) & binary(catalog) & test(=rows::t10_git_11_intent_to_add)
+package(snp-stash) & binary(catalog) & test(=behaviour::guard::files_that_keep_changing_abort_before_any_mutation)
+package(snp-stash) & binary(catalog) & test(=behaviour::guard::hazard_b_intent_to_add_paired_as_a_rename)
+package(snp-stash) & binary(catalog) & test(=behaviour::guard::ita_only_with_an_unwritable_store_writes_the_pointer_and_notes_it)
+package(snp-stash) & binary(catalog) & test(=behaviour::guard::linked_worktrees_have_their_own_lock)
+package(snp-stash) & binary(catalog) & test(=behaviour::oracle::a_head_move_under_an_onbranch_include_is_seen)
+package(snp-stash) & binary(catalog) & test(=rows::t10_sfo_16_intent_to_add)
+package(snp-testkit) & binary(guard) & test(=guard::real_caches_are_untouched_by_the_suite)

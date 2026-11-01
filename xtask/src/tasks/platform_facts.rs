@@ -22,7 +22,12 @@
 //! * `report.md`: one row per prediction (ID, 14 § reference, claim, verdict, observed value): **confirmed**,
 //!   **contradicted** or **unknown** (fact not available on this runner); also appended to `$GITHUB_STEP_SUMMARY`;
 //! * `corrections.md`: only when a prediction is contradicted; the workflow files it as an issue, and 14 §A.6.5
-//!   requires the matrix to be corrected in the PR that fixes it.
+//!   requires the matrix to be corrected in the PR that fixes it;
+//! * `unverified.md`: only when a prediction that applies to this runner is **unknown** (its fact could not be
+//!   collected, e.g. `snp __debug platform` does not exist yet, so PF-22 / W18 cannot be checked); the workflow
+//!   reports it as a warning and files one issue for all runners, so an unverified prediction never passes silently.
+//!   A prediction whose premise does not hold on the runner (`PYTHON_CPU_COUNT` before CPython 3.13) is **n/a**, not
+//!   unknown.
 //!
 //! Relative `--out`, `--python` and `--snp` paths are resolved against the current directory first (the probes run
 //! in a scratch directory). The task always prints and never fails (14 §A.6.3): a missing tool is recorded as
@@ -203,6 +208,18 @@ pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
         }
     } else {
         std::fs::write(&corrections, render_corrections(&facts, &contradicted))?;
+    }
+    let unverified = out_dir.join("unverified.md");
+    let unknown: Vec<&Outcome> = results
+        .iter()
+        .filter(|r| matches!(r.verdict, Verdict::Unknown(_)))
+        .collect();
+    if unknown.is_empty() {
+        if unverified.exists() {
+            std::fs::remove_file(&unverified)?;
+        }
+    } else {
+        std::fs::write(&unverified, render_unverified(&facts, &unknown))?;
     }
     if let Some(summary) = env.get_nonempty("GITHUB_STEP_SUMMARY") {
         let mut f = std::fs::OpenOptions::new()
@@ -842,8 +859,22 @@ enum Verdict {
     Confirmed(String),
     /// The fact contradicts the prediction.
     Contradicted(String),
-    /// The fact is not available on this runner.
+    /// The fact is not available on this runner: the prediction applies but is unverified.
     Unknown(String),
+    /// The prediction's premise does not hold on this runner (e.g. an interpreter that predates the feature).
+    NotApplicable(String),
+}
+
+impl Verdict {
+    /// The observed value or the reason.
+    fn observed(&self) -> &str {
+        match self {
+            Self::Confirmed(o)
+            | Self::Contradicted(o)
+            | Self::Unknown(o)
+            | Self::NotApplicable(o) => o,
+        }
+    }
 }
 
 /// One derived prediction of 14 §A.6 checked against the facts.
@@ -1082,7 +1113,9 @@ static PREDICTIONS: &[Prediction] = &[
                 Some(m) if m >= 13 => {
                     expect_eq(f, "/python/cpu_count_with_python_cpu_count_3", &json!(3))
                 }
-                Some(_) => Verdict::Unknown(format!("python {version} predates PYTHON_CPU_COUNT")),
+                Some(_) => {
+                    Verdict::NotApplicable(format!("python {version} predates PYTHON_CPU_COUNT"))
+                }
                 None => unknown(f, "/python/probe_stdin_null/version"),
             }
         },
@@ -1309,20 +1342,23 @@ fn render_report(facts: &Value, results: &[Outcome]) -> String {
     let count = |f: fn(&Verdict) -> bool| results.iter().filter(|r| f(&r.verdict)).count();
     writeln!(
         out,
-        "{} prediction(s): {} confirmed, {} contradicted, {} unknown.\n",
+        "{} prediction(s): {} confirmed, {} contradicted, {} unknown, {} n/a.\n",
         results.len(),
         count(|v| matches!(v, Verdict::Confirmed(_))),
         count(|v| matches!(v, Verdict::Contradicted(_))),
         count(|v| matches!(v, Verdict::Unknown(_))),
+        count(|v| matches!(v, Verdict::NotApplicable(_))),
     )
     .unwrap_or_default();
     out.push_str("| ID | Source | Claim | Verdict | Observed |\n|---|---|---|---|---|\n");
     for r in results {
-        let (v, obs) = match &r.verdict {
-            Verdict::Confirmed(o) => ("confirmed", o),
-            Verdict::Contradicted(o) => ("**contradicted**", o),
-            Verdict::Unknown(o) => ("unknown", o),
+        let v = match &r.verdict {
+            Verdict::Confirmed(_) => "confirmed",
+            Verdict::Contradicted(_) => "**contradicted**",
+            Verdict::Unknown(_) => "**unknown**",
+            Verdict::NotApplicable(_) => "n/a",
         };
+        let obs = r.verdict.observed();
         writeln!(
             out,
             "| {} | {} | {} | {v} | {} |",
@@ -1349,16 +1385,52 @@ fn render_corrections(facts: &Value, contradicted: &[&Outcome]) -> String {
     )
     .unwrap_or_default();
     for r in contradicted {
-        let obs = match &r.verdict {
-            Verdict::Contradicted(o) | Verdict::Confirmed(o) | Verdict::Unknown(o) => o,
-        };
         writeln!(
             out,
             "- **{}** ({}): {}\n  - observed: `{}`",
             r.prediction.id,
             r.prediction.source,
             r.prediction.claim,
-            obs.replace('`', "'")
+            r.verdict.observed().replace('`', "'")
+        )
+        .unwrap_or_default();
+    }
+    out
+}
+
+/// What is missing for a prediction to be checked, when the task knows (else the generic text).
+fn missing_fact(id: &str) -> &'static str {
+    match id {
+        "PF-22" => {
+            "`snp __debug platform` (a JSON object with `py_cpu_count` and the other 14 §A.6.3 snp facts) does not \
+             exist yet; it belongs to the snp binary (WP-33)"
+        }
+        _ => "the fact could not be collected on this runner (see `facts.json`)",
+    }
+}
+
+/// `unverified.md`: the predictions that apply to this runner but could not be checked.
+fn render_unverified(facts: &Value, unknown: &[&Outcome]) -> String {
+    let mut out = String::new();
+    writeln!(
+        out,
+        "The platform-facts job on `{}` could not verify {} derived prediction(s) of \
+         docs/research/14-platform-matrix.md that apply to it.\nAcceptance (WBS WP-37) requires every prediction to be \
+         confirmed or corrected, so each one needs its fact collected; the full facts are in the `platform-facts` \
+         artifact of this run.\n",
+        runner_label(facts),
+        unknown.len()
+    )
+    .unwrap_or_default();
+    for r in unknown {
+        writeln!(
+            out,
+            "- **{}** ({}): {}\n  - missing: {}\n  - observed: `{}`",
+            r.prediction.id,
+            r.prediction.source,
+            r.prediction.claim,
+            missing_fact(r.prediction.id),
+            r.verdict.observed().replace('`', "'")
         )
         .unwrap_or_default();
     }
@@ -1464,7 +1536,7 @@ mod tests {
     }
 
     #[test]
-    fn python_before_313_leaves_python_cpu_count_unknown() {
+    fn python_before_313_makes_python_cpu_count_not_applicable() {
         let mut f = facts_for("macos");
         *f.pointer_mut("/python/probe_stdin_null/version").unwrap() = json!("3.12.3");
         let r = evaluate(&f);
@@ -1473,7 +1545,11 @@ mod tests {
             .find(|r| r.prediction.id == "PF-11")
             .unwrap()
             .verdict;
-        assert!(matches!(v, Verdict::Unknown(_)));
+        assert!(matches!(v, Verdict::NotApplicable(_)));
+        // n/a is neither unknown nor contradicted: it is in the report but in no follow-up file
+        let report = render_report(&f, &r);
+        assert!(report.contains("| n/a |"));
+        assert!(report.contains("0 unknown, 1 n/a"));
     }
 
     #[test]
@@ -1615,13 +1691,21 @@ mod tests {
             verdict_of(&evaluate(&f), "PF-22"),
             Verdict::Contradicted(_)
         ));
-        // `snp __debug platform` not implemented: unknown, not contradicted
+        // `snp __debug platform` not implemented: unknown, not contradicted, and reported as unverified
         *f.pointer_mut("/snp/debug_platform").unwrap() =
             json!("unavailable: exit status: 2 (invalid choice: '__debug')");
-        assert!(matches!(
-            verdict_of(&evaluate(&f), "PF-22"),
-            Verdict::Unknown(_)
-        ));
+        let results = evaluate(&f);
+        assert!(matches!(verdict_of(&results, "PF-22"), Verdict::Unknown(_)));
+        let unknown: Vec<&Outcome> = results
+            .iter()
+            .filter(|r| matches!(r.verdict, Verdict::Unknown(_)))
+            .collect();
+        assert_eq!(unknown.len(), 1);
+        let u = render_unverified(&f, &unknown);
+        assert!(u.contains("**PF-22**"), "{u}");
+        assert!(u.contains("`snp __debug platform`"), "{u}");
+        assert!(u.contains("WP-33"), "{u}");
+        assert!(u.contains("invalid choice: '__debug'"), "{u}");
         let mut f = facts_for("macos");
         f.as_object_mut().unwrap().remove("snp");
         assert!(matches!(

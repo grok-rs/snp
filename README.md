@@ -119,8 +119,10 @@ Releases are cut by pushing a tag `vX.Y.Z` that matches the workspace version an
 pins exactly the user crates, the sibling checkouts are clean at the pinned commits, the snp checkout is clean, and
 cfgv and file-identify are published on crates.io from exactly those commits (`.cargo_vcs_info.json`). It then builds
 the eight targets with cargo-dist (auditable binaries, CycloneDX SBOMs, SHA-256 checksums, GitHub attestations), the
-`snp-cli` wheels with maturin, and publishes the GitHub release. `packaging/` holds the wheel project and the
-`snp-action` composite action.
+`snp-cli` wheels with maturin, and publishes the GitHub release. A manual run (`workflow_dispatch`) with a tag must
+be dispatched from that tag ("Use workflow from: Tags / vX.Y.Z"), never from a branch; with the default input
+`dry-run` it builds everything and publishes nothing. `packaging/` holds the wheel project and the `snp-action`
+composite action.
 
 ## License
 

@@ -33,6 +33,11 @@ checksum file, adds `snp` to `PATH`, caches snp's cache directory under the key 
 `snp run --show-diff-on-failure --color=always ${extra_args}`. It works on Linux, macOS and Windows runners, x86_64 and
 arm64.
 
+`extra_args` is parsed by bash as shell words, as `pre-commit/action` parses it: quotes group words
+(`--files "a b.py"`), and `$VAR` and `$(...)` expand (`--from-ref "$BASE"`). It is shell code written by the
+workflow's author, with either action, and must never contain untrusted text such as a pull-request title. The cached
+directory is the one snp uses: `SNP_HOME`, else `$XDG_CACHE_HOME/snp`, else `~/.cache/snp`.
+
 ### Without the action
 
 ```yaml

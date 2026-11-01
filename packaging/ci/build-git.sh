@@ -5,6 +5,9 @@
 #
 #   packaging/ci/build-git.sh VERSION PREFIX
 #
+# BUILD_GIT_JOBS sets make's job count. The default is min(nproc, 4) and the build runs at the lowest CPU priority, so
+# that a local build on a shared development machine never starves concurrent work; CI runners have 2-4 cores anyway.
+#
 # Only the versions below are accepted, each with the SHA-256 of its tarball as listed in kernel.org's
 # sha256sums.asc. Adding a version means adding its line here and to the matrix.
 set -euo pipefail
@@ -31,6 +34,15 @@ case "$version" in
     ;;
 esac
 
+cores=$(nproc 2> /dev/null || echo 1)
+jobs=${BUILD_GIT_JOBS:-$((cores < 4 ? cores : 4))}
+case "$jobs" in
+  '' | *[!0-9]* | 0*)
+    echo "build-git.sh: BUILD_GIT_JOBS must be a positive integer, not '$jobs'" >&2
+    exit 2
+    ;;
+esac
+
 if [ -x "$prefix/bin/git" ] && "$prefix/bin/git" --version | grep -qx "git version $version"; then
   echo "git $version already built in $prefix"
   exit 0
@@ -46,7 +58,7 @@ tar -xJf "$work/$tarball" -C "$work"
 
 # Old releases predate GCC 10's -fno-common default; no Tcl/Tk, gettext, Perl or Python (the tests need none of the
 # scripted porcelain); libcurl and expat for https remotes.
-make -C "$work/git-$version" -j"${BUILD_GIT_JOBS:-$(nproc)}" \
+nice -n 19 make -C "$work/git-$version" -j"$jobs" \
   prefix="$prefix" \
   CFLAGS="-O2 -fcommon" \
   NO_TCLTK=1 NO_GETTEXT=1 NO_PERL=1 NO_PYTHON=1 NO_OPENSSL=1 NO_INSTALL_HARDLINKS=1 \

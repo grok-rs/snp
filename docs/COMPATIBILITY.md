@@ -209,7 +209,7 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 | D-PLAT-06 | Windows: config/`--files` on another drive → `ValueError` (relpath) exit 3 | absolute path kept | 32 |
 | D-PLAT-08 | cygwin/MSYS2 git on Windows: a warning, then undefined behaviour | clear error, exit 1 | 18 |
 | D-PLAT-09 | Windows: `.cmd` partitions can exceed 8191 characters after quoting (crash) | partitions re-split | 15 |
-| D-PLAT-10 | Windows CPU count = `GetActiveProcessorCount(ALL_PROCESSOR_GROUPS)` | `available_parallelism` (differs only above 64 logical CPUs; no `unsafe`) | 15 |
+| D-PLAT-10 | Windows CPU count = `GetActiveProcessorCount(ALL_PROCESSOR_GROUPS)`; on macOS and Windows under CPython ≥ 3.13 a positive `PYTHON_CPU_COUNT` replaces the count (`multiprocessing.cpu_count()`; Linux uses `sched_getaffinity`, which ignores it) | `available_parallelism` (differs only above 64 logical CPUs; no `unsafe`); `PYTHON_CPU_COUNT` ignored on every OS (14 A.9 Q3; `SNP_JOBS` sets the count) | 15 |
 | D-PLAT-12 | Windows: a directory junction is tagged `directory` | tagged `symlink` (reading the reparse tag needs `unsafe`) | 22 |
 
 ### 5.6 PERF — forced by FD-7/FD-8, invisible in hook output
@@ -384,8 +384,8 @@ invalid value is a FatalError naming the variable. Test builds only (`--features
 
 Exported to hooks: exactly pre-commit's set (02 §6.1) plus `_SNP_STASH_LOCK` while a stash is held (D-EXT-04);
 `SNP_RUNNING_LEGACY=1` and `PRE_COMMIT_RUNNING_LEGACY=1` for legacy hooks. Deliberately ignored: `NO_COLOR`,
-`FORCE_COLOR`, `CLICOLOR_FORCE`, `PYTHON_CPU_COUNT`, `PYTHONWARNINGS` (passed through to hooks unchanged), `RUST_LOG`,
-`PREK_*`.
+`FORCE_COLOR`, `CLICOLOR_FORCE`, `PYTHON_CPU_COUNT` (pre-commit ignores it too on Linux; on macOS and Windows under
+CPython ≥ 3.13 it does not: D-PLAT-10), `PYTHONWARNINGS` (passed through to hooks unchanged), `RUST_LOG`, `PREK_*`.
 
 ## 9. Migration notes (for the user documentation)
 

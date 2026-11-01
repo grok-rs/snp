@@ -76,14 +76,22 @@ jobs:
         id: tag
         env:
           EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
           REF_NAME: ${{ github.ref_name }}
           INPUT_TAG: ${{ inputs.tag }}
+        # A manual release must be dispatched from the tag itself ("Use workflow from: Tags / vX.Y.Z"): every job
+        # checks out the dispatch ref, and actions/checkout fetches neither tags nor other refs, so a run dispatched
+        # from a branch would build the branch. Refused here with an explanation instead of failing in the gate.
         run: |
           tag=""
           if [ "$EVENT" = push ]; then
             tag="$REF_NAME"
           elif [ "$EVENT" = workflow_dispatch ] && [ "$INPUT_TAG" != dry-run ]; then
             tag="$INPUT_TAG"
+            if [ "$REF" != "refs/tags/$tag" ]; then
+              echo "::error::a manual release of $tag must be dispatched from the tag $tag (Use workflow from: Tags / $tag), not from $REF"
+              exit 1
+            fi
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if [ -n "$tag" ]; then echo "publishing=true" >> "$GITHUB_OUTPUT"; else echo "publishing=false" >> "$GITHUB_OUTPUT"; fi
@@ -131,7 +139,9 @@ jobs:
           fi
       - name: Release notes
         if: steps.tag.outputs.publishing == 'true'
-        run: cargo xtask release notes "${{ steps.tag.outputs.tag }}"
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: cargo xtask release notes "$TAG"
 
   plan:
     needs: gates
@@ -206,9 +216,9 @@ jobs:
       - name: Install dist
         working-directory: .
         run: ${{ matrix.install_dist.run }}
-      - name: Install cargo-auditable and cargo-cyclonedx
+      - name: Install cargo-auditable, cargo-cyclonedx and rust-audit-info
         uses: taiki-e/install-action@v2
-        with: { tool: "cargo-auditable,cargo-cyclonedx" }
+        with: { tool: "cargo-auditable,cargo-cyclonedx,rust-audit-info" }
       - name: Install system dependencies
         if: ${{ matrix.packages_install }}
         run: ${{ matrix.packages_install }}
@@ -227,8 +237,9 @@ jobs:
           echo "EOF" >> "$GITHUB_OUTPUT"
           mkdir -p target/distrib
           cp dist-manifest.json "$BUILD_MANIFEST_NAME"
-      # ELF, Mach-O and PE binaries built by cargo-auditable all carry a section named `.dep-v0`; each target's archive
-      # is unpacked and its binary checked, and a missing archive or binary is an error.
+      # Each target's archive is unpacked and its binary's embedded dependency list read back with rust-audit-info
+      # (which parses the `.dep-v0` section of ELF, Mach-O and PE files and decompresses it): it must be valid JSON
+      # whose root package is snp. A missing archive, binary or section is an error.
       - name: The binaries embed their dependency list (cargo-auditable)
         env:
           TARGETS: ${{ join(matrix.targets, ' ') }}
@@ -249,8 +260,11 @@ jobs:
             esac
             bin="$(find "$dir" -type f -name "$exe" | head -n 1)"
             [ -n "$bin" ] || { echo "::error::$archive contains no $exe"; exit 1; }
-            LC_ALL=C grep -aqF '.dep-v0' "$bin" || { echo "::error::$t: $exe has no .dep-v0 section (cargo-auditable)"; exit 1; }
-            echo "$t: $exe embeds its dependency list"
+            rust-audit-info "$bin" > "$dir/audit.json" \
+              || { echo "::error::$t: $exe has no readable .dep-v0 section (cargo-auditable)"; exit 1; }
+            jq -e 'any(.packages[]; .name == "snp" and .root == true) and (.packages | length) > 1' "$dir/audit.json" > /dev/null \
+              || { echo "::error::$t: the dependency list of $exe does not have snp as its root package"; exit 1; }
+            echo "$t: $exe embeds its dependency list ($(jq '.packages | length' "$dir/audit.json") packages)"
           done
       - uses: actions/upload-artifact@v4
         with:

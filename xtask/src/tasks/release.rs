@@ -794,12 +794,52 @@ fn check_vcs_info(json: &str, pin: &Pin) -> Result<(), String> {
     Ok(())
 }
 
-/// The body of the `## [version]` (or `## version`, `## vversion`) section of a Keep-a-Changelog file.
+/// The fence a line opens or closes (Markdown: up to three spaces, then at least three backticks or tildes): the
+/// fence character and the length of the run.
+fn fence_marker(line: &str) -> Option<(char, usize)> {
+    let indent = line
+        .len()
+        .saturating_sub(line.trim_start_matches(' ').len());
+    if indent > 3 {
+        return None;
+    }
+    let rest = line.get(indent..)?;
+    let c = rest.chars().next().filter(|c| matches!(c, '`' | '~'))?;
+    let n = rest.chars().take_while(|&x| x == c).count();
+    (n >= 3).then_some((c, n))
+}
+
+/// The body of the `## [version]` (or `## version`, `## vversion`) section of a Keep-a-Changelog file. Headings inside
+/// fenced code blocks (a quoted Markdown snippet) neither start nor end a section.
 fn changelog_section<'a>(text: &'a str, version: &str) -> Option<&'a str> {
     let mut start = None;
     let mut offset = 0_usize;
+    // The open fence: its character and length (a closing fence uses the same character, at least as many times,
+    // and nothing else but spaces).
+    let mut fence: Option<(char, usize)> = None;
     for line in text.split_inclusive('\n') {
         let next = offset.saturating_add(line.len());
+        let marker = fence_marker(line.trim_end_matches(['\n', '\r']));
+        match (fence, marker) {
+            (None, Some(m)) => {
+                fence = Some(m);
+                offset = next;
+                continue;
+            }
+            (Some((c, n)), Some((mc, mn))) => {
+                let after = line.trim().trim_start_matches(mc);
+                if mc == c && mn >= n && after.is_empty() {
+                    fence = None;
+                }
+                offset = next;
+                continue;
+            }
+            (Some(_), None) => {
+                offset = next;
+                continue;
+            }
+            (None, None) => {}
+        }
         if let Some(h) = line.strip_prefix("## ") {
             if start.is_some() {
                 return text.get(start.unwrap_or(0)..offset);
@@ -928,6 +968,20 @@ mod tests {
         assert_eq!(changelog_section(text, "Unreleased"), Some("\nnext\n\n"));
         assert_eq!(changelog_section(text, "1.0.1"), Some("\nold\n"));
         assert_eq!(changelog_section(text, "3.0.0"), None);
+        // A heading inside a fenced block (a quoted Markdown snippet) neither ends nor starts a section, whichever
+        // fence character and length is used; an indented (4 spaces) fence is no fence.
+        let fenced = "## [2.0.0]\n\nMigration:\n\n```markdown\n## [Unreleased]\n```\n\n~~~~\n## 2.0.0\n~~~\n## [1.0.0]\n~~~~\n\ntail\n\n## [1.0.0]\n\nold\n";
+        assert_eq!(
+            changelog_section(fenced, "2.0.0"),
+            Some(
+                "\nMigration:\n\n```markdown\n## [Unreleased]\n```\n\n~~~~\n## 2.0.0\n~~~\n## [1.0.0]\n~~~~\n\ntail\n\n"
+            )
+        );
+        assert_eq!(changelog_section(fenced, "1.0.0"), Some("\nold\n"));
+        assert_eq!(changelog_section(fenced, "Unreleased"), None);
+        assert_eq!(fence_marker("    ```"), None);
+        assert_eq!(fence_marker("   ```rust"), Some(('`', 3)));
+        assert_eq!(fence_marker("``"), None);
         let root = workspace::root().unwrap();
         let ours = std::fs::read_to_string(root.join("CHANGELOG.md")).unwrap();
         let v = workspace_version(&root).unwrap();
@@ -1269,6 +1323,363 @@ mod tests {
             o.allow_dirty = true;
             let r = gates(&o);
             assert!(r.failed("lock/file-identify"), "{}", render(&r));
+        }
+    }
+
+    /// The packaging scripts and the workflows WP-37 owns: the scripts are run (bash), the workflows read as text.
+    mod packaging {
+        use super::*;
+
+        fn read(rel: &str) -> String {
+            std::fs::read_to_string(workspace::root().unwrap().join(rel)).unwrap()
+        }
+
+        fn indent(line: &str) -> usize {
+            line.len().saturating_sub(line.trim_start().len())
+        }
+
+        /// Every `run:` script of a workflow or composite action: the one-line value, or the block scalar that
+        /// follows (`|`, `>-`, …) at a deeper indentation.
+        fn run_scripts(text: &str) -> Vec<String> {
+            let lines: Vec<&str> = text.lines().collect();
+            let mut out = Vec::new();
+            let mut i = 0;
+            while i < lines.len() {
+                let line = lines[i];
+                let t = line.trim_start();
+                let t = t.strip_prefix("- ").unwrap_or(t);
+                i += 1;
+                let Some(value) = t.strip_prefix("run:") else {
+                    continue;
+                };
+                let value = value.trim();
+                if value.starts_with('|') || value.starts_with('>') {
+                    let key = indent(line);
+                    let mut block = String::new();
+                    while i < lines.len() && (lines[i].trim().is_empty() || indent(lines[i]) > key)
+                    {
+                        block.push_str(lines[i].trim());
+                        block.push('\n');
+                        i += 1;
+                    }
+                    out.push(block);
+                } else {
+                    out.push(value.to_owned());
+                }
+            }
+            out
+        }
+
+        const WORKFLOWS: [&str; 4] = [
+            ".github/workflows/platform.yml",
+            ".github/workflows/release.yml",
+            ".github/workflows/nightly.yml",
+            "packaging/snp-action/action.yml",
+        ];
+
+        #[test]
+        fn run_scripts_are_found() {
+            let y = "steps:\n  - run: echo a\n  - name: b\n    run: |\n      one\n\n      two\n    env: {}\n  - run: >-\n      x\n      y\n";
+            assert_eq!(run_scripts(y), ["echo a", "one\n\ntwo\n", "x\ny\n"]);
+            for w in WORKFLOWS {
+                assert!(!run_scripts(&read(w)).is_empty(), "{w}");
+            }
+        }
+
+        /// Values an attacker can choose (a tag name, a dispatch input, an event payload) reach scripts only
+        /// through the environment, never as `${{ … }}` pasted into the script text.
+        #[test]
+        fn scripts_never_paste_untrusted_expressions() {
+            for w in WORKFLOWS {
+                for script in run_scripts(&read(w)) {
+                    for bad in [
+                        "${{ steps.",
+                        "${{ inputs.",
+                        "${{ github.event",
+                        "${{ github.head_ref",
+                        "${{ github.ref",
+                    ] {
+                        assert!(
+                            !script.contains(bad),
+                            "{w}: `{bad}` in the script {script:?}"
+                        );
+                    }
+                }
+            }
+        }
+
+        /// The flags of `snp-difftest` (crates/snp-difftest/src/main.rs, WP-35) that the workflows may use.
+        #[test]
+        fn difftest_calls_use_the_harness_interface() {
+            let mut calls = 0;
+            for w in WORKFLOWS {
+                for script in run_scripts(&read(w)) {
+                    for line in script
+                        .lines()
+                        .filter(|l| l.trim_start().starts_with("cargo xtask difftest"))
+                    {
+                        calls += 1;
+                        let rest = line.split("cargo xtask difftest").nth(1).unwrap();
+                        let words: Vec<&str> = rest
+                            .split_whitespace()
+                            .take_while(|w| !matches!(*w, "|" | ">" | "&&" | ";"))
+                            .collect();
+                        assert!(
+                            matches!(words.first(), Some(&("run" | "list"))),
+                            "{w}: {line}"
+                        );
+                        let mut it = words.iter().skip(1);
+                        while let Some(flag) = it.next() {
+                            match *flag {
+                                "--suite" => assert!(
+                                    matches!(
+                                        it.next(),
+                                        Some(
+                                            &("seed"
+                                                | "curated"
+                                                | "divergences"
+                                                | "all"
+                                                | "generated")
+                                        )
+                                    ),
+                                    "{w}: {line}"
+                                ),
+                                "--file" | "--tag" | "--cases" | "--seed" | "--scenario"
+                                | "--out" => {
+                                    assert!(it.next().is_some(), "{w}: {line}");
+                                }
+                                "--keep" | "--no-shrink" => {}
+                                other => panic!("{w}: unknown difftest flag {other:?} in {line}"),
+                            }
+                        }
+                    }
+                }
+            }
+            assert!(calls >= 4, "{calls}");
+        }
+
+        #[test]
+        fn nightly_leaves_the_performance_gates_to_bench_yml() {
+            let nightly = read(".github/workflows/nightly.yml");
+            assert!(!nightly.contains("cargo xtask bench"));
+            assert!(!nightly.contains("\n  bench:"));
+            assert!(read(".github/workflows/bench.yml").contains("schedule:"));
+        }
+
+        #[test]
+        fn a_manual_release_runs_from_its_tag() {
+            let release = read(".github/workflows/release.yml");
+            assert!(release.contains(r#"if [ "$REF" != "refs/tags/$tag" ]; then"#));
+            assert!(release.contains(r#"cargo xtask release notes "$TAG""#));
+            assert!(release.contains("rust-audit-info \"$bin\""));
+            assert!(!release.contains("grep -aqF '.dep-v0'"));
+        }
+
+        #[test]
+        fn the_git_matrix_is_blocking() {
+            let platform = read(".github/workflows/platform.yml");
+            assert!(
+                !platform.contains("continue-on-error"),
+                "the git axis must not hide regressions"
+            );
+            assert!(platform.contains("packaging/ci/git-tests.sh"));
+            // every git of the matrix is pinned in build-git.sh, and each known-failure list names single tests
+            let build = read("packaging/ci/build-git.sh");
+            let root = workspace::root().unwrap();
+            for line in platform
+                .lines()
+                .filter(|l| l.trim_start().starts_with("- { git: "))
+            {
+                let v = line
+                    .split("git: ")
+                    .nth(1)
+                    .unwrap()
+                    .split(',')
+                    .next()
+                    .unwrap()
+                    .trim();
+                assert!(
+                    build.contains(&format!("\n  {v}) sha256=")),
+                    "{v} is not pinned"
+                );
+                let known = root.join(format!("packaging/ci/git-known-failures/{v}.txt"));
+                if let Ok(text) = std::fs::read_to_string(&known) {
+                    for l in text
+                        .lines()
+                        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                    {
+                        assert!(
+                            l.starts_with("package(snp-")
+                                && l.contains(" & test(=")
+                                && l.ends_with(')'),
+                            "{}: {l}",
+                            known.display()
+                        );
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn build_git_defaults_to_a_bounded_job_count() {
+            let script = read("packaging/ci/build-git.sh");
+            assert!(script.contains("jobs=${BUILD_GIT_JOBS:-$((cores < 4 ? cores : 4))}"));
+            assert!(script.contains("nice -n 19 make"));
+            assert!(!script.contains("$(nproc)}"));
+        }
+
+        #[cfg(unix)]
+        mod scripts {
+            use super::*;
+
+            struct Scratch(PathBuf);
+            impl Drop for Scratch {
+                fn drop(&mut self) {
+                    std::fs::remove_dir_all(&self.0).unwrap_or_default();
+                }
+            }
+
+            fn scratch() -> Scratch {
+                Scratch(private_scratch("snp-xtask-packaging").unwrap())
+            }
+
+            fn bash() -> Command {
+                let mut c = Command::new("bash");
+                c.current_dir(workspace::root().unwrap())
+                    .env_remove("SNP_HOME")
+                    .env_remove("XDG_CACHE_HOME")
+                    .env_remove("SNP_ACTION_EXTRA_ARGS")
+                    .env_remove("SNP_ACTION_SNP");
+                c
+            }
+
+            /// A fake `snp` that prints each argument as `[arg]` and exits with `$FAKE_SNP_EXIT`.
+            fn fake_snp(dir: &Path) -> PathBuf {
+                use std::os::unix::fs::PermissionsExt as _;
+                let p = dir.join("snp");
+                std::fs::write(
+                    &p,
+                    concat!(
+                        "#!/usr/bin/env bash\n",
+                        "printf '[%s]' \"$@\"\n",
+                        "exit \"$",
+                        "{FAKE_SNP_EXIT:-0}\"\n",
+                    ),
+                )
+                .unwrap();
+                std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+                p
+            }
+
+            fn run_action(snp: &Path, extra: Option<&str>) -> (String, Option<i32>) {
+                let mut c = bash();
+                c.arg("packaging/snp-action/run.sh")
+                    .env("SNP_ACTION_SNP", snp)
+                    .env("BASE", "abc def");
+                if let Some(e) = extra {
+                    c.env("SNP_ACTION_EXTRA_ARGS", e);
+                }
+                let o = c.output().unwrap();
+                (String::from_utf8(o.stdout).unwrap(), o.status.code())
+            }
+
+            /// pre-commit/action's step: the input pasted into the bash script.
+            fn run_pre_commit_action(snp: &Path, extra: &str) -> String {
+                let o = bash()
+                    .arg("-c")
+                    .arg(format!(
+                        "\"$SNP\" run --show-diff-on-failure --color=always {extra}"
+                    ))
+                    .env("SNP", snp)
+                    .env("BASE", "abc def")
+                    .output()
+                    .unwrap();
+                String::from_utf8(o.stdout).unwrap()
+            }
+
+            #[test]
+            fn snp_action_parses_extra_args_like_pre_commit_action() {
+                let d = scratch();
+                let snp = fake_snp(&d.0);
+                let head = "[run][--show-diff-on-failure][--color=always]";
+                for (extra, args) in [
+                    ("--all-files", "[--all-files]"),
+                    (r#"--files "a b.py" c.py"#, "[--files][a b.py][c.py]"),
+                    ("--files 'it''s.py'", "[--files][its.py]"),
+                    (
+                        r#"--from-ref "$BASE" --to-ref HEAD"#,
+                        "[--from-ref][abc def][--to-ref][HEAD]",
+                    ),
+                    ("--files $(printf 'x.py y.py')", "[--files][x.py][y.py]"),
+                    ("  --hook-stage   manual  ", "[--hook-stage][manual]"),
+                    ("", ""),
+                ] {
+                    let (out, code) = run_action(&snp, Some(extra));
+                    assert_eq!(code, Some(0), "{extra:?}");
+                    assert_eq!(out, format!("{head}{args}"), "{extra:?}");
+                    assert_eq!(out, run_pre_commit_action(&snp, extra), "{extra:?}");
+                }
+                // no input at all: no extra arguments (the action's default `--all-files` comes from action.yml)
+                assert_eq!(run_action(&snp, None).0, head);
+                // snp's exit status is the step's
+                let o = bash()
+                    .arg("packaging/snp-action/run.sh")
+                    .env("SNP_ACTION_SNP", &snp)
+                    .env("SNP_ACTION_EXTRA_ARGS", "--all-files")
+                    .env("FAKE_SNP_EXIT", "3")
+                    .output()
+                    .unwrap();
+                assert_eq!(o.status.code(), Some(3));
+                let action = read("packaging/snp-action/action.yml");
+                assert!(action.contains(r#"run: '"$GITHUB_ACTION_PATH/run.sh"'"#));
+                assert!(!action.contains("$SNP_ACTION_EXTRA_ARGS\n"));
+            }
+
+            #[test]
+            fn snp_action_caches_the_directory_snp_uses() {
+                let dir = |vars: &[(&str, &str)]| {
+                    let mut c = bash();
+                    c.arg("packaging/snp-action/cache-dir.sh");
+                    for (k, v) in vars {
+                        c.env(k, v);
+                    }
+                    let o = c.output().unwrap();
+                    assert!(o.status.success());
+                    String::from_utf8(o.stdout).unwrap()
+                };
+                assert_eq!(dir(&[]), "~/.cache/snp\n");
+                assert_eq!(
+                    dir(&[("SNP_HOME", ""), ("XDG_CACHE_HOME", "")]),
+                    "~/.cache/snp\n"
+                );
+                assert_eq!(dir(&[("XDG_CACHE_HOME", "/x/cache")]), "/x/cache/snp\n");
+                assert_eq!(dir(&[("XDG_CACHE_HOME", "/x/cache/")]), "/x/cache/snp\n");
+                assert_eq!(dir(&[("SNP_HOME", "/s"), ("XDG_CACHE_HOME", "/x")]), "/s\n");
+                assert_eq!(
+                    dir(&[("SNP_HOME", ""), ("XDG_CACHE_HOME", "/x")]),
+                    "/x/snp\n"
+                );
+                let action = read("packaging/snp-action/action.yml");
+                assert!(action.contains("path: ${{ steps.cache-dir.outputs.path }}"));
+                assert!(!action.contains("path: ~/.cache/snp"));
+            }
+
+            #[test]
+            fn build_git_refuses_a_bad_job_count_before_downloading() {
+                for jobs in ["x", "0", "-1", "2 3"] {
+                    let o = bash()
+                        .arg("packaging/ci/build-git.sh")
+                        .args(["2.18.5", "/nonexistent/snp-xtask-git"])
+                        .env("BUILD_GIT_JOBS", jobs)
+                        .output()
+                        .unwrap();
+                    assert_eq!(o.status.code(), Some(2), "{jobs:?}");
+                    assert!(
+                        String::from_utf8_lossy(&o.stderr).contains("BUILD_GIT_JOBS"),
+                        "{jobs:?}"
+                    );
+                }
+            }
         }
     }
 }
