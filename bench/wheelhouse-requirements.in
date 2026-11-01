@@ -1,0 +1,5 @@
+# The hook dependencies of B6/B7 (pre-commit-hooks v6.0.0: install_requires ruamel.yaml) and the build backend of its
+# setup.py (pip/uv build isolation): `bench setup` downloads them into target/bench/tools/wheels, and every measured
+# tool installs from there with no index (PIP_NO_INDEX, UV_NO_INDEX, UV_OFFLINE).
+ruamel.yaml==0.19.1
+setuptools==84.2.1

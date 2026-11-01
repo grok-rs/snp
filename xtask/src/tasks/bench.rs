@@ -3,7 +3,9 @@
 //!
 //! * `setup` installs the measuring tools (hyperfine 1.19.0 and prek 0.5.5, both pinned; the pre-commit 4.6.2 oracle
 //!   comes from `cargo xtask oracle install`), mirrors pre-commit-hooks locally (every clone is redirected to the
-//!   mirror through `url.<mirror>.insteadOf`, so no scenario touches the network), generates the deterministic
+//!   mirror through `url.<mirror>.insteadOf`), downloads the hash-locked wheelhouse every Python install resolves from
+//!   with no index and puts the pinned uv on the hermetic PATH (so no scenario touches the network), generates the
+//!   deterministic
 //!   fixture repositories of B1–B12 under `target/bench/fixtures` (fixed author, committer and dates: identical trees
 //!   and SHAs on every machine), builds snp with the `dist` profile and primes every tool's warm store.
 //! * `run` measures each scenario × tool with `hyperfine -N -w 5 -r 50` in the hermetic environment, peak RSS with
@@ -11,9 +13,10 @@
 //!   dhat total allocation of B3 (`--dhat`, a `--features dhat-heap` build); it writes one JSON run record.
 //! * `gate` checks a run record against `bench/budgets.toml` and a baseline (an explicit record — the PR base — or the
 //!   last record of the JSON-lines history `bench/history/<platform>-<variant>.jsonl`): it fails on a median
-//!   regression above 5 % whose 95 % confidence intervals do not overlap, on a hard-budget breach, and when snp's p50
-//!   is slower than pre-commit's or prek's; `--comment` writes the Markdown PR comment, `--record` appends to the
-//!   history. `gate --micro` enforces the exact micro thresholds of the W1/W2 acceptance lists on criterion's results
+//!   regression above 5 % whose 95 % confidence intervals do not overlap (against the history: also against the
+//!   median of its last 10 records, the drift check), on a hard-budget breach, and when snp's p50 is slower than
+//!   pre-commit's or prek's or that comparison could not be made; `--comment` writes the Markdown PR comment,
+//!   `--record` appends to the history. `gate --micro` enforces the exact micro thresholds of the W1/W2 acceptance lists on criterion's results
 //!   (`cargo bench -p snp`). `gate --compare A B` prints the per-scenario effect of B against A (ADR-047 speculative
 //!   config load on/off, ADR-079 musl system allocator vs mimalloc).
 //!
@@ -71,6 +74,7 @@ warm stores. Everything lives under target/bench.
   --allocator A          system (default) or mimalloc (feature musl-mimalloc; musl targets only)
   --mirror-from SRC      clone the pre-commit-hooks mirror from SRC (default: the GitHub URL)
   --path PATH            the PATH of the hermetic environment (Unix; default /usr/local/bin:/usr/bin:/bin)
+  --jobs N               cargo --jobs of the snp build and the hyperfine install (default: CARGO_BUILD_JOBS or all cores)
   --no-install           fail instead of installing a missing hyperfine/prek";
 
 const RUN_HELP: &str = "\
@@ -88,12 +92,14 @@ record (default target/bench/results/<label>.json).
   --out FILE             write the record here instead
   --runs N / --warmup N  override hyperfine's counts (50 / 5; the slow scenarios use fewer)
   --syscalls             also count snp's syscalls with `strace -f -c` (Linux; B1, B3)
-  --dhat                 also measure B3's total allocation with a `--features dhat-heap` build
+  --dhat                 also measure B3's total allocation with a `--features dhat-heap` build (a second, full
+                         release build in target/bench/dhat-target)
+  --jobs N               cargo --jobs of the snp builds (default: CARGO_BUILD_JOBS or all cores)
   --path PATH            the PATH of the hermetic environment (Unix)";
 
 const GATE_HELP: &str = "\
 usage: cargo xtask bench gate [options]
-       cargo xtask bench gate --micro [--criterion DIR]
+       cargo xtask bench gate --micro --since SECS [--criterion DIR]
        cargo xtask bench gate --compare A.json B.json
 
 Checks a run record against bench/budgets.toml and a baseline; exits non-zero on a failed check.
@@ -104,9 +110,14 @@ Checks a run record against bench/budgets.toml and a baseline; exits non-zero on
   --comment FILE         write the Markdown PR comment here
   --record               append the current record to the history when the gate passes
   --allow-missing LIST   scenarios not measured on purpose (comma-separated): their budgets warn instead of failing
+  --allow-missing-reference LIST
+                         scenarios whose pre-commit/prek reference may fail or be missing: the never-slower rule
+                         warns instead of failing
   --micro                check the criterion results of `cargo bench -p snp` against the [[micro]] thresholds
   --criterion DIR        criterion's output directory (default <target-dir>/criterion)
-  --since SECS           --micro: ignore results older than this Unix time (stale results of an earlier run)
+  --since SECS           --micro: ignore results older than this Unix time (stale results of an earlier run);
+                         required unless --any-age
+  --any-age              --micro: accept criterion results of any age
   --compare A B          print the per-scenario effect of record B against record A (no gate)";
 
 /// Runs the task with the arguments that follow its name.
@@ -558,6 +569,31 @@ impl Work {
         self.dir.join("tools")
     }
 
+    /// The local wheels every Python install of the measured tools resolves from (no index, no network).
+    fn wheelhouse(&self) -> PathBuf {
+        self.tools_dir().join("wheels")
+    }
+
+    /// The directory prepended to the hermetic PATH: the pinned `uv` (prek and snp would otherwise download one).
+    fn path_dir(&self) -> PathBuf {
+        self.tools_dir().join("path")
+    }
+
+    /// `GIT_CEILING_DIRECTORIES`: git never discovers a repository above `target/bench`. Every fixture and store
+    /// repository lives below it, so a fixture whose `.git` is missing or broken (an interrupted setup) is an error
+    /// instead of the enclosing snp checkout, where B9's `git commit` would land on a real branch and run its hooks.
+    /// Both the given and the canonical spelling are listed: git compares the ceiling against the real path of the
+    /// working directory.
+    fn git_ceiling(&self) -> OsString {
+        let mut dirs = vec![self.dir.clone()];
+        if let Ok(real) = real_path(&self.dir)
+            && real != self.dir
+        {
+            dirs.push(real);
+        }
+        std::env::join_paths(dirs).unwrap_or_else(|_| self.dir.clone().into_os_string())
+    }
+
     fn setup_file(&self) -> PathBuf {
         self.dir.join("setup.json")
     }
@@ -592,12 +628,25 @@ impl Work {
             ("TZ".into(), "UTC".into()),
             ("TERM".into(), "dumb".into()),
             ("NO_COLOR".into(), "1".into()),
+            ("GIT_CEILING_DIRECTORIES".into(), self.git_ceiling()),
             ("PIP_DISABLE_PIP_VERSION_CHECK".into(), "1".into()),
+            // no measurement touches the network: Python installs resolve from the wheelhouse only (B6/B7's
+            // ruamel.yaml and setuptools), virtualenv never checks for newer seed wheels
+            ("PIP_NO_INDEX".into(), "1".into()),
+            ("PIP_FIND_LINKS".into(), self.wheelhouse().into()),
+            ("UV_NO_INDEX".into(), "1".into()),
+            ("UV_FIND_LINKS".into(), self.wheelhouse().into()),
+            ("UV_OFFLINE".into(), "1".into()),
+            ("UV_PYTHON_DOWNLOADS".into(), "never".into()),
+            ("VIRTUALENV_NO_PERIODIC_UPDATE".into(), "1".into()),
         ];
         if cfg!(windows) {
             v.push(("USERPROFILE".into(), home.into()));
         } else {
-            v.push(("PATH".into(), self.path_var.clone()));
+            let mut path = self.path_dir().into_os_string();
+            path.push(":");
+            path.push(&self.path_var);
+            v.push(("PATH".into(), path));
         }
         v
     }
@@ -632,6 +681,17 @@ impl Work {
             .stdin(Stdio::null());
         cmd
     }
+}
+
+/// The OS's real path of `p`: what git resolves a working directory to when it compares it with
+/// `GIT_CEILING_DIRECTORIES` or prints `--show-toplevel`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the comparison is with git's own (OS) realpath of the same directories, not Python's os.path.realpath; \
+              both sides go through this function, so a Windows \\\\?\\ prefix cancels out"
+)]
+fn real_path(p: &Path) -> std::io::Result<PathBuf> {
+    std::fs::canonicalize(p)
 }
 
 /// Runs `cmd`; fails with its output when it exits non-zero; returns stdout.
@@ -937,6 +997,26 @@ fn init_repo(work: &Work, dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `dir` must be the top level of its own git repository: git (with the bench's ceiling) resolves it to exactly
+/// `dir`, so no command run there can reach another repository.
+fn ensure_own_repo(work: &Work, dir: &Path) -> anyhow::Result<()> {
+    let top = git(work, dir, &["rev-parse", "--show-toplevel"]).with_context(|| {
+        format!(
+            "{} is not a git repository (run `cargo xtask bench setup`)",
+            dir.display()
+        )
+    })?;
+    let top = PathBuf::from(top.trim_end_matches(['\n', '\r']));
+    let real = |p: &Path| real_path(p).with_context(|| format!("resolving {}", p.display()));
+    ensure!(
+        real(&top)? == real(dir)?,
+        "{} belongs to the repository at {}, not its own (run `cargo xtask bench setup`)",
+        dir.display(),
+        top.display()
+    );
+    Ok(())
+}
+
 fn commit_all(work: &Work, dir: &Path, msg: &str) -> anyhow::Result<()> {
     git(work, dir, &["add", "-A"])?;
     git(work, dir, &["commit", "-q", "--no-verify", "-m", msg])?;
@@ -1186,7 +1266,7 @@ fn runs(program: &Path) -> bool {
 /// hyperfine [`HYPERFINE_VERSION`]: `target/bench/tools/bin/hyperfine`, else `hyperfine` on PATH, else `cargo install
 /// --locked` it. Another hyperfine release is never used: its JSON and `-N` semantics (e.g. `--prepare` under `-N`)
 /// differ, and the records would come from a different measuring tool.
-fn ensure_hyperfine(work: &Work, install: bool) -> anyhow::Result<PathBuf> {
+fn ensure_hyperfine(work: &Work, install: bool, jobs: Option<u32>) -> anyhow::Result<PathBuf> {
     let local = work.tools_dir().join("bin").join(exe_name("hyperfine"));
     if hyperfine_version_ok(&local) {
         return Ok(local);
@@ -1205,6 +1285,7 @@ fn ensure_hyperfine(work: &Work, install: bool) -> anyhow::Result<PathBuf> {
         .arg(work.tools_dir())
         .arg(format!("hyperfine@{HYPERFINE_VERSION}"))
         .env("CARGO_TARGET_DIR", work.tools_dir().join("build"));
+    cargo_jobs(&mut cmd, jobs);
     run_ok(&mut cmd, "cargo install hyperfine")?;
     ensure!(
         hyperfine_version_ok(&local),
@@ -1276,6 +1357,96 @@ fn ensure_prek(work: &Work, install: bool) -> anyhow::Result<PathBuf> {
     Ok(exe)
 }
 
+/// The pinned bench helpers and the wheelhouse that make every measurement offline: a venv `tools/bench-tools` from the
+/// hash-locked `bench/tools-requirements.txt` (uv 0.12.19 — linked as `tools/path/uv`, the head of the hermetic PATH —
+/// and pip), and `tools/wheels`, the hash-checked wheels of `bench/wheelhouse-requirements.txt` that pre-commit's pip,
+/// prek's uv and snp install B6/B7's hook repository from (`PIP_NO_INDEX`, `UV_NO_INDEX`, `UV_OFFLINE`). Without
+/// them, every cold B7 run would resolve ruamel.yaml and setuptools on PyPI and prek would download uv.
+fn ensure_offline_tools(work: &Work, install: bool) -> anyhow::Result<()> {
+    let venv = work.tools_dir().join("bench-tools");
+    let uv = venv_exe(&venv, "uv");
+    let python = venv_exe(&venv, "python");
+    let wheels = work.wheelhouse();
+    let lock = std::fs::read_to_string(work.root.join("bench").join("wheelhouse-requirements.txt"))
+        .context("reading bench/wheelhouse-requirements.txt")?;
+    let stamp = wheels.join(".requirements.txt");
+    let wheels_ok = std::fs::read_to_string(&stamp).is_ok_and(|t| t == lock);
+    if runs(&uv) && runs(&python) && wheels_ok {
+        return link_uv(work, &uv);
+    }
+    ensure!(
+        install,
+        "the bench helper tools or the wheelhouse are missing under {} (run `cargo xtask bench setup`)",
+        work.tools_dir().display()
+    );
+    if !(runs(&uv) && runs(&python)) {
+        say("bench: installing the bench helper tools (uv, pip)");
+        remove_tree(&venv)?;
+        run_ok(
+            Command::new("uv")
+                .args(["venv", "--no-config", "--quiet", "--python", "3.12"])
+                .arg(&venv),
+            "uv venv (bench tools)",
+        )?;
+        run_ok(
+            Command::new("uv")
+                .args([
+                    "pip",
+                    "install",
+                    "--no-config",
+                    "--quiet",
+                    "--require-hashes",
+                    "--only-binary",
+                    ":all:",
+                ])
+                .arg("--python")
+                .arg(&python)
+                .arg("-r")
+                .arg(work.root.join("bench").join("tools-requirements.txt")),
+            "uv pip install (bench tools)",
+        )?;
+    }
+    say("bench: downloading the wheelhouse");
+    remove_tree(&wheels)?;
+    std::fs::create_dir_all(&wheels).with_context(|| format!("creating {}", wheels.display()))?;
+    run_ok(
+        Command::new(&python)
+            .args([
+                "-I",
+                "-m",
+                "pip",
+                "download",
+                "--quiet",
+                "--disable-pip-version-check",
+                "--no-deps",
+                "--require-hashes",
+                "--only-binary",
+                ":all:",
+                "-d",
+            ])
+            .arg(&wheels)
+            .arg("-r")
+            .arg(work.root.join("bench").join("wheelhouse-requirements.txt"))
+            .stdin(Stdio::null()),
+        "pip download (wheelhouse)",
+    )?;
+    std::fs::write(&stamp, lock).with_context(|| format!("writing {}", stamp.display()))?;
+    link_uv(work, &uv)
+}
+
+/// `tools/path/uv` → the pinned uv.
+fn link_uv(work: &Work, uv: &Path) -> anyhow::Result<()> {
+    let dir = work.path_dir();
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    let link = dir.join(exe_name("uv"));
+    remove_tree(&link)?;
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(uv, &link).with_context(|| format!("linking {}", link.display()))?;
+    #[cfg(not(unix))]
+    std::fs::copy(uv, &link).with_context(|| format!("copying {}", link.display()))?;
+    Ok(())
+}
+
 fn prek_version_ok(exe: &Path) -> bool {
     Command::new(exe)
         .arg("--version")
@@ -1305,6 +1476,8 @@ fn oracle_pre_commit(work: &Work) -> anyhow::Result<PathBuf> {
 struct Build {
     target: Option<String>,
     mimalloc: bool,
+    /// `--jobs N` of every cargo invocation (`None`: cargo's default, i.e. `CARGO_BUILD_JOBS` or every core).
+    jobs: Option<u32>,
 }
 
 impl Build {
@@ -1319,7 +1492,11 @@ impl Build {
             !mimalloc || target.as_deref().is_some_and(|t| t.ends_with("-musl")),
             "--allocator mimalloc applies to musl targets only (ADR-079)"
         );
-        Ok(Self { target, mimalloc })
+        Ok(Self {
+            target,
+            mimalloc,
+            jobs: o.number("jobs")?,
+        })
     }
 
     fn variant(&self) -> String {
@@ -1362,9 +1539,17 @@ impl Build {
         if self.mimalloc {
             cmd.args(["--features", "musl-mimalloc"]);
         }
+        cargo_jobs(&mut cmd, self.jobs);
         say(&format!("bench: building snp ({}, dist)", self.variant()));
         run_ok(&mut cmd, "cargo build --profile dist")?;
         Ok(dir.join("dist").join(exe_name("snp")))
+    }
+}
+
+/// `--jobs N` on a cargo command (the bench builds share the machine with everything else running on it).
+fn cargo_jobs(cmd: &mut Command, jobs: Option<u32>) {
+    if let Some(n) = jobs {
+        cmd.arg("--jobs").arg(n.to_string());
     }
 }
 
@@ -1485,6 +1670,19 @@ impl SetupState {
     }
 }
 
+/// The `unavailable` reason of a scenario whose setup has not finished (an interrupted setup leaves it behind).
+const SETUP_IN_PROGRESS: &str =
+    "setup did not finish (interrupted?): run `cargo xtask bench setup` again";
+
+/// The fixtures `scenarios` need: B9's per-tool hooked copy is made from `noop10`, so it needs that one too.
+fn fixtures_of(scenarios: &[&Scenario]) -> BTreeSet<Fixture> {
+    let mut f: BTreeSet<Fixture> = scenarios.iter().map(|s| s.fixture).collect();
+    if f.contains(&Fixture::Hooked) {
+        f.insert(Fixture::Noop10);
+    }
+    f
+}
+
 fn setup(root: &Path, args: &[String]) -> anyhow::Result<()> {
     let Some(o) = Opts::parse(
         args,
@@ -1496,6 +1694,7 @@ fn setup(root: &Path, args: &[String]) -> anyhow::Result<()> {
             "allocator",
             "mirror-from",
             "path",
+            "jobs",
         ],
         &["no-install"],
     )?
@@ -1510,11 +1709,12 @@ fn setup(root: &Path, args: &[String]) -> anyhow::Result<()> {
     let install = !o.has("no-install");
     std::fs::create_dir_all(&work.dir)?;
 
-    let hyperfine = ensure_hyperfine(&work, install)?;
+    let build = Build::from_opts(&o)?;
+    let hyperfine = ensure_hyperfine(&work, install, build.jobs)?;
     let mut exes = BTreeMap::new();
     for t in &tool_list {
         let exe = match t {
-            Tool::Snp => resolve_snp(&work, &o, &Build::from_opts(&o)?)?,
+            Tool::Snp => resolve_snp(&work, &o, &build)?,
             Tool::PreCommit => oracle_pre_commit(&work)?,
             Tool::Prek => ensure_prek(&work, install)?,
         };
@@ -1522,18 +1722,25 @@ fn setup(root: &Path, args: &[String]) -> anyhow::Result<()> {
     }
     let tools = Tools { hyperfine, exes };
 
+    // keep what an earlier setup found for the scenarios and tools not prepared now; the ones prepared now are
+    // unavailable until their priming succeeds, so an interrupted setup (half-rebuilt fixtures) leaves nothing that
+    // `run` would measure
+    let mut state = SetupState::load(&work).unwrap_or_default();
+    for s in &scenarios {
+        for t in tools.exes.keys() {
+            state
+                .unavailable
+                .insert(SetupState::key(s.id, *t), SETUP_IN_PROGRESS.to_owned());
+        }
+    }
+    state.save(&work, &tools)?;
+
     write_gitconfig(&work)?;
-    let fixtures: BTreeSet<Fixture> = scenarios.iter().map(|s| s.fixture).collect();
+    ensure_offline_tools(&work, install)?;
+    let fixtures = fixtures_of(&scenarios);
     if fixtures.contains(&Fixture::Pch960) {
         ensure_mirror(&work, o.one("mirror-from"))?;
     }
-    // keep what an earlier setup found for the scenarios and tools not prepared now
-    let mut state = SetupState::load(&work).unwrap_or_default();
-    state.unavailable.retain(|k, _| {
-        !scenarios
-            .iter()
-            .any(|s| tools.exes.keys().any(|t| *k == SetupState::key(s.id, *t)))
-    });
     let mut gc_configs = Vec::new();
     for f in &fixtures {
         say(&format!("bench: generating fixture {}", f.dir()));
@@ -1553,15 +1760,19 @@ fn setup(root: &Path, args: &[String]) -> anyhow::Result<()> {
     // per-tool preparation: B9's installed hook, B6's warm store, B11's populated store
     for (tool, exe) in &tools.exes {
         for s in &scenarios {
-            if let Err(e) = prime(&work, *tool, exe, s, &gc_configs) {
-                say(&format!(
-                    "bench: {} unavailable for {}: {e:#}",
-                    s.id,
-                    tool.name()
-                ));
-                state
-                    .unavailable
-                    .insert(SetupState::key(s.id, *tool), format!("{e:#}"));
+            let key = SetupState::key(s.id, *tool);
+            match prime(&work, *tool, exe, s, &gc_configs) {
+                Ok(()) => {
+                    state.unavailable.remove(&key);
+                }
+                Err(e) => {
+                    say(&format!(
+                        "bench: {} unavailable for {}: {e:#}",
+                        s.id,
+                        tool.name()
+                    ));
+                    state.unavailable.insert(key, format!("{e:#}"));
+                }
             }
         }
     }
@@ -1597,9 +1808,11 @@ fn prime(
             let dir = work.fixture(Fixture::Hooked, tool);
             remove_tree(&dir)?;
             copy_tree(&work.fixture(Fixture::Noop10, tool), &dir)?;
+            ensure_own_repo(work, &dir)?;
             tool_cmd(&dir, &[OsStr::new("install")])?;
         }
         Fixture::Pch960 if s.store == StoreMode::Warm => {
+            ensure_own_repo(work, &work.fixture(Fixture::Pch960, tool))?;
             tool_cmd(
                 &work.fixture(Fixture::Pch960, tool),
                 &[OsStr::new("install-hooks")],
@@ -1608,6 +1821,7 @@ fn prime(
         Fixture::Gc500 => {
             remove_tree(&work.store(tool, StoreMode::Gc))?;
             let dir = work.fixture(Fixture::Gc500, tool);
+            ensure_own_repo(work, &dir)?;
             for c in gc_configs {
                 tool_cmd(
                     &dir,
@@ -1622,10 +1836,12 @@ fn prime(
         _ => {}
     }
     // the scenario's command must succeed once before it is measured
+    let dir = work.fixture(s.fixture, tool);
+    ensure_own_repo(work, &dir)?;
     if s.store != StoreMode::Cold {
         let (program, argv) = scenario_command(s, exe);
         let mut cmd = Work::command(&program, &env);
-        cmd.args(&argv).current_dir(work.fixture(s.fixture, tool));
+        cmd.args(&argv).current_dir(&dir);
         if tool == Tool::Snp {
             cmd.env("SNP_BIN", exe);
         }
@@ -1950,6 +2166,7 @@ fn measure(root: &Path, args: &[String]) -> anyhow::Result<()> {
             "runs",
             "warmup",
             "path",
+            "jobs",
         ],
         &["syscalls", "dhat"],
     )?
@@ -1963,7 +2180,7 @@ fn measure(root: &Path, args: &[String]) -> anyhow::Result<()> {
     let scenarios = selected_scenarios(&o)?;
     let tool_list = selected_tools(&o)?;
     let build = Build::from_opts(&o)?;
-    let hyperfine = ensure_hyperfine(&work, false)?;
+    let hyperfine = ensure_hyperfine(&work, false, None)?;
     let mut exes = BTreeMap::new();
     for t in &tool_list {
         let exe = match t {
@@ -2058,9 +2275,18 @@ fn measure(root: &Path, args: &[String]) -> anyhow::Result<()> {
                     && let Some(Outcome::Ok(m)) =
                         record.scenarios.get_mut(id).and_then(|t| t.get_mut("snp"))
                 {
-                    let n = count_syscalls(&work, snp, s)?;
-                    say(&format!("bench: {id} snp: {n} syscalls (strace -f -c)"));
-                    m.syscalls = Some(n);
+                    // a failure leaves the metric unmeasured (the gate fails its budget as such) and keeps the
+                    // timings of the whole run
+                    match count_syscalls(&work, snp, s) {
+                        Ok(n) => {
+                            say(&format!("bench: {id} snp: {n} syscalls (strace -f -c)"));
+                            m.syscalls = Some(n);
+                        }
+                        Err(e) => say(&format!(
+                            "bench: warning: {id} snp: syscalls not measured: {}",
+                            one_line(&format!("{e:#}"))
+                        )),
+                    }
                 }
             }
         }
@@ -2071,9 +2297,16 @@ fn measure(root: &Path, args: &[String]) -> anyhow::Result<()> {
                 .get_mut("B3")
                 .and_then(|t| t.get_mut("snp"))
         {
-            let bytes = dhat_total(&work, &build, s)?;
-            say(&format!("bench: B3 snp: {bytes} bytes allocated (dhat)"));
-            m.alloc_mib = Some(bytes_to_mib(bytes));
+            match dhat_total(&work, &build, s) {
+                Ok(bytes) => {
+                    say(&format!("bench: B3 snp: {bytes} bytes allocated (dhat)"));
+                    m.alloc_mib = Some(bytes_to_mib(bytes));
+                }
+                Err(e) => say(&format!(
+                    "bench: warning: B3 snp: allocation not measured: {}",
+                    one_line(&format!("{e:#}"))
+                )),
+            }
         }
     }
 
@@ -2129,6 +2362,8 @@ fn measure_one(
         "fixture {} missing (run `cargo xtask bench setup`)",
         dir.display()
     );
+    // B9 commits in the fixture 56 times: it must be the fixture's own repository, never an enclosing one
+    ensure_own_repo(work, &dir)?;
     let mut env = work.tool_env(tool, s.store, Some(s));
     if tool == Tool::Snp {
         // B9's hook script runs `$SNP_BIN` first (ADR-048): the measured binary, whichever one setup installed
@@ -2207,6 +2442,7 @@ fn rss_median_kib(
 /// `strace -f -c` of snp on `s` (Linux).
 fn count_syscalls(work: &Work, snp: &Path, s: &Scenario) -> anyhow::Result<u64> {
     let summary = work.results().join(format!("strace-{}.txt", s.id));
+    ensure_own_repo(work, &work.fixture(s.fixture, Tool::Snp))?;
     let env = work.tool_env(Tool::Snp, s.store, Some(s));
     let (program, argv) = scenario_command(s, snp);
     let mut cmd = Work::command("strace", &env);
@@ -2243,10 +2479,12 @@ fn dhat_total(work: &Work, build: &Build, s: &Scenario) -> anyhow::Result<u64> {
         cmd.args(["--target", t]);
         bin_dir.push(t);
     }
+    cargo_jobs(&mut cmd, build.jobs);
     say("bench: building snp (dhat-heap)");
     run_ok(&mut cmd, "cargo build --features dhat-heap")?;
     let exe = bin_dir.join("release").join(exe_name("snp"));
     let dir = work.fixture(s.fixture, Tool::Snp);
+    ensure_own_repo(work, &dir)?;
     let profile = dir.join("dhat-heap.json");
     remove_tree(&profile)?;
     let env = work.tool_env(Tool::Snp, s.store, Some(s));
@@ -2362,14 +2600,24 @@ impl Budgets {
             .get("regression_pct")
             .and_then(toml_f64)
             .context("[gate] regression_pct")?;
-        let never_slower_than = gate
+        let mut never_slower_than = Vec::new();
+        for v in gate
             .get("never_slower_than")
             .and_then(toml::Value::as_array)
             .into_iter()
             .flatten()
-            .filter_map(toml::Value::as_str)
-            .map(str::to_owned)
-            .collect();
+        {
+            // a misspelt tool would never be measured, and the rule would never compare anything
+            let name = v
+                .as_str()
+                .with_context(|| format!("[gate] never_slower_than: {v} is not a tool name"))?;
+            let tool = Tool::parse(name).context("[gate] never_slower_than")?;
+            ensure!(
+                tool != Tool::Snp,
+                "[gate] never_slower_than: snp is the measured tool"
+            );
+            never_slower_than.push(name.to_owned());
+        }
         let musl_adopted = t
             .get("musl")
             .and_then(|m| m.get("adopted"))
@@ -2489,15 +2737,64 @@ struct Check {
     detail: String,
 }
 
+/// How many of the latest history records the drift check takes the median of.
+const DRIFT_WINDOW: usize = 10;
+/// The fewest history measurements of a scenario the drift check needs.
+const DRIFT_MIN: usize = 3;
+
+/// The record whose snp median on `id` is the median of `history`'s (the lower middle; `None` below [`DRIFT_MIN`]).
+fn drift_reference<'a>(history: &'a [Record], id: &str) -> Option<(&'a Measure, usize)> {
+    let mut ms: Vec<&Measure> = history.iter().filter_map(|r| r.get(id, "snp")).collect();
+    if ms.len() < DRIFT_MIN {
+        return None;
+    }
+    ms.sort_by(|a, b| a.median_ms.total_cmp(&b.median_ms));
+    let n = ms.len();
+    ms.get(n.saturating_sub(1) / 2).map(|m| (*m, n))
+}
+
+/// The regression rule of `snp` against `prev`: more than `pct` % slower with disjoint 95 % CIs fails, slower with
+/// overlapping CIs warns.
+fn regression(snp: &Measure, prev: &Measure, pct: f64, against: &str) -> (Verdict, String) {
+    let limit = prev.median_ms * (1.0 + pct / 100.0);
+    let slower = snp.median_ms > limit;
+    let disjoint = snp.ci95_ms.0 > prev.ci95_ms.1;
+    let verdict = if slower && disjoint {
+        Verdict::Fail
+    } else if slower {
+        Verdict::Warn
+    } else {
+        Verdict::Pass
+    };
+    (
+        verdict,
+        format!(
+            "{:.2} ms [{:.2}, {:.2}] vs {against} {:.2} ms [{:.2}, {:.2}] ({:+.1}%)",
+            snp.median_ms,
+            snp.ci95_ms.0,
+            snp.ci95_ms.1,
+            prev.median_ms,
+            prev.ci95_ms.0,
+            prev.ci95_ms.1,
+            (snp.median_ms / prev.median_ms - 1.0) * 100.0
+        ),
+    )
+}
+
 /// Every check of `cur` (and against `base`) under `b` (the e2e gate; pure). Nothing passes silently: a budget whose
 /// scenario was not measured fails when hard (a warning when its scenario is in `allow_missing` — the scenarios a
 /// workflow knowingly does not run yet), a requested metric without a value fails, a competitor that failed or was not
-/// measured is a warning on the never-slower rule, and a missing baseline is a warning.
+/// measured fails the never-slower rule (a warning when the scenario is in `allow_missing_reference`, or for the
+/// non-adopted musl allocator), and a missing baseline is a warning. `history` (the latest records of the JSON-lines
+/// history; empty for an explicit baseline) adds the drift check: the regression rule against the median record of
+/// the window, so a series of slowdowns each just under the threshold of the previous record still fails.
 fn evaluate(
     cur: &Record,
     base: Option<&Record>,
     b: &Budgets,
     allow_missing: &BTreeSet<String>,
+    allow_missing_reference: &BTreeSet<String>,
+    history: &[Record],
 ) -> Vec<Check> {
     let mut out = Vec::new();
     let push = |out: &mut Vec<Check>, s: &str, what: String, verdict, detail: String| {
@@ -2533,7 +2830,14 @@ fn evaluate(
                         }
                         _ => format!("reference {other} not measured"),
                     };
-                    push(&mut out, id, format!("p50 <= {other}"), Verdict::Warn, why);
+                    let (verdict, why) = if allow_missing_reference.contains(id) {
+                        (Verdict::Warn, format!("{why} (--allow-missing-reference)"))
+                    } else if musl_other {
+                        (Verdict::Warn, why)
+                    } else {
+                        (Verdict::Fail, why)
+                    };
+                    push(&mut out, id, format!("p50 <= {other}"), verdict, why);
                     continue;
                 }
             };
@@ -2569,31 +2873,28 @@ fn evaluate(
             );
         }
         if let Some(prev) = base.and_then(|r| r.get(id, "snp")) {
-            let limit = prev.median_ms * (1.0 + b.regression_pct / 100.0);
-            let slower = snp.median_ms > limit;
-            let disjoint = snp.ci95_ms.0 > prev.ci95_ms.1;
-            let verdict = if slower && disjoint {
-                Verdict::Fail
-            } else if slower {
-                Verdict::Warn
-            } else {
-                Verdict::Pass
-            };
+            let (verdict, detail) = regression(snp, prev, b.regression_pct, "baseline");
             push(
                 &mut out,
                 id,
                 format!("no regression > {}%", b.regression_pct),
                 verdict,
-                format!(
-                    "{:.2} ms [{:.2}, {:.2}] vs baseline {:.2} ms [{:.2}, {:.2}] ({:+.1}%)",
-                    snp.median_ms,
-                    snp.ci95_ms.0,
-                    snp.ci95_ms.1,
-                    prev.median_ms,
-                    prev.ci95_ms.0,
-                    prev.ci95_ms.1,
-                    (snp.median_ms / prev.median_ms - 1.0) * 100.0
-                ),
+                detail,
+            );
+        }
+        if let Some((prev, n)) = drift_reference(history, id) {
+            let (verdict, detail) = regression(
+                snp,
+                prev,
+                b.regression_pct,
+                &format!("median of the last {n} records"),
+            );
+            push(
+                &mut out,
+                id,
+                format!("no drift > {}%", b.regression_pct),
+                verdict,
+                detail,
             );
         }
     }
@@ -2710,19 +3011,30 @@ fn history_file(dir: &Path, platform: &str, variant: &str) -> PathBuf {
     dir.join(format!("{platform}-{variant}.jsonl"))
 }
 
-/// The last record of a JSON-lines history (`None` when the file is missing or empty).
-fn last_history_record(path: &Path) -> anyhow::Result<Option<Record>> {
+/// The last `n` records of a JSON-lines history, oldest first (empty when the file is missing or empty).
+fn history_records(path: &Path, n: usize) -> anyhow::Result<Vec<Record>> {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
-    let Some(line) = text.lines().rev().find(|l| !l.trim().is_empty()) else {
-        return Ok(None);
-    };
-    let v: Value = serde_json::from_str(line)
-        .with_context(|| format!("parsing the last line of {}", path.display()))?;
-    Record::from_json(&v).map(Some)
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    let skip = lines.len().saturating_sub(n);
+    lines
+        .iter()
+        .enumerate()
+        .skip(skip)
+        .map(|(i, line)| {
+            let v: Value = serde_json::from_str(line).with_context(|| {
+                format!(
+                    "parsing record {} of {}",
+                    i.saturating_add(1),
+                    path.display()
+                )
+            })?;
+            Record::from_json(&v)
+        })
+        .collect()
 }
 
 fn fmt_measure(m: Option<&Measure>) -> String {
@@ -2821,9 +3133,10 @@ fn gate(root: &Path, args: &[String]) -> anyhow::Result<()> {
             "comment",
             "criterion",
             "allow-missing",
+            "allow-missing-reference",
             "since",
         ],
-        &["record", "micro", "compare"],
+        &["record", "micro", "compare", "any-age"],
     )?
     else {
         say(GATE_HELP);
@@ -2847,6 +3160,13 @@ fn gate(root: &Path, args: &[String]) -> anyhow::Result<()> {
                     .with_context(|| format!("--since {v:?}: not a Unix time in seconds"))
             })
             .transpose()?;
+        // criterion keeps the results of every earlier `cargo bench`: without a cut-off a benchmark that no longer
+        // runs (renamed, removed, not selected) would pass on stale numbers
+        ensure!(
+            since.is_some() || o.has("any-age"),
+            "gate --micro needs --since <unix-secs> (the time `cargo bench` started), or --any-age to accept results \
+             of any age"
+        );
         return gate_micro(&budgets, &dir, since);
     }
     if o.has("compare") {
@@ -2866,12 +3186,25 @@ fn gate(root: &Path, args: &[String]) -> anyhow::Result<()> {
         .one("history")
         .map_or_else(|| root.join("bench").join("history"), PathBuf::from);
     let hist_file = history_file(&history, &cur.platform, &cur.variant);
-    let base = match o.one("baseline") {
-        Some(p) => Some(Record::read(Path::new(p))?),
-        None => last_history_record(&hist_file)?,
+    // an explicit baseline (a pull request's base commit) has no history; otherwise the last record is the baseline
+    // and the window of the latest ones the drift reference
+    let (base, recent) = if let Some(p) = o.one("baseline") {
+        (Some(Record::read(Path::new(p))?), Vec::new())
+    } else {
+        let recent = history_records(&hist_file, DRIFT_WINDOW)?;
+        (recent.last().cloned(), recent)
     };
     let allow_missing: BTreeSet<String> = o.list("allow-missing").into_iter().collect();
-    let checks = evaluate(&cur, base.as_ref(), &budgets, &allow_missing);
+    let allow_missing_reference: BTreeSet<String> =
+        o.list("allow-missing-reference").into_iter().collect();
+    let checks = evaluate(
+        &cur,
+        base.as_ref(),
+        &budgets,
+        &allow_missing,
+        &allow_missing_reference,
+        &recent,
+    );
     for c in &checks {
         say(&format!(
             "{:<5} {:<5} {:<34} {}",
@@ -3308,11 +3641,23 @@ mod tests {
         assert_eq!(hard("B1", Metric::MedianMs), Some(3.0));
         assert_eq!(hard("B2", Metric::MedianMs), Some(10.0));
         assert_eq!(hard("B3", Metric::MedianMs), Some(25.0));
-        assert_eq!(hard("B4", Metric::RssMib), Some(30.0));
-        assert_eq!(hard("B6", Metric::RssMib), Some(25.0));
-        assert_eq!(hard("B12u", Metric::RssMib), Some(30.0));
+        // the memory budgets are MB (10^6 bytes) in ARCHITECTURE §12.1: their MiB value may not exceed it
+        let mib_of_mb = |mb: f64| mb * 1e6 / (1024.0 * 1024.0);
+        for (s, metric, mb) in [
+            ("B4", Metric::RssMib, 30.0),
+            ("B6", Metric::RssMib, 25.0),
+            ("B12u", Metric::RssMib, 30.0),
+            ("B3", Metric::AllocMib, 2.0),
+        ] {
+            let max = hard(s, metric).unwrap();
+            assert!(
+                max <= mib_of_mb(mb) && max > mib_of_mb(mb) - 0.01,
+                "{s} {metric:?}: {max} MiB is not {mb} MB"
+            );
+        }
+        let b8 = b.limits.iter().find(|x| x.scenario == "B8").unwrap();
+        assert!(b8.plus <= mib_of_mb(2.0));
         assert_eq!(hard("B1", Metric::Syscalls), Some(64.0));
-        assert_eq!(hard("B3", Metric::AllocMib), Some(2.0));
         // ARCHITECTURE §12.3: committed syscall ceilings on B1 and B3 (B3 provisional and soft until WP-32)
         assert!(
             b.limits
@@ -3392,7 +3737,7 @@ mod tests {
                 ("B3", "prek", Outcome::Ok(m(18.0, (17.0, 19.0)))),
             ],
         );
-        let checks = evaluate(&cur, None, &b, &none());
+        let checks = evaluate(&cur, None, &b, &none(), &none(), &[]);
         assert_eq!(
             verdict_of(&checks, "B1", "p50 <= 3").unwrap().verdict,
             Verdict::Fail
@@ -3430,7 +3775,7 @@ mod tests {
             ],
         );
         // every hard Linux budget of an unmeasured scenario fails: B2/B3 p50, B4/B6/B12u RSS
-        let checks = evaluate(&cur, None, &b, &none());
+        let checks = evaluate(&cur, None, &b, &none(), &none(), &[]);
         for (s, what) in [
             ("B2", "p50"),
             ("B3", "p50"),
@@ -3456,7 +3801,7 @@ mod tests {
         .into_iter()
         .map(str::to_owned)
         .collect();
-        let checks = evaluate(&cur, None, &b, &pending);
+        let checks = evaluate(&cur, None, &b, &pending, &none(), &[]);
         assert!(
             checks.iter().all(|c| c.verdict != Verdict::Fail),
             "{checks:?}"
@@ -3471,20 +3816,28 @@ mod tests {
         let mut dhat = cur.clone();
         dhat.extras.insert("alloc_mib".into());
         assert_eq!(
-            verdict_of(&evaluate(&dhat, None, &b, &none()), "B3", "allocated")
-                .unwrap()
-                .verdict,
+            verdict_of(
+                &evaluate(&dhat, None, &b, &none(), &none(), &[]),
+                "B3",
+                "allocated"
+            )
+            .unwrap()
+            .verdict,
             Verdict::Fail
         );
         assert_eq!(
-            verdict_of(&evaluate(&dhat, None, &b, &pending), "B3", "allocated")
-                .unwrap()
-                .verdict,
+            verdict_of(
+                &evaluate(&dhat, None, &b, &pending, &none(), &[]),
+                "B3",
+                "allocated"
+            )
+            .unwrap()
+            .verdict,
             Verdict::Warn
         );
         let mut nightly = cur;
         nightly.extras.insert("syscalls".into());
-        let checks = evaluate(&nightly, None, &b, &pending);
+        let checks = evaluate(&nightly, None, &b, &pending, &none(), &[]);
         assert_eq!(
             verdict_of(&checks, "B1", "syscalls").unwrap().verdict,
             Verdict::Fail
@@ -3496,7 +3849,7 @@ mod tests {
         {
             snp.syscalls = Some(62);
         }
-        let checks = evaluate(&nightly, None, &b, &pending);
+        let checks = evaluate(&nightly, None, &b, &pending, &none(), &[]);
         assert_eq!(
             verdict_of(&checks, "B1", "syscalls").unwrap().verdict,
             Verdict::Pass
@@ -3509,7 +3862,7 @@ mod tests {
     }
 
     #[test]
-    fn never_slower_rule_warns_on_a_failed_or_missing_reference() {
+    fn never_slower_rule_fails_on_a_failed_or_missing_reference() {
         let b = budgets();
         let cur = record(
             "gnu-system",
@@ -3522,18 +3875,98 @@ mod tests {
                 ),
             ],
         );
-        let checks = evaluate(&cur, None, &b, &none());
+        let checks = evaluate(&cur, None, &b, &none(), &none(), &[]);
         let pc = verdict_of(&checks, "B1", "p50 <= pre-commit").unwrap();
-        assert_eq!(pc.verdict, Verdict::Warn);
+        assert_eq!(pc.verdict, Verdict::Fail);
         assert_eq!(
             pc.detail,
             "reference pre-commit failed: setup: oracle broken line 2"
         );
         let prek = verdict_of(&checks, "B1", "p50 <= prek").unwrap();
-        assert_eq!(prek.verdict, Verdict::Warn);
+        assert_eq!(prek.verdict, Verdict::Fail);
         assert_eq!(prek.detail, "reference prek not measured");
         let text = comment(&cur, None, &checks);
         assert!(text.contains("reference pre-commit failed"), "{text}");
+        // an exemption is explicit (and visible in the workflow), per scenario
+        let exempt: BTreeSet<String> = ["B1".to_owned()].into();
+        let checks = evaluate(&cur, None, &b, &none(), &exempt, &[]);
+        let prek = verdict_of(&checks, "B1", "p50 <= prek").unwrap();
+        assert_eq!(prek.verdict, Verdict::Warn);
+        assert!(prek.detail.ends_with("(--allow-missing-reference)"));
+        // the non-adopted musl allocator is only reported
+        let musl = record(
+            "musl-mimalloc",
+            &[("B1", "snp", Outcome::Ok(m(1.0, (0.9, 1.1))))],
+        );
+        let checks = evaluate(&musl, None, &b, &none(), &none(), &[]);
+        assert_eq!(
+            verdict_of(&checks, "B1", "p50 <= prek").unwrap().verdict,
+            Verdict::Warn
+        );
+    }
+
+    #[test]
+    fn never_slower_than_names_real_tools() {
+        let ok = "[gate]\nregression_pct = 5\nnever_slower_than = [\"pre-commit\", \"prek\"]\n";
+        assert_eq!(
+            Budgets::parse(ok).unwrap().never_slower_than,
+            ["pre-commit", "prek"]
+        );
+        for bad in ["[\"prekk\"]", "[\"snp\"]", "[1]"] {
+            let text = format!("[gate]\nregression_pct = 5\nnever_slower_than = {bad}\n");
+            assert!(Budgets::parse(&text).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn drift_against_the_history_median_catches_a_slow_creep() {
+        let b = budgets();
+        // every record 4.9 % slower than the one before: each step passes the regression rule
+        let mut history = Vec::new();
+        let mut t = 10.0_f64;
+        for _ in 0..8 {
+            history.push(record(
+                "gnu-system",
+                &[("B1", "snp", Outcome::Ok(m(t, (t * 0.99, t * 1.01))))],
+            ));
+            t *= 1.049;
+        }
+        let cur = record(
+            "gnu-system",
+            &[
+                ("B1", "snp", Outcome::Ok(m(t, (t * 0.99, t * 1.01)))),
+                ("B1", "pre-commit", Outcome::Ok(m(100.0, (99.0, 101.0)))),
+                ("B1", "prek", Outcome::Ok(m(100.0, (99.0, 101.0)))),
+            ],
+        );
+        let checks = evaluate(&cur, history.last(), &b, &none(), &none(), &history);
+        assert_eq!(
+            verdict_of(&checks, "B1", "no regression").unwrap().verdict,
+            Verdict::Pass
+        );
+        let drift = verdict_of(&checks, "B1", "no drift").unwrap();
+        assert_eq!(drift.verdict, Verdict::Fail, "{}", drift.detail);
+        assert!(
+            drift.detail.contains("median of the last 8 records"),
+            "{}",
+            drift.detail
+        );
+        // a stable history passes; fewer than DRIFT_MIN measurements skip the check
+        let flat: Vec<Record> = (0..5)
+            .map(|_| {
+                record(
+                    "gnu-system",
+                    &[("B1", "snp", Outcome::Ok(m(t, (t * 0.99, t * 1.01))))],
+                )
+            })
+            .collect();
+        let checks = evaluate(&cur, flat.last(), &b, &none(), &none(), &flat);
+        assert_eq!(
+            verdict_of(&checks, "B1", "no drift").unwrap().verdict,
+            Verdict::Pass
+        );
+        let checks = evaluate(&cur, flat.last(), &b, &none(), &none(), &flat[..2]);
+        assert!(verdict_of(&checks, "B1", "no drift").is_none());
     }
 
     #[test]
@@ -3554,7 +3987,7 @@ mod tests {
         let check = |median: f64, ci: (f64, f64)| {
             let cur = record("gnu-system", &[("B3", "snp", Outcome::Ok(m(median, ci)))]);
             verdict_of(
-                &evaluate(&cur, Some(&base), &b, &none()),
+                &evaluate(&cur, Some(&base), &b, &none(), &none(), &[]),
                 "B3",
                 "no regression",
             )
@@ -3584,7 +4017,7 @@ mod tests {
                 ("B6", "snp", Outcome::Failed("exit 3".into())),
             ],
         );
-        let checks = evaluate(&cur, None, &b, &none());
+        let checks = evaluate(&cur, None, &b, &none(), &none(), &[]);
         // B8 RSS limit = 1.0 × 8 + 2 = 10 MiB: soft breach
         assert_eq!(
             verdict_of(&checks, "B8", "RSS").unwrap().verdict,
@@ -3623,7 +4056,7 @@ mod tests {
         };
         let v = |variant: &str| {
             verdict_of(
-                &evaluate(&record(variant, &rows), None, &b, &none()),
+                &evaluate(&record(variant, &rows), None, &b, &none(), &none(), &[]),
                 "B3",
                 "p50 <= prek",
             )
@@ -3648,7 +4081,7 @@ mod tests {
             "gnu-system",
             &[("B1", "snp", Outcome::Ok(m(1.0, (0.9, 1.1))))],
         );
-        let checks = evaluate(&cur, Some(&base), &b, &none());
+        let checks = evaluate(&cur, Some(&base), &b, &none(), &none(), &[]);
         let text = comment(&cur, Some(&base), &checks);
         assert!(text.contains("**Gate: FAIL**"), "{text}");
         assert!(
@@ -3743,7 +4176,7 @@ mod tests {
             .join(std::process::id().to_string());
         std::fs::create_dir_all(&dir).unwrap();
         let file = history_file(&dir, "linux-x86_64", "gnu-system");
-        assert!(last_history_record(&file).unwrap().is_none());
+        assert_eq!(history_records(&file, 10).unwrap().len(), 0);
         let a = record(
             "gnu-system",
             &[("B1", "snp", Outcome::Ok(m(1.0, (0.9, 1.1))))],
@@ -3752,9 +4185,116 @@ mod tests {
         b.label = "second".into();
         let text = format!("{}\n{}\n\n", a.to_json(), b.to_json());
         std::fs::write(&file, text).unwrap();
-        let got = last_history_record(&file).unwrap().unwrap();
+        let got = history_records(&file, 10).unwrap().pop().unwrap();
+        let window = history_records(&file, 10).unwrap();
+        let last_one = history_records(&file, 1).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(got.label, "second");
+        assert_eq!(window.len(), 2);
+        assert_eq!(window[0].label, "t");
+        assert_eq!(last_one.len(), 1);
+        assert_eq!(last_one[0].label, "second");
+    }
+
+    /// A `Work` rooted in a scratch directory.
+    fn scratch_work(name: &str) -> (PathBuf, Work) {
+        let base = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../target/tmp")
+            .join(format!("xtask-bench-{name}-{}", std::process::id()));
+        let _stale = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let base = real_path(&base).unwrap();
+        let target_dir = base.join("target");
+        let work = Work {
+            root: base.clone(),
+            dir: target_dir.join("bench"),
+            target_dir,
+            path_var: UNIX_PATH.into(),
+        };
+        std::fs::create_dir_all(&work.dir).unwrap();
+        (base, work)
+    }
+
+    #[test]
+    fn the_hermetic_environment_is_offline_and_pinned_below_target_bench() {
+        let (base, work) = scratch_work("env");
+        let env: BTreeMap<String, String> = work
+            .env()
+            .into_iter()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.to_string_lossy().into_owned(),
+                )
+            })
+            .collect();
+        std::fs::remove_dir_all(&base).unwrap();
+        let wheels = work.wheelhouse().display().to_string();
+        for (k, v) in [
+            ("PIP_NO_INDEX", "1"),
+            ("UV_NO_INDEX", "1"),
+            ("UV_OFFLINE", "1"),
+            ("UV_PYTHON_DOWNLOADS", "never"),
+            ("VIRTUALENV_NO_PERIODIC_UPDATE", "1"),
+            ("PIP_FIND_LINKS", wheels.as_str()),
+            ("UV_FIND_LINKS", wheels.as_str()),
+            ("GIT_CEILING_DIRECTORIES", work.dir.to_str().unwrap()),
+        ] {
+            assert_eq!(env.get(k).map(String::as_str), Some(v), "{k}");
+        }
+        if !cfg!(windows) {
+            let path = &env["PATH"];
+            assert!(
+                path.starts_with(&format!("{}:", work.path_dir().display())),
+                "{path}"
+            );
+            assert!(path.ends_with(UNIX_PATH), "{path}");
+        }
+    }
+
+    /// An interrupted setup leaves a fixture whose `.git` is not a repository: git must not walk up to the enclosing
+    /// repository (B9 would commit there), and the measurement must refuse the directory.
+    #[test]
+    fn a_fixture_never_resolves_to_an_enclosing_repository() {
+        let (base, work) = scratch_work("ceiling");
+        // the enclosing repository: the scratch root (in the real case, the developer's snp checkout)
+        git(
+            &work,
+            &base,
+            &["-c", "init.defaultBranch=main", "init", "-q"],
+        )
+        .unwrap();
+        let broken = work.fixture(Fixture::Hooked, Tool::Snp);
+        std::fs::create_dir_all(broken.join(".git").join("objects")).unwrap();
+        let err = ensure_own_repo(&work, &broken).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("not a git repository"),
+            "{err:#}"
+        );
+        // a directory below a fixture is not the fixture's top level either
+        let good = work.fixture(Fixture::Noop10, Tool::Snp);
+        gen_noop10(&work, &good).unwrap();
+        ensure_own_repo(&work, &good).unwrap();
+        let sub = good.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let err = ensure_own_repo(&work, &sub).unwrap_err();
+        assert!(format!("{err:#}").contains("not its own"), "{err:#}");
+        // and the enclosing repository received nothing
+        let log = git(&work, &base, &["rev-list", "--all", "--count"]).unwrap();
+        std::fs::remove_dir_all(&base).unwrap();
+        assert_eq!(log.trim(), "0");
+    }
+
+    #[test]
+    fn b9_alone_generates_the_noop10_fixture_it_copies() {
+        let b9 = scenario("B9").unwrap();
+        assert_eq!(b9.fixture, Fixture::Hooked);
+        assert_eq!(
+            fixtures_of(&[b9]),
+            [Fixture::Noop10, Fixture::Hooked].into()
+        );
+        let b4 = scenario("B4").unwrap();
+        assert_eq!(fixtures_of(&[b4]), [Fixture::Files50k].into());
     }
 
     #[test]
