@@ -15,7 +15,7 @@
 //! | B4 `run --all-files`, 1 hook with filenames, 2 000 files, `PRE_COMMIT_NO_CONCURRENCY=1` | 7 | exactly 1 (one partition) | **≤ 8** |
 //! | B6 13 pre-commit-hooks hooks, Tier A fast path, `--all-files` | 7 + ≤ 4 per-run pre-commit-hooks facts (`diff --staged --diff-filter=A`, `check-attr --stdin`, `ls-files`, `ls-files --stage`) + ≤ 2 slack | 0 (all native, no Python) | **≤ 13** |
 //!
-//! The baseline `git diff` is elided on the warm path (`diff-index` rc 0 + the DiffOracle stat path, ADR-078), so
+//! The baseline `git diff` is elided on the warm path (`diff-index` rc 0 + the `DiffOracle` stat path, ADR-078), so
 //! no `git diff` runs on Unix. On Windows there is no stat oracle: every hook that ran is followed by a real
 //! `git diff` and the baseline is taken (ADR-043), so the hook-proportional bounds grow by `hooks + 1`.
 //!
@@ -394,7 +394,7 @@ fn spawn_roles_are_well_formed() {
     }
 }
 
-/// The DoD's 3× margin over a timing budget of ARCHITECTURE §12.1 for this OS (Linux, macOS, Windows): the
+/// The definition of done's 3× margin over a timing budget of ARCHITECTURE §12.1 for this OS (Linux, macOS, Windows): the
 /// perf-smoke job runs these release-mode tests; `cargo xtask bench gate` enforces the budgets themselves on the
 /// `dist` build with hyperfine.
 fn smoke_budget(linux_ms: u64, macos_ms: u64, windows_ms: u64) -> std::time::Duration {

@@ -64,25 +64,25 @@ const TYPICAL: &[&str] = &[
 /// Twenty Unicode-aware tier-1 patterns (word classes, case folding, non-ASCII literals): large lazy-DFA state
 /// spaces, the ADR-079 cache-memory case.
 const UNICODE_PATTERNS: &[&str] = &[
-    r"(?i)^données/",
+    "(?i)^données/",
     r"^\w+/\w+_\d+\.py$",
-    r"(?i)straße|strasse",
+    "(?i)straße|strasse",
     r"[^\W\d_]{6,}_\d+\.",
-    r"^(?:日本語|中文资料)/",
+    "^(?:日本語|中文资料)/",
     r"\b\w{3,8}\b/\w+\.md$",
-    r"(?i)ünïcödé",
+    "(?i)ünïcödé",
     r"^[\w\-]+(?:/[\w\-]+){2,}\.json$",
     r"\d{3,}\.(?:ts|tsx|js)$",
-    r"(?i)^(?:ελληνικά|русский)/",
-    r"[αβγδεζηθ]",
+    "(?i)^(?:ελληνικά|русский)/",
+    "[αβγδεζηθ]",
     r"(?:\w+/){3}\w+_\d{2}\.",
     r"[\u4e00-\u9fff]{2,}",
-    r"(?i)caf[ée]",
+    "(?i)caf[ée]",
     r"^\w*\d\w*/",
-    r"(?:^|/)測試|测试/",
+    "(?:^|/)測試|测试/",
     r"\W\w+_\d+\.min\.js$",
     r"(?i)naïve/.+\.ya?ml$",
-    r"[ऀ-ॿ]+",
+    "[ऀ-ॿ]+",
     r"^\w+(?:/\w+)*/\w+_1\d*\.\w+$",
 ];
 
@@ -149,6 +149,10 @@ fn tier1(c: &mut Criterion) {
     g.bench_function("unicode_32threads_x20", |b| {
         b.iter(|| {
             std::thread::scope(|s| {
+                #[expect(
+                    clippy::needless_collect,
+                    reason = "every thread must be running before the first join"
+                )]
                 let handles: Vec<_> = (0..threads)
                     .map(|_| {
                         std::thread::Builder::new()

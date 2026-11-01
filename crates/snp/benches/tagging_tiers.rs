@@ -69,7 +69,7 @@ fn tier_names(n: usize) -> Vec<String> {
         .map(|(i, p)| {
             if i % 11 == 0 {
                 p.rsplit_once('.')
-                    .map_or(p.clone(), |(stem, _)| stem.to_owned())
+                    .map_or_else(|| p.clone(), |(stem, _)| stem.to_owned())
             } else {
                 p
             }

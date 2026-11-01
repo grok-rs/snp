@@ -62,7 +62,7 @@ fn bench(c: &mut Criterion) {
         u64::try_from(long.len()).unwrap_or(u64::MAX),
     ));
     g.bench_function("long_cjk_4k_chars", |b| {
-        b.iter(|| len_cjk(black_box(&long)))
+        b.iter(|| len_cjk(black_box(&long)));
     });
     g.finish();
 }
