@@ -212,6 +212,7 @@ pub(crate) struct H {
     pub(crate) clock: Option<Arc<dyn Clock>>,
     pub(crate) color: bool,
     pub(crate) cwd: Option<PathBuf>,
+    pub(crate) jobs: usize,
 }
 
 impl H {
@@ -246,6 +247,7 @@ impl H {
             clock: None,
             color: false,
             cwd: None,
+            jobs: 4,
         };
         h.git(&["init", "-q", "-b", "main"]);
         h.git(&["config", "commit.gpgsign", "false"]);
@@ -341,7 +343,7 @@ impl H {
             },
         ));
         let git_exe = Arc::new(GitExe::resolve(&env, &cwd, None).unwrap());
-        let jobs = NonZeroUsize::new(4).unwrap();
+        let jobs = NonZeroUsize::new(self.jobs).unwrap();
         RunCtx {
             env,
             brand: self.brand,
