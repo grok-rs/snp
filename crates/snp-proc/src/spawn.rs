@@ -385,7 +385,10 @@ impl SpawnError {
         {
             return pyerr::os_error_text(&c.source, Some(&c.cwd), None);
         }
-        pyerr::os_error_text(&self.io, Some(&self.program), None)
+        // Windows: `_winapi.CreateProcess` raises `OSError(winerror)` without a file name (`[WinError 193] %1 is
+        // not a valid Win32 application`).
+        let program = (!cfg!(windows)).then_some(self.program.as_os_str());
+        pyerr::os_error_text(&self.io, program, None)
     }
 }
 
