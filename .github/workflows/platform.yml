@@ -139,19 +139,18 @@ jobs:
         include:
           # ADR-063, by each scenario's `requires.git`: the stash refusal (D-DATA-17, >=2.5 <2.19) on 2.18.5; the
           # warning (D-DIAG-01) and the --deduplicate fallback (D-CRASH-26), both >=2.19 <2.31, on 2.30.
-          # `pending`: some snp-git / snp-stash tests still assume a modern git (16 fail on 2.18.5, 5 on 2.30.9) until
-          # their owners (WP-18, WP-23) gate them by git version; the test step reports them without failing the job.
-          # Drop `pending` once they are gated.
-          - { git: 2.18.5, divergences: "D-DATA-17", pending: true }
-          - { git: 2.30.9, divergences: "D-CRASH-26 D-DIAG-01", pending: true }
-          - { git: 2.31.8, divergences: "", pending: false }
-          - { git: 2.34.8, divergences: "", pending: false }
-          - { git: 2.39.5, divergences: "", pending: false }
-          - { git: 2.43.7, divergences: "", pending: false }
+          # The tests that still assume a newer git (17 on 2.18.5, 5 on 2.30.9, owners WP-18 and WP-23) are listed one
+          # by one in packaging/ci/git-known-failures/<version>.txt; every other test is blocking on every version.
+          - { git: 2.18.5, divergences: "D-DATA-17" }
+          - { git: 2.30.9, divergences: "D-CRASH-26 D-DIAG-01" }
+          - { git: 2.31.8, divergences: "" }
+          - { git: 2.34.8, divergences: "" }
+          - { git: 2.39.5, divergences: "" }
+          - { git: 2.43.7, divergences: "" }
           # config-based hooks (hook.<name>.command, `install --git-config-hooks`)
-          - { git: 2.54.0, divergences: "", pending: false }
+          - { git: 2.54.0, divergences: "" }
           # latest release at the last update of this matrix
-          - { git: 2.56.0, divergences: "", pending: false }
+          - { git: 2.56.0, divergences: "" }
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -186,21 +185,12 @@ jobs:
       - uses: taiki-e/install-action@v2
         with: { tool: cargo-nextest }
       - run: cargo build --workspace --bins --features snp/testing --locked
-      # The crates whose behaviour depends on the git version: the git layer, the test fixtures, the stash guard, the
-      # store's clones, hook resolution, the run pipeline, the commands and the binary's integration tests.
+      # Blocking, except the tests packaging/ci/git-known-failures/<version>.txt lists by name (run separately,
+      # reported, and flagged once they pass).
       - name: Git-dependent tests
-        id: git-tests
-        continue-on-error: ${{ matrix.pending }}
-        run: >-
-          cargo nextest run --features snp/testing --locked --profile ci --no-tests=warn
-          -p snp-git -p snp-testkit -p snp-stash -p snp-store -p snp-repo -p snp-run -p snp-cmd -p snp
-      - name: Known failures on old git (pending WP-18 / WP-23 version gating)
-        if: ${{ matrix.pending && steps.git-tests.outcome == 'failure' }}
         env:
           GIT_VERSION: ${{ matrix.git }}
-        run: >-
-          echo "::warning::git $GIT_VERSION - git-dependent tests fail until WP-18/WP-23 gate them by git version
-          (see the junit artifact)"
+        run: packaging/ci/git-tests.sh "$GIT_VERSION"
       - name: difftest not implemented yet
         if: ${{ matrix.divergences != '' && needs.tasks.outputs.difftest != 'ready' }}
         run: >-
@@ -217,9 +207,13 @@ jobs:
         if: ${{ matrix.divergences != '' && needs.tasks.outputs.difftest == 'ready' }}
         env:
           DIVERGENCES: ${{ matrix.divergences }}
+        # The harness selects a scenario file with `--file` (crates/snp-difftest/src/main.rs); a missing file is an
+        # error, never a silent pass.
         run: |
           for id in $DIVERGENCES; do
-            cargo xtask difftest --scenario "tests/differential/divergences/$id.yaml"
+            file="tests/differential/divergences/$id.yaml"
+            [ -f "$file" ] || { echo "::error::$file does not exist"; exit 1; }
+            cargo xtask difftest run --file "$file"
           done
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
@@ -267,9 +261,7 @@ jobs:
         with: { tool: cargo-nextest }
       - run: cargo build --workspace --bins --features snp/testing --locked
       - name: Git-dependent tests
-        run: >-
-          cargo nextest run --features snp/testing --locked --profile ci --no-tests=warn
-          -p snp-git -p snp-testkit -p snp-stash -p snp-store -p snp-repo -p snp-run -p snp-cmd -p snp
+        run: packaging/ci/git-tests.sh latest
 
   musl:
     # Static builds (14 §A.5.1: T1 for releases, T2 for tests): built with the release profile, checked to be static,
@@ -339,6 +331,15 @@ jobs:
         with:
           name: platform-facts-${{ matrix.os }}-py${{ matrix.python }}
           path: snp/target/platform-facts/${{ matrix.os }}-py${{ matrix.python }}
+      - name: Report unverified predictions
+        env:
+          FACTS_DIR: target/platform-facts/${{ matrix.os }}-py${{ matrix.python }}
+        run: |
+          unverified="$FACTS_DIR/unverified.md"
+          [ -f "$unverified" ] || { echo "every applicable prediction was checked"; exit 0; }
+          ids="$(sed -n 's/^- \*\*\(PF-[0-9]*\)\*\*.*/\1/p' "$unverified" | paste -sd ' ' -)"
+          echo "::warning::platform-facts: unverified predictions on ${{ matrix.os }} (Python ${{ matrix.python }}): $ids; see $unverified"
+          cat "$unverified" >> "$GITHUB_STEP_SUMMARY"
       - name: Report contradicted predictions
         env:
           GH_TOKEN: ${{ github.token }}
@@ -346,7 +347,7 @@ jobs:
           FILE_ISSUE: ${{ github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
         run: |
           corrections="$FACTS_DIR/corrections.md"
-          [ -f "$corrections" ] || { echo "every applicable prediction confirmed or unknown"; exit 0; }
+          [ -f "$corrections" ] || { echo "no applicable prediction contradicted"; exit 0; }
           echo "::warning::platform-facts: contradicted predictions on ${{ matrix.os }} (Python ${{ matrix.python }}); see $corrections"
           [ "$FILE_ISSUE" = true ] || exit 0
           title="platform-facts: contradicted predictions on ${{ matrix.os }} (Python ${{ matrix.python }})"
@@ -357,6 +358,40 @@ jobs:
           {
             cat "$corrections"
             echo
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > issue.md
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue.md
+
+  platform-facts-unverified:
+    # One issue for the predictions that some runner could not check (`unverified.md`, e.g. PF-22 until
+    # `snp __debug platform` exists): WBS WP-37 needs every prediction confirmed or corrected, so an unverified one
+    # must stay visible. Scheduled runs and main only, at most one open issue.
+    name: platform-facts unverified
+    needs: platform-facts
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { pattern: platform-facts-*, path: facts }
+      - name: File or skip the issue
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          files=(facts/*/unverified.md)
+          [ "${#files[@]}" -gt 0 ] || { echo "every applicable prediction was checked on every runner"; exit 0; }
+          title="platform-facts: unverified predictions"
+          if [ -n "$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" --json number --jq '.[].number')" ]; then
+            echo "an issue is already open"
+            exit 0
+          fi
+          {
+            for f in "${files[@]}"; do cat "$f"; echo; done
             echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > issue.md
           gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue.md
@@ -389,7 +424,13 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: cargo build --release --locked -p snp -p snp-probe --bins
       - run: cargo xtask oracle install
-      - run: cargo xtask difftest --suite platform --keep-failures
+      # The platform scenarios are the curated ones tagged `platform` (tests/differential/scenarios/platform). The
+      # dry selection first makes drift of the harness's command line fail visibly, and an empty selection fails.
+      - name: Select the platform scenarios
+        run: |
+          cargo xtask difftest list --suite curated --tag platform | tee platform-scenarios.txt
+          [ -s platform-scenarios.txt ] || { echo "::error::no scenario is tagged platform"; exit 1; }
+      - run: cargo xtask difftest run --suite curated --tag platform --keep
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:

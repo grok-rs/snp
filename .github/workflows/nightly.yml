@@ -5,7 +5,8 @@
 # * oracle: the pre-commit 4.6.2 oracles are rebuilt and verified;
 # * fuzz: 300 s per cargo-fuzz target (no panic, no hang > 5 s, <= 512 MB RSS, 256 KiB stacks);
 # * difftest: the generated differential suite against the oracle (WP-35's harness);
-# * catalog-status, bench: WP-35's catalog report and WP-36's end-to-end budgets;
+# * catalog-status: WP-35's catalog report (the scheduled performance gates are bench.yml's, owned by WP-36; this
+#   workflow does not duplicate them);
 # * mutants: cargo-mutants on snp-stash, snp-proc (xargs), snp-argparse and snp-pyre;
 # * coverage: llvm-cov over the hermetic suite, published as an artifact.
 #
@@ -42,13 +43,12 @@ jobs:
     outputs:
       difftest: ${{ steps.check.outputs.difftest }}
       catalog-status: ${{ steps.check.outputs.catalog-status }}
-      bench: ${{ steps.check.outputs.bench }}
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
       - id: check
         run: |
-          for task in difftest catalog_status bench; do
+          for task in difftest catalog_status; do
             key="${task//_/-}"
             if grep -q 'todo!()' "xtask/src/tasks/$task.rs"; then
               echo "::notice::cargo xtask $key is still a W0 stub; its nightly job is skipped"
@@ -204,7 +204,10 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: cargo build --release --locked -p snp -p snp-probe --bins
       - run: cargo xtask oracle install
-      - run: cargo xtask difftest --suite generated --cases 2000 --seed "$GITHUB_RUN_ID"
+      # The harness's interface (crates/snp-difftest/src/main.rs): a dry selection first, so that drift of the
+      # command line fails visibly here.
+      - run: cargo xtask difftest list --suite curated > /dev/null
+      - run: cargo xtask difftest run --suite generated --cases 2000 --seed "$GITHUB_RUN_ID"
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -225,22 +228,6 @@ jobs:
         run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - run: cargo xtask catalog-status | tee -a "$GITHUB_STEP_SUMMARY"
-
-  bench:
-    # WP-36: end-to-end budgets against the oracle (`cargo xtask bench setup|run|gate`).
-    needs: tasks
-    if: ${{ needs.tasks.outputs.bench == 'ready' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-        with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
-      - run: rustup toolchain install
-      - uses: astral-sh/setup-uv@v6
-      - run: cargo xtask oracle install
-      - run: cargo xtask bench setup && cargo xtask bench run && cargo xtask bench gate
 
   mutants:
     # Mutation testing (ARCHITECTURE §13.7) on the crates whose correctness is most subtle: the stash guard, xargs

@@ -1,0 +1,8 @@
+# Tests that fail on git 2.30.9 because they assume a newer git (measured with packaging/ci/git-tests.sh 2.30.9).
+# Owners: snp-git and snp-testkit WP-18, snp-stash WP-23; each owner gates its tests by git version and removes the
+# line. platform.yml runs every other test blocking, and these alone non-blocking, warning about any that pass.
+package(snp-git) & binary(catalog) & test(=behaviour::exe::version_cache_trusts_only_passing_entries)
+package(snp-git) & binary(catalog) & test(=behaviour::owned::owned_env_is_sanitized_and_carries_the_fsmonitor_injection)
+package(snp-git) & binary(catalog) & test(=behaviour::user_repo::dedup_fallback_equals_ls_files_deduplicate)
+package(snp-git) & binary(catalog) & test(=rows::t10_git_08_zsplit)
+package(snp-testkit) & binary(guard) & test(=guard::real_caches_are_untouched_by_the_suite)
