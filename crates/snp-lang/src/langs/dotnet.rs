@@ -92,11 +92,13 @@ pub fn read_nuspec(path: &Path) -> Result<String, LangError> {
     let file = std::fs::File::open(path).map_err(io_err("open", path))?;
     let mut archive = zip::ZipArchive::new(file)
         .map_err(|e| LangError::Value(format!("{}: {e}", path.display())))?;
-    let names: Vec<String> = archive
-        .file_names()
-        .filter(|n| n.ends_with(".nuspec"))
-        .map(str::to_owned)
-        .collect();
+    let mut names: Vec<String> = Vec::new();
+    for n in archive.file_names() {
+        let n = n.map_err(|e| LangError::Value(format!("{}: {e}", path.display())))?;
+        if n.ends_with(".nuspec") {
+            names.push(n.into_owned());
+        }
+    }
     let name = match names.as_slice() {
         [one] => one.clone(),
         [] => {

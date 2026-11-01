@@ -29,8 +29,19 @@ allow = [
     "ISC",
     "Unicode-3.0",
     "Zlib",
-    "MPL-2.0",
 ]
+
+# Permissive licenses accepted for one crate each (ADR-084), not workspace-wide.
+[[licenses.exceptions]]
+# `(MIT OR Apache-2.0) AND Unicode-DFS-2016`: the Unicode name tables of snp-pyre's `\N{...}` escapes.
+crate = "unicode_names2"
+allow = ["Unicode-DFS-2016"]
+
+[[licenses.exceptions]]
+# CDLA-Permissive-2.0: the Mozilla root list, compiled in by ureq's `rustls` feature (snp verifies with the
+# platform verifier or SSL_CERT_FILE / SSL_CERT_DIR and never selects these roots).
+crate = "webpki-roots"
+allow = ["CDLA-Permissive-2.0"]
 
 [licenses.private]
 ignore = true
@@ -52,7 +63,7 @@ deny = [
     # Python shlex semantics come from snp-pycompat.
     { crate = "shlex", wrappers = ["cc"], reason = "use snp_pycompat::shlex (Python semantics); `cc` build scripts may use it" },
     { crate = "shell-words", reason = "use snp_pycompat::shlex (Python semantics)" },
-    # ADR-002: snp-yaml's in-tree libyaml port (the libyaml-safer fork) + own PyYAML layers.
+    # ADR-002: snp-yaml's in-tree libyaml port + own PyYAML layers.
     { crate = "serde_yaml", reason = "deprecated; snp-yaml (ADR-002)" },
     { crate = "serde_yml", reason = "RUSTSEC-2025-0068; snp-yaml (ADR-002)" },
     { crate = "libyml", reason = "RUSTSEC-2025-0067" },
@@ -67,13 +78,14 @@ deny = [
     { crate = "mimalloc", wrappers = ["snp"], reason = "only the musl allocator of crates/snp (ADR-079)" },
     # ADR-003: `regex` only behind snp-pyre (snp-pycompat is regex-free). Third-party dev tools
     # that use it internally are allowed as wrappers.
-    { crate = "regex", wrappers = ["snp-pyre", "insta", "criterion", "tracing-subscriber", "matchers"], reason = "regex only via snp-pyre (ADR-003, ADR-056)" },
+    { crate = "regex", wrappers = ["snp-pyre", "insta", "criterion"], reason = "regex only via snp-pyre (ADR-003, ADR-056)" },
     { crate = "memmap2", reason = "no memory-mapped files (truncation SIGBUS)" },
     { crate = "anstyle-query", reason = "Windows colour via winapi-util (ADR-029)" },
     { crate = "unicode-width", reason = "east-asian width from snp-pycompat tables (UCD 15.1)" },
     # ctrlc and process-wrap are Windows-only dependencies of snp-proc; their `cfg(unix)` edge to nix is never built,
-    # but cargo-deny evaluates target cfgs per edge, so the two must be listed as wrappers (WP-15).
-    { crate = "nix", wrappers = ["ctrlc", "process-wrap"], reason = "rustix only (safe APIs)" },
+    # but cargo-deny evaluates target cfgs per edge, so the two must be listed as wrappers (WP-15). zip >= 9 uses nix
+    # (`fs`) on macOS and the BSDs for its extraction helpers, which snp never calls (ADR-084).
+    { crate = "nix", wrappers = ["ctrlc", "process-wrap", "zip"], reason = "rustix only (safe APIs)" },
 ]
 
 [sources]

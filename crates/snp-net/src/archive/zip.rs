@@ -29,14 +29,14 @@ pub(crate) fn walk(file: File, x: &mut Extraction<'_>) -> Result<(), NetError> {
     for i in 0..archive.len() {
         x.count()?;
         let mut entry = archive.by_index(i).map_err(|e| zip_error(&e))?;
-        let name = entry.name().as_bytes().to_vec();
+        let name = entry.name().map_err(|e| zip_error(&e))?.as_bytes().to_vec();
         if name.contains(&b'\\') {
             return Err(Extraction::refuse(&name));
         }
         if entry.encrypted() {
             return Err(NetError::Io(io::Error::new(
                 io::ErrorKind::Unsupported,
-                format!("encrypted zip entry {:?}", entry.name()),
+                format!("encrypted zip entry {:?}", String::from_utf8_lossy(&name)),
             )));
         }
         let unix = entry.unix_mode();
