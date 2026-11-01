@@ -1,0 +1,16 @@
+# mdBook configuration of the snp user documentation. The pages are plain Markdown that also reads well on GitHub;
+# `cargo xtask docs` regenerates reference/cli.md and divergences.md and checks every link and anchor.
+[book]
+title = "snp — You Shell Not Pass"
+description = "A drop-in replacement for pre-commit 4.6.2"
+authors = ["Serhii Kaliuzhnyi"]
+language = "en"
+src = "."
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/grok-rs/snp"
+edit-url-template = "https://github.com/grok-rs/snp/edit/main/docs/user/{path}"
