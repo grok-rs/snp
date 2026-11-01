@@ -53,7 +53,8 @@ mod goldens {
 
     fn has_hex(v: &Value) -> bool {
         match v {
-            Value::Object(m) => m.contains_key("hex"),
+            // a byte-string value, or a mapping (the case's `env`) holding one
+            Value::Object(m) => m.contains_key("hex") || m.values().any(has_hex),
             Value::Array(a) => a.iter().any(has_hex),
             _ => false,
         }

@@ -225,7 +225,12 @@ fn b1_version_spawns_nothing() {
     assert_bounds("B1 positive control", &out, &control, usize::MAX, 1);
     let (out, log) = run_logged(&env, env.root(), &["--version"], &[]);
     assert_eq!(out.code, 0);
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "snp 2.0.0\n");
+    // argparse's `print` (text mode: CRLF on Windows)
+    let nl = if cfg!(windows) { "\r\n" } else { "\n" };
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        format!("snp 2.0.0{nl}")
+    );
     assert_eq!(log.total(), 0, "--version spawned:\n{}", log.dump());
 }
 
@@ -258,7 +263,7 @@ fn b3_ten_noop_hooks_within_18_spawns() {
         log.spawns
             .iter()
             .filter(|s| s.role == "hook")
-            .all(|s| s.exe == "true"),
+            .all(|s| s.exe == "true" || s.exe.eq_ignore_ascii_case("true.exe")),
         "{}",
         log.dump()
     );
@@ -308,12 +313,15 @@ fn b4_shape_one_partition_no_per_file_spawns() {
         &["run", "--all-files", "true-files"],
         &[("PRE_COMMIT_NO_CONCURRENCY", "1")],
     );
+    // Windows: CreateProcess takes at most 32 767 characters, so the 2 000 paths (~44 k) need two partitions
+    // (pre-commit's xargs splits the same way there).
+    let partitions = if cfg!(windows) { 2 } else { 1 };
     assert_bounds(
         "B4 (2k files)",
         &out,
         &log,
-        WARM_RUN_GIT + 1 + windows_diff_spawns(1),
-        1,
+        WARM_RUN_GIT + partitions + windows_diff_spawns(1),
+        partitions,
     );
 }
 
@@ -371,7 +379,14 @@ fn b6_shape_fast_path_within_13_spawns() {
     // this test's correctness depends on it.
     let no_network = [("GIT_ALLOW_PROTOCOL", "file")];
     let (out, log) = run_logged(&env, &repo, &["run", "--all-files"], &no_network);
-    assert_bounds("B6", &out, &log, WARM_RUN_GIT + 4 + 2, 0);
+    // Windows: no stat oracle, so the baseline `git diff` is taken (ADR-043).
+    assert_bounds(
+        "B6",
+        &out,
+        &log,
+        WARM_RUN_GIT + 4 + 2 + usize::from(cfg!(windows)),
+        0,
+    );
     assert!(
         log.spawns.iter().all(Spawn::is_git),
         "B6 started a non-git process:\n{}",

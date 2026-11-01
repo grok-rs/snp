@@ -311,7 +311,9 @@ fn find_exe_is_memoised_per_path() {
     ]);
     let p = ToolProbe::new(None);
     let found = p.find_exe(OsStr::new("tool"), &env, d.path()).unwrap();
-    assert_eq!(found, bin.join(name));
+    // pre-commit joins the name with the `PATHEXT` entry as spelt (`tool.EXE`); NTFS matches it case-insensitively.
+    let spelt = if cfg!(windows) { "tool.EXE" } else { "tool" };
+    assert_eq!(found, bin.join(spelt));
     std::fs::remove_file(bin.join(name)).unwrap();
     assert_eq!(
         p.find_exe(OsStr::new("tool"), &env, d.path()),

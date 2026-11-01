@@ -354,7 +354,13 @@ mod testkit {
         assert_eq!(env.probe(), bins.probe);
         // both brands through the runners (argv[0] decides, COMPATIBILITY §3.1)
         let out = env.snp(env.root()).arg("--version").output();
-        assert_eq!((out.code, out.stdout.as_slice()), (0, &b"snp 2.0.0\n"[..]));
+        // argparse's `print`: CRLF in Windows text mode
+        let version: &[u8] = if cfg!(windows) {
+            b"snp 2.0.0\r\n"
+        } else {
+            b"snp 2.0.0\n"
+        };
+        assert_eq!((out.code, out.stdout.as_slice()), (0, version));
         let out = env.snp_as_pre_commit(env.root()).arg("--version").output();
         assert_eq!(
             (out.code, out.stdout.as_slice()),
