@@ -4,9 +4,15 @@
 //!
 //! Owner: WP-31.
 
+mod fastpath;
+mod install;
+mod messages;
 mod model;
+mod prefetch;
+mod resolve;
 mod resolver;
 mod seams;
+mod stages;
 mod tools;
 
 use snp_files as _;

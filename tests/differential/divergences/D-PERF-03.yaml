@@ -1,5 +1,55 @@
-# D-PERF-03 (PERF, owner WP-31): native implementations (fast path, ADR-031); output byte-identical; Tier A repos are never cloned (FD-8)
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-PERF-03 (PERF, owner WP-31): pre-commit-hooks at a Tier A tag runs natively; output byte-identical, the
+# repository is never cloned and no python environment is built (FD-8, ADR-031, ADR-032).
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3. Extension: `expected.<tool>.store_clones` is the number
+# of cloned hook repositories in the tool's own store after the step (pre-commit: `repo*` directories of
+# `$PRE_COMMIT_HOME`; snp: the entries of `$SNP_HOME/repos-v1`). The oracle clones the upstream URL (net: true);
+# the transcript itself must stay identical (`compare: exact`), the store must keep differing.
 expect_divergence: D-PERF-03
-status: stub
+name: divergences/D-PERF-03-tier-a-never-cloned
+since: "4.6.2"
+requires: {git: ">=2.31", net: true, tools: [], os: [linux, macos, windows], pty: false}
+repos: {}
+work:
+  files: {a.json: "{}\n"}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: https://github.com/pre-commit/pre-commit-hooks
+        rev: v6.0.0
+        hooks:
+        -   id: trailing-whitespace
+        -   id: end-of-file-fixer
+        -   id: check-json
+  commit: [".pre-commit-config.yaml", a.json]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - tool: [run, --all-files]
+    env: {}
+    stdin: ""
+    tty: false
+  - tool: [run, --all-files]
+    env: {}
+    stdin: ""
+    tty: false
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    exit: 0
+    stdout_starts_with: "[INFO] Initializing environment for https://github.com/pre-commit/pre-commit-hooks.\n[INFO] Installing environment for https://github.com/pre-commit/pre-commit-hooks.\n"
+    store_clones: 1
+  snp:
+    exit: 0
+    stdout_starts_with: "[INFO] Initializing environment for https://github.com/pre-commit/pre-commit-hooks.\n[INFO] Installing environment for https://github.com/pre-commit/pre-commit-hooks.\n"
+    store_clones: 0
