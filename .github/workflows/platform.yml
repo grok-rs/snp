@@ -430,6 +430,9 @@ jobs:
         run: |
           cargo xtask difftest list --suite curated --tag platform | tee platform-scenarios.txt
           [ -s platform-scenarios.txt ] || { echo "::error::no scenario is tagged platform"; exit 1; }
+      # The rust-cache'd target/ can carry scenario roots of an earlier run without their marker file, which the
+      # harness then refuses to delete: start from no roots.
+      - run: rm -rf target/difftest/roots
       - run: cargo xtask difftest run --suite curated --tag platform --keep
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}

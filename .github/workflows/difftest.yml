@@ -65,6 +65,9 @@ jobs:
           ( ulimit -v 4194304 && cargo test -p snp-difftest --locked )
       - name: seed self-consistency and the planted-divergence shrinker
         run: cargo test -p snp-difftest --test oracle --locked -- --ignored
+      # The rust-cache'd target/ can carry scenario roots of an earlier run without their marker file, which the
+      # harness then refuses to delete: start from no roots.
+      - run: rm -rf target/difftest/roots
       - name: curated corpus, oracle against itself
         run: cargo xtask difftest --debug --suite curated --self-check
       - name: divergence register
@@ -93,6 +96,9 @@ jobs:
         with: { workspaces: snp }
       - uses: astral-sh/setup-uv@v6
       - run: cargo xtask oracle install
+      # The rust-cache'd target/ can carry scenario roots of an earlier run without their marker file, which the
+      # harness then refuses to delete: start from no roots.
+      - run: rm -rf target/difftest/roots
       - name: curated scenarios and divergence files, both brands
         run: cargo xtask difftest --suite all --out target/difftest/out
       - if: failure()
