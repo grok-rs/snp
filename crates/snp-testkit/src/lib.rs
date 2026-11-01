@@ -14,6 +14,8 @@ mod env;
 mod fixture;
 mod harness;
 mod repo;
+#[cfg(unix)]
+mod session;
 mod snapshot;
 
 pub use bins::Bins;
@@ -21,6 +23,8 @@ pub use cmd::{Cmd, Output};
 pub use env::{Oracle, TestEnv};
 pub use fixture::Fixture;
 pub use repo::RepoBuilder;
+#[cfg(unix)]
+pub use session::Session;
 #[doc(hidden)]
 pub use snapshot::__render;
 

@@ -82,6 +82,29 @@ impl Cmd {
         self
     }
 
+    /// Starts the command as the leader of a new session whose controlling terminal is a fresh pty (80×24), the way
+    /// an interactive shell runs `git commit` (ADR-085 tests); with `stdin_null` its stdin is `/dev/null` (a git
+    /// hook's) while `/dev/tty` is the pty. `None` without util-linux `setsid --ctty` (callers skip).
+    #[cfg(unix)]
+    pub fn session(self, stdin_null: bool) -> Option<crate::session::Session> {
+        crate::session::start(&self.program, &self.args, &self.env, &self.cwd, stdin_null)
+    }
+
+    /// The command in a new session without a controlling terminal (util-linux `setsid`), so `/dev/tty` cannot be
+    /// opened whatever terminal the test runner has (CI, cron). `None` without `setsid` (callers skip).
+    #[cfg(unix)]
+    #[must_use]
+    pub fn without_terminal(self) -> Option<Self> {
+        let setsid = crate::session::setsid()?;
+        let mut args = vec![OsString::from("--wait"), self.program.into_os_string()];
+        args.extend(self.args);
+        Some(Self {
+            program: setsid,
+            args,
+            ..self
+        })
+    }
+
     fn command(&self) -> Command {
         let mut cmd = Command::new(&self.program);
         self.env.apply_to(&mut cmd);
@@ -200,7 +223,7 @@ fn join(feeder: Feeder) {
 }
 
 /// The exit code; Unix signal deaths as `128 + n` (shell convention).
-fn exit_code(status: ExitStatus) -> i32 {
+pub(crate) fn exit_code(status: ExitStatus) -> i32 {
     if let Some(c) = status.code() {
         return c;
     }

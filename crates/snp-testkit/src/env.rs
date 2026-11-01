@@ -205,6 +205,20 @@ impl TestEnv {
         Cmd::new(self.bins.snp.clone(), self.env.clone(), cwd)
     }
 
+    /// `/bin/sh -c script` with the hermetic env.
+    pub fn sh(&self, cwd: &Path, script: &str) -> Cmd {
+        Cmd::new(PathBuf::from("/bin/sh"), self.env.clone(), cwd).args(["-c", script])
+    }
+
+    /// git (resolved on the hermetic `PATH`) with the hermetic env, for runs that need a [`Cmd`] (a pty session).
+    pub fn git(&self, cwd: &Path) -> Cmd {
+        Cmd::new(
+            crate::harness::git_exe(&self.env, cwd),
+            self.env.clone(),
+            cwd,
+        )
+    }
+
     /// Through a `pre-commit` symlink/copy (compat brand): `<root>/bin/pre-commit` (`pre-commit.exe` copy on
     /// Windows), so `basename(argv[0])` selects the compat brand (COMPATIBILITY §3.1).
     pub fn snp_as_pre_commit(&self, cwd: &Path) -> Cmd {

@@ -39,6 +39,9 @@ mod init_templatedir; // WP-33
 #[cfg(test)]
 mod install; // WP-33
 #[cfg(test)]
+#[cfg(unix)]
+mod interactive; // WP-32 (ADR-085)
+#[cfg(test)]
 mod list; // WP-32
 #[cfg(test)]
 mod meta; // WP-32
