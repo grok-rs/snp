@@ -84,7 +84,6 @@ fn gc_manifest(
 fn mark_used(cx: &CmdCtx<'_>, cfg: &snp_config::Config, root: &Path, used: &mut Used, regexes: &RegexCache) {
     for repo in &cfg.repos {
         match repo {
-            RepoConfig::Meta { .. } | RepoConfig::Builtin { .. } => {}
             RepoConfig::Local { hooks } => {
                 for h in hooks {
                     used.keys.insert(Store::local_key(&h.additional_dependencies));

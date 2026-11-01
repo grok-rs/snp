@@ -65,12 +65,21 @@ pub(crate) fn git_exe(cx: &CmdCtx<'_>) -> Result<Arc<GitExe>, Failure> {
 /// outside the repository becomes `../x.yaml`); a missing one is kept as typed and so re-interpreted relative to the
 /// root (03 §1.2 item 4). `relpath` across Windows drives (pre-commit's `ValueError`) keeps the absolute path.
 pub(crate) fn git_frame(cx: &CmdCtx<'_>, config: &OsStr) -> Result<Frame, Failure> {
+    frame_impl(cx, config, true)
+}
+
+/// [`git_frame`] without `mark_config_used` (read-only commands: `doctor`).
+pub(crate) fn git_frame_untracked(cx: &CmdCtx<'_>, config: &OsStr) -> Result<Frame, Failure> {
+    frame_impl(cx, config, false)
+}
+
+fn frame_impl(cx: &CmdCtx<'_>, config: &OsStr, track: bool) -> Result<Frame, Failure> {
     let exe = git_exe(cx)?;
-    let (git, info) = Git::discover(Arc::clone(&exe), cx.env, cx.cwd, cx.git_backend.clone())?;
+    let (git, info) = Git::discover(Arc::clone(&exe), cx.env, cx.cwd, Arc::clone(&cx.git_backend))?;
     let git = git.with_brand(cx.brand);
     let config_display = adjust_config(config, cx.cwd, &info.root);
     let config_path = info.root.join(&config_display);
-    if let Ok(real) = snp_os::realpath::realpath_nonstrict(&config_path, &info.root) {
+    if track && let Ok(real) = snp_os::realpath::realpath_nonstrict(&config_path, &info.root) {
         cx.store.mark_config_used(&real, &info.root);
     }
     Ok(Frame {

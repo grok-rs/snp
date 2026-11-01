@@ -67,7 +67,7 @@ pub(crate) fn restored(hook_path: &OsStr) -> Vec<u8> {
 /// `init_templatedir.py:36`, logged at WARNING.
 pub(crate) const TEMPLATEDIR_NOT_SET: &str = "`init.templateDir` not set to the target directory";
 
-/// `init_templatedir.py:37`, logged at WARNING: `maybe \`git config --global init.templateDir {dest}\`?`.
+/// `init_templatedir.py:37`, logged at WARNING: ``maybe `git config --global init.templateDir {dest}`?``.
 pub(crate) fn templatedir_maybe(dest: &OsStr) -> String {
     format!(
         "maybe `git config --global init.templateDir {}`?",

@@ -91,7 +91,7 @@ fn update_one(
         .prefix("tmp")
         .tempdir()
         .map_err(|e| Failure::from_io(&e, None, None))?;
-    let owned = OwnedRepo::open(Arc::clone(exe), cx.env, tmp.path(), cx.git_backend.clone());
+    let owned = OwnedRepo::open(Arc::clone(exe), cx.env, tmp.path(), Arc::clone(&cx.git_backend));
     let mut info = match owned.rev_info(&remote_arg(&r.repo, root), tags_only, freeze) {
         Ok(info) => info,
         Err(f @ (Failure::Interrupted(_) | Failure::StdoutClosed)) => return Err(f),
@@ -274,14 +274,13 @@ pub fn autoupdate(a: &AutoupdateArgs, cx: &CmdCtx<'_>) -> Result<i32, Failure> {
         updates.sort_by_key(|u| u.repo_index);
         let original = std::fs::read(&f.config_path)
             .map_err(|e| Failure::from_io(&e, Some(&f.config_display), None))?;
-        let new = match revline::rewrite_with(&original, &updates, ext)? {
-            Rewrite::Lines(b) | Rewrite::FullReformat(b) => b,
-            _ => {
-                return Err(Failure::Exc {
-                    kind: snp_core::failure::ExcKind::Unexpected,
-                    exc: PyExc::new("AssertionError", "could not find rev lines"),
-                });
-            }
+        let (Rewrite::Lines(new) | Rewrite::FullReformat(new)) =
+            revline::rewrite_with(&original, &updates, ext)?
+        else {
+            return Err(Failure::Exc {
+                kind: snp_core::failure::ExcKind::Unexpected,
+                exc: PyExc::new("AssertionError", "could not find rev lines"),
+            });
         };
         write_config(&f.config_path, f.root(), &new)?;
     }

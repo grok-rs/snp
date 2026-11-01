@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use snp_cli::{ConfigArgs, ConfigCmd, ValidateArgs};
 use snp_config::validate::{self, FileKind};
-use snp_config::{ConfigSource, ExtMode, SAMPLE_CONFIG, effective_dump, json_schema, load_config};
+use snp_config::{ExtMode, SAMPLE_CONFIG, effective_dump, json_schema, load_config};
 use snp_config::{migrate, overlay};
 use snp_core::failure::Failure;
 use snp_pyre::RegexCache;
@@ -158,7 +158,7 @@ pub fn config(a: &ConfigCmd, cx: &CmdCtx<'_>) -> Result<i32, Failure> {
             let regexes = RegexCache::default();
             let ext = frame::ext_mode(cx);
             let o = frame::load_opts(cx, &regexes, ext);
-            let src: ConfigSource = f.source();
+            let src = f.source();
             let mut cfg = load_config(&src, &o)?;
             if !no_local_config {
                 let tracked = |p: &Path| is_tracked(cx, &f, p);
@@ -174,7 +174,7 @@ pub fn config(a: &ConfigCmd, cx: &CmdCtx<'_>) -> Result<i32, Failure> {
             write_text(cx, &effective_dump(&cfg, *json));
             Ok(0)
         }
-        _ => Err(crate::frame::unsupported("config")),
+        _ => Err(frame::unsupported("config")),
     }
 }
 

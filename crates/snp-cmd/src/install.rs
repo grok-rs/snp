@@ -160,6 +160,10 @@ fn lexists(p: &Path) -> bool {
 /// The mode the new script gets: the existing regular file's mode (pre-commit truncates it in place) or
 /// `0o666 & ~umask` for a new file, then `| 0o111` (`util.make_executable`). `None` on Windows.
 #[cfg(unix)]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "one signature for both platforms; Windows has no mode bits"
+)]
 fn script_mode(hook: &Path, hooks: &Path, keep_existing: bool) -> Option<u32> {
     use std::os::unix::fs::PermissionsExt;
     let base = if keep_existing && let Ok(md) = fs::metadata(hook) && md.is_file() {
