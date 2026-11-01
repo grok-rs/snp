@@ -1023,19 +1023,27 @@ impl Brand {
 ```
 cur = std::env::current_exe()?                            // Linux: /proc/self/exe (resolved)
 cands = []
-if brand == Snp and arg0 contains a path separator: cands.push(std::path::absolute(arg0))
+if brand == Snp and arg0 contains a path separator
+   and absolute(arg0) has no `..` component:            cands.push(std::path::absolute(arg0))
 for dir in PATH (skip empty and relative entries): cands.push(dir / "snp[.exe]")
 cands.push(cur)
 pick the first c with is_file(c) && same_file(c, cur)     // Unix: (st_dev, st_ino); Windows: same-file crate (volume serial + file index)
 ```
 
 - Never canonicalize the pick. Homebrew's `/opt/homebrew/bin/snp` symlink must survive upgrades.
+- An arg0 with a `..` component (`../../bin/snp install` run inside the repository) is skipped, not folded:
+  `absolute` keeps the `..`, which ties `SNP_EXE` to the invoking directory (moving or renaming the repository then
+  breaks it), and folding `..` lexically is wrong across symlinked directories. The PATH or `cur` candidate wins.
+  Tests: `scripts::tests::select_exe_skips_a_dotted_arg0`, `install::snp_exe_never_embeds_dot_dot`.
 - The script's `command -v snp` / `pre-commit` fallbacks cover versioned picks such as mise installs.
 
 #### A.19.4 Is a file "snp"?
 
 `same_file(file, cur)`; or, for a copy, the same length and the same BLAKE3 or SHA-256 as `cur`; or `file --version`
-(10 s timeout) matching `^pre-commit [0-9.]+ \(snp ([^)]+)\)$`, which also reports the other snp's version.
+run with `SNP_VERSION_PROBE=1` (10 s timeout, own process group) matching `^pre-commit [0-9.]+ \(snp ([^)]+)\)$`,
+which also reports the other snp's version. A plain `--version` cannot be used: the compat brand prints exactly
+`pre-commit 4.6.2` (ADR-023); with the variable (and exactly that argv) snp of either brand prints
+`pre-commit 4.6.2 (snp X)`, while Python pre-commit ignores it.
 
 #### A.19.5 PATH lookup emulating `command -v`
 
