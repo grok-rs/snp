@@ -280,7 +280,12 @@ fn body(st: &mut RunState<'_>, a: &RunArgs, inv: &Invocation<'_>) -> Result<i32,
     let needs_files = hooks
         .iter()
         .any(|h| !h.def.always_run || h.def.pass_filenames);
-    let stat_possible = stat_possible(&git, &info, &run_env);
+    // F and G cost two spawns and save one `git diff` per executed process hook: worth it from three hooks on
+    let process_hooks = to_install
+        .iter()
+        .filter(|h| matches!(h.exec, snp_repo::ExecKind::Language))
+        .count();
+    let stat_possible = process_hooks >= 3 && stat_possible(&git, &info, &run_env);
     let (installed, side) = std::thread::scope(|s| {
         let side = std::thread::Builder::new().spawn_scoped(s, || {
             side_queries(&git, &sel, &info, needs_files, stat_possible)

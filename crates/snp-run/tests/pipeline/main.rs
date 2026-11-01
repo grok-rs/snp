@@ -5,9 +5,15 @@
 //! Owner: WP-32.
 #![cfg(unix)]
 
+// declared `#[cfg(test)]` so their `#[test]` functions and helpers count as test code for clippy
+#[cfg(test)]
 mod harness;
 
+#[cfg(test)]
 mod extensions;
+#[cfg(test)]
 mod hook_impl;
+#[cfg(test)]
 mod meta;
+#[cfg(test)]
 mod run;

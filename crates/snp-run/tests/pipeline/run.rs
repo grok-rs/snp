@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use snp_core::stage::{HookType, Stage};
 
-use crate::harness::{H, StepClock, all, args, line, local, sys, verbose};
+use crate::harness::{H, StepClock, all, args, contains_bytes, line, local, rep, sys, verbose};
 
 const META_IDENTITY: &str = "-   repo: meta\n    hooks:\n    -   id: identity\n";
 
@@ -90,7 +90,7 @@ fn t10_run_53_nonexistent_file_skips_everything() {
     assert_eq!(o.code, 0, "{o:?}");
     let nf = |n: &str| {
         let dots = 80 - 30 - n.len() + 3;
-        format!("{n}{}(no files to check)Skipped\n", ".".repeat(dots))
+        format!("{n}{}(no files to check)Skipped\n", rep(".", dots))
     };
     assert_eq!(
         o.stdout,
@@ -128,7 +128,6 @@ fn t10_run_15_duration_uses_the_clock() {
     let o = h.run(verbose(all()));
     assert_eq!(o.code, 0, "{o:?}");
     assert!(o.stdout.contains("\n- duration: 0.77s\n"), "{}", o.stdout);
-    let _ = Stage::Hook(HookType::PreCommit);
 }
 
 #[test]
@@ -202,11 +201,7 @@ fn t10_run_11_arbitrary_bytes_pass_through() {
     assert_eq!(o.code, 0);
     let o = h.run(verbose(args()));
     let needle = b"\xe2\x98\x83\xb2\n";
-    assert!(
-        o.stdout_bytes.windows(needle.len()).any(|w| w == needle),
-        "{:?}",
-        o.stdout
-    );
+    assert!(contains_bytes(&o.stdout_bytes, needle), "{:?}", o.stdout);
 }
 
 #[test]
@@ -312,7 +307,7 @@ fn t10_run_14_global_include_exclude_then_identity() {
         assert_eq!(o.code, 0);
         assert!(
             o.stdout
-                .starts_with(&format!("identity{}Passed\n", ".".repeat(65))),
+                .starts_with(&format!("identity{}Passed\n", rep(".", 65))),
             "{}",
             o.stdout
         );
@@ -445,7 +440,7 @@ fn t10_run_18_log_file_gets_the_stripped_output() {
     let log = std::fs::read_to_string(h.path("test.log")).unwrap();
     assert_eq!(log, "This is STDOUT output\nThis is STDERR output\n");
     // append mode
-    let _ = h.run(args());
+    drop(h.run(args()));
     let log = std::fs::read_to_string(h.path("test.log")).unwrap();
     assert_eq!(log.matches("STDOUT").count(), 2);
 }
@@ -667,7 +662,7 @@ fn t10_run_27_many_long_file_names_are_partitioned() {
         "sh -c 'echo $#' --",
         "files: ''\nverbose: true",
     )));
-    let long = "a".repeat(100);
+    let long = rep("a", 100);
     for i in 0..400 {
         h.write(&format!("{long}{i}"), b"");
     }
@@ -764,9 +759,7 @@ fn t10_run_30_commit_msg_stages() {
     assert!(h.read(".git/COMMIT_EDITMSG").contains("Signed off by:"));
     // post-checkout runs hooks with no files
     let h = H::new();
-    h.config(&format!(
-        "repos:\n-   repo: meta\n    hooks:\n    -   id: identity\n        stages: [post-checkout]\n"
-    ));
+    h.config("repos:\n-   repo: meta\n    hooks:\n    -   id: identity\n        stages: [post-checkout]\n");
     let mut a = args();
     a.hook_stage = Stage::Hook(HookType::PostCheckout);
     let o = h.run(a);
@@ -905,9 +898,7 @@ fn t10_run_36_fail_fast() {
     }
     // a passing fail_fast hook does not stop the run
     let h = H::new();
-    h.config(&format!(
-        "repos:\n-   repo: meta\n    hooks:\n    -   id: identity\n        fail_fast: true\n    -   id: identity\n        name: run me!\n"
-    ));
+    h.config("repos:\n-   repo: meta\n    hooks:\n    -   id: identity\n        fail_fast: true\n    -   id: identity\n        name: run me!\n");
     let o = h.run(all());
     assert_eq!(o.stdout.matches("run me!").count(), 1);
 }
@@ -1124,7 +1115,7 @@ fn x13_exe_02_shlex_error_fails_the_hook() {
 #[test]
 fn x13_exe_03_argument_list_too_long() {
     let h = H::new();
-    let big = "x".repeat(140_000);
+    let big = rep("x", 140_000);
     h.config(&local(&sys(
         "big",
         "big",
@@ -1134,7 +1125,7 @@ fn x13_exe_03_argument_list_too_long() {
     h.write("a", b"");
     h.stage("a");
     let o = h.run(args());
-    assert_eq!(o.code, 1, "{}", &o.stdout[..o.stdout.len().min(400)]);
+    assert_eq!(o.code, 1, "{}", o.stdout.get(..400).unwrap_or(&o.stdout));
     assert!(
         o.stdout
             .contains("\n\n[Errno 7] Argument list too long: '/usr/bin/echo'\n\n")
@@ -1148,7 +1139,7 @@ fn x13_exe_03_argument_list_too_long() {
 #[test]
 fn x13_sm_06_e2big_without_files() {
     let h = H::new();
-    let big = "x".repeat(140_000);
+    let big = rep("x", 140_000);
     h.config(&local(&sys(
         "big",
         "big",

@@ -4,7 +4,7 @@ use std::path::Path;
 
 use snp_core::failure::Failure;
 
-use crate::harness::{H, hook_impl_args, line, local, sys};
+use crate::harness::{H, hook_impl_args, line, local, rep, sys};
 
 /// The sample local config of HKI-08.
 const SAMPLE: &str = "repos:\n-   repo: local\n    hooks:\n    -   id: do_not_commit\n        name: Block if \"DO NOT COMMIT\" is found\n        entry: DO NOT COMMIT\n        language: pygrep\n";
@@ -102,8 +102,8 @@ fn t10_hki_02_legacy_hook() {
         ".git/hooks/pre-push.legacy",
         format!("#!/bin/sh\ncat > '{}'\n", got.display()).as_bytes(),
     );
-    let z = "0".repeat(40);
-    let stdin = format!("(delete) {z} refs/heads/b {}\n", "1".repeat(40));
+    let z = rep("0", 40);
+    let stdin = format!("(delete) {z} refs/heads/b {}\n", rep("1", 40));
     let o = h.hook_impl(
         hook_impl_args("pre-push", &["--", "origin", "url"], Some(&dir)),
         stdin.as_bytes(),
@@ -190,7 +190,7 @@ fn x13_hi_07_broken_legacy_hook_fails_but_hooks_run() {
     assert_eq!(o.stdout, line("passing", "Passed"));
     // a directory passes os.access(X_OK)
     std::fs::remove_file(dir.join("pre-commit.legacy")).unwrap();
-    std::fs::create_dir(dir.join("pre-commit.legacy")).unwrap();
+    std::fs::create_dir_all(dir.join("pre-commit.legacy")).unwrap();
     let o = h.hook_impl(hook_impl_args("pre-commit", &["--"], Some(&dir)), b"");
     assert_eq!(o.code, 1);
     assert!(o.stderr.contains("is a directory"), "{}", o.stderr);
@@ -334,7 +334,7 @@ fn t10_hki_06_pre_push_namespaces() {
         o.stdout
     );
     // a new branch: from = the parent of the first commit not on the remote
-    let z = "0".repeat(40);
+    let z = rep("0", 40);
     let stdin = format!("refs/heads/feat {second} refs/heads/feat {z}\n");
     let o = h.hook_impl(
         hook_impl_args("pre-push", &["--", "origin", "url"], None),
@@ -358,7 +358,7 @@ fn t10_hki_06_pre_push_namespaces() {
 #[test]
 fn t10_hki_07_delete_branch_push_prints_nothing() {
     let (h, first, _) = pushed();
-    let z = "0".repeat(40);
+    let z = rep("0", 40);
     let stdin = format!("(delete) {z} refs/heads/b {first}\n");
     let o = h.hook_impl(
         hook_impl_args("pre-push", &["--", "origin", "url"], None),
@@ -370,8 +370,8 @@ fn t10_hki_07_delete_branch_push_prints_nothing() {
 #[test]
 fn x13_hi_05_unknown_local_sha() {
     let (h, _, _) = pushed();
-    let z = "0".repeat(40);
-    let bad = "1234567890".repeat(4);
+    let z = rep("0", 40);
+    let bad = rep("1234567890", 4);
     let stdin = format!("refs/heads/x {bad} refs/heads/x {z}\n");
     let o = h.hook_impl(
         hook_impl_args("pre-push", &["--", "origin", "url"], None),

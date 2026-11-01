@@ -34,7 +34,7 @@ pub(crate) struct Sink(pub(crate) Arc<Mutex<Vec<u8>>>);
 
 impl Write for Sink {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
+        snp_core::sync::lock(&self.0).extend_from_slice(buf);
         Ok(buf.len())
     }
     fn flush(&mut self) -> std::io::Result<()> {
@@ -135,16 +135,18 @@ impl Resolve for Fake {
     }
 
     fn install_envs(&self, hooks: &[&ResolvedHook], _cx: &ResolveCtx<'_>) -> Result<(), Failure> {
-        self.installs
-            .calls
-            .lock()
-            .unwrap()
+        snp_core::sync::lock(&self.installs.calls)
             .push(hooks.iter().map(|h| h.def.id.to_string()).collect());
-        if let Some(p) = self.installs.touch.lock().unwrap().as_ref() {
-            let mut f = std::fs::OpenOptions::new().append(true).open(p).unwrap();
-            f.write_all(b"autosave\n").unwrap();
+        let touch = snp_core::sync::lock(&self.installs.touch).clone();
+        if let Some(p) = touch {
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(&p)
+                .and_then(|mut f| f.write_all(b"autosave\n"))
+                .map_err(|e| Failure::from_io(&e, None, None))?;
         }
-        if let Some(d) = *self.installs.delay.lock().unwrap() {
+        let delay = *snp_core::sync::lock(&self.installs.delay);
+        if let Some(d) = delay {
             std::thread::sleep(d);
         }
         Ok(())
@@ -389,16 +391,14 @@ impl H {
                 cancel: cancel.clone(),
                 role: Role::Tool,
             }),
-            resolver: self.fake.clone(),
+            resolver: Arc::<Fake>::clone(&self.fake),
             cancel: cancel.clone(),
             signals: None,
             pool: JobPool::new(jobs, cancel.clone()),
             net: Limiter::new(jobs),
             installs: Limiter::new(jobs),
             probe: Arc::new(ToolProbe::default()),
-            runner: Arc::new(ProcRunner {
-                cancel: cancel.clone(),
-            }),
+            runner: Arc::new(ProcRunner { cancel }),
             budget: OutputBudget::new(64 << 20, self.base.join("spill")),
             invocation_cwd: cwd,
             arg0: Some(OsString::from("pre-commit")),
@@ -554,8 +554,19 @@ pub(crate) fn sys(id: &str, name: &str, entry: &str, extra: &str) -> String {
     s
 }
 
+/// `s` repeated `n` times (`str::repeat` is a disallowed method).
+pub(crate) fn rep(s: &str, n: usize) -> String {
+    std::iter::repeat_n(s, n).collect()
+}
+
+/// `needle` occurs in `hay`.
+pub(crate) fn contains_bytes(hay: &[u8], needle: &[u8]) -> bool {
+    (0..=hay.len().saturating_sub(needle.len()))
+        .any(|i| hay.get(i..i + needle.len()) == Some(needle))
+}
+
 /// `{name}{dots}{status}` at 80 columns.
 pub(crate) fn line(name: &str, status: &str) -> String {
     let dots = 79 - name.chars().count() - status.chars().count();
-    format!("{name}{}{status}\n", ".".repeat(dots))
+    format!("{name}{}{status}\n", rep(".", dots))
 }

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use snp_core::brand::Brand;
 
-use crate::harness::{H, args, line, local, sys};
+use crate::harness::{H, args, line, local, rep, sys};
 
 fn staged(h: &H, path: &str, content: &[u8]) {
     h.write(path, content);
@@ -136,7 +136,7 @@ fn stage_fixed_verify_stages_the_fixes() {
     );
     let cached = String::from_utf8(h.git(&["show", ":a.txt"]).stdout).unwrap();
     assert_eq!(cached, "good\n");
-    assert!(h.git(&["diff"]).stdout.is_empty());
+    assert_eq!(h.git(&["diff"]).stdout, b"");
 }
 
 #[test]
@@ -502,7 +502,7 @@ fn output_modes() {
     let o = h.run(args());
     assert_eq!(o.code, 1);
     assert!(
-        o.stdout.contains(&format!("{}\nSummary: ", "=".repeat(79))),
+        o.stdout.contains(&format!("{}\nSummary: ", rep("=", 79))),
         "{}",
         o.stdout
     );

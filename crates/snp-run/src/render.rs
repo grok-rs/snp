@@ -412,4 +412,96 @@ mod tests {
         let s = summary(&rows, 0.5, false);
         assert!(s.ends_with("Summary: 1 passed, 0 failed, 1 skipped in 0.5s\n- a: 0.12s\n"));
     }
+
+    /// A shared byte sink for a `Printer`.
+    #[derive(Clone, Default)]
+    struct Sink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Sink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            snp_core::sync::lock(&self.0).extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn printer(color: bool) -> (snp_core::output::Printer, Sink) {
+        let out = Sink::default();
+        let p = snp_core::output::Printer::new(
+            Box::new(out.clone()),
+            Box::new(std::io::sink()),
+            snp_core::output::PrinterOpts {
+                brand: snp_core::brand::Brand::PreCommit,
+                color,
+                stdout_is_tty: false,
+                windows_text_mode: false,
+                cancel: snp_core::cancel::CancelToken::new(),
+            },
+        );
+        (p, out)
+    }
+
+    #[test]
+    fn t10_out_01_write_is_utf8_bytes() {
+        let (p, out) = printer(false);
+        p.write("hello wörld".as_bytes());
+        assert_eq!(*out.0.lock().unwrap(), "hello wörld".as_bytes());
+    }
+
+    #[test]
+    fn t10_out_02_format_color() {
+        let mut s = String::new();
+        push_colored(&mut s, "foo", GREEN, true);
+        assert_eq!(s, "\x1b[42mfoo\x1b[m");
+        let mut s = String::new();
+        push_colored(&mut s, "foo", GREEN, false);
+        assert_eq!(s, "foo");
+    }
+
+    #[test]
+    fn t10_out_03_use_color() {
+        use snp_core::env::Env;
+        use snp_core::output::ColorSetting;
+        let env = Env::from_pairs([("TERM", "xterm")]);
+        assert!(!snp_os::term::decide_color(ColorSetting::Never, &env));
+        assert!(snp_os::term::decide_color(ColorSetting::Always, &env));
+        // auto: the test's stderr is not a terminal (captured), or TERM=dumb
+        let dumb = Env::from_pairs([("TERM", "dumb")]);
+        assert!(!snp_os::term::decide_color(ColorSetting::Auto, &dumb));
+        assert_eq!(ColorSetting::parse(std::ffi::OsStr::new("bogus")), None);
+        assert_eq!(ColorSetting::parse(std::ffi::OsStr::new("")), None);
+    }
+
+    #[test]
+    fn t10_out_04_log_lines() {
+        use snp_core::output::Level;
+        let (p, out) = printer(true);
+        p.log(Level::Warning, "hi");
+        p.log(Level::Error, "bad");
+        p.log(Level::Info, "info");
+        assert_eq!(
+            String::from_utf8(out.0.lock().unwrap().clone()).unwrap(),
+            "\x1b[43;30m[WARNING]\x1b[m hi\n\x1b[41m[ERROR]\x1b[m bad\n[INFO]\x1b[m info\n"
+        );
+        let (p, out) = printer(false);
+        p.log(Level::Warning, "hi");
+        assert_eq!(*out.0.lock().unwrap(), b"[WARNING] hi\n");
+    }
+
+    #[test]
+    fn t10_out_05_colour_bytes() {
+        assert_eq!(
+            [RED, GREEN, YELLOW, TURQUOISE, SUBTLE, NORMAL],
+            [
+                "\x1b[41m",
+                "\x1b[42m",
+                "\x1b[43;30m",
+                "\x1b[46;30m",
+                "\x1b[2m",
+                "\x1b[m"
+            ]
+        );
+    }
 }
