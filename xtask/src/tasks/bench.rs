@@ -86,7 +86,7 @@ record (default target/bench/results/<label>.json).
   --allocator A          system (default) or mimalloc (musl targets only)
   --label NAME           the record name (default: current)
   --out FILE             write the record here instead
-  --runs N / --warmup N  override hyperfine's 50 / 5 (fixtures with their own counts keep them)
+  --runs N / --warmup N  override hyperfine's counts (50 / 5; the slow scenarios use fewer)
   --syscalls             also count snp's syscalls with `strace -f -c` (Linux; B1, B3)
   --dhat                 also measure B3's total allocation with a `--features dhat-heap` build
   --path PATH            the PATH of the hermetic environment (Unix)";
@@ -2081,14 +2081,7 @@ fn measure_one(
         env.push(("SNP_BIN".into(), exe.as_os_str().to_owned()));
     }
     let (default_w, default_r) = s.runs.unwrap_or((WARMUP, RUNS));
-    let (warmup, runs) = (
-        counts.0.unwrap_or(default_w),
-        if s.runs.is_some() {
-            default_r
-        } else {
-            counts.1.unwrap_or(default_r)
-        },
-    );
+    let (warmup, runs) = (counts.0.unwrap_or(default_w), counts.1.unwrap_or(default_r));
     let (program, argv) = scenario_command(s, exe);
     let mut line = vec![program.clone().into_os_string()];
     line.extend(argv.iter().cloned());

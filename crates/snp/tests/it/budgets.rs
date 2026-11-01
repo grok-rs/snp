@@ -393,3 +393,70 @@ fn spawn_roles_are_well_formed() {
         assert!(!(s.role == "hook" && s.is_git()), "{s:?}");
     }
 }
+
+/// The DoD's 3× margin over a timing budget of ARCHITECTURE §12.1 for this OS (Linux, macOS, Windows): the
+/// perf-smoke job runs these release-mode tests; `cargo xtask bench gate` enforces the budgets themselves on the
+/// `dist` build with hyperfine.
+fn smoke_budget(linux_ms: u64, macos_ms: u64, windows_ms: u64) -> std::time::Duration {
+    let ms = if cfg!(target_os = "macos") {
+        macos_ms
+    } else if cfg!(windows) {
+        windows_ms
+    } else {
+        linux_ms
+    };
+    std::time::Duration::from_millis(ms * 3)
+}
+
+/// The median wall time of `runs` invocations of `snp <args>` in `cwd` (after two warm-up runs).
+fn median_wall(env: &TestEnv, cwd: &Path, args: &[&str], runs: usize) -> std::time::Duration {
+    for _ in 0..2 {
+        let out = env.snp(cwd).args(args).output();
+        assert_eq!(out.code, 0, "{}", String::from_utf8_lossy(&out.stderr));
+    }
+    let mut times: Vec<std::time::Duration> = (0..runs)
+        .map(|_| {
+            let t = std::time::Instant::now();
+            let out = env.snp(cwd).args(args).output();
+            let elapsed = t.elapsed();
+            assert_eq!(out.code, 0, "{}", String::from_utf8_lossy(&out.stderr));
+            elapsed
+        })
+        .collect();
+    times.sort();
+    times[runs / 2]
+}
+
+/// B1 (`--version`, ≤ 3 ms on Linux, 5 ms on macOS, 15 ms on Windows) with the 3× margin.
+#[test]
+#[ignore = "perf"]
+fn perf_b1_version_within_3x_budget() {
+    let env = TestEnv::new(bins());
+    let median = median_wall(&env, env.root(), &["--version"], 31);
+    let budget = smoke_budget(3, 5, 15);
+    assert!(median <= budget, "B1 median {median:?} > {budget:?}");
+}
+
+/// B2 (one `always_run` noop hook, ≤ 10 ms on Linux) with the 3× margin. Renamed `perf_b2_…` (the perf-smoke
+/// filter) when WP-32 merges.
+#[test]
+#[ignore = "needs WP-32"]
+fn timing_b2_one_noop_hook_within_3x_budget() {
+    let env = TestEnv::new(bins());
+    let repo = noop_repo(&env, "b2-timing", &noop_config(10));
+    let median = median_wall(&env, &repo, &["run", "noop-01"], 21);
+    let budget = smoke_budget(10, 15, 100);
+    assert!(median <= budget, "B2 median {median:?} > {budget:?}");
+}
+
+/// B3 (ten `always_run` noop hooks, ≤ 25 ms on Linux, 40 ms on macOS) with the 3× margin. Renamed `perf_b3_…`
+/// when WP-32 merges.
+#[test]
+#[ignore = "needs WP-32"]
+fn timing_b3_ten_noop_hooks_within_3x_budget() {
+    let env = TestEnv::new(bins());
+    let repo = noop_repo(&env, "b3-timing", &noop_config(10));
+    let median = median_wall(&env, &repo, &["run"], 21);
+    let budget = smoke_budget(25, 40, 400);
+    assert!(median <= budget, "B3 median {median:?} > {budget:?}");
+}
