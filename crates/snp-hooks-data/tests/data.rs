@@ -376,7 +376,9 @@ mod data {
         assert_eq!(import_closure("nope").len(), 0);
     }
 
-    /// ADR-031 initial gates: Exact for NATIVE ids, Delegate for the caveat ids; absent ids delegate.
+    /// ADR-031 gates: Exact for NATIVE ids; absent ids delegate. The caveat ids (check-yaml, check-toml, check-xml,
+    /// detect-aws-credentials) follow their corpus comparison, which snp-hooks' `tests/caveats`
+    /// (`caveat_corpus_gates`) checks against this table.
     #[test]
     fn parity_gates() {
         for id in [
@@ -389,10 +391,6 @@ mod data {
             assert_eq!(parity_gate(id), Gate::Exact, "{id}");
         }
         for id in [
-            "check-yaml",
-            "check-toml",
-            "check-xml",
-            "detect-aws-credentials",
             "check-ast",
             "debug-statements",
             "check-illegal-windows-names",

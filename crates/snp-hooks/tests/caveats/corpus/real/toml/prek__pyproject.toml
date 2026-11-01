@@ -1,0 +1,82 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "prek"
+version = "0.5.5"
+description = "A fast Git hook manager written in Rust, designed as a drop-in alternative to pre-commit, reimagined."
+authors = [{ name = "j178", email = "hi@j178.dev" }]
+requires-python = ">=3.8"
+keywords = ["pre-commit", "git", "hooks"]
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "licenses/*"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Rust",
+  "Topic :: Software Development :: Quality Assurance",
+]
+
+[project.urls]
+Repository = "https://github.com/j178/prek"
+Changelog = "https://github.com/j178/prek/blob/master/CHANGELOG.md"
+Releases = "https://github.com/j178/prek/releases"
+Homepage = "https://prek.j178.dev/"
+
+[dependency-groups]
+dev = ["rooster"]
+docs = [
+  "llmstxt-standalone>=0.2.0",
+  "mike",
+  "zensical>=0.0.24",
+]
+docker = ["cargo-zigbuild>=0.19.8"]
+
+[tool.uv.sources]
+rooster = { git = "https://github.com/j178/rooster", rev = "c1901e113611dbe4c2c30917a4d4d392e6d0c679" }
+mike = { git = "https://github.com/squidfunk/mike.git", rev = "2d4ad799442f4592db8ad53b179bfb33db8c69ac" }
+
+[tool.uv.dependency-groups]
+dev = { requires-python = ">=3.12" }
+docs = { requires-python = ">=3.12" }
+
+[tool.maturin]
+bindings = "bin"
+manifest-path = "crates/prek/Cargo.toml"
+strip = true
+python-source = "python"
+
+[tool.rooster]
+version-format = "cargo"
+version_tag_prefix = "v"
+major_labels = []  # We do not use the major version number yet
+minor_labels = ["breaking"]
+changelog_ignore_labels = ["internal", "ci", "testing"]
+changelog_sections.breaking = "Breaking changes"
+changelog_sections.enhancement = "Enhancements"
+changelog_sections.compatibility = "Enhancements"
+changelog_sections.performance = "Performance"
+changelog_sections.bug = "Bug fixes"
+changelog_sections.documentation = "Documentation"
+changelog_sections.__unknown__ = "Other changes"
+changelog_contributors = true
+
+version_files = [
+  "pyproject.toml",
+  # Replace the `workspace.package.version` field in the Cargo.toml
+  { path = "Cargo.toml", format = "cargo", field = "workspace.package.version" },
+  # Bump versions of dependent crates
+  { target = "Cargo.toml", match = "^prek-", version_format = "cargo" },
+  "README.md",
+  "docs/installation.md",
+  # Update current Docker examples without rewriting historical tag references.
+  { target = "docs/integrations.md", match = "ghcr.io/j178/prek:[0-9]", version_format = "cargo" },
+  { target = ".github/ISSUE_TEMPLATE/bug_report.yaml", match = "current:", version_format = "cargo" },
+]
+
+[tool.uv]
+package = false

@@ -1,0 +1,41 @@
+[profile.ci-core]
+status-level = "skip"
+final-status-level = "slow"
+failure-output = "immediate"
+fail-fast = false
+test-threads = 8
+
+[profile.ci-language]
+inherits = "ci-core"
+default-filter = "binary_id(prek::languages)"
+
+[[profile.ci-language.overrides]]
+# LuaRocks can hit a race condition when multiple processes are installing the same package.
+filter = "test(lua::)"
+threads-required = "num-test-threads"
+
+[[profile.ci-language.overrides]]
+# .NET named mutexes share /tmp/.dotnet/shm state between test processes on Unix.
+platform = "cfg(unix)"
+filter = "test(dotnet::)"
+threads-required = "num-test-threads"
+
+[[profile.ci-language.overrides]]
+# Conda package operations can share user-level cache and lock state.
+filter = "test(conda::)"
+threads-required = "num-test-threads"
+
+[[profile.ci-language.overrides]]
+# Julia package operations share user-level depot and registry state.
+filter = "test(julia::)"
+threads-required = "num-test-threads"
+
+[[profile.ci-language.overrides]]
+platform = "cfg(windows)"
+filter = "test(perl::)"
+threads-required = "num-test-threads"
+
+[[profile.ci-language.overrides]]
+# R package installs can share user-level cache and lock state.
+filter = "test(/^r::/)"
+threads-required = "num-test-threads"

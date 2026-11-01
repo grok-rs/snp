@@ -1,0 +1,207 @@
+{
+ "python": "3.13.14",
+ "results": {
+  "fep-bad-arg": {
+   "code": 2,
+   "crashed": false,
+   "files": {},
+   "out": "usage: Fixes the encoding pragma of python files [-h] [--pragma PRAGMA]\n                                                 [--remove]\n                                                 [filenames ...]\nFixes the encoding pragma of python files: error: unrecognized arguments: --bogus\n"
+  },
+  "fep-custom-pragma": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.py": "# coding: utf-8\nx\n",
+    "b.py": "# coding: utf-8\nx\n"
+   },
+   "out": "Added `# coding: utf-8` to b.py\n"
+  },
+  "fep-help": {
+   "code": 0,
+   "crashed": false,
+   "files": {},
+   "out": "usage: Fixes the encoding pragma of python files [-h] [--pragma PRAGMA]\n                                                 [--remove]\n                                                 [filenames ...]\n\npositional arguments:\n  filenames        Filenames to fix\n\noptions:\n  -h, --help       show this help message and exit\n  --pragma PRAGMA  The encoding pragma to use. Default: # -*- coding: utf-8\n                   -*-\n  --remove         Remove the encoding pragma (Useful in a python3-only\n                   codebase)\n"
+  },
+  "fep-remove": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.py": "x\n",
+    "b.py": "x\n",
+    "c.py": "#!/x\ny\n"
+   },
+   "out": "Removed encoding pragma from a.py\nRemoved encoding pragma from c.py\n"
+  },
+  "fep-table": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.py": "# -*- coding: utf-8 -*-\nx = 1\n",
+    "b.py": "#!/usr/bin/env python\r\n# -*- coding: utf-8 -*-\r\nx\r\n",
+    "c.py": "# -*- coding: utf-8 -*-\nx\n",
+    "d.py": "# -*- coding: utf-8 -*-\nx\n",
+    "e.py": "",
+    "f.py": "",
+    "g.py": ""
+   },
+   "out": "Added `# -*- coding: utf-8 -*-` to a.py\nAdded `# -*- coding: utf-8 -*-` to b.py\nAdded `# -*- coding: utf-8 -*-` to d.py\nAdded `# -*- coding: utf-8 -*-` to e.py\nAdded `# -*- coding: utf-8 -*-` to g.py\n"
+  },
+  "fns-help": {
+   "code": 0,
+   "crashed": false,
+   "files": {},
+   "out": ""
+  },
+  "fns-none": {
+   "code": 0,
+   "crashed": false,
+   "files": {},
+   "out": ""
+  },
+  "fns-quoted": {
+   "code": 1,
+   "crashed": false,
+   "files": {},
+   "out": "\"s\\303\\251\": new submodule introduced\n\nThis commit introduces new submodules.\nDid you unintentionally `git add .`?\nTo fix: git rm {thesubmodule}  # no trailing slash\nAlso check .gitmodules\n"
+  },
+  "fns-refs": {
+   "code": 0,
+   "crashed": false,
+   "files": {},
+   "out": ""
+  },
+  "fns-staged": {
+   "code": 1,
+   "crashed": false,
+   "files": {},
+   "out": "other: new submodule introduced\nsub: new submodule introduced\n\nThis commit introduces new submodules.\nDid you unintentionally `git add .`?\nTo fix: git rm {thesubmodule}  # no trailing slash\nAlso check .gitmodules\n"
+  },
+  "ntt-abbrev": {
+   "code": 1,
+   "crashed": false,
+   "files": {},
+   "out": "tests/b.py does not match pattern \"test.*\\.py\"\n"
+  },
+  "ntt-default": {
+   "code": 1,
+   "crashed": false,
+   "files": {},
+   "out": "tests/test_foo.py does not match pattern \".*_test\\.py\"\ntests/a\nb_test.py does not match pattern \".*_test\\.py\"\n"
+  },
+  "ntt-django": {
+   "code": 1,
+   "crashed": false,
+   "files": {},
+   "out": "tests/foo_test.py does not match pattern \"test.*\\.py\"\n"
+  },
+  "ntt-mutex": {
+   "code": 2,
+   "crashed": false,
+   "files": {},
+   "out": "usage: name-tests-test [-h] [--django] [filenames ...]\nname-tests-test: error: unrecognized arguments: --pytest-test-first\n"
+  },
+  "ntt-test-first": {
+   "code": 2,
+   "crashed": false,
+   "files": {},
+   "out": "usage: name-tests-test [-h] [--django] [filenames ...]\nname-tests-test: error: unrecognized arguments: --pytest-test-first\n"
+  },
+  "ntt-unittest": {
+   "code": 2,
+   "crashed": false,
+   "files": {},
+   "out": "usage: name-tests-test [-h] [--django] [filenames ...]\nname-tests-test: error: unrecognized arguments: --unittest\n"
+  },
+  "ssy-flag-file": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "--x": "a: 2\n\nb: 1\n"
+   },
+   "out": "Fixing file `--x`\n"
+  },
+  "ssy-not-utf8-crash": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a": "a: 2\n\nb: 1\n",
+    "b": "x: \u00ff\n",
+    "c": "b: 1\n\na: 2\n"
+   },
+   "out": "Fixing file `a`\nUnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 3: invalid start byte\n"
+  },
+  "ssy-not-utf8-second-chunk": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u00e2\u0082\u00ac\u00ff"
+   },
+   "out": "UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 3: invalid start byte\n"
+  },
+  "ssy-table": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a": "b: 1  \n",
+    "b": "\n",
+    "c": "\n",
+    "d": "",
+    "e": "# c\n\na: 2\n\nb: 1\n",
+    "f": "a: 2\u00c2\u00a0\nb: 1\n",
+    "g": "\"a\": 2\n\nb: 1\n",
+    "h": "a: 2\n\nb: 1\n",
+    "i": "a: 1\r\n\r\nb: 2\r\n",
+    "j": "# h1\n# h2\n\nx: 3\n\n'y': 2\n# trailing\n\n# about z\nz: 1\n"
+   },
+   "out": "Fixing file `b`\nFixing file `c`\nFixing file `e`\nFixing file `g`\nFixing file `h`\nFixing file `j`\n"
+  },
+  "vcs-bad-domain": {
+   "code": 2,
+   "crashed": false,
+   "files": {
+    "a.md": "x\n"
+   },
+   "out": "usage: check-vcs-permalinks [-h] [filenames ...]\ncheck-vcs-permalinks: error: unrecognized arguments: --additional-github-domain\n"
+  },
+  "vcs-domains": {
+   "code": 2,
+   "crashed": false,
+   "files": {
+    "a.md": "https://gitlab.example/o/r/blob/master/x#L1\nhttps://github.com/o/r/blob/master/x#L2\n"
+   },
+   "out": "usage: check-vcs-permalinks [-h] [filenames ...]\ncheck-vcs-permalinks: error: unrecognized arguments: --additional-github-domain --additional-github-domain=github.com a.md\n"
+  },
+  "vcs-missing-crash": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.md": "https://github.com/o/r/blob/master/x#L2\n"
+   },
+   "out": "a.md:1:https://github.com/o/r/blob/master/x#L2\nFileNotFoundError: [Errno 2] No such file or directory: 'nope'\n"
+  },
+  "vcs-partitions": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "f1": "https://github.com/o/r/blob/master/x#L1\n",
+    "f2": "ok\n",
+    "f3": "https://github.com/o/r/blob/master/x#L3\n",
+    "f4": "https://github.com/o/r/blob/master/x#L4\n",
+    "f5": "https://github.com/o/r/blob/master/x#L5\n",
+    "f6": "https://github.com/o/r/blob/master/x#L6"
+   },
+   "out": "f1:1:https://github.com/o/r/blob/master/x#L1\nf3:1:https://github.com/o/r/blob/master/x#L3\nf6:1:https://github.com/o/r/blob/master/x#L6\nNon-permanent github link detected.\nOn any page on github press [y] to load a permalink.\nf4:1:https://github.com/o/r/blob/master/x#L4\nf5:1:https://github.com/o/r/blob/master/x#L5\n\nNon-permanent github link detected.\nOn any page on github press [y] to load a permalink.\n"
+  },
+  "vcs-table": {
+   "code": 1,
+   "crashed": false,
+   "files": {
+    "a.md": "see https://github.com/o/r/blob/main/x.py#L1 here\nhttps://github.com/o/r/blob/abc1234/x.py#L2\nhttps://github.com/o/r/blob/v1.0/x.py#L3\nhttps://github.com/o/r/blob/abc/x.py#L4\nhttps://github.com/o/r/blob/master/x.py#Lx\nhttps://github.com/o/r/tree/main/x.py#L5\nhttps://githubXcom/o/r/blob/master/x.py#L6\nhttps://github.com/o/r/blob/master/y.py#L7",
+    "b.md": "nothing\n"
+   },
+   "out": "a.md:7:https://githubXcom/o/r/blob/master/x.py#L6\na.md:8:https://github.com/o/r/blob/master/y.py#L7\nNon-permanent github link detected.\nOn any page on github press [y] to load a permalink.\n"
+  }
+ },
+ "tag": "v3.3.0",
+ "version": "3.3.0"
+}
