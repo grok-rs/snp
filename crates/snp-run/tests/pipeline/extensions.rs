@@ -610,3 +610,297 @@ fn list_text_and_json() {
          \"unsupported\", \"stages\": [\"pre-push\"], \"groups\": []}\n]\n"
     );
 }
+
+/// The index content of `path`.
+fn cached(h: &H, path: &str) -> String {
+    String::from_utf8(h.git(&["show", &format!(":{path}")]).stdout).unwrap()
+}
+
+#[test]
+fn stage_fixed_is_withdrawn_when_a_final_bucket_changes_the_file() {
+    // the bucket is the last priority: no later sequential hook would catch the second change
+    let h = H::new();
+    h.config(&local(&format!(
+        "{}{}{}",
+        sys("fix", "fix", FIX, "stage_fixed: trust\npriority: 1"),
+        sys(
+            "more",
+            "more",
+            "sh -c 'echo INJECTED >> a.txt' --",
+            "priority: 2\npass_filenames: false\nalways_run: true"
+        ),
+        sys(
+            "p1",
+            "p1",
+            "'true'",
+            "priority: 2\npass_filenames: false\nalways_run: true"
+        ),
+    )));
+    staged(&h, "a.txt", b"bad\n");
+    let o = h.run(args());
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(o.stdout.contains(&line("more", "Failed")), "{}", o.stdout);
+    assert_eq!(cached(&h, "a.txt"), "bad\n", "{o:?}");
+    assert!(
+        o.stderr
+            .contains("snp: stage_fixed: a.txt was changed by a later hook; not staged\n"),
+        "{}",
+        o.stderr
+    );
+    // a failing bucket member that appends to the accepted file
+    let h = H::new();
+    h.config(&local(&format!(
+        "{}{}{}",
+        sys("fix", "fix", FIX, "stage_fixed: trust\npriority: 0"),
+        sys(
+            "p1",
+            "p1",
+            "sh -c 'echo EVIL >> a.txt; exit 1' --",
+            "priority: 1\npass_filenames: false\nalways_run: true"
+        ),
+        sys(
+            "p2",
+            "p2",
+            "sh -c 'exit 0' --",
+            "priority: 1\npass_filenames: false\nalways_run: true"
+        ),
+    )));
+    staged(&h, "a.txt", b"bad\n");
+    let o = h.run(args());
+    assert_eq!(o.code, 1, "{o:?}");
+    assert_eq!(cached(&h, "a.txt"), "bad\n", "{o:?}");
+}
+
+#[test]
+fn stage_fixed_withdrawn_by_a_later_sequential_hook_says_so() {
+    let h = H::new();
+    h.config(&local(&format!(
+        "{}{}",
+        sys("fix", "fix", FIX, "stage_fixed: trust"),
+        sys(
+            "later",
+            "later",
+            "sh -c 'echo more >> a.txt' --",
+            "pass_filenames: false\nalways_run: true"
+        ),
+    )));
+    staged(&h, "a.txt", b"bad\n");
+    let o = h.run(args());
+    assert_eq!(o.code, 1, "{o:?}");
+    assert_eq!(cached(&h, "a.txt"), "bad\n");
+    assert!(
+        o.stderr
+            .contains("snp: stage_fixed: a.txt was changed by a later hook; not staged\n"),
+        "{}",
+        o.stderr
+    );
+}
+
+#[test]
+fn bucket_blames_a_writer_without_filenames() {
+    // `writer` gets no file list, so it could have written x.py: the linter alone is never blamed
+    let h = H::new();
+    h.config(&local(&format!(
+        "{}{}",
+        sys(
+            "writer",
+            "writer",
+            "sh -c 'echo w >> x.py' --",
+            "priority: 1\nalways_run: true\npass_filenames: false"
+        ),
+        sys("lint", "lint", "'true'", "priority: 1\nfiles: \\.py$"),
+    )));
+    staged(&h, "x.py", b"x = 1\n");
+    let o = h.run(args());
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(o.stdout.contains(&line("writer", "Failed")), "{}", o.stdout);
+    // a bucket of constrained writers still attributes to the single owner
+    let h = H::new();
+    h.config(&local(&format!(
+        "{}{}",
+        sys(
+            "fa",
+            "fa",
+            "sh -c 'sed -i s/bad/good/ \"$@\"' --",
+            "priority: 1\nfiles: ^a"
+        ),
+        sys("fb", "fb", "'true'", "priority: 1\nfiles: ^b"),
+    )));
+    staged(&h, "a.txt", b"bad\n");
+    staged(&h, "b.txt", b"b\n");
+    let o = h.run(args());
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(o.stdout.contains(&line("fa", "Failed")), "{}", o.stdout);
+    assert!(o.stdout.contains(&line("fb", "Passed")), "{}", o.stdout);
+}
+
+#[test]
+fn stage_fixed_works_inside_a_priority_bucket() {
+    let h = H::new();
+    h.config(&local(&format!(
+        "{}{}{}",
+        sys(
+            "fa",
+            "fa",
+            FIX,
+            "stage_fixed: trust\npriority: 0\nfiles: ^a"
+        ),
+        sys(
+            "fb",
+            "fb",
+            FIX,
+            "stage_fixed: trust\npriority: 0\nfiles: ^b"
+        ),
+        sys("c", "c", "'true'", "priority: 0\nfiles: ^c"),
+    )));
+    staged(&h, "a.txt", b"bad\n");
+    staged(&h, "b.txt", b"bad\n");
+    staged(&h, "c.txt", b"c\n");
+    let o = h.run(args());
+    assert_eq!(o.code, 0, "{o:?}");
+    let staged_line = "- files were modified by this hook and staged\n";
+    assert_eq!(
+        o.stdout,
+        format!(
+            "{}- hook id: fa\n{staged_line}{}- hook id: fb\n{staged_line}{}",
+            line("fa", "Passed"),
+            line("fb", "Passed"),
+            line("c", "Passed")
+        )
+    );
+    assert_eq!(cached(&h, "a.txt"), "good\n");
+    assert_eq!(cached(&h, "b.txt"), "good\n");
+}
+
+#[test]
+fn stage_fixed_combines_with_fail_on_changes() {
+    for (key, ci, fails) in [
+        ("always", false, true),
+        ("ci", true, true),
+        ("ci", false, false),
+        ("never", true, false),
+    ] {
+        let mut h = H::new();
+        if ci {
+            h.env_set("CI", "1");
+        }
+        h.config(&local(&sys(
+            "fix",
+            "fix",
+            FIX,
+            &format!("stage_fixed: trust\nfail_on_changes: {key}"),
+        )));
+        staged(&h, "a.txt", b"bad\n");
+        let o = h.run(args());
+        let status = if fails { "Failed" } else { "Passed" };
+        assert_eq!(o.code, i32::from(fails), "{key} CI={ci}: {o:?}");
+        assert!(
+            o.stdout.starts_with(&line("fix", status))
+                && o.stdout
+                    .contains("- files were modified by this hook and staged\n"),
+            "{key} CI={ci}: {}",
+            o.stdout
+        );
+    }
+    // the root default (`always`, pre-commit's) does not fail an accepted fix
+    let h = H::new();
+    h.config(&local(&sys("fix", "fix", FIX, "stage_fixed: trust")));
+    staged(&h, "a.txt", b"bad\n");
+    assert_eq!(h.run(args()).code, 0);
+    // an explicit root value combines too
+    let mut h = H::new();
+    h.env_set("CI", "true");
+    h.config(&format!(
+        "fail_on_changes: ci\n{}",
+        local(&sys("fix", "fix", FIX, "stage_fixed: trust"))
+    ));
+    staged(&h, "a.txt", b"bad\n");
+    let o = h.run(args());
+    assert_eq!(o.code, 1, "{o:?}");
+}
+
+#[test]
+fn stage_fixed_counts_further_changes_to_already_dirty_files() {
+    // `dirt` dirtied b.txt; `fx` fixes its input a.txt and also changes b.txt again: O ≠ ∅ ⇒ normal failure
+    let h = H::new();
+    h.config(&local(&format!(
+        "{}{}",
+        sys(
+            "dirt",
+            "dirt",
+            "sh -c 'echo x >> b.txt; exit 1' --",
+            "pass_filenames: false\nalways_run: true"
+        ),
+        sys(
+            "fx",
+            "fx",
+            "sh -c 'sed -i s/bad/good/ a.txt; echo y >> b.txt; exit 1' --",
+            "stage_fixed: trust\nfiles: ^a"
+        ),
+    )));
+    staged(&h, "a.txt", b"bad\n");
+    staged(&h, "b.txt", b"b\n");
+    let o = h.run(args());
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(o.stdout.contains(&line("fx", "Failed")), "{}", o.stdout);
+    assert!(!o.stdout.contains("and staged"), "{}", o.stdout);
+    assert_eq!(cached(&h, "a.txt"), "bad\n");
+    assert_eq!(cached(&h, "b.txt"), "b\n");
+}
+
+#[test]
+fn a_large_bucket_runs_on_a_bounded_set_of_threads() {
+    let mut h = H::new();
+    h.jobs = 1;
+    let hooks: String = (0..40)
+        .map(|i| {
+            sys(
+                &format!("h{i:02}"),
+                &format!("h{i:02}"),
+                "'true'",
+                "priority: 0\nalways_run: true\npass_filenames: false",
+            )
+        })
+        .collect();
+    h.config(&local(&hooks));
+    let o = h.run(args());
+    assert_eq!(o.code, 0, "{o:?}");
+    let want: String = (0..40)
+        .map(|i| line(&format!("h{i:02}"), "Passed"))
+        .collect();
+    assert_eq!(o.stdout, want);
+}
+
+#[test]
+fn local_overlay_tracked_check_is_literal() {
+    // the config lives in `sub[1]/`; a tracked `sub1/.pre-commit-config.local.yaml` must not count as the overlay
+    let h = H::new();
+    let cfg = local(&sys(
+        "a",
+        "a",
+        "echo base",
+        "always_run: true\npass_filenames: false\nverbose: true",
+    ));
+    h.write("sub[1]/cfg.yaml", cfg.as_bytes());
+    h.stage("sub[1]/cfg.yaml");
+    h.write(
+        "sub1/.pre-commit-config.local.yaml",
+        b"hooks:\n  a:\n    entry: \"echo tracked {entry}\"\n",
+    );
+    h.stage("sub1/.pre-commit-config.local.yaml");
+    h.commit("configs");
+    h.write(
+        "sub[1]/.pre-commit-config.local.yaml",
+        b"hooks:\n  a:\n    entry: \"echo wrapped {entry}\"\n",
+    );
+    let mut a = args();
+    a.config = OsString::from("sub[1]/cfg.yaml");
+    let o = h.run(a);
+    assert_eq!(o.code, 0, "{o:?}");
+    assert!(
+        o.stdout.contains("\n\nwrapped echo base\n\n"),
+        "{}\n{}",
+        o.stdout,
+        o.stderr
+    );
+}

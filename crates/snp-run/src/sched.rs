@@ -295,25 +295,25 @@ pub(crate) fn run_hooks(l: &Loop<'_>, oracle: &mut DiffOracle) -> Result<LoopRes
         }
         // statuses that need no run print at once when they are next in line
         out.flush(l.hooks);
-        let finished = if jobs.len() == 1 {
-            let job = jobs.pop().map(|j| vec![j]).unwrap_or_default();
-            run_sequential(l, &mut out, oracle, &mut fixes, job)?
-        } else if jobs.is_empty() {
-            Vec::new()
-        } else {
-            run_bucket(l, oracle, &fixes, jobs)?
-        };
-        for (pos, d) in finished {
-            let h = l.hooks.get(pos);
-            if d.failed {
-                res.retval = 1;
-                if l.fail_fast || h.is_some_and(|h| h.def.fail_fast) {
-                    stop = true;
+        for group in groups(l, jobs) {
+            let finished = if group.len() == 1 {
+                run_sequential(l, &mut out, oracle, &mut fixes, group)?
+            } else {
+                run_bucket(l, oracle, &mut fixes, group)?
+            };
+            for (pos, d) in finished {
+                let h = l.hooks.get(pos);
+                if d.failed {
+                    res.retval = 1;
+                    if l.fail_fast || h.is_some_and(|h| h.def.fail_fast) {
+                        // the bucket is the unit (§3.1 step 18): its remaining members still run
+                        stop = true;
+                    }
                 }
+                out.done.insert(pos, d);
             }
-            out.done.insert(pos, d);
+            out.flush(l.hooks);
         }
-        out.flush(l.hooks);
     }
     out.drain(l.hooks);
     if l.mode == OutputMode::Summary {
@@ -331,7 +331,13 @@ pub(crate) fn run_hooks(l: &Loop<'_>, oracle: &mut DiffOracle) -> Result<LoopRes
             .collect();
         printer.write(render::summary(&rows, wall, e.color).as_bytes());
     }
-    res.to_stage = fixes.into_paths();
+    // belt and braces: a path changed after its acceptance is never staged, whatever ran after it
+    fixes.check_after(root, &BTreeSet::new());
+    let (to_stage, withdrawn) = fixes.into_paths();
+    for p in &withdrawn {
+        printer.diag(&messages::stage_fixed_withdrawn(&p.lossy()));
+    }
+    res.to_stage = to_stage;
     check_cancel(e)?;
     Ok(res)
 }
@@ -397,9 +403,41 @@ fn changes_fail(l: &Loop<'_>, h: &ResolvedHook) -> bool {
     }
 }
 
+/// Whether an accepted `stage_fixed` fix still fails the hook (§8.3: "`fail_on_changes` combines", e.g. stage
+/// locally, fail in CI). Only an explicit setting combines — the hook's own key, or a root value other than
+/// pre-commit's default `always` (which would otherwise fail every accepted fix and make `stage_fixed` inert).
+fn staged_fix_fails(l: &Loop<'_>, h: &ResolvedHook) -> bool {
+    let explicit = h
+        .def
+        .ext
+        .fail_on_changes
+        .or_else(|| (l.fail_on_changes != FailOnChanges::Always).then_some(l.fail_on_changes));
+    explicit.is_some() && changes_fail(l, h)
+}
+
 /// The active `stage_fixed` mode of a hook.
 fn stage_fixed(l: &Loop<'_>, h: &ResolvedHook) -> Option<StageFixed> {
     h.def.ext.stage_fixed.filter(|_| l.stage_fixed)
+}
+
+/// The execution groups of one bucket: a hook with an active `stage_fixed` runs alone first (its M/O rule needs
+/// exclusive access to the worktree), then the remaining hooks together. Output order is unaffected (head-of-line).
+fn groups<'h>(l: &Loop<'_>, jobs: Vec<Job<'h>>) -> Vec<Vec<Job<'h>>> {
+    if jobs.len() <= 1 {
+        return if jobs.is_empty() {
+            Vec::new()
+        } else {
+            vec![jobs]
+        };
+    }
+    let (alone, rest): (Vec<Job<'h>>, Vec<Job<'h>>) = jobs
+        .into_iter()
+        .partition(|j| stage_fixed(l, j.hook).is_some());
+    let mut out: Vec<Vec<Job<'h>>> = alone.into_iter().map(|j| vec![j]).collect();
+    if !rest.is_empty() {
+        out.push(rest);
+    }
+    out
 }
 
 /// Accepted `stage_fixed` fixes: the stamp each path had when it was accepted.
@@ -412,6 +450,9 @@ struct Fixes {
 impl Fixes {
     /// Paths a later hook changed again are never staged (§8.3).
     fn check_after(&mut self, root: &Path, accepting: &BTreeSet<RepoPath>) {
+        if self.accepted.is_empty() {
+            return;
+        }
         for p in stamp::changed(root, &self.accepted) {
             if !accepting.contains(&p) {
                 self.poisoned.insert(p);
@@ -425,11 +466,12 @@ impl Fixes {
         }
     }
 
-    fn into_paths(self) -> Vec<RepoPath> {
+    /// `(paths to stage, accepted paths withdrawn because a later hook changed them)`.
+    fn into_paths(self) -> (Vec<RepoPath>, Vec<RepoPath>) {
+        let poisoned = self.poisoned;
         self.accepted
             .into_keys()
-            .filter(|p| !self.poisoned.contains(p))
-            .collect()
+            .partition(|p| !poisoned.contains(p))
     }
 }
 
@@ -479,16 +521,20 @@ fn run_one(
     let root = e.git.root();
     let h = job.hook;
     let sf = stage_fixed(l, h);
-    let tracking = sf.is_some() || !fixes.accepted.is_empty();
+    let inputs: BTreeSet<&RepoPath> = job.inputs.iter().collect();
     let dirty_before = if sf.is_some() {
         dirty(e.git)?
     } else {
         BTreeSet::new()
     };
-    let input_stamps = if sf.is_some() {
-        stamp::stamps(root, &job.inputs)
+    // M: the hook's inputs; O also counts files an earlier hook already dirtied (stamped: usually few)
+    let (input_stamps, other_stamps) = if sf.is_some() {
+        (
+            stamp::stamps(root, &job.inputs),
+            stamp::stamps(root, dirty_before.iter().filter(|p| !inputs.contains(p))),
+        )
     } else {
-        BTreeMap::new()
+        (BTreeMap::new(), BTreeMap::new())
     };
     let t0 = e.cx.clock.now();
     oracle.before_hook()?;
@@ -498,12 +544,13 @@ fn run_one(
     let mut ran = ran;
     let mut ext_lines = std::mem::take(&mut ran.ext_lines);
     let mut accepted_now = BTreeSet::new();
+    let mut staged = false;
     if let (Some(mode), Change::Changed) = (sf, change) {
         let dirty_after = dirty(e.git)?;
-        let inputs: BTreeSet<&RepoPath> = job.inputs.iter().collect();
         let others = dirty_after
             .difference(&dirty_before)
-            .any(|p| !inputs.contains(p));
+            .any(|p| !inputs.contains(p))
+            || !stamp::changed(root, &other_stamps).is_empty();
         let m = stamp::changed(root, &input_stamps);
         if !others && !m.is_empty() {
             let accept = if ran.code == 0 || mode == StageFixed::Trust {
@@ -522,14 +569,24 @@ fn run_one(
                 accepted_now.extend(m);
                 change = Change::Unchanged;
                 ran.code = 0;
+                staged = true;
                 ext_lines.push(messages::STAGED_FIXES.to_owned());
             }
         }
     }
-    if tracking {
-        fixes.check_after(root, &accepted_now);
+    fixes.check_after(root, &accepted_now);
+    let mut d = finish(l, h, ran, change, duration, ext_lines);
+    if staged && !d.failed && staged_fix_fails(l, h) {
+        d = Done {
+            status: Status::Failed,
+            failed: true,
+            ..d
+        };
+        if let Some(t) = &h.def.ext.fail_text {
+            d.ext_lines.push(messages::fail_text(t));
+        }
     }
-    Ok(finish(l, h, ran, change, duration, ext_lines))
+    Ok(d)
 }
 
 /// The modification decision of an executed hook (§3.7).
@@ -578,11 +635,17 @@ fn finish(
     }
 }
 
+/// The most hook threads one bucket runs at once (hook threads hold no pool permit; their children do).
+fn bucket_threads(l: &Loop<'_>, jobs: usize) -> usize {
+    let cap = l.e.cx.pool.permits().get().saturating_mul(2).max(2);
+    jobs.min(cap).max(1)
+}
+
 /// A bucket of several hooks: run concurrently, attribute the changes (§3.7 item 6).
 fn run_bucket(
     l: &Loop<'_>,
     oracle: &mut DiffOracle,
-    _fixes: &Fixes,
+    fixes: &mut Fixes,
     jobs: Vec<Job<'_>>,
 ) -> Result<Vec<(usize, Done)>, Failure> {
     let e = l.e;
@@ -595,72 +658,25 @@ fn run_bucket(
         .collect();
     let before = stamp::stamps(root, &watched);
     oracle.before_hook()?;
-    let results: Vec<Result<(Ran, Option<f64>), Failure>> = std::thread::scope(|s| {
-        // every thread is spawned before the first join (the hooks of a bucket run concurrently)
-        #[expect(
-            clippy::needless_collect,
-            reason = "spawn all threads before joining any"
-        )]
-        let handles: Vec<_> = jobs
-            .iter()
-            .map(|j| {
-                std::thread::Builder::new().spawn_scoped(s, move || {
-                    let t0 = e.cx.clock.now();
-                    let r = exec::run_hook(e, j.hook, &j.argv_files);
-                    r.map(|ran| (ran, Some(secs(e, t0))))
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .map(|h| match h {
-                Ok(h) => h.join().unwrap_or_else(|p| Err(panic_failure(&p))),
-                Err(err) => Err(Failure::from_io(&err, None, None)),
-            })
-            .collect()
-    });
-    let mut rans = Vec::new();
-    for r in results {
-        rans.push(r?);
-    }
-    let any_writer = rans
-        .iter()
-        .zip(&jobs)
-        .any(|((r, _), j)| !(r.reads_only || matches!(j.hook.exec, ExecKind::Meta(_))));
+    let rans = run_concurrently(l, &jobs)?;
+    let is_writer =
+        |r: &Ran, j: &Job<'_>| !(r.reads_only || matches!(j.hook.exec, ExecKind::Meta(_)));
+    let any_writer = rans.iter().zip(&jobs).any(|((r, _), j)| is_writer(r, j));
     let bucket_change = if any_writer {
         oracle.after_hook()?
     } else {
         Change::Unchanged
     };
-    let mut blamed: BTreeSet<usize> = BTreeSet::new();
-    if bucket_change == Change::Changed {
+    let blamed = if bucket_change == Change::Changed {
         let dirty_after = dirty(e.git)?;
         let mut changed: BTreeSet<RepoPath> = stamp::changed(root, &before).into_iter().collect();
         changed.extend(dirty_after.difference(&dirty_before).cloned());
-        let writers: Vec<usize> = rans
-            .iter()
-            .zip(&jobs)
-            .enumerate()
-            .filter(|(_, ((r, _), j))| !(r.reads_only || matches!(j.hook.exec, ExecKind::Meta(_))))
-            .map(|(i, _)| i)
-            .collect();
-        if changed.is_empty() {
-            blamed.extend(writers.iter().copied());
-        }
-        for p in &changed {
-            let owners: Vec<usize> = writers
-                .iter()
-                .copied()
-                .filter(|i| jobs.get(*i).is_some_and(|j| j.inputs.contains(p)))
-                .collect();
-            if owners.len() == 1 {
-                blamed.extend(owners);
-            } else {
-                // not attributable to exactly one hook: every hook that could have caused it fails (fail closed)
-                blamed.extend(writers.iter().copied());
-            }
-        }
-    }
+        attribute(&rans, &jobs, &changed, is_writer)
+    } else {
+        BTreeSet::new()
+    };
+    // an accepted fix that a hook of this bucket changed again is never staged (§8.3)
+    fixes.check_after(root, &BTreeSet::new());
     Ok(rans
         .into_iter()
         .zip(jobs)
@@ -675,6 +691,124 @@ fn run_bucket(
             (job.pos, finish(l, job.hook, ran, change, duration, ext))
         })
         .collect())
+}
+
+/// One executed hook of a bucket and its duration.
+type BucketRun = (Ran, Option<f64>);
+
+/// What one bucket worker ran: `(job index, result)`.
+type WorkerRuns = Vec<(usize, Result<BucketRun, Failure>)>;
+
+/// Runs `jobs` on at most [`bucket_threads`] hook threads; each worker takes the next job when its hook ends.
+/// Results come back in job order.
+fn run_concurrently(lp: &Loop<'_>, jobs: &[Job<'_>]) -> Result<Vec<BucketRun>, Failure> {
+    let env = lp.e;
+    let cursor = std::sync::atomic::AtomicUsize::new(0);
+    let workers = bucket_threads(lp, jobs.len());
+    let joined: Vec<Result<WorkerRuns, Failure>> = std::thread::scope(|s| {
+        let cursor = &cursor;
+        // every worker is spawned before the first join (the hooks of a bucket run concurrently)
+        #[expect(
+            clippy::needless_collect,
+            reason = "spawn all workers before joining any"
+        )]
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                std::thread::Builder::new().spawn_scoped(s, move || {
+                    let mut mine = Vec::new();
+                    loop {
+                        let idx = cursor.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(job) = jobs.get(idx) else {
+                            break;
+                        };
+                        let t0 = env.cx.clock.now();
+                        let r = exec::run_hook(env, job.hook, &job.argv_files)
+                            .map(|ran| (ran, Some(secs(env, t0))));
+                        mine.push((idx, r));
+                    }
+                    mine
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| match h {
+                Ok(h) => h.join().map_err(|p| panic_failure(&p)),
+                Err(err) => Err(Failure::from_io(&err, None, None)),
+            })
+            .collect()
+    });
+    let mut slots: Vec<Option<Result<BucketRun, Failure>>> =
+        std::iter::repeat_with(|| None).take(jobs.len()).collect();
+    let mut worker_err = None;
+    for w in joined {
+        match w {
+            Ok(mine) => {
+                for (idx, r) in mine {
+                    if let Some(slot) = slots.get_mut(idx) {
+                        *slot = Some(r);
+                    }
+                }
+            }
+            Err(f) => {
+                worker_err.get_or_insert(f);
+            }
+        }
+    }
+    let mut rans = Vec::new();
+    for slot in slots {
+        match slot {
+            Some(r) => rans.push(r?),
+            // a job no worker finished: a worker failed to start or panicked
+            None => {
+                return Err(worker_err.unwrap_or_else(|| {
+                    Failure::unexpected("RuntimeError", "a bucket hook did not run".to_owned())
+                }));
+            }
+        }
+    }
+    Ok(rans)
+}
+
+/// §3.7 item 6: the bucket members a modification fails. A changed path is attributed to one writer only when no
+/// other writer could have written it: the single writer whose inputs contain it, where every writer that got no
+/// file list (`pass_filenames: false`, or no inputs) could have written any path. Otherwise every writer fails
+/// (conservative, fail closed). A writer can still write outside its inputs undetected by this rule; the run's exit
+/// status is never affected (some hook always fails), only which one is named.
+fn attribute(
+    rans: &[BucketRun],
+    jobs: &[Job<'_>],
+    changed: &BTreeSet<RepoPath>,
+    is_writer: impl Fn(&Ran, &Job<'_>) -> bool,
+) -> BTreeSet<usize> {
+    let writers: Vec<(usize, Option<BTreeSet<&RepoPath>>)> = rans
+        .iter()
+        .zip(jobs)
+        .enumerate()
+        .filter(|(_, ((r, _), j))| is_writer(r, j))
+        .map(|(i, (_, j))| {
+            let unconstrained = !j.hook.def.pass_filenames || j.inputs.is_empty();
+            (i, (!unconstrained).then(|| j.inputs.iter().collect()))
+        })
+        .collect();
+    let all: BTreeSet<usize> = writers.iter().map(|(i, _)| *i).collect();
+    if changed.is_empty() {
+        return all;
+    }
+    let mut blamed = BTreeSet::new();
+    for p in changed {
+        let mut owners = writers
+            .iter()
+            .filter(|(_, inputs)| inputs.as_ref().is_none_or(|s| s.contains(p)))
+            .map(|(i, _)| *i);
+        match (owners.next(), owners.next()) {
+            (Some(only), None) => {
+                blamed.insert(only);
+            }
+            _ => return all,
+        }
+    }
+    blamed
 }
 
 /// A panicking hook thread, as the envelope reports it.

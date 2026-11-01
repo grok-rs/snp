@@ -166,6 +166,12 @@ pub(crate) fn fail_text(text: &str) -> String {
 pub(crate) const STAGE_FIXED_REFUSED: &str =
     "snp: stage_fixed: the unstaged changes would not apply over the fixes; nothing was staged";
 
+/// `stage_fixed`: an accepted fix that a later hook changed again is withdrawn from the staging (stderr, one line
+/// per path; ARCHITECTURE §8.3 "files also modified by a non-`stage_fixed` hook are never staged").
+pub(crate) fn stage_fixed_withdrawn(path: &str) -> String {
+    format!("snp: stage_fixed: {path} was changed by a later hook; not staged")
+}
+
 /// Go's `time.Duration.String()` for the durations the `timeout` key accepts (`1m30s`, `500ms`, `2h0m0s`).
 pub(crate) fn go_duration(d: Duration) -> String {
     let nanos = d.as_nanos();
