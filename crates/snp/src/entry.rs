@@ -10,6 +10,7 @@ use std::sync::OnceLock;
 
 use snp_cli::{Cli, CliOutcome};
 use snp_core::brand::Brand;
+use snp_core::cancel::CancelToken;
 use snp_core::env::Env;
 use snp_core::fault;
 use snp_core::output::{ColorSetting, Printer, PrinterOpts};
@@ -40,10 +41,39 @@ fn color_setting(cli: &Cli) -> ColorSetting {
 /// `snp_cli::parse` under its own `catch_unwind` (the parser is pure and never touches disk).
 fn parse(brand: Brand, argv: &[OsString], env: &Env) -> Option<CliOutcome> {
     let args = argv.get(1..).unwrap_or_default();
+    // Only help and usage texts are wrapped to the terminal: a lone `--version`/`-V` skips the TIOCGWINSZ probe
+    // (§12.2 T1, B1's syscall ceiling).
+    let version_only = matches!(args, [a] if a == "--version" || a == "-V");
     panic::catch_unwind(AssertUnwindSafe(|| {
-        snp_cli::parse(brand, args, env, snp_os::term::stdout_tty_columns())
+        let cols = if version_only {
+            None
+        } else {
+            snp_os::term::stdout_tty_columns()
+        };
+        snp_cli::parse(brand, args, env, cols)
     }))
     .ok()
+}
+
+/// Help and version texts (argparse's `_print_message(message, sys.stdout)`, exit 0) need no session: they are
+/// written before the cwd, `current_exe` and the tty probe (§12.2 T1 "`--version` before any init").
+fn print_stdout_only(text: &str, brand: Brand, cancel: &CancelToken) -> Exit {
+    let printer = Printer::new(
+        Box::new(envelope::FailClosedStdout(std::io::stdout())),
+        Box::new(std::io::stderr()),
+        PrinterOpts {
+            brand,
+            color: false,
+            stdout_is_tty: false,
+            windows_text_mode: cfg!(windows),
+            cancel: cancel.clone(),
+        },
+    );
+    match text.strip_suffix('\n') {
+        Some(t) => printer.py_print(t),
+        None => printer.write(text.as_bytes()),
+    }
+    envelope::success(0, &printer, cancel)
 }
 
 /// `SNP_VERSION_PROBE=1 <file> --version` (exactly that argv): the brand-independent identification line that
@@ -93,6 +123,14 @@ pub fn entry() -> Exit {
     } else {
         parse(brand, &argv, &env)
     };
+    // A panic while printing is reported like any other, with the full session (crash log).
+    let mut stdout_panicked = false;
+    if let Some(CliOutcome::Stdout(text)) = &parsed {
+        match panic::catch_unwind(AssertUnwindSafe(|| print_stdout_only(text, brand, &cancel))) {
+            Ok(exit) => return exit,
+            Err(_) => stdout_panicked = true,
+        }
+    }
     let color = match &parsed {
         Some(CliOutcome::Cli(cli)) => snp_os::term::decide_color(color_setting(cli), &env),
         _ => false,
@@ -123,7 +161,7 @@ pub fn entry() -> Exit {
         signals: OnceLock::new(),
         git_version: OnceLock::new(),
     };
-    let outcome = parsed.and_then(|p| {
+    let outcome = parsed.filter(|_| !stdout_panicked).and_then(|p| {
         panic::catch_unwind(AssertUnwindSafe(|| dispatch::dispatch(p, &session))).ok()
     });
     let exit = match outcome {
