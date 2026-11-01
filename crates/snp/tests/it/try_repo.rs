@@ -1,5 +1,5 @@
-//! Integration tests: `try-repo` (T10-TRY) through the binary: the throwaway store (ADR-059) needs WP-31's resolver and
-//! WP-33's entry, so every test is `#[ignore = "needs WP-31 and WP-33"]` until both merge.
+//! Integration tests: `try-repo` (T10-TRY) through the binary: the throwaway store (ADR-059) with WP-31's resolver and
+//! WP-33's entry.
 //!
 //! Owner: WP-32.
 
@@ -47,7 +47,6 @@ fn setup(env: &TestEnv) -> (PathBuf, PathBuf) {
 }
 
 #[test]
-#[ignore = "needs WP-31 and WP-33"]
 fn t10_try_01_all_hooks_sorted_by_id() {
     let env = env();
     let (hooks, consumer) = setup(&env);
@@ -74,7 +73,6 @@ fn t10_try_01_all_hooks_sorted_by_id() {
 }
 
 #[test]
-#[ignore = "needs WP-31 and WP-33"]
 fn t10_try_02_one_hook_without_reading_the_manifest() {
     let env = env();
     let (hooks, consumer) = setup(&env);
@@ -93,7 +91,6 @@ fn t10_try_02_one_hook_without_reading_the_manifest() {
 }
 
 #[test]
-#[ignore = "needs WP-31 and WP-33"]
 fn t10_try_03_relative_and_bare_repos() {
     let env = env();
     let (hooks, consumer) = setup(&env);
@@ -117,7 +114,6 @@ fn t10_try_03_relative_and_bare_repos() {
 }
 
 #[test]
-#[ignore = "needs WP-31 and WP-33"]
 fn t10_try_04_explicit_ref() {
     let env = env();
     let (hooks, consumer) = setup(&env);
@@ -137,10 +133,12 @@ fn t10_try_04_explicit_ref() {
 }
 
 #[test]
-#[ignore = "needs WP-31 and WP-33"]
 fn t10_try_05_uncommitted_manifest_change() {
     let env = env();
-    let (hooks, consumer) = setup(&env);
+    // `test_try_repo_uncommitted_changes` uses `script_hooks_repo`, whose `bash_hook` has `files: ''` (the
+    // `modified_file_returns_zero_repo` hook of the same id only matches `foo.py` and would be skipped)
+    let (_, consumer) = setup(&env);
+    let hooks = env.fixture_repo(Fixture::Resource("script_hooks_repo"));
     let manifest = hooks.join(".pre-commit-hooks.yaml");
     let m = std::fs::read_to_string(&manifest).unwrap().replacen(
         "name: Bash hook",
@@ -166,7 +164,6 @@ fn t10_try_05_uncommitted_manifest_change() {
 }
 
 #[test]
-#[ignore = "needs WP-31 and WP-33"]
 fn t10_try_06_staged_files_in_the_hook_repo() {
     let env = env();
     let (hooks, consumer) = setup(&env);
@@ -187,7 +184,6 @@ fn t10_try_06_staged_files_in_the_hook_repo() {
 }
 
 #[test]
-#[ignore = "needs WP-31 and WP-33"]
 fn t10_try_07_repo_relative_to_the_root_from_a_subdirectory() {
     let env = env();
     let (_, consumer) = setup(&env);
@@ -206,7 +202,6 @@ fn t10_try_07_repo_relative_to_the_root_from_a_subdirectory() {
 }
 
 #[test]
-#[ignore = "needs WP-31 and WP-33"]
 fn try_repo_twice_initializes_and_installs_each_time() {
     let env = env();
     let (hooks, consumer) = setup(&env);
@@ -228,7 +223,6 @@ fn try_repo_twice_initializes_and_installs_each_time() {
 }
 
 #[test]
-#[ignore = "needs WP-31 and WP-33"]
 fn x13_git_03_bad_repo() {
     let env = env();
     let (_, consumer) = setup(&env);

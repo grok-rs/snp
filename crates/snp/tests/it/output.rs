@@ -1,5 +1,5 @@
 //! Integration tests: run output through the binary — colours, columns, the pty (T10-OUT; the byte-level rows run as
-//! unit tests of `snp_run::render`). `#[ignore = "needs WP-33"]` until the entry merges.
+//! unit tests of `snp_run::render`).
 //!
 //! Owner: WP-32.
 
@@ -42,7 +42,6 @@ fn repo(env: &TestEnv, name: &str, config: &str) -> PathBuf {
 const CFG: &str = "repos:\n-   repo: local\n    hooks:\n    -   id: p\n        name: passing hook\n        entry: 'true'\n        language: system\n        always_run: true\n";
 
 #[test]
-#[ignore = "needs WP-33"]
 fn colour_always_and_never() {
     let env = env();
     let dir = repo(&env, "o", CFG);
@@ -62,7 +61,6 @@ fn colour_always_and_never() {
 }
 
 #[test]
-#[ignore = "needs WP-33"]
 fn auto_colour_follows_stderr() {
     let env = env();
     let dir = repo(&env, "o", CFG);

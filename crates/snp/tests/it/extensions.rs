@@ -1,6 +1,6 @@
 //! Integration tests: snp's config extension keys through the binary (ARCHITECTURE §8). The semantics are tested
 //! through `snp_run::run` in `crates/snp-run/tests/pipeline/extensions.rs`; these pin the CLI surface (`--group`,
-//! `-j`, `--summary`) and are `#[ignore = "needs WP-33"]` until the entry merges.
+//! `-j`, `--summary`).
 //!
 //! Owner: WP-32.
 
@@ -43,7 +43,6 @@ fn repo(env: &TestEnv, name: &str, config: &str) -> PathBuf {
 const CFG: &str = "repos:\n-   repo: local\n    hooks:\n    -   id: lint:js\n        name: lint js\n        entry: 'true'\n        language: system\n        always_run: true\n        groups: [lint]\n        priority: 0\n    -   id: slow\n        name: slow\n        entry: 'true'\n        language: system\n        always_run: true\n        groups: [slow]\n        priority: 0\n";
 
 #[test]
-#[ignore = "needs WP-33"]
 fn selectors_and_groups_on_the_command_line() {
     let env = env();
     let dir = repo(&env, "e", CFG);
@@ -54,7 +53,6 @@ fn selectors_and_groups_on_the_command_line() {
 }
 
 #[test]
-#[ignore = "needs WP-33"]
 fn jobs_do_not_change_the_output() {
     let env = env();
     let dir = repo(&env, "e", CFG);
@@ -64,7 +62,6 @@ fn jobs_do_not_change_the_output() {
 }
 
 #[test]
-#[ignore = "needs WP-33"]
 fn summary_footer() {
     let env = env();
     let dir = repo(&env, "e", CFG);

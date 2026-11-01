@@ -4,8 +4,7 @@
 //! stderr, refusing to overwrite without `--force`, `--strict` writing nothing, the `--local` overlay file, the in-place
 //! builtin ⇄ upstream rewrite and the `--install` sequence.
 //!
-//! The `snp migrate` dispatch is WP-33's (`crates/snp/src/commands.rs`), running a converted config is WP-32's: the
-//! tests that need them are `#[ignore = "needs WP-33"]` / `#[ignore = "needs WP-32"]` until those packages merge.
+//! The `snp migrate` dispatch is WP-33's (`crates/snp/src/commands.rs`), running a converted config is WP-32's.
 //!
 //! Owner: WP-34.
 
@@ -66,7 +65,6 @@ fn text(b: &[u8]) -> String {
 }
 
 #[test]
-#[ignore = "needs WP-33"]
 fn writes_the_worked_example_and_reports_on_stderr() {
     let env = env();
     let dir = fixture_repo(&env, "worked_example");
@@ -81,7 +79,6 @@ fn writes_the_worked_example_and_reports_on_stderr() {
 }
 
 #[test]
-#[ignore = "needs WP-33"]
 fn output_dash_prints_the_config_and_writes_nothing() {
     let env = env();
     let dir = fixture_repo(&env, "worked_example");
@@ -99,7 +96,6 @@ fn output_dash_prints_the_config_and_writes_nothing() {
 }
 
 #[test]
-#[ignore = "needs WP-33"]
 fn refuses_to_overwrite_without_force() {
     let env = env();
     let dir = fixture_repo(&env, "many_extends_levels");
@@ -123,7 +119,6 @@ fn refuses_to_overwrite_without_force() {
 }
 
 #[test]
-#[ignore = "needs WP-33"]
 fn strict_exits_2_and_writes_nothing() {
     let env = env();
     let dir = fixture_repo(&env, "features");
@@ -150,7 +145,6 @@ fn strict_exits_2_and_writes_nothing() {
 }
 
 #[test]
-#[ignore = "needs WP-33"]
 fn local_writes_the_overlay() {
     let env = env();
     let dir = fixture_repo(&env, "features");
@@ -171,7 +165,6 @@ fn local_writes_the_overlay() {
 }
 
 #[test]
-#[ignore = "needs WP-33"]
 fn load_errors_exit_1() {
     let env = env();
     let dir = env
@@ -191,7 +184,6 @@ fn load_errors_exit_1() {
 }
 
 #[test]
-#[ignore = "needs WP-33"]
 fn builtin_and_upstream_rewrite_in_place() {
     let env = env();
     let upstream = "repos:\n-   repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v6.0.0  # pinned\n    hooks:\n    -   id: trailing-whitespace\n    -   id: check-yaml\n";
@@ -220,7 +212,6 @@ fn builtin_and_upstream_rewrite_in_place() {
 /// deleted and snp installs every emitted stage, chaining the restored hook as `.legacy`.
 #[cfg(unix)]
 #[test]
-#[ignore = "needs WP-33"]
 fn install_replaces_lefthook_hooks() {
     let env = env();
     let dir = fixture_repo(&env, "worked_example");
@@ -238,6 +229,8 @@ fn install_replaces_lefthook_hooks() {
         "#!/bin/sh\n# LEFTHOOK file\ncall_lefthook run \"pre-push\" \"$@\"\n",
     )
     .unwrap();
+    // the test env's empty `GIT_TEMPLATE_DIR` leaves `.git/info` uncreated
+    std::fs::create_dir_all(dir.join(".git/info")).unwrap();
     std::fs::write(dir.join(".git/info/lefthook.checksum"), "abc 1\n").unwrap();
     std::fs::create_dir_all(dir.join(".git/info/lefthook-remotes")).unwrap();
     let out = env
@@ -264,7 +257,6 @@ fn install_replaces_lefthook_hooks() {
 /// `crates/snp-migrate/tests/oracle.rs`).
 #[cfg(unix)]
 #[test]
-#[ignore = "needs WP-32"]
 fn converted_config_runs_under_snp() {
     let env = env();
     let dir = fixture_repo(&env, "runnable");

@@ -65,7 +65,6 @@ fn text(b: &[u8]) -> String {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn tier_a_pre_commit_hooks_cold_and_warm_transcripts_match_pc462_py312() {
     let t = TestEnv::new(bins());
     let proj = project(&t, &pch_config(), &[("a.json", b"{}\n")]);
@@ -79,15 +78,19 @@ fn tier_a_pre_commit_hooks_cold_and_warm_transcripts_match_pc462_py312() {
         .args(["run", "--all-files"])
         .output();
     assert_eq!((warm.code, text(&warm.stdout)), (0, PC462_WARM.to_owned()));
-    // D-PERF-03: Tier A is never cloned.
+    // D-PERF-03: Tier A is never cloned. A clone is a directory; the `<key>.lock` file is the repository lock the
+    // `Initializing` line is printed under (ADR-032), not a clone.
     let repos = t.root().join("snp-store/repos-v1");
-    let clones = std::fs::read_dir(&repos).map_or(0, |d| d.filter_map(Result::ok).count());
+    let clones = std::fs::read_dir(&repos).map_or(0, |d| {
+        d.filter_map(Result::ok)
+            .filter(|e| e.file_type().is_ok_and(|f| f.is_dir()))
+            .count()
+    });
     assert_eq!(clones, 0, "{}", repos.display());
 }
 
 #[cfg(unix)]
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_rep_03_interleaved_stdout_stderr_in_order_and_pty_with_color() {
     let t = TestEnv::new(bins());
     let repo = t.fixture_repo(Fixture::Resource("stdout_stderr_repo"));
@@ -125,7 +128,6 @@ fn t10_rep_03_interleaved_stdout_stderr_in_order_and_pty_with_color() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_rep_04_hook_cwd_is_the_repository_root() {
     let t = TestEnv::new(bins());
     let repo = t.fixture_repo(Fixture::Resource("prints_cwd_repo"));
@@ -152,17 +154,17 @@ fn t10_rep_04_hook_cwd_is_the_repository_root() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_rep_05_fifteen_thousand_files() {
     let t = TestEnv::new(bins());
     let repo = t.fixture_repo(Fixture::Resource("script_hooks_repo"));
     let rev = head(&t, &repo);
     let cfg = remote(&repo, &rev, "    -   id: bash_hook\n");
-    let proj = project(&t, &cfg, &[]);
-    let names: Vec<String> = (0..15_000).map(|i| format!("f{i}")).collect();
+    // `test_lots_of_files` passes `[os.devnull] * 15000`: one existing file 15 000 times (`--files` keeps
+    // duplicates, and a nonexistent name would be dropped by `lexists`, leaving nothing to check)
+    let proj = project(&t, &cfg, &[("f", b"x\n")]);
     let mut cmd = t.snp(&proj).args(["run", "--files"]);
-    for n in &names {
-        cmd = cmd.arg(n);
+    for _ in 0..15_000 {
+        cmd = cmd.arg("f");
     }
     let out = cmd.output();
     let stdout = text(&out.stdout);
@@ -182,7 +184,6 @@ fn t10_rep_05_fifteen_thousand_files() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_rep_12_unknown_id_exits_1_through_the_binary() {
     let t = TestEnv::new(bins());
     let repo = t.fixture_repo(Fixture::Resource("script_hooks_repo"));

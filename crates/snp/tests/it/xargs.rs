@@ -21,7 +21,6 @@ fn cfg(entry: &str, extra: &str) -> String {
 }
 
 #[test]
-#[ignore = "needs WP-33"]
 fn t10_xrg_17_serial_echo_keeps_order() {
     let env = env();
     let mut repo = env.git_repo("x").file(
@@ -43,7 +42,6 @@ fn t10_xrg_17_serial_echo_keeps_order() {
 }
 
 #[test]
-#[ignore = "needs WP-33"]
 fn t10_xrg_18_entry_args_then_files() {
     let env = env();
     let dir = env

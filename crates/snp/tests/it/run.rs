@@ -1,8 +1,8 @@
 //! Integration tests: `run` (T10-RUN, X13-EXE) through the binary, against remote (file://) hook repositories.
 //!
 //! The pipeline itself is tested in `crates/snp-run/tests/pipeline` (a fake resolver, `repo: local`/`meta`); these
-//! tests add WP-31's resolver (clones, manifests, installs) and WP-33's entry (argv, brand, envelope), so they are
-//! `#[ignore = "needs WP-31 and WP-33"]` until both merge (the [e2e] items of WBS WP-32).
+//! tests add WP-31's resolver (clones, manifests, installs) and WP-33's entry (argv, brand, envelope): the [e2e] items
+//! of WBS WP-32.
 //!
 //! Owner: WP-32.
 
@@ -67,7 +67,6 @@ fn hook_lines(out: &Output) -> String {
 }
 
 #[test]
-#[ignore = "needs WP-31 and WP-33"]
 fn t10_run_10_failing_hook_repo() {
     let env = env();
     let dir = consuming(&env, "failing_hook_repo", &[("foo.py", b"")]);
@@ -80,7 +79,6 @@ fn t10_run_10_failing_hook_repo() {
 }
 
 #[test]
-#[ignore = "needs WP-31 and WP-33"]
 fn t10_run_11_arbitrary_bytes_repo() {
     let env = env();
     let dir = consuming(&env, "arbitrary_bytes_repo", &[("foo.py", b"")]);
@@ -94,7 +92,6 @@ fn t10_run_11_arbitrary_bytes_repo() {
 }
 
 #[test]
-#[ignore = "needs WP-31 and WP-33"]
 fn t10_run_12_modified_file_returns_zero_repo() {
     let env = env();
     let dir = consuming(
@@ -118,7 +115,6 @@ fn t10_run_12_modified_file_returns_zero_repo() {
 }
 
 #[test]
-#[ignore = "needs WP-31 and WP-33"]
 fn t10_run_17_script_hooks_repo() {
     let env = env();
     let dir = consuming(&env, "script_hooks_repo", &[("foo.py", b"")]);
@@ -141,7 +137,6 @@ fn t10_run_17_script_hooks_repo() {
 }
 
 #[test]
-#[ignore = "needs WP-31 and WP-33"]
 fn t10_run_23_skip_alias_and_not_installed() {
     let env = env();
     let dir = consuming(&env, "script_hooks_repo", &[("foo.py", b"")]);
@@ -155,7 +150,6 @@ fn t10_run_23_skip_alias_and_not_installed() {
 }
 
 #[test]
-#[ignore = "needs WP-31 and WP-33"]
 fn t10_run_59_invalid_pre_commit_color() {
     let env = env();
     let dir = consuming(&env, "script_hooks_repo", &[]);
@@ -173,7 +167,6 @@ fn t10_run_59_invalid_pre_commit_color() {
 }
 
 #[test]
-#[ignore = "needs WP-31 and WP-33"]
 fn t10_run_60_no_subcommand_is_run() {
     let env = env();
     let dir = consuming(&env, "failing_hook_repo", &[("foo.py", b"")]);
@@ -183,7 +176,6 @@ fn t10_run_60_no_subcommand_is_run() {
 }
 
 #[test]
-#[ignore = "needs WP-31 and WP-33"]
 fn x13_exe_08_language_setup_errors_crash_like_pre_commit() {
     // a remote hook whose language toolchain is missing fails in install/run as pre-commit does (exit 3)
     let env = env();
@@ -202,7 +194,6 @@ fn x13_exe_08_language_setup_errors_crash_like_pre_commit() {
 }
 
 #[test]
-#[ignore = "needs WP-31 and WP-33"]
 fn cold_and_warm_transcripts_match_the_oracle() {
     let env = env();
     let dir = consuming(&env, "script_hooks_repo", &[("foo.py", b"")]);

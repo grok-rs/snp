@@ -1,5 +1,5 @@
 //! Integration tests: meta hooks through the binary (T10-MET; the rows themselves run in
-//! `crates/snp-run/tests/pipeline/meta.rs`). `#[ignore = "needs WP-33"]` until the entry merges.
+//! `crates/snp-run/tests/pipeline/meta.rs`).
 //!
 //! Owner: WP-32.
 
@@ -40,7 +40,6 @@ fn repo(env: &TestEnv, name: &str, config: &str) -> PathBuf {
 }
 
 #[test]
-#[ignore = "needs WP-33"]
 fn check_useless_excludes_through_the_binary() {
     let env = env();
     let dir = repo(
@@ -60,7 +59,6 @@ fn check_useless_excludes_through_the_binary() {
 }
 
 #[test]
-#[ignore = "needs WP-33"]
 fn check_hooks_apply_with_one_job() {
     let env = env();
     let dir = repo(

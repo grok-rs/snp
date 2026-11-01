@@ -1,6 +1,6 @@
 //! Integration tests: `hook-impl` through installed git hooks (T10-HKI, X13-HI). Every row also runs through
 //! `snp_run::hook_impl` in `crates/snp-run/tests/pipeline/hook_impl.rs`; these add `install` (WP-33) and real git
-//! triggers, so they are `#[ignore = "needs WP-33"]` until it merges.
+//! triggers.
 //!
 //! Owner: WP-32.
 
@@ -53,7 +53,6 @@ fn git(dir: &std::path::Path, env: &TestEnv, args: &[&str]) -> std::process::Out
 const SAMPLE: &str = "repos:\n-   repo: local\n    hooks:\n    -   id: do_not_commit\n        name: Block if \"DO NOT COMMIT\" is found\n        entry: DO NOT COMMIT\n        language: pygrep\n";
 
 #[test]
-#[ignore = "needs WP-33"]
 fn t10_hki_08_git_commit_with_nothing_staged() {
     let env = env();
     let dir = repo(&env, "h", SAMPLE);
@@ -74,7 +73,6 @@ fn t10_hki_08_git_commit_with_nothing_staged() {
 }
 
 #[test]
-#[ignore = "needs WP-33"]
 fn hook_type_matrix_through_git() {
     let env = env();
     let mut cfg = String::from("repos:\n-   repo: local\n    hooks:\n");
@@ -126,7 +124,6 @@ fn hook_type_matrix_through_git() {
 }
 
 #[test]
-#[ignore = "needs WP-33"]
 fn snp_0_still_runs_a_git_lfs_like_legacy_pre_push_hook() {
     let env = env();
     let dir = repo(&env, "k", SAMPLE);

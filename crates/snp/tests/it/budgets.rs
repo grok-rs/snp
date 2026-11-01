@@ -10,21 +10,20 @@
 //! | Shape | git spawns | hook spawns | total |
 //! |---|---|---|---|
 //! | B1 `--version` | 0 | 0 | **0** |
-//! | B2 `run noop-01` (1 `always_run` hook, nothing staged) | 1 combined `rev-parse` + ≤ 6 fan-out (A, B, C, E, F, G) + 0 `git diff` | 1 | **≤ 8** |
-//! | B3 `run` (10 such hooks) | the same 7 | 10 | **≤ 17** |
+//! | B2 `run noop-01` (1 `always_run` hook, nothing staged) | 1 combined `rev-parse` + fan-out A, B, C + the stash's `write-tree` and `diff-index` + 1 `git diff` (no Stat mode below 3 process hooks) | 1 | **≤ 8** |
+//! | B3 `run` (10 such hooks) | 1 combined `rev-parse` + fan-out A, B, C, F, G (E skipped, P17) + `write-tree` + `diff-index` | 10 | **≤ 18** |
 //! | B4 `run --all-files`, 1 hook with filenames, 2 000 files, `PRE_COMMIT_NO_CONCURRENCY=1` | 7 | exactly 1 (one partition) | **≤ 8** |
 //! | B6 13 pre-commit-hooks hooks, Tier A fast path, `--all-files` | 7 + ≤ 4 per-run pre-commit-hooks facts (`diff --staged --diff-filter=A`, `check-attr --stdin`, `ls-files`, `ls-files --stage`) + ≤ 2 slack | 0 (all native, no Python) | **≤ 13** |
 //!
-//! The baseline `git diff` is elided on the warm path (`diff-index` rc 0 + the `DiffOracle` stat path, ADR-078), so
-//! no `git diff` runs on Unix. On Windows there is no stat oracle: every hook that ran is followed by a real
+//! The stash's `write-tree` + `diff-index` are pre-commit's own calls (`_unstaged_changes_cleared`, 02 §7), outside
+//! the fan-out (ADR-082 corrects the B3 model, which had left them out). The baseline `git diff` is elided on the warm
+//! path (`diff-index` rc 0 + the `DiffOracle` stat path, ADR-078), so no `git diff` runs on Unix once the Stat mode
+//! applies (three process hooks or more). On Windows there is no stat oracle: every hook that ran is followed by a real
 //! `git diff` and the baseline is taken (ADR-043), so the hook-proportional bounds grow by `hooks + 1`.
 //!
 //! Every count is taken on the second of two identical runs (the first warms the store), as the bounds describe the
-//! warm path. The run-pipeline shapes need snp-run (WP-32) and the spawn-log arming in the binary's entry (WP-33);
-//! they are ignored ("needs WP-32 and WP-33") until both packages merge — today no spawn-count test runs in any
-//! configuration. B1's zero count is asserted only after a positive control proved the log armed, so it waits for the
-//! same packages. Without `--features testing` the spawn log does not exist,
-//! so those tests are ignored with a reason that says so.
+//! warm path. B1's zero count is asserted only after a positive control proved the log armed. Without
+//! `--features testing` the spawn log does not exist, so those tests are ignored with a reason that says so.
 //!
 //! Owner: WP-36.
 
@@ -172,6 +171,23 @@ const fn windows_diff_spawns(hooks: usize) -> usize {
 /// The fixed git cost of a warm run: one combined `rev-parse` and at most six overlapped fan-out queries.
 const WARM_RUN_GIT: usize = 1 + 6;
 
+/// The git cost of a warm stashing `run` whose hooks read no files (P17: no staged list E), `process_hooks` of them
+/// executed: one combined `rev-parse`; fan-out A, B, C, plus F and G when the Stat mode applies (Unix, from three
+/// process hooks on, ARCHITECTURE §3.1 step 14); the stash's `write-tree` + `diff-index` (02 §7); one `git diff` per
+/// executed hook without the Stat mode (and on Windows the baseline as well, ADR-043).
+const fn stash_run_git(process_hooks: usize) -> usize {
+    let stat = cfg!(unix) && process_hooks >= 3;
+    let fan_out = if stat { 5 } else { 3 };
+    let diffs = if stat {
+        0
+    } else if cfg!(windows) {
+        process_hooks + 1
+    } else {
+        process_hooks
+    };
+    1 + fan_out + 2 + diffs
+}
+
 fn assert_bounds(what: &str, out: &Output, log: &SpawnLog, max_total: usize, hooks: usize) {
     assert_eq!(
         out.code,
@@ -199,10 +215,6 @@ fn assert_bounds(what: &str, out: &Output, log: &SpawnLog, max_total: usize, hoo
 /// run pipeline (WP-32) and the binary entry arming `SNP_TEST_SPAWN_LOG` (WP-33).
 #[test]
 #[cfg_attr(
-    feature = "testing",
-    ignore = "needs WP-32 and WP-33 (positive control: `snp run` with the spawn log armed)"
-)]
-#[cfg_attr(
     not(feature = "testing"),
     ignore = "needs a `--features testing` build (spawn log)"
 )]
@@ -220,10 +232,6 @@ fn b1_version_spawns_nothing() {
 /// B2: one `always_run` noop hook, nothing staged: ≤ 8 spawns (7 git + 1 hook).
 #[test]
 #[cfg_attr(
-    feature = "testing",
-    ignore = "needs WP-32 and WP-33 (the binary entry arms SNP_TEST_SPAWN_LOG)"
-)]
-#[cfg_attr(
     not(feature = "testing"),
     ignore = "needs a `--features testing` build (spawn log)"
 )]
@@ -231,36 +239,20 @@ fn b2_one_noop_hook_within_8_spawns() {
     let env = TestEnv::new(bins());
     let repo = noop_repo(&env, "b2", &noop_config(10));
     let (out, log) = run_logged(&env, &repo, &["run", "noop-01"], &[]);
-    assert_bounds(
-        "B2",
-        &out,
-        &log,
-        WARM_RUN_GIT + 1 + windows_diff_spawns(1),
-        1,
-    );
+    assert_bounds("B2", &out, &log, stash_run_git(1) + 1, 1);
 }
 
-/// B3: ten `always_run` noop hooks, nothing staged: ≤ 17 spawns (7 git + 10 hooks, no `git diff`).
+/// B3: ten `always_run` noop hooks, nothing staged: ≤ 18 spawns (8 git + 10 hooks, no `git diff`).
 #[test]
-#[cfg_attr(
-    feature = "testing",
-    ignore = "needs WP-32 and WP-33 (the binary entry arms SNP_TEST_SPAWN_LOG)"
-)]
 #[cfg_attr(
     not(feature = "testing"),
     ignore = "needs a `--features testing` build (spawn log)"
 )]
-fn b3_ten_noop_hooks_within_17_spawns() {
+fn b3_ten_noop_hooks_within_18_spawns() {
     let env = TestEnv::new(bins());
     let repo = noop_repo(&env, "b3", &noop_config(10));
     let (out, log) = run_logged(&env, &repo, &["run"], &[]);
-    assert_bounds(
-        "B3",
-        &out,
-        &log,
-        WARM_RUN_GIT + 10 + windows_diff_spawns(10),
-        10,
-    );
+    assert_bounds("B3", &out, &log, stash_run_git(10) + 10, 10);
     // the hooks run in their own process groups only when isolation is asked for; `true` inherits
     assert!(
         log.spawns
@@ -276,10 +268,6 @@ fn b3_ten_noop_hooks_within_17_spawns() {
 /// every hook is `always_run` with `pass_filenames: false`, P17).
 #[test]
 #[cfg_attr(
-    feature = "testing",
-    ignore = "needs WP-32 and WP-33 (the binary entry arms SNP_TEST_SPAWN_LOG)"
-)]
-#[cfg_attr(
     not(feature = "testing"),
     ignore = "needs a `--features testing` build (spawn log)"
 )]
@@ -293,22 +281,12 @@ fn b3_spawns_do_not_grow_with_tracked_files() {
     }
     let repo = b.stage_all().commit("init").build();
     let (out, log) = run_logged(&env, &repo, &["run"], &[]);
-    assert_bounds(
-        "B3 (2k files)",
-        &out,
-        &log,
-        WARM_RUN_GIT + 10 + windows_diff_spawns(10),
-        10,
-    );
+    assert_bounds("B3 (2k files)", &out, &log, stash_run_git(10) + 10, 10);
 }
 
 /// B4 shape: `run --all-files`, one hook with filenames over 2 000 files and one job: exactly one partition, so one
 /// hook spawn; no per-file process of any kind.
 #[test]
-#[cfg_attr(
-    feature = "testing",
-    ignore = "needs WP-32 and WP-33 (the binary entry arms SNP_TEST_SPAWN_LOG)"
-)]
 #[cfg_attr(
     not(feature = "testing"),
     ignore = "needs a `--features testing` build (spawn log)"
@@ -360,10 +338,6 @@ const B6_HOOKS: [&str; 13] = [
 /// process; only the fixed git queries plus the per-run pre-commit-hooks facts: ≤ 13 spawns.
 #[test]
 #[cfg_attr(
-    feature = "testing",
-    ignore = "needs WP-32 and WP-33 (the binary entry arms SNP_TEST_SPAWN_LOG)"
-)]
-#[cfg_attr(
     not(feature = "testing"),
     ignore = "needs a `--features testing` build (spawn log)"
 )]
@@ -403,9 +377,14 @@ fn b6_shape_fast_path_within_13_spawns() {
         "B6 started a non-git process:\n{}",
         log.dump()
     );
-    // the fast path never clones (no network, no store entry): the store's repository bucket stays empty
+    // the fast path never clones (no network): the store's repository bucket holds no clone directory (only the
+    // `<key>.lock` the `Initializing` line is printed under, ADR-032)
     let store = env.root().join("snp-store").join("repos-v1");
-    let repos = std::fs::read_dir(&store).map_or(0, |d| d.filter_map(Result::ok).count());
+    let repos = std::fs::read_dir(&store).map_or(0, |d| {
+        d.filter_map(Result::ok)
+            .filter(|e| e.file_type().is_ok_and(|f| f.is_dir()))
+            .count()
+    });
     assert_eq!(
         repos,
         0,
@@ -416,10 +395,6 @@ fn b6_shape_fast_path_within_13_spawns() {
 
 /// The spawn log records the group of each spawn; a hook never runs in the `critical` role.
 #[test]
-#[cfg_attr(
-    feature = "testing",
-    ignore = "needs WP-32 and WP-33 (the binary entry arms SNP_TEST_SPAWN_LOG)"
-)]
 #[cfg_attr(
     not(feature = "testing"),
     ignore = "needs a `--features testing` build (spawn log)"
@@ -485,7 +460,6 @@ fn perf_b1_version_within_3x_budget() {
 /// B2 (one `always_run` noop hook, ≤ 10 ms on Linux) with the 3× margin. Renamed `perf_b2_…` (the perf-smoke
 /// filter) when WP-32 merges.
 #[test]
-#[ignore = "needs WP-32"]
 fn timing_b2_one_noop_hook_within_3x_budget() {
     let env = TestEnv::new(bins());
     let repo = noop_repo(&env, "b2-timing", &noop_config(10));
@@ -497,7 +471,6 @@ fn timing_b2_one_noop_hook_within_3x_budget() {
 /// B3 (ten `always_run` noop hooks, ≤ 25 ms on Linux, 40 ms on macOS) with the 3× margin. Renamed `perf_b3_…`
 /// when WP-32 merges.
 #[test]
-#[ignore = "needs WP-32"]
 fn timing_b3_ten_noop_hooks_within_3x_budget() {
     let env = TestEnv::new(bins());
     let repo = noop_repo(&env, "b3-timing", &noop_config(10));

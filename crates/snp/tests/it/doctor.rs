@@ -68,7 +68,6 @@ fn doctor_predicts_failing_commits_and_fixes_them() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn doctor_fast_path_table() {
     let env = tenv();
     let r = repo_with(&env, "r", LOCAL_CONFIG);

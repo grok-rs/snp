@@ -37,7 +37,10 @@ fn dirty(env: &TestEnv, config: &str) -> PathBuf {
 const CFG: &str = "repos:\n-   repo: local\n    hooks:\n    -   id: p\n        name: printing\n        entry: echo out\n        language: system\n        verbose: true\n";
 
 #[test]
-#[ignore = "needs WP-33 (and a `--features testing` build)"]
+#[cfg_attr(
+    not(feature = "testing"),
+    ignore = "needs a `--features testing` build"
+)]
 fn a_panic_after_a_hook_still_restores_the_stash() {
     let env = env();
     let dir = dirty(&env, CFG);
@@ -55,7 +58,6 @@ fn a_panic_after_a_hook_still_restores_the_stash() {
 }
 
 #[test]
-#[ignore = "needs WP-33"]
 fn sigint_during_a_hook_restores_the_stash() {
     let env = env();
     let dir = dirty(

@@ -431,7 +431,6 @@ fn x13_cmd_11_validate_unreadable_file() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn x13_cmd_12_try_repo_git_failure() {
     let env = tenv();
     let r = repo_with(&env, "r", LOCAL_CONFIG);
@@ -634,7 +633,6 @@ fn x13_eh_05_rust_panic() {}
 
 #[cfg(feature = "testing")]
 #[test]
-#[ignore = "needs WP-32"]
 fn panic_during_run_restores_the_stash_before_the_banner() {
     let env = tenv();
     let r = repo_with(&env, "r", LOCAL_CONFIG);

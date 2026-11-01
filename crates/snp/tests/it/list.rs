@@ -1,5 +1,5 @@
 //! Integration tests: `snp list` through the binary (the listing is tested through `snp_run::list` in
-//! `crates/snp-run/tests/pipeline/extensions.rs`). `#[ignore = "needs WP-33"]` until the entry merges.
+//! `crates/snp-run/tests/pipeline/extensions.rs`).
 //!
 //! Owner: WP-32.
 
@@ -27,7 +27,6 @@ fn repo(env: &TestEnv, name: &str, config: &str) -> PathBuf {
 }
 
 #[test]
-#[ignore = "needs WP-33"]
 fn list_text_json_and_filters() {
     let env = env();
     let dir = repo(

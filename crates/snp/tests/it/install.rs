@@ -1,7 +1,7 @@
 //! Integration tests: `install` (T10-INS, M11-MIG).
 //!
 //! Rows whose expectation is a `git commit`/`git push` running the installed hooks go through `hook-impl` and the
-//! run pipeline (WP-32): they are written against the frozen contracts and ignored until WP-32 merges.
+//! run pipeline (WP-32).
 //!
 //! Owner: WP-33.
 
@@ -111,6 +111,18 @@ fn hook(r: &Path, t: &str) -> PathBuf {
 
 fn legacy(r: &Path, t: &str) -> PathBuf {
     r.join(".git/hooks").join(format!("{t}.legacy"))
+}
+
+/// `git clone <fixture> <root>/clone` (pre-commit's `cmd_output('git', 'clone', upstream, path)`).
+fn clone_of(env: &TestEnv, f: Fixture) -> PathBuf {
+    let upstream = env.fixture_repo(f);
+    let r = env.root().join("clone");
+    git(
+        env,
+        env.root(),
+        &["clone", upstream.to_str().unwrap(), r.to_str().unwrap()],
+    );
+    r
 }
 
 /// `git commit -m <msg>` after touching and adding `file`: `(code, stdout + stderr)`.
@@ -300,7 +312,6 @@ fn t10_ins_08_custom_config_and_worktree_install_location() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_ins_08_consuming_repo_commit_runs_hooks() {
     let env = tenv();
     let r = env.fixture_repo(Fixture::ConsumingRepo("script_hooks_repo"));
@@ -312,7 +323,6 @@ fn t10_ins_08_consuming_repo_commit_runs_hooks() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_ins_09_commit_with_unstaged_changes() {
     let env = tenv();
     let r = env.fixture_repo(Fixture::ConsumingRepo("script_hooks_repo"));
@@ -326,7 +336,6 @@ fn t10_ins_09_commit_with_unstaged_changes() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_ins_10_merge_commit_with_unicode_message() {
     let env = tenv();
     let r = env.fixture_repo(Fixture::ConsumingRepo("script_hooks_repo"));
@@ -393,7 +402,6 @@ fn t10_ins_12_no_executable_found() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_ins_13_failing_hook_fails_the_commit() {
     let env = tenv();
     let r = env.fixture_repo(Fixture::ConsumingRepo("failing_hook_repo"));
@@ -429,7 +437,6 @@ fn t10_ins_14_migration_mode_messages() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_ins_14_legacy_runs_first_on_commit() {
     let env = tenv();
     let r = env.fixture_repo(Fixture::ConsumingRepo("script_hooks_repo"));
@@ -473,7 +480,6 @@ fn t10_ins_16_binary_hook_bytes() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_ins_17_failing_legacy_still_runs_hooks() {
     let env = tenv();
     let r = env.fixture_repo(Fixture::ConsumingRepo("script_hooks_repo"));
@@ -560,7 +566,6 @@ fn t10_ins_21_uninstall_keeps_foreign_hook() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_ins_22_install_hooks_then_commit_prints_no_initializing() {
     let env = tenv();
     let r = env.fixture_repo(Fixture::ConsumingRepo("script_hooks_repo"));
@@ -571,7 +576,6 @@ fn t10_ins_22_install_hooks_then_commit_prints_no_initializing() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_ins_23_commit_without_snp_on_path() {
     let env = tenv().with_env("PATH", "/usr/bin:/bin");
     let r = env.fixture_repo(Fixture::ConsumingRepo("script_hooks_repo"));
@@ -581,10 +585,10 @@ fn t10_ins_23_commit_without_snp_on_path() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_ins_24_pre_push_runs_hooks_on_pushed_files() {
     let env = tenv();
-    let upstream = env.fixture_repo(Fixture::Resource("failing_hook_repo"));
+    // `test_pre_push_integration_failing`: a clone of a repository that *consumes* the failing hook
+    let upstream = env.fixture_repo(Fixture::ConsumingRepo("failing_hook_repo"));
     let r = env.root().join("clone");
     git(
         &env,
@@ -604,26 +608,30 @@ fn t10_ins_24_pre_push_runs_hooks_on_pushed_files() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_ins_25_pre_push_remote_name() {
     let env = tenv();
     let r = env.fixture_repo(Fixture::PushExample);
     git(&env, &r, &["remote", "rename", "origin", "origin2"]);
+    // `test_pre_push_environment_variables` (`add_config_to_repo`: the config is committed). The entry holds `: `,
+    // so it must be a quoted scalar (as `yaml.dump` writes it): plain, it is a YAML error under both tools.
     std::fs::write(
         r.join(".pre-commit-config.yaml"),
-        "repos:\n-   repo: local\n    hooks:\n    -   id: r\n        name: r\n        entry: bash -c 'echo remote: $PRE_COMMIT_REMOTE_NAME'\n        language: system\n        verbose: true\n",
+        "repos:\n-   repo: local\n    hooks:\n    -   id: r\n        name: r\n        entry: 'bash -c \"echo remote: $PRE_COMMIT_REMOTE_NAME\"'\n        language: system\n        verbose: true\n",
     )
     .unwrap();
+    git(&env, &r, &["add", ".pre-commit-config.yaml"]);
+    git(&env, &r, &["commit", "-m", "add hooks config"]);
     assert_code(&compat(&env, &r, &["install", "-t", "pre-push"]), 0);
     let (_, out, err) = git(&env, &r, &["push", "origin2", "HEAD:new"]);
     assert!(format!("{out}{err}").contains("\nremote: origin2\n"));
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_ins_26_push_nothing_new() {
     let env = tenv();
-    let r = env.fixture_repo(Fixture::PushExample);
+    // `test_pre_push_integration_empty_push`: a clone of a consuming repository (`hook-impl` validates the config
+    // before it looks at the pushed refs, so a clone without one fails every push)
+    let r = clone_of(&env, Fixture::ConsumingRepo("script_hooks_repo"));
     assert_code(&compat(&env, &r, &["install", "-t", "pre-push"]), 0);
     git(&env, &r, &["push", "origin", "HEAD:master"]);
     let (code, _, err) = git(&env, &r, &["push", "origin", "HEAD:master"]);
@@ -631,10 +639,11 @@ fn t10_ins_26_push_nothing_new() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_ins_27_legacy_pre_push_gets_stdin() {
     let env = tenv();
-    let r = env.fixture_repo(Fixture::PushExample);
+    // `test_pre_push_legacy`: a clone of a consuming repository with one new commit to push
+    let r = clone_of(&env, Fixture::ConsumingRepo("script_hooks_repo"));
+    commit_file(&env, &r, "foo", "foo");
     write_hook(
         &hook(&r, "pre-push"),
         b"#!/usr/bin/env bash\nread lr ls rr rs\ntest -n \"$lr\" -a -n \"$ls\" -a -n \"$rr\" -a -n \"$rs\"\necho legacy\n",
@@ -642,11 +651,15 @@ fn t10_ins_27_legacy_pre_push_gets_stdin() {
     assert_code(&compat(&env, &r, &["install", "-t", "pre-push"]), 0);
     let (code, out, err) = git(&env, &r, &["push", "origin", "HEAD:new"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(err.starts_with("legacy\n"), "{err}");
+    // upstream reads stdout and stderr merged; which of the two a pre-push hook's stdout reaches depends on the git
+    // version (2.43 leaves it on stdout)
+    let hook_out = if out.is_empty() { &err } else { &out };
+    assert!(hook_out.starts_with("legacy\n"), "{out}{err}");
+    let bash = hook_out.lines().find(|l| l.starts_with("Bash hook"));
+    assert!(bash.is_some_and(|l| l.ends_with("Passed")), "{out}{err}");
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_ins_28_commit_msg_hook() {
     let env = tenv();
     let r = env.fixture_repo(Fixture::CommitMsgRepo);
@@ -659,7 +672,6 @@ fn t10_ins_28_commit_msg_hook() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_ins_29_post_commit_hook_runs_after_install() {
     let env = tenv();
     let r = repo_with(
@@ -675,7 +687,6 @@ fn t10_ins_29_post_commit_hook_runs_after_install() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_ins_30_stash_does_not_trigger_post_checkout() {
     let env = tenv();
     let r = repo_with(
@@ -699,7 +710,6 @@ fn t10_ins_30_stash_does_not_trigger_post_checkout() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_ins_31_prepare_commit_msg_hook() {
     let env = tenv();
     let r = env.fixture_repo(Fixture::PrepareCommitMsgRepo { failing: false });
@@ -714,7 +724,6 @@ fn t10_ins_31_prepare_commit_msg_hook() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_ins_32_pre_merge_commit_hook() {
     let env = tenv();
     let r = env.fixture_repo(Fixture::ConsumingRepo("script_hooks_repo"));
@@ -754,7 +763,6 @@ fn t10_ins_33_allow_missing_config_is_embedded() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn t10_ins_33_missing_config_commit_outcomes() {
     let env = tenv();
     let r = empty_repo(&env, "r");
@@ -949,7 +957,6 @@ fn snp_exe_is_the_stable_invoked_path() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "needs WP-32"]
 fn snp_exe_survives_deleting_the_versioned_target() {
     let env = tenv();
     let cellar = env.root().join("Cellar/snp/2.0.0/bin");
@@ -1081,7 +1088,6 @@ fn git_config_hooks_on_git_2_54() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn install_hooks_runs_after_install() {
     let env = tenv();
     let r = env.fixture_repo(Fixture::ConsumingRepo("script_hooks_repo"));
@@ -1265,7 +1271,6 @@ fn m11_mig_07_snp_v1_script() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn m11_mig_08_case_b_commit_runs_snp_in_compat_mode() {
     let env = tenv();
     let r = env.fixture_repo(Fixture::ConsumingRepo("script_hooks_repo"));
@@ -1328,7 +1333,6 @@ fn m11_mig_10_era1_script_classified_and_replaced() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn m11_mig_11_cdpath_with_legacy() {
     let env = tenv();
     let r = env.fixture_repo(Fixture::ConsumingRepo("script_hooks_repo"));
@@ -1341,7 +1345,6 @@ fn m11_mig_11_cdpath_with_legacy() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn m11_mig_12_pre_commit_script_cdpath_legacy_via_alias() {
     let env = tenv();
     let r = env.fixture_repo(Fixture::ConsumingRepo("script_hooks_repo"));
@@ -1484,7 +1487,6 @@ fn m11_mig_17_snp_v1_layout() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn m11_mig_18_hazmat_entries_exit_codes() {
     let env = tenv();
     let r = repo_with(
@@ -1568,7 +1570,6 @@ fn m11_mig_21_alias_refuses_foreign_pre_commit() {
 }
 
 #[test]
-#[ignore = "needs WP-32"]
 fn m11_mig_22_run_hint_only_on_a_terminal() {
     let env = tenv();
     let r = repo_with(&env, "r", LOCAL_CONFIG);
