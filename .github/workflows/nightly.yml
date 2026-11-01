@@ -1,5 +1,19 @@
-# Nightly (ARCHITECTURE §13.7; WBS WP-00 item 8: skeleton). Owned by WP-00; the jobs call xtask tasks owned by
-# later packages, which enable their job (remove `if: false`) when the task is implemented.
+# Nightly orchestration (ARCHITECTURE §13.1, §13.5, §13.7; WBS WP-37). Created by WP-00, owned by WP-37.
+#
+# * tests: the nextest `nightly` profile on every platform (proptest at 10 000 cases);
+# * toolchains / network: the opt-in `tc_*` (real language toolchains) and `net_*` (real downloads) suites;
+# * oracle: the pre-commit 4.6.2 oracles are rebuilt and verified;
+# * fuzz: 300 s per cargo-fuzz target (no panic, no hang > 5 s, <= 512 MB RSS, 256 KiB stacks);
+# * difftest: the generated differential suite against the oracle (WP-35's harness);
+# * catalog-status, bench: WP-35's catalog report and WP-36's end-to-end budgets;
+# * mutants: cargo-mutants on snp-stash, snp-proc (xargs), snp-argparse and snp-pyre;
+# * coverage: llvm-cov over the hermetic suite, published as an artifact.
+#
+# Jobs that drive an xtask task owned by another package run once that task is implemented: the `tasks` job reports
+# whether each task is still its W0 stub (a `todo!()` body), and the job is skipped (with a notice) until it is not.
+#
+# Layout (as in ci.yml): the repository at $GITHUB_WORKSPACE/snp, the user crates next to it at the deps.lock commits
+# (ADR-061); every job checks them out first.
 name: nightly
 
 on:
@@ -21,19 +35,42 @@ defaults:
     working-directory: snp
 
 jobs:
+  tasks:
+    name: implemented xtask tasks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      difftest: ${{ steps.check.outputs.difftest }}
+      catalog-status: ${{ steps.check.outputs.catalog-status }}
+      bench: ${{ steps.check.outputs.bench }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - id: check
+        run: |
+          for task in difftest catalog_status bench; do
+            key="${task//_/-}"
+            if grep -q 'todo!()' "xtask/src/tasks/$task.rs"; then
+              echo "::notice::cargo xtask $key is still a W0 stub; its nightly job is skipped"
+              echo "$key=stub" >> "$GITHUB_OUTPUT"
+            else
+              echo "$key=ready" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
   tests:
-    # nextest profile `nightly` on every platform of ARCHITECTURE §13.7. Packages that add opt-in suites (toolchains,
-    # network, oracle interop) extend this job when they land.
     name: tests (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, macos-15, macos-15-intel, windows-2025]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 120
+    env:
+      PROPTEST_CASES: "10000"
     steps:
       - uses: actions/checkout@v4
-        with: { path: snp }
+        with: { path: snp, persist-credentials: false }
       - name: User crates at the deps.lock commits
         run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
@@ -51,10 +88,12 @@ jobs:
       matrix:
         os: [ubuntu-24.04-arm, windows-11-arm]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 120
+    env:
+      PROPTEST_CASES: "10000"
     steps:
       - uses: actions/checkout@v4
-        with: { path: snp }
+        with: { path: snp, persist-credentials: false }
       - name: User crates at the deps.lock commits
         run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
@@ -63,13 +102,60 @@ jobs:
       - run: cargo build --workspace --bins --features snp/testing --locked
       - run: cargo nextest run --workspace --features snp/testing --locked --profile nightly --no-tests=warn
 
+  toolchains:
+    # `tc_*` tests (`#[ignore = "toolchain"]`) need real toolchains: Python, Node, Go, Rust, Ruby, … on the runner.
+    name: toolchains (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: actions/setup-node@v4
+        with: { node-version: lts/* }
+      - uses: actions/setup-go@v5
+        with: { go-version: stable, cache: false }
+      - uses: ruby/setup-ruby@v1
+        with: { ruby-version: "3.3" }
+      - uses: astral-sh/setup-uv@v6
+      - uses: taiki-e/install-action@v2
+        with: { tool: cargo-nextest }
+      - run: cargo build --workspace --bins --features snp/testing --locked
+      - run: >-
+          cargo nextest run --workspace --features snp/testing --locked --profile nightly --no-tests=warn
+          --run-ignored only -E 'test(/^tc_/)'
+
+  network:
+    # `net_*` tests (`#[ignore = "net"]`) download from the real origins (toolchain catalogue, checksums).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: taiki-e/install-action@v2
+        with: { tool: cargo-nextest }
+      - run: >-
+          cargo nextest run --workspace --features snp/testing --locked --profile nightly --no-tests=warn
+          --run-ignored only -E 'test(/^net_/)'
+
   oracle:
     # The pre-commit 4.6.2 oracles (WP-00): created and verified every night.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-        with: { path: snp }
+        with: { path: snp, persist-credentials: false }
       - name: User crates at the deps.lock commits
         run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
@@ -81,14 +167,14 @@ jobs:
     # 300 s per target (ARCHITECTURE §13.5).
     name: fuzz (shard ${{ matrix.shard }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     steps:
       - uses: actions/checkout@v4
-        with: { path: snp }
+        with: { path: snp, persist-credentials: false }
       - name: User crates at the deps.lock commits
         run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install nightly --profile minimal
@@ -96,43 +182,59 @@ jobs:
         with: { tool: cargo-fuzz }
       - run: cargo +nightly fuzz build
       - run: .github/scripts/fuzz-run.sh ${{ matrix.shard }} 10 300
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-artifacts-${{ matrix.shard }}
+          path: snp/fuzz/artifacts
+          if-no-files-found: ignore
 
   difftest:
-    # WP-35: generated scenarios against the oracle (`cargo xtask difftest --suite generated`).
-    if: false
+    # WP-35: generated scenarios against the oracle, in both brands.
+    needs: tasks
+    if: ${{ needs.tasks.outputs.difftest == 'ready' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
-        with: { path: snp }
+        with: { path: snp, persist-credentials: false }
       - name: User crates at the deps.lock commits
         run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: astral-sh/setup-uv@v6
+      - run: cargo build --release --locked -p snp -p snp-probe --bins
       - run: cargo xtask oracle install
       - run: cargo xtask difftest --suite generated --cases 2000 --seed "$GITHUB_RUN_ID"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: difftest-generated
+          path: snp/target/difftest
+          if-no-files-found: ignore
 
   catalog-status:
     # WP-35: ported vs total catalog rows (tests/catalog/index.tsv).
-    if: false
+    needs: tasks
+    if: ${{ needs.tasks.outputs.catalog-status == 'ready' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-        with: { path: snp }
+        with: { path: snp, persist-credentials: false }
       - name: User crates at the deps.lock commits
         run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
-      - run: cargo xtask catalog-status
+      - run: cargo xtask catalog-status | tee -a "$GITHUB_STEP_SUMMARY"
 
   bench:
     # WP-36: end-to-end budgets against the oracle (`cargo xtask bench setup|run|gate`).
-    if: false
+    needs: tasks
+    if: ${{ needs.tasks.outputs.bench == 'ready' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-        with: { path: snp }
+        with: { path: snp, persist-credentials: false }
       - name: User crates at the deps.lock commits
         run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
@@ -141,17 +243,54 @@ jobs:
       - run: cargo xtask bench setup && cargo xtask bench run && cargo xtask bench gate
 
   mutants:
-    # Mutation testing on snp-stash, snp-proc (xargs), snp-argparse and snp-pyre (ARCHITECTURE §13.7); enabled
-    # once those crates are implemented (W1/W2).
-    if: false
+    # Mutation testing (ARCHITECTURE §13.7) on the crates whose correctness is most subtle: the stash guard, xargs
+    # partitioning, the argparse engine and the regex front end. One shard per package keeps each run bounded.
+    name: mutants (${{ matrix.target.name }})
     runs-on: ubuntu-24.04
     timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { name: snp-stash, args: "-p snp-stash" }
+          - { name: snp-proc xargs, args: "-p snp-proc --file crates/snp-proc/src/xargs.rs" }
+          - { name: snp-argparse, args: "-p snp-argparse" }
+          - { name: snp-pyre, args: "-p snp-pyre" }
     steps:
       - uses: actions/checkout@v4
-        with: { path: snp }
+        with: { path: snp, persist-credentials: false }
       - name: User crates at the deps.lock commits
         run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: taiki-e/install-action@v2
         with: { tool: "cargo-mutants,cargo-nextest" }
-      - run: cargo mutants --test-tool nextest -p snp-stash -p snp-proc -p snp-argparse -p snp-pyre
+      - name: cargo mutants
+        env:
+          MUTANTS_ARGS: ${{ matrix.target.args }}
+        run: |
+          # shellcheck disable=SC2086
+          cargo mutants --test-tool nextest --no-shuffle $MUTANTS_ARGS
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: mutants-${{ matrix.target.name }}
+          path: snp/mutants.out
+          if-no-files-found: ignore
+
+  coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: taiki-e/install-action@v2
+        with: { tool: "cargo-llvm-cov,cargo-nextest" }
+      - run: cargo llvm-cov nextest --workspace --features snp/testing --locked --profile ci --no-tests=warn --lcov --output-path lcov.info
+      - run: cargo llvm-cov report --summary-only | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: snp/lcov.info

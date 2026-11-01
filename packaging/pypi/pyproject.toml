@@ -1,0 +1,47 @@
+# The `snp-cli` wheel (ADR-049, 11 §A.9.3): the `snp` binary only, built by maturin with `bindings = "bin"`.
+#
+#   cd packaging/pypi && maturin build --release --locked --out dist
+#
+# The PyPI name `snp` belongs to an unrelated placeholder, hence `snp-cli` (the `ast-grep-cli` precedent). The wheel
+# never contains a `pre-commit` executable or a `pre_commit` package: the `pre-commit` name stays opt-in
+# (`snp self alias install`).
+[build-system]
+requires = ["maturin>=1.15,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "snp-cli"
+description = "You Shell Not Pass: a drop-in replacement for pre-commit 4.6.2, as a single native binary"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.8"
+authors = [{ name = "Serhii Kaliuzhnyi" }]
+keywords = ["git", "hooks", "pre-commit", "linter", "formatter"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Rust",
+  "Topic :: Software Development :: Quality Assurance",
+  "Topic :: Software Development :: Version Control :: Git",
+]
+# The version is the workspace version of crates/snp/Cargo.toml.
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/grok-rs/snp"
+Documentation = "https://github.com/grok-rs/snp/tree/main/docs/user"
+Repository = "https://github.com/grok-rs/snp"
+Changelog = "https://github.com/grok-rs/snp/blob/main/CHANGELOG.md"
+Issues = "https://github.com/grok-rs/snp/issues"
+
+[tool.maturin]
+bindings = "bin"
+manifest-path = "../../crates/snp/Cargo.toml"
+# The same profile as the cargo-dist archives (release + stripped symbols).
+profile = "dist"
+locked = true
+strip = true

@@ -1,0 +1,402 @@
+# Platform matrix (WBS WP-37; ARCHITECTURE §13.1 L6, §13.7; 14 §A.5–§A.6; ADR-061, ADR-063). Owned by WP-37.
+#
+# * test: the hermetic suite on every OS of the release (Linux x64/arm64, macOS arm64/x64, Windows x64/arm64);
+# * git: the git-dependent crates against pinned git releases built from source (2.18.5, 2.30, 2.31, 2.34, 2.39,
+#   2.43, 2.54 with config hooks, latest), the native latest git of macOS (Homebrew) and Git for Windows; on 2.18.5
+#   and 2.30 the expect_divergence scenarios D-DATA-17 / D-CRASH-26 / D-DIAG-01 run against the oracle;
+# * musl: static builds smoke-tested in an Alpine container;
+# * platform-facts: `cargo xtask platform-facts` on every runner image with Python 3.12 and 3.13, published as
+#   artifacts; contradicted predictions of 14 §A.6 are filed as issues (scheduled runs) or annotated (pull requests);
+# * difftest-platform: the platform scenarios W01–W27 / M01–M07 against the oracle (14 §A.6.4);
+# * wheel: the snp-cli wheel builds, installs and runs `snp --version` on Linux, macOS and Windows;
+# * docs: the generated user documentation is current and has no broken links.
+#
+# Layout (as in ci.yml): the repository is checked out at $GITHUB_WORKSPACE/snp and the user crates next to it at the
+# deps.lock commits, so `../cfgv-rs` and `../file-identify` resolve. Every job does that first.
+name: platform
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "43 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
+defaults:
+  run:
+    shell: bash
+    working-directory: snp
+
+jobs:
+  runners:
+    # The arm64 Linux and Windows runners exist for public repositories only; every matrix below takes its runner list
+    # from here.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      all: ${{ steps.lists.outputs.all }}
+      musl: ${{ steps.lists.outputs.musl }}
+    steps:
+      - id: lists
+        working-directory: .
+        env:
+          PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          if [ "$PRIVATE" = true ]; then
+            echo 'all=["ubuntu-24.04","macos-15","macos-15-intel","windows-2025"]' >> "$GITHUB_OUTPUT"
+            echo 'musl=[{"target":"x86_64-unknown-linux-musl","os":"ubuntu-24.04"}]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'all=["ubuntu-24.04","ubuntu-24.04-arm","macos-15","macos-15-intel","windows-2025","windows-11-arm"]' >> "$GITHUB_OUTPUT"
+            echo 'musl=[{"target":"x86_64-unknown-linux-musl","os":"ubuntu-24.04"},{"target":"aarch64-unknown-linux-musl","os":"ubuntu-24.04-arm"}]' >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    name: test (${{ matrix.os }})
+    needs: runners
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJson(needs.runners.outputs.all) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      # 14 §A.6.1 step 1: before the checkout, so fixture bytes and SHAs are identical on every OS.
+      - name: Neutral git defaults
+        working-directory: .
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.fsmonitor false
+          git config --global init.defaultBranch master
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: snp, key: platform }
+      - uses: taiki-e/install-action@v2
+        with: { tool: cargo-nextest }
+      - run: git --version
+      - run: cargo build --workspace --bins --features snp/testing --locked
+      - run: cargo nextest run --workspace --features snp/testing --locked --profile ci --no-tests=warn
+      - name: Serial mode (PRE_COMMIT_NO_CONCURRENCY)
+        run: >-
+          cargo nextest run --workspace --features snp/testing --locked --profile ci --no-tests=warn
+          -E 'test(/run|xargs|stash/)'
+        env:
+          PRE_COMMIT_NO_CONCURRENCY: "1"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: junit-test-${{ matrix.os }}
+          path: snp/target/nextest/ci/junit.xml
+          if-no-files-found: ignore
+
+  git:
+    # The git-version axis (§13.1 L6). Pinned releases are built from the kernel.org tarballs (SHA-256 pinned in
+    # packaging/ci/build-git.sh) and cached per version.
+    name: git ${{ matrix.git }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ADR-063: warning (D-DIAG-01), the --deduplicate fallback (D-CRASH-26) and the stash refusal (D-DATA-17)
+          - { git: 2.18.5, divergences: "D-DATA-17 D-CRASH-26 D-DIAG-01" }
+          # the warning band and the fallback
+          - { git: 2.30.9, divergences: "D-CRASH-26 D-DIAG-01" }
+          - { git: 2.31.8, divergences: "" }
+          - { git: 2.34.8, divergences: "" }
+          - { git: 2.39.5, divergences: "" }
+          - { git: 2.43.7, divergences: "" }
+          # config-based hooks (hook.<name>.command, `install --git-config-hooks`)
+          - { git: 2.54.0, divergences: "" }
+          # latest release at the last update of this matrix
+          - { git: 2.56.0, divergences: "" }
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Neutral git defaults
+        working-directory: .
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.fsmonitor false
+          git config --global init.defaultBranch master
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - name: Build dependencies of git
+        run: sudo apt-get update -q && sudo apt-get install -q -y libcurl4-openssl-dev libexpat1-dev zlib1g-dev
+      - uses: actions/cache@v4
+        id: git-cache
+        with:
+          path: ~/git-${{ matrix.git }}
+          key: git-${{ matrix.git }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('snp/packaging/ci/build-git.sh') }}
+      - name: Build git ${{ matrix.git }}
+        if: steps.git-cache.outputs.cache-hit != 'true'
+        run: packaging/ci/build-git.sh "${{ matrix.git }}" "$HOME/git-${{ matrix.git }}"
+      - name: Put git ${{ matrix.git }} first on PATH
+        run: |
+          echo "$HOME/git-${{ matrix.git }}/bin" >> "$GITHUB_PATH"
+          "$HOME/git-${{ matrix.git }}/bin/git" --version | grep -qx "git version ${{ matrix.git }}"
+      - run: git --version
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: snp, key: platform-git }
+      - uses: taiki-e/install-action@v2
+        with: { tool: cargo-nextest }
+      - run: cargo build --workspace --bins --features snp/testing --locked
+      # The crates whose behaviour depends on the git version: the git layer, the test fixtures, the stash guard, the
+      # store's clones, hook resolution, the run pipeline, the commands and the binary's integration tests.
+      - name: Git-dependent tests
+        run: >-
+          cargo nextest run --features snp/testing --locked --profile ci --no-tests=warn
+          -p snp-git -p snp-testkit -p snp-stash -p snp-store -p snp-repo -p snp-run -p snp-cmd -p snp
+      - uses: astral-sh/setup-uv@v6
+        if: ${{ matrix.divergences != '' }}
+      - name: Oracle (pre-commit 4.6.2)
+        if: ${{ matrix.divergences != '' }}
+        run: cargo xtask oracle install
+      # ADR-063: the differences on old git are registered divergences; the harness fails when one stops reproducing.
+      - name: expect_divergence scenarios
+        if: ${{ matrix.divergences != '' }}
+        env:
+          DIVERGENCES: ${{ matrix.divergences }}
+        run: |
+          for id in $DIVERGENCES; do
+            cargo xtask difftest --scenario "tests/differential/divergences/$id.yaml"
+          done
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: junit-git-${{ matrix.git }}
+          path: snp/target/nextest/ci/junit.xml
+          if-no-files-found: ignore
+
+  git-native-latest:
+    # The newest git each OS distributes: Homebrew git on macOS, the latest Git for Windows.
+    name: git latest (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - name: Latest git (Homebrew)
+        if: runner.os == 'macOS'
+        working-directory: .
+        run: |
+          brew install git
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+      - name: Latest Git for Windows
+        if: runner.os == 'Windows'
+        working-directory: .
+        shell: pwsh
+        run: choco upgrade git --no-progress -y
+      - name: Neutral git defaults
+        working-directory: .
+        run: |
+          git --version
+          git config --global core.autocrlf false
+          git config --global core.fsmonitor false
+          git config --global init.defaultBranch master
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: snp, key: platform-git }
+      - uses: taiki-e/install-action@v2
+        with: { tool: cargo-nextest }
+      - run: cargo build --workspace --bins --features snp/testing --locked
+      - name: Git-dependent tests
+        run: >-
+          cargo nextest run --features snp/testing --locked --profile ci --no-tests=warn
+          -p snp-git -p snp-testkit -p snp-stash -p snp-store -p snp-repo -p snp-run -p snp-cmd -p snp
+
+  musl:
+    # Static builds (14 §A.5.1: T1 for releases, T2 for tests): built with the release profile, checked to be static,
+    # and run in an Alpine container that has no glibc.
+    name: musl (${{ matrix.target }})
+    needs: runners
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.runners.outputs.musl) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: sudo apt-get update -q && sudo apt-get install -q -y musl-tools
+      - run: rustup toolchain install && rustup target add "${{ matrix.target }}"
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: snp, key: "musl-${{ matrix.target }}" }
+      - run: cargo build --profile dist --locked -p snp --target "${{ matrix.target }}"
+      - name: The binary is static
+        run: |
+          bin="target/${{ matrix.target }}/dist/snp"
+          file "$bin"
+          file "$bin" | grep -Eq 'static(-pie)? linked'
+      - name: Runs without glibc
+        run: >-
+          docker run --rm -v "$PWD/target/${{ matrix.target }}/dist:/snp:ro" alpine:3.22
+          sh -c '/snp/snp --version | grep -Eq "^snp [0-9]+\.[0-9]+\.[0-9]+$" && /snp/snp --help > /dev/null'
+
+  platform-facts:
+    # 14 §A.6.3/§A.6.5: record the facts of each runner image and check the derived predictions; never fails.
+    name: platform-facts (${{ matrix.os }}, Python ${{ matrix.python }})
+    needs: runners
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJson(needs.runners.outputs.all) }}
+        python: ["3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - uses: actions/setup-python@v5
+        id: python
+        with: { python-version: "${{ matrix.python }}" }
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: snp, key: platform-facts }
+      - name: Build snp and xtask
+        run: cargo build --locked -p snp -p xtask
+      - name: cargo xtask platform-facts
+        env:
+          FACTS_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: >-
+          cargo xtask platform-facts --out "target/platform-facts/${{ matrix.os }}-py${{ matrix.python }}"
+          --python "$FACTS_PYTHON" --snp "target/debug/snp$(test "$RUNNER_OS" = Windows && echo .exe || true)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: platform-facts-${{ matrix.os }}-py${{ matrix.python }}
+          path: snp/target/platform-facts/${{ matrix.os }}-py${{ matrix.python }}
+      - name: Report contradicted predictions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FACTS_DIR: target/platform-facts/${{ matrix.os }}-py${{ matrix.python }}
+          FILE_ISSUE: ${{ github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+        run: |
+          corrections="$FACTS_DIR/corrections.md"
+          [ -f "$corrections" ] || { echo "every applicable prediction confirmed or unknown"; exit 0; }
+          echo "::warning::platform-facts: contradicted predictions on ${{ matrix.os }} (Python ${{ matrix.python }}); see $corrections"
+          [ "$FILE_ISSUE" = true ] || exit 0
+          title="platform-facts: contradicted predictions on ${{ matrix.os }} (Python ${{ matrix.python }})"
+          if [ -n "$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" --json number --jq '.[].number')" ]; then
+            echo "an issue is already open"
+            exit 0
+          fi
+          {
+            cat "$corrections"
+            echo
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > issue.md
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue.md
+
+  difftest-platform:
+    # 14 §A.6.1 steps 4–7: the platform scenarios against the oracle on the real runners.
+    name: difftest platform (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, macos-15-intel, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - name: Neutral git defaults
+        working-directory: .
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.fsmonitor false
+          git config --global init.defaultBranch master
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: snp, key: platform }
+      - uses: astral-sh/setup-uv@v6
+      - run: cargo build --release --locked -p snp -p snp-probe --bins
+      - run: cargo xtask oracle install
+      - run: cargo xtask difftest --suite platform --keep-failures
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: difftest-platform-${{ matrix.os }}
+          path: snp/target/difftest
+          if-no-files-found: ignore
+
+  wheel:
+    # The snp-cli wheel (maturin, bindings = "bin") installs and runs on the three OSes (WBS WP-37 acceptance).
+    name: wheel (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: snp, key: wheel }
+      - uses: astral-sh/setup-uv@v6
+      # The dev profile keeps the smoke fast; the release workflow builds with the dist profile.
+      - name: Build the wheel
+        working-directory: snp/packaging/pypi
+        run: uvx --from 'maturin>=1.15,<2.0' maturin build --profile dev --locked --out dist
+      - name: Install it and run snp --version
+        working-directory: snp/packaging/pypi
+        run: |
+          uv venv --python 3.13 venv
+          if [ "$RUNNER_OS" = Windows ]; then bin=venv/Scripts; else bin=venv/bin; fi
+          uv pip install --python "$bin/python" dist/snp_cli-*.whl
+          "$bin/snp" --version | tee version.txt
+          grep -Eq '^snp [0-9]+\.[0-9]+\.[0-9]+$' version.txt
+          # the wheel ships `snp` only: never a `pre-commit` executable (ADR-049)
+          if ls "$bin" | grep -qi '^pre-commit'; then echo "::error::the wheel installed a pre-commit executable"; exit 1; fi
+
+  docs:
+    name: user documentation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: snp, key: docs }
+      - run: cargo xtask docs --check
+      - run: cargo xtask release gates --skip-registry --allow-unreleased

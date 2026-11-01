@@ -1,0 +1,411 @@
+# Release (WBS WP-37; ADR-049, ADR-061; ARCHITECTURE §11.7; 07 §3.17). Owned by WP-37.
+#
+# Maintained by hand in the layout of cargo-dist 0.32's generated workflow (dist-workspace.toml has
+# `allow-dirty = ["ci"]`), with the snp specifics:
+#
+# * every job checks the repository out at $GITHUB_WORKSPACE/snp and the user crates next to it at the deps.lock
+#   commits (ADR-061), so `../cfgv-rs` and `../file-identify` resolve;
+# * `gates` runs first: `cargo xtask release gates` (deps.lock pins exactly the user crates; the siblings are clean at
+#   the pinned commits; the snp checkout is clean; the tag is `v` + the workspace version with a CHANGELOG section;
+#   cfgv and file-identify are published on crates.io from exactly the pinned commits, `.cargo_vcs_info.json`). A
+#   mismatch stops the release before anything is built;
+# * `dist` builds the eight targets with cargo-auditable, a CycloneDX SBOM per package and SHA-256 checksums, plus the
+#   shell and PowerShell installers (no bin-aliases);
+# * `wheels` builds the snp-cli wheels with maturin (bindings = "bin") and smoke-tests them;
+# * `announce` attests every asset (GitHub artifact attestations) and creates the GitHub release with the CHANGELOG
+#   section as notes; `publish-pypi` uploads the wheels with trusted publishing.
+#
+# Triggers: a pushed tag `vX.Y.Z` releases. A pull request that changes the release configuration, and a manual run
+# with the default tag `dry-run`, run the gates (without the registry check), `dist plan` and the builds, but publish
+# nothing.
+name: release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+  pull_request:
+    paths:
+      - dist-workspace.toml
+      - .github/workflows/release.yml
+      - packaging/pypi/**
+      - xtask/src/tasks/release.rs
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (vX.Y.Z), or dry-run to build without publishing
+        required: true
+        default: dry-run
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  DIST_VERSION: "0.32.0"
+  MATURIN_VERSION: "1.15.0"
+
+defaults:
+  run:
+    shell: bash
+    working-directory: snp
+
+jobs:
+  gates:
+    name: release gates (ADR-061)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      publishing: ${{ steps.tag.outputs.publishing }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - name: Release tag
+        id: tag
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          tag=""
+          if [ "$EVENT" = push ]; then
+            tag="$REF_NAME"
+          elif [ "$EVENT" = workflow_dispatch ] && [ "$INPUT_TAG" != dry-run ]; then
+            tag="$INPUT_TAG"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ -n "$tag" ]; then echo "publishing=true" >> "$GITHUB_OUTPUT"; else echo "publishing=false" >> "$GITHUB_OUTPUT"; fi
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - name: cargo xtask release gates
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if [ -n "$TAG" ]; then
+            cargo xtask release gates --tag "$TAG"
+          else
+            # dry runs and pull requests: the user crates need not be published yet, the version not be released
+            cargo xtask release gates --skip-registry --allow-unreleased
+          fi
+      - name: Release notes
+        if: steps.tag.outputs.publishing == 'true'
+        run: cargo xtask release notes "${{ steps.tag.outputs.tag }}"
+
+  plan:
+    needs: gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      val: ${{ steps.plan.outputs.manifest }}
+      tag-flag: ${{ needs.gates.outputs.tag != '' && format('--tag={0}', needs.gates.outputs.tag) || '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - name: Install dist
+        working-directory: .
+        run: >-
+          curl --proto '=https' --tlsv1.2 -LsSf
+          "https://github.com/axodotdev/cargo-dist/releases/download/v${DIST_VERSION}/cargo-dist-installer.sh" | sh
+      - name: Cache dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-dist-cache
+          path: ~/.cargo/bin/dist
+      - id: plan
+        env:
+          TAG: ${{ needs.gates.outputs.tag }}
+        run: |
+          if [ -n "$TAG" ]; then
+            dist plan --tag="$TAG" --output-format=json > plan-dist-manifest.json
+          else
+            dist plan --output-format=json > plan-dist-manifest.json
+          fi
+          echo "dist ran successfully"
+          cat plan-dist-manifest.json
+          echo "manifest=$(jq -c "." plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-plan-dist-manifest
+          path: snp/plan-dist-manifest.json
+
+  build-local-artifacts:
+    name: build (${{ join(matrix.targets, ', ') }})
+    needs: plan
+    if: ${{ fromJson(needs.plan.outputs.val).ci.github.artifacts_matrix.include != null }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.val).ci.github.artifacts_matrix }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BUILD_MANIFEST_NAME: target/distrib/${{ join(matrix.targets, '-') }}-dist-manifest.json
+    steps:
+      - name: Neutral git defaults
+        working-directory: .
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - name: Install dist
+        working-directory: .
+        run: ${{ matrix.install_dist.run }}
+      - name: Install cargo-auditable and cargo-cyclonedx
+        uses: taiki-e/install-action@v2
+        with: { tool: "cargo-auditable,cargo-cyclonedx" }
+      - name: Install system dependencies
+        if: ${{ matrix.packages_install }}
+        run: ${{ matrix.packages_install }}
+      - name: Build artifacts
+        id: dist
+        env:
+          TAG_FLAG: ${{ needs.plan.outputs.tag-flag }}
+          DIST_ARGS: ${{ matrix.dist_args }}
+        run: |
+          # shellcheck disable=SC2086
+          dist build $TAG_FLAG --print=linkage --output-format=json $DIST_ARGS > dist-manifest.json
+          echo "dist ran successfully"
+          echo "paths<<EOF" >> "$GITHUB_OUTPUT"
+          # relative paths are relative to snp/ (the working directory), artifact paths to the workspace
+          jq --raw-output ".upload_files[]" dist-manifest.json | sed -E '/^(\/|[A-Za-z]:)/! s|^|snp/|' >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          mkdir -p target/distrib
+          cp dist-manifest.json "$BUILD_MANIFEST_NAME"
+      - name: The binaries embed their dependency list (cargo-auditable)
+        if: runner.os == 'Linux'
+        run: |
+          shopt -s nullglob
+          found=0
+          for f in target/distrib/*/snp target/distrib/*/snp.exe; do
+            found=1
+            grep -c '\.dep-v0' "$f" > /dev/null || { echo "::error::$f has no .dep-v0 section (cargo-auditable)"; exit 1; }
+          done
+          [ "$found" = 1 ] || echo "no unpacked binary to inspect"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-build-local-${{ join(matrix.targets, '_') }}
+          path: |
+            ${{ steps.dist.outputs.paths }}
+            snp/${{ env.BUILD_MANIFEST_NAME }}
+
+  build-global-artifacts:
+    needs: [plan, build-local-artifacts]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BUILD_MANIFEST_NAME: target/distrib/global-dist-manifest.json
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: actions/download-artifact@v4
+        with: { name: cargo-dist-cache, path: ~/.cargo/bin/ }
+      - run: chmod +x ~/.cargo/bin/dist
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-*
+          path: snp/target/distrib/
+          merge-multiple: true
+      - id: dist
+        env:
+          TAG_FLAG: ${{ needs.plan.outputs.tag-flag }}
+        run: |
+          # shellcheck disable=SC2086
+          dist build $TAG_FLAG --output-format=json "--artifacts=global" > dist-manifest.json
+          echo "dist ran successfully"
+          echo "paths<<EOF" >> "$GITHUB_OUTPUT"
+          # relative paths are relative to snp/ (the working directory), artifact paths to the workspace
+          jq --raw-output ".upload_files[]" dist-manifest.json | sed -E '/^(\/|[A-Za-z]:)/! s|^|snp/|' >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          cp dist-manifest.json "$BUILD_MANIFEST_NAME"
+      - name: Every target has an archive, a checksum and an SBOM
+        run: |
+          set -euo pipefail
+          for t in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl \
+                   aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
+            case "$t" in *windows*) a="snp-$t.zip" ;; *) a="snp-$t.tar.xz" ;; esac
+            test -f "target/distrib/$a" || { echo "::error::missing $a"; exit 1; }
+            test -f "target/distrib/$a.sha256" || { echo "::error::missing $a.sha256"; exit 1; }
+          done
+          ls target/distrib
+          ls target/distrib | grep -Eq '\.cdx\.xml$' || { echo "::error::no CycloneDX SBOM"; exit 1; }
+          test -f target/distrib/snp-installer.sh && test -f target/distrib/snp-installer.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-build-global
+          path: |
+            ${{ steps.dist.outputs.paths }}
+            snp/${{ env.BUILD_MANIFEST_NAME }}
+
+  wheels:
+    # snp-cli (ADR-049, 11 §A.9.3): maturin `bindings = "bin"`, the `snp` binary only. Linux wheels are manylinux
+    # 2_17 builds made in maturin's container (the whole workspace, siblings included, is mounted); Windows wheels link
+    # the CRT statically like the archives.
+    name: wheel (${{ matrix.target }})
+    needs: gates
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, runner: ubuntu-24.04, manylinux: "2_17", smoke: true }
+          - { target: aarch64-unknown-linux-gnu, runner: ubuntu-24.04-arm, manylinux: "2_17", smoke: true }
+          - { target: x86_64-unknown-linux-musl, runner: ubuntu-24.04, manylinux: musllinux_1_2, smoke: false }
+          - { target: aarch64-unknown-linux-musl, runner: ubuntu-24.04-arm, manylinux: musllinux_1_2, smoke: false }
+          - { target: aarch64-apple-darwin, runner: macos-15, manylinux: "", smoke: true }
+          - { target: x86_64-apple-darwin, runner: macos-15-intel, manylinux: "", smoke: true }
+          - { target: x86_64-pc-windows-msvc, runner: windows-2025, manylinux: "", smoke: true }
+          - { target: aarch64-pc-windows-msvc, runner: windows-11-arm, manylinux: "", smoke: true }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - name: Static CRT on Windows
+        if: runner.os == 'Windows'
+        run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> "$GITHUB_ENV"
+      - uses: PyO3/maturin-action@v1
+        with:
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          working-directory: snp/packaging/pypi
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux || 'off' }}
+          args: --locked --out dist
+          sccache: false
+      - uses: astral-sh/setup-uv@v6
+        if: ${{ matrix.smoke }}
+      - name: Install the wheel and run snp --version
+        if: ${{ matrix.smoke }}
+        working-directory: snp/packaging/pypi
+        run: |
+          uv venv --python 3.13 venv
+          if [ "$RUNNER_OS" = Windows ]; then bin=venv/Scripts; else bin=venv/bin; fi
+          uv pip install --python "$bin/python" dist/snp_cli-*.whl
+          "$bin/snp" --version | tee version.txt
+          grep -Eq '^snp [0-9]+\.[0-9]+\.[0-9]+$' version.txt
+          if ls "$bin" | grep -qi '^pre-commit'; then echo "::error::the wheel installed a pre-commit executable"; exit 1; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.target }}
+          path: snp/packaging/pypi/dist
+
+  host:
+    needs: [gates, plan, build-local-artifacts, build-global-artifacts, wheels]
+    if: ${{ always() && needs.gates.outputs.publishing == 'true' && needs.plan.result == 'success' && needs.build-local-artifacts.result == 'success' && needs.build-global-artifacts.result == 'success' && needs.wheels.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    outputs:
+      val: ${{ steps.host.outputs.manifest }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - uses: actions/download-artifact@v4
+        with: { name: cargo-dist-cache, path: ~/.cargo/bin/ }
+      - run: chmod +x ~/.cargo/bin/dist
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-*
+          path: snp/target/distrib/
+          merge-multiple: true
+      - id: host
+        env:
+          TAG_FLAG: ${{ needs.plan.outputs.tag-flag }}
+        run: |
+          # shellcheck disable=SC2086
+          dist host $TAG_FLAG --steps=upload --steps=release --output-format=json > dist-manifest.json
+          echo "artifacts uploaded and released successfully"
+          cat dist-manifest.json
+          echo "manifest=$(jq -c "." dist-manifest.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-dist-manifest
+          path: snp/dist-manifest.json
+
+  publish-pypi:
+    name: publish snp-cli to PyPI
+    needs: [plan, host]
+    if: ${{ !fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: release
+      url: https://pypi.org/project/snp-cli/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: wheels
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: wheels/
+          attestations: true
+
+  announce:
+    needs: [gates, plan, host, publish-pypi]
+    if: ${{ always() && needs.host.result == 'success' && (needs.publish-pypi.result == 'skipped' || needs.publish-pypi.result == 'success') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-*
+          path: artifacts
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: artifacts
+          merge-multiple: true
+      - name: Remove the per-job manifests
+        working-directory: .
+        run: rm -f artifacts/*-dist-manifest.json
+      - name: Attest every asset
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/*
+      - name: Create the GitHub release
+        working-directory: .
+        env:
+          TAG: ${{ needs.gates.outputs.tag }}
+          PRERELEASE_FLAG: ${{ fromJson(needs.host.outputs.val).announcement_is_prerelease && '--prerelease' || '' }}
+          ANNOUNCEMENT_TITLE: ${{ fromJson(needs.host.outputs.val).announcement_title }}
+          ANNOUNCEMENT_BODY: ${{ fromJson(needs.host.outputs.val).announcement_github_body }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          printf '%s\n' "$ANNOUNCEMENT_BODY" > "$RUNNER_TEMP/notes.txt"
+          # shellcheck disable=SC2086
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG \
+            --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
