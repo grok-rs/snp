@@ -58,7 +58,11 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: cargo xtask oracle install
       - name: corpus integrity and unit tests
-        run: cargo test -p snp-difftest --locked
+        # Built first, then run under a 4 GiB address-space cap: the robustness tests feed alias bombs, output
+        # floods and extreme `count:` values, and an unbounded expansion must fail this job, not the runner.
+        run: |
+          cargo test -p snp-difftest --locked --no-run
+          ( ulimit -v 4194304 && cargo test -p snp-difftest --locked )
       - name: seed self-consistency and the planted-divergence shrinker
         run: cargo test -p snp-difftest --test oracle --locked -- --ignored
       - name: curated corpus, oracle against itself

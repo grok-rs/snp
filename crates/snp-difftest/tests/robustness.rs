@@ -1,12 +1,17 @@
 //! Property tests of the harness's parsers and normalisers (WP-35; the harness is tooling, so these proptests stand in
 //! for the fuzz targets of the shipped parsers): no input makes them panic, the normalisers are idempotent, and the
-//! brand map's apply/invert round trip holds for texts assembled from its own phrases and arbitrary filler.
+//! brand map's apply/invert round trip holds for texts assembled from its own phrases and arbitrary filler. The
+//! resource cases feed alias chains ("billion laughs") and extreme `count:`/`timeout:` integers and require every
+//! parse to finish quickly; difftest.yml runs this binary under a memory cap, so an unbounded expansion fails CI
+//! instead of the machine.
 //!
 //! Owner: WP-35.
 
 #[cfg(test)]
 mod robustness {
+    use std::fmt::Write as _;
     use std::path::Path;
+    use std::time::{Duration, Instant};
 
     use proptest::prelude::*;
     use snp_difftest::{
@@ -67,9 +72,9 @@ mod robustness {
 
         #[test]
         fn scenario_parsing_never_panics(s in "\\PC{0,400}") {
-            let _ = Scenario::parse(&s, Path::new("fuzz.yaml"));
-            let _ = Yv::parse(&s);
-            let _ = BrandMap::parse(&s);
+            drop(Scenario::parse(&s, Path::new("fuzz.yaml")));
+            drop(Yv::parse(&s));
+            drop(BrandMap::parse(&s));
         }
 
         #[test]
@@ -86,9 +91,9 @@ mod robustness {
         ) {
             let mut doc = String::from("name: f\n");
             for (k, v) in keys.iter().zip(vals.iter().chain(std::iter::repeat(&String::new()))) {
-                doc.push_str(&format!("{k}: {v:?}\n"));
+                writeln!(doc, "{k}: {v:?}").unwrap();
             }
-            let _ = Scenario::parse(&doc, Path::new("fuzz.yaml"));
+            drop(Scenario::parse(&doc, Path::new("fuzz.yaml")));
         }
 
         #[test]
@@ -103,9 +108,9 @@ mod robustness {
                 }
                 let u = canonical_usage(input);
                 prop_assert_eq!(canonical_usage(&u), u);
-                let _ = mask_paths(input, &[b"/r/store", b"/r/snp-store"]);
-                let _ = strip_diag(input, None);
-                let _ = m.reduce_snp_only_parsers(input);
+                drop(mask_paths(input, &[b"/r/store", b"/r/snp-store"]));
+                drop(strip_diag(input, None));
+                drop(m.reduce_snp_only_parsers(input));
             }
         }
 
@@ -116,10 +121,76 @@ mod robustness {
             let mut t = String::new();
             for (i, filler) in picks {
                 let p = phrases.get(i % phrases.len().max(1)).copied().unwrap_or_default();
-                t.push_str(&format!("{filler}{p}{filler}\n"));
+                writeln!(t, "{filler}{p}{filler}").unwrap();
             }
             let forward = m.apply(t.as_bytes());
             prop_assert_eq!(m.invert(&forward), t.into_bytes());
+        }
+    }
+
+    /// `a0: &a0 [x…]`, `aN: &aN [*aN-1…]`: `fan`^`depth` nodes once expanded.
+    fn alias_chain(depth: usize, fan: usize) -> String {
+        let mut doc = format!("a0: &a0 [{}]\n", vec!["x"; fan].join(", "));
+        for l in 1..=depth {
+            let prev = format!("*a{}", l - 1);
+            writeln!(doc, "a{l}: &a{l} [{}]", vec![prev.as_str(); fan].join(", ")).unwrap();
+        }
+        doc
+    }
+
+    fn extreme_int() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(i64::MAX),
+            Just(i64::MIN),
+            Just(-1_i64),
+            Just(0_i64),
+            Just(100_000_i64),
+            Just(100_001_i64),
+            Just(67_108_864_i64),
+            Just(67_108_865_i64),
+            Just(4_294_967_296_i64),
+            Just(86_400_i64),
+            Just(86_401_i64),
+            any::<i64>(),
+        ]
+    }
+
+    /// Generous for debug builds: the budgets make each of these a few milliseconds in release.
+    const BOUND: Duration = Duration::from_secs(10);
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 64, failure_persistence: None, ..ProptestConfig::default() })]
+
+        #[test]
+        fn alias_chains_are_bounded(depth in 1_usize..=10, fan in 1_usize..=10, scenario in any::<bool>()) {
+            let mut doc = alias_chain(depth, fan);
+            let start = Instant::now();
+            if scenario {
+                doc.push_str("name: b\nsteps: [{tool: [run]}]\n");
+                drop(Scenario::parse(&doc, Path::new("bomb.yaml")));
+            } else {
+                drop(Yv::parse(&doc));
+                drop(BrandMap::parse(&doc));
+            }
+            prop_assert!(start.elapsed() < BOUND, "{depth}x{fan}: {:?}", start.elapsed());
+        }
+
+        #[test]
+        fn extreme_integers_are_bounded(
+            count in extreme_int(),
+            timeout in extreme_int(),
+            unit in prop_oneof![Just(""), Just("x"), Just("0123456789abcdef")],
+            files in 1_usize..=8,
+        ) {
+            let mut doc = String::from("name: n\nwork:\n  files:\n");
+            for i in 0..files {
+                writeln!(doc, "    f{i}: {{generate: {{count: {count}, repeat: {unit:?}}}}}").unwrap();
+            }
+            writeln!(doc, "  generated: {{pattern: \"g{{i}}\", count: {count}, content: {unit:?}}}").unwrap();
+            writeln!(doc, "steps: [{{tool: [run], timeout: {timeout}}}]").unwrap();
+            let start = Instant::now();
+            drop(Scenario::parse(&doc, Path::new("ints.yaml")));
+            prop_assert!(start.elapsed() < BOUND, "{count}/{timeout}: {:?}", start.elapsed());
         }
     }
 }
