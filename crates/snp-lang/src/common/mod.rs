@@ -173,33 +173,16 @@ fn pw_current_home() -> Option<OsString> {
 
 /// `lang_base.hook_cmd(entry, args)` (`lang_base.py:174-178`) with the hazmat rewrite of ADR-006 / 03 §H.8.1:
 /// `shlex.split(entry)` (POSIX, no comments); a leading `pre-commit hazmat` or `snp hazmat` (exact tokens, any
-/// quoting) becomes `[self_exe, "__hazmat"]`; then `args`.
+/// quoting) becomes `[self_exe, "__hazmat"]`; then `args`. `Empty`: the entry and the args produce no token at all.
 ///
-/// The same contract as `snp_proc::hookcmd::hook_cmd` (WP-15), on the W0 `snp_pycompat::shlex` baseline. `Empty`:
-/// the entry and the args produce no token at all. Once WP-15 has merged this body becomes a call of
-/// `snp_proc::hookcmd::hook_cmd` (one implementation, so `plan` and the hook runner cannot drift);
+/// One implementation, `snp_proc::hookcmd::hook_cmd` (WP-15), so `plan` and the hook runner cannot drift;
 /// `tests/envless/plans.rs` stays the regression check.
 pub(crate) fn hook_cmd(
     entry: &str,
     args: &[Arc<str>],
     self_exe: &Path,
 ) -> Result<Vec<OsString>, HookCmdError> {
-    let tokens = snp_pycompat::shlex::split(entry).map_err(HookCmdError::Shlex)?;
-    let mut cmd: Vec<OsString> = Vec::new();
-    let rest: &[String] = match tokens.as_slice() {
-        [tool, verb, rest @ ..] if (tool == "pre-commit" || tool == "snp") && verb == "hazmat" => {
-            cmd.push(self_exe.as_os_str().to_os_string());
-            cmd.push(OsString::from("__hazmat"));
-            rest
-        }
-        all => all,
-    };
-    cmd.extend(rest.iter().map(OsString::from));
-    cmd.extend(args.iter().map(|a| OsString::from(&**a)));
-    if cmd.is_empty() {
-        return Err(HookCmdError::Empty);
-    }
-    Ok(cmd)
+    snp_proc::hookcmd::hook_cmd(entry, args, self_exe)
 }
 
 /// `Prefix(prefix).path(part)` (`prefix.py:13-14`): `os.path.normpath(os.path.join(prefix, part))` — lexical; an
