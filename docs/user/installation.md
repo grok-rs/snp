@@ -92,15 +92,13 @@ In tox, nox or `requirements-dev.txt` you can depend on `snp-cli` and call `snp`
 `pre-commit` into the same environment if you also create the alias there (see the
 [migration guide](migration.md#scripts-and-tools-that-call-pre-commit)).
 
-## crates.io
+## crates.io (not yet available)
 
-```sh
-cargo install --locked snp
-cargo binstall snp          # prebuilt binary from the GitHub release
-```
-
-snp 2.x replaces the unrelated snp 1.x that earlier versions of the crate shipped; if `~/.cargo/bin/snp --version`
-prints `1.x`, run the command above. `snp doctor` warns when the first `snp` on `PATH` is not the one you are running.
+snp 2.x is **not published on crates.io yet**. The crate name `snp` on crates.io currently holds the unrelated snp 1.x,
+so `cargo install snp` and `cargo binstall snp` install that older tool, not this one. Use the installers, the archives,
+PyPI or a build from source until a release note announces the crates.io channel. If `~/.cargo/bin/snp --version`
+prints `1.x`, that is the old crate: `cargo uninstall snp` removes it. `snp doctor` warns when the first `snp` on `PATH`
+is not the one you are running.
 
 ## From source
 
@@ -154,5 +152,5 @@ it, and `snp self alias install --force` refreshes it.
    (`snp uninstall`); see [Rollback](migration.md#rollback).
 2. `snp self alias uninstall` if you created the alias.
 3. `snp clean` removes snp's cache (`~/.cache/snp` or `$SNP_HOME`).
-4. Remove the binary: `rm ~/.cargo/bin/snp`, `pipx uninstall snp-cli`, `uv tool uninstall snp-cli` or
-   `cargo uninstall snp`.
+4. Remove the binary: `rm ~/.cargo/bin/snp` (shell installer), `pipx uninstall snp-cli` or
+   `uv tool uninstall snp-cli`.

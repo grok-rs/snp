@@ -22,7 +22,7 @@ hooks.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/grok-rs/snp/releases/latest/download/snp-installer.sh | sh
-# or: pipx install snp-cli  |  uv tool install snp-cli  |  cargo install --locked snp
+# or: pipx install snp-cli  |  uv tool install snp-cli   (not crates.io yet: `snp` there is the unrelated 1.x)
 snp --version   # snp 2.0.0
 ```
 

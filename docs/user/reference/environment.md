@@ -12,8 +12,8 @@ are parsed with an upper bound; an invalid value is an error that names the vari
 | `TERM` | `TERM=dumb` disables colour under `auto`. |
 | `PRE_COMMIT_NO_CONCURRENCY` | When set (to anything), hooks get `jobs = 1`, as in pre-commit. |
 | `TRAVIS` | When set (and `PRE_COMMIT_NO_CONCURRENCY` is not), hooks get `jobs = 2`, as in pre-commit. |
-| `PRE_COMMIT_ALLOW_NO_CONFIG` | Hook scripts installed with `--allow-missing-config` do not fail without a config. |
-| `PRE_COMMIT_RUNNING_LEGACY` | Set for a `.legacy` hook run in migration mode (also exported by snp). |
+| `PRE_COMMIT_ALLOW_NO_CONFIG` | Non-empty: a hook script run without a config file skips instead of failing, whatever it was installed with (the per-invocation form of `--allow-missing-config`; the error message suggests `PRE_COMMIT_ALLOW_NO_CONFIG=1 git ...`). |
+| `PRE_COMMIT_RUNNING_LEGACY` | Set for a `.legacy` hook run in migration mode (also exported by snp). Also checked on entry: a hook script that finds it already set is a recursive migration-mode script and stops with `bug: pre-commit's script is installed in migration mode`. |
 | `_PRE_COMMIT_SKIP_POST_CHECKOUT` | `post-checkout` runs do nothing (set while the stash of unstaged changes is restored, as in pre-commit). |
 | `PRE_COMMIT_USE_MAMBA`, `PRE_COMMIT_USE_MICROMAMBA` | Select mamba/micromamba for `language: conda`. |
 | `PATH`, `PATHEXT` | Executable lookup, with pre-commit's rules. |
