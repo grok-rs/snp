@@ -4,12 +4,15 @@
 //! order and line endings survive:
 //!
 //! * `to_builtin`: every repo whose `repo` is the pre-commit-hooks URL (`snp_hooks_data::is_pre_commit_hooks_url`)
-//!   and whose hooks are all builtin ids without `entry`, `additional_dependencies` or a non-`system` `language`
-//!   becomes `repo: builtin`; its `rev` is removed and a comment line `# was: <url>@<rev>` (plus any comment that
+//!   and `rev` are one-line scalars and whose hooks are all builtin ids without `entry`, `additional_dependencies` or
+//!   `language` becomes `repo: builtin`; its `rev` is removed and a comment line `# was: <url>@<rev>` (plus any comment that
 //!   followed the rev) is written above the repo item.
 //! * `to_upstream`: every `repo: builtin` becomes the URL and rev of its `# was:` comment, or the canonical URL and
 //!   the newest known tag; `language: system` hook keys (valid only for builtin) are removed. Without a `# was:`
 //!   comment a `# was: builtin` marker is written instead, so converting back restores the original bytes.
+//!
+//! An item sharing its line with another (`repos: [{…}, {…}]`) keeps no comment. The rewritten text must compose
+//! again, else nothing changes (exit 1); configs with YAML line breaks other than `\n`/`\r\n` are refused.
 //!
 //! Owner: WP-34.
 
@@ -58,21 +61,35 @@ struct Edit {
 /// Navigation over a composed document.
 struct Doc<'a> {
     text: &'a str,
-    doc: Document,
+    composed: Document,
     nl: &'static str,
 }
 
 impl<'a> Doc<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self, Failure> {
-        let text = std::str::from_utf8(bytes).map_err(|e| failure(&format!("the config is not valid UTF-8: {e}")))?;
+        let text = std::str::from_utf8(bytes)
+            .map_err(|e| failure(&format!("the config is not valid UTF-8: {e}")))?;
+        // The edits are line based (`\n` / `\r\n`); YAML's other line breaks would let a written comment end early.
+        if text.contains(['\u{85}', '\u{2028}', '\u{2029}'])
+            || text.replace("\r\n", "\n").contains('\r')
+        {
+            return Err(failure(
+                "the config uses line breaks other than \\n and \\r\\n; convert them first",
+            ));
+        }
         let lim = snp_yaml::Limits::default();
-        let doc = snp_yaml::compose(text, snp_yaml::Schema::PyYaml11Safe, &lim).map_err(|e| failure(&e.to_string()))?;
+        let doc = snp_yaml::compose(text, snp_yaml::Schema::PyYaml11Safe, &lim)
+            .map_err(|e| failure(&e.to_string()))?;
         let nl = if text.contains("\r\n") { "\r\n" } else { "\n" };
-        Ok(Self { text, doc, nl })
+        Ok(Self {
+            text,
+            composed: doc,
+            nl,
+        })
     }
 
     fn node(&self, id: NodeId) -> Option<&snp_yaml::Node> {
-        self.doc.nodes.get(usize::try_from(id.0).ok()?)
+        self.composed.nodes.get(usize::try_from(id.0).ok()?)
     }
 
     fn scalar(&self, id: NodeId) -> Option<&str> {
@@ -98,7 +115,10 @@ impl<'a> Doc<'a> {
 
     /// The `(key, value)` of `key` in map `id`.
     fn get(&self, id: NodeId, key: &str) -> Option<(NodeId, NodeId)> {
-        self.pairs(id).iter().copied().find(|(k, _)| self.scalar(*k) == Some(key))
+        self.pairs(id)
+            .iter()
+            .copied()
+            .find(|(k, _)| self.scalar(*k) == Some(key))
     }
 
     fn span(&self, id: NodeId) -> std::ops::Range<usize> {
@@ -116,7 +136,10 @@ impl<'a> Doc<'a> {
 
     /// The start of the line holding byte `at`.
     fn line_start(&self, at: usize) -> usize {
-        self.text.get(..at).and_then(|s| s.rfind('\n')).map_or(0, |i| i.saturating_add(1))
+        self.text
+            .get(..at)
+            .and_then(|s| s.rfind('\n'))
+            .map_or(0, |i| i.saturating_add(1))
     }
 
     /// The byte after the line break ending the line holding `at` (the text's end without one).
@@ -130,15 +153,46 @@ impl<'a> Doc<'a> {
     /// The rest of the line after `at` (without the line break).
     fn rest_of_line(&self, at: usize) -> &str {
         let end = self.next_line(at);
-        self.text.get(at..end).unwrap_or("").trim_end_matches(['\n', '\r'])
+        self.text
+            .get(at..end)
+            .unwrap_or("")
+            .trim_end_matches(['\n', '\r'])
+    }
+
+    /// Whether `item` is the first thing on its line after the sequence indicator (`  - ` / `-   `), so the line above
+    /// it can carry its `# was:` comment unambiguously.
+    fn owns_line(&self, item: NodeId) -> bool {
+        let start = self.span(item).start;
+        self.text
+            .get(self.line_start(start)..start)
+            .is_some_and(|p| p.chars().all(|c| c == ' ' || c == '-'))
+    }
+
+    /// The text `edits` produce, provided it still composes (a rewrite never emits a broken config).
+    fn finish(&self, edits: Vec<Edit>) -> Result<Vec<u8>, Failure> {
+        let out = self.apply(edits);
+        let text = std::str::from_utf8(&out).map_err(|e| failure(&e.to_string()))?;
+        snp_yaml::compose(
+            text,
+            snp_yaml::Schema::PyYaml11Safe,
+            &snp_yaml::Limits::default(),
+        )
+        .map_err(|e| {
+            failure(&format!(
+                "the rewritten config does not parse ({e}); nothing changed"
+            ))
+        })?;
+        Ok(out)
     }
 
     /// The `repos` items.
     fn repos(&self) -> Vec<NodeId> {
-        let Some(root) = self.doc.root else {
+        let Some(root) = self.composed.root else {
             return Vec::new();
         };
-        self.get(root, "repos").map(|(_, v)| self.items(v).to_vec()).unwrap_or_default()
+        self.get(root, "repos")
+            .map(|(_, v)| self.items(v).to_vec())
+            .unwrap_or_default()
     }
 
     /// The `# was: …` comment line directly above the line of `item`: `(line start, line end, text after "# was: ")`.
@@ -179,20 +233,36 @@ impl<'a> Doc<'a> {
         if self.is_flow(map) {
             // `a: 1, rev: x, b: 2` → drop `rev: x, `; the last pair drops the preceding `, `.
             if let Some((nk, _)) = pairs.get(pos.saturating_add(1)) {
-                return Some(vec![Edit { start: ks, end: self.span(*nk).start, text: String::new() }]);
+                return Some(vec![Edit {
+                    start: ks,
+                    end: self.span(*nk).start,
+                    text: String::new(),
+                }]);
             }
             let (_, pv) = pairs.get(pos.checked_sub(1)?)?;
-            return Some(vec![Edit { start: self.span(*pv).end, end: ve, text: String::new() }]);
+            return Some(vec![Edit {
+                start: self.span(*pv).end,
+                end: ve,
+                text: String::new(),
+            }]);
         }
         let ls = self.line_start(ks);
         let before = self.text.get(ls..ks)?;
         if before.trim().is_empty() {
             // The key starts its line: drop the whole line(s) through the value's line.
-            return Some(vec![Edit { start: ls, end: self.next_line(ve), text: String::new() }]);
+            return Some(vec![Edit {
+                start: ls,
+                end: self.next_line(ve),
+                text: String::new(),
+            }]);
         }
         // `- rev: x` as the first pair: the next key moves up.
         let (nk, _) = pairs.get(pos.saturating_add(1))?;
-        Some(vec![Edit { start: ks, end: self.span(*nk).start, text: String::new() }])
+        Some(vec![Edit {
+            start: ks,
+            end: self.span(*nk).start,
+            text: String::new(),
+        }])
     }
 
     /// Applies non-overlapping edits.
@@ -219,9 +289,16 @@ fn convertible(d: &Doc<'_>, hooks: Option<NodeId>, ids: &[&str]) -> bool {
     let items = d.items(hooks);
     !items.is_empty()
         && items.iter().all(|h| {
-            let id_ok = d.get(*h, "id").and_then(|(_, v)| d.scalar(v)).is_some_and(|id| ids.contains(&id));
-            let lang_ok = d.get(*h, "language").is_none_or(|(_, v)| d.scalar(v) == Some("system"));
-            id_ok && lang_ok && d.get(*h, "entry").is_none() && d.get(*h, "additional_dependencies").is_none()
+            let id_ok = d
+                .get(*h, "id")
+                .and_then(|(_, v)| d.scalar(v))
+                .is_some_and(|id| ids.contains(&id));
+            // Any `language` (even `system`, which upstream means "run the installed console script") changes
+            // what runs, and converting back would drop it.
+            id_ok
+                && d.get(*h, "language").is_none()
+                && d.get(*h, "entry").is_none()
+                && d.get(*h, "additional_dependencies").is_none()
         })
 }
 
@@ -229,39 +306,56 @@ fn convertible(d: &Doc<'_>, hooks: Option<NodeId>, ids: &[&str]) -> bool {
 ///
 /// Rewrites `repo: https://github.com/pre-commit/pre-commit-hooks` (any URL form pre-commit accepts for it) with its
 /// `rev` into `repo: builtin` when every hook of the block is a builtin id without `entry`,
-/// `additional_dependencies` or a non-`system` `language`; other repos and the rest of the text are untouched.
+/// `additional_dependencies` or `language`; other repos and the rest of the text are untouched.
 pub fn to_builtin(config_bytes: &[u8]) -> Result<Vec<u8>, Failure> {
     let d = Doc::parse(config_bytes)?;
     let ids = builtin_ids();
     let mut edits = Vec::new();
     for item in d.repos() {
-        let Some((_, repo_v)) = d.get(item, "repo") else { continue };
-        let Some(url) = d.scalar(repo_v) else { continue };
-        if !snp_hooks_data::is_pre_commit_hooks_url(url) || !convertible(&d, d.get(item, "hooks").map(|(_, v)| v), &ids) {
+        let Some((_, repo_v)) = d.get(item, "repo") else {
+            continue;
+        };
+        let Some(url) = d.scalar(repo_v) else {
+            continue;
+        };
+        // A remote repo without `rev` is invalid for pre-commit anyway; a multi-line URL or rev cannot go into the
+        // one-line `# was:` comment.
+        let Some(rev) = d.get(item, "rev") else {
+            continue;
+        };
+        let one_line = |id: NodeId| !d.raw(id).contains(['\n', '\r']);
+        if !snp_hooks_data::is_pre_commit_hooks_url(url)
+            || !convertible(&d, d.get(item, "hooks").map(|(_, v)| v), &ids)
+            || !d.owns_line(item)
+            || !one_line(repo_v)
+            || !one_line(rev.1)
+        {
             continue;
         }
-        let rev = d.get(item, "rev");
+        let (rk, rv) = rev;
+        let Some(rm) = d.remove_pair(item, rk, rv) else {
+            continue;
+        };
         let mut item_edits = vec![Edit {
             start: d.span(repo_v).start,
             end: d.span(repo_v).end,
             text: "builtin".to_owned(),
         }];
-        let mut was = d.raw(repo_v).to_owned();
-        if let Some((rk, rv)) = rev {
-            let Some(rm) = d.remove_pair(item, rk, rv) else { continue };
-            item_edits.extend(rm);
-            was.push('@');
-            was.push_str(d.raw(rv));
-            if !d.is_flow(item) {
-                let rest = d.rest_of_line(d.span(rv).end);
-                if rest.trim_start().starts_with('#') {
-                    was.push_str(rest);
-                }
+        item_edits.extend(rm);
+        let mut was = format!("{}@{}", d.raw(repo_v), d.raw(rv));
+        if !d.is_flow(item) {
+            let rest = d.rest_of_line(d.span(rv).end);
+            if rest.trim_start().starts_with('#') {
+                was.push_str(rest);
             }
         }
         let ls = d.line_start(d.span(item).start);
         match d.was_comment(item) {
-            Some((start, end, "builtin")) => item_edits.push(Edit { start, end, text: String::new() }),
+            Some((start, end, "builtin")) => item_edits.push(Edit {
+                start,
+                end,
+                text: String::new(),
+            }),
             _ => item_edits.push(Edit {
                 start: ls,
                 end: ls,
@@ -270,7 +364,7 @@ pub fn to_builtin(config_bytes: &[u8]) -> Result<Vec<u8>, Failure> {
         }
         edits.extend(item_edits);
     }
-    Ok(d.apply(edits))
+    d.finish(edits)
 }
 
 /// `snp migrate upstream`: `repo: builtin` → pre-commit-hooks entries.
@@ -282,11 +376,18 @@ pub fn to_upstream(config_bytes: &[u8]) -> Result<Vec<u8>, Failure> {
     let d = Doc::parse(config_bytes)?;
     let mut edits = Vec::new();
     for item in d.repos() {
-        let Some((repo_k, repo_v)) = d.get(item, "repo") else { continue };
+        let Some((repo_k, repo_v)) = d.get(item, "repo") else {
+            continue;
+        };
         if d.scalar(repo_v) != Some("builtin") {
             continue;
         }
-        let (url, rev, rest, comment) = match d.was_comment(item) {
+        let was = if d.owns_line(item) {
+            d.was_comment(item)
+        } else {
+            None
+        };
+        let (url, rev, rest, comment) = match was {
             Some((start, end, body)) if body != "builtin" => {
                 // `<url>@<rev>[  # comment]`: the rev is the last `@`-separated word.
                 let (main, rest) = match body.find(" #").or_else(|| body.find("\t#")) {
@@ -294,27 +395,48 @@ pub fn to_upstream(config_bytes: &[u8]) -> Result<Vec<u8>, Failure> {
                     None => (body, ""),
                 };
                 let main = main.trim_end();
-                let pad = &body.get(main.len()..body.len().saturating_sub(rest.len())).unwrap_or("");
+                let pad = &body
+                    .get(main.len()..body.len().saturating_sub(rest.len()))
+                    .unwrap_or("");
                 match main.rsplit_once('@') {
-                    Some((u, r)) if !u.is_empty() && !r.is_empty() => {
-                        (u.to_owned(), r.to_owned(), format!("{pad}{rest}"), Some((start, end)))
-                    }
-                    _ => (UPSTREAM.to_owned(), latest_tag().to_owned(), String::new(), None),
+                    Some((u, r)) if !u.is_empty() && !r.is_empty() => (
+                        u.to_owned(),
+                        r.to_owned(),
+                        format!("{pad}{rest}"),
+                        Some((start, end)),
+                    ),
+                    _ => (
+                        UPSTREAM.to_owned(),
+                        latest_tag().to_owned(),
+                        String::new(),
+                        None,
+                    ),
                 }
             }
-            _ => (UPSTREAM.to_owned(), latest_tag().to_owned(), String::new(), None),
+            _ => (
+                UPSTREAM.to_owned(),
+                latest_tag().to_owned(),
+                String::new(),
+                None,
+            ),
         };
-        match comment {
-            Some((start, end)) => edits.push(Edit { start, end, text: String::new() }),
-            None => {
+        let (start, end, text) = comment.map_or_else(
+            || {
+                if !d.owns_line(item) {
+                    // Several items share the line: no marker (converting back then keeps the upstream form).
+                    let ls = d.line_start(d.span(item).start);
+                    return (ls, ls, String::new());
+                }
                 let ls = d.line_start(d.span(item).start);
-                edits.push(Edit {
-                    start: ls,
-                    end: ls,
-                    text: format!("{}{WAS}builtin{}", d.indent_of_line(ls), d.nl),
-                });
-            }
-        }
+                (
+                    ls,
+                    ls,
+                    format!("{}{WAS}builtin{}", d.indent_of_line(ls), d.nl),
+                )
+            },
+            |(start, end)| (start, end, String::new()),
+        );
+        edits.push(Edit { start, end, text });
         edits.push(Edit {
             start: d.span(repo_v).start,
             end: d.span(repo_v).end,
@@ -329,11 +451,19 @@ pub fn to_upstream(config_bytes: &[u8]) -> Result<Vec<u8>, Failure> {
                 });
             } else {
                 let at = d.next_line(d.span(repo_v).end);
-                let lead = if at == d.text.len() && !d.text.ends_with('\n') { d.nl } else { "" };
+                let lead = if at == d.text.len() && !d.text.ends_with('\n') {
+                    d.nl
+                } else {
+                    ""
+                };
                 edits.push(Edit {
                     start: at,
                     end: at,
-                    text: format!("{lead}{}rev: {rev}{rest}{}", d.column(d.span(repo_k).start), d.nl),
+                    text: format!(
+                        "{lead}{}rev: {rev}{rest}{}",
+                        d.column(d.span(repo_k).start),
+                        d.nl
+                    ),
                 });
             }
         }
@@ -348,7 +478,7 @@ pub fn to_upstream(config_bytes: &[u8]) -> Result<Vec<u8>, Failure> {
             }
         }
     }
-    Ok(d.apply(edits))
+    d.finish(edits)
 }
 
 #[cfg(test)]
@@ -381,11 +511,17 @@ mod tests {
         let out = u(src);
         assert_eq!(
             out,
-            format!("repos:\n  # was: builtin\n  - repo: {UPSTREAM}\n    rev: {}\n    hooks:\n      - id: end-of-file-fixer\n", latest_tag())
+            format!(
+                "repos:\n  # was: builtin\n  - repo: {UPSTREAM}\n    rev: {}\n    hooks:\n      - id: end-of-file-fixer\n",
+                latest_tag()
+            )
         );
         assert_eq!(latest_tag(), "v6.0.0");
         // Back to builtin: the marker is consumed (`language: system` is not restored: it is builtin's default).
-        assert_eq!(b(&out), "repos:\n  - repo: builtin\n    hooks:\n      - id: end-of-file-fixer\n");
+        assert_eq!(
+            b(&out),
+            "repos:\n  - repo: builtin\n    hooks:\n      - id: end-of-file-fixer\n"
+        );
     }
 
     #[test]
@@ -419,7 +555,10 @@ mod tests {
     fn rev_first_key() {
         let src = "repos:\n- rev: v4.5.0\n  repo: git@github.com:pre-commit/pre-commit-hooks.git\n  hooks:\n  - id: check-json\n";
         let out = b(src);
-        assert_eq!(out, "repos:\n# was: git@github.com:pre-commit/pre-commit-hooks.git@v4.5.0\n- repo: builtin\n  hooks:\n  - id: check-json\n");
+        assert_eq!(
+            out,
+            "repos:\n# was: git@github.com:pre-commit/pre-commit-hooks.git@v4.5.0\n- repo: builtin\n  hooks:\n  - id: check-json\n"
+        );
     }
 
     #[test]
