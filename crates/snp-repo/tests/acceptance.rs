@@ -32,25 +32,39 @@ mod tests {
     /// A local stand-in for the upstream repository at `v6.0.0`, and the global `insteadOf` that redirects clones of
     /// the upstream URL to it (the owned-repo env keeps `HOME`, so git reads the test's `~/.gitconfig`).
     fn redirect_upstream(h: &H) -> std::path::PathBuf {
-        let profile = snp_hooks_data::profile_for_rev("v6.0.0").unwrap();
+        redirect_upstream_at(h, "v6.0.0")
+    }
+
+    /// [`redirect_upstream`] with the manifest of `rev`, tagged `rev`.
+    fn redirect_upstream_at(h: &H, rev: &str) -> std::path::PathBuf {
+        let profile = snp_hooks_data::profile_for_rev(rev).unwrap();
         let dir =
             h.t.git_repo("pch-mirror")
                 .file(".pre-commit-hooks.yaml", profile.manifest_yaml.as_bytes())
                 .stage_all()
-                .commit("v6.0.0")
-                .tag("v6.0.0")
+                .commit(rev)
+                .tag(rev)
                 .build();
+        redirect_to(h, &format!("file://{}", dir.display()));
+        dir
+    }
+
+    /// A global `insteadOf` sending clones of the upstream URL to `url`.
+    fn redirect_to(h: &H, url: &str) {
         let mut f = std::fs::OpenOptions::new()
             .append(true)
             .open(h.t.root().join("home/.gitconfig"))
             .unwrap();
-        write!(
-            f,
-            "[url \"file://{}\"]\n\tinsteadOf = {PCH}\n",
-            dir.display()
+        write!(f, "[url \"{url}\"]\n\tinsteadOf = {PCH}\n").unwrap();
+    }
+
+    /// The deprecated-stage warning of the upstream repository at a pre-v5 tag.
+    fn old_stages_warning() -> String {
+        format!(
+            "[WARNING] repo `{PCH}` uses deprecated stage names (commit, push) which will be removed in a future \
+             version.  Hint: often `pre-commit autoupdate --repo {PCH}` will fix this.  if it does not -- consider \
+             reporting an issue to that repo.\n"
         )
-        .unwrap();
-        dir
     }
 
     fn repos_v1_entries(h: &H) -> usize {
@@ -118,15 +132,142 @@ mod tests {
         h.resolve(&cfg).unwrap();
         assert_eq!(
             h.out.take(),
-            format!(
-                "{}[WARNING] repo `{PCH}` uses deprecated stage names (commit, push) which will be removed in a future \
-                 version.  Hint: often `pre-commit autoupdate --repo {PCH}` will fix this.  if it does not -- consider \
-                 reporting an issue to that repo.\n",
-                initializing(PCH)
-            )
+            format!("{}{}", initializing(PCH), old_stages_warning())
         );
         h.resolve(&cfg).unwrap();
         assert_eq!(h.out.take(), "");
+    }
+
+    /// A delegated Tier A hook: pre-commit's order is Initializing → clone → warning → db row; a failing clone
+    /// prints no warning and records nothing, so the next run starts over with its Initializing line.
+    #[test]
+    fn tier_a_delegated_clone_failure_records_nothing() {
+        let h = H::new();
+        redirect_to(&h, "file:///nonexistent/pch");
+        let cfg = h.config(&pch_cfg(
+            "v4.4.0",
+            "    -   id: check-yaml\n        entry: check-yaml --unsafe\n",
+        ));
+        for _ in 0..2 {
+            let (ty, _) = exc(&h.resolve(&cfg).unwrap_err());
+            assert_eq!(ty, "CalledProcessError");
+            assert_eq!(
+                h.out.take(),
+                initializing(PCH),
+                "no warning, nothing recorded"
+            );
+        }
+        assert_eq!(repos_v1_entries(&h), 0);
+    }
+
+    #[test]
+    fn tier_a_delegated_clone_prints_initializing_then_the_warning() {
+        let h = H::new();
+        redirect_upstream_at(&h, "v4.4.0");
+        let cfg = h.config(&pch_cfg(
+            "v4.4.0",
+            "    -   id: trailing-whitespace\n    -   id: check-yaml\n        entry: check-yaml --unsafe\n",
+        ));
+        let hooks = h.resolve(&cfg).unwrap();
+        assert_eq!(
+            h.out.take(),
+            format!("{}{}", initializing(PCH), old_stages_warning())
+        );
+        assert!(matches!(hooks[0].exec, ExecKind::Native { .. }));
+        assert!(matches!(hooks[1].exec, ExecKind::Language));
+        assert_eq!(repos_v1_entries(&h), 1);
+        h.resolve(&cfg).unwrap();
+        assert_eq!(h.out.take(), "");
+    }
+
+    /// ARCHITECTURE §gc: a hook moving from native to delegated keeps pre-commit's transcript — its one environment
+    /// was installed on the first run, so the second prints nothing. (The harness has no python, so the real install
+    /// then fails; the point is that it starts without a second triplet. The reverse direction and the scheduler
+    /// rules are unit-tested in `install.rs`.)
+    #[test]
+    fn native_then_delegated_prints_no_second_triplet() {
+        let h = H::new();
+        redirect_upstream(&h);
+        let native = h.config(&pch_cfg("v6.0.0", "    -   id: check-json\n"));
+        h.resolve_and_install(&native).unwrap();
+        assert_eq!(
+            h.out.take(),
+            format!("{}{}", initializing(PCH), installing(PCH))
+        );
+        let delegated = h.config(&pch_cfg(
+            "v6.0.0",
+            "    -   id: check-json\n        entry: check-json\n",
+        ));
+        let (ty, text) = exc(&h.resolve_and_install(&delegated).unwrap_err());
+        assert_eq!(
+            (ty.as_str(), text.as_str()),
+            (
+                "ValueError",
+                "failed to find interpreter for python_spec='default'"
+            )
+        );
+        assert_eq!(
+            h.out.take(),
+            "",
+            "pre-commit prints nothing on the second run"
+        );
+        h.resolve_and_install(&native).unwrap();
+        assert_eq!(h.out.take(), "");
+    }
+
+    /// `_new_repo` checks again under the lock: a run that waited for another process's clone prints only the
+    /// `Locking` line (once per process), never a second Initializing line — for a clone and for a Tier A
+    /// repository that is never cloned.
+    #[test]
+    fn a_run_that_waited_for_another_processs_entry_prints_no_initializing_line() {
+        use snp_store::{MarkerKey, RepoId, Store};
+        let h = H::new();
+        let (dir, sha) = h.hook_repo(
+            "waited-hooks",
+            &[(
+                ".pre-commit-hooks.yaml",
+                &support::manifest_one("w", "w", "system", ""),
+                false,
+            )],
+        );
+        let url = dir.to_string_lossy().into_owned();
+        let tier_a = h.config(&pch_cfg("v6.0.0", "    -   id: trailing-whitespace\n"));
+        h.store.ensure_created(h.brand, &h.printer).unwrap();
+        for (repo, rev, cfg) in [
+            (
+                url.clone(),
+                sha.clone(),
+                h.config(&format!(
+                    "repos:\n-   repo: {url}\n    rev: {sha}\n    hooks:\n    -   id: w\n"
+                )),
+            ),
+            (PCH.to_owned(), "v6.0.0".to_owned(), tier_a),
+        ] {
+            let key = Store::remote_key(&RepoId::from_config(&repo, &h.project), &rev, &[]);
+            let held = h
+                .store
+                .repo_lock(&key, &mut || {}, &snp_core::cancel::CancelToken::new())
+                .unwrap();
+            let loc = h.store.location().clone();
+            let other = std::thread::Builder::new()
+                .spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    // The other process's `_new_repo` inserted its row before releasing the lock.
+                    Store::new(loc).set_marker(&MarkerKey::Initialized {
+                        db_repo_name: Arc::from(repo.as_str()),
+                        rev: Arc::from(rev.as_str()),
+                    });
+                    drop(held);
+                })
+                .unwrap();
+            h.resolve(&cfg).unwrap();
+            other.join().unwrap();
+            let out = h.out.take();
+            assert!(
+                out.is_empty() || out == "[INFO] Locking pre-commit directory\n",
+                "{out:?}"
+            );
+        }
     }
 
     #[test]

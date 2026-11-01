@@ -6,11 +6,12 @@
 //! order:
 //!
 //! * `[INFO] Initializing environment for {db_repo_name}.` when the store sees `(db_repo_name, rev)` for the first
-//!   time (`keys-v1` marker absent; `store.py:160`) — for the base clone of a remote repository (then the
-//!   deprecated-stage warning of the new clone, `clientlib.py:84-109`), for every `additional_dependencies` variant
-//!   (in the per-hook loop, `repository.py:193-200`) and for the local template of a `repo: local` hook with an
-//!   environment (`repository.py:152-159`). A Tier A pre-commit-hooks repository prints its line from the marker
-//!   whether or not it is ever cloned.
+//!   time (`keys-v1` marker absent; `store.py:142-171`), decided under the repository lock once the entry is
+//!   confirmed missing, then the clone, the deprecated-stage warning of the new checkout (`clientlib.py:84-109`) and
+//!   the marker — for the base clone of a remote repository, for every `additional_dependencies` variant (in the
+//!   per-hook loop, `repository.py:193-200`) and for the local template of a `repo: local` hook with an environment
+//!   (`repository.py:152-159`). A Tier A pre-commit-hooks repository prints the same lines whether or not it is
+//!   cloned: after the clone a delegated hook needs, else without one.
 //! * `[ERROR] … is not present in repository …` (E1) and the env-less guards (E2/E3), then exit 1.
 //! * `[WARNING] Unexpected key(s) present on …` (W11) after the hook's own clone, buffered per hook so a remote
 //!   repository whose later hook fails a guard prints no W11 at all (`_hook` runs for every hook before any
@@ -352,54 +353,88 @@ impl<'c, 'a> Resolution<'c, 'a> {
         i
     }
 
-    /// `[INFO] Initializing environment for {db_repo_name}.` when the store has never seen `(db_repo_name, rev)`;
-    /// `true` = new (the caller sets the marker once the entry is complete).
-    fn initialize(&self, db_repo_name: &str, rev: &str) -> bool {
-        let k = MarkerKey::Initialized {
-            db_repo_name: Arc::from(db_repo_name),
-            rev: Arc::from(rev),
+    /// `store._new_repo` (`store.py:132-171`) around [`Store::materialize`]: under the repository lock, once the
+    /// entry is confirmed missing, `[INFO] Initializing environment for {name}.` when the store has never seen
+    /// `(name, rev)` (`keys-v1` marker absent), then `fill`, then the deprecated-stage warning of the new checkout,
+    /// then the marker — so a failing clone records nothing and a process that waited for another one's clone
+    /// prints only the `Locking` line. An entry that is already present prints nothing (pre-commit's row exists).
+    fn materialize_announced(
+        &mut self,
+        key: &RepoKey,
+        meta: RepoMeta,
+        a: Announce<'_>,
+        fill: &mut dyn FnMut(&Path) -> Result<(), Failure>,
+    ) -> Result<RepoHandle, Failure> {
+        self.ensure_store()?;
+        let cx = self.cx;
+        let mut ran = false;
+        let mut marked = false;
+        let r = {
+            let mut wrapped = |dest: &Path| -> Result<(), Failure> {
+                ran = true;
+                let new = !initialized(cx, a.name, a.rev);
+                if new {
+                    cx.printer.log(Level::Info, &messages::initializing(a.name));
+                }
+                fill(dest)?;
+                if new {
+                    if let Some(repo) = a.stages_of {
+                        warn_stages_of(cx, repo, dest);
+                    }
+                    cx.store.set_marker(&init_key(a.name, a.rev));
+                    marked = true;
+                }
+                Ok(())
+            };
+            cx.store
+                .materialize(key, meta, &mut wrapped, &mut lock_notice(cx), cx.cancel)
         };
-        if self.cx.store.marker_exists(&k) {
-            return false;
+        match &r {
+            // The entry never reached the store (a failed rename or marker write): neither did the db row.
+            Err(_) if marked => forget(cx, a.name, a.rev),
+            Ok(_) if !ran && !initialized(cx, a.name, a.rev) => {
+                cx.store.set_marker(&init_key(a.name, a.rev));
+            }
+            _ => {}
         }
-        self.cx
-            .printer
-            .log(Level::Info, &messages::initializing(db_repo_name));
-        true
+        r
     }
 
-    /// Records that `(db_repo_name, rev)` is complete.
-    fn mark(&self, db_repo_name: &str, rev: &str) {
-        self.cx.store.set_marker(&MarkerKey::Initialized {
-            db_repo_name: Arc::from(db_repo_name),
-            rev: Arc::from(rev),
-        });
-    }
-
-    /// `warn_for_stages_on_repo_init` for a new clone of `repo` with manifest bytes `manifest`.
-    fn warn_stages(&self, repo: &str, manifest: &[u8]) {
-        let legacy = stages::legacy_stages(manifest);
-        if !legacy.is_empty() {
-            self.cx.warn.warn(&messages::deprecated_repo_stages(
-                self.cx.brand,
-                repo,
-                &legacy,
-            ));
+    /// The `Initializing` line and the deprecated-stage warning of a Tier A repository that is not cloned
+    /// (ADR-032): printed exactly when pre-commit's clone would print them, under the repository lock like
+    /// `_new_repo`'s second query.
+    fn announce_uncloned(
+        &mut self,
+        plan: &RemotePlan,
+        repo: &str,
+        rev: &str,
+        manifest: &[u8],
+    ) -> Result<(), Failure> {
+        let cx = self.cx;
+        if initialized(cx, repo, rev) {
+            return Ok(());
         }
-    }
-
-    /// The deprecated-stage warning from a clone's manifest file (unreadable: nothing, like pre-commit's swallowed
-    /// load error).
-    fn warn_stages_of(&self, repo: &str, src: &Path) {
-        if let Ok(bytes) = snp_os::fs::read_capped(&src.join(MANIFEST_FILE), MANIFEST_CAP) {
-            self.warn_stages(repo, &bytes);
+        self.ensure_store()?;
+        let _lock = cx
+            .store
+            .repo_lock(&plan.base_key, &mut lock_notice(cx), cx.cancel)?;
+        if initialized(cx, repo, rev) {
+            return Ok(());
         }
+        cx.printer.log(Level::Info, &messages::initializing(repo));
+        warn_stages(cx, repo, manifest);
+        cx.store.set_marker(&init_key(repo, rev));
+        Ok(())
     }
 
     /// The base clone of a remote repository (`store.clone(repo, rev)`): the store entry, the finished prefetch, or
     /// pre-commit's foreground clone.
-    fn materialize_remote(&mut self, plan: &RemotePlan, rev: &str) -> Result<RepoHandle, Failure> {
-        self.ensure_store()?;
+    fn materialize_remote(
+        &mut self,
+        plan: &RemotePlan,
+        repo: &str,
+        rev: &str,
+    ) -> Result<RepoHandle, Failure> {
         let cx = self.cx;
         let meta = RepoMeta {
             kind: RepoKind::Remote {
@@ -427,13 +462,12 @@ impl<'c, 'a> Resolution<'c, 'a> {
             )
             .map(drop)
         };
-        cx.store.materialize(
-            &plan.base_key,
-            meta,
-            &mut fill,
-            &mut lock_notice(cx),
-            cx.cancel,
-        )
+        let a = Announce {
+            name: repo,
+            rev,
+            stages_of: Some(repo),
+        };
+        self.materialize_announced(&plan.base_key, meta, a, &mut fill)
     }
 
     /// A deps variant (ADR-025): `git clone --local` of the base, falling back to the network clone.
@@ -441,10 +475,10 @@ impl<'c, 'a> Resolution<'c, 'a> {
         &mut self,
         plan: &RemotePlan,
         base: &RepoHandle,
+        repo: &str,
         rev: &str,
         deps: &Arc<[Arc<str>]>,
     ) -> Result<RepoHandle, Failure> {
-        self.ensure_store()?;
         let cx = self.cx;
         let key = Store::remote_key(&plan.id, rev, deps);
         let meta = RepoMeta {
@@ -465,26 +499,31 @@ impl<'c, 'a> Resolution<'c, 'a> {
             )
             .map(drop)
         };
-        cx.store
-            .materialize(&key, meta, &mut fill, &mut lock_notice(cx), cx.cancel)
+        let name = snp_store::db_repo_name(repo, deps);
+        let a = Announce {
+            name: &name,
+            rev,
+            stages_of: Some(repo),
+        };
+        self.materialize_announced(&key, meta, a, &mut fill)
     }
 
     /// `store.make_local(deps)` (`store.py:212-215`): the 4.6.2 local template.
     fn materialize_local(&mut self, deps: &Arc<[Arc<str>]>) -> Result<RepoHandle, Failure> {
-        self.ensure_store()?;
-        let cx = self.cx;
         let key = Store::local_key(deps);
         let meta = RepoMeta {
             kind: RepoKind::Local,
             deps: Arc::clone(deps),
         };
-        cx.store.materialize(
-            &key,
-            meta,
-            &mut |dest| write_local_template(dest),
-            &mut lock_notice(cx),
-            cx.cancel,
-        )
+        let name = snp_store::db_repo_name("local", deps);
+        let rev = snp_core::profile::LOCAL_TEMPLATE_VERSION.to_string();
+        let a = Announce {
+            name: &name,
+            rev: &rev,
+            // `warn_for_stages_on_repo_init('local', …)` finds no manifest there.
+            stages_of: None,
+        };
+        self.materialize_announced(&key, meta, a, &mut |dest| write_local_template(dest))
     }
 
     /// A `repo: local` hook (`_non_cloned_repository_hooks`, `repository.py:147-168`).
@@ -496,15 +535,7 @@ impl<'c, 'a> Resolution<'c, 'a> {
             .map_err(|e| merge_failure(cx, &e))?;
         def.language_version = default_version(cx, def.language, &def.language_version)?;
         let (prefix, key, repo) = if def.language.env_dir_base().is_some() {
-            let name = snp_store::db_repo_name("local", &def.additional_dependencies);
-            let rev = snp_core::profile::LOCAL_TEMPLATE_VERSION.to_string();
-            let rev = rev.as_str();
-            self.ensure_store()?;
-            let new = self.initialize(&name, rev);
             let handle = self.materialize_local(&def.additional_dependencies)?;
-            if new {
-                self.mark(&name, rev);
-            }
             (handle.src.clone(), Some(handle.key), Some(handle))
         } else {
             (cx.cfg.source.project_root.clone(), None, None)
@@ -598,6 +629,12 @@ impl<'c, 'a> Resolution<'c, 'a> {
     }
 
     /// A cloned repository (`_cloned_repository_hooks`, `repository.py:171-200`), with the fast path.
+    ///
+    /// pre-commit's order is: `Initializing` → clone → deprecated-stage warning → manifest → unknown-id check →
+    /// per-hook merge errors. A Tier A repository reads its manifest from the profile, so the ids, merges and
+    /// fast-path verdicts are known before any clone: when a hook delegates (or `--with-fallback`), the clone comes
+    /// first and the line, the warning and the marker follow it as in pre-commit; when every hook runs natively, they
+    /// are printed without one (ADR-032). Errors found before that point are held back and reported after it.
     fn remote(
         &mut self,
         plan: &RemotePlan,
@@ -607,13 +644,8 @@ impl<'c, 'a> Resolution<'c, 'a> {
     ) -> Result<(), Failure> {
         let cx = self.cx;
         self.ensure_store()?;
-        let new = self.initialize(repo, rev);
         let mut base: Option<RepoHandle> = None;
         let manifest = if let Some(profile) = plan.profile {
-            if new {
-                self.warn_stages(repo, profile.manifest_yaml.as_bytes());
-                self.mark(repo, rev);
-            }
             let display = would_be_manifest_path(cx, &plan.base_key);
             snp_config::load_manifest_bytes(
                 profile.manifest_yaml.as_bytes(),
@@ -621,42 +653,70 @@ impl<'c, 'a> Resolution<'c, 'a> {
                 &load_opts(cx, cx.warn),
             )?
         } else {
-            let handle = self.materialize_remote(plan, rev)?;
-            if new {
-                self.warn_stages_of(repo, &handle.src);
-                self.mark(repo, rev);
-            }
+            let handle = self.materialize_remote(plan, repo, rev)?;
             let path = handle.src.join(MANIFEST_FILE);
             let m = snp_config::load_manifest(&path, path.as_os_str(), &load_opts(cx, cx.warn))?;
             base = Some(handle);
             m
         };
-        for c in hooks {
-            if manifest.get(&c.id).is_none() {
-                return Err(merge_failure(
-                    cx,
-                    &MergeError::UnknownId {
+        let mut held: Option<Held> =
+            hooks
+                .iter()
+                .find(|c| manifest.get(&c.id).is_none())
+                .map(|c| {
+                    Held::Merge(MergeError::UnknownId {
                         id: Arc::clone(&c.id),
                         repo: Arc::clone(repo),
-                    },
-                ));
+                    })
+                });
+        let mut merged = Vec::new();
+        if held.is_none() {
+            for c in hooks {
+                let Some(m) = manifest.get(&c.id) else {
+                    continue;
+                };
+                let buf = CollectWarnings::new();
+                let patch = self.patch(&c.id, merged_alias(c, m));
+                let mut def = match snp_config::merge_hook(m, c, cx.cfg, repo, patch, &buf) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        held = Some(Held::Merge(e));
+                        break;
+                    }
+                };
+                match default_version(cx, def.language, &def.language_version) {
+                    Ok(v) => def.language_version = v,
+                    Err(f) => {
+                        held = Some(Held::Failure(f));
+                        break;
+                    }
+                }
+                merged.push((c, m, patch, def, buf));
             }
         }
-        let mut merged = Vec::new();
-        for c in hooks {
-            let Some(m) = manifest.get(&c.id) else {
-                continue;
-            };
-            let buf = CollectWarnings::new();
-            let patch = self.patch(&c.id, merged_alias(c, m));
-            let mut def = snp_config::merge_hook(m, c, cx.cfg, repo, patch, &buf)
-                .map_err(|e| merge_failure(cx, &e))?;
-            def.language_version = default_version(cx, def.language, &def.language_version)?;
-            merged.push((c, m, patch, def, buf));
-        }
         let mut facts: Option<Result<CloneFacts, String>> = None;
+        let mut decided = Vec::new();
         for (c, m, patch, def, buf) in merged {
             let verdict = self.verdict(plan, repo, base.as_ref(), &mut facts, c, m, patch, &def);
+            decided.push((verdict, def, buf));
+        }
+        if let Some(profile) = plan.profile {
+            let with_fallback = self.policy.with_fallback;
+            if decided
+                .iter()
+                .any(|(v, _, _)| clones(v.as_ref(), with_fallback))
+            {
+                base = Some(self.materialize_remote(plan, repo, rev)?);
+            } else {
+                self.announce_uncloned(plan, repo, rev, profile.manifest_yaml.as_bytes())?;
+            }
+        }
+        match held {
+            Some(Held::Merge(e)) => return Err(merge_failure(cx, &e)),
+            Some(Held::Failure(f)) => return Err(f),
+            None => {}
+        }
+        for (verdict, def, buf) in decided {
             self.push_remote(plan, repo, rev, &mut base, verdict, def)?;
             flush(&buf, cx.warn);
         }
@@ -756,22 +816,14 @@ impl<'c, 'a> Resolution<'c, 'a> {
         let base_handle = if let Some(b) = base.clone() {
             b
         } else {
-            let b = self.materialize_remote(plan, rev)?;
+            let b = self.materialize_remote(plan, repo, rev)?;
             *base = Some(b.clone());
             b
         };
         let handle = if def.additional_dependencies.is_empty() {
             base_handle
         } else {
-            let name = snp_store::db_repo_name(repo, &def.additional_dependencies);
-            let new = self.initialize(&name, rev);
-            let h =
-                self.materialize_variant(plan, &base_handle, rev, &def.additional_dependencies)?;
-            if new {
-                self.warn_stages_of(repo, &h.src);
-                self.mark(&name, rev);
-            }
-            h
+            self.materialize_variant(plan, &base_handle, repo, rev, &def.additional_dependencies)?
         };
         let index = self.next_index();
         self.out.push(ResolvedHook {
@@ -787,6 +839,72 @@ impl<'c, 'a> Resolution<'c, 'a> {
             virtual_install: None,
         });
         Ok(())
+    }
+}
+
+/// What a new store entry announces (`_new_repo`).
+#[derive(Debug, Clone, Copy)]
+struct Announce<'n> {
+    /// `db_repo_name`.
+    name: &'n str,
+    /// The revision (`C.LOCAL_REPO_VERSION` for the local template).
+    rev: &'n str,
+    /// `warn_for_stages_on_repo_init(repo, …)` of the new checkout (`None` for the local template).
+    stages_of: Option<&'n str>,
+}
+
+/// An error found before a Tier A repository's clone decision, reported after it (pre-commit's order).
+#[derive(Debug)]
+enum Held {
+    /// E1–E3.
+    Merge(MergeError),
+    /// `get_default_version` and the like.
+    Failure(Failure),
+}
+
+/// Whether a hook with `verdict` needs the clone pre-commit makes (see `push_remote`).
+const fn clones(verdict: Option<&Verdict>, with_fallback: bool) -> bool {
+    match verdict {
+        Some(Verdict::FailLanguage) => false,
+        Some(Verdict::Native { .. }) => with_fallback,
+        _ => true,
+    }
+}
+
+/// The `keys-v1` marker of `(db_repo_name, rev)`.
+fn init_key(name: &str, rev: &str) -> MarkerKey {
+    MarkerKey::Initialized {
+        db_repo_name: Arc::from(name),
+        rev: Arc::from(rev),
+    }
+}
+
+/// Whether the store has seen `(db_repo_name, rev)` (pre-commit's `repos` row).
+fn initialized(cx: &ResolveCtx<'_>, name: &str, rev: &str) -> bool {
+    cx.store.marker_exists(&init_key(name, rev))
+}
+
+/// Removes the marker of `(db_repo_name, rev)`.
+fn forget(cx: &ResolveCtx<'_>, name: &str, rev: &str) {
+    let _removed = cx.store.retain_markers(&mut |k| {
+        !matches!(k, MarkerKey::Initialized { db_repo_name, rev: r } if **db_repo_name == *name && **r == *rev)
+    });
+}
+
+/// `warn_for_stages_on_repo_init` for a new clone of `repo` with manifest bytes `manifest`.
+fn warn_stages(cx: &ResolveCtx<'_>, repo: &str, manifest: &[u8]) {
+    let legacy = stages::legacy_stages(manifest);
+    if !legacy.is_empty() {
+        cx.warn
+            .warn(&messages::deprecated_repo_stages(cx.brand, repo, &legacy));
+    }
+}
+
+/// The deprecated-stage warning from a checkout's manifest file (unreadable: nothing, like pre-commit's swallowed
+/// load error).
+fn warn_stages_of(cx: &ResolveCtx<'_>, repo: &str, src: &Path) {
+    if let Ok(bytes) = snp_os::fs::read_capped(&src.join(MANIFEST_FILE), MANIFEST_CAP) {
+        warn_stages(cx, repo, &bytes);
     }
 }
 
