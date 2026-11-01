@@ -354,10 +354,10 @@ pub(crate) fn canonical_help(bytes: &[u8]) -> Vec<u8> {
     }
     // `-t {…}, --hook-type {…}` → `-t, --hook-type {…}` (the choices are the same list twice)
     let lines = lines_with_ends(&cur);
-    let mut out: Vec<u8> = Vec::with_capacity(cur.len());
+    let mut out: Vec<u8> = Vec::new();
     for line in lines {
         if let Some(rest) = line.strip_prefix(b"  -t {")
-            && let Some(at) = rest.windows(15).position(|w| w == b"}, --hook-type ")
+            && let Some(at) = crate::text::find_bytes(rest, b"}, --hook-type ")
             && let Some(tail) = rest.get(at.saturating_add(3)..)
         {
             out.extend_from_slice(b"  -t, ");

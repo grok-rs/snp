@@ -903,7 +903,7 @@ fn judge(
         // A shell step that runs the plain oracle by name (interop: `${oracle} install`) runs pre-commit on both
         // sides: its text is pre-commit's on both, so the snp-brand map does not apply to it.
         let oracle_only = matches!(&step.kind, StepKind::Shell(cmd)
-            if cmd.contains("${oracle}") && !cmd.contains("${tool}"));
+            if cmd.contains(concat!("$", "{oracle}")) && !cmd.contains(concat!("$", "{tool}")));
         let map_oracle = if oracle_only { map_snp } else { map_oracle };
         // A stream cut at MAX_CAPTURE is never "equal", even when both sides flooded.
         if ca.truncated || cb.truncated {

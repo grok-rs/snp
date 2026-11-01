@@ -393,7 +393,7 @@ fn lfs_files_memo_agrees_with_check_attr() {
     );
     assert_eq!(
         facts.lfs_files(&all).unwrap(),
-        PchFacts::new(git.clone()).lfs_files(&all).unwrap()
+        PchFacts::new(git).lfs_files(&all).unwrap()
     );
     // an untracked path is asked directly
     sb.write(&repo, "new.dat", b"n");
