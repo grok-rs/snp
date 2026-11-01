@@ -140,8 +140,9 @@ fn flush(buf: &CollectWarnings, warn: &dyn WarnSink) {
     }
 }
 
-/// The `language_version` after `languages[lang].get_default_version()` (`repository.py:120-123`), memoised by
-/// `ToolProbe`; env-less languages keep `default` (their `get_default_version` is `lang_base.basic_get_default_version`).
+/// The `language_version` after `languages[lang].get_default_version()` (`repository.py:120-123`), memoised by the
+/// backend through `ToolProbe`; env-less languages keep `default` (their `get_default_version` is
+/// `lang_base.basic_get_default_version`).
 pub(crate) fn default_version(
     cx: &ResolveCtx<'_>,
     lang: LanguageId,
@@ -150,12 +151,10 @@ pub(crate) fn default_version(
     if &**version != DEFAULT || lang.env_dir_base().is_none() {
         return Ok(Arc::clone(version));
     }
-    let backend = snp_lang::backend(lang);
-    let host = &cx.host;
-    host.probe
-        .default_version(lang, host.base_env, host.cwd, &mut || {
-            backend.default_version(host)
-        })
+    // The backends memoise through `ToolProbe::default_version` themselves; wrapping the call in the same memo
+    // again would wait on the slot this very call holds.
+    snp_lang::backend(lang)
+        .default_version(&cx.host)
         .map_err(Failure::from)
 }
 

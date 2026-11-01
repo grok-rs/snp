@@ -1905,6 +1905,7 @@ dependencies = [
 name = "snp-repo"
 version = "2.0.0"
 dependencies = [
+ "blake3",
  "snp-config",
  "snp-core",
  "snp-files",
@@ -1916,6 +1917,9 @@ dependencies = [
  "snp-proc",
  "snp-pyre",
  "snp-store",
+ "snp-testkit",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]

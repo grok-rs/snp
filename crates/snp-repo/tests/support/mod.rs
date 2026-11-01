@@ -33,9 +33,16 @@ use snp_testkit::{Bins, TestEnv};
 pub(crate) struct Buf(Arc<Mutex<Vec<u8>>>);
 
 impl Buf {
-    /// Everything written so far, cleared.
+    /// Everything written so far, cleared, without the store's `[INFO] Locking pre-commit directory` notice.
+    ///
+    /// That notice is printed at most once per *process* on any contended store lock, and the tests of one binary
+    /// run in parallel: a lock file descriptor briefly duplicated into another test's spawned child (between its
+    /// fork and exec) can make any test the one that waits. Its text is golden-tested by snp-store.
     pub(crate) fn take(&self) -> String {
-        String::from_utf8(std::mem::take(&mut *self.0.lock().unwrap())).unwrap()
+        let s = String::from_utf8(std::mem::take(&mut *self.0.lock().unwrap())).unwrap();
+        s.split_inclusive('\n')
+            .filter(|l| *l != "[INFO] Locking pre-commit directory\n")
+            .collect()
     }
 }
 
