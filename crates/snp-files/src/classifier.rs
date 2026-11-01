@@ -9,7 +9,7 @@ use snp_core::failure::{ExcKind, Failure};
 use snp_proc::pool::JobPool;
 use snp_pyre::{MatchError, MatchKind, PyRegex};
 
-use crate::table::par_chunks;
+use crate::table::{REGEX_THREADS, par_chunks_on};
 use crate::{FileId, FileTable, HookFilter, TagOutcome, messages};
 
 /// `Classifier.from_config`: top-level include/exclude (`re.search` on the `/`-path), then lexists.
@@ -40,7 +40,7 @@ impl Classifier {
         pool: &JobPool,
     ) -> Result<Self, Failure> {
         let t: &FileTable = &table;
-        let found: Vec<(FileId, Meta)> = par_chunks(pool, t.len(), |range| {
+        let found: Vec<(FileId, Meta)> = par_chunks_on(pool, t.len(), REGEX_THREADS, |range| {
             let mut out = Vec::new();
             for raw in range {
                 let id = FileId(u32::try_from(raw).unwrap_or(u32::MAX));
@@ -85,7 +85,7 @@ impl Classifier {
         let adopt = pending.as_deref().filter(|_| f.needs.any());
         let table: &FileTable = &self.table;
         let kept = &self.kept;
-        par_chunks(pool, kept.len(), |range| {
+        par_chunks_on(pool, kept.len(), REGEX_THREADS, |range| {
             let mut out = Vec::new();
             for &id in kept.get(range).unwrap_or_default() {
                 if f.prefix

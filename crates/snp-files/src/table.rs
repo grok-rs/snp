@@ -667,13 +667,30 @@ pub(crate) fn par_chunks<T: Send>(
     n: usize,
     f: impl Fn(Range<usize>) -> Result<Vec<T>, Failure> + Sync,
 ) -> Result<Vec<T>, Failure> {
+    par_chunks_on(pool, n, usize::MAX, f)
+}
+
+/// The most threads that match `files`/`exclude` patterns at once, whatever the pool size: every thread that runs a
+/// pattern gets its own lazy-DFA cache for it (~77 KB each), so 20 patterns on 32 threads held 27 MB of caches (B12u)
+/// while the wall time hardly improves beyond 8 threads.
+pub(crate) const REGEX_THREADS: usize = 8;
+
+/// [`par_chunks`] on at most `max_threads` threads.
+pub(crate) fn par_chunks_on<T: Send>(
+    pool: &JobPool,
+    n: usize,
+    max_threads: usize,
+    f: impl Fn(Range<usize>) -> Result<Vec<T>, Failure> + Sync,
+) -> Result<Vec<T>, Failure> {
     let permits = pool.permits();
-    if n < PARALLEL_MIN || permits.get() == 1 || JobPool::holds_permit() {
+    let threads = permits.get().min(max_threads.max(1));
+    if n < PARALLEL_MIN || threads == 1 || JobPool::holds_permit() {
         return f(0..n);
     }
-    let per = n.div_ceil(permits.get().saturating_mul(4)).max(CHUNK_MIN);
+    let threads = NonZeroUsize::new(threads).unwrap_or(permits);
+    let per = n.div_ceil(threads.get().saturating_mul(4)).max(CHUNK_MIN);
     let chunks = n.div_ceil(per);
-    let parts = pool.map_ordered(permits, chunks, |k| {
+    let parts = pool.map_ordered(threads, chunks, |k| {
         let start = k.saturating_mul(per);
         f(start..start.saturating_add(per).min(n))
     });
@@ -767,6 +784,25 @@ impl Read for NonBlocking {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// B12u: pattern matching uses at most `REGEX_THREADS` threads whatever the pool size; results stay in order.
+    #[test]
+    fn par_chunks_on_caps_the_threads() {
+        let pool = JobPool::new(
+            NonZeroUsize::new(32).unwrap(),
+            snp_core::cancel::CancelToken::new(),
+        );
+        let seen = std::sync::Mutex::new(std::collections::HashSet::new());
+        let out = par_chunks_on(&pool, 20_000, REGEX_THREADS, |r| {
+            seen.lock().unwrap().insert(std::thread::current().id());
+            std::thread::sleep(std::time::Duration::from_micros(200));
+            Ok(r.collect::<Vec<usize>>())
+        })
+        .unwrap();
+        assert_eq!(out, (0..20_000).collect::<Vec<_>>());
+        let threads = seen.lock().unwrap().len();
+        assert!((2..=REGEX_THREADS).contains(&threads), "{threads}");
+    }
 
     fn table(paths: &[&str]) -> FileTable {
         FileTable::from_args(
