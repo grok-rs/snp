@@ -11,8 +11,13 @@
 //!   the newest known tag; `language: system` hook keys (valid only for builtin) are removed. Without a `# was:`
 //!   comment a `# was: builtin` marker is written instead, so converting back restores the original bytes.
 //!
-//! An item sharing its line with another (`repos: [{…}, {…}]`) keeps no comment. The rewritten text must compose
-//! again, else nothing changes (exit 1); configs with YAML line breaks other than `\n`/`\r\n` are refused.
+//! An item sharing its line with another (`repos: [{…}, {…}]`) keeps no comment, and a `repo` or `rev` whose key and
+//! value are on different lines is left alone. The rewritten text must compose again, else nothing changes (exit 1);
+//! configs with YAML line breaks other than `\n`/`\r\n` are refused.
+//!
+//! The round trip `to_upstream(to_builtin(x)) == x` is byte-exact when `rev` directly follows `repo` (the layout
+//! pre-commit's own tools write). Otherwise the parsed config is the same but the restored `rev` line sits right
+//! after `repo` (a `rev` written before `repo` or after `hooks` moves).
 //!
 //! Owner: WP-34.
 
@@ -249,10 +254,21 @@ impl<'a> Doc<'a> {
         let ls = self.line_start(ks);
         let before = self.text.get(ls..ks)?;
         if before.trim().is_empty() {
-            // The key starts its line: drop the whole line(s) through the value's line.
+            // The key starts its line: drop the whole line(s) through the value's line. When they end the text
+            // without a final line break, the break before them goes instead (the text keeps having none).
+            let end = self.next_line(ve);
+            let start = if end == self.text.len() && !self.text.ends_with('\n') {
+                let head = self.text.get(..ls).unwrap_or("");
+                head.strip_suffix("\r\n")
+                    .or_else(|| head.strip_suffix('\n'))
+                    .unwrap_or(head)
+                    .len()
+            } else {
+                ls
+            };
             return Some(vec![Edit {
-                start: ls,
-                end: self.next_line(ve),
+                start,
+                end,
                 text: String::new(),
             }]);
         }
@@ -323,12 +339,18 @@ pub fn to_builtin(config_bytes: &[u8]) -> Result<Vec<u8>, Failure> {
         let Some(rev) = d.get(item, "rev") else {
             continue;
         };
-        let one_line = |id: NodeId| !d.raw(id).contains(['\n', '\r']);
+        // The key and its value on one line (`rev:\n  v1` would come back as `rev: v1`).
+        let one_line = |k: NodeId, v: NodeId| {
+            d.text
+                .get(d.span(k).start..d.span(v).end)
+                .is_some_and(|t| !t.contains(['\n', '\r']))
+        };
+        let repo_k = d.get(item, "repo").map_or(repo_v, |(k, _)| k);
         if !snp_hooks_data::is_pre_commit_hooks_url(url)
             || !convertible(&d, d.get(item, "hooks").map(|(_, v)| v), &ids)
             || !d.owns_line(item)
-            || !one_line(repo_v)
-            || !one_line(rev.1)
+            || !one_line(repo_k, repo_v)
+            || !one_line(rev.0, rev.1)
         {
             continue;
         }
@@ -451,18 +473,18 @@ pub fn to_upstream(config_bytes: &[u8]) -> Result<Vec<u8>, Failure> {
                 });
             } else {
                 let at = d.next_line(d.span(repo_v).end);
-                let lead = if at == d.text.len() && !d.text.ends_with('\n') {
-                    d.nl
+                // At the end of a text without a final line break, the rev line becomes the last line (and has none).
+                let (lead, trail) = if at == d.text.len() && !d.text.ends_with('\n') {
+                    (d.nl, "")
                 } else {
-                    ""
+                    ("", d.nl)
                 };
                 edits.push(Edit {
                     start: at,
                     end: at,
                     text: format!(
-                        "{lead}{}rev: {rev}{rest}{}",
-                        d.column(d.span(repo_k).start),
-                        d.nl
+                        "{lead}{}rev: {rev}{rest}{trail}",
+                        d.column(d.span(repo_k).start)
                     ),
                 });
             }
@@ -567,5 +589,39 @@ mod tests {
         assert!(to_builtin(b"a: [").is_err());
         assert_eq!(to_builtin(b"").unwrap(), b"");
         assert_eq!(to_upstream(b"repos: []\n").unwrap(), b"repos: []\n");
+    }
+
+    /// A `rev` whose value is on the next line is left alone (it could not come back as written).
+    #[test]
+    fn rev_value_on_its_own_line_stays() {
+        let src = "repos:\n-   repo: https://github.com/pre-commit/pre-commit-hooks\n    rev:\n      v4.5.0\n    hooks:\n    -   id: check-yaml\n";
+        assert_eq!(b(src), src);
+        let src = "repos:\n-   repo:\n      https://github.com/pre-commit/pre-commit-hooks\n    rev: v4.5.0\n    hooks:\n    -   id: check-yaml\n";
+        assert_eq!(b(src), src);
+    }
+
+    /// A config without a final line break keeps having none, both ways.
+    #[test]
+    fn no_final_line_break() {
+        let src = "repos:\n-   hooks:\n    -   id: check-yaml\n    repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v4.5.0";
+        let out = b(src);
+        assert_eq!(
+            out,
+            "repos:\n# was: https://github.com/pre-commit/pre-commit-hooks@v4.5.0\n-   hooks:\n    -   id: check-yaml\n    repo: builtin"
+        );
+        assert_eq!(u(&out), src);
+        let src = UP.trim_end_matches('\n');
+        assert_eq!(u(&b(src)), src);
+    }
+
+    /// `rev` after `hooks`: the parsed config survives the round trip, the `rev` line comes back after `repo`.
+    #[test]
+    fn rev_after_hooks_moves() {
+        let src = "repos:\n-   repo: https://github.com/pre-commit/pre-commit-hooks\n    hooks:\n    -   id: check-yaml\n    rev: v4.5.0\n";
+        let back = u(&b(src));
+        assert_eq!(
+            back,
+            "repos:\n-   repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v4.5.0\n    hooks:\n    -   id: check-yaml\n"
+        );
     }
 }
