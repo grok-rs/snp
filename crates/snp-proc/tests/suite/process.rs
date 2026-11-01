@@ -341,18 +341,31 @@ fn nofile64() {
 #[cfg(not(unix))]
 fn nofile64() {}
 
-/// `OutputBudget`: 32 partitions each printing 8 MiB keep the peak RSS below 100 MB (spill used) and every output is
-/// byte-identical.
+/// `OutputBudget`: 32 partitions each printing 8 MiB against a 64 MiB budget spill at least 24 of the outputs, every
+/// output is byte-identical and no spill file is left behind. Deterministic: the resident-memory bound itself is the
+/// perf-smoke test below.
 #[cfg(target_os = "linux")]
 #[test]
-fn output_budget_bounds_resident_memory() {
+fn output_budget_spills_and_preserves_every_output() {
     let r = run_driver("rss");
-    let peak_kb: u64 = result(&r, "peak_kb").unwrap().parse().unwrap();
     assert_eq!(result(&r, "identical"), Some("32"), "{r:?}");
     assert!(
         result(&r, "spilled").unwrap().parse::<usize>().unwrap() >= 20,
         "{r:?}"
     );
+    assert_eq!(result(&r, "spill_entries"), Some("0"), "{r:?}");
+}
+
+/// `OutputBudget`: the same 32 × 8 MiB keep the peak RSS below 100 MB. A resident-memory bound depends on the
+/// allocator, the build profile and the load of the machine, so it is ignored in the default gate (which must be
+/// deterministic) and run by the perf-smoke job in release mode.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "perf"]
+fn perf_output_budget_bounds_resident_memory() {
+    let r = run_driver("rss");
+    let peak_kb: u64 = result(&r, "peak_kb").unwrap().parse().unwrap();
+    assert_eq!(result(&r, "identical"), Some("32"), "{r:?}");
     assert!(peak_kb < 100 * 1024, "peak RSS {peak_kb} kB: {r:?}");
 }
 

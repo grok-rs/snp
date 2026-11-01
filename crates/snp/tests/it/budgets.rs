@@ -457,10 +457,11 @@ fn perf_b1_version_within_3x_budget() {
     assert!(median <= budget, "B1 median {median:?} > {budget:?}");
 }
 
-/// B2 (one `always_run` noop hook, ≤ 10 ms on Linux) with the 3× margin. Renamed `perf_b2_…` (the perf-smoke
-/// filter) when WP-32 merges.
+/// B2 (one `always_run` noop hook, ≤ 10 ms on Linux) with the 3× margin. A wall-clock bound: ignored in the default
+/// gate (it must be deterministic) and run by the perf-smoke job in release mode.
 #[test]
-fn timing_b2_one_noop_hook_within_3x_budget() {
+#[ignore = "perf"]
+fn perf_b2_one_noop_hook_within_3x_budget() {
     let env = TestEnv::new(bins());
     let repo = noop_repo(&env, "b2-timing", &noop_config(10));
     let median = median_wall(&env, &repo, &["run", "noop-01"], 21);
@@ -468,10 +469,11 @@ fn timing_b2_one_noop_hook_within_3x_budget() {
     assert!(median <= budget, "B2 median {median:?} > {budget:?}");
 }
 
-/// B3 (ten `always_run` noop hooks, ≤ 25 ms on Linux, 40 ms on macOS) with the 3× margin. Renamed `perf_b3_…`
-/// when WP-32 merges.
+/// B3 (ten `always_run` noop hooks, ≤ 25 ms on Linux, 40 ms on macOS) with the 3× margin. A wall-clock bound:
+/// ignored in the default gate and run by the perf-smoke job in release mode.
 #[test]
-fn timing_b3_ten_noop_hooks_within_3x_budget() {
+#[ignore = "perf"]
+fn perf_b3_ten_noop_hooks_within_3x_budget() {
     let env = TestEnv::new(bins());
     let repo = noop_repo(&env, "b3-timing", &noop_config(10));
     let median = median_wall(&env, &repo, &["run"], 21);
