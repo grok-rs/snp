@@ -4,7 +4,7 @@ expect_divergence: D-PLAT-06
 status: active
 since: "4.6.2"
 brands: [compat, snp]
-requires: {git: ">=2.31", net: false, tools: [], os: [windows], pty: false, second_drive: true}
+requires: {git: ">=2.31", net: false, tools: [], os: [windows], pty: false, manual: "a second drive (subst) on the Windows runner; ${second_drive} names it"}
 repos: {}
 work:
   files: {a.txt: "a\n"}
