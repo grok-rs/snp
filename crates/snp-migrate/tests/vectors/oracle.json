@@ -1,6 +1,6 @@
 {
   "features.portable.yaml": {
-    "sha256": "3a3fd9aefab3ff447da5eeb7583c64e8b191c0cef57d1c7b0c2c044a932a8a77",
+    "sha256": "5b32661ad1e261f1a4eb1dc36b213157745470571d0835287595339d99ed1692",
     "validate": {
       "exit": 0,
       "stdout": "",
@@ -9,7 +9,7 @@
     "runs": []
   },
   "features.snp.local.yaml": {
-    "sha256": "e9658c316ba134cc19ebbcd84ee2f562adec5ed8fa93f92854d6cd76b31d3b43",
+    "sha256": "280708f373a649a54ffe9e3ae06cd45f8d85c7a243d3b5283eae082e2ca42c8e",
     "validate": {
       "exit": 0,
       "stdout": "[WARNING] Unexpected key(s) present at root: fail_on_changes\n",
@@ -18,7 +18,7 @@
     "runs": []
   },
   "features.snp.yaml": {
-    "sha256": "13b52238d9934f29609bc9895ad993ee90f75633572aa66eb7bde2f106f04c6a",
+    "sha256": "46165720e0aa06a1f0a573aad0daab6e0fa4c740eff2243902c15a54c4fed713",
     "validate": {
       "exit": 0,
       "stdout": "[WARNING] Unexpected key(s) present at root: fail_on_changes\n",
@@ -63,7 +63,7 @@
     "runs": []
   },
   "runnable.portable.yaml": {
-    "sha256": "533c6a01fc35156ab693abdf2d6702e3a5b4d51fccf01c7e19d46ed9bf0429b9",
+    "sha256": "ac48e024b0bb1cc2f8e28b860459599b65025d2e5eb27d5e277ae625d73b0ced",
     "validate": {
       "exit": 0,
       "stdout": "",
@@ -150,7 +150,7 @@
     ]
   },
   "runnable.snp.yaml": {
-    "sha256": "39d21b857654f54cd2159a3c561577e081019352ecb40d0531e83e92107a5ae9",
+    "sha256": "a041b69fad1f807812fd03428c79410cc97d25d21c5680a6777c06a021a70e6a",
     "validate": {
       "exit": 0,
       "stdout": "[WARNING] Unexpected key(s) present at root: fail_on_changes\n",

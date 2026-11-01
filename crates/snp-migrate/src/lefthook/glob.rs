@@ -364,12 +364,12 @@ fn py_class_char(c: char, out: &mut String) {
     out.push(c);
 }
 
-/// Renders a bracket expression.
+/// Renders a bracket expression. A negated class matches `/` in both matchers (doublestar's `[!a]` / `[^a]` does
+/// not exclude the separator).
 fn class(
     neg: bool,
     items: &[(char, char)],
     flavor: Flavor,
-    no_sep: bool,
     out: &mut String,
 ) -> Result<(), GlobError> {
     match flavor {
@@ -377,9 +377,6 @@ fn class(
             out.push('[');
             if neg {
                 out.push('^');
-                if no_sep {
-                    out.push('/');
-                }
             }
             for &(lo, hi) in items {
                 py_class_char(lo, out);
@@ -424,9 +421,6 @@ fn class(
             out.push('[');
             if neg {
                 out.push('^');
-                if no_sep {
-                    out.push('/');
-                }
             }
             if close {
                 out.push(']');
@@ -447,72 +441,32 @@ fn class(
     Ok(())
 }
 
-/// Renders a sequence. `top` = the sequence is the whole pattern (a trailing `/**` may only end the pattern).
-fn render(
-    toks: &[Tok],
-    m: Matcher,
-    f: Flavor,
-    top: bool,
-    out: &mut String,
-) -> Result<(), GlobError> {
+/// Renders a gobwas sequence (no separators: `*` is `.*`, `?` is `.`).
+fn render(toks: &[Tok], f: Flavor, out: &mut String) -> Result<(), GlobError> {
     let group_open = match f {
         Flavor::Python => "(?:",
         Flavor::Ere => "(",
     };
-    let mut i = 0_usize;
-    while let Some(t) = toks.get(i) {
-        let next = toks.get(i.saturating_add(1));
-        let at_segment_start = i == 0 || matches!(toks.get(i.wrapping_sub(1)), Some(Tok::Lit('/')));
+    for t in toks {
         match t {
-            Tok::Lit('/')
-                if m == Matcher::Doublestar
-                    && top
-                    && matches!(next, Some(Tok::Star(n)) if *n >= 2)
-                    && i.saturating_add(2) == toks.len() =>
-            {
-                // A trailing `/**`: the directory itself and everything below it.
-                out.push_str(group_open);
-                out.push_str("/.*)?");
-                i = i.saturating_add(2);
-                continue;
-            }
             Tok::Lit(c) => match f {
                 Flavor::Python => py_escape(*c, out),
                 Flavor::Ere => ere_escape(*c, out),
             },
-            Tok::Star(n) => match m {
-                Matcher::Gobwas => out.push_str(".*"),
-                Matcher::Doublestar
-                    if *n >= 2 && at_segment_start && matches!(next, Some(Tok::Lit('/'))) =>
-                {
-                    // `**/`: zero or more leading directories.
-                    out.push_str(group_open);
-                    out.push_str(".*/)?");
-                    i = i.saturating_add(2);
-                    continue;
-                }
-                Matcher::Doublestar if *n >= 2 && at_segment_start && next.is_none() => {
-                    out.push_str(".*");
-                }
-                Matcher::Doublestar => out.push_str("[^/]*"),
-            },
-            Tok::Any => match m {
-                Matcher::Gobwas => out.push('.'),
-                Matcher::Doublestar => out.push_str("[^/]"),
-            },
-            Tok::Class(neg, items) => class(*neg, items, f, m == Matcher::Doublestar, out)?,
+            Tok::Star(_) => out.push_str(".*"),
+            Tok::Any => out.push('.'),
+            Tok::Class(neg, items) => class(*neg, items, f, out)?,
             Tok::Alt(alts) => {
                 out.push_str(group_open);
                 for (k, a) in alts.iter().enumerate() {
                     if k > 0 {
                         out.push('|');
                     }
-                    render(a, m, f, false, out)?;
+                    render(a, f, out)?;
                 }
                 out.push(')');
             }
         }
-        i = i.saturating_add(1);
     }
     Ok(())
 }
@@ -522,8 +476,216 @@ fn render(
 pub(crate) fn translate(pattern: &str, m: Matcher, f: Flavor) -> Result<String, GlobError> {
     let toks = parse(pattern, m)?;
     let mut out = String::new();
-    render(&toks, m, f, true, &mut out)?;
+    if m == Matcher::Doublestar {
+        ds_render(&toks, f, &mut out)?;
+    } else {
+        render(&toks, f, &mut out)?;
+    }
     Ok(out)
+}
+
+/// The most brace alternatives a doublestar pattern may expand to.
+const MAX_DS_ALTERNATIVES: usize = 256;
+
+/// doublestar expands `{a,b}` textually (`pattern[:before] + alt + pattern[closing+1:]`), so a `**` or `/` that a
+/// brace brings next to its context means what the expanded text means: the pattern becomes the list of its
+/// brace-free expansions (adjacent star runs merged).
+fn ds_expand(toks: &[Tok], left: &mut usize) -> Result<Vec<Vec<Tok>>, GlobError> {
+    let mut acc: Vec<Vec<Tok>> = vec![Vec::new()];
+    for t in toks {
+        let tails: Vec<Vec<Tok>> = match t {
+            Tok::Alt(alts) => {
+                let mut v = Vec::new();
+                for a in alts {
+                    v.extend(ds_expand(a, left)?);
+                }
+                v
+            }
+            t => vec![vec![t.clone()]],
+        };
+        let mut next = Vec::new();
+        for a in &acc {
+            for tail in &tails {
+                *left = left.checked_sub(1).ok_or_else(|| {
+                    GlobError("the braces expand to too many alternatives".to_owned())
+                })?;
+                let mut v = a.clone();
+                for t in tail {
+                    match (v.last_mut(), t) {
+                        (Some(Tok::Star(n)), Tok::Star(k)) => *n = n.saturating_add(*k),
+                        _ => v.push(t.clone()),
+                    }
+                }
+                next.push(v);
+            }
+        }
+        acc = next;
+    }
+    Ok(acc)
+}
+
+/// One step of doublestar's matcher (`doMatchWithSeparator`).
+enum DsUnit<'a> {
+    /// A literal, `?` or a bracket expression.
+    One(&'a Tok),
+    /// `*` or a `**` that is not a path doublestar: any run without `/` (text `*` or `**`).
+    Star(&'static str),
+    /// `**/` at a segment start: zero or more directories.
+    Dirs,
+    /// `**` ending the pattern at a segment start: matches whatever is left.
+    Rest,
+}
+
+impl DsUnit<'_> {
+    fn text(&self) -> String {
+        match self {
+            // A literal `*` was written `\*` (an unescaped one is a star): never part of a [`DS_ZERO`] rest.
+            DsUnit::One(Tok::Lit('*')) => "\\*".to_owned(),
+            DsUnit::One(Tok::Lit(c)) => c.to_string(),
+            DsUnit::One(_) => "?".to_owned(),
+            DsUnit::Star(t) => (*t).to_owned(),
+            DsUnit::Dirs => "**/".to_owned(),
+            DsUnit::Rest => "**".to_owned(),
+        }
+    }
+}
+
+/// The steps of a brace-free doublestar pattern. A star run is read two stars at a time: a pair at a segment start
+/// is a path doublestar when it ends the pattern or a `/` follows, any other pair or single star is a plain star.
+fn ds_units(toks: &[Tok]) -> Vec<DsUnit<'_>> {
+    let mut out = Vec::new();
+    let mut seg_start = true;
+    let mut i = 0_usize;
+    while let Some(t) = toks.get(i) {
+        i = i.saturating_add(1);
+        match t {
+            Tok::Star(2) if seg_start && toks.get(i).is_none() => out.push(DsUnit::Rest),
+            Tok::Star(2) if seg_start && toks.get(i) == Some(&Tok::Lit('/')) => {
+                out.push(DsUnit::Dirs);
+                i = i.saturating_add(1);
+            }
+            Tok::Star(n) => {
+                for _ in 0..n / 2 {
+                    out.push(DsUnit::Star("**"));
+                }
+                if n % 2 == 1 {
+                    out.push(DsUnit::Star("*"));
+                }
+                seg_start = false;
+            }
+            t => {
+                seg_start = *t == Tok::Lit('/');
+                out.push(DsUnit::One(t));
+            }
+        }
+    }
+    out
+}
+
+/// What `isZeroLengthPattern` accepts as the rest of the pattern once the name is used up.
+const DS_ZERO: [&str; 6] = ["", "*", "**", "/**", "**/", "/**/"];
+
+/// The union of `chain` (the alternatives of one expansion, by increasing end step). When each one extends the
+/// one before, it is written as nested optional tails (`dir`, `dir/`, `dir/.+` → `dir(?:/.*)?`).
+fn ds_factor(chain: &[String], group_open: &str) -> String {
+    let opt = |x: &str| match x {
+        ".+" => ".*".to_owned(),
+        "[^/]+" => "[^/]*".to_owned(),
+        x => format!("{group_open}{x})?"),
+    };
+    let pairs = || chain.iter().zip(chain.iter().skip(1));
+    let is_chain = pairs().all(|(a, b)| b.len() > a.len() && b.starts_with(a.as_str()));
+    match chain {
+        [] => String::new(),
+        [one] => one.clone(),
+        [first, ..] if is_chain => {
+            let steps: Vec<&str> = pairs()
+                .map(|(a, b)| b.get(a.len()..).unwrap_or(""))
+                .collect();
+            let mut acc = String::new();
+            for step in steps.iter().rev() {
+                acc = if acc.is_empty() {
+                    (*step).to_owned()
+                } else {
+                    format!("{step}{}", opt(&acc))
+                };
+            }
+            format!("{first}{}", opt(&acc))
+        }
+        _ => format!("{group_open}{})", chain.join("|")),
+    }
+}
+
+/// Whether ending the name at step `k` is out of the matcher's reach: a plain `**` star run before the closing `/`
+/// (`x**/`) is processed (taking the matcher's single star backtrack) before the name can end there, so a star
+/// earlier in the same segment can no longer move to let the name end at `k`.
+fn ds_lost_backtrack(units: &[DsUnit<'_>], k: usize) -> bool {
+    if !matches!(units.get(k), Some(DsUnit::Star(_))) || k.saturating_add(1) == units.len() {
+        return false;
+    }
+    units
+        .get(..k)
+        .unwrap_or(&[])
+        .iter()
+        .rev()
+        .take_while(|u| !matches!(u, DsUnit::One(Tok::Lit('/')) | DsUnit::Dirs))
+        .any(|u| matches!(u, DsUnit::Star(_)))
+}
+
+/// Renders a doublestar pattern. The matcher only looks at pattern steps while name characters remain, and once
+/// the name is used up it matches iff the rest of the pattern is one of [`DS_ZERO`] (so `src/**/` matches `src`,
+/// but `a***` does not match `a`). The regex is therefore the union, over every step boundary whose rest is in
+/// [`DS_ZERO`], of the steps before it, the last of which consumes at least one character.
+fn ds_render(toks: &[Tok], f: Flavor, out: &mut String) -> Result<(), GlobError> {
+    let group_open = match f {
+        Flavor::Python => "(?:",
+        Flavor::Ere => "(",
+    };
+    let mut left = MAX_DS_ALTERNATIVES;
+    let mut alts: Vec<String> = Vec::new();
+    for flat in ds_expand(toks, &mut left)? {
+        let mut chain: Vec<String> = Vec::new();
+        let units = ds_units(&flat);
+        let texts: Vec<String> = units.iter().map(DsUnit::text).collect();
+        for k in 0..=units.len() {
+            let rest: String = texts.get(k..).unwrap_or(&[]).concat();
+            if !DS_ZERO.contains(&rest.as_str()) || ds_lost_backtrack(&units, k) {
+                continue;
+            }
+            let mut r = String::new();
+            for (j, u) in units.get(..k).unwrap_or(&[]).iter().enumerate() {
+                let last = j.saturating_add(1) == k;
+                match u {
+                    DsUnit::One(Tok::Lit(c)) => match f {
+                        Flavor::Python => py_escape(*c, &mut r),
+                        Flavor::Ere => ere_escape(*c, &mut r),
+                    },
+                    DsUnit::One(Tok::Class(neg, items)) => class(*neg, items, f, &mut r)?,
+                    DsUnit::One(_) => r.push_str("[^/]"),
+                    DsUnit::Star(_) => r.push_str(if last { "[^/]+" } else { "[^/]*" }),
+                    DsUnit::Dirs if last => r.push_str(".*/"),
+                    DsUnit::Dirs => {
+                        r.push_str(group_open);
+                        r.push_str(".*/)?");
+                    }
+                    DsUnit::Rest => r.push_str(".+"),
+                }
+            }
+            chain.push(r);
+        }
+        let r = ds_factor(&chain, group_open);
+        if !alts.contains(&r) {
+            alts.push(r);
+        }
+    }
+    if let [one] = alts.as_slice() {
+        out.push_str(one);
+    } else {
+        out.push_str(group_open);
+        out.push_str(&alts.join("|"));
+        out.push(')');
+    }
+    Ok(())
 }
 
 /// The `files` regex of a `glob` list: `^(?i:(?:<g1>)|(?:<g2>))$` (05 §19.6), `None` when every pattern is empty.
@@ -606,6 +768,19 @@ pub(crate) fn ere(globs: &[String], m: Matcher, lower: bool) -> Result<Option<St
     }
     out.push_str(")$");
     Ok(Some(out))
+}
+
+/// More unbounded runs than this in one translated regex earn a warning: gobwas compiles a glob to a matcher that
+/// never backtracks, but pre-commit runs the regex with Python's backtracking `re`, where `.*a.*a.*…` grows
+/// polynomially with the path length.
+pub(crate) const SLOW_RUNS: usize = 4;
+
+/// The unbounded runs (`.*`, `.+`, `[^/]*`, `[^/]+`) of a translated regex.
+pub(crate) fn unbounded_runs(re: &str) -> usize {
+    [".*", ".+", "[^/]*", "[^/]+"]
+        .iter()
+        .map(|r| re.matches(r).count())
+        .sum()
 }
 
 /// Go's `strings.ToLower`: the simple (one-to-one) lowercase mapping of every character. Rust's full mapping turns
@@ -753,12 +928,22 @@ mod tests {
         assert_eq!(ds("**"), ".*");
         assert_eq!(ds("a/**/b"), "a/(?:.*/)?b");
         assert_eq!(ds("a?"), "a[^/]");
-        assert_eq!(ds("[^a]"), "[^/a]");
-        assert_eq!(ds("[!a]"), "[^/a]");
+        // doublestar's negated class matches `/` (`x[!a]y` matches `x/y`).
+        assert_eq!(ds("[^a]"), "[^a]");
+        assert_eq!(ds("x[!a]y"), "x[^a]y");
+        assert!(matches(&files(&["x[!a]y"], Matcher::Doublestar), "x/y"));
+        // A trailing `/**/` also matches the directory itself; `***` is two plain stars.
+        assert_eq!(ds("src/**/"), "src(?:/(?:.*/)?)?");
+        let g = files(&["a***"], Matcher::Doublestar);
+        assert!(!matches(&g, "a") && matches(&g, "ab") && !matches(&g, "a/b"));
+        assert_eq!(ds("a*"), "a[^/]*");
+        assert_eq!(ds("{**,x}/y"), "(?:(?:.*/)?y|x/y)");
         let g = files(&["dir/**"], Matcher::Doublestar);
         assert!(matches(&g, "dir"));
         assert!(matches(&g, "dir/a/b"));
         assert!(!matches(&g, "dirx"));
+        let g = files(&["src/**/"], Matcher::Doublestar);
+        assert!(matches(&g, "src") && matches(&g, "src/a/") && !matches(&g, "src/a"));
     }
 
     #[test]
@@ -905,6 +1090,83 @@ mod tests {
         assert!(
             errors > 100 && compared > 9_000 && unicode_bugs < 20,
             "{errors} {compared} {unicode_bugs}"
+        );
+    }
+
+    /// `tests/vectors/doublestar.jsonl` was produced by the real bmatcuk/doublestar v4.10.2 (lefthook's pinned
+    /// version) with `tests/vectors/doublestar-oracle/` (`python3 gen.py 34 900 | go run .`), with lefthook's
+    /// `err == nil && matched` verdict. Every pattern doublestar validates translates to a regex (and an ERE, where
+    /// one exists) with the same verdicts.
+    #[test]
+    fn doublestar_vectors() {
+        let mut compared = 0_usize;
+        let mut bad = Vec::new();
+        for l in include_str!("../../tests/vectors/doublestar.jsonl").lines() {
+            let v: serde_json::Value = serde_json::from_str(l).unwrap();
+            if !v["ok"].as_bool().unwrap() {
+                continue;
+            }
+            let p = v["p"].as_str().unwrap().to_owned();
+            let lower = v["lower"].as_bool().unwrap();
+            let pats = std::slice::from_ref(&p);
+            let re = if lower {
+                files_regex(pats, Matcher::Doublestar, None)
+            } else {
+                exclude_regex(pats, Matcher::Doublestar)
+            };
+            let re = re
+                .unwrap_or_else(|e| panic!("doublestar accepts {p:?}: {e:?}"))
+                .unwrap();
+            let compile =
+                |r: &str| snp_pyre::PyRegex::compile(r, snp_pyre::Options::CONFIG).unwrap();
+            let py = compile(&re);
+            let ere = ere(pats, Matcher::Doublestar, lower)
+                .ok()
+                .flatten()
+                .map(|e| (compile(&regex_syntax_like(&e, lower)), e));
+            let paths = v["paths"].as_array().unwrap();
+            let want = v["m"].as_array().unwrap();
+            for (path, want) in paths.iter().zip(want) {
+                let (path, want) = (path.as_str().unwrap(), want.as_bool().unwrap());
+                if py.search(path).unwrap() != want {
+                    bad.push(format!("{p:?} (lower {lower}) {re:?} {path:?} want {want}"));
+                }
+                if let Some((ere_re, e)) = &ere {
+                    let target = if lower {
+                        go_lower(path)
+                    } else {
+                        path.to_owned()
+                    };
+                    if ere_re.search(&target).unwrap() != want {
+                        bad.push(format!("ere {p:?} {e:?} {path:?} want {want}"));
+                    }
+                }
+                compared += 1;
+            }
+        }
+        // doublestar keeps a single `*` backtrack, so a later star (or a negated class that matches `/`) can make
+        // it miss a match a regex finds, or reach a `**/` end the regex cannot see (COMPATIBILITY.md, migrate glob
+        // divergences). Those patterns are counted, everything else must agree.
+        let quirk = |line: &String| {
+            let p = line.split(' ').find(|w| w.starts_with('"')).unwrap_or("");
+            let lost = p.match_indices("**/").any(|(i, _)| {
+                let seg = p.get(..i).unwrap_or("");
+                let seg = seg.rsplit('/').next().unwrap_or("");
+                !seg.is_empty() && seg.contains('*')
+            });
+            p.contains("[!") || p.contains("[^") || lost
+        };
+        let (quirks, real): (Vec<String>, Vec<String>) = bad.into_iter().partition(quirk);
+        assert!(
+            real.is_empty(),
+            "{} mismatches:\n{}",
+            real.len(),
+            real.join("\n")
+        );
+        assert!(
+            compared > 20_000 && quirks.len() < 80,
+            "{compared} {}",
+            quirks.len()
         );
     }
 

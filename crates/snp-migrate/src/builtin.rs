@@ -12,8 +12,9 @@
 //!   comment a `# was: builtin` marker is written instead, so converting back restores the original bytes.
 //!
 //! An item sharing its line with another (`repos: [{…}, {…}]`) keeps no comment, and a `repo` or `rev` whose key and
-//! value are on different lines is left alone. The rewritten text must compose again, else nothing changes (exit 1);
-//! configs with YAML line breaks other than `\n`/`\r\n` are refused.
+//! value are on different lines, or that carries an anchor or tag or is an alias, is left alone. The rewritten text
+//! must compose again, else nothing changes (exit 1); configs with YAML line breaks other than `\n`/`\r\n` are
+//! refused.
 //!
 //! The round trip `to_upstream(to_builtin(x)) == x` is byte-exact when `rev` directly follows `repo` (the layout
 //! pre-commit's own tools write). Otherwise the parsed config is the same but the restored `rev` line sits right
@@ -132,6 +133,16 @@ impl<'a> Doc<'a> {
 
     fn raw(&self, id: NodeId) -> &str {
         self.text.get(self.span(id)).unwrap_or("")
+    }
+
+    /// Whether node `id` is written in place inside `within` without an anchor, tag or alias: an alias's span is its
+    /// anchor's (elsewhere), and replacing or removing an anchored node would leave its aliases undefined.
+    fn plain_in(&self, id: NodeId, within: NodeId) -> bool {
+        let (span, outer) = (self.span(id), self.span(within));
+        self.node(id).is_some_and(|n| n.anchor.is_none())
+            && !self.raw(id).starts_with(['&', '!', '*'])
+            && outer.start <= span.start
+            && span.end <= outer.end
     }
 
     /// Whether map `id` is a flow mapping (`{…}`).
@@ -347,6 +358,9 @@ pub fn to_builtin(config_bytes: &[u8]) -> Result<Vec<u8>, Failure> {
         };
         let repo_k = d.get(item, "repo").map_or(repo_v, |(k, _)| k);
         if !snp_hooks_data::is_pre_commit_hooks_url(url)
+            || ![repo_k, repo_v, rev.0, rev.1]
+                .iter()
+                .all(|n| d.plain_in(*n, item))
             || !convertible(&d, d.get(item, "hooks").map(|(_, v)| v), &ids)
             || !d.owns_line(item)
             || !one_line(repo_k, repo_v)
@@ -401,7 +415,10 @@ pub fn to_upstream(config_bytes: &[u8]) -> Result<Vec<u8>, Failure> {
         let Some((repo_k, repo_v)) = d.get(item, "repo") else {
             continue;
         };
-        if d.scalar(repo_v) != Some("builtin") {
+        if d.scalar(repo_v) != Some("builtin")
+            || !d.plain_in(repo_k, item)
+            || !d.plain_in(repo_v, item)
+        {
             continue;
         }
         let was = if d.owns_line(item) {
@@ -493,6 +510,8 @@ pub fn to_upstream(config_bytes: &[u8]) -> Result<Vec<u8>, Failure> {
             for h in d.items(hooks) {
                 if let Some((lk, lv)) = d.get(*h, "language")
                     && d.scalar(lv) == Some("system")
+                    && d.plain_in(lk, *h)
+                    && d.plain_in(lv, *h)
                     && let Some(rm) = d.remove_pair(*h, lk, lv)
                 {
                     edits.extend(rm);

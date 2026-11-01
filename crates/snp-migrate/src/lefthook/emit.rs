@@ -275,7 +275,8 @@ fn plain_ok(s: &str, flow: bool) -> bool {
     if !indicator_ok || s.contains(": ") || s.contains(" #") || s.ends_with(':') {
         return false;
     }
-    if flow && s.contains([',', '[', ']', '{', '}']) {
+    // Pure-Python PyYAML (pre-commit's fallback without libyaml) also ends a flow plain scalar at `?`.
+    if flow && s.contains([',', '[', ']', '{', '}', '?']) {
         return false;
     }
     if s == "-" || s.starts_with("---") || s.starts_with("...") {
@@ -327,6 +328,10 @@ mod tests {
         assert_eq!(scalar("a: b", false), "'a: b'");
         assert_eq!(scalar("a,b", true), "'a,b'");
         assert_eq!(scalar("a,b", false), "a,b");
+        // `yaml.SafeLoader` (no libyaml) fails on `[a?b]` / `{URL: http://h?a=1}`.
+        assert_eq!(scalar("a?b", true), "'a?b'");
+        assert_eq!(scalar("http://h?a=1", true), "'http://h?a=1'");
+        assert_eq!(scalar("http://h?a=1", false), "http://h?a=1");
         assert_eq!(scalar("", false), "''");
         assert_eq!(scalar("it's", false), "it's");
         assert_eq!(scalar("'x'", false), "'''x'''");

@@ -34,27 +34,65 @@ pub(crate) fn wrapper(script: &str) -> String {
     format!("sh -c {} --", sh_single(script))
 }
 
-/// `"<value>"` for an environment assignment that keeps lefthook's `$VAR` / `${VAR}` expansion (`os.ExpandEnv`)
-/// while command substitution and escapes stay literal.
+/// `"<value>"` for an environment assignment that reproduces lefthook's `os.ExpandEnv` of the value while
+/// command substitution and escapes stay literal. Go's `os.Expand` grammar (`getShellName`): `$NAME` / `${NAME}`
+/// with a shell variable name become `${NAME}`; a special one-character name (`*#$@!?-` or a digit, braced or
+/// not) and any other `${…}` look up an environment variable `sh` cannot name and become empty; `${}` and an
+/// unclosed `${` are dropped; `$` before anything else (or at the end) stays a literal `$`.
 pub(crate) fn dq_expand(v: &str) -> String {
+    fn lit(out: &mut String, c: char) {
+        if matches!(c, '\\' | '"' | '`' | '$') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    fn special(c: char) -> bool {
+        "*#$@!?-".contains(c) || c.is_ascii_digit()
+    }
+    fn alnum(c: char) -> bool {
+        c == '_' || c.is_ascii_alphanumeric()
+    }
     let mut out = String::from("\"");
     let chars: Vec<char> = v.chars().collect();
-    for (i, &c) in chars.iter().enumerate() {
-        match c {
-            '\\' | '"' | '`' => {
-                out.push('\\');
-                out.push(c);
-            }
-            '$' => {
-                let next = chars.get(i.saturating_add(1)).copied();
-                let expands =
-                    next.is_some_and(|n| n == '{' || n == '_' || n.is_ascii_alphanumeric());
-                if !expands {
-                    out.push('\\');
+    let mut i = 0usize;
+    while let Some(&c) = chars.get(i) {
+        i = i.saturating_add(1);
+        if c != '$' {
+            lit(&mut out, c);
+            continue;
+        }
+        let rest = chars.get(i..).unwrap_or(&[]);
+        let (name, width): (Option<String>, usize) = match rest {
+            [] => (None, 0),
+            ['{', n, '}', ..] if special(*n) => (Some(n.to_string()), 3),
+            ['{', tail @ ..] => match tail.iter().position(|&c| c == '}') {
+                Some(0) => (Some(String::new()), 2),
+                Some(k) => (
+                    Some(tail.get(..k).unwrap_or(&[]).iter().collect()),
+                    k.saturating_add(2),
+                ),
+                None => (Some(String::new()), 1),
+            },
+            [n, ..] if special(*n) => (Some(n.to_string()), 1),
+            _ => {
+                let k = rest.iter().take_while(|&&c| alnum(c)).count();
+                if k == 0 {
+                    (None, 0)
+                } else {
+                    (Some(rest.get(..k).unwrap_or(&[]).iter().collect()), k)
                 }
-                out.push('$');
             }
-            c => out.push(c),
+        };
+        i = i.saturating_add(width);
+        match name {
+            None => lit(&mut out, '$'),
+            Some(n) if is_var_name(&n) => {
+                out.push_str("${");
+                out.push_str(&n);
+                out.push('}');
+            }
+            // Bad syntax (eaten) or a name no shell variable can have: Go's `Getenv` gives "".
+            Some(_) => {}
         }
     }
     out.push('"');
@@ -251,6 +289,7 @@ pub(crate) fn inline_templates(s: &str, templates: &[(String, String)], job_name
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write as _;
 
     #[test]
     fn quoting() {
@@ -262,11 +301,51 @@ mod tests {
             wrapper("echo 'x' \"$@\""),
             "sh -c 'echo '\\''x'\\'' \"$@\"' --"
         );
-        assert_eq!(dq_expand("$HOME/bin:${PATH}"), "\"$HOME/bin:${PATH}\"");
+        assert_eq!(dq_expand("$HOME/bin:${PATH}"), "\"${HOME}/bin:${PATH}\"");
         assert_eq!(
             dq_expand("a\"b`c\\d$(x) $"),
             "\"a\\\"b\\`c\\\\d\\$(x) \\$\""
         );
+    }
+
+    /// `tests/vectors/expandenv.jsonl` holds Go's `os.Expand` (the `os.ExpandEnv` grammar) of 561 values under a
+    /// fixed environment (`expandenv-oracle`); every [`dq_expand`] assignment, run by `sh` with that environment,
+    /// gives the same value.
+    #[cfg(unix)]
+    #[test]
+    fn dq_expand_matches_go_expand_env() {
+        let mut script = String::new();
+        let mut want = Vec::new();
+        for line in include_str!("../../tests/vectors/expandenv.jsonl").lines() {
+            let v: serde_json::Value = serde_json::from_str(line).unwrap();
+            let input = v["in"].as_str().unwrap();
+            want.push((input.to_owned(), v["out"].as_str().unwrap().to_owned()));
+            writeln!(script, "V={}; printf '%s\\037' \"$V\"", dq_expand(input)).unwrap();
+        }
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .env_clear()
+            .envs([
+                ("A", "x y"),
+                ("H", "/home/u"),
+                ("AH", "$A`q`"),
+                ("x", "\\\""),
+                ("A1", "1"),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let got = String::from_utf8(out.stdout).unwrap();
+        let got: Vec<&str> = got.split('\u{1f}').collect();
+        assert_eq!(got.len(), want.len().saturating_add(1));
+        for ((input, w), g) in want.iter().zip(got) {
+            assert_eq!(g, w, "{input:?} -> {}", dq_expand(input));
+        }
     }
 
     #[test]

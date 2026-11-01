@@ -1,5 +1,5 @@
 snp-migrate: lossy: pre-commit/[4]: piped group: pre-commit fail_fast stops the whole run, lefthook piped only stopped its group
 snp-migrate: warning: pre-commit: parallelism reduced: a sequential group inside a parallel one is serialised
-snp-migrate: warning: pre-commit/listed files: best-effort: file list computed in shell
-snp-migrate: warning: pre-commit/every file: best-effort: file list computed in shell
+snp-migrate: warning: pre-commit/listed files: best-effort: file list computed in shell (names git must quote are skipped)
+snp-migrate: warning: pre-commit/every file: best-effort: file list computed in shell (names git must quote are skipped)
 Converted 11 jobs from 5 lefthook hooks into 11 hooks (3 warnings, 1 lossy conversions).
