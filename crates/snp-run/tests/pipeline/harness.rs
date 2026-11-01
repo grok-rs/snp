@@ -88,6 +88,100 @@ fn meta_kind(id: &str) -> ExecKind {
     }
 }
 
+/// A remote repo: the store's clone (made by try-repo, or here as `store.clone` would), its manifest, the merge.
+fn remote(
+    cx: &ResolveCtx<'_>,
+    repo: &str,
+    rev: &str,
+    hooks: &[snp_config::ConfigHook],
+    index: &mut u32,
+) -> Result<Vec<ResolvedHook>, Failure> {
+    let id = snp_store::RepoId::from_config(repo, &cx.cfg.source.project_root);
+    let key = Store::remote_key(&id, rev, &[]);
+    let handle = if let Some(h) = cx.store.lookup(&key) {
+        h
+    } else {
+        cx.store.ensure_created(cx.brand, cx.printer)?;
+        let marker = snp_store::MarkerKey::Initialized {
+            db_repo_name: Arc::from(snp_store::db_repo_name(repo, &[])),
+            rev: Arc::from(rev),
+        };
+        if !cx.store.marker_exists(&marker) {
+            cx.printer.log(
+                snp_core::output::Level::Info,
+                &format!("Initializing environment for {repo}."),
+            );
+        }
+        let src = match &id {
+            snp_store::RepoId::LocalPath(p) => p.to_string_lossy().into_owned(),
+            _ => repo.to_owned(),
+        };
+        let meta = snp_store::RepoMeta {
+            kind: snp_store::RepoKind::Remote {
+                id,
+                rev: Arc::from(rev),
+            },
+            deps: Arc::from(Vec::new()),
+        };
+        let mut fill = |dest: &Path| {
+            snp_git::OwnedRepo::clone_rev(
+                Arc::clone(cx.git_exe),
+                cx.env,
+                dest,
+                &src,
+                rev,
+                snp_git::CloneMode::Foreground,
+                Arc::clone(&cx.git_backend),
+            )
+            .map(drop)
+        };
+        let h = cx
+            .store
+            .materialize(&key, meta, &mut fill, &mut || {}, cx.cancel)?;
+        cx.store.set_marker(&marker);
+        h
+    };
+    let opts = snp_config::LoadOpts {
+        brand: cx.brand,
+        ext: snp_config::ExtMode::Enabled,
+        regexes: cx.regexes,
+        warn: cx.warn,
+        diag: cx.printer,
+    };
+    let path = handle.src.join(".pre-commit-hooks.yaml");
+    let manifest =
+        snp_config::load_manifest(&path, path.as_os_str(), &opts).map_err(Failure::from)?;
+    let mut out = Vec::new();
+    for c in hooks {
+        let Some(m) = manifest.get(&c.id) else {
+            return Err(Failure::fatal("FatalError", format!("unknown id {}", c.id)));
+        };
+        let patch = cx.overlay.and_then(|o| o.hook_patch(&c.id, ""));
+        let def = snp_config::merge_hook(m, c, cx.cfg, repo, patch, cx.warn).map_err(|e| {
+            cx.printer
+                .log(snp_core::output::Level::Error, &e.message(cx.brand));
+            Failure::Exit(1)
+        })?;
+        out.push(ResolvedHook {
+            index: *index,
+            src: HookSrc::Remote {
+                repo: Arc::from(repo),
+                rev: Arc::from(rev),
+            },
+            exec: ExecKind::Language,
+            def: Arc::new(def),
+            prefix: handle.src.clone(),
+            repo: Some(handle.clone()),
+            language_version: Arc::from("default"),
+            install_key: None,
+            virtual_install: None,
+            docker_tag: None,
+        });
+        *index += 1;
+    }
+    Ok(out)
+}
+
 impl Resolve for Fake {
     fn all_hooks(&self, cx: &ResolveCtx<'_>) -> Result<Vec<ResolvedHook>, Failure> {
         let mut out = Vec::new();
@@ -97,10 +191,14 @@ impl Resolve for Fake {
             let (hooks, src, meta) = match repo {
                 RepoConfig::Local { hooks } => (hooks, "local", false),
                 RepoConfig::Meta { hooks } => (hooks, "meta", true),
+                RepoConfig::Remote { repo, rev, hooks } => {
+                    out.extend(remote(cx, repo, rev, hooks, &mut index)?);
+                    continue;
+                }
                 _ => {
                     return Err(Failure::fatal(
                         "FatalError",
-                        "fake resolver: remote repos unsupported",
+                        "fake resolver: builtin repos unsupported",
                     ));
                 }
             };
@@ -165,7 +263,7 @@ impl Resolve for Fake {
             env: cx.env,
             entry: &h.def.entry,
             args: &h.def.args,
-            is_local: true,
+            is_local: matches!(h.src, HookSrc::Local),
             color,
             docker_tag: None,
         };
@@ -454,6 +552,15 @@ impl H {
             },
             &cx,
         );
+        cx.printer.finish();
+        Self::finish(r, &o, &e)
+    }
+
+    /// `try-repo`.
+    pub(crate) fn try_repo(&self, a: snp_cli::TryRepoArgs) -> Out {
+        let (o, e) = (Sink::default(), Sink::default());
+        let cx = self.ctx(&o, &e);
+        let r = snp_run::try_repo(a, &cx);
         cx.printer.finish();
         Self::finish(r, &o, &e)
     }

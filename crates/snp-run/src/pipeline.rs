@@ -59,8 +59,9 @@ pub(crate) struct Invocation<'s> {
 struct RunState {
     stash: Option<StashGuard>,
     store_guard: Option<StoreGuard>,
-    /// A field whose own `Drop` panics (the ADR-066 drop-order test).
+    /// A field whose own `Drop` panics (the ADR-066 drop-order test); only dropped, never read.
     #[cfg(test)]
+    #[expect(dead_code, reason = "exists for its Drop")]
     probe: Option<tests::PanicOnDrop>,
 }
 

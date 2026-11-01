@@ -17,3 +17,5 @@ mod hook_impl;
 mod meta;
 #[cfg(test)]
 mod run;
+#[cfg(test)]
+mod try_repo;
