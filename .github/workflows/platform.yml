@@ -288,7 +288,7 @@ jobs:
         run: |
           bin="target/${{ matrix.target }}/dist/snp"
           file "$bin"
-          file "$bin" | grep -Eq 'static(-pie)? linked'
+          file "$bin" | grep -Eq 'statically linked|static-pie linked'
       - name: Runs without glibc
         run: >-
           docker run --rm -v "$PWD/target/${{ matrix.target }}/dist:/snp:ro" alpine:3.22
@@ -465,8 +465,10 @@ jobs:
         run: |
           uv venv --python 3.13 venv
           if [ "$RUNNER_OS" = Windows ]; then bin=venv/Scripts; else bin=venv/bin; fi
-          uv pip install --python "$bin/python" dist/snp_cli-*.whl
-          "$bin/snp" --version | tee version.txt
+          # `--python` takes the environment directory (a bare `venv/Scripts/python` has no `.exe` to find).
+          uv pip install --python venv dist/snp_cli-*.whl
+          # Windows prints `\r\n` (Python text-mode stdout, which snp reproduces).
+          "$bin/snp" --version | tr -d '\r' | tee version.txt
           grep -Eq '^snp [0-9]+\.[0-9]+\.[0-9]+$' version.txt
           # the wheel ships `snp` only: never a `pre-commit` executable (ADR-049)
           if ls "$bin" | grep -qi '^pre-commit'; then echo "::error::the wheel installed a pre-commit executable"; exit 1; fi
