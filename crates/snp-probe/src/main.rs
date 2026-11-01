@@ -8,7 +8,7 @@
 //! | `args A…` | each argument on its own line |
 //! | `count A…` | the number of arguments |
 //! | `env NAME…` | `NAME=value` or `NAME unset` per name |
-//! | `envnames` | every environment variable name, sorted, raw case |
+//! | `envnames` | every environment variable name, sorted, raw case (on Windows without `=X:` and `PROMPT`) |
 //! | `cwd` | the working directory |
 //! | `tty` | `stdin: <bool>` / `stdout: <bool>` / `stderr: <bool>` (Python `isatty()`) |
 //! | `stdin-kind` | `file-type: char\|pipe\|disk\|other` and `crt-isatty: 0\|1` |
@@ -69,6 +69,13 @@ fn line(s: impl AsRef<[u8]>) {
     out(&v);
 }
 
+/// Windows shell state rather than configuration, left out of `envnames`: the hidden per-drive working directories
+/// (`=C:`; CPython's `os.chdir` sets them, so pre-commit's hooks inherit them, and so does every child of `cmd.exe`)
+/// and `cmd.exe`'s `PROMPT` (the oracle's `.cmd` launchers run through `cmd.exe`).
+fn cmd_shell_state(name: &OsStr) -> bool {
+    cfg!(windows) && (raw(name).starts_with(b"=") || name.eq_ignore_ascii_case("PROMPT"))
+}
+
 /// The raw bytes of an argument (`WTF-8` on Windows).
 fn raw(s: &OsStr) -> &[u8] {
     s.as_encoded_bytes()
@@ -119,7 +126,10 @@ fn run(args: &[OsString]) -> End {
                 clippy::disallowed_methods,
                 reason = "the probe reports its own environment"
             )]
-            let mut names: Vec<OsString> = std::env::vars_os().map(|(k, _)| k).collect();
+            let mut names: Vec<OsString> = std::env::vars_os()
+                .map(|(k, _)| k)
+                .filter(|k| !cmd_shell_state(k))
+                .collect();
             names.sort();
             for n in names {
                 line(raw(&n));
