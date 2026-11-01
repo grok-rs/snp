@@ -1,0 +1,229 @@
+# Performance and memory budgets enforced by `cargo xtask bench gate` (ARCHITECTURE §12.1, §12.3; ADR-043, ADR-071,
+# ADR-079). Owned by WP-36. Every number here is normative: changing one is a reviewed change of a budget.
+#
+# Units: times in milliseconds (the hyperfine median of `-N -w 5 -r 50`), memory in MiB (RSS: the median of 10
+# `/usr/bin/time` runs; allocations: dhat's total bytes allocated), syscalls as counted by `strace -f -c`.
+
+[gate]
+# A median regression above this percentage fails the gate when the 95 % confidence intervals of the two medians do
+# not overlap (distribution-free order-statistic intervals).
+regression_pct = 5.0
+# snp's p50 must never be slower than these tools on any scenario both measured (ARCHITECTURE §12.1).
+never_slower_than = ["pre-commit", "prek"]
+
+# The ADR-079 musl allocator decision applied to the release artifacts ("system" or "mimalloc"); `bench gate` holds
+# the musl record of this allocator to the same never-slower rule. See bench/musl-allocator.md.
+[musl]
+adopted = "system"
+
+# ---------------------------------------------------------------------------------------------------------------
+# Budgets. `metric`: median_ms | rss_mib | syscalls | alloc_mib. Without `vs_*` the limit is `max`; with
+# `vs_tool = T` it is `max ×` T's value of the same metric on the same scenario; with `vs_scenario = S` it is
+# `max ×` snp's value on S; `plus` is added to a relative limit. `hard = true` fails the gate, otherwise the breach is
+# reported (and shown in the PR comment) without failing. `os` is linux | macos | windows.
+# ---------------------------------------------------------------------------------------------------------------
+
+# --- Linux x86_64 (the reference runner; the hard gates of ADR-043) -------------------------------------------
+[[budget]]
+os = "linux"
+scenario = "B1"
+metric = "median_ms"
+max = 3.0
+hard = true
+
+[[budget]]
+os = "linux"
+scenario = "B2"
+metric = "median_ms"
+max = 10.0
+hard = true
+
+[[budget]]
+os = "linux"
+scenario = "B3"
+metric = "median_ms"
+max = 25.0
+hard = true
+
+[[budget]]
+os = "linux"
+scenario = "B4"
+metric = "median_ms"
+vs_tool = "pre-commit"
+max = 0.2 # >= 5x faster than pre-commit
+hard = false
+
+[[budget]]
+os = "linux"
+scenario = "B5"
+metric = "median_ms"
+vs_scenario = "B4"
+max = 1.3
+hard = false
+
+[[budget]]
+os = "linux"
+scenario = "B6"
+metric = "median_ms"
+max = 60.0
+hard = false
+
+[[budget]]
+os = "linux"
+scenario = "B7"
+metric = "median_ms"
+max = 1000.0
+hard = false
+
+[[budget]]
+os = "linux"
+scenario = "B8"
+metric = "rss_mib"
+vs_scenario = "B3"
+max = 1.0
+plus = 2.0 # the streamed patch: B3's RSS + <= 2 MiB
+hard = false
+
+[[budget]]
+os = "linux"
+scenario = "B9"
+metric = "median_ms"
+vs_scenario = "B3"
+max = 1.0
+plus = 3.0 # B3 + 3 ms
+hard = false
+
+[[budget]]
+os = "linux"
+scenario = "B10"
+metric = "median_ms"
+max = 50.0
+hard = false
+
+[[budget]]
+os = "linux"
+scenario = "B11"
+metric = "median_ms"
+max = 1000.0
+hard = false
+
+# B12: peak RSS of B4 (50 k files) and B6, plus the ADR-079 regex-cache case B12u (20 Unicode patterns, SNP_JOBS=32,
+# non-ASCII paths).
+[[budget]]
+os = "linux"
+scenario = "B4"
+metric = "rss_mib"
+max = 30.0
+hard = true
+
+[[budget]]
+os = "linux"
+scenario = "B6"
+metric = "rss_mib"
+max = 25.0
+hard = true
+
+[[budget]]
+os = "linux"
+scenario = "B12u"
+metric = "rss_mib"
+max = 30.0
+hard = true
+
+# Nightly: syscall ceilings (`strace -f -c`) and the allocation budget (feature `dhat-heap`).
+[[budget]]
+os = "linux"
+scenario = "B1"
+metric = "syscalls"
+max = 64.0
+hard = true
+
+[[budget]]
+os = "linux"
+scenario = "B3"
+metric = "alloc_mib"
+max = 2.0
+hard = true
+
+# --- macOS arm64 (soft) --------------------------------------------------------------------------------------
+[[budget]]
+os = "macos"
+scenario = "B1"
+metric = "median_ms"
+max = 5.0
+hard = false
+
+[[budget]]
+os = "macos"
+scenario = "B2"
+metric = "median_ms"
+max = 15.0
+hard = false
+
+[[budget]]
+os = "macos"
+scenario = "B3"
+metric = "median_ms"
+max = 40.0
+hard = false
+
+# --- Windows x64 (soft ratios to pre-commit: every hook's `git diff` stays a real spawn, ADR-043) -----------------
+[[budget]]
+os = "windows"
+scenario = "B1"
+metric = "median_ms"
+max = 15.0
+hard = false
+
+[[budget]]
+os = "windows"
+scenario = "B2"
+metric = "median_ms"
+vs_tool = "pre-commit"
+max = 0.4
+hard = false
+
+[[budget]]
+os = "windows"
+scenario = "B3"
+metric = "median_ms"
+vs_tool = "pre-commit"
+max = 0.5
+hard = false
+
+# ---------------------------------------------------------------------------------------------------------------
+# Micro thresholds (`cargo xtask bench gate --micro`): the exact targets stated by the W1/W2 acceptance lists, whose
+# release-mode `perf_*` tests only catch a 3x regression (ADR-071). `id` is the criterion benchmark id of
+# crates/snp/benches; the statistic is criterion's median estimate. `max_ns` bounds the time per iteration,
+# `min_per_sec` the throughput (the benchmark's declared elements per second). A threshold whose benchmark has no
+# result fails the gate.
+# ---------------------------------------------------------------------------------------------------------------
+[[micro]]
+id = "argparse/hook_impl_cli_compat"
+max_ns = 5000.0
+source = "WP-12: hook-impl argv parse < 5 µs (12 §A.17 item 8)"
+
+[[micro]]
+id = "argparse/hook_impl_cli_snp"
+max_ns = 5000.0
+source = "WP-12: hook-impl argv parse < 5 µs, snp brand"
+
+[[micro]]
+id = "pyre_tier1/typical_12x100k"
+min_per_sec = 1000000.0
+source = "WP-13: tier-1 path searches >= 1,000,000/s"
+
+[[micro]]
+id = "classify/50k_files_10_filters"
+max_ns = 40000000.0
+source = "WP-22: classification of 50 k files with 10 typical filters <= 40 ms"
+
+[[micro]]
+id = "yaml/alias_bomb_10x10_rejected"
+max_ns = 100000000.0
+source = "WP-14: the 10 x 10 alias bomb is a limit error in < 100 ms"
+
+[[micro]]
+id = "yaml/deep_nesting_10000_rejected"
+max_ns = 100000000.0
+source = "WP-14: nesting depth 10,000 is a clean YAML error in < 100 ms"
