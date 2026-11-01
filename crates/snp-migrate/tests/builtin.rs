@@ -66,8 +66,9 @@ mod builtin {
             converted += built.matches("repo: builtin").count();
         }
         // Config 0: 1, config 1: 1, config 2: 2 (black stays), config 3: 1 (the check-ast block stays),
-        // config 4: 0, config 5: 0 (two items on one line), config 6: 1.
-        assert_eq!(converted, 6);
+        // config 4: 0, config 5: 0 (two items on one line), config 6: 1, config 7: 1 (anchored `repo` / `rev`
+        // values stay).
+        assert_eq!(converted, 7);
     }
 
     #[test]
@@ -91,6 +92,18 @@ mod builtin {
             ["builtin", "https://github.com/pre-commit/pre-commit-hooks"]
         );
         assert_eq!(b(&corpus[4]), corpus[4]);
+        // config 7: a `repo` or `rev` with an anchor is left alone (removing it would undefine `*u` / `*r`).
+        let built = b(&corpus[7]);
+        assert_eq!(
+            repos(&built),
+            [
+                "&u",
+                "https://github.com/pre-commit/pre-commit-hooks",
+                "builtin",
+                "local"
+            ]
+        );
+        value(&built);
         assert_eq!(b(&corpus[5]), corpus[5]);
         let built = b(&corpus[2]);
         assert_eq!(

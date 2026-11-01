@@ -78,3 +78,25 @@ repos:
 -   repo: meta
     hooks:
     -   id: check-hooks-apply
+---8<---
+# The anchored block stays upstream (its anchor is used later); the other one converts.
+repos:
+-   repo: &u https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+    -   id: check-json
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: &r v6.0.0
+    hooks:
+    -   id: check-xml
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+    -   id: check-toml
+-   repo: local
+    hooks:
+    -   id: echo
+        name: *u
+        entry: echo *r
+        language: system
+        args: [*r]
