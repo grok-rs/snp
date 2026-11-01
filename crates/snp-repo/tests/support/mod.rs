@@ -24,7 +24,9 @@ use snp_lang::{Host, ToolProbe};
 use snp_proc::pool::{JobPool, Limiter};
 use snp_proc::spawn::Role;
 use snp_pyre::RegexCache;
-use snp_repo::{FastPathPolicy, Preflight, Resolve, ResolveCtx, ResolvedHook, StoreResolver, StoreTools};
+use snp_repo::{
+    FastPathPolicy, Preflight, Resolve, ResolveCtx, ResolvedHook, StoreResolver, StoreTools,
+};
 use snp_store::{Store, StoreLocation, StoreSource};
 use snp_testkit::{Bins, TestEnv};
 
@@ -47,9 +49,9 @@ impl Buf {
 }
 
 impl std::io::Write for Buf {
-    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(b);
-        Ok(b.len())
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        snp_core::sync::lock(&self.0).extend_from_slice(buf);
+        Ok(buf.len())
     }
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
@@ -207,7 +209,12 @@ impl H {
     }
 
     /// Runs `f` with a context over `cfg`.
-    pub(crate) fn with_ctx<R>(&self, cfg: &Config, overlay: Option<&Overlay>, f: impl FnOnce(&ResolveCtx<'_>) -> R) -> R {
+    pub(crate) fn with_ctx<R>(
+        &self,
+        cfg: &Config,
+        overlay: Option<&Overlay>,
+        f: impl FnOnce(&ResolveCtx<'_>) -> R,
+    ) -> R {
         let tools = StoreTools(&self.store);
         let host = Host {
             base_env: &self.env,
@@ -285,14 +292,21 @@ pub(crate) fn git(env: &Env, dir: &Path, args: &[&str]) -> String {
     cmd.args(args).current_dir(dir).env_clear();
     env.apply_to(&mut cmd);
     let out = cmd.output().unwrap();
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8(out.stdout).unwrap()
 }
 
 /// `(exception type, text)` of a `Failure::Exc`.
 pub(crate) fn exc(f: &Failure) -> (String, String) {
     match f {
-        Failure::Exc { exc, .. } => (exc.ty.to_string(), String::from_utf8_lossy(&exc.text).into_owned()),
+        Failure::Exc { exc, .. } => (
+            exc.ty.to_string(),
+            String::from_utf8_lossy(&exc.text).into_owned(),
+        ),
         other => panic!("not an exception: {other:?}"),
     }
 }
@@ -312,5 +326,6 @@ pub(crate) fn installing(src: &str) -> String {
 
 /// A `.pre-commit-hooks.yaml` with one hook.
 pub(crate) fn manifest_one(id: &str, entry: &str, language: &str, extra: &str) -> Vec<u8> {
-    format!("-   id: {id}\n    name: {id}\n    entry: {entry}\n    language: {language}\n{extra}").into_bytes()
+    format!("-   id: {id}\n    name: {id}\n    entry: {entry}\n    language: {language}\n{extra}")
+        .into_bytes()
 }

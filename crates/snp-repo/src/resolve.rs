@@ -1029,7 +1029,7 @@ mod tests {
     fn clone_url_joins_local_directories_only() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        std::fs::create_dir(root.join("hooks")).unwrap();
+        std::fs::create_dir_all(root.join("hooks")).unwrap();
         assert_eq!(
             clone_url("hooks", root),
             root.join("hooks").to_string_lossy()

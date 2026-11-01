@@ -586,7 +586,10 @@ mod tests {
     #[test]
     fn facts_round_trip() {
         let f = CloneFacts {
-            blobs: vec![("pre_commit_hooks/a b.py".to_owned(), "0".repeat(40))],
+            blobs: vec![(
+                "pre_commit_hooks/a b.py".to_owned(),
+                "0000000000000000000000000000000000000000".to_owned(),
+            )],
             scripts: vec![("x".to_owned(), "pre_commit_hooks.x:main".to_owned())],
         };
         let back = CloneFacts::decode(&f.encode()).unwrap();

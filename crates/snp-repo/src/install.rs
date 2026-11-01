@@ -639,6 +639,7 @@ mod tests {
     use std::time::Duration;
 
     use snp_core::output::PrinterOpts;
+    use snp_core::sync;
 
     use super::*;
 
@@ -647,9 +648,9 @@ mod tests {
     struct Buf(Arc<Mutex<Vec<u8>>>);
 
     impl std::io::Write for Buf {
-        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(b);
-            Ok(b.len())
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            sync::lock(&self.0).extend_from_slice(buf);
+            Ok(buf.len())
         }
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
@@ -697,7 +698,7 @@ mod tests {
 
     impl EnvInstaller for Fake {
         fn installed(&self, job: &Job) -> Result<bool, Failure> {
-            Ok(self.installed.lock().unwrap().contains(&Self::name(job)))
+            Ok(sync::lock(&self.installed).contains(&Self::name(job)))
         }
         fn virtual_installed(&self, key: &InstallKey) -> bool {
             self.virtuals.lock().unwrap().contains(&key_digest(key))
@@ -728,7 +729,7 @@ mod tests {
             } else if self.heavy_running.load(Ordering::SeqCst) > 0 {
                 self.heavy_overlap.store(true, Ordering::SeqCst);
             }
-            self.log.lock().unwrap().push(format!("start {}", job.src));
+            sync::lock(&self.log).push(format!("start {}", job.src));
             let ms = self
                 .delays
                 .iter()
@@ -754,7 +755,7 @@ mod tests {
             })
         }
         fn commit(&self, job: &Job, _p: &Prepared) -> Result<(), Failure> {
-            self.installed.lock().unwrap().push(Self::name(job));
+            sync::lock(&self.installed).push(Self::name(job));
             Ok(())
         }
         fn discard(&self, job: &Job) {
@@ -787,14 +788,15 @@ mod tests {
     }
 
     fn expected(srcs: &[&str]) -> String {
-        srcs.iter()
-            .map(|s| {
-                format!(
-                    "[INFO] Installing environment for {s}.\n[INFO] Once installed this environment will be \
-                     reused.\n[INFO] This may take a few minutes...\n"
-                )
-            })
-            .collect()
+        let mut out = String::new();
+        for s in srcs {
+            out.push_str("[INFO] Installing environment for ");
+            out.push_str(s);
+            out.push_str(
+                ".\n[INFO] Once installed this environment will be reused.\n[INFO] This may take a few minutes...\n",
+            );
+        }
+        out
     }
 
     fn limiter(n: usize) -> Arc<Limiter> {
@@ -919,9 +921,9 @@ mod tests {
         // owner; the containment refusal takes the same path (the install stops before touching anything else).
         let tmp = tempfile::tempdir().unwrap();
         let envs = tmp.path().join("envs");
-        std::fs::create_dir(&envs).unwrap();
+        std::fs::create_dir_all(&envs).unwrap();
         let outside = tmp.path().join("py_env-x");
-        std::fs::create_dir(&outside).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
         let job = Job {
             key: key(1, &[]),
             src: Arc::from("local"),
