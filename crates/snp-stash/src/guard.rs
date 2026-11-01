@@ -1098,6 +1098,12 @@ impl StashGuard {
         self.clean
     }
 
+    /// Whether the stash removed intent-to-add entries from the index (`git rm --cached`): an index read taken
+    /// before the stash no longer describes it.
+    pub fn cleared_intent_to_add(&self) -> bool {
+        self.inner.as_ref().is_some_and(|i| !i.ita.is_empty())
+    }
+
     /// `("_SNP_STASH_LOCK", token)` for nested runs.
     pub fn child_env_token(&self) -> Option<(&'static str, OsString)> {
         let inner = self.inner.as_deref()?;

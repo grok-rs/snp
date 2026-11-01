@@ -16,8 +16,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use snp_cli::RunArgs;
-use snp_config::Config;
 use snp_config::ext::OutputMode;
+use snp_config::{Config, RepoConfig};
 use snp_core::cancel::CancelReason;
 use snp_core::env::{Env, EnvPatch};
 use snp_core::failure::{Failure, PyExc};
@@ -151,11 +151,34 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     for line in recovery.unwrap_or_default() {
         printer.diag(&line);
     }
-    // step 6: the speculative config load (warnings buffered) beside the read-only preflight git calls
+    // step 6: the speculative config load (warnings buffered) beside the read-only preflight git calls, and — for a
+    // stashing run on the stat-capable path — the DiffOracle inputs F and G, which the stash does not change (only
+    // its intent-to-add clearing changes the index: then F is asked again after it). Started here they are off the
+    // critical path instead of a serial git stage after the stash (B2/B3, ADR-084).
     let buffered = Buffered::default();
-    let (loaded, unmerged, unstaged) = std::thread::scope(|s| {
+    let speculate = stash && stat_possible(&git0, &info, &cx.env);
+    let (loaded, unmerged, unstaged, early) = std::thread::scope(|s| {
         let load = std::thread::Builder::new().spawn_scoped(s, || {
-            common::load_config_with(cx, &src, &buffered.warn, &buffered.diag)
+            let loaded = common::load_config_with(cx, &src, &buffered.warn, &buffered.diag);
+            // Only for a config with three or more process-hook candidates: below that the stat path does not pay
+            // for its two spawns (B2's spawn budget). A thread that could not start, panicked or failed leaves its
+            // input to step 14.
+            let early = if speculate
+                && loaded
+                    .as_ref()
+                    .is_ok_and(|c| process_candidates(c, &a.hooks) >= 3)
+            {
+                let f = std::thread::Builder::new()
+                    .spawn_scoped(s, || git0.tracked_with_modes().ok().map(Arc::new));
+                let origins = git0.config_origins().ok().map(Arc::from);
+                Early {
+                    tracked: f.ok().and_then(|h| h.join().ok().flatten()),
+                    origins,
+                }
+            } else {
+                Early::default()
+            };
+            (loaded, early)
         });
         let unstaged = std::thread::Builder::new()
             .spawn_scoped(s, || stash.then(|| git0.config_is_unstaged(&config)));
@@ -164,11 +187,16 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
             Ok(h) => h.join().unwrap_or_else(|p| Some(Err(panicked(&p)))),
             Err(_) => stash.then(|| git0.config_is_unstaged(&config)),
         };
-        let loaded = match load {
-            Ok(h) => h.join().unwrap_or_else(|p| Err(panicked(&p))),
-            Err(_) => common::load_config_with(cx, &src, &buffered.warn, &buffered.diag),
+        let (loaded, early) = match load {
+            Ok(h) => h
+                .join()
+                .unwrap_or_else(|p| (Err(panicked(&p)), Early::default())),
+            Err(_) => (
+                common::load_config_with(cx, &src, &buffered.warn, &buffered.diag),
+                Early::default(),
+            ),
         };
-        (loaded, unmerged, unstaged)
+        (loaded, unmerged, unstaged, early)
     });
     if inv.direct
         && let Ok(cfg) = &loaded
@@ -297,20 +325,31 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     let needs_files = hooks
         .iter()
         .any(|h| !h.def.always_run || h.def.pass_filenames);
-    // F and G cost two spawns and save one `git diff` per executed process hook: worth it from three hooks on
+    // F and G cost two spawns and save one `git diff` per executed process hook: worth it from three hooks on, or
+    // from one when step 6 already has them (off the critical path)
     let process_hooks = to_install
         .iter()
         .filter(|h| matches!(h.exec, snp_repo::ExecKind::Language))
         .count();
-    let stat_possible = process_hooks >= 3 && stat_possible(&git, &info, &run_env);
+    let ita_cleared = st
+        .stash
+        .as_ref()
+        .is_some_and(StashGuard::cleared_intent_to_add);
+    let early = Early {
+        tracked: early.tracked.filter(|_| !ita_cleared),
+        origins: early.origins,
+    };
+    let have_early = early.tracked.is_some() && early.origins.is_some();
+    let stat_possible = (process_hooks >= 3 || (have_early && process_hooks >= 1))
+        && (have_early || stat_possible(&git, &info, &run_env));
     let (installed, side) = std::thread::scope(|s| {
         let side = std::thread::Builder::new().spawn_scoped(s, || {
-            side_queries(&git, &sel, &info, needs_files, stat_possible)
+            side_queries(&git, &sel, &info, needs_files, stat_possible, &early)
         });
         let installed = cx.resolver.install_envs(&to_install, &rcx);
         let side = match side {
             Ok(h) => h.join().unwrap_or_else(|p| Err(panicked(&p))),
-            Err(_) => side_queries(&git, &sel, &info, needs_files, stat_possible),
+            Err(_) => side_queries(&git, &sel, &info, needs_files, stat_possible, &early),
         };
         (installed, side)
     });
@@ -476,13 +515,50 @@ struct Side {
     origins: Option<Arc<[PathBuf]>>,
 }
 
+/// The hooks of `cfg` that may run as processes (local and remote; meta and builtin hooks are in-process), among
+/// the selected ones when the command line names hooks (`run noop-01` of a ten-hook config is one candidate).
+fn process_candidates(cfg: &Config, selectors: &[OsString]) -> usize {
+    let picked = |id: &str, alias: &str| {
+        selectors.is_empty()
+            || selectors.iter().any(|s| {
+                s.as_os_str() == OsStr::new(id)
+                    || (!alias.is_empty() && s.as_os_str() == OsStr::new(alias))
+            })
+    };
+    cfg.repos
+        .iter()
+        .map(|r| match r {
+            RepoConfig::Local { hooks } => hooks.iter().filter(|h| picked(&h.id, &h.alias)).count(),
+            RepoConfig::Remote { hooks, .. } => hooks.iter().filter(|h| picked(&h.id, "")).count(),
+            _ => 0,
+        })
+        .sum()
+}
+
+/// F and G taken at step 6 (`None`: not speculated, failed, or stale after an intent-to-add clearing).
+#[derive(Debug, Default)]
+struct Early {
+    tracked: Option<Arc<IndexEntries>>,
+    origins: Option<Arc<[PathBuf]>>,
+}
+
 fn side_queries(
     git: &Git,
     sel: &Selection<'_>,
     info: &RepoInfo,
     needs_files: bool,
     stat: bool,
+    early: &Early,
 ) -> Result<Side, Failure> {
+    if stat && let (Some(tracked), Some(origins)) = (&early.tracked, &early.origins) {
+        let staged =
+            (needs_files && files::wants_staged(sel, git, info)).then(|| git.staged_files());
+        return Ok(Side {
+            staged: staged.transpose()?,
+            tracked: Some(Arc::clone(tracked)),
+            origins: Some(Arc::clone(origins)),
+        });
+    }
     // E, F and G are independent read-only queries: each on its own thread, so one spawn is on the critical path
     std::thread::scope(|s| {
         let spawn_f = || {

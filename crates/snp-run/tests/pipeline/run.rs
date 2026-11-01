@@ -1384,3 +1384,43 @@ fn spawn_bounds_for_the_b2_b3_shapes() {
         }
     }
 }
+
+/// ADR-084: with three or more hooks the DiffOracle inputs are read before the stash; when the stash clears
+/// intent-to-add entries that early index read is stale and is taken again, so a hook that writes into an
+/// intent-to-add file (untracked while the hooks run) is not reported as modifying files, exactly as with `git diff`,
+/// and a hook that modifies a tracked file still is.
+#[test]
+fn early_oracle_inputs_follow_an_intent_to_add_clearing() {
+    for (target, modified) in [("n.txt", false), ("t.txt", true)] {
+        let h = H::new();
+        let mut hooks = sys(
+            "touch",
+            "touch",
+            &format!("sh -c 'echo more >> {target}' --"),
+            "always_run: true\npass_filenames: false",
+        );
+        for i in 1..=3 {
+            hooks.push_str(&sys(
+                &format!("noop-{i}"),
+                &format!("noop {i}"),
+                "'true'",
+                "always_run: true\npass_filenames: false",
+            ));
+        }
+        h.config(&local(&hooks));
+        h.write("t.txt", b"t\n");
+        h.git(&["add", "t.txt"]);
+        h.git(&["commit", "-qm", "t"]);
+        h.write("n.txt", b"n\n");
+        h.git(&["add", "-N", "n.txt"]);
+        h.write("t.txt", b"t\nunstaged\n");
+        let o = h.run(args());
+        assert_eq!(o.code, i32::from(modified), "{target}: {o:?}");
+        assert_eq!(
+            o.stdout.contains("- files were modified by this hook"),
+            modified,
+            "{target}: {}",
+            o.stdout
+        );
+    }
+}

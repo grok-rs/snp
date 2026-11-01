@@ -1701,11 +1701,7 @@ fn migration_note_goldens_in_both_brands() {
         write_hook(&legacy(&r, "pre-commit"), &ours);
         let out = run(&["uninstall"]);
         assert_code(&out, 0);
-        assert_eq!(
-            text(&out.stdout),
-            format!("{prog} uninstalled\n"),
-            "{brand}"
-        );
+        assert_eq!(text(&out.stdout), "pre-commit uninstalled\n", "{brand}");
         assert_eq!(
             text(&out.stderr),
             "Removed .git/hooks/pre-commit.legacy: it is a hook script from snp, not a user hook\n",
