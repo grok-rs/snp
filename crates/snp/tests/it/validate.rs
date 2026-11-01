@@ -12,11 +12,11 @@ fn t10_val_01_valid_config() {
     std::fs::write(env.root().join("c.yaml"), GOOD).unwrap();
     let out = compat(&env, env.root(), &["validate-config", "c.yaml"]);
     assert_code(&out, 0);
-    assert!(out.stdout.is_empty());
+    assert_eq!(text(&out.stdout), "");
     // no file at all: exit 0, nothing printed
     let out = compat(&env, env.root(), &["validate-config"]);
     assert_code(&out, 0);
-    assert!(out.stdout.is_empty());
+    assert_eq!(text(&out.stdout), "");
 }
 
 #[test]
@@ -28,7 +28,11 @@ fn t10_val_02_invalid_configs() {
         let out = compat(&env, env.root(), &["validate-config", f]);
         assert_code(&out, 1);
     }
-    let out = compat(&env, env.root(), &["validate-config", "empty.yaml", "does-not-exist"]);
+    let out = compat(
+        &env,
+        env.root(),
+        &["validate-config", "empty.yaml", "does-not-exist"],
+    );
     assert_eq!(
         text(&out.stdout),
         "\n==> File empty.yaml\n==> At Config()\n=====> Missing required key: repos\n\n=====> does-not-exist is not a file\n"
@@ -44,8 +48,15 @@ fn t10_val_03_invalid_manifests() {
         let out = compat(&env, env.root(), &["validate-manifest", f]);
         assert_code(&out, 1);
     }
-    std::fs::write(env.root().join("m.yaml"), "-   id: x\n    name: x\n    entry: x\n    language: system\n").unwrap();
-    assert_code(&compat(&env, env.root(), &["validate-manifest", "m.yaml"]), 0);
+    std::fs::write(
+        env.root().join("m.yaml"),
+        "-   id: x\n    name: x\n    entry: x\n    language: system\n",
+    )
+    .unwrap();
+    assert_code(
+        &compat(&env, env.root(), &["validate-manifest", "m.yaml"]),
+        0,
+    );
 }
 
 #[test]
@@ -70,11 +81,22 @@ fn strict_and_portable() {
     assert!(!text(&plain.stdout).contains("bogus"));
     let strict = snp(&env, env.root(), &["validate-config", "--strict", "c.yaml"]);
     assert_code(&strict, 0);
-    assert!(text(&strict.stdout).contains("[WARNING] Unexpected key(s) present on local => x: bogus"), "{}", text(&strict.stdout));
-    let portable = snp(&env, env.root(), &["validate-config", "--portable", "c.yaml"]);
+    assert!(
+        text(&strict.stdout).contains("[WARNING] Unexpected key(s) present on local => x: bogus"),
+        "{}",
+        text(&strict.stdout)
+    );
+    let portable = snp(
+        &env,
+        env.root(),
+        &["validate-config", "--portable", "c.yaml"],
+    );
     assert_code(&portable, 0);
     let p = text(&portable.stdout);
     assert!(p.contains("bogus") && p.contains("priority"), "{p}");
     // the compat brand rejects both flags
-    assert_code(&compat(&env, env.root(), &["validate-config", "--strict", "c.yaml"]), 2);
+    assert_code(
+        &compat(&env, env.root(), &["validate-config", "--strict", "c.yaml"]),
+        2,
+    );
 }

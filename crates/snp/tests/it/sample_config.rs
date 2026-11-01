@@ -16,5 +16,7 @@ fn sample_config_both_brands_and_color_env() {
     assert_code(&ok, 0);
     let bad = snp(&env, env.root(), &["sample-config"]);
     assert_code(&bad, 2);
-    assert!(text(&bad.stderr).ends_with("snp sample-config: error: argument --color: invalid use_color value: 'bogus'\n"));
+    assert!(text(&bad.stderr).ends_with(
+        "snp sample-config: error: argument --color: invalid use_color value: 'bogus'\n"
+    ));
 }

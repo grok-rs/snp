@@ -13,10 +13,20 @@ fn doctor_clean_repository() {
     let out = snp(&env, &r, &["doctor"]);
     assert_code(&out, 0);
     let o = text(&out.stdout);
-    assert!(o.starts_with("info  snp: 2.0.0 (pre-commit 4.6.2 compatible), "), "{o}");
+    assert!(
+        o.starts_with("info  snp: 2.0.0 (pre-commit 4.6.2 compatible), "),
+        "{o}"
+    );
     assert!(o.contains("ok    .git/hooks/pre-commit: runs snp\n"), "{o}");
     assert!(o.contains("ok    stash: no unrestored stash\n"), "{o}");
-    assert!(o.lines().last().unwrap().ends_with("error(s), 0 warning(s).") || o.contains(" 0 error(s), "), "{o}");
+    assert!(
+        o.lines()
+            .last()
+            .unwrap()
+            .ends_with("error(s), 0 warning(s).")
+            || o.contains(" 0 error(s), "),
+        "{o}"
+    );
     // compat brand has no doctor
     assert_code(&compat(&env, &r, &["doctor"]), 2);
 }
@@ -44,10 +54,16 @@ fn doctor_predicts_failing_commits_and_fixes_them() {
         return; // a system pre-commit answers (Case B)
     }
     assert_code(&out, 1);
-    assert!(o.contains("error .git/hooks/pre-commit: commits fail: nothing named pre-commit on PATH"), "{o}");
+    assert!(
+        o.contains("error .git/hooks/pre-commit: commits fail: nothing named pre-commit on PATH"),
+        "{o}"
+    );
     let out = snp(&env, &r, &["doctor", "--fix"]);
     let script = std::fs::read_to_string(r.join(".git/hooks/pre-commit")).unwrap();
-    assert!(script.contains("--skip-on-missing-config"), "parsed options kept: {script}");
+    assert!(
+        script.contains("--skip-on-missing-config"),
+        "parsed options kept: {script}"
+    );
     assert!(text(&out.stdout).contains("ok    .git/hooks/pre-commit: runs snp"));
 }
 

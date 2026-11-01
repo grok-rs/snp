@@ -19,7 +19,7 @@ fn perms_enforced(dir: &Path) -> bool {
     set_mode(&probe, 0o500);
     let enforced = std::fs::write(probe.join("x"), b"").is_err();
     set_mode(&probe, 0o700);
-    let _ = std::fs::remove_dir_all(&probe);
+    drop(std::fs::remove_dir_all(&probe));
     enforced
 }
 
@@ -68,14 +68,30 @@ fn t10_err_02_line_two_and_log_skeleton() {
         format!("{line1}\nCheck the log at {}\n", compat_log(&env).display())
     );
     let log = std::fs::read_to_string(compat_log(&env)).unwrap();
-    assert!(log.starts_with("### version information\n\n```\npre-commit version: 4.6.2\ngit --version: "), "{log}");
-    assert!(log.contains("\nsys.version:\n    snp 2.0.0 (rustc "), "{log}");
+    assert!(
+        log.starts_with(
+            "### version information\n\n```\npre-commit version: 4.6.2\ngit --version: "
+        ),
+        "{log}"
+    );
+    assert!(
+        log.contains("\nsys.version:\n    snp 2.0.0 (rustc "),
+        "{log}"
+    );
     assert!(log.contains("\nsys.executable: "), "{log}");
-    assert!(log.contains(&format!("```\n\n### error information\n\n```\n{line1}\n```\n\n```\n")), "{log}");
+    assert!(
+        log.contains(&format!(
+            "```\n\n### error information\n\n```\n{line1}\n```\n\n```\n"
+        )),
+        "{log}"
+    );
     assert!(log.ends_with("```\n"), "{log}");
     // snp brand: snp.log, `snp version:`
     let out = snp(&env, env.root(), &["install"]);
-    assert!(text(&out.stdout).ends_with(&format!("Check the log at {}\n", store(&env).join("snp.log").display())));
+    assert!(text(&out.stdout).ends_with(&format!(
+        "Check the log at {}\n",
+        store(&env).join("snp.log").display()
+    )));
     let log = std::fs::read_to_string(store(&env).join("snp.log")).unwrap();
     assert!(log.contains("\nsnp version: 2.0.0\n"), "{log}");
     // overwritten each time, never an environment dump
@@ -91,7 +107,14 @@ fn t10_err_03_non_utf8_texts_exit_cleanly() {
     // A non-UTF-8 hooks path in the IsADirectoryError text.
     let weird = std::ffi::OsStr::from_bytes(b"cfg-\xff\xfe.yaml");
     std::fs::create_dir_all(r.join(".git/hooks/pre-push")).unwrap();
-    let out = env.snp_as_pre_commit(&r).arg("install").arg("-c").arg(weird).arg("-t").arg("pre-push").output();
+    let out = env
+        .snp_as_pre_commit(&r)
+        .arg("install")
+        .arg("-c")
+        .arg(weird)
+        .arg("-t")
+        .arg("pre-push")
+        .output();
     assert_code(&out, 3);
     assert!(out.stdout.starts_with(b"An unexpected error has occurred: IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-push'"));
 }
@@ -105,8 +128,14 @@ fn t10_err_04_real_process_last_two_lines() {
     let o = text(&out.stdout);
     let lines: Vec<&str> = o.lines().collect();
     assert_eq!(lines.len(), 2, "{o}");
-    assert_eq!(lines[0], "An unexpected error has occurred: IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-commit'");
-    assert_eq!(lines[1], format!("Check the log at {}", compat_log(&env).display()));
+    assert_eq!(
+        lines[0],
+        "An unexpected error has occurred: IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-commit'"
+    );
+    assert_eq!(
+        lines[1],
+        format!("Check the log at {}", compat_log(&env).display())
+    );
 }
 
 #[cfg(unix)]
@@ -127,7 +156,7 @@ fn t10_err_05_read_only_store_prints_the_body() {
         "An unexpected error has occurred: IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-commit'\nFailed to write to log at {}\n### version information\n",
         compat_log(&env).display()
     )), "{o}");
-    assert!(out.stderr.is_empty());
+    assert_eq!(text(&out.stderr), "");
 }
 
 #[test]
@@ -140,7 +169,10 @@ fn x13_cfg_14_side_loads_fall_back() {
     assert!(text(&out.stdout).contains("pre-commit installed at .git/hooks/pre-commit"));
     // gc treats a tracked config that fails to load as dead
     std::fs::write(r.join(".pre-commit-config.yaml"), "repos: [\n").unwrap();
-    assert_eq!(text(&compat(&env, &r, &["gc"]).stdout), "0 repo(s) removed.\n");
+    assert_eq!(
+        text(&compat(&env, &r, &["gc"]).stdout),
+        "0 repo(s) removed.\n"
+    );
 }
 
 #[test]
@@ -166,7 +198,13 @@ fn x13_cmd_02_hooks_dir_unwritable() {
     let out = compat(&env, &r, &["install"]);
     set_mode(&hooks, 0o700);
     assert_code(&out, 3);
-    assert!(text(&out.stdout).starts_with("An unexpected error has occurred: PermissionError: [Errno 13] Permission denied: "), "{}", text(&out.stdout));
+    assert!(
+        text(&out.stdout).starts_with(
+            "An unexpected error has occurred: PermissionError: [Errno 13] Permission denied: "
+        ),
+        "{}",
+        text(&out.stdout)
+    );
 }
 
 #[cfg(unix)]
@@ -206,12 +244,19 @@ fn x13_cmd_05_could_not_find_rev_lines() {
     let env = tenv();
     let up = env
         .git_repo("up")
-        .file(".pre-commit-hooks.yaml", b"-   id: foo\n    name: foo\n    entry: echo\n    language: system\n")
+        .file(
+            ".pre-commit-hooks.yaml",
+            b"-   id: foo\n    name: foo\n    entry: echo\n    language: system\n",
+        )
         .stage_all()
         .commit("1")
         .build();
     let old = git(&env, &up, &["rev-parse", "HEAD"]).1.trim().to_owned();
-    env.git_repo("up").file("x", b"x").stage_all().commit("2").build();
+    env.git_repo("up")
+        .file("x", b"x")
+        .stage_all()
+        .commit("2")
+        .build();
     let cfg = format!(
         "repos:\n-   repo: {}\n    rev: {old}\n    hooks:\n    -   id: foo\n        rev: extra\n",
         up.display()
@@ -219,8 +264,17 @@ fn x13_cmd_05_could_not_find_rev_lines() {
     let r = repo_with(&env, "r", &cfg);
     let out = compat(&env, &r, &["autoupdate"]);
     assert_code(&out, 3);
-    assert!(text(&out.stdout).contains("An unexpected error has occurred: AssertionError: could not find rev lines\n"), "{}", text(&out.stdout));
-    assert_eq!(std::fs::read_to_string(r.join(".pre-commit-config.yaml")).unwrap(), cfg);
+    assert!(
+        text(&out.stdout).contains(
+            "An unexpected error has occurred: AssertionError: could not find rev lines\n"
+        ),
+        "{}",
+        text(&out.stdout)
+    );
+    assert_eq!(
+        std::fs::read_to_string(r.join(".pre-commit-config.yaml")).unwrap(),
+        cfg
+    );
 }
 
 #[test]
@@ -230,12 +284,18 @@ fn x13_cmd_06_autoupdate_git_failure_is_a_repo_line() {
     let r = repo_with(
         &env,
         "r",
-        &format!("repos:\n-   repo: {}\n    rev: v1.0.0\n    hooks:\n    -   id: foo\n", missing.display()),
+        &format!(
+            "repos:\n-   repo: {}\n    rev: v1.0.0\n    hooks:\n    -   id: foo\n",
+            missing.display()
+        ),
     );
     let out = compat(&env, &r, &["autoupdate"]);
     assert_code(&out, 1);
     let o = text(&out.stdout);
-    assert!(o.starts_with(&format!("[{}] command: (", missing.display())), "{o}");
+    assert!(
+        o.starts_with(&format!("[{}] command: (", missing.display())),
+        "{o}"
+    );
     assert!(!o.contains("Check the log"), "{o}");
 }
 
@@ -263,12 +323,22 @@ fn x13_cmd_08_gc_removal_failure() {
         path: store(&env),
         source: snp_store::StoreSource::SnpHome,
     });
-    s.ensure_created(snp_core::brand::Brand::Snp, &snp_core::output::CollectWarnings::new()).unwrap();
+    s.ensure_created(
+        snp_core::brand::Brand::Snp,
+        &snp_core::output::CollectWarnings::new(),
+    )
+    .unwrap();
     let id = snp_store::RepoId::Url(Arc::from("https://example.com/x"));
     let key = snp_store::Store::remote_key(&id, "v1.0.0", &[]);
     s.materialize(
         &key,
-        snp_store::RepoMeta { kind: snp_store::RepoKind::Remote { id, rev: Arc::from("v1.0.0") }, deps: Arc::from(Vec::new()) },
+        snp_store::RepoMeta {
+            kind: snp_store::RepoKind::Remote {
+                id,
+                rev: Arc::from("v1.0.0"),
+            },
+            deps: Arc::from(Vec::new()),
+        },
         &mut |d: &Path| {
             std::fs::create_dir_all(d.join(".git")).unwrap();
             Ok(())
@@ -282,7 +352,11 @@ fn x13_cmd_08_gc_removal_failure() {
     let out = compat(&env, env.root(), &["gc"]);
     set_mode(&repos, 0o700);
     assert_code(&out, 3);
-    assert!(text(&out.stdout).starts_with("An unexpected error has occurred: PermissionError: "), "{}", text(&out.stdout));
+    assert!(
+        text(&out.stdout).starts_with("An unexpected error has occurred: PermissionError: "),
+        "{}",
+        text(&out.stdout)
+    );
 }
 
 #[cfg(unix)]
@@ -301,7 +375,12 @@ fn x13_cmd_09_crashing_tracked_config_is_dead() {
     set_mode(&cfg, 0o644);
     assert_code(&out, 0);
     assert_eq!(text(&out.stdout), "0 repo(s) removed.\n");
-    assert!(std::fs::read_dir(store(&env).join("configs-v1")).unwrap().next().is_none());
+    assert!(
+        std::fs::read_dir(store(&env).join("configs-v1"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
 }
 
 #[cfg(unix)]
@@ -352,9 +431,15 @@ fn x13_cmd_11_validate_unreadable_file() {
 fn x13_cmd_12_try_repo_git_failure() {
     let env = tenv();
     let r = repo_with(&env, "r", LOCAL_CONFIG);
-    let out = compat(&env, &r, &["try-repo", env.root().join("nope").to_str().unwrap()]);
+    let out = compat(
+        &env,
+        &r,
+        &["try-repo", env.root().join("nope").to_str().unwrap()],
+    );
     assert_code(&out, 3);
-    assert!(text(&out.stdout).starts_with("An unexpected error has occurred: CalledProcessError: "));
+    assert!(
+        text(&out.stdout).starts_with("An unexpected error has occurred: CalledProcessError: ")
+    );
 }
 
 /// The store path is a file: the handler never double-faults (`Failed to write to log at …`).
@@ -367,7 +452,10 @@ fn x13_eh_01_store_unusable_inside_the_handler() {
     let out = compat(&env, env.root(), &["install"]);
     assert_code(&out, 1);
     let o = text(&out.stdout);
-    assert!(o.starts_with("An error has occurred: FatalError: git failed."), "{o}");
+    assert!(
+        o.starts_with("An error has occurred: FatalError: git failed."),
+        "{o}"
+    );
     assert!(o.contains("\nFailed to write to log at "), "{o}");
     assert!(o.contains("### version information"), "{o}");
     assert!(out.stderr.is_empty(), "{}", text(&out.stderr));
@@ -380,8 +468,14 @@ fn x13_eh_02_log_is_a_directory() {
     let out = compat(&env, env.root(), &["install"]);
     assert_code(&out, 1);
     let o = text(&out.stdout);
-    assert!(o.contains(&format!("\nFailed to write to log at {}\n### version information\n", compat_log(&env).display())), "{o}");
-    assert!(out.stderr.is_empty());
+    assert!(
+        o.contains(&format!(
+            "\nFailed to write to log at {}\n### version information\n",
+            compat_log(&env).display()
+        )),
+        "{o}"
+    );
+    assert_eq!(text(&out.stderr), "");
 }
 
 /// stdout closed early: exit 120, nothing on stderr, no crash log.
@@ -422,7 +516,11 @@ fn x13_eh_04_keyboard_interrupt() {
     Command::new("kill").args(["-INT", &pid]).status().unwrap();
     let out = child.wait_with_output().unwrap();
     assert_eq!(out.status.code(), Some(130));
-    assert!(text(&out.stdout).starts_with("Interrupted (^C): KeyboardInterrupt: \nCheck the log at "), "{}", text(&out.stdout));
+    assert!(
+        text(&out.stdout).starts_with("Interrupted (^C): KeyboardInterrupt: \nCheck the log at "),
+        "{}",
+        text(&out.stdout)
+    );
 }
 
 /// SIGTERM: death by the re-raised signal (no banner).
@@ -441,25 +539,35 @@ fn sigterm_dies_by_the_signal() {
         .spawn()
         .unwrap();
     std::thread::sleep(Duration::from_millis(500));
-    Command::new("kill").args(["-TERM", &child.id().to_string()]).status().unwrap();
+    Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
     let out = child.wait_with_output().unwrap();
     assert_eq!(out.status.signal(), Some(15));
-    assert!(out.stdout.is_empty());
+    assert_eq!(text(&out.stdout), "");
 }
 
-/// A panic injected through the test-only feature: exit 3, the PanicException banner, the crash log with the
+/// A panic injected through the test-only feature: exit 3, the `PanicException` banner, the crash log with the
 /// location and the bug-report hint.
 #[cfg(feature = "testing")]
 #[test]
 fn x13_eh_05_rust_panic() {
     let env = tenv();
-    let out = env.snp(env.root()).arg("sample-config").env("SNP_FAULT", "PrinterWrite").output();
+    let out = env
+        .snp(env.root())
+        .arg("sample-config")
+        .env("SNP_FAULT", "PrinterWrite")
+        .output();
     assert_code(&out, 3);
     let o = text(&out.stdout);
     assert!(o.starts_with("An unexpected error has occurred: PanicException: snp fault injection: PrinterWrite\nCheck the log at "), "{o}");
     let log = std::fs::read_to_string(store(&env).join("snp.log")).unwrap();
     assert!(log.contains("panicked at "), "{log}");
-    assert!(log.contains("https://github.com/grok-rs/snp/issues"), "{log}");
+    assert!(
+        log.contains("https://github.com/grok-rs/snp/issues"),
+        "{log}"
+    );
 }
 
 #[cfg(not(feature = "testing"))]
@@ -476,11 +584,17 @@ fn panic_during_run_restores_the_stash_before_the_banner() {
     std::fs::write(r.join("f"), b"1\n").unwrap();
     git(&env, &r, &["add", "f"]);
     std::fs::write(r.join("f"), b"2\n").unwrap();
-    let out = env.snp(&r).arg("run").env("SNP_FAULT", "WorkerPartition").output();
+    let out = env
+        .snp(&r)
+        .arg("run")
+        .env("SNP_FAULT", "WorkerPartition")
+        .output();
     assert_code(&out, 3);
     let o = text(&out.stdout);
     let restored = o.find("Restored changes from").unwrap();
-    let banner = o.find("An unexpected error has occurred: PanicException").unwrap();
+    let banner = o
+        .find("An unexpected error has occurred: PanicException")
+        .unwrap();
     assert!(restored < banner, "{o}");
     assert_eq!(std::fs::read(r.join("f")).unwrap(), b"2\n");
 }
@@ -502,5 +616,5 @@ fn x13_sm_08_no_epipe_noise() {
         .unwrap();
     assert_eq!(out.status.code(), Some(120));
     assert!(!text(&out.stderr).contains("BrokenPipe"));
-    assert!(out.stderr.is_empty());
+    assert_eq!(text(&out.stderr), "");
 }

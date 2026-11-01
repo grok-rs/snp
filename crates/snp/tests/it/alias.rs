@@ -23,14 +23,29 @@ fn alias_install_status_uninstall() {
     let alias: PathBuf = dir.join("pre-commit");
     assert_eq!(
         text(&out.stdout),
-        format!("Created {} -> {}\n", alias.display(), env!("CARGO_BIN_EXE_snp"))
+        format!(
+            "Created {} -> {}\n",
+            alias.display(),
+            env!("CARGO_BIN_EXE_snp")
+        )
     );
-    assert!(std::fs::symlink_metadata(&alias).unwrap().file_type().is_symlink());
+    assert!(
+        std::fs::symlink_metadata(&alias)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
     // idempotent
-    assert_code(&snp(&env, env.root(), &["self", "alias", "install", "--dir", d]), 0);
+    assert_code(
+        &snp(&env, env.root(), &["self", "alias", "install", "--dir", d]),
+        0,
+    );
     let out = snp(&env, env.root(), &["self", "alias", "status"]);
     assert_code(&out, 0);
-    assert_eq!(text(&out.stdout), format!("pre-commit -> {} (snp alias (this snp))\n", alias.display()));
+    assert_eq!(
+        text(&out.stdout),
+        format!("pre-commit -> {} (snp alias (this snp))\n", alias.display())
+    );
 }
 
 #[cfg(unix)]
@@ -40,28 +55,41 @@ fn alias_force_keeps_a_backup_and_uninstall_restores_it() {
     // the default dir is the parent of the stable snp path: use a copy of snp in its own dir
     let bin = env.root().join("bin2");
     std::fs::create_dir_all(&bin).unwrap();
-    std::fs::copy(env!("CARGO_BIN_EXE_snp"), bin.join("snp")).unwrap();
+    crate::install::copy_snp(&bin.join("snp"));
     crate::install::write_hook(&bin.join("pre-commit"), b"#!/bin/sh\necho foreign\n");
-    let mut cmd = std::process::Command::new(bin.join("snp"));
-    env.env().apply_to(&mut cmd);
     let run = |args: &[&str]| {
         let mut c = std::process::Command::new(bin.join("snp"));
         env.env().apply_to(&mut c);
-        c.env("PATH", path_with(&bin)).args(args).current_dir(env.root()).output().unwrap()
+        c.env("PATH", path_with(&bin))
+            .args(args)
+            .current_dir(env.root())
+            .output()
+            .unwrap()
     };
-    drop(cmd);
     let o = run(&["self", "alias", "install"]);
     assert_eq!(o.status.code(), Some(1));
-    assert!(text(&o.stderr).contains("already exists and is not snp (unknown); use --force"), "{}", text(&o.stderr));
+    assert!(
+        text(&o.stderr).contains("already exists and is not snp (unknown); use --force"),
+        "{}",
+        text(&o.stderr)
+    );
     let o = run(&["self", "alias", "install", "--force"]);
     assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
-    assert_eq!(std::fs::read(bin.join("pre-commit.snp-backup")).unwrap(), b"#!/bin/sh\necho foreign\n");
+    assert_eq!(
+        std::fs::read(bin.join("pre-commit.snp-backup")).unwrap(),
+        b"#!/bin/sh\necho foreign\n"
+    );
     let o = run(&["self", "alias", "uninstall"]);
     assert_eq!(o.status.code(), Some(0));
     let alias = bin.join("pre-commit");
     assert_eq!(
         text(&o.stdout),
-        format!("Removed {}\nRestored {} from {}.snp-backup\n", alias.display(), alias.display(), alias.display())
+        format!(
+            "Removed {}\nRestored {} from {}.snp-backup\n",
+            alias.display(),
+            alias.display(),
+            alias.display()
+        )
     );
     assert_eq!(std::fs::read(&alias).unwrap(), b"#!/bin/sh\necho foreign\n");
     // a foreign pre-commit is left alone

@@ -100,9 +100,13 @@ mod skeleton {
             &[("SNP_FAULT", "PrinterWrite")],
         );
         assert_eq!(out.status.code(), Some(3));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let (line1, rest) = stdout.split_once('\n').unwrap_or_default();
         assert_eq!(
-            String::from_utf8_lossy(&out.stdout),
-            "An unexpected error has occurred: PanicException: snp fault injection: PrinterWrite\n"
+            line1,
+            "An unexpected error has occurred: PanicException: snp fault injection: PrinterWrite"
         );
+        assert!(rest.starts_with("Check the log at "), "{stdout}");
+        assert!(rest.ends_with("snp.log\n"), "{stdout}");
     }
 }

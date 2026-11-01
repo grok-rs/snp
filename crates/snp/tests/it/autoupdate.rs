@@ -4,6 +4,7 @@
 //!
 //! Owner: WP-33.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use snp_testkit::TestEnv;
@@ -41,10 +42,12 @@ fn advance(env: &TestEnv, up: &Path, file: &str) -> String {
 fn config_for(repos: &[(&Path, &str)]) -> String {
     let mut s = String::from("repos:\n");
     for (p, r) in repos {
-        s.push_str(&format!(
-            "-   repo: {}\n    rev: {r}\n    hooks:\n    -   id: foo\n",
+        writeln!(
+            s,
+            "-   repo: {}\n    rev: {r}\n    hooks:\n    -   id: foo",
             p.display()
-        ));
+        )
+        .unwrap();
     }
     s
 }
@@ -60,7 +63,10 @@ fn t10_aup_01_rev_info_from_config() {
     let r = repo_with(&env, "r", &config_for(&[(&up, &head)]));
     let out = compat(&env, &r, &["autoupdate"]);
     assert_code(&out, 0);
-    assert_eq!(text(&out.stdout), format!("[{}] already up to date!\n", up.display()));
+    assert_eq!(
+        text(&out.stdout),
+        format!("[{}] already up to date!\n", up.display())
+    );
 }
 
 #[test]
@@ -72,22 +78,37 @@ fn t10_aup_02_rev_selection() {
     let r = repo_with(&env, "r", &config_for(&[(&up, &old)]));
     let out = compat(&env, &r, &["autoupdate"]);
     assert_code(&out, 0);
-    assert_eq!(text(&out.stdout), format!("[{}] updating {old} -> {new}\n", up.display()));
+    assert_eq!(
+        text(&out.stdout),
+        format!("[{}] updating {old} -> {new}\n", up.display())
+    );
     // a tag on the newest commit: the tag; a version-like tag preferred over `latest`
     env.git_repo("up").tag("latest").tag("v1.2.3").build();
     let r = repo_with(&env, "r2", &config_for(&[(&up, &old)]));
     let out = compat(&env, &r, &["autoupdate"]);
-    assert_eq!(text(&out.stdout), format!("[{}] updating {old} -> v1.2.3\n", up.display()));
+    assert_eq!(
+        text(&out.stdout),
+        format!("[{}] updating {old} -> v1.2.3\n", up.display())
+    );
     // commits after the tag: still the tag (tags_only)
     let head = advance(&env, &up, "b");
     let out = compat(&env, &r, &["autoupdate"]);
-    assert_eq!(text(&out.stdout), format!("[{}] already up to date!\n", up.display()));
+    assert_eq!(
+        text(&out.stdout),
+        format!("[{}] already up to date!\n", up.display())
+    );
     // --bleeding-edge: HEAD's sha
     let out = compat(&env, &r, &["autoupdate", "--bleeding-edge"]);
-    assert_eq!(text(&out.stdout), format!("[{}] updating v1.2.3 -> {head}\n", up.display()));
+    assert_eq!(
+        text(&out.stdout),
+        format!("[{}] updating v1.2.3 -> {head}\n", up.display())
+    );
     // freeze an already-sha rev: no frozen comment
     let out = compat(&env, &r, &["autoupdate", "--bleeding-edge", "--freeze"]);
-    assert_eq!(text(&out.stdout), format!("[{}] already up to date!\n", up.display()));
+    assert_eq!(
+        text(&out.stdout),
+        format!("[{}] already up to date!\n", up.display())
+    );
 }
 
 #[test]
@@ -103,9 +124,18 @@ fn t10_aup_03_up_to_date_is_byte_identical() {
 #[test]
 fn t10_aup_04_old_rev_without_manifest() {
     let env = tenv();
-    let p = env.git_repo("up").file("nope.yaml", MANIFEST.as_bytes()).stage_all().commit("1").build();
+    let p = env
+        .git_repo("up")
+        .file("nope.yaml", MANIFEST.as_bytes())
+        .stage_all()
+        .commit("1")
+        .build();
     let old = rev(&env, &p, "HEAD");
-    env.git_repo("up").file(".pre-commit-hooks.yaml", MANIFEST.as_bytes()).stage_all().commit("2").build();
+    env.git_repo("up")
+        .file(".pre-commit-hooks.yaml", MANIFEST.as_bytes())
+        .stage_all()
+        .commit("2")
+        .build();
     let new = rev(&env, &p, "HEAD");
     let r = repo_with(&env, "r", &config_for(&[(&p, &old)]));
     assert_code(&compat(&env, &r, &["autoupdate"]), 0);
@@ -119,7 +149,11 @@ fn t10_aup_05_only_the_stale_rev_changes() {
     let (b, b_old) = upstream(&env, "b");
     let b_new = advance(&env, &b, "x");
     let r = repo_with(&env, "r", &config_for(&[(&a, &a_head), (&b, &b_old)]));
-    git(&env, &r, &["config", "--global", "core.useBuiltinFSMonitor", "true"]);
+    git(
+        &env,
+        &r,
+        &["config", "--global", "core.useBuiltinFSMonitor", "true"],
+    );
     assert_code(&compat(&env, &r, &["autoupdate"]), 0);
     assert_eq!(read_cfg(&r), config_for(&[(&a, &a_head), (&b, &b_new)]));
 }
@@ -141,7 +175,10 @@ fn t10_aup_06_repo_filter() {
     let before = read_cfg(&r);
     let out = compat(&env, &r, &["autoupdate", "--repo", "foo", "--repo", "dne"]);
     assert_code(&out, 1);
-    assert_eq!(text(&out.stdout), "repos (dne, foo) were not found in .pre-commit-config.yaml\n");
+    assert_eq!(
+        text(&out.stdout),
+        "repos (dne, foo) were not found in .pre-commit-config.yaml\n"
+    );
     assert_eq!(read_cfg(&r), before);
 }
 
@@ -169,7 +206,10 @@ fn t10_aup_08_mixed_line_endings() {
     );
     let r = repo_with(&env, "r", &cfg);
     assert_code(&compat(&env, &r, &["autoupdate"]), 0);
-    assert_eq!(std::fs::read(r.join(".pre-commit-config.yaml")).unwrap(), cfg.as_bytes());
+    assert_eq!(
+        std::fs::read(r.join(".pre-commit-config.yaml")).unwrap(),
+        cfg.as_bytes()
+    );
     let new = advance(&env, &up, "x");
     assert_code(&compat(&env, &r, &["autoupdate"]), 0);
     assert_eq!(
@@ -191,7 +231,10 @@ fn t10_aup_09_flow_style_is_reformatted() {
     assert_code(&compat(&env, &r, &["autoupdate"]), 0);
     assert_eq!(
         read_cfg(&r),
-        format!("repos:\n-   repo: {}\n    rev: {new}\n    hooks:\n    -   id: foo\n", up.display())
+        format!(
+            "repos:\n-   repo: {}\n    rev: {new}\n    hooks:\n    -   id: foo\n",
+            up.display()
+        )
     );
 }
 
@@ -206,7 +249,10 @@ fn t10_aup_10_freeze_and_unfreeze() {
     assert_code(&compat(&env, &r, &["autoupdate"]), 0);
     assert!(read_cfg(&r).contains("    rev: v1.2.3\n"));
     let out = compat(&env, &r, &["autoupdate", "--freeze"]);
-    assert_eq!(text(&out.stdout), format!("[{}] updating v1.2.3 -> v1.2.3 (frozen)\n", up.display()));
+    assert_eq!(
+        text(&out.stdout),
+        format!("[{}] updating v1.2.3 -> v1.2.3 (frozen)\n", up.display())
+    );
     assert!(read_cfg(&r).contains(&format!("    rev: {tagged}  # frozen: v1.2.3\n")));
     assert_code(&compat(&env, &r, &["autoupdate"]), 0);
     assert!(read_cfg(&r).contains("    rev: v1.2.3\n"));
@@ -235,7 +281,10 @@ fn t10_aup_12_upstream_without_manifest() {
     let out = compat(&env, &r, &["autoupdate"]);
     assert_code(&out, 1);
     let o = text(&out.stdout);
-    assert!(o.starts_with(&format!("[{}] \n=====> ", up.display())), "{o}");
+    assert!(
+        o.starts_with(&format!("[{}] \n=====> ", up.display())),
+        "{o}"
+    );
     assert!(o.contains(".pre-commit-hooks.yaml is not a file"), "{o}");
     assert_eq!(read_cfg(&r), cfg);
 }
@@ -245,7 +294,10 @@ fn t10_aup_13_hook_disappeared() {
     let env = tenv();
     let (up, old) = upstream(&env, "up");
     env.git_repo("up")
-        .file(".pre-commit-hooks.yaml", MANIFEST.replace("foo", "bar").as_bytes())
+        .file(
+            ".pre-commit-hooks.yaml",
+            MANIFEST.replace("foo", "bar").as_bytes(),
+        )
         .stage_all()
         .commit("rename")
         .build();
@@ -255,7 +307,10 @@ fn t10_aup_13_hook_disappeared() {
     assert_code(&out, 1);
     assert_eq!(
         text(&out.stdout),
-        format!("[{}] Cannot update because the update target is missing these hooks: foo\n", up.display())
+        format!(
+            "[{}] Cannot update because the update target is missing these hooks: foo\n",
+            up.display()
+        )
     );
     assert_eq!(read_cfg(&r), cfg);
 }
@@ -267,10 +322,13 @@ fn t10_aup_14_local_repos_are_untouched() {
     let r = repo_with(&env, "r", &format!("repos:\n{local}"));
     let out = compat(&env, &r, &["autoupdate"]);
     assert_code(&out, 0);
-    assert!(out.stdout.is_empty());
+    assert_eq!(text(&out.stdout), "");
     let (up, old) = upstream(&env, "up");
     let new = advance(&env, &up, "x");
-    let cfg = format!("repos:\n{local}{}", config_for(&[(&up, &old)]).trim_start_matches("repos:\n"));
+    let cfg = format!(
+        "repos:\n{local}{}",
+        config_for(&[(&up, &old)]).trim_start_matches("repos:\n")
+    );
     let r = repo_with(&env, "r2", &cfg);
     assert_code(&compat(&env, &r, &["autoupdate"]), 0);
     assert_eq!(read_cfg(&r), cfg.replace(&old, &new));
@@ -289,13 +347,19 @@ fn t10_aup_15_meta_only() {
 fn t10_aup_16_list_format_is_migrated_first() {
     let env = tenv();
     let (up, head) = upstream(&env, "up");
-    let cfg = format!("-   repo: {}\n    sha: {head}\n    hooks:\n    -   id: foo\n", up.display());
+    let cfg = format!(
+        "-   repo: {}\n    sha: {head}\n    hooks:\n    -   id: foo\n",
+        up.display()
+    );
     let r = repo_with(&env, "r", &cfg);
     let out = compat(&env, &r, &["autoupdate"]);
     assert_code(&out, 0);
     assert_eq!(
         text(&out.stdout),
-        format!("[{}] already up to date!\nConfiguration has been migrated.\n", up.display())
+        format!(
+            "[{}] already up to date!\nConfiguration has been migrated.\n",
+            up.display()
+        )
     );
     assert!(read_cfg(&r).starts_with("repos:\n-   repo: "));
     assert!(read_cfg(&r).contains(&format!("    rev: {head}\n")));
@@ -329,8 +393,14 @@ fn x13_git_02_one_fetch_fails() {
     let out = compat(&env, &r, &["autoupdate"]);
     assert_code(&out, 1);
     let o = text(&out.stdout);
-    assert!(o.contains(&format!("[{}] updating {old} -> {new}\n", up.display())), "{o}");
-    assert!(o.contains(&format!("[{}] command: (", missing.display())), "{o}");
+    assert!(
+        o.contains(&format!("[{}] updating {old} -> {new}\n", up.display())),
+        "{o}"
+    );
+    assert!(
+        o.contains(&format!("[{}] command: (", missing.display())),
+        "{o}"
+    );
     assert!(o.contains("'fetch', 'origin', 'HEAD', '--quiet', '--filter=blob:none', '--tags')\nreturn code: 128\n"), "{o}");
     assert!(!o.contains("An unexpected error"), "{o}");
     assert!(read_cfg(&r).contains(&format!("rev: {new}\n")));
@@ -346,7 +416,10 @@ fn parallel_jobs() {
         let new = advance(&env, &p, "x");
         ups.push((p, old, new));
     }
-    let pairs: Vec<(&Path, &str)> = ups.iter().map(|(p, o, _)| (p.as_path(), o.as_str())).collect();
+    let pairs: Vec<(&Path, &str)> = ups
+        .iter()
+        .map(|(p, o, _)| (p.as_path(), o.as_str()))
+        .collect();
     let r = repo_with(&env, "r", &config_for(&pairs));
     let out = compat(&env, &r, &["autoupdate", "-j", "0"]);
     assert_code(&out, 0);

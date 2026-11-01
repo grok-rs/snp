@@ -110,7 +110,11 @@ fn t10_cli_01_adjust_args_and_chdir() {
     let script = std::fs::read_to_string(r.join(".git/hooks/pre-commit")).unwrap();
     assert!(script.contains("--config=foo/cfg.yaml"), "{script}");
     // A missing relative config is kept as typed (re-interpreted relative to the root).
-    let out = compat(&env, &r.join("foo"), &["install", "-c", "missing.yaml", "-t", "pre-push"]);
+    let out = compat(
+        &env,
+        &r.join("foo"),
+        &["install", "-c", "missing.yaml", "-t", "pre-push"],
+    );
     assert_code(&out, 0);
     let script = std::fs::read_to_string(r.join(".git/hooks/pre-push")).unwrap();
     assert!(script.contains("--config=missing.yaml"), "{script}");
@@ -154,7 +158,19 @@ fn t10_cli_04_hazmat_cd_parsing() {
     let r = empty_repo(&env, "r");
     std::fs::create_dir_all(r.join("subdir")).unwrap();
     // `cd subdir -- cmd -- f1 f2`: the command after the subdir is everything up to the last `--`.
-    let out = compat(&env, &r, &["hazmat", "cd", "subdir", "git", "rev-parse", "--show-prefix", "--"]);
+    let out = compat(
+        &env,
+        &r,
+        &[
+            "hazmat",
+            "cd",
+            "subdir",
+            "git",
+            "rev-parse",
+            "--show-prefix",
+            "--",
+        ],
+    );
     assert_code(&out, 0);
     assert_eq!(text(&out.stdout), "subdir/\n");
 }
@@ -166,7 +182,11 @@ fn t10_cli_05_no_args_outside_a_repo() {
     // `main([])` is `run`: the WP-32 pipeline reports the git failure; until then the run stub may panic, but
     // never with 101 and always through the envelope.
     assert_ne!(out.code, 101);
-    assert!(text(&out.stdout).contains("Check the log at "), "{}", text(&out.stdout));
+    assert!(
+        text(&out.stdout).contains("Check the log at "),
+        "{}",
+        text(&out.stdout)
+    );
 }
 
 #[test]
@@ -186,12 +206,14 @@ fn t10_cli_07_usage_errors_and_version() {
     let env = tenv();
     let out = compat(&env, env.root(), &["run", "--nope"]);
     assert_code(&out, 2);
-    assert!(out.stdout.is_empty());
+    assert_eq!(text(&out.stdout), "");
     assert!(text(&out.stderr).ends_with("pre-commit: error: unrecognized arguments: --nope\n"));
     assert!(text(&out.stderr).starts_with("usage: pre-commit "));
     let out = compat(&env, env.root(), &["run", "-a", "--files", "x"]);
     assert_code(&out, 2);
-    assert!(text(&out.stderr).contains("argument --files: not allowed with argument --all-files/-a"));
+    assert!(
+        text(&out.stderr).contains("argument --files: not allowed with argument --all-files/-a")
+    );
     let out = compat(&env, env.root(), &["--version"]);
     assert_code(&out, 0);
     assert_eq!(text(&out.stdout), "pre-commit 4.6.2\n");
@@ -242,5 +264,33 @@ fn completions_print_embedded_scripts() {
     let env = tenv();
     let out = snp(&env, env.root(), &["completions", "bash"]);
     assert_code(&out, 0);
-    assert!(!out.stdout.is_empty());
+    assert_ne!(text(&out.stdout), "");
+}
+
+/// [e2e] B1: `snp --version` ≤ 3 ms on the Linux CI runner; this smoke allows 3× (9 ms) for the median of 21
+/// runs. Release-mode only (`perf-smoke` job); a debug build only checks the output.
+#[test]
+#[ignore = "perf"]
+fn perf_b1_version_under_9ms() {
+    let env = tenv();
+    let mut times: Vec<std::time::Duration> = (0..21)
+        .map(|_| {
+            let mut cmd = Command::new(env!("CARGO_BIN_EXE_snp"));
+            env.env().apply_to(&mut cmd);
+            cmd.arg("--version").current_dir(env.root());
+            let start = std::time::Instant::now();
+            let out = cmd.output().unwrap();
+            let took = start.elapsed();
+            assert_eq!(text(&out.stdout), "snp 2.0.0\n");
+            took
+        })
+        .collect();
+    times.sort();
+    let median = times[times.len() / 2];
+    if !cfg!(debug_assertions) {
+        assert!(
+            median <= std::time::Duration::from_millis(9),
+            "median {median:?}"
+        );
+    }
 }

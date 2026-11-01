@@ -31,6 +31,9 @@ fn clean_without_a_store() {
     let env = env.with_env("SNP_HOME", missing.as_os_str());
     let out = snp(&env, env.root(), &["clean"]);
     assert_code(&out, 0);
-    assert_eq!(text(&out.stdout), format!("Cleaned {}.\n", missing.display()));
+    assert_eq!(
+        text(&out.stdout),
+        format!("Cleaned {}.\n", missing.display())
+    );
     assert!(!missing.exists());
 }

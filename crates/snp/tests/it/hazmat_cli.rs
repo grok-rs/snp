@@ -11,8 +11,14 @@ fn x13_hz_01_no_tool_is_a_usage_error() {
     let out = compat(&env, env.root(), &["hazmat"]);
     assert_code(&out, 2);
     let err = text(&out.stderr);
-    assert!(err.starts_with("usage: pre-commit hazmat [-h] [--color {auto,always,never}]\n"), "{err}");
-    assert!(err.ends_with("pre-commit hazmat: error: the following arguments are required: tool\n"), "{err}");
+    assert!(
+        err.starts_with("usage: pre-commit hazmat [-h] [--color {auto,always,never}]\n"),
+        "{err}"
+    );
+    assert!(
+        err.ends_with("pre-commit hazmat: error: the following arguments are required: tool\n"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -35,11 +41,18 @@ fn x13_hz_02_missing_executable() {
 #[test]
 fn x13_hz_03_empty_command() {
     let env = tenv();
-    for args in [&["hazmat", "ignore-exit-code"][..], &["hazmat", "n1", "--"][..]] {
+    for args in [
+        &["hazmat", "ignore-exit-code"][..],
+        &["hazmat", "n1", "--"][..],
+    ] {
         let out = compat(&env, env.root(), args);
         // An exit-3 crash through the envelope (never a panic, never 101).
         assert_code(&out, 3);
-        assert!(text(&out.stdout).starts_with("An unexpected error has occurred: "), "{}", text(&out.stdout));
+        assert!(
+            text(&out.stdout).starts_with("An unexpected error has occurred: "),
+            "{}",
+            text(&out.stdout)
+        );
     }
 }
 
@@ -63,7 +76,7 @@ fn x13_hz_05_no_double_dash() {
     let out = compat(&env, env.root(), &["hazmat", "n1", "echo"]);
     assert_code(&out, 1);
     assert_eq!(text(&out.stderr), "hazmat entry must end with `--`\n");
-    assert!(out.stdout.is_empty());
+    assert_eq!(text(&out.stdout), "");
 }
 
 /// D-MISC-02: `argv[1] == "__hazmat"` is the in-hook entry in both brands (prog `hazmat.py`).
@@ -79,5 +92,9 @@ fn reserved_in_hook_entry() {
     }
     let out = compat(&env, env.root(), &["__hazmat", "bogus"]);
     assert_code(&out, 2);
-    assert!(text(&out.stderr).contains("hazmat.py: error: argument tool: invalid choice: 'bogus'"), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stderr).contains("hazmat.py: error: argument tool: invalid choice: 'bogus'"),
+        "{}",
+        text(&out.stderr)
+    );
 }

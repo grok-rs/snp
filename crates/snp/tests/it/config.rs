@@ -17,7 +17,11 @@ fn config_dump_yaml_json_and_overlay() {
     assert_code(&out, 0);
     assert!(text(&out.stdout).trim_start().starts_with('{'));
     // an untracked local overlay is applied unless --no-local-config
-    std::fs::write(r.join(".pre-commit-config.local.yaml"), "fail_on_changes: never\n").unwrap();
+    std::fs::write(
+        r.join(".pre-commit-config.local.yaml"),
+        "fail_on_changes: never\n",
+    )
+    .unwrap();
     let with = snp(&env, &r, &["config", "dump"]);
     assert_code(&with, 0);
     let without = snp(&env, &r, &["config", "dump", "--no-local-config"]);
@@ -33,6 +37,9 @@ fn config_schema_is_json() {
     let out = snp(&env, env.root(), &["config", "schema"]);
     assert_code(&out, 0);
     let o = text(&out.stdout);
-    assert!(o.trim_start().starts_with('{') && o.contains("\"repos\""), "{o}");
+    assert!(
+        o.trim_start().starts_with('{') && o.contains("\"repos\""),
+        "{o}"
+    );
     assert!(o.ends_with("}\n"));
 }

@@ -14,7 +14,7 @@ fn uninstall_manager_rules() {
     write_hook(&hook, prek_script("").as_bytes());
     let out = compat(&env, &r, &["uninstall"]);
     assert_code(&out, 0);
-    assert!(out.stdout.is_empty());
+    assert_eq!(text(&out.stdout), "");
     assert!(hook.exists());
     // snp script with snp's own script as .legacy
     assert_code(&snp(&env, &r, &["install"]), 0);
@@ -36,7 +36,10 @@ fn uninstall_restores_a_prek_legacy() {
     let env = tenv();
     let r = repo_with(&env, "r", LOCAL_CONFIG);
     assert_code(&snp(&env, &r, &["install"]), 0);
-    write_hook(&r.join(".git/hooks/pre-commit.legacy"), prek_script("").as_bytes());
+    write_hook(
+        &r.join(".git/hooks/pre-commit.legacy"),
+        prek_script("").as_bytes(),
+    );
     let out = compat(&env, &r, &["uninstall"]);
     assert_eq!(
         text(&out.stdout),

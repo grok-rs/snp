@@ -28,7 +28,14 @@ fn open_store(env: &TestEnv) -> Store {
 }
 
 /// Materialises `(repo, rev, deps)` with `manifest` (None: no manifest file) as a clone would.
-fn materialize(st: &Store, repo: &str, root: &Path, rev: &str, deps: &[&str], manifest: Option<&str>) -> PathBuf {
+fn materialize(
+    st: &Store,
+    repo: &str,
+    root: &Path,
+    rev: &str,
+    deps: &[&str],
+    manifest: Option<&str>,
+) -> PathBuf {
     let id = RepoId::from_config(repo, root);
     let deps: Arc<[Arc<str>]> = deps.iter().map(|d| Arc::from(*d)).collect();
     let key = Store::remote_key(&id, rev, &deps);
@@ -63,7 +70,7 @@ fn config(repo: &str, rev: &str) -> String {
 }
 
 fn track(st: &Store, r: &Path) {
-    let cfg = std::fs::canonicalize(r.join(".pre-commit-config.yaml")).unwrap();
+    let cfg = snp_os::realpath::realpath_nonstrict(&r.join(".pre-commit-config.yaml"), r).unwrap();
     st.mark_config_used(&cfg, r);
 }
 
@@ -97,7 +104,10 @@ fn t10_gc_02_nothing_to_remove() {
     let st = open_store(&env);
     for (name, cfg) in [
         ("never", config("https://example.com/never", "v1.0.0")),
-        ("meta", "repos:\n-   repo: meta\n    hooks:\n    -   id: identity\n".to_owned()),
+        (
+            "meta",
+            "repos:\n-   repo: meta\n    hooks:\n    -   id: identity\n".to_owned(),
+        ),
         ("local", LOCAL_CONFIG.to_owned()),
     ] {
         let r = repo_with(&env, name, &cfg);
@@ -140,7 +150,13 @@ fn t10_gc_04_unknown_hook_id_does_not_crash() {
     let env = tenv();
     let st = open_store(&env);
     let up = "https://example.com/hooks";
-    let r = repo_with(&env, "r", &format!("repos:\n-   repo: {up}\n    rev: v1.0.0\n    hooks:\n    -   id: does-not-exist\n"));
+    let r = repo_with(
+        &env,
+        "r",
+        &format!(
+            "repos:\n-   repo: {up}\n    rev: v1.0.0\n    hooks:\n    -   id: does-not-exist\n"
+        ),
+    );
     materialize(&st, up, &r, "v1.0.0", &[], Some(MANIFEST));
     track(&st, &r);
     assert_eq!(gc(&env, env.root()), "0 repo(s) removed.\n");
@@ -155,7 +171,7 @@ fn t10_gc_05_invalid_config_is_forgotten() {
     track(&st, &r);
     assert_eq!(st.tracked_configs().len(), 1);
     assert_eq!(gc(&env, env.root()), "0 repo(s) removed.\n");
-    assert!(st.tracked_configs().is_empty());
+    assert_eq!(st.tracked_configs().len(), 0);
 }
 
 #[test]
@@ -174,7 +190,7 @@ fn t10_gc_06_manifest_deleted_repo_removed() {
 fn t10_gc_07_store_without_tracked_configs() {
     let env = tenv();
     let _st = open_store(&env);
-    let _ = std::fs::remove_dir_all(store(&env).join("configs-v1"));
+    drop(std::fs::remove_dir_all(store(&env).join("configs-v1")));
     assert_eq!(gc(&env, env.root()), "0 repo(s) removed.\n");
     // and a store that does not exist yet is not created
     let env = tenv();
@@ -224,7 +240,7 @@ fn relative_local_repo_resolves_against_the_project_root() {
         .commit("m")
         .build();
     let project = repo_with(&env, "proj", &config("../tools", "v1.0.0"));
-    let _ = git(&env, &tools, &["tag", "v1.0.0"]);
+    let (_, _, _) = git(&env, &tools, &["tag", "v1.0.0"]);
     materialize(&st, "../tools", &project, "v1.0.0", &[], Some(MANIFEST));
     track(&st, &project);
     let elsewhere = env.root().join("home");
