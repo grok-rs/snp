@@ -247,3 +247,27 @@ fn try_repo_twice_initializes_both_times() {
         );
     }
 }
+
+#[test]
+fn try_repo_stashes_into_the_throwaway_store() {
+    // ADR-059: `patches/` lives in the temp store, as pre-commit's `Store(tempdir)`
+    let h = consumer();
+    let repo = hooks_repo(&h);
+    h.write("test-file", b"unstaged\n");
+    let o = h.try_repo(try_args(&repo, &[], false));
+    assert_eq!(o.code, 0, "{o:?}");
+    let line = o
+        .stdout
+        .lines()
+        .find(|l| l.starts_with("[INFO] Stashing unstaged files to "))
+        .unwrap_or_else(|| panic!("{}", o.stdout));
+    let path = line
+        .trim_start_matches("[INFO] Stashing unstaged files to ")
+        .trim_end_matches('.');
+    assert!(
+        !Path::new(path).starts_with(&h.store),
+        "patch in the main store: {path}"
+    );
+    assert!(!Path::new(path).exists(), "the throwaway store is gone");
+    assert_eq!(std::fs::read(h.path("test-file")).unwrap(), b"unstaged\n");
+}

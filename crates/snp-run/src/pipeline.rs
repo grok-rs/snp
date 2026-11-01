@@ -206,7 +206,7 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     let mut run_env = runenv::run_env(&cx.env, a);
     // step 9: the stash guard
     if stash {
-        let guard = snp_stash::enter(stash_ctx(cx, &git0, &info, &run_env))?;
+        let guard = snp_stash::enter(stash_ctx(cx, inv.store, &git0, &info, &run_env))?;
         if let Some((k, v)) = guard.child_env_token() {
             run_env = run_env.patched(&EnvPatch::default().set(k, v));
         }
@@ -404,8 +404,10 @@ fn regex(cx: &RunCtx, pattern: &str) -> Result<Arc<snp_pyre::PyRegex>, Failure> 
         .map_err(|e| Failure::unexpected("re.error", e.to_string()))
 }
 
-/// The stash's context: a Critical-role backend on a token that is never cancelled (ADR-065).
-fn stash_ctx(cx: &RunCtx, git: &Git, info: &RepoInfo, run_env: &Env) -> StashCtx {
+/// The stash's context: a Critical-role backend on a token that is never cancelled (ADR-065). The patch lives in
+/// the run's store: try-repo's throwaway store keeps `patches/` in its temp dir, as pre-commit's `Store(tempdir)`
+/// does (ADR-059), so `[INFO] Stashing unstaged files to <path>.` names the same kind of path.
+fn stash_ctx(cx: &RunCtx, store: &Store, git: &Git, info: &RepoInfo, run_env: &Env) -> StashCtx {
     let backend = Arc::new(ProcBackend {
         cancel: snp_core::cancel::CancelToken::new(),
         role: Role::Critical,
@@ -413,7 +415,7 @@ fn stash_ctx(cx: &RunCtx, git: &Git, info: &RepoInfo, run_env: &Env) -> StashCtx
     StashCtx {
         git: git.with_env(run_env.clone()).with_backend(backend),
         info: info.clone(),
-        patches_dir: cx.store.patches_dir(),
+        patches_dir: store.patches_dir(),
         printer: Arc::clone(&cx.printer),
         cancel: cx.cancel.clone(),
         clock: Arc::clone(&cx.clock),
@@ -454,16 +456,37 @@ fn side_queries(
     needs_files: bool,
     stat: bool,
 ) -> Result<Side, Failure> {
-    let mut side = Side::default();
-    if needs_files && files::wants_staged(sel, git, info) {
-        side.staged = Some(git.staged_files()?);
-    }
-    if stat {
-        // a failure here only costs the Stat mode (the oracle falls back to `git diff`)
-        side.tracked = git.tracked_with_modes().ok().map(Arc::new);
-        side.origins = git.config_origins().ok().map(Arc::from);
-    }
-    Ok(side)
+    // E, F and G are independent read-only queries: each on its own thread, so one spawn is on the critical path
+    std::thread::scope(|s| {
+        let spawn_f = || {
+            std::thread::Builder::new()
+                .spawn_scoped(s, || git.tracked_with_modes().ok().map(Arc::new))
+        };
+        let spawn_g = || {
+            std::thread::Builder::new().spawn_scoped(s, || git.config_origins().ok().map(Arc::from))
+        };
+        let f = stat.then(spawn_f);
+        let g = stat.then(spawn_g);
+        let staged =
+            (needs_files && files::wants_staged(sel, git, info)).then(|| git.staged_files());
+        // a failure of F or G only costs the Stat mode (the oracle falls back to `git diff`); a thread that could
+        // not start runs its query here
+        let tracked = match f {
+            Some(Ok(h)) => h.join().ok().flatten(),
+            Some(Err(_)) => git.tracked_with_modes().ok().map(Arc::new),
+            None => None,
+        };
+        let origins = match g {
+            Some(Ok(h)) => h.join().ok().flatten(),
+            Some(Err(_)) => git.config_origins().ok().map(Arc::from),
+            None => None,
+        };
+        Ok(Side {
+            staged: staged.transpose()?,
+            tracked,
+            origins,
+        })
+    })
 }
 
 /// The baseline of ADR-078: known empty after a clean `diff-index` on the warm path; taken lazily (pre-commit's

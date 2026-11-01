@@ -1311,3 +1311,76 @@ fn epipe_stops_the_run_and_restores_the_stash() {
     ));
     assert_eq!(h.read("a.txt"), "a\nstaged\nunstaged\n");
 }
+
+/// The git subcommands `snp_run::run` spawned, logged by a `git` wrapper first on `PATH` (`--version` excluded).
+fn logged_git(h: &mut H) -> std::path::PathBuf {
+    let bin = h.base.join("wrap-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let log = h.base.join("git.log");
+    let real = ["/usr/bin/git", "/usr/local/bin/git", "/bin/git"]
+        .into_iter()
+        .find(|p| std::path::Path::new(p).exists())
+        .unwrap();
+    let script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexec {real} \"$@\"\n",
+        log.display()
+    );
+    let wrapper = bin.join("git");
+    std::fs::write(&wrapper, script).unwrap();
+    let mut perm = std::fs::metadata(&wrapper).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perm, 0o755);
+    std::fs::set_permissions(&wrapper, perm).unwrap();
+    let path = format!("{}:/usr/local/bin:/usr/bin:/bin", bin.display());
+    h.env_set("PATH", path);
+    log
+}
+
+fn git_spawns(log: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| *l != "--version")
+        .map(str::to_owned)
+        .collect()
+}
+
+/// ARCHITECTURE §12.1 B2/B3 shapes, warm second run: the git spawn count is an upper bound (an O(hooks) `git diff`
+/// or a duplicated query shows up here long before it shows up as a timing regression). The current count is 8 for
+/// B3: `rev-parse`, A `ls-files --unmerged`, B `diff --quiet <cfg>`, the stash's ITA query, `write-tree` and
+/// `diff-index`, F `ls-files -s -z`, G `config --list --show-origin -z`; B2 takes 6 + one `git diff` (no F/G).
+#[test]
+fn spawn_bounds_for_the_b2_b3_shapes() {
+    for (n, bound) in [(1_usize, 7_usize), (10, 8)] {
+        let mut h = H::new();
+        let log = logged_git(&mut h);
+        let hooks: String = (1..=n)
+            .map(|i| {
+                sys(
+                    &format!("noop-{i:02}"),
+                    &format!("no-op {i:02}"),
+                    "'true'",
+                    "always_run: true\npass_filenames: false",
+                )
+            })
+            .collect();
+        h.config(&local(&hooks));
+        assert_eq!(h.run(args()).code, 0);
+        let _ignored = std::fs::remove_file(&log);
+        let o = h.run(args());
+        assert_eq!(o.code, 0, "{o:?}");
+        let spawns = git_spawns(&log);
+        assert!(
+            spawns.len() <= bound,
+            "{n} hooks: {} git spawns > {bound}:\n{}",
+            spawns.len(),
+            spawns.join("\n")
+        );
+        if n >= 3 {
+            assert!(
+                !spawns.iter().any(|s| s.starts_with("diff --no-ext-diff")),
+                "the stat oracle elides the per-hook `git diff`:\n{}",
+                spawns.join("\n")
+            );
+        }
+    }
+}
