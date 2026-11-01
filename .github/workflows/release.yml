@@ -215,7 +215,16 @@ jobs:
       - run: rustup toolchain install
       - name: Install dist
         working-directory: .
-        run: ${{ matrix.install_dist.run }}
+        # dist's plan gives the installer command for its shell (`pwsh` on Windows: `irm … | iex`).
+        env:
+          INSTALL_DIST: ${{ matrix.install_dist.run }}
+          INSTALL_DIST_SHELL: ${{ matrix.install_dist.shell }}
+        run: |
+          if [ "$INSTALL_DIST_SHELL" = pwsh ]; then
+            pwsh -NoProfile -Command "$INSTALL_DIST"
+          else
+            sh -c "$INSTALL_DIST"
+          fi
       - name: Install cargo-auditable, cargo-cyclonedx and rust-audit-info
         uses: taiki-e/install-action@v2
         with: { tool: "cargo-auditable,cargo-cyclonedx,rust-audit-info" }
