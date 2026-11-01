@@ -1260,7 +1260,7 @@ fn convert_leaf(
         if portable {
             notes.push((
                 Level::Lossy,
-                "interactive (TTY passthrough) is not supported yet; dropped".to_owned(),
+                "interactive (TTY passthrough) is an snp extension that pre-commit lacks; dropped (--portable)".to_owned(),
             ));
         } else {
             out.interactive = true;

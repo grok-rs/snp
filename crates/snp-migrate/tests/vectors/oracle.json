@@ -1,6 +1,6 @@
 {
   "features.portable.yaml": {
-    "sha256": "5b32661ad1e261f1a4eb1dc36b213157745470571d0835287595339d99ed1692",
+    "sha256": "a7683bc90205583e9eaf3d5893eeeb28d665c2bb6914ddf0399348a5a9aad2a6",
     "validate": {
       "exit": 0,
       "stdout": "",
