@@ -872,6 +872,17 @@ fn judge(
         (Brand::Snp, true) => (&opts.brand_map, &opts.brand_map),
     };
     let reduce = (variant.brand == Brand::Snp && !opts.self_check).then_some(&opts.brand_map);
+    // A class-BRAND divergence is exactly what the brand map removes: its own scenario compares unmapped texts,
+    // or the divergence could never be observed.
+    let brand_id = s
+        .expect_divergence
+        .as_deref()
+        .is_some_and(|i| i.starts_with("D-BRAND-"));
+    let (map_oracle, reduce) = if brand_id {
+        (&identity, None)
+    } else {
+        (map_oracle, reduce)
+    };
     let (map_oracle, map_snp) = ((map_oracle, reduce), (map_snp, reduce));
     let keep_diag = s.expect_divergence.as_deref().filter(|_| s.is_diag());
     let mut diffs = Vec::new();
@@ -889,6 +900,11 @@ fn judge(
             continue;
         };
         let (ca, cb) = (&a.captured, &b.captured);
+        // A shell step that runs the plain oracle by name (interop: `${oracle} install`) runs pre-commit on both
+        // sides: its text is pre-commit's on both, so the snp-brand map does not apply to it.
+        let oracle_only = matches!(&step.kind, StepKind::Shell(cmd)
+            if cmd.contains("${oracle}") && !cmd.contains("${tool}"));
+        let map_oracle = if oracle_only { map_snp } else { map_oracle };
         // A stream cut at MAX_CAPTURE is never "equal", even when both sides flooded.
         if ca.truncated || cb.truncated {
             diffs.push(Difference {
@@ -931,15 +947,30 @@ fn judge(
         };
         stripped.extend(ids);
         let eol = c.eol_insensitive;
-        stream_diff(
-            &mut diffs,
-            format!("{label} stdout"),
-            c.stdout,
-            (
-                &norm_stream(c.stdout, &ca.stdout, map_oracle, &stores, eol),
-                &norm_stream(c.stdout, &snp_out, map_snp, &stores, eol),
-            ),
-        );
+        // Under a pty stdout and stderr are one stream: a difference that is only the kept DIAG ID's own lines is
+        // that ID's stderr difference (it is labelled as such, so the class-DIAG rule holds).
+        let oracle_out = norm_stream(c.stdout, &ca.stdout, map_oracle, &stores, eol);
+        let snp_norm = norm_stream(c.stdout, &snp_out, map_snp, &stores, eol);
+        let diag_only = step.tty
+            && keep_diag.is_some()
+            && !compare::streams_equal(c.stdout, &oracle_out, &snp_norm)
+            && compare::streams_equal(
+                c.stdout,
+                &oracle_out,
+                &norm_stream(
+                    c.stdout,
+                    &normalise::strip_diag(&snp_out, None).0,
+                    map_snp,
+                    &stores,
+                    eol,
+                ),
+            );
+        let what = if diag_only {
+            format!("{label} stdout (pty: merged stderr)")
+        } else {
+            format!("{label} stdout")
+        };
+        stream_diff(&mut diffs, what, c.stdout, (&oracle_out, &snp_norm));
         stream_diff(
             &mut diffs,
             format!("{label} stderr"),
@@ -1075,9 +1106,10 @@ fn state_diffs(diffs: &mut Vec<Difference>, label: &str, c: &Compare, a: &State,
     }
 }
 
-/// Whether a difference's channel is stderr (DIAG may differ there only).
+/// Whether a difference's channel is stderr (DIAG may differ there only); under a pty, the merged stream when the
+/// difference is only DIAG lines.
 fn is_stderr(d: &Difference) -> bool {
-    d.what.ends_with(" stderr")
+    d.what.ends_with(" stderr") || d.what.ends_with(" stdout (pty: merged stderr)")
 }
 
 fn render_diffs(diffs: &[Difference], failures: &[String]) -> String {

@@ -317,9 +317,56 @@ pub fn normalise(tier: Tier, bytes: &[u8], map: &BrandMap) -> Vec<u8> {
     let mapped = map.apply(bytes);
     match tier {
         Tier::A => mapped,
-        Tier::C => tier_c(&canonical_usage(&mapped)),
-        Tier::B => tier_c(&tier_b(&canonical_usage(&mapped))),
+        Tier::C => tier_c(&canonical_help(&canonical_usage(&mapped))),
+        Tier::B => tier_c(&tier_b(&canonical_help(&canonical_usage(&mapped)))),
     }
+}
+
+/// The remaining CPython 3.12 → 3.13 rows of research 12 §A.4.1 (the help option lines and try-repo's usage wrap):
+/// 3.12 repeats the metavar after every option string (`-c CONFIG, --config CONFIG`), 3.13 prints it once
+/// (`-c, --config CONFIG`), which also moves the help text. Literal rewrites of exactly the listed lines, so the
+/// py312 runtime oracle's help texts compare with snp's canonical 3.13 rendering (COMPATIBILITY §1: the 3.13 texts
+/// are canonical). Text already in the 3.13 form passes through unchanged.
+pub(crate) fn canonical_help(bytes: &[u8]) -> Vec<u8> {
+    const PAIRS: [(&[u8], &[u8]); 6] = [
+        (
+            b"  -c CONFIG, --config CONFIG\n                        Path to alternate config file\n",
+            b"  -c, --config CONFIG   Path to alternate config file\n",
+        ),
+        (b"\n  -j JOBS, --jobs JOBS  ", b"\n  -j, --jobs JOBS       "),
+        (
+            b"\n  --from-ref FROM_REF, --source FROM_REF, -s FROM_REF\n",
+            b"\n  --from-ref, --source, -s FROM_REF\n",
+        ),
+        (
+            b"\n  --to-ref TO_REF, --origin TO_REF, -o TO_REF\n",
+            b"\n  --to-ref, --origin, -o TO_REF\n",
+        ),
+        (b"\n  --ref REF, --rev REF  ", b"\n  --ref, --rev REF      "),
+        (
+            b"\n                           [--ref REF] [--verbose]\n                           [--all-files | --files [FILES ...]]\n                           [--show-diff-on-failure] [--fail-fast]\n",
+            b"\n                           [--ref REF] [--verbose] [--all-files |\n                           --files [FILES ...]] [--show-diff-on-failure]\n                           [--fail-fast]\n",
+        ),
+    ];
+    let mut cur = bytes.to_vec();
+    for (from, to) in PAIRS {
+        cur = replace_bytes(&cur, from, to);
+    }
+    // `-t {…}, --hook-type {…}` → `-t, --hook-type {…}` (the choices are the same list twice)
+    let lines = lines_with_ends(&cur);
+    let mut out: Vec<u8> = Vec::with_capacity(cur.len());
+    for line in lines {
+        if let Some(rest) = line.strip_prefix(b"  -t {")
+            && let Some(at) = rest.windows(15).position(|w| w == b"}, --hook-type ")
+            && let Some(tail) = rest.get(at.saturating_add(3)..)
+        {
+            out.extend_from_slice(b"  -t, ");
+            out.extend_from_slice(tail);
+            continue;
+        }
+        out.extend_from_slice(line);
+    }
+    out
 }
 
 /// CPython 3.12 → 3.13 argparse rendering (research 12 §A.4.1): 3.12 puts the `...` of a sub-command usage on its
@@ -507,6 +554,8 @@ fn mask_numbered(line: &[u8], prefix: &[u8], repl: &[u8], with_pid: bool) -> Vec
 
 /// `repo` + exactly 8 of `[a-z0-9_]` (pre-commit's `tempfile.mkdtemp(prefix='repo')` names) → `repo[RAND]`; the
 /// same for `tmp`. The character before the prefix must not be alphanumeric (`/repoabc12345`, ` tmpxyz_1234`).
+/// `tmp` also takes the names of Rust's `tempfile` crate (snp's own temporary directories): 6 or 8 of
+/// `[A-Za-z0-9]` followed by a non-alphanumeric byte (random directory suffixes are Tier C, COMPATIBILITY §1).
 fn mask_rand(line: &[u8], prefix: &[u8], repl: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut i = 0_usize;
@@ -525,6 +574,16 @@ fn mask_rand(line: &[u8], prefix: &[u8], repl: &[u8]) -> Vec<u8> {
             if n == 8 {
                 out.extend_from_slice(repl);
                 i = i.saturating_add(prefix.len()).saturating_add(8);
+                continue;
+            }
+            let alnum = tail
+                .iter()
+                .take_while(|c| c.is_ascii_alphanumeric())
+                .count();
+            let ends = tail.get(alnum).is_none_or(|c| !c.is_ascii_alphanumeric());
+            if prefix == b"tmp" && (alnum == 6 || alnum == 8) && ends {
+                out.extend_from_slice(repl);
+                i = i.saturating_add(prefix.len()).saturating_add(alnum);
                 continue;
             }
         }
@@ -843,6 +902,14 @@ mod tests {
     }
 
     #[test]
+    fn py312_help_lines_are_canonicalised() {
+        let py312 = b"options:\n  -h, --help            show this help message and exit\n  -c CONFIG, --config CONFIG\n                        Path to alternate config file\n  -j JOBS, --jobs JOBS  Number of threads to use. (default 1).\n  -t {pre-commit,pre-push}, --hook-type {pre-commit,pre-push}\n  --from-ref FROM_REF, --source FROM_REF, -s FROM_REF\n                        x\n";
+        let py313 = b"options:\n  -h, --help            show this help message and exit\n  -c, --config CONFIG   Path to alternate config file\n  -j, --jobs JOBS       Number of threads to use. (default 1).\n  -t, --hook-type {pre-commit,pre-push}\n  --from-ref, --source, -s FROM_REF\n                        x\n";
+        assert_eq!(canonical_help(py312), py313.to_vec());
+        assert_eq!(canonical_help(py313), py313.to_vec());
+    }
+
+    #[test]
     fn py312_usage_is_canonicalised() {
         let py312 = b"usage: pre-commit [-h] [-V]\n                  {autoupdate,run,help,hook-impl}\n                  ...\npre-commit: error: unrecognized arguments: --bogus\n";
         let py313 = b"usage: pre-commit [-h] [-V]\n                  {autoupdate,run,help,hook-impl} ...\npre-commit: error: unrecognized arguments: --bogus\n";
@@ -897,6 +964,15 @@ mod tests {
         assert_eq!(
             out,
             b"- duration: [D]s\n\x1b[2m- duration: [D]s\x1b[m\n[INFO] Stashing unstaged files to /r/store/patch[TP].\nrepo[RAND] tmp[RAND] repoTooLongForIt\n"
+        );
+        // snp's own temporary directories (Rust `tempfile` names); `tmpfiles` is a word, not a suffix
+        assert_eq!(
+            normalise(
+                Tier::C,
+                b"/t/tmpLVNaLv/.pre-commit-hooks.yaml /t/tmpAb3dE9gH/x tmpfiles\n",
+                &BrandMap::identity()
+            ),
+            b"/t/tmp[RAND]/.pre-commit-hooks.yaml /t/tmp[RAND]/x tmpfiles\n"
         );
         let chatter = b"[INFO] Installing environment for x.\n[INFO] Once installed this environment will be reused.\nCollecting six\nnpm WARN x\nh.......Passed\n";
         assert_eq!(

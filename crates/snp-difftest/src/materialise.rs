@@ -336,12 +336,19 @@ fn slash(p: &Path) -> String {
 
 impl World {
     /// Replaces every `${name}` / `${repo:x}` / `${rev:x}` / `${url:x}` in `s`; unknown names are an error (a typo
-    /// would otherwise compare two identical wrong runs).
+    /// would otherwise compare two identical wrong runs). `$${` is a literal `${` (shell text such as pre-commit's
+    /// hook template, `"$${ARGS[@]}"`).
     pub(crate) fn subst(&self, s: &str) -> Result<String, String> {
         let mut out = String::new();
         let mut rest = s;
         while let Some(start) = rest.find("${") {
             let (head, tail) = rest.split_at_checked(start).ok_or("bad substitution")?;
+            if let Some(lit) = head.strip_suffix('$') {
+                out.push_str(lit);
+                out.push_str("${");
+                rest = tail.get(2..).unwrap_or_default();
+                continue;
+            }
             out.push_str(head);
             let tail = tail.get(2..).unwrap_or_default();
             let end = tail
@@ -846,6 +853,10 @@ mod tests {
         assert!(w.subst("${nope}").is_err());
         assert!(w.subst("${root").is_err());
         assert_eq!(w.subst_bytes(b"\xff${root}").unwrap(), b"\xff${root}");
+        assert_eq!(
+            w.subst("exec x \"$${ARGS[@]}\" ${root}").unwrap(),
+            "exec x \"${ARGS[@]}\" /r"
+        );
     }
 
     #[test]
