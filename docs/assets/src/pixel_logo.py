@@ -347,49 +347,49 @@ SERVER_C = {"O": hexc("#14142a"), "s": hexc("#2e2e4a"), "P": hexc("#3d3d60"), "G
 
 
 
-WIZARD_BIG = [  # 21x40, faces left; staff at column 0; feet on the last row
-    ".............OO......",
-    "............OhO......",
-    "...........OhhO......",
-    "...........OhdO......",
-    "..........OHhdO......",
-    "..........OHhhdO.....",
-    ".........OHhhhdO.....",
-    ".........OHhhhhdO....",
-    "........OHhhhhhdO....",
-    "........OHhhhhhhdO...",
-    ".......OHhhhhhhhdO...",
-    ".......OHhhhhhhhhdO..",
-    "...OOOOObbbbbbbbbbOOO",
-    "..OHHHHHHhhhhhhhhhhdO",
-    "...OOOOOOOOOOOOOOOOO.",
-    ".....OssssWWWWWWO....",
-    ".....OsesSWWWWWWWO...",
-    "....OssssSWWWWWWWO...",
-    ".....OSssWWWWWWWWO...",
-    ".....OwwwwwwwWWWWO...",
-    "....OrwwwwwwwwWrrrO..",
-    "...OrrwwwwwwwwWrrrRO.",
-    ".ssrrrwwwwwwwWrrrrRO.",
-    ".ssrrrrwwwwwwWrrrrRO.",
-    "..OrrrrwwwwwWrrrrrRO.",
-    "..OrrrrrwwwwWrrrrrRO.",
-    "..OBBBBBBwwwBBBBBBBO.",
-    "..OrrrrrrrwwrrrrrrRO.",
-    "..OLrrrrrrrwrrrrrrRO.",
-    "..OLrrrrrrrrrrrrrrRO.",
-    ".OLLrrrrrrrrrrrrrRRO.",
-    ".OLrrrrrrrrrrrrrrRRO.",
-    ".OLrrrrrrrrrrrrrrRRO.",
-    "OLLrrrrrrrrrrrrrrRRRO",
-    "OLrrrrrrrrrrrrrrrRRRO",
-    "OLrrrrrrrrrrrrrrrRRRO",
-    "OLLrrrrrrrrrrrrrrRRRO",
-    "OLrrrrrrrrrrrrrrrRRRO",
-    "OOOOOOOOOOOOOOOOOOOOO",
-    ".OfffO.........OfffO.",
+WIZARD_BIG = [  # 17x40, slim, faces left; staff at column 0; feet on the last row
+    "..........OO.....",
+    ".........OhO.....",
+    "........OhhO.....",
+    "........OhdO.....",
+    ".......OHhdO.....",
+    ".......OHhhdO....",
+    "......OHhhhdO....",
+    "......OHhhhhdO...",
+    ".....OHhhhhhdO...",
+    ".....OHhhhhhhdO..",
+    "....OHhhhhhhhdO..",
+    "..OOObbbbbbbbbOOO",
+    ".OHHHHHhhhhhhhhdO",
+    "..OOOOOOOOOOOOOO.",
+    "....OsssWWWWWO...",
+    "....OsesWWWWWWO..",
+    "...OsssSWWWWWWO..",
+    "....OSsWWWWWWWO..",
+    "....OwwwwwwWWWO..",
+    "...OrwwwwwwWrrO..",
+    ".ssrrwwwwwwWrrRO.",
+    ".ssrrrwwwwwWrrRO.",
+    "..OrrrwwwwWrrrRO.",
+    "..OrrrrwwwWrrrRO.",
+    "..OBBBBBwwBBBBBO.",
+    "..OrrrrrrwrrrrRO.",
+    "..OLrrrrrwrrrrRO.",
+    "..OLrrrrrrrrrrRO.",
+    "..OLrrrrrrrrrRRO.",
+    "..OLrrrrrrrrrRRO.",
+    "..OLrrrrrrrrrRRO.",
+    "..OLrrrrrrrrrRRO.",
+    ".OLLrrrrrrrrrRRO.",
+    ".OLLrrrrrrrrrRRO.",
+    ".OLLrrrrrrrrrRRO.",
+    ".OLLrrrrrrrrrRRO.",
+    ".OLLrrrrrrrrrRRO.",
+    ".OLLrrrrrrrrrRRO.",
+    ".OOOOOOOOOOOOOOO.",
+    "..OffO.....OffO..",
 ]
-assert all(len(r) == 21 for r in WIZARD_BIG)
+assert all(len(r) == 17 for r in WIZARD_BIG)
 
 # ---------------------------------------------------------------------------------------------- scene
 
@@ -425,7 +425,7 @@ def render(frame: int) -> Canvas:
         c.put(cx0 + dx, cy0 + dy + 1, hexc("#2f8a49"))
 
     # the shield: a crescent of light around the wizard's front
-    scx, scy, sr = wx + 10, wy + 22, 25
+    scx, scy, sr = wx + 8, wy + 22, 24
     for a10 in range(1150, 2451, 12):
         a = math.radians(a10 / 10)
         x, y = int(round(scx + sr * math.cos(a))), int(round(scy + sr * math.sin(a)))
