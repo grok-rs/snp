@@ -125,7 +125,8 @@ fn encode_crash(
     // The exact pretty text (lone surrogates kept) gives the encode position; `at` is its index in that text.
     let shifted = first_position(&exc.text).and_then(|at| {
         let file = str_of(name);
-        kernels::pretty_json_crash_position(contents, opts, MINOR, &file, windows_write)?.checked_sub(at)
+        kernels::pretty_json_crash_position(contents, opts, MINOR, &file, windows_write)?
+            .checked_sub(at)
     });
     let Some(delta) = shifted else {
         return exc.clone();
@@ -299,15 +300,31 @@ mod tests {
         assert_eq!(pos("{\"\u{fffd}\":1,\"\\ud800\":2}"), Some(73));
         assert_eq!(pos("{\"\u{fffd}\":1,\"x\":0,\"\\ud800\":2}"), Some(90));
         assert_eq!(
-            pos("{\"\u{e9}\":1,\"e\":2,\"\u{1f600}\":3,\"\u{ffff}\":4,\"\\ud800\":5,\"\\udc00\":6,\"A\":7,\"a\":8}"),
+            pos(
+                "{\"\u{e9}\":1,\"e\":2,\"\u{1f600}\":3,\"\u{ffff}\":4,\"\\ud800\":5,\"\\udc00\":6,\"A\":7,\"a\":8}"
+            ),
             Some(148)
         );
-        let text = kernels::pretty_json_text("{\"\\ud800\":\"\\ud83d\\ude00\\u007f\\u0001\"}", &opts("\t", true), MINOR).unwrap();
+        let text = kernels::pretty_json_text(
+            "{\"\\ud800\":\"\\ud83d\\ude00\\u007f\\u0001\"}",
+            &opts("\t", true),
+            MINOR,
+        )
+        .unwrap();
         let want: Vec<u32> = "{\n\t\"\u{fffd}\": \"\u{1f600}\u{7f}\\u0001\"\n}\n"
             .chars()
-            .map(|c| if c == '\u{fffd}' { 0xD800 } else { u32::from(c) })
+            .map(|c| {
+                if c == '\u{fffd}' {
+                    0xD800
+                } else {
+                    u32::from(c)
+                }
+            })
             .collect();
         assert_eq!(text, want);
-        assert_eq!(kernels::pretty_json_crash_position("[1]", &o, MINOR, "f", None), None);
+        assert_eq!(
+            kernels::pretty_json_crash_position("[1]", &o, MINOR, "f", None),
+            None
+        );
     }
 }

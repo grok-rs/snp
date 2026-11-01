@@ -324,7 +324,12 @@ pub fn pretty_json_text(contents: &str, opts: &DumpOpts, minor: PyMinor) -> Opti
                 let v = hex4(i)?;
                 if v < 0x7F {
                     out.extend([0x5C, 0x75]);
-                    out.extend(ascii.get(i..i.saturating_add(4))?.iter().map(|&c| u32::from(c)));
+                    out.extend(
+                        ascii
+                            .get(i..i.saturating_add(4))?
+                            .iter()
+                            .map(|&c| u32::from(c)),
+                    );
                     i = i.saturating_add(4);
                     continue;
                 }
@@ -335,7 +340,11 @@ pub fn pretty_json_text(contents: &str, opts: &DumpOpts, minor: PyMinor) -> Opti
                 match pair.then(|| hex4(i.saturating_add(2))).flatten() {
                     Some(lo) if (0xDC00..0xE000).contains(&lo) => {
                         let hi = v.saturating_sub(0xD800) << 10;
-                        out.push(0x1_0000_u32.saturating_add(hi).saturating_add(lo.saturating_sub(0xDC00)));
+                        out.push(
+                            0x1_0000_u32
+                                .saturating_add(hi)
+                                .saturating_add(lo.saturating_sub(0xDC00)),
+                        );
                         i = i.saturating_add(6);
                     }
                     _ => out.push(v),
@@ -375,7 +384,10 @@ pub fn pretty_json_crash_position(
     let in_block = |base: u32, c: u32| (base..base.saturating_add(0x800)).contains(&c);
     let base = (0x1E0_u32..0x220).map(|block| block << 11).find(|&base| {
         !text.iter().any(|&c| in_block(base, c))
-            && !contents.chars().chain(file.chars()).any(|c| in_block(base, u32::from(c)))
+            && !contents
+                .chars()
+                .chain(file.chars())
+                .any(|c| in_block(base, u32::from(c)))
     })?;
     let dst: String = text
         .iter()
@@ -394,7 +406,7 @@ pub fn pretty_json_crash_position(
 }
 
 /// `str.lower()` of a Python string held as its file-system bytes (UTF-8 with `surrogateescape`): valid text is
-/// lowercased with CPython's data (UCD 15.1.0 / 15.0.0, [`super::lower_table`], never the toolchain's newer Unicode
+/// lowercased with CPython's data (UCD 15.1.0 / 15.0.0, the generated `lower_table`, never the toolchain's newer Unicode
 /// tables, so letters that gained a lowercase form after 15.1 stay as they are, as in Python), CPython's final-sigma
 /// rule (`handle_capital_sigma`) included; undecodable bytes (lone surrogates in Python, neither cased nor
 /// case-ignorable, so they end a sigma context scan exactly as a chunk boundary does) stay as they are.
@@ -411,8 +423,14 @@ pub fn py_lower(s: &[u8]) -> Vec<u8> {
                 }
                 '\u{3A3}' => {
                     let before = valid.get(..i).unwrap_or_default();
-                    let after = valid.get(i.saturating_add(c.len_utf8())..).unwrap_or_default();
-                    if final_sigma(before, after) { '\u{3C2}' } else { '\u{3C3}' }
+                    let after = valid
+                        .get(i.saturating_add(c.len_utf8())..)
+                        .unwrap_or_default();
+                    if final_sigma(before, after) {
+                        '\u{3C2}'
+                    } else {
+                        '\u{3C3}'
+                    }
                 }
                 _ => py_lower_char(c),
             };
@@ -437,7 +455,8 @@ fn final_sigma(before: &str, after: &str) -> bool {
         }
     };
     let cased = |c: char| sigma_class(c) == 2;
-    first(before.chars(), true).is_some_and(cased) && !first(after.chars(), false).is_some_and(cased)
+    first(before.chars(), true).is_some_and(cased)
+        && !first(after.chars(), false).is_some_and(cased)
 }
 
 /// The [`super::lower_table::SIGMA_CONTEXT`] class of `c` (0 = neither cased nor case-ignorable).
@@ -850,20 +869,45 @@ zope==1\n# trailing\n"
     #[test]
     fn py_lower_ignores_post_15_1_case_pairs() {
         // Letters that gained a lowercase mapping after UCD 15.1: CPython 3.12/3.13 leave them unchanged.
-        for c in ['\u{1C89}', '\u{A7CB}', '\u{A7CC}', '\u{A7DA}', '\u{A7DC}', '\u{10D50}', '\u{16EA0}'] {
+        for c in [
+            '\u{1C89}',
+            '\u{A7CB}',
+            '\u{A7CC}',
+            '\u{A7DA}',
+            '\u{A7DC}',
+            '\u{10D50}',
+            '\u{16EA0}',
+        ] {
             let s = c.to_string();
-            assert_eq!(py_lower(s.as_bytes()), s.as_bytes(), "U+{:04X}", u32::from(c));
+            assert_eq!(
+                py_lower(s.as_bytes()),
+                s.as_bytes(),
+                "U+{:04X}",
+                u32::from(c)
+            );
         }
-        assert_eq!(py_lower("ABC\u{130}\u{3A3}".as_bytes()), "abci\u{307}\u{3C2}".as_bytes());
+        assert_eq!(
+            py_lower("ABC\u{130}\u{3A3}".as_bytes()),
+            "abci\u{307}\u{3C2}".as_bytes()
+        );
         assert_eq!(py_lower("\u{3A3}A".as_bytes()), "\u{3C3}a".as_bytes());
-        assert_eq!(py_lower("A\u{3A3}.TXT".as_bytes()), "a\u{3C3}.txt".as_bytes());
+        assert_eq!(
+            py_lower("A\u{3A3}.TXT".as_bytes()),
+            "a\u{3C3}.txt".as_bytes()
+        );
         assert_eq!(py_lower("A\u{3A3}. 1".as_bytes()), "a\u{3C2}. 1".as_bytes());
         // U+0295 is cased in CPython's UCD 15.1 data (not in newer Unicode): the sigma after it is final.
-        assert_eq!(py_lower("A\u{295}\u{3A3}".as_bytes()), "a\u{295}\u{3C2}".as_bytes());
+        assert_eq!(
+            py_lower("A\u{295}\u{3A3}".as_bytes()),
+            "a\u{295}\u{3C2}".as_bytes()
+        );
         assert_eq!(py_lower(b"A\xce\xa3\xff"), b"a\xcf\x82\xff");
         assert_eq!(py_lower(b"A\xffB"), b"a\xffb");
         let pair: &[&[u8]] = &["\u{1C89}.txt".as_bytes(), "\u{1C8A}.txt".as_bytes()];
-        assert_eq!(case_conflicts(&[], pair, &[], 3, false), Vec::<Vec<u8>>::new());
+        assert_eq!(
+            case_conflicts(&[], pair, &[], 3, false),
+            Vec::<Vec<u8>>::new()
+        );
     }
 
     /// Every code point (alone and as `A<c>Σ` and `Σ<c>`, exercising the final-sigma context) against
@@ -877,7 +921,10 @@ zope==1\n# trailing\n"
                 continue;
             }
             let script = "import sys\nw=sys.stdout.buffer.write\nfor cp in range(0x110000):\n    if 0xd800<=cp<0xe000: continue\n    c=chr(cp)\n    w((' '.join(s.encode('utf-8').hex() for s in (c.lower(), ('A'+c+'\\u03a3').lower(), ('\\u03a3'+c).lower()))+'\\n').encode())\n";
-            let out = std::process::Command::new(&exe).args(["-I", "-c", script]).output().unwrap();
+            let out = std::process::Command::new(&exe)
+                .args(["-I", "-c", script])
+                .output()
+                .unwrap();
             assert!(out.status.success());
             let mut lines = out.stdout.split(|&b| b == b'\n');
             for cp in (0_u32..0x11_0000).filter(|cp| !(0xD800..0xE000).contains(cp)) {
@@ -890,11 +937,23 @@ zope==1\n# trailing\n"
                         .collect::<Vec<u8>>()
                 });
                 let alone = c.to_string();
-                assert_eq!(py_lower(alone.as_bytes()), parts.next().unwrap(), "{py} U+{cp:04X}");
+                assert_eq!(
+                    py_lower(alone.as_bytes()),
+                    parts.next().unwrap(),
+                    "{py} U+{cp:04X}"
+                );
                 let ctx = format!("A{c}\u{3A3}");
-                assert_eq!(py_lower(ctx.as_bytes()), parts.next().unwrap(), "{py} A U+{cp:04X} SIGMA");
+                assert_eq!(
+                    py_lower(ctx.as_bytes()),
+                    parts.next().unwrap(),
+                    "{py} A U+{cp:04X} SIGMA"
+                );
                 let ctx = format!("\u{3A3}{c}");
-                assert_eq!(py_lower(ctx.as_bytes()), parts.next().unwrap(), "{py} SIGMA U+{cp:04X}");
+                assert_eq!(
+                    py_lower(ctx.as_bytes()),
+                    parts.next().unwrap(),
+                    "{py} SIGMA U+{cp:04X}"
+                );
             }
         }
     }
