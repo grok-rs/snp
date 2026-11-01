@@ -525,12 +525,13 @@ fn lang_dotnet_nuspec_parsing() {
 #[test]
 fn lang_dotnet_nuspec_deep_nesting_fits_a_small_stack() {
     let ns = "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd";
+    let times = |t: &str, n: usize| -> String { std::iter::repeat_n(t, n).collect() };
     let deep = format!(
         "<package xmlns=\"{ns}\">{}<id>x</id>{}</package>",
-        "<a>".repeat(5000),
-        "</a>".repeat(5000)
+        times("<a>", 5000),
+        times("</a>", 5000)
     );
-    let unclosed = "<C>".repeat(5000);
+    let unclosed = times("<C>", 5000);
     let worker = std::thread::Builder::new()
         .stack_size(256 * 1024)
         .spawn(move || {
