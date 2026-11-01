@@ -152,7 +152,15 @@ pub(crate) fn report(failure: Failure, s: &Session) -> Exit {
             printer.write_line(line);
             write_log(s, line, None);
         }
-        Failure::SystemExit { stderr, .. } => printer.write_stderr(stderr),
+        // `raise SystemExit(msg)`: the interpreter prints `str(msg)` through the stderr text layer (CRLF in Windows
+        // text mode)
+        Failure::SystemExit { stderr, .. } => match std::str::from_utf8(stderr)
+            .ok()
+            .and_then(|t| t.strip_suffix('\n'))
+        {
+            Some(text) => printer.py_eprint(text),
+            None => printer.write_stderr(stderr),
+        },
         Failure::Usage { stderr } => match stderr.strip_suffix('\n') {
             // argparse writes through the stderr text layer (CRLF in Windows text mode).
             Some(text) => printer.py_eprint(text),
