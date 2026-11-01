@@ -324,6 +324,29 @@ fn daemonize(rest: &[OsString]) -> Result<i32, End> {
         .get(usize::from(hold))
         .map_or(Ok(30), |s| parse_int::<u64>(Some(s), "daemonize"))?;
     let exe = std::env::current_exe().map_err(|e| End::Usage(format!("daemonize: {e}")))?;
+    // Windows: a Rust child inherits every inheritable handle of its parent (`bInheritHandles`), including the
+    // probe's own stdout/stderr pipes, so a "detached" copy would hold the hook's output open. A daemoniser that
+    // lets go of them (CPython's `close_fds`, a shell's `start`) is started through PowerShell's `Start-Process`,
+    // which inherits no handles.
+    #[cfg(windows)]
+    if !hold {
+        let script = format!(
+            "(Start-Process -WindowStyle Hidden -PassThru -FilePath '{}' -ArgumentList '__daemon','{secs}').Id",
+            exe.to_string_lossy().replace('\'', "''")
+        );
+        let o = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .map_err(|e| End::Usage(format!("daemonize: {e}")))?;
+        let pid = String::from_utf8_lossy(&o.stdout).trim().to_owned();
+        if !o.status.success() || pid.is_empty() {
+            return Err(End::Usage("daemonize: Start-Process failed".to_owned()));
+        }
+        line(format!("daemon {pid}"));
+        return Ok(0);
+    }
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("__daemon").arg(secs.to_string());
     cmd.stdin(std::process::Stdio::null());

@@ -516,7 +516,34 @@ fn windows_ctrl_c_reaches_inherit_children_only() {
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("results");
-    let mut child = driver_command("catalog::driver_entry", "win_ctrlc")
+    // The driver runs under a PowerShell launcher on the new console that first clears the inherited "ignore
+    // CTRL_C" flag: a process created with CREATE_NEW_PROCESS_GROUP (CI runners and test runners start steps that
+    // way) implies `SetConsoleCtrlHandler(NULL, TRUE)`, which every descendant inherits, so the console's CTRL_C
+    // would never reach the driver (a terminal user's snp starts with the flag clear).
+    let driver = driver_command("catalog::driver_entry", "win_ctrlc");
+    let args: Vec<String> = driver
+        .get_args()
+        .map(|a| format!("'{}'", a.to_string_lossy().replace('\'', "''")))
+        .collect();
+    let launcher = format!(
+        r#"Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class SnpCtrl {{
+    [DllImport("kernel32.dll", SetLastError = true)] public static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add);
+}}
+'@
+[void][SnpCtrl]::SetConsoleCtrlHandler([IntPtr]::Zero, $false)
+& '{exe}' {args}
+exit $LASTEXITCODE
+"#,
+        exe = driver.get_program().to_string_lossy().replace('\'', "''"),
+        args = args.join(" ")
+    );
+    let mut child = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-EncodedCommand"])
+        .arg(encoded_command(&launcher))
+        .env(crate::common::DRIVER_VAR, "win_ctrlc")
         .env("SNP_KILL_GRACE", "1")
         .env("SNP_PROC_TEST_DIR", dir.path())
         .env("SNP_PROC_TEST_OUT", &out)
