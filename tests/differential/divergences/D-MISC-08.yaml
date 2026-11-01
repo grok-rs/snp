@@ -32,6 +32,8 @@ steps:
     env: {}
     stdin: ""
     tty: false
+  # the crash log of whichever tool ran (pre-commit's in its store, snp's in its own; both names in the snp store)
+  - shell: 'cat "${store}/pre-commit.log" "${snp_store}/pre-commit.log" "${snp_store}/snp.log" 2>/dev/null; true'
 compare:
   stdout: tierB
   stderr: exact
@@ -48,11 +50,13 @@ expected:
       2:
         exit: 3
         stdout_starts_with: "An unexpected error has occurred: IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-commit'\nCheck the log at "
-        crash_log_contains: "Traceback (most recent call last):"
+      3:
+        stdout_contains: "Traceback (most recent call last):"
   snp:
     steps:
       2:
         exit: 3
         stdout_starts_with: "An unexpected error has occurred: IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-commit'\nCheck the log at "
-        crash_log_contains: "### error information\n\n```\nAn unexpected error has occurred: IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-commit'\n```\n\n```\n(no further details)\n```\n"
-        crash_log_not_contains: "Traceback"
+      3:
+        stdout_contains: "### error information\n\n```\nAn unexpected error has occurred: IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-commit'\n```\n\n```\n(no further details)\n```\n"
+        stdout_not_contains: "Traceback"

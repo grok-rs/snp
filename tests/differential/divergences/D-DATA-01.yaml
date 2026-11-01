@@ -20,7 +20,9 @@ work:
         hooks:
         -   id: clobber
             name: clobber
-            entry: sh -c 'rm -f foo && mkdir foo && echo x > foo/x' --
+            # the fix conflicts with the stashed change (the first apply fails) and a held index lock makes the
+            # rollback checkout fail too: the final restore fails in both tools
+            entry: sh -c 'echo clobbered > foo && touch .git/index.lock' --
             language: system
             files: ^foo$
   commit: [".pre-commit-config.yaml"]

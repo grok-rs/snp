@@ -17,6 +17,8 @@ work:
 steps:
   - tool: [run]
     signal: {name: SIGINT, after: .hook-started.ready}
-  - shell: cat a.txt; git status --porcelain
+  # the trap hook records the signals it got in .hook-started: snp forwards a kill(2)-sent SIGINT to its hooks
+  # (ARCHITECTURE §10.4, ADR-065), pre-commit does not; this scenario pins the restore, so only a.txt is listed
+  - shell: cat a.txt; git status --porcelain -- a.txt
 compare:
   tree: false

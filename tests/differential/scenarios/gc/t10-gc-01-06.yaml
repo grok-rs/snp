@@ -1,4 +1,6 @@
 name: gc/t10-gc-01-06
+# step 12: pre-commit's `clean` also removes the legacy `~/.pre-commit`; snp never touches pre-commit's directories
+expect_divergence: D-STORE-02
 covers: [T10-GC-01, T10-GC-02, T10-GC-04, T10-GC-05, T10-GC-06, T10-GC-08]
 repos:
   hooks:

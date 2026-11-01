@@ -24,6 +24,9 @@ compare:
   stdout: exact
   stderr: exact
   exit: exact
+  # the store lives in the work tree here: snp's gc removes the 1.x data and lays out its own store (checked below);
+  # pre-commit never looks at SNP_HOME
+  tree: false
 expected:
   oracle:
     exit: 0
@@ -33,3 +36,4 @@ expected:
     exit: 0
     stdout: "0 repo(s) removed.\n"
     stderr: "Removed snp 1.x cache data from ${work}/snpstore.\n"
+    tree_missing: [snpstore/db.db, snpstore/repos/repo_0123456789abcdef/x.txt]

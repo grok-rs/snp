@@ -9,7 +9,7 @@ repos:
   hooks: {fixture: script_hooks_repo, tags: [v2.0.0]}
 work:
   files: {}
-  config: "repos:\r\n-   repo: ${repo:hooks}\r\n    rev: ${rev:hooks}  # note\r\n    hooks:\r\n    -   id: bash_hook\r\n"
+  config: "repos:\r\n-   repo: ${repo:hooks}\r\n    rev: v2.0.0  # note\r\n    hooks:\r\n    -   id: bash_hook\r\n"
   commit: [".pre-commit-config.yaml"]
 steps:
   - tool: [autoupdate, --freeze]

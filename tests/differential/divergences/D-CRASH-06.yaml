@@ -58,7 +58,7 @@ expected:
   oracle:
     exit: 3
     stdout_contains: "An unexpected error has occurred: CalledProcessError: command: ("
-    config_file_unchanged: true
+    config_file_contains: "rev: v1.0.0"
   snp:
     exit: 1
     stdout_contains: "updating v1.0.0 -> v2.0.0\n[${root}/gone] command: ("

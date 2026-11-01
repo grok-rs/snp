@@ -16,4 +16,5 @@ work:
 steps:
   - tool: [run, -a]
 compare:
-  stdout: tierB
+  # Tier C: Tier B would reduce the traceback to its last line and hide the listed divergence
+  stdout: exact

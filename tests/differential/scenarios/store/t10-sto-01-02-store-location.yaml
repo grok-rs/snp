@@ -1,4 +1,7 @@
 name: store/t10-sto-01-02-store-location
+# snp keeps its own store at SNP_HOME / ~/.cache/snp and never reads PRE_COMMIT_HOME or XDG_CACHE_HOME/pre-commit
+# (FD-2): the steps that move pre-commit's store differ by design
+expect_divergence: D-STORE-01
 covers: [T10-STO-01, T10-STO-02, T10-STO-09]
 repos:
   hooks: {fixture: script_hooks_repo}

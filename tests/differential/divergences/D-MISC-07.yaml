@@ -29,8 +29,9 @@ steps:
     stdin: ""
     tty: false
 compare:
-  # The traceback frames differ (Tier B); the final line, the status line and the exit code agree.
-  stdout: tierB
+  # The traceback frames differ: compared at Tier C, since Tier B reduces both sides to the same final line and the
+  # divergence would no longer be observable; `expected:` pins each side.
+  stdout: exact
   stderr: exact
   exit: exact
   tree: true

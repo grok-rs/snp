@@ -1,9 +1,8 @@
 # D-CRASH-11 (CRASH, owner WP-18): same algorithm on bytes (ASCII whitespace), hooks run
 # A push whose ref name is not UTF-8: pre-commit 4.6.2 decodes the stdin strictly and crashes (exit 3); snp parses the
 # bytes and runs the pre-push hooks (a root push: --all-files).
-# Extensions of the 10 §7.4.3 schema used here: `bare: true` for an empty remote, the `${head}` substitution (the work
-# repo's HEAD sha) and `stdin_bytes`, a text whose `\xNN` escapes stand for raw bytes, expanded by the harness after
-# the substitutions (`!!binary` cannot carry a substitution).
+# Extensions of the 10 §7.4.3 schema used here: `bare: true` for an empty remote; the non-UTF-8 stdin is written by
+# `printf` in a shell step that runs `${tool}` (HEAD's sha is only known after the setup).
 expect_divergence: D-CRASH-11
 name: divergences/D-CRASH-11-non-utf8-pre-push-stdin
 since: "4.6.2"
@@ -23,8 +22,9 @@ work:
   commit: [".pre-commit-config.yaml"]
 steps:
   - git: [remote, add, origin, "${repo:remote}"]
-  - tool: [hook-impl, --hook-type=pre-push, --hook-dir, .git/hooks, --, origin, "${repo:remote}"]
-    stdin_bytes: 'refs/heads/caf\xe9 ${head} refs/heads/caf\xe9 0000000000000000000000000000000000000000\n'
+  # the pre-push line carries HEAD's sha, so the tool runs from a shell step (the harness has no `${head}`)
+  - shell: |
+      printf 'refs/heads/caf\351 %s refs/heads/caf\351 %s\n' "$(git rev-parse HEAD)" "${z40}" | "${tool}" hook-impl --hook-type=pre-push --hook-dir .git/hooks -- origin "${repo:remote}"
 compare:
   stdout: exact
   stderr: exact

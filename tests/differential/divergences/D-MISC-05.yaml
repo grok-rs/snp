@@ -43,8 +43,9 @@ steps:
     stdin: ""
     tty: false
 compare:
-  # The hook block differs (traceback vs one line); the status line, exit code and repository state agree.
-  stdout: tierB
+  # The hook block differs (traceback vs one line): compared at Tier C, since Tier B reduces both sides to the same
+  # final line and the divergence would no longer be observable; `expected:` pins each side.
+  stdout: exact
   stderr: exact
   exit: exact
   tree: true

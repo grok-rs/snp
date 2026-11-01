@@ -1,0 +1,12 @@
+name: seed/help-top-level
+covers: [T10-CLI-03]
+tags: [seed]
+# The top-level help lists every sub-command: the snp brand adds its own (cache, completions, config, doctor, list,
+# migrate, self; K6, D-BRAND-01), so only the compat brand can equal pre-commit's. The snp brand's text is pinned by
+# crates/snp-cli/tests/goldens/snp.json.
+brands: [compat]
+work:
+  config: null
+steps:
+  - tool: [--help]
+  - tool: [help]

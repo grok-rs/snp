@@ -1,4 +1,6 @@
 name: store/t10-sto-04-deprecated-stages-manifest
+# the listing of pre-commit's store (`repo*` clones) has no counterpart in snp's own store layout (FD-2)
+expect_divergence: D-STORE-01
 covers: [T10-STO-04, T10-STO-05, T10-STO-08]
 repos:
   hooks:

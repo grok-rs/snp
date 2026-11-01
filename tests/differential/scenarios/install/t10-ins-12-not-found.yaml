@@ -1,4 +1,6 @@
 name: install/t10-ins-12-not-found
+# snp's POSIX template (D-DATA-05) reports `snp` not found (11 §A.16.1 M5) where pre-commit's says `pre-commit`
+expect_divergence: D-DATA-05
 covers: [T10-INS-12]
 requires: {os: [linux, macos]}
 work:
@@ -8,7 +10,8 @@ work:
   stage: [a.txt]
 steps:
   - tool: [install]
-  - shell: sed 's|^INSTALL_PYTHON=.*|INSTALL_PYTHON=/dne|' .git/hooks/pre-commit > h && cat h > .git/hooks/pre-commit && rm h
+  # the installed executable disappears: pre-commit's template names it INSTALL_PYTHON, snp's SNP_EXE
+  - shell: sed -e 's|^INSTALL_PYTHON=.*|INSTALL_PYTHON=/dne|' -e 's|^SNP_EXE=.*|SNP_EXE=/dne|' .git/hooks/pre-commit > h && cat h > .git/hooks/pre-commit && rm h
   - git: [commit, -q, -m, x]
     env: {PATH: "/usr/bin:/bin"}
 compare:

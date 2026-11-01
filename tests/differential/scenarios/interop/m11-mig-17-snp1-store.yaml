@@ -7,9 +7,15 @@ work:
   config: "repos: []\n"
   setup:
     - shell: |
-        mkdir -p "${snp_store}/resource-pools" && printf 'This directory is maintained by SNP (Shell Not Pass).\n' > "${snp_store}/README" && : > "${snp_store}/db.db"
+        mkdir -p "${snp_store}/resource-pools" && printf 'This directory is maintained by the SNP (Shell Not Pass) project.\nLearn more: https://github.com/devops247-online/snp\n' > "${snp_store}/README" && : > "${snp_store}/db.db"
 steps:
   - tool: [gc]
-  - shell: ls "${snp_store}"
 compare:
   store: false
+# snp's own layout (`*-v1/`, store-v1.json) appears beside the 1.x files, so a listing of the store differs by design
+# (FD-2); what MIG-17 pins is checked on snp's side: the 1.x data is gone and no reserved name was created.
+expected:
+  snp:
+    exit: 0
+    stderr_contains: "Removed snp 1.x cache data from "
+    absent: ["${snp_store}/db.db", "${snp_store}/resource-pools", "${snp_store}/repos", "${snp_store}/environments"]

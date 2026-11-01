@@ -56,4 +56,4 @@ expected:
     stderr: ""
   snp:
     exit: 0
-    stderr_matches: '^hint: \.git/hooks/pre-commit runs Python pre-commit, not snp; run `(snp|pre-commit) install` to switch\n'
+    stdout_matches: '^hint: \.git/hooks/pre-commit runs Python pre-commit, not snp; run `(snp|pre-commit) install` to switch\n'

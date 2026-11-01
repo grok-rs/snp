@@ -12,7 +12,7 @@ steps:
   - tool: [--nope]
   - tool: [help, bogus]
   - tool: [run, -a, --hook-stage]
-  - tool: [hazmat]
+  # `hazmat` without a tool: D-CRASH-22 (pre-commit crashes), asserted by its divergence scenario
   - tool: [hazmat, --help]
   - tool: [hazmat, cd, foo, echo]
   - tool: [hazmat, cd, foo, echo, --, foo/f1, f2]

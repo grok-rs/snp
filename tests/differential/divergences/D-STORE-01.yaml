@@ -18,6 +18,8 @@ steps:
       HOME: "${work}/home"
       XDG_CACHE_HOME: ""
       PRE_COMMIT_HOME: "${work}/pch"
+      # the harness's hermetic SNP_HOME would win over the default location this scenario pins
+      SNP_HOME: null
 compare:
   stdout: exact
   stderr: exact

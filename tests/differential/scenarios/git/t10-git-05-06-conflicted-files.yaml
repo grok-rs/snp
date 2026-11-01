@@ -6,7 +6,7 @@ work:
     repos:
     -   repo: local
         hooks:
-        -   {id: show, name: show, entry: echo, language: system, verbose: true}
+        -   {id: show, name: show, entry: "printf '%s\\n'", language: system, verbose: true}
   commit: [.pre-commit-config.yaml, conflict_file, placeholder]
   setup:
     - git: [checkout, -q, -b, foo]
@@ -23,3 +23,6 @@ steps:
   - tool: [run]
   - tool: [run, --all-files]
   - shell: cat .git/MERGE_MSG
+# pre-commit's conflicted-file set has a per-process order (COMPATIBILITY N-1): one file per line, unordered
+compare:
+  stdout: lines-unordered

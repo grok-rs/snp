@@ -4,7 +4,5 @@ tags: [seed]
 work:
   config: null
 steps:
-  - tool: [--help]
-  - tool: [help]
   - tool: [help, run]
   - tool: [run, --help]
