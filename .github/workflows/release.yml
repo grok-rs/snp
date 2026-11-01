@@ -18,6 +18,10 @@
 # Triggers: a pushed tag `vX.Y.Z` releases. A pull request that changes the release configuration, and a manual run
 # with the default tag `dry-run`, run the gates (without the registry check), `dist plan` and the builds, but publish
 # nothing.
+#
+# Runners: the arm64 Linux and Windows runners exist for public repositories only. While the repository is private a
+# dry run builds the other targets (the dist matrix and the wheel matrix drop the arm64 Linux/Windows entries, as
+# platform.yml does) and a tagged release fails in `gates` with an explanation, instead of leaving jobs queued.
 name: release
 
 on:
@@ -63,6 +67,8 @@ jobs:
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       publishing: ${{ steps.tag.outputs.publishing }}
+      private: ${{ steps.runners.outputs.private }}
+      wheels: ${{ steps.runners.outputs.wheels }}
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
@@ -81,6 +87,35 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if [ -n "$tag" ]; then echo "publishing=true" >> "$GITHUB_OUTPUT"; else echo "publishing=false" >> "$GITHUB_OUTPUT"; fi
+      - name: Runners (arm64 Linux/Windows runners exist for public repositories only)
+        id: runners
+        env:
+          PRIVATE: ${{ github.event.repository.private }}
+          PUBLISHING: ${{ steps.tag.outputs.publishing }}
+        run: |
+          wheels='[
+            {"target":"x86_64-unknown-linux-gnu","runner":"ubuntu-24.04","manylinux":"2_17","smoke":true},
+            {"target":"aarch64-unknown-linux-gnu","runner":"ubuntu-24.04-arm","manylinux":"2_17","smoke":true},
+            {"target":"x86_64-unknown-linux-musl","runner":"ubuntu-24.04","manylinux":"musllinux_1_2","smoke":false},
+            {"target":"aarch64-unknown-linux-musl","runner":"ubuntu-24.04-arm","manylinux":"musllinux_1_2","smoke":false},
+            {"target":"aarch64-apple-darwin","runner":"macos-15","manylinux":"","smoke":true},
+            {"target":"x86_64-apple-darwin","runner":"macos-15-intel","manylinux":"","smoke":true},
+            {"target":"x86_64-pc-windows-msvc","runner":"windows-2025","manylinux":"","smoke":true},
+            {"target":"aarch64-pc-windows-msvc","runner":"windows-11-arm","manylinux":"","smoke":true}
+          ]'
+          if [ "$PRIVATE" = true ]; then
+            if [ "$PUBLISHING" = true ]; then
+              echo "::error::a release needs the arm64 Linux and Windows runners, which exist for public repositories only; make the repository public first"
+              exit 1
+            fi
+            echo "::notice::private repository: the dry run skips the arm64 Linux and Windows targets"
+            wheels="$(jq -c 'map(select(.runner != "ubuntu-24.04-arm" and .runner != "windows-11-arm"))' <<< "$wheels")"
+            echo "private=true" >> "$GITHUB_OUTPUT"
+          else
+            wheels="$(jq -c . <<< "$wheels")"
+            echo "private=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "wheels=$wheels" >> "$GITHUB_OUTPUT"
       - name: User crates at the deps.lock commits
         run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
@@ -104,6 +139,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       val: ${{ steps.plan.outputs.manifest }}
+      targets: ${{ steps.plan.outputs.targets }}
       tag-flag: ${{ needs.gates.outputs.tag != '' && format('--tag={0}', needs.gates.outputs.tag) || '' }}
     steps:
       - uses: actions/checkout@v4
@@ -124,6 +160,7 @@ jobs:
       - id: plan
         env:
           TAG: ${{ needs.gates.outputs.tag }}
+          PRIVATE: ${{ needs.gates.outputs.private }}
         run: |
           if [ -n "$TAG" ]; then
             dist plan --tag="$TAG" --output-format=json > plan-dist-manifest.json
@@ -131,6 +168,13 @@ jobs:
             dist plan --output-format=json > plan-dist-manifest.json
           fi
           echo "dist ran successfully"
+          if [ "$PRIVATE" = true ]; then
+            # dry run in a private repository (gates refuses a release there): no arm64 Linux/Windows runners
+            jq '.ci.github.artifacts_matrix.include |= map(select(.runner != "ubuntu-24.04-arm" and .runner != "windows-11-arm"))' \
+              plan-dist-manifest.json > plan-filtered.json
+            mv plan-filtered.json plan-dist-manifest.json
+          fi
+          echo "targets=$(jq -r '[.ci.github.artifacts_matrix.include[]?.targets[]] | join(" ")' plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
           cat plan-dist-manifest.json
           echo "manifest=$(jq -c "." plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
@@ -183,16 +227,31 @@ jobs:
           echo "EOF" >> "$GITHUB_OUTPUT"
           mkdir -p target/distrib
           cp dist-manifest.json "$BUILD_MANIFEST_NAME"
+      # ELF, Mach-O and PE binaries built by cargo-auditable all carry a section named `.dep-v0`; each target's archive
+      # is unpacked and its binary checked, and a missing archive or binary is an error.
       - name: The binaries embed their dependency list (cargo-auditable)
-        if: runner.os == 'Linux'
+        env:
+          TARGETS: ${{ join(matrix.targets, ' ') }}
         run: |
-          shopt -s nullglob
-          found=0
-          for f in target/distrib/*/snp target/distrib/*/snp.exe; do
-            found=1
-            grep -c '\.dep-v0' "$f" > /dev/null || { echo "::error::$f has no .dep-v0 section (cargo-auditable)"; exit 1; }
+          set -euo pipefail
+          for t in $TARGETS; do
+            dir="$RUNNER_TEMP/auditable-$t"
+            rm -rf "$dir" && mkdir -p "$dir"
+            case "$t" in
+              *windows*)
+                archive="target/distrib/snp-$t.zip"; exe=snp.exe
+                test -f "$archive" || { echo "::error::missing $archive"; exit 1; }
+                7z x -y -o"$dir" "$archive" > /dev/null ;;
+              *)
+                archive="target/distrib/snp-$t.tar.xz"; exe=snp
+                test -f "$archive" || { echo "::error::missing $archive"; exit 1; }
+                tar -xJf "$archive" -C "$dir" ;;
+            esac
+            bin="$(find "$dir" -type f -name "$exe" | head -n 1)"
+            [ -n "$bin" ] || { echo "::error::$archive contains no $exe"; exit 1; }
+            LC_ALL=C grep -aqF '.dep-v0' "$bin" || { echo "::error::$t: $exe has no .dep-v0 section (cargo-auditable)"; exit 1; }
+            echo "$t: $exe embeds its dependency list"
           done
-          [ "$found" = 1 ] || echo "no unpacked binary to inspect"
       - uses: actions/upload-artifact@v4
         with:
           name: artifacts-build-local-${{ join(matrix.targets, '_') }}
@@ -201,7 +260,7 @@ jobs:
             snp/${{ env.BUILD_MANIFEST_NAME }}
 
   build-global-artifacts:
-    needs: [plan, build-local-artifacts]
+    needs: [gates, plan, build-local-artifacts]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -233,11 +292,16 @@ jobs:
           jq --raw-output ".upload_files[]" dist-manifest.json | sed -E '/^(\/|[A-Za-z]:)/! s|^|snp/|' >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
           cp dist-manifest.json "$BUILD_MANIFEST_NAME"
+      # every target of the plan: all eight for a release, without the arm64 Linux/Windows ones for a private dry run
       - name: Every target has an archive, a checksum and an SBOM
+        env:
+          TARGETS: ${{ needs.plan.outputs.targets }}
+          PRIVATE: ${{ needs.gates.outputs.private }}
         run: |
           set -euo pipefail
-          for t in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl \
-                   aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
+          n="$(wc -w <<< "$TARGETS")"
+          if [ "$PRIVATE" != true ] && [ "$n" -ne 8 ]; then echo "::error::the plan has $n targets, not 8: $TARGETS"; exit 1; fi
+          for t in $TARGETS; do
             case "$t" in *windows*) a="snp-$t.zip" ;; *) a="snp-$t.tar.xz" ;; esac
             test -f "target/distrib/$a" || { echo "::error::missing $a"; exit 1; }
             test -f "target/distrib/$a.sha256" || { echo "::error::missing $a.sha256"; exit 1; }
@@ -261,15 +325,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { target: x86_64-unknown-linux-gnu, runner: ubuntu-24.04, manylinux: "2_17", smoke: true }
-          - { target: aarch64-unknown-linux-gnu, runner: ubuntu-24.04-arm, manylinux: "2_17", smoke: true }
-          - { target: x86_64-unknown-linux-musl, runner: ubuntu-24.04, manylinux: musllinux_1_2, smoke: false }
-          - { target: aarch64-unknown-linux-musl, runner: ubuntu-24.04-arm, manylinux: musllinux_1_2, smoke: false }
-          - { target: aarch64-apple-darwin, runner: macos-15, manylinux: "", smoke: true }
-          - { target: x86_64-apple-darwin, runner: macos-15-intel, manylinux: "", smoke: true }
-          - { target: x86_64-pc-windows-msvc, runner: windows-2025, manylinux: "", smoke: true }
-          - { target: aarch64-pc-windows-msvc, runner: windows-11-arm, manylinux: "", smoke: true }
+        # the eight targets (gates drops the arm64 Linux/Windows ones for a dry run in a private repository)
+        include: ${{ fromJson(needs.gates.outputs.wheels) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:

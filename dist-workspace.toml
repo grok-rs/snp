@@ -16,8 +16,9 @@ cargo-dist-version = "0.32.0"
 ci = "github"
 packages = ["snp"]
 allow-dirty = ["ci"]
-# Pull requests that touch the release configuration run `dist plan` only (the platform workflow builds and smoke
-# tests every target).
+# Only read by dist's generated workflow; release.yml is maintained by hand (`allow-dirty`), so this has no effect
+# there: a pull request that touches the release configuration runs the gates, `dist plan`, every build and every
+# wheel, and publishes nothing. Kept at dist's default for `dist generate --check`-style tooling.
 pr-run-mode = "plan"
 hosting = "github"
 # ADR-049: shell and PowerShell installers that install `snp` only. `bin-aliases` is deliberately not configured: it
