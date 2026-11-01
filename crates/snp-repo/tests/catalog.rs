@@ -486,7 +486,7 @@ mod tests {
     #[test]
     #[ignore = "needs a python toolchain on PATH (non-hermetic row)"]
     fn t10_rep_10_local_python_language_version_is_resolved() {
-        let h = H::new();
+        let h = H::new().real();
         let cfg = h.config(
             "repos:\n-   repo: local\n    hooks:\n    -   id: py\n        name: py\n        entry: py\n        language: \
              python\n        additional_dependencies: [six]\n",
@@ -503,7 +503,7 @@ mod tests {
     #[test]
     #[ignore = "needs a python toolchain and the network (non-hermetic row)"]
     fn t10_rep_06_python_env_deps_roll_forward_isolation() {
-        let h = H::new();
+        let h = H::new().real();
         let cfg = h.config(
             "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: \
              python\n        additional_dependencies: [mccabe]\n    -   id: b\n        name: b\n        entry: b\n        \

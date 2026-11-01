@@ -20,7 +20,7 @@ use snp_core::output::{Printer, PrinterOpts};
 use snp_git::{GitBackend, GitExe, ProcBackend};
 use snp_hooks_data::{Epoch, NativeSource};
 use snp_lang::harness::ShimRunner;
-use snp_lang::{Host, ToolProbe};
+use snp_lang::{CmdRunner, Host, ProcRunner, ToolProbe};
 use snp_proc::pool::{JobPool, Limiter};
 use snp_proc::spawn::Role;
 use snp_pyre::RegexCache;
@@ -86,6 +86,8 @@ pub(crate) struct H {
     pub(crate) cancel: CancelToken,
     pub(crate) probe: ToolProbe,
     pub(crate) runner: ShimRunner,
+    /// The real runner (non-hermetic rows: real toolchains), used instead of [`Self::runner`] after [`Self::real`].
+    pub(crate) real: Option<ProcRunner>,
     pub(crate) regexes: RegexCache,
     pub(crate) preflight: FakePreflight,
     pub(crate) self_exe: PathBuf,
@@ -143,6 +145,7 @@ impl H {
         let nz = |n| NonZeroUsize::new(n).unwrap();
         Self {
             runner: ShimRunner::new(env.clone()),
+            real: None,
             env,
             project,
             store,
@@ -168,6 +171,23 @@ impl H {
             },
             resolver: StoreResolver::default(),
             t,
+        }
+    }
+
+    /// Runs the languages' setup commands for real (the toolchains on the hermetic `PATH`) instead of the scripted
+    /// [`ShimRunner`]: for the non-hermetic rows that need a real interpreter's answers.
+    pub(crate) fn real(mut self) -> Self {
+        self.real = Some(ProcRunner {
+            cancel: self.cancel.clone(),
+        });
+        self
+    }
+
+    /// The runner of setup commands: the real one after [`Self::real`], else the scripted [`ShimRunner`].
+    fn cmd_runner(&self) -> &dyn CmdRunner {
+        match &self.real {
+            Some(r) => r,
+            None => &self.runner,
         }
     }
 
@@ -217,7 +237,7 @@ impl H {
             probe: &self.probe,
             fetch: None,
             tools: &tools,
-            runner: &self.runner,
+            runner: self.cmd_runner(),
             printer: &self.printer,
             cancel: &self.cancel,
             brand: self.brand,
