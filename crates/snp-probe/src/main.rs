@@ -334,7 +334,13 @@ fn daemonize(rest: &[OsString]) -> Result<i32, End> {
             "(Start-Process -WindowStyle Hidden -PassThru -FilePath '{}' -ArgumentList '__daemon','{secs}').Id",
             exe.to_string_lossy().replace('\'', "''")
         );
-        let o = std::process::Command::new("powershell")
+        // The hook's environment is the test's hermetic one (a POSIX `PATH`, no `SystemRoot`): PowerShell is
+        // named by its absolute path and gets the `SystemRoot` it needs to start.
+        let root = system_root();
+        let powershell =
+            std::path::Path::new(&root).join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+        let o = std::process::Command::new(powershell)
+            .env("SystemRoot", &root)
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .stdin(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -361,6 +367,18 @@ fn daemonize(rest: &[OsString]) -> Result<i32, End> {
     // Not waited for: the daemon outlives the probe (and is reparented).
     drop(child);
     Ok(0)
+}
+
+/// The Windows directory: the probe's `SystemRoot` or `windir`, else the default `C:\Windows`.
+#[cfg(windows)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "snp-probe is a dev-only test binary with no Env snapshot; it reads its own environment"
+)]
+fn system_root() -> OsString {
+    std::env::var_os("SystemRoot")
+        .or_else(|| std::env::var_os("windir"))
+        .unwrap_or_else(|| OsString::from(r"C:\Windows"))
 }
 
 /// The detached copy: a new session (no controlling terminal, own process group), then sleep.

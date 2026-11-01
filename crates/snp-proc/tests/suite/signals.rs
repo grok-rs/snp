@@ -519,7 +519,9 @@ fn windows_ctrl_c_reaches_inherit_children_only() {
     // The driver runs under a PowerShell launcher on the new console that first clears the inherited "ignore
     // CTRL_C" flag: a process created with CREATE_NEW_PROCESS_GROUP (CI runners and test runners start steps that
     // way) implies `SetConsoleCtrlHandler(NULL, TRUE)`, which every descendant inherits, so the console's CTRL_C
-    // would never reach the driver (a terminal user's snp starts with the flag clear).
+    // would never reach the driver (a terminal user's snp starts with the flag clear). The launcher itself then
+    // swallows the event with a handler of its own (handlers, unlike the flag, are not inherited): PowerShell's
+    // default one stops the script, which then exits 1 instead of with the driver's status.
     let driver = driver_command("catalog::driver_entry", "win_ctrlc");
     let args: Vec<String> = driver
         .get_args()
@@ -530,10 +532,15 @@ fn windows_ctrl_c_reaches_inherit_children_only() {
 using System;
 using System.Runtime.InteropServices;
 public static class SnpCtrl {{
+    public delegate bool Handler(uint ev);
     [DllImport("kernel32.dll", SetLastError = true)] public static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetConsoleCtrlHandler(Handler handler, bool add);
+    static readonly Handler Swallow = delegate(uint ev) {{ return true; }};
+    public static bool SwallowEvents() {{ return SetConsoleCtrlHandler(Swallow, true); }}
 }}
 '@
 [void][SnpCtrl]::SetConsoleCtrlHandler([IntPtr]::Zero, $false)
+if (-not [SnpCtrl]::SwallowEvents()) {{ exit 4 }}
 & '{exe}' {args}
 exit $LASTEXITCODE
 "#,

@@ -19,6 +19,9 @@ mod skeleton {
         cmd.args(args)
             .env_clear()
             .env("HOME", home.path())
+            // `~` on Windows is USERPROFILE (ntpath.expanduser ignores HOME): without it there is no store and
+            // so no crash log line
+            .env("USERPROFILE", home.path())
             .env("PRE_COMMIT_HOME", home.path().join("store"))
             .envs(extra.iter().copied())
             .current_dir(home.path())
