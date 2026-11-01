@@ -1183,8 +1183,12 @@ fn start(
     #[cfg(feature = "testing")]
     crate::spawn_log::record(spec.role, group, arg0);
 
-    let spawned_cancelled = spec.role != Role::Critical && spec.cancel.is_cancelled();
+    // The gate is taken before the token is read: `registry::forward` holds it exclusively, so a signal either
+    // finds this child registered (and forwards to it) or was dispatched before the token is read here (and the
+    // child is killed at once as spawned-cancelled). Without it a SIGINT landing between the exec and `register`
+    // reached nobody and the hook got a silent SIGKILL after the grace (x13-eh-04, D-DATA-18).
     let gate = registry::spawn_gate();
+    let spawned_cancelled = spec.role != Role::Critical && spec.cancel.is_cancelled();
     let spawned = {
         let _lock = spawnlock::guard();
         spawn_platform(cmd, spec.role, group)
@@ -1192,6 +1196,8 @@ fn start(
     let (proc_, pid, stdin, out, err) = spawned
         .map_err(|io| attribute_to_cwd(io, spec.cwd))
         .map_err(fail)?;
+    #[cfg(all(test, unix))]
+    tests::before_register();
     let cell = registry::register(proc_, pid, spec.role, group, spec.cancel.clone());
     drop(gate);
     let started = Started {
@@ -1418,6 +1424,52 @@ mod pty {
 #[cfg(unix)]
 mod tests {
     use super::*;
+
+    /// Test-only hook run between the exec and `register` (the window of the x13-eh-04 race).
+    static BEFORE_REGISTER: Mutex<Option<fn()>> = Mutex::new(None);
+
+    pub(super) fn before_register() {
+        let hook = *sync::lock(&BEFORE_REGISTER);
+        if let Some(f) = hook {
+            f();
+        }
+    }
+
+    static RACE_TOKEN: std::sync::OnceLock<CancelToken> = std::sync::OnceLock::new();
+
+    /// A SIGINT sent (kill(2)) while a child is between its exec and `register` must still be forwarded to it:
+    /// the forwarder waits for the registration instead of missing the child (x13-eh-04 / D-DATA-18).
+    #[test]
+    fn sigint_between_exec_and_register_is_forwarded() {
+        fn interrupt_mid_spawn() {
+            let forwarder = std::thread::spawn(|| {
+                RACE_TOKEN
+                    .get()
+                    .unwrap()
+                    .cancel(snp_core::cancel::CancelReason::Interrupt);
+                registry::forward(registry::Sig::Int, registry::Origin::Sent);
+            });
+            // Give the forwarder ample time to run (and, before the fix, to miss this child).
+            std::thread::sleep(Duration::from_millis(300));
+            // One-shot: later spawns in this process are unaffected.
+            *sync::lock(&BEFORE_REGISTER) = None;
+            drop(forwarder);
+        }
+        registry::set_kill_grace(Duration::from_secs(3));
+        let cancel = RACE_TOKEN.get_or_init(CancelToken::new).clone();
+        *sync::lock(&BEFORE_REGISTER) = Some(interrupt_mid_spawn);
+        let argv: Vec<OsString> = ["/bin/sleep", "10"].iter().map(OsString::from).collect();
+        let env = env();
+        let started = Instant::now();
+        let c = capture(&spec(&argv, &env, Path::new("/"), &cancel)).unwrap();
+        // Forwarded: the child dies by SIGINT at once; missed: SIGKILL after the 3 s grace.
+        assert_eq!(c.status, PyStatus(-2), "child was not sent SIGINT");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+    }
 
     fn sh(script: &str) -> Vec<OsString> {
         ["/bin/sh", "-c", script, "--"]

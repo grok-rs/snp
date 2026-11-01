@@ -314,7 +314,12 @@ pub(crate) fn kill_now(cell: &Cell) {
 /// "force quit" for npm, cargo, uv); isolated groups (hooks with a `timeout`) never see the terminal and always get
 /// the signal by `-pgid`; Critical children are never signalled. Windows: a no-op (the console delivers `CTRL_C` to
 /// Inherit children; isolated groups are terminated with their Job Object after the grace).
+///
+/// It holds the spawn gate exclusively, so a child between its exec and its registration is waited for and
+/// signalled, never missed (a spawn reads its token only under the gate, see `spawn::start`).
 pub fn forward(sig: Sig, origin: Origin) {
+    #[cfg(unix)]
+    let _gate = sync::write(&SPAWN_GATE);
     #[cfg(unix)]
     for cell in live() {
         if !affected(&cell) {
