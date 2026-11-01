@@ -132,6 +132,16 @@ impl RepoId {
     }
 }
 
+/// The repository name an `Initialized` marker is keyed by: [`db_repo_name`] for a URL, and for a local directory its
+/// canonical path (`abs:<realpath>[:deps]`), so `repo: ../tools` in two projects announces each clone (D-DATA-08,
+/// ADR-082). The printed `Initializing environment for {…}.` keeps [`db_repo_name`].
+pub fn marker_repo_name(id: &RepoId, repo: &str, deps: &[Arc<str>]) -> String {
+    match id {
+        RepoId::LocalPath(p) => db_repo_name(&format!("abs:{}", p.to_string_lossy()), deps),
+        RepoId::Url(_) => db_repo_name(repo, deps),
+    }
+}
+
 /// `store.db_repo_name`: `repo` or `repo:dep1,dep2` (deps in config order, no sorting); local repos use
 /// `local[:deps]`.
 ///

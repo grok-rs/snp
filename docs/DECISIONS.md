@@ -968,6 +968,8 @@ elides the baseline in the very same sentence: the warm B3 run is 1 + A, B, C, F
 pre-commit-hooks natives, partition emulation, ≤ 13 spawns with "≤ 4 per-run pre-commit-hooks facts") spawned 46: the
 frozen `PchFacts::lfs_files` was one `check-attr` per partition and `check_merge_conflict`'s `rev-parse --git-dir`
 went through the never-cached `PchFacts::raw`, so both scaled with the partition count (≈ 20 at 96 files on 22 CPUs).
+(c) The first differential run against the oracle showed D-DATA-08 half done: a second project's `repo: ../tools`
+got its own clone but no `Initializing` line, because the `Initialized` marker was keyed by the verbatim string.
 **Decision.** (1) B3's bound is ≤ 18 spawns (8 git + 10 hooks); B2 stays ≤ 8 (7 git: no F/G below three process hooks,
 one `git diff` after its hook). (2) `PchFacts::lfs_files` keeps its signature and result but memoises: the first call
 of a run asks for its own paths (a single-partition hook costs one spawn, as upstream); a later call takes one
@@ -976,11 +978,14 @@ partition whose paths are all index paths while the index, `HEAD`, `<git dir>/in
 of every directory of every asked path are unchanged (one `stat` per directory per call); any other path, a changed
 attribute source or a failing whole-index call (a non-UTF-8 path, a git error) falls back to the per-partition call,
 so results and errors stay upstream's byte for byte. (3) `PchFacts::raw` memoises a successful `rev-parse --git-dir`
-(the git dir cannot move during a run; an error is never cached).
+(the git dir cannot move during a run; an error is never cached). (4) New `snp_store::marker_repo_name(id, repo,
+deps)`: the `Initialized` marker of a local-directory repository is keyed by its canonical path (`abs:<realpath>`), the
+same identity as its clone (D-DATA-08), so `repo: ../tools` in a second project prints `[INFO] Initializing
+environment for ../tools.` when it clones; resolution, try-repo and gc derive it the same way.
 **Rationale.** Spawn counts are not observable output; every byte a hook prints and every exit code is unchanged, and
 the fallbacks keep the exact upstream calls wherever the memo could differ. Changing the bound instead of the stash
 would mean dropping pre-commit's own `write-tree`/`diff-index`, the data-safety core's parity anchor.
-**Consequences.** ARCHITECTURE §12.1 and the §1.4.13 comments, WBS WP-36, `bench/README.md` and
+**Consequences.** ARCHITECTURE §12.1, the §1.4.13 comments and §1.4.16 (`marker_repo_name`), WBS WP-36, `bench/README.md` and
 `crates/snp/tests/it/budgets.rs` state the corrected bounds; B6 measures 10–11 spawns. Amends ADR-070 (item 10: "B3
 stays ≤ 17 spawns").
 

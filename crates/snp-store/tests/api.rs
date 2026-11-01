@@ -67,6 +67,7 @@ mod api {
         has::<[RepoId; 2]>([id.clone(), RepoId::LocalPath(PathBuf::from("/src/hooks"))]);
         has::<fn(&str, &Path) -> RepoId>(RepoId::from_config);
         has::<fn(&str, &[Arc<str>]) -> String>(snp_store::db_repo_name);
+        has::<fn(&RepoId, &str, &[Arc<str>]) -> String>(snp_store::marker_repo_name);
         has::<ToolRef>(ToolRef {
             tool: Arc::from("node"),
             version: Arc::from("22.11.0"),

@@ -372,7 +372,7 @@ impl<'c, 'a> Resolution<'c, 'a> {
         let r = {
             let mut wrapped = |dest: &Path| -> Result<(), Failure> {
                 ran = true;
-                let new = !initialized(cx, a.name, a.rev);
+                let new = !initialized(cx, a.marker, a.rev);
                 if new {
                     cx.printer.log(Level::Info, &messages::initializing(a.name));
                 }
@@ -381,7 +381,7 @@ impl<'c, 'a> Resolution<'c, 'a> {
                     if let Some(repo) = a.stages_of {
                         warn_stages_of(cx, repo, dest);
                     }
-                    cx.store.set_marker(&init_key(a.name, a.rev));
+                    cx.store.set_marker(&init_key(a.marker, a.rev));
                     marked = true;
                 }
                 Ok(())
@@ -391,9 +391,9 @@ impl<'c, 'a> Resolution<'c, 'a> {
         };
         match &r {
             // The entry never reached the store (a failed rename or marker write): neither did the db row.
-            Err(_) if marked => forget(cx, a.name, a.rev),
-            Ok(_) if !ran && !initialized(cx, a.name, a.rev) => {
-                cx.store.set_marker(&init_key(a.name, a.rev));
+            Err(_) if marked => forget(cx, a.marker, a.rev),
+            Ok(_) if !ran && !initialized(cx, a.marker, a.rev) => {
+                cx.store.set_marker(&init_key(a.marker, a.rev));
             }
             _ => {}
         }
@@ -411,19 +411,20 @@ impl<'c, 'a> Resolution<'c, 'a> {
         manifest: &[u8],
     ) -> Result<(), Failure> {
         let cx = self.cx;
-        if initialized(cx, repo, rev) {
+        let marker = snp_store::marker_repo_name(&plan.id, repo, &[]);
+        if initialized(cx, &marker, rev) {
             return Ok(());
         }
         self.ensure_store()?;
         let _lock = cx
             .store
             .repo_lock(&plan.base_key, &mut lock_notice(cx), cx.cancel)?;
-        if initialized(cx, repo, rev) {
+        if initialized(cx, &marker, rev) {
             return Ok(());
         }
         cx.printer.log(Level::Info, &messages::initializing(repo));
         warn_stages(cx, repo, manifest);
-        cx.store.set_marker(&init_key(repo, rev));
+        cx.store.set_marker(&init_key(&marker, rev));
         Ok(())
     }
 
@@ -462,8 +463,10 @@ impl<'c, 'a> Resolution<'c, 'a> {
             )
             .map(drop)
         };
+        let marker = snp_store::marker_repo_name(&plan.id, repo, &[]);
         let a = Announce {
             name: repo,
+            marker: &marker,
             rev,
             stages_of: Some(repo),
         };
@@ -500,8 +503,10 @@ impl<'c, 'a> Resolution<'c, 'a> {
             .map(drop)
         };
         let name = snp_store::db_repo_name(repo, deps);
+        let marker = snp_store::marker_repo_name(&plan.id, repo, deps);
         let a = Announce {
             name: &name,
+            marker: &marker,
             rev,
             stages_of: Some(repo),
         };
@@ -519,6 +524,7 @@ impl<'c, 'a> Resolution<'c, 'a> {
         let rev = snp_core::profile::LOCAL_TEMPLATE_VERSION.to_string();
         let a = Announce {
             name: &name,
+            marker: &name,
             rev: &rev,
             // `warn_for_stages_on_repo_init('local', …)` finds no manifest there.
             stages_of: None,
@@ -847,6 +853,8 @@ impl<'c, 'a> Resolution<'c, 'a> {
 struct Announce<'n> {
     /// `db_repo_name`.
     name: &'n str,
+    /// The `Initialized` marker's repository name (`snp_store::marker_repo_name`).
+    marker: &'n str,
     /// The revision (`C.LOCAL_REPO_VERSION` for the local template).
     rev: &'n str,
     /// `warn_for_stages_on_repo_init(repo, …)` of the new checkout (`None` for the local template).

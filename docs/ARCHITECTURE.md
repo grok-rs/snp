@@ -1724,6 +1724,8 @@ impl RepoId {
 }
 /// store.db_repo_name: `repo` or `repo:dep1,dep2` (deps in config order, no sorting); local repos use `local[:deps]`.
 pub fn db_repo_name(repo: &str, deps: &[Arc<str>]) -> String;
+/// The `Initialized` marker's name: db_repo_name for a URL, `abs:<realpath>[:deps]` for a local directory (ADR-082).
+pub fn marker_repo_name(id: &RepoId, repo: &str, deps: &[Arc<str>]) -> String;
 /// A shared toolchain an env links to (store-owned reference format; `sweep` reads only these, never InstallState).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)] pub struct ToolRef { pub tool: Arc<str>, pub version: Arc<str> }
 /// A tracked config and the project root its relative `repo:` paths resolve against (configs-v1 records both).

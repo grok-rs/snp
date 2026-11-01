@@ -104,7 +104,7 @@ fn manifest_ids(
     let id = RepoId::from_config(repo, root);
     let key = Store::remote_key(&id, rev, &[]);
     let marker = MarkerKey::Initialized {
-        db_repo_name: Arc::from(snp_store::db_repo_name(repo, &[])),
+        db_repo_name: Arc::from(snp_store::marker_repo_name(&id, repo, &[])),
         rev: Arc::from(rev),
     };
     if !store.marker_exists(&marker) {

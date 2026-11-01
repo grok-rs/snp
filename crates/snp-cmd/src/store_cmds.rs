@@ -16,7 +16,9 @@ use snp_config::{
 use snp_core::failure::Failure;
 use snp_core::output::Level;
 use snp_pyre::RegexCache;
-use snp_store::{MarkerKey, RepoId, RepoKey, Store, StoreGuard, TrackedConfig, db_repo_name};
+use snp_store::{
+    MarkerKey, RepoId, RepoKey, Store, StoreGuard, TrackedConfig, db_repo_name, marker_repo_name,
+};
 
 use crate::{CmdCtx, frame, messages};
 
@@ -38,7 +40,7 @@ fn exclusive(cx: &CmdCtx<'_>) -> Result<StoreGuard, Failure> {
 struct Used {
     /// Repository keys still in use (pre-commit's `unused.discard((repo, rev))`).
     keys: HashSet<RepoKey>,
-    /// `(db_repo_name, rev)` of every used remote key whose manifest was loadable (present or Tier A): their
+    /// `(marker_repo_name, rev)` of every used remote key whose manifest was loadable (present or Tier A): their
     /// `keys-v1` `Initialized` markers stay.
     remote_markers: HashSet<(String, String)>,
     /// `db_repo_name` of every used local key (`local`, `local:dep,…`).
@@ -108,7 +110,7 @@ fn mark_used(
                 };
                 used.keys.insert(key);
                 used.remote_markers
-                    .insert((db_repo_name(repo, &[]), rev.to_string()));
+                    .insert((marker_repo_name(&id, repo, &[]), rev.to_string()));
                 for h in hooks {
                     let Some(m) = manifest.get(&h.id) else {
                         continue;
@@ -126,7 +128,7 @@ fn mark_used(
                     let deps = config_hook_deps(raw_deps, &m.additional_dependencies);
                     used.keys.insert(Store::remote_key(&id, rev, &deps));
                     used.remote_markers
-                        .insert((db_repo_name(repo, &deps), rev.to_string()));
+                        .insert((marker_repo_name(&id, repo, &deps), rev.to_string()));
                 }
             }
             _ => {}
