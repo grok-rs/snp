@@ -198,7 +198,12 @@ fn from_value(path: &Path, value: &Value) -> Overlay {
 /// `skip` condition, so the hook prints pre-commit's `Skipped` line like `SKIP=`. The overlay is recorded in
 /// `Config::raw` for [`crate::effective_dump`].
 pub fn apply_root(cfg: &mut Config, ov: &Overlay, diag: &dyn DiagSink) {
-    diag.diag(&messages::overlay_active(&ov.path.to_string_lossy()));
+    // shown like the config itself: relative to the project root (pre-commit's `chdir`), absolute outside it
+    let shown = ov
+        .path
+        .strip_prefix(&cfg.source.project_root)
+        .unwrap_or(&ov.path);
+    diag.diag(&messages::overlay_active(&shown.to_string_lossy()));
     if let Some(f) = ov.fail_on_changes {
         cfg.root_ext.fail_on_changes = f;
     }

@@ -135,7 +135,15 @@ pub(crate) fn apply_overlay(
         Ok(Some(p)) => p,
         Ok(None) => return Ok(None),
         Err(note) => {
-            cx.printer.diag(&note);
+            // the ignored-overlay notes name the file like the active notice: relative to the project root
+            let mut root = cfg
+                .source
+                .project_root
+                .as_os_str()
+                .to_string_lossy()
+                .into_owned();
+            root.push(std::path::MAIN_SEPARATOR);
+            cx.printer.diag(&note.replace(&root, ""));
             return Ok(None);
         }
     };

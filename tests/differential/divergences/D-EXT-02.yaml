@@ -30,7 +30,7 @@ compare:
   exit: exact
 expected:
   oracle:
-    stdout_contains: "\nbase a.txt\n"
+    stdout_contains: "\nbase .pre-commit-config.yaml a.txt\n"
   snp:
-    stdout_contains: "\noverlay echo base a.txt\n"
+    stdout_contains: "\noverlay echo base .pre-commit-config.yaml a.txt\n"
     stderr: "snp: using local overrides from .pre-commit-config.local.yaml\n"
