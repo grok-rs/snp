@@ -7,7 +7,8 @@ decision was needed, with sources), **Decision**, **Rationale**, **Consequences*
 approved by the integration lead and the owners of the affected packages; the amended ADR only gains a status line
 naming the amending ADR, which is normative where they differ. ADR-056…ADR-080 apply the second design review
 (2026-10-08); Appendix B lists every finding and its disposition. ADR-081 applies the verification of the W0 skeleton;
-ADR-082 the end-to-end integration of the merged packages; ADR-083 the verification of the integrated `main`; ADR-084 the final multi-lens review.
+ADR-082 the end-to-end integration of the merged packages; ADR-083 the verification of the integrated `main`; ADR-084
+the final multi-lens review.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
