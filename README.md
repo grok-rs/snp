@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo.svg" alt="snp — You Shell Not Pass: a wizard guards the bridge against a failing commit" width="640">
+</p>
+
 # snp — You Shell Not Pass
 
 > *"You shall not pass!"* — every git hook, guarding your commits.
