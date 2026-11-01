@@ -114,6 +114,17 @@ impl FileLock {
     }
 }
 
+impl Drop for FileLock {
+    /// Unlocks explicitly before the file closes. Closing alone releases a `flock(2)` lock only once *every*
+    /// descriptor of the open file description is closed, and a child another thread spawns holds a copy of each
+    /// descriptor between its `fork` and `exec` (`O_CLOEXEC` closes it only at the `exec`): another thread of this
+    /// process then found the lock still taken and printed the `Locking … directory` notice without real
+    /// contention. `LOCK_UN` releases the description itself.
+    fn drop(&mut self) {
+        let _released: io::Result<()> = self.file.unlock();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,6 +226,23 @@ mod tests {
         let e = FileLock::acquire(&p, LockMode::Exclusive, &mut || {}, &cancel, None).unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::Interrupted);
         t.join().unwrap();
+    }
+
+    #[test]
+    fn drop_releases_even_while_a_duplicate_descriptor_is_open() {
+        // A forked child's copy of the descriptor (until its `exec`) behaves like this duplicate.
+        let (_d, p) = lock_path();
+        let held = FileLock::try_acquire(&p, LockMode::Exclusive)
+            .unwrap()
+            .unwrap();
+        let dup = held.file().try_clone().unwrap();
+        drop(held);
+        assert!(
+            FileLock::try_acquire(&p, LockMode::Exclusive)
+                .unwrap()
+                .is_some()
+        );
+        drop(dup);
     }
 
     #[test]
