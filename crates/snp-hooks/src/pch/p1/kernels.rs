@@ -11,6 +11,7 @@ use memchr::memmem;
 use snp_core::failure::PyExc;
 use snp_pycompat::chars::PyChar;
 use snp_pycompat::text::{bytes_lstrip, bytes_rstrip, bytes_strip};
+use snp_pyparsers::json::{DumpOpts, PyMinor};
 
 /// `list(f)` of a binary file: lines split after each `\n` (a lone `\r` is not a break); the last line may lack
 /// its `\n`.
@@ -245,15 +246,212 @@ pub fn requirements_fix(content: &[u8], epoch: u16) -> Result<Option<Vec<u8>>, P
     Ok((after != content).then_some(after))
 }
 
+/// The text `pretty_format_json._get_pretty_format(contents, …)` returns, as code points with its lone surrogates
+/// kept (Rust strings cannot hold them): what Python later encodes (the diff, or the autofix write) and fails on.
+/// Rendered exactly through the `ensure_ascii=True` encoder, which escapes every surrogate and so keeps keys,
+/// duplicate merging and order intact, with an all-space indent of the same length (the real indent, read back
+/// from a probe rendering, is put back after each newline); the escapes `ensure_ascii=False` would not emit (code
+/// points from U+007F up, astral pairs joined) are then decoded. `None` when the contents do not render (decode
+/// error, `TypeError`, resource caps) or the rendering is not the expected shape.
+pub fn pretty_json_text(contents: &str, opts: &DumpOpts, minor: PyMinor) -> Option<Vec<u32>> {
+    let probe_opts = DumpOpts {
+        indent: opts.indent.clone(),
+        ensure_ascii: true,
+        sort_keys: false,
+        top_keys: Vec::new(),
+    };
+    // `[[0]]` renders as `[\n I [\n I I 0\n I ]\n]\n`: ten fixed characters and four copies of the indent `I`.
+    let probe: Vec<char> = snp_pyparsers::json::pretty_format("[[0]]", &probe_opts, minor)
+        .ok()?
+        .chars()
+        .collect();
+    let extra = probe.len().checked_sub(10)?;
+    if extra % 4 != 0 {
+        return None;
+    }
+    let k = extra / 4;
+    let indent = probe.get(2..k.checked_add(2)?)?;
+    let spaced = DumpOpts {
+        indent: " ".repeat(k),
+        ensure_ascii: true,
+        ..opts.clone()
+    };
+    let ascii: Vec<char> = snp_pyparsers::json::pretty_format(contents, &spaced, minor)
+        .ok()?
+        .chars()
+        .collect();
+    let hex4 = |at: usize| -> Option<u32> {
+        let digits: String = ascii.get(at..at.checked_add(4)?)?.iter().collect();
+        u32::from_str_radix(&digits, 16).ok()
+    };
+    let mut out = Vec::with_capacity(ascii.len());
+    let mut i = 0_usize;
+    while let Some(&c) = ascii.get(i) {
+        i = i.saturating_add(1);
+        match c {
+            // Only a `newline_indent` puts a raw newline (strings escape theirs); tokens never start with a space.
+            '\n' => {
+                out.push(0x0A);
+                let mut m = 0_usize;
+                while k > 0 && ascii.get(i) == Some(&' ') {
+                    m = m.saturating_add(1);
+                    i = i.saturating_add(1);
+                }
+                if k > 0 {
+                    if m % k != 0 {
+                        return None;
+                    }
+                    for _ in 0..m / k {
+                        out.extend(indent.iter().map(|&c| u32::from(c)));
+                    }
+                }
+            }
+            // Backslashes appear only in string escapes (the indent is all spaces here).
+            '\\' => {
+                let e = *ascii.get(i)?;
+                i = i.saturating_add(1);
+                if e != 'u' {
+                    out.extend([0x5C, u32::from(e)]);
+                    continue;
+                }
+                let v = hex4(i)?;
+                if v < 0x7F {
+                    out.extend([0x5C, 0x75]);
+                    out.extend(ascii.get(i..i.saturating_add(4))?.iter().map(|&c| u32::from(c)));
+                    i = i.saturating_add(4);
+                    continue;
+                }
+                i = i.saturating_add(4);
+                let pair = (0xD800..0xDC00).contains(&v)
+                    && ascii.get(i) == Some(&'\\')
+                    && ascii.get(i.saturating_add(1)) == Some(&'u');
+                match pair.then(|| hex4(i.saturating_add(2))).flatten() {
+                    Some(lo) if (0xDC00..0xE000).contains(&lo) => {
+                        out.push(0x1_0000 + ((v - 0xD800) << 10) + (lo - 0xDC00));
+                        i = i.saturating_add(6);
+                    }
+                    _ => out.push(v),
+                }
+            }
+            _ => out.push(u32::from(c)),
+        }
+    }
+    Some(out)
+}
+
+/// The character position at which Python's encode of the pretty text fails on its first lone surrogate: in
+/// `get_diff(contents, pretty, file).encode()` (`windows_write` `None`), or in `open(f, 'w').write(pretty)`
+/// (`Some(windows)`: on Windows each `\n` before it was written as `\r\n` first). `None` when the pretty text holds
+/// no lone surrogate (or does not render, see [`pretty_json_text`]).
+///
+/// The diff is computed with each lone surrogate mapped injectively onto a block of private-use code points that
+/// occurs nowhere in the contents, the pretty text or the file name, so line equality is exactly Python's.
+pub fn pretty_json_crash_position(
+    contents: &str,
+    opts: &DumpOpts,
+    minor: PyMinor,
+    file: &str,
+    windows_write: Option<bool>,
+) -> Option<usize> {
+    let text = pretty_json_text(contents, opts, minor)?;
+    let is_surrogate = |c: u32| (0xD800..0xE000).contains(&c);
+    let first = text.iter().position(|&c| is_surrogate(c))?;
+    if let Some(windows) = windows_write {
+        let newlines = if windows {
+            text.get(..first)?.iter().filter(|&&c| c == 0x0A).count()
+        } else {
+            0
+        };
+        return first.checked_add(newlines);
+    }
+    let in_block = |base: u32, c: u32| (base..base.saturating_add(0x800)).contains(&c);
+    let base = (0xF_0000_u32..0x11_0000).step_by(0x800).find(|&base| {
+        !text.iter().any(|&c| in_block(base, c))
+            && !contents.chars().chain(file.chars()).any(|c| in_block(base, u32::from(c)))
+    })?;
+    let dst: String = text
+        .iter()
+        .map(|&c| {
+            if is_surrogate(c) {
+                char::from_u32(base.saturating_add(c.saturating_sub(0xD800)))
+            } else {
+                char::from_u32(c)
+            }
+        })
+        .collect::<Option<String>>()?;
+    let src: Vec<&str> = snp_pycompat::text::splitlines_keepends(contents).collect();
+    let dst: Vec<&str> = snp_pycompat::text::splitlines_keepends(&dst).collect();
+    let diff = snp_pyparsers::difflib::unified_diff(&src, &dst, file, file);
+    diff.chars().position(|c| in_block(base, u32::from(c)))
+}
+
 /// `str.lower()` of a Python string held as its file-system bytes (UTF-8 with `surrogateescape`): valid text is
-/// lowercased with full Unicode mappings (final sigma included); undecodable bytes stay as they are.
+/// lowercased with CPython's data (UCD 15.1.0 / 15.0.0, [`super::lower_table`], never the toolchain's newer Unicode
+/// tables, so letters that gained a lowercase form after 15.1 stay as they are, as in Python), CPython's final-sigma
+/// rule (`handle_capital_sigma`) included; undecodable bytes (lone surrogates in Python, neither cased nor
+/// case-ignorable, so they end a sigma context scan exactly as a chunk boundary does) stay as they are.
 pub fn py_lower(s: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(s.len());
+    let mut buf = [0_u8; 4];
     for chunk in s.utf8_chunks() {
-        out.extend_from_slice(chunk.valid().to_lowercase().as_bytes());
+        let valid = chunk.valid();
+        for (i, c) in valid.char_indices() {
+            let lower = match c {
+                '\u{130}' => {
+                    out.extend_from_slice("i\u{307}".as_bytes());
+                    continue;
+                }
+                '\u{3A3}' => {
+                    let before = valid.get(..i).unwrap_or_default();
+                    let after = valid.get(i.saturating_add(c.len_utf8())..).unwrap_or_default();
+                    if final_sigma(before, after) { '\u{3C2}' } else { '\u{3C3}' }
+                }
+                _ => py_lower_char(c),
+            };
+            out.extend_from_slice(lower.encode_utf8(&mut buf).as_bytes());
+        }
         out.extend_from_slice(chunk.invalid());
     }
     out
+}
+
+/// CPython `handle_capital_sigma`: final when the nearest non-case-ignorable character before is cased and the
+/// nearest one after (if any) is not. Each scan stops at the next capital sigma (cased), so the total work over a
+/// string stays linear.
+fn final_sigma(before: &str, after: &str) -> bool {
+    let first = |mut it: std::str::Chars<'_>, rev: bool| {
+        let mut next = || if rev { it.next_back() } else { it.next() };
+        loop {
+            match next() {
+                Some(c) if sigma_class(c) == 1 => {}
+                other => return other,
+            }
+        }
+    };
+    let cased = |c: char| sigma_class(c) == 2;
+    first(before.chars(), true).is_some_and(cased) && !first(after.chars(), false).is_some_and(cased)
+}
+
+/// The [`super::lower_table::SIGMA_CONTEXT`] class of `c` (0 = neither cased nor case-ignorable).
+fn sigma_class(c: char) -> u8 {
+    let cp = u32::from(c);
+    let table = super::lower_table::SIGMA_CONTEXT;
+    let i = table.partition_point(|&(first, _, _)| first <= cp);
+    match i.checked_sub(1).and_then(|i| table.get(i)) {
+        Some(&(_, last, class)) if cp <= last => class,
+        _ => 0,
+    }
+}
+
+/// CPython's one-code-point lowercase mapping of `c` (identity when [`super::lower_table::LOWER`] has no row).
+fn py_lower_char(c: char) -> char {
+    let cp = u32::from(c);
+    super::lower_table::LOWER
+        .binary_search_by_key(&cp, |&(k, _)| k)
+        .ok()
+        .and_then(|i| super::lower_table::LOWER.get(i))
+        .and_then(|&(_, l)| char::from_u32(l))
+        .unwrap_or(c)
 }
 
 /// Python `str` ordering (by code point) of two file-system strings (`surrogateescape`: an undecodable byte is
@@ -639,5 +837,55 @@ zope==1\n# trailing\n"
         let (_, e) = destroyed_symlink_candidates("1 x\0");
         assert!(e.is_some());
         assert!(same_after_rstrip(b"target", b"target\r\n"));
+    }
+
+    #[test]
+    fn py_lower_ignores_post_15_1_case_pairs() {
+        // Letters that gained a lowercase mapping after UCD 15.1: CPython 3.12/3.13 leave them unchanged.
+        for c in ['\u{1C89}', '\u{A7CB}', '\u{A7CC}', '\u{A7DA}', '\u{A7DC}', '\u{10D50}', '\u{16EA0}'] {
+            let s = c.to_string();
+            assert_eq!(py_lower(s.as_bytes()), s.as_bytes(), "U+{:04X}", u32::from(c));
+        }
+        assert_eq!(py_lower("ABC\u{130}\u{3A3}".as_bytes()), "abci\u{307}\u{3C2}".as_bytes());
+        assert_eq!(py_lower("\u{3A3}A".as_bytes()), "\u{3C3}a".as_bytes());
+        assert_eq!(py_lower("A\u{3A3}.TXT".as_bytes()), "a\u{3C3}.txt".as_bytes());
+        assert_eq!(py_lower("A\u{3A3}. 1".as_bytes()), "a\u{3C2}. 1".as_bytes());
+        // U+0295 is cased in CPython's UCD 15.1 data (not in newer Unicode): the sigma after it is final.
+        assert_eq!(py_lower("A\u{295}\u{3A3}".as_bytes()), "a\u{295}\u{3C2}".as_bytes());
+        assert_eq!(py_lower(b"A\xce\xa3\xff"), b"a\xcf\x82\xff");
+        assert_eq!(py_lower(b"A\xffB"), b"a\xffb");
+        let pair: &[&[u8]] = &["\u{1C89}.txt".as_bytes(), "\u{1C8A}.txt".as_bytes()];
+        assert!(case_conflicts(&[], pair, &[], 3, false).is_empty());
+    }
+
+    /// Every code point (alone and as `A<c>Σ` and `Σ<c>`, exercising the final-sigma context) against
+    /// `str.lower()` of the pc462 oracles, when they are present (skipped on machines without them).
+    #[test]
+    fn lower_table_matches_the_oracle() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/oracle");
+        for py in ["pc462-py312/bin/python", "pc462-py313/bin/python"] {
+            let exe = root.join(py);
+            if !exe.exists() {
+                continue;
+            }
+            let script = "import sys\nw=sys.stdout.buffer.write\nfor cp in range(0x110000):\n    if 0xd800<=cp<0xe000: continue\n    c=chr(cp)\n    w((' '.join(s.encode('utf-8').hex() for s in (c.lower(), ('A'+c+'\\u03a3').lower(), ('\\u03a3'+c).lower()))+'\\n').encode())\n";
+            let out = std::process::Command::new(&exe).args(["-I", "-c", script]).output().unwrap();
+            assert!(out.status.success());
+            let mut lines = out.stdout.split(|&b| b == b'\n');
+            for cp in (0_u32..0x11_0000).filter(|cp| !(0xD800..0xE000).contains(cp)) {
+                let c = char::from_u32(cp).unwrap();
+                let line = lines.next().unwrap();
+                let text = std::str::from_utf8(line).unwrap();
+                let mut parts = text.split(' ').map(|h| {
+                    (0..h.len() / 2).map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap()).collect::<Vec<u8>>()
+                });
+                let alone = c.to_string();
+                assert_eq!(py_lower(alone.as_bytes()), parts.next().unwrap(), "{py} U+{cp:04X}");
+                let ctx = format!("A{c}\u{3A3}");
+                assert_eq!(py_lower(ctx.as_bytes()), parts.next().unwrap(), "{py} A U+{cp:04X} SIGMA");
+                let ctx = format!("\u{3A3}{c}");
+                assert_eq!(py_lower(ctx.as_bytes()), parts.next().unwrap(), "{py} SIGMA U+{cp:04X}");
+            }
+        }
     }
 }

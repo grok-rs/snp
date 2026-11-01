@@ -16,6 +16,7 @@ pub(crate) mod check_symlinks;
 pub(crate) mod destroyed_symlinks;
 pub(crate) mod file_contents_sorter;
 pub mod kernels;
+mod lower_table;
 pub(crate) mod pretty_format_json;
 pub(crate) mod requirements_txt_fixer;
 pub(crate) mod util;

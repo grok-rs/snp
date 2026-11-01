@@ -20,6 +20,7 @@ use snp_hooks_data::Epoch;
 use snp_pyparsers::CheckError;
 use snp_pyparsers::json::{DumpOpts, PyMinor};
 
+use super::kernels;
 use super::util::{bytes_of, str_of, text_read, text_write_bytes};
 use crate::framework::{
     self, FileStep, PyOut, files_positional, store, store_true, with_default, with_help,
@@ -112,91 +113,6 @@ fn first_position(text: &[u8]) -> Option<usize> {
     digits.parse().ok()
 }
 
-/// The line index and in-line character offset of character `p` of `lines`.
-fn locate(lines: &[&str], p: usize) -> Option<(usize, usize)> {
-    let mut seen = 0_usize;
-    for (i, l) in lines.iter().enumerate() {
-        let n = l.chars().count();
-        if p < seen.saturating_add(n) {
-            return Some((i, p.saturating_sub(seen)));
-        }
-        seen = seen.saturating_add(n);
-    }
-    None
-}
-
-/// The `(start, count)` of one side of a unified-diff hunk range (`difflib._format_range_unified`).
-fn parse_range(r: &str) -> (usize, usize) {
-    let (start, len): (usize, usize) = match r.split_once(',') {
-        Some((s, l)) => (s.parse().unwrap_or(0), l.parse().unwrap_or(0)),
-        None => (r.parse().unwrap_or(0), 1),
-    };
-    let start0 = if len == 0 {
-        start
-    } else {
-        start.saturating_sub(1)
-    };
-    (start0, len)
-}
-
-/// The character position in `diff` (the `unified_diff(a, b)` text) where line `line` of `b`, character
-/// `offset`, appears as an added line: walks the hunks knowing each line's content.
-fn diff_position(diff: &str, a: &[&str], b: &[&str], line: usize, offset: usize) -> Option<usize> {
-    let mut rest = diff;
-    let mut pos = 0_usize;
-    let take = |rest: &mut &str, n_chars: usize, pos: &mut usize| {
-        let byte = rest
-            .char_indices()
-            .nth(n_chars)
-            .map_or(rest.len(), |(i, _)| i);
-        *rest = rest.get(byte..).unwrap_or_default();
-        *pos = pos.saturating_add(n_chars);
-    };
-    // `--- f\n+++ f\n`.
-    for _ in 0..2 {
-        let n = rest.find('\n')?;
-        let chars = rest.get(..=n)?.chars().count();
-        take(&mut rest, chars, &mut pos);
-    }
-    while rest.starts_with("@@ -") {
-        let n = rest.find('\n')?;
-        let header = rest.get(..n)?;
-        let mut parts = header.split(' ');
-        let ra = parts.nth(1)?.strip_prefix('-')?;
-        let rb = parts.next()?.strip_prefix('+')?;
-        let (mut ai, alen) = parse_range(ra);
-        let (mut bi, blen) = parse_range(rb);
-        let (aend, bend) = (ai.saturating_add(alen), bi.saturating_add(blen));
-        let chars = rest.get(..=n)?.chars().count();
-        take(&mut rest, chars, &mut pos);
-        while ai < aend || bi < bend {
-            let prefix = rest.chars().next()?;
-            take(&mut rest, 1, &mut pos);
-            let content = match prefix {
-                ' ' => {
-                    ai = ai.saturating_add(1);
-                    bi = bi.saturating_add(1);
-                    a.get(ai.saturating_sub(1))?
-                }
-                '-' => {
-                    ai = ai.saturating_add(1);
-                    a.get(ai.saturating_sub(1))?
-                }
-                '+' => {
-                    if bi == line {
-                        return Some(pos.saturating_add(offset));
-                    }
-                    bi = bi.saturating_add(1);
-                    b.get(bi.saturating_sub(1))?
-                }
-                _ => return None,
-            };
-            take(&mut rest, content.chars().count(), &mut pos);
-        }
-    }
-    None
-}
-
 /// What a `UnicodeEncodeError` from the encoder means for the hook: the pretty text holds a lone surrogate at the
 /// position `exc` names. Returns the exception as Python raises it at its encode point.
 fn encode_crash(
@@ -206,29 +122,13 @@ fn encode_crash(
     name: &OsStr,
     windows_write: Option<bool>,
 ) -> PyExc {
-    let Some(at) = first_position(&exc.text) else {
-        return exc.clone();
-    };
-    // The same text with each lone surrogate as U+FFFD: lines and positions are unchanged.
-    let pretty = snp_pyparsers::json::loads(contents.as_bytes(), MINOR)
-        .map(|v| snp_pyparsers::json::dumps_pretty(&v, opts))
-        .unwrap_or_default();
-    let delta = if let Some(windows) = windows_write {
-        // `open(f, 'w').write(pretty)`: on Windows every `\n` before the surrogate became `\r\n` first.
-        if windows {
-            pretty.chars().take(at).filter(|&c| c == '\n').count()
-        } else {
-            0
-        }
-    } else {
-        // `get_diff(contents, pretty, f).encode()`.
-        let src: Vec<&str> = snp_pycompat::text::splitlines_keepends(contents).collect();
-        let dst: Vec<&str> = snp_pycompat::text::splitlines_keepends(&pretty).collect();
+    // The exact pretty text (lone surrogates kept) gives the encode position; `at` is its index in that text.
+    let shifted = first_position(&exc.text).and_then(|at| {
         let file = str_of(name);
-        let diff = snp_pyparsers::difflib::unified_diff(&src, &dst, &file, &file);
-        locate(&dst, at)
-            .and_then(|(l, o)| diff_position(&diff, &src, &dst, l, o))
-            .map_or(0, |d| d.saturating_sub(at))
+        kernels::pretty_json_crash_position(contents, opts, MINOR, &file, windows_write)?.checked_sub(at)
+    });
+    let Some(delta) = shifted else {
+        return exc.clone();
     };
     PyExc::new(exc.ty.clone(), shift_positions(&exc.text, delta))
 }
@@ -379,17 +279,35 @@ mod tests {
             b"x in position 6-7: y"
         );
         assert_eq!(first_position(b"c in position 12: s"), Some(12));
-        assert_eq!(parse_range("1,3"), (0, 3));
-        assert_eq!(parse_range("4"), (3, 1));
-        assert_eq!(parse_range("0,0"), (0, 0));
     }
 
+    fn opts(indent: &str, sort_keys: bool) -> DumpOpts {
+        DumpOpts {
+            indent: indent.to_owned(),
+            ensure_ascii: false,
+            sort_keys,
+            top_keys: Vec::new(),
+        }
+    }
+
+    /// Keys differing only by lone surrogates, or a lone surrogate next to a literal U+FFFD, stay distinct keys
+    /// (Python positions verified against the v6.0.0 oracle with the file `a.json`: 73, 90, 148).
     #[test]
-    fn diff_walk() {
-        let a = ["{\"a\":\"x\"}"];
-        let b = ["{\n", "  \"a\": \"\u{fffd}\"\n", "}\n"];
-        let diff = snp_pyparsers::difflib::unified_diff(&a, &b, "f", "f");
-        let at = diff_position(&diff, &a, &b, 1, 8).unwrap();
-        assert_eq!(diff.chars().nth(at), Some('\u{fffd}'));
+    fn crash_positions_keep_surrogate_keys_apart() {
+        let o = opts("2", false);
+        let pos = |c: &str| kernels::pretty_json_crash_position(c, &o, MINOR, "a.json", None);
+        assert_eq!(pos("{\"\u{fffd}\":1,\"\\ud800\":2}"), Some(73));
+        assert_eq!(pos("{\"\u{fffd}\":1,\"x\":0,\"\\ud800\":2}"), Some(90));
+        assert_eq!(
+            pos("{\"\u{e9}\":1,\"e\":2,\"\u{1f600}\":3,\"\u{ffff}\":4,\"\\ud800\":5,\"\\udc00\":6,\"A\":7,\"a\":8}"),
+            Some(148)
+        );
+        let text = kernels::pretty_json_text("{\"\\ud800\":\"\\ud83d\\ude00\\u007f\\u0001\"}", &opts("\t", true), MINOR).unwrap();
+        let want: Vec<u32> = "{\n\t\"\u{fffd}\": \"\u{1f600}\u{7f}\\u0001\"\n}\n"
+            .chars()
+            .map(|c| if c == '\u{fffd}' { 0xD800 } else { u32::from(c) })
+            .collect();
+        assert_eq!(text, want);
+        assert_eq!(kernels::pretty_json_crash_position("[1]", &o, MINOR, "f", None), None);
     }
 }

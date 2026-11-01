@@ -31,11 +31,35 @@
    "files": {},
    "out": "Case-insensitivity conflict found: Bar\nCase-insensitivity conflict found: Foo.txt\nCase-insensitivity conflict found: bar\nCase-insensitivity conflict found: foo.txt\n"
   },
+  "ccc-post-15-1-astral": {
+   "code": 0,
+   "crashed": false,
+   "files": {},
+   "out": ""
+  },
+  "ccc-post-15-1-dirs": {
+   "code": 0,
+   "crashed": false,
+   "files": {},
+   "out": ""
+  },
+  "ccc-post-15-1-files": {
+   "code": 0,
+   "crashed": false,
+   "files": {},
+   "out": ""
+  },
   "ccc-quotepath-false": {
    "code": 1,
    "crashed": false,
    "files": {},
    "out": "Case-insensitivity conflict found: \u00c3\u0084.txt\nCase-insensitivity conflict found: \u00c3\u00a4.txt\n"
+  },
+  "ccc-sigma-final": {
+   "code": 1,
+   "crashed": false,
+   "files": {},
+   "out": "Case-insensitivity conflict found: A\u00ce\u00a3\nCase-insensitivity conflict found: A\u00ce\u00a3.x\nCase-insensitivity conflict found: a\u00cf\u0082\nCase-insensitivity conflict found: a\u00cf\u0083.x\n"
   },
   "ccc-staged": {
    "code": 1,
@@ -344,6 +368,62 @@
     "a.json": "{\n  \"a\": 1,\n  \"b\": 2,\n  \"c\": 3,\n  \"d\": 4,\n  \"e\": 5,\n  \"f\": 6,\n    \"g\": 7,\n  \"h\": 8\n}"
    },
    "out": "--- a.json\n+++ a.json\n@@ -5,6 +5,6 @@\n   \"d\": 4,\n   \"e\": 5,\n   \"f\": 6,\n-    \"g\": 7,\n+  \"g\": 7,\n   \"h\": 8\n-}+}\n"
+  },
+  "pfj-surrogate-key-vs-fffd": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.json": "{\"\u00ef\u00bf\u00bd\":1,\"\\ud800\":2}"
+   },
+   "out": "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 73: surrogates not allowed\n"
+  },
+  "pfj-surrogate-key-vs-fffd-middle": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.json": "{\"\u00ef\u00bf\u00bd\":1,\"x\":0,\"\\ud800\":2}"
+   },
+   "out": "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 90: surrogates not allowed\n"
+  },
+  "pfj-surrogate-key-vs-fffd-middle-sorted": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.json": "{\"\u00ef\u00bf\u00bd\":1,\"x\":0,\"\\ud800\":2}"
+   },
+   "out": "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 79: surrogates not allowed\n"
+  },
+  "pfj-surrogate-key-vs-fffd-sorted": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.json": "{\"\u00ef\u00bf\u00bd\":1,\"\\ud800\":2}"
+   },
+   "out": "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 62: surrogates not allowed\n"
+  },
+  "pfj-surrogate-keys-autofix-indent": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.json": ""
+   },
+   "out": "Fixing file a.json\nUnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 25: surrogates not allowed\n"
+  },
+  "pfj-surrogate-keys-mixed": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.json": "{\"\u00c3\u00a9\":1,\"e\":2,\"\u00f0\u009f\u0098\u0080\":3,\"\u00ef\u00bf\u00bf\":4,\"\\ud800\":5,\"\\udc00\":6,\"A\":7,\"a\":8}"
+   },
+   "out": "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 148: surrogates not allowed\n"
+  },
+  "pfj-surrogate-keys-mixed-sorted": {
+   "code": 1,
+   "crashed": true,
+   "files": {
+    "a.json": "{\"\u00c3\u00a9\":1,\"e\":2,\"\u00f0\u009f\u0098\u0080\":3,\"\u00ef\u00bf\u00bf\":4,\"\\ud800\":5,\"\\udc00\":6,\"A\":7,\"a\":8}"
+   },
+   "out": "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 148: surrogates not allowed\n"
   },
   "pfj-top-keys-no-sort": {
    "code": 1,
