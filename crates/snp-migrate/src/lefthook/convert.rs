@@ -522,7 +522,7 @@ fn entry_rules(i: &EntryIn<'_>, matcher: Matcher) -> EntryOut {
         let mut notes = Vec::new();
         let body = shell::replace_sh(i.cmd, &occs, |o| match &o.tpl {
             t if t.is_file_list() => "\"$@\"".to_owned(),
-            Tpl::Arg(n) => arg_text(*n, &mut notes),
+            Tpl::Arg(n) => unquote_in_dq(i.cmd, o, arg_text(*n, &mut notes)),
             t => t.text(),
         });
         out.notes.extend(notes);
@@ -561,7 +561,7 @@ fn entry_rules(i: &EntryIn<'_>, matcher: Matcher) -> EntryOut {
             "\"$@\"".to_owned()
         } else {
             match &o.tpl {
-                Tpl::Arg(n) => arg_text(*n, &mut notes),
+                Tpl::Arg(n) => unquote_in_dq(i.cmd, o, arg_text(*n, &mut notes)),
                 t => t.text(),
             }
         }
@@ -569,6 +569,16 @@ fn entry_rules(i: &EntryIn<'_>, matcher: Matcher) -> EntryOut {
     out.notes.extend(notes);
     out.entry = shell::wrapper(&format!("{prefix}{body}"));
     out
+}
+
+/// A positional value (`"$VAR"`, or several for `{0}`) written inside an existing double-quoted string: without its
+/// own quotes, which would end and reopen the string and leave the value unquoted (field-split).
+fn unquote_in_dq(cmd: &str, o: &Occ, value: String) -> String {
+    if shell::in_double_quotes(cmd, o.start) {
+        value.replace('"', "")
+    } else {
+        value
+    }
 }
 
 /// A lefthook condition as snp sees it.
@@ -1247,10 +1257,14 @@ fn convert_leaf(
     }
     if j.interactive {
         out.require_serial = true;
-        notes.push((
-            Level::Lossy,
-            "interactive (TTY passthrough) is not supported yet; dropped".to_owned(),
-        ));
+        if portable {
+            notes.push((
+                Level::Lossy,
+                "interactive (TTY passthrough) is not supported yet; dropped".to_owned(),
+            ));
+        } else {
+            out.interactive = true;
+        }
     }
     if j.stage_fixed {
         if stage != "pre-commit" {

@@ -236,6 +236,37 @@ pub(crate) fn scan(text: &str) -> Vec<Occ> {
     out
 }
 
+/// Whether byte `pos` of the shell text `s` is inside a double-quoted string (`"…"`; backslash escapes and
+/// single-quoted strings are honoured, command substitutions are not tracked). A positional template there is
+/// substituted without its own quotes: `test -n "{2}"` becomes `test -n "$PRE_COMMIT_COMMIT_MSG_SOURCE"`.
+pub(crate) fn in_double_quotes(s: &str, pos: usize) -> bool {
+    #[derive(PartialEq)]
+    enum Q {
+        No,
+        Single,
+        Double,
+    }
+    let mut q = Q::No;
+    let mut escaped = false;
+    for b in s.as_bytes().iter().take(pos) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        q = match (&q, *b) {
+            (Q::No | Q::Double, b'\\') => {
+                escaped = true;
+                continue;
+            }
+            (Q::No, b'\'') => Q::Single,
+            (Q::No, b'"') => Q::Double,
+            (Q::Single, b'\'') | (Q::Double, b'"') => Q::No,
+            _ => continue,
+        };
+    }
+    q == Q::Double
+}
+
 /// `s` with each occurrence replaced by `f(occ)` (occurrences from [`scan`] of the same string).
 pub(crate) fn replace(s: &str, occs: &[Occ], mut f: impl FnMut(&Occ) -> String) -> String {
     let mut out = String::new();
@@ -290,6 +321,16 @@ pub(crate) fn inline_templates(s: &str, templates: &[(String, String)], job_name
 mod tests {
     use super::*;
     use std::fmt::Write as _;
+
+    #[test]
+    fn double_quote_context() {
+        let s = r#"test -n "{2}" || x '"{2}"' "a\"{2}" {2}"#;
+        let at = |n: usize| s.match_indices("{2}").nth(n).map(|(i, _)| i).unwrap();
+        assert!(in_double_quotes(s, at(0)));
+        assert!(!in_double_quotes(s, at(1)), "inside single quotes");
+        assert!(in_double_quotes(s, at(2)), "after an escaped quote");
+        assert!(!in_double_quotes(s, at(3)));
+    }
 
     #[test]
     fn quoting() {
