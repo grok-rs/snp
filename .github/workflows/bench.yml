@@ -1,0 +1,209 @@
+# Performance and memory gates (WP-36; ARCHITECTURE §12.3, ADR-043, ADR-071, ADR-079). Owned by WP-36.
+#
+# * micro:  criterion micro-benches (`cargo bench -p snp`) + `cargo xtask bench gate --micro` (the exact W1/W2
+#           thresholds; the perf-smoke tests of ci.yml only catch a 3x regression).
+# * e2e:    hyperfine scenarios B1-B12 of snp (dist) vs pre-commit 4.6.2 (pc462-py312) and prek 0.5.5 on the Linux
+#           reference runner. Pull requests compare against the base commit built on the same runner and get a PR
+#           comment; main and the nightly compare against the JSON-lines history and append to it. The nightly
+#           also enforces the syscall ceiling (`strace -f -c`, B1 <= 64) and the B3 allocation budget (dhat).
+# * musl:   B3/B4/B6/B12 of the musl artifact with the system allocator and with mimalloc (ADR-079); the adopted
+#           allocator (bench/budgets.toml [musl]) is held to the never-slower-than-prek rule.
+#
+# The run pipeline (`snp run`, WP-32) is not merged yet: BENCH_SCENARIOS lists the scenarios snp can run today
+# (B1). WP-32 widens it to the full set (B1,B2,...,B12u) when it merges.
+name: bench
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "deps.lock"
+      - "bench/**"
+      - "xtask/src/tasks/bench.rs"
+      - ".github/workflows/bench.yml"
+  schedule:
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+  BENCH_SCENARIOS: B1
+  MUSL_SCENARIOS: B1
+
+defaults:
+  run:
+    shell: bash
+    working-directory: snp
+
+jobs:
+  micro:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: snp, key: bench-micro }
+      - name: criterion micro-benches
+        run: >-
+          cargo bench -p snp --locked
+          --bench argparse_hook_impl --bench len_cjk --bench pyre_kinds
+          --bench shuffle_partition --bench tagging_tiers --bench yaml_manifest_load
+          -- --noplot
+      - name: micro thresholds
+        run: cargo xtask bench gate --micro
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: criterion
+          path: snp/target/criterion
+          retention-days: 14
+
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: snp, key: bench-e2e }
+      - uses: astral-sh/setup-uv@v6
+      - name: strace
+        if: github.event_name == 'schedule'
+        working-directory: .
+        run: sudo apt-get update -q && sudo apt-get install -yq strace
+      - run: cargo xtask oracle install
+      - name: Bench history
+        uses: actions/cache/restore@v4
+        with:
+          path: snp/bench/history
+          key: bench-history-${{ github.run_id }}
+          restore-keys: bench-history-
+      - run: cargo xtask bench setup --scenarios "$BENCH_SCENARIOS"
+      # Pull requests: the base commit's snp, built and measured on this runner, is the baseline.
+      - name: Base commit
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: snp-base
+      - name: Measure the base commit
+        if: github.event_name == 'pull_request'
+        run: |
+          cargo build --manifest-path ../snp-base/Cargo.toml --profile dist --locked -p snp --bin snp \
+            --target-dir target/bench/base-target
+          cargo xtask bench run --scenarios "$BENCH_SCENARIOS" --tools snp \
+            --snp target/bench/base-target/dist/snp --label base
+      - name: Measure
+        run: |
+          extra=()
+          if [ "${{ github.event_name }}" = schedule ]; then extra=(--syscalls --dhat); fi
+          cargo xtask bench run --scenarios "$BENCH_SCENARIOS" --label current "${extra[@]}"
+      - name: Gate
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            cargo xtask bench gate --baseline target/bench/results/base.json --comment target/bench/comment.md
+          else
+            cargo xtask bench gate --comment target/bench/comment.md --record
+          fi
+      - name: Job summary
+        if: always()
+        run: if [ -f target/bench/comment.md ]; then cat target/bench/comment.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: PR comment
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          [ -f target/bench/comment.md ] || exit 0
+          gh pr comment "$PR" --body-file target/bench/comment.md --edit-last \
+            || gh pr comment "$PR" --body-file target/bench/comment.md
+      - name: Save the bench history
+        if: success() && github.event_name != 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: snp/bench/history
+          key: bench-history-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-e2e
+          path: |
+            snp/target/bench/results
+            snp/target/bench/comment.md
+            snp/bench/history
+          retention-days: 30
+
+  musl:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install && rustup target add x86_64-unknown-linux-musl
+      - name: musl toolchain
+        working-directory: .
+        run: sudo apt-get update -q && sudo apt-get install -yq musl-tools
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: snp, key: bench-musl }
+      - uses: astral-sh/setup-uv@v6
+      - run: cargo xtask oracle install
+      - name: Bench history
+        uses: actions/cache/restore@v4
+        with:
+          path: snp/bench/history
+          key: bench-history-musl-${{ github.run_id }}
+          restore-keys: bench-history-musl-
+      - run: cargo xtask bench setup --scenarios "$MUSL_SCENARIOS" --target x86_64-unknown-linux-musl
+      - name: Measure both allocators
+        run: |
+          for alloc in system mimalloc; do
+            cargo xtask bench run --scenarios "$MUSL_SCENARIOS" --target x86_64-unknown-linux-musl \
+              --allocator "$alloc" --label "musl-$alloc"
+          done
+      - name: Allocator effect (ADR-079)
+        run: |
+          cargo xtask bench gate --compare target/bench/results/musl-system.json target/bench/results/musl-mimalloc.json \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Gate
+        run: |
+          for alloc in system mimalloc; do
+            cargo xtask bench gate --current "target/bench/results/musl-$alloc.json" --record
+          done
+      - name: Save the bench history
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: snp/bench/history
+          key: bench-history-musl-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-musl
+          path: snp/target/bench/results
+          retention-days: 30
