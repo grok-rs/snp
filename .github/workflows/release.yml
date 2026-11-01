@@ -298,6 +298,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { name: cargo-dist-cache, path: ~/.cargo/bin/ }
       - run: chmod +x ~/.cargo/bin/dist
+      - name: Install cargo-cyclonedx
+        uses: taiki-e/install-action@v2
+        with: { tool: cargo-cyclonedx }
       - uses: actions/download-artifact@v4
         with:
           pattern: artifacts-*
@@ -315,6 +318,15 @@ jobs:
           jq --raw-output ".upload_files[]" dist-manifest.json | sed -E '/^(\/|[A-Za-z]:)/! s|^|snp/|' >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
           cp dist-manifest.json "$BUILD_MANIFEST_NAME"
+      # dist lists the SBOM as a global artifact (target/distrib/snp.cdx.xml) but does not write it: its own CI template
+      # runs cargo-cyclonedx in this job. cargo-cyclonedx writes one SBOM per workspace member next to its manifest;
+      # only the binary package's is released, and it covers the dependencies of every target.
+      - name: CycloneDX SBOM
+        run: |
+          set -euo pipefail
+          cargo cyclonedx --format xml --target all --manifest-path crates/snp/Cargo.toml
+          mv crates/snp/snp.cdx.xml target/distrib/snp.cdx.xml
+          find . -path ./target -prune -o -name '*.cdx.xml' -type f -exec rm -f '{}' +
       # every target of the plan: all eight for a release, without the arm64 Linux/Windows ones for a private dry run
       - name: Every target has an archive, a checksum and an SBOM
         env:
@@ -330,8 +342,7 @@ jobs:
             test -f "target/distrib/$a.sha256" || { echo "::error::missing $a.sha256"; exit 1; }
           done
           ls target/distrib
-          # cargo-cyclonedx writes the SBOM next to the package manifest (crates/snp/snp.cdx.xml), not into
-          # target/distrib: take its path from the global manifest's upload list.
+          # the SBOM's path comes from the global manifest's upload list (the step above writes it there)
           sbom="$(jq --raw-output '.upload_files[]' dist-manifest.json | grep -E '\.cdx\.xml$' | head -n 1)"
           [ -n "$sbom" ] && [ -f "$sbom" ] || { echo "::error::no CycloneDX SBOM (upload list: $sbom)"; exit 1; }
           test -f target/distrib/snp-installer.sh && test -f target/distrib/snp-installer.ps1
