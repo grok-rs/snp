@@ -182,7 +182,8 @@ jobs:
         with: { tool: cargo-fuzz }
       # The prebuilt cargo-fuzz is a musl binary and defaults `--target` to its own triple (sanitizers need the
       # glibc host target, which fuzz-run.sh looks under).
-      - run: cargo +nightly fuzz build --target "$(rustc +nightly -vV | sed -n 's/^host: //p')"
+      - run: |
+          cargo +nightly fuzz build --target "$(rustc +nightly -vV | sed -n 's/^host: //p')"
       - run: .github/scripts/fuzz-run.sh ${{ matrix.shard }} 10 300
       - uses: actions/upload-artifact@v4
         if: failure()

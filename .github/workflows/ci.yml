@@ -198,6 +198,7 @@ jobs:
       - name: Build every target
         # The prebuilt cargo-fuzz is a musl binary and defaults `--target` to its own triple (sanitizers need the
         # glibc host target, which fuzz-run.sh looks under).
-        run: cargo +nightly fuzz build --target "$(rustc +nightly -vV | sed -n 's/^host: //p')"
+        run: |
+          cargo +nightly fuzz build --target "$(rustc +nightly -vV | sed -n 's/^host: //p')"
       - name: Run this shard's targets for 60 s each
         run: .github/scripts/fuzz-run.sh ${{ matrix.shard }} 6 60
