@@ -1,6 +1,7 @@
 //! Integration tests: `snp migrate lefthook|builtin|upstream` through the binary (ARCHITECTURE §1.4.23, 05 §19.1,
 //! 09 §7.1). The conversions themselves are golden-tested in `crates/snp-migrate/tests`; these tests pin what the
-//! binary adds around them: where the result goes (`.pre-commit-config.yaml`, `-o FILE`, `-o -`), the report on
+//! binary adds around them: where the result goes (`.snp.yaml`, `.pre-commit-config.yaml` with `--portable`, `-o FILE`,
+//! `-o -`; ADR-087), the report on
 //! stderr, refusing to overwrite without `--force`, `--strict` writing nothing, the `--local` overlay file, the in-place
 //! builtin ⇄ upstream rewrite and the `--install` sequence.
 //!
@@ -72,10 +73,31 @@ fn writes_the_worked_example_and_reports_on_stderr() {
     assert_eq!(out.code, 0, "{}", text(&out.stderr));
     assert_eq!(out.stdout, b"");
     assert_eq!(text(&out.stderr), golden("worked_example.snp.report.txt"));
-    let written = std::fs::read_to_string(dir.join(".pre-commit-config.yaml")).unwrap();
+    // snp brand: `.snp.yaml` by default (ADR-087)
+    let written = std::fs::read_to_string(dir.join(".snp.yaml")).unwrap();
     assert_eq!(written, golden("worked_example.snp.yaml"));
+    assert!(!dir.join(".pre-commit-config.yaml").exists());
     // The source config is left alone.
     assert!(dir.join("lefthook.yml").is_file());
+    // and `snp run` finds it without `-c`
+    let out = env.snp(&dir).args(["config", "dump"]).output();
+    assert_eq!(out.code, 0, "{}", text(&out.stderr));
+}
+
+#[test]
+fn portable_writes_pre_commit_config() {
+    let env = env();
+    let dir = fixture_repo(&env, "worked_example");
+    let out = env
+        .snp(&dir)
+        .args(["migrate", "lefthook", "--portable"])
+        .output();
+    assert_eq!(out.code, 0, "{}", text(&out.stderr));
+    assert_eq!(
+        std::fs::read_to_string(dir.join(".pre-commit-config.yaml")).unwrap(),
+        golden("worked_example.portable.yaml")
+    );
+    assert!(!dir.join(".snp.yaml").exists());
 }
 
 #[test]
@@ -135,6 +157,7 @@ fn strict_exits_2_and_writes_nothing() {
         text(&out.stderr)
     );
     assert!(!dir.join(".pre-commit-config.yaml").exists());
+    assert!(!dir.join(".snp.yaml").exists());
     // A faithful conversion passes --strict.
     let dir = fixture_repo(&env, "many_extends_levels");
     let out = env
@@ -155,13 +178,38 @@ fn local_writes_the_overlay() {
     assert_eq!(out.code, 0, "{}", text(&out.stderr));
     assert_eq!(text(&out.stderr), golden("features.snp.local.report.txt"));
     assert_eq!(
-        std::fs::read_to_string(dir.join(".pre-commit-config.yaml")).unwrap(),
+        std::fs::read_to_string(dir.join(".snp.yaml")).unwrap(),
         golden("features.snp.local.yaml")
     );
+    // the overlay name matches the config's (`.snp.yaml` ⇒ `.snp.local.yaml`, ADR-087)
+    assert_eq!(
+        std::fs::read_to_string(dir.join(".snp.local.yaml")).unwrap(),
+        golden("features.snp.local.overlay.yaml")
+    );
+    assert!(!dir.join(".pre-commit-config.local.yaml").exists());
+}
+
+#[test]
+fn local_overlay_follows_an_explicit_output_name() {
+    let env = env();
+    let dir = fixture_repo(&env, "features");
+    let out = env
+        .snp(&dir)
+        .args([
+            "migrate",
+            "lefthook",
+            "--local",
+            "-o",
+            ".pre-commit-config.yaml",
+        ])
+        .output();
+    assert_eq!(out.code, 0, "{}", text(&out.stderr));
     assert_eq!(
         std::fs::read_to_string(dir.join(".pre-commit-config.local.yaml")).unwrap(),
         golden("features.snp.local.overlay.yaml")
     );
+    assert!(!dir.join(".snp.local.yaml").exists());
+    assert!(!dir.join(".snp.yaml").exists());
 }
 
 #[test]
@@ -181,6 +229,7 @@ fn load_errors_exit_1() {
         text(&out.stderr)
     );
     assert!(!dir.join(".pre-commit-config.yaml").exists());
+    assert!(!dir.join(".snp.yaml").exists());
 }
 
 #[test]
@@ -206,6 +255,32 @@ fn builtin_and_upstream_rewrite_in_place() {
         .output();
     assert_eq!(out.code, 0, "{}", text(&out.stderr));
     assert_eq!(std::fs::read_to_string(&cfg).unwrap(), upstream);
+}
+
+#[test]
+fn builtin_rewrites_the_discovered_snp_config() {
+    let env = env();
+    let upstream = "repos:\n-   repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v6.0.0\n    hooks:\n    -   id: check-yaml\n";
+    let dir = env
+        .git_repo("builtin-snp")
+        .file(".snp.yaml", upstream.as_bytes())
+        .file("sub/x.txt", b"x\n")
+        .stage_all()
+        .commit("x")
+        .build();
+    // from a subdirectory: the root's `.snp.yaml` (ADR-087)
+    let out = env
+        .snp(&dir.join("sub"))
+        .args(["migrate", "builtin"])
+        .output();
+    assert_eq!(out.code, 0, "{}", text(&out.stderr));
+    assert!(
+        std::fs::read_to_string(dir.join(".snp.yaml"))
+            .unwrap()
+            .contains("-   repo: builtin\n"),
+    );
+    assert!(!dir.join(".pre-commit-config.yaml").exists());
+    assert!(!dir.join("sub/.pre-commit-config.yaml").exists());
 }
 
 /// `--install` (ARCHITECTURE §1.4.23): lefthook's shim is removed and its `.old` restored, `.git/info/lefthook*` is
@@ -238,7 +313,7 @@ fn install_replaces_lefthook_hooks() {
         .args(["migrate", "lefthook", "--install"])
         .output();
     assert_eq!(out.code, 0, "{}", text(&out.stderr));
-    assert!(dir.join(".pre-commit-config.yaml").is_file());
+    assert!(dir.join(".snp.yaml").is_file());
     assert!(!dir.join(".git/info/lefthook.checksum").exists());
     assert!(!dir.join(".git/info/lefthook-remotes").exists());
     assert!(!hooks.join("pre-commit.old").exists());
@@ -249,6 +324,7 @@ fn install_replaces_lefthook_hooks() {
     for stage in ["pre-commit", "pre-push", "commit-msg"] {
         let hook = std::fs::read_to_string(hooks.join(stage)).unwrap();
         assert!(!hook.contains("LEFTHOOK"), "{stage}: {hook}");
+        assert!(hook.contains("--config=.snp.yaml"), "{stage}: {hook}");
     }
     assert!(!hooks.join("pre-push.legacy").exists());
 }

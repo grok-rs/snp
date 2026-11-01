@@ -210,7 +210,7 @@ fn run_parallel(
 /// remote) is that repository's `[{repo}] <CalledProcessError block>` line with exit 1; the others are still updated
 /// and written, where pre-commit aborts everything with exit 3.
 pub fn autoupdate(a: &AutoupdateArgs, cx: &CmdCtx<'_>) -> Result<i32, Failure> {
-    let f = frame::git_frame(cx, &a.config)?;
+    let f = frame::git_frame(cx, &a.config, true)?;
     migrate_file(cx, &f.config_path, &f.config_display, f.root(), true)?;
     let regexes = RegexCache::default();
     let ext = frame::ext_mode(cx);

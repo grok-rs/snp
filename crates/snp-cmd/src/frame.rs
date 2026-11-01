@@ -11,6 +11,7 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use snp_cli::ConfigArg;
 use snp_config::{ConfigSource, ExtMode, LoadOpts};
 use snp_core::failure::Failure;
 use snp_core::failure::pyerr;
@@ -65,16 +66,29 @@ pub(crate) fn git_exe(cx: &CmdCtx<'_>) -> Result<Arc<GitExe>, Failure> {
 /// outside the repository becomes `../x.yaml`); a missing one is normalised by `relpath` against the root, which
 /// re-interprets it relative to the root (03 §1.2 item 4). `relpath` across Windows drives (pre-commit's
 /// `ValueError`) keeps the absolute path.
-pub(crate) fn git_frame(cx: &CmdCtx<'_>, config: &OsStr) -> Result<Frame, Failure> {
-    frame_impl(cx, config, true)
+///
+/// Without `-c` the config is discovered in the root first (`.snp.yaml`, `.snp.yml`, `.pre-commit-config.yaml`;
+/// ADR-087), its stderr note printed once per run; `require` (the command cannot work without a config) also notes
+/// that none was found.
+pub(crate) fn git_frame(
+    cx: &CmdCtx<'_>,
+    config: &ConfigArg,
+    require: bool,
+) -> Result<Frame, Failure> {
+    frame_impl(cx, config, true, require)
 }
 
 /// [`git_frame`] without `mark_config_used` (read-only commands: `doctor`).
-pub(crate) fn git_frame_untracked(cx: &CmdCtx<'_>, config: &OsStr) -> Result<Frame, Failure> {
-    frame_impl(cx, config, false)
+pub(crate) fn git_frame_untracked(cx: &CmdCtx<'_>, config: &ConfigArg) -> Result<Frame, Failure> {
+    frame_impl(cx, config, false, false)
 }
 
-fn frame_impl(cx: &CmdCtx<'_>, config: &OsStr, track: bool) -> Result<Frame, Failure> {
+fn frame_impl(
+    cx: &CmdCtx<'_>,
+    config: &ConfigArg,
+    track: bool,
+    require: bool,
+) -> Result<Frame, Failure> {
     let exe = git_exe(cx)?;
     let (git, info) = Git::discover(
         Arc::clone(&exe),
@@ -83,7 +97,10 @@ fn frame_impl(cx: &CmdCtx<'_>, config: &OsStr, track: bool) -> Result<Frame, Fai
         Arc::clone(&cx.git_backend),
     )?;
     let git = git.with_brand(cx.brand);
-    let config_display = adjust_config(config, cx.cwd, &info.root)?;
+    let found =
+        snp_config::discover::discover(config.explicit(), cx.cwd, &info.root, cx.brand, cx.env)?;
+    found.note(cx.printer, require);
+    let config_display = adjust_config(&found.config, cx.cwd, &info.root)?;
     let config_path = info.root.join(&config_display);
     if track && let Ok(real) = snp_os::realpath::realpath_nonstrict(&config_path, &info.root) {
         cx.store.mark_config_used(&real, &info.root);

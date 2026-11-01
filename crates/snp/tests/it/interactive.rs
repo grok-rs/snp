@@ -414,7 +414,7 @@ fn a_migrated_commitizen_hook_prompts_during_git_commit() {
         .build();
     let migrated = env.snp(&dir).args(["migrate", "lefthook"]).output();
     assert_eq!(migrated.code, 0, "{}", text(&migrated.stderr));
-    let config = std::fs::read_to_string(dir.join(".pre-commit-config.yaml")).unwrap();
+    let config = std::fs::read_to_string(dir.join(".snp.yaml")).unwrap();
     assert!(config.contains("        interactive: true\n"), "{config}");
     assert!(
         config.contains("test -n \"$PRE_COMMIT_COMMIT_MSG_SOURCE\" || ./cz.sh"),
@@ -426,10 +426,7 @@ fn a_migrated_commitizen_hook_prompts_during_git_commit() {
         .output();
     assert_eq!(installed.code, 0, "{}", text(&installed.stderr));
     std::fs::write(dir.join("b.txt"), b"b\n").unwrap();
-    let added = env
-        .git(&dir)
-        .args(["add", "b.txt", ".pre-commit-config.yaml"])
-        .output();
+    let added = env.git(&dir).args(["add", "b.txt", ".snp.yaml"]).output();
     assert_eq!(added.code, 0);
     let Some(mut s) = env.git(&dir).args(["commit"]).session(false) else {
         eprintln!("skipped: util-linux `setsid --ctty` is not available");

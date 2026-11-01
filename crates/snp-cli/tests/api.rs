@@ -11,10 +11,10 @@ mod api {
 
     use snp_argparse::ParserSpec;
     use snp_cli::{
-        AutoupdateArgs, CacheAction, CacheArgs, Cli, CliOutcome, ColorArgs, ConfigArgs, ConfigCmd,
-        DoctorArgs, HazmatArgs, HazmatTool, HookImplArgs, InitTemplatedirArgs, InstallArgs,
-        InstallHooksArgs, ListArgs, MigrateArgs, RunArgs, RunExt, SelfArgs, Shell, StdinFormat,
-        TryRepoArgs, UninstallArgs, ValidateArgs,
+        AutoupdateArgs, CacheAction, CacheArgs, Cli, CliOutcome, ColorArgs, ConfigArg, ConfigArgs,
+        ConfigCmd, DoctorArgs, HazmatArgs, HazmatTool, HookImplArgs, InitTemplatedirArgs,
+        InstallArgs, InstallHooksArgs, ListArgs, MigrateArgs, RunArgs, RunExt, SelfArgs, Shell,
+        StdinFormat, TryRepoArgs, UninstallArgs, ValidateArgs,
     };
     use snp_core::brand::Brand;
     use snp_core::env::Env;
@@ -35,7 +35,7 @@ mod api {
     fn run_args() -> RunArgs {
         RunArgs {
             color: ColorSetting::Auto,
-            config: os(),
+            config: ConfigArg::given(os()),
             hooks: vec![os()],
             verbose: false,
             all_files: false,
@@ -120,7 +120,7 @@ mod api {
         };
         let config = ConfigArgs {
             color: ColorSetting::Always,
-            config: os(),
+            config: ConfigArg::given(os()),
         };
         let validate = ValidateArgs {
             color: ColorSetting::Auto,
@@ -137,7 +137,7 @@ mod api {
             }),
             Cli::HookImpl(HookImplArgs {
                 color: ColorSetting::Auto,
-                config: os(),
+                config: ConfigArg::given(os()),
                 hook_type: os(),
                 hook_dir: None,
                 skip_on_missing_config: false,
@@ -145,7 +145,7 @@ mod api {
             }),
             Cli::Install(InstallArgs {
                 color: ColorSetting::Auto,
-                config: os(),
+                config: ConfigArg::given(os()),
                 overwrite: false,
                 install_hooks: false,
                 hook_types: vec![HookType::PrePush],
@@ -154,25 +154,25 @@ mod api {
             }),
             Cli::Uninstall(UninstallArgs {
                 color: ColorSetting::Auto,
-                config: os(),
+                config: ConfigArg::given(os()),
                 hook_types: Vec::new(),
                 git_config_hooks: true,
             }),
             Cli::InstallHooks(InstallHooksArgs {
                 color: ColorSetting::Auto,
-                config: os(),
+                config: ConfigArg::given(os()),
                 with_fallback: false,
             }),
             Cli::InitTemplatedir(InitTemplatedirArgs {
                 color: ColorSetting::Auto,
-                config: os(),
+                config: ConfigArg::given(os()),
                 directory: os(),
                 no_allow_missing_config: false,
                 hook_types: Vec::new(),
             }),
             Cli::Autoupdate(AutoupdateArgs {
                 color: ColorSetting::Auto,
-                config: os(),
+                config: ConfigArg::given(os()),
                 bleeding_edge: false,
                 freeze: false,
                 repos: Vec::new(),
@@ -192,7 +192,7 @@ mod api {
                 },
             }),
             Cli::List(ListArgs {
-                config: os(),
+                config: ConfigArg::given(os()),
                 json: true,
                 stage: Some(Stage::Manual),
                 groups: Vec::new(),
@@ -200,7 +200,7 @@ mod api {
                 no_groups: Vec::new(),
             }),
             Cli::Config(ConfigCmd::Dump {
-                config: os(),
+                config: ConfigArg::given(os()),
                 json: false,
                 no_local_config: false,
             }),
@@ -218,13 +218,17 @@ mod api {
                 install: false,
                 force: false,
             }),
-            Cli::Migrate(MigrateArgs::Builtin { config: os() }),
-            Cli::Migrate(MigrateArgs::Upstream { config: os() }),
+            Cli::Migrate(MigrateArgs::Builtin {
+                config: ConfigArg::given(os()),
+            }),
+            Cli::Migrate(MigrateArgs::Upstream {
+                config: ConfigArg::given(os()),
+            }),
             Cli::Doctor(DoctorArgs {
                 fix: false,
                 fast_path: false,
                 stash: false,
-                config: os(),
+                config: ConfigArg::given(os()),
             }),
             Cli::SelfCmd(SelfArgs::AliasInstall {
                 dir: None,

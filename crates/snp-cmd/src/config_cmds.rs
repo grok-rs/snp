@@ -2,14 +2,18 @@
 //!
 //! Owner: WP-33.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
-use snp_cli::{ConfigArgs, ConfigCmd, ValidateArgs};
+use snp_cli::{ConfigArg, ConfigArgs, ConfigCmd, ValidateArgs};
+use snp_config::discover;
 use snp_config::validate::{self, FileKind};
 use snp_config::{ExtMode, SAMPLE_CONFIG, effective_dump, json_schema, load_config};
 use snp_config::{migrate, overlay};
+use snp_core::brand::Brand;
+use snp_core::env::Env;
 use snp_core::failure::Failure;
+use snp_core::output::DiagSink;
 use snp_pyre::RegexCache;
 
 use crate::CmdCtx;
@@ -108,12 +112,57 @@ pub fn read_config_for_rewrite(path: &Path, display: &OsStr) -> Result<Vec<u8>, 
     Ok(migrate::read_config(path, display)?)
 }
 
+/// `snp migrate lefthook`'s default output name: `.snp.yaml`, or `.pre-commit-config.yaml` with `--portable`
+/// (pre-commit must find it; ADR-087).
+pub fn migrate_output_name(portable: bool) -> &'static str {
+    if portable {
+        discover::PRE_COMMIT_CONFIG
+    } else {
+        ".snp.yaml"
+    }
+}
+
+/// The local overlay written next to `config` (`snp migrate lefthook --local`): `.snp.local.yaml` beside an
+/// `.snp.y[a]ml`, else `.pre-commit-config.local.yaml` (ADR-087).
+pub fn overlay_name(config: &Path) -> &'static str {
+    let [first, _] = discover::overlay_names(config);
+    first
+}
+
+/// The config `snp migrate builtin|upstream` rewrites: `-c` relative to `cwd`, else the config discovered in
+/// `root` (ADR-087; its note printed on `diag`), else `.pre-commit-config.yaml` in `cwd`. Returns the path and its
+/// display (relative to `cwd` when inside it).
+///
+/// # Errors
+///
+/// `FatalError` when both `.snp.yaml` and `.snp.yml` exist.
+pub fn rewrite_target(
+    config: &ConfigArg,
+    cwd: &Path,
+    root: &Path,
+    brand: Brand,
+    env: &Env,
+    diag: &dyn DiagSink,
+) -> Result<(PathBuf, OsString), Failure> {
+    if let Some(c) = config.explicit() {
+        return Ok((cwd.join(c), c.to_os_string()));
+    }
+    let found = discover::discover(None, cwd, root, brand, env)?;
+    found.note(diag, true);
+    let path = cwd.join(&found.config);
+    let display = match path.strip_prefix(cwd) {
+        Ok(rel) if found.chosen.is_some() => rel.as_os_str().to_os_string(),
+        _ => found.config,
+    };
+    Ok((path, display))
+}
+
 /// `pre-commit migrate-config`.
 ///
 /// A git command (`_adjust_args_and_chdir`, config tracking), then `migrate_config(args.config)` (not quiet);
 /// always 0 unless the config is invalid YAML (`InvalidConfigError`, exit 1).
 pub fn migrate_config(a: &ConfigArgs, cx: &CmdCtx<'_>) -> Result<i32, Failure> {
-    let f = frame::git_frame(cx, &a.config)?;
+    let f = frame::git_frame(cx, &a.config, true)?;
     migrate_file(cx, &f.config_path, &f.config_display, f.root(), false)?;
     Ok(0)
 }
@@ -162,7 +211,7 @@ pub fn config(a: &ConfigCmd, cx: &CmdCtx<'_>) -> Result<i32, Failure> {
             json,
             no_local_config,
         } => {
-            let f = frame::git_frame(cx, config)?;
+            let f = frame::git_frame(cx, config, true)?;
             let regexes = RegexCache::default();
             let ext = frame::ext_mode(cx);
             let o = frame::load_opts(cx, &regexes, ext);

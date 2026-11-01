@@ -5,6 +5,7 @@
 //! Owner: WP-21.
 
 mod convert;
+pub mod discover;
 mod dump;
 pub mod ext;
 mod items;

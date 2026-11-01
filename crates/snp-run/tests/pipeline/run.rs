@@ -493,7 +493,7 @@ fn t10_run_19_always_run_and_hook_verbose() {
     );
     h.stage("alternate_config.yaml");
     let mut a = args();
-    a.config = OsString::from("alternate_config.yaml");
+    a.config = snp_cli::ConfigArg::given("alternate_config.yaml");
     assert_eq!(h.run(a).code, 0);
 }
 

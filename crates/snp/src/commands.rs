@@ -8,12 +8,12 @@
 //!
 //! Owner: WP-33 (W0 skeleton by WP-00).
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use snp_cli::{Cli, DoctorArgs, InstallArgs, InstallHooksArgs, MigrateArgs, Shell};
+use snp_cli::{Cli, ConfigArg, DoctorArgs, InstallArgs, InstallHooksArgs, MigrateArgs, Shell};
 use snp_cmd::{CmdCtx, DoctorCheck, DoctorLine};
 use snp_core::clock::SystemClock;
 use snp_core::failure::Failure;
@@ -346,7 +346,7 @@ fn with_cmd_ctx(
 #[derive(Debug)]
 struct FastPathCheck<'a> {
     session: &'a Session,
-    config: OsString,
+    config: ConfigArg,
 }
 
 impl DoctorCheck for FastPathCheck<'_> {
@@ -505,7 +505,7 @@ fn migrate(a: &MigrateArgs, s: &Session) -> Result<i32, Failure> {
             let to_stdout = output.as_deref().is_some_and(|o| o == "-");
             let out_path = match output.as_deref() {
                 Some(o) if o != "-" => cwd.join(o),
-                _ => root.join(".pre-commit-config.yaml"),
+                _ => root.join(snp_cmd::migrate_output_name(*portable)),
             };
             let opts = snp_migrate::LefthookOpts {
                 root: root.clone(),
@@ -527,7 +527,7 @@ fn migrate(a: &MigrateArgs, s: &Session) -> Result<i32, Failure> {
                     let ov_path = out_path
                         .parent()
                         .unwrap_or(&root)
-                        .join(".pre-commit-config.local.yaml");
+                        .join(snp_cmd::overlay_name(&out_path));
                     write_output(&ov_path, ov.as_bytes(), *force)?;
                 }
             }
@@ -584,7 +584,7 @@ fn migrate_install(s: &Session, root: &Path, config: &Path) -> Result<i32, Failu
         }
         let args = InstallArgs {
             color: ColorSetting::Auto,
-            config: config.clone(),
+            config: ConfigArg::given(config.clone()),
             overwrite: false,
             install_hooks: false,
             hook_types: Vec::new(),
@@ -622,11 +622,18 @@ type Explain = fn(&[u8]) -> Result<Vec<String>, Failure>;
 /// `snp migrate builtin|upstream`: rewrite the config in place (atomically, mode kept).
 fn rewrite_config(
     s: &Session,
-    config: &OsStr,
+    config: &ConfigArg,
     convert: fn(&[u8]) -> Result<Vec<u8>, Failure>,
     explain: Option<Explain>,
 ) -> Result<i32, Failure> {
-    let path = s.cwd()?.join(config);
+    let root = if config.given {
+        PathBuf::new()
+    } else {
+        migrate_root(s, None)?
+    };
+    let (path, display) =
+        snp_cmd::rewrite_target(config, s.cwd()?, &root, s.brand, &s.env, &s.printer)?;
+    let config = display.as_os_str();
     // Never `fs::read`: `/dev/zero` or a FIFO named as the config would grow without bound (D-SEC-11).
     let bytes = snp_cmd::read_config_for_rewrite(&path, config)?;
     let new = convert(&bytes)?;

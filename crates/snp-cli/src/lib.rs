@@ -13,8 +13,8 @@ mod parse;
 mod specs;
 
 pub use args::{
-    AutoupdateArgs, CacheAction, CacheArgs, Cli, CliOutcome, ColorArgs, ConfigArgs, ConfigCmd,
-    DoctorArgs, HazmatArgs, HazmatTool, HookImplArgs, InitTemplatedirArgs, InstallArgs,
+    AutoupdateArgs, CacheAction, CacheArgs, Cli, CliOutcome, ColorArgs, ConfigArg, ConfigArgs,
+    ConfigCmd, DoctorArgs, HazmatArgs, HazmatTool, HookImplArgs, InitTemplatedirArgs, InstallArgs,
     InstallHooksArgs, ListArgs, MigrateArgs, RunArgs, RunExt, SelfArgs, Shell, StdinFormat,
     TryRepoArgs, UninstallArgs, ValidateArgs,
 };

@@ -8,6 +8,7 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use snp_cli::ConfigArg;
 use snp_config::overlay::{self, Overlay};
 use snp_config::{Config, ConfigSource, ExtMode, LoadOpts, RepoConfig};
 use snp_core::env::Env;
@@ -54,6 +55,26 @@ pub(crate) fn adjust_config(config: &OsStr, invocation_cwd: &Path, root: &Path) 
         // `os.path.relpath(config)` after the chdir: a relative value is relative to the root
         rebase_path(config, root, root)
     }
+}
+
+/// The config of a git command (§3.1 step 4): `-c` as given, else discovered in the root (`.snp.yaml`, `.snp.yml`,
+/// `.pre-commit-config.yaml`; ADR-087), with its stderr note once per run (`require`: the command needs a config,
+/// so "none found" is noted too), then [`adjust_config`].
+pub(crate) fn resolve_config(
+    cx: &RunCtx,
+    arg: &ConfigArg,
+    root: &Path,
+    require: bool,
+) -> Result<OsString, Failure> {
+    let d = snp_config::discover::discover(
+        arg.explicit(),
+        &cx.invocation_cwd,
+        root,
+        cx.brand,
+        &cx.env,
+    )?;
+    d.note(&*cx.printer, require);
+    Ok(adjust_config(&d.config, &cx.invocation_cwd, root))
 }
 
 /// `ConfigSource` for a root-relative (or absolute) config path.

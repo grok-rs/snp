@@ -25,7 +25,7 @@ use crate::select::GroupFilter;
 pub fn list(a: ListArgs, cx: &RunCtx) -> Result<i32, Failure> {
     let (git, info) = common::discover(cx)?;
     let root = info.root;
-    let config = common::adjust_config(&a.config, &cx.invocation_cwd, &root);
+    let config = common::resolve_config(cx, &a.config, &root, true)?;
     let src = common::config_source(&config, &root);
     common::mark_config_used(&cx.store, &src.path, &root);
     let buffered = Buffered::default();

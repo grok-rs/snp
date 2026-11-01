@@ -126,9 +126,9 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         }
     };
     let config = if inv.fixed_paths {
-        a.config.clone()
+        a.config.path.clone()
     } else {
-        common::adjust_config(&a.config, &cx.invocation_cwd, &root)
+        common::resolve_config(cx, &a.config, &root, true)?
     };
     let cli_files = match a.ext.stdin_files {
         Some(fmt) if cx.brand == snp_core::brand::Brand::Snp => {

@@ -12,8 +12,8 @@ use snp_core::stage::{HookType, Stage};
 use snp_core::{brand::Brand, env::Env};
 
 use crate::args::{
-    AutoupdateArgs, CacheAction, CacheArgs, Cli, CliOutcome, ColorArgs, ConfigArgs, ConfigCmd,
-    DoctorArgs, HazmatArgs, HazmatTool, HookImplArgs, InitTemplatedirArgs, InstallArgs,
+    AutoupdateArgs, CacheAction, CacheArgs, Cli, CliOutcome, ColorArgs, ConfigArg, ConfigArgs,
+    ConfigCmd, DoctorArgs, HazmatArgs, HazmatTool, HookImplArgs, InitTemplatedirArgs, InstallArgs,
     InstallHooksArgs, ListArgs, MigrateArgs, RunArgs, RunExt, SelfArgs, Shell, StdinFormat,
     TryRepoArgs, UninstallArgs, ValidateArgs,
 };
@@ -120,11 +120,12 @@ fn os(ns: &Namespace, dest: &str) -> OsString {
     ns.value(dest).map(OsStr::to_os_string).unwrap_or_default()
 }
 
-fn config(ns: &Namespace) -> OsString {
-    ns.value("config").map_or_else(
-        || OsString::from(".pre-commit-config.yaml"),
-        OsStr::to_os_string,
-    )
+/// `-c/--config`; not given ⇒ [`ConfigArg::absent`] (discovered by the commands, ADR-087).
+fn config(ns: &Namespace) -> ConfigArg {
+    match ns.value("config") {
+        Some(c) if ns.was_given("config") => ConfigArg::given(c),
+        _ => ConfigArg::absent(),
+    }
 }
 
 /// `Some` only for a non-empty value: pre-commit tests these options for truthiness (`run.py:262-414`).
@@ -359,7 +360,7 @@ pub(crate) fn facade(spec: &'static ParserSpec, top: &Namespace, cfg: &ParseCfg<
             Some(("upstream", m)) => MigrateArgs::Upstream { config: config(m) },
             Some((_, m)) => MigrateArgs::Builtin { config: config(m) },
             None => MigrateArgs::Builtin {
-                config: OsString::from(".pre-commit-config.yaml"),
+                config: ConfigArg::absent(),
             },
         }),
         "doctor" => Cli::Doctor(DoctorArgs {

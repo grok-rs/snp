@@ -599,6 +599,49 @@ repos:
         assert!(note.contains("does not exist"), "{note}");
     }
 
+    #[test]
+    fn overlay_name_follows_the_config_name() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let never = |_: &Path| false;
+        for n in [
+            ".pre-commit-config.local.yaml",
+            ".snp.local.yml",
+            ".snp.local.yaml",
+        ] {
+            std::fs::write(dir.path().join(n), "hooks: {}\n").expect("write");
+        }
+        let snp = dir.path().join(".snp.yaml");
+        assert_eq!(
+            overlay::locate(&snp, &env(&[]), &never),
+            Ok(Some(dir.path().join(".snp.local.yaml")))
+        );
+        assert_eq!(
+            overlay::locate(&dir.path().join(".snp.yml"), &env(&[]), &never),
+            Ok(Some(dir.path().join(".snp.local.yaml"))),
+            ".yaml first, whichever snp name the config has"
+        );
+        std::fs::remove_file(dir.path().join(".snp.local.yaml")).expect("rm");
+        assert_eq!(
+            overlay::locate(&snp, &env(&[]), &never),
+            Ok(Some(dir.path().join(".snp.local.yml")))
+        );
+        // `.pre-commit-config.yaml` (and any other name) keeps the old overlay names
+        assert_eq!(
+            overlay::locate(
+                &dir.path().join(".pre-commit-config.yaml"),
+                &env(&[]),
+                &never
+            ),
+            Ok(Some(dir.path().join(".pre-commit-config.local.yaml")))
+        );
+        std::fs::remove_file(dir.path().join(".pre-commit-config.local.yaml")).expect("rm");
+        assert_eq!(
+            overlay::locate(&dir.path().join("custom.yaml"), &env(&[]), &never),
+            Ok(None),
+            "an snp config's overlay is not another config's"
+        );
+    }
+
     const BASE: &str = "\
 repos:
 -   repo: https://github.com/pre-commit/pre-commit-hooks

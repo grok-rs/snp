@@ -79,7 +79,7 @@ mod tests {
     pub(crate) fn args() -> RunArgs {
         RunArgs {
             color: ColorSetting::Never,
-            config: OsString::from(".pre-commit-config.yaml"),
+            config: snp_cli::ConfigArg::absent(),
             hooks: Vec::new(),
             verbose: false,
             all_files: false,

@@ -547,7 +547,7 @@ impl H {
         let r = snp_run::install_hooks(
             snp_cli::InstallHooksArgs {
                 color: ColorSetting::Never,
-                config: ".pre-commit-config.yaml".into(),
+                config: snp_cli::ConfigArg::absent(),
                 with_fallback: false,
             },
             &cx,
@@ -587,7 +587,7 @@ impl H {
 pub(crate) fn args() -> RunArgs {
     RunArgs {
         color: ColorSetting::Never,
-        config: OsString::from(".pre-commit-config.yaml"),
+        config: snp_cli::ConfigArg::absent(),
         hooks: Vec::new(),
         verbose: false,
         all_files: false,
@@ -635,7 +635,7 @@ pub(crate) fn hook_impl_args(
 ) -> snp_cli::HookImplArgs {
     snp_cli::HookImplArgs {
         color: ColorSetting::Never,
-        config: OsString::from(".pre-commit-config.yaml"),
+        config: snp_cli::ConfigArg::absent(),
         hook_type: OsString::from(hook_type),
         hook_dir: hook_dir.map(|p| p.as_os_str().to_os_string()),
         skip_on_missing_config: false,

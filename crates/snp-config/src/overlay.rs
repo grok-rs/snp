@@ -1,5 +1,5 @@
-//! The local overlay `.pre-commit-config.local.y[a]ml` (ARCHITECTURE §8.4, ADR-070, COMPATIBILITY §7.4,
-//! D-EXT-02/03): root items are applied to the `Config`, hook patches are data merged by `merge_hook`.
+//! The local overlay `.pre-commit-config.local.y[a]ml` — `.snp.local.y[a]ml` next to an `.snp.y[a]ml` config
+//! (ARCHITECTURE §8.4, ADR-070, ADR-087, COMPATIBILITY §7.4, D-EXT-02/03): root items are applied to the `Config`, hook patches are data merged by `merge_hook`.
 //!
 //! Owner: WP-21.
 
@@ -80,13 +80,8 @@ impl HookPatch {
     }
 }
 
-/// The overlay file names next to the config, in lookup order.
-const OVERLAY_NAMES: [&str; 2] = [
-    ".pre-commit-config.local.yaml",
-    ".pre-commit-config.local.yml",
-];
-
-/// `<config dir>/.pre-commit-config.local.y[a]ml` or `SNP_LOCAL_CONFIG`; ignored when tracked by git or when CI is
+/// `<config dir>/.pre-commit-config.local.y[a]ml` (`.snp.local.y[a]ml` for an `.snp.y[a]ml` config,
+/// [`crate::discover::overlay_names`]) or `SNP_LOCAL_CONFIG`; ignored when tracked by git or when CI is
 /// truthy unless named by `SNP_LOCAL_CONFIG`; `Err(note)` = ignored with a stderr note.
 ///
 /// `SNP_LOCAL_CONFIG` empty or `0` disables the overlay; a relative value is resolved against the config's
@@ -115,7 +110,7 @@ pub fn locate(
         }
         return Ok(Some(path));
     }
-    let Some(path) = OVERLAY_NAMES
+    let Some(path) = crate::discover::overlay_names(cfg)
         .iter()
         .map(|n| dir.join(n))
         .find(|p| p.is_file())

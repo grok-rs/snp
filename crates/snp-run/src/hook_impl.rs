@@ -39,7 +39,7 @@ pub fn hook_impl(a: HookImplArgs, stdin: &mut dyn Read, cx: &RunCtx) -> Result<i
 fn body(a: &HookImplArgs, stdin: &mut dyn Read, cx: &RunCtx) -> Result<i32, Failure> {
     let (git, info) = common::discover(cx)?;
     let root = info.root.clone();
-    let config = common::adjust_config(&a.config, &cx.invocation_cwd, &root);
+    let config = common::resolve_config(cx, &a.config, &root, true)?;
     common::mark_config_used(&cx.store, &root.join(&config), &root);
     let hook_type = a.hook_type.to_string_lossy().into_owned();
     // `main.py:408`: `args.rest[1:]`, whatever the first token is
@@ -271,7 +271,7 @@ fn namespace(ty: HookType, a: &HookImplArgs, config: OsString) -> RunArgs {
     let arg = |i: usize| rest.get(i).cloned();
     let mut ns = RunArgs {
         color: a.color,
-        config,
+        config: snp_cli::ConfigArg::given(config),
         hooks: Vec::new(),
         verbose: false,
         all_files: false,
@@ -387,7 +387,7 @@ mod tests {
     fn hi(ty: &str, rest: &[&str]) -> HookImplArgs {
         HookImplArgs {
             color: ColorSetting::Always,
-            config: OsString::from(".pre-commit-config.yaml"),
+            config: snp_cli::ConfigArg::given(".pre-commit-config.yaml"),
             hook_type: OsString::from(ty),
             hook_dir: None,
             skip_on_missing_config: false,

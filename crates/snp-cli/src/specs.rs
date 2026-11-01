@@ -838,7 +838,8 @@ static MIGRATE_LEFTHOOK: ParserSpec = parser(
         },
         ActionSpec {
             help: Some(
-                "Where to write the result (default: .pre-commit-config.yaml; `-` for stdout).",
+                "Where to write the result (default: .snp.yaml, .pre-commit-config.yaml with \
+                 --portable; `-` for stdout).",
             ),
             metavar: Some("FILE"),
             ..store(&["-o", "--output"], "output")
@@ -851,7 +852,10 @@ static MIGRATE_LEFTHOOK: ParserSpec = parser(
         store_true(
             &["--local"],
             "local",
-            Some("Also convert lefthook-local.yml into .pre-commit-config.local.yaml."),
+            Some(
+                "Also convert lefthook-local.yml into the local overlay beside the output \
+                 (.snp.local.yaml, .pre-commit-config.local.yaml with --portable).",
+            ),
         ),
         store_true(
             &["--strict"],

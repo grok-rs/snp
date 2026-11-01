@@ -455,9 +455,11 @@ options:
   -h, --help         show this help message and exit
   --root DIR         Repository root (default: the current git repository).
   -c, --config FILE  lefthook configuration to convert (default: lefthook's lookup).
-  -o, --output FILE  Where to write the result (default: .pre-commit-config.yaml; `-` for stdout).
+  -o, --output FILE  Where to write the result (default: .snp.yaml, .pre-commit-config.yaml with
+                     --portable; `-` for stdout).
   --portable         Emit only keys pre-commit 4.x understands.
-  --local            Also convert lefthook-local.yml into .pre-commit-config.local.yaml.
+  --local            Also convert lefthook-local.yml into the local overlay beside the output
+                     (.snp.local.yaml, .pre-commit-config.local.yaml with --portable).
   --strict           Fail (exit 2) when a feature cannot be converted faithfully.
   --install          Afterwards remove lefthook's hooks and install snp's.
   -f, --force        Overwrite an existing output file.

@@ -21,7 +21,7 @@ use crate::{RunCtx, common, messages};
 pub fn try_repo(a: TryRepoArgs, cx: &RunCtx) -> Result<i32, Failure> {
     let (git, info) = common::discover(cx)?;
     let root = info.root;
-    let user_config = common::adjust_config(&a.run.config, &cx.invocation_cwd, &root);
+    let user_config = common::resolve_config(cx, &a.run.config, &root, false)?;
     common::mark_config_used(&cx.store, &root.join(&user_config), &root);
     let repo = adjust_repo(&a.repo, &cx.invocation_cwd, &root);
     let tmp = common::TempDir::new(&cx.env)?;
@@ -66,7 +66,7 @@ pub fn try_repo(a: TryRepoArgs, cx: &RunCtx) -> Result<i32, Failure> {
     cx.printer.write(config_s.as_bytes());
     cx.printer.write_line(rule.as_bytes());
     let mut run = a.run;
-    run.config = config_path.into_os_string();
+    run.config = snp_cli::ConfigArg::given(config_path);
     let inv = Invocation {
         store: &store,
         track_config: false,
