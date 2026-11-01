@@ -1,5 +1,53 @@
-# D-STORE-02 (STORE, owner WP-33): snp never touches pre-commit's directories; clean always prints Cleaned {snp store}.
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-STORE-02 (STORE, owner WP-33): snp never touches pre-commit's directories; `clean` prints `Cleaned {snp store}.`
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands`, `expect_divergence` and `expected` (ARCHITECTURE §13.2).
+# A pre-1.0 store ~/.pre-commit exists. pre-commit 4.6.2 removes it (second `Cleaned …` line); snp prints its own
+# store once and leaves ~/.pre-commit alone (the shell steps run with the scenario's HOME).
+name: divergences/D-STORE-02-clean-keeps-pre-commit-dirs
 expect_divergence: D-STORE-02
-status: stub
+status: active
+since: "4.6.2"
+brands: [compat, snp]
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files: {}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: t
+            name: t
+            entry: "true"
+            language: system
+  commit: [".pre-commit-config.yaml"]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - shell: "mkdir -p \"$HOME/.pre-commit\" && echo x > \"$HOME/.pre-commit/keep\""
+  - tool: [clean]
+    env: {}
+    stdin: ""
+    tty: false
+  - shell: "test -e \"$HOME/.pre-commit/keep\" && echo kept || echo removed"
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    steps:
+      2: {exit: 0, stdout_contains: "/.pre-commit.\n"}
+      3: {stdout: "removed\n"}
+  snp:
+    steps:
+      2: {exit: 0, stdout_matches: '^Cleaned \S+\.\n$', stdout_not_contains: ".pre-commit."}
+      3: {stdout: "kept\n"}

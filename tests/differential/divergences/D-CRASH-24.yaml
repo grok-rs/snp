@@ -1,5 +1,58 @@
-# D-CRASH-24 (CRASH, owner WP-33): silent, exit 120, stash restored
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-CRASH-24 (CRASH, owner WP-33): stdout closed (EPIPE) → silent, exit 120, stash restored
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands`, `expect_divergence` and `expected` (ARCHITECTURE §13.2).
+# The step key `stdout_closed: true` (an extension for WP-35's harness) starts the tool with its stdout connected to
+# a pipe whose read end is already closed. Both tools exit 120; pre-commit 4.6.2 prints `BrokenPipeError` noise on
+# stderr (X13-EH-03, X13-SM-08), snp prints nothing. The second step also checks the restored unstaged change.
+name: divergences/D-CRASH-24-stdout-closed
 expect_divergence: D-CRASH-24
-status: stub
+status: active
+since: "4.6.2"
+brands: [compat, snp]
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files: {foo: "1\n"}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: t
+            name: t
+            entry: "true"
+            language: system
+  commit: [".pre-commit-config.yaml"]
+  stage: [foo]
+  unstaged: {foo: "2\n"}
+  git_config: {}
+steps:
+  - tool: [sample-config]
+    env: {}
+    stdin: ""
+    tty: false
+    stdout_closed: true
+  - tool: [run]
+    env: {}
+    stdin: ""
+    tty: false
+    stdout_closed: true
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    steps:
+      1: {exit: 120, stderr_contains: "BrokenPipeError: [Errno 32] Broken pipe"}
+      2: {exit: 120, stderr_contains: "BrokenPipeError: [Errno 32] Broken pipe"}
+  snp:
+    steps:
+      1: {exit: 120, stderr: ""}
+      2: {exit: 120, stderr: ""}

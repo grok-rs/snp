@@ -1,5 +1,66 @@
 # D-CRASH-06 (CRASH, owner WP-33): per-repo [{repo}] <error> lines, the others are updated and written, exit 1
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands`, `expect_divergence` and `expected` (ARCHITECTURE §13.2).
+# `autoupdate` over one reachable repository with a newer tag and one remote that does not exist: pre-commit 4.6.2
+# aborts on the `git fetch` CalledProcessError (exit 3, crash log, config unchanged, X13-GIT-02); snp prints the
+# error as that repository's line, updates and writes the other one, and exits 1.
+name: divergences/D-CRASH-06-autoupdate-one-unreachable-repo
 expect_divergence: D-CRASH-06
-status: stub
+status: active
+since: "4.6.2"
+brands: [compat, snp]
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos, windows], pty: false}
+repos:
+  hooks:
+    files:
+      .pre-commit-hooks.yaml: |
+        -   id: x
+            name: x
+            entry: echo
+            language: system
+    tags: [v1.0.0]
+    then:
+      - commit: v2
+      - tag: v2.0.0
+work:
+  files: {}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: v1.0.0
+        hooks:
+        -   id: x
+    -   repo: ${root}/gone
+        rev: v1.0.0
+        hooks:
+        -   id: x
+  commit: [".pre-commit-config.yaml"]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - tool: [autoupdate]
+    env: {}
+    stdin: ""
+    tty: false
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    exit: 3
+    stdout_contains: "An unexpected error has occurred: CalledProcessError: command: ("
+    config_file_unchanged: true
+  snp:
+    exit: 1
+    stdout_contains: "updating v1.0.0 -> v2.0.0\n[${root}/gone] command: ("
+    stdout_not_contains: "An unexpected error has occurred"
+    config_file_contains: "rev: v2.0.0"

@@ -1,5 +1,49 @@
-# D-MISC-02 (BRAND, owner WP-33): argv[1] == "__hazmat" is reserved (in-hook hazmat entry, both brands) — class BRAND
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-MISC-02 (BRAND, owner WP-33): `argv[1] == "__hazmat"` is reserved (in-hook hazmat entry, both brands)
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands`, `expect_divergence` and `expected` (ARCHITECTURE §13.2).
+# pre-commit 4.6.2 rejects `__hazmat` as an invalid subcommand (usage, exit 2); snp runs the hazmat tool.
+name: divergences/D-MISC-02-reserved-hazmat-entry
 expect_divergence: D-MISC-02
-status: stub
+status: active
+since: "4.6.2"
+brands: [compat, snp]
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos, windows], pty: false}
+repos: {}
+work:
+  files: {}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: t
+            name: t
+            entry: "true"
+            language: system
+  commit: [".pre-commit-config.yaml"]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - tool: [__hazmat, n1, echo, --, a, b]
+    env: {COLUMNS: "80"}
+    stdin: ""
+    tty: false
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    exit: 2
+    stderr_contains: "error: argument command: invalid choice: '__hazmat'"
+  snp:
+    exit: 0
+    stdout: "a\nb\n"
+    stderr: ""

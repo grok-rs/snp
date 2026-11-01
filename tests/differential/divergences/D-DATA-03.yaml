@@ -1,5 +1,57 @@
-# D-DATA-03 (DATA, owner WP-33): refused unless -f; a .legacy that is itself a manager script is removed
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-DATA-03 (DATA, owner WP-33): a foreign `.legacy` is never overwritten without -f
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands`, `expect_divergence` and `expected` (ARCHITECTURE §13.2).
+# A foreign pre-commit hook and a foreign pre-commit.legacy: pre-commit 4.6.2 moves the hook onto the legacy (the
+# old legacy's bytes are lost, exit 0); snp refuses with a FatalError (exit 1) and leaves both files.
+name: divergences/D-DATA-03-foreign-legacy-refused
 expect_divergence: D-DATA-03
-status: stub
+status: active
+since: "4.6.2"
+brands: [compat, snp]
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files:
+    foreign-hook: "#!/bin/sh\necho foreign\n"
+    foreign-legacy: "#!/bin/sh\necho legacy\n"
+  exec: [foreign-hook, foreign-legacy]
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: t
+            name: t
+            entry: "true"
+            language: system
+  commit: [".pre-commit-config.yaml", foreign-hook, foreign-legacy]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - shell: "mkdir -p .git/hooks && cp foreign-hook .git/hooks/pre-commit && cp foreign-legacy .git/hooks/pre-commit.legacy"
+  - tool: [install]
+    env: {}
+    stdin: ""
+    tty: false
+  - shell: "cat .git/hooks/pre-commit.legacy"
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: behavior
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    steps:
+      2: {exit: 0, stdout_starts_with: "Running in migration mode with existing hooks at .git/hooks/pre-commit.legacy\n"}
+      3: {stdout: "#!/bin/sh\necho foreign\n"}
+  snp:
+    steps:
+      2:
+        exit: 1
+        stdout_starts_with: "An error has occurred: FatalError: refusing to overwrite existing .git/hooks/pre-commit.legacy; use -f to discard it\n"
+      3: {stdout: "#!/bin/sh\necho legacy\n"}
