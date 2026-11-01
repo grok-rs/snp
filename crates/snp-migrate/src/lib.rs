@@ -5,5 +5,5 @@
 mod builtin;
 mod lefthook;
 
-pub use builtin::{to_builtin, to_upstream};
+pub use builtin::{not_converted as builtin_not_converted, to_builtin, to_upstream};
 pub use lefthook::{Converted, LefthookOpts, lefthook};

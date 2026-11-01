@@ -691,8 +691,9 @@ mod tests {
         assert!(matches!(h.resolve(&unknown).unwrap_err(), Failure::Exit(1)));
         assert_eq!(
             h.out.take(),
-            "[ERROR] `nope` is not present in repository builtin.  Typo? Perhaps it is introduced in a newer version?  \
-             Often `pre-commit autoupdate` fixes this.\n"
+            "[ERROR] `nope` is not present in repository builtin.  Typo? Not every pre-commit-hooks hook is builtin \
+             (see `repo: builtin` in docs/user/configuration.md); use `repo: \
+             https://github.com/pre-commit/pre-commit-hooks` with a `rev` for it.\n"
         );
     }
 

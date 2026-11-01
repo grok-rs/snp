@@ -71,6 +71,28 @@ mod builtin {
         assert_eq!(converted, 7);
     }
 
+    /// ADR-084: a pre-commit-hooks block left upstream is explained (ids without a builtin, keys that change what
+    /// runs); a convertible block and other repos are not mentioned.
+    #[test]
+    fn why_a_block_stays_upstream() {
+        let cfg = "repos:\n-   repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v6.0.0\n    hooks:\n    \
+                   -   id: trailing-whitespace\n    -   id: debug-statements\n    -   id: double-quote-string-fixer\n\
+                   -   repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v6.0.0\n    hooks:\n    \
+                   -   id: check-yaml\n        language: system\n\
+                   -   repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v6.0.0\n    hooks:\n    \
+                   -   id: end-of-file-fixer\n\
+                   -   repo: local\n    hooks:\n    -   {id: x, name: x, entry: x, language: system}\n";
+        assert_eq!(
+            snp_migrate::builtin_not_converted(cfg.as_bytes()).unwrap(),
+            [
+                "pre-commit-hooks (line 2) not converted: debug-statements, double-quote-string-fixer have no \
+                 builtin",
+                "pre-commit-hooks (line 8) not converted: hook check-yaml sets `language`",
+            ]
+        );
+        assert_eq!(b(cfg).matches("repo: builtin").count(), 1);
+    }
+
     #[test]
     fn builtin_round_trip_is_byte_exact() {
         for (i, src) in corpus("builtin.yaml").iter().enumerate() {

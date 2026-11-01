@@ -107,6 +107,14 @@ pub(crate) fn unexpected_keys_hook(src: &str, id: &str, keys: &str) -> String {
 
 /// E1 `_cloned_repository_hooks` (`repository.py:182-187`).
 pub(crate) fn unknown_hook_id(brand: Brand, id: &str, repo: &str) -> String {
+    if repo == "builtin" {
+        // `repo: builtin` has no rev, so autoupdate cannot help (ADR-084).
+        return format!(
+            "`{id}` is not present in repository builtin.  Typo? Not every pre-commit-hooks hook is builtin (see \
+             `repo: builtin` in docs/user/configuration.md); use `repo: https://github.com/pre-commit/pre-commit-hooks` \
+             with a `rev` for it."
+        );
+    }
     format!(
         "`{id}` is not present in repository {repo}.  Typo? Perhaps it is introduced in a newer version?  \
          Often {} fixes this.",

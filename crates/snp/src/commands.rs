@@ -539,8 +539,15 @@ fn migrate(a: &MigrateArgs, s: &Session) -> Result<i32, Failure> {
             }
             Ok(if *strict && converted.lossy { 2 } else { 0 })
         }
-        MigrateArgs::Builtin { config } => rewrite_config(s, config, snp_migrate::to_builtin),
-        MigrateArgs::Upstream { config } => rewrite_config(s, config, snp_migrate::to_upstream),
+        MigrateArgs::Builtin { config } => rewrite_config(
+            s,
+            config,
+            snp_migrate::to_builtin,
+            Some(snp_migrate::builtin_not_converted),
+        ),
+        MigrateArgs::Upstream { config } => {
+            rewrite_config(s, config, snp_migrate::to_upstream, None)
+        }
         _ => Err(Failure::unexpected(
             "NotImplementedError",
             "migrate: subcommand not supported by this build",
@@ -614,11 +621,18 @@ fn rewrite_config(
     s: &Session,
     config: &OsStr,
     convert: fn(&[u8]) -> Result<Vec<u8>, Failure>,
+    explain: Option<fn(&[u8]) -> Result<Vec<String>, Failure>>,
 ) -> Result<i32, Failure> {
     let path = s.cwd()?.join(config);
     // Never `fs::read`: `/dev/zero` or a FIFO named as the config would grow without bound (D-SEC-11).
     let bytes = snp_cmd::read_config_for_rewrite(&path, config)?;
     let new = convert(&bytes)?;
+    if let Some(explain) = explain {
+        // Say why a block stays as it is instead of only "already migrated" (ADR-084).
+        for why in explain(&bytes)? {
+            s.printer.py_print(&why);
+        }
+    }
     if new == bytes {
         s.printer.py_print("Configuration is already migrated.");
         return Ok(0);

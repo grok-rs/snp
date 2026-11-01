@@ -403,6 +403,58 @@ pub fn to_builtin(config_bytes: &[u8]) -> Result<Vec<u8>, Failure> {
     d.finish(edits)
 }
 
+/// Why [`to_builtin`] leaves each pre-commit-hooks block of `config_bytes` alone because of its hooks (ADR-084): one
+/// line per block, `pre-commit-hooks (line N) not converted: <ids> have no builtin` and/or `… hook <id> sets
+/// <key>`. Empty when every such block converts (or there is none).
+pub fn not_converted(config_bytes: &[u8]) -> Result<Vec<String>, Failure> {
+    let d = Doc::parse(config_bytes)?;
+    let ids = builtin_ids();
+    let mut out = Vec::new();
+    for item in d.repos() {
+        let Some(url) = d.get(item, "repo").and_then(|(_, v)| d.scalar(v)) else {
+            continue;
+        };
+        if !snp_hooks_data::is_pre_commit_hooks_url(url) {
+            continue;
+        }
+        let Some((_, hooks)) = d.get(item, "hooks") else {
+            continue;
+        };
+        let mut missing: Vec<&str> = Vec::new();
+        let mut keyed: Vec<String> = Vec::new();
+        for &h in d.items(hooks).iter() {
+            let id = d.get(h, "id").and_then(|(_, v)| d.scalar(v)).unwrap_or("");
+            if !ids.contains(&id) && !missing.contains(&id) {
+                missing.push(id);
+            }
+            for key in ["language", "entry", "additional_dependencies"] {
+                if d.get(h, key).is_some() {
+                    keyed.push(format!("hook {id} sets `{key}`"));
+                }
+            }
+        }
+        if missing.is_empty() && keyed.is_empty() {
+            continue;
+        }
+        let line = d
+            .text
+            .get(..d.span(item).start)
+            .map_or(0, |t| t.matches('\n').count())
+            .saturating_add(1);
+        let mut why = Vec::new();
+        if !missing.is_empty() {
+            let verb = if missing.len() == 1 { "has" } else { "have" };
+            why.push(format!("{} {verb} no builtin", missing.join(", ")));
+        }
+        why.extend(keyed);
+        out.push(format!(
+            "pre-commit-hooks (line {line}) not converted: {}",
+            why.join("; ")
+        ));
+    }
+    Ok(out)
+}
+
 /// `snp migrate upstream`: `repo: builtin` → pre-commit-hooks entries.
 ///
 /// Restores the URL and rev recorded by [`to_builtin`]'s `# was:` comment, else uses

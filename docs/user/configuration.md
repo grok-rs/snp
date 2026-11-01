@@ -157,10 +157,14 @@ repos:
 ```
 
 Hooks of pre-commit-hooks v6.0.0 (same ids, same defaults, with upstream bugs fixed and some extra `--check` flags),
-always native, without `rev` and without a clone. `entry` and `additional_dependencies` are not allowed and `language`
+always native, without `rev` and without a clone. Seven of its 34 ids have no builtin, because they inspect Python
+source with Python's own parser: `check-ast`, `check-builtin-literals`, `check-byte-order-marker`,
+`check-docstring-first`, `debug-statements`, `double-quote-string-fixer` and `fix-encoding-pragma`; keep them in a
+`repo: https://github.com/pre-commit/pre-commit-hooks` block with a `rev`. `entry` and `additional_dependencies` are not allowed and `language`
 must be absent or `system`. pre-commit does not understand `repo: builtin`: use it only in repositories that have
 switched completely. `snp migrate builtin` converts pre-commit-hooks repos to it and `snp migrate upstream` converts
-back.
+back; a block that uses one of the seven ids above (or sets `language`, `entry` or `additional_dependencies`) stays
+upstream, and `snp migrate builtin` prints why (`pre-commit-hooks (line N) not converted: …`).
 
 ## Local overlay
 
