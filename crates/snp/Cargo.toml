@@ -46,6 +46,8 @@ mimalloc = { workspace = true, optional = true }
 # integration tests (tests/it) and the WP-36 criterion benches
 criterion.workspace = true
 dhat.workspace = true
+# `TagSet` for the classifier filters of the tagging bench (WP-36)
+file-identify.workspace = true
 snp-argparse.workspace = true
 snp-files.workspace = true
 snp-pycompat.workspace = true
