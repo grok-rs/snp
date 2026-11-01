@@ -1,0 +1,21 @@
+extends:
+  - extends/e2.yml
+
+pre-commit:
+  jobs:
+    - name: group
+      group:
+        jobs:
+          - name: child
+            run: child named
+          - run: 1 no-name
+    - name: echo
+      run: echo 1
+      skip: true
+    - run: e1
+
+e1:
+  jobs:
+    - name: echo
+      run: e1
+

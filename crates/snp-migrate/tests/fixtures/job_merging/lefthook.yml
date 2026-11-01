@@ -1,0 +1,15 @@
+extends:
+  - extends/e1.yml
+
+pre-commit:
+  jobs:
+    - name: group
+      group:
+        jobs:
+          - name: child
+            run: named
+          - run: 0 no-name
+    - name: echo
+      run: echo 0
+    - run: lefthook.yml
+

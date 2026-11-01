@@ -1,0 +1,14 @@
+extends:
+  - extends/e2.yml
+
+pre-commit:
+  commands:
+    echo:
+      run: echo 1
+      skip: true
+
+e1:
+  commands:
+    echo:
+      run: e1
+

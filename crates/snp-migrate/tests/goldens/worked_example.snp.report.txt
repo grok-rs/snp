@@ -1,0 +1,2 @@
+snp-migrate: warning: pre-commit/rubocop: exclude 'config/routes.rb' is matched from the repo root (lefthook semantics) and never matches under root 'backend/'
+Converted 4 jobs from 3 lefthook hooks into 4 hooks (1 warnings, 0 lossy conversions).

@@ -1,0 +1,8 @@
+snp-migrate: warning: lefthook.yml: pre-commit fails hooks that modify files; lefthook did not
+snp-migrate: lossy: pre-commit/eslint: stage_fixed dropped (portable mode): fixes are no longer staged
+snp-migrate: warning: pre-commit/rubocop: exclude 'config/routes.rb' is matched from the repo root (lefthook semantics) and never matches under root 'backend/'
+snp-migrate: warning: pre-commit/rubocop: tags dropped (portable mode)
+snp-migrate: lossy: commit-msg/lint-msg: skip/only conditions dropped (portable mode)
+snp-migrate: warning: pre-push/test: fail_text dropped (portable mode)
+snp-migrate: lossy: pre-push/test: timeout dropped (portable mode)
+Converted 4 jobs from 3 lefthook hooks into 4 hooks (4 warnings, 3 lossy conversions).

@@ -16,6 +16,16 @@ snp-hooks-data.workspace = true
 snp-pyre.workspace = true
 snp-yaml.workspace = true
 file-identify.workspace = true
+globset.workspace = true
+indexmap.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+sha2.workspace = true
+snp-testkit.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

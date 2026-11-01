@@ -1,0 +1,39 @@
+e1:
+  jobs:
+    - name: echo
+      run: e1
+e2:
+  jobs:
+    - name: echo
+      run: e2
+e3:
+  jobs:
+    - name: echo
+      run: e3
+extends:
+  - extends/e1.yml
+pre-commit:
+  jobs:
+    - name: group
+      glob:
+        - '*.rb'
+      group:
+        jobs:
+          - name: child
+            run: child named with glob
+            stage_fixed: true
+          - run: 0 no-name
+          - run: 1 no-name
+          - run: 2 no-name
+          - run: 3 no-name
+    - name: echo
+      run: echo 2
+      glob:
+        - "3"
+      tags:
+        - backend
+      skip: true
+    - run: lefthook.yml
+    - run: e1
+    - run: e2
+    - run: e3

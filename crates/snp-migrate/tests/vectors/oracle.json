@@ -1,0 +1,257 @@
+{
+  "features.portable.yaml": {
+    "sha256": "3ca1771279aee4064a7268e2faa6f3bfd4ed51d46b6ced071c6107ac9fd73a35",
+    "validate": {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "runs": []
+  },
+  "features.snp.local.yaml": {
+    "sha256": "e9658c316ba134cc19ebbcd84ee2f562adec5ed8fa93f92854d6cd76b31d3b43",
+    "validate": {
+      "exit": 0,
+      "stdout": "[WARNING] Unexpected key(s) present at root: fail_on_changes\n",
+      "stderr": ""
+    },
+    "runs": []
+  },
+  "features.snp.yaml": {
+    "sha256": "13b52238d9934f29609bc9895ad993ee90f75633572aa66eb7bde2f106f04c6a",
+    "validate": {
+      "exit": 0,
+      "stdout": "[WARNING] Unexpected key(s) present at root: fail_on_changes\n",
+      "stderr": ""
+    },
+    "runs": []
+  },
+  "job_merging.portable.yaml": {
+    "sha256": "55875639cceecca5bea04c0323cb4a2382e5b85a64203e16ffa56cf51434c8ef",
+    "validate": {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "runs": []
+  },
+  "job_merging.snp.yaml": {
+    "sha256": "3601ce91b88476b94150ef5855602acc9dd25a52472cadf679b7b3d941472ae9",
+    "validate": {
+      "exit": 0,
+      "stdout": "[WARNING] Unexpected key(s) present at root: fail_on_changes\n",
+      "stderr": ""
+    },
+    "runs": []
+  },
+  "many_extends_levels.portable.yaml": {
+    "sha256": "5be5c2f99f58bed06890410d73bd32c466c3c58d1347ac41a7c977af73f42749",
+    "validate": {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "runs": []
+  },
+  "many_extends_levels.snp.yaml": {
+    "sha256": "50282998cc0780e1fbe1313a69f30b8082587d697d04b5efe819335cfbb38672",
+    "validate": {
+      "exit": 0,
+      "stdout": "[WARNING] Unexpected key(s) present at root: fail_on_changes\n",
+      "stderr": ""
+    },
+    "runs": []
+  },
+  "runnable.portable.yaml": {
+    "sha256": "173d679142684348f991e7ac0f858d1959c68d52207a74c668de95f661df8a98",
+    "validate": {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "runs": [
+      {
+        "args": [
+          "run",
+          "--all-files"
+        ],
+        "result": {
+          "exit": 0,
+          "stdout": "text files are not empty.................................................Passed\nwrapper..................................................................Passed\nenv with expansion.......................................................Passed\nin a root................................................................Passed\nlisted files.............................................................Passed\nok.sh....................................................................Passed\nevery file...............................................................Passed\n",
+          "stderr": ""
+        }
+      },
+      {
+        "args": [
+          "run",
+          "--hook-stage",
+          "manual",
+          "--all-files"
+        ],
+        "result": {
+          "exit": 0,
+          "stdout": "all (lint)...............................................................Passed\n",
+          "stderr": ""
+        }
+      },
+      {
+        "args": [
+          "run",
+          "--hook-stage",
+          "pre-push",
+          "--all-files",
+          "--remote-name",
+          "origin",
+          "--remote-url",
+          "https://example.invalid/r.git",
+          "--local-branch",
+          "refs/heads/master",
+          "--remote-branch",
+          "refs/heads/master"
+        ],
+        "result": {
+          "exit": 0,
+          "stdout": "remote...................................................................Passed\n",
+          "stderr": ""
+        }
+      },
+      {
+        "args": [
+          "run",
+          "--hook-stage",
+          "commit-msg",
+          "--commit-msg-filename",
+          "msg.txt"
+        ],
+        "result": {
+          "exit": 0,
+          "stdout": "message..................................................................Passed\n",
+          "stderr": ""
+        }
+      },
+      {
+        "args": [
+          "run",
+          "--hook-stage",
+          "post-checkout",
+          "--from-ref",
+          "HEAD",
+          "--to-ref",
+          "HEAD",
+          "--checkout-type",
+          "1"
+        ],
+        "result": {
+          "exit": 0,
+          "stdout": "refs.....................................................................Passed\n",
+          "stderr": ""
+        }
+      }
+    ]
+  },
+  "runnable.snp.yaml": {
+    "sha256": "39d21b857654f54cd2159a3c561577e081019352ecb40d0531e83e92107a5ae9",
+    "validate": {
+      "exit": 0,
+      "stdout": "[WARNING] Unexpected key(s) present at root: fail_on_changes\n",
+      "stderr": ""
+    },
+    "runs": [
+      {
+        "args": [
+          "run",
+          "--all-files"
+        ],
+        "result": {
+          "exit": 0,
+          "stdout": "[WARNING] Unexpected key(s) present at root: fail_on_changes\n[WARNING] Unexpected key(s) present on local => text-files-are-not-empty: fail_text, priority, stage_fixed, timeout\n[WARNING] Unexpected key(s) present on local => wrapper: priority\n[WARNING] Unexpected key(s) present on local => env-with-expansion: priority\n[WARNING] Unexpected key(s) present on local => in-a-root: priority, root, skip\n[WARNING] Unexpected key(s) present on local => listed-files: priority\n[WARNING] Unexpected key(s) present on local => ok-sh: priority\n[WARNING] Unexpected key(s) present on local => every-file: groups, priority\n[WARNING] Unexpected key(s) present on local => all: groups\ntext files are not empty.................................................Passed\nwrapper..................................................................Passed\nenv with expansion.......................................................Passed\nin a root................................................................Passed\nlisted files.............................................................Passed\nok.sh....................................................................Passed\nevery file...............................................................Passed\n",
+          "stderr": ""
+        }
+      },
+      {
+        "args": [
+          "run",
+          "--hook-stage",
+          "manual",
+          "--all-files"
+        ],
+        "result": {
+          "exit": 0,
+          "stdout": "[WARNING] Unexpected key(s) present at root: fail_on_changes\n[WARNING] Unexpected key(s) present on local => text-files-are-not-empty: fail_text, priority, stage_fixed, timeout\n[WARNING] Unexpected key(s) present on local => wrapper: priority\n[WARNING] Unexpected key(s) present on local => env-with-expansion: priority\n[WARNING] Unexpected key(s) present on local => in-a-root: priority, root, skip\n[WARNING] Unexpected key(s) present on local => listed-files: priority\n[WARNING] Unexpected key(s) present on local => ok-sh: priority\n[WARNING] Unexpected key(s) present on local => every-file: groups, priority\n[WARNING] Unexpected key(s) present on local => all: groups\nall......................................................................Passed\n",
+          "stderr": ""
+        }
+      },
+      {
+        "args": [
+          "run",
+          "--hook-stage",
+          "pre-push",
+          "--all-files",
+          "--remote-name",
+          "origin",
+          "--remote-url",
+          "https://example.invalid/r.git",
+          "--local-branch",
+          "refs/heads/master",
+          "--remote-branch",
+          "refs/heads/master"
+        ],
+        "result": {
+          "exit": 0,
+          "stdout": "[WARNING] Unexpected key(s) present at root: fail_on_changes\n[WARNING] Unexpected key(s) present on local => text-files-are-not-empty: fail_text, priority, stage_fixed, timeout\n[WARNING] Unexpected key(s) present on local => wrapper: priority\n[WARNING] Unexpected key(s) present on local => env-with-expansion: priority\n[WARNING] Unexpected key(s) present on local => in-a-root: priority, root, skip\n[WARNING] Unexpected key(s) present on local => listed-files: priority\n[WARNING] Unexpected key(s) present on local => ok-sh: priority\n[WARNING] Unexpected key(s) present on local => every-file: groups, priority\n[WARNING] Unexpected key(s) present on local => all: groups\nremote...................................................................Passed\n",
+          "stderr": ""
+        }
+      },
+      {
+        "args": [
+          "run",
+          "--hook-stage",
+          "commit-msg",
+          "--commit-msg-filename",
+          "msg.txt"
+        ],
+        "result": {
+          "exit": 0,
+          "stdout": "[WARNING] Unexpected key(s) present at root: fail_on_changes\n[WARNING] Unexpected key(s) present on local => text-files-are-not-empty: fail_text, priority, stage_fixed, timeout\n[WARNING] Unexpected key(s) present on local => wrapper: priority\n[WARNING] Unexpected key(s) present on local => env-with-expansion: priority\n[WARNING] Unexpected key(s) present on local => in-a-root: priority, root, skip\n[WARNING] Unexpected key(s) present on local => listed-files: priority\n[WARNING] Unexpected key(s) present on local => ok-sh: priority\n[WARNING] Unexpected key(s) present on local => every-file: groups, priority\n[WARNING] Unexpected key(s) present on local => all: groups\nmessage..................................................................Passed\n",
+          "stderr": ""
+        }
+      },
+      {
+        "args": [
+          "run",
+          "--hook-stage",
+          "post-checkout",
+          "--from-ref",
+          "HEAD",
+          "--to-ref",
+          "HEAD",
+          "--checkout-type",
+          "1"
+        ],
+        "result": {
+          "exit": 0,
+          "stdout": "[WARNING] Unexpected key(s) present at root: fail_on_changes\n[WARNING] Unexpected key(s) present on local => text-files-are-not-empty: fail_text, priority, stage_fixed, timeout\n[WARNING] Unexpected key(s) present on local => wrapper: priority\n[WARNING] Unexpected key(s) present on local => env-with-expansion: priority\n[WARNING] Unexpected key(s) present on local => in-a-root: priority, root, skip\n[WARNING] Unexpected key(s) present on local => listed-files: priority\n[WARNING] Unexpected key(s) present on local => ok-sh: priority\n[WARNING] Unexpected key(s) present on local => every-file: groups, priority\n[WARNING] Unexpected key(s) present on local => all: groups\nrefs.....................................................................Passed\n",
+          "stderr": ""
+        }
+      }
+    ]
+  },
+  "worked_example.portable.yaml": {
+    "sha256": "df8f826cd70e3042174614ab4c66c078fdbc8fc434d48b9cc5cfbb1f8741f4dc",
+    "validate": {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "runs": []
+  },
+  "worked_example.snp.yaml": {
+    "sha256": "4b1b96f1eca9d8a114c7d747a562e1b6ad705a44377bf3a06ceebd2acce5b522",
+    "validate": {
+      "exit": 0,
+      "stdout": "[WARNING] Unexpected key(s) present at root: fail_on_changes\n",
+      "stderr": ""
+    },
+    "runs": []
+  }
+}

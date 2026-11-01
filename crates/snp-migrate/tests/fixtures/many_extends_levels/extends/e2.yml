@@ -1,0 +1,14 @@
+extends:
+  - extends/e3.yml
+
+pre-commit:
+  commands:
+    echo:
+      run: echo 2
+      tags: ["backend"]
+
+e2:
+  commands:
+    echo:
+      run: e2
+

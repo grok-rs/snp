@@ -1,0 +1,22 @@
+extends:
+  - extends/e3.yml
+
+pre-commit:
+  jobs:
+    - name: group
+      glob: "*.rb"
+      group:
+        jobs:
+          - name: child
+            run: child named with glob
+          - run: 2 no-name
+    - name: echo
+      run: echo 2
+      tags: ["backend"]
+    - run: e2
+
+e2:
+  jobs:
+    - name: echo
+      run: e2
+

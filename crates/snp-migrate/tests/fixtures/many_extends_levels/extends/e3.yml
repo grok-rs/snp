@@ -1,0 +1,10 @@
+pre-commit:
+  commands:
+    echo:
+      glob: 3
+
+e3:
+  commands:
+    echo:
+      run: e3
+

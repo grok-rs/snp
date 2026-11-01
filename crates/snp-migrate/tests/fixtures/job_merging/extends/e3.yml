@@ -1,0 +1,18 @@
+pre-commit:
+  jobs:
+    - name: group
+      glob: "*.rb"
+      group:
+        jobs:
+          - name: child
+            stage_fixed: true
+          - run: 3 no-name
+    - name: echo
+      glob: 3
+    - run: e3
+
+e3:
+  jobs:
+    - name: echo
+      run: e3
+
