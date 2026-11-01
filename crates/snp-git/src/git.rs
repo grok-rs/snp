@@ -703,8 +703,9 @@ impl Git {
 
     /// `git.get_conflicted_files` (`git.py:114-132`): the tab-indented `MERGE_MSG` lines (parsed on bytes, never
     /// decoded: D-CRASH-12, X13-GIT-07) ∪ `git diff --name-only --no-ext-diff -z -m <write-tree> HEAD MERGE_HEAD --`,
-    /// in first-seen order (pre-commit's `set` order is per-process random). The `[INFO] Checking merge-conflict
-    /// files only.` line is the caller's.
+    /// in first-seen order (pre-commit's `set` order is per-process random: COMPATIBILITY N-1, a determinism note the
+    /// difftest compares with `lines-unordered`). The `[INFO] Checking merge-conflict files only.` line is the
+    /// caller's.
     pub fn conflicted_files(&self, info: &RepoInfo) -> Result<ZList, Failure> {
         let msg_path = info.git_dir.join("MERGE_MSG");
         let merge_msg = std::fs::read(&msg_path).map_err(|e| {
