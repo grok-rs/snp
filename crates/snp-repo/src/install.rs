@@ -6,12 +6,20 @@
 //!
 //! 1. **Need list** (`_need_installed`, no lock): unique keys in config order (a fast-path hook's *virtual* key
 //!    counts like a real one, ADR-032; a real install of the same key wins), each checked: state parses, deps and
-//!    version equal, `health()` healthy (X13-ENV-01: a malformed state is "not installed").
-//! 2. **Workers**, one per prefix (repository), take their keys in config order: per-repo lock → re-check (another
-//!    process may have installed it) → [`snp_lang::check_support`] *before* any filesystem mutation (04b §5.1) →
-//!    an `InstallLimiter` permit (every permit for the compile-heavy languages) → remove the stale env dir → install
-//!    → health → wait for the coordinator's verdict → commit the marker (or remove the env dir).
-//! 3. **The coordinator** (the calling thread) walks the keys in config order: it prints key *k*'s triplet only once
+//!    version equal, `health()` healthy (X13-ENV-01: a malformed state is "not installed"). A virtual key and the
+//!    real environment of the same key are one install as far as pre-commit can tell, so a hook moving between
+//!    native and delegated prints nothing new: a virtual key whose real environment is installed and healthy is
+//!    installed, and a real install whose key a virtual install already announced runs without the triplet.
+//! 2. **Locks** (`with store.exclusive_lock()`): the calling thread takes the per-repository lock of every
+//!    repository the need list installs into, in one canonical order (sorted [`RepoKey`]), before any worker
+//!    starts, and holds them to the end. pre-commit serialises on one store lock; taking several in a fixed order
+//!    keeps two processes with opposite config orders from each holding one lock while waiting for the other
+//!    (a worker never blocks on a lock while its coordinator waits on another repository).
+//! 3. **Workers**, one per prefix (repository), take their keys in config order: re-check (another process may have
+//!    installed it before the locks were ours) → [`snp_lang::check_support`] *before* any filesystem mutation
+//!    (04b §5.1) → an `InstallLimiter` permit (every permit for the compile-heavy languages) → remove the stale env
+//!    dir → install → health → wait for the coordinator's verdict → commit the marker (or remove the env dir).
+//! 4. **The coordinator** (the calling thread) walks the keys in config order: it prints key *k*'s triplet only once
 //!    *k − 1* is finished and *k*'s worker found it still needs installing, then commits *k*; the first failure in
 //!    config order is the result, every later in-flight install is cancelled and its directory removed, so the
 //!    store ends exactly as after pre-commit's sequential loop.
@@ -102,12 +110,15 @@ pub(crate) struct Prepared {
 pub(crate) trait EnvInstaller: Sync {
     /// `_hook_installed` (a malformed state is "not installed").
     fn installed(&self, job: &Job) -> Result<bool, Failure>;
-    /// Whether a virtual key's `Installed` marker exists.
-    fn virtual_installed(&self, key: &InstallKey) -> bool;
-    /// Records a virtual install.
+    /// Whether the key's `Installed` marker exists (a virtual install announced it).
+    fn marker(&self, key: &InstallKey) -> bool;
+    /// Whether the key's real environment exists in the store, installed and healthy.
+    fn real_installed(&self, key: &InstallKey) -> bool;
+    /// Sets the key's `Installed` marker.
     fn mark_virtual(&self, key: &InstallKey);
-    /// The per-repository lock (held for the re-check, the install and the commit).
-    fn lock(&self, job: &Job) -> Result<Option<FileLock>, Failure>;
+    /// The per-repository lock of `repo` (held for the re-checks, the installs and the commits), waiting under
+    /// `cancel`.
+    fn lock(&self, repo: &RepoKey, cancel: &CancelToken) -> Result<Option<FileLock>, Failure>;
     /// `check_support` (before any filesystem mutation).
     fn check(&self, job: &Job) -> Result<(), Failure>;
     /// Compile-heavy languages take every `InstallLimiter` permit (ADR-065).
@@ -253,17 +264,36 @@ pub(crate) fn run(
     cancel: &CancelToken,
 ) -> Result<(), Failure> {
     let mut need: Vec<&Entry> = Vec::new();
+    let mut silent: Vec<bool> = Vec::new();
     for e in all {
-        let needed = match e {
-            Entry::Virtual { key, .. } => !inst.virtual_installed(key),
-            Entry::Real(j) => !inst.installed(j)?,
+        let (needed, quiet) = match e {
+            Entry::Virtual { key, .. } => (!inst.marker(key) && !inst.real_installed(key), false),
+            // Announced already by a virtual install of the same key: pre-commit sees it installed.
+            Entry::Real(j) => (!inst.installed(j)?, inst.marker(&j.key)),
         };
         if needed {
             need.push(e);
+            silent.push(quiet);
         }
     }
     if need.is_empty() {
         return Ok(());
+    }
+    // Every repository lock, in canonical order, before any worker starts (see the module docs).
+    let mut repos: Vec<RepoKey> = need
+        .iter()
+        .filter_map(|e| match e {
+            Entry::Real(j) => Some(j.key.repo),
+            Entry::Virtual { .. } => None,
+        })
+        .collect();
+    repos.sort_unstable_by_key(|k| k.0);
+    repos.dedup();
+    let mut locks: Vec<FileLock> = Vec::new();
+    for repo in &repos {
+        if let Some(l) = inst.lock(repo, cancel)? {
+            locks.push(l);
+        }
     }
     let child = cancel.child();
     let abort = AtomicBool::new(false);
@@ -305,7 +335,7 @@ pub(crate) fn run(
                 Err(e) => tracing::debug!("install worker refused: {e}"),
             }
         }
-        let result = coordinate(inst, &need, &mut slots, printer);
+        let result = coordinate(inst, &need, &silent, &mut slots, printer);
         if result.is_err() {
             abort.store(true, Ordering::Release);
             child.cancel(CancelReason::Interrupt);
@@ -315,6 +345,7 @@ pub(crate) fn run(
         for h in spawned {
             let _joined = h.join();
         }
+        drop(locks);
         result
     })
 }
@@ -323,11 +354,12 @@ pub(crate) fn run(
 fn coordinate(
     inst: &dyn EnvInstaller,
     need: &[&Entry],
+    silent: &[bool],
     slots: &mut [Option<Slot>],
     printer: &Printer,
 ) -> Result<(), Failure> {
     let lost = || Failure::unexpected("RuntimeError", "snp: an install worker ended unexpectedly");
-    for (e, slot) in need.iter().zip(slots.iter_mut()) {
+    for ((e, slot), quiet) in need.iter().zip(slots.iter_mut()).zip(silent) {
         let Some(slot) = slot else {
             if let Entry::Virtual { key, .. } = e {
                 triplet(printer, e.src());
@@ -337,7 +369,11 @@ fn coordinate(
         };
         match slot.events.recv().map_err(|_| lost())? {
             Event::Decided(false) => continue,
-            Event::Decided(true) => triplet(printer, e.src()),
+            Event::Decided(true) => {
+                if !quiet {
+                    triplet(printer, e.src());
+                }
+            }
             Event::Ready(r) | Event::Committed(r) => {
                 r?;
                 return Err(lost());
@@ -394,13 +430,6 @@ fn one(
 ) -> bool {
     let job = item.job;
     let send = |e: Event| item.events.send(e).is_ok();
-    let _lock = match inst.lock(job) {
-        Ok(l) => l,
-        Err(e) => {
-            send(Event::Ready(Err(e)));
-            return false;
-        }
-    };
     let needed = match inst.installed(job) {
         Ok(installed) => !installed,
         Err(e) => {
@@ -525,10 +554,25 @@ impl EnvInstaller for LangInstaller<'_, '_> {
         Ok(health == Health::Healthy)
     }
 
-    fn virtual_installed(&self, key: &InstallKey) -> bool {
+    fn marker(&self, key: &InstallKey) -> bool {
         self.cx.store.marker_exists(&MarkerKey::Installed {
             install_key: key_digest(key),
         })
+    }
+
+    fn real_installed(&self, key: &InstallKey) -> bool {
+        let Some(repo) = self.cx.store.lookup(&key.repo) else {
+            return false;
+        };
+        let job = Job {
+            key: key.clone(),
+            src: Arc::from(""),
+            env_dir: self.cx.store.env_dir(&repo, key.lang, &key.version),
+            prefix: repo.src,
+            envs: repo.envs,
+            is_local: false,
+        };
+        self.installed(&job).unwrap_or(false)
     }
 
     fn mark_virtual(&self, key: &InstallKey) {
@@ -537,14 +581,10 @@ impl EnvInstaller for LangInstaller<'_, '_> {
         });
     }
 
-    fn lock(&self, job: &Job) -> Result<Option<FileLock>, Failure> {
+    fn lock(&self, repo: &RepoKey, cancel: &CancelToken) -> Result<Option<FileLock>, Failure> {
         let cx = self.cx;
         cx.store
-            .repo_lock(
-                &job.key.repo,
-                &mut crate::resolve::lock_notice(cx),
-                cx.cancel,
-            )
+            .repo_lock(repo, &mut crate::resolve::lock_notice(cx), cancel)
             .map(Some)
     }
 
@@ -677,6 +717,7 @@ mod tests {
     #[derive(Default)]
     struct Fake {
         installed: Mutex<Vec<String>>,
+        installed_keys: Mutex<Vec<[u8; 16]>>,
         virtuals: Mutex<Vec<[u8; 16]>>,
         fail: Vec<&'static str>,
         unsupported: Vec<&'static str>,
@@ -700,13 +741,23 @@ mod tests {
         fn installed(&self, job: &Job) -> Result<bool, Failure> {
             Ok(sync::lock(&self.installed).contains(&Self::name(job)))
         }
-        fn virtual_installed(&self, key: &InstallKey) -> bool {
+        fn marker(&self, key: &InstallKey) -> bool {
             self.virtuals.lock().unwrap().contains(&key_digest(key))
+        }
+        fn real_installed(&self, key: &InstallKey) -> bool {
+            self.installed_keys
+                .lock()
+                .unwrap()
+                .contains(&key_digest(key))
         }
         fn mark_virtual(&self, key: &InstallKey) {
             self.virtuals.lock().unwrap().push(key_digest(key));
         }
-        fn lock(&self, _job: &Job) -> Result<Option<FileLock>, Failure> {
+        fn lock(
+            &self,
+            _repo: &RepoKey,
+            _cancel: &CancelToken,
+        ) -> Result<Option<FileLock>, Failure> {
             Ok(None)
         }
         fn check(&self, job: &Job) -> Result<(), Failure> {
@@ -756,6 +807,7 @@ mod tests {
         }
         fn commit(&self, job: &Job, _p: &Prepared) -> Result<(), Failure> {
             sync::lock(&self.installed).push(Self::name(job));
+            sync::lock(&self.installed_keys).push(key_digest(&job.key));
             Ok(())
         }
         fn discard(&self, job: &Job) {
@@ -939,6 +991,130 @@ mod tests {
         assert_eq!(exc.ty, "PermissionError");
         assert!(String::from_utf8_lossy(&exc.text).contains(&*outside.to_string_lossy()));
         assert!(outside.is_dir());
+    }
+
+    /// One run with a fresh printer: its transcript.
+    fn go(inst: &dyn EnvInstaller, all: &[Entry]) -> String {
+        let (p, out) = printer();
+        run(inst, all, &p, &limiter(2), &CancelToken::new()).unwrap();
+        transcript(&out)
+    }
+
+    /// ARCHITECTURE §gc: a hook moving from native to delegated (or back) prints nothing new — pre-commit sees the
+    /// one environment it installed on the first run.
+    #[test]
+    fn virtual_then_real_of_the_same_key_installs_silently() {
+        let fake = Fake::default();
+        let virt = [Entry::Virtual {
+            key: key(1, &[]),
+            src: Arc::from("r1"),
+        }];
+        let realk = [real("r1", 1)];
+        assert_eq!(go(&fake, &virt), expected(&["r1"]));
+        assert_eq!(go(&fake, &realk), "", "no second triplet");
+        assert!(fake.installed.lock().unwrap().contains(&"r1#".to_owned()));
+        assert_eq!(go(&fake, &realk), "");
+        assert_eq!(go(&fake, &virt), "");
+    }
+
+    #[test]
+    fn real_then_virtual_of_the_same_key_prints_nothing() {
+        let fake = Fake::default();
+        let virt = [Entry::Virtual {
+            key: key(1, &[]),
+            src: Arc::from("r1"),
+        }];
+        assert_eq!(go(&fake, &[real("r1", 1)]), expected(&["r1"]));
+        assert_eq!(go(&fake, &virt), "");
+        assert!(fake.virtuals.lock().unwrap().is_empty(), "no marker needed");
+    }
+
+    /// Real per-repository `flock`s in a shared directory, slow installs, one shared "store" state.
+    struct Locking {
+        dir: PathBuf,
+        inner: Fake,
+        installs: AtomicUsize,
+    }
+
+    impl EnvInstaller for Locking {
+        fn installed(&self, job: &Job) -> Result<bool, Failure> {
+            self.inner.installed(job)
+        }
+        fn marker(&self, key: &InstallKey) -> bool {
+            self.inner.marker(key)
+        }
+        fn real_installed(&self, key: &InstallKey) -> bool {
+            self.inner.real_installed(key)
+        }
+        fn mark_virtual(&self, key: &InstallKey) {
+            self.inner.mark_virtual(key);
+        }
+        fn lock(&self, repo: &RepoKey, cancel: &CancelToken) -> Result<Option<FileLock>, Failure> {
+            let path = self.dir.join(format!("{}.lock", repo.hex()));
+            FileLock::acquire(
+                &path,
+                snp_os::lock::LockMode::Exclusive,
+                &mut || {},
+                cancel,
+                Some(Duration::from_secs(20)),
+            )
+            .map(Some)
+            .map_err(|e| Failure::from_io(&e, Some(path.as_os_str()), None))
+        }
+        fn check(&self, job: &Job) -> Result<(), Failure> {
+            self.inner.check(job)
+        }
+        fn heavy(&self, job: &Job) -> bool {
+            self.inner.heavy(job)
+        }
+        fn install(&self, job: &Job, cancel: &CancelToken) -> Result<Prepared, Failure> {
+            self.installs.fetch_add(1, Ordering::SeqCst);
+            self.inner.install(job, cancel)
+        }
+        fn commit(&self, job: &Job, p: &Prepared) -> Result<(), Failure> {
+            self.inner.commit(job, p)
+        }
+        fn discard(&self, job: &Job) {
+            self.inner.discard(job);
+        }
+    }
+
+    /// Two "processes" (threads with separate lock descriptors) whose configs list the same two cold repositories
+    /// in opposite orders: before, each locked its first repository's install and waited for its own coordinator,
+    /// which waited for the other repository — a lock-order inversion that hung until the timeout.
+    #[test]
+    fn two_processes_with_opposite_config_orders_never_deadlock() {
+        let tmp = tempfile::tempdir().unwrap();
+        for _ in 0..5 {
+            let inst = Locking {
+                dir: tmp.path().to_path_buf(),
+                inner: Fake {
+                    delays: vec![("a", 150), ("b", 150)],
+                    ..Fake::default()
+                },
+                installs: AtomicUsize::new(0),
+            };
+            let p1: &'static [Entry] = Box::leak(Box::new([real("b", 2), real("a", 1)]));
+            let p2: &'static [Entry] = Box::leak(Box::new([real("a", 1), real("b", 2)]));
+            let start = std::time::Instant::now();
+            let (r1, r2) = std::thread::scope(|s| {
+                let go = |all: &'static [Entry]| {
+                    let inst = &inst;
+                    move || {
+                        let (p, _out) = printer();
+                        run(inst, all, &p, &limiter(4), &CancelToken::new())
+                    }
+                };
+                let t1 = std::thread::Builder::new().spawn_scoped(s, go(p1)).unwrap();
+                let t2 = std::thread::Builder::new().spawn_scoped(s, go(p2)).unwrap();
+                (t1.join().unwrap(), t2.join().unwrap())
+            });
+            r1.unwrap();
+            r2.unwrap();
+            assert!(start.elapsed() < Duration::from_secs(10));
+            // The second process found both installed under the locks.
+            assert_eq!(inst.installs.load(Ordering::SeqCst), 2);
+        }
     }
 
     #[test]
