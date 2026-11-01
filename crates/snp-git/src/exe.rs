@@ -369,8 +369,18 @@ pub(crate) fn cache_store(path: &Path, key: &CacheKey, v: GitVersion) {
         out.push_str(&cache_line(&k, old));
         out.push('\n');
     }
-    let _ignored: std::io::Result<()> =
-        snp_os::fs::atomic_replace(path, out.as_bytes(), Some(0o600));
+    let write = || snp_os::fs::atomic_replace(path, out.as_bytes(), Some(0o600));
+    // An existing store that lacks the cache directory (created by hand, or never through `ensure_created`) gets it
+    // here (0700, one level): otherwise no run would ever persist the version and every run would spawn
+    // `git --version`. A missing store is never created for a cache (lazy store, 03 §21 Q12).
+    if let Err(e) = write()
+        && e.kind() == std::io::ErrorKind::NotFound
+        && let Some(dir) = path.parent()
+        && dir.parent().is_some_and(Path::is_dir)
+        && snp_os::fs::ensure_private_dir(dir).is_ok()
+    {
+        let _ignored: std::io::Result<()> = write();
+    }
 }
 
 #[cfg(test)]
