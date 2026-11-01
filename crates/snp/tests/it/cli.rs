@@ -119,7 +119,11 @@ fn t10_cli_01_adjust_args_and_chdir() {
     let out = compat(&env, &r.join("foo"), &["install", "-c", "cfg.yaml"]);
     assert_code(&out, 0);
     let script = std::fs::read_to_string(r.join(".git/hooks/pre-commit")).unwrap();
-    assert!(script.contains("--config=foo/cfg.yaml"), "{script}");
+    // `os.path.relpath` joins with `\` on Windows (and shlex then quotes the argument)
+    assert!(
+        slashed(&script).contains("--config=foo/cfg.yaml"),
+        "{script}"
+    );
     // A missing relative config is kept as typed (re-interpreted relative to the root).
     let out = compat(
         &env,

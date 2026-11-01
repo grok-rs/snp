@@ -2,8 +2,15 @@
 //!
 //! Owner: WP-33.
 
-use crate::cli::{LOCAL_CONFIG, assert_code, compat, repo_with, snp, tenv, text};
+use crate::cli::{
+    LOCAL_CONFIG, assert_code, compat, repo_with, slashed, snp, tenv, text as raw_text,
+};
 use crate::install::{pre_commit_script, write_hook};
+
+/// [`crate::cli::text`] with the path separator read as `/` (doctor names hooks by their joined paths).
+fn text(b: &[u8]) -> String {
+    slashed(&raw_text(b))
+}
 
 #[test]
 fn doctor_clean_repository() {
