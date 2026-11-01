@@ -1538,7 +1538,7 @@ against Python-style adjacent dedup on arbitrary input. The scenario below runs 
 
 ### D-DATA-01
 
-one stderr line after the envelope: [ERROR] Your unstaged changes are saved in <patch>; restore them with: git apply --3way <patch> (X13-STASH-02)
+one stderr line after the envelope: [ERROR] Your unstaged changes are saved in <patch>; restore them with: git apply --whitespace=nowarn <patch>, plus what to do when it does not apply (X13-STASH-02)
 
 * **Class:** DATA (COMPATIBILITY §5.2)
 
@@ -1546,7 +1546,7 @@ one stderr line after the envelope: [ERROR] Your unstaged changes are saved in <
 
 | pre-commit 4.6.2 | snp |
 |---|---|
-| final stash-restore failure prints only a traceback; the user does not learn where the unstaged work is | one stderr line after the envelope: `[ERROR] Your unstaged changes are saved in <patch>; restore them with: git apply --3way <patch>` (X13-STASH-02) |
+| final stash-restore failure prints only a traceback; the user does not learn where the unstaged work is | one stderr line after the envelope: `[ERROR] Your unstaged changes are saved in <patch>; restore them with: git apply --whitespace=nowarn <patch>`, plus what to do when it does not apply (X13-STASH-02) |
 
 ##### Rationale
 
@@ -1557,10 +1557,15 @@ crash log is the only further hint. Users who do not recognise this lose their w
 
 snp keeps every byte of pre-commit's stdout (line 1 of the envelope is the same `CalledProcessError` text, exit 3) and
 adds one line on **stderr** after it (ADR-045): where the work is and the command that restores it. The command is
-`git apply --3way` (ADR-067), not plain `git apply`: snp patches are `--binary` with full index lines and their
-preimage blobs are in the object store (the tree was written by `git write-tree`), so a three-way apply also succeeds
-after a partial apply or on top of later edits, where the plain form fails. The patch, the journal and the git-dir
-pointer are kept forever (never garbage-collected), and the next run in that worktree repeats the notice (D-DATA-13).
+pre-commit's own restore, `git apply --whitespace=nowarn <patch>` (ADR-084): it changes the worktree only and is
+all-or-nothing. `--3way` (ADR-067's first choice) is wrong here: it implies `--index`, so it stages the user's
+unstaged changes, and it refuses every path whose worktree differs from the index (`does not match index`) — exactly
+what a failed rollback leaves. When the hooks' edits are still in the worktree the plain apply refuses, so the line
+goes on: `; if git apply reports that the patch does not apply, those files changed after the stash (hook fixes or
+later edits): keep a copy with git diff --binary <tree> > <patch>.now, put them back with git --literal-pathspecs
+restore --source=<tree> --worktree -- <patch paths…>, then apply it again` (`git restore` leaves the index alone; a
+long or unparseable list uses `-- :/`). The patch, the journal and the git-dir pointer are kept, and the next run in
+that worktree repeats the notice (D-DATA-13).
 
 Why it is safe: stdout and the exit code are unchanged (K2 holds for stdout), the line goes to stderr only, and it is
 printed only on the path where pre-commit has already failed with exit 3.
@@ -1582,7 +1587,7 @@ Check the log at /s/pre-commit.log
 (stderr: empty)
 
 $ snp run                 # stdout identical; stderr:
-[ERROR] Your unstaged changes are saved in /s/patches/patch1791403656-1781218; restore them with: git apply --3way /s/patches/patch1791403656-1781218
+[ERROR] Your unstaged changes are saved in /s/patches/patch1791403656-1781218; restore them with: git apply --whitespace=nowarn /s/patches/patch1791403656-1781218; if git apply reports that the patch does not apply, those files changed after the stash (hook fixes or later edits): keep a copy with git diff --binary 4b825dc642cb6eb9a060e54bf8d69288fbee4904 > /s/patches/patch1791403656-1781218.now, put them back with git --literal-pathspecs restore --source=4b825dc642cb6eb9a060e54bf8d69288fbee4904 --worktree -- foo, then apply it again
 ```
 
 The scenario `tests/differential/divergences/D-DATA-01.yaml` makes every `git apply` fail through a `git` wrapper on
@@ -2039,7 +2044,7 @@ per-worktree lock (nested runs exempt via token only while the lock is held), du
 
 | pre-commit 4.6.2 | snp |
 |---|---|
-| two concurrent runs in one worktree can stash over each other; a killed run leaves no recovery hint | per-worktree lock (nested runs exempt via token only while the lock is held), durable journal + git-dir pointer, patch re-verified before the checkout, next-run recovery notice on stderr (`git apply --3way`) |
+| two concurrent runs in one worktree can stash over each other; a killed run leaves no recovery hint | per-worktree lock (nested runs exempt via token only while the lock is held), durable journal + git-dir pointer, patch re-verified before the checkout, next-run recovery notice on stderr (`git apply --whitespace=nowarn`, never overwriting later edits) |
 
 ##### Rationale
 
@@ -2064,23 +2069,27 @@ snp adds, with no change to any byte pre-commit prints on a working path (ARCHIT
   every mutation (fsynced for the data-protecting states), deleted when the run is done;
 * the next run in the worktree (any store: the pointer is in the git dir) prints, on stderr, for every orphaned
   journal: `snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in <patch>
-  (index tree <tree>). Restore with: git --literal-pathspecs checkout <tree> -- <patch paths…> && git apply --3way
-  <patch> && git --literal-pathspecs reset -q <tree> -- <patch paths…> <stage_fixed paths…>`. After the stash
-  checkout the worktree holds only staged content and hook edits in the patch's paths (the user's work is in the
-  patch), so they are first put back to their stash-time contents — otherwise `git apply` refuses a path a hook or
-  `stage_fixed` touched (`does not match index`); the final reset gives back the pre-run index (the `--3way` apply
-  stages, and `stage_fixed` may have staged fixes). Paths are literal pathspecs. A long list (more than 64 paths or
-  4096 bytes) or an unparseable patch uses `git read-tree <tree> && git checkout-index -f -a && git apply --3way
-  <patch> && git read-tree <tree>`. Intent-to-add paths the run cleared are re-added last
-  (`&& git --literal-pathspecs add --intent-to-add -- <paths…>`). A run killed after clearing intent-to-add entries
-  but with no patch at risk (before the patch, or after the restore) gets one notice `snp: an earlier run was
-  interrupted before it re-added its intent-to-add files. Restore with: git --literal-pathspecs add --intent-to-add
-  -- <paths…>`, printed once. Nothing is ever applied automatically. (The checkout discards hook edits — and any
-  later edits — in the patch's paths, as pre-commit's own rollback does.)
+  (index tree <tree>). Restore with: git apply --whitespace=nowarn <patch>` — pre-commit's own restore command:
+  worktree only, and all-or-nothing, so it never overwrites anything that changed since the interrupted run (a hook's
+  fix, or work done after the kill): it applies around such edits or refuses and changes nothing (ADR-084). With the
+  run's own index (not the temporary `GIT_INDEX_FILE` of `git commit -- <paths>`) it continues `&& git
+  --literal-pathspecs reset -q <tree> -- <stage_fixed paths…>` (`&& git read-tree <tree>` for a long list), then
+  re-adds the intent-to-add paths the run cleared (`&& git --literal-pathspecs add --intent-to-add -- <paths…>`; a
+  list of more than 64 paths or 4096 bytes is kept in `<patch>.ita`, NUL-separated, and read with
+  `--pathspec-file-nul --pathspec-from-file=<patch>.ita`). The notice then says what to do when the apply refuses:
+  `; if git apply reports that the patch does not apply, those files changed after the stash (hook fixes or later
+  edits): keep a copy with git diff --binary <tree> > <patch>.now, put them back with git --literal-pathspecs restore
+  --source=<tree> --worktree -- <patch paths…>, then run the command again` (`git restore --source=<tree> --worktree
+  -- :/` for a long or unparseable list). Paths are literal pathspecs; the commands are run from the top of the
+  worktree. A run killed after clearing intent-to-add entries but with no patch at risk (before the patch, or after
+  the restore) gets one notice `snp: an earlier run was interrupted before it re-added its intent-to-add files.
+  Restore with: git --literal-pathspecs add --intent-to-add -- <paths…>` (or the kept-list form), printed once.
+  Nothing is ever applied automatically.
 * the notices are printed once per run, at its start (before any preflight check can end it), followed by `snp: this
   notice repeats until those changes are back in the worktree; to dismiss it and keep the patch, run: snp doctor
-  --fix --stash`. Once the patch's changes are back (`git apply --check --reverse <patch>` succeeds: the user ran the
-  printed command), the next run retires the journal and says so once: `snp: the unstaged changes saved in <patch>
+  --fix --stash`. Once the patch's changes are back (`git -c apply.ignoreWhitespace=no apply --check --reverse
+  --whitespace=nowarn <patch>` succeeds and every mode the patch sets is the worktree file's: the user ran the printed
+  command), the next run retires the journal and says so once: `snp: the unstaged changes saved in <patch>
   are back in the worktree; the recovery notice of that interrupted run is retired`. `snp doctor --fix --stash`
   dismisses every orphan of the worktree explicitly. Neither deletes the patch (ADR-083).
 
@@ -2098,7 +2107,7 @@ snp: waiting for another snp run in this worktree…
 An error has occurred: FatalError: snp: another snp run in this worktree still holds /r/.git/snp-stash.lock after 60 s; set SNP_STASH_LOCK_TIMEOUT (seconds, at most 3600) to wait longer
 
 # the run after a `kill -9` during the hooks (stderr)
-snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in /s/patches/patch1791403656-1781218 (index tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904). Restore with: git --literal-pathspecs checkout 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -- foo && git apply --3way /s/patches/patch1791403656-1781218 && git --literal-pathspecs reset -q 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -- foo
+snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in /s/patches/patch1791403656-1781218 (index tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904). Restore with: git apply --whitespace=nowarn /s/patches/patch1791403656-1781218; if git apply reports that the patch does not apply, those files changed after the stash (hook fixes or later edits): keep a copy with git diff --binary 4b825dc642cb6eb9a060e54bf8d69288fbee4904 > /s/patches/patch1791403656-1781218.now, put them back with git --literal-pathspecs restore --source=4b825dc642cb6eb9a060e54bf8d69288fbee4904 --worktree -- foo, then run the command again
 snp: this notice repeats until those changes are back in the worktree; to dismiss it and keep the patch, run: snp doctor --fix --stash
 
 # the run after the user ran that command (stderr, once)
@@ -4374,7 +4383,7 @@ stdout or the exit code.
 snp: waiting for another snp run in this worktree…
 snp: restoring stashed changes, please wait
 snp: git needed the terminal during the restore and was stopped
-snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in /s/patches/patch1791403656-1781218 (index tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904). Restore with: git --literal-pathspecs checkout 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -- foo && git apply --3way /s/patches/patch1791403656-1781218 && git --literal-pathspecs reset -q 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -- foo
+snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in /s/patches/patch1791403656-1781218 (index tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904). Restore with: git apply --whitespace=nowarn /s/patches/patch1791403656-1781218; if git apply reports that the patch does not apply, those files changed after the stash (hook fixes or later edits): keep a copy with git diff --binary 4b825dc642cb6eb9a060e54bf8d69288fbee4904 > /s/patches/patch1791403656-1781218.now, put them back with git --literal-pathspecs restore --source=4b825dc642cb6eb9a060e54bf8d69288fbee4904 --worktree -- foo, then run the command again
 snp: this notice repeats until those changes are back in the worktree; to dismiss it and keep the patch, run: snp doctor --fix --stash
 snp: the unstaged changes saved in /s/patches/patch1791403656-1781218 are back in the worktree; the recovery notice of that interrupted run is retired
 ```

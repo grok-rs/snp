@@ -158,7 +158,7 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 
 | ID | pre-commit 4.6.2 | snp | WP |
 |---|---|---|---|
-| D-DATA-01 | final stash-restore failure prints only a traceback; the user does not learn where the unstaged work is | one stderr line after the envelope: `[ERROR] Your unstaged changes are saved in <patch>; restore them with: git apply --3way <patch>` (X13-STASH-02) | 23 |
+| D-DATA-01 | final stash-restore failure prints only a traceback; the user does not learn where the unstaged work is | one stderr line after the envelope: `[ERROR] Your unstaged changes are saved in <patch>; restore them with: git apply --whitespace=nowarn <patch>`, plus what to do when it does not apply (X13-STASH-02) | 23 |
 | D-DATA-02 | SIGTERM/SIGHUP kill pre-commit without restoring the stash (unstaged work only in the patch) | descendants of the cancelled hooks are killed (Linux subreaper, Windows job), then the stash is restored (restore messages printed), then death by the same signal (exit status 143/129 as before). Residual risk, documented: on macOS an orphaned descendant of an Inherit-group hook (e.g. a formatter started by a shell entry) cannot be found and may still write after the restore; the patch file is kept, so the work stays recoverable | 23, 15 |
 | D-DATA-03 | `install` silently overwrites an existing foreign `.legacy` hook | refused unless `-f`; a `.legacy` that is itself a manager script is removed | 33 |
 | D-DATA-05 | hook script: bash template written through symlinks, CRLF on Windows | POSIX `sh` template, LF everywhere, atomic write that replaces a symlink instead of writing through it (template identity: BRAND) | 33 |
@@ -168,7 +168,7 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 | D-DATA-10 | `autoupdate --freeze` rewrites a CRLF `rev:` line with LF (mixed endings) | the line keeps its `\r` (DEV-PY-1) | 21 |
 | D-DATA-11 | `GIT_DIFF_OPTS=--unified=0` makes the stash patch unrestorable (hazard a) | `GIT_DIFF_OPTS` removed for the stash `diff-index` | 23, 18 |
 | D-DATA-12 | an intent-to-add file paired as a rename is missed ⇒ restore fails and a deletion is lost (hazard b) | `--no-renames` on the ITA query | 23, 18 |
-| D-DATA-13 | two concurrent runs in one worktree can stash over each other; a killed run leaves no recovery hint | per-worktree lock (nested runs exempt via token only while the lock is held), durable journal + git-dir pointer, patch re-verified before the checkout, next-run recovery notice on stderr (`git apply --3way`) | 23 |
+| D-DATA-13 | two concurrent runs in one worktree can stash over each other; a killed run leaves no recovery hint | per-worktree lock (nested runs exempt via token only while the lock is held), durable journal + git-dir pointer, patch re-verified before the checkout, next-run recovery notice on stderr (`git apply --whitespace=nowarn`, never overwriting later edits) | 23 |
 | D-DATA-14 | migrate-config doubles the rewrite of an aliased `stages` list (`[pre-commitpre-commit]`) | rewrites deduplicated by YAML node | 21 |
 | D-DATA-15 | migrate-config turns a folded `language: >-\n  python_venv` into invalid YAML | block scalars rewritten safely | 21 |
 | D-DATA-16 | autoupdate: a config without a final newline triggers a full PyYAML re-dump that drops all comments | end of file treated as a line end; comments kept | 21 |

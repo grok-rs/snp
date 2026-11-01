@@ -198,9 +198,11 @@ fn kill_at_staging_fixed_is_recoverable_by_the_hint() {
         u.hint(),
         format!(
             "snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in {0} \
-             (index tree {tree}). Restore with: git --literal-pathspecs checkout {tree} -- foo && git apply --3way {0} \
-             && git --literal-pathspecs reset -q {tree} -- foo fixme",
-            u.patch.display()
+             (index tree {tree}). Restore with: git apply --whitespace=nowarn {0} && git --literal-pathspecs reset -q \
+             {tree} -- fixme{1}git --literal-pathspecs restore --source={tree} --worktree -- foo, then run the command \
+             again",
+            u.patch.display(),
+            super::recovery::fallback(&tree, &u.patch)
         )
     );
     // The kill right after the add: no restore runs (the leaked guard keeps its lock, which the hint never needs).
@@ -216,6 +218,8 @@ fn kill_at_staging_fixed_is_recoverable_by_the_hint() {
 /// Runs the commands after `Restore with: ` exactly as printed.
 fn run_hint(sb: &Sandbox, repo: &std::path::Path, hint: &str) {
     let cmds = hint.split("Restore with: ").nth(1).unwrap();
+    // The command proper; the rest is what to do when the apply refuses.
+    let cmds = cmds.split("; if git apply reports").next().unwrap();
     let out = std::process::Command::new("sh")
         .arg("-c")
         .arg(cmds)
@@ -251,7 +255,9 @@ fn kill_at_staging_fixed_of_a_file_in_the_patch_is_recoverable_by_the_hint() {
     assert_eq!(found.len(), 1);
     let _leaked = std::mem::ManuallyDrop::new(g);
     run_hint(&sb, &repo, &found[0].hint());
-    assert_eq!(sb.read(&repo, "x"), user.as_bytes());
+    // The user's change is back and the index is the pre-run one; the hook's fix, which the patch does not touch,
+    // is kept (the hint never overwrites the worktree, ADR-084).
+    assert_eq!(sb.read(&repo, "x"), user.replace("1  ", "1").as_bytes());
     assert_eq!(sb.index(&repo), index_before);
-    assert_eq!(sb.unstaged_diff(&repo), diff_before);
+    assert_ne!(sb.unstaged_diff(&repo), diff_before);
 }

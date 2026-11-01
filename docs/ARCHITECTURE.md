@@ -1859,7 +1859,7 @@ impl StashGuard {
     pub fn stage_fixed(&mut self, paths: &[RepoPath]) -> Result<bool, Failure>;
     pub fn restore(self) -> Result<(), Failure>;
 }
-/// A journaled run that never restored (§4.6). Recovery hints use `git apply --3way` (valid: `--binary` patches carry
+/// A journaled run that never restored (§4.6). Recovery hints use `git apply --whitespace=nowarn` (ADR-084; `--binary` patches carry
 /// full index lines and their preimage blobs are in the object store via write-tree).
 #[derive(Debug, Clone)] pub struct Unrestored { pub patch: PathBuf, pub tree: Option<String>, pub worktree: PathBuf,
     pub pid: u32, pub state: Box<str>, pub staged_fixed: Vec<RepoPath> }
@@ -2676,7 +2676,9 @@ notice).
        fixes...`; `git -c submodule.recurse=0 checkout -- .` (same env); apply again (both variants).
     c. Still failing → journal `failed`; `Failure::Exc(Unexpected, CalledProcessError …)` with the **K+ hint** written
        to **stderr** after the log line: `[ERROR] Your unstaged changes are saved in <patch>; restore them with:
-       git apply --3way <patch>` (X13-STASH-02, D-DATA-01). Patch, journal and pointer are kept forever (never gc'd).
+       git apply --whitespace=nowarn <patch>`, plus the fallback for a worktree the rollback could not reset (keep a
+       copy with `git diff --binary <tree>`, `git restore --source=<tree> --worktree` the patch's paths, apply again;
+       X13-STASH-02, D-DATA-01, ADR-084). Patch, journal and pointer are kept forever (never gc'd).
     d. Success → `[INFO] Restored changes from <patch>.`; journal `restored`; the patch file is kept (parity; gc prunes
        restored patches after 30 days, D-DATA-04).
     e. `SNP_STASH_VERIFY=1`: `verify_restored` warns on stderr if the patch is not present in the worktree (never
@@ -2731,12 +2733,16 @@ the lock (`StashCtx::report_recovery`), so each notice is printed exactly once p
 acquired, every non-`restored` journal for this worktree —
 found through the git-dir pointer (any store) and one `readdir` of this store's `patches/` — is orphaned by definition,
 and produces on **stderr**: `snp: an earlier run was interrupted before it restored your unstaged changes; they are
-saved in <patch> (index tree <tree>). Restore with: git apply --3way <patch>`, preceded for the `staging-fixed` state by
-`git reset -q <tree> -- <paths…>` (or `git read-tree <tree>` when the path list is long) — never auto-applied (the user
-may have continued working; `--3way` also works after a partial apply because `--binary` patches carry full index
-lines and their preimage blobs exist). The notices of a pass are followed once by `snp: this notice repeats until
+saved in <patch> (index tree <tree>). Restore with: git apply --whitespace=nowarn <patch>` (worktree only and
+all-or-nothing: it never overwrites a hook fix or work done after the kill, ADR-084), followed — the run's own index
+only, never a temporary `GIT_INDEX_FILE` — by `&& git --literal-pathspecs reset -q <tree> -- <stage_fixed paths…>` (or
+`git read-tree <tree>` when the list is long), by the intent-to-add re-add (a long list is kept in `<patch>.ita`, read
+with `--pathspec-from-file`, and outlives the journal), and by what to do when the apply refuses (keep a copy with `git
+diff --binary <tree> > <patch>.now`, `git restore --source=<tree> --worktree` the patch's paths, run it again) — never
+auto-applied (the user may have continued working). The notices of a pass are followed once by `snp: this notice repeats until
 those changes are back in the worktree; to dismiss it and keep the patch, run: snp doctor --fix --stash`. Dismissal
-(ADR-083): an orphan whose patch is already applied to the worktree (`git apply --check --reverse <patch>` succeeds —
+(ADR-083): an orphan whose patch is already applied to the worktree (`git -c apply.ignoreWhitespace=no apply --check
+--reverse --whitespace=nowarn <patch>` succeeds and every mode the patch sets is the worktree file's, ADR-084 —
 the user ran the printed command, or restored the work another way) is retired by that pass: its journal and pointer
 are removed and `snp: the unstaged changes saved in <patch> are back in the worktree; the recovery notice of that
 interrupted run is retired` is printed once (plus the intent-to-add notice when the run had cleared entries).

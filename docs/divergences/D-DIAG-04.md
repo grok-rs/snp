@@ -39,7 +39,7 @@ stdout or the exit code.
 snp: waiting for another snp run in this worktree…
 snp: restoring stashed changes, please wait
 snp: git needed the terminal during the restore and was stopped
-snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in /s/patches/patch1791403656-1781218 (index tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904). Restore with: git --literal-pathspecs checkout 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -- foo && git apply --3way /s/patches/patch1791403656-1781218 && git --literal-pathspecs reset -q 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -- foo
+snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in /s/patches/patch1791403656-1781218 (index tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904). Restore with: git apply --whitespace=nowarn /s/patches/patch1791403656-1781218; if git apply reports that the patch does not apply, those files changed after the stash (hook fixes or later edits): keep a copy with git diff --binary 4b825dc642cb6eb9a060e54bf8d69288fbee4904 > /s/patches/patch1791403656-1781218.now, put them back with git --literal-pathspecs restore --source=4b825dc642cb6eb9a060e54bf8d69288fbee4904 --worktree -- foo, then run the command again
 snp: this notice repeats until those changes are back in the worktree; to dismiss it and keep the patch, run: snp doctor --fix --stash
 snp: the unstaged changes saved in /s/patches/patch1791403656-1781218 are back in the worktree; the recovery notice of that interrupted run is retired
 ```

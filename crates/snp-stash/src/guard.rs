@@ -1008,7 +1008,14 @@ impl Inner {
                 self.flags.patch = PatchStep::Idle;
                 self.flags.restore_failed = true;
                 self.journal_best_effort(State::Failed);
-                Err(with_hint(e, &messages::k_plus_hint(patch)))
+                Err(with_hint(
+                    e,
+                    &messages::k_plus_hint(
+                        patch,
+                        self.tree.as_ref().map(|t| t.as_str()),
+                        recovery::patch_paths(patch).as_deref(),
+                    ),
+                ))
             }
         }
     }

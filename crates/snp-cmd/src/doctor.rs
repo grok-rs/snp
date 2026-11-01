@@ -574,7 +574,8 @@ fn stash_checks(cx: &CmdCtx<'_>, f: &Frame, verify: bool, fix: bool, r: &mut Rep
                 Lvl::Ok,
                 format!("stash {}", lossy(&d.patch)),
                 format!(
-                    "recovery notice dismissed ({state}); the patch is kept: git apply --3way {} still applies it",
+                    "recovery notice dismissed ({state}); the patch is kept: git apply --whitespace=nowarn {} still applies \
+                     it",
                     lossy(&d.patch)
                 ),
             );

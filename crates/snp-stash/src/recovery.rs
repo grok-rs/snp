@@ -16,8 +16,8 @@ use snp_git::Git;
 use crate::journal::{self, JournalData, PointerData};
 use crate::{lock, messages};
 
-/// A journaled run that never restored (§4.6). Recovery hints use `git apply --3way` (valid: `--binary` patches
-/// carry full index lines and their preimage blobs are in the object store via write-tree).
+/// A journaled run that never restored (§4.6). Recovery hints use a plain, worktree-only `git apply
+/// --whitespace=nowarn` (ADR-084: all-or-nothing, so it never overwrites what changed since the interrupted run).
 #[derive(Debug, Clone)]
 pub struct Unrestored {
     /// The saved patch.
@@ -35,19 +35,19 @@ pub struct Unrestored {
 }
 
 impl Unrestored {
-    /// The exact stderr notice (§4.6).
+    /// The exact stderr notice (§4.6, ADR-084).
     ///
     /// `snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in <patch> (index
-    /// tree <tree>). Restore with: git --literal-pathspecs checkout <tree> -- <patch paths…> && git apply --3way
-    /// <patch> && git --literal-pathspecs reset -q <tree> -- <patch paths…> <staged paths…>`: the patch's paths are
-    /// first put back to their stash-time contents (after the stash checkout the worktree holds only staged content
-    /// and hook edits there, so `git apply` would refuse them), then the patch is applied and the index of those paths
-    /// and of the `stage_fixed` paths is reset to the stash-time tree. A long list (or an unreadable patch) uses
-    /// `git read-tree <tree> && git checkout-index -f -a && git apply --3way <patch> && git read-tree <tree>`. The
-    /// intent-to-add paths the run cleared are re-added last (`&& git --literal-pathspecs add --intent-to-add -- …`).
+    /// tree <tree>). Restore with: git apply --whitespace=nowarn <patch>`: the apply changes the worktree only and is
+    /// all-or-nothing, so it never overwrites what changed since the interrupted run. With the run's own index, `&& git
+    /// --literal-pathspecs reset -q <tree> -- <staged paths…>` unstages what `stage_fixed` had staged; the
+    /// intent-to-add paths the run cleared are re-added (`&& git --literal-pathspecs add --intent-to-add -- …`, or
+    /// `--pathspec-from-file=<patch>.ita` for a long list, kept next to the patch). Then what to do when the apply
+    /// refuses: keep a copy of the current files (`git diff --binary <tree> > <patch>.now`), put the worktree copies of
+    /// the patch's files back to the stash-time tree (`git restore --source=<tree> --worktree`), run it again.
     ///
-    /// The patch's paths are read from the patch (`diff --git` headers) and the intent-to-add list from the store
-    /// journal next to it, so the text is complete for any `Unrestored`.
+    /// The patch's paths are read from the patch (`diff --git` headers) and the intent-to-add list and the index file
+    /// from the store journal next to it, so the text is complete for any `Unrestored`.
     pub fn hint(&self) -> String {
         let paths = patch_paths(&self.patch);
         let journal = journal_for(&self.patch);
@@ -56,15 +56,63 @@ impl Unrestored {
             .iter()
             .map(|r| r.as_bytes().to_vec())
             .collect();
+        let ita = journal.as_ref().map_or(&[][..], |(_, d)| d.ita.as_slice());
+        let ita_file = kept_ita_file(&self.patch, ita);
+        let own_index = journal.as_ref().is_none_or(|(_, d)| uses_own_index(d));
         messages::recovery_notice(&messages::Recovery {
             patch: &self.patch,
             tree: self.tree.as_deref(),
             patch_paths: paths.as_deref(),
             staged_fixed: &staged,
-            ita: journal.as_ref().map_or(&[], |(_, d)| d.ita.as_slice()),
-            journal: journal.as_ref().map(|(p, _)| p.as_path()),
+            own_index,
+            ita,
+            ita_file: ita_file.as_deref(),
         })
     }
+}
+
+/// Whether the journaled run used the worktree's own index (`--git-path index` is `<git-dir>/index`), not a
+/// temporary `GIT_INDEX_FILE` (`git commit -- <paths>`): the hint must not reset entries of the real index to a
+/// temporary index's tree.
+fn uses_own_index(d: &JournalData) -> bool {
+    d.index_file.as_os_str().is_empty()
+        || d.git_dir.as_os_str().is_empty()
+        || same_path(&d.index_file, &d.git_dir.join("index"))
+}
+
+/// The kept list of a long intent-to-add list (ADR-084): `<base>.ita`, NUL-separated (for `git add
+/// --pathspec-file-nul --pathspec-from-file`), written when missing or different. It is never deleted with a journal,
+/// so a notice that names it stays true; next to a patch, gc removes it with the patch (both start with `patch`).
+/// `None` for a short list (spelled out) or when it cannot be written (the notice then spells out the whole list).
+pub(crate) fn kept_ita_file(base: &Path, ita: &[Vec<u8>]) -> Option<PathBuf> {
+    let list: Vec<&[u8]> = ita.iter().map(Vec::as_slice).collect();
+    if ita.is_empty() || messages::short_list(&list) {
+        return None;
+    }
+    let mut name = base.as_os_str().to_owned();
+    name.push(".ita");
+    let file = PathBuf::from(name);
+    let mut body = Vec::new();
+    for p in ita {
+        body.extend_from_slice(p);
+        body.push(0);
+    }
+    if std::fs::read(&file).is_ok_and(|b| b == body) {
+        return Some(file);
+    }
+    let tmp = {
+        let mut t = file.as_os_str().to_owned();
+        t.push(format!(".tmp{}", std::process::id()));
+        PathBuf::from(t)
+    };
+    let written = std::fs::write(&tmp, &body)
+        .and_then(|()| std::fs::File::open(&tmp)?.sync_all())
+        .and_then(|()| std::fs::rename(&tmp, &file));
+    if written.is_err() {
+        let _ignored = std::fs::remove_file(&tmp);
+        return None;
+    }
+    Some(file)
 }
 
 /// The store journal of `patch` (same directory, `data.patch == patch`).
@@ -208,6 +256,18 @@ pub(crate) struct Orphan {
     pub(crate) ita: (Vec<Vec<u8>>, Option<PathBuf>),
     /// The run's journal and pointer files (never the patch).
     pub(crate) files: Vec<PathBuf>,
+}
+
+impl Orphan {
+    /// The intent-to-add notice for when the run's journal is retired, naming a list file that is kept (ADR-084).
+    fn ita_notice(&self) -> Option<String> {
+        let (ita, _) = &self.ita;
+        if ita.is_empty() {
+            return None;
+        }
+        let kept = kept_ita_file(&self.unrestored.patch, ita);
+        Some(messages::ita_notice(ita, kept.as_deref()))
+    }
 }
 
 /// A run whose only leftover is its cleared intent-to-add list.
@@ -470,9 +530,8 @@ pub(crate) fn report_locked(
         let patch = &o.unrestored.patch;
         if matches!(verify_restored(git, patch), Ok(true)) {
             out.push(messages::retired_notice(patch));
-            let (ita, listed) = &o.ita;
-            if !ita.is_empty() {
-                out.push(messages::ita_notice(ita, listed.as_deref()));
+            if let Some(notice) = o.ita_notice() {
+                out.push(notice);
             }
             retire(o);
         } else {
@@ -484,7 +543,12 @@ pub(crate) fn report_locked(
         out.push(messages::DISMISS_HINT.to_owned());
     }
     for run in &scan.ita_only {
-        out.push(messages::ita_notice(&run.paths, run.listed.as_deref()));
+        // The list outlives the journal deleted below (ADR-084).
+        let kept = run
+            .listed
+            .as_deref()
+            .and_then(|l| kept_ita_file(l, &run.paths));
+        out.push(messages::ita_notice(&run.paths, kept.as_deref()));
         for f in &run.files {
             let _ignored = std::fs::remove_file(f);
         }
@@ -533,11 +597,10 @@ pub fn dismiss_unrestored(
     let scan = scan(git_dir, patches_dir, worktree_root);
     let mut out = Vec::new();
     for o in &scan.unrestored {
-        let (ita, listed) = &o.ita;
         out.push(Dismissed {
             patch: o.unrestored.patch.clone(),
             present: matches!(verify_restored(git, &o.unrestored.patch), Ok(true)),
-            ita_notice: (!ita.is_empty()).then(|| messages::ita_notice(ita, listed.as_deref())),
+            ita_notice: o.ita_notice(),
         });
         retire(o);
     }
@@ -560,16 +623,94 @@ pub fn recovery_scan(git_dir: &Path, patches_dir: &Path, worktree_root: &Path) -
     }
 }
 
-/// `snp doctor --stash` / `SNP_STASH_VERIFY` (warn-only, 06's verify): `git apply --check --reverse <patch>` against
-/// the worktree after a restore (true = the patch's changes are present).
+/// `snp doctor --stash` / `SNP_STASH_VERIFY` (warn-only, 06's verify) and the retirement of orphans: whether the
+/// worktree holds every change of `patch` (ADR-084).
+///
+/// `git -c apply.ignoreWhitespace=no apply --check --reverse --whitespace=nowarn <patch>` must succeed — the flags
+/// make the match exact whatever the user's `apply.whitespace` / `apply.ignoreWhitespace` (with `fix`, git matches
+/// whitespace-insensitively and would call a missing trailing-whitespace change present) — and every mode the patch
+/// sets (`new mode`, `new file mode`) must be the worktree file's: git only warns about a mode that differs (`has type
+/// 100644, expected 100755`) and exits 0, so a lost `chmod +x` would otherwise count as restored.
 pub fn verify_restored(git: &Git, patch: &Path) -> Result<bool, Failure> {
     let c = git.run_raw(&[
+        OsStr::new("-c"),
+        OsStr::new("apply.ignoreWhitespace=no"),
         OsStr::new("apply"),
         OsStr::new("--check"),
         OsStr::new("--reverse"),
+        OsStr::new("--whitespace=nowarn"),
         patch.as_os_str(),
     ])?;
-    Ok(c.status.0 == 0)
+    if c.status.0 != 0 {
+        return Ok(false);
+    }
+    Ok(patch_modes(patch).is_some_and(|modes| {
+        modes
+            .iter()
+            .all(|(path, mode)| mode_matches(git.root(), path, mode))
+    }))
+}
+
+/// Every `(path, mode)` a patch sets: the `new mode <m>` and `new file mode <m>` lines of its extended headers (all
+/// of them, not capped like [`patch_paths`]). `None` when the patch is unreadable or a header does not parse.
+fn patch_modes(patch: &Path) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
+    use std::io::BufRead;
+    let f = std::fs::File::open(patch).ok()?;
+    let mut r = std::io::BufReader::new(f);
+    let mut out = Vec::new();
+    let mut line = Vec::new();
+    let mut current: Option<Vec<u8>> = None;
+    loop {
+        line.clear();
+        if r.read_until(b'\n', &mut line).ok()? == 0 {
+            break;
+        }
+        let text = line.strip_suffix(b"\n").unwrap_or(&line);
+        if let Some(rest) = text.strip_prefix(b"diff --git ") {
+            current = Some(diff_git_name(rest)?);
+        } else if let Some(path) = &current {
+            if let Some(m) = text
+                .strip_prefix(b"new mode ")
+                .or_else(|| text.strip_prefix(b"new file mode "))
+            {
+                out.push((path.clone(), m.to_vec()));
+            } else if !(text.starts_with(b"old mode ")
+                || text.starts_with(b"deleted file mode ")
+                || text.starts_with(b"index "))
+            {
+                current = None;
+            }
+        }
+    }
+    Some(out)
+}
+
+/// Whether the worktree file `root/path` has the git `mode` (`100644`, `100755`, `120000`; anything else, e.g. a
+/// gitlink, is not checked). Non-Unix platforms do not record the executable bit: only the file type is compared.
+fn mode_matches(root: &Path, path: &[u8], mode: &[u8]) -> bool {
+    let Some(rel) = RepoPath::new(path).filter(RepoPath::is_contained) else {
+        return false;
+    };
+    let Ok(md) = std::fs::symlink_metadata(root.join(rel.to_os())) else {
+        return false;
+    };
+    match mode {
+        b"120000" => md.file_type().is_symlink(),
+        b"100644" | b"100755" => {
+            if !md.file_type().is_file() {
+                return false;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let exec = md.permissions().mode() & 0o100 != 0;
+                exec == (mode == b"100755")
+            }
+            #[cfg(not(unix))]
+            true
+        }
+        _ => true,
+    }
 }
 
 #[cfg(test)]

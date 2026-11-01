@@ -84,7 +84,7 @@ restore them (`kill -9`, a power loss), every later run in that worktree prints,
 saved and the exact command that restores them; snp never applies the patch by itself (you may have kept working).
 Once you have run that command, the next run notices that the changes are back, says so once and stops printing the
 notice. To dismiss a notice without restoring (or after restoring the work some other way), run
-`snp doctor --fix --stash`: it names each patch it dismisses and keeps it, so `git apply --3way <patch>` still works
+`snp doctor --fix --stash`: it names each patch it dismisses and keeps it, so `git apply --whitespace=nowarn <patch>` still works
 later (`snp cache gc` removes such a patch after 30 days).
 
 ### Warnings about old git

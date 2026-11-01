@@ -570,8 +570,12 @@ mod rows {
         assert_eq!(
             hint.unwrap(),
             format!(
-                "[ERROR] Your unstaged changes are saved in {0}; restore them with: git apply --3way {0}",
-                patch.display()
+                "[ERROR] Your unstaged changes are saved in {0}; restore them with: git apply --whitespace=nowarn \
+                 {0}; if git apply reports that the patch does not apply, those files changed after the stash (hook \
+                 fixes or later edits): keep a copy with git diff --binary {1} > {0}.now, put them back with git \
+                 --literal-pathspecs restore --source={1} --worktree -- foo, then apply it again",
+                patch.display(),
+                sb.git_text(&repo, &["write-tree"])
             )
         );
         let lines: Vec<String> = out.text().lines().map(str::to_owned).collect();
@@ -592,7 +596,7 @@ mod rows {
             &repo,
             &[
                 std::ffi::OsStr::new("apply"),
-                "--3way".as_ref(),
+                "--whitespace=nowarn".as_ref(),
                 patch.as_os_str(),
             ],
         );

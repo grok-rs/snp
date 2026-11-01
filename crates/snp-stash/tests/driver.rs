@@ -407,6 +407,10 @@ mod process {
     /// Runs the commands after `Restore with: ` exactly as printed.
     fn run_hint(sb: &Sandbox, repo: &Path, hint: &str) {
         let cmds = hint.split("Restore with: ").nth(1).unwrap();
+        // The command proper; the rest is what to do when the apply refuses.
+        let cmds = cmds.split("; if git apply reports").next().unwrap();
+        // The command proper; the rest is what to do when the apply refuses.
+        let cmds = cmds.split("; if git apply reports").next().unwrap();
         let out = Command::new("sh")
             .arg("-c")
             .arg(cmds)

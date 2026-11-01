@@ -168,7 +168,12 @@ fn restore_command(stderr: &str) -> String {
         .lines()
         .find(|l| l.contains(NOTICE))
         .unwrap_or_else(|| panic!("no notice in {stderr}"));
-    line.split_once("Restore with: ").unwrap().1.to_owned()
+    let cmd = line.split_once("Restore with: ").unwrap().1;
+    // The command proper; the rest is what to do when the apply refuses (ADR-084).
+    cmd.split("; if git apply reports")
+        .next()
+        .unwrap()
+        .to_owned()
 }
 
 /// ADR-083: a run that ends in a preflight check before the stash (here: an unstaged config) or that does not stash
@@ -271,7 +276,7 @@ fn doctor_fix_stash_dismisses_the_notice_and_keeps_the_patch() {
     assert!(line.contains("NOT in the worktree"), "{line}");
     assert!(!stdout.contains("unrestored changes"), "{stdout}");
     let patch = line
-        .split_once("git apply --3way ")
+        .split_once("git apply --whitespace=nowarn ")
         .unwrap()
         .1
         .split_once(" still")
@@ -284,7 +289,7 @@ fn doctor_fix_stash_dismisses_the_notice_and_keeps_the_patch() {
     assert_eq!(out.code, 0, "{err}");
     assert!(!err.contains("snp: "), "{err}");
     let st = std::process::Command::new("git")
-        .args(["apply", "--3way", &patch])
+        .args(["apply", "--whitespace=nowarn", &patch])
         .current_dir(&dir)
         .env_clear()
         .envs(env.env().iter())

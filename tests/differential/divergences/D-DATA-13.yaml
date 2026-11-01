@@ -56,4 +56,4 @@ expected:
     steps:
       3:
         exit: 0
-        stderr_matches: '^snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in (\S+) \(index tree [0-9a-f]{40}\)\. Restore with: git --literal-pathspecs checkout ([0-9a-f]{40}) -- foo && git apply --3way \1 && git --literal-pathspecs reset -q \2 -- foo\nsnp: this notice repeats until those changes are back in the worktree; to dismiss it and keep the patch, run: snp doctor --fix --stash\n$'
+        stderr_matches: '^snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in (\S+) \(index tree ([0-9a-f]{40})\)\. Restore with: git apply --whitespace=nowarn \1; if git apply reports that the patch does not apply, those files changed after the stash \(hook fixes or later edits\): keep a copy with git diff --binary \2 > \1\.now, put them back with git --literal-pathspecs restore --source=\2 --worktree -- foo, then run the command again\nsnp: this notice repeats until those changes are back in the worktree; to dismiss it and keep the patch, run: snp doctor --fix --stash\n$'
