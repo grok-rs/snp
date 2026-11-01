@@ -10,7 +10,12 @@
 #           allocator (bench/budgets.toml [musl]) is held to the never-slower-than-prek rule.
 #
 # The run pipeline (`snp run`, WP-32) is not merged yet: BENCH_SCENARIOS lists the scenarios snp can run today
-# (B1). WP-32 widens it to the full set (B1,B2,...,B12u) when it merges.
+# (B1), and BENCH_PENDING the ones knowingly not run, whose budgets the gate reports as warnings instead of failures
+# (`--allow-missing`). WP-32 moves every BENCH_PENDING scenario into BENCH_SCENARIOS (and B3,B4,B6,B12u from
+# MUSL_PENDING into MUSL_SCENARIOS) when it merges: a scenario in neither list fails every hard budget it has.
+#
+# The history caches of the gnu (e2e) and musl jobs use prefixes that cannot match each other: actions/cache
+# restore-keys are prefix matches, and a shared prefix would restore the other job's history.
 name: bench
 
 on:
@@ -41,7 +46,11 @@ env:
   CARGO_INCREMENTAL: "0"
   RUST_BACKTRACE: "1"
   BENCH_SCENARIOS: B1
+  BENCH_PENDING: B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12u
   MUSL_SCENARIOS: B1
+  # B2, B5, B7-B11 are not part of the musl matrix (ADR-079: B3/B4/B6/B12) and stay here; B3, B4, B6, B12u are
+  # pending WP-32
+  MUSL_PENDING: B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12u
 
 defaults:
   run:
@@ -62,12 +71,13 @@ jobs:
         with: { workspaces: snp, key: bench-micro }
       - name: criterion micro-benches
         run: >-
+          echo "BENCH_START=$(date +%s)" >> "$GITHUB_ENV" &&
           cargo bench -p snp --locked
           --bench argparse_hook_impl --bench len_cjk --bench pyre_kinds
           --bench shuffle_partition --bench tagging_tiers --bench yaml_manifest_load
           -- --noplot
       - name: micro thresholds
-        run: cargo xtask bench gate --micro
+        run: cargo xtask bench gate --micro --since "$BENCH_START"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -99,8 +109,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: snp/bench/history
-          key: bench-history-${{ github.run_id }}
-          restore-keys: bench-history-
+          key: bench-history-gnu-${{ github.run_id }}
+          restore-keys: bench-history-gnu-
       - run: cargo xtask bench setup --scenarios "$BENCH_SCENARIOS"
       # Pull requests: the base commit's snp, built and measured on this runner, is the baseline.
       - name: Base commit
@@ -124,9 +134,10 @@ jobs:
       - name: Gate
         run: |
           if [ "${{ github.event_name }}" = pull_request ]; then
-            cargo xtask bench gate --baseline target/bench/results/base.json --comment target/bench/comment.md
+            cargo xtask bench gate --baseline target/bench/results/base.json --comment target/bench/comment.md \
+              --allow-missing "$BENCH_PENDING"
           else
-            cargo xtask bench gate --comment target/bench/comment.md --record
+            cargo xtask bench gate --comment target/bench/comment.md --record --allow-missing "$BENCH_PENDING"
           fi
       - name: Job summary
         if: always()
@@ -145,7 +156,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: snp/bench/history
-          key: bench-history-${{ github.run_id }}
+          key: bench-history-gnu-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -193,7 +204,8 @@ jobs:
       - name: Gate
         run: |
           for alloc in system mimalloc; do
-            cargo xtask bench gate --current "target/bench/results/musl-$alloc.json" --record
+            cargo xtask bench gate --current "target/bench/results/musl-$alloc.json" --record \
+              --allow-missing "$MUSL_PENDING"
           done
       - name: Save the bench history
         if: success()

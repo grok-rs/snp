@@ -98,13 +98,15 @@ usage: cargo xtask bench gate [options]
 
 Checks a run record against bench/budgets.toml and a baseline; exits non-zero on a failed check.
 
-  --current FILE         the record to check (default target/bench/results/current.json)
+  --current FILE         the record to check (default <target-dir>/bench/results/current.json)
   --baseline FILE        the baseline record (default: the last history record of the same platform and variant)
   --history DIR          the JSON-lines history (default bench/history)
   --comment FILE         write the Markdown PR comment here
   --record               append the current record to the history when the gate passes
+  --allow-missing LIST   scenarios not measured on purpose (comma-separated): their budgets warn instead of failing
   --micro                check the criterion results of `cargo bench -p snp` against the [[micro]] thresholds
-  --criterion DIR        criterion's output directory (default target/criterion)
+  --criterion DIR        criterion's output directory (default <target-dir>/criterion)
+  --since SECS           --micro: ignore results older than this Unix time (stale results of an earlier run)
   --compare A B          print the per-scenario effect of record B against record A (no gate)";
 
 /// Runs the task with the arguments that follow its name.
@@ -501,13 +503,19 @@ struct Work {
     path_var: OsString,
 }
 
+/// cargo's target directory of the workspace at `root` (`CARGO_TARGET_DIR` and `build.target-dir` respected): `run`,
+/// `setup` and `gate` must agree on where the records and criterion's results live.
+fn target_dir(root: &Path) -> anyhow::Result<PathBuf> {
+    let meta = workspace::metadata(root)?;
+    Ok(meta
+        .get("target_directory")
+        .and_then(Value::as_str)
+        .map_or_else(|| root.join("target"), PathBuf::from))
+}
+
 impl Work {
     fn new(root: &Path, o: &Opts) -> anyhow::Result<Self> {
-        let meta = workspace::metadata(root)?;
-        let target_dir = meta
-            .get("target_directory")
-            .and_then(Value::as_str)
-            .map_or_else(|| root.join("target"), PathBuf::from);
+        let target_dir = target_dir(root)?;
         let dir = target_dir.join("bench");
         let path_var = OsString::from(o.one("path").unwrap_or(UNIX_PATH));
         Ok(Self {
@@ -1175,18 +1183,21 @@ fn runs(program: &Path) -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
-/// hyperfine: `target/bench/tools/bin/hyperfine`, else `hyperfine` on PATH, else `cargo install --locked` it.
+/// hyperfine [`HYPERFINE_VERSION`]: `target/bench/tools/bin/hyperfine`, else `hyperfine` on PATH, else `cargo install
+/// --locked` it. Another hyperfine release is never used: its JSON and `-N` semantics (e.g. `--prepare` under `-N`)
+/// differ, and the records would come from a different measuring tool.
 fn ensure_hyperfine(work: &Work, install: bool) -> anyhow::Result<PathBuf> {
     let local = work.tools_dir().join("bin").join(exe_name("hyperfine"));
-    if runs(&local) {
+    if hyperfine_version_ok(&local) {
         return Ok(local);
     }
-    if runs(Path::new("hyperfine")) {
+    if hyperfine_version_ok(Path::new("hyperfine")) {
         return Ok(PathBuf::from("hyperfine"));
     }
     ensure!(
         install,
-        "hyperfine not found (run without --no-install to install {HYPERFINE_VERSION})"
+        "hyperfine {HYPERFINE_VERSION} not found at {} or on PATH (run `cargo xtask bench setup` to install it)",
+        local.display()
     );
     say(&format!("bench: installing hyperfine {HYPERFINE_VERSION}"));
     let mut cmd = Command::new("cargo");
@@ -1196,11 +1207,28 @@ fn ensure_hyperfine(work: &Work, install: bool) -> anyhow::Result<PathBuf> {
         .env("CARGO_TARGET_DIR", work.tools_dir().join("build"));
     run_ok(&mut cmd, "cargo install hyperfine")?;
     ensure!(
-        runs(&local),
-        "{} does not run after the install",
+        hyperfine_version_ok(&local),
+        "{} is not hyperfine {HYPERFINE_VERSION} after the install",
         local.display()
     );
     Ok(local)
+}
+
+/// Whether `exe --version` runs and prints `hyperfine <HYPERFINE_VERSION>`.
+fn hyperfine_version_ok(exe: &Path) -> bool {
+    Command::new(exe)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .output()
+        .is_ok_and(|o| {
+            o.status.success() && is_hyperfine_version(&String::from_utf8_lossy(&o.stdout))
+        })
+}
+
+/// `hyperfine --version` output names exactly [`HYPERFINE_VERSION`].
+fn is_hyperfine_version(stdout: &str) -> bool {
+    let mut words = stdout.split_whitespace();
+    words.next() == Some("hyperfine") && words.next() == Some(HYPERFINE_VERSION)
 }
 
 /// prek: a venv `target/bench/tools/prek` from the hash-locked `bench/prek-requirements.txt` (wheels only).
@@ -1773,6 +1801,9 @@ struct Record {
     label: String,
     commit: String,
     unix_time: u64,
+    /// The optional metrics this run was asked to measure (`syscalls` for `--syscalls`, `alloc_mib` for `--dhat`): a
+    /// budget on a requested metric that has no value fails instead of being skipped.
+    extras: BTreeSet<String>,
     scenarios: BTreeMap<String, BTreeMap<String, Outcome>>,
 }
 
@@ -1824,6 +1855,7 @@ impl Record {
             "label": self.label,
             "commit": self.commit,
             "unix_time": self.unix_time,
+            "extras": self.extras.iter().collect::<Vec<_>>(),
             "scenarios": scenarios,
         })
     }
@@ -1879,6 +1911,14 @@ impl Record {
             label: s("label"),
             commit: s("commit"),
             unix_time: v.get("unix_time").and_then(Value::as_u64).unwrap_or(0),
+            extras: v
+                .get("extras")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
             scenarios,
         })
     }
@@ -1948,8 +1988,22 @@ fn measure(root: &Path, args: &[String]) -> anyhow::Result<()> {
         unix_time: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs()),
+        extras: [("syscalls", "syscalls"), ("dhat", "alloc_mib")]
+            .into_iter()
+            .filter(|(switch, _)| o.has(switch))
+            .map(|(_, metric)| metric.to_owned())
+            .collect(),
         scenarios: BTreeMap::new(),
     };
+    for (switch, needs) in [("syscalls", &["B1", "B3"][..]), ("dhat", &["B3"][..])] {
+        if o.has(switch) && !scenarios.iter().any(|s| needs.contains(&s.id)) {
+            say(&format!(
+                "bench: warning: --{switch} measures {} only, which this run does not select (the gate reports the \
+                 budget as not measured)",
+                needs.join("/")
+            ));
+        }
+    }
     for s in &scenarios {
         let mut per_tool = BTreeMap::new();
         for (tool, exe) in &exes {
@@ -2238,6 +2292,15 @@ impl Metric {
         }
     }
 
+    /// The `Record::extras` name of a metric measured only on request (`--syscalls`, `--dhat`).
+    const fn extra(self) -> Option<&'static str> {
+        match self {
+            Self::Syscalls => Some("syscalls"),
+            Self::AllocMib => Some("alloc_mib"),
+            Self::MedianMs | Self::RssMib => None,
+        }
+    }
+
     fn of(self, m: &Measure) -> Option<f64> {
         match self {
             Self::MedianMs => Some(m.median_ms),
@@ -2426,8 +2489,16 @@ struct Check {
     detail: String,
 }
 
-/// Every check of `cur` (and against `base`) under `b` (the e2e gate; pure).
-fn evaluate(cur: &Record, base: Option<&Record>, b: &Budgets) -> Vec<Check> {
+/// Every check of `cur` (and against `base`) under `b` (the e2e gate; pure). Nothing passes silently: a budget whose
+/// scenario was not measured fails when hard (a warning when its scenario is in `allow_missing` — the scenarios a
+/// workflow knowingly does not run yet), a requested metric without a value fails, a competitor that failed or was not
+/// measured is a warning on the never-slower rule, and a missing baseline is a warning.
+fn evaluate(
+    cur: &Record,
+    base: Option<&Record>,
+    b: &Budgets,
+    allow_missing: &BTreeSet<String>,
+) -> Vec<Check> {
     let mut out = Vec::new();
     let push = |out: &mut Vec<Check>, s: &str, what: String, verdict, detail: String| {
         out.push(Check {
@@ -2453,30 +2524,50 @@ fn evaluate(cur: &Record, base: Option<&Record>, b: &Budgets) -> Vec<Check> {
         };
         // never slower than pre-commit or prek at p50 (the non-adopted musl allocator is only reported)
         for other in &b.never_slower_than {
-            if let Some(o) = cur.get(id, other) {
-                let ok = snp.median_ms <= o.median_ms;
-                let verdict = if ok {
-                    Verdict::Pass
-                } else if musl_other {
-                    Verdict::Warn
-                } else {
-                    Verdict::Fail
-                };
-                push(
-                    &mut out,
-                    id,
-                    format!("p50 <= {other}"),
-                    verdict,
-                    format!(
-                        "{:.2} ms vs {:.2} ms ({:.2}x)",
-                        snp.median_ms,
-                        o.median_ms,
-                        o.median_ms / snp.median_ms
-                    ),
-                );
-            }
+            let o = match tools.get(other) {
+                Some(Outcome::Ok(o)) => o,
+                failed_or_absent => {
+                    let why = match failed_or_absent {
+                        Some(Outcome::Failed(e)) => {
+                            format!("reference {other} failed: {}", one_line(e))
+                        }
+                        _ => format!("reference {other} not measured"),
+                    };
+                    push(&mut out, id, format!("p50 <= {other}"), Verdict::Warn, why);
+                    continue;
+                }
+            };
+            let ok = snp.median_ms <= o.median_ms;
+            let verdict = if ok {
+                Verdict::Pass
+            } else if musl_other {
+                Verdict::Warn
+            } else {
+                Verdict::Fail
+            };
+            push(
+                &mut out,
+                id,
+                format!("p50 <= {other}"),
+                verdict,
+                format!(
+                    "{:.2} ms vs {:.2} ms ({:.2}x)",
+                    snp.median_ms,
+                    o.median_ms,
+                    o.median_ms / snp.median_ms
+                ),
+            );
         }
         // regression against the baseline: > pct and non-overlapping 95 % CIs
+        if base.is_some_and(|r| r.get(id, "snp").is_none()) {
+            push(
+                &mut out,
+                id,
+                format!("no regression > {}%", b.regression_pct),
+                Verdict::Warn,
+                "the baseline has no snp measurement of this scenario".into(),
+            );
+        }
         if let Some(prev) = base.and_then(|r| r.get(id, "snp")) {
             let limit = prev.median_ms * (1.0 + b.regression_pct / 100.0);
             let slower = snp.median_ms > limit;
@@ -2507,10 +2598,23 @@ fn evaluate(cur: &Record, base: Option<&Record>, b: &Budgets) -> Vec<Check> {
         }
     }
     // budgets of this OS
+    if base.is_none() {
+        push(
+            &mut out,
+            "*",
+            format!("no regression > {}%", b.regression_pct),
+            Verdict::Warn,
+            format!(
+                "no baseline for {}-{}: the regression check is skipped",
+                cur.platform, cur.variant
+            ),
+        );
+    }
     for bud in b.limits.iter().filter(|x| x.os == cur.os()) {
-        let Some(snp) = cur.get(&bud.scenario, "snp") else {
+        // syscalls and allocations are measured only on request (the nightly); a requested one must be there
+        if bud.metric.extra().is_some_and(|e| !cur.extras.contains(e)) {
             continue;
-        };
+        }
         let what = format!(
             "{} <= {}{}",
             match bud.metric {
@@ -2522,8 +2626,35 @@ fn evaluate(cur: &Record, base: Option<&Record>, b: &Budgets) -> Vec<Check> {
             budget_text(bud),
             if bud.hard { " (hard)" } else { "" }
         );
+        let snp = match cur.scenarios.get(&bud.scenario).and_then(|t| t.get("snp")) {
+            Some(Outcome::Ok(m)) => m,
+            Some(Outcome::Failed(_)) => continue, // already a "snp ran" failure
+            None => {
+                let allowed = allow_missing.contains(&bud.scenario);
+                let (verdict, detail) = if allowed {
+                    (Verdict::Warn, "scenario not measured (--allow-missing)")
+                } else if bud.hard {
+                    (Verdict::Fail, "scenario not measured")
+                } else {
+                    (Verdict::Warn, "scenario not measured")
+                };
+                push(&mut out, &bud.scenario, what, verdict, detail.into());
+                continue;
+            }
+        };
         let Some(value) = bud.metric.of(snp) else {
-            continue; // not measured in this run (e.g. syscalls outside the nightly)
+            push(
+                &mut out,
+                &bud.scenario,
+                what,
+                if bud.hard {
+                    Verdict::Fail
+                } else {
+                    Verdict::Warn
+                },
+                "metric not measured".into(),
+            );
+            continue;
         };
         let reference = match (&bud.vs_tool, &bud.vs_scenario) {
             (Some(t), _) => cur.get(&bud.scenario, t).and_then(|m| bud.metric.of(m)),
@@ -2683,7 +2814,15 @@ fn comment(cur: &Record, base: Option<&Record>, checks: &[Check]) -> String {
 fn gate(root: &Path, args: &[String]) -> anyhow::Result<()> {
     let Some(o) = Opts::parse(
         args,
-        &["current", "baseline", "history", "comment", "criterion"],
+        &[
+            "current",
+            "baseline",
+            "history",
+            "comment",
+            "criterion",
+            "allow-missing",
+            "since",
+        ],
         &["record", "micro", "compare"],
     )?
     else {
@@ -2691,12 +2830,24 @@ fn gate(root: &Path, args: &[String]) -> anyhow::Result<()> {
         return Ok(());
     };
     let budgets = Budgets::load(root)?;
+    let target = target_dir(root)?;
     if o.has("micro") {
         o.no_positional()?;
         let dir = o
             .one("criterion")
-            .map_or_else(|| root.join("target").join("criterion"), PathBuf::from);
-        return gate_micro(&budgets, &dir);
+            .map_or_else(|| target.join("criterion"), PathBuf::from);
+        let since = o
+            .one("since")
+            .map(|v| {
+                v.parse::<u64>()
+                    .ok()
+                    .and_then(|secs| {
+                        std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(secs))
+                    })
+                    .with_context(|| format!("--since {v:?}: not a Unix time in seconds"))
+            })
+            .transpose()?;
+        return gate_micro(&budgets, &dir, since);
     }
     if o.has("compare") {
         let [a, b] = o.positional.as_slice() else {
@@ -2706,7 +2857,7 @@ fn gate(root: &Path, args: &[String]) -> anyhow::Result<()> {
         return Ok(());
     }
     o.no_positional()?;
-    let work_results = root.join("target").join("bench").join("results");
+    let work_results = target.join("bench").join("results");
     let current_path = o
         .one("current")
         .map_or_else(|| work_results.join("current.json"), PathBuf::from);
@@ -2719,7 +2870,8 @@ fn gate(root: &Path, args: &[String]) -> anyhow::Result<()> {
         Some(p) => Some(Record::read(Path::new(p))?),
         None => last_history_record(&hist_file)?,
     };
-    let checks = evaluate(&cur, base.as_ref(), &budgets);
+    let allow_missing: BTreeSet<String> = o.list("allow-missing").into_iter().collect();
+    let checks = evaluate(&cur, base.as_ref(), &budgets, &allow_missing);
     for c in &checks {
         say(&format!(
             "{:<5} {:<5} {:<34} {}",
@@ -2804,7 +2956,12 @@ struct CritResult {
 }
 
 /// Every `<dir>/**/new/{benchmark,estimates}.json` pair, keyed by the full benchmark id.
-fn read_criterion(dir: &Path) -> anyhow::Result<BTreeMap<String, CritResult>> {
+/// With `since`, a result whose `estimates.json` is older is stale (an earlier `cargo bench`, e.g. of a benchmark
+/// that no longer runs) and is left out, so its threshold fails as unmeasured.
+fn read_criterion(
+    dir: &Path,
+    since: Option<std::time::SystemTime>,
+) -> anyhow::Result<BTreeMap<String, CritResult>> {
     let mut out = BTreeMap::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
@@ -2823,6 +2980,18 @@ fn read_criterion(dir: &Path) -> anyhow::Result<BTreeMap<String, CritResult>> {
         let (bench, est) = (d.join("benchmark.json"), d.join("estimates.json"));
         if !bench.is_file() || !est.is_file() {
             continue;
+        }
+        if let Some(since) = since {
+            let modified = std::fs::metadata(&est)
+                .and_then(|m| m.modified())
+                .with_context(|| format!("reading the mtime of {}", est.display()))?;
+            if modified < since {
+                say(&format!(
+                    "bench gate --micro: ignoring the stale result {}",
+                    est.display()
+                ));
+                continue;
+            }
         }
         let b: Value = serde_json::from_str(&std::fs::read_to_string(&bench)?)
             .with_context(|| format!("parsing {}", bench.display()))?;
@@ -2924,8 +3093,8 @@ fn fmt_ns(ns: f64) -> String {
     }
 }
 
-fn gate_micro(b: &Budgets, dir: &Path) -> anyhow::Result<()> {
-    let results = read_criterion(dir)?;
+fn gate_micro(b: &Budgets, dir: &Path, since: Option<std::time::SystemTime>) -> anyhow::Result<()> {
+    let results = read_criterion(dir, since)?;
     let checks = evaluate_micro(&b.micro, &results);
     for c in &checks {
         say(&format!(
@@ -2985,6 +3154,10 @@ mod tests {
 
     fn budgets() -> Budgets {
         Budgets::load(&workspace::root().unwrap()).unwrap()
+    }
+
+    fn none() -> BTreeSet<String> {
+        BTreeSet::new()
     }
 
     fn verdict_of<'a>(checks: &'a [Check], scenario: &str, what: &str) -> Option<&'a Check> {
@@ -3140,6 +3313,12 @@ mod tests {
         assert_eq!(hard("B12u", Metric::RssMib), Some(30.0));
         assert_eq!(hard("B1", Metric::Syscalls), Some(64.0));
         assert_eq!(hard("B3", Metric::AllocMib), Some(2.0));
+        // ARCHITECTURE §12.3: committed syscall ceilings on B1 and B3 (B3 provisional and soft until WP-32)
+        assert!(
+            b.limits
+                .iter()
+                .any(|x| x.os == "linux" && x.scenario == "B3" && x.metric == Metric::Syscalls)
+        );
         let micro = |id: &str| b.micro.iter().find(|t| t.id == id).cloned();
         assert_eq!(
             micro("argparse/hook_impl_cli_compat").unwrap().max_ns,
@@ -3184,7 +3363,7 @@ mod tests {
         let mut snp = m(1.5, (1.4, 1.6));
         snp.rss_mib = Some(7.5);
         snp.syscalls = Some(60);
-        let r = record(
+        let mut r = record(
             "gnu-system",
             &[
                 ("B1", "snp", Outcome::Ok(snp)),
@@ -3192,6 +3371,7 @@ mod tests {
                 ("B3", "prek", Outcome::Failed("boom".into())),
             ],
         );
+        r.extras.insert("syscalls".into());
         let back = Record::from_json(&r.to_json()).unwrap();
         assert_eq!(back, r);
         assert_eq!(back.os(), "linux");
@@ -3212,7 +3392,7 @@ mod tests {
                 ("B3", "prek", Outcome::Ok(m(18.0, (17.0, 19.0)))),
             ],
         );
-        let checks = evaluate(&cur, None, &b);
+        let checks = evaluate(&cur, None, &b, &none());
         assert_eq!(
             verdict_of(&checks, "B1", "p50 <= 3").unwrap().verdict,
             Verdict::Fail
@@ -3231,8 +3411,137 @@ mod tests {
             verdict_of(&checks, "B3", "p50 <= 25").unwrap().verdict,
             Verdict::Pass
         );
-        // nothing measured for B2: no B2 check at all
-        assert!(checks.iter().all(|c| c.scenario != "B2"));
+        // B2 was not measured: its hard budget fails rather than passing silently
+        assert_eq!(
+            verdict_of(&checks, "B2", "p50 <= 10").unwrap().verdict,
+            Verdict::Fail
+        );
+    }
+
+    #[test]
+    fn gate_reports_unmeasured_scenarios_and_metrics() {
+        let b = budgets();
+        let cur = record(
+            "gnu-system",
+            &[
+                ("B1", "snp", Outcome::Ok(m(1.0, (0.9, 1.1)))),
+                ("B1", "pre-commit", Outcome::Ok(m(170.0, (169.0, 171.0)))),
+                ("B1", "prek", Outcome::Ok(m(4.0, (3.9, 4.1)))),
+            ],
+        );
+        // every hard Linux budget of an unmeasured scenario fails: B2/B3 p50, B4/B6/B12u RSS
+        let checks = evaluate(&cur, None, &b, &none());
+        for (s, what) in [
+            ("B2", "p50"),
+            ("B3", "p50"),
+            ("B4", "RSS"),
+            ("B6", "RSS"),
+            ("B12u", "RSS"),
+        ] {
+            let c = checks
+                .iter()
+                .find(|c| c.scenario == s && c.what.starts_with(what) && c.what.ends_with("(hard)"))
+                .unwrap_or_else(|| panic!("no {s} {what} check: {checks:?}"));
+            assert_eq!(c.verdict, Verdict::Fail, "{c:?}");
+        }
+        // a soft budget of an unmeasured scenario warns
+        assert_eq!(
+            verdict_of(&checks, "B7", "p50 <= 1000").unwrap().verdict,
+            Verdict::Warn
+        );
+        // the scenarios a workflow knowingly skips only warn
+        let pending: BTreeSet<String> = [
+            "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B10", "B11", "B12u",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        let checks = evaluate(&cur, None, &b, &pending);
+        assert!(
+            checks.iter().all(|c| c.verdict != Verdict::Fail),
+            "{checks:?}"
+        );
+        assert_eq!(
+            verdict_of(&checks, "B3", "p50 <= 25").unwrap().verdict,
+            Verdict::Warn
+        );
+        // B1 syscalls / B3 allocations: skipped when not requested, a failure when requested and missing
+        assert!(verdict_of(&checks, "B1", "syscalls").is_none());
+        assert!(verdict_of(&checks, "B3", "allocated").is_none());
+        let mut dhat = cur.clone();
+        dhat.extras.insert("alloc_mib".into());
+        assert_eq!(
+            verdict_of(&evaluate(&dhat, None, &b, &none()), "B3", "allocated")
+                .unwrap()
+                .verdict,
+            Verdict::Fail
+        );
+        assert_eq!(
+            verdict_of(&evaluate(&dhat, None, &b, &pending), "B3", "allocated")
+                .unwrap()
+                .verdict,
+            Verdict::Warn
+        );
+        let mut nightly = cur;
+        nightly.extras.insert("syscalls".into());
+        let checks = evaluate(&nightly, None, &b, &pending);
+        assert_eq!(
+            verdict_of(&checks, "B1", "syscalls").unwrap().verdict,
+            Verdict::Fail
+        );
+        if let Some(Outcome::Ok(snp)) = nightly
+            .scenarios
+            .get_mut("B1")
+            .and_then(|t| t.get_mut("snp"))
+        {
+            snp.syscalls = Some(62);
+        }
+        let checks = evaluate(&nightly, None, &b, &pending);
+        assert_eq!(
+            verdict_of(&checks, "B1", "syscalls").unwrap().verdict,
+            Verdict::Pass
+        );
+        // no baseline: the skipped regression check is visible
+        assert_eq!(
+            verdict_of(&checks, "*", "no regression").unwrap().verdict,
+            Verdict::Warn
+        );
+    }
+
+    #[test]
+    fn never_slower_rule_warns_on_a_failed_or_missing_reference() {
+        let b = budgets();
+        let cur = record(
+            "gnu-system",
+            &[
+                ("B1", "snp", Outcome::Ok(m(1.0, (0.9, 1.1)))),
+                (
+                    "B1",
+                    "pre-commit",
+                    Outcome::Failed("setup: oracle broken\nline 2".into()),
+                ),
+            ],
+        );
+        let checks = evaluate(&cur, None, &b, &none());
+        let pc = verdict_of(&checks, "B1", "p50 <= pre-commit").unwrap();
+        assert_eq!(pc.verdict, Verdict::Warn);
+        assert_eq!(
+            pc.detail,
+            "reference pre-commit failed: setup: oracle broken line 2"
+        );
+        let prek = verdict_of(&checks, "B1", "p50 <= prek").unwrap();
+        assert_eq!(prek.verdict, Verdict::Warn);
+        assert_eq!(prek.detail, "reference prek not measured");
+        let text = comment(&cur, None, &checks);
+        assert!(text.contains("reference pre-commit failed"), "{text}");
+    }
+
+    #[test]
+    fn hyperfine_version_must_match_the_pin() {
+        assert!(is_hyperfine_version("hyperfine 1.19.0\n"));
+        assert!(!is_hyperfine_version("hyperfine 1.18.0\n"));
+        assert!(!is_hyperfine_version("hyperfine 1.19.01\n"));
+        assert!(!is_hyperfine_version(""));
     }
 
     #[test]
@@ -3244,9 +3553,13 @@ mod tests {
         );
         let check = |median: f64, ci: (f64, f64)| {
             let cur = record("gnu-system", &[("B3", "snp", Outcome::Ok(m(median, ci)))]);
-            verdict_of(&evaluate(&cur, Some(&base), &b), "B3", "no regression")
-                .unwrap()
-                .verdict
+            verdict_of(
+                &evaluate(&cur, Some(&base), &b, &none()),
+                "B3",
+                "no regression",
+            )
+            .unwrap()
+            .verdict
         };
         assert_eq!(check(10.4, (10.3, 10.5)), Verdict::Pass); // +4 %
         assert_eq!(check(10.6, (10.1, 11.0)), Verdict::Warn); // +6 %, intervals overlap
@@ -3271,7 +3584,7 @@ mod tests {
                 ("B6", "snp", Outcome::Failed("exit 3".into())),
             ],
         );
-        let checks = evaluate(&cur, None, &b);
+        let checks = evaluate(&cur, None, &b, &none());
         // B8 RSS limit = 1.0 × 8 + 2 = 10 MiB: soft breach
         assert_eq!(
             verdict_of(&checks, "B8", "RSS").unwrap().verdict,
@@ -3279,12 +3592,14 @@ mod tests {
         );
         // B9 ≤ B3 + 3 ms = 23 ms
         assert_eq!(
-            verdict_of(&checks, "B9", "p50").unwrap().verdict,
+            verdict_of(&checks, "B9", "p50 <= 1x B3").unwrap().verdict,
             Verdict::Pass
         );
         // B4 vs pre-commit: not measured → warn, never a silent pass
         assert_eq!(
-            verdict_of(&checks, "B4", "p50").unwrap().verdict,
+            verdict_of(&checks, "B4", "p50 <= 0.2x pre-commit")
+                .unwrap()
+                .verdict,
             Verdict::Warn
         );
         assert_eq!(
@@ -3308,7 +3623,7 @@ mod tests {
         };
         let v = |variant: &str| {
             verdict_of(
-                &evaluate(&record(variant, &rows), None, &b),
+                &evaluate(&record(variant, &rows), None, &b, &none()),
                 "B3",
                 "p50 <= prek",
             )
@@ -3333,7 +3648,7 @@ mod tests {
             "gnu-system",
             &[("B1", "snp", Outcome::Ok(m(1.0, (0.9, 1.1))))],
         );
-        let checks = evaluate(&cur, Some(&base), &b);
+        let checks = evaluate(&cur, Some(&base), &b, &none());
         let text = comment(&cur, Some(&base), &checks);
         assert!(text.contains("**Gate: FAIL**"), "{text}");
         assert!(
@@ -3398,8 +3713,14 @@ mod tests {
                 .join("base"),
         )
         .unwrap();
-        let got = read_criterion(&dir).unwrap();
+        let got = read_criterion(&dir, None).unwrap();
+        // a result older than the `--since` time of this run is stale and left out
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+        let stale = read_criterion(&dir, Some(later)).unwrap();
+        let fresh = read_criterion(&dir, Some(std::time::UNIX_EPOCH)).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
+        assert!(stale.is_empty(), "{stale:?}");
+        assert_eq!(fresh, got);
         assert_eq!(
             got.get("argparse/hook_impl_cli_compat"),
             Some(&CritResult {
@@ -3409,7 +3730,7 @@ mod tests {
         );
         assert_eq!(got.len(), 1);
         assert!(
-            read_criterion(Path::new("/nonexistent/criterion"))
+            read_criterion(Path::new("/nonexistent/criterion"), None)
                 .unwrap()
                 .is_empty()
         );

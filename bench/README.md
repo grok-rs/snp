@@ -61,12 +61,22 @@ the tool waited for, so a git child larger than the tool itself is what gets rep
 * **Regression**: snp's median more than 5 % above the baseline's **and** the two 95 % confidence intervals of the
   medians disjoint (distribution-free order-statistic intervals, ranks `n/2 ∓ 1.96·√n/2`) fails; a > 5 % change with
   overlapping intervals is a warning. Pull requests use the base commit measured on the same runner as the baseline;
-  main and the nightly use the last history record of the same platform and variant.
+  main and the nightly use the last history record of the same platform and variant. The gate reads the records and
+  criterion's results from cargo's target directory (`CARGO_TARGET_DIR` respected), like `run` writes them, and uses
+  hyperfine 1.19.0 only (another hyperfine on PATH is ignored).
 * **Budgets**: every `[[budget]]` of the running OS; `hard = true` fails, a soft breach is a warning.
-* **Never slower**: snp's p50 above pre-commit's or prek's on any scenario both measured fails (musl: the
-  non-adopted allocator is reported only).
+* **Nothing passes silently**: a hard budget whose scenario is not in the record fails (a soft one warns), unless the
+  scenario is listed in `--allow-missing` (the scenarios a workflow knowingly does not run yet, `BENCH_PENDING` in
+  `.github/workflows/bench.yml`), which turns it into a warning. A syscall or allocation budget is checked only when
+  the run asked for that metric (`--syscalls`, `--dhat`, recorded in the record's `extras`); asked for but without a
+  value, it fails. A missing baseline is a warning (the regression check is skipped), and so is a baseline without
+  the scenario.
+* **Never slower**: snp's p50 above pre-commit's or prek's on any scenario fails (musl: the non-adopted allocator is
+  reported only); a competitor that failed or was not measured on a scenario snp measured is a warning naming the
+  reason, never a silent pass.
 * **Micro** (`gate --micro`): criterion's median of each `[[micro]]` benchmark against its exact threshold; a missing
-  result fails. These are the exact targets whose release-mode `perf_*` tests (the `perf-smoke` CI job) only catch a
+  result fails, and with `--since <unix-secs>` (CI passes the time `cargo bench` started) a result older than that
+  is stale and counts as missing. These are the exact targets whose release-mode `perf_*` tests (the `perf-smoke` CI job) only catch a
   3× regression: argparse hook-impl parse < 5 µs (WP-12), tier-1 path searches ≥ 1,000,000/s (WP-13),
   classification of 50 k files with 10 filters ≤ 40 ms (WP-22), alias bomb and 10,000-deep nesting rejected in
   < 100 ms (WP-14).

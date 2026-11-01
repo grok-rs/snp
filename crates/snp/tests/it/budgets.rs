@@ -19,8 +19,10 @@
 //! no `git diff` runs on Unix. On Windows there is no stat oracle: every hook that ran is followed by a real
 //! `git diff` and the baseline is taken (ADR-043), so the hook-proportional bounds grow by `hooks + 1`.
 //!
-//! The run-pipeline shapes need snp-run (WP-32) and the spawn-log arming in the binary's entry (WP-33); they are
-//! `#[ignore = "needs WP-32"]` until those packages merge. Without `--features testing` the spawn log does not exist,
+//! Every count is taken on the second of two identical runs (the first warms the store), as the bounds describe the
+//! warm path. The run-pipeline shapes need snp-run (WP-32) and the spawn-log arming in the binary's entry (WP-33);
+//! they are `#[ignore = "needs WP-32"]` until those packages merge. B1's zero count is asserted only after a
+//! positive control proved the log armed, so it waits for the same packages. Without `--features testing` the spawn log does not exist,
 //! so those tests are ignored with a reason that says so.
 //!
 //! Owner: WP-36.
@@ -110,7 +112,9 @@ fn snp_proc_log_lines(path: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Runs `snp <args>` in `cwd` with the spawn log armed; returns the output and the log.
+/// Runs `snp <args>` in `cwd` twice — once unlogged to warm the store (the cached `git --version` of
+/// `GitExe::resolve`, the store layout, the baseline-elision state), then with the spawn log armed — and returns the
+/// second run's output and log: the bounds of ARCHITECTURE §12.1 are those of the warm path that B2/B3 measure.
 fn run_logged(
     env: &TestEnv,
     cwd: &Path,
@@ -121,6 +125,11 @@ fn run_logged(
         "spawns-{}.log",
         args.join("_").replace(['/', ' '], "-")
     ));
+    let mut warm = env.snp(cwd).args(args);
+    for (k, v) in extra {
+        warm = warm.env(k, v);
+    }
+    let _warm_up = warm.output();
     let _ignored = std::fs::remove_file(&log);
     let mut cmd = env.snp(cwd).args(args).env("SNP_TEST_SPAWN_LOG", &log);
     for (k, v) in extra {
@@ -184,10 +193,23 @@ fn assert_bounds(what: &str, out: &Output, log: &SpawnLog, max_total: usize, hoo
     );
 }
 
-/// B1: `--version` starts no process at all (T1: answered before any initialisation).
+/// B1: `--version` starts no process at all (T1: answered before any initialisation). A zero count proves nothing
+/// unless the log is armed, so a `snp run` that must spawn is logged first as the positive control; that needs the
+/// run pipeline (WP-32) and the binary entry arming `SNP_TEST_SPAWN_LOG` (WP-33).
 #[test]
+#[cfg_attr(
+    feature = "testing",
+    ignore = "needs WP-32 and WP-33 (positive control: `snp run` with the spawn log armed)"
+)]
+#[cfg_attr(
+    not(feature = "testing"),
+    ignore = "needs a `--features testing` build (spawn log)"
+)]
 fn b1_version_spawns_nothing() {
     let env = TestEnv::new(bins());
+    let repo = noop_repo(&env, "b1-control", &noop_config(1));
+    let (out, control) = run_logged(&env, &repo, &["run"], &[]);
+    assert_bounds("B1 positive control", &out, &control, usize::MAX, 1);
     let (out, log) = run_logged(&env, env.root(), &["--version"], &[]);
     assert_eq!(out.code, 0);
     assert_eq!(String::from_utf8_lossy(&out.stdout), "snp 2.0.0\n");

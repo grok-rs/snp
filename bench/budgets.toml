@@ -138,6 +138,15 @@ metric = "syscalls"
 max = 64.0
 hard = true
 
+# B3's ceiling is provisional and soft: `strace -f` also counts the 7 git and 10 hook children, and `snp run` (WP-32)
+# does not exist yet to measure it. WP-32 replaces it with its measured value (+ ~10 % headroom) and `hard = true`.
+[[budget]]
+os = "linux"
+scenario = "B3"
+metric = "syscalls"
+max = 4000.0
+hard = false
+
 [[budget]]
 os = "linux"
 scenario = "B3"
