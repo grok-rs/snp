@@ -1255,7 +1255,15 @@ fn parse_compare(v: &Yv, unsupported: &mut Vec<String>) -> Result<Compare, Strin
                     },
                 };
             }
-            "eol" => c.eol_insensitive = s(val, &what)? == "insensitive",
+            // `windows`: insensitive on Windows only, where pre-commit's text-mode writes end lines with `\r\n`
+            // and snp keeps each line's original ending (D-DATA-09)
+            "eol" => {
+                c.eol_insensitive = match s(val, &what)?.as_str() {
+                    "insensitive" => true,
+                    "windows" => cfg!(windows),
+                    _ => false,
+                }
+            }
             "winerror_text" => {}
             other => unsupported.push(format!("{what}: unknown compare key {other:?}")),
         }

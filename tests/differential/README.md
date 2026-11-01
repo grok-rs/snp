@@ -161,7 +161,7 @@ compare:
   config_file: exact              # .pre-commit-config.yaml after each step
   git_config: false
   store: false                    # true / logical: the set of (repo, rev) entries
-  eol: insensitive                # \r\n == \n (14 §A.6.4)
+  eol: insensitive                # \r\n == \n (14 §A.6.4); `windows`: on Windows only (D-DATA-09 rewrites)
 expected:                         # divergence files: how each side must behave (crates/snp-difftest/src/expect.rs)
   oracle: [{exit: 3, stdout_contains: "OverflowError"}]
   snp: [{exit: 1, stderr: ""}]

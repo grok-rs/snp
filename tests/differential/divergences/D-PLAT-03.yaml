@@ -29,7 +29,7 @@ steps:
   - tool: [run, --all-files]
     env:
       # run.cmd is found through PATH (the work tree root first).
-      PATH: "${work};${env:PATH}"
+      PATH: "${work};${PATH}"
 compare:
   # Diverges by design in the hook output (pre-commit executes the injected `echo`).
   stdout: exact

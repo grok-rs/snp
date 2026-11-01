@@ -2,7 +2,8 @@ name: store/t10-sto-13-submodules
 covers: [T10-STO-13, T10-STO-06]
 repos:
   inner:
-    files: {inner.sh: "#!/bin/sh\necho inner\n"}
+    # `env sh`, not `/bin/sh`: Windows has no /bin/sh for pre-commit (snp falls back to `sh` on PATH, D-PLAT-02)
+    files: {inner.sh: "#!/usr/bin/env sh\necho inner\n"}
     exec: [inner.sh]
   hooks:
     fixture: script_hooks_repo

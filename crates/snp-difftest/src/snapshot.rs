@@ -273,6 +273,15 @@ fn snp_store(store: &Path) -> Vec<String> {
         let repo = match v.get("kind").and_then(serde_json::Value::as_str) {
             Some("local") => String::from("local"),
             _ => match v.get("repo") {
+                // D-DATA-08 keys a local directory by its canonical path, `\`-separated on Windows; the oracle
+                // records the config's `repo:` (the scenarios' substituted paths use `/`)
+                Some(serde_json::Value::String(s))
+                    if cfg!(windows)
+                        && v.get("repo_type").and_then(serde_json::Value::as_str)
+                            == Some("path") =>
+                {
+                    s.replace('\\', "/")
+                }
                 Some(serde_json::Value::String(s)) => s.clone(),
                 Some(other) => other.to_string(),
                 None => String::from("?"),

@@ -23,3 +23,6 @@ steps:
   - shell: cat .pre-commit-config.yaml
 compare:
   stdout: lines-unordered
+  # pre-commit rewrites the config through a text-mode file (CRLF on Windows); snp keeps each line's ending
+  # (D-DATA-09, pinned by its divergence file)
+  eol: windows

@@ -351,6 +351,9 @@ pub(crate) fn canonical_help(bytes: &[u8]) -> Vec<u8> {
     let mut cur = bytes.to_vec();
     for (from, to) in PAIRS {
         cur = replace_bytes(&cur, from, to);
+        // Windows: Python's text-mode stdout writes the same lines with CRLF
+        let (from, to) = (crlf(from), crlf(to));
+        cur = replace_bytes(&cur, &from, &to);
     }
     // `-t {…}, --hook-type {…}` → `-t, --hook-type {…}` (the choices are the same list twice)
     let lines = lines_with_ends(&cur);
@@ -369,6 +372,11 @@ pub(crate) fn canonical_help(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
+/// `b` with every `\n` written as `\r\n`.
+fn crlf(b: &[u8]) -> Vec<u8> {
+    replace_bytes(b, b"\n", b"\r\n")
+}
+
 /// CPython 3.12 → 3.13 argparse rendering (research 12 §A.4.1): 3.12 puts the `...` of a sub-command usage on its
 /// own line after the choices (`{autoupdate,…,hook-impl}` / `...`); 3.13 renders `{…} ...` on one line. Inside an
 /// argparse block, a line of indentation plus `...` that follows a line ending in `}` is joined onto it. Applied to
@@ -382,15 +390,19 @@ pub fn canonical_usage(bytes: &[u8]) -> Vec<u8> {
         if line.starts_with(b"usage: ") {
             in_usage = true;
         }
-        let trimmed = line.strip_suffix(b"\n").unwrap_or(line);
+        // `\n` or (Windows text mode) `\r\n`
+        let (trimmed, eol) = split_eol(line);
         let is_dots = in_usage
             && !trimmed.is_empty()
             && trimmed.trim_ascii_start() == b"..."
             && trimmed.starts_with(b" ");
         if is_dots && prev_closes && out.ends_with(b"\n") {
             out.pop();
+            if out.ends_with(b"\r") {
+                out.pop();
+            }
             out.extend_from_slice(b" ...");
-            out.extend_from_slice(line.get(trimmed.len()..).unwrap_or_default());
+            out.extend_from_slice(eol);
             prev_closes = false;
             continue;
         }
@@ -460,7 +472,9 @@ fn tier_c(b: &[u8]) -> Vec<u8> {
 /// `-   repo: <…>/shadow-repo` in try-repo's `Using config:` block.
 fn is_shadow_repo_line(line: &[u8]) -> bool {
     let (body, _) = split_eol(line);
-    body.ends_with(b"/shadow-repo") && contains_bytes(body, b"repo: ")
+    // `\shadow-repo`: the tempdir joined by `os.path` on Windows
+    (body.ends_with(b"/shadow-repo") || body.ends_with(b"\\shadow-repo"))
+        && contains_bytes(body, b"repo: ")
 }
 
 /// The indentation of a `    rev: <40 or 64 hex digits>` line.
@@ -918,6 +932,16 @@ mod tests {
         assert_eq!(canonical_usage(py312), py313.to_vec());
         assert_eq!(canonical_usage(py313), py313.to_vec());
         assert_eq!(canonical_usage(b"}\n   ...\n"), b"}\n   ...\n");
+        // Windows text mode
+        assert_eq!(canonical_usage(&crlf(py312)), crlf(py313));
+    }
+
+    #[test]
+    fn py312_crlf_help_lines_are_canonicalised() {
+        let py312 = b"options:\r\n  -c CONFIG, --config CONFIG\r\n                        Path to alternate config file\r\n  -t {a,b}, --hook-type {a,b}\r\n  --to-ref TO_REF, --origin TO_REF, -o TO_REF\r\n";
+        let py313 = b"options:\r\n  -c, --config CONFIG   Path to alternate config file\r\n  -t, --hook-type {a,b}\r\n  --to-ref, --origin, -o TO_REF\r\n";
+        assert_eq!(canonical_help(py312), py313.to_vec());
+        assert_eq!(canonical_help(py313), py313.to_vec());
     }
 
     #[test]
@@ -989,6 +1013,11 @@ mod tests {
         assert_eq!(
             normalise(Tier::C, shadow, &BrandMap::identity()),
             b"-   repo: /r/tmp/tmp[RAND]/shadow-repo\n    rev: [SHADOW-REV]\n    rev: 508372f149f5f691200929308eaba68eb7ddd4da\n"
+        );
+        let shadow = b"-   repo: D:\\r\\tmp\\tmpab12cd34\\shadow-repo\r\n    rev: 508372f149f5f691200929308eaba68eb7ddd4da\r\n";
+        assert_eq!(
+            normalise(Tier::C, shadow, &BrandMap::identity()),
+            b"-   repo: D:\\r\\tmp\\tmp[RAND]\\shadow-repo\r\n    rev: [SHADOW-REV]\r\n"
         );
     }
 

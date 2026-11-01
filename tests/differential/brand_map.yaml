@@ -76,6 +76,9 @@ substitutions:
   # crash log (error_handler.py:47; ADR-013)
   - from: "/pre-commit.log"
     to: "/snp.log"
+  # the same path joined by os.path on Windows
+  - from: "\\pre-commit.log"
+    to: "\\snp.log"
   - from: "pre-commit version: 4.6.2"
     to: "snp version: 2.0.0"
 

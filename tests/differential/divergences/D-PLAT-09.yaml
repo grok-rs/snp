@@ -28,7 +28,7 @@ work:
 steps:
   - tool: [run, --all-files]
     env:
-      PATH: "${work};${env:PATH}"
+      PATH: "${work};${PATH}"
 compare:
   stdout: exact
   stderr: exact
