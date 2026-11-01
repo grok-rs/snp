@@ -5,16 +5,17 @@
 
 mod era;
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use snp_core::brand::Brand;
-use snp_core::env::Env;
+use snp_core::cancel::CancelToken;
+use snp_core::env::{Env, EnvPatch};
 use snp_core::stage::HookType;
+use snp_proc::spawn::{Group, Role, Spec, Stdin};
 use snp_pycompat::shlex::quote_bytes;
 
 pub use era::{ScriptArgs, parse_script_args};
@@ -74,7 +75,9 @@ fn is_file(p: &Path) -> bool {
 }
 
 /// 11 §A.19.3: the stable executable to embed as `SNP_EXE`, never canonicalised. Candidates in order:
-/// `absolute(arg0)` when arg0 contains a separator; then each absolute PATH entry joined with the brand's name —
+/// `absolute(arg0)` when arg0 contains a separator and the result has no `..` component (`../../bin/snp` run from
+/// the repository would tie the hook to the repository's own path; `..` is never folded lexically, which is wrong
+/// across symlinked directories); then each absolute PATH entry joined with the brand's name —
 /// `snp[.exe]` (snp brand) or `pre-commit[.exe]` (compat brand, so hooks keep the compat brand, ADR-060); then
 /// `current`. The first candidate that is a file and `same_file` as `current` wins (Unix (dev, ino); Windows volume
 /// serial + file index).
@@ -86,6 +89,9 @@ pub fn select_exe(brand: Brand, arg0: Option<&OsStr>, env: &Env, current: &Path)
     let mut cands: Vec<PathBuf> = Vec::new();
     if let Some(a) = arg0.filter(|a| has_separator(a))
         && let Ok(abs) = std::path::absolute(a)
+        && !abs
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
     {
         cands.push(abs);
     }
@@ -129,59 +135,66 @@ pub(crate) fn snp_version_of(line: &str) -> Option<&str> {
 }
 
 /// Runs `exe --version` with stdin `/dev/null`, a 10 s deadline (killed after it) and the inherited environment
-/// (11 §A.19.8: the probe mirrors what a hook would see); the first stdout line, `None` on any failure.
+/// plus `SNP_VERSION_PROBE=1` (11 §A.19.8: the probe mirrors what a hook would see); the first stdout line, `None`
+/// on any failure. With the variable an snp of any brand prints `pre-commit 4.6.2 (snp X)` (§A.19.4), which a plain
+/// compat-brand `--version` (`pre-commit 4.6.2`, ADR-023) would not reveal; Python pre-commit ignores it.
 pub(crate) fn version_probe(exe: &Path) -> Option<String> {
-    let out = probe_output(exe, &[OsStr::new("--version")], None)?;
+    let env = Env::capture_process().patched(&EnvPatch::default().set("SNP_VERSION_PROBE", "1"));
+    let out = probe_output_env(exe, &[OsStr::new("--version")], None, &env, PROBE_DEADLINE)?;
     let text = String::from_utf8_lossy(&out.1);
     snp_pycompat::text::splitlines(&text)
         .next()
         .map(|l| l.trim_end().to_owned())
 }
 
-/// `argv[0] args…` with stdin `/dev/null`, stdout captured, stderr discarded, a 10 s deadline: `(status, stdout)`.
+/// How long a probe may run before its process group is terminated.
+const PROBE_DEADLINE: Duration = Duration::from_secs(10);
+
+/// `argv[0] args…` with stdin `/dev/null`, stdout captured, stderr discarded, a 10 s deadline: `(status, stdout)`
+/// (`status` is `None` for a death by signal). `None` on a spawn failure or when the deadline expired.
+///
+/// Spawned through `snp_proc::spawn::capture` in its own process group (`Group::Isolated`, `Role::Tool`): at the
+/// deadline the whole group gets SIGTERM, then SIGKILL after `SNP_KILL_GRACE`, and the wait ends after the drain
+/// even when a grandchild still holds the stdout pipe (Windows: the Job Object equivalent).
 pub(crate) fn probe_output(
     exe: &Path,
     args: &[&OsStr],
     cwd: Option<&Path>,
 ) -> Option<(Option<i32>, Vec<u8>)> {
-    let mut cmd = Command::new(exe);
-    cmd.args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    if let Some(d) = cwd {
-        cmd.current_dir(d);
+    probe_output_env(exe, args, cwd, &Env::capture_process(), PROBE_DEADLINE)
+}
+
+fn probe_output_env(
+    exe: &Path,
+    args: &[&OsStr],
+    cwd: Option<&Path>,
+    env: &Env,
+    limit: Duration,
+) -> Option<(Option<i32>, Vec<u8>)> {
+    let argv: Vec<OsString> = std::iter::once(exe.as_os_str())
+        .chain(args.iter().copied())
+        .map(OsStr::to_os_string)
+        .collect();
+    let cancel = CancelToken::new();
+    let deadline = Instant::now().checked_add(limit);
+    let spec = Spec {
+        argv: &argv,
+        env,
+        cwd: cwd.unwrap_or_else(|| Path::new(".")),
+        stdin: Stdin::Null,
+        group: Group::Isolated,
+        role: Role::Tool,
+        deadline,
+        cancel: &cancel,
+    };
+    let out = snp_proc::spawn::capture(&spec).ok()?;
+    if deadline.is_none_or(|d| Instant::now() >= d) {
+        return None;
     }
-    let mut child = {
-        let _g = snp_core::spawnlock::guard();
-        cmd.spawn().ok()?
-    };
-    let mut stdout = child.stdout.take()?;
-    let reader = std::thread::Builder::new()
-        .name("snp-probe-read".into())
-        .spawn(move || {
-            let mut b = Vec::new();
-            let _read: io::Result<u64> = (&mut stdout).take(1 << 20).read_to_end(&mut b).map(|_| 0);
-            b
-        })
-        .ok();
-    let deadline = Instant::now().checked_add(Duration::from_secs(10));
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(st)) => break Some(st),
-            Ok(None) => {}
-            Err(_) => break None,
-        }
-        if deadline.is_none_or(|d| Instant::now() >= d) {
-            let _killed: io::Result<()> = child.kill();
-            let _reaped = child.wait();
-            break None;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    };
-    let out = reader.and_then(|h| h.join().ok()).unwrap_or_default();
-    let st = status?;
-    Some((st.code(), out))
+    let code = i32::try_from(out.status.0).ok().filter(|c| *c >= 0);
+    let mut stdout = out.stdout;
+    stdout.truncate(1 << 20);
+    Some((code, stdout))
 }
 
 /// 11 §A.19.4: same file, or a copy with equal length and BLAKE3, or `--version` matching `pre-commit X (snp Y)`.
@@ -332,6 +345,77 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn select_exe_skips_a_dotted_arg0() {
+        let d = tempfile::tempdir().unwrap();
+        let bin = d.path().join("bin");
+        let repo = d.path().join("w/repo");
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(&repo).unwrap();
+        let exe = bin.join("snp");
+        fs::write(&exe, b"x").unwrap();
+        let rel = Path::new("../../bin/snp");
+        let env = Env::from_pairs([("PATH", bin.as_os_str())]);
+        // `absolute` resolves against the process cwd; use an absolute dotted arg0 to stay cwd-independent.
+        let dotted = repo.join(rel);
+        assert_eq!(
+            select_exe(Brand::Snp, Some(dotted.as_os_str()), &env, &exe),
+            exe
+        );
+        let none = Env::from_pairs::<&str, &str>([]);
+        assert_eq!(
+            select_exe(Brand::Snp, Some(dotted.as_os_str()), &none, &exe),
+            exe
+        );
+        assert_eq!(
+            select_exe(Brand::Snp, Some(exe.as_os_str()), &none, &exe),
+            exe
+        );
+    }
+
+    /// A config path holding newlines (`snp install -c $'my\ncfg.yaml'`) reads back from the rendered script.
+    #[cfg(unix)]
+    #[test]
+    fn multi_line_tokens_parse_back() {
+        for cfg in ["my\ncfg.yaml", "a\r\nb", "x\n", "\n#y"] {
+            let script = render(
+                OsStr::new(cfg),
+                HookType::PreCommit,
+                false,
+                Path::new("/u/b\nin/snp"),
+            );
+            let p = parse_script_args(&Owner::Snp { stale: false }, &script).unwrap();
+            assert_eq!(p.config.as_deref(), Some(cfg.as_bytes()));
+            assert_eq!(p.snp_exe.as_deref(), Some(&b"/u/b\nin/snp"[..]));
+        }
+    }
+
+    /// A grandchild holding the stdout pipe cannot extend the probe past its deadline: the whole group is killed.
+    #[cfg(unix)]
+    #[test]
+    fn probe_deadline_kills_the_group() {
+        let t = Instant::now();
+        let r = probe_output_env(
+            Path::new("/bin/sh"),
+            &[
+                OsStr::new("-c"),
+                OsStr::new("sleep 30 & sleep 30; echo late"),
+            ],
+            None,
+            &Env::capture_process(),
+            Duration::from_millis(300),
+        );
+        assert_eq!(r, None);
+        assert!(t.elapsed() < Duration::from_secs(8), "{:?}", t.elapsed());
+        let ok = probe_output(
+            Path::new("/bin/sh"),
+            &[OsStr::new("-c"), OsStr::new("echo hi; exit 3")],
+            None,
+        );
+        assert_eq!(ok, Some((Some(3), b"hi\n".to_vec())));
+    }
+
+    #[cfg(unix)]
     mod roundtrip {
         use std::os::unix::ffi::OsStrExt;
 
@@ -344,8 +428,8 @@ mod tests {
             /// (`doctor --fix` keeps an snp script's options).
             #[test]
             fn rendered_tokens_parse_back(
-                cfg in proptest::collection::vec(any::<u8>().prop_filter("no NUL/LF/CR", |b| !matches!(b, 0 | b'\n' | b'\r')), 1..64),
-                exe in proptest::collection::vec(any::<u8>().prop_filter("no NUL/LF/CR", |b| !matches!(b, 0 | b'\n' | b'\r')), 1..64),
+                cfg in proptest::collection::vec(any::<u8>().prop_filter("no NUL", |b| *b != 0), 1..64),
+                exe in proptest::collection::vec(any::<u8>().prop_filter("no NUL", |b| *b != 0), 1..64),
                 skip in any::<bool>(),
             ) {
                 let script = render(OsStr::from_bytes(&cfg), HookType::CommitMsg, skip, Path::new(OsStr::from_bytes(&exe)));

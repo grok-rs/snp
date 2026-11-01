@@ -49,8 +49,17 @@ fuzz_target!(|data: &[u8]| {
     let exe = PathBuf::from(os(word));
     let rendered = scripts::render(&os(word), t, mode & 8 != 0, &exe);
     let back = scripts::parse_script_args(&Owner::Snp { stale: false }, &rendered);
-    // A rendered script always parses back (a newline in the word is quoted, so lines stay intact).
-    if back.is_none() && !word.is_empty() && !word.contains(&b'\n') && !word.contains(&b'\r') {
-        panic!("rendered script did not parse back: {word:?}");
+    // A rendered script always parses back, newlines and CRs included (quoted words span lines).
+    if word.is_empty() {
+        return;
     }
+    let Some(back) = back else {
+        panic!("rendered script did not parse back: {word:?}");
+    };
+    #[cfg(unix)]
+    if back.config.as_deref() != Some(word) || back.snp_exe.as_deref() != Some(word) {
+        panic!("rendered script parsed back differently: {word:?} -> {back:?}");
+    }
+    #[cfg(not(unix))]
+    let _ = back;
 });

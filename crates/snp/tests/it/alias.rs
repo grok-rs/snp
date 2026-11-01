@@ -108,3 +108,82 @@ fn self_check_passes() {
     assert!(o.contains("ok   hook script: "), "{o}");
     assert!(!o.contains("FAIL"), "{o}");
 }
+
+/// A different snp build (another version, a stale Windows hard link) named `pre-commit` is recognised as snp
+/// although its compat-brand `--version` prints only `pre-commit 4.6.2`: the probe sets `SNP_VERSION_PROBE=1`
+/// (11 §A.19.4). Python pre-commit (which ignores the variable) is still reported as such.
+#[cfg(unix)]
+#[test]
+fn alias_status_recognises_another_snp_build() {
+    let env = tenv();
+    let dir = env.root().join("other");
+    let mut bytes = std::fs::read(env!("CARGO_BIN_EXE_snp")).unwrap();
+    bytes.extend_from_slice(b"\0not the same build\0");
+    crate::install::write_hook(&dir.join("pre-commit"), &bytes);
+    let env2 = env.with_env("PATH", path_with(&dir));
+    let out = snp(&env2, env.root(), &["self", "alias", "status"]);
+    assert_code(&out, 0);
+    assert_eq!(
+        text(&out.stdout),
+        format!(
+            "pre-commit -> {} (snp alias (snp {}))\n",
+            dir.join("pre-commit").display(),
+            env!("CARGO_PKG_VERSION")
+        )
+    );
+    // `install --dir` over it is not refused as "not snp" (it replaces the other build's alias or keeps it).
+    let d = dir.to_str().unwrap();
+    let out = snp(&env2, env.root(), &["self", "alias", "install", "--dir", d]);
+    assert!(
+        !text(&out.stderr).contains("is not snp"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_code(&out, 0);
+    let py = env.root().join("py");
+    crate::install::write_hook(
+        &py.join("pre-commit"),
+        b"#!/bin/sh\necho 'pre-commit 4.6.2'\n",
+    );
+    let env3 = env.with_env("PATH", path_with(&py));
+    let out = snp(&env3, env.root(), &["self", "alias", "status"]);
+    assert_code(&out, 0);
+    assert_eq!(
+        text(&out.stdout),
+        format!(
+            "pre-commit -> {} (Python pre-commit 4.6.2)\n",
+            py.join("pre-commit").display()
+        )
+    );
+}
+
+/// A `pre-commit` on PATH whose background grandchild keeps the stdout pipe open cannot hang the `--version`
+/// probe (11 §A.19.4): at the 10 s deadline its whole process group is killed and the kind is `unknown`. Before,
+/// `doctor` and `self alias status` waited for the grandchild (25 s here; forever with `sleep infinity`).
+#[cfg(unix)]
+#[test]
+fn version_probe_is_bounded_when_a_grandchild_holds_the_pipe() {
+    let env = tenv();
+    let dir = env.root().join("slow");
+    crate::install::write_hook(
+        &dir.join("pre-commit"),
+        b"#!/bin/sh\nsleep 25 &\necho 'pre-commit 4.6.2'\n",
+    );
+    let env = env.with_env("PATH", path_with(&dir));
+    let r = crate::cli::repo_with(&env, "r", crate::cli::LOCAL_CONFIG);
+    for args in [&["self", "alias", "status"][..], &["doctor"][..]] {
+        let t = std::time::Instant::now();
+        let out = snp(&env, &r, args);
+        let took = t.elapsed();
+        // 10 s deadline + SIGTERM (the group dies at once) + scheduling slack on a loaded host.
+        assert!(
+            took < std::time::Duration::from_secs(14),
+            "{args:?}: {took:?}"
+        );
+        let o = text(&out.stdout);
+        assert!(
+            o.contains("pre-commit") && o.contains("(unknown)"),
+            "{args:?}: {o}"
+        );
+    }
+}

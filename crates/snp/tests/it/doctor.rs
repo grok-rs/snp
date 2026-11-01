@@ -75,3 +75,23 @@ fn doctor_fast_path_table() {
     let out = snp(&env, &r, &["doctor", "--fast-path"]);
     assert!(text(&out.stdout).contains("fast path: "));
 }
+
+/// `snp install -c $'my\ncfg.yaml'`: the quoted config spans two lines of the script; doctor reads it (no false
+/// "`SNP_EXE` is not executable") and `--fix` has nothing to rewrite, so the config path survives.
+#[cfg(unix)]
+#[test]
+fn doctor_reads_a_multi_line_config_token() {
+    let env = tenv();
+    let r = repo_with(&env, "r", LOCAL_CONFIG);
+    std::fs::write(r.join("my\ncfg.yaml"), LOCAL_CONFIG).unwrap();
+    assert_code(&snp(&env, &r, &["install", "-c", "my\ncfg.yaml"]), 0);
+    let before = std::fs::read(r.join(".git/hooks/pre-commit")).unwrap();
+    let out = snp(&env, &r, &["doctor"]);
+    let o = text(&out.stdout);
+    assert!(o.contains("ok    .git/hooks/pre-commit: runs snp\n"), "{o}");
+    let _fixed = snp(&env, &r, &["doctor", "--fix"]);
+    assert_eq!(
+        std::fs::read(r.join(".git/hooks/pre-commit")).unwrap(),
+        before
+    );
+}

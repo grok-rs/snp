@@ -167,17 +167,31 @@ fn snp_v1(b: &[u8]) -> Option<ScriptArgs> {
     saw.then_some(out)
 }
 
-/// snp's own script: `SNP_EXE=<word>` and the `set -- hook-impl …` line.
+/// snp's own script: `SNP_EXE=<word>` and the `set -- hook-impl …` line. Both are parsed as shell statements, not
+/// lines: `render` quotes with `shlex.quote`, so a config path or `SNP_EXE` holding a newline spans lines inside its
+/// quotes.
 fn snp(b: &[u8]) -> Option<ScriptArgs> {
     let mut out = ScriptArgs::default();
     let mut saw = false;
-    for line in lines(b) {
-        if let Some(rest) = line.strip_prefix(b"SNP_EXE=") {
-            out.snp_exe = Some(sh_words(rest)?.into_iter().next().unwrap_or_default());
-        } else if let Some(rest) = line.strip_prefix(b"set -- ") {
-            apply_args(&mut out, &sh_words(rest)?);
+    let mut pos = 0_usize;
+    while let Some(rest) = b.get(pos..).filter(|r| !r.is_empty()) {
+        let next_line = rest
+            .iter()
+            .position(|&c| c == b'\n')
+            .map_or(rest.len(), |n| n.saturating_add(1));
+        let step = if let Some(stmt) = rest.strip_prefix(b"SNP_EXE=") {
+            let (words, used) = sh_split(stmt, true)?;
+            out.snp_exe = Some(words.into_iter().next().unwrap_or_default());
+            used.saturating_add(8)
+        } else if let Some(stmt) = rest.strip_prefix(b"set -- ") {
+            let (words, used) = sh_split(stmt, true)?;
+            apply_args(&mut out, &words);
             saw = true;
-        }
+            used.saturating_add(7)
+        } else {
+            next_line
+        };
+        pos = pos.saturating_add(step.max(1));
     }
     saw.then_some(out)
 }
@@ -190,6 +204,12 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
 /// `\` only before `$`, `` ` ``, `"`, `\`; an unquoted `\` escapes the next byte; an unquoted `#` at a word start
 /// starts a comment. `$NAME` / `"$@"` stay literal text. `None` for an unterminated quote.
 pub(crate) fn sh_words(line: &[u8]) -> Option<Vec<Vec<u8>>> {
+    sh_split(line, false).map(|(w, _)| w)
+}
+
+/// [`sh_words`] over `line`; with `statement`, an unquoted LF ends the statement (a CR before it is a blank) and a
+/// quoted one is literal. Returns the words and the bytes consumed (through the terminating LF).
+fn sh_split(line: &[u8], statement: bool) -> Option<(Vec<Vec<u8>>, usize)> {
     let mut words: Vec<Vec<u8>> = Vec::new();
     let mut cur: Vec<u8> = Vec::new();
     let mut in_word = false;
@@ -197,13 +217,26 @@ pub(crate) fn sh_words(line: &[u8]) -> Option<Vec<Vec<u8>>> {
     while let Some(&c) = line.get(i) {
         i = i.saturating_add(1);
         match c {
+            b'\n' if statement => break,
             b' ' | b'\t' => {
                 if in_word {
                     words.push(std::mem::take(&mut cur));
                     in_word = false;
                 }
             }
-            b'#' if !in_word => break,
+            b'\r' if statement && line.get(i) == Some(&b'\n') => {
+                if in_word {
+                    words.push(std::mem::take(&mut cur));
+                    in_word = false;
+                }
+            }
+            b'#' if !in_word => {
+                if statement {
+                    let skip = line.get(i..)?.iter().position(|&b| b == b'\n');
+                    i = skip.map_or(line.len(), |n| i.saturating_add(n).saturating_add(1));
+                }
+                break;
+            }
             b'\'' => {
                 in_word = true;
                 let end = line.get(i..)?.iter().position(|&b| b == b'\'')?;
@@ -245,7 +278,7 @@ pub(crate) fn sh_words(line: &[u8]) -> Option<Vec<Vec<u8>>> {
     if in_word {
         words.push(cur);
     }
-    Some(words)
+    Some((words, i))
 }
 
 /// A Python string literal at the start of `b` (single or double quotes; `\\`, `\'`, `\"`, `\n`, `\t`, `\r`,

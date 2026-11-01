@@ -289,10 +289,19 @@ fn hook_check(
         Owner::Missing => {}
         Owner::NotAFile => r.add(Lvl::Error, disp, "is not a file"),
         Owner::Snp { stale } => {
-            let exe_ok = parsed()
-                .and_then(|p| p.snp_exe)
-                .is_some_and(|e| is_executable(&path_of(&e)));
-            if *stale {
+            let args = parsed();
+            let exe_ok = args
+                .as_ref()
+                .and_then(|p| p.snp_exe.as_ref())
+                .is_some_and(|e| is_executable(&path_of(e)));
+            if args.is_none() {
+                // `--fix` would lose its `--config`: never rewritten (fix_one).
+                r.add(
+                    Lvl::Warn,
+                    disp,
+                    "an snp hook script whose options cannot be read; `--fix` leaves it alone",
+                );
+            } else if *stale {
                 r.fixable(
                     Lvl::Warn,
                     disp,
@@ -587,13 +596,14 @@ fn fix_one(cx: &CmdCtx<'_>, dir: &HooksDir, t: HookType, exe: &Path) -> Result<(
     let bytes = snp_os::fs::read_capped(&path, 1 << 20).unwrap_or_default();
     let parsed: Option<ScriptArgs> = parse_script_args(&owner, &bytes);
     let rewrite = match &owner {
-        Owner::Snp { stale } => {
+        // An snp script whose options cannot be read is left alone: rewriting it would drop its `--config`.
+        Owner::Snp { stale } => parsed.as_ref().is_some_and(|p| {
             *stale
-                || !parsed
+                || !p
+                    .snp_exe
                     .as_ref()
-                    .and_then(|p| p.snp_exe.as_ref())
                     .is_some_and(|e| is_executable(&path_of(e)))
-        }
+        }),
         Owner::SnpV1 | Owner::PreCommit { .. } => true,
         Owner::Prek => parsed.as_ref().is_none_or(|p| p.prek_only.is_empty()),
         _ => false,
