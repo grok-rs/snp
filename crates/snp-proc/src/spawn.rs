@@ -429,11 +429,18 @@ fn attribute_to_cwd(io: io::Error, cwd: &Path) -> io::Error {
         let cwd_ok = std::fs::metadata(cwd).is_ok_and(|m| m.is_dir())
             && rustix::fs::access(cwd, rustix::fs::Access::EXEC_OK).is_ok();
         if chdir_like && !cwd_ok {
+            // The errno `chdir(cwd)` itself gives (CPython's child calls it): the spawn's own code can differ
+            // (macOS reports a cwd that is a file as `ENOENT`).
+            let source = match std::fs::metadata(cwd) {
+                Ok(m) if !m.is_dir() => io::Error::from_raw_os_error(Errno::NOTDIR.raw_os_error()),
+                Ok(_) => io::Error::from_raw_os_error(Errno::ACCESS.raw_os_error()),
+                Err(e) => e,
+            };
             return io::Error::new(
-                io.kind(),
+                source.kind(),
                 ChdirFailed {
                     cwd: cwd.as_os_str().to_os_string(),
-                    source: io,
+                    source,
                 },
             );
         }
@@ -1243,9 +1250,52 @@ type Spawned = (
     Option<std::process::ChildStderr>,
 );
 
+/// `ENOEXEC` for a program the kernel cannot exec (no `#!`, no Mach-O magic), which Apple's `posix_spawnp` would
+/// otherwise run with `/bin/sh` (its `execvp` emulation, ADR-086): CPython's `fork` + `execve` raises `OSError: [Errno
+/// 8] Exec format error` there, like the kernel on every other Unix. `None` when the file cannot be read or is not an
+/// executable regular file: the spawn then reports the kernel's own error.
+#[cfg(any(target_os = "macos", all(test, unix)))]
+fn exec_format_error(program: &Path) -> Option<io::Error> {
+    use std::os::unix::fs::PermissionsExt as _;
+    // Mach-O 32/64 (both byte orders) and universal ("fat") binaries.
+    const MAGICS: [[u8; 4]; 6] = [
+        [0xfe, 0xed, 0xfa, 0xce],
+        [0xfe, 0xed, 0xfa, 0xcf],
+        [0xce, 0xfa, 0xed, 0xfe],
+        [0xcf, 0xfa, 0xed, 0xfe],
+        [0xca, 0xfe, 0xba, 0xbe],
+        [0xbe, 0xba, 0xfe, 0xca],
+    ];
+    if !has_sep(program.as_os_str()) {
+        return None;
+    }
+    let md = std::fs::metadata(program).ok()?;
+    if !md.is_file() || md.permissions().mode() & 0o111 == 0 {
+        return None;
+    }
+    let mut head = [0_u8; 4];
+    let mut f = File::open(program).ok()?;
+    let mut n = 0;
+    while n < head.len() {
+        match f.read(head.get_mut(n..)?) {
+            Ok(0) => break,
+            Ok(k) => n = n.saturating_add(k),
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => return None,
+        }
+    }
+    let head = head.get(..n)?;
+    let execable = head.starts_with(b"#!") || MAGICS.iter().any(|m| head == m.as_slice());
+    (!execable).then(|| io::Error::from_raw_os_error(rustix::io::Errno::NOEXEC.raw_os_error()))
+}
+
 /// `Command::spawn` (Unix).
 #[cfg(unix)]
 fn spawn_platform(mut cmd: Command, _role: Role, _group: Group) -> io::Result<Spawned> {
+    #[cfg(target_os = "macos")]
+    if let Some(e) = exec_format_error(Path::new(cmd.get_program())) {
+        return Err(e);
+    }
     let spawned = cmd.spawn();
     drop(cmd);
     let mut child = spawned?;
@@ -1552,8 +1602,9 @@ mod tests {
             FIRST_CHUNK + 1,
             3 * CHUNK + 17,
         ] {
+            // BSD head refuses `-c 0`: no output then.
             let argv = sh(&format!(
-                "head -c {n} /dev/zero | tr '\\0' x; printf '%s' end >&2"
+                "[ {n} -gt 0 ] && head -c {n} /dev/zero | tr '\\0' x; printf '%s' end >&2"
             ));
             let c = capture(&spec(&argv, &env, Path::new("/"), &cancel)).unwrap();
             assert_eq!(c.stdout.len(), n);
@@ -1829,6 +1880,43 @@ mod tests {
         );
         let e = capture(&spec(&[], &env, d.path(), &cancel)).unwrap_err();
         assert_eq!(e.io.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    /// The macOS pre-check: only executable regular files that are neither `#!` scripts nor Mach-O binaries are
+    /// `ENOEXEC` (what `execve` returns there); anything else is left to the spawn.
+    #[test]
+    fn exec_format_error_matches_the_kernel_rule() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let file = |name: &str, body: &[u8], mode: u32| {
+            let p = d.path().join(name);
+            std::fs::write(&p, body).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode)).unwrap();
+            p
+        };
+        let noexec = |p: &Path| {
+            exec_format_error(p).and_then(|e| e.raw_os_error())
+                == Some(rustix::io::Errno::NOEXEC.raw_os_error())
+        };
+        assert!(noexec(&file("plain", b"echo hi\n", 0o755)));
+        assert!(noexec(&file("empty", b"", 0o755)));
+        assert!(noexec(&file("short", b"#", 0o755)));
+        assert!(!noexec(&file("script", b"#!/bin/sh\n", 0o755)));
+        assert!(!noexec(&file(
+            "macho",
+            &[0xcf, 0xfa, 0xed, 0xfe, 7, 0, 0, 1],
+            0o755
+        )));
+        assert!(!noexec(&file(
+            "fat",
+            &[0xca, 0xfe, 0xba, 0xbe, 0, 0, 0, 2],
+            0o755
+        )));
+        assert!(!noexec(&file("not-exec", b"echo hi\n", 0o644)));
+        assert!(!noexec(&d.path().join("missing")));
+        assert!(!noexec(d.path()));
+        // A bare name is a PATH search: not this check's.
+        assert!(exec_format_error(Path::new("plain")).is_none());
     }
 
     /// `subprocess.Popen` names the cwd when the child's chdir fails (CPython 3.12:
