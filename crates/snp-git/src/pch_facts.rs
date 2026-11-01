@@ -57,9 +57,12 @@ pub struct PchFacts {
     /// The successful `rev-parse --git-dir` of [`PchFacts::raw`] (`check_merge_conflict` asks once per partition;
     /// the git dir cannot move during a run).
     git_dir: Mutex<Option<GitDirAnswer>>,
+    /// The answer of `config core.fileMode` with the stamps of the repository's config files
+    /// (`check_executables_have_shebangs` asks once per partition; B6 spawned it 20 times for one hook).
+    file_mode: Mutex<Option<(Vec<FileStamp>, GitDirAnswer)>>,
 }
 
-/// A successful `rev-parse --git-dir`: `(exit status, stdout, stderr)`.
+/// A captured answer: `(exit status, stdout, stderr)`.
 type GitDirAnswer = (i64, Vec<u8>, Vec<u8>);
 
 /// The `check-attr filter` memo of [`PchFacts::lfs_files`] (ADR-082).
@@ -150,7 +153,21 @@ impl PchFacts {
             branch: Mutex::new(None),
             lfs: Mutex::new(LfsState::Fresh),
             git_dir: Mutex::new(None),
+            file_mode: Mutex::new(None),
         }
+    }
+
+    /// The stamps of the repository config files a `git config` read sees (beside the global and system files,
+    /// which a run does not change): `config` and `config.worktree` of the git dir and of the common dir.
+    fn config_stamps(&self) -> Vec<FileStamp> {
+        let mut dirs = vec![self.git.admin_dir.to_path_buf()];
+        if let Ok(rel) = std::fs::read_to_string(self.git.admin_dir.join("commondir")) {
+            dirs.push(self.git.admin_dir.join(rel.trim_end_matches(['\n', '\r'])));
+        }
+        dirs.iter()
+            .flat_map(|d| [d.join("config"), d.join("config.worktree")])
+            .map(|p| file_stamp(&p))
+            .collect()
     }
 
     /// The stamp of `<dir>/.gitattributes` (`dir` relative to the root) or, for `None`, of
@@ -425,6 +442,9 @@ impl PchFacts {
     /// (`check_merge_conflict` asks it once per partition; ADR-082).
     pub fn raw(&self, args: &[&OsStr]) -> Result<Captured, Failure> {
         let git_dir = args == [OsStr::new("rev-parse"), OsStr::new("--git-dir")];
+        if args == [OsStr::new("config"), OsStr::new("core.fileMode")] {
+            return self.file_mode(args);
+        }
         if !git_dir {
             return self.git.run_raw(args);
         }
@@ -441,6 +461,28 @@ impl PchFacts {
         if c.status.0 == 0 {
             *memo = Some((c.status.0, c.stdout.clone(), c.stderr.clone()));
         }
+        Ok(c)
+    }
+}
+
+impl PchFacts {
+    /// `config core.fileMode`, memoised while the repository's config files keep their stamps (any exit status:
+    /// unset is `1` with empty output, and stays so until a config file changes).
+    fn file_mode(&self, args: &[&OsStr]) -> Result<Captured, Failure> {
+        let stamps = self.config_stamps();
+        let mut memo = snp_core::sync::lock(&self.file_mode);
+        if let Some((at, (status, stdout, stderr))) = memo.as_ref()
+            && *at == stamps
+        {
+            return Ok(Captured {
+                status: snp_proc::spawn::PyStatus(*status),
+                stdout: stdout.clone(),
+                stderr: stderr.clone(),
+                stopped_by_tty: false,
+            });
+        }
+        let c = self.git.run_raw(args)?;
+        *memo = Some((stamps, (c.status.0, c.stdout.clone(), c.stderr.clone())));
         Ok(c)
     }
 }

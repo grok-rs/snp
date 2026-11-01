@@ -186,14 +186,15 @@ impl JobPool {
         }
     }
 
-    /// Runs `f(0..n)` on ≤ min(limit, n) scoped threads (`Builder::spawn_scoped`, every handle joined), each call
-    /// holding a permit; results in index order. n == 1, or a caller that holds a permit, runs inline. A panicking
-    /// call becomes `Err(Failure::Exc(PanicException …))`; a refused thread spawn becomes `Err(Failure::from_io)`.
+    /// Runs `f(0..n)` on ≤ min(limit, n) threads — the calling thread plus scoped helpers (`Builder::spawn_scoped`,
+    /// every handle joined) — each call holding a permit; results in index order. n == 1, a limit of 1, or a caller
+    /// that holds a permit, runs inline (no thread at all). A panicking call becomes `Err(Failure::Exc(PanicException
+    /// …))`.
     ///
     /// `xargs.py:166-184` (`ThreadPoolExecutor(threads).map` keeps results in partition order). Indices are handed
     /// out in order; an index whose permit is refused (cancellation) yields `Err(Failure::Interrupted(reason))`.
-    /// When the OS refuses even the first worker thread every result is that `Failure`; later refusals just leave
-    /// fewer workers.
+    /// A helper thread the OS refuses just leaves fewer workers: the calling thread always works too, so every index
+    /// runs (a thread per call was ~500 clone/mmap/munmap rounds for 13 hooks, B6).
     pub fn map_ordered<T: Send, F: Fn(usize) -> Result<T, Failure> + Sync>(
         &self,
         limit: NonZeroUsize,
@@ -206,10 +207,10 @@ impl JobPool {
         if Self::holds_permit() {
             return (0..n).map(|i| call(&f, i)).collect();
         }
-        if n == 1 {
-            return vec![self.run_one(&f, 0)];
-        }
         let threads = limit.get().min(n);
+        if threads == 1 {
+            return (0..n).map(|i| self.run_one(&f, i)).collect();
+        }
         let slots: Vec<Mutex<Option<Result<T, Failure>>>> =
             (0..n).map(|_| Mutex::new(None)).collect();
         let next = AtomicUsize::new(0);
@@ -225,33 +226,23 @@ impl JobPool {
                 }
             }
         };
-        let spawn_error = std::thread::scope(|s| {
+        std::thread::scope(|s| {
             let mut handles = Vec::new();
-            let mut first_error = None;
-            for k in 0..threads {
+            for k in 1..threads {
                 match std::thread::Builder::new()
                     .name(format!("snp-pool-{k}"))
                     .spawn_scoped(s, worker)
                 {
                     Ok(h) => handles.push(h),
-                    Err(e) => {
-                        first_error = Some(e);
-                        break;
-                    }
+                    Err(_) => break,
                 }
             }
-            let none_started = handles.is_empty();
+            worker();
             for h in handles {
                 // `worker` catches every panic of `f`; a join error cannot carry a result.
                 let _joined = h.join();
             }
-            if none_started { first_error } else { None }
         });
-        if let Some(e) = spawn_error {
-            return (0..n)
-                .map(|_| Err(Failure::from_io(&e, None, None)))
-                .collect();
-        }
         slots
             .into_iter()
             .map(|slot| {
@@ -530,6 +521,28 @@ mod tests {
         assert_eq!(got, (0..40).map(|i| i * 2).collect::<Vec<_>>());
         assert!(peak.load(Ordering::SeqCst) <= 3);
         assert!(pool.map_ordered(nz(2), 0, |_| Ok(())).is_empty());
+    }
+
+    /// A limit of 1 spawns no thread; a larger limit uses the calling thread as one of its workers (B6).
+    #[test]
+    fn map_ordered_works_on_the_calling_thread() {
+        let pool = JobPool::new(nz(4), CancelToken::new());
+        let me = std::thread::current().id();
+        let ids = pool.map_ordered(nz(1), 6, |_| Ok(std::thread::current().id()));
+        assert!(ids.into_iter().all(|id| id.unwrap() == me));
+        let ids: Vec<_> = pool
+            .map_ordered(nz(3), 30, |_| {
+                std::thread::sleep(Duration::from_millis(2));
+                Ok(std::thread::current().id())
+            })
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+        let mut distinct = ids.clone();
+        distinct.sort_by_key(|id| format!("{id:?}"));
+        distinct.dedup();
+        assert!(distinct.len() <= 3, "{distinct:?}");
+        assert!(ids.contains(&me));
     }
 
     #[test]

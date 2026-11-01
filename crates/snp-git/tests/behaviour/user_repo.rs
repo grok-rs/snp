@@ -355,6 +355,41 @@ fn pch_facts_use_upstream_argv_and_invalidate_on_index_changes() {
     assert!(facts.tracked_files().unwrap().is_empty());
 }
 
+/// ADR-084: `config core.fileMode` is asked once per state of the repository's config (one spawn for all
+/// partitions of `check-executables-have-shebangs`), and a config change is seen.
+#[test]
+fn file_mode_is_memoised_until_the_config_changes() {
+    let sb = Sandbox::new();
+    let repo = sb.init("filemode");
+    let (git, _) = sb.discover(&repo);
+    let facts = PchFacts::new(git);
+    let ask = || {
+        let c = facts
+            .raw(&[OsStr::new("config"), OsStr::new("core.fileMode")])
+            .unwrap();
+        (c.status.0, String::from_utf8(c.stdout).unwrap())
+    };
+    assert_eq!(ask(), (0, "true\n".to_owned()));
+    // A spawn would see this edit made behind git's back with the same size: the memo answers instead.
+    let config = repo.join(".git/config");
+    let before = std::fs::metadata(&config).unwrap().modified().unwrap();
+    let text = std::fs::read_to_string(&config).unwrap();
+    std::fs::write(&config, text.replace("filemode = true", "filemode = fals")).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&config)
+        .unwrap()
+        .set_modified(before)
+        .unwrap();
+    assert_eq!(ask(), (0, "true\n".to_owned()));
+    // `git config` rewrites the file (new inode, new stamp): the next ask spawns again.
+    std::fs::write(&config, text).unwrap();
+    sb.git(&repo, &["config", "core.fileMode", "false"]);
+    assert_eq!(ask(), (0, "false\n".to_owned()));
+    sb.git(&repo, &["config", "--unset", "core.fileMode"]);
+    assert_eq!(ask().0, 1);
+}
+
 /// ADR-082: from the second call on, `lfs_files` answers index paths from one whole-index `check-attr`; the answer
 /// equals the direct call's, follows `.gitattributes` edits, keeps input order and repeats, and asks git directly
 /// for paths outside the index.

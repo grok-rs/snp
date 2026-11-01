@@ -738,8 +738,12 @@ const TICK: Duration = Duration::from_millis(50);
 const DRAIN: Duration = Duration::from_millis(500);
 /// Bounded reader channel (chunks of at most [`CHUNK`] bytes).
 const CHANNEL_BOUND: usize = 4;
-/// Read size of the reader threads.
+/// Largest read size of the reader threads.
 const CHUNK: usize = 64 * 1024;
+/// First read size of a reader thread: most children print nothing or a few lines, so the buffer starts small and
+/// doubles whenever a read fills it, up to [`CHUNK`] (a 64 KiB buffer per stream of every spawn was 64 % of all
+/// bytes a quiet `run` allocated, budget B3 `alloc_mib`).
+const FIRST_CHUNK: usize = 4 * 1024;
 /// Stack of the helper threads (their buffers live on the heap).
 const HELPER_STACK: usize = 256 * 1024;
 
@@ -1329,12 +1333,15 @@ fn spawn_reader(
         .name(name.to_owned())
         .stack_size(HELPER_STACK)
         .spawn(move || {
-            let mut buf = vec![0_u8; CHUNK];
+            let mut buf = vec![0_u8; FIRST_CHUNK];
             loop {
                 match src.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
                         let chunk = buf.get(..n).unwrap_or_default().to_vec();
+                        if n == buf.len() && buf.len() < CHUNK {
+                            buf.resize(buf.len().saturating_mul(2).min(CHUNK), 0);
+                        }
                         if tx.send((which, chunk)).is_err() {
                             break; // the waiter gave up (deadline / cancellation)
                         }
@@ -1526,6 +1533,28 @@ mod tests {
         };
         assert!(same(Path::new(printed.trim_end()), d.path()));
         assert!(!c.stopped_by_tty);
+    }
+
+    /// The reader buffer starts at `FIRST_CHUNK` and grows: small and large outputs both arrive whole, in order.
+    #[test]
+    fn growing_reader_buffers_keep_every_byte() {
+        let (env, cancel) = (env(), CancelToken::new());
+        for n in [
+            0_usize,
+            1,
+            FIRST_CHUNK - 1,
+            FIRST_CHUNK,
+            FIRST_CHUNK + 1,
+            3 * CHUNK + 17,
+        ] {
+            let argv = sh(&format!(
+                "head -c {n} /dev/zero | tr '\\0' x; printf '%s' end >&2"
+            ));
+            let c = capture(&spec(&argv, &env, Path::new("/"), &cancel)).unwrap();
+            assert_eq!(c.stdout.len(), n);
+            assert!(c.stdout.iter().all(|b| *b == b'x'));
+            assert_eq!(c.stderr, b"end");
+        }
     }
 
     #[test]
