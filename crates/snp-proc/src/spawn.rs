@@ -46,6 +46,8 @@ pub enum Stdin {
     Bytes(Arc<[u8]>),
     /// snp's own stdin.
     Inherit,
+    /// The terminal of an `interactive` hook (ADR-085; [`interactive`]).
+    Terminal(crate::tty::Terminal),
 }
 
 /// Inherit: child stays in snp's process group (terminal ^C reaches it, parity).
@@ -732,6 +734,42 @@ pub fn inherit(spec: &Spec<'_>) -> Result<PyStatus, SpawnError> {
     Ok(waited.status)
 }
 
+/// How an [`interactive`] child ended.
+#[derive(Debug)]
+pub struct Interactive {
+    /// Python returncode.
+    pub status: PyStatus,
+    /// The deadline killed it.
+    pub timed_out: bool,
+    /// Cancellation killed it.
+    pub interrupted: bool,
+}
+
+/// An `interactive` hook (ADR-085): stdin per `spec.stdin` (normally [`Stdin::Terminal`]), stdout and stderr
+/// inherited (never captured), supervised like every Hook child (deadline: TERM, grace, KILL; cancellation: the
+/// grace, then KILL). The caller passes `Group::Inherit` so the child stays in snp's — the terminal's foreground —
+/// process group; a deadline or cancellation therefore signals the child process only, not its descendants. When the
+/// child was killed or died of a signal, the terminal modes saved before the spawn are put back.
+pub fn interactive(spec: &Spec<'_>) -> Result<Interactive, SpawnError> {
+    let terminal = match &spec.stdin {
+        Stdin::Terminal(t) => Some(t),
+        _ => None,
+    };
+    let saved = terminal.and_then(crate::tty::Terminal::save);
+    let started = start(spec, Stdio::inherit(), Stdio::inherit(), false)?;
+    let waited = started.supervise(spec, None, |_, _| {});
+    if let (Some(t), Some(saved)) = (terminal, &saved)
+        && (waited.timed_out || waited.interrupted || waited.status.0 < 0)
+    {
+        t.restore(saved);
+    }
+    Ok(Interactive {
+        status: waited.status,
+        timed_out: waited.timed_out,
+        interrupted: waited.interrupted,
+    })
+}
+
 /// Longest wait between checks of `deadline` / `cancel`.
 const TICK: Duration = Duration::from_millis(50);
 /// How long output is still collected after a deadline or cancellation killed the child (§3.6).
@@ -1181,6 +1219,7 @@ fn start(
         (Stdin::EmptyPipe, true) | (Stdin::Null, _) => Stdio::null(),
         (Stdin::EmptyPipe | Stdin::Bytes(_), _) => Stdio::piped(),
         (Stdin::Inherit, _) => Stdio::inherit(),
+        (Stdin::Terminal(t), _) => t.stdio().map_err(fail)?,
     };
     cmd.stdin(stdin_mode).stdout(stdout).stderr(stderr);
     crate::trace::log_spawn(spec.argv, &env, spec.cwd, spec.role, group);

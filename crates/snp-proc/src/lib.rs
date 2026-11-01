@@ -14,4 +14,5 @@ pub mod spawn;
 #[cfg(feature = "testing")]
 pub mod spawn_log;
 mod trace;
+pub mod tty;
 pub mod xargs;
