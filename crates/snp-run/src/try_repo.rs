@@ -73,6 +73,7 @@ pub fn try_repo(a: TryRepoArgs, cx: &RunCtx) -> Result<i32, Failure> {
         direct: false,
         fixed_paths: true,
         hook_stdin: None,
+        discovered: None,
     };
     let rc = pipeline::run_pipeline(&run, cx, &inv);
     drop(store);

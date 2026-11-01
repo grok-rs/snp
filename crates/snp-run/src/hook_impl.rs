@@ -38,7 +38,7 @@ pub fn hook_impl(a: HookImplArgs, stdin: &mut dyn Read, cx: &RunCtx) -> Result<i
 /// `hook_impl.hook_impl` after `_adjust_args_and_chdir`.
 fn body(a: &HookImplArgs, stdin: &mut dyn Read, cx: &RunCtx) -> Result<i32, Failure> {
     let (git, info) = common::discover(cx)?;
-    let root = info.root;
+    let root = info.root.clone();
     let config = common::adjust_config(&a.config, &cx.invocation_cwd, &root);
     common::mark_config_used(&cx.store, &root.join(&config), &root);
     let hook_type = a.hook_type.to_string_lossy().into_owned();
@@ -114,6 +114,7 @@ fn body(a: &HookImplArgs, stdin: &mut dyn Read, cx: &RunCtx) -> Result<i32, Fail
         direct: false,
         fixed_paths: true,
         hook_stdin: Some(input),
+        discovered: Some((git, info)),
     };
     let rc = pipeline::run_pipeline(&ns, cx, &inv)?;
     Ok(retv | rc)

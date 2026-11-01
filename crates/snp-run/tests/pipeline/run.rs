@@ -1424,3 +1424,27 @@ fn early_oracle_inputs_follow_an_intent_to_add_clearing() {
         );
     }
 }
+
+/// ADR-084 (B9): `hook-impl` discovers the repository once; the pipeline reuses it (one combined `rev-parse`).
+#[test]
+fn hook_impl_discovers_the_repository_once() {
+    let mut h = H::new();
+    let log = logged_git(&mut h);
+    h.config(&local(&sys(
+        "noop",
+        "noop",
+        "'true'",
+        "always_run: true\npass_filenames: false",
+    )));
+    let o = h.hook_impl(
+        crate::harness::hook_impl_args("pre-commit", &["--"], None),
+        b"",
+    );
+    assert_eq!(o.code, 0, "{o:?}");
+    let spawns = git_spawns(&log);
+    let rev_parses = spawns
+        .iter()
+        .filter(|s| s.starts_with("rev-parse --show-cdup"))
+        .count();
+    assert_eq!(rev_parses, 1, "{}", spawns.join("\n"));
+}

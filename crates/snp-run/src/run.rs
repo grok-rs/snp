@@ -27,6 +27,7 @@ pub fn run(a: RunArgs, cx: &RunCtx) -> Result<i32, Failure> {
         direct: true,
         fixed_paths: false,
         hook_stdin: None,
+        discovered: None,
     };
     let outcome = pipeline::run_pipeline(&a, cx, &inv);
     cx.printer.flush();

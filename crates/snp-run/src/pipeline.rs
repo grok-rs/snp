@@ -52,6 +52,9 @@ pub(crate) struct Invocation<'s> {
     pub(crate) fixed_paths: bool,
     /// The git hook's stdin (pre-push ref lines) for `use_stdin`.
     pub(crate) hook_stdin: Option<Arc<[u8]>>,
+    /// The repository the caller already discovered with this `RunCtx` (hook-impl): step 3 reuses it instead of
+    /// spawning the same `rev-parse` again (B9, ADR-084).
+    pub(crate) discovered: Option<(Git, RepoInfo)>,
 }
 
 /// Lives on the stack for one pipeline (§2.4): the resources whose release order is part of the safety argument.
@@ -110,7 +113,10 @@ pub(crate) fn run_pipeline(a: &RunArgs, cx: &RunCtx, inv: &Invocation<'_>) -> Re
 fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Result<i32, Failure> {
     let printer = &*cx.printer;
     // §3.1 steps 3–4: discovery, then `_adjust_args_and_chdir` as a pure function
-    let (git0, info) = common::discover(cx)?;
+    let (git0, info) = match &inv.discovered {
+        Some((git, info)) => (git.clone(), info.clone()),
+        None => common::discover(cx)?,
+    };
     let root = info.root.clone();
     let rebase = |f: &OsString| {
         if inv.fixed_paths {
