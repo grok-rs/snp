@@ -1627,7 +1627,7 @@ mod tests {
         for line in tsv.lines().filter(|l| !l.starts_with('#')) {
             let (hex, want) = line.split_once('\t').unwrap();
             let bytes: Vec<u8> = (0..hex.len() / 2)
-                .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
+                .map(|i| u8::from_str_radix(hex.get(2 * i..2 * i + 2).unwrap(), 16).unwrap())
                 .collect();
             let want: Vec<&str> = want.split(',').filter(|s| !s.is_empty()).collect();
             let got = legacy_stages(&bytes);
@@ -1648,13 +1648,13 @@ mod tests {
     fn hostile_inputs_are_bounded() {
         let deep = format!(
             "- id: a\n  stages: [commit]\n  x: {}{}\n",
-            "[".repeat(10_000),
-            "]".repeat(10_000)
+            std::iter::repeat_n("[", 10_000).collect::<String>(),
+            std::iter::repeat_n("]", 10_000).collect::<String>()
         );
         assert_eq!(legacy_stages(deep.as_bytes()), NONE);
         let deep = format!(
             "- id: a\n  stages: [commit]\n  x:\n  {}a\n",
-            "- ".repeat(200)
+            std::iter::repeat_n("- ", 200).collect::<String>()
         );
         assert_eq!(legacy_stages(deep.as_bytes()), NONE);
         let laughs = format!(
@@ -1666,7 +1666,7 @@ mod tests {
         assert_eq!(legacy_stages(laughs.as_bytes()), NONE);
         let long = format!(
             "- id: a\n  stages: [{}commit]\n",
-            "pre-commit,".repeat(200_000)
+            std::iter::repeat_n("pre-commit,", 200_000).collect::<String>()
         );
         assert_eq!(legacy_stages(long.as_bytes()), ["commit"]);
     }
