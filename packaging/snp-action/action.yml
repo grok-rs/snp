@@ -1,0 +1,111 @@
+# snp-action: run snp in GitHub Actions (11 §A.11.1; WBS WP-37). Published as `grok-rs/snp-action`; this directory is
+# the source of that repository.
+#
+# A drop-in replacement for `pre-commit/action`: the `extra_args` input has the same name and default, the run uses the
+# same flags (`--show-diff-on-failure --color=always`). It needs no Python: it downloads the snp release archive for
+# the runner, verifies it against the release's SHA-256 checksum, puts `snp` on PATH and caches snp's own cache
+# directory under a key that differs from every key pre-commit/action used (an immutable cache restored from such a
+# key would never save snp's cache).
+name: snp
+description: Run snp (a drop-in replacement for pre-commit) on the repository
+author: Serhii Kaliuzhnyi
+branding:
+  icon: shield
+  color: gray-dark
+
+inputs:
+  extra_args:
+    description: Options passed to `snp run` (the same input as pre-commit/action)
+    required: false
+    default: --all-files
+  version:
+    description: The snp release to use, `latest` or a version such as `2.0.0`
+    required: false
+    default: latest
+  cache:
+    description: Cache snp's cache directory (`~/.cache/snp`) between runs (`true` or `false`)
+    required: false
+    default: "true"
+
+outputs:
+  snp-path:
+    description: Absolute path of the snp executable the action installed
+    value: ${{ steps.install.outputs.snp }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install snp
+      id: install
+      shell: bash
+      env:
+        SNP_ACTION_VERSION: ${{ inputs.version }}
+        SNP_ACTION_OS: ${{ runner.os }}
+        SNP_ACTION_ARCH: ${{ runner.arch }}
+        SNP_ACTION_TEMP: ${{ runner.temp }}
+      run: |
+        set -euo pipefail
+        case "$SNP_ACTION_OS/$SNP_ACTION_ARCH" in
+          Linux/X64)     target=x86_64-unknown-linux-musl;  ext=tar.xz ;;
+          Linux/ARM64)   target=aarch64-unknown-linux-musl; ext=tar.xz ;;
+          macOS/ARM64)   target=aarch64-apple-darwin;       ext=tar.xz ;;
+          macOS/X64)     target=x86_64-apple-darwin;        ext=tar.xz ;;
+          Windows/X64)   target=x86_64-pc-windows-msvc;     ext=zip ;;
+          Windows/ARM64) target=aarch64-pc-windows-msvc;    ext=zip ;;
+          *) echo "::error::snp-action: no snp release for $SNP_ACTION_OS/$SNP_ACTION_ARCH"; exit 1 ;;
+        esac
+        case "$SNP_ACTION_VERSION" in
+          latest) base=https://github.com/grok-rs/snp/releases/latest/download ;;
+          v*)     base="https://github.com/grok-rs/snp/releases/download/$SNP_ACTION_VERSION" ;;
+          *)      base="https://github.com/grok-rs/snp/releases/download/v$SNP_ACTION_VERSION" ;;
+        esac
+        archive="snp-$target.$ext"
+        dir="$SNP_ACTION_TEMP/snp-action"
+        rm -rf "$dir" && mkdir -p "$dir"
+        curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
+          --output "$dir/$archive" "$base/$archive"
+        curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
+          --output "$dir/$archive.sha256" "$base/$archive.sha256"
+        expected="$(cut -d ' ' -f 1 < "$dir/$archive.sha256" | tr -d '\r' | tr 'A-F' 'a-f')"
+        if command -v sha256sum > /dev/null; then
+          actual="$(sha256sum "$dir/$archive" | cut -d ' ' -f 1)"
+        else
+          actual="$(shasum -a 256 "$dir/$archive" | cut -d ' ' -f 1)"
+        fi
+        if [ "${#expected}" -ne 64 ] || [ "$expected" != "$actual" ]; then
+          echo "::error::snp-action: checksum mismatch for $archive (expected $expected, got $actual)"
+          exit 1
+        fi
+        if [ "$ext" = zip ]; then
+          unzip -q "$dir/$archive" -d "$dir"
+          exe=snp.exe
+        else
+          tar -xJf "$dir/$archive" -C "$dir"
+          exe=snp
+        fi
+        bin="$(dirname "$(find "$dir" -type f -name "$exe" | head -n 1)")"
+        if [ ! -f "$bin/$exe" ]; then
+          echo "::error::snp-action: $archive does not contain $exe"
+          exit 1
+        fi
+        chmod +x "$bin/$exe" || true
+        echo "$bin" >> "$GITHUB_PATH"
+        echo "snp=$bin/$exe" >> "$GITHUB_OUTPUT"
+        "$bin/$exe" --version
+
+    # Key scheme `snp-1` (11 §A.11.1): runner OS and architecture because environments hold platform binaries,
+    # pythonLocation for Python hooks set up by actions/setup-python (empty otherwise), the config hash. No snp
+    # version: the cache is versioned internally.
+    - name: Cache snp's cache directory
+      if: ${{ inputs.cache == 'true' }}
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/snp
+        key: snp-1|${{ runner.os }}|${{ runner.arch }}|${{ env.pythonLocation }}|${{ hashFiles('.pre-commit-config.yaml') }}
+
+    - name: Run snp
+      shell: bash
+      env:
+        SNP_ACTION_EXTRA_ARGS: ${{ inputs.extra_args }}
+      # Word splitting of the extra arguments is intended (pre-commit/action does the same).
+      run: snp run --show-diff-on-failure --color=always $SNP_ACTION_EXTRA_ARGS
