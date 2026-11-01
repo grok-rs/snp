@@ -149,6 +149,12 @@ fn read_config(root: &Path, path: &Path) -> Result<LMap, LoadError> {
             "can't parse config '{shown}', file has unsupported or no extension\nhint: rename {shown} to {shown}.yml"
         )));
     };
+    // A FIFO or device named `*.yml` would block `read_to_end` forever (lefthook hangs too); only regular files
+    // (symlinks followed) are read.
+    let md = std::fs::metadata(path).map_err(|e| LoadError(format!("{shown}: {e}")))?;
+    if !md.is_file() {
+        return Err(LoadError(format!("{shown}: not a regular file")));
+    }
     let mut bytes = Vec::new();
     let cap = u64::try_from(value::MAX_BYTES)
         .unwrap_or(u64::MAX)
@@ -587,6 +593,29 @@ fn has_meta(p: &str) -> bool {
 /// The deepest directory recursion of [`go_glob`].
 const MAX_GLOB_DEPTH: usize = 32;
 
+/// The `go_glob` error when a load's extends patterns go past their [`GlobBudget`].
+pub(crate) const TOO_MANY: &str = "matches too many paths";
+
+/// What the extends globs of one load may still read and return. Without it, directory symlinks (`a -> .`,
+/// `b -> .`) or `/proc/*/root` make `*/*/…` patterns grow exponentially in time and memory; lefthook has no bound.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GlobBudget {
+    /// Directory entries left to read (`read_dir` items, over every pattern of the load).
+    pub(crate) entries: usize,
+    /// Matches left to return.
+    pub(crate) matches: usize,
+}
+
+impl GlobBudget {
+    /// The per-load budget: 16384 directory entries and 4096 matches.
+    pub(crate) const fn new() -> Self {
+        Self {
+            entries: 16_384,
+            matches: 4_096,
+        }
+    }
+}
+
 /// Go's `filepath.Glob` (afero's copy) run from the directory `base` (lefthook globs the extends path as written,
 /// relative to the repository it runs in, so metacharacters in `base` itself are never read as a pattern): a
 /// pattern without metacharacters is returned when it exists (`Lstat`); otherwise every directory level with
@@ -596,10 +625,12 @@ pub(crate) fn go_glob(
     base: &Path,
     pattern: &str,
     depth: usize,
+    budget: &mut GlobBudget,
 ) -> Result<Vec<String>, &'static str> {
     go_match(pattern, "")?;
     if !has_meta(pattern) {
         return Ok(if std::fs::symlink_metadata(base.join(pattern)).is_ok() {
+            charge(&mut budget.matches, 1)?;
             vec![pattern.to_owned()]
         } else {
             Vec::new()
@@ -621,24 +652,32 @@ pub(crate) fn go_glob(
         d => d.strip_suffix('/').unwrap_or(d).to_owned(),
     };
     if !has_meta(&dir) {
-        return glob_dir(base, &dir, file, Vec::new());
+        return glob_dir(base, &dir, file, Vec::new(), budget);
     }
     if dir == pattern {
         return Err(BAD_PATTERN);
     }
     let mut matches = Vec::new();
-    for d in go_glob(base, &dir, depth.saturating_add(1))? {
-        matches = glob_dir(base, &d, file, matches)?;
+    for d in go_glob(base, &dir, depth.saturating_add(1), budget)? {
+        matches = glob_dir(base, &d, file, matches, budget)?;
     }
     Ok(matches)
 }
 
-/// `glob(dir, pattern, matches)`: the sorted entries of `dir` matching `pattern`.
+/// Takes `n` from `left`, or fails with [`TOO_MANY`] when it is spent.
+fn charge(left: &mut usize, n: usize) -> Result<(), &'static str> {
+    *left = left.checked_sub(n).ok_or(TOO_MANY)?;
+    Ok(())
+}
+
+/// `glob(dir, pattern, matches)`: the sorted entries of `dir` matching `pattern`, each entry read and each match
+/// charged to `budget`.
 fn glob_dir(
     base: &Path,
     dir: &str,
     pattern: &str,
     mut matches: Vec<String>,
+    budget: &mut GlobBudget,
 ) -> Result<Vec<String>, &'static str> {
     let full = base.join(dir);
     if !full.is_dir() {
@@ -647,13 +686,17 @@ fn glob_dir(
     let Ok(entries) = std::fs::read_dir(&full) else {
         return Ok(matches);
     };
-    let mut names: Vec<String> = entries
-        .filter_map(Result::ok)
-        .filter_map(|e| e.file_name().into_string().ok())
-        .collect();
+    let mut names: Vec<String> = Vec::new();
+    for e in entries {
+        charge(&mut budget.entries, 1)?;
+        if let Some(n) = e.ok().and_then(|e| e.file_name().into_string().ok()) {
+            names.push(n);
+        }
+    }
     names.sort();
     for n in names {
         if go_match(pattern, &n)? {
+            charge(&mut budget.matches, 1)?;
             let joined = if dir == "." {
                 n
             } else if dir.ends_with('/') {
@@ -674,6 +717,8 @@ struct Ctx<'a> {
     warnings: Vec<String>,
     /// What `{cmd}` substitutions may still add ([`CMD_BUDGET`]).
     budget: usize,
+    /// What the extends globs may still read and return.
+    globs: GlobBudget,
 }
 
 impl Ctx<'_> {
@@ -702,8 +747,13 @@ impl Ctx<'_> {
             } else {
                 p.clone()
             };
-            let paths = go_glob(self.root, &pattern, 0)
-                .map_err(|e| LoadError(format!("bad glob syntax for '{p}': {e}")))?;
+            let paths = go_glob(self.root, &pattern, 0, &mut self.globs).map_err(|e| {
+                if e == TOO_MANY {
+                    LoadError(format!("extends pattern '{p}' {TOO_MANY}"))
+                } else {
+                    LoadError(format!("bad glob syntax for '{p}': {e}"))
+                }
+            })?;
             for rel in paths {
                 let path = self.root.join(&rel).to_string_lossy().into_owned();
                 if visited.contains(&path) {
@@ -805,6 +855,7 @@ pub(crate) fn load(
         files: Vec::new(),
         warnings: Vec::new(),
         budget: CMD_BUDGET,
+        globs: GlobBudget::new(),
     };
     let main_path = locate_main(root, config)?;
     let local_path = locate_local(root);
