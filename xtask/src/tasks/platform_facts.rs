@@ -11,19 +11,22 @@
 //!   and scope, plus the values `git init` probes on this file system), `PATHEXT` and the `where`-style lookups of
 //!   `sh bash env python git`, the environment a git-spawned native program sees (Git for Windows' `MSYSTEM`/`TERM`/
 //!   `PATH` additions, 14 A.1 #15), the Python facts pre-commit depends on (`os.cpu_count`, `process_cpu_count`,
-//!   `PYTHON_CPU_COUNT`, UTF-8 mode, `isatty` of a `NUL`/`/dev/null` stdin vs an empty pipe, `os.access(X_OK)` of a
-//!   plain file, `os.environ` key case, `print()` line endings into a pipe, the unsigned exit code of `cmd /c exit -1`,
-//!   the `[WinError 193]` text), the Rust facts snp depends on (`available_parallelism`, `IsTerminal` of a null
+//!   `PYTHON_CPU_COUNT`, UTF-8 mode, `isatty` of a `NUL`/`/dev/null` stdin vs an empty pipe, `isatty(2)` and the
+//!   console mode of a `NUL`/`/dev/null` stderr, `os.access(X_OK)` of a plain file, `os.environ` key case, `print()`
+//!   line endings into a pipe, the unsigned exit code of `cmd /c exit -1`, the exit code of `sys.exit(0xC0000005)`
+//!   (gh-125842), the `[WinError 193]` text), the Rust facts snp depends on (`available_parallelism`, `IsTerminal` of a null
 //!   stdin, `ExitStatus` of the same child), file-system facts (temp-dir realpath — `/tmp` → `/private/tmp` on macOS —,
 //!   case sensitivity, Unicode normalisation of names, symlink creation) and the OS version (`ver`/`systeminfo`,
 //!   `sw_vers`, `/etc/os-release`), `ulimit -n` and `ARG_MAX`; with `--snp`, `snp --version` and the hidden
-//!   `snp __debug platform` report;
+//!   `snp __debug platform` report (a JSON object, run once plainly and once with `PYTHON_CPU_COUNT=3`);
 //! * `report.md`: one row per prediction (ID, 14 § reference, claim, verdict, observed value): **confirmed**,
 //!   **contradicted** or **unknown** (fact not available on this runner); also appended to `$GITHUB_STEP_SUMMARY`;
 //! * `corrections.md`: only when a prediction is contradicted; the workflow files it as an issue, and 14 §A.6.5
 //!   requires the matrix to be corrected in the PR that fixes it.
 //!
-//! The task always prints and never fails (14 §A.6.3): a missing tool is recorded as `unavailable: …`. `--strict`
+//! Relative `--out`, `--python` and `--snp` paths are resolved against the current directory first (the probes run
+//! in a scratch directory). The task always prints and never fails (14 §A.6.3): a missing tool is recorded as
+//! `unavailable: …`. `--strict`
 //! (local use) turns a contradicted prediction into a failure. The hidden `--probe-stdin` / `--print-env` modes are the
 //! child processes the task spawns of itself.
 //!
@@ -122,6 +125,30 @@ if os.name == "nt":
         out["spawn_text_file_error"] = str(e)
 else:
     out["returncode_exit_255"] = subprocess.run(["sh", "-c", "exit 255"]).returncode
+# gh-125842: SystemExit(n) with n > 0x7FFFFFFF (14 P-43, W10)
+out["returncode_sys_exit_c0000005"] = subprocess.run(
+    [sys.executable, "-I", "-S", "-c", "import sys; sys.exit(0xC0000005)"]).returncode
+print(json.dumps(out))
+"#;
+
+/// The stderr probe, run with stderr redirected to `NUL` / `/dev/null` (14 A.1 #9, P-50, W11): the CRT `isatty(2)`
+/// pre-commit's colour decision uses, and on Windows whether `GetConsoleMode`/`SetConsoleMode` succeed on it (the
+/// `vt_ok` half of the decision, as `pre_commit/color.py` computes it).
+const PY_STDERR_PROBE: &str = r#"
+import json, os
+out = {"isatty_2": os.isatty(2)}
+if os.name == "nt":
+    import ctypes
+    from ctypes import wintypes
+    k = ctypes.windll.kernel32
+    k.GetStdHandle.restype = wintypes.HANDLE
+    k.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    k.SetConsoleMode.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    h = k.GetStdHandle(-12)
+    mode = wintypes.DWORD()
+    ok = bool(k.GetConsoleMode(h, ctypes.byref(mode)))
+    out["get_console_mode_ok"] = ok
+    out["vt_ok"] = ok and bool(k.SetConsoleMode(h, mode.value | 4))
 print(json.dumps(out))
 "#;
 
@@ -205,9 +232,9 @@ fn parse_args(args: &[OsString]) -> anyhow::Result<Opts> {
                 .with_context(|| format!("{name} needs a value"))
         };
         match a.to_str() {
-            Some("--out") => opts.out = Some(value("--out")?),
-            Some("--python") => opts.python = Some(value("--python")?),
-            Some("--snp") => opts.snp = Some(value("--snp")?),
+            Some("--out") => opts.out = Some(absolute(&value("--out")?)?),
+            Some("--python") => opts.python = Some(program(value("--python")?)?),
+            Some("--snp") => opts.snp = Some(program(value("--snp")?)?),
             Some("--strict") => opts.strict = true,
             _ => bail!(
                 "usage: cargo xtask platform-facts [--out DIR] [--python EXE] [--snp EXE] [--strict] (got {})",
@@ -216,6 +243,22 @@ fn parse_args(args: &[OsString]) -> anyhow::Result<Opts> {
         }
     }
     Ok(opts)
+}
+
+/// `p` made absolute against the current directory: the probes run in a scratch directory, where a relative path
+/// would name something else.
+fn absolute(p: &Path) -> anyhow::Result<PathBuf> {
+    std::path::absolute(p).with_context(|| format!("resolving {}", p.display()))
+}
+
+/// A program argument: a bare name (`python3`) stays a `PATH` lookup, anything with a directory part is made
+/// absolute like [`absolute`].
+fn program(p: PathBuf) -> anyhow::Result<PathBuf> {
+    if p.components().count() > 1 || p.is_absolute() {
+        absolute(&p)
+    } else {
+        Ok(p)
+    }
 }
 
 /// Child mode: is this process's stdin a terminal (Rust `IsTerminal`)?
@@ -299,22 +342,24 @@ fn text_of(r: Result<Ran, String>) -> Value {
     }
 }
 
-/// A scratch directory for the probes (removed at the end of [`collect`]).
-fn scratch() -> PathBuf {
-    std::env::temp_dir().join(format!("snp-platform-facts-{}", std::process::id()))
+/// A fresh, private scratch directory for the probes (removed at the end of [`collect`]); a stale or planted
+/// directory would distort the file-system and `git init` facts.
+fn scratch() -> Result<PathBuf, String> {
+    super::release::private_scratch("snp-platform-facts")
 }
 
 /// Gathers every fact; never fails.
 fn collect(env: &Env, opts: &Opts) -> Value {
-    let dir = scratch();
-    let made = std::fs::create_dir_all(&dir).is_ok();
-    let cwd = if made {
-        dir.clone()
-    } else {
-        std::env::temp_dir()
-    };
     let mut facts = Map::new();
     facts.insert("schema".to_owned(), json!(1));
+    let dir = match scratch() {
+        Ok(d) => d,
+        Err(e) => {
+            facts.insert("error".to_owned(), json!(format!("unavailable: {e}")));
+            return Value::Object(facts);
+        }
+    };
+    let cwd = dir.clone();
     facts.insert("host".to_owned(), host_facts(env, &cwd));
     facts.insert("fs".to_owned(), fs_facts(&cwd));
     facts.insert("rust".to_owned(), rust_facts(&cwd));
@@ -324,9 +369,7 @@ fn collect(env: &Env, opts: &Opts) -> Value {
     if let Some(snp) = &opts.snp {
         facts.insert("snp".to_owned(), snp_facts(snp, &cwd));
     }
-    if made {
-        std::fs::remove_dir_all(&dir).unwrap_or_default();
-    }
+    std::fs::remove_dir_all(&dir).unwrap_or_default();
     Value::Object(facts)
 }
 
@@ -728,6 +771,20 @@ fn python_facts(opts: &Opts, cwd: &Path) -> Value {
     };
     m.insert("probe_stdin_null".to_owned(), probe(Stdio::null()));
     m.insert("probe_stdin_pipe".to_owned(), probe(Stdio::piped()));
+    // stderr redirected to NUL / /dev/null (`2>NUL`, 14 P-50, W11)
+    let mut args = pre.clone();
+    args.extend(["-I", "-c", PY_STDERR_PROBE]);
+    let mut c = command(&py, &args, cwd);
+    c.stderr(Stdio::null());
+    m.insert(
+        "probe_stderr_null".to_owned(),
+        match exec(c) {
+            Ok(r) if r.code == Some(0) => serde_json::from_slice(&r.stdout)
+                .unwrap_or_else(|e| json!(format!("unavailable: unparsable probe output: {e}"))),
+            Ok(r) => json!(format!("unavailable: {}", r.display)),
+            Err(e) => json!(e),
+        },
+    );
     // print() into a pipe: CRLF on Windows (text-mode stdout, 14 A.1 #16)
     let mut args = pre.clone();
     args.extend(["-I", "-c", "print('x')"]);
@@ -757,9 +814,22 @@ fn python_facts(opts: &Opts, cwd: &Path) -> Value {
 }
 
 fn snp_facts(snp: &Path, cwd: &Path) -> Value {
+    let debug = |python_cpu_count: Option<&str>| {
+        let mut c = command(snp, &["__debug", "platform"], cwd);
+        if let Some(n) = python_cpu_count {
+            c.env("PYTHON_CPU_COUNT", n);
+        }
+        let text = text_of(exec(c));
+        // a JSON object when the subcommand exists; otherwise the `unavailable: …` text
+        text.as_str()
+            .and_then(|t| serde_json::from_str::<Value>(t).ok())
+            .filter(Value::is_object)
+            .unwrap_or(text)
+    };
     json!({
         "version": text_of(exec(command(snp, &["--version"], cwd))),
-        "debug_platform": text_of(exec(command(snp, &["__debug", "platform"], cwd))),
+        "debug_platform": debug(None),
+        "debug_platform_python_cpu_count_3": debug(Some("3")),
     })
 }
 
@@ -841,6 +911,13 @@ fn unknown(facts: &Value, pointer: &str) -> Verdict {
         || format!("{pointer}: not collected"),
         |v| format!("{pointer}: {v}"),
     ))
+}
+
+/// The probed CPython version as `(major, minor, patch)`.
+fn py_version(facts: &Value) -> Option<(u32, u32, u32)> {
+    let v = get(facts, "/python/probe_stdin_null/version")?.as_str()?;
+    let mut it = v.split('.').map(|p| p.parse::<u32>().ok());
+    Some((it.next()??, it.next()??, it.next()??))
 }
 
 /// The predictions; each names the 14 section that makes it.
@@ -1118,6 +1195,69 @@ static PREDICTIONS: &[Prediction] = &[
         claim: "CI stderr is a pipe, not a terminal (no colour under `--color auto`)",
         check: |f| expect_eq(f, "/rust/stderr_is_terminal", &Value::Bool(false)),
     },
+    Prediction {
+        id: "PF-20",
+        source: "14 P-43, A.6.1, W10 (gh-125842)",
+        os: WIN,
+        claim: "`sys.exit(0xC0000005)` exits with 0xFFFFFFFF (4294967295) before CPython 3.13.1 and with 0xC0000005 (3221225477) from 3.13.1 on, so `hook-impl`'s exit code depends on the interpreter",
+        check: |f| {
+            let Some(version) = py_version(f) else {
+                return unknown(f, "/python/probe_stdin_null/version");
+            };
+            let expected: u64 = if version >= (3, 13, 1) {
+                3_221_225_477
+            } else {
+                4_294_967_295
+            };
+            match get(f, "/python/probe_stdin_null/returncode_sys_exit_c0000005") {
+                Some(v) => verdict(
+                    v == &json!(expected),
+                    format!("python {}.{}.{}: {v}", version.0, version.1, version.2),
+                ),
+                None => unknown(f, "/python/probe_stdin_null/returncode_sys_exit_c0000005"),
+            }
+        },
+    },
+    Prediction {
+        id: "PF-21",
+        source: "14 A.1 #9, P-50, W11",
+        os: ALL,
+        claim: "with stderr redirected to `NUL` / `/dev/null`, the CRT `isatty(2)` is true on Windows only, and there `GetConsoleMode` fails (no VT), so `--color auto` prints no colour under `2>NUL`",
+        check: |f| {
+            let windows = os_of(f) == "windows";
+            let Some(isatty) = get(f, "/python/probe_stderr_null/isatty_2") else {
+                return unknown(f, "/python/probe_stderr_null/isatty_2");
+            };
+            if !windows {
+                return verdict(isatty == &Value::Bool(false), format!("isatty(2) {isatty}"));
+            }
+            match get(f, "/python/probe_stderr_null/vt_ok") {
+                Some(vt) => verdict(
+                    isatty == &Value::Bool(true) && vt == &Value::Bool(false),
+                    format!("isatty(2) {isatty}, vt_ok {vt}"),
+                ),
+                None => unknown(f, "/python/probe_stderr_null/vt_ok"),
+            }
+        },
+    },
+    Prediction {
+        id: "PF-22",
+        source: "14 A.1 #14, A.6.3, W18, D-PLAT-10",
+        os: WIN_MAC,
+        claim: "snp's `py_cpu_count` (`snp __debug platform`) equals Python's `os.cpu_count()` and ignores `PYTHON_CPU_COUNT=3`",
+        check: |f| {
+            let snp = get(f, "/snp/debug_platform/py_cpu_count");
+            let snp3 = get(f, "/snp/debug_platform_python_cpu_count_3/py_cpu_count");
+            let py = get(f, "/python/probe_stdin_null/cpu_count");
+            match (snp, snp3, py) {
+                (Some(s), Some(s3), Some(p)) => verdict(
+                    s == p && s3 == p,
+                    format!("snp {s}, snp with PYTHON_CPU_COUNT=3 {s3}, python {p}"),
+                ),
+                _ => unknown(f, "/snp/debug_platform"),
+            }
+        },
+    },
 ];
 
 /// Evaluates every prediction that applies to the facts' OS.
@@ -1252,11 +1392,20 @@ mod tests {
                 "probe_stdin_null": { "version": "3.13.1", "stdin_isatty": os == "windows",
                     "access_x_ok_plain_file": os == "windows", "environ_upper_cases_keys": os == "windows",
                     "cpu_count": 4, "returncode_cmd_exit_minus_1": 4_294_967_295_u64,
+                    "returncode_sys_exit_c0000005": 3_221_225_477_u64,
                     "spawn_text_file_error": "[WinError 193] %1 is not a valid Win32 application" },
                 "probe_stdin_pipe": { "stdin_isatty": false },
+                "probe_stderr_null": if os == "windows" {
+                    json!({ "isatty_2": true, "get_console_mode_ok": false, "vt_ok": false })
+                } else {
+                    json!({ "isatty_2": false })
+                },
                 "print_into_pipe_hex": if os == "windows" { "780d0a" } else { "780a" },
                 "cpu_count_with_python_cpu_count_3": 3
-            }
+            },
+            "snp": { "version": "snp 2.0.0",
+                     "debug_platform": { "py_cpu_count": 4 },
+                     "debug_platform_python_cpu_count_3": { "py_cpu_count": 4 } }
         })
     }
 
@@ -1329,7 +1478,7 @@ mod tests {
 
     #[test]
     fn where_all_follows_path_order() {
-        let dir = scratch().with_extension("where");
+        let dir = scratch().unwrap();
         let a = dir.join("a");
         let b = dir.join("b");
         std::fs::create_dir_all(&a).unwrap();
@@ -1357,7 +1506,128 @@ mod tests {
         ])
         .unwrap();
         assert!(o.strict);
-        assert_eq!(o.out.as_deref(), Some(Path::new("x")));
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(o.out.as_deref(), Some(cwd.join("x").as_path()));
+        // the probes run in a scratch directory: relative program paths are resolved now, bare names stay PATH
+        // lookups
+        let o = parse_args(&[
+            OsString::from("--snp"),
+            OsString::from("target/debug/snp"),
+            OsString::from("--python"),
+            OsString::from("python3"),
+        ])
+        .unwrap();
+        assert_eq!(
+            o.snp.as_deref(),
+            Some(cwd.join("target").join("debug").join("snp").as_path())
+        );
+        assert!(o.snp.as_deref().is_some_and(Path::is_absolute));
+        assert_eq!(o.python.as_deref(), Some(Path::new("python3")));
+    }
+
+    #[test]
+    fn a_relative_snp_path_still_names_the_same_file_from_the_scratch_directory() {
+        // the unit tests run in the xtask package directory, where `src/main.rs` exists
+        let o = parse_args(&[OsString::from("--snp"), OsString::from("src/main.rs")]).unwrap();
+        let snp = o.snp.unwrap();
+        let dir = scratch().unwrap();
+        let facts = snp_facts(&snp, &dir);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(snp.is_file(), "{}", snp.display());
+        // the probe reached the file (it is not executable), instead of looking for `<scratch>/src/main.rs`
+        let version = facts["version"].as_str().unwrap();
+        assert!(!version.contains("os error 2"), "{version}");
+    }
+
+    fn verdict_of<'a>(results: &'a [Outcome], id: &str) -> &'a Verdict {
+        &results
+            .iter()
+            .find(|r| r.prediction.id == id)
+            .unwrap()
+            .verdict
+    }
+
+    #[test]
+    fn sys_exit_code_prediction_follows_the_interpreter_version() {
+        let mut f = facts_for("windows");
+        assert!(matches!(
+            verdict_of(&evaluate(&f), "PF-20"),
+            Verdict::Confirmed(_)
+        ));
+        // 3.12 (before gh-125842): 0xFFFFFFFF is predicted, so the 3.13.1 value contradicts it
+        *f.pointer_mut("/python/probe_stdin_null/version").unwrap() = json!("3.12.10");
+        assert!(matches!(
+            verdict_of(&evaluate(&f), "PF-20"),
+            Verdict::Contradicted(_)
+        ));
+        *f.pointer_mut("/python/probe_stdin_null/returncode_sys_exit_c0000005")
+            .unwrap() = json!(4_294_967_295_u64);
+        assert!(matches!(
+            verdict_of(&evaluate(&f), "PF-20"),
+            Verdict::Confirmed(_)
+        ));
+        // 3.13.0 is still before the fix
+        *f.pointer_mut("/python/probe_stdin_null/version").unwrap() = json!("3.13.0");
+        assert!(matches!(
+            verdict_of(&evaluate(&f), "PF-20"),
+            Verdict::Confirmed(_)
+        ));
+        *f.pointer_mut("/python/probe_stdin_null/version").unwrap() = json!("unavailable: x");
+        assert!(matches!(
+            verdict_of(&evaluate(&f), "PF-20"),
+            Verdict::Unknown(_)
+        ));
+        // not evaluated off Windows
+        assert!(
+            evaluate(&facts_for("linux"))
+                .iter()
+                .all(|r| r.prediction.id != "PF-20")
+        );
+    }
+
+    #[test]
+    fn stderr_null_prediction_needs_isatty_true_and_no_vt_on_windows() {
+        let mut f = facts_for("windows");
+        *f.pointer_mut("/python/probe_stderr_null/vt_ok").unwrap() = json!(true);
+        assert!(matches!(
+            verdict_of(&evaluate(&f), "PF-21"),
+            Verdict::Contradicted(_)
+        ));
+        let mut f = facts_for("linux");
+        *f.pointer_mut("/python/probe_stderr_null/isatty_2").unwrap() = json!(true);
+        assert!(matches!(
+            verdict_of(&evaluate(&f), "PF-21"),
+            Verdict::Contradicted(_)
+        ));
+        *f.pointer_mut("/python/probe_stderr_null").unwrap() = json!("unavailable: no python");
+        assert!(matches!(
+            verdict_of(&evaluate(&f), "PF-21"),
+            Verdict::Unknown(_)
+        ));
+    }
+
+    #[test]
+    fn snp_cpu_count_prediction_compares_snp_with_python() {
+        let mut f = facts_for("macos");
+        *f.pointer_mut("/snp/debug_platform_python_cpu_count_3/py_cpu_count")
+            .unwrap() = json!(3);
+        assert!(matches!(
+            verdict_of(&evaluate(&f), "PF-22"),
+            Verdict::Contradicted(_)
+        ));
+        // `snp __debug platform` not implemented: unknown, not contradicted
+        *f.pointer_mut("/snp/debug_platform").unwrap() =
+            json!("unavailable: exit status: 2 (invalid choice: '__debug')");
+        assert!(matches!(
+            verdict_of(&evaluate(&f), "PF-22"),
+            Verdict::Unknown(_)
+        ));
+        let mut f = facts_for("macos");
+        f.as_object_mut().unwrap().remove("snp");
+        assert!(matches!(
+            verdict_of(&evaluate(&f), "PF-22"),
+            Verdict::Unknown(_)
+        ));
     }
 
     #[test]
@@ -1374,5 +1644,24 @@ mod tests {
         let results = evaluate(&facts);
         let report = render_report(&facts, &results);
         assert!(report.starts_with("## Platform facts: "));
+        // with a Python on this host, the `2>/dev/null` probe ran and (off Windows) isatty(2) is false
+        if cfg!(unix) && facts.pointer("/python/probe_stdin_null/version").is_some() {
+            assert_eq!(
+                facts.pointer("/python/probe_stderr_null/isatty_2"),
+                Some(&Value::Bool(false)),
+                "{facts:#}"
+            );
+            assert!(matches!(
+                verdict_of(&results, "PF-21"),
+                Verdict::Confirmed(_)
+            ));
+            assert!(
+                facts
+                    .pointer("/python/probe_stdin_null/returncode_sys_exit_c0000005")
+                    .and_then(Value::as_u64)
+                    .is_some(),
+                "{facts:#}"
+            );
+        }
     }
 }

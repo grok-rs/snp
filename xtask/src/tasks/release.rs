@@ -16,8 +16,9 @@
 //!    pinned `rev`, has no modified or untracked files, and whose `Cargo.toml` declares the pinned name and version;
 //! 3. **clean checkout**: the snp work tree has no modified or untracked files (`--allow-dirty` skips this for local
 //!    dry runs only);
-//! 4. **version**: `--tag` (the pushed tag) is `v` + the workspace version, and `CHANGELOG.md` has a section for that
-//!    version (`--allow-unreleased` also accepts `## [Unreleased]`, for pull-request dry runs);
+//! 4. **version**: `--tag` (the pushed tag) is `v` + the workspace version, exists as a tag whose commit is the
+//!    checked-out `HEAD` (a `workflow_dispatch` run on another ref cannot publish under the tag), and `CHANGELOG.md`
+//!    has a section for that version (`--allow-unreleased` also accepts `## [Unreleased]`, for pull-request dry runs);
 //! 5. **registry** (ADR-061): each user crate is published on crates.io in exactly the pinned version, not yanked,
 //!    the downloaded `.crate` matches the index checksum, and its `.cargo_vcs_info.json` records the pinned commit
 //!    (`git.sha1 == rev`), a clean tree (`dirty` absent or false) and `path_in_vcs == ""`. `--skip-registry` skips
@@ -544,7 +545,7 @@ fn gates(opts: &GateOpts) -> Report {
             if let Some(tag) = &opts.tag {
                 let want = format!("v{version}");
                 if tag == &want {
-                    report.pass("tag", format!("{tag} matches the workspace version"));
+                    report.record("tag", tag_at_head(&root, tag));
                 } else {
                     report.fail("tag", format!("tag {tag} != {want} (workspace version)"));
                 }
@@ -577,24 +578,74 @@ fn gates(opts: &GateOpts) -> Report {
     if opts.skip_registry {
         report.pass("registry", "skipped (--skip-registry)");
     } else {
-        // unique per call: concurrent callers in one process (the tests) must not share it
-        static CALLS: AtomicUsize = AtomicUsize::new(0);
-        let n = CALLS.fetch_add(1, Ordering::Relaxed);
-        let scratch =
-            std::env::temp_dir().join(format!("snp-release-gates-{}-{n}", std::process::id()));
-        if let Err(e) = std::fs::create_dir_all(&scratch) {
-            report.fail("registry", format!("{}: {e}", scratch.display()));
-        } else {
-            for pin in &pins {
-                report.record(
-                    &format!("registry/{}", pin.name),
-                    check_published(opts, pin, &scratch),
-                );
+        match private_scratch("snp-release-gates") {
+            Err(e) => report.fail("registry", e),
+            Ok(scratch) => {
+                for pin in &pins {
+                    report.record(
+                        &format!("registry/{}", pin.name),
+                        check_published(opts, pin, &scratch),
+                    );
+                }
+                std::fs::remove_dir_all(&scratch).unwrap_or_default();
             }
-            std::fs::remove_dir_all(&scratch).unwrap_or_default();
         }
     }
     report
+}
+
+/// `tag` exists and names the commit checked out at `HEAD` of `root`.
+fn tag_at_head(root: &Path, tag: &str) -> Result<String, String> {
+    let tagged = git(
+        root,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/tags/{tag}^{{commit}}"),
+        ],
+    )
+    .map_err(|_| format!("tag {tag} does not exist in {}", root.display()))?;
+    let head = git(root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    if tagged == head {
+        Ok(format!(
+            "{tag} matches the workspace version and points at HEAD ({head})"
+        ))
+    } else {
+        Err(format!(
+            "tag {tag} does not point at HEAD (tag {tagged}, HEAD {head})"
+        ))
+    }
+}
+
+/// Creates a fresh directory under the temporary directory that no other process (or user) created first: the
+/// name carries the PID, a per-process counter and the clock, creation is exclusive (`create_dir`, never
+/// `create_dir_all`, so a planted directory or symlink is refused) and, on Unix, the mode is 0700.
+pub(crate) fn private_scratch(prefix: &str) -> Result<PathBuf, String> {
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    let base = std::env::temp_dir();
+    let mut last = String::new();
+    for _ in 0..64 {
+        let n = CALLS.fetch_add(1, Ordering::Relaxed);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.subsec_nanos());
+        let dir = base.join(format!("{prefix}-{}-{n}-{nanos:08x}", std::process::id()));
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        match builder.create(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                last = format!("{}: {e}", dir.display());
+            }
+            Err(e) => return Err(format!("{}: {e}", dir.display())),
+        }
+    }
+    Err(format!(
+        "no fresh scratch directory under {}: {last}",
+        base.display()
+    ))
 }
 
 fn check_sibling(dir: &Path, pin: &Pin) -> Result<String, String> {
@@ -903,6 +954,22 @@ mod tests {
         assert!(GateOpts::parse(&["--tag".into()]).is_err());
     }
 
+    #[test]
+    fn scratch_directories_are_fresh_private_and_distinct() {
+        let a = private_scratch("snp-release-scratch-test").unwrap();
+        let b = private_scratch("snp-release-scratch-test").unwrap();
+        assert_ne!(a, b);
+        assert!(a.is_dir() && b.is_dir());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = std::fs::metadata(&a).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700);
+        }
+        std::fs::remove_dir_all(&a).unwrap();
+        std::fs::remove_dir_all(&b).unwrap();
+    }
+
     /// A self-contained release layout under a temporary directory: a workspace (git repo) with deps.lock,
     /// two sibling user crates (git repos) and a `file://` registry (sparse index + `.crate` files).
     #[cfg(unix)]
@@ -1015,7 +1082,7 @@ mod tests {
                             file-identify = { path = \"../file-identify\", version = \"0.5\" }\n\
                             serde = \"1\"\nsnp-core = { path = \"crates/snp-core\", version = \"2.0.0\" }\n";
             let root = base.join("snp");
-            repo(
+            let tagged = repo(
                 &root,
                 &[
                     ("Cargo.toml", manifest),
@@ -1026,6 +1093,7 @@ mod tests {
                     ),
                 ],
             );
+            sh(&root, &["git", "tag", "v2.0.0", &tagged]);
             Fixture {
                 base,
                 root,
@@ -1140,6 +1208,37 @@ mod tests {
             assert!(r.failed("sibling/file-identify"), "{text}");
             assert!(text.contains("deps.lock pins"), "{text}");
             assert!(r.failed("tag"), "{text}");
+            // the right tag name, but HEAD moved past the tagged commit (a workflow_dispatch run on another ref)
+            let mut moved = opts(&f);
+            moved.skip_registry = true;
+            moved.allow_dirty = true;
+            sh(
+                &f.root,
+                &[
+                    "git",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    "after the release",
+                ],
+            );
+            let r = gates(&moved);
+            assert!(r.failed("tag"), "{}", render(&r));
+            assert!(
+                render(&r).contains("tag v2.0.0 does not point at HEAD"),
+                "{}",
+                render(&r)
+            );
+            // a tag that does not exist at all
+            moved.tag = Some("v2.0.0".into());
+            sh(&f.root, &["git", "tag", "-d", "v2.0.0"]);
+            let r = gates(&moved);
+            assert!(
+                render(&r).contains("tag v2.0.0 does not exist"),
+                "{}",
+                render(&r)
+            );
             // --allow-dirty skips only the snp checkout gate
             o.allow_dirty = true;
             o.tag = None;
