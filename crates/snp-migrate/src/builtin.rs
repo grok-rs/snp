@@ -422,7 +422,7 @@ pub fn not_converted(config_bytes: &[u8]) -> Result<Vec<String>, Failure> {
         };
         let mut missing: Vec<&str> = Vec::new();
         let mut keyed: Vec<String> = Vec::new();
-        for &h in d.items(hooks).iter() {
+        for &h in d.items(hooks) {
             let id = d.get(h, "id").and_then(|(_, v)| d.scalar(v)).unwrap_or("");
             if !ids.contains(&id) && !missing.contains(&id) {
                 missing.push(id);

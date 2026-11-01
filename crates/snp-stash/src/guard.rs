@@ -1012,7 +1012,7 @@ impl Inner {
                     e,
                     &messages::k_plus_hint(
                         patch,
-                        self.tree.as_ref().map(|t| t.as_str()),
+                        self.tree.as_ref().map(ObjectId::as_str),
                         recovery::patch_paths(patch).as_deref(),
                     ),
                 ))

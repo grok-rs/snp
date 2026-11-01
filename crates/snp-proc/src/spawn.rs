@@ -1449,13 +1449,15 @@ mod tests {
     #[test]
     fn sigint_between_exec_and_register_is_forwarded() {
         fn interrupt_mid_spawn() {
-            let forwarder = std::thread::spawn(|| {
-                RACE_TOKEN
-                    .get()
-                    .unwrap()
-                    .cancel(snp_core::cancel::CancelReason::Interrupt);
-                registry::forward(registry::Sig::Int, registry::Origin::Sent);
-            });
+            let forwarder = std::thread::Builder::new()
+                .spawn(|| {
+                    RACE_TOKEN
+                        .get()
+                        .unwrap()
+                        .cancel(snp_core::cancel::CancelReason::Interrupt);
+                    registry::forward(registry::Sig::Int, registry::Origin::Sent);
+                })
+                .unwrap();
             // Give the forwarder ample time to run (and, before the fix, to miss this child).
             std::thread::sleep(Duration::from_millis(300));
             // One-shot: later spawns in this process are unaffected.

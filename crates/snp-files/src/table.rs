@@ -792,7 +792,7 @@ mod tests {
             NonZeroUsize::new(32).unwrap(),
             snp_core::cancel::CancelToken::new(),
         );
-        let seen = std::sync::Mutex::new(std::collections::HashSet::new());
+        let seen = Mutex::new(std::collections::HashSet::new());
         let out = par_chunks_on(&pool, 20_000, REGEX_THREADS, |r| {
             seen.lock().unwrap().insert(std::thread::current().id());
             std::thread::sleep(std::time::Duration::from_micros(200));

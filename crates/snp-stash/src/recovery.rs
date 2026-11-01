@@ -696,10 +696,7 @@ fn mode_matches(root: &Path, path: &[u8], mode: &[u8]) -> bool {
     };
     match mode {
         b"120000" => md.file_type().is_symlink(),
-        b"100644" | b"100755" => {
-            if !md.file_type().is_file() {
-                return false;
-            }
+        b"100644" | b"100755" if !md.is_dir() && !md.is_symlink() => {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -709,6 +706,7 @@ fn mode_matches(root: &Path, path: &[u8], mode: &[u8]) -> bool {
             #[cfg(not(unix))]
             true
         }
+        b"100644" | b"100755" => false,
         _ => true,
     }
 }

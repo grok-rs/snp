@@ -616,12 +616,15 @@ fn clone_cx<'a>(c: &CmdCtx<'a>) -> CmdCtx<'a> {
     }
 }
 
+/// Explains, one line each, what a migration leaves as it is.
+type Explain = fn(&[u8]) -> Result<Vec<String>, Failure>;
+
 /// `snp migrate builtin|upstream`: rewrite the config in place (atomically, mode kept).
 fn rewrite_config(
     s: &Session,
     config: &OsStr,
     convert: fn(&[u8]) -> Result<Vec<u8>, Failure>,
-    explain: Option<fn(&[u8]) -> Result<Vec<String>, Failure>>,
+    explain: Option<Explain>,
 ) -> Result<i32, Failure> {
     let path = s.cwd()?.join(config);
     // Never `fs::read`: `/dev/zero` or a FIFO named as the config would grow without bound (D-SEC-11).

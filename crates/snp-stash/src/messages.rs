@@ -71,18 +71,15 @@ fn push_fallback(s: &mut String, patch: &str, tree: &str, existing: Option<&[&[u
     s.push_str(" > ");
     s.push_str(&sh(&format!("{patch}.now")));
     s.push_str(", put them back with ");
-    match existing {
-        Some(paths) => {
-            s.push_str("git --literal-pathspecs restore --source=");
-            s.push_str(tree);
-            s.push_str(" --worktree --");
-            push_paths(s, paths);
-        }
-        None => {
-            s.push_str("git restore --source=");
-            s.push_str(tree);
-            s.push_str(" --worktree -- :/");
-        }
+    if let Some(paths) = existing {
+        s.push_str("git --literal-pathspecs restore --source=");
+        s.push_str(tree);
+        s.push_str(" --worktree --");
+        push_paths(s, paths);
+    } else {
+        s.push_str("git restore --source=");
+        s.push_str(tree);
+        s.push_str(" --worktree -- :/");
     }
     s.push_str(", then ");
     s.push_str(again);

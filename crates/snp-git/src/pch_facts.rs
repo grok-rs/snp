@@ -436,6 +436,26 @@ impl PchFacts {
         })
     }
 
+    /// `config core.fileMode`, memoised while the repository's config files keep their stamps (any exit status:
+    /// unset is `1` with empty output, and stays so until a config file changes).
+    fn file_mode(&self, args: &[&OsStr]) -> Result<Captured, Failure> {
+        let stamps = self.config_stamps();
+        let mut memo = snp_core::sync::lock(&self.file_mode);
+        if let Some((at, (status, stdout, stderr))) = memo.as_ref()
+            && *at == stamps
+        {
+            return Ok(Captured {
+                status: snp_proc::spawn::PyStatus(*status),
+                stdout: stdout.clone(),
+                stderr: stderr.clone(),
+                stopped_by_tty: false,
+            });
+        }
+        let c = self.git.run_raw(args)?;
+        *memo = Some((stamps, (c.status.0, c.stdout.clone(), c.stderr.clone())));
+        Ok(c)
+    }
+
     /// Any other catalogued call (09 §3: `config core.fileMode`, `ls-files -z --stage -- <paths>`, `status
     /// --porcelain=v2 -z -- <paths>`, `cat-file`, `diff --diff-filter=A --raw …`): `git <args>` with the hook env,
     /// unchecked, never cached — except a successful `rev-parse --git-dir`, which cannot change during a run
@@ -461,28 +481,6 @@ impl PchFacts {
         if c.status.0 == 0 {
             *memo = Some((c.status.0, c.stdout.clone(), c.stderr.clone()));
         }
-        Ok(c)
-    }
-}
-
-impl PchFacts {
-    /// `config core.fileMode`, memoised while the repository's config files keep their stamps (any exit status:
-    /// unset is `1` with empty output, and stays so until a config file changes).
-    fn file_mode(&self, args: &[&OsStr]) -> Result<Captured, Failure> {
-        let stamps = self.config_stamps();
-        let mut memo = snp_core::sync::lock(&self.file_mode);
-        if let Some((at, (status, stdout, stderr))) = memo.as_ref()
-            && *at == stamps
-        {
-            return Ok(Captured {
-                status: snp_proc::spawn::PyStatus(*status),
-                stdout: stdout.clone(),
-                stderr: stderr.clone(),
-                stopped_by_tty: false,
-            });
-        }
-        let c = self.git.run_raw(args)?;
-        *memo = Some((stamps, (c.status.0, c.stdout.clone(), c.stderr.clone())));
         Ok(c)
     }
 }

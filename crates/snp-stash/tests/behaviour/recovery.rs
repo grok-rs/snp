@@ -354,12 +354,12 @@ fn the_notice_never_overwrites_work_done_after_the_kill() {
         let now = String::from_utf8_lossy(&now);
         assert!(now.contains("NEW WORK AFTER KILL"), "{notice}\n{now}");
         assert_eq!(ok, applies, "{stderr}");
-        if !ok {
+        if ok {
+            assert!(now.contains("USER"));
+        } else {
             // Refused: nothing changed. The fallback keeps a copy before it restores the file.
             assert_eq!(sb.read(&repo, "foo"), after_kill);
             assert!(notice.contains("git diff --binary "));
-        } else {
-            assert!(now.contains("USER"));
         }
     }
 }
