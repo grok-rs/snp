@@ -322,6 +322,7 @@ mod tests {
             stderr: b"saved in /p/x; apply /p/x\n".to_vec(),
             exit: Some(3),
             timed_out: false,
+            truncated: false,
         };
         let mut state = State {
             config_file: Some(b"repos: []\n".to_vec()),

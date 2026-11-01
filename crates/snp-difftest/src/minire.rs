@@ -3,7 +3,9 @@
 //! `regex` crate (deny.toml: snp-pyre only) and needs no more than this subset: literals, `.`, escapes
 //! (`\d \w \s \D \W \S \. \[ …`), classes with ranges and negation, groups `(…)`/`(?:…)`, alternation and the
 //! quantifiers `* + ? {n} {n,} {n,m}` (greedy; a trailing `?` is accepted and ignored). Every match attempt has a
-//! step budget, so a hostile pattern fails instead of hanging.
+//! step budget, so a hostile pattern fails instead of hanging, and a recursion-depth limit (ARCH S2): a quantified
+//! single-character atom (`.*`, `\S+`, `[a-z]{2,}`) is matched by a loop, everything else that would nest deeper
+//! than [`MAX_DEPTH`] fails with an error instead of overflowing the stack.
 //!
 //! Owner: WP-35.
 
@@ -40,7 +42,12 @@ pub(crate) struct Regex {
 }
 
 const BUDGET: u64 = 2_000_000;
+/// Nested `seq`/`repeat` activations one match may stack (each is a few frames; far below a 2 MiB thread stack
+/// even in debug builds).
+const MAX_DEPTH: u32 = 1_000;
 const MAX_REPEAT: u32 = 10_000;
+/// Longest text searched (the matcher holds it as `char`s: four bytes each).
+const MAX_TEXT: usize = 16 * 1024 * 1024;
 
 /// Parser state.
 struct Parser<'p> {
@@ -55,6 +62,10 @@ struct Parser<'p> {
 struct Ctx<'t> {
     t: &'t [char],
     budget: Cell<u64>,
+    /// Current nesting of `seq`/`repeat`.
+    depth: Cell<u32>,
+    /// The depth limit was hit (the budget is then zeroed so every pending attempt unwinds).
+    too_deep: Cell<bool>,
     caps: Vec<Cell<Option<(usize, usize)>>>,
     multiline: bool,
     dotall: bool,
@@ -86,12 +97,19 @@ impl Regex {
 
     /// `re.search(pattern, text) is not None`; an exhausted step budget is `Err`.
     pub(crate) fn search(&self, text: &str) -> Result<bool, String> {
+        if text.len() > MAX_TEXT {
+            return Err(format!(
+                "text longer than {MAX_TEXT} bytes for a pattern match"
+            ));
+        }
         let chars: Vec<char> = text.chars().collect();
         let mut caps = Vec::new();
         caps.resize_with(self.groups.saturating_add(1), || Cell::new(None));
         let cx = Ctx {
             t: &chars,
             budget: Cell::new(BUDGET),
+            depth: Cell::new(0),
+            too_deep: Cell::new(false),
             caps,
             multiline: self.multiline,
             dotall: self.dotall,
@@ -100,6 +118,9 @@ impl Regex {
             let mut k = |_: usize| true;
             if self.alts.iter().any(|alt| seq(alt, &cx, start, &mut k)) {
                 return Ok(true);
+            }
+            if cx.too_deep.get() {
+                return Err(String::from("pattern exceeded the matching depth"));
             }
             if cx.budget.get() == 0 {
                 return Err(String::from("pattern exceeded the matching budget"));
@@ -357,6 +378,20 @@ fn tick(budget: &Cell<u64>) -> bool {
     true
 }
 
+/// Runs `f` one nesting level deeper, or fails (zeroing the budget) past [`MAX_DEPTH`].
+fn deeper(cx: &Ctx<'_>, f: impl FnOnce() -> bool) -> bool {
+    let d = cx.depth.get();
+    if d >= MAX_DEPTH {
+        cx.too_deep.set(true);
+        cx.budget.set(0);
+        return false;
+    }
+    cx.depth.set(d.saturating_add(1));
+    let r = f();
+    cx.depth.set(d);
+    r
+}
+
 /// Matches `nodes` at `pos`, then calls `k` with the end position.
 fn seq(nodes: &[Node], cx: &Ctx<'_>, pos: usize, k: &mut dyn FnMut(usize) -> bool) -> bool {
     if !tick(&cx.budget) {
@@ -365,7 +400,56 @@ fn seq(nodes: &[Node], cx: &Ctx<'_>, pos: usize, k: &mut dyn FnMut(usize) -> boo
     let Some((first, rest)) = nodes.split_first() else {
         return k(pos);
     };
-    one(first, cx, pos, &mut |p| seq(rest, cx, p, k))
+    deeper(cx, || one(first, cx, pos, &mut |p| seq(rest, cx, p, k)))
+}
+
+/// Whether `c` matches a single-character atom; `None` for other nodes.
+fn atom_hit(node: &Node, cx: &Ctx<'_>, c: char) -> Option<bool> {
+    match node {
+        Node::Char(want) => Some(c == *want),
+        Node::Any => Some(cx.dotall || c != '\n'),
+        Node::Class(items, neg) => Some(class_hit(items, c) != *neg),
+        _ => None,
+    }
+}
+
+/// A greedy repeat of a single-character atom without recursion: count the longest run, then offer `k` every
+/// length from there down to `min`.
+fn repeat_atom(
+    inner: &Node,
+    bounds: (u32, Option<u32>),
+    cx: &Ctx<'_>,
+    pos: usize,
+    k: &mut dyn FnMut(usize) -> bool,
+) -> bool {
+    let (min, max) = bounds;
+    let min = usize::try_from(min).unwrap_or(usize::MAX);
+    let limit = max.map_or(usize::MAX, |m| usize::try_from(m).unwrap_or(usize::MAX));
+    let mut n = 0_usize;
+    while n < limit {
+        let Some(&c) = cx.t.get(pos.saturating_add(n)) else {
+            break;
+        };
+        if !tick(&cx.budget) {
+            return false;
+        }
+        if atom_hit(inner, cx, c) != Some(true) {
+            break;
+        }
+        n = n.saturating_add(1);
+    }
+    if n < min {
+        return false;
+    }
+    loop {
+        if k(pos.saturating_add(n)) {
+            return true;
+        }
+        if n <= min || cx.budget.get() == 0 {
+            return false;
+        }
+        n = n.saturating_sub(1);
+    }
 }
 
 #[expect(
@@ -428,6 +512,11 @@ fn one(node: &Node, cx: &Ctx<'_>, pos: usize, k: &mut dyn FnMut(usize) -> bool) 
             let len = want.len();
             t.get(pos..).is_some_and(|rest| rest.starts_with(want)) && k(pos.saturating_add(len))
         }
+        Node::Repeat(inner, min, max)
+            if matches!(**inner, Node::Char(_) | Node::Any | Node::Class(..)) =>
+        {
+            repeat_atom(inner, (*min, *max), cx, pos, k)
+        }
         Node::Repeat(inner, min, max) => repeat(inner, (*min, *max), 0, cx, pos, k),
     }
 }
@@ -446,9 +535,11 @@ fn repeat(
     let (min, max) = bounds;
     let can_more = max.is_none_or(|m| count < m);
     if can_more {
-        let more = one(inner, cx, pos, &mut |p| {
-            // An empty iteration cannot make progress: stop repeating.
-            p != pos && repeat(inner, bounds, count.saturating_add(1), cx, p, k)
+        let more = deeper(cx, || {
+            one(inner, cx, pos, &mut |p| {
+                // An empty iteration cannot make progress: stop repeating.
+                p != pos && repeat(inner, bounds, count.saturating_add(1), cx, p, k)
+            })
         });
         if more {
             return true;
@@ -460,6 +551,11 @@ fn repeat(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `s` repeated `n` times (`str::repeat` is disallowed).
+    fn rep(s: &str, n: usize) -> String {
+        std::iter::repeat_n(s, n).collect()
+    }
 
     fn s(p: &str, t: &str) -> bool {
         Regex::new(p).unwrap().search(t).unwrap()
@@ -517,5 +613,58 @@ mod tests {
         let r = Regex::new("(a|a)*(a|a)*(a|a)*(a|a)*c").unwrap();
         let t: String = std::iter::repeat_n('a', 40).collect();
         assert!(r.search(&t).is_err());
+    }
+
+    #[test]
+    fn long_texts_never_overflow_the_stack() {
+        // On a 2 MiB stack (the difftest worker size): `^a*b` over 20 000 `a`s aborted the process before the
+        // single-character repeat became a loop and nesting got a limit.
+        let h = std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(|| {
+                let long = rep("a", 1_000_000);
+                assert_eq!(
+                    Regex::new("^a*b").unwrap().search(&rep("a", 20_000)),
+                    Ok(false)
+                );
+                assert!(Regex::new("^a*b").unwrap().search(&long).is_err());
+                assert_eq!(Regex::new("^a*$").unwrap().search(&long), Ok(true));
+                assert_eq!(Regex::new(r"^\S+$").unwrap().search(&long), Ok(true));
+                assert_eq!(Regex::new("^.*a$").unwrap().search(&long), Ok(true));
+                assert_eq!(
+                    Regex::new("^[a-c]{3,5}a").unwrap().search("aaaaaa"),
+                    Ok(true)
+                );
+                assert_eq!(Regex::new("^a{2,3}$").unwrap().search("aaaa"), Ok(false));
+                // An unanchored search that cannot match exhausts the budget instead of running O(n²).
+                assert!(Regex::new("a*b").unwrap().search(&long).is_err());
+                assert!(
+                    Regex::new("a")
+                        .unwrap()
+                        .search(&rep("a", MAX_TEXT + 1))
+                        .is_err()
+                );
+                // Group repeats recurse: past the depth limit they fail cleanly.
+                let abs = rep("ab", 20_000);
+                let deep = Regex::new("^(?:ab)*$").unwrap().search(&abs);
+                assert!(deep.is_err(), "{deep:?}");
+                assert_eq!(
+                    Regex::new("^(?:ab)*$").unwrap().search(&rep("ab", 100)),
+                    Ok(true)
+                );
+                let saved = format!(
+                    "saved in /{}; apply /{}\n",
+                    rep("p", 20_000),
+                    rep("p", 20_000)
+                );
+                assert_eq!(
+                    Regex::new(r"^saved in (\S+); apply \1\n$")
+                        .unwrap()
+                        .search(&saved),
+                    Ok(true)
+                );
+            })
+            .unwrap();
+        h.join().unwrap();
     }
 }

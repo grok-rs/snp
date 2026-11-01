@@ -6,7 +6,7 @@
 //! SHAs); the [`Runner`] runs its steps under the pre-commit 4.6.2 oracle and under snp, snapshots every observable
 //! effect after each step (streams, exit code, worktree bytes and modes, index, refs, stash list, config bytes,
 //! hook scripts, the logical store) and compares them after the normalisation tiers of COMPATIBILITY §2
-//! ([`normalise`], [`Tier`]). snp-brand runs compare against the prog-patched oracle with the [`BrandMap`] applied to
+//! ([`normalise()`], [`Tier`]). snp-brand runs compare against the prog-patched oracle with the [`BrandMap`] applied to
 //! every non-argparse text.
 //!
 //! The register tooling ([`register`]) joins the scenarios with the per-ID divergence files
