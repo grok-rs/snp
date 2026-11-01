@@ -19,12 +19,14 @@ are parsed with an upper bound; an invalid value is an error that names the vari
 | `PATH`, `PATHEXT` | Executable lookup, with pre-commit's rules. |
 | `HOME`, `USERPROFILE` | Home directory (`~`). |
 | `XDG_CACHE_HOME` | Parent of the default cache directory (`$XDG_CACHE_HOME/snp`). |
-| `COLUMNS` | Width of help texts and of the `....Passed` lines. |
+| `COLUMNS` | Width of help, usage and error texts (argparse); status lines are sized from the hook names as in pre-commit, never from the terminal. |
 | `PRE_COMMIT_HOME` | **Not** a location for snp: it is read only to refuse using pre-commit's cache. |
 | `CI` | Read only by extensions (`fail_on_changes: ci`, `{ci: …}` conditions, the local overlay). |
 
-Deliberately ignored, for parity with pre-commit: `NO_COLOR`, `FORCE_COLOR`, `CLICOLOR_FORCE`, `PYTHON_CPU_COUNT`,
-`RUST_LOG`, `PREK_*`. `PYTHONWARNINGS` is passed to hooks unchanged.
+Deliberately ignored, for parity with pre-commit: `NO_COLOR`, `FORCE_COLOR`, `CLICOLOR_FORCE`, `RUST_LOG`, `PREK_*`.
+`PYTHON_CPU_COUNT` is ignored too; pre-commit also ignores it on Linux, but on macOS and Windows under Python 3.13 or
+later it uses it as the CPU count (see [D-PLAT-10](../divergences.md#d-plat-10); `SNP_JOBS` sets snp's count).
+`PYTHONWARNINGS` is passed to hooks unchanged.
 
 Exported to hooks: exactly pre-commit's set, plus `_SNP_STASH_LOCK` while snp holds the stash of unstaged changes (a
 nested `snp run` inside a hook then does not deadlock), and `SNP_RUNNING_LEGACY=1` next to `PRE_COMMIT_RUNNING_LEGACY=1`
