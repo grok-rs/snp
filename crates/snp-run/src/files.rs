@@ -184,7 +184,10 @@ mod tests {
             split_records(b"a\r\n\nb\n", StdinFormat::Lines),
             vec![OsString::from("a"), OsString::from("b")]
         );
-        assert_eq!(split_records(b"", StdinFormat::Lines), Vec::<OsString>::new());
+        assert_eq!(
+            split_records(b"", StdinFormat::Lines),
+            Vec::<OsString>::new()
+        );
     }
 
     #[test]
