@@ -1960,6 +1960,7 @@ dependencies = [
  "snp-stash",
  "snp-store",
  "snp-yaml",
+ "tempfile",
 ]
 
 [[package]]

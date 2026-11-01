@@ -1,5 +1,48 @@
-# D-DIAG-03 (DIAG, owner WP-32): run hint, only when stderr is a TTY, SNP_NO_HINTS unset/empty and core.hooksPath unset: hint: {hook_path} runs {owner}, not snp; run {prog} install to switch…
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-DIAG-03 (DIAG, owner WP-32): `run` on a terminal hints that git still runs pre-commit's hook script
+name: divergences/D-DIAG-03-run-hint
 expect_divergence: D-DIAG-03
-status: stub
+status: active
+since: "4.6.2"
+brands: [compat, snp]
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: true}
+repos: {}
+work:
+  files: {a.txt: "a\n"}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: p
+            name: passing
+            entry: 'true'
+            language: system
+            always_run: true
+  commit: [".pre-commit-config.yaml", a.txt]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - oracle: [install]
+  - tool: [run]
+    env: {SNP_NO_HINTS: ""}
+    stdin: ""
+    tty: true
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    exit: 0
+    stderr: ""
+  snp:
+    exit: 0
+    stderr_matches: '^hint: \.git/hooks/pre-commit runs pre-commit, not (snp|pre-commit); run `(snp|pre-commit) install` to switch\n'

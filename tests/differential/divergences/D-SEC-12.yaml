@@ -1,5 +1,49 @@
-# D-SEC-12 (SEC, owner WP-32): more than 64 MiB fails closed before the legacy hook and the hooks run: An error has occurred: FatalError: snp: hook stdin exceeds 64 MiB; refusing to run…
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-SEC-12 (SEC, owner WP-32): pre-push stdin over 64 MiB fails closed before the legacy hook
+name: divergences/D-SEC-12-huge-pre-push-stdin
 expect_divergence: D-SEC-12
-status: stub
+status: active
+since: "4.6.2"
+brands: [compat, snp]
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files: {".git/hooks/pre-push.legacy": "#!/bin/sh\ncat >/dev/null\necho legacy-ran\n"}
+  exec: [".git/hooks/pre-push.legacy"]
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: p
+            name: passing
+            entry: 'true'
+            language: system
+            stages: [pre-push]
+  commit: [".pre-commit-config.yaml"]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=pre-push, --hook-dir, "${work}/.git/hooks", --, origin, url]
+    env: {}
+    # 65 MiB of `x` (the harness expands `stdin_generate`; YAML cannot carry it inline)
+    stdin_generate: {byte: "x", len: 68157440}
+    tty: false
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    exit: 3
+    stdout_contains: "legacy-ran"
+  snp:
+    exit: 1
+    stdout_contains: "An error has occurred: FatalError: snp: hook stdin exceeds 64 MiB; refusing to run hooks on a truncated ref list"
+    stdout_not_contains: "legacy-ran"

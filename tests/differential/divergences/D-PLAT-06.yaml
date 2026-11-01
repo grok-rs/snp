@@ -1,5 +1,45 @@
-# D-PLAT-06 (PLAT, owner WP-32): absolute path kept
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-PLAT-06 (PLAT, owner WP-32): a --files path on another drive stays absolute instead of crashing relpath
+name: divergences/D-PLAT-06-cross-drive-files
 expect_divergence: D-PLAT-06
-status: stub
+status: active
+since: "4.6.2"
+brands: [compat, snp]
+requires: {git: ">=2.31", net: false, tools: [], os: [windows], pty: false, second_drive: true}
+repos: {}
+work:
+  files: {a.txt: "a\n"}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: p
+            name: passing
+            entry: cmd /c exit 0
+            language: system
+  commit: [".pre-commit-config.yaml", a.txt]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - tool: [run, --files, "${second_drive}\\x.txt"]
+    env: {}
+    stdin: ""
+    tty: false
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    exit: 3
+    stdout_contains: "ValueError: path is on mount"
+  snp:
+    exit: 0

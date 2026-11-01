@@ -1,5 +1,47 @@
-# D-EXT-05 (EXT, owner WP-32): SNP=0/false makes hook-impl skip snp's hooks (the legacy hook still runs)
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-EXT-05 (EXT, owner WP-32): SNP=0 makes hook-impl skip snp's hooks; the legacy hook still runs
+name: divergences/D-EXT-05-kill-switch
 expect_divergence: D-EXT-05
-status: stub
+status: active
+since: "4.6.2"
+brands: [compat, snp]
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files: {".git/hooks/pre-commit.legacy": "#!/bin/sh\necho legacy-ran\n"}
+  exec: [".git/hooks/pre-commit.legacy"]
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: f
+            name: failing
+            entry: 'false'
+            language: system
+            always_run: true
+  commit: [".pre-commit-config.yaml"]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=pre-commit, --hook-dir, "${work}/.git/hooks", --]
+    env: {SNP: "0"}
+    stdin: ""
+    tty: false
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    exit: 1
+    stdout_contains: "failing......"
+  snp:
+    exit: 0
+    stdout: "legacy-ran\n"

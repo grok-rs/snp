@@ -5,7 +5,7 @@ value repaired (all lines equal and an existing directory ⇒ use one line)
 * **Class:** DATA (COMPATIBILITY §5.2)
 * **Owner:** WP-32; the first package of the register row owns this file and
   `tests/differential/divergences/D-DATA-07.yaml` (WBS "Divergence files", ADR-071).
-* **Status:** stub, created by WP-00. The owner replaces the two sections below.
+* **Status:** implemented by WP-32 (`snp_run::hook_impl::repair_hook_dir`).
 
 ## Register entry (COMPATIBILITY §5.2)
 
@@ -15,9 +15,27 @@ value repaired (all lines equal and an existing directory ⇒ use one line)
 
 ## Rationale
 
-To be written by WP-32: why snp deviates from pre-commit 4.6.2 here, and why the deviation is safe.
+The installed hook script computes its directory with `HERE="$(cd "$(dirname "$0")" && pwd)"`. With an exported
+`CDPATH` that matches, bash's `cd` prints the directory it changed to, so `HERE` holds it twice (`/r/.git/hooks` +
+newline + `/r/.git/hooks`). pre-commit receives that as `--hook-dir`, looks for
+`/r/.git/hooks\n/r/.git/hooks/pre-push.legacy`, does not find it, and silently skips the legacy hook — for git-lfs users
+this means `git push` no longer uploads LFS objects, and nothing says so.
+
+snp repairs exactly that shape: when the value contains newlines, every non-empty line is identical and that line is
+an existing directory, the line is used. Any other value is kept verbatim (it then behaves as in pre-commit).
+
+Why it is safe: the repaired value is the directory the script meant to pass; the condition cannot match a legitimate
+directory name (a path made of two identical newline-separated copies of an existing directory is not a real hook
+directory); every other input is untouched.
 
 ## Examples
 
-To be written by WP-32: a minimal reproduction with the exact pre-commit 4.6.2 bytes and the exact snp bytes; the
-scenario in `tests/differential/divergences/D-DATA-07.yaml` must keep reproducing the difference.
+```text
+$ export CDPATH=.            # the script's `cd` now echoes the directory
+$ git push                   # pre-push.legacy = git-lfs's hook
+# pre-commit: the legacy hook is skipped, LFS objects are not pushed
+# snp: --hook-dir is repaired, the legacy hook runs, then snp's pre-push hooks
+```
+
+Proof: `crates/snp-run/tests/pipeline/hook_impl.rs::d_data_07_cdpath_doubled_hook_dir` and the unit test
+`snp_run::hook_impl::tests::d_data_07_cdpath_repair`; the scenario `tests/differential/divergences/D-DATA-07.yaml`.

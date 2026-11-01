@@ -1,5 +1,47 @@
-# D-CRASH-15 (CRASH, owner WP-32): output printed, [WARNING] line, run continues
-# Stub created by WP-00. The owner replaces it with a scenario in the schema of docs/research/10-test-strategy.md
-# §7.4.3 that must keep diverging; WP-35's harness runs every file here from W3 on (a stub is skipped).
+# D-CRASH-15 (CRASH, owner WP-32): an unwritable log_file is a warning; the hook output is printed
+name: divergences/D-CRASH-15-unwritable-log-file
 expect_divergence: D-CRASH-15
-status: stub
+status: active
+since: "4.6.2"
+brands: [compat, snp]
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files: {a.txt: "a\n"}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: l
+            name: logged
+            entry: sh -c 'echo some-output; exit 1' --
+            language: system
+            log_file: nodir/x.log
+  commit: [".pre-commit-config.yaml", a.txt]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - tool: [run, --all-files]
+    env: {}
+    stdin: ""
+    tty: false
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    exit: 3
+    stdout_contains: "FileNotFoundError: [Errno 2] No such file or directory: 'nodir/x.log'"
+  snp:
+    exit: 1
+    stdout_contains: "\n\nsome-output\n[WARNING] Could not write to log_file nodir/x.log: [Errno 2] No such file or directory: 'nodir/x.log'\n\n"
