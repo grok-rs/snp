@@ -5,9 +5,8 @@ Writes docs/assets/logo.png (static) and docs/assets/logo.gif (animated): a 240x
 nearest-neighbour, so every art pixel is a crisp 4x4 block. Everything is drawn from the sprite maps and
 procedures below: no external images.
 
-Scene: the wizard holds the bridge between the repository island (server rack, queued commits) and the
-production island (Ferris under an umbrella, campfire, deployed commit). A failing commit is stopped in
-front of the glowing ">_" staff; the production incident lurks in the fire below.
+Scene (minimal): the wizard holds the line with a glowing ">_" staff. From the left, alerts, failing lints,
+bugs and broken commits fly at him and shatter on his light; behind him a stable server hums along, green.
 
     python3 docs/assets/src/pixel_logo.py
 """
@@ -20,8 +19,8 @@ from pathlib import Path
 
 from PIL import Image
 
-W, H, SCALE = 240, 130, 4
-FRAMES = 10  # animation loop; rain falls 13 px per frame so 10 frames tile the 130 px height
+W, H, SCALE = 232, 104, 4
+FRAMES = 8  # animation loop
 OUT = Path(__file__).resolve().parent.parent
 
 
@@ -264,249 +263,218 @@ def cube(c: Canvas, x: int, y: int, face, hi, sh, symbol: str) -> None:
         c.put(x + dx, y + dy, white)
 
 
+# ---------------------------------------------------------------------------------------------- icons
+
+WARN = [  # 9x8 warning triangle
+    "....R....",
+    "...RYR...",
+    "...RKR...",
+    "..RYKYR..",
+    "..RYKYR..",
+    ".RYYYYYR.",
+    ".RYYKYYR.",
+    "RRRRRRRRR",
+]
+WARN_C = {"R": hexc("#e8452d"), "Y": hexc("#f2c14e"), "K": hexc("#2a1a10")}
+
+XBADGE = [  # 7x7 red error badge
+    ".RRRRR.",
+    "RWRRRWR",
+    "RRWRWRR",
+    "RRRWRRR",
+    "RRWRWRR",
+    "RWRRRWR",
+    ".RRRRR.",
+]
+XBADGE_C = {"R": hexc("#d93a3a"), "W": hexc("#ffe0e0")}
+
+BUG = [  # 9x8 bug
+    ".K.....K.",
+    "..K...K..",
+    "...RRR...",
+    "KKRRDRRKK",
+    "..RRDRR..",
+    "KKRRDRRKK",
+    "..RRDRR..",
+    "...RRR...",
+]
+BUG_C = {"R": hexc("#ec5b2c"), "D": hexc("#7a1f10"), "K": hexc("#c9c2e8")}
+
+LINT = [  # 13x9 code card with a red squiggle
+    "OOOOOOOOOOOOO",
+    "OggggggggpppO",
+    "OppppgggggggO",
+    "OgggggppppppO",
+    "OrrrrrrrrrrrO",
+    "OppgggggggggO",
+    "OggppppgggggO",
+    "O.r.r.r.r.r.O",
+    "OOOOOOOOOOOOO",
+]
+LINT_C = {"O": hexc("#3a3566"), "g": hexc("#7d76bd"), "p": hexc("#4c4782"), "r": hexc("#ff5a5a"),
+          ".": hexc("#221f44")}
+
+SERVER = [  # 15x26 healthy server
+    "OOOOOOOOOOOOOOO",
+    "OsssssssssssssO",
+    "OsPPPPPPPPPPPsO",
+    "OsPGPgPvvvvvPsO",
+    "OsPPPPPPPPPPPsO",
+    "OsssssssssssssO",
+    "OsPPPPPPPPPPPsO",
+    "OsPGPGPvvvvvPsO",
+    "OsPPPPPPPPPPPsO",
+    "OsssssssssssssO",
+    "OsPPPPPPPPPPPsO",
+    "OsPGPgPvvvvvPsO",
+    "OsPPPPPPPPPPPsO",
+    "OsssssssssssssO",
+    "OsPPPPPPPPPPPsO",
+    "OsPGPGPvvvvvPsO",
+    "OsPPPPPPPPPPPsO",
+    "OsssssssssssssO",
+    "OsPPPPPPPPPPPsO",
+    "OsPGPgPvvvvvPsO",
+    "OsPPPPPPPPPPPsO",
+    "OsssssssssssssO",
+    "OsssssssssssssO",
+    "OOOOOOOOOOOOOOO",
+    ".OO.........OO.",
+    ".OO.........OO.",
+]
+SERVER_C = {"O": hexc("#14142a"), "s": hexc("#2e2e4a"), "P": hexc("#3d3d60"), "G": hexc("#5cf07a"),
+            "g": hexc("#2f8a49"), "v": hexc("#262642")}
+
+
+
+WIZARD_BIG = [  # 21x40, faces left; staff at column 0; feet on the last row
+    ".............OO......",
+    "............OhO......",
+    "...........OhhO......",
+    "...........OhdO......",
+    "..........OHhdO......",
+    "..........OHhhdO.....",
+    ".........OHhhhdO.....",
+    ".........OHhhhhdO....",
+    "........OHhhhhhdO....",
+    "........OHhhhhhhdO...",
+    ".......OHhhhhhhhdO...",
+    ".......OHhhhhhhhhdO..",
+    "...OOOOObbbbbbbbbbOOO",
+    "..OHHHHHHhhhhhhhhhhdO",
+    "...OOOOOOOOOOOOOOOOO.",
+    ".....OssssWWWWWWO....",
+    ".....OsesSWWWWWWWO...",
+    "....OssssSWWWWWWWO...",
+    ".....OSssWWWWWWWWO...",
+    ".....OwwwwwwwWWWWO...",
+    "....OrwwwwwwwwWrrrO..",
+    "...OrrwwwwwwwwWrrrRO.",
+    ".ssrrrwwwwwwwWrrrrRO.",
+    ".ssrrrrwwwwwwWrrrrRO.",
+    "..OrrrrwwwwwWrrrrrRO.",
+    "..OrrrrrwwwwWrrrrrRO.",
+    "..OBBBBBBwwwBBBBBBBO.",
+    "..OrrrrrrrwwrrrrrrRO.",
+    "..OLrrrrrrrwrrrrrrRO.",
+    "..OLrrrrrrrrrrrrrrRO.",
+    ".OLLrrrrrrrrrrrrrRRO.",
+    ".OLrrrrrrrrrrrrrrRRO.",
+    ".OLrrrrrrrrrrrrrrRRO.",
+    "OLLrrrrrrrrrrrrrrRRRO",
+    "OLrrrrrrrrrrrrrrrRRRO",
+    "OLrrrrrrrrrrrrrrrRRRO",
+    "OLLrrrrrrrrrrrrrrRRRO",
+    "OLrrrrrrrrrrrrrrrRRRO",
+    "OOOOOOOOOOOOOOOOOOOOO",
+    ".OfffO.........OfffO.",
+]
+assert all(len(r) == 21 for r in WIZARD_BIG)
+
 # ---------------------------------------------------------------------------------------------- scene
 
 
 def render(frame: int) -> Canvas:
     c = Canvas()
-    rng = random.Random(1337)  # static layout; `frame` only drives the animated details
     phase = frame / FRAMES
-
-    # sky: banded gradient, dithered only around band edges
-    sky = [hexc(h) for h in ("#0f0f26", "#13132d", "#181735", "#1e1b3f", "#251f49", "#2c2452")]
+    bg = hexc("#14132b")
     for y in range(H):
-        t = y / (H - 1) * (len(sky) - 1)
-        i = int(t)
-        f = min(1.0, max(0.0, ((t - i) - 0.35) / 0.3))
         for x in range(W):
-            c.put(x, y, sky[min(i + 1, len(sky) - 1)] if f > bayer(x, y) else sky[i])
+            c.put(x, y, bg)
 
-    # text boxes (keep stars out of them)
-    title = "YOU SHELL NOT PASS"
-    sub = "SNP * THE GIT HOOK GUARD"
-    tag = [("PRE-COMMIT DROP-IN", C["yellow"]), (" * ", C["dim"]), ("RUST", C["orange"]), (" * ", C["dim"]),
-           ("DEVOPS", C["blue"])]
-    tag_len = sum(len(s) for s, _ in tag)
-    tx, ty = (W - text_width(title, 2)) // 2, 7
-    sx, sy = (W - text_width(sub)) // 2, 27
-    gx, gy = (W - (tag_len * 6 - 1)) // 2, 37
-    boxes = [(tx - 3, ty - 3, tx + text_width(title, 2) + 3, ty + 17),
-             (sx - 3, sy - 2, sx + text_width(sub) + 3, sy + 9),
-             (gx - 3, gy - 2, gx + tag_len * 6 + 3, gy + 9)]
+    ground = 67
+    wx, wy = 106, ground - 39  # wizard sprite origin (feet on the ground line)
+    ox, oy = wx, wy - 9        # staff orb
+    WZ = WIZARD_BIG
 
-    def free(x: int, y: int) -> bool:
-        return not any(a <= x <= b and c0 <= y <= d for a, c0, b, d in boxes)
+    # ground: a single quiet line, fading out at both ends
+    for x in range(16, W - 16):
+        edge = min(x - 16, W - 17 - x)
+        if edge > 10 or bayer(x, ground + 1) < edge / 10:
+            c.put(x, ground + 1, hexc("#2a2752"))
 
-    # distant clouds
-    for cx0, cy0, ln in ((-4, 62, 40), (14, 70, 28), (178, 74, 46), (150, 66, 22), (96, 52, 18)):
-        for i, (dy, cut) in enumerate(((0, 6), (1, 0), (2, 3))):
-            c.rect(cx0 + cut, cy0 + dy, cx0 + ln - cut - i * 2, cy0 + dy, C["cloud"] if i else C["cloud_hi"])
+    # behind the wizard: the stable server, calm green glow and a check mark
+    sx0, sy0 = 150, ground - 25
+    glow(c, sx0 + 7, sy0 + 12, 20, hexc("#3ecf6a"), 0.22, steps=5)
+    c.sprite(sx0, sy0, SERVER, SERVER_C)
+    for i in range(5):  # blinking activity LEDs
+        c.put(sx0 + 5, sy0 + 3 + i * 4, hexc("#2f8a49") if (i + frame) % 4 == 0 else hexc("#9cffb0"))
+    cx0, cy0 = sx0 + 4, sy0 - 9
+    for dx, dy in ((0, 2), (1, 3), (2, 4), (3, 3), (4, 2), (5, 1), (6, 0)):
+        c.put(cx0 + dx, cy0 + dy, hexc("#5cf07a"))
+        c.put(cx0 + dx, cy0 + dy + 1, hexc("#2f8a49"))
 
-    # stars: dim dots, bright dots, twinkling crosses, little cyan "bits" like data packets
-    for _ in range(70):
-        x, y = rng.randrange(W), rng.randrange(0, 84)
-        if free(x, y):
-            c.put(x, y, C["star_dim"] if rng.random() < 0.6 else C["star"])
-    for i in range(9):
-        x, y = rng.randrange(6, W - 6), rng.randrange(4, 78)
-        if not free(x, y):
+    # the shield: a crescent of light around the wizard's front
+    scx, scy, sr = wx + 10, wy + 22, 25
+    for a10 in range(1150, 2451, 12):
+        a = math.radians(a10 / 10)
+        x, y = int(round(scx + sr * math.cos(a))), int(round(scy + sr * math.sin(a)))
+        if y > ground:
             continue
-        bright = (i + frame) % 3 != 0
-        col = C["cyan_hi"] if bright else C["star"]
-        c.put(x, y, col)
-        if bright:
-            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                c.put(x + dx, y + dy, C["star"])
-    for _ in range(7):
-        x, y = rng.randrange(4, W - 6), rng.randrange(8, 88)
-        if free(x, y) and free(x + 2, y + 2):
-            c.rect(x - 1, y - 1, x + 2, y + 2, C["shadow"])
-            c.rect(x, y, x + 1, y + 1, C["cyan"])
+        shimmer = 0.55 + 0.45 * (((a10 // 12) + frame * 2) % 7 < 3)
+        c.add(x, y, hexc("#ffe9a8"), 0.85 * shimmer)
+        c.add(x - 1, y, hexc("#ffd98a"), 0.25 * shimmer)
+        c.add(x + 1, y, hexc("#ffd98a"), 0.12)
 
-    # moon with a dotted halo
-    mx, my, mr = 224, 58, 7.5
-    for y in range(int(my - 13), int(my + 14)):
-        for x in range(int(mx - 13), int(mx + 14)):
-            d = math.hypot(x - mx, y - my)
-            if d <= mr:
-                col = C["moon_sh"] if (x - mx) + (y - my) > mr * 0.75 else C["moon"]
-                c.put(x, y, col)
-            elif d <= 12.5 and (x + y) % 2 == 0 and bayer(x, y) < (12.5 - d) / 4.5:
-                c.put(x, y, hexc("#3c3a72") if d < 10 else hexc("#2e2c5e"))
-    for x, y in ((221, 55), (222, 55), (226, 60), (223, 61), (227, 56)):
-        c.put(x, y, C["moon_cr"])
+    # incoming trouble, left to right, each with a fading motion trail
+    bob = lambda k: int(round(1.2 * math.sin(2 * math.pi * (phase + k / 5))))
+    trouble = [
+        (14, 50 + bob(0), LINT, LINT_C),
+        (34, 30 + bob(1), WARN, WARN_C),
+        (50, 54 + bob(2), BUG, BUG_C),
+        (60, 38 + bob(3), XBADGE, XBADGE_C),
+        (72, 24 + bob(4), XBADGE, XBADGE_C),
+        (74, 47 + bob(2), WARN, WARN_C),
+    ]
+    for x, y, spr, cmap in trouble:
+        h = len(spr)
+        for k in range(1, 6):  # motion trail
+            if (k + frame) % 2 == 0 or k < 3:
+                c.add(x - 2 * k, y + h // 2, hexc("#ff5a5a"), 0.30 - k * 0.05)
+                if h > 7:
+                    c.add(x - 2 * k - 1, y + h // 2 - 2, hexc("#ff5a5a"), 0.18 - k * 0.03)
+        c.sprite(x, y, spr, cmap)
 
-    # chasm fire glow between the islands
-    fire_pal = [hexc(h) for h in ("#3a1d44", "#5e2240", "#8f2c38", "#c43f2c", "#ee6a2a", "#ffa040")]
-    for y in range(80, H):
-        for x in range(60, 181):
-            v = 1 - math.hypot((x - 120) / 48, (y - 142) / 44)
-            if v <= 0:
-                continue
-            t = v * (len(fire_pal) + 0.4)
-            i = int(t)
-            f = min(1.0, max(0.0, ((t - i) - 0.25) / 0.5))
-            idx = i + (1 if f > bayer(x, y) else 0)
-            if idx >= 1:
-                c.put(x, y, fire_pal[min(idx - 1, len(fire_pal) - 1)])
-    c.sprite(113, 112, BALROG, BALROG_C)
-    for i in range(26):
-        x = rng.randrange(92, 150)
-        y0 = rng.randrange(0, 30)
-        y = 98 + (y0 - frame * 3) % 30
-        c.put(x, y, C["ember"] if i % 3 else C["ember2"])
+    # sparks where the trouble breaks on the shield
+    for i, (px_, py_) in enumerate(((86, 30), (84, 44), (85, 37), (85, 55), (88, 24), (83, 50))):
+        if (i + frame) % 3 != 0:
+            c.put(px_, py_, hexc("#fff4c4"))
+            c.put(px_ - 1, py_ - 1 + (frame % 2) * 2, hexc("#ff8a5a"))
+            if (i + frame) % 2:
+                c.put(px_ - 2, py_ + 1, hexc("#ff5a5a"))
 
-    # floating islands
-    mask: set[tuple[int, int]] = set()
-
-    def island(x0: int, x1: int, top: int, maxd: int, seed: int) -> None:
-        r = random.Random(seed)
-        cx, hw = (x0 + x1) / 2, (x1 - x0) / 2
-        jag = [r.choice((-1, 0, 0, 1)) for _ in range(x1 - x0 + 2)]
-        for x in range(x0, x1 + 1):
-            u = (x - cx) / hw
-            d = max(3, int(maxd * (1 - abs(u) ** 1.7)) + jag[(x - x0) // 2])
-            for y in range(top, top + d + 1):
-                k = y - top
-                if y == top + d:
-                    col = C["rock_edge"]
-                elif k <= 1:
-                    col = C["dirt"]
-                elif k <= 4:
-                    col = C["rock1"]
-                elif u > 0.3 and (x + y) % 2 == 0:
-                    col = C["rock3"]
-                else:
-                    col = C["rock2"]
-                c.put(x, y, col)
-                mask.add((x, y))
-            # roots and drips under the edge
-            if r.random() < 0.12:
-                ln = r.randrange(2, 6)
-                for yy in range(top + d + 1, top + d + 1 + ln):
-                    c.put(x, yy, C["rock_edge"])
-                if r.random() < 0.4:
-                    c.put(x, top + d + ln + 2 + (frame % 3), C["cyan_dk"])
-        for _ in range(int((x1 - x0) * 1.4)):  # rock speckles
-            x, y = r.randrange(x0, x1), r.randrange(top + 3, top + maxd)
-            if (x, y) in mask and (x + 1, y) in mask and (x, y + 1) in mask:
-                c.put(x, y, C["rock_spk"])
-                c.put(x + 1, y, C["rock_spk"])
-                c.put(x, y + 1, C["rock_edge"])
-        for x in range(x0 + 1, x1):  # grass
-            c.put(x, top, C["grass_hi"] if r.random() < 0.25 else C["grass"])
-            c.put(x, top + 1, C["grass_dk"] if r.random() < 0.6 else C["dirt"])
-            if r.random() < 0.18:
-                c.put(x, top - 1, C["grass_hi"])
-                if r.random() < 0.3:
-                    c.put(x, top - 2, C["grass"])
-
-    island(6, 88, 93, 30, 11)
-    island(152, 234, 93, 32, 23)
-
-    crystals = [(28, 104), (46, 113), (66, 101), (18, 99), (74, 108), (168, 106), (190, 117), (212, 101),
-                (200, 99), (224, 107)]
-    for x, y in crystals:
-        if (x, y) in mask:
-            c.put(x, y, C["cyan_hi"])
-            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                c.put(x + dx, y + dy, C["cyan"])
-            c.put(x + 1, y + 1, C["cyan_dk"])
-
-    # pond and waterfall on the repository island
-    for x in range(8, 18):
-        c.put(x, 93, C["water_hi"] if (x + frame) % 4 == 0 else C["water"])
-        c.put(x, 94, C["water"])
-    for y in range(93, H):
-        for x, base in ((5, C["water"]), (6, C["water_hi"])):
-            col = C["water_fx"] if (y + frame * 2 + x * 3) % 7 == 0 else base
-            c.put(x, y, col)
-        if (y + frame) % 5 == 0:
-            c.put(4 - (y % 2), y, C["water_hi"])
-
-    # the bridge of Khazad-dum: a thin arch, thick at the abutments, lit along its lower rim by the fire
-    for x in range(85, 156):
-        u = (x - 120) / 35
-        thick = 2 + int(round(13 * u ** 4 + 3 * u * u))
-        for y in range(93, 93 + thick + 1):
-            if y == 93:
-                col = C["stone_top"]
-            elif y == 93 + thick:
-                col = hexc("#b0563a") if abs(u) < 0.8 else C["stone_edge"]  # firelit rim
-            elif y == 93 + thick - 1:
-                col = C["stone_edge"]
-            elif y == 94:
-                col = C["stone3"] if x % 6 == 0 else C["stone"]
-            elif y == 95 and x % 6 == 3:
-                col = C["stone3"]
-            else:
-                col = C["stone2"] if y < 97 else C["stone3"]
-            c.put(x, y, col)
-
-    # repository island: server rack, lamp, queued commits
-    rx, ry = 21, 69
-    c.rect(rx, ry, rx + 11, ry + 23, C["outline"])
-    c.rect(rx + 1, ry + 1, rx + 10, ry + 22, hexc("#2c2c42"))
-    leds = (hexc("#5cf07a"), hexc("#ffc24a"), hexc("#4fa8ea"))
-    for i in range(5):
-        uy = ry + 2 + i * 4
-        c.rect(rx + 2, uy, rx + 9, uy + 2, hexc("#3b3b57"))
-        on = (i * 3 + frame) % 4 != 0
-        c.put(rx + 3, uy + 1, leds[0] if on else hexc("#24603a"))
-        c.put(rx + 5, uy + 1, leds[(i + 1) % 3] if (i + frame) % 2 else hexc("#3b3b57"))
-        for vx in range(rx + 7, rx + 9):
-            c.put(vx, uy + 1, hexc("#24243a"))
-    c.put(rx + 9, ry - 1, C["pole"])
-    c.put(rx + 9, ry - 2, C["pole"])
-    c.put(rx + 9, ry - 3, hexc("#ff5050") if frame % 2 == 0 else hexc("#7a2a2a"))
-
-    lx = 41
-    c.rect(lx, 76, lx, 92, C["pole"])
-    c.rect(lx - 1, 73, lx + 1, 75, C["outline"])
-    c.put(lx, 74, C["lamp"])
-
-    for qx in (50, 61, 72):
-        cube(c, qx, 86, hexc("#7b7fa8"), hexc("#a3a7cc"), hexc("#5a5d85"), "dots")
-
-    # production island: deployed commit, campfire, Ferris under an umbrella, prod server
-    cube(c, 160, 86, hexc("#43c463"), hexc("#7ae08a"), hexc("#2b8a45"), "check")
-    c.sprite(176, 86, FIRE[frame % 3], FIRE_C)
-    for i in range(3):  # sparks
-        c.put(178 + (i * 2 + frame) % 4, 82 - (frame + i * 3) % 6, C["ember"])
-    c.sprite(189, 84, FERRIS, FERRIS_C)
-    c.rect(202, 72, 202, 83, hexc("#3a3a4a"))
-    c.sprite(195, 67, UMBRELLA, UMBRELLA_C)
-    px0, py0 = 217, 79
-    c.rect(px0, py0, px0 + 9, py0 + 13, C["outline"])
-    c.rect(px0 + 1, py0 + 1, px0 + 8, py0 + 12, hexc("#2c2c42"))
-    for i in range(3):
-        uy = py0 + 2 + i * 4
-        c.rect(px0 + 2, uy, px0 + 7, uy + 2, hexc("#3b3b57"))
-        c.put(px0 + 3, uy + 1, hexc("#5cf07a") if (i + frame) % 3 else hexc("#24603a"))
-        c.put(px0 + 5, uy + 1, hexc("#5cf07a"))
-
-    # the wizard holds the bridge, staff raised against the failing commit
-    wx, wy = 114, 64
-    c.sprite(wx, wy, WIZARD, WIZARD_C)
+    # the wizard, rim-lit, staff raised
+    c.sprite(wx, wy, WZ, WIZARD_C)
     rim = hexc("#f4f2ff")
-    for dy, row in enumerate(WIZARD):
+    for dy, row in enumerate(WZ):
         last = max((i for i, ch in enumerate(row) if ch not in ".O"), default=None)
         if last is not None and dy % 2 == 0 and row[last] in "hrRdW":
             c.put(wx + last, wy + dy, rim if row[last] in "rR" else hexc("#c4c3dc"))
-    for y in range(wy - 6, wy + 29):
+    for y in range(wy - 6, wy + 40):
         c.put(wx, y, hexc("#7b5434") if y % 5 else hexc("#5e3e26"))
-    cube(c, 99, 86, hexc("#d94040"), hexc("#f06a5a"), hexc("#8a2028"), "x")
-
-    # lights
     pulse = 1.0 + 0.12 * math.sin(2 * math.pi * phase)
-    ox, oy = wx, wy - 9
-    glow(c, ox, oy, 19, C["staff_light"], 0.5 * pulse, steps=6)
-    glow(c, lx, 74, 8, C["lamp"], 0.45, steps=5)
-    glow(c, 179, 88, 12, C["warm"], 0.42 * (1.0 + 0.15 * ((frame * 7) % 3 - 1)), steps=5)
-    for x, y in crystals:
-        if (x, y) in mask:
-            glow(c, x, y, 4, C["cyan"], 0.25)
-    for y in range(int(oy - 5), int(oy + 6)):  # the bright orb of the staff
+    glow(c, ox, oy, 17, C["staff_light"], 0.5 * pulse, steps=6)
+    for y in range(int(oy - 5), int(oy + 6)):
         for x in range(int(ox - 5), int(ox + 6)):
             d = math.hypot(x - ox, y - oy)
             if d <= 4.6:
@@ -516,30 +484,15 @@ def render(frame: int) -> Canvas:
             for xx, bit in enumerate(row):
                 if bit == "#":
                     c.put(int(ox) - 3 + gi * 4 + xx, int(oy) - 2 + yy, hexc("#3a2a00"))
-    for dx, dy in ((7, -1), (8, 1), (7, 3), (9, -2)):  # the commit is refused: sparks off the block
-        if (dx + dy + frame) % 3:
-            c.put(99 + dx, 86 + dy, C["white"] if dy % 2 else hexc("#ff8a8a"))
 
-    # fireflies
-    for i in range(6):
-        x = rng.randrange(20, 225)
-        y = rng.randrange(60, 90) + int(2 * math.sin(2 * math.pi * (phase + i / 6)))
-        if free(x, y):
-            c.put(x, y, C["yellow"] if (i + frame) % 4 else C["fire_y"])
-
-    # rain
-    drops = [(rng.randrange(W), rng.randrange(H), rng.choice((2, 3, 3, 4))) for _ in range(150)]
-    for x, y0, ln in drops:
-        y = (y0 + frame * 13) % H
-        for k in range(ln):
-            c.mix(x, (y + k) % H, C["rain"], 0.28)
-
-    # text
-    draw_text(c, tx, ty, title, C["white"], 2, shadow=C["shadow"])
-    draw_text(c, sx, sy, sub, C["lav"], 1, shadow=C["shadow"])
-    x = gx
-    for s, col in tag:
-        x = draw_text(c, x, gy, s, col, 1, shadow=C["shadow"])
+    # wordmark
+    title = "YOU SHELL NOT PASS"
+    sub = "SNP * THE GIT HOOK GUARD"
+    tx = (W - text_width(title, 2)) // 2
+    draw_text(c, tx, 75, title, C["white"], 2, shadow=C["shadow"])
+    sx = (W - text_width(sub)) // 2
+    x = draw_text(c, sx, 94, "SNP", C["yellow"], 1, shadow=C["shadow"])
+    draw_text(c, x, 94, sub[3:], C["lav"], 1, shadow=C["shadow"])
     return c
 
 
@@ -547,7 +500,7 @@ def main() -> None:
     frames = [render(f).image() for f in range(FRAMES)]
     frames[0].save(OUT / "logo.png", optimize=True)
     pal = [fr.quantize(colors=255, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE) for fr in frames]
-    pal[0].save(OUT / "logo.gif", save_all=True, append_images=pal[1:], duration=110, loop=0, optimize=True,
+    pal[0].save(OUT / "logo.gif", save_all=True, append_images=pal[1:], duration=140, loop=0, optimize=True,
                 disposal=1)
     print(f"wrote {OUT / 'logo.png'} and {OUT / 'logo.gif'}")
 
