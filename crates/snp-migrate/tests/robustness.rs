@@ -477,7 +477,13 @@ mod robustness {
     #[test]
     fn extends_under_a_root_with_metacharacters() {
         let d = tempfile::tempdir().unwrap();
-        for dir in ["m[1]", "m*", "m?x", "m\\y"] {
+        // `*`, `?` and `\\` cannot appear in a Windows file name; `[` can.
+        let dirs: &[&str] = if cfg!(windows) {
+            &["m[1]"]
+        } else {
+            &["m[1]", "m*", "m?x", "m\\y"]
+        };
+        for dir in dirs {
             let root = d.path().join(dir);
             std::fs::create_dir_all(root.join("e")).unwrap();
             std::fs::write(
