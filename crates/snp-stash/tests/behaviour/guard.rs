@@ -39,7 +39,7 @@ fn concurrent_second_run_waits_once_then_times_out() {
         format!(
             "snp: another snp run in this worktree still holds {} after 0 s; set SNP_STASH_LOCK_TIMEOUT (seconds, \
              at most 3600) to wait longer",
-            repo.join(".git/snp-stash.lock").display()
+            repo.join(".git").join("snp-stash.lock").display()
         )
     );
     assert_eq!(

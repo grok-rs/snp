@@ -2,8 +2,16 @@
 //!
 //! Owner: WP-33.
 
-use crate::cli::{LOCAL_CONFIG, assert_code, compat, repo_with, snp, tenv, text};
+use crate::cli::{
+    LOCAL_CONFIG, assert_code, compat, repo_with, slashed, snp, tenv, text as raw_text,
+};
 use crate::install::{prek_script, write_hook};
+
+/// [`crate::cli::text`] with the path separator read as `/`: the messages print `os.path.join`ed hook paths
+/// (`.git\hooks\pre-commit` on Windows, see [`slashed`]).
+fn text(b: &[u8]) -> String {
+    slashed(&raw_text(b))
+}
 
 /// A prek script is not ours: left alone silently; snp's own script in `.legacy` is deleted with M12.
 #[test]

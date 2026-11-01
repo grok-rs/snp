@@ -494,8 +494,8 @@ mod rows {
         assert_eq!(
             text,
             format!(
-                "command: ('{}', 'write-tree')\nreturn code: 128\nstdout: (none)\nstderr:\n    fatal: boom",
-                git_exe(&sb, &repo)
+                "command: ({}, 'write-tree')\nreturn code: 128\nstdout: (none)\nstderr:\n    fatal: boom",
+                snp_pycompat::repr::repr_str(&git_exe(&sb, &repo))
             )
         );
         assert_eq!(out.text(), "");
@@ -521,9 +521,9 @@ mod rows {
         assert_eq!(
             text,
             format!(
-                "command: ('{}', '-c', 'submodule.recurse=0', 'checkout', '--', '.')\nreturn code: 1\nstdout: \
+                "command: ({}, '-c', 'submodule.recurse=0', 'checkout', '--', '.')\nreturn code: 1\nstdout: \
                  (none)\nstderr:\n    error: boom",
-                git_exe(&sb, &repo)
+                snp_pycompat::repr::repr_str(&git_exe(&sb, &repo))
             )
         );
         // The `finally` still restored: the applies fail (changes still present), rollback, apply.
@@ -561,10 +561,10 @@ mod rows {
         assert_eq!(
             text,
             format!(
-                "command: ('{}', '-c', 'core.autocrlf=false', 'apply', '--whitespace=nowarn', '{}')\nreturn code: \
+                "command: ({}, '-c', 'core.autocrlf=false', 'apply', '--whitespace=nowarn', {})\nreturn code: \
                  1\nstdout: (none)\nstderr:\n    error: patch failed: foo:1",
-                git_exe(&sb, &repo),
-                patch.display()
+                snp_pycompat::repr::repr_str(&git_exe(&sb, &repo)),
+                snp_pycompat::repr::repr_str(&patch.display().to_string())
             )
         );
         assert_eq!(

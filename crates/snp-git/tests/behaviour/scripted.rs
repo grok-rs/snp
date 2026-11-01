@@ -56,7 +56,8 @@ fn every_call_can_fail_and_is_recorded() {
         (
             "CalledProcessError".to_owned(),
             format!(
-                "command: ('{exe}', 'write-tree')\nreturn code: 128\nstdout: (none)\nstderr:\n    fatal: unmerged"
+                "command: ({}, 'write-tree')\nreturn code: 128\nstdout: (none)\nstderr:\n    fatal: unmerged",
+                snp_pycompat::repr::repr_str(&exe)
             )
         )
     );
@@ -112,8 +113,9 @@ fn every_call_can_fail_and_is_recorded() {
     assert!(!git.apply(&patch, false, Group::Isolated).unwrap());
     let e = git.apply(&patch, true, Group::Isolated).unwrap_err();
     assert!(exc(&e).1.starts_with(&format!(
-        "command: ('{exe}', '-c', 'core.autocrlf=false', 'apply', '--whitespace=nowarn', '{}')",
-        patch.display()
+        "command: ({}, '-c', 'core.autocrlf=false', 'apply', '--whitespace=nowarn', {})",
+        snp_pycompat::repr::repr_str(&exe),
+        snp_pycompat::repr::repr_str(&patch.display().to_string())
     )));
     scripted.on("*apply *", exit(0, b"", b""));
     assert!(git.apply(&patch, true, Group::Isolated).unwrap());

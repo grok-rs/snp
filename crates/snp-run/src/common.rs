@@ -406,17 +406,29 @@ fn create_private_dir(p: &Path) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    /// `s` with the separators `os.path` writes on this platform (`ntpath` writes `\`).
+    fn sep(s: &str) -> String {
+        if cfg!(windows) {
+            s.replace('/', "\\")
+        } else {
+            s.to_owned()
+        }
+    }
+
     #[test]
     fn rebase_keeps_order_and_dots() {
         let root = Path::new("/r");
         let cwd = Path::new("/r/sub");
         assert_eq!(rebase_path(OsStr::new("../b.txt"), cwd, root), "b.txt");
         assert_eq!(rebase_path(OsStr::new("./../a.txt"), cwd, root), "a.txt");
-        assert_eq!(rebase_path(OsStr::new("foo.py"), cwd, root), "sub/foo.py");
+        assert_eq!(
+            rebase_path(OsStr::new("foo.py"), cwd, root),
+            *sep("sub/foo.py")
+        );
         assert_eq!(rebase_path(OsStr::new("/r/x"), cwd, root), "x");
         assert_eq!(
             rebase_path(OsStr::new("/elsewhere/x"), cwd, root),
-            "../elsewhere/x"
+            *sep("../elsewhere/x")
         );
     }
 

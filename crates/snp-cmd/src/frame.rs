@@ -248,6 +248,15 @@ mod tests {
         adjust_config(c.as_ref(), cwd, root).unwrap()
     }
 
+    /// `s` with the separators `os.path` writes on this platform (`ntpath` writes `\`).
+    fn sep(s: &str) -> String {
+        if cfg!(windows) {
+            s.replace('/', "\\")
+        } else {
+            s.to_owned()
+        }
+    }
+
     #[test]
     fn existing_config_is_re_expressed_against_the_root() {
         let d = tempfile::tempdir().unwrap();
@@ -264,7 +273,7 @@ mod tests {
             ".pre-commit-config.yaml"
         );
         std::fs::write(sub.join("c.yaml"), b"").unwrap();
-        assert_eq!(adj("c.yaml", &sub, root), "a/b/c.yaml");
+        assert_eq!(adj("c.yaml", &sub, root), *sep("a/b/c.yaml"));
         let out = tempfile::tempdir().unwrap();
         std::fs::write(out.path().join("o.yaml"), b"").unwrap();
         let rel = adj(out.path().join("o.yaml"), &sub, root);
@@ -279,8 +288,11 @@ mod tests {
         assert_eq!(adj("./missing.yaml", root, root), "missing.yaml");
         assert_eq!(adj("a/../missing.yaml", root, root), "missing.yaml");
         assert_eq!(adj(root.join("missing.yaml"), root, root), "missing.yaml");
-        assert_eq!(adj("a//b.yaml", root, root), "a/b.yaml");
-        assert_eq!(adj("sub/../../missing.yaml", root, root), "../missing.yaml");
+        assert_eq!(adj("a//b.yaml", root, root), *sep("a/b.yaml"));
+        assert_eq!(
+            adj("sub/../../missing.yaml", root, root),
+            *sep("../missing.yaml")
+        );
     }
 
     #[test]
@@ -298,6 +310,6 @@ mod tests {
     #[test]
     fn dot_join_normalises() {
         assert_eq!(normjoin_dot(OsStr::new(".git")), ".git");
-        assert_eq!(normjoin_dot(OsStr::new("/abs/.git")), "/abs/.git");
+        assert_eq!(normjoin_dot(OsStr::new("/abs/.git")), *sep("/abs/.git"));
     }
 }

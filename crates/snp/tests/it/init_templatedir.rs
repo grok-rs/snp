@@ -2,7 +2,7 @@
 //!
 //! Owner: WP-33.
 
-use crate::cli::{LOCAL_CONFIG, assert_code, compat, git, repo_with, snp, tenv, text};
+use crate::cli::{LOCAL_CONFIG, assert_code, compat, git, repo_with, slashed, snp, tenv, text};
 
 #[test]
 fn t10_itd_01_template_dir_not_configured() {
@@ -21,11 +21,11 @@ fn t10_itd_01_template_dir_not_configured() {
     );
     assert_code(&out, 0);
     assert_eq!(
-        text(&out.stdout),
-        format!(
+        slashed(&text(&out.stdout)),
+        slashed(&format!(
             "pre-commit installed at {t}/hooks/pre-commit\n[WARNING] `init.templateDir` not set to the target directory\n[WARNING] maybe `git config --global init.templateDir {t}`?\n",
             t = tmpl.display()
-        )
+        ))
     );
     let script = std::fs::read_to_string(tmpl.join("hooks/pre-commit")).unwrap();
     assert!(script.contains("--skip-on-missing-config"));
@@ -59,11 +59,11 @@ fn t10_itd_02_template_dir_configured() {
     let out = compat(&env, &r, &["init-templatedir", tmpl.to_str().unwrap()]);
     assert_code(&out, 0);
     assert_eq!(
-        text(&out.stdout),
-        format!(
+        slashed(&text(&out.stdout)),
+        slashed(&format!(
             "pre-commit installed at {}/hooks/pre-commit\n",
             tmpl.display()
-        )
+        ))
     );
 }
 
@@ -73,7 +73,7 @@ fn t10_itd_03_target_is_the_cwd() {
     let r = repo_with(&env, "r", LOCAL_CONFIG);
     let out = compat(&env, &r, &["init-templatedir", "."]);
     assert_code(&out, 0);
-    let o = text(&out.stdout);
+    let o = slashed(&text(&out.stdout));
     assert_eq!(o.lines().count(), 3, "{o}");
     assert!(
         o.starts_with("pre-commit installed at ./hooks/pre-commit\n"),

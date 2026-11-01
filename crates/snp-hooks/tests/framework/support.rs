@@ -306,8 +306,16 @@ pub(crate) fn argv_of(v: &serde_json::Value) -> Vec<OsString> {
 }
 
 /// A short, readable rendering of bytes for failure messages.
+///
+/// On Windows Python's text-mode `print()` writes `\r\n`, which `PyOut` reproduces (its unit tests check the
+/// translation); the expectations here are written with `\n`, so `\r\n` folds to `\n` there.
 pub(crate) fn show(b: &[u8]) -> String {
-    String::from_utf8_lossy(b).into_owned()
+    let s = String::from_utf8_lossy(b);
+    if cfg!(windows) {
+        s.replace("\r\n", "\n")
+    } else {
+        s.into_owned()
+    }
 }
 
 /// The hook epoch of `hook` at `tag` (the generated per-tag profile).

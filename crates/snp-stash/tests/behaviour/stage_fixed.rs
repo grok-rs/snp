@@ -198,11 +198,12 @@ fn kill_at_staging_fixed_is_recoverable_by_the_hint() {
         u.hint(),
         format!(
             "snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in {0} \
-             (index tree {tree}). Restore with: git apply --whitespace=nowarn {0} && git --literal-pathspecs reset -q \
+             (index tree {tree}). Restore with: git apply --whitespace=nowarn {2} && git --literal-pathspecs reset -q \
              {tree} -- fixme{1}git --literal-pathspecs restore --source={tree} --worktree -- foo, then run the command \
              again",
             u.patch.display(),
-            super::recovery::fallback(&tree, &u.patch)
+            super::recovery::fallback(&tree, &u.patch),
+            snp_pycompat::shlex::quote(&u.patch.display().to_string())
         )
     );
     // The kill right after the add: no restore runs (the leaked guard keeps its lock, which the hint never needs).

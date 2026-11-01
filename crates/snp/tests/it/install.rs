@@ -11,8 +11,15 @@ use std::process::Command;
 use snp_testkit::{Fixture, Oracle, TestEnv};
 
 use crate::cli::{
-    LOCAL_CONFIG, assert_code, compat, empty_repo, git, is_executable, repo_with, snp, tenv, text,
+    LOCAL_CONFIG, assert_code, compat, empty_repo, git, is_executable, repo_with, slashed, snp,
+    tenv, text as raw_text,
 };
+
+/// [`crate::cli::text`] with the path separator read as `/`: the messages print `os.path.join`ed hook paths
+/// (`.git\hooks\pre-commit` on Windows, see [`slashed`]).
+fn text(b: &[u8]) -> String {
+    slashed(&raw_text(b))
+}
 
 /// pre-commit 4.6.2's era-3 template as `pre-commit install` renders it (`INSTALL_PYTHON`, `ARGS`).
 pub(crate) fn pre_commit_script(python: &str, extra: &str) -> String {
@@ -1544,7 +1551,9 @@ fn m11_mig_21_alias_refuses_foreign_pre_commit() {
     let env = tenv();
     let dir = env.root().join("aliasdir");
     std::fs::create_dir_all(&dir).unwrap();
-    write_hook(&dir.join("pre-commit"), b"#!/bin/sh\necho foreign\n");
+    // The alias is `pre-commit.exe` on Windows.
+    let alias = format!("pre-commit{}", std::env::consts::EXE_SUFFIX);
+    write_hook(&dir.join(&alias), b"#!/bin/sh\necho foreign\n");
     let d = dir.to_str().unwrap();
     let out = snp(&env, env.root(), &["self", "alias", "install", "--dir", d]);
     assert_code(&out, 1);
@@ -1559,10 +1568,10 @@ fn m11_mig_21_alias_refuses_foreign_pre_commit() {
         &["self", "alias", "install", "--dir", d, "--force"],
     );
     assert_code(&out, 0);
-    assert!(dir.join("pre-commit.snp-backup").is_file());
+    assert!(dir.join(format!("{alias}.snp-backup")).is_file());
     assert!(text(&out.stdout).starts_with("Created "));
     // The alias is snp: `--version` through it is the compat brand.
-    let o = Command::new(dir.join("pre-commit"))
+    let o = Command::new(dir.join(&alias))
         .arg("--version")
         .output()
         .unwrap();
