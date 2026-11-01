@@ -19,6 +19,17 @@ pub(crate) fn text(b: &[u8]) -> String {
     String::from_utf8_lossy(b).replace("\r\n", "\n")
 }
 
+/// `s` with `\` read as `/` on Windows, for texts whose only platform difference is the path separator: pre-commit
+/// prints `os.path.join`ed paths (`.git\hooks\pre-commit` there), which the Windows difftest platform scenarios
+/// compare against the oracle itself.
+pub(crate) fn slashed(s: &str) -> String {
+    if cfg!(windows) {
+        s.replace('\\', "/")
+    } else {
+        s.to_owned()
+    }
+}
+
 /// `git <args>` in `cwd` with the hermetic env: `(code, stdout, stderr)`.
 pub(crate) fn git(env: &TestEnv, cwd: &Path, args: &[&str]) -> (i32, String, String) {
     let mut cmd = Command::new("git");

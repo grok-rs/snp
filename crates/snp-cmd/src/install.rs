@@ -132,13 +132,20 @@ fn io_fail(e: &io::Error, path: &OsStr) -> Failure {
 }
 
 /// `IsADirectoryError: [Errno 21] Is a directory: '<path>'`: pre-commit opens a directory found at the hook path
-/// (`is_our_script`, X13-CMD-01).
+/// (`is_our_script`, X13-CMD-01). On Windows CPython's `open()` of a directory fails in the CRT with `EACCES`:
+/// `PermissionError: [Errno 13] Permission denied: '<path>'`.
 fn is_a_directory(path: &OsStr) -> Failure {
     #[cfg(unix)]
-    let e = io::Error::from_raw_os_error(21);
+    {
+        io_fail(&io::Error::from_raw_os_error(21), path)
+    }
     #[cfg(not(unix))]
-    let e = io::Error::from(io::ErrorKind::IsADirectory);
-    io_fail(&e, path)
+    {
+        Failure::unexpected(
+            "PermissionError",
+            snp_pycompat::repr::oserror_str(13, "Permission denied", Some(path), None),
+        )
+    }
 }
 
 /// Classifies `path`, mapping a directory to pre-commit's crash.
@@ -608,8 +615,14 @@ mod tests {
             path: PathBuf::from("/x/tmpl"),
         };
         let (disp, legacy, path, lpath) = d.paths(HookType::PrePush);
-        assert_eq!(disp, "./tmpl/hooks/pre-push");
-        assert_eq!(legacy, "./tmpl/hooks/pre-push.legacy");
+        // `os.path.join('./tmpl/', 'hooks', 'pre-push')`: ntpath joins with `\`.
+        let joined = if cfg!(windows) {
+            "./tmpl/hooks\\pre-push"
+        } else {
+            "./tmpl/hooks/pre-push"
+        };
+        assert_eq!(disp, joined);
+        assert_eq!(legacy, *format!("{joined}.legacy"));
         assert_eq!(path, Path::new("/x/tmpl/hooks/pre-push"));
         assert_eq!(lpath, Path::new("/x/tmpl/hooks/pre-push.legacy"));
     }
