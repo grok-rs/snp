@@ -277,11 +277,24 @@ pub fn autoupdate(a: &AutoupdateArgs, cx: &CmdCtx<'_>) -> Result<i32, Failure> {
     })?;
     if !updates.is_empty() {
         updates.sort_by_key(|u| u.repo_index);
-        let original = std::fs::read(&f.config_path)
-            .map_err(|e| Failure::from_io(&e, Some(&f.config_display), None))?;
-        let (Rewrite::Lines(new) | Rewrite::FullReformat(new)) =
-            revline::rewrite_with(&original, &updates, ext)?
-        else {
+        // Capped and is-file checked again: the file may have been swapped since `load_config` read it.
+        let original = crate::read_config_for_rewrite(&f.config_path, &f.config_display)?;
+        let rewritten = match revline::rewrite_with(&original, &updates, ext) {
+            Err(e)
+                if e.uncaught().is_some_and(|(ty, msg)| {
+                    ty == "AssertionError" && msg == "could not find rev lines"
+                }) =>
+            {
+                // `_original_lines` (`autoupdate.py:119-137`) writes `yaml_dump(yaml_load(original))` before the
+                // retry that raises: the reformatted file stays on disk.
+                if let Some(dumped) = reformatted(&original) {
+                    write_config(&f.config_path, f.root(), dumped.as_bytes())?;
+                }
+                return Err(e.into());
+            }
+            r => r?,
+        };
+        let (Rewrite::Lines(new) | Rewrite::FullReformat(new)) = rewritten else {
             return Err(Failure::Exc {
                 kind: snp_core::failure::ExcKind::Unexpected,
                 exc: PyExc::new("AssertionError", "could not find rev lines"),
@@ -290,6 +303,16 @@ pub fn autoupdate(a: &AutoupdateArgs, cx: &CmdCtx<'_>) -> Result<i32, Failure> {
         write_config(&f.config_path, f.root(), &new)?;
     }
     Ok(retv)
+}
+
+/// `yaml_dump(yaml_load(original))` with universal newlines, as `rewrite_with` computes it for its retry.
+fn reformatted(original: &[u8]) -> Option<String> {
+    let text = snp_pycompat::codec::decode_utf8(original).ok()?;
+    snp_yaml::emit::redump(
+        &snp_pycompat::textio::universal_newlines(text),
+        &snp_yaml::Limits::default(),
+    )
+    .ok()
 }
 
 #[cfg(test)]

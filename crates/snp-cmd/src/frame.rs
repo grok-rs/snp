@@ -62,8 +62,9 @@ pub(crate) fn git_exe(cx: &CmdCtx<'_>) -> Result<Arc<GitExe>, Failure> {
 /// 382-384`).
 ///
 /// An existing config path is made absolute against the invocation cwd and then relative to the root (a config
-/// outside the repository becomes `../x.yaml`); a missing one is kept as typed and so re-interpreted relative to the
-/// root (03 §1.2 item 4). `relpath` across Windows drives (pre-commit's `ValueError`) keeps the absolute path.
+/// outside the repository becomes `../x.yaml`); a missing one is normalised by `relpath` against the root, which
+/// re-interprets it relative to the root (03 §1.2 item 4). `relpath` across Windows drives (pre-commit's
+/// `ValueError`) keeps the absolute path.
 pub(crate) fn git_frame(cx: &CmdCtx<'_>, config: &OsStr) -> Result<Frame, Failure> {
     frame_impl(cx, config, true)
 }
@@ -82,7 +83,7 @@ fn frame_impl(cx: &CmdCtx<'_>, config: &OsStr, track: bool) -> Result<Frame, Fai
         Arc::clone(&cx.git_backend),
     )?;
     let git = git.with_brand(cx.brand);
-    let config_display = adjust_config(config, cx.cwd, &info.root);
+    let config_display = adjust_config(config, cx.cwd, &info.root)?;
     let config_path = info.root.join(&config_display);
     if track && let Ok(real) = snp_os::realpath::realpath_nonstrict(&config_path, &info.root) {
         cx.store.mark_config_used(&real, &info.root);
@@ -96,14 +97,25 @@ fn frame_impl(cx: &CmdCtx<'_>, config: &OsStr, track: bool) -> Result<Frame, Fai
     })
 }
 
-/// `_adjust_args_and_chdir`'s treatment of `args.config` (`main.py:175-199`).
-pub(crate) fn adjust_config(config: &OsStr, cwd: &Path, root: &Path) -> OsString {
-    if !cwd.join(config).exists() {
-        return config.to_os_string();
+/// `_adjust_args_and_chdir`'s treatment of `args.config` (`main.py:175-199`): an existing path is made absolute
+/// against the invocation cwd; then the path is always re-expressed with `os.path.relpath` against the new cwd (the
+/// root), so a missing `./x.yaml` becomes `x.yaml` and `-c ''` raises `ValueError: no path specified` (03 §1.2
+/// item 4). `relpath` across Windows drives (pre-commit's `ValueError`) keeps the absolute path.
+pub(crate) fn adjust_config(config: &OsStr, cwd: &Path, root: &Path) -> Result<OsString, Failure> {
+    let exists = !config.is_empty() && cwd.join(config).exists();
+    let p = if exists {
+        snp_pycompat::ospath::abspath(config, cwd).into_os_string()
+    } else {
+        config.to_os_string()
+    };
+    match snp_pycompat::ospath::relpath(&p, None, root) {
+        Ok(rel) => Ok(rel),
+        Err(e @ snp_pycompat::PathError::NoPathSpecified) => Err(Failure::Exc {
+            kind: snp_core::failure::ExcKind::Unexpected,
+            exc: snp_core::failure::PyExc::new(e.py_type(), e.to_string()),
+        }),
+        Err(_) => Ok(snp_pycompat::ospath::abspath(&p, root).into_os_string()),
     }
-    let abs = snp_pycompat::ospath::abspath(config, cwd);
-    snp_pycompat::ospath::relpath(abs.as_os_str(), Some(root.as_os_str()), cwd)
-        .unwrap_or_else(|_| abs.into_os_string())
 }
 
 /// `SNP_COMPAT_STRICT=1`: extension keys are unknown keys, as for pre-commit (ADR-039).
@@ -232,30 +244,55 @@ pub(crate) fn interrupted(cx: &CmdCtx<'_>) -> Option<Failure> {
 mod tests {
     use super::*;
 
+    fn adj(c: impl AsRef<OsStr>, cwd: &Path, root: &Path) -> OsString {
+        adjust_config(c.as_ref(), cwd, root).unwrap()
+    }
+
     #[test]
-    fn missing_config_is_kept_as_typed() {
+    fn existing_config_is_re_expressed_against_the_root() {
         let d = tempfile::tempdir().unwrap();
         let root = d.path();
         let sub = root.join("a/b");
         std::fs::create_dir_all(&sub).unwrap();
         assert_eq!(
-            adjust_config(OsStr::new(".pre-commit-config.yaml"), &sub, root),
+            adj(".pre-commit-config.yaml", &sub, root),
             ".pre-commit-config.yaml"
         );
         std::fs::write(root.join(".pre-commit-config.yaml"), b"").unwrap();
         assert_eq!(
-            adjust_config(OsStr::new("../../.pre-commit-config.yaml"), &sub, root),
+            adj("../../.pre-commit-config.yaml", &sub, root),
             ".pre-commit-config.yaml"
         );
         std::fs::write(sub.join("c.yaml"), b"").unwrap();
-        assert_eq!(
-            adjust_config(OsStr::new("c.yaml"), &sub, root),
-            "a/b/c.yaml"
-        );
+        assert_eq!(adj("c.yaml", &sub, root), "a/b/c.yaml");
         let out = tempfile::tempdir().unwrap();
         std::fs::write(out.path().join("o.yaml"), b"").unwrap();
-        let rel = adjust_config(out.path().join("o.yaml").as_os_str(), &sub, root);
+        let rel = adj(out.path().join("o.yaml"), &sub, root);
         assert!(rel.to_string_lossy().starts_with(".."), "{rel:?}");
+    }
+
+    /// Oracle (pc462): `os.path.relpath` normalises a missing config after the chdir to the root.
+    #[test]
+    fn missing_config_is_normalised_by_relpath() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path();
+        assert_eq!(adj("./missing.yaml", root, root), "missing.yaml");
+        assert_eq!(adj("a/../missing.yaml", root, root), "missing.yaml");
+        assert_eq!(adj(root.join("missing.yaml"), root, root), "missing.yaml");
+        assert_eq!(adj("a//b.yaml", root, root), "a/b.yaml");
+        assert_eq!(adj("sub/../../missing.yaml", root, root), "../missing.yaml");
+    }
+
+    #[test]
+    fn empty_config_is_value_error() {
+        let d = tempfile::tempdir().unwrap();
+        let Err(Failure::Exc { kind, exc }) = adjust_config(OsStr::new(""), d.path(), d.path())
+        else {
+            panic!("expected ValueError");
+        };
+        assert_eq!(kind, snp_core::failure::ExcKind::Unexpected);
+        assert_eq!(exc.ty, "ValueError");
+        assert_eq!(exc.text, b"no path specified");
     }
 
     #[test]

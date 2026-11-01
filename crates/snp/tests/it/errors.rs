@@ -258,7 +258,7 @@ fn x13_cmd_05_could_not_find_rev_lines() {
         .commit("2")
         .build();
     let cfg = format!(
-        "repos:\n-   repo: {}\n    rev: {old}\n    hooks:\n    -   id: foo\n        rev: extra\n",
+        "repos:\n-   repo: {}\n    rev: {old}\n    hooks:\n    -   id: foo\n        rev: extra\n        args: [--rev]\n",
         up.display()
     );
     let r = repo_with(&env, "r", &cfg);
@@ -271,9 +271,13 @@ fn x13_cmd_05_could_not_find_rev_lines() {
         "{}",
         text(&out.stdout)
     );
+    // Oracle (pc462): `_original_lines` writes `yaml_dump(yaml_load(original))` before raising.
     assert_eq!(
         std::fs::read_to_string(r.join(".pre-commit-config.yaml")).unwrap(),
-        cfg
+        format!(
+            "repos:\n-   repo: {}\n    rev: {old}\n    hooks:\n    -   id: foo\n        rev: extra\n        args:\n        - --rev\n",
+            up.display()
+        )
     );
 }
 
@@ -498,6 +502,59 @@ fn x13_eh_03_stdout_closed() {
     assert!(!store(&env).join("snp.log").exists());
 }
 
+/// `> /dev/full` (ENOSPC): the output is lost, so the command fails closed with 120 (pre-commit 4.6.2: CPython's
+/// shutdown flush fails, exit 120 with `Exception ignored ... OSError: [Errno 28]`); snp prints nothing on stderr
+/// (D-CRASH-24).
+#[cfg(target_os = "linux")]
+#[test]
+fn x13_eh_03_stdout_full() {
+    let env = tenv();
+    for args in [
+        &["--version"][..],
+        &["--help"][..],
+        &["sample-config"][..],
+        &["clean"][..],
+    ] {
+        let full = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .unwrap();
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_snp"));
+        env.env().apply_to(&mut cmd);
+        let out = cmd
+            .args(args)
+            .current_dir(env.root())
+            .stdout(Stdio::from(full))
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(120), "{args:?}");
+        assert!(out.stderr.is_empty(), "{args:?}: {}", text(&out.stderr));
+    }
+}
+
+/// stdout closed before the start (`>&-`): the Rust runtime reopens fd 1 on `/dev/null` before `main` (so no file
+/// snp opens can become fd 1), and the command then behaves as under `> /dev/null`. pre-commit 4.6.2 exits 1 with an
+/// import-time traceback instead (`sys.stdout` is `None`); recorded in D-CRASH-24.
+#[cfg(unix)]
+#[test]
+fn x13_eh_03_stdout_closed_at_start_is_dev_null() {
+    let env = tenv();
+    let mut cmd = Command::new("/bin/sh");
+    env.env().apply_to(&mut cmd);
+    let out = cmd
+        .arg("-c")
+        .arg("exec \"$0\" sample-config >&-")
+        .arg(env!("CARGO_BIN_EXE_snp"))
+        .current_dir(env.root())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert!(out.stdout.is_empty() && out.stderr.is_empty());
+}
+
 #[cfg(unix)]
 #[test]
 fn x13_eh_04_keyboard_interrupt() {
@@ -617,4 +674,51 @@ fn x13_sm_08_no_epipe_noise() {
     assert_eq!(out.status.code(), Some(120));
     assert!(!text(&out.stderr).contains("BrokenPipe"));
     assert_eq!(text(&out.stderr), "");
+}
+
+/// `snp migrate builtin|upstream` reads the config through the loader's capped read (ARCHITECTURE §11.4, D-SEC-11):
+/// `/dev/zero` behind the config name, a FIFO and a file over the 16 MiB limit fail at once with exit 1 instead of
+/// reading without bound (a `/dev/zero` config once drove `fs::read` into the OOM killer).
+#[cfg(unix)]
+#[test]
+fn migrate_config_read_is_capped() {
+    let env = tenv();
+    let r = env.root().join("r");
+    std::fs::create_dir_all(&r).unwrap();
+    git(&env, &r, &["init", "-q"]);
+    let cfg = r.join(".pre-commit-config.yaml");
+    std::os::unix::fs::symlink("/dev/zero", &cfg).unwrap();
+    for sub in ["builtin", "upstream"] {
+        let out = snp(&env, &r, &["migrate", sub]);
+        assert_code(&out, 1);
+        assert!(
+            text(&out.stdout).starts_with(
+                "An error has occurred: InvalidConfigError: \n=====> .pre-commit-config.yaml is not a file\nCheck the log at "
+            ),
+            "{sub}: {}",
+            text(&out.stdout)
+        );
+    }
+    std::fs::remove_file(&cfg).unwrap();
+    let st = Command::new("mkfifo").arg(&cfg).status().unwrap();
+    assert!(st.success());
+    let out = snp(&env, &r, &["migrate", "builtin"]);
+    assert_code(&out, 1);
+    assert!(
+        text(&out.stdout).contains("is not a file"),
+        "{}",
+        text(&out.stdout)
+    );
+    std::fs::remove_file(&cfg).unwrap();
+    // Sparse: no 16 MiB is ever written.
+    let f = std::fs::File::create(&cfg).unwrap();
+    f.set_len((16 << 20) + 1).unwrap();
+    drop(f);
+    let out = snp(&env, &r, &["migrate", "builtin"]);
+    assert_code(&out, 1);
+    assert!(
+        text(&out.stdout).contains("bytes long, more than the limit of 16777216 bytes"),
+        "{}",
+        text(&out.stdout)
+    );
 }

@@ -22,6 +22,37 @@ pub(crate) fn exit(code: i32) -> Exit {
     u8::try_from(code).map_or(Exit::Raw(code), Exit::Code)
 }
 
+/// The process stdout as the `Printer` sees it: any write or flush error is reported as `BrokenPipe`, so the
+/// Printer latches `closed` on ENOSPC (`> /dev/full`), EIO or EAGAIN exactly as on EPIPE and the invocation fails
+/// closed with 120 instead of reporting success after its output was lost. CPython's shutdown flush of `sys.stdout`
+/// fails the same way (`Exception ignored ... OSError: [Errno 28] No space left on device`, exit 120; pre-commit
+/// 4.6.2, oracle); snp drops the noise as for EPIPE (D-CRASH-24).
+#[derive(Debug)]
+pub(crate) struct FailClosedStdout<W>(pub(crate) W);
+
+/// `e` as the `BrokenPipe` the Printer latches on (the original error is dropped: it is never shown).
+fn as_broken_pipe(e: std::io::Error) -> std::io::Error {
+    if e.kind() == std::io::ErrorKind::BrokenPipe {
+        e
+    } else {
+        std::io::Error::from(std::io::ErrorKind::BrokenPipe)
+    }
+}
+
+impl<W: Write> Write for FailClosedStdout<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf).map_err(as_broken_pipe)
+    }
+
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        self.0.write_all(buf).map_err(as_broken_pipe)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush().map_err(as_broken_pipe)
+    }
+}
+
 /// Whether stdout was closed under us (EPIPE): the whole invocation then ends silently with 120 (X13-EH-03).
 fn stdout_closed(printer: &Printer, cancel: &CancelToken) -> bool {
     printer.is_closed() || cancel.reason() == Some(CancelReason::StdoutClosed)
@@ -215,6 +246,46 @@ mod tests {
         let out = String::from_utf8(out.0.lock().unwrap().clone()).unwrap();
         let err = String::from_utf8(err.0.lock().unwrap().clone()).unwrap();
         (exit, out, err, store, d)
+    }
+
+    /// A writer whose every write fails with `kind`.
+    struct Failing(io::ErrorKind);
+
+    impl Write for Failing {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::Error::from(self.0))
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// ENOSPC (`> /dev/full`), EIO, EBADF: the output is lost, so the command fails closed with 120, never 0.
+    #[test]
+    fn any_stdout_write_error_fails_closed() {
+        for kind in [
+            io::ErrorKind::StorageFull,
+            io::ErrorKind::Other,
+            io::ErrorKind::BrokenPipe,
+            io::ErrorKind::WouldBlock,
+        ] {
+            let cancel = CancelToken::new();
+            let err = Buf::default();
+            let printer = Printer::new(
+                Box::new(FailClosedStdout(Failing(kind))),
+                Box::new(err.clone()),
+                PrinterOpts {
+                    brand: Brand::PreCommit,
+                    color: false,
+                    stdout_is_tty: false,
+                    windows_text_mode: false,
+                    cancel: cancel.clone(),
+                },
+            );
+            printer.py_print("x");
+            assert_eq!(success(0, &printer, &cancel), Exit::Code(120), "{kind:?}");
+            assert!(err.0.lock().unwrap().is_empty());
+        }
     }
 
     #[test]

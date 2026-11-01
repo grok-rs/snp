@@ -46,6 +46,25 @@ fn parse(brand: Brand, argv: &[OsString], env: &Env) -> Option<CliOutcome> {
     .ok()
 }
 
+/// `SNP_VERSION_PROBE=1 <file> --version` (exactly that argv): the brand-independent identification line that
+/// `doctor` and `self alias` match against `^pre-commit [0-9.]+ \(snp ([^)]+)\)$` (11 §A.19.4). A plain `--version`
+/// keeps the brand's exact text (`pre-commit 4.6.2` under the compat brand, ADR-023), which cannot tell an snp alias
+/// from Python pre-commit; Python pre-commit ignores the variable.
+fn is_version_probe(argv: &[OsString], env: &Env) -> bool {
+    argv.len() == 2
+        && argv.get(1).is_some_and(|a| a == "--version")
+        && env.get("SNP_VERSION_PROBE").is_some_and(|v| v == "1")
+}
+
+/// `pre-commit 4.6.2 (snp 2.0.0)`.
+fn version_probe_line() -> String {
+    format!(
+        "pre-commit {} (snp {})\n",
+        snp_core::profile::PRE_COMMIT,
+        snp_core::profile::SNP_VERSION
+    )
+}
+
 /// The whole program except `process::exit` (§10.1): every guard and destructor has run when it returns.
 ///
 /// `pre_commit.main.main` + `error_handler.error_handler()`: a panic anywhere below `dispatch` becomes a
@@ -69,18 +88,26 @@ pub fn entry() -> Exit {
     fault::arm_from_env(&env);
     #[cfg(feature = "testing")]
     snp_proc::spawn_log::enable_from_env(&env);
-    let parsed = parse(brand, &argv, &env);
+    let parsed = if is_version_probe(&argv, &env) {
+        Some(CliOutcome::Stdout(version_probe_line()))
+    } else {
+        parse(brand, &argv, &env)
+    };
     let color = match &parsed {
         Some(CliOutcome::Cli(cli)) => snp_os::term::decide_color(color_setting(cli), &env),
         _ => false,
     };
-    let printer = Printer::stdio(PrinterOpts {
-        brand,
-        color,
-        stdout_is_tty: snp_os::term::stdout_is_tty(),
-        windows_text_mode: cfg!(windows),
-        cancel: cancel.clone(),
-    });
+    let printer = Printer::new(
+        Box::new(envelope::FailClosedStdout(std::io::stdout())),
+        Box::new(std::io::stderr()),
+        PrinterOpts {
+            brand,
+            color,
+            stdout_is_tty: snp_os::term::stdout_is_tty(),
+            windows_text_mode: cfg!(windows),
+            cancel: cancel.clone(),
+        },
+    );
     let self_exe = std::env::current_exe().unwrap_or_else(|_| {
         arg0.as_ref()
             .map_or_else(|| PathBuf::from(brand.prog()), PathBuf::from)

@@ -610,7 +610,8 @@ fn rewrite_config(
     convert: fn(&[u8]) -> Result<Vec<u8>, Failure>,
 ) -> Result<i32, Failure> {
     let path = s.cwd()?.join(config);
-    let bytes = std::fs::read(&path).map_err(|e| Failure::from_io(&e, Some(config), None))?;
+    // Never `fs::read`: `/dev/zero` or a FIFO named as the config would grow without bound (D-SEC-11).
+    let bytes = snp_cmd::read_config_for_rewrite(&path, config)?;
     let new = convert(&bytes)?;
     if new == bytes {
         s.printer.py_print("Configuration is already migrated.");

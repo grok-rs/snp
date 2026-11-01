@@ -24,7 +24,10 @@ use snp_stash as _;
 use snp_yaml as _;
 
 pub use autoupdate::autoupdate;
-pub use config_cmds::{config, migrate_config, sample_config, validate_config, validate_manifest};
+pub use config_cmds::{
+    config, migrate_config, read_config_for_rewrite, sample_config, validate_config,
+    validate_manifest,
+};
 pub use ctx::CmdCtx;
 pub use doctor::{DoctorCheck, DoctorLine, doctor};
 pub use install::{init_templatedir, install, uninstall};

@@ -100,6 +100,14 @@ pub(crate) fn migrate_file(
     Ok(())
 }
 
+/// Reads a config file to rewrite it (`snp migrate builtin|upstream`, `autoupdate`): through the loader's capped
+/// read (`cfgv.load_from_filename` up to the validation context), so a non-regular file (`/dev/zero`, a FIFO) is
+/// `=====> {display} is not a file` (exit 1) and a file over the YAML byte limit (16 MiB, ARCHITECTURE §11.4,
+/// D-SEC-11) is `the input is N bytes long, more than the limit of M bytes` without being read.
+pub fn read_config_for_rewrite(path: &Path, display: &OsStr) -> Result<Vec<u8>, Failure> {
+    Ok(migrate::read_config(path, display)?)
+}
+
 /// `pre-commit migrate-config`.
 ///
 /// A git command (`_adjust_args_and_chdir`, config tracking), then `migrate_config(args.config)` (not quiet);
