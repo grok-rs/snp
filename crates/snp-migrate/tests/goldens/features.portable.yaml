@@ -20,19 +20,19 @@ repos:
         stages: [pre-commit]
         require_serial: true
         fail_fast: true
-      # snp-migrate: warning: pre-commit/changed go files: best-effort: file list computed in shell
+      # snp-migrate: warning: pre-commit/changed go files: best-effort: file list computed in shell (names git must quote are skipped)
       - id: changed-go-files
         name: changed go files
         language: system
-        entry: "sh -c 'set -f; IFS='\\''\n'\\''; set -- $( ( git diff --name-only HEAD~1 ) | grep -iE '\\''^(.*\\.go)$'\\'' | grep -vE '\\''^(vendor/.*)$'\\'' | while IFS= read -r f; do [ -f \"$f\" ] && printf '\\''%s\\n'\\'' \"$f\"; done); unset IFS; set +f; [ $# -gt 0 ] || exit 0; gofmt -l \"$@\"' --"
+        entry: "sh -c 'set -f; IFS='\\''\n'\\''; set -- $( ( [ -n \"${GIT_CONFIG_COUNT-}\" ] || export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.quotePath GIT_CONFIG_VALUE_0=false; git diff --name-only HEAD~1 ) | sed '\\''s/^[[:space:]]*//; s/[[:space:]]*$//'\\'' | grep -iE '\\''^(.*\\.go)$'\\'' | grep -vE '\\''^(vendor/.*)$'\\'' | while IFS= read -r f; do [ -f \"$f\" ] && printf '\\''%s\\n'\\'' \"$f\"; done); unset IFS; set +f; [ $# -gt 0 ] || exit 0; gofmt -l \"$@\"' --"
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
-      # snp-migrate: warning: pre-commit/all python: best-effort: file list computed in shell
+      # snp-migrate: warning: pre-commit/all python: best-effort: file list computed in shell (names git must quote are skipped)
       - id: all-python
         name: all python
         language: system
-        entry: "sh -c 'set -f; IFS='\\''\n'\\''; set -- $( ( git ls-files --cached ) | grep -iE '\\''^(.*\\.py)$'\\'' | grep -vE '\\''^(vendor/.*)$'\\'' | while IFS= read -r f; do [ -f \"$f\" ] && printf '\\''%s\\n'\\'' \"$f\"; done); unset IFS; set +f; [ $# -gt 0 ] || exit 0; ruff check \"$@\"' --"
+        entry: "sh -c 'set -f; IFS='\\''\n'\\''; set -- $( ( [ -n \"${GIT_CONFIG_COUNT-}\" ] || export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.quotePath GIT_CONFIG_VALUE_0=false; git ls-files --cached ) | sed '\\''s/^[[:space:]]*//; s/[[:space:]]*$//'\\'' | grep -iE '\\''^(.*\\.py)$'\\'' | grep -vE '\\''^(vendor/.*)$'\\'' | while IFS= read -r f; do [ -f \"$f\" ] && printf '\\''%s\\n'\\'' \"$f\"; done); unset IFS; set +f; [ $# -gt 0 ] || exit 0; ruff check \"$@\"' --"
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
@@ -41,7 +41,7 @@ repos:
       - id: env-and-root
         name: env and root
         language: system
-        entry: sh -c 'cd services/api || exit 1; PATH="$HOME/bin:$PATH"; export PATH; LEVEL="2"; export LEVEL; make lint' --
+        entry: sh -c 'cd services/api || exit 1; PATH="${HOME}/bin:${PATH}"; export PATH; LEVEL="2"; export LEVEL; make lint' --
         files: '^services/api/'
         exclude: '^(?:vendor/.*)$'
         pass_filenames: false

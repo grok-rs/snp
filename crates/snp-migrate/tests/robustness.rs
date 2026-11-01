@@ -555,4 +555,152 @@ mod robustness {
             assert_eq!(code, 2, "{what}");
         }
     }
+
+    /// Two directory symlinks to `.` make `*/*/…/x.yml` match 2^n paths: the glob budget stops the load with
+    /// exit 1 within a fraction of a second instead of walking for hours (lefthook has no bound).
+    #[cfg(unix)]
+    #[test]
+    fn symlink_loop_extends_glob_is_bounded() {
+        let pattern = format!("{}x.yml", std::iter::repeat_n("*/", 24).collect::<String>());
+        let d = tree(&[
+            ("lefthook.yml", &format!("extends: ['{pattern}']\n")),
+            ("x.yml", "pre-commit: {jobs: [{name: x, run: lint}]}\n"),
+        ]);
+        std::os::unix::fs::symlink(".", d.path().join("a")).unwrap();
+        std::os::unix::fs::symlink(".", d.path().join("b")).unwrap();
+        let t = std::time::Instant::now();
+        let (code, text) = exit_code(&snp_migrate::lefthook(&opts(d.path(), false)).unwrap_err());
+        assert_eq!(code, 1);
+        assert!(
+            text.contains(&format!(
+                "extends pattern '{pattern}' matches too many paths"
+            )),
+            "{text}"
+        );
+        assert!(
+            t.elapsed() < std::time::Duration::from_secs(10),
+            "{:?}",
+            t.elapsed()
+        );
+        // A shallow pattern through the same links still loads.
+        std::fs::write(d.path().join("lefthook.yml"), "extends: ['a/*.yml']\n").unwrap();
+        let c = snp_migrate::lefthook(&opts(d.path(), false)).unwrap();
+        assert!(c.config_yaml.contains("entry: lint"), "{}", c.config_yaml);
+    }
+
+    /// A FIFO reached by `extends` is refused instead of blocking the read forever.
+    #[cfg(unix)]
+    #[test]
+    fn fifo_extends_is_refused() {
+        let d = tree(&[(
+            "lefthook.yml",
+            "extends: [e.yml]\npre-commit: {jobs: [{run: lint}]}\n",
+        )]);
+        let fifo = d.path().join("e.yml");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .is_ok_and(|s| s.success());
+        if !made {
+            return;
+        }
+        let o = opts(d.path(), false);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .spawn(move || drop(tx.send(snp_migrate::lefthook(&o).map(|_| ()))))
+            .unwrap();
+        let r = rx
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("the load blocked on the FIFO");
+        let (code, text) = exit_code(&r.unwrap_err());
+        assert_eq!(code, 1);
+        assert!(text.contains("e.yml: not a regular file"), "{text}");
+    }
+
+    /// The R5 `{files}` list follows lefthook's line handling: git prints non-ASCII names unquoted
+    /// (`core.quotePath=false`) and each line is trimmed (`strings.TrimSpace`) before the existence check.
+    #[cfg(unix)]
+    #[test]
+    fn files_list_keeps_non_ascii_names_and_trims_lines() {
+        let d = tree(&[
+            (
+                "lefthook.yml",
+                "pre-commit:\n  jobs:\n    - {name: tracked, files: git ls-files, run: 'printf \"[%s]\" {files}'}\n    - {name: spaced, files: \"printf ' plain.txt \\\\r\\\\n'\", run: 'printf \"[%s]\" {files}'}\n",
+            ),
+            ("caf\u{e9}.txt", ""),
+            (" sp.txt", ""),
+            ("plain.txt", ""),
+        ]);
+        let git = |args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .args(args)
+                .current_dir(d.path())
+                .env_remove("GIT_CONFIG_COUNT")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .output()
+                .is_ok_and(|o| o.status.success());
+            assert!(ok, "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        git(&[
+            "-c",
+            "core.quotePath=true",
+            "add",
+            "caf\u{e9}.txt",
+            " sp.txt",
+            "plain.txt",
+        ]);
+        let c = snp_migrate::lefthook(&opts(d.path(), false)).unwrap();
+        let hooks = loaded_hooks(&c.config_yaml);
+        let mut got = Vec::new();
+        for h in &hooks {
+            let entry = field(h, "entry").unwrap().as_str().unwrap();
+            // pre-commit's `shlex.split(entry)` equals `sh`'s parse of the `sh -c '…' --` wrapper.
+            let out = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(entry)
+                .current_dir(d.path())
+                .env_remove("GIT_CONFIG_COUNT")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{entry}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            got.push(String::from_utf8(out.stdout).unwrap());
+        }
+        // lefthook: café.txt unquoted, ' sp.txt' trimmed to a name that does not exist.
+        assert_eq!(
+            got,
+            ["[caf\u{e9}.txt][plain.txt]", "[plain.txt]"],
+            "{}",
+            c.config_yaml
+        );
+    }
+
+    /// A glob with many stars becomes a regex Python's backtracking `re` runs slowly: a warning (not lossy), and a
+    /// realistic glob has none.
+    #[test]
+    fn many_star_globs_warn_about_slow_regexes() {
+        let c = convert(
+            &[(
+                "lefthook.yml",
+                "pre-commit:\n  jobs:\n    - {name: slow, glob: '*a*a*a*a*a*a*a*a*a*a*b', run: lint}\n    - {name: ok, glob: '**/*.{js,ts}', run: lint}\n",
+            )],
+            false,
+        );
+        let warns: Vec<&String> = c
+            .report
+            .iter()
+            .filter(|l| l.contains("unbounded runs"))
+            .collect();
+        assert_eq!(warns.len(), 1, "{:?}", c.report);
+        assert!(
+            warns[0].contains("pre-commit/slow: the glob regex has 11 unbounded runs"),
+            "{warns:?}"
+        );
+    }
 }

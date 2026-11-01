@@ -415,4 +415,19 @@ Exported to hooks: exactly pre-commit's set (02 §6.1) plus `_SNP_STASH_LOCK` wh
     default `fail_on_changes: never`, `fail_text`, `tags`, `skip`/`only`, `stage_fixed`, `timeout`, `use_stdin`;
   * `snp migrate builtin` → `snp migrate upstream` restores the original bytes when `rev` directly follows `repo`;
     a `rev` written before `repo` or after `hooks` comes back right after `repo` (same parsed config). A `repo`/`rev`
-    whose value is on the line after its key stays upstream.
+    whose value is on the line after its key, or that carries an anchor or tag or is an alias, stays upstream;
+  * `glob_matcher: doublestar` patterns follow bmatcuk/doublestar v4.10.2 (checked against vectors from the real
+    library): negated classes match `/`, braces expand textually, a trailing `/**`, `/**/` or `*` also matches the
+    name without it, `***` is two plain stars. doublestar keeps a single `*` backtrack, so with a negated class that
+    matches `/` after a star, or a plain `x**/` after a star in the same segment, it can miss a match the regex finds
+    (or the reverse); such patterns are not otherwise detected;
+  * shell-computed file lists (`{files}`, and `{all_files}` / `{staged_files}` outside their stage) run the command
+    with `core.quotePath=false` (unless `GIT_CONFIG_COUNT` is already set) and trim each line like lefthook; names git
+    still quotes (with `"`, `\`, a tab or other control characters) are skipped where lefthook unquotes them;
+  * env values are expanded with Go's `os.ExpandEnv` grammar: `$NAME` / `${NAME}`; special parameters (`$1`, `$@`,
+    `$$`, …) and any other `${…}` form (`${X:-d}`, `${#X}`) are empty, as lefthook looks up a variable of that literal
+    name; values are expanded in the hook's environment in order, so an earlier `env` entry is visible to a later one
+    (lefthook expands each against its own environment);
+  * extends globs read at most 16384 directory entries and return at most 4096 paths per load (lefthook has no
+    bound; symlink loops such as `a -> .` make `*/*/…` patterns exponential): past that the load fails (exit 1).
+    A config or extends path that is not a regular file (a FIFO, a device) is refused instead of blocking.

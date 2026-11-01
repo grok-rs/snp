@@ -39,11 +39,11 @@ repos:
         priority: 0
         root: sub
         skip: [merge]
-      # snp-migrate: warning: pre-commit/listed files: best-effort: file list computed in shell
+      # snp-migrate: warning: pre-commit/listed files: best-effort: file list computed in shell (names git must quote are skipped)
       - id: listed-files
         name: listed files
         language: system
-        entry: "sh -c 'set -f; IFS='\\''\n'\\''; set -- $( ( git ls-files ) | grep -iE '\\''^(.*\\.txt)$'\\'' | while IFS= read -r f; do [ -f \"$f\" ] && printf '\\''%s\\n'\\'' \"$f\"; done); unset IFS; set +f; [ $# -gt 0 ] || exit 0; grep -q . \"$@\"' --"
+        entry: "sh -c 'set -f; IFS='\\''\n'\\''; set -- $( ( [ -n \"${GIT_CONFIG_COUNT-}\" ] || export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.quotePath GIT_CONFIG_VALUE_0=false; git ls-files ) | sed '\\''s/^[[:space:]]*//; s/[[:space:]]*$//'\\'' | grep -iE '\\''^(.*\\.txt)$'\\'' | while IFS= read -r f; do [ -f \"$f\" ] && printf '\\''%s\\n'\\'' \"$f\"; done); unset IFS; set +f; [ $# -gt 0 ] || exit 0; grep -q . \"$@\"' --"
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
@@ -57,11 +57,11 @@ repos:
         always_run: true
         stages: [pre-commit]
         priority: 0
-      # snp-migrate: warning: pre-commit/every file: best-effort: file list computed in shell
+      # snp-migrate: warning: pre-commit/every file: best-effort: file list computed in shell (names git must quote are skipped)
       - id: every-file
         name: every file
         language: system
-        entry: "sh -c 'set -f; IFS='\\''\n'\\''; set -- $( ( git ls-files --cached ) | while IFS= read -r f; do [ -f \"$f\" ] && printf '\\''%s\\n'\\'' \"$f\"; done); unset IFS; set +f; [ $# -gt 0 ] || exit 0; ls \"$@\" > /dev/null' --"
+        entry: "sh -c 'set -f; IFS='\\''\n'\\''; set -- $( ( [ -n \"${GIT_CONFIG_COUNT-}\" ] || export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.quotePath GIT_CONFIG_VALUE_0=false; git ls-files --cached ) | sed '\\''s/^[[:space:]]*//; s/[[:space:]]*$//'\\'' | while IFS= read -r f; do [ -f \"$f\" ] && printf '\\''%s\\n'\\'' \"$f\"; done); unset IFS; set +f; [ $# -gt 0 ] || exit 0; ls \"$@\" > /dev/null' --"
         pass_filenames: false
         always_run: true
         stages: [pre-commit]

@@ -8,8 +8,8 @@ snp-migrate: lossy: lefthook.yml: pre-commit fails hooks that modify files; left
 snp-migrate: lossy: pre-commit/lint group: piped group: pre-commit fail_fast stops the whole run, lefthook piped only stopped its group
 snp-migrate: warning: pre-commit: parallelism reduced: a sequential group inside a parallel one is serialised
 snp-migrate: lossy: pre-commit/eslint: no identify tag for MIME 'text/x-unknown'; filter dropped
-snp-migrate: warning: pre-commit/changed go files: best-effort: file list computed in shell
-snp-migrate: warning: pre-commit/all python: best-effort: file list computed in shell
+snp-migrate: warning: pre-commit/changed go files: best-effort: file list computed in shell (names git must quote are skipped)
+snp-migrate: warning: pre-commit/all python: best-effort: file list computed in shell (names git must quote are skipped)
 snp-migrate: lossy: pre-commit/env and root: skip/only conditions dropped (portable mode)
 snp-migrate: warning: pre-commit/env and root: exclude 'vendor/*' is matched from the repo root (lefthook semantics) and never matches under root './services/api/'
 snp-migrate: warning: pre-commit/broken: lefthook fails this job (either `run`,`script`, or `group` must be provided for a job); converted to a `fail` hook

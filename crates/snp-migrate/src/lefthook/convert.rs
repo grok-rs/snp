@@ -308,6 +308,13 @@ struct EntryOut {
     notes: Vec<(Level, String)>,
 }
 
+/// Sets `core.quotePath=false` for the file-list command through git's environment, unless the caller already
+/// passes configuration that way.
+const QUOTE_PATH: &str = "[ -n \"${GIT_CONFIG_COUNT-}\" ] || export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.quotePath GIT_CONFIG_VALUE_0=false; ";
+
+/// The `sed` script trimming leading and trailing whitespace of each file-list line (Go's `strings.TrimSpace`).
+const TRIM: &str = "'s/^[[:space:]]*//; s/[[:space:]]*$//'";
+
 /// The R5 file-list pipeline: the command's output filtered by glob/exclude/root and lefthook's existence check.
 fn list_pipeline(
     cmd: &str,
@@ -319,7 +326,10 @@ fn list_pipeline(
     if let Some(r) = i.list_root {
         p.push_str(&root_pattern(r).0);
     }
-    write!(p, "( {cmd} )").unwrap_or_default();
+    // lefthook trims each line (`strings.TrimSpace`) and `strconv.Unquote`s git's C-quoted names; with
+    // `core.quotePath=false` git leaves non-ASCII names unquoted (names with `"`, `\` or control characters stay
+    // quoted and are skipped by the existence check), and `sed` trims the lines.
+    write!(p, "( {QUOTE_PATH}{cmd} ) | sed {TRIM}").unwrap_or_default();
     match glob::ere(i.glob, matcher, true) {
         Ok(Some(e)) => write!(p, " | grep -iE {}", shell::sh_quote(&e)).unwrap_or_default(),
         Ok(None) => {}
@@ -354,6 +364,19 @@ fn list_pipeline(
     )
     .unwrap_or_default();
     p
+}
+
+/// A warning when the `files` / `exclude` regex has more than [`glob::SLOW_RUNS`] unbounded runs.
+fn slow_regex_note(what: &str, re: Option<&str>, notes: &mut Vec<(Level, String)>) {
+    let n = re.map_or(0, glob::unbounded_runs);
+    if n > glob::SLOW_RUNS {
+        notes.push((
+            Level::Warning,
+            format!(
+                "the {what} regex has {n} unbounded runs; Python's backtracking `re` may be slow on long paths (lefthook's matcher is linear)"
+            ),
+        ));
+    }
 }
 
 /// The `<root>/` prefix as the pattern of a `${f#…}` expansion, plus the assignment it needs: a root made of
@@ -481,7 +504,8 @@ fn entry_rules(i: &EntryIn<'_>, matcher: Matcher) -> EntryOut {
         out.always_run = true;
         out.notes.push((
             Level::Warning,
-            "best-effort: file list computed in shell".to_owned(),
+            "best-effort: file list computed in shell (names git must quote are skipped)"
+                .to_owned(),
         ));
         let mut script = prefix;
         if let Some((cmd, _)) = &list {
@@ -1086,7 +1110,10 @@ fn convert_leaf(
     if e.filters_apply {
         let root_prefix = if portable { root.as_deref() } else { None };
         match glob::files_regex(&s.glob, cx.matcher, root_prefix) {
-            Ok(f) => out.files = f,
+            Ok(f) => {
+                slow_regex_note("glob", f.as_deref(), notes);
+                out.files = f;
+            }
             Err(err) if cx.matcher == Matcher::Gobwas => {
                 fail_hook(out, &format!("invalid glob pattern: {}", err.0));
                 notes.push((
@@ -1110,7 +1137,10 @@ fn convert_leaf(
             }
         }
         match glob::exclude_regex(&s.exclude, cx.matcher) {
-            Ok(x) => out.exclude = x,
+            Ok(x) => {
+                slow_regex_note("exclude", x.as_deref(), notes);
+                out.exclude = x;
+            }
             Err(err) if cx.matcher == Matcher::Gobwas => {
                 fail_hook(out, &format!("invalid glob pattern: {}", err.0));
                 notes.push((
@@ -1595,7 +1625,7 @@ mod tests {
         assert!(e.always_run && !e.pass_filenames && !e.filters_apply);
         assert_eq!(
             e.entry,
-            "sh -c 'set -f; IFS='\\''\n'\\''; set -- $( ( git diff --name-only main ) | grep -iE '\\''^(.*\\.rb)$'\\'' | grep -vE '\\''^(vendor/.*)$'\\'' | while IFS= read -r f; do [ -f \"$f\" ] && printf '\\''%s\\n'\\'' \"$f\"; done); unset IFS; set +f; [ $# -gt 0 ] || exit 0; rubocop \"$@\"' --"
+            "sh -c 'set -f; IFS='\\''\n'\\''; set -- $( ( [ -n \"${GIT_CONFIG_COUNT-}\" ] || export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.quotePath GIT_CONFIG_VALUE_0=false; git diff --name-only main ) | sed '\\''s/^[[:space:]]*//; s/[[:space:]]*$//'\\'' | grep -iE '\\''^(.*\\.rb)$'\\'' | grep -vE '\\''^(vendor/.*)$'\\'' | while IFS= read -r f; do [ -f \"$f\" ] && printf '\\''%s\\n'\\'' \"$f\"; done); unset IFS; set +f; [ $# -gt 0 ] || exit 0; rubocop \"$@\"' --"
         );
         let e = rules("lint {all_files}", "pre-commit");
         assert!(e.entry.contains("git ls-files --cached"));
