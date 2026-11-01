@@ -441,12 +441,31 @@ fn class(
     Ok(())
 }
 
+/// `(a|b|c)`. POSIX leaves an empty ERE branch or subexpression undefined and BSD `grep -E` (macOS) refuses it
+/// ("empty (sub)expression"), so for `grep` the empty branches become an optional group: `(a||b)` -> `(a|b)?`,
+/// `(|)` -> nothing.
+fn alternation(alts: &[String], f: Flavor) -> String {
+    match f {
+        Flavor::Python => format!("(?:{})", alts.join("|")),
+        Flavor::Ere => {
+            let full: Vec<&str> = alts
+                .iter()
+                .map(String::as_str)
+                .filter(|a| !a.is_empty())
+                .collect();
+            if full.is_empty() {
+                String::new()
+            } else if full.len() < alts.len() {
+                format!("({})?", full.join("|"))
+            } else {
+                format!("({})", full.join("|"))
+            }
+        }
+    }
+}
+
 /// Renders a gobwas sequence (no separators: `*` is `.*`, `?` is `.`).
 fn render(toks: &[Tok], f: Flavor, out: &mut String) -> Result<(), GlobError> {
-    let group_open = match f {
-        Flavor::Python => "(?:",
-        Flavor::Ere => "(",
-    };
     for t in toks {
         match t {
             Tok::Lit(c) => match f {
@@ -457,14 +476,13 @@ fn render(toks: &[Tok], f: Flavor, out: &mut String) -> Result<(), GlobError> {
             Tok::Any => out.push('.'),
             Tok::Class(neg, items) => class(*neg, items, f, out)?,
             Tok::Alt(alts) => {
-                out.push_str(group_open);
-                for (k, a) in alts.iter().enumerate() {
-                    if k > 0 {
-                        out.push('|');
-                    }
-                    render(a, f, out)?;
+                let mut rendered = Vec::new();
+                for a in alts {
+                    let mut s = String::new();
+                    render(a, f, &mut s)?;
+                    rendered.push(s);
                 }
-                out.push(')');
+                out.push_str(&alternation(&rendered, f));
             }
         }
     }
@@ -612,6 +630,7 @@ fn ds_factor(chain: &[String], group_open: &str) -> String {
             }
             format!("{first}{}", opt(&acc))
         }
+        _ if group_open == "(" => alternation(chain, Flavor::Ere),
         _ => format!("{group_open}{})", chain.join("|")),
     }
 }
@@ -681,9 +700,7 @@ fn ds_render(toks: &[Tok], f: Flavor, out: &mut String) -> Result<(), GlobError>
     if let [one] = alts.as_slice() {
         out.push_str(one);
     } else {
-        out.push_str(group_open);
-        out.push_str(&alts.join("|"));
-        out.push(')');
+        out.push_str(&alternation(&alts, f));
     }
     Ok(())
 }
@@ -970,6 +987,8 @@ mod tests {
     fn ere_forms() {
         let e = |p: &str| translate(p, Matcher::Gobwas, Flavor::Ere).unwrap();
         assert_eq!(e("*.{js,ts}"), ".*\\.(js|ts)");
+        // No empty branch or group: BSD grep refuses them.
+        assert_eq!(e("{x*,y,}"), "(x.*|y)?");
         assert_eq!(e("[\\]a-]"), "[]a-]");
         assert_eq!(e("[!^x]"), "[^x^]");
         assert_eq!(e("[^]"), "\\^");
