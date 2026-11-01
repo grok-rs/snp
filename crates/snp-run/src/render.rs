@@ -83,6 +83,18 @@ pub fn full_msg(name: &str, status: Status, cols: usize, color: bool) -> String 
     s
 }
 
+/// `(interactive)`: the status column of an interactive hook's start line.
+const INTERACTIVE: &str = "(interactive)";
+
+/// The line printed before an `interactive` hook runs (ADR-085): `{name}{dots}(interactive)\n`, aligned with the
+/// status lines. The hook then reads and writes the terminal directly; its usual status line follows when it ends.
+pub fn interactive_msg(name: &str, cols: usize) -> String {
+    let mut s = dotted(name, cols, INTERACTIVE.len());
+    s.push_str(INTERACTIVE);
+    s.push('\n');
+    s
+}
+
 /// `name + '.' * (cols - len_cjk(name) - end_len - 1)`.
 fn dotted(name: &str, cols: usize, end_len: usize) -> String {
     let dots = cols
@@ -285,6 +297,15 @@ mod tests {
             full("start", "end", "post ", 20, None),
             "start......post end\n"
         );
+    }
+
+    #[test]
+    fn interactive_line_is_aligned_with_the_status_lines() {
+        let line = interactive_msg("commitizen", 80);
+        assert_eq!(line.len(), 80);
+        assert!(line.starts_with("commitizen....."));
+        assert!(line.ends_with("...(interactive)\n"));
+        assert_eq!(full_msg("commitizen", Status::Passed, 80, false).len(), 80);
     }
 
     #[test]

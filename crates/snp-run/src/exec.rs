@@ -23,6 +23,7 @@ use snp_git::pch_facts::PchFacts;
 use snp_hooks::{Epoch, HookCx, NativeSource};
 use snp_lang::RunPlan;
 use snp_proc::spawn::{self, Group, Output, PyStatus, Role, Spec, Stdin};
+use snp_proc::tty::Terminal;
 use snp_proc::xargs;
 use snp_repo::{ExecKind, ResolveCtx, ResolvedHook};
 
@@ -90,7 +91,9 @@ pub(crate) fn hook_cwd(root: &Path, h: &ResolvedHook) -> PathBuf {
     }
 }
 
-/// Runs one hook on `files` (already `()` when `pass_filenames: false`; relative to the hook's cwd).
+/// Runs one hook on `files` (already `()` when `pass_filenames: false`; relative to the hook's cwd). With `tty`
+/// (an `interactive` hook that found a terminal, ADR-085) a process hook's partitions run one after another on the
+/// terminal, uncaptured; hooks that run inside snp ignore it.
 ///
 /// # Errors
 ///
@@ -100,6 +103,7 @@ pub(crate) fn run_hook(
     e: &ExecEnv<'_>,
     h: &ResolvedHook,
     files: &[OsString],
+    tty: Option<&Terminal>,
 ) -> Result<Ran, Failure> {
     let cwd = hook_cwd(e.git.root(), h);
     if h.def.ext.root.is_some() && !cwd.is_dir() {
@@ -132,7 +136,7 @@ pub(crate) fn run_hook(
         }
         _ => {
             let plan = e.cx.resolver.plan(h, e.rcx, e.color)?;
-            run_plan(e, h, plan, files, &cwd)?
+            run_plan(e, h, plan, files, &cwd, tty)?
         }
     };
     interrupted(e)?;
@@ -179,6 +183,7 @@ fn run_plan(
     plan: RunPlan,
     files: &[OsString],
     cwd: &Path,
+    tty: Option<&Terminal>,
 ) -> Result<Ran, Failure> {
     match plan {
         RunPlan::Xargs {
@@ -195,7 +200,7 @@ fn run_plan(
             let serial = serial || h.def.require_serial;
             let jobs = xargs::target_concurrency(&env, serial, e.cpu);
             let order = shuffled(files, shuffle && !serial);
-            run_xargs(e, h, &cmd, &order, &env, cwd, jobs)
+            run_xargs(e, h, &cmd, &order, &env, cwd, jobs, tty)
         }
         RunPlan::Fail { entry } => {
             let names: Vec<&[u8]> = files.iter().map(|f| os_bytes(f)).collect();
@@ -263,6 +268,10 @@ struct Part {
 }
 
 /// `xargs.xargs` for a process hook.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "xargs.xargs' inputs plus the interactive terminal"
+)]
 fn run_xargs(
     e: &ExecEnv<'_>,
     h: &ResolvedHook,
@@ -271,6 +280,7 @@ fn run_xargs(
     env: &Env,
     cwd: &Path,
     jobs: NonZeroUsize,
+    tty: Option<&Terminal>,
 ) -> Result<Ran, Failure> {
     // `normalize_cmd` once per hook, before partitioning (`xargs.py:149-152`).
     let cmd = match snp_proc::resolve::normalize_cmd(cmd, env, cwd) {
@@ -291,7 +301,9 @@ fn run_xargs(
     };
     let timeout = h.def.ext.timeout;
     let deadline = timeout.and_then(|t| Instant::now().checked_add(t));
-    let group = if timeout.is_some() {
+    // an interactive hook stays in snp's (the terminal's foreground) process group: an isolated group could not read
+    // the terminal (SIGTTIN); its timeout then signals the child process only (ADR-085)
+    let group = if timeout.is_some() && tty.is_none() {
         Group::Isolated
     } else {
         Group::Inherit
@@ -302,7 +314,12 @@ fn run_xargs(
         _ => None,
     };
     let pty = e.color && cfg!(unix) && stdin.is_none();
-    let threads = NonZeroUsize::new(parts.len().min(jobs.get())).unwrap_or(NonZeroUsize::MIN);
+    // the partitions of an interactive hook take turns on the terminal
+    let threads = if tty.is_some() {
+        NonZeroUsize::MIN
+    } else {
+        NonZeroUsize::new(parts.len().min(jobs.get())).unwrap_or(NonZeroUsize::MIN)
+    };
     let results = e.cx.pool.map_ordered(threads, parts.len(), |i| {
         fault::hit(Point::WorkerPartition);
         let range = parts.get(i).cloned().unwrap_or(0..0);
@@ -318,14 +335,19 @@ fn run_xargs(
             argv: &argv,
             env,
             cwd,
-            stdin: stdin
-                .as_ref()
-                .map_or(Stdin::EmptyPipe, |b| Stdin::Bytes(Arc::clone(b))),
+            stdin: match (tty, &stdin) {
+                (Some(t), _) => Stdin::Terminal(t.clone()),
+                (None, Some(b)) => Stdin::Bytes(Arc::clone(b)),
+                (None, None) => Stdin::EmptyPipe,
+            },
             group,
             role: Role::Hook,
             deadline,
             cancel: &e.cx.cancel,
         };
+        if tty.is_some() {
+            return Ok(interactive_part(&spec));
+        }
         Ok(match spawn::merged(&spec, pty, &e.cx.budget) {
             Ok(m) => Part {
                 status: m.status,
@@ -375,6 +397,27 @@ fn run_xargs(
         timed_out: timeout.filter(|_| timed_out),
         ..Ran::default()
     })
+}
+
+/// One partition of an interactive hook: on the terminal, nothing captured; an unstartable program reports its error
+/// like any partition (`util.py:86-87`).
+fn interactive_part(spec: &Spec<'_>) -> Part {
+    match spawn::interactive(spec) {
+        Ok(r) => Part {
+            status: r.status,
+            output: Output::Memory(Vec::new()),
+            timed_out: r.timed_out,
+        },
+        Err(err) => {
+            let mut text = err.python_text().trim_end_matches('\n').to_owned();
+            text.push('\n');
+            Part {
+                status: PyStatus(1),
+                output: Output::Memory(text.into_bytes()),
+                timed_out: false,
+            }
+        }
+    }
 }
 
 /// A partition refused by cancellation (as opposed to a panicking or unstartable worker).

@@ -14,10 +14,12 @@ use std::time::Instant;
 
 use snp_config::ext::{FailOnChanges, OutputMode, Priority, RootExt, StageFixed};
 use snp_core::failure::Failure;
+use snp_core::lang::LanguageId;
 use snp_core::output::Printer;
 use snp_core::path::RepoPath;
 use snp_files::{Classifier, HookFilter};
 use snp_git::Git;
+use snp_proc::tty::Terminal;
 use snp_repo::{ExecKind, ResolvedHook};
 use snp_stash::diff_oracle::{Change, DiffOracle};
 
@@ -57,6 +59,8 @@ pub(crate) struct Loop<'a> {
     pub(crate) stage_fixed: bool,
     /// The root extension keys (`priorities`).
     pub(crate) root_ext: &'a RootExt,
+    /// `SNP_NO_TTY`: `interactive` hooks run like any other hook (ADR-085).
+    pub(crate) no_tty: bool,
 }
 
 /// What the loop produced.
@@ -118,13 +122,32 @@ fn priority(h: &ResolvedHook, root: &RootExt) -> u64 {
     }
 }
 
-/// Buckets of positions: ascending priority, config order inside a bucket.
+/// Buckets of positions: ascending priority, config order inside a bucket. An `interactive` hook is a bucket of its
+/// own (ADR-085): the members of its priority before it in config order form one bucket, the ones after it another,
+/// so nothing else runs while it owns the terminal.
 fn buckets(hooks: &[&ResolvedHook], root: &RootExt) -> Vec<Vec<usize>> {
     let mut by: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
     for (i, h) in hooks.iter().enumerate() {
         by.entry(priority(h, root)).or_default().push(i);
     }
-    by.into_values().collect()
+    let mut out = Vec::new();
+    for bucket in by.into_values() {
+        let mut cur = Vec::new();
+        for pos in bucket {
+            if hooks.get(pos).is_some_and(|h| h.def.ext.interactive) {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+                out.push(vec![pos]);
+            } else {
+                cur.push(pos);
+            }
+        }
+        if !cur.is_empty() {
+            out.push(cur);
+        }
+    }
+    out
 }
 
 /// Head-of-line printer state.
@@ -140,6 +163,10 @@ struct Out<'a> {
     /// A start segment was written for this position.
     started: Option<usize>,
     done: BTreeMap<usize, Done>,
+    /// Blocks printed ahead of config order (before or of an `interactive` hook); `flush` steps over them.
+    printed: BTreeSet<usize>,
+    /// `interactive` hooks whose block prints as soon as it is done.
+    eager: BTreeSet<usize>,
     summary: Vec<(usize, Status, Option<f64>)>,
 }
 
@@ -155,15 +182,56 @@ impl Out<'_> {
         self.started = Some(pos);
     }
 
-    /// Prints every finished block that is next in config order.
+    /// Prints every finished block that is next in config order, then the finished `interactive` blocks.
     fn flush(&mut self, hooks: &[&ResolvedHook]) {
-        while let Some(d) = self.done.remove(&self.next) {
-            if let Some(h) = hooks.get(self.next) {
-                self.print(h, &d, self.started == Some(self.next));
+        loop {
+            if let Some(d) = self.done.remove(&self.next) {
+                if let Some(h) = hooks.get(self.next) {
+                    self.print(h, &d, self.started == Some(self.next));
+                }
+                self.summary.push((self.next, d.status, d.duration));
+            } else if !self.printed.remove(&self.next) {
+                break;
             }
-            self.summary.push((self.next, d.status, d.duration));
             self.next = self.next.saturating_add(1);
         }
+        let eager: Vec<usize> = self
+            .eager
+            .iter()
+            .copied()
+            .filter(|p| self.done.contains_key(p))
+            .collect();
+        for pos in eager {
+            self.eager.remove(&pos);
+            self.print_ahead(hooks, pos);
+        }
+    }
+
+    /// Prints the finished block at `pos` now, ahead of config order.
+    fn print_ahead(&mut self, hooks: &[&ResolvedHook], pos: usize) {
+        if let Some(d) = self.done.remove(&pos) {
+            if let Some(h) = hooks.get(pos) {
+                self.print(h, &d, self.started == Some(pos));
+            }
+            self.summary.push((pos, d.status, d.duration));
+            self.printed.insert(pos);
+        }
+    }
+
+    /// Before an `interactive` hook runs (ADR-085): every finished block prints now (with `priority`, ahead of hooks
+    /// that run later), then `{name}....(interactive)`, flushed before the hook takes the terminal; its block prints
+    /// as soon as it is done.
+    fn begin_interactive(&mut self, hooks: &[&ResolvedHook], pos: usize, name: &str) {
+        self.flush(hooks);
+        let held: Vec<usize> = self.done.keys().copied().collect();
+        for p in held {
+            self.print_ahead(hooks, p);
+        }
+        self.flush(hooks);
+        self.eager.insert(pos);
+        self.printer
+            .write(render::interactive_msg(name, self.cols).as_bytes());
+        self.printer.flush();
     }
 
     /// At the end (or after `fail_fast`): the finished blocks in config order, skipping hooks that never ran.
@@ -260,6 +328,8 @@ pub(crate) fn run_hooks(l: &Loop<'_>, oracle: &mut DiffOracle) -> Result<LoopRes
         next: 0,
         started: None,
         done: BTreeMap::new(),
+        printed: BTreeSet::new(),
+        eager: BTreeSet::new(),
         summary: Vec::new(),
     };
     let mut res = LoopResult::default();
@@ -502,12 +572,39 @@ fn run_sequential(
 ) -> Result<Vec<(usize, Done)>, Failure> {
     let mut finished = Vec::new();
     for job in jobs {
-        if out.can_start(job.pos) {
+        let tty = terminal(l, job.hook);
+        if tty.is_some() {
+            out.begin_interactive(l.hooks, job.pos, &job.hook.def.name);
+        } else if out.can_start(job.pos) {
             out.start(job.pos, &job.hook.def.name);
         }
-        finished.push((job.pos, run_one(l, oracle, fixes, &job)?));
+        let d = run_one(l, oracle, fixes, &job, tty.as_ref())?;
+        // a killed interactive hook (timeout, signal) was cut off mid-prompt: its status line starts a new line
+        if tty.is_some() && d.code < 0 {
+            out.printer.write(b"\n");
+        }
+        finished.push((job.pos, d));
     }
     Ok(finished)
+}
+
+/// The terminal of an `interactive` process hook (ADR-085). `None` for every other hook, under `SNP_NO_TTY`, and when
+/// no terminal is usable — then after a one-line stderr note, and the hook runs like any other.
+fn terminal(l: &Loop<'_>, h: &ResolvedHook) -> Option<Terminal> {
+    let spawns = matches!(h.exec, ExecKind::Language)
+        && !matches!(h.def.language, LanguageId::Fail | LanguageId::Pygrep);
+    if !h.def.ext.interactive || !spawns || l.no_tty {
+        return None;
+    }
+    match Terminal::open() {
+        Ok(t) => Some(t),
+        Err(why) => {
+            l.e.cx
+                .printer
+                .diag(&messages::interactive_no_tty(&h.def.id, &why.to_string()));
+            None
+        }
+    }
 }
 
 /// One executed hook: run, modification decision, `stage_fixed`.
@@ -516,6 +613,7 @@ fn run_one(
     oracle: &mut DiffOracle,
     fixes: &mut Fixes,
     job: &Job<'_>,
+    tty: Option<&Terminal>,
 ) -> Result<Done, Failure> {
     let e = l.e;
     let root = e.git.root();
@@ -538,7 +636,7 @@ fn run_one(
     };
     let t0 = e.cx.clock.now();
     oracle.before_hook()?;
-    let ran = exec::run_hook(e, h, &job.argv_files)?;
+    let ran = exec::run_hook(e, h, &job.argv_files, tty)?;
     let duration = Some(secs(e, t0));
     let mut change = decide(oracle, h, &ran)?;
     let mut ran = ran;
@@ -558,7 +656,7 @@ fn run_one(
             } else {
                 // `verify`: one re-run on the same inputs; it must pass without new changes
                 oracle.before_hook()?;
-                let again = exec::run_hook(e, h, &job.argv_files)?;
+                let again = exec::run_hook(e, h, &job.argv_files, tty)?;
                 let c2 = decide(oracle, h, &again)?;
                 let ok = again.code == 0 && c2 == Change::Unchanged;
                 ran = again;
@@ -722,7 +820,7 @@ fn run_concurrently(lp: &Loop<'_>, jobs: &[Job<'_>]) -> Result<Vec<BucketRun>, F
                             break;
                         };
                         let t0 = env.cx.clock.now();
-                        let r = exec::run_hook(env, job.hook, &job.argv_files)
+                        let r = exec::run_hook(env, job.hook, &job.argv_files, None)
                             .map(|ran| (ran, Some(secs(env, t0))));
                         mine.push((idx, r));
                     }

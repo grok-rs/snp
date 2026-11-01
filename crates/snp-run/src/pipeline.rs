@@ -425,6 +425,7 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         ci: run_env.is_truthy_flag("CI"),
         stage_fixed,
         root_ext: &cfg.root_ext,
+        no_tty: run_env.is_truthy_flag("SNP_NO_TTY"),
     };
     let res = sched::run_hooks(&lp, &mut oracle)?;
     let mut retval = res.retval;
