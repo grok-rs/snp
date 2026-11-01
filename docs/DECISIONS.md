@@ -7,7 +7,7 @@ decision was needed, with sources), **Decision**, **Rationale**, **Consequences*
 approved by the integration lead and the owners of the affected packages; the amended ADR only gains a status line
 naming the amending ADR, which is normative where they differ. ADR-056…ADR-080 apply the second design review
 (2026-10-08); Appendix B lists every finding and its disposition. ADR-081 applies the verification of the W0 skeleton;
-ADR-082 the end-to-end integration of the merged packages.
+ADR-082 the end-to-end integration of the merged packages; ADR-083 the verification of the integrated `main`.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -731,6 +731,8 @@ locks or restores. `snp_core::fault` (feature `fault-injection`, owner WP-00) pr
 
 ### ADR-067 — Stash hardening, round 2
 
+*Status: Accepted; amended by ADR-083 (dismissal of orphaned-stash notices). The amending ADR is normative where they differ.*
+
 **Context.** Renaming the patch to `patch<secs>-<pid>` could replace a concurrent run's live patch (same second and pid
 across PID namespaces sharing a store); the fsyncs between `diff-index` and `git checkout -- .` (F_FULLFSYNC: 10–50 ms
 each on macOS) widened pre-commit's ~1 ms window in which an editor autosave is discarded; pid-based liveness fails under
@@ -988,6 +990,51 @@ would mean dropping pre-commit's own `write-tree`/`diff-index`, the data-safety 
 **Consequences.** ARCHITECTURE §12.1, the §1.4.13 comments and §1.4.16 (`marker_repo_name`), WBS WP-36, `bench/README.md` and
 `crates/snp/tests/it/budgets.rs` state the corrected bounds; B6 measures 10–11 spawns. Amends ADR-070 (item 10: "B3
 stays ≤ 17 spawns").
+
+### ADR-083 — Post-integration verification corrections
+
+**Context.** An independent verification of the integrated `main` found: (a) the B2/B3 wall-clock tests of
+`crates/snp/tests/it/budgets.rs` and the 100 MB resident-memory bound of `snp-proc`'s output-budget test ran in the
+default nextest gate and failed 2 runs in 6 under load, although ADR-071 puts every threshold test in the release-mode
+perf-smoke job; (b) snp forwards a SIGINT sent with kill(2) to the running hooks (ADR-065, ARCHITECTURE §10.4) while
+pre-commit 4.6.2 never signals the hook (it keeps running, orphaned, after the restore) — an observable difference with
+no register ID (K4), which `x13-eh-04` had hidden by narrowing its `git status`; (c) the orphaned-stash notice of §4.6
+could never be dismissed: after the user ran the printed `Restore with:` command the journal still said `stashed`, so
+the notice repeated on every run, and the `snp doctor --fix` removal §4.6 promised did not exist; (d) a stashing run
+skipped the step-5 recovery scan (it reported inside `snp_stash::enter`, ADR-082's integration fix), so a run ending in
+a preflight check before the stash (unmerged files, an unstaged config) never showed the notice; (e) `cargo xtask
+difftest` built `-p snp -p snp-probe -p snp-difftest` in one cargo invocation, whose feature unification (the harness's
+`insta`/`regex` turn on `syn` features) gave a different `snp` than a plain build; (f) B3's syscall ceiling was still the
+provisional soft 4000; (g) `libyaml-safer` was declared in the workspace with a profile override although snp-yaml uses
+its in-tree port (ADR-002's fork); (h) the two non-hermetic python rows of `crates/snp-repo/tests/catalog.rs` could not
+pass with a real python: the harness answered every setup command with the scripted empty `ShimRunner` reply.
+**Decision.** (1) Every wall-clock or resident-memory bound is `#[ignore = "perf"]` and named `perf_*` (the perf-smoke
+filter, release build, 3× margin); the deterministic part of such a test (the output budget spills and keeps every byte)
+stays in the default gate as its own test. (2) New register ID **D-DATA-18** (class DATA: the orphaned hook can write
+into the worktree after the restore) with its rationale and scenario; `x13-eh-04` observes the whole `git status` and
+the hook's signal record again under `expect_divergence: D-DATA-18`. (3) Dismissal of an orphan (§4.6): a recovery pass
+(lock held) runs `git apply --check --reverse <patch>` for each orphan; when the changes are back, its journal and
+pointer are removed with the one-time notice `snp: the unstaged changes saved in <patch> are back in the worktree; the
+recovery notice of that interrupted run is retired` (plus the intent-to-add notice when it had cleared entries). Every
+other orphan keeps its notice, followed once per pass by `snp: this notice repeats until those changes are back in the
+worktree; to dismiss it and keep the patch, run: snp doctor --fix --stash`. `snp doctor --fix --stash` retires every
+orphan of the worktree (`snp_stash::dismiss_unrestored`), applied or not, and names each patch. A retirement never
+deletes the patch; it resets the patch's modification time, so gc's 30-day retention of unjournaled patches (D-DATA-04)
+counts from the retirement. (4) Every non-nested run makes the recovery pass at step 5 (`snp_stash::recovery_report`,
+non-blocking lock probe); `StashCtx::report_recovery` is `false` when that pass ran, so `enter` reports only when the
+probe found the lock held: exactly one report per run on every path. (5) `cargo xtask difftest` builds `snp` in a cargo
+invocation of its own, then `snp-probe` and `snp-difftest`. (6) B3's syscall ceiling is hard: 3842–3845 measured on the
+dist build (`strace -f -c` over snp, its 8 git and 10 hook children; Linux 7.0, glibc 2.39) + ~10 % = 4230. (7) The
+unused `libyaml-safer` workspace dependency and its profile override are removed (cargo-machete and cargo-deny clean).
+(8) The snp-repo test harness can run setup commands with the real `ProcRunner` (`H::real()`), which the non-hermetic
+rows use.
+**Rationale.** A default gate that fails on machine load trains people to rerun it; the perf job measures the same
+bounds where they mean something. The forwarding is the safer behaviour (the terminal ^C already stops the hook under
+both tools), so it is registered, not removed. A notice that cannot be silenced is ignored, and then a real one is too;
+retiring only on proof (the reverse check) or on an explicit command keeps the "never applied, never lost" rule of §4.6.
+**Consequences.** ARCHITECTURE §4.6 and §12.3, COMPATIBILITY §5.2 (D-DATA-18), D-DATA-13/D-DIAG-04 (texts and
+scenarios), `bench/budgets.toml`, `bench/README.md`, WBS WP-15 (owned divergence files) and the user troubleshooting page
+state the new behaviour. Amends ADR-067 (recovery: dismissal) and ADR-082 (the print-once fix).
 
 ---
 

@@ -152,7 +152,7 @@ snp/
 ```
 
 26 crates. Sizing rule: each crate is 1–10 kLOC with one owner per wave. Every compile-heavy third-party subtree lives
-in exactly one crate (`regex`/`fancy-regex` → snp-pyre, `libyaml-safer` → snp-yaml, `ureq`/`rustls`/`tar`/`zip` →
+in exactly one crate (`regex`/`fancy-regex` → snp-pyre, `ureq`/`rustls`/`tar`/`zip` →
 snp-net) so they compile in parallel and downstream edits never rebuild them.
 
 ### 1.2 Dependency DAG and implementation waves
@@ -2724,17 +2724,25 @@ reviewer. `Drop` is the panic fallback only.
 ### 4.6 Recovery
 
 Liveness is the worktree lock, never a pid (ADR-067: pids are reused, meaningless across PID namespaces sharing a
-store, and a pid check cannot see a GUI client's other store). On every non-nested `run`/`hook-impl` start,
-`recovery_scan` tries the worktree lock without blocking; if it is held, another live run owns the worktree and nothing
-is reported; if acquired (also inside `enter`, which holds it anyway), every non-`restored` journal for this worktree —
+store, and a pid check cannot see a GUI client's other store). On every non-nested `run`/`hook-impl` start (step 5,
+before any preflight can end the run), `recovery_report` tries the worktree lock without blocking; if it is held,
+another live run owns the worktree and nothing is reported then — a stashing run reports inside `enter` once it holds
+the lock (`StashCtx::report_recovery`), so each notice is printed exactly once per run on every path (ADR-083); if
+acquired, every non-`restored` journal for this worktree —
 found through the git-dir pointer (any store) and one `readdir` of this store's `patches/` — is orphaned by definition,
 and produces on **stderr**: `snp: an earlier run was interrupted before it restored your unstaged changes; they are
 saved in <patch> (index tree <tree>). Restore with: git apply --3way <patch>`, preceded for the `staging-fixed` state by
 `git reset -q <tree> -- <paths…>` (or `git read-tree <tree>` when the path list is long) — never auto-applied (the user
 may have continued working; `--3way` also works after a partial apply because `--binary` patches carry full index
-lines and their preimage blobs exist). `snp doctor` lists them; `snp cache gc`/`gc` never deletes them; the pointer is
-removed only when its journal reaches Done or the user deletes it (`snp doctor --fix` offers this after showing the
-hint).
+lines and their preimage blobs exist). The notices of a pass are followed once by `snp: this notice repeats until
+those changes are back in the worktree; to dismiss it and keep the patch, run: snp doctor --fix --stash`. Dismissal
+(ADR-083): an orphan whose patch is already applied to the worktree (`git apply --check --reverse <patch>` succeeds —
+the user ran the printed command, or restored the work another way) is retired by that pass: its journal and pointer
+are removed and `snp: the unstaged changes saved in <patch> are back in the worktree; the recovery notice of that
+interrupted run is retired` is printed once (plus the intent-to-add notice when the run had cleared entries).
+`snp doctor --fix --stash` retires every orphan of the worktree explicitly, applied or not, naming each kept patch.
+Retiring never deletes the patch; its modification time is reset, so `gc`'s 30-day retention (D-DATA-04) counts from
+the retirement. `snp doctor` lists the orphans; `snp cache gc`/`gc` never deletes a journaled patch.
 
 ### 4.7 Fault-injection coverage (`snp_git::testing::ScriptedBackend`)
 
@@ -3562,9 +3570,9 @@ scenario (catches accidental O(files) spawns); timing gates use the `dist` build
 package acceptance lists are enforced in two places: a release-mode `#[test] #[ignore = "perf"]` per threshold with a
 3× safety factor run by the `perf-smoke` CI job (W1/W2, catches gross regressions), and the exact targets by `cargo
 xtask bench gate` (WP-36). The bench matrix includes the musl artifacts (system allocator vs mimalloc, ADR-079) and a
-B12 case with 32 threads × 20 patterns on non-ASCII paths (regex cache memory). Syscalls: nightly
-Linux `strace -f -c` on B1/B3 with committed ceilings (B1 ≤ 64 syscalls). Allocations: bench feature `dhat-heap`
-(B3 ≤ 2 MB total allocated). Criterion micro-benches: pyre kinds vs engines on 100 k paths, shuffle + partition on 50 k,
+B12 case with 32 threads × 20 patterns on non-ASCII paths (regex cache memory). Syscalls: nightly Linux `strace -f
+-c` on B1/B3 with committed hard ceilings (B1 ≤ 64 syscalls; B3 ≤ 4230 over the whole process tree, ADR-083).
+Allocations: bench feature `dhat-heap` (B3 ≤ 2 MB total allocated). Criterion micro-benches: pyre kinds vs engines on 100 k paths, shuffle + partition on 50 k,
 tagging tiers, YAML load of the pre-commit-hooks manifest, argparse parse of a hook-impl argv, `len_cjk`.
 
 ---
