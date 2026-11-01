@@ -4,7 +4,8 @@
 # (`target/oracle/pc462-py313/bin/pre-commit-snp-prog`) in snp-brand runs, then requires byte equality with snp.
 # argparse texts (usage, help, usage errors) are never substituted: they are rendered with prog `snp`.
 #
-# Created by WP-00 from COMPATIBILITY §3.3; owned by WP-35 afterwards (WBS "Divergence files").
+# Created by WP-00 from COMPATIBILITY §3.3; owned by WP-35 (snp-difftest validates it at load: `version: 1`, non-empty
+# `from` texts, no rule touching a `never` entry; the apply/invert round trip is unit-tested).
 version: 1
 
 # A line exactly equal to `from` becomes `to`; applied before the substring rules (a plain substitution would give
@@ -12,14 +13,17 @@ version: 1
 whole_line:
   - from: "pre-commit 4.6.2"
     to: "snp 2.0.0"
+  # The prog-patched oracle renders argparse's `%(prog)s 4.6.2` version action as `snp 4.6.2`.
+  - from: "snp 4.6.2"
+    to: "snp 2.0.0"
 
 # Substring rules, applied in this order to every non-argparse line of stdout and stderr.
 substitutions:
   # install / uninstall (install_uninstall.py:85,111,157)
   - from: "pre-commit installed at "
     to: "snp installed at "
-  # COMPATIBILITY §3.3 row. Note: install_uninstall.py:157 prints `{hook_type} uninstalled`, so this line names the
-  # hook type `pre-commit`; WP-33/WP-35 confirm the rule before relying on it.
+  # COMPATIBILITY §3.3 row. install_uninstall.py:157 prints `{hook_type} uninstalled`: only the default hook type's
+  # line (`pre-commit uninstalled`) names the tool and is branded; `pre-push uninstalled` & co. stay.
   - from: "pre-commit uninstalled"
     to: "snp uninstalled"
   - from: "Use -f to use only pre-commit."
