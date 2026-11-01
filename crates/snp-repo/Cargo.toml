@@ -25,6 +25,8 @@ blake3.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+snp-git = { workspace = true, features = ["testing"] }
+snp-lang = { workspace = true, features = ["testing"] }
 snp-testkit.workspace = true
 tempfile.workspace = true
 

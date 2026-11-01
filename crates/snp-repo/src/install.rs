@@ -914,6 +914,32 @@ mod tests {
     }
 
     #[test]
+    fn x13_env_04_a_stale_env_dir_that_cannot_be_removed_is_an_os_error() {
+        // `rmtree` repairs permissions like pre-commit's `util.rmtree`, so an unremovable directory needs a foreign
+        // owner; the containment refusal takes the same path (the install stops before touching anything else).
+        let tmp = tempfile::tempdir().unwrap();
+        let envs = tmp.path().join("envs");
+        std::fs::create_dir(&envs).unwrap();
+        let outside = tmp.path().join("py_env-x");
+        std::fs::create_dir(&outside).unwrap();
+        let job = Job {
+            key: key(1, &[]),
+            src: Arc::from("local"),
+            prefix: tmp.path().to_path_buf(),
+            envs,
+            env_dir: outside.clone(),
+            is_local: true,
+        };
+        let err = LangInstaller::remove(&job).unwrap_err();
+        let Failure::Exc { exc, .. } = err else {
+            panic!("{err:?}")
+        };
+        assert_eq!(exc.ty, "PermissionError");
+        assert!(String::from_utf8_lossy(&exc.text).contains(&*outside.to_string_lossy()));
+        assert!(outside.is_dir());
+    }
+
+    #[test]
     fn digests_distinguish_keys() {
         assert_ne!(key_digest(&key(1, &[])), key_digest(&key(1, &["a"])));
         assert_ne!(
