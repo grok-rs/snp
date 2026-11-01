@@ -18,8 +18,8 @@ use snp_core::stage::{HookType, Stage};
 use crate::ExtMode;
 use crate::ext::{self, HOOK_EXT_KEYS, ROOT_EXT_KEYS};
 use crate::items::{
-    BUILTIN, BuiltinNoRev, Compiled, DEFAULT, DeprecatedStagesWarning, ExtKey, LOCAL,
-    LanguageMigration, META, NotAllowed, PriorityAliases, SensibleRegex, StagesMigration,
+    BUILTIN, BuiltinNoRev, Compiled, DEFAULT, DeprecatedStagesWarning, ExtKey, InteractiveLanguage,
+    LOCAL, LanguageMigration, META, NotAllowed, PriorityAliases, SensibleRegex, StagesMigration,
     UnlessBuiltin, WarnMutableRev, check_min_version, check_string_regex, check_type_tag,
     language_values,
 };
@@ -147,12 +147,21 @@ fn common_hook_warnings(brand: Brand) -> Vec<Validator> {
     ]
 }
 
-/// The hook-level extension items (ARCHITECTURE §8.2), appended after pre-commit's items.
-fn hook_ext_items() -> Vec<Validator> {
-    HOOK_EXT_KEYS
+/// The hook-level extension items (ARCHITECTURE §8.2), appended after pre-commit's items. `in_process` names the
+/// kind of a dict whose hooks never spawn a process (meta, `repo: builtin`): `interactive: true` is refused there;
+/// elsewhere it is refused together with `language: fail` / `pygrep` (ADR-085).
+fn hook_ext_items(in_process: Option<&'static str>) -> Vec<Validator> {
+    let mut items: Vec<Validator> = HOOK_EXT_KEYS
         .iter()
-        .map(|k| ExtKey::item(k, ext::hook_check(k)))
-        .collect()
+        .map(|k| match *k {
+            "interactive" => ExtKey::item(k, ext::check_interactive(in_process)),
+            _ => ExtKey::item(k, ext::hook_check(k)),
+        })
+        .collect();
+    if in_process.is_none() {
+        items.push(Validator::custom(InteractiveLanguage));
+    }
+    items
 }
 
 /// `MANIFEST_HOOK_DICT`.
@@ -171,7 +180,7 @@ fn config_hook_dict(brand: Brand, ext: ExtMode) -> Schema {
     )));
     items.extend(common_hook_warnings(brand));
     if ext == ExtMode::Enabled {
-        items.extend(hook_ext_items());
+        items.extend(hook_ext_items(None));
     }
     Schema::map("Hook", Some(Value::from("id")), items)
 }
@@ -181,7 +190,7 @@ fn local_hook_dict(brand: Brand, ext: ExtMode) -> Schema {
     let mut items = manifest_items(brand);
     items.extend(common_hook_warnings(brand));
     if ext == ExtMode::Enabled {
-        items.extend(hook_ext_items());
+        items.extend(hook_ext_items(None));
     }
     Schema::map("Hook", Some(Value::from("id")), items)
 }
@@ -252,7 +261,7 @@ fn meta_hook_dict(brand: Brand, ext: ExtMode) -> Schema {
     }
     items.extend(common_hook_warnings(brand));
     if ext == ExtMode::Enabled {
-        items.extend(hook_ext_items());
+        items.extend(hook_ext_items(Some("meta")));
     }
     Schema::map("Hook", Some(Value::from("id")), items)
 }
@@ -281,7 +290,7 @@ fn builtin_hook_dict(brand: Brand) -> Schema {
         false,
     )));
     items.extend(common_hook_warnings(brand));
-    items.extend(hook_ext_items());
+    items.extend(hook_ext_items(Some("repo: builtin")));
     Schema::map("Hook", Some(Value::from("id")), items)
 }
 
@@ -457,7 +466,7 @@ fn overlay_patch_dict(brand: Brand) -> Schema {
         CheckFn::check_one_of(language_values()),
         false,
     )));
-    items.extend(hook_ext_items());
+    items.extend(hook_ext_items(None));
     Schema::map("Hook", None, items)
 }
 

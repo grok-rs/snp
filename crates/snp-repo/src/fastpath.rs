@@ -141,8 +141,9 @@ pub(crate) fn tier_a_candidate(profile: &'static TagProfile, id: &str) -> Option
         })
 }
 
-/// G4 (09 §6.4): the user's hook config or the overlay patch sets `language`, `entry` or a non-empty
-/// `additional_dependencies`; the offending key.
+/// G4 (09 §6.4): the user's hook config or the overlay patch sets `language`, `entry`, a non-empty
+/// `additional_dependencies` or `interactive: true` (an interactive hook needs a real process, ADR-085); the offending
+/// key.
 fn user_override(c: Option<&ConfigHook>, patch: Option<&HookPatch>) -> Option<String> {
     let mut keys: Vec<(String, bool)> = Vec::new();
     if let Some(c) = c {
@@ -155,14 +156,21 @@ fn user_override(c: Option<&ConfigHook>, patch: Option<&HookPatch>) -> Option<St
     if let Some(p) = patch {
         for (k, v) in &p.raw {
             if let Some(k) = k.as_str() {
-                keys.push((k.to_owned(), v.as_array().is_some_and(|a| !a.is_empty())));
+                // a non-empty list, or `true`
+                let set = v.as_array().is_some_and(|a| !a.is_empty()) || v.as_bool() == Some(true);
+                keys.push((k.to_owned(), set));
             }
         }
+    }
+    // `ConfigHook::raw` holds pre-commit's keys only (its extension keys are parsed into `ext`, and in strict mode
+    // `interactive` is an unknown key that changes nothing)
+    if c.is_some_and(|c| c.ext.interactive) {
+        keys.push(("interactive".to_owned(), true));
     }
     keys.into_iter()
         .find_map(|(k, non_empty)| match k.as_str() {
             "language" | "entry" => Some(k),
-            "additional_dependencies" if non_empty => Some(k),
+            "additional_dependencies" | "interactive" if non_empty => Some(k),
             _ => None,
         })
 }

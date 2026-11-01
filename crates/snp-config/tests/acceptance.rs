@@ -224,6 +224,56 @@ repos:
         err(&load_config_text(&text, PC, E))
     }
 
+    /// ADR-085: `interactive: true` is a hook-level bool; hooks that never spawn a process refuse it.
+    #[test]
+    fn interactive_needs_a_process_hook() {
+        let ok_text = "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: system\n        interactive: true\n    -   id: b\n        name: b\n        entry: b\n        language: fail\n        interactive: false\n";
+        let (cfg, w) = ok(load_config_text(ok_text, PC, E));
+        assert_eq!(w, NONE);
+        let hooks = local_hooks(&cfg);
+        assert!(hooks[0].ext.interactive);
+        assert!(!hooks[1].ext.interactive);
+        // strict mode: an unknown key like any other extension key
+        let (cfg, _) = ok(load_config_text(ok_text, PC, S));
+        assert!(!local_hooks(&cfg)[0].ext.interactive);
+        let leaf = |kind: &str| {
+            format!(
+                "==> At key: interactive\n=====> interactive: true needs a hook that runs a process; {kind} hooks run inside snp"
+            )
+        };
+        for lang in ["fail", "pygrep"] {
+            let text = format!(
+                "repos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: {lang}\n        interactive: true\n"
+            );
+            assert_eq!(
+                err(&load_config_text(&text, PC, E)),
+                format!(
+                    "{}{}",
+                    hook_ctx("'local'", "'a'"),
+                    leaf(&format!("language: {lang}"))
+                )
+            );
+        }
+        let meta = "repos:\n-   repo: meta\n    hooks: [{id: identity, interactive: true}]\n";
+        assert_eq!(
+            err(&load_config_text(meta, PC, E)),
+            format!("{}{}", hook_ctx("'meta'", "'identity'"), leaf("meta"))
+        );
+        let builtin =
+            "repos:\n-   repo: builtin\n    hooks: [{id: check-yaml, interactive: true}]\n";
+        assert_eq!(
+            err(&load_config_text(builtin, PC, E)),
+            format!(
+                "{}{}",
+                hook_ctx("'builtin'", "'check-yaml'"),
+                leaf("repo: builtin")
+            )
+        );
+        let builtin_off =
+            "repos:\n-   repo: builtin\n    hooks: [{id: check-yaml, interactive: false}]\n";
+        ok(load_config_text(builtin_off, PC, E));
+    }
+
     #[test]
     fn extension_values_are_validated_with_pre_commit_contexts() {
         let ctx = hook_ctx("'local'", "'a'");
@@ -334,8 +384,8 @@ repos:
                 "==> At key: fail_on_changes\n=====> Expected one of always, ci, never, non-ci but got: 'sometimes'",
             ),
             (
-                "interactive: true",
-                "==> At key: interactive\n=====> 'interactive' is not available in this version",
+                "interactive: 1",
+                "==> At key: interactive\n=====> Expected bool got int",
             ),
             (
                 "follow: false",

@@ -226,7 +226,12 @@ pub(crate) fn bad_snp_version(version_repr: &str) -> String {
     format!("invalid version {version_repr}: expected MAJOR.MINOR.PATCH")
 }
 
-/// A reserved extension key (`interactive`, `follow`; ARCHITECTURE §8.2).
+/// `interactive: true` on a hook that runs inside snp (ADR-085).
+pub(crate) fn interactive_in_process(kind: &str) -> String {
+    format!("interactive: true needs a hook that runs a process; {kind} hooks run inside snp")
+}
+
+/// A reserved extension key (`follow`; ARCHITECTURE §8.2).
 pub(crate) fn reserved_key(key_repr: &str) -> String {
     format!("{key_repr} is not available in this version")
 }

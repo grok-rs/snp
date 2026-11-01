@@ -555,6 +555,34 @@ impl MapItem for ExtKey {
     }
 }
 
+/// `interactive: true` with `language: fail` or `pygrep`: those hooks never spawn a process (ADR-085). Reported at
+/// `interactive` after its own bool check.
+#[derive(Debug)]
+pub(crate) struct InteractiveLanguage;
+
+impl MapItem for InteractiveLanguage {
+    fn check(&self, dct: &Map, _cx: &mut Cx<'_>) -> Result<(), ValidationError> {
+        if dct
+            .get(&Value::from("interactive"))
+            .and_then(Value::as_bool)
+            != Some(true)
+        {
+            return Ok(());
+        }
+        match dct.get(&Value::from("language")).and_then(Value::as_str) {
+            Some(lang @ ("fail" | "pygrep")) => validate_context(
+                || "At key: interactive".to_owned(),
+                || {
+                    Err(ValidationError::new(messages::interactive_in_process(
+                        &format!("language: {lang}"),
+                    )))
+                },
+            ),
+            _ => Ok(()),
+        }
+    }
+}
+
 /// `priority: <name>` must name an entry of the root `priorities` (checked once at the root, after every
 /// pre-commit item, with the contexts cfgv would have produced: `At key: repos` / `At Repository(repo=…)` /
 /// `At key: hooks` / `At Hook(id=…)` / `At key: priority`).
