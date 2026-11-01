@@ -1510,7 +1510,7 @@ mod tests {
                         .filter(|l| !l.is_empty() && !l.starts_with('#'))
                     {
                         assert!(
-                            l.starts_with("package(snp-")
+                            (l.starts_with("package(snp-") || l.starts_with("package(snp) "))
                                 && l.contains(" & test(=")
                                 && l.ends_with(')'),
                             "{}: {l}",
