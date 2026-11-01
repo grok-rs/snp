@@ -19,6 +19,24 @@ pub(crate) fn text(b: &[u8]) -> String {
     String::from_utf8_lossy(b).replace("\r\n", "\n")
 }
 
+/// A `PATH` with git but neither snp nor pre-commit: the system directories (POSIX), or git's own directory
+/// (Windows).
+pub(crate) fn path_without_snp(env: &TestEnv) -> String {
+    if cfg!(windows) {
+        env.env()
+            .get("PATH")
+            .map(std::env::split_paths)
+            .into_iter()
+            .flatten()
+            .find(|d| d.join("git.exe").is_file())
+            .expect("git on PATH")
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        "/usr/bin:/bin".to_owned()
+    }
+}
+
 /// `s` with `\` read as `/` on Windows, for texts whose only platform difference is the path separator: pre-commit
 /// prints `os.path.join`ed paths (`.git\hooks\pre-commit` there), which the Windows difftest platform scenarios
 /// compare against the oracle itself.

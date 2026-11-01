@@ -722,8 +722,13 @@ mod tests {
         let base = snp_pycompat::ospath::realpath(tmp.path().as_os_str(), Path::new("/")).unwrap();
         let root = base.join("repo");
         std::fs::create_dir_all(&root).unwrap();
+        // the process's PATH: git lives elsewhere on Windows
+        let path = Env::capture_process().get("PATH").map_or_else(
+            || "/usr/local/bin:/usr/bin:/bin".to_owned(),
+            |p| p.to_string_lossy().into_owned(),
+        );
         let env = Env::from_pairs([
-            ("PATH", "/usr/local/bin:/usr/bin:/bin"),
+            ("PATH", path.as_str()),
             ("HOME", base.to_str().unwrap()),
             ("GIT_CONFIG_NOSYSTEM", "1"),
             ("GIT_AUTHOR_NAME", "a"),

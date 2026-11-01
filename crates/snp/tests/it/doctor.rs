@@ -54,7 +54,7 @@ fn doctor_predicts_failing_commits_and_fixes_them() {
         &r.join(".git/hooks/pre-commit"),
         pre_commit_script("/nonexistent/python", " --skip-on-missing-config").as_bytes(),
     );
-    let env2 = env.with_env("PATH", "/usr/bin:/bin");
+    let env2 = env.with_env("PATH", crate::cli::path_without_snp(&env));
     let out = env2.snp(&r).arg("doctor").output();
     let o = text(&out.stdout);
     if !o.contains("pre-commit on PATH: not found") {
