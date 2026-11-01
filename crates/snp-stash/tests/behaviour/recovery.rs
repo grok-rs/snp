@@ -209,9 +209,10 @@ fn stale_files_are_cleaned_and_garbage_is_ignored() {
     std::fs::write(&patch, b"x").unwrap();
     let journal = |state: &str| {
         format!(
-            "{{\"v\":1,\"state\":\"{state}\",\"worktree\":\"{}\",\"patch\":\"{}\",\"tree\":null}}",
-            repo.display(),
-            patch.display()
+            "{{\"v\":1,\"state\":\"{state}\",\"worktree\":{},\"patch\":{},\"tree\":null}}",
+            // JSON strings: a Windows path's `\` is escaped
+            serde_json::to_string(&repo).unwrap(),
+            serde_json::to_string(&patch).unwrap()
         )
     };
     let restored = sb.patches().join("run-1-aa.snp-journal");
@@ -223,8 +224,8 @@ fn stale_files_are_cleaned_and_garbage_is_ignored() {
     std::fs::write(
         repo.join(".git/snp-stash.journal"),
         format!(
-            "{{\"v\":1,\"journal\":\"{}\",\"state\":\"restored\"}}",
-            restored.display()
+            "{{\"v\":1,\"journal\":{},\"state\":\"restored\"}}",
+            serde_json::to_string(&restored).unwrap()
         ),
     )
     .unwrap();
