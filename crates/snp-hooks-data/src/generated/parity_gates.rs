@@ -27,8 +27,8 @@ pub(crate) static PARITY_GATES: &[(&str, Gate)] = &[
     // 5040 corpus runs, 0 acceptance and 0 message differences.
     ("check-yaml", Gate::Exact),
     ("destroyed-symlinks", Gate::Exact),
-    // 370 corpus runs, 0 acceptance and 0 message differences.
-    ("detect-aws-credentials", Gate::Exact),
+    // 370 corpus runs, 0 acceptance and 3 message differences (3 only in line order: Python iterates a set).
+    ("detect-aws-credentials", Gate::Caveat),
     ("detect-private-key", Gate::Exact),
     ("end-of-file-fixer", Gate::Exact),
     ("file-contents-sorter", Gate::Exact),

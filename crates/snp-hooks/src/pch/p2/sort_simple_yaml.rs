@@ -3,7 +3,10 @@
 //! The file is read in text mode (`r+`, the locale encoding — UTF-8 here, 09 §10 Q6 —, universal newlines; an
 //! undecodable file is the `UnicodeDecodeError` crash with CPython's chunk-relative positions) and rewritten in
 //! text mode (`\r\n` on Windows) after ``Fixing file `…` `` is printed. Python opens `r+`; the native reads first
-//! and writes only when the order changes (D-CRASH-23).
+//! and writes only when the order changes (D-CRASH-23). The UTF-8 assumption differs from Python only on Windows
+//! CPython 3.12/3.13 without UTF-8 mode (ANSI code page, e.g. cp1252): there Python sorts a latin-1 file the native
+//! reports as undecodable, and crashes on a UTF-8 file holding a byte cp1252 leaves undefined (0x81, 0x8D, 0x8F,
+//! 0x90, 0x9D) that the native sorts. Not yet in the COMPATIBILITY register (an integration-lead row).
 //!
 //! Owner: WP-27.
 

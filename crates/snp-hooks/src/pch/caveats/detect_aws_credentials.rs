@@ -9,7 +9,13 @@
 //! `AWS_SESSION_TOKEN` are added. No key: exit 2 with the hint (exit 0 with `--allow-missing-credentials`).
 //! Python iterates `set`s, so the order of several findings in one file (and which of two broken credential files
 //! crashes first) varies per process; snp reads the credential files sorted by path and reports findings per file
-//! sorted by key — a message-order difference the gate documents.
+//! sorted by key. Against the pinned oracle run (`PYTHONHASHSEED=0`) that is a message-order difference: the
+//! caveat corpus gate counts it as a message difference (the generated parity-gate row says how many are
+//! order-only), which makes this hook's gate `Caveat` — still eligible for `auto`, since no acceptance (exit code)
+//! differs. The order in which broken credential files are tried is not covered by the single-file corpus.
+//! Credential files are decoded as UTF-8, not the locale encoding (09 §10 Q6: on Windows CPython 3.12/3.13 without
+//! UTF-8 mode Python would decode with the ANSI code page; not yet in the COMPATIBILITY register, an
+//! integration-lead row).
 //!
 //! Owner: WP-27.
 

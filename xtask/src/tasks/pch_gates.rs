@@ -619,10 +619,14 @@ fn render_table(reports: &serde_json::Value) -> anyhow::Result<String> {
             (
                 caveat_gate(r),
                 format!(
-                    "{} corpus runs, {} acceptance and {} message differences",
+                    "{} corpus runs, {} acceptance and {} message differences{}",
                     num("cases"),
                     num("acceptance"),
-                    num("message")
+                    num("message"),
+                    match num("order_only") {
+                        0 => String::new(),
+                        n => format!(" ({n} only in line order: Python iterates a set)"),
+                    }
                 ),
             ),
         );

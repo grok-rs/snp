@@ -127,6 +127,8 @@ struct Report {
     cases: u64,
     acceptance: u64,
     message: u64,
+    /// Message differences that are only a different line order.
+    order_only: u64,
     examples: Vec<String>,
 }
 
@@ -175,11 +177,13 @@ fn caveat_corpus_gates() {
         let want_out = latin1(want["out"].as_str().unwrap());
         let same_verdict = i64::from(got.code) == want["code"].as_i64().unwrap()
             && got.crashed == want["crashed"].as_bool().unwrap();
-        let same_text = if hook_id == "detect-aws-credentials" {
-            sorted_lines(&got.output) == sorted_lines(&want_out)
-        } else {
-            got.output == want_out
-        };
+        // detect-aws-credentials reports its findings in a deterministic order (sorted), where Python iterates a
+        // set (an order that varies with the hash seed): an order-only difference is a message difference, not
+        // an acceptance one, and is counted as such (`order_only` in the report).
+        let same_text = got.output == want_out;
+        if !same_text && sorted_lines(&got.output) == sorted_lines(&want_out) {
+            r.order_only += 1;
+        }
         if !same_verdict {
             r.acceptance += 1;
         } else if !same_text {
@@ -201,8 +205,8 @@ fn caveat_corpus_gates() {
         .iter()
         .map(|(id, r)| {
             format!(
-                "{id}: {} runs, {} acceptance, {} message",
-                r.cases, r.acceptance, r.message
+                "{id}: {} runs, {} acceptance, {} message ({} order only)",
+                r.cases, r.acceptance, r.message, r.order_only
             )
         })
         .collect();
@@ -218,6 +222,7 @@ fn caveat_corpus_gates() {
                         "cases": r.cases,
                         "acceptance": r.acceptance,
                         "message": r.message,
+                        "order_only": r.order_only,
                         "examples": r.examples,
                     }),
                 )
