@@ -354,3 +354,53 @@ fn pch_facts_use_upstream_argv_and_invalidate_on_index_changes() {
     let facts = PchFacts::new(git.with_env(env));
     assert!(facts.tracked_files().unwrap().is_empty());
 }
+
+/// ADR-082: from the second call on, `lfs_files` answers index paths from one whole-index `check-attr`; the answer
+/// equals the direct call's, follows `.gitattributes` edits, keeps input order and repeats, and asks git directly
+/// for paths outside the index.
+#[test]
+fn lfs_files_memo_agrees_with_check_attr() {
+    let sb = Sandbox::new();
+    let repo = sb.init("lfs-memo");
+    sb.write(&repo, ".gitattributes", b"*.dat filter=lfs\n");
+    sb.write(&repo, "a.dat", b"a");
+    sb.write(&repo, "a.txt", b"a");
+    sb.write(&repo, "sub/b.dat", b"b");
+    sb.write(&repo, "sub/b.bin", b"b");
+    sb.git(&repo, &["add", "."]);
+    let (git, _) = sb.discover(&repo);
+    let facts = PchFacts::new(git.clone());
+    let all: [&[u8]; 4] = [b"a.dat", b"a.txt", b"sub/b.dat", b"sub/b.bin"];
+    let first = facts.lfs_files(&all[..2]).unwrap();
+    assert_eq!(first, vec![b"a.dat".to_vec()]);
+    // the memo (second call) and repeats in input order, as git echoes them
+    let again = facts
+        .lfs_files(&[b"sub/b.dat", b"a.dat", b"sub/b.dat", b"a.txt"])
+        .unwrap();
+    assert_eq!(
+        again,
+        vec![b"sub/b.dat".to_vec(), b"a.dat".to_vec(), b"sub/b.dat".to_vec()]
+    );
+    // a nested `.gitattributes` written by an earlier hook is honoured
+    sb.write(&repo, "sub/.gitattributes", b"*.bin filter=lfs\n");
+    assert_eq!(
+        facts.lfs_files(&all[2..]).unwrap(),
+        vec![b"sub/b.dat".to_vec(), b"sub/b.bin".to_vec()]
+    );
+    assert_eq!(
+        facts.lfs_files(&all).unwrap(),
+        PchFacts::new(git.clone()).lfs_files(&all).unwrap()
+    );
+    // an untracked path is asked directly
+    sb.write(&repo, "new.dat", b"n");
+    assert_eq!(
+        facts.lfs_files(&[b"new.dat", b"a.txt"]).unwrap(),
+        vec![b"new.dat".to_vec()]
+    );
+    // `rev-parse --git-dir` is memoised, with the same answer
+    let args = [OsStr::new("rev-parse"), OsStr::new("--git-dir")];
+    let one = facts.raw(&args).unwrap();
+    let two = facts.raw(&args).unwrap();
+    assert_eq!((one.status.0, &one.stdout), (two.status.0, &two.stdout));
+    assert_eq!(one.stdout, b".git\n");
+}

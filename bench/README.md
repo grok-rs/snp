@@ -110,10 +110,8 @@ the tool waited for, so a git child larger than the tool itself is what gets rep
 ## Spawn budgets
 
 `crates/snp/tests/it/budgets.rs` runs a `--features testing` build with `SNP_TEST_SPAWN_LOG` and asserts the
-documented upper bounds per scenario shape (B1 0 spawns, B2 ≤ 8, B3 ≤ 17, B4 one partition, B6 ≤ 13 and no non-git
-process); see the table in that file. Every one of these tests is ignored until the run pipeline (WP-32) and the
-binary entry that arms `SNP_TEST_SPAWN_LOG` (WP-33) merge. Until then, no spawn count is checked in any
-configuration.
+documented upper bounds per scenario shape (B1 0 spawns, B2 ≤ 8, B3 ≤ 18, B4 one partition, B6 ≤ 13 and no non-git
+process); see the table in that file. They run in every `cargo nextest run --workspace --features snp/testing`.
 
 ## Criterion micro-benches (`crates/snp/benches`)
 

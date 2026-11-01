@@ -6,7 +6,8 @@ decision was needed, with sources), **Decision**, **Rationale**, **Consequences*
 2026-10-08. A later change to an accepted ADR is a new ADR that supersedes it (never an in-place edit of the decision),
 approved by the integration lead and the owners of the affected packages; the amended ADR only gains a status line
 naming the amending ADR, which is normative where they differ. ADR-056…ADR-080 apply the second design review
-(2026-10-08); Appendix B lists every finding and its disposition. ADR-081 applies the verification of the W0 skeleton.
+(2026-10-08); Appendix B lists every finding and its disposition. ADR-081 applies the verification of the W0 skeleton;
+ADR-082 the end-to-end integration of the merged packages.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -770,7 +771,7 @@ with id …`. `HookFilter::compile` takes `prefix: Option<RepoPath>` and `FileTa
 
 ### ADR-070 — Cross-crate contract corrections (review round 2)
 
-*Status: Accepted; amended by ADR-081 (the binary depends on snp-lang to build `RunCtx.probe`/`RunCtx.runner`; doctor still needs no snp-config edge). The amending ADR is normative where they differ.*
+*Status: Accepted; amended by ADR-081 (the binary depends on snp-lang to build `RunCtx.probe`/`RunCtx.runner`; doctor still needs no snp-config edge) and ADR-082 (B3's spawn bound is ≤ 18). The amending ADRs are normative where they differ.*
 
 **Context.** Several contracts could not compile against the DAG or forced same-wave packages to invent handshakes.
 **Decision.** Reflected in ARCHITECTURE §1.4: (1) doctor's fast-path table comes from `snp_run::doctor_fast_path`,
@@ -956,6 +957,32 @@ cannot follow the text.
 **Consequences.** `check-dag` enforces the two new edges; ARCHITECTURE §1.2, §1.3, §1.4.2, §1.4.21, §1.4.24 and the
 WBS (rules, WP-00, WP-21, WP-22, WP-26, WP-33, crate table) are updated. Amends ADR-070 (item 1: the binary has the
 snp-lang edge; doctor still needs no snp-config edge) and ADR-071 (item 7: the xtask edges).
+
+### ADR-082 — End-to-end integration corrections
+
+**Context.** With every work package merged, the tests ignored for a missing sibling ran for the first time. Two
+normative texts could not hold as written. (a) The B3 spawn model of ARCHITECTURE §12.1 ("1 combined `rev-parse` + ≤ 6
+fan-out queries + 10 hooks ⇒ ≤ 17") leaves out the stash's `write-tree` and `diff-index`, which pre-commit itself runs
+(`staged_files_only.py:52-53`, G08/G09 of 02 §G.3; 02 §989 lists them in the warm sequence) and whose rc 0 is what
+elides the baseline in the very same sentence: the warm B3 run is 1 + A, B, C, F, G + 2 = 8 git spawns. (b) B6 (13
+pre-commit-hooks natives, partition emulation, ≤ 13 spawns with "≤ 4 per-run pre-commit-hooks facts") spawned 46: the
+frozen `PchFacts::lfs_files` was one `check-attr` per partition and `check_merge_conflict`'s `rev-parse --git-dir`
+went through the never-cached `PchFacts::raw`, so both scaled with the partition count (≈ 20 at 96 files on 22 CPUs).
+**Decision.** (1) B3's bound is ≤ 18 spawns (8 git + 10 hooks); B2 stays ≤ 8 (7 git: no F/G below three process hooks,
+one `git diff` after its hook). (2) `PchFacts::lfs_files` keeps its signature and result but memoises: the first call
+of a run asks for its own paths (a single-partition hook costs one spawn, as upstream); a later call takes one
+`check-attr filter -z --stdin` over every index path (`ls-files -z --stage`, itself a cached fact) and answers each
+partition whose paths are all index paths while the index, `HEAD`, `<git dir>/info/attributes` and the `.gitattributes`
+of every directory of every asked path are unchanged (one `stat` per directory per call); any other path, a changed
+attribute source or a failing whole-index call (a non-UTF-8 path, a git error) falls back to the per-partition call,
+so results and errors stay upstream's byte for byte. (3) `PchFacts::raw` memoises a successful `rev-parse --git-dir`
+(the git dir cannot move during a run; an error is never cached).
+**Rationale.** Spawn counts are not observable output; every byte a hook prints and every exit code is unchanged, and
+the fallbacks keep the exact upstream calls wherever the memo could differ. Changing the bound instead of the stash
+would mean dropping pre-commit's own `write-tree`/`diff-index`, the data-safety core's parity anchor.
+**Consequences.** ARCHITECTURE §12.1 and the §1.4.13 comments, WBS WP-36, `bench/README.md` and
+`crates/snp/tests/it/budgets.rs` state the corrected bounds; B6 measures 10–11 spawns. Amends ADR-070 (item 10: "B3
+stays ≤ 17 spawns").
 
 ---
 

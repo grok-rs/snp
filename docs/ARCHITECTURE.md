@@ -1509,9 +1509,9 @@ pub mod pch_facts {
         pub fn added_files(&self) -> Result<std::sync::Arc<[Vec<u8>]>, Failure>;      // diff --staged --name-only --diff-filter=A
         pub fn tracked_files(&self) -> Result<std::sync::Arc<[Vec<u8>]>, Failure>;    // ls-files (quoted, non -z)
         pub fn index_modes(&self) -> Result<std::sync::Arc<[(u32, Vec<u8>)]>, Failure>; // ls-files --stage
-        pub fn lfs_files(&self, paths: &[&[u8]]) -> Result<Vec<Vec<u8>>, Failure>;    // check-attr filter (09 §4.E)
+        pub fn lfs_files(&self, paths: &[&[u8]]) -> Result<Vec<Vec<u8>>, Failure>;    // check-attr filter (09 §4.E); whole-index memo (ADR-082)
         pub fn current_branch(&self) -> Result<Option<String>, Failure>;              // symbolic-ref HEAD
-        pub fn raw(&self, args: &[&OsStr]) -> Result<Captured, Failure>;               // any other catalogued call
+        pub fn raw(&self, args: &[&OsStr]) -> Result<Captured, Failure>;               // any other catalogued call (rev-parse --git-dir memoised, ADR-082)
     }
 }
 /// 11 §A.5.1 hook-script classifier (pure, bounded file reads: ≤ 1 MiB, multi-pattern scan; lowest class rank wins).
@@ -3523,9 +3523,10 @@ artifact attestations, checksums for every release asset, dependency budget ≤ 
 | B12 | peak RSS, B4 (50 k) / B6 | — | **≤ 30 MB / ≤ 25 MB (hard)** | | |
 
 Never slower than pre-commit or prek at p50 on any scenario (musl artifacts included, ADR-079). B3 spawn model on
-Linux: 1 combined `rev-parse` + ≤ 6 overlapped fan-out queries (A, B, C, E, F, G) + 10 hooks + 0 `git diff` (baseline
-elided by diff-index rc 0 on the warm path; DiffOracle stat path) ⇒ ≤ 17 spawns, ≈ 12 on the critical path (≈ 1 ms
-each measured).
+Linux (ADR-082): 1 combined `rev-parse` + ≤ 6 overlapped fan-out queries (A, B, C, E, F, G; E is not taken when no hook
+reads files, P17) + the stash's own `write-tree` and `diff-index` (pre-commit's G08/G09, 02 §7) + 10 hooks + 0 `git
+diff` (baseline elided by diff-index rc 0 on the warm path; DiffOracle stat path) ⇒ ≤ 18 spawns for B3 (8 git), ≈ 13 on
+the critical path (≈ 1 ms each measured); B2 (one hook, no Stat mode below three process hooks): 7 git + 1 hook ≤ 8.
 
 ### 12.2 Techniques (each owned by a crate; every one gated by an equivalence test, S13)
 

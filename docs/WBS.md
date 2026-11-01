@@ -608,7 +608,7 @@ External dependencies (roxmltree for the dotnet nuspec, serde_json for JSON prob
 
 **Acceptance.**
 - [e2e] B1–B12 measured and stored as JSON history; Linux hard gates enforced in CI
-- [e2e] spawn-count tests pass with the documented upper bounds (B3 ≤ 17 spawns)
+- [e2e] spawn-count tests pass with the documented upper bounds (B3 ≤ 18 spawns, ADR-082)
 - [e2e] syscall ceiling B1 ≤ 64 and allocation budget B3 ≤ 2 MB enforced nightly
 - [e2e] never slower than pre-commit or prek at p50 on any scenario
 - micro-bench suite runs in CI without failures
