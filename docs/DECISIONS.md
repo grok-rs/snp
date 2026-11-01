@@ -7,7 +7,7 @@ decision was needed, with sources), **Decision**, **Rationale**, **Consequences*
 approved by the integration lead and the owners of the affected packages; the amended ADR only gains a status line
 naming the amending ADR, which is normative where they differ. ADR-056…ADR-080 apply the second design review
 (2026-10-08); Appendix B lists every finding and its disposition. ADR-081 applies the verification of the W0 skeleton;
-ADR-082 the end-to-end integration of the merged packages; ADR-083 the verification of the integrated `main`.
+ADR-082 the end-to-end integration of the merged packages; ADR-083 the verification of the integrated `main`; ADR-084 the final multi-lens review.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -1035,6 +1035,57 @@ retiring only on proof (the reverse check) or on an explicit command keeps the "
 **Consequences.** ARCHITECTURE §4.6 and §12.3, COMPATIBILITY §5.2 (D-DATA-18), D-DATA-13/D-DIAG-04 (texts and
 scenarios), `bench/budgets.toml`, `bench/README.md`, WBS WP-15 (owned divergence files) and the user troubleshooting page
 state the new behaviour. Amends ADR-067 (recovery: dismissal) and ADR-082 (the print-once fix).
+
+### ADR-084 — Final-review corrections
+
+**Context.** The final multi-lens review of `main` found: (a) a kill(2) SIGINT landing between a hook's exec and its
+registration reached nobody (`registry::forward` walked the registry without the spawn gate), so the hook got a
+silent SIGKILL after the grace instead of the SIGINT of D-DATA-18 — `x13-eh-04` failed under load; (b) `cargo deny
+check` failed on advisories (rustls 0.23.45, zip 8.6) and licenses (`Unicode-DFS-2016` of unicode_names2,
+`CDLA-Permissive-2.0` of webpki-roots) and carried stale entries; (c) the stash recovery commands (D-DATA-13, the K+
+hint of D-DATA-01) overwrote worktree files without a check (`git checkout <tree> -- <paths>`, `git checkout-index -f
+-a`), so work done after the kill was lost; the long form never worked (`read-tree` without stat data plus `--3way`:
+`does not match index`); `--3way` staged the user's unstaged changes; a temporary `GIT_INDEX_FILE` (`git commit --
+<paths>`) had its tree reset into the real index; (d) the ADR-083 retirement check (`git apply --check --reverse`)
+accepted a lost mode change (git only warns) and, under `apply.whitespace=fix`, a lost whitespace change; (e) a long
+intent-to-add list was named by a journal deleted in the same pass; (f) perf: a thread per `map_ordered` call even at
+one job, two 64 KiB reader buffers per spawn, `git config core.fileMode` once per partition, F/G as a serial git stage
+after the stash, a second `rev-parse` in hook-impl, 32 regex threads holding a lazy-DFA cache per pattern each, and
+`--version` probing the terminal and building a session; (g) UX: an unknown `--group` passed silently, `snp uninstalled`
+read as if snp itself was removed, `stage_fixed`'s per-hook line claimed a staging that can still be refused, and
+`snp migrate builtin` said "already migrated" for blocks it skipped.
+**Decision.** (1) `registry::forward` holds the spawn gate exclusively and `spawn::start` reads its token only under
+the gate: a signal either finds the child registered or the child is spawned already-cancelled (killed at once).
+(2) rustls 0.23.46, zip 9 (the walker handles fallible names; zip is a `nix` wrapper: its macOS/BSD extraction helpers
+are never called); per-crate `[[licenses.exceptions]]` for the two permissive licenses; the stale `MPL-2.0` allowance
+and `tracing-subscriber`/`matchers` regex wrappers removed; `cargo deny check` joins the local gate list. (3) Every
+recovery command restores with pre-commit's own `git apply --whitespace=nowarn <patch>` (worktree only,
+all-or-nothing: it applies around later edits or refuses and changes nothing); with the run's own index it then resets
+the `stage_fixed` paths (`git read-tree <tree>` for a long list), re-adds the intent-to-add paths, and says what to do
+when the apply refuses: keep a copy (`git diff --binary <tree> > <patch>.now`), `git restore --source=<tree> --worktree`
+the patch's paths (`-- :/` for a long or unparseable list), run it again. The K+ hint has the same shape. (4) The
+retirement check is `git -c apply.ignoreWhitespace=no apply --check --reverse --whitespace=nowarn <patch>` plus a
+comparison of every mode the patch sets with the worktree file. (5) A long intent-to-add list is kept in `<patch>.ita`
+(or `<journal>.ita` for a run without a patch), NUL-separated, and re-added with `--pathspec-file-nul
+--pathspec-from-file`; it is never deleted with a journal. (6) `map_ordered` runs inline at a limit of 1 and uses the
+calling thread as a worker; reader buffers start at 4 KiB and double up to 64 KiB; `PchFacts` memoises `config
+core.fileMode` on the stamps of the repository config files; a stashing run with three or more selected process-hook
+candidates reads F and G in the step-6 scope (dropped when the stash cleared intent-to-add entries) and then uses the
+stat path from one process hook on; hook-impl hands its `(Git, RepoInfo)` to the pipeline; the classifier matches
+patterns on at most 8 threads; help and version texts are printed before the session is built. (7) A
+`--group`/`--require-group` name no hook carries fails like an unknown id (``No hook in group `G` (known groups:
+…)``, exit 1); `{hook_type} uninstalled` is never branded; the `stage_fixed` line reads `- files were modified by this
+hook (stage_fixed: staged after the last hook)`; `snp migrate builtin` prints `pre-commit-hooks (line N) not converted:
+…` per skipped block, and the unknown-id error of `repo: builtin` points to the list of ids without a builtin instead of
+autoupdate. (8) Rejected: the merge-conflict file order is not an unregistered divergence — it is determinism note N-1
+(COMPATIBILITY §6.1), compared with `lines-unordered` (`git/t10-git-05-06-conflicted-files` covers several files).
+**Deferred.** The stat-based re-verification of the stash patch (B8): it must stamp every path the diff could include
+— an autosave of a clean file is what the second `diff-index` catches — with git's racy-timestamp fallback, in the S3
+core; it gets its own design. Also deferred: speculating the ITA query and `write-tree` before the worktree lock, one
+poll(2) loop instead of two reader threads per spawn, the B4 path copies, and the B8/B11 measurement fixes.
+**Consequences.** COMPATIBILITY §3.3, D-DATA-01, D-DATA-13, D-DIAG-04 (texts and scenarios), ARCHITECTURE §4.2, §4.6,
+§8, the user configuration and troubleshooting pages state the new behaviour. Amends ADR-065 (forwarding), ADR-067
+(recovery commands) and ADR-083 (retirement check).
 
 ---
 

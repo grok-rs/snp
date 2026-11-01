@@ -52,7 +52,7 @@ packages). Every package description below is self-contained; `NN §x` = `docs/r
   WP-35's harness from W3 on), and every timing threshold of its acceptance list present as a release-mode
   `#[ignore = "perf"]` test with a 3× margin (run by the `perf-smoke` CI job; WP-36's bench gate enforces the exact
   targets).
-* **Wave exit gate:** all packages of the wave merged; `xtask check-dag` (incl. dev-dependencies), `check-unsafe`,
+* **Wave exit gate:** all packages of the wave merged; `xtask check-dag` (incl. dev-dependencies), `check-unsafe`, `cargo deny check`,
   `lint-guards` green; `xtask catalog-status` shows every hermetic row owned by the wave's packages ported; the next
   wave's owners re-run their `tests/api.rs` against the merged crates.
 * **Oracles and vectors.** `cargo xtask oracle install` (WP-00) builds `target/oracle/pc462-py312` (pre-commit 4.6.2 on
