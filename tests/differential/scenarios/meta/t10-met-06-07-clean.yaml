@@ -1,0 +1,21 @@
+name: meta/t10-met-06-07-clean
+covers: [T10-MET-06, T10-MET-07]
+requires: {os: [linux, macos]}
+work:
+  files: {a.py: ""}
+  symlinks: {broken: nowhere}
+  config: |
+    repos:
+    -   repo: meta
+        hooks:
+        -   id: check-useless-excludes
+        -   id: identity
+            args: [a, b, c]
+            pass_filenames: false
+            always_run: true
+    -   repo: local
+        hooks:
+        -   {id: py, name: py, entry: 'true', language: system, exclude: ^broken$}
+  commit: [.pre-commit-config.yaml, a.py, broken]
+steps:
+  - tool: [run, --all-files]

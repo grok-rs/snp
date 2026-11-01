@@ -4,7 +4,8 @@
 # (`target/oracle/pc462-py313/bin/pre-commit-snp-prog`) in snp-brand runs, then requires byte equality with snp.
 # argparse texts (usage, help, usage errors) are never substituted: they are rendered with prog `snp`.
 #
-# Created by WP-00 from COMPATIBILITY §3.3; owned by WP-35 afterwards (WBS "Divergence files").
+# Created by WP-00 from COMPATIBILITY §3.3; owned by WP-35 (snp-difftest validates it at load: `version: 1`, non-empty
+# `from` texts, no rule touching a `never` entry; the apply/invert round trip is unit-tested).
 version: 1
 
 # A line exactly equal to `from` becomes `to`; applied before the substring rules (a plain substitution would give
@@ -12,14 +13,17 @@ version: 1
 whole_line:
   - from: "pre-commit 4.6.2"
     to: "snp 2.0.0"
+  # The prog-patched oracle renders argparse's `%(prog)s 4.6.2` version action as `snp 4.6.2`.
+  - from: "snp 4.6.2"
+    to: "snp 2.0.0"
 
 # Substring rules, applied in this order to every non-argparse line of stdout and stderr.
 substitutions:
   # install / uninstall (install_uninstall.py:85,111,157)
   - from: "pre-commit installed at "
     to: "snp installed at "
-  # COMPATIBILITY §3.3 row. Note: install_uninstall.py:157 prints `{hook_type} uninstalled`, so this line names the
-  # hook type `pre-commit`; WP-33/WP-35 confirm the rule before relying on it.
+  # COMPATIBILITY §3.3 row. install_uninstall.py:157 prints `{hook_type} uninstalled`: only the default hook type's
+  # line (`pre-commit uninstalled`) names the tool and is branded; `pre-push uninstalled` & co. stay.
   - from: "pre-commit uninstalled"
     to: "snp uninstalled"
   - from: "Use -f to use only pre-commit."
@@ -85,3 +89,18 @@ never:
   - "pre-commit hook(s) made changes."
   - "Your pre-commit configuration is unstaged."
   - "https://pre-commit.com/"
+
+# Inside argparse blocks (a `usage: ` line through the next `…: error: …` line) of snp-brand runs only: the
+# top-level parser's command list grows by snp's own commands. The list is wider than any terminal, so argparse
+# renders it on a line of its own and the substitution is exact (checked against WP-12's
+# crates/snp-cli/tests/goldens/snp.json by the harness's unit tests).
+argparse_substitutions:
+  - from: "{autoupdate,clean,gc,hazmat,init-templatedir,install,install-hooks,migrate-config,run,sample-config,try-repo,uninstall,validate-config,validate-manifest,help,hook-impl}"
+    to: "{autoupdate,cache,clean,completions,config,doctor,gc,hazmat,init-templatedir,install,install-hooks,list,migrate,migrate-config,run,sample-config,self,try-repo,uninstall,validate-config,validate-manifest,help,hook-impl}"
+  - from: "(choose from 'autoupdate', 'clean', 'gc', 'hazmat', 'init-templatedir', 'install', 'install-hooks', 'migrate-config', 'run', 'sample-config', 'try-repo', 'uninstall', 'validate-config', 'validate-manifest', 'help', 'hook-impl')"
+    to: "(choose from 'autoupdate', 'cache', 'clean', 'completions', 'config', 'doctor', 'gc', 'hazmat', 'init-templatedir', 'install', 'install-hooks', 'list', 'migrate', 'migrate-config', 'run', 'sample-config', 'self', 'try-repo', 'uninstall', 'validate-config', 'validate-manifest', 'help', 'hook-impl')"
+
+# Sub-commands whose snp-brand parser has snp-only options (COMPATIBILITY §8.1): their usage lines wrap differently
+# and cannot be derived from the oracle. In snp-brand runs both sides' usage blocks of these parsers are reduced to
+# `usage: snp <cmd> [SNP-ONLY OPTIONS]` plus the (compared) `error:` line; WP-12's snp.json goldens pin the full text.
+snp_only_option_parsers: [install, install-hooks, run, try-repo, uninstall, validate-config, validate-manifest]

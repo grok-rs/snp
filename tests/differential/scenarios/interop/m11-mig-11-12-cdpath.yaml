@@ -1,0 +1,23 @@
+name: interop/m11-mig-11-12-cdpath
+description: '11 §A.20 MIG-11/12 — an exported CDPATH=. with a legacy hook (pre-commit silently skips the legacy hook)'
+covers: [M11-MIG-11, M11-MIG-12]
+tags: [migration]
+requires: {os: [linux, macos]}
+expect_divergence: D-DATA-07
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: ok, name: ok, entry: 'true', language: system}
+  commit: [.pre-commit-config.yaml]
+  stage: [a.txt]
+  setup:
+    - shell: mkdir -p .git/hooks && printf '#!/bin/sh\necho legacy ran\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+steps:
+  - tool: [install]
+  - git: [commit, -q, -m, mig11]
+    env: {CDPATH: "."}
+compare:
+  hooks_dir: true

@@ -1,0 +1,8 @@
+name: platform/m06-benchmark
+description: '14 §A.6.4 M06 — 10 no-op hooks, /usr/bin/git vs Homebrew git (a benchmark; WP-36)'
+tags: [platform]
+requires: {os: [macos], manual: "timing comparison owned by the bench gate (WP-36)"}
+work:
+  config: "repos: []\n"
+steps:
+  - tool: [run]

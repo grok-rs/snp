@@ -1,0 +1,15 @@
+name: platform/m03-case-insensitive-config
+description: '14 §A.6.4 M03 — `-c .PRE-COMMIT-CONFIG.YAML` on a case-insensitive file system; hook regexes stay case-sensitive'
+tags: [platform]
+requires: {os: [macos, windows]}
+work:
+  files: {Readme.md: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: r, name: readme, entry: echo, language: system, files: ^readme}
+  commit: [.pre-commit-config.yaml]
+  stage: [Readme.md]
+steps:
+  - tool: [run, -c, .PRE-COMMIT-CONFIG.YAML]

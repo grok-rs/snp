@@ -1,0 +1,18 @@
+name: crash/c10-pre-push-non-utf8
+description: '13 X.10 c10 — non-UTF-8 pre-push stdin (X13-HI-04)'
+covers: [X13-HI-04]
+tags: [crash-recipe]
+expect_divergence: D-CRASH-11
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: h, name: h, entry: echo, language: system, stages: [pre-push], verbose: true}
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - shell: |
+      printf 'refs/heads/\377 %s refs/heads/x 0000000000000000000000000000000000000000\n' "$(git rev-parse HEAD)" | "$PRE_COMMIT" hook-impl --config=.pre-commit-config.yaml --hook-type=pre-push --hook-dir "$PWD/.git/hooks" -- origin /nonexistent/remote
+compare:
+  stdout: tierB

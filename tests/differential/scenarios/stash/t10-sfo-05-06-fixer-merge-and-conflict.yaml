@@ -1,0 +1,19 @@
+name: stash/t10-sfo-05-06-fixer-merge-and-conflict
+covers: [T10-SFO-05, T10-SFO-06]
+work:
+  files: {foo: "1\n2\n3\n4\n5\n6\n7\n8\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: fix, name: fix ones, entry: "sh -c 'sed \"s/1/a/\" foo > foo.tmp && mv foo.tmp foo' --", language: system, files: ^foo$}
+  commit: [.pre-commit-config.yaml]
+  stage: [foo]
+  unstaged: {foo: "1\n2\n3\n4\n5\n6\n7\n8\n9\n"}
+steps:
+  - tool: [run]
+  - git: [diff]
+  - git: [checkout, foo]
+  - shell: printf '1\n2\n3\n4\n5\n6\n7\n8\n' > foo && git add foo && sed 's/1/b/' foo > foo.tmp && mv foo.tmp foo
+  - tool: [run]
+  - git: [status, --porcelain]

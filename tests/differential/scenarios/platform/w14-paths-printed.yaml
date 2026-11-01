@@ -1,0 +1,14 @@
+name: platform/w14-paths-printed
+description: '14 §A.6.4 W14 — install paths, a worktree install, `-c sub/cfg.yaml`, `--files sub\a.py`'
+tags: [platform]
+requires: {os: [windows], probe: true}
+work:
+  files: {sub/a.py: "", sub/cfg.yaml: "repos:\n-   repo: local\n    hooks:\n    -   {id: a, name: a, entry: \"${probe} args\", language: system, verbose: true}\n"}
+  config: "repos: []\n"
+  commit: [.pre-commit-config.yaml, sub/cfg.yaml, sub/a.py]
+steps:
+  - tool: [install]
+  - tool: [install, -c, sub/cfg.yaml]
+  - tool: [run, -c, sub/cfg.yaml, --files, 'sub\a.py']
+compare:
+  hooks_dir: true

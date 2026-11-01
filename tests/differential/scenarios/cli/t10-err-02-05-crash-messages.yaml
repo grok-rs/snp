@@ -1,0 +1,18 @@
+name: cli/t10-err-02-05-crash-messages
+covers: [T10-ERR-01, T10-ERR-02, T10-ERR-05]
+requires: {os: [linux, macos], not_root: true}
+work:
+  files: {a.txt: ""}
+  config: |
+    minimum_pre_commit_version: "abc"
+    repos: []
+  commit: [a.txt]
+steps:
+  - tool: [run]
+  - shell: sed -n '1,2p;/### error information/,$p' "${store}/pre-commit.log" | grep -v '^  File \|^    \|^Traceback'
+  - shell: chmod 555 "${store}"
+  - tool: [run]
+  - shell: chmod 755 "${store}"
+expect_divergence: D-CRASH-01
+compare:
+  stdout: tierB

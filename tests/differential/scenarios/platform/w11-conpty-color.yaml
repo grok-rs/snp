@@ -1,0 +1,15 @@
+name: platform/w11-conpty-color
+description: '14 §A.6.4 W11 — `--color auto` under ConPTY, under pipes and with stderr to NUL'
+tags: [platform]
+requires: {os: [windows], console: conpty}
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: p, name: pass, entry: 'true', language: system}
+        -   {id: f, name: fail, entry: 'false', language: system}
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [run, -a, --color, auto]

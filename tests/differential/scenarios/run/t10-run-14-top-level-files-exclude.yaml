@@ -1,0 +1,16 @@
+name: run/t10-run-14-top-level-files-exclude
+covers: [T10-RUN-14]
+work:
+  files: {foo.py: "", bar.py: ""}
+  config: |
+    exclude: ^foo\.py$
+    repos:
+    -   repo: meta
+        hooks: [{id: identity}]
+  commit: [.pre-commit-config.yaml]
+  stage: [foo.py, bar.py]
+  setup:
+    - write: {files.yaml: "files: ^bar\\.py$\nrepos:\n-   repo: meta\n    hooks: [{id: identity}]\n"}
+steps:
+  - tool: [run, --verbose]
+  - tool: [run, --verbose, -c, files.yaml, --files, foo.py, bar.py]

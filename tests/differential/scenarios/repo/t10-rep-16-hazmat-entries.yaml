@@ -1,0 +1,15 @@
+name: repo/t10-rep-16-hazmat-entries
+covers: [T10-REP-16, T10-HAZ-03, T10-HAZ-05]
+work:
+  files: {f1: "", f2: "", subdir/a: "", subdir/b: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: ign, name: ignore exit, entry: pre-commit hazmat ignore-exit-code sh -c 'echo "$@"; exit 7' --, language: system, files: ^f, verbose: true}
+        -   {id: n1, name: one per file, entry: pre-commit hazmat n1 echo --, language: system, files: ^f, verbose: true}
+        -   {id: cd, name: cd subdir, entry: pre-commit hazmat cd subdir sh -c 'pwd -P | sed "s|.*/||"; echo "$@"' --, language: system, files: ^subdir/, verbose: true}
+  commit: [.pre-commit-config.yaml, f1, f2, subdir/a, subdir/b]
+steps:
+  - tool: [run, -a]
+    env: {PATH_PREPEND: "${root}/bin"}

@@ -1,0 +1,20 @@
+name: run/t10-run-30-commit-msg-stages
+covers: [T10-RUN-30, T10-RUN-33]
+work:
+  files: {msg: "This is the commit message\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: signed, name: Must have "Signed off by:", entry: "sh -c 'grep -q \"Signed off by:\" \"$1\"' --", language: system, stages: [commit-msg]}
+        -   {id: add-signed, name: Add "Signed off by:", entry: "sh -c 'printf \"\\nSigned off by: me\\n\" >> \"$1\"' --", language: system, stages: [prepare-commit-msg]}
+    -   repo: meta
+        hooks:
+        -   {id: identity, stages: [post-checkout]}
+  commit: [.pre-commit-config.yaml]
+steps:
+  - tool: [run, --hook-stage, commit-msg, --commit-msg-filename, msg]
+  - tool: [run, --hook-stage, commit-msg]
+  - tool: [run, --hook-stage, post-checkout, --from-ref, HEAD, --to-ref, HEAD, --checkout-type, "1"]
+  - tool: [run, --hook-stage, prepare-commit-msg, --commit-msg-filename, msg, --prepare-commit-message-source, commit, --commit-object-name, HEAD]
+  - tool: [run, --hook-stage, commit-msg, --commit-msg-filename, msg]

@@ -1,0 +1,20 @@
+name: git/t10-git-12-git-env
+covers: [T10-GIT-12, T10-GIT-13]
+requires: {probe: true}
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook}]
+    -   repo: local
+        hooks:
+        -   {id: env, name: env, entry: "${probe} env GIT_DIR GIT_INDEX_FILE GIT_SSH_COMMAND GIT_CONFIG_COUNT http_proxy", language: system, verbose: true, pass_filenames: false}
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [run, -a]
+    env: {GIT_SSH_COMMAND: ssh-x, GIT_CONFIG_COUNT: "0", http_proxy: "http://127.0.0.1:9"}
+  - shell: find "${store}" -maxdepth 3 -name hooks -path '*/.git/hooks' | wc -l

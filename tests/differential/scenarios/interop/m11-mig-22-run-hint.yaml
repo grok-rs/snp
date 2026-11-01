@@ -1,0 +1,19 @@
+name: interop/m11-mig-22-run-hint
+description: '11 §A.20 MIG-22 — `run` with a pre-commit-owned hook script: the hint appears only when stderr is a tty'
+covers: [M11-MIG-22]
+tags: [migration]
+requires: {os: [linux, macos], pty: true}
+expect_divergence: D-DIAG-03
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: ok, name: ok, entry: 'true', language: system}
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - shell: ${oracle} install
+  - tool: [run, -a]
+  - tool: [run, -a]
+    tty: true

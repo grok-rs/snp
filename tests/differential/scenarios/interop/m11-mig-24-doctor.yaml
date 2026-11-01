@@ -1,0 +1,10 @@
+name: interop/m11-mig-24-doctor
+description: '11 §A.20 MIG-24 — `snp doctor` over the fixtures above (snp-only command, WP-33 acceptance)'
+covers: [M11-MIG-24]
+tags: [migration]
+brands: [snp]
+requires: {manual: "snp-only command without an oracle counterpart (WP-33 integration test)"}
+work:
+  config: null
+steps:
+  - tool: [doctor]

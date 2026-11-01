@@ -1,0 +1,10 @@
+name: interop/m11-mig-21-self-alias
+description: '11 §A.20 MIG-21 — `snp self alias install` over a foreign pre-commit (snp-only command, WP-33 acceptance)'
+covers: [M11-MIG-21]
+tags: [migration]
+brands: [snp]
+requires: {manual: "snp-only command without an oracle counterpart (WP-33 integration test)"}
+work:
+  config: null
+steps:
+  - tool: [self, alias, install]

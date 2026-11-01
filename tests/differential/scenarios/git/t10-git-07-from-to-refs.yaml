@@ -1,0 +1,23 @@
+name: git/t10-git-07-from-to-refs
+covers: [T10-GIT-07]
+work:
+  files: {base.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: show, name: show, entry: echo, language: system, verbose: true}
+  commit: [.pre-commit-config.yaml, base.txt]
+  setup:
+    - write: {a.txt: "", b.txt: ""}
+    - commit: two files
+    - git: [checkout, -q, --orphan, orphan]
+    - git: [rm, -q, -r, --cached, .]
+    - shell: rm -f a.txt base.txt b.txt && printf 'b\n' > b.txt
+    - git: [add, b.txt]
+    - commit: orphan
+    - git: [checkout, -q, -f, master]
+steps:
+  - tool: [run, --from-ref, HEAD^, --to-ref, HEAD]
+  - tool: [run, --from-ref, HEAD, --to-ref, HEAD^]
+  - tool: [run, --from-ref, HEAD, --to-ref, orphan]

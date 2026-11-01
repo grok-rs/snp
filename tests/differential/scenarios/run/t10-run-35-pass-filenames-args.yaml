@@ -1,0 +1,16 @@
+name: run/t10-run-35-pass-filenames-args
+covers: [T10-RUN-35]
+work:
+  files: {foo.py: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: a, name: a, entry: echo Hello World, language: system, verbose: true}
+        -   {id: b, name: b, entry: echo Hello World, language: system, verbose: true, pass_filenames: false}
+        -   {id: c, name: c, entry: echo, args: [some, args], language: system, verbose: true}
+        -   {id: d, name: d, entry: echo, args: [some, args], language: system, verbose: true, pass_filenames: false}
+  commit: [.pre-commit-config.yaml]
+  stage: [foo.py]
+steps:
+  - tool: [run, --verbose]

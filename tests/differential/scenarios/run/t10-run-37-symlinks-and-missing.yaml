@@ -1,0 +1,18 @@
+name: run/t10-run-37-symlinks-and-missing
+covers: [T10-RUN-37, T10-RUN-38]
+requires: {os: [linux, macos]}
+work:
+  files: {bar: "x\n"}
+  symlinks: {foo: bar, link: does-not-exist}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: sym, name: symlinks, entry: echo, language: system, types: [symlink], verbose: true}
+        -   {id: file, name: files, entry: echo, language: system, types: [file], verbose: true}
+        -   {id: all, name: everything, entry: echo, language: system, verbose: true}
+  commit: [.pre-commit-config.yaml]
+  stage: [bar, foo, link]
+steps:
+  - tool: [run]
+  - tool: [run, --files, foo, link, nope, bar]

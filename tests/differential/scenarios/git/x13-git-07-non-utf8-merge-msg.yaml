@@ -1,0 +1,25 @@
+name: git/x13-git-07-non-utf8-merge-msg
+covers: [X13-GIT-07, X13-GIT-08]
+requires: {os: [linux]}
+expect_divergence: D-CRASH-12
+work:
+  files: {f: "base\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: show, name: show, entry: echo, language: system}
+  commit: [.pre-commit-config.yaml, f]
+  setup:
+    - git: [checkout, -q, -b, other]
+    - write: {f: "other\n"}
+    - commit: other
+    - git: [checkout, -q, "-"]
+    - write: {f: "mine\n"}
+    - commit: mine
+    - shell: git merge -q other >/dev/null 2>&1 || true
+    - shell: printf 'Merge\n\nConflicts:\n\tf\377\n' > .git/MERGE_MSG && echo resolved > f && git add f
+steps:
+  - tool: [run]
+compare:
+  stdout: tierB

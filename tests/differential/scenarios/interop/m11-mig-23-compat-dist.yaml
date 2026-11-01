@@ -1,0 +1,9 @@
+name: interop/m11-mig-23-compat-dist
+description: '11 §A.20 MIG-23 — the opt-in Python compat distribution (v1.1, needs the network)'
+covers: [M11-MIG-23]
+tags: [migration]
+requires: {net: true, manual: "the snp-pre-commit-compat distribution ships in v1.1"}
+work:
+  config: null
+steps:
+  - tool: [--version]

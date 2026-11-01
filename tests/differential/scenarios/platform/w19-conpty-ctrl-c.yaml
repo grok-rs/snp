@@ -1,0 +1,19 @@
+name: platform/w19-conpty-ctrl-c
+description: '14 §A.6.4 W19 — Ctrl-C into a ConPTY while a hook sleeps with a stash active'
+tags: [platform]
+requires: {os: [windows], console: conpty, probe: true}
+work:
+  files: {a.txt: "a\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: s, name: sleep, entry: "${probe} sleep 5000", language: system}
+  commit: [.pre-commit-config.yaml, a.txt]
+  setup:
+    - write: {a.txt: "b\n"}
+    - git: [add, a.txt]
+    - write: {a.txt: "c\n"}
+steps:
+  - tool: [run]
+    signal: {name: SIGINT, after: 1s}

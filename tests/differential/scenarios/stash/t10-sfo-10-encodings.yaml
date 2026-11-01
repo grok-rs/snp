@@ -1,0 +1,18 @@
+name: stash/t10-sfo-10-encodings
+covers: [T10-SFO-10, T10-SFO-11]
+work:
+  files: {snow: "x\n", latin: "x\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: t, name: t, entry: 'true', language: system}
+        -   {id: trunc, name: truncate latin, entry: "sh -c ': > latin' --", language: system, files: ^latin$, stages: [manual]}
+  commit: [.pre-commit-config.yaml]
+  stage: [snow, latin]
+  unstaged: {snow: "☃\n", latin: !!binary "+iAK"}
+steps:
+  - tool: [run]
+  - git: [status, --porcelain]
+  - tool: [run, --hook-stage, manual]
+  - git: [status, --porcelain]

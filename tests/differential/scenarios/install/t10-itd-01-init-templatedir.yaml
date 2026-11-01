@@ -1,0 +1,18 @@
+name: install/t10-itd-01-init-templatedir
+covers: [T10-ITD-01, T10-ITD-02, T10-ITD-05]
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook}]
+  commit: [.pre-commit-config.yaml]
+steps:
+  - tool: [init-templatedir, "${root}/tmpl", -t, pre-commit]
+  - shell: GIT_TEMPLATE_DIR="${root}/tmpl" git init -q "${root}/fresh" && cd "${root}/fresh" && touch foo && git add foo && git commit -m "no config"
+  - shell: git config --global init.templateDir "${root}/tmpl"
+  - tool: [init-templatedir, "${root}/tmpl", -t, pre-commit]
+  - tool: [init-templatedir, --no-allow-missing-config, "${root}/tmpl2"]
+  - shell: GIT_TEMPLATE_DIR="${root}/tmpl2" git init -q "${root}/fresh2" && cd "${root}/fresh2" && touch foo && git add foo && git commit -m "no config"

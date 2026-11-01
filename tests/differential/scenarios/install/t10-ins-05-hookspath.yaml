@@ -1,0 +1,10 @@
+name: install/t10-ins-05-hookspath
+covers: [T10-INS-05]
+work:
+  git_config: {core.hooksPath: hooks}
+  config: "repos: []\n"
+steps:
+  - tool: [install]
+  - tool: [uninstall]
+compare:
+  hooks_dir: true

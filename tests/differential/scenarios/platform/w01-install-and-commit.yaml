@@ -1,0 +1,18 @@
+name: platform/w01-install-and-commit
+description: '14 §A.6.4 W01 — install, then a commit with a passing probe hook (hook script bytes differ by design, BRAND)'
+tags: [platform]
+requires: {os: [windows], probe: true}
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: ok, name: ok, entry: "${probe} exit 0", language: system}
+  commit: [.pre-commit-config.yaml]
+  stage: [a.txt]
+steps:
+  - tool: [install]
+  - git: [commit, -q, -m, w01]
+compare:
+  hooks_dir: true

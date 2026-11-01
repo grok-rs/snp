@@ -1,0 +1,21 @@
+name: install/t10-ins-27-legacy-pre-push
+covers: [T10-INS-27]
+repos:
+  hooks: {fixture: script_hooks_repo}
+  remote: {bare: true}
+work:
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook, stages: [pre-push]}]
+  commit: [.pre-commit-config.yaml]
+  setup:
+    - git: [remote, add, origin, "${repo:remote}"]
+    - shell: mkdir -p .git/hooks && printf '#!/usr/bin/env bash\nread lr ls rr rs\ntest -n "$lr" -a -n "$ls" -a -n "$rr" -a -n "$rs" || exit 1\necho legacy\n' > .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+steps:
+  - tool: [install, -t, pre-push]
+  - shell: touch foo && git add foo && git commit -q -m foo
+  - git: [push, origin, HEAD:main]
+compare:
+  hooks_dir: true

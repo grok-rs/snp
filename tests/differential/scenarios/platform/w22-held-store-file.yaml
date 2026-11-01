@@ -1,0 +1,8 @@
+name: platform/w22-held-store-file
+description: '14 §A.6.4 W22 — gc/clean with a read-only pack and with a file held open by another process'
+tags: [platform]
+requires: {os: [windows], manual: "needs a background `snp-probe hold` holding a store file during clean"}
+work:
+  config: "repos: []\n"
+steps:
+  - tool: [clean]

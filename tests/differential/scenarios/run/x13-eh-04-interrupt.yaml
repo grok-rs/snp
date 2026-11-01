@@ -1,0 +1,22 @@
+name: run/x13-eh-04-interrupt
+description: 'SIGINT while a hook runs with a stash held: Interrupted (^C), exit 130, the stash restored (X13-EH-04)'
+covers: [X13-EH-04]
+requires: {os: [linux, macos], probe: true}
+work:
+  files: {a.txt: "a\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: trap, name: trap, entry: "${probe} trap .hook-started 100 20000", language: system, pass_filenames: false, always_run: true}
+  commit: [.pre-commit-config.yaml, a.txt]
+  setup:
+    - write: {a.txt: "b\n"}
+    - git: [add, a.txt]
+    - write: {a.txt: "c\n"}
+steps:
+  - tool: [run]
+    signal: {name: SIGINT, after: .hook-started.ready}
+  - shell: cat a.txt; git status --porcelain
+compare:
+  tree: false

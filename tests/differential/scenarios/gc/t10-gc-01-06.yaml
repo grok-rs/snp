@@ -1,0 +1,36 @@
+name: gc/t10-gc-01-06
+covers: [T10-GC-01, T10-GC-02, T10-GC-04, T10-GC-05, T10-GC-06, T10-GC-08]
+repos:
+  hooks:
+    fixture: script_hooks_repo
+    tags: [v1]
+    then: [{write: {x: "1\n"}}, {commit: two}, {tag: v2}]
+work:
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: v1
+        hooks: [{id: bash_hook}]
+  files:
+    invalid.yaml: "i am: invalid\n"
+    missing-hook.yaml: |
+      repos:
+      -   repo: ${repo:hooks}
+          rev: v2
+          hooks: [{id: does-not-exist}]
+steps:
+  - tool: [install-hooks]
+  - tool: [autoupdate]
+  - tool: [install-hooks]
+  - tool: [gc]
+  - tool: [validate-config, invalid.yaml]
+  - tool: [gc]
+  - tool: [run, -c, missing-hook.yaml]
+  - tool: [gc]
+  - shell: rm .pre-commit-config.yaml missing-hook.yaml
+  - tool: [gc]
+  - shell: mkdir -p "${home}/.pre-commit"
+  - tool: [clean]
+  - tool: [clean]
+compare:
+  store: true

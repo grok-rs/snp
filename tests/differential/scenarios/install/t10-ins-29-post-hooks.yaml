@@ -1,0 +1,25 @@
+name: install/t10-ins-29-post-hooks
+covers: [T10-INS-29, T10-INS-30]
+work:
+  files: {some_file: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: post-commit, name: post-commit, entry: touch post-commit.tmp, language: system, always_run: true, verbose: true, pass_filenames: false, stages: [post-commit]}
+        -   {id: post-merge, name: post-merge, entry: touch post-merge.tmp, language: system, always_run: true, verbose: true, pass_filenames: false, stages: [post-merge]}
+        -   {id: post-rewrite, name: post-rewrite, entry: touch post-rewrite.tmp, language: system, always_run: true, verbose: true, pass_filenames: false, stages: [post-rewrite]}
+        -   {id: post-checkout, name: post-checkout, entry: "sh -c 'echo $PRE_COMMIT_TO_REF' --", language: system, always_run: true, verbose: true, stages: [post-checkout]}
+        -   {id: never, name: never post-checkout, entry: fail, language: fail, always_run: true, stages: [post-checkout]}
+  commit: [.pre-commit-config.yaml, some_file]
+steps:
+  - shell: git commit -q --allow-empty -m before && ls *.tmp 2>/dev/null; true
+  - tool: [install, -t, post-commit, -t, post-merge, -t, post-rewrite]
+  - git: [commit, -q, --allow-empty, -m, after]
+  - git: [commit, -q, --amend, --allow-empty, -m, amended]
+  - shell: git checkout -q -b side && git commit -q --allow-empty -m side && git checkout -q - && git merge -q --no-ff -m merge side
+  - shell: ls *.tmp
+  - tool: [install, -t, post-checkout]
+  - git: [checkout, -q, side]
+compare:
+  hooks_dir: true

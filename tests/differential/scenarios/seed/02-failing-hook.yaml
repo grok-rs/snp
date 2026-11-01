@@ -1,0 +1,16 @@
+name: seed/failing-hook
+covers: [T10-RUN-10]
+tags: [seed]
+repos:
+  hooks: {fixture: failing_hook_repo}
+work:
+  files: {foo.py: ""}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: failing_hook}]
+  commit: [.pre-commit-config.yaml]
+  stage: [foo.py]
+steps:
+  - tool: [run]

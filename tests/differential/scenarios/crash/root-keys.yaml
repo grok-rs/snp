@@ -1,0 +1,15 @@
+name: crash/root-keys
+description: '13 X.4 — non-string and mixed root keys (X13-CFG-02, X13-CFG-03)'
+covers: [X13-CFG-02, X13-CFG-03]
+tags: [crash-recipe]
+expect_divergence: D-CRASH-02
+work:
+  config: null
+  setup:
+    - write: {int.yaml: "1: x\nrepos: []\n"}
+    - write: {mixed.yaml: "1: x\nfoo: y\nrepos: []\n"}
+steps:
+  - tool: [validate-config, int.yaml]
+  - tool: [validate-config, mixed.yaml]
+compare:
+  stdout: tierB

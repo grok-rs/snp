@@ -1,0 +1,10 @@
+name: seed/help
+covers: [T10-CLI-03]
+tags: [seed]
+work:
+  config: null
+steps:
+  - tool: [--help]
+  - tool: [help]
+  - tool: [help, run]
+  - tool: [run, --help]

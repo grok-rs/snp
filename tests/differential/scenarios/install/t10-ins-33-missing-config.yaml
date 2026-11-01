@@ -1,0 +1,15 @@
+name: install/t10-ins-33-missing-config
+covers: [T10-INS-33, T10-HKI-01]
+work:
+  files: {foo: ""}
+  config: null
+  stage: [foo]
+steps:
+  - tool: [install, -f]
+  - git: [commit, -m, x]
+  - git: [commit, -m, x]
+    env: {PRE_COMMIT_ALLOW_NO_CONFIG: "1"}
+  - tool: [install, -f, --allow-missing-config]
+  - shell: touch bar && git add bar && git commit -m y
+compare:
+  hooks_dir: true

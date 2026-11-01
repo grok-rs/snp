@@ -1,0 +1,15 @@
+name: crash/c02-regex-nesting
+description: '13 X.10 c02 — group nesting depth 500 (X13-CFG-06)'
+covers: [X13-CFG-06]
+tags: [crash-recipe]
+expect_divergence: D-CRASH-04
+work:
+  config: null
+  setup:
+    - shell: |
+        p=$(printf '%0500d' 0 | tr 0 '('); q=$(printf '%0500d' 0 | tr 0 ')')
+        printf 'repos:\n-   repo: local\n    hooks:\n    -   {id: h, name: h, entry: x, language: system, files: "%s%s"}\n' "$p" "$q" > .pre-commit-config.yaml
+steps:
+  - tool: [validate-config, .pre-commit-config.yaml]
+compare:
+  stdout: tierB

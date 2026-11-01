@@ -1,0 +1,16 @@
+name: git/t10-git-09-unicode-names
+covers: [T10-GIT-09]
+work:
+  files: {"интервью": "x\n", "a b.txt": "", "-dash": "", "#hash": "", "[br]": ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: show, name: show, entry: echo, language: system, verbose: true}
+  commit: [.pre-commit-config.yaml]
+  stage: ["интервью", "a b.txt", "-dash", "#hash", "[br]"]
+steps:
+  - tool: [run]
+  - git: [commit, -q, -m, x]
+  - tool: [run, --all-files]
+  - tool: [run, --files, "интервью", "-dash"]

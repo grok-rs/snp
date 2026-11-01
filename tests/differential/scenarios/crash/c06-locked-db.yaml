@@ -1,0 +1,27 @@
+name: crash/c06-locked-db
+description: '13 X.10 c06 — db.db is garbage / empty / a directory (X13-ST-06, X13-ST-07, X13-ST-08, X13-ST-02)'
+covers: [X13-ST-02, X13-ST-06, X13-ST-07, X13-ST-08]
+tags: [crash-recipe]
+expect_divergence: D-CRASH-17
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook}]
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - shell: printf 'garbage' > "${store}/db.db"
+  - tool: [run, -a]
+  - shell: ': > "${store}/db.db"'
+  - tool: [run, -a]
+  - shell: rm -f "${store}/db.db" && mkdir "${store}/db.db"
+  - tool: [run, -a]
+  - tool: [gc]
+  - tool: [run, -a]
+    env: {PRE_COMMIT_HOME: "${work}/a.txt"}
+compare:
+  stdout: tierB

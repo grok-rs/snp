@@ -1,0 +1,9 @@
+name: interop/m11-mig-20-catalog-goldens
+description: '11 §A.20 MIG-20 — compat-brand golden test over every catalog string (unit-level: WP-12 / WP-33 goldens)'
+covers: [M11-MIG-20]
+tags: [migration]
+requires: {manual: "a golden test over the message catalog, not a differential run (WP-33 owns it)"}
+work:
+  config: null
+steps:
+  - tool: [--version]

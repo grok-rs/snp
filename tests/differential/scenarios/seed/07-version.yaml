@@ -1,0 +1,7 @@
+name: seed/version
+tags: [seed]
+work:
+  config: null
+steps:
+  - tool: [--version]
+  - tool: [-V]

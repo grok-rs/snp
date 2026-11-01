@@ -1,0 +1,21 @@
+name: cli/t10-cli-01-07
+covers: [T10-CLI-01, T10-CLI-02, T10-CLI-04, T10-CLI-07]
+work:
+  files: {foo/cfg.yaml: "repos:\n-   repo: meta\n    hooks: [{id: identity}]\n", foo/f1: "", foo/f2: ""}
+  config: null
+  commit: [foo/cfg.yaml, foo/f1, foo/f2]
+steps:
+  - tool: [run, -c, cfg.yaml, --files, f1, f2]
+    cwd: foo
+  - tool: [run, -a, --files, foo/f1]
+  - tool: [run, --nope]
+  - tool: [--nope]
+  - tool: [help, bogus]
+  - tool: [run, -a, --hook-stage]
+  - tool: [hazmat]
+  - tool: [hazmat, --help]
+  - tool: [hazmat, cd, foo, echo]
+  - tool: [hazmat, cd, foo, echo, --, foo/f1, f2]
+  - tool: [hazmat, n1, echo, hi]
+  - tool: [hazmat, ignore-exit-code, sh, -c, "echo bye >&2; exit 3", --]
+  - tool: [hazmat, n1, sh, -c, "echo $1; test $1 != foo/f2", x, --, foo/f1, foo/f2]

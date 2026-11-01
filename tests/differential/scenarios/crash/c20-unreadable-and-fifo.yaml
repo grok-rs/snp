@@ -1,0 +1,21 @@
+name: crash/c20-unreadable-and-fifo
+description: '13 X.10 c20 — unreadable files, an unreadable entry script (X13-CLS-02, X13-EXE-04)'
+covers: [X13-CLS-02, X13-EXE-04]
+tags: [crash-recipe]
+requires: {os: [linux, macos], not_root: true}
+expect_divergence: D-CRASH-18
+work:
+  files: {noext: "data\n", u.txt: "u\n", s.sh: "#!/bin/sh\necho s\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: all, name: all files, entry: echo, language: system}
+        -   {id: s, name: script, entry: ./s.sh, language: script, pass_filenames: false, always_run: true}
+  commit: [.pre-commit-config.yaml, noext, u.txt, s.sh]
+  modes: {noext: "0o000", u.txt: "0o000", s.sh: "0o111"}
+steps:
+  - tool: [run, -a]
+  - shell: chmod 644 noext u.txt && chmod 755 s.sh
+compare:
+  stdout: tierB

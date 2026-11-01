@@ -1,0 +1,15 @@
+name: interop/m11-mig-17-snp1-store
+description: '11 §A.20 MIG-17 — a store holding an snp 1.x layout (README signature, db.db, resource-pools/): ignored, gc notes it on stderr'
+covers: [M11-MIG-17]
+tags: [migration]
+expect_divergence: D-DIAG-05
+work:
+  config: "repos: []\n"
+  setup:
+    - shell: |
+        mkdir -p "${snp_store}/resource-pools" && printf 'This directory is maintained by SNP (Shell Not Pass).\n' > "${snp_store}/README" && : > "${snp_store}/db.db"
+steps:
+  - tool: [gc]
+  - shell: ls "${snp_store}"
+compare:
+  store: false

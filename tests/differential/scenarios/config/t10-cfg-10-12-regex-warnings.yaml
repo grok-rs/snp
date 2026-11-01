@@ -1,0 +1,36 @@
+name: config/t10-cfg-10-12-regex-warnings
+covers: [T10-CFG-10, T10-CFG-11, T10-CFG-12]
+work:
+  config: null
+  files:
+    files-none.yaml: |
+      repos:
+      -   repo: local
+          hooks:
+          -   {id: x, name: x, entry: x, language: system, files: ~}
+    files-empty.yaml: |
+      repos:
+      -   repo: local
+          hooks:
+          -   id: x
+              name: x
+              entry: x
+              language: system
+              files:
+    glob.yaml: |
+      files: dir/*.py
+      exclude: dir[\/].*\.py
+      repos:
+      -   repo: local
+          hooks:
+          -   {id: flake8, name: flake8, entry: x, language: system, files: dir/*.py}
+          -   {id: a, name: a, entry: x, language: system, files: 'dir[\/].*\.py'}
+          -   {id: b, name: b, entry: x, language: system, exclude: 'dir[/\\].*\.py'}
+          -   {id: c, name: c, entry: x, language: system, files: 'dir[\\/].*\.py'}
+      -   repo: meta
+          hooks:
+          -   {id: identity, files: dir/*.py}
+steps:
+  - tool: [validate-config, files-none.yaml]
+  - tool: [validate-config, files-empty.yaml]
+  - tool: [validate-config, glob.yaml]

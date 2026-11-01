@@ -1,0 +1,25 @@
+name: run/t10-run-21-hook-env
+covers: [T10-RUN-21]
+requires: {probe: true}
+work:
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: env
+            name: env
+            entry: ${probe} env PRE_COMMIT PRE_COMMIT_IS_SQUASH_MERGE PRE_COMMIT_REWRITE_COMMAND PRE_COMMIT_CHECKOUT_TYPE PRE_COMMIT_PRE_REBASE_UPSTREAM PRE_COMMIT_PRE_REBASE_BRANCH PRE_COMMIT_FROM_REF PRE_COMMIT_TO_REF PRE_COMMIT_ORIGIN PRE_COMMIT_SOURCE PRE_COMMIT_COMMIT_MSG_SOURCE PRE_COMMIT_COMMIT_OBJECT_NAME PRE_COMMIT_LOCAL_BRANCH PRE_COMMIT_REMOTE_BRANCH PRE_COMMIT_REMOTE_NAME PRE_COMMIT_REMOTE_URL
+            language: system
+            pass_filenames: false
+            always_run: true
+            verbose: true
+            stages: [pre-commit, post-merge, post-rewrite, post-checkout, pre-rebase, pre-push, prepare-commit-msg]
+  commit: [.pre-commit-config.yaml]
+steps:
+  - tool: [run, --hook-stage, post-merge, --is-squash-merge, "1"]
+  - tool: [run, --hook-stage, post-rewrite, --rewrite-command, amend]
+  - tool: [run, --hook-stage, post-checkout, --checkout-type, "1", --from-ref, HEAD, --to-ref, HEAD]
+  - tool: [run, --hook-stage, pre-rebase, --pre-rebase-upstream, master, --pre-rebase-branch, topic]
+  - tool: [run, --hook-stage, pre-rebase, --pre-rebase-upstream, master]
+  - tool: [run, --hook-stage, pre-push, --from-ref, HEAD, --to-ref, HEAD, --local-branch, main, --remote-branch, rmain, --remote-name, origin, --remote-url, /nowhere]
+  - tool: [run, --hook-stage, prepare-commit-msg, --commit-msg-filename, msg, --prepare-commit-message-source, commit, --commit-object-name, HEAD]

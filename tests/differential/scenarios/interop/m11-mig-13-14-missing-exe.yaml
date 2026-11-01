@@ -1,0 +1,26 @@
+name: interop/m11-mig-13-14-missing-exe
+description: '11 §A.20 MIG-13/14 — the installed script''s interpreter / SNP_EXE is gone; another pre-commit on PATH, then nothing'
+covers: [M11-MIG-13, M11-MIG-14]
+tags: [migration]
+requires: {os: [linux, macos]}
+expect_divergence: D-DATA-05
+work:
+  files: {a.txt: "", b.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: ok, name: ok, entry: 'true', language: system}
+  commit: [.pre-commit-config.yaml]
+  stage: [a.txt]
+steps:
+  - tool: [install]
+  - shell: mkdir -p "${root}/alt" && ln -s ${oracle} "${root}/alt/pre-commit" && rm -f "${root}/bin/pre-commit" "${root}/bin/snp"
+  - shell: sed 's|^INSTALL_PYTHON=.*|INSTALL_PYTHON=/nonexistent|' .git/hooks/pre-commit > h && cat h > .git/hooks/pre-commit && rm h
+  - git: [commit, -q, -m, mig13]
+    env: {PATH: "${root}/alt:/usr/bin:/bin"}
+  - shell: git add b.txt
+  - git: [commit, -q, -m, mig14]
+    env: {PATH: "/usr/bin:/bin"}
+compare:
+  hooks_dir: true

@@ -1,0 +1,41 @@
+name: fast-path/pre-commit-hooks-cold-warm
+description: 'pre-commit-hooks v6.0.0 (Tier A: native in snp, never cloned, D-PERF-03 is invisible): cold and warm transcripts must be byte-identical'
+tags: [fast-path]
+requires: {net: true}
+repos:
+  pch: {url: "https://github.com/pre-commit/pre-commit-hooks", rev: v6.0.0}
+work:
+  files:
+    trailing.txt: "trailing   \nok\n"
+    noeol.txt: "no final newline"
+    good.yaml: "a: 1\n"
+    bad.yaml: "a: [\n"
+    crlf.txt: "a\r\nb\r\n"
+    conflict.txt: "<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> other\n"
+    exe.sh: "echo no shebang\n"
+    big.json: "{\"a\": 1, \"b\": [1, 2]}\n"
+    bad.json: "{\"a\": }\n"
+  exec: [exe.sh]
+  config: |
+    repos:
+    -   repo: ${repo:pch}
+        rev: ${rev:pch}
+        hooks:
+        -   id: trailing-whitespace
+        -   id: end-of-file-fixer
+        -   id: check-yaml
+        -   id: check-json
+        -   id: check-merge-conflict
+        -   id: check-executables-have-shebangs
+        -   id: mixed-line-ending
+        -   id: check-added-large-files
+        -   id: no-commit-to-branch
+        -   id: detect-private-key
+  commit: [.pre-commit-config.yaml]
+  stage: [trailing.txt, noeol.txt, good.yaml, bad.yaml, crlf.txt, conflict.txt, exe.sh, big.json, bad.json]
+steps:
+  - tool: [run]
+  - tool: [run]
+  - tool: [run, -a, --color, always]
+compare:
+  store: false

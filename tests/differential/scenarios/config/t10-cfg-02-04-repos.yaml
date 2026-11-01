@@ -1,0 +1,37 @@
+name: config/t10-cfg-02-04-repos
+covers: [T10-CFG-02, T10-CFG-03, T10-CFG-04, T10-CFG-09]
+work:
+  config: null
+  files:
+    ok.yaml: |
+      repos:
+      -   repo: git@github.com:pre-commit/pre-commit-hooks
+          rev: cd74dc150c142c3be70b24eaf0b02cae9d235f37
+          hooks:
+          -   id: pyflakes
+              files: \.py$
+              args: [foo, bar, baz]
+    exclude-int.yaml: |
+      repos:
+      -   repo: git@github.com:pre-commit/pre-commit-hooks
+          rev: cd74dc150c142c3be70b24eaf0b02cae9d235f37
+          hooks:
+          -   id: pyflakes
+              exclude: 0
+    local-rev.yaml: |
+      repos:
+      -   repo: local
+          rev: foo
+          hooks:
+          -   {id: x, name: x, entry: x, language: system}
+    meta-rev.yaml: |
+      repos:
+      -   repo: meta
+          rev: 3.7.7
+          hooks: [{id: identity}]
+steps:
+  - tool: [validate-config, ok.yaml]
+  - tool: [validate-config, exclude-int.yaml]
+  - tool: [validate-config, local-rev.yaml]
+  - tool: [validate-config, meta-rev.yaml]
+  - tool: [validate-config, ok.yaml, exclude-int.yaml, local-rev.yaml]

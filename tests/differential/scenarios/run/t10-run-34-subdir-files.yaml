@@ -1,0 +1,16 @@
+name: run/t10-run-34-subdir-files
+covers: [T10-RUN-34, T10-CLI-01]
+work:
+  files: {subdir/foo.py: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: show, name: show, entry: echo, language: system}
+  commit: [.pre-commit-config.yaml]
+  stage: [subdir/foo.py]
+steps:
+  - tool: [run, -v, --files, foo.py]
+    cwd: subdir
+  - tool: [run, -v]
+    cwd: subdir

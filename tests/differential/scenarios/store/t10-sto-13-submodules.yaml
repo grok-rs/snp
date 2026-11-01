@@ -1,0 +1,31 @@
+name: store/t10-sto-13-submodules
+covers: [T10-STO-13, T10-STO-06]
+repos:
+  inner:
+    files: {inner.sh: "#!/bin/sh\necho inner\n"}
+    exec: [inner.sh]
+  hooks:
+    fixture: script_hooks_repo
+    then:
+      - git: [-c, protocol.file.allow=always, submodule, add, -q, "${repo:inner}", sub]
+      - write:
+          .pre-commit-hooks.yaml: |
+            -   id: sub
+                name: sub
+                entry: sub/inner.sh
+                language: script
+                pass_filenames: false
+                always_run: true
+      - commit: with submodule
+work:
+  git_config: {protocol.file.allow: always}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: sub, verbose: true}]
+  commit: [.pre-commit-config.yaml]
+steps:
+  - tool: [run]
+    env: {GIT_ALLOW_PROTOCOL: null}
+  - tool: [run]

@@ -1,0 +1,16 @@
+name: cli/t10-cli-abbreviations
+covers: [T10-CLI-07]
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: t, name: t, entry: 'true', language: system}
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [run, --all]
+  - tool: [run, --all-f, --verb]
+  - tool: [run, --conf, .pre-commit-config.yaml, -a]
+  - tool: [run, --c, never, -a]
+  - tool: [run, --hook, pre-commit, -a]

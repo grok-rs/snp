@@ -1,0 +1,22 @@
+name: seed/validate-config
+covers: [T10-VAL-02, T10-CFG-26]
+tags: [seed]
+work:
+  files:
+    good.yaml: "repos: []\n"
+    bad-yaml.yaml: "{\n"
+    no-repos.yaml: "{}\n"
+    float-rev.yaml: |
+      repos:
+      -   repo: https://example.com/r
+          rev: 1.10
+          hooks: [{id: x}]
+  config: "repos: []\n"
+steps:
+  - tool: [validate-config, good.yaml]
+  - tool: [validate-config, does-not-exist]
+  - tool: [validate-config, bad-yaml.yaml]
+  - tool: [validate-config, no-repos.yaml]
+  - tool: [validate-config, float-rev.yaml]
+compare:
+  stdout: exact

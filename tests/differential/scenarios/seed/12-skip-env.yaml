@@ -1,0 +1,19 @@
+name: seed/skip-env
+covers: [T10-RUN-23]
+tags: [seed]
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: one, name: one, entry: 'true', language: system}
+        -   {id: two, name: two, entry: 'false', language: system, alias: second}
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [run, -a]
+    env: {SKIP: two}
+  - tool: [run, -a]
+    env: {SKIP: " one , two "}
+  - tool: [run, -a, second]
+  - tool: [run, -a, nope]

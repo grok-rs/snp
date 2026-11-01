@@ -1,0 +1,17 @@
+name: run/x13-exe-07-pygrep-bad-pattern
+description: 'pygrep entries Python rejects: re.error (one traceback per partition) and OverflowError (X13-EXE-07)'
+covers: [X13-EXE-07]
+expect_divergence: D-MISC-05
+work:
+  files: {a.txt: "x\n", b.txt: "y\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: bad, name: bad pattern, entry: "(", language: pygrep}
+        -   {id: big, name: big repeat, entry: "a{4294967296}", language: pygrep}
+  commit: [.pre-commit-config.yaml, a.txt, b.txt]
+steps:
+  - tool: [run, -a]
+compare:
+  stdout: tierB

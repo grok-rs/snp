@@ -1,0 +1,17 @@
+name: platform/w10-ntstatus-exit-codes
+description: '14 §A.6.4 W10 — NTSTATUS and -1 exit codes in `- exit code:` lines'
+tags: [platform]
+requires: {os: [windows], probe: true}
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: av, name: access violation, entry: "${probe} ntstatus C0000005", language: system, pass_filenames: false}
+        -   {id: m1, name: minus one, entry: "${probe} ntstatus FFFFFFFF", language: system, pass_filenames: false}
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [run, -a]
+compare:
+  exit: nonzero-equal

@@ -1,0 +1,16 @@
+name: platform/m05-pty-output
+description: '14 §A.6.4 M05 — under a pty with --color always, a hook writes 200 KiB; a grandchild keeps the pty open'
+tags: [platform]
+requires: {os: [macos, linux], probe: true, pty: true}
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: fill, name: fill, entry: "${probe} fill 204800", language: system, verbose: true, pass_filenames: false}
+        -   {id: hold, name: hold, entry: "sh -c '(sleep 2; echo late) & echo early' --", language: system, verbose: true, pass_filenames: false}
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [run, -a, --color, always]
+    tty: true

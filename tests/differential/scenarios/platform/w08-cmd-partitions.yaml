@@ -1,0 +1,20 @@
+name: platform/w08-cmd-partitions
+description: '14 §A.6.4 W08 — 3000 short names through a `.cmd` shim; partition sizes per the batch-file budget'
+tags: [platform]
+requires: {os: [windows], probe: true}
+work:
+  generated: {count: 3000, pattern: "f0000000000000{i:06}.js", content: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: shim, name: shim, entry: shim.cmd, language: system, verbose: true, require_serial: true}
+  commit: [.pre-commit-config.yaml]
+  stage: ["."]
+  setup:
+    - shell: printf '@echo off\r\n"%s" count %%*\r\n' "${probe_path}" > shim.cmd
+steps:
+  - tool: [run]
+    env: {PATH_PREPEND: "${work}"}
+compare:
+  eol: insensitive

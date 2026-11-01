@@ -1,0 +1,16 @@
+name: config/regex-invalid
+covers: [T10-CFG-11]
+work:
+  config: null
+  files:
+    named.yaml: |
+      repos:
+      -   repo: local
+          hooks:
+          -   {id: x, name: x, entry: x, language: system, files: '(?<n>foo)'}
+    unbalanced.yaml: |
+      exclude: '(['
+      repos: []
+steps:
+  - tool: [validate-config, named.yaml]
+  - tool: [validate-config, unbalanced.yaml]

@@ -1,0 +1,15 @@
+name: platform/m02-unicode-normalisation
+description: '14 §A.6.4 M02 — NFC file name, NFC regex, NFD `--files`'
+tags: [platform]
+requires: {probe: true}
+work:
+  files: {"ä.txt": ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: a, name: umlaut, entry: "${probe} args", language: system, files: 'ä', verbose: true}
+  commit: [.pre-commit-config.yaml, "ä.txt"]
+steps:
+  - tool: [run, -a]
+  - shell: '"$PRE_COMMIT" run --files "$(printf ''a\314\210.txt'')"'

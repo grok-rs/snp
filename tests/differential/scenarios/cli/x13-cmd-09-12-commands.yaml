@@ -1,0 +1,28 @@
+name: cli/x13-cmd-09-12-commands
+description: 'gc with a tracked config that crashes the loader, validate-config on an unreadable file, try-repo failures (X13-CMD-09, X13-CMD-11, X13-CMD-12)'
+covers: [X13-CMD-09, X13-CMD-11, X13-CMD-12, X13-SM-09]
+requires: {os: [linux, macos], not_root: true}
+expect_divergence: D-CRASH-17
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook}]
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [install-hooks]
+  - shell: |
+      printf 'minimum_pre_commit_version: "abc"\nrepos: []\n' > .pre-commit-config.yaml
+  - tool: [gc]
+  - shell: chmod 000 .pre-commit-config.yaml
+  - tool: [validate-config, .pre-commit-config.yaml]
+  - tool: [validate-manifest, .pre-commit-config.yaml]
+  - shell: chmod 644 .pre-commit-config.yaml
+  - tool: [try-repo, "${repo:hooks}", nope]
+  - tool: [try-repo]
+compare:
+  stdout: tierB

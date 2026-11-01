@@ -1,0 +1,17 @@
+name: crash/c24-migrate-config
+description: '13 X.10 c24 — migrate-config on a missing / non-UTF-8 / %YAML list-root config; an invalid minimum version (X13-CFG-01, X13-CFG-10..12)'
+covers: [X13-CFG-10, X13-CFG-11, X13-CFG-12]
+tags: [crash-recipe]
+expect_divergence: D-CRASH-07
+work:
+  config: null
+  setup:
+    - write: {latin.yaml: !!binary "cmVwb3M6IFtdCiMgY2Fm6Qo="}
+    - write: {yaml11.yaml: "%YAML 1.1\n---\n-   repo: local\n    hooks: []\n"}
+steps:
+  - tool: [migrate-config]
+  - tool: [migrate-config, -c, latin.yaml]
+  - tool: [migrate-config, -c, yaml11.yaml]
+  - tool: [autoupdate]
+compare:
+  stdout: tierB

@@ -1,0 +1,21 @@
+name: run/t10-run-16-show-diff-on-failure
+covers: [T10-RUN-16]
+repos:
+  hooks: {fixture: modified_file_returns_zero_repo}
+work:
+  files: {foo.py: "", bar.py: "x\n"}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook3}]
+  commit: [.pre-commit-config.yaml, bar.py]
+  setup:
+    - write: {bar.py: "y\n"}
+    - git: [add, bar.py]
+steps:
+  - tool: [run, --show-diff-on-failure]
+  - git: [checkout, bar.py]
+  - tool: [run, --show-diff-on-failure, --color, always]
+  - git: [checkout, bar.py]
+  - tool: [run, --show-diff-on-failure, --all-files, --color, never]

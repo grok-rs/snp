@@ -1,0 +1,19 @@
+name: run/t10-run-20-from-ref-to-ref
+covers: [T10-RUN-20]
+work:
+  files: {a.txt: "1\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: show, name: show, entry: echo, language: system, verbose: true}
+  commit: [.pre-commit-config.yaml]
+  setup:
+    - commit: first
+    - write: {a.txt: "2\n", b.txt: "new\n"}
+    - commit: second
+steps:
+  - tool: [run, --from-ref, HEAD~1]
+  - tool: [run, --to-ref, HEAD]
+  - tool: [run, --from-ref, HEAD~1, --to-ref, HEAD]
+  - tool: [run, --source, HEAD~1, --origin, HEAD]

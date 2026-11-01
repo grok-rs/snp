@@ -1,0 +1,16 @@
+name: xargs/t10-xrg-09-10-exit-codes
+covers: [T10-XRG-09, T10-XRG-10, T10-XRG-08]
+requires: {os: [linux, macos]}
+work:
+  files: {"0": "", "1": "", "5": ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: exit, name: max abs exit, entry: "sh -c 'for a; do test \"$a\" = 0 || exit \"$a\"; done' --", language: system, require_serial: true}
+        -   {id: kill, name: killed, entry: "sh -c 'kill -9 $$' --", language: system}
+        -   {id: echo, name: echo, entry: echo hello world, language: system, pass_filenames: false, verbose: true}
+  commit: [.pre-commit-config.yaml]
+  stage: ["0", "1", "5"]
+steps:
+  - tool: [run]

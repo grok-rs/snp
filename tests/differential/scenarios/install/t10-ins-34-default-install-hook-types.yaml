@@ -1,0 +1,13 @@
+name: install/t10-ins-34-default-install-hook-types
+covers: [T10-INS-34]
+work:
+  config: |
+    default_install_hook_types: [pre-commit, pre-push]
+    repos: []
+steps:
+  - tool: [install]
+  - shell: ls .git/hooks | grep -v sample
+  - tool: [uninstall]
+  - shell: ls .git/hooks | grep -v sample; true
+compare:
+  hooks_dir: true

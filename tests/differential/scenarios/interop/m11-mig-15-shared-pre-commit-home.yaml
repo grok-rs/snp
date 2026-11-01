@@ -1,0 +1,24 @@
+name: interop/m11-mig-15-shared-pre-commit-home
+description: '11 §A.20 MIG-15 — one PRE_COMMIT_HOME, the tool runs, then the oracle runs gc and clean, then the tool runs again'
+covers: [M11-MIG-15]
+tags: [migration]
+expect_divergence: D-STORE-01
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook}]
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [run, -a]
+    env: {SNP_HOME: null}
+  - shell: ${oracle} gc && ${oracle} clean
+  - tool: [run, -a]
+    env: {SNP_HOME: null}
+  - shell: ls "${store}" 2>/dev/null; true
+compare:
+  store: false

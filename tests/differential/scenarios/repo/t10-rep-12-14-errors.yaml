@@ -1,0 +1,28 @@
+name: repo/t10-rep-12-14-errors
+covers: [T10-REP-12, T10-REP-14]
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  files:
+    a.txt: ""
+    unknown.yaml: |
+      repos:
+      -   repo: file://${repo:hooks}
+          rev: ${rev:hooks}
+          hooks: [{id: i-dont-exist}]
+    lv.yaml: |
+      repos:
+      -   repo: local
+          hooks:
+          -   {id: system-hook, name: s, entry: 'true', language: system, language_version: python3.12}
+    deps.yaml: |
+      repos:
+      -   repo: local
+          hooks:
+          -   {id: system-hook, name: s, entry: 'true', language: unsupported, additional_dependencies: [x]}
+  config: null
+  commit: [a.txt]
+steps:
+  - tool: [run, -c, unknown.yaml]
+  - tool: [run, -c, lv.yaml]
+  - tool: [run, -c, deps.yaml]

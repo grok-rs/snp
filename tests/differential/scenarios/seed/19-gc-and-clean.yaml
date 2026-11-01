@@ -1,0 +1,20 @@
+name: seed/gc-and-clean
+covers: [T10-GC-02]
+tags: [seed]
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  files: {a.txt: ""}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook}]
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [gc]
+  - tool: [install-hooks]
+  - tool: [gc]
+  - tool: [clean]
+compare:
+  store: true

@@ -1,0 +1,16 @@
+name: platform/w06-pathext-shims
+description: '14 §A.6.4 W06 — `tool` + `tool.cmd` + `tool.ps1` on PATH, lower-case PATHEXT, a quoted PATH entry'
+tags: [platform]
+requires: {os: [windows]}
+work:
+  files: {a.txt: "", shims/tool: "#!/bin/sh\necho sh-shim\n", shims/tool.cmd: "@echo cmd-shim\r\n", shims/tool.ps1: "Write-Output ps1\r\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: tool, name: tool, entry: tool, language: system, verbose: true, pass_filenames: false}
+        -   {id: t2, name: t2, entry: t2, language: system, verbose: true, pass_filenames: false}
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [run, -a]
+    env: {PATH_PREPEND: "${work}/shims", PATHEXT: ".com;.exe;.bat;.cmd"}

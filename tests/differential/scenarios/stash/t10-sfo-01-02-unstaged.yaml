@@ -1,0 +1,16 @@
+name: stash/t10-sfo-01-02-unstaged
+covers: [T10-SFO-01, T10-SFO-02]
+work:
+  files: {foo: "1\n2\n3\n4\n5\n6\n7\n8\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: cat, name: cat, entry: cat, language: system, verbose: true}
+  commit: [.pre-commit-config.yaml]
+  stage: [foo]
+steps:
+  - tool: [run]
+  - shell: printf 'herp\nderp\n' > foo
+  - tool: [run]
+  - git: [status, --porcelain]

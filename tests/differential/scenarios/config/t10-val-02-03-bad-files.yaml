@@ -1,0 +1,21 @@
+name: config/t10-val-02-03-bad-files
+covers: [T10-VAL-02, T10-VAL-03, T10-VAL-01]
+work:
+  config: "repos: []\n"
+  files:
+    bad.yaml: "{\n"
+    empty-map.yaml: "{}\n"
+    flow.yaml: "repos: [\n"
+    mapping-values.yaml: "repos:\n-   repo: local\n    hooks: a: b\n"
+steps:
+  - tool: [validate-config]
+  - tool: [validate-config, does-not-exist]
+  - tool: [validate-config, bad.yaml]
+  - tool: [validate-config, empty-map.yaml]
+  - tool: [validate-config, flow.yaml]
+  - tool: [validate-config, mapping-values.yaml]
+  - tool: [validate-manifest, does-not-exist]
+  - tool: [validate-manifest, bad.yaml]
+  - tool: [validate-manifest, empty-map.yaml]
+compare:
+  stdout: tierB

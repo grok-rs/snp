@@ -1,0 +1,8 @@
+name: platform/w25-lock-interop
+description: '14 §A.6.4 W25 — the store lock held by the other tool'
+tags: [platform]
+requires: {os: [windows, macos], manual: "timing test: one tool holds the store lock for 8 s in the background"}
+work:
+  config: "repos: []\n"
+steps:
+  - tool: [install-hooks]

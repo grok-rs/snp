@@ -1,0 +1,25 @@
+name: run/t10-run-13-types
+covers: [T10-RUN-13]
+repos:
+  types: {fixture: types_repo}
+  types_or: {fixture: types_or_repo}
+  exclude_types: {fixture: exclude_types_repo}
+work:
+  files: {bar.py: "", bar.notpy: "", bar.pxd: "", exe: "#!/usr/bin/env python3\n"}
+  exec: [exe]
+  config: |
+    repos:
+    -   repo: ${repo:types}
+        rev: ${rev:types}
+        hooks: [{id: python-files}]
+    -   repo: ${repo:types_or}
+        rev: ${rev:types_or}
+        hooks: [{id: python-cython-files}]
+    -   repo: ${repo:exclude_types}
+        rev: ${rev:exclude_types}
+        hooks: [{id: python-files}]
+  commit: [.pre-commit-config.yaml]
+  stage: [bar.py, bar.notpy, bar.pxd, exe]
+steps:
+  - tool: [run]
+  - tool: [run, --verbose]

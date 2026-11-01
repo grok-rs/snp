@@ -1,0 +1,20 @@
+name: xargs/t10-xrg-11-15-concurrency
+covers: [T10-XRG-11, T10-XRG-15, T10-XRG-16, T10-XRG-17, T10-XRG-12]
+requires: {probe: true, logical_cpus_min: 4}
+work:
+  generated: {count: 10, pattern: "{i}", content: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: shuffled, name: shuffled, entry: "${probe} args", language: system, verbose: true}
+        -   {id: serial, name: serial, entry: "${probe} args", language: system, require_serial: true, verbose: true}
+        -   {id: env, name: env, entry: "${probe} env PRE_COMMIT_TEST_VAR", language: system, pass_filenames: false, verbose: true}
+  commit: [.pre-commit-config.yaml]
+  stage: ["."]
+steps:
+  - tool: [run]
+    env: {PRE_COMMIT_NO_CONCURRENCY: "1", PRE_COMMIT_TEST_VAR: value}
+  - tool: [run]
+    env: {TRAVIS: "1"}
+  - tool: [run]

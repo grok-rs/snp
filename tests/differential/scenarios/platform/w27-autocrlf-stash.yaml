@@ -1,0 +1,25 @@
+name: platform/w27-autocrlf-stash
+description: '14 §A.6.4 W27 — core.autocrlf=true; a CRLF-only unstaged change; a real change; an EOL-rewriting fixer'
+tags: [platform]
+requires: {os: [windows, linux]}
+work:
+  files: {a.txt: "one\ntwo\n"}
+  git_config: {core.autocrlf: "true"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: crlf, name: crlf, entry: "sh -c 'for f; do sed \"s/$/\\r/\" \"$f\" > \"$f.t\" && mv \"$f.t\" \"$f\"; done' --", language: system, stages: [manual]}
+        -   {id: t, name: t, entry: 'true', language: system}
+  commit: [.pre-commit-config.yaml, a.txt]
+  setup:
+    - write: {a.txt: "one\ntwo\nthree\n"}
+    - git: [add, a.txt]
+    - write: {a.txt: "one\r\ntwo\r\nthree\r\n"}
+steps:
+  - tool: [run]
+  - git: [status, --porcelain]
+  - shell: printf 'one\r\ntwo\r\nthree\r\nfour\r\n' > a.txt
+  - tool: [run]
+  - tool: [run, --hook-stage, manual]
+  - git: [status, --porcelain]

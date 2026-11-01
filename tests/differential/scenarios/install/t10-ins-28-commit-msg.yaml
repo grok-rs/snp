@@ -1,0 +1,19 @@
+name: install/t10-ins-28-commit-msg
+covers: [T10-INS-28, T10-INS-31]
+work:
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: must-have-signoff, name: Must have "Signed off by:", entry: "grep -q 'Signed off by:'", language: system, stages: [commit-msg]}
+        -   {id: add-signoff, name: Add "Signed off by:", entry: "sh -c 'printf \"\\nSigned off by: me\\n\" >> \"$1\"' --", language: system, stages: [prepare-commit-msg]}
+  commit: [.pre-commit-config.yaml]
+steps:
+  - tool: [install, -t, commit-msg]
+  - shell: touch foo && git add foo && git commit -m Hi
+  - shell: |
+      git commit -m "$(printf 'Hi\nSigned off by: me, lol')"
+  - tool: [install, -t, prepare-commit-msg]
+  - shell: touch bar && git add bar && git commit -m Hi && git log -1 --format=%B
+compare:
+  hooks_dir: true

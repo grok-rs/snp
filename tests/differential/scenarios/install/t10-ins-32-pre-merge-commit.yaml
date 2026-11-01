@@ -1,0 +1,17 @@
+name: install/t10-ins-32-pre-merge-commit
+covers: [T10-INS-32]
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook, stages: [pre-merge-commit]}]
+  commit: [.pre-commit-config.yaml]
+steps:
+  - tool: [install, -t, pre-merge-commit]
+  - shell: git checkout -q -b feature && touch foo && git add foo && git commit -q -m foo && git checkout -q -
+  - git: [merge, --no-ff, --no-edit, feature]
+compare:
+  hooks_dir: true

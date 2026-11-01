@@ -1,0 +1,24 @@
+name: install/t10-ins-11-14-legacy-migration
+covers: [T10-INS-11, T10-INS-14, T10-INS-15, T10-INS-17, T10-INS-19]
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook}]
+  commit: [.pre-commit-config.yaml]
+  setup:
+    - shell: mkdir -p .git/hooks && printf '#!/usr/bin/env bash\necho legacy hook\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+steps:
+  - shell: touch baz && git add baz && git commit -m commit!
+  - tool: [install]
+  - tool: [install]
+  - shell: touch foo && git add foo && git commit -m commit!
+  - shell: printf '#!/usr/bin/env bash\necho "fail!"\nexit 1\n' > .git/hooks/pre-commit.legacy && chmod +x .git/hooks/pre-commit.legacy
+  - shell: touch bar && git add bar && git commit -m commit!
+  - tool: [uninstall]
+  - shell: ls .git/hooks | grep -v sample; cat .git/hooks/pre-commit
+compare:
+  hooks_dir: true

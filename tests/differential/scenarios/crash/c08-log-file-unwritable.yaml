@@ -1,0 +1,24 @@
+name: crash/c08-log-file-unwritable
+description: '13 X.10 c08 — log_file in a missing directory / a directory / empty (X13-EXE-05)'
+covers: [X13-EXE-05]
+tags: [crash-recipe]
+expect_divergence: D-CRASH-15
+work:
+  files: {a.txt: "", logd/keep: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: nodir, name: nodir, entry: "sh -c 'echo some-output; exit 1' --", language: system, log_file: nodir/x.log}
+        -   {id: dir, name: dir, entry: "sh -c 'echo some-output; exit 1' --", language: system, log_file: logd}
+        -   {id: empty, name: empty, entry: "sh -c 'echo some-output; exit 1' --", language: system, log_file: ""}
+  commit: [.pre-commit-config.yaml, a.txt, logd/keep]
+  setup:
+    - write: {a.txt: "staged\n"}
+    - git: [add, a.txt]
+    - write: {a.txt: "staged\nunstaged\n"}
+steps:
+  - tool: [run]
+  - tool: [run, -a]
+compare:
+  stdout: tierB

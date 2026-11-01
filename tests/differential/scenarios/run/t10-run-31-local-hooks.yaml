@@ -1,0 +1,20 @@
+name: run/t10-run-31-local-hooks
+covers: [T10-RUN-31, T10-RUN-39]
+work:
+  files: {foo.py: "x = 1\n", notes.txt: "TODO later\n", ok.txt: "fine\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: identity-copy, name: identity-copy, entry: echo, language: system, files: \.py$, verbose: true}
+        -   {id: do_not_commit, name: Block if "DO NOT COMMIT" is found, entry: DO NOT COMMIT, language: pygrep, files: ^(.*)$}
+        -   {id: todo, name: no todos, entry: "sh -c '! grep -iI todo \"$@\"' --", language: system}
+    -   repo: meta
+        hooks:
+        -   id: check-useless-excludes
+  commit: [.pre-commit-config.yaml]
+  stage: [foo.py, notes.txt, ok.txt]
+steps:
+  - tool: [run]
+  - tool: [run, do_not_commit]
+  - tool: [run, check-useless-excludes]

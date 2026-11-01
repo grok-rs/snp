@@ -1,0 +1,25 @@
+name: install/t10-hki-04-07-hook-impl
+covers: [T10-HKI-04, T10-HKI-07, T10-HKI-08, T10-HKI-09, T10-HKI-02]
+work:
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: do_not_commit, name: Block if "DO NOT COMMIT" is found, entry: DO NOT COMMIT, language: pygrep}
+  commit: [.pre-commit-config.yaml]
+steps:
+  - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=pre-commit, --hook-dir, "${work}/.git/hooks", --, run, --all-files]
+  - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=commit-msg, --]
+  - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=prepare-commit-msg, --]
+  - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=pre-rebase, --]
+  - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=pre-push, --hook-dir, "${work}/.git/hooks", --, origin, /nowhere]
+    stdin: "(delete) 0000000000000000000000000000000000000000 refs/heads/x 1111111111111111111111111111111111111111\n"
+  - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=pre-commit]
+  - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=pre-commit, --hook-dir, "${work}/.git/hooks", --]
+    env: {PRE_COMMIT_RUNNING_LEGACY: "1"}
+  - shell: mkdir -p .git/hooks && printf '#!/bin/sh\necho hi "$@"\nexit 1\n' > .git/hooks/pre-commit.legacy && chmod +x .git/hooks/pre-commit.legacy
+  - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=pre-commit, --hook-dir, "${work}/.git/hooks", --]
+  - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=pre-commit, --hook-dir, "${work}/.git/hooks", --]
+    env: {PRE_COMMIT_RUNNING_LEGACY: "1"}
+  - tool: [hook-impl, --config=missing.yaml, --hook-type=pre-commit, --]
+  - tool: [hook-impl, --config=missing.yaml, --hook-type=pre-commit, --skip-on-missing-config, --]

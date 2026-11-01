@@ -1,0 +1,24 @@
+name: crash/c15-autoupdate-unreachable
+description: '13 X.10 c15 — autoupdate with one unreachable repo (X13-GIT-02)'
+covers: [X13-GIT-02]
+tags: [crash-recipe]
+expect_divergence: D-CRASH-06
+repos:
+  hooks:
+    fixture: script_hooks_repo
+    tags: [v1.0.0]
+    then: [{write: {x: "1\n"}}, {commit: two}, {tag: v1.1.0}]
+work:
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: v1.0.0
+        hooks: [{id: bash_hook}]
+    -   repo: /nonexistent/repo
+        rev: v1.0.0
+        hooks: [{id: x}]
+steps:
+  - tool: [autoupdate]
+  - shell: cat .pre-commit-config.yaml
+compare:
+  stdout: tierB

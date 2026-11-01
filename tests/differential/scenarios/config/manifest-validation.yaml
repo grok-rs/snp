@@ -1,0 +1,23 @@
+name: config/manifest-validation
+covers: [T10-CFG-16]
+work:
+  config: null
+  files:
+    ok-manifest.yaml: |
+      -   id: a
+          name: a
+          entry: a
+          language: python
+          language_version: python3.4
+          files: ''
+          always_run: true
+    bad-manifest.yaml: |
+      -   id: a
+          name: a
+          language: python
+    deprecated-manifest.yaml: |
+      -   {id: a, name: a, entry: a, language: system, stages: [commit]}
+steps:
+  - tool: [validate-manifest, ok-manifest.yaml]
+  - tool: [validate-manifest, bad-manifest.yaml]
+  - tool: [validate-manifest, deprecated-manifest.yaml]

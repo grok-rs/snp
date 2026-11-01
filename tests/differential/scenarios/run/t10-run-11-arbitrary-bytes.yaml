@@ -1,0 +1,15 @@
+name: run/t10-run-11-arbitrary-bytes
+covers: [T10-RUN-11]
+repos:
+  hooks: {fixture: arbitrary_bytes_repo}
+work:
+  files: {foo.py: ""}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: hook}]
+  commit: [.pre-commit-config.yaml]
+  stage: [foo.py]
+steps:
+  - tool: [run]

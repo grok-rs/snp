@@ -1,0 +1,15 @@
+name: git/t10-git-02-worktree
+covers: [T10-GIT-02]
+work:
+  files: {a.txt: "a\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: show, name: show, entry: echo, language: system, verbose: true}
+  commit: [.pre-commit-config.yaml, a.txt]
+  setup:
+    - git: [worktree, add, -q, "${root}/wt", -b, wtb]
+steps:
+  - shell: cd ../wt && echo b > b.txt && git add b.txt && "$PRE_COMMIT" run
+  - shell: cd ../wt && "$PRE_COMMIT" run --all-files

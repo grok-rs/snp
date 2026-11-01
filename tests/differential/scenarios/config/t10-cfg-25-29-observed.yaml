@@ -1,0 +1,37 @@
+name: config/t10-cfg-25-29-observed
+covers: [T10-CFG-25, T10-CFG-26, T10-CFG-27, T10-CFG-28, T10-CFG-29]
+work:
+  config: null
+  files:
+    bools.yaml: |
+      repos:
+      -   repo: local
+          hooks:
+          -   {id: x, name: x, entry: x, language: system, always_run: yes, pass_filenames: off}
+    float-rev.yaml: |
+      repos:
+      -   repo: https://example.com/r
+          rev: 1.10
+          hooks: [{id: x}]
+    dup.yaml: "repos: []\nrepos: []\n"
+    anchors.yaml: |
+      x-common: &common
+          language: system
+          entry: 'true'
+      repos:
+      -   repo: local
+          hooks:
+          -   <<: *common
+              id: a
+              name: a
+    no-name.yaml: |
+      repos:
+      -   repo: local
+          hooks:
+          -   {id: x, entry: x, language: system}
+steps:
+  - tool: [validate-config, bools.yaml]
+  - tool: [validate-config, float-rev.yaml]
+  - tool: [validate-config, dup.yaml]
+  - tool: [validate-config, anchors.yaml]
+  - tool: [validate-config, no-name.yaml]

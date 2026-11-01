@@ -1,0 +1,25 @@
+name: stash/t10-sfo-08-submodule
+covers: [T10-SFO-08, T10-SFO-09]
+repos:
+  sub:
+    files: {s.txt: "rev1\n"}
+    then:
+      - write: {s.txt: "rev2\n"}
+      - commit: rev2
+work:
+  files: {bar: ""}
+  git_config: {protocol.file.allow: always}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: t, name: t, entry: 'true', language: system}
+  commit: [.pre-commit-config.yaml, bar]
+  setup:
+    - git: [-c, protocol.file.allow=always, submodule, add, -q, "${repo:sub}", sub]
+    - commit: add sub
+    - shell: cd sub && git checkout -q HEAD~1 && echo untracked > new.txt
+    - shell: printf 'changed\n' > bar
+steps:
+  - tool: [run]
+  - git: [status, --porcelain]

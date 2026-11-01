@@ -1,0 +1,19 @@
+name: crash/c24-minimum-version-abc
+description: '13 X.10 c24 — minimum_pre_commit_version "abc" / "" / "4." / "4.6.3rc1" (X13-CFG-01)'
+covers: [X13-CFG-01]
+tags: [crash-recipe]
+expect_divergence: D-CRASH-01
+work:
+  config: null
+  setup:
+    - write: {abc.yaml: "minimum_pre_commit_version: \"abc\"\nrepos: []\n"}
+    - write: {empty.yaml: "minimum_pre_commit_version: \"\"\nrepos: []\n"}
+    - write: {dot.yaml: "minimum_pre_commit_version: \"4.\"\nrepos: []\n"}
+    - write: {rc.yaml: "minimum_pre_commit_version: \"4.6.3rc1\"\nrepos: []\n"}
+steps:
+  - tool: [validate-config, abc.yaml]
+  - tool: [validate-config, empty.yaml]
+  - tool: [validate-config, dot.yaml]
+  - tool: [validate-config, rc.yaml]
+compare:
+  stdout: tierB

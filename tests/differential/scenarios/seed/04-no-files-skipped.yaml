@@ -1,0 +1,14 @@
+name: seed/no-files-skipped
+covers: [T10-RUN-53]
+tags: [seed]
+work:
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: a, name: a, entry: 'false', language: system}
+        -   {id: b, name: b, entry: 'false', language: system, types: [python]}
+  commit: [.pre-commit-config.yaml]
+steps:
+  - tool: [run]
+  - tool: [run, --color, always]

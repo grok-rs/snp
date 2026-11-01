@@ -1,0 +1,20 @@
+name: try-repo/t10-try-01-07
+covers: [T10-TRY-01, T10-TRY-02, T10-TRY-03, T10-TRY-04, T10-TRY-07]
+repos:
+  hooks:
+    fixture: modified_file_returns_zero_repo
+    then:
+      - write: {extra: "x\n"}
+      - commit: second
+work:
+  files: {test-file: "", sub/x: ""}
+  config: null
+  stage: [test-file]
+steps:
+  - tool: [try-repo, "${repo:hooks}", --verbose]
+  - tool: [try-repo, "${repo:hooks}", bash_hook, --verbose]
+  - tool: [try-repo, ../repos/hooks]
+  - tool: [try-repo, "${repo:hooks}/.git"]
+  - tool: [try-repo, "${repo:hooks}", --ref, "${rev:hooks}"]
+  - tool: [try-repo, ../../repos/hooks]
+    cwd: sub

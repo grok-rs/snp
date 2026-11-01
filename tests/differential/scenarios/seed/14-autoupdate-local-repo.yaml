@@ -1,0 +1,21 @@
+name: seed/autoupdate-local-repo
+covers: [T10-AUP-04]
+tags: [seed]
+repos:
+  hooks:
+    fixture: script_hooks_repo
+    tags: [v1.0.0]
+    then:
+      - write: {README: "later\n"}
+      - commit: second
+      - tag: v1.1.0
+work:
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: v1.0.0
+        hooks:
+        -   id: bash_hook
+steps:
+  - tool: [autoupdate]
+  - tool: [autoupdate]

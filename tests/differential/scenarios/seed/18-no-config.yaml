@@ -1,0 +1,10 @@
+name: seed/no-config
+covers: [T10-RUN-56]
+tags: [seed]
+work:
+  files: {a.txt: ""}
+  config: null
+  commit: [a.txt]
+steps:
+  - tool: [run]
+  - tool: [run, -a]

@@ -1,0 +1,21 @@
+name: crash/c04-non-utf8-names
+description: '13 X.10 c04 — non-UTF-8 file names from git and --files (X13-GIT-05, X13-GIT-06)'
+covers: [X13-GIT-05, X13-GIT-06]
+tags: [crash-recipe]
+requires: {os: [linux]}
+expect_divergence: D-CRASH-12
+work:
+  files: {ok.txt: "", "bad\\xff.txt": ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: h, name: h, entry: echo, language: system, verbose: true}
+  commit: [.pre-commit-config.yaml, ok.txt, "bad\\xff.txt"]
+steps:
+  - tool: [run, -a]
+  - shell: printf 'x\n' >> "$(printf 'bad\377.txt')" && git add -A
+  - tool: [run]
+  - shell: '"$PRE_COMMIT" run --files "$(printf ''bad\377.txt'')"'
+compare:
+  stdout: tierB

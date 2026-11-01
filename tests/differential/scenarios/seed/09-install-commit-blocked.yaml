@@ -1,0 +1,16 @@
+name: seed/install-commit-blocked
+tags: [seed]
+work:
+  files: {a.txt: "hello\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: no, name: never passes, entry: 'false', language: system}
+  commit: [.pre-commit-config.yaml]
+  stage: [a.txt]
+steps:
+  - tool: [install]
+  - git: [commit, -m, add a]
+compare:
+  hooks_dir: true

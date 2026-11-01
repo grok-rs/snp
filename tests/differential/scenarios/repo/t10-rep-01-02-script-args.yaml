@@ -1,0 +1,32 @@
+name: repo/t10-rep-01-02-script-args
+covers: [T10-REP-01, T10-REP-02, T10-REP-15]
+repos:
+  nf: {fixture: not_found_exe}
+  apl: {fixture: arg_per_line_hooks_repo}
+  hooks: {fixture: script_hooks_repo}
+work:
+  files: {bar: "", "foo bar": "", baz: ""}
+  config: |
+    repos:
+    -   repo: ${repo:nf}
+        rev: ${rev:nf}
+        hooks: [{id: not-found-exe}]
+    -   repo: ${repo:apl}
+        rev: ${rev:apl}
+        hooks: [{id: arg-per-line, verbose: true}, {id: arg-per-line, alias: braces, args: ["hi {1}", "I'm {a} problem"], verbose: true}]
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: bash_hook, verbose: true}]
+    -   repo: local
+        hooks:
+        -   id: quotes
+            name: quotes
+            entry: printf '[%s]\n'
+            args: ['i have spaces', "and\"'quotes", '$and !this']
+            language: system
+            verbose: true
+            pass_filenames: false
+  commit: [.pre-commit-config.yaml]
+  stage: [bar, "foo bar", baz]
+steps:
+  - tool: [run]

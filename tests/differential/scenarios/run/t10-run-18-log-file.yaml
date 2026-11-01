@@ -1,0 +1,16 @@
+name: run/t10-run-18-log-file
+covers: [T10-RUN-18]
+repos:
+  hooks: {fixture: logfile_repo}
+work:
+  files: {foo.py: ""}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks: [{id: logfile test hook}]
+  commit: [.pre-commit-config.yaml]
+  stage: [foo.py]
+steps:
+  - tool: [run]
+  - tool: [run]

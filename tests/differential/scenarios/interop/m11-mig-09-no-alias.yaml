@@ -1,0 +1,15 @@
+name: interop/m11-mig-09-no-alias
+description: '11 §A.20 MIG-09 — the same era-3 script with only `snp` on PATH: `pre-commit` not found'
+covers: [M11-MIG-09]
+tags: [migration]
+brands: [snp]
+work:
+  files: {a.txt: ""}
+  config: "repos: []\n"
+  commit: [.pre-commit-config.yaml]
+  stage: [a.txt]
+steps:
+  - shell: ${oracle} install
+  - shell: sed 's|^INSTALL_PYTHON=.*|INSTALL_PYTHON=/nonexistent|' .git/hooks/pre-commit > h && cat h > .git/hooks/pre-commit && rm h
+  - git: [commit, -q, -m, mig09]
+    env: {PATH: "${root}/bin:/usr/bin:/bin"}

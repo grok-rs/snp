@@ -1,0 +1,15 @@
+name: cli/t10-haz-01-02-hazmat-errors
+covers: [T10-HAZ-01, T10-HAZ-02, T10-HAZ-04]
+work:
+  files: {subdir/1: "", not-subdir/2: ""}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: nodash, name: no dashes, entry: pre-commit hazmat n1 echo, language: system}
+        -   {id: prefix, name: wrong prefix, entry: pre-commit hazmat cd subdir echo --, language: system}
+        -   {id: bye, name: bye, entry: "pre-commit hazmat ignore-exit-code sh -c 'echo bye >&2; exit 9' --", language: system, verbose: true, pass_filenames: false, always_run: true}
+  commit: [.pre-commit-config.yaml, subdir/1, not-subdir/2]
+steps:
+  - tool: [run, -a]
+    env: {PATH_PREPEND: "${root}/bin"}

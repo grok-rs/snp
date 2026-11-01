@@ -1,0 +1,24 @@
+name: crash/c16-meta-hook-warnings
+description: '13 X.10 c16 — warnings inside meta-hook output (X13-SM-04)'
+covers: [X13-SM-04]
+tags: [crash-recipe]
+expect_divergence: D-MISC-04
+work:
+  files: {a.txt: ""}
+  config: |
+    foo: bar
+    repos:
+    -   repo: meta
+        hooks:
+        -   {id: check-useless-excludes, verbose: true}
+        -   {id: check-hooks-apply, verbose: true}
+        -   {id: identity, verbose: true}
+    -   repo: local
+        hooks:
+        -   {id: h, name: h, entry: 'true', language: system, files: "[[]", bogus_key: 1}
+  commit: [.pre-commit-config.yaml, a.txt]
+steps:
+  - tool: [run, -a]
+compare:
+  stdout: tierB
+  stderr: tierB

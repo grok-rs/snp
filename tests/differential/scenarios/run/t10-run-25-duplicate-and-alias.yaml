@@ -1,0 +1,24 @@
+name: run/t10-run-25-duplicate-and-alias
+covers: [T10-RUN-25, T10-RUN-23]
+repos:
+  hooks: {fixture: script_hooks_repo}
+work:
+  files: {foo.py: ""}
+  config: |
+    repos:
+    -   repo: ${repo:hooks}
+        rev: ${rev:hooks}
+        hooks:
+        -   id: bash_hook
+        -   id: bash_hook
+            alias: foo_bash
+  commit: [.pre-commit-config.yaml]
+  stage: [foo.py]
+steps:
+  - tool: [run]
+  - tool: [run, bash_hook]
+  - tool: [run, foo_bash]
+  - tool: [run]
+    env: {SKIP: foo_bash}
+  - tool: [run, foo_bash]
+    env: {SKIP: foo_bash}
