@@ -1,0 +1,125 @@
+//! Property tests of the harness's parsers and normalisers (WP-35; the harness is tooling, so these proptests stand in
+//! for the fuzz targets of the shipped parsers): no input makes them panic, the normalisers are idempotent, and the
+//! brand map's apply/invert round trip holds for texts assembled from its own phrases and arbitrary filler.
+//!
+//! Owner: WP-35.
+
+#[cfg(test)]
+mod robustness {
+    use std::path::Path;
+
+    use proptest::prelude::*;
+    use snp_difftest::{
+        BrandMap, Scenario, Tier, Yv, canonical_usage, mask_paths, normalise, strip_diag,
+    };
+
+    fn map() -> BrandMap {
+        BrandMap::workspace().unwrap()
+    }
+
+    /// Lines that exercise every normaliser branch, mixed with arbitrary text.
+    fn line() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just(String::from("Traceback (most recent call last):")),
+            Just(String::from("  File \"x.py\", line 1, in <module>")),
+            Just(String::from("ValueError: boom")),
+            Just(String::new()),
+            Just(String::from(
+                "During handling of the above exception, another exception occurred:"
+            )),
+            Just(String::from("usage: pre-commit run [-h]")),
+            Just(String::from(
+                "pre-commit run: error: unrecognized arguments: --x"
+            )),
+            Just(String::from("- duration: 0.03s")),
+            Just(String::from("[INFO] Installing environment for x.")),
+            Just(String::from("h.......Passed")),
+            Just(String::from(
+                "[INFO] Stashing unstaged files to /r/store/patch1700000000-42."
+            )),
+            Just(String::from("-   repo: /r/tmp/tmpab12cd34/shadow-repo")),
+            Just(String::from(
+                "    rev: 508372f149f5f691200929308eaba68eb7ddd4da"
+            )),
+            Just(String::from(
+                "[WinError 32] The process cannot access the file: 'C:\\x'"
+            )),
+            Just(String::from("pre-commit 4.6.2")),
+            Just(String::from("  in \"<unicode string>\", line 2, column 1")),
+            "[ -~]{0,40}",
+            "\\PC{0,20}",
+        ]
+    }
+
+    fn text() -> impl Strategy<Value = Vec<u8>> {
+        prop::collection::vec((line(), prop::bool::ANY), 0..24).prop_map(|ls| {
+            let mut out = Vec::new();
+            for (l, crlf) in ls {
+                out.extend_from_slice(l.as_bytes());
+                out.extend_from_slice(if crlf { b"\r\n" } else { b"\n" });
+            }
+            out
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 256, failure_persistence: None, ..ProptestConfig::default() })]
+
+        #[test]
+        fn scenario_parsing_never_panics(s in "\\PC{0,400}") {
+            let _ = Scenario::parse(&s, Path::new("fuzz.yaml"));
+            let _ = Yv::parse(&s);
+            let _ = BrandMap::parse(&s);
+        }
+
+        #[test]
+        fn structured_scenarios_never_panic(
+            keys in prop::collection::vec(
+                prop_oneof![
+                    Just("work"), Just("steps"), Just("repos"), Just("compare"), Just("requires"),
+                    Just("expected"), Just("brands"), Just("status"), Just("expect_divergence"), Just("files"),
+                    Just("tool"), Just("git"), Just("shell"), Just("signal"), Just("generated"), Just("count"),
+                ],
+                0..8,
+            ),
+            vals in prop::collection::vec("[ -~]{0,12}", 0..8),
+        ) {
+            let mut doc = String::from("name: f\n");
+            for (k, v) in keys.iter().zip(vals.iter().chain(std::iter::repeat(&String::new()))) {
+                doc.push_str(&format!("{k}: {v:?}\n"));
+            }
+            let _ = Scenario::parse(&doc, Path::new("fuzz.yaml"));
+        }
+
+        #[test]
+        fn normalisers_never_panic_and_are_idempotent(b in text(), raw in prop::collection::vec(any::<u8>(), 0..300)) {
+            let m = map();
+            for input in [&b, &raw] {
+                for tier in [Tier::A, Tier::B, Tier::C] {
+                    let once = normalise(tier, input, &m);
+                    if !matches!(tier, Tier::A) {
+                        prop_assert_eq!(normalise(tier, &once, &BrandMap::identity()), once.clone());
+                    }
+                }
+                let u = canonical_usage(input);
+                prop_assert_eq!(canonical_usage(&u), u);
+                let _ = mask_paths(input, &[b"/r/store", b"/r/snp-store"]);
+                let _ = strip_diag(input, None);
+                let _ = m.reduce_snp_only_parsers(input);
+            }
+        }
+
+        #[test]
+        fn brand_map_round_trip(picks in prop::collection::vec((0_usize..64, "[a-z ]{0,10}"), 0..12)) {
+            let m = map();
+            let phrases: Vec<&str> = m.substitutions().iter().map(|r| r.from.as_str()).collect();
+            let mut t = String::new();
+            for (i, filler) in picks {
+                let p = phrases.get(i % phrases.len().max(1)).copied().unwrap_or_default();
+                t.push_str(&format!("{filler}{p}{filler}\n"));
+            }
+            let forward = m.apply(t.as_bytes());
+            prop_assert_eq!(m.invert(&forward), t.into_bytes());
+        }
+    }
+}

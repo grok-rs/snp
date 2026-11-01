@@ -91,7 +91,7 @@ fn parse_args(argv: &[OsString]) -> Result<Args, String> {
             "--cases" => {
                 a.cases = val("--cases")?
                     .parse()
-                    .map_err(|_| "snp-difftest: --cases: not a number")?
+                    .map_err(|_| "snp-difftest: --cases: not a number")?;
             }
             "--seed" => a.seed = parse_seed(&val("--seed")?),
             "--case" => {
@@ -99,7 +99,7 @@ fn parse_args(argv: &[OsString]) -> Result<Args, String> {
                     val("--case")?
                         .parse()
                         .map_err(|_| "snp-difftest: --case: not a number")?,
-                )
+                );
             }
             "--snp-bin" => a.snp_bin = Some(PathBuf::from(val("--snp-bin")?)),
             "--oracle" => a.oracle = Some(PathBuf::from(val("--oracle")?)),
@@ -288,7 +288,8 @@ fn runner(a: &Args) -> Result<(Runner, Options), String> {
     if a.no_probe {
         o.probe = None;
     } else if let Some(p) = &a.probe {
-        o.probe = Some(p.clone());
+        o.probe =
+            Some(std::path::absolute(p).map_err(|e| format!("--probe {}: {e}", p.display()))?);
     }
     o.allow_net = a.net;
     o.keep = a.keep;

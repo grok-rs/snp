@@ -722,7 +722,7 @@ fn parse_requires(v: &Yv, sc: &mut Scenario) -> Result<(), String> {
         match k.as_str() {
             "git" => {
                 sc.requires.git =
-                    VersionReq::parse(&s(val, &what)?).map_err(|e| format!("{what}: {e}"))?
+                    VersionReq::parse(&s(val, &what)?).map_err(|e| format!("{what}: {e}"))?;
             }
             "net" => sc.requires.net = bool_of(val, &what)?,
             "tools" => sc.requires.tools = str_list(val, &what)?,
@@ -756,6 +756,29 @@ fn parse_requires(v: &Yv, sc: &mut Scenario) -> Result<(), String> {
             "sandbox" => sc
                 .unsupported
                 .push(String::from("requires.sandbox (a sandboxed runner)")),
+            // 14 §A.6.1: the console the tool runs under. `pipe` is the default; a posix `pty` is the step-level
+            // `tty: true`; a Windows ConPTY needs a console host the harness does not drive yet.
+            "console" => match s(val, &what)?.as_str() {
+                "pipe" | "none" => {}
+                "pty" => sc.requires.pty = true,
+                other => sc.unsupported.push(format!(
+                    "requires.console {other:?} (only `pipe` and `pty`)"
+                )),
+            },
+            // 14 §A.6.1: how git is started on Windows (`git-cmd`, `git-pwsh`, `git-bash`); the harness spawns git
+            // directly, which is the `direct` launcher.
+            "launcher" => {
+                let l = s(val, &what)?;
+                if l != "direct" {
+                    sc.unsupported
+                        .push(format!("requires.launcher {l:?} (only `direct`)"));
+                }
+            }
+            // A setup the harness cannot build (drive substitution, a held file lock, a benchmark…): the scenario is
+            // recorded for the manual / platform matrix and skipped with this reason.
+            "manual" => sc
+                .unsupported
+                .push(format!("requires.manual: {}", s(val, &what)?)),
             other => return Err(format!("requires: unknown key {other:?}")),
         }
     }
@@ -924,13 +947,13 @@ fn parse_work(v: &Yv, unsupported: &mut Vec<String>) -> Result<Work, String> {
                 w.commit = str_list(val, &what)?
                     .iter()
                     .map(|p| expand_byte_escapes(p))
-                    .collect()
+                    .collect();
             }
             "stage" => {
                 w.stage = str_list(val, &what)?
                     .iter()
                     .map(|p| expand_byte_escapes(p))
-                    .collect()
+                    .collect();
             }
             "unstaged" => {
                 for (p, c) in map_of(val, &what)? {
@@ -953,13 +976,13 @@ fn parse_work(v: &Yv, unsupported: &mut Vec<String>) -> Result<Work, String> {
             "git" => {
                 w.git = val
                     .as_bool()
-                    .ok_or_else(|| format!("{what}: expected a boolean"))?
+                    .ok_or_else(|| format!("{what}: expected a boolean"))?;
             }
             "object_format" => w.object_format = Some(s(val, &what)?),
             "dir" => w.dir = Some(s(val, &what)?),
             "generated" => w.files.extend(generated_files(val, &what)?),
             "junctions" => {
-                unsupported.push(String::from("work.junctions (Windows directory junctions)"))
+                unsupported.push(String::from("work.junctions (Windows directory junctions)"));
             }
             other => return Err(format!("{what}: unknown key {other:?}")),
         }
@@ -1149,7 +1172,7 @@ fn parse_compare(v: &Yv, unsupported: &mut Vec<String>) -> Result<Compare, Strin
             "config_file" => c.config_file = stream_mode(val, &what)?,
             "git_config" => {
                 c.git_config = bool_of(val, &what)
-                    .or_else(|_| Ok::<bool, String>(s(val, &what)? == "exact"))?
+                    .or_else(|_| Ok::<bool, String>(s(val, &what)? == "exact"))?;
             }
             "store" => {
                 c.store = match val.as_bool() {
@@ -1712,6 +1735,40 @@ compare:
         ] {
             assert!(Scenario::parse(bad, Path::new("b.yaml")).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn platform_requirements() {
+        let parse = |req: &str| {
+            Scenario::parse(
+                &format!("name: p\nrequires: {req}\nsteps: [{{tool: [run]}}]\n"),
+                Path::new("p.yaml"),
+            )
+            .unwrap()
+        };
+        let ok = parse("{console: pipe, launcher: direct, path_profile: runner}");
+        assert!(ok.unsupported.is_empty(), "{:?}", ok.unsupported);
+        assert!(parse("{console: pty}").requires.pty);
+        for (req, why) in [
+            ("{console: conpty}", "requires.console \"conpty\""),
+            ("{launcher: git-cmd}", "requires.launcher \"git-cmd\""),
+            ("{path_profile: user-minimal}", "requires.path_profile"),
+            ("{manual: needs subst}", "requires.manual: needs subst"),
+        ] {
+            let sc = parse(req);
+            assert!(
+                sc.unsupported.iter().any(|u| u.contains(why)),
+                "{req}: {:?}",
+                sc.unsupported
+            );
+        }
+        assert!(
+            Scenario::parse(
+                "name: p\nrequires: {consol: pipe}\nsteps: [{tool: [run]}]\n",
+                Path::new("p.yaml")
+            )
+            .is_err()
+        );
     }
 
     #[test]

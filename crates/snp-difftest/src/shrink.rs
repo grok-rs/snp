@@ -423,6 +423,7 @@ pub fn repro_script(s: &Scenario, r: &Runner, root: &Path) -> String {
         (String::from("probe"), String::from("$PROBE")),
         (String::from("probe_path"), String::from("$PROBE")),
         (String::from("tool"), String::from("$TOOL")),
+        (String::from("oracle"), String::from("\"$ORACLE_BIN\"")),
         (
             String::from("z40"),
             String::from("0000000000000000000000000000000000000000"),
@@ -724,7 +725,7 @@ esac
 
 hermetic() {
   env -i PATH="$ROOT/bin:$PATH" HOME="$ROOT/home" PRE_COMMIT_HOME="$ROOT/store" SNP_HOME="$ROOT/snp-store" \
-    GIT_CONFIG_GLOBAL="$ROOT/home/.gitconfig" TMPDIR="$ROOT/tmp" GIT_CEILING_DIRECTORIES="$ROOT" \
+    GIT_CONFIG_GLOBAL="$ROOT/home/.gitconfig" TMPDIR="$ROOT/tmp" GIT_CEILING_DIRECTORIES="$(dirname "$ROOT")" \
     XDG_CACHE_HOME="$ROOT/home/.cache" GIT_TEMPLATE_DIR="$ROOT/git-template" GIT_CONFIG_NOSYSTEM=1 \
     GIT_AUTHOR_NAME=test GIT_COMMITTER_NAME=test GIT_AUTHOR_EMAIL=test@example.com \
     GIT_COMMITTER_EMAIL=test@example.com GIT_AUTHOR_DATE="$BASE_DATE +0000" GIT_COMMITTER_DATE="$BASE_DATE +0000" \

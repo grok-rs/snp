@@ -131,7 +131,9 @@ impl Options {
             .snp_bin
             .parent()
             .map(|d| d.join(format!("snp-probe{exe}")))
-            .filter(|p| p.is_file());
+            .filter(|p| p.is_file())
+            // Hooks run in the scenario's work directory: a relative probe path would not resolve there.
+            .and_then(|p| std::path::absolute(p).ok());
         let python = r
             .oracle_bin
             .parent()
@@ -464,6 +466,14 @@ impl Runner {
         let tool = link_tool(&w, self.program(brand, side, opts), brand)?;
         w.vars
             .push((String::from("tool"), tool.to_string_lossy().into_owned()));
+        // The plain pre-commit 4.6.2 oracle on both sides: interop scenarios (11 §A.20) run it explicitly next to the
+        // tool under test (`- shell: ${oracle} install` then `- tool: [install]`), so the oracle side is the baseline.
+        let oracle = std::path::absolute(&self.oracle_bin)
+            .map_err(|e| format!("resolving {}: {e}", self.oracle_bin.display()))?;
+        w.vars.push((
+            String::from("oracle"),
+            crate::text::sh_quote(&oracle.to_string_lossy()),
+        ));
         let work = w.layout.work.clone();
         let want = Wanted {
             tree: s.compare.tree || needs_tree(s),
@@ -652,6 +662,13 @@ fn link_tool(w: &World, program: &Path, brand: Brand) -> Result<PathBuf, String>
         Brand::Compat => "pre-commit",
         Brand::Snp => "snp",
     };
+    // The link lives under the scenario root: a relative program path (`--snp-bin target/debug/snp`) would dangle.
+    let absolute = std::path::absolute(program)
+        .map_err(|e| format!("resolving {}: {e}", program.display()))?;
+    let program = absolute.as_path();
+    if !program.exists() {
+        return Err(format!("{} does not exist", program.display()));
+    }
     #[cfg(unix)]
     {
         let link = w.layout.bin.join(name);

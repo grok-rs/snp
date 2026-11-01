@@ -4,7 +4,8 @@
 //! * **Tier A** — byte-exact: only the brand map is applied (snp-brand runs).
 //! * **Tier C** — the "ignored" items are masked on both sides: `- duration: …s`, stash patch names and pids, the
 //!   store roots (snp's store differs from pre-commit's by design, FD-2), random `repo…`/`tmp…` suffixes and the
-//!   installer chatter between `[INFO] Installing environment for …` and the next status line. This is what the
+//!   installer chatter between `[INFO] Installing environment for …` and the next status line, and the `rev:` of
+//!   try-repo's shadow repository (committed by pre-commit without the fixed commit dates). This is what the
 //!   `exact` compare mode uses: everything else stays byte-exact.
 //! * **Tier B** — Tier C plus the semantic reductions: Python tracebacks to their last line, argparse usage blocks
 //!   to their `error:` lines (the py312 oracle wraps differently, 12 §A.4.1), YAML error bodies below the `=====> `
@@ -317,7 +318,7 @@ pub fn normalise(tier: Tier, bytes: &[u8], map: &BrandMap) -> Vec<u8> {
     match tier {
         Tier::A => mapped,
         Tier::C => tier_c(&canonical_usage(&mapped)),
-        Tier::B => tier_b(&tier_c(&canonical_usage(&mapped))),
+        Tier::B => tier_c(&tier_b(&canonical_usage(&mapped))),
     }
 }
 
@@ -376,6 +377,7 @@ pub fn mask_paths(bytes: &[u8], stores: &[&[u8]]) -> Vec<u8> {
 fn tier_c(b: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut in_install = false;
+    let mut after_shadow = false;
     for line in lines_with_ends(b) {
         if in_install {
             if is_status_line(line) {
@@ -383,6 +385,16 @@ fn tier_c(b: &[u8]) -> Vec<u8> {
             } else if !is_install_note(line) {
                 continue;
             }
+        }
+        // try-repo's shadow repository (uncommitted changes) is committed under `no_git_env`, i.e. without the
+        // harness's fixed `GIT_*_DATE`: its `rev:` is a wall-clock-dependent SHA on both sides. Only kept lines take
+        // part, so masking is idempotent.
+        let shadow_rev = std::mem::replace(&mut after_shadow, is_shadow_repo_line(line));
+        if shadow_rev && let Some(indent) = shadow_rev_indent(line) {
+            out.extend_from_slice(indent);
+            out.extend_from_slice(b"rev: [SHADOW-REV]");
+            out.extend_from_slice(split_eol(line).1);
+            continue;
         }
         if line.starts_with(b"[INFO] Installing environment for ") {
             in_install = true;
@@ -394,6 +406,21 @@ fn tier_c(b: &[u8]) -> Vec<u8> {
         out.extend_from_slice(&l);
     }
     out
+}
+
+/// `-   repo: <…>/shadow-repo` in try-repo's `Using config:` block.
+fn is_shadow_repo_line(line: &[u8]) -> bool {
+    let (body, _) = split_eol(line);
+    body.ends_with(b"/shadow-repo") && contains_bytes(body, b"repo: ")
+}
+
+/// The indentation of a `    rev: <40 or 64 hex digits>` line.
+fn shadow_rev_indent(line: &[u8]) -> Option<&[u8]> {
+    let (body, _) = split_eol(line);
+    let indent = body.iter().take_while(|c| **c == b' ').count();
+    let (head, rest) = body.split_at_checked(indent)?;
+    let sha = rest.strip_prefix(b"rev: ")?;
+    (matches!(sha.len(), 40 | 64) && sha.iter().all(u8::is_ascii_hexdigit)).then_some(head)
 }
 
 /// The two notes pre-commit prints right after `Installing environment for …`: part of the header, kept.
@@ -513,9 +540,12 @@ fn mask_rand(line: &[u8], prefix: &[u8], repl: &[u8]) -> Vec<u8> {
 fn tier_b(b: &[u8]) -> Vec<u8> {
     let lines = lines_with_ends(b);
     let mut out = Vec::new();
-    let mut iter = lines.iter().peekable();
+    let mut i = 0_usize;
     let mut in_usage = false;
-    while let Some(line) = iter.next() {
+    // Where the exception line of the traceback just collapsed starts in `out` (a chained traceback replaces it).
+    let mut last_exception: Option<usize> = None;
+    while let Some(line) = lines.get(i).copied() {
+        i = i.saturating_add(1);
         // argparse usage block: keep only the `error:` line (wrap points differ between the oracles).
         if line.starts_with(b"usage: ") {
             in_usage = true;
@@ -531,14 +561,34 @@ fn tier_b(b: &[u8]) -> Vec<u8> {
         }
         // Python traceback: keep only the exception line (the first non-indented line after the header).
         if line.starts_with(b"Traceback (most recent call last):") {
-            while let Some(next) = iter.peek() {
-                if next.starts_with(b" ") || next.starts_with(b"\t") {
-                    iter.next();
-                } else {
-                    break;
-                }
+            while lines
+                .get(i)
+                .is_some_and(|next| next.starts_with(b" ") || next.starts_with(b"\t"))
+            {
+                i = i.saturating_add(1);
+            }
+            last_exception = Some(out.len());
+            continue;
+        }
+        // A chained traceback (`\nDuring handling of the above exception, …:\n\n`): the chain reduces to its final
+        // exception line. How many links CPython prints for one EPIPE depends on when the reader went away.
+        if let Some(start) = last_exception
+            && split_eol(line).0.is_empty()
+            && lines.get(i).is_some_and(|next| is_chain_separator(next))
+        {
+            out.truncate(start);
+            i = i.saturating_add(1);
+            if lines
+                .get(i)
+                .is_some_and(|next| split_eol(next).0.is_empty())
+            {
+                i = i.saturating_add(1);
             }
             continue;
+        }
+        // Only the line right after a traceback is its exception line; anything later ends the chain.
+        if last_exception.is_some_and(|start| start != out.len()) {
+            last_exception = None;
         }
         // YAML error bodies: keep `=====> ` + the first line, drop the libyaml mark lines.
         if line.starts_with(b"  in \"<unicode string>\"") || line.starts_with(b"  in \"<file>\"") {
@@ -549,6 +599,13 @@ fn tier_b(b: &[u8]) -> Vec<u8> {
         out.extend_from_slice(&l);
     }
     out
+}
+
+/// The separator lines CPython prints between the links of an exception chain.
+fn is_chain_separator(line: &[u8]) -> bool {
+    let (body, _) = split_eol(line);
+    body == b"During handling of the above exception, another exception occurred:"
+        || body == b"The above exception was the direct cause of the following exception:"
 }
 
 /// `[WinError 32] <localized text>: 'path'` → `[WinError 32] [TEXT]: 'path'`.
@@ -849,6 +906,26 @@ mod tests {
         assert_eq!(
             normalise(Tier::A, b"- duration: 0.03s\n", &BrandMap::identity()),
             b"- duration: 0.03s\n"
+        );
+        let shadow = b"-   repo: /r/tmp/tmpab12cd34/shadow-repo\n    rev: 508372f149f5f691200929308eaba68eb7ddd4da\n    rev: 508372f149f5f691200929308eaba68eb7ddd4da\n";
+        assert_eq!(
+            normalise(Tier::C, shadow, &BrandMap::identity()),
+            b"-   repo: /r/tmp/tmp[RAND]/shadow-repo\n    rev: [SHADOW-REV]\n    rev: 508372f149f5f691200929308eaba68eb7ddd4da\n"
+        );
+    }
+
+    #[test]
+    fn tier_b_collapses_exception_chains() {
+        let one = b"Traceback (most recent call last):\n  File \"a\", line 1\nBrokenPipeError: [Errno 32] Broken pipe\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"b\", line 2\nBrokenPipeError: [Errno 32] Broken pipe\nException ignored in: x\n";
+        let two = b"Traceback (most recent call last):\n  File \"a\", line 1\nBrokenPipeError: [Errno 32] Broken pipe\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"b\", line 2\nBrokenPipeError: [Errno 32] Broken pipe\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"c\", line 3\nBrokenPipeError: [Errno 32] Broken pipe\nException ignored in: x\n";
+        let want = b"BrokenPipeError: [Errno 32] Broken pipe\nException ignored in: x\n";
+        assert_eq!(normalise(Tier::B, one, &BrandMap::identity()), want);
+        assert_eq!(normalise(Tier::B, two, &BrandMap::identity()), want);
+        // A blank line that is not followed by a chain separator stays.
+        let plain = b"Traceback (most recent call last):\n  x\nValueError: v\n\nnext\n";
+        assert_eq!(
+            normalise(Tier::B, plain, &BrandMap::identity()),
+            b"ValueError: v\n\nnext\n"
         );
     }
 

@@ -197,13 +197,17 @@ pub(crate) fn hermetic_env(l: &Layout, parent: &Env) -> Env {
     }
     pairs.push(("PATH".into(), path));
     let gitconfig = l.home.join(".gitconfig");
+    // git never searches a ceiling directory itself, only below it: the ceiling is the root's parent, so a step whose
+    // cwd is the root (or a non-repository work dir) is "not a git repository" even when the harness root lies inside
+    // a checkout (the default `target/difftest/roots` does), instead of running against the enclosing repository.
+    let ceiling = l.root.parent().unwrap_or(&l.root);
     let vars: [(&str, &Path); 7] = [
         ("HOME", &l.home),
         ("PRE_COMMIT_HOME", &l.store),
         ("SNP_HOME", &l.snp_store),
         ("GIT_CONFIG_GLOBAL", &gitconfig),
         ("TMPDIR", &l.tmp),
-        ("GIT_CEILING_DIRECTORIES", &l.root),
+        ("GIT_CEILING_DIRECTORIES", ceiling),
         ("USERPROFILE", &l.home),
     ];
     for (k, v) in vars {
