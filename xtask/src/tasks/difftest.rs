@@ -58,6 +58,22 @@ pub(crate) fn build(
     Ok(())
 }
 
+/// The cargo invocations that build the binaries under test: `snp` alone, then `snp-probe` and `snp-difftest`.
+///
+/// One `cargo build -p snp -p snp-probe -p snp-difftest` unifies the features of the three packages' dependency
+/// graphs (the harness's `insta` and `regex` turn on features of shared crates such as `syn`), so the `snp` it
+/// produced was not the binary a plain `cargo build -p snp` ships. Building `snp` in its own invocation tests the
+/// real binary.
+pub(crate) const BUILD_INVOCATIONS: [&[&str]; 2] = [&["snp"], &["snp-probe", "snp-difftest"]];
+
+/// Builds the binaries under test in `profile`, one cargo invocation per [`BUILD_INVOCATIONS`] entry.
+fn build_under_test(root: &std::path::Path, profile: &str) -> anyhow::Result<()> {
+    for packages in BUILD_INVOCATIONS {
+        build(root, profile, packages)?;
+    }
+    Ok(())
+}
+
 /// Runs the task with the arguments that follow its name.
 pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
     let root = workspace::root()?;
@@ -82,7 +98,7 @@ pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
         (String::from("run"), rest)
     };
     if !no_build {
-        build(&root, profile, &["snp", "snp-probe", "snp-difftest"])?;
+        build_under_test(&root, profile)?;
     }
     let dir = target_dir(&root)?.join(if profile == "release" {
         "release"
@@ -107,4 +123,27 @@ pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
         bail!("snp-difftest {command} failed ({status})");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BUILD_INVOCATIONS;
+
+    /// `snp` is built in a cargo invocation of its own, so no harness dependency unifies features into it.
+    #[test]
+    fn snp_is_built_alone() {
+        let with_snp: Vec<&[&str]> = BUILD_INVOCATIONS
+            .iter()
+            .copied()
+            .filter(|p| p.contains(&"snp"))
+            .collect();
+        assert_eq!(with_snp, [&["snp"][..]]);
+        let all: Vec<&str> = BUILD_INVOCATIONS
+            .iter()
+            .flat_map(|p| p.iter().copied())
+            .collect();
+        for p in ["snp", "snp-probe", "snp-difftest"] {
+            assert!(all.contains(&p), "{p} is not built");
+        }
+    }
 }
