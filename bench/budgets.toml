@@ -3,6 +3,9 @@
 #
 # Units: times in milliseconds (the hyperfine median of `-N -w 5 -r 50`), memory in MiB (RSS: the median of 10
 # `/usr/bin/time` runs; allocations: dhat's total bytes allocated), syscalls as counted by `strace -f -c`.
+# ARCHITECTURE §12.1 states the memory budgets in MB (10^6 bytes); they are written here as the MiB value of exactly
+# that many MB, rounded down (30 MB = 28.61 MiB, 25 MB = 23.84 MiB, 2 MB = 1.907 MiB), so no limit is looser than
+# the specification.
 
 [gate]
 # A median regression above this percentage fails the gate when the 95 % confidence intervals of the two medians do
@@ -81,7 +84,7 @@ scenario = "B8"
 metric = "rss_mib"
 vs_scenario = "B3"
 max = 1.0
-plus = 2.0 # the streamed patch: B3's RSS + <= 2 MiB
+plus = 1.907 # the streamed patch: B3's RSS + <= 2 MB
 hard = false
 
 [[budget]]
@@ -113,21 +116,21 @@ hard = false
 os = "linux"
 scenario = "B4"
 metric = "rss_mib"
-max = 30.0
+max = 28.61 # 30 MB
 hard = true
 
 [[budget]]
 os = "linux"
 scenario = "B6"
 metric = "rss_mib"
-max = 25.0
+max = 23.84 # 25 MB
 hard = true
 
 [[budget]]
 os = "linux"
 scenario = "B12u"
 metric = "rss_mib"
-max = 30.0
+max = 28.61 # 30 MB
 hard = true
 
 # Nightly: syscall ceilings (`strace -f -c`) and the allocation budget (feature `dhat-heap`).
@@ -151,7 +154,7 @@ hard = false
 os = "linux"
 scenario = "B3"
 metric = "alloc_mib"
-max = 2.0
+max = 1.907 # 2 MB
 hard = true
 
 # --- macOS arm64 (soft) --------------------------------------------------------------------------------------

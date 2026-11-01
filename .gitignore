@@ -1,3 +1,4 @@
 /target/
 /.claude/
 /docs/research/pycompat-proto/Cargo.lock
+/bench/history/
