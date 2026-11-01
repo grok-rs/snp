@@ -1784,6 +1784,9 @@ this means `git push` no longer uploads LFS objects, and nothing says so.
 
 snp repairs exactly that shape: when the value contains newlines, every non-empty line is identical and that line is
 an existing directory, the line is used. Any other value is kept verbatim (it then behaves as in pre-commit).
+On Windows the script runs in Git for Windows' MSYS2 shell, whose `pwd` prints `/d/a/x` for `D:\a\x`; MSYS2 converts
+a single path argument for a native program but not the two-line value, so each line is read as `D:/a/x` there before
+the comparison.
 
 Why it is safe: the repaired value is the directory the script meant to pass; the condition cannot match a legitimate
 directory name (a path made of two identical newline-separated copies of an existing directory is not a real hook

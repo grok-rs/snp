@@ -138,17 +138,50 @@ fn read_capped(stdin: &mut dyn Read) -> Result<Vec<u8>, Failure> {
 pub(crate) fn repair_hook_dir(dir: &OsStr) -> PathBuf {
     let bytes = dir.as_encoded_bytes();
     if bytes.contains(&b'\n') {
-        let mut lines = bytes.split(|b| *b == b'\n').filter(|l| !l.is_empty());
+        let mut lines = bytes
+            .split(|b| *b == b'\n')
+            .filter(|l| !l.is_empty())
+            .map(hook_dir_line);
         if let Some(first) = lines.next()
             && lines.all(|l| l == first)
+            && first.is_dir()
         {
-            let candidate = PathBuf::from(crate::files::os_from_bytes(first));
-            if candidate.is_dir() {
-                return candidate;
-            }
+            return first;
         }
     }
     PathBuf::from(dir)
+}
+
+/// One line of a doubled `HERE`. On Windows the script runs in Git for Windows' MSYS2 shell, whose `pwd` prints
+/// `/d/a/x` for `D:\a\x`; MSYS2 rewrites such an argument for a native program only when it is a single path, so
+/// the lines of the doubled one arrive in the shell's form and are read as `D:/a/x`.
+fn hook_dir_line(line: &[u8]) -> PathBuf {
+    let native = if cfg!(windows) {
+        msys_drive_path(line)
+    } else {
+        None
+    };
+    native.map_or_else(
+        || PathBuf::from(crate::files::os_from_bytes(line)),
+        PathBuf::from,
+    )
+}
+
+/// `/d` or `/d/rest` (an MSYS2 drive path) as `D:/` or `D:/rest`; `None` for anything else.
+fn msys_drive_path(line: &[u8]) -> Option<String> {
+    let (drive, rest) = match line {
+        [b'/', d] => (*d, &[][..]),
+        [b'/', d, b'/', rest @ ..] => (*d, rest),
+        _ => return None,
+    };
+    if !drive.is_ascii_alphabetic() {
+        return None;
+    }
+    let rest = std::str::from_utf8(rest).ok()?;
+    Some(format!(
+        "{}:/{rest}",
+        char::from(drive.to_ascii_uppercase())
+    ))
 }
 
 /// `os.access(legacy_hook, os.X_OK)`: directories pass too (X13-HI-07).
@@ -439,6 +472,25 @@ mod tests {
         let mixed = OsString::from(format!("{s}\n/nonexistent"));
         assert_eq!(repair_hook_dir(&mixed), PathBuf::from(&mixed));
         assert_eq!(repair_hook_dir(OsStr::new("/x/y")), PathBuf::from("/x/y"));
+    }
+
+    #[test]
+    fn d_data_07_msys_drive_paths() {
+        assert_eq!(msys_drive_path(b"/d/a/x").as_deref(), Some("D:/a/x"));
+        assert_eq!(msys_drive_path(b"/c").as_deref(), Some("C:/"));
+        assert_eq!(msys_drive_path(b"/c/").as_deref(), Some("C:/"));
+        for not_drive in [&b"/usr/bin"[..], b"/1/x", b"d/a", b"/", b""] {
+            assert_eq!(msys_drive_path(not_drive), None);
+        }
+        if cfg!(windows) {
+            // the doubled HERE of Git for Windows' shell (the MSYS2 form of the temp directory, twice)
+            let d = std::env::temp_dir();
+            let s = d.to_string_lossy().replace('\\', "/");
+            let (drive, rest) = s.split_once(':').unwrap();
+            let msys = format!("/{}{rest}", drive.to_ascii_lowercase());
+            let doubled = OsString::from(format!("{msys}\n{msys}"));
+            assert_eq!(repair_hook_dir(&doubled), d);
+        }
     }
 
     #[test]
