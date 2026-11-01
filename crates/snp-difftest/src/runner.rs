@@ -889,6 +889,22 @@ fn judge(
             continue;
         };
         let (ca, cb) = (&a.captured, &b.captured);
+        // A stream cut at MAX_CAPTURE is never "equal", even when both sides flooded.
+        if ca.truncated || cb.truncated {
+            diffs.push(Difference {
+                what: format!("{label} output"),
+                diff: format!(
+                    "-output exceeded {} bytes: {}\n+output exceeded {} bytes: {}\n",
+                    exec::MAX_CAPTURE,
+                    ca.truncated,
+                    exec::MAX_CAPTURE,
+                    cb.truncated
+                ),
+            });
+            // Normalising and diffing two 64 MiB prefixes would only restate that; the step's state still counts.
+            state_diffs(&mut diffs, &label, c, &a.state, &b.state);
+            continue;
+        }
         if ca.timed_out != cb.timed_out {
             diffs.push(Difference {
                 what: format!("{label} timeout"),
@@ -1131,9 +1147,11 @@ fn combine(vs: &[VariantReport]) -> Verdict {
         .map_or(Verdict::Same, Verdict::copy)
 }
 
-/// A file-system-safe directory name for a scenario.
+/// A file-system-safe directory name for a scenario: one path component that is never empty and never starts
+/// with a dot (so `.` and `..` cannot name the output directory or its parent).
 pub(crate) fn safe_name(name: &str) -> String {
-    name.chars()
+    let s: String = name
+        .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || "-_.".contains(c) {
                 c
@@ -1141,7 +1159,41 @@ pub(crate) fn safe_name(name: &str) -> String {
                 '_'
             }
         })
-        .collect()
+        .collect();
+    if s.is_empty() || s.starts_with('.') {
+        format!("_{s}")
+    } else {
+        s
+    }
+}
+
+/// Written into every artifact directory; [`write_artifacts`] removes only directories that carry it.
+const ARTIFACT_MARKER: &str = ".snp-difftest-artifacts";
+
+/// `dir/<safe name>`, emptied: an existing directory is removed only when it carries [`ARTIFACT_MARKER`] (or is a
+/// pre-marker artifact directory); the fresh one gets the marker.
+fn artifact_dir(dir: &Path, name: &str) -> Result<PathBuf, String> {
+    let base = dir.join(safe_name(name));
+    if base.parent() != Some(dir) {
+        return Err(format!(
+            "{}: not a directory below {}",
+            base.display(),
+            dir.display()
+        ));
+    }
+    if std::fs::symlink_metadata(&base).is_ok() {
+        // Directories written before the marker existed carry scenario.yaml and repro.sh.
+        let legacy = base.join("scenario.yaml").is_file() && base.join("repro.sh").is_file();
+        if !base.join(ARTIFACT_MARKER).is_file() && !legacy {
+            return Err(format!(
+                "refusing to replace {}: not a difftest artifact directory (no {ARTIFACT_MARKER})",
+                base.display()
+            ));
+        }
+        std::fs::remove_dir_all(&base).map_err(|e| format!("{}: {e}", base.display()))?;
+    }
+    materialise::write_file(&base.join(ARTIFACT_MARKER), b"")?;
+    Ok(base)
 }
 
 fn write_artifacts(
@@ -1151,10 +1203,7 @@ fn write_artifacts(
     r: &Runner,
     root: &Path,
 ) -> Result<(), String> {
-    let base = dir.join(safe_name(&s.name));
-    if base.exists() {
-        std::fs::remove_dir_all(&base).map_err(|e| format!("{}: {e}", base.display()))?;
-    }
+    let base = artifact_dir(dir, &s.name)?;
     let w = |p: PathBuf, b: &[u8]| materialise::write_file(&p, b);
     w(base.join("scenario.yaml"), s.to_yaml().as_bytes())?;
     w(base.join("report.txt"), out.report().as_bytes())?;
@@ -1350,5 +1399,36 @@ mod tests {
         s.since = Some(String::from("5.0.0"));
         assert!(skip_reason(&s, &opts).is_some());
         assert_eq!(safe_name("divergences/D-X: y"), "divergences_D-X__y");
+        for bad in ["", ".", "..", ".hidden"] {
+            let n = safe_name(bad);
+            assert!(n.starts_with('_'), "{bad:?} -> {n:?}");
+        }
+    }
+
+    #[test]
+    fn artifact_dir_never_removes_foreign_directories() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("precious.txt"), b"x").unwrap();
+        let out = d.path().join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("keep.txt"), b"x").unwrap();
+        // `..` and `.` once named --out's parent and --out itself.
+        for name in ["..", "."] {
+            let base = artifact_dir(&out, name).unwrap();
+            assert_eq!(base.parent(), Some(out.as_path()));
+            assert!(base.join(ARTIFACT_MARKER).is_file());
+        }
+        assert!(d.path().join("precious.txt").is_file());
+        assert!(out.join("keep.txt").is_file());
+        // A re-run replaces its own artifact directory…
+        let base = artifact_dir(&out, "s").unwrap();
+        std::fs::write(base.join("old"), b"x").unwrap();
+        let base = artifact_dir(&out, "s").unwrap();
+        assert!(!base.join("old").exists());
+        // …but never one the harness did not write.
+        std::fs::create_dir_all(out.join("mine")).unwrap();
+        std::fs::write(out.join("mine/data"), b"x").unwrap();
+        assert!(artifact_dir(&out, "mine").is_err());
+        assert!(out.join("mine/data").is_file());
     }
 }

@@ -590,6 +590,13 @@ fn parse_doc(doc: &Yv, path: &Path) -> Result<Scenario, String> {
             sc.expect_divergence.clone().unwrap_or(default_name)
         );
     }
+    // The name becomes an artifact directory below `--out` (runner::write_artifacts removes and rewrites it).
+    if !root_relative(&sc.name) {
+        return Err(format!(
+            "name: {:?} must be a relative name without `.`/`..` components or backslashes",
+            sc.name
+        ));
+    }
     if let Some(v) = doc.get("unit_tests") {
         sc.unit_tests = str_list(v, "unit_tests")?;
     }
@@ -608,11 +615,7 @@ fn parse_doc(doc: &Yv, path: &Path) -> Result<Scenario, String> {
     }
     if let Some(v) = doc.get("projects") {
         sc.projects = str_list(v, "projects")?;
-        if sc
-            .projects
-            .iter()
-            .any(|p| p.is_empty() || p.starts_with('/') || p.split('/').any(|c| c == ".."))
-        {
+        if sc.projects.iter().any(|p| !root_relative(p)) {
             return Err(String::from(
                 "projects: entries are relative paths below the scenario root",
             ));
@@ -837,7 +840,7 @@ fn parse_repo(name: &str, v: &Yv, unsupported: &mut Vec<String>) -> Result<RepoS
             "exec" => r.exec = str_list(val, &what)?,
             "tags" => r.tags = str_list(val, &what)?,
             "then" => r.then = parse_ops(val, &what, unsupported)?,
-            "path" => r.path = Some(s(val, &what)?),
+            "path" => r.path = Some(root_rel(s(val, &what)?, &what)?),
             "bare" => r.bare = bool_of(val, &what)?,
             "object_format" => r.object_format = Some(s(val, &what)?),
             "url" => {
@@ -861,8 +864,47 @@ fn parse_repo(name: &str, v: &Yv, unsupported: &mut Vec<String>) -> Result<RepoS
     Ok(r)
 }
 
+/// Whether `p` is a non-empty relative path that stays below the directory it is joined to: no root, drive or
+/// backslash (Windows separators), no `.`/`..` components. Scenario names and root-relative directories (`work.dir`,
+/// `repos.*.path`, `projects`) must be.
+pub(crate) fn root_relative(p: &str) -> bool {
+    !p.is_empty()
+        && !p.starts_with('/')
+        && !p.contains('\\')
+        && !Path::new(p).is_absolute()
+        && p.split('/').all(|c| !c.is_empty() && c != "." && c != "..")
+        && Path::new(p)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
+fn root_rel(p: String, what: &str) -> Result<String, String> {
+    if root_relative(&p) {
+        Ok(p)
+    } else {
+        Err(format!(
+            "{what}: {p:?} must be a relative path below the scenario root (no `..`, `.` or absolute parts)"
+        ))
+    }
+}
+
+/// Largest single `{generate}` file.
+const MAX_GENERATED_FILE: usize = 64 * 1024 * 1024;
+
+/// Largest total of generated work bytes (`{generate}` contents and `generated:` files together) one scenario may
+/// materialise. Literal contents are already bounded by the YAML reader's expansion budget.
+pub(crate) const MAX_GENERATED_TOTAL: usize = 256 * 1024 * 1024;
+
+/// Charges `n` bytes against the scenario's generated-bytes budget.
+fn charge_work(left: &mut usize, n: usize, what: &str) -> Result<(), String> {
+    *left = left.checked_sub(n).ok_or_else(|| {
+        format!("{what}: generated work files exceed {MAX_GENERATED_TOTAL} bytes in total")
+    })?;
+    Ok(())
+}
+
 /// `{generate: {prefix, repeat, count, suffix}}` file contents: `prefix + repeat × count + suffix`.
-fn generated_content(v: &Yv, what: &str) -> Result<Vec<u8>, String> {
+fn generated_content(v: &Yv, what: &str, left: &mut usize) -> Result<Vec<u8>, String> {
     let part = |k: &str| -> Result<Vec<u8>, String> {
         v.get(k)
             .map_or(Ok(Vec::new()), |x| bytes_of(x, &format!("{what}.{k}")))
@@ -870,19 +912,32 @@ fn generated_content(v: &Yv, what: &str) -> Result<Vec<u8>, String> {
     let count = v
         .get("count")
         .and_then(Yv::as_i64)
-        .ok_or_else(|| format!("{what}: count must be an integer"))?;
+        .and_then(|c| usize::try_from(c).ok())
+        .filter(|c| *c <= MAX_GENERATED_FILE)
+        .ok_or_else(|| format!("{what}: count must be an integer in 0..={MAX_GENERATED_FILE}"))?;
     let unit = part("repeat")?;
-    let total = usize::try_from(count)
-        .ok()
-        .and_then(|c| c.checked_mul(unit.len()))
-        .filter(|n| *n <= 64 * 1024 * 1024)
+    let (prefix, suffix) = (part("prefix")?, part("suffix")?);
+    let size = count
+        .checked_mul(unit.len())
+        .and_then(|n| n.checked_add(prefix.len()))
+        .and_then(|n| n.checked_add(suffix.len()))
+        .filter(|n| *n <= MAX_GENERATED_FILE)
         .ok_or_else(|| format!("{what}: generated contents out of range (at most 64 MiB)"))?;
-    let mut out = part("prefix")?;
-    out.try_reserve(total).map_err(|e| format!("{what}: {e}"))?;
-    for _ in 0..count {
-        out.extend_from_slice(&unit);
+    charge_work(left, size, what)?;
+    let mut out = Vec::new();
+    out.try_reserve_exact(size)
+        .map_err(|e| format!("{what}: {e}"))?;
+    out.extend_from_slice(&prefix);
+    match unit.as_slice() {
+        [] => {}
+        [b] => out.resize(prefix.len().saturating_add(count), *b),
+        _ => {
+            for _ in 0..count {
+                out.extend_from_slice(&unit);
+            }
+        }
     }
-    out.extend(part("suffix")?);
+    out.extend_from_slice(&suffix);
     Ok(out)
 }
 
@@ -891,14 +946,18 @@ fn parse_work(v: &Yv, unsupported: &mut Vec<String>) -> Result<Work, String> {
         git: true,
         ..Work::default()
     };
+    let mut left = MAX_GENERATED_TOTAL;
     for (k, val) in map_of(v, "work")? {
         let what = format!("work.{k}");
         match k.as_str() {
             "files" => {
                 for (p, c) in map_of(val, &what)? {
                     if p == "generated" && c.get("pattern").is_some() {
-                        w.files
-                            .extend(generated_files(c, &format!("{what}.generated"))?);
+                        w.files.extend(generated_files(
+                            c,
+                            &format!("{what}.generated"),
+                            &mut left,
+                        )?);
                         continue;
                     }
                     if c.as_map().is_some() {
@@ -907,7 +966,7 @@ fn parse_work(v: &Yv, unsupported: &mut Vec<String>) -> Result<Work, String> {
                             .ok_or_else(|| format!("{what}.{p}: expected contents"))?;
                         w.files.push((
                             expand_byte_escapes(p),
-                            generated_content(g, &format!("{what}.{p}"))?,
+                            generated_content(g, &format!("{what}.{p}"), &mut left)?,
                         ));
                         continue;
                     }
@@ -979,8 +1038,8 @@ fn parse_work(v: &Yv, unsupported: &mut Vec<String>) -> Result<Work, String> {
                     .ok_or_else(|| format!("{what}: expected a boolean"))?;
             }
             "object_format" => w.object_format = Some(s(val, &what)?),
-            "dir" => w.dir = Some(s(val, &what)?),
-            "generated" => w.files.extend(generated_files(val, &what)?),
+            "dir" => w.dir = Some(root_rel(s(val, &what)?, &what)?),
+            "generated" => w.files.extend(generated_files(val, &what, &mut left)?),
             "junctions" => {
                 unsupported.push(String::from("work.junctions (Windows directory junctions)"));
             }
@@ -998,7 +1057,7 @@ const MAX_GENERATED: i64 = 100_000;
 
 /// `generated: {pattern: "a b{i:04}", count: 1000, content: "x\n"}`: `count` files named by `pattern`, where `{i}` is
 /// the index and `{i:0N}` the index zero-padded to `N` digits.
-fn generated_files(v: &Yv, what: &str) -> Result<Vec<NamedBytes>, String> {
+fn generated_files(v: &Yv, what: &str, left: &mut usize) -> Result<Vec<NamedBytes>, String> {
     let pattern = s(
         v.get("pattern")
             .ok_or_else(|| format!("{what}: missing pattern"))?,
@@ -1039,6 +1098,18 @@ fn generated_files(v: &Yv, what: &str) -> Result<Vec<NamedBytes>, String> {
             .ok_or_else(|| format!("{what}: bad index format {spec:?}"))?,
         None => return Err(format!("{what}: bad pattern")),
     };
+    // Names are at most head + 20 digits + tail; charge them too so a huge pattern cannot amplify either.
+    let per_file = content
+        .len()
+        .checked_add(head.len())
+        .and_then(|n| n.checked_add(tail.len()))
+        .and_then(|n| n.checked_add(width.max(20)))
+        .ok_or_else(|| format!("{what}: generated files out of range"))?;
+    let all = usize::try_from(count)
+        .ok()
+        .and_then(|c| c.checked_mul(per_file))
+        .ok_or_else(|| format!("{what}: generated files out of range"))?;
+    charge_work(left, all, what)?;
     Ok((0..count)
         .map(|i| {
             (
@@ -1640,6 +1711,11 @@ fn emit(sc: &Scenario) -> String {
 mod tests {
     use super::*;
 
+    /// `s` repeated `n` times (`str::repeat` is disallowed).
+    fn rep(s: &str, n: usize) -> String {
+        std::iter::repeat_n(s, n).collect()
+    }
+
     const SAMPLE: &str = r#"
 name: run/sample
 since: "4.1.0"
@@ -1735,6 +1811,87 @@ compare:
         ] {
             assert!(Scenario::parse(bad, Path::new("b.yaml")).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn hostile_names_and_root_relative_paths_are_refused() {
+        for name in ["..", ".", "", "/abs", "a/../b", "a\\\\b", "a//b", "./a"] {
+            let text = format!("name: {name:?}\nsteps: [{{tool: [run]}}]\n");
+            assert!(
+                Scenario::parse(&text, Path::new("n.yaml")).is_err(),
+                "{name:?}"
+            );
+        }
+        assert!(
+            Scenario::parse(
+                "name: a/b-c.d\nsteps: [{tool: [run]}]\n",
+                Path::new("n.yaml")
+            )
+            .is_ok()
+        );
+        for bad in [
+            "work: {dir: ../x}",
+            "work: {dir: /tmp/x}",
+            "repos: {h: {path: ../../h}}",
+            "projects: [../p]",
+        ] {
+            let text = format!("name: x\n{bad}\nsteps: [{{tool: [run]}}]\n");
+            assert!(
+                Scenario::parse(&text, Path::new("p.yaml")).is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn alias_bomb_scenario_is_refused_quickly() {
+        let mut text = crate::yamlv::tests::alias_bomb(9, 10);
+        text.push_str("name: b\nsteps: [{tool: [run]}]\n");
+        let start = std::time::Instant::now();
+        let err = Scenario::parse(&text, Path::new("b.yaml")).unwrap_err();
+        assert!(err.contains("alias bomb"), "{err}");
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    #[test]
+    fn generated_work_is_bounded() {
+        let parse = |work: &str| {
+            Scenario::parse(
+                &format!("name: g\nwork: {work}\nsteps: [{{tool: [run]}}]\n"),
+                Path::new("g.yaml"),
+            )
+        };
+        let start = std::time::Instant::now();
+        // An empty unit once looped `count` (9.2e18) times.
+        for count in [i64::MAX, -1, i64::MIN] {
+            assert!(
+                parse(&format!(
+                    "{{files: {{a.txt: {{generate: {{count: {count}}}}}}}}}"
+                ))
+                .is_err(),
+                "{count}"
+            );
+        }
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+        let ok =
+            parse("{files: {a.txt: {generate: {count: 3, repeat: ab, prefix: '<', suffix: '>'}}}}")
+                .unwrap();
+        assert_eq!(ok.work.files[0].1, b"<ababab>");
+        let ok = parse("{files: {a.txt: {generate: {count: 4, repeat: z}}}}").unwrap();
+        assert_eq!(ok.work.files[0].1, b"zzzz");
+        // Five 60 MiB files: each under the per-file cap, together over the 256 MiB total.
+        let five: Vec<String> = (0..5)
+            .map(|i| format!("f{i}: {{generate: {{count: 62914560, repeat: x}}}}"))
+            .collect();
+        let err = parse(&format!("{{files: {{{}}}}}", five.join(", "))).unwrap_err();
+        assert!(err.contains("in total"), "{err}");
+        // generated: count × content is charged before anything is cloned (100 000 × 4 KiB > 256 MiB).
+        let big = rep("x", 4096);
+        let err = parse(&format!(
+            "{{generated: {{pattern: \"f{{i}}\", count: 100000, content: {big}}}}}"
+        ))
+        .unwrap_err();
+        assert!(err.contains("in total"), "{err}");
     }
 
     #[test]

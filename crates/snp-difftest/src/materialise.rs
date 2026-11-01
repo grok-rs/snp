@@ -472,10 +472,21 @@ impl World {
                 }
                 Op::Write(p, b) => {
                     let b = self.subst_bytes(b)?;
-                    write_file(&dir.join(p), &b)?;
+                    write_file(&confined(&self.layout.root, dir, p)?, &b)?;
                 }
                 Op::Remove(p) => {
-                    let full = dir.join(p);
+                    let full = confined(&self.layout.root, dir, p)?;
+                    // The lexical check above cannot see symlinked parents: the real parent must be inside too.
+                    let real_root =
+                        canonical(&self.layout.root).map_err(|e| format!("remove {p}: {e}"))?;
+                    let real_parent = full
+                        .parent()
+                        .map(canonical)
+                        .transpose()
+                        .map_err(|e| format!("remove {p}: {e}"))?;
+                    if !real_parent.is_some_and(|rp| rp.starts_with(&real_root)) {
+                        return Err(format!("remove {p}: leaves the scenario root"));
+                    }
                     let md =
                         std::fs::symlink_metadata(&full).map_err(|e| format!("remove {p}: {e}"))?;
                     if md.is_dir() {
@@ -499,6 +510,45 @@ impl World {
             }
         }
         Ok(())
+    }
+}
+
+/// `base/rel`, resolved lexically, refused unless it stays below the scenario root `root`: absolute paths, drive
+/// prefixes and `..` that climb out are errors (a typo such as `remove: ../` must never touch files outside the
+/// harness root). `base` is a directory inside `root`.
+pub(crate) fn confined<P: AsRef<Path>>(
+    root: &Path,
+    base: &Path,
+    rel: P,
+) -> Result<PathBuf, String> {
+    use std::path::Component;
+    let rel = rel.as_ref();
+    let mut out = base.to_path_buf();
+    for c in rel.components() {
+        match c {
+            Component::Normal(n) => out.push(n),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    break;
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(format!(
+                    "{}: scenario paths must be relative to the scenario root",
+                    rel.display()
+                ));
+            }
+        }
+    }
+    if out.starts_with(root) && out != root {
+        Ok(out)
+    } else {
+        Err(format!(
+            "{}: leaves the scenario root {}",
+            rel.display(),
+            root.display()
+        ))
     }
 }
 
@@ -600,8 +650,8 @@ fn build_repo(w: &mut World, r: &RepoSpec) -> Result<(), String> {
         return Ok(());
     }
     let dir = match &r.path {
-        Some(p) => w.layout.root.join(p),
-        None => w.layout.repos.join(&r.name),
+        Some(p) => confined(&w.layout.root, &w.layout.root, p)?,
+        None => confined(&w.layout.root, &w.layout.repos, &r.name)?,
     };
     std::fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
     let mut init: Vec<String> = vec![String::from("init"), String::from("-q")];
@@ -629,10 +679,10 @@ fn build_repo(w: &mut World, r: &RepoSpec) -> Result<(), String> {
     }
     for (p, b) in &r.files {
         let b = w.subst_bytes(b)?;
-        write_file(&dir.join(p), &b)?;
+        write_file(&confined(&w.layout.root, &dir, p)?, &b)?;
     }
     for p in &r.exec {
-        make_exec(&dir.join(p))?;
+        make_exec(&confined(&w.layout.root, &dir, p)?)?;
     }
     w.git_ok(&dir, &["add", "-A"])?;
     for p in &r.exec {
@@ -665,17 +715,17 @@ fn build_work(w: &mut World, work: &Work) -> Result<(), String> {
     }
     for (p, b) in &work.files {
         let b = w.subst_bytes(b)?;
-        write_file(&dir.join(path_from_bytes(p)?), &b)?;
+        write_file(&confined(&w.layout.root, &dir, path_from_bytes(p)?)?, &b)?;
     }
     if let Some(c) = &work.config {
         let c = w.subst(c)?;
         write_file(&dir.join(".pre-commit-config.yaml"), c.as_bytes())?;
     }
     for p in &work.exec {
-        make_exec(&dir.join(p))?;
+        make_exec(&confined(&w.layout.root, &dir, p)?)?;
     }
     for (link, target) in &work.symlinks {
-        symlink(&w.subst(target)?, &dir.join(link))?;
+        symlink(&w.subst(target)?, &confined(&w.layout.root, &dir, link)?)?;
     }
     if work.git && !work.commit.is_empty() {
         let mut add: Vec<OsString> = vec!["add".into(), "--".into()];
@@ -692,7 +742,7 @@ fn build_work(w: &mut World, work: &Work) -> Result<(), String> {
     }
     // `modes` apply after the commit (a mode-000 file is committed first, then made unreadable).
     for (p, m) in &work.modes {
-        set_mode(&dir.join(p), *m)?;
+        set_mode(&confined(&w.layout.root, &dir, p)?, *m)?;
     }
     if work.git && !work.stage.is_empty() {
         let mut add: Vec<OsString> = vec!["add".into(), "--".into()];
@@ -702,7 +752,7 @@ fn build_work(w: &mut World, work: &Work) -> Result<(), String> {
         w.git_ok(&dir, &add)?;
     }
     for (p, b) in &work.unstaged {
-        let full = dir.join(p);
+        let full = confined(&w.layout.root, &dir, p)?;
         match b {
             Some(b) => {
                 let b = w.subst_bytes(b)?;
@@ -716,7 +766,7 @@ fn build_work(w: &mut World, work: &Work) -> Result<(), String> {
     }
     w.apply_ops(&dir, &work.setup)?;
     for (p, m) in &work.chmod {
-        set_mode(&dir.join(p), *m)?;
+        set_mode(&confined(&w.layout.root, &dir, p)?, *m)?;
     }
     if work.git
         && let Ok(out) = w.git(&dir, &["rev-parse", "-q", "--verify", "HEAD"])
@@ -753,10 +803,9 @@ fn symlink(target: &str, link: &Path) -> Result<(), String> {
 fn mkfifo(w: &World, dir: &Path, name: &str) -> Result<(), String> {
     #[cfg(unix)]
     {
-        let _: &World = w;
         rustix::fs::mkfifoat(
             rustix::fs::CWD,
-            dir.join(name),
+            confined(&w.layout.root, dir, name)?,
             rustix::fs::Mode::from_raw_mode(0o644),
         )
         .map_err(|e| format!("mkfifo {name}: {e}"))
@@ -833,5 +882,54 @@ mod tests {
         }
         assert_eq!(revs[0], revs[1]);
         assert_eq!(revs[0].0.len(), 40);
+    }
+
+    #[test]
+    fn confined_refuses_paths_outside_the_root() {
+        let root = Path::new("/r");
+        let work = Path::new("/r/work");
+        assert_eq!(
+            confined(root, work, "a/b").unwrap(),
+            Path::new("/r/work/a/b")
+        );
+        assert_eq!(
+            confined(root, work, "../tools/x").unwrap(),
+            Path::new("/r/tools/x")
+        );
+        assert_eq!(confined(root, work, "./a").unwrap(), Path::new("/r/work/a"));
+        for bad in ["../", "../..", "../../etc", "/home/x", "a/../../.."] {
+            assert!(confined(root, work, bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn scenario_ops_cannot_touch_files_outside_the_root() {
+        let d = tempfile::tempdir().unwrap();
+        let base = canonical(d.path()).unwrap();
+        std::fs::write(base.join("precious"), b"x").unwrap();
+        let root = base.join("r");
+        let parent = Env::capture_process();
+        for setup in [
+            "[{remove: ../..}]",
+            "[{remove: ../../precious}]",
+            "[{write: {../../precious: y}}]",
+        ] {
+            let text = format!(
+                "name: t\nwork:\n  files: {{a.txt: a}}\n  setup: {setup}\nsteps: [{{tool: [run]}}]\n"
+            );
+            let sc = Scenario::parse(&text, Path::new("t.yaml")).unwrap();
+            reset_root(&root).unwrap();
+            assert!(materialise(&sc, &root, None, &parent).is_err(), "{setup}");
+            assert_eq!(
+                std::fs::read(base.join("precious")).unwrap(),
+                b"x",
+                "{setup}"
+            );
+        }
+        let text = "name: t\nwork:\n  files: {../../precious: y}\nsteps: [{tool: [run]}]\n";
+        let sc = Scenario::parse(text, Path::new("t.yaml")).unwrap();
+        reset_root(&root).unwrap();
+        assert!(materialise(&sc, &root, None, &parent).is_err());
+        assert_eq!(std::fs::read(base.join("precious")).unwrap(), b"x");
     }
 }
