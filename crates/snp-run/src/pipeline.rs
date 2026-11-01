@@ -54,15 +54,17 @@ pub(crate) struct Invocation<'s> {
     pub(crate) hook_stdin: Option<Arc<[u8]>>,
 }
 
-/// Lives on the stack for one pipeline (§2.4).
-#[derive(Debug)]
-struct RunState<'a> {
-    cx: &'a RunCtx,
+/// Lives on the stack for one pipeline (§2.4): the resources whose release order is part of the safety argument.
+#[derive(Debug, Default)]
+struct RunState {
     stash: Option<StashGuard>,
     store_guard: Option<StoreGuard>,
+    /// A field whose own `Drop` panics (the ADR-066 drop-order test).
+    #[cfg(test)]
+    probe: Option<tests::PanicOnDrop>,
 }
 
-impl Drop for RunState<'_> {
+impl Drop for RunState {
     /// Runs BEFORE any field is dropped: the panic-path restore (the normal and error paths restore explicitly).
     fn drop(&mut self) {
         if let Some(g) = self.stash.take() {
@@ -77,12 +79,8 @@ const QUIESCE: Duration = Duration::from_secs(2);
 
 /// Runs the pipeline with its single exit (§4.4).
 pub(crate) fn run_pipeline(a: &RunArgs, cx: &RunCtx, inv: &Invocation<'_>) -> Result<i32, Failure> {
-    let mut st = RunState {
-        cx,
-        stash: None,
-        store_guard: None,
-    };
-    let body = body(&mut st, a, inv);
+    let mut st = RunState::default();
+    let body = body(&mut st, cx, a, inv);
     let cancelled = cx.cancel.reason();
     if cancelled.is_some() && st.stash.is_some() {
         snp_proc::registry::quiesce(QUIESCE);
@@ -108,8 +106,7 @@ pub(crate) fn run_pipeline(a: &RunArgs, cx: &RunCtx, inv: &Invocation<'_>) -> Re
     clippy::too_many_lines,
     reason = "pre-commit's run() in source order, one step after another"
 )]
-fn body(st: &mut RunState<'_>, a: &RunArgs, inv: &Invocation<'_>) -> Result<i32, Failure> {
-    let cx = st.cx;
+fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Result<i32, Failure> {
     let printer = &*cx.printer;
     // §3.1 steps 3–4: discovery, then `_adjust_args_and_chdir` as a pure function
     let (git0, info) = common::discover(cx)?;
@@ -540,5 +537,120 @@ fn run_hint(cx: &RunCtx, git: &Git, info: &RepoInfo, cfg: &Config) {
             &shown.to_string_lossy(),
             name,
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::process::Command;
+
+    use snp_core::clock::SystemClock;
+    use snp_core::output::{Printer, PrinterOpts};
+    use snp_git::GitExe;
+
+    use super::*;
+
+    /// A field whose `Drop` panics.
+    #[derive(Debug)]
+    pub(super) struct PanicOnDrop;
+
+    impl Drop for PanicOnDrop {
+        fn drop(&mut self) {
+            panic!("field drop panics");
+        }
+    }
+
+    fn git(root: &Path, env: &Env, args: &[&str]) {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .env_clear()
+            .envs(env.iter())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// ADR-066: `RunState::drop` runs before its fields are dropped, so a panic in a field's `Drop` (after the hooks)
+    /// cannot prevent the restore.
+    #[test]
+    fn run_state_restores_before_a_panicking_field_drops() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = snp_pycompat::ospath::realpath(tmp.path().as_os_str(), Path::new("/")).unwrap();
+        let root = base.join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        let env = Env::from_pairs([
+            ("PATH", "/usr/local/bin:/usr/bin:/bin"),
+            ("HOME", base.to_str().unwrap()),
+            ("GIT_CONFIG_NOSYSTEM", "1"),
+            ("GIT_AUTHOR_NAME", "a"),
+            ("GIT_AUTHOR_EMAIL", "a@b"),
+            ("GIT_COMMITTER_NAME", "a"),
+            ("GIT_COMMITTER_EMAIL", "a@b"),
+        ]);
+        git(&root, &env, &["init", "-q"]);
+        std::fs::write(root.join("a.txt"), b"a\n").unwrap();
+        git(&root, &env, &["add", "a.txt"]);
+        git(&root, &env, &["commit", "-q", "-m", "init"]);
+        std::fs::write(root.join("a.txt"), b"a\nstaged\n").unwrap();
+        git(&root, &env, &["add", "a.txt"]);
+        std::fs::write(root.join("a.txt"), b"a\nstaged\nunstaged\n").unwrap();
+        let cancel = snp_core::cancel::CancelToken::new();
+        let exe = Arc::new(GitExe::resolve(&env, &root, None).unwrap());
+        let backend = Arc::new(ProcBackend {
+            cancel: cancel.clone(),
+            role: Role::Tool,
+        });
+        let (g, info) = Git::discover(exe, &env, &root, backend).unwrap();
+        let printer = Arc::new(Printer::new(
+            Box::new(std::io::sink()),
+            Box::new(std::io::sink()),
+            PrinterOpts {
+                brand: snp_core::brand::Brand::PreCommit,
+                color: false,
+                stdout_is_tty: false,
+                windows_text_mode: false,
+                cancel: cancel.clone(),
+            },
+        ));
+        let critical = Arc::new(ProcBackend {
+            cancel: snp_core::cancel::CancelToken::new(),
+            role: Role::Critical,
+        });
+        let guard = snp_stash::enter(StashCtx {
+            git: g.with_backend(critical),
+            info,
+            patches_dir: base.join("patches"),
+            printer,
+            cancel,
+            clock: Arc::new(SystemClock),
+            signals: None,
+            lock_timeout: Duration::from_secs(5),
+            verify: false,
+            old_git: false,
+        })
+        .unwrap();
+        // the stash took the unstaged line away; a "hook" modified the file
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.txt")).unwrap(),
+            "a\nstaged\n"
+        );
+        let st = RunState {
+            stash: Some(guard),
+            store_guard: None,
+            probe: Some(PanicOnDrop),
+        };
+        let r = catch_unwind(AssertUnwindSafe(move || drop(st)));
+        assert!(r.is_err(), "the probe field panicked");
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.txt")).unwrap(),
+            "a\nstaged\nunstaged\n",
+            "restored before the panicking field was dropped"
+        );
     }
 }

@@ -420,3 +420,28 @@ fn hook_impl_rc_is_legacy_or_run() {
     let o = h.hook_impl(hook_impl_args("pre-commit", &["--"], Some(&dir)), b"");
     assert_eq!(o.code, 5);
 }
+
+/// The `rev-list --max-parents=0` / `rev-parse <first>^` branch of `_pre_push_ns` (X13-HI-06's calls): a pushed
+/// history whose first new commit is a root commit runs on all files, with the push variables but no refs.
+#[test]
+fn x13_hi_06_orphan_push_runs_on_all_files() {
+    let (h, _, _) = pushed();
+    h.git(&["checkout", "-q", "--orphan", "orphan"]);
+    h.commit("orphan root");
+    let sha = String::from_utf8(h.git(&["rev-parse", "HEAD"]).stdout)
+        .unwrap()
+        .trim()
+        .to_owned();
+    let z = rep("0", 40);
+    let stdin = format!("refs/heads/orphan {sha} refs/heads/orphan {z}\n");
+    let o = h.hook_impl(
+        hook_impl_args("pre-push", &["--", "origin", "url"], None),
+        stdin.as_bytes(),
+    );
+    assert_eq!(o.code, 0, "{o:?}");
+    assert!(
+        o.stdout.contains("\n\n.. origin refs/heads/orphan\n\n"),
+        "{}",
+        o.stdout
+    );
+}
