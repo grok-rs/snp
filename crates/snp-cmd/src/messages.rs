@@ -217,10 +217,11 @@ pub(crate) fn up_to_date(repo: &str) -> String {
     format!("[{repo}] already up to date!")
 }
 
-/// `autoupdate.py:96-100`: `[{repo}] Cannot update because the update target is missing these hooks: …`.
-pub(crate) fn missing_hooks(repo: &str, sorted: &[&str]) -> String {
+/// `autoupdate.py:96-100`: the text after `[{repo}] ` of `Cannot update because the update target is missing these
+/// hooks: {sorted, ", "}`.
+pub(crate) fn missing_hooks(sorted: &[&str]) -> String {
     format!(
-        "[{repo}] Cannot update because the update target is missing these hooks: {}",
+        "Cannot update because the update target is missing these hooks: {}",
         sorted.join(", ")
     )
 }
@@ -449,8 +450,8 @@ mod tests {
         assert_eq!(updating("r", "v1", "v2", None), "[r] updating v1 -> v2");
         assert_eq!(up_to_date("r"), "[r] already up to date!");
         assert_eq!(
-            missing_hooks("r", &["a", "b"]),
-            "[r] Cannot update because the update target is missing these hooks: a, b"
+            repo_error("r", missing_hooks(&["a", "b"]).as_bytes()),
+            b"[r] Cannot update because the update target is missing these hooks: a, b"
         );
         assert_eq!(doctor_summary(1, 2), "3 problem(s): 1 error(s), 2 warning(s).");
     }

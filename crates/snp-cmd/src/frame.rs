@@ -194,6 +194,14 @@ fn normjoin_dot(p: &OsStr) -> OsString {
     snp_pycompat::ospath::normpath(&snp_pycompat::ospath::join(OsStr::new("."), &[p]))
 }
 
+/// A subcommand variant this build does not know (the CLI enums are `#[non_exhaustive]`).
+pub(crate) fn unsupported(what: &str) -> Failure {
+    Failure::unexpected(
+        "NotImplementedError",
+        format!("{what}: subcommand not supported by this build"),
+    )
+}
+
 /// Whether the token is cancelled by a signal (the command stops and the envelope reports it).
 pub(crate) fn interrupted(cx: &CmdCtx<'_>) -> Option<Failure> {
     use snp_core::cancel::CancelReason;
