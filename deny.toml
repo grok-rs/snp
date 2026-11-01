@@ -52,7 +52,7 @@ deny = [
     # Python shlex semantics come from snp-pycompat.
     { crate = "shlex", wrappers = ["cc"], reason = "use snp_pycompat::shlex (Python semantics); `cc` build scripts may use it" },
     { crate = "shell-words", reason = "use snp_pycompat::shlex (Python semantics)" },
-    # ADR-002: libyaml-safer + own PyYAML layers.
+    # ADR-002: snp-yaml's in-tree libyaml port (the libyaml-safer fork) + own PyYAML layers.
     { crate = "serde_yaml", reason = "deprecated; snp-yaml (ADR-002)" },
     { crate = "serde_yml", reason = "RUSTSEC-2025-0068; snp-yaml (ADR-002)" },
     { crate = "libyml", reason = "RUSTSEC-2025-0067" },

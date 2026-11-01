@@ -1,6 +1,6 @@
 [package]
 name = "snp-yaml"
-description = "PyYAML SafeLoader/SafeDumper compatibility over libyaml-safer"
+description = "PyYAML SafeLoader/SafeDumper compatibility over an in-tree libyaml port (ADR-002)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

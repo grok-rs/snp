@@ -50,7 +50,6 @@ cfgv = { path = "../cfgv-rs", version = "0.3", default-features = false }
 file-identify = { path = "../file-identify", version = "0.5", default-features = false }
 
 # --- YAML / regex / text ---
-libyaml-safer = "0.3.0"
 regex = "1.13.1"
 regex-syntax = "0.8.11"
 fancy-regex = "0.19.2"
@@ -216,9 +215,6 @@ panic = "unwind"
 opt-level = 1
 
 [profile.dev.package.fancy-regex]
-opt-level = 1
-
-[profile.dev.package.libyaml-safer]
 opt-level = 1
 
 [profile.dev.package.blake3]
