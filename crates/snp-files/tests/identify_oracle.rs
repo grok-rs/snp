@@ -59,8 +59,22 @@ mod oracle {
         let root = dir.path().to_path_buf();
         let mut entries = Vec::new();
         let mut socks = Vec::new();
+        // APFS (macOS) refuses non-UTF-8 names (EILSEQ) and folds case: those entries cannot be laid out there.
+        let (byte_names, case_names) = (
+            !snp_files_test_fs::refuses_non_utf8(&root),
+            snp_files_test_fs::case_sensitive(&root),
+        );
+        let mut folded: Vec<String> = Vec::new();
         for e in json["entries"].as_array().unwrap() {
             let rel = unhex(e["path"].as_str().unwrap());
+            if !byte_names && std::str::from_utf8(&rel).is_err() {
+                continue;
+            }
+            let lower = String::from_utf8_lossy(&rel).to_lowercase();
+            if !case_names && folded.contains(&lower) {
+                continue;
+            }
+            folded.push(lower);
             let p = root.join(std::ffi::OsStr::from_bytes_ext(&rel));
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             match e["kind"].as_str().unwrap() {
@@ -96,6 +110,29 @@ mod oracle {
             entries.push(Entry { path: rel, tags });
         }
         (dir, root, entries, socks)
+    }
+
+    /// What the temp file system can name.
+    mod snp_files_test_fs {
+        use std::path::Path;
+
+        /// Whether a name that is not UTF-8 is refused (APFS: `EILSEQ`).
+        pub(super) fn refuses_non_utf8(dir: &Path) -> bool {
+            let p = dir
+                .join(<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"probe\xff"));
+            let refused = std::fs::write(&p, b"").is_err();
+            let _ignored = std::fs::remove_file(&p);
+            refused
+        }
+
+        /// Whether `a` and `A` are two names.
+        pub(super) fn case_sensitive(dir: &Path) -> bool {
+            let p = dir.join("case-probe");
+            std::fs::write(&p, b"").unwrap();
+            let sensitive = !dir.join("CASE-PROBE").exists();
+            std::fs::remove_file(&p).unwrap();
+            sensitive
+        }
     }
 
     /// `OsStr::from_bytes` without importing the trait at every call site.

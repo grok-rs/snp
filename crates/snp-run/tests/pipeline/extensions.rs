@@ -117,8 +117,9 @@ fn jobs_1_and_jobs_32_print_the_same_bytes() {
     assert_eq!(outs[0], outs[1]);
 }
 
-/// A fixer that rewrites `bad` to `good`, exiting 1 when it fixed something.
-const FIX: &str = "sh -c 'r=0; for f; do if grep -q bad \"$f\"; then sed -i s/bad/good/ \"$f\"; r=1; fi; done; exit $r' --";
+/// A fixer that rewrites `bad` to `good`, exiting 1 when it fixed something. (No `sed -i`: BSD sed wants a suffix
+/// argument.)
+const FIX: &str = "sh -c 'r=0; for f; do if grep -q bad \"$f\"; then { t=$(sed s/bad/good/ \"$f\") && printf \"%s\\n\" \"$t\" > \"$f\"; }; r=1; fi; done; exit $r' --";
 
 #[test]
 fn stage_fixed_verify_stages_the_fixes() {
@@ -721,7 +722,7 @@ fn bucket_blames_a_writer_without_filenames() {
         sys(
             "fa",
             "fa",
-            "sh -c 'sed -i s/bad/good/ \"$@\"' --",
+            "sh -c 'for f; do { t=$(sed s/bad/good/ \"$f\") && printf \"%s\\n\" \"$t\" > \"$f\"; }; done' --",
             "priority: 1\nfiles: ^a"
         ),
         sys("fb", "fb", "'true'", "priority: 1\nfiles: ^b"),
@@ -836,7 +837,7 @@ fn stage_fixed_counts_further_changes_to_already_dirty_files() {
         sys(
             "fx",
             "fx",
-            "sh -c 'sed -i s/bad/good/ a.txt; echo y >> b.txt; exit 1' --",
+            "sh -c 'f=a.txt; { t=$(sed s/bad/good/ \"$f\") && printf \"%s\\n\" \"$t\" > \"$f\"; }; echo y >> b.txt; exit 1' --",
             "stage_fixed: trust\nfiles: ^a"
         ),
     )));

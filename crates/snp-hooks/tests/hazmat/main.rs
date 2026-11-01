@@ -199,11 +199,23 @@ fn returncode(status: std::process::ExitStatus) -> i64 {
     i64::from(status.code().unwrap())
 }
 
-/// `(code, output)` with the work tree replaced by `<root>`.
+/// `(code, output)` with the work tree replaced by `<root>` (also its physical path, which `pwd` prints: macOS
+/// temp directories live under the `/var` -> `/private/var` symlink).
 fn run_in(argv: &[&str], dir: &Path) -> (i64, String) {
     let (status, out) = hazmat_process(argv, dir);
     let root = dir.to_string_lossy().into_owned();
-    (returncode(status), show(&out).replace(&root, "<root>"))
+    let real = snp_os::realpath::realpath_nonstrict(dir, dir)
+        .map_or_else(|_| root.clone(), |p| p.to_string_lossy().into_owned());
+    (
+        returncode(status),
+        show(&out).replace(&real, "<root>").replace(&root, "<root>"),
+    )
+}
+
+/// Whether `/bin/sh` is dash (Debian, Ubuntu).
+fn sh_is_dash() -> bool {
+    snp_os::realpath::realpath_nonstrict(Path::new("/bin/sh"), Path::new("/"))
+        .is_ok_and(|p| p.file_name().is_some_and(|n| n == "dash"))
 }
 
 /// Every case of `cases.json` against the pre-commit 4.6.2 goldens.
@@ -223,6 +235,11 @@ fn hazmat_goldens() {
         let (code, out) = run_in(&argv, dir.path());
         let want = &goldens["results"][name];
         let want_out = show(&latin1(want["out"].as_str().unwrap()));
+        // The goldens were recorded where /bin/sh is dash; a case whose output is the shell's own error text
+        // (`/bin/sh: 0: cannot open …`) has another text and code under bash or zsh (macOS).
+        if want_out.starts_with("/bin/sh: 0: ") && !sh_is_dash() {
+            continue;
+        }
         if code != want["code"].as_i64().unwrap() || out != want_out {
             failures.push(format!(
                 "{name}: code {code} (want {})\n--- got\n{out}\n--- want\n{want_out}",

@@ -189,11 +189,12 @@ fn t10_run_10_failing_hook_output() {
 #[test]
 fn t10_run_11_arbitrary_bytes_pass_through() {
     let h = H::new();
+    // No file names: BSD printf (macOS) fails on arguments its format does not use.
     h.config(&local(&sys(
         "bytes",
         "bytes",
         "printf '\\342\\230\\203\\262\\n'",
-        "",
+        "pass_filenames: false",
     )));
     h.write("foo.py", b"");
     h.stage("foo.py");
@@ -1139,7 +1140,16 @@ fn x13_exe_03_argument_list_too_long() {
 #[test]
 fn x13_sm_06_e2big_without_files() {
     let h = H::new();
-    let big = rep("x", 140_000);
+    // Linux limits one argument to 128 KiB (MAX_ARG_STRLEN); macOS and the BSDs only the whole argv + env (ARG_MAX,
+    // 1 MiB on macOS).
+    let big = rep(
+        "x",
+        if cfg!(target_os = "linux") {
+            140_000
+        } else {
+            1_100_000
+        },
+    );
     h.config(&local(&sys(
         "big",
         "big",

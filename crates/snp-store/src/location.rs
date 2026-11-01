@@ -117,14 +117,15 @@ mod tests {
 
     #[test]
     fn precedence_and_relative_values() {
+        // Paths that do not exist: the location is realpath'd, and macOS's `/home` is a symlink.
         let cwd = Path::new("/work/proj");
-        let e = env(&[("HOME", "/home/u"), ("SNP_HOME", "rel/store")]);
+        let e = env(&[("HOME", "/nonexistent-home/u"), ("SNP_HOME", "rel/store")]);
         let loc = resolve_location(&e, cwd).unwrap();
         assert_eq!(loc.path, PathBuf::from("/work/proj/rel/store"));
         assert_eq!(loc.source, StoreSource::SnpHome);
 
         let e = env(&[
-            ("HOME", "/home/u"),
+            ("HOME", "/nonexistent-home/u"),
             ("SNP_HOME", ""),
             ("XDG_CACHE_HOME", "/x"),
         ]);
@@ -132,16 +133,16 @@ mod tests {
         assert_eq!(loc.path, PathBuf::from("/x/snp"));
         assert_eq!(loc.source, StoreSource::XdgCacheHome);
 
-        let e = env(&[("HOME", "/home/u"), ("XDG_CACHE_HOME", "")]);
+        let e = env(&[("HOME", "/nonexistent-home/u"), ("XDG_CACHE_HOME", "")]);
         let loc = resolve_location(&e, cwd).unwrap();
-        assert_eq!(loc.path, PathBuf::from("/home/u/.cache/snp"));
+        assert_eq!(loc.path, PathBuf::from("/nonexistent-home/u/.cache/snp"));
         assert_eq!(loc.source, StoreSource::PlatformDefault);
 
         // PRE_COMMIT_HOME never moves snp's store.
-        let e = env(&[("HOME", "/home/u"), ("PRE_COMMIT_HOME", "/p")]);
+        let e = env(&[("HOME", "/nonexistent-home/u"), ("PRE_COMMIT_HOME", "/p")]);
         assert_eq!(
             resolve_location(&e, cwd).unwrap().path,
-            PathBuf::from("/home/u/.cache/snp")
+            PathBuf::from("/nonexistent-home/u/.cache/snp")
         );
 
         // HOME="" → expanduser("~/.cache") == "/.cache" (posixpath).

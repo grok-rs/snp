@@ -274,6 +274,17 @@ mod catalog {
         assert!(snp);
     }
 
+    /// Whether writing a non-UTF-8 name failed because the file system refuses such names (APFS, macOS: `EILSEQ`;
+    /// git cannot hand snp such a path there either). Any other error fails the test.
+    #[cfg(unix)]
+    fn refused(r: std::io::Result<()>) -> bool {
+        match r {
+            Ok(()) => false,
+            Err(e) if e.raw_os_error() == Some(rustix::io::Errno::ILSEQ.raw_os_error()) => true,
+            Err(e) => panic!("{e}"),
+        }
+    }
+
     /// X13-GIT-05: non-UTF-8 path bytes in git's `-z` output (pre-commit: `UnicodeDecodeError`, exit 3) stay bytes:
     /// regexes see the lossy view, identify and argv the raw bytes.
     #[cfg(unix)]
@@ -282,7 +293,12 @@ mod catalog {
         use std::os::unix::ffi::OsStrExt;
         let (_g, root) = root();
         let raw: &[u8] = b"bad\xff.txt";
-        std::fs::write(root.join(std::ffi::OsStr::from_bytes(raw)), b"x\n").unwrap();
+        if refused(std::fs::write(
+            root.join(std::ffi::OsStr::from_bytes(raw)),
+            b"x\n",
+        )) {
+            return;
+        }
         std::fs::write(root.join("ok.txt"), b"x\n").unwrap();
         let mut buf = b"ok.txt\0".to_vec();
         buf.extend_from_slice(raw);
@@ -315,7 +331,12 @@ mod catalog {
         use std::os::unix::ffi::{OsStrExt, OsStringExt};
         let (_g, root) = root();
         let raw = b"h\xffllo.py".to_vec();
-        std::fs::write(root.join(std::ffi::OsStr::from_bytes(&raw)), b"print(1)\n").unwrap();
+        if refused(std::fs::write(
+            root.join(std::ffi::OsStr::from_bytes(&raw)),
+            b"print(1)\n",
+        )) {
+            return;
+        }
         let mut table = FileTable::from_args(vec![OsString::from_vec(raw.clone())], &root);
         table.retain_lexists();
         assert_eq!(table.len(), 1);

@@ -54,6 +54,18 @@ impl Spawn {
     }
 }
 
+/// Whether the hermetic `PATH`'s `python3` is the `/usr/bin` xcrun shim (macOS).
+fn python3_is_the_macos_shim(env: &TestEnv) -> bool {
+    let Some(path) = env.env().get("PATH") else {
+        return false;
+    };
+    std::env::split_paths(path)
+        .map(|d| d.join("python3"))
+        .find(|p| p.is_file())
+        .and_then(|p| snp_os::realpath::realpath_nonstrict(&p, Path::new("/")).ok())
+        .is_some_and(|p| p.starts_with("/usr/bin"))
+}
+
 /// The spawn log of one invocation.
 #[derive(Debug)]
 struct SpawnLog {
@@ -387,8 +399,17 @@ fn b6_shape_fast_path_within_13_spawns() {
         WARM_RUN_GIT + 4 + 2 + usize::from(cfg!(windows)),
         0,
     );
+    // The python default-version probe is persisted after the warm-up run, so the measured run spawns no Python,
+    // except where `python3` is macOS's `/usr/bin` xcrun shim: it follows `xcode-select`, so snp never persists its
+    // facts (`ToolProbe::fact_file`) and probes once per run.
+    let shim_probe = |s: &Spawn| {
+        cfg!(target_os = "macos")
+            && s.role == "tool"
+            && s.exe == "python3"
+            && python3_is_the_macos_shim(&env)
+    };
     assert!(
-        log.spawns.iter().all(Spawn::is_git),
+        log.spawns.iter().all(|s| s.is_git() || shim_probe(s)),
         "B6 started a non-git process:\n{}",
         log.dump()
     );
