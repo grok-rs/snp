@@ -4,6 +4,7 @@
 //! Owner: WP-34.
 
 use indexmap::IndexMap;
+use std::fmt::Write as _;
 
 /// A koanf map: string keys in document order (Go maps are unordered; document order keeps the output stable).
 pub(crate) type LMap = IndexMap<String, LValue>;
@@ -121,6 +122,10 @@ fn too_deep() -> String {
 
 /// go-yaml v3 through koanf: the YAML 1.2 core schema of snp-yaml (`Schema::Yaml12Core`), map keys turned into
 /// strings with Go's `%v` (`maps.IntfaceKeysToStrings`).
+#[expect(
+    clippy::redundant_closure_for_method_calls,
+    reason = "the method paths name cfgv::Value, which snp-migrate has no edge to"
+)]
 fn from_yaml(text: &str) -> Result<LValue, String> {
     let limits = snp_yaml::Limits {
         max_depth: 128,
@@ -175,7 +180,10 @@ struct Ops<V> {
 type PairsFn<V> = fn(&V) -> Vec<(&V, &V)>;
 
 impl<V> Ops<V> {
-    #[expect(clippy::too_many_arguments, reason = "one function pointer per operation")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one function pointer per operation"
+    )]
     fn new(
         _probe: &V,
         kind: fn(&V) -> &'static str,
@@ -257,10 +265,9 @@ fn from_json_value(v: &serde_json::Value, depth: usize) -> Result<LValue, String
     Ok(match v {
         serde_json::Value::Null => LValue::Null,
         serde_json::Value::Bool(b) => LValue::Bool(*b),
-        serde_json::Value::Number(n) => n.as_i64().map_or_else(
-            || LValue::Float(n.as_f64().unwrap_or(0.0)),
-            LValue::Int,
-        ),
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map_or_else(|| LValue::Float(n.as_f64().unwrap_or(0.0)), LValue::Int),
         serde_json::Value::String(s) => LValue::Str(s.clone()),
         serde_json::Value::Array(items) => LValue::List(
             items
@@ -455,7 +462,7 @@ pub(crate) fn go_quote(s: &str) -> String {
             '\t' => out.push_str("\\t"),
             '\r' => out.push_str("\\r"),
             c if c.is_control() => {
-                out.push_str(&format!("\\u{:04x}", u32::from(c)));
+                write!(out, "\\u{:04x}", u32::from(c)).unwrap_or_default();
             }
             c => out.push(c),
         }
@@ -533,12 +540,11 @@ pub(crate) fn go_parse_int(s: &str) -> Option<i64> {
     } else if lower.len() > 1 && lower.starts_with('0') {
         (8, lower.get(1..)?.to_owned(), true)
     } else {
-        (10, lower.clone(), false)
+        (10, lower, false)
     };
     if digits.contains('_') {
         // underscoreOK: only with a base prefix, never doubled, leading or trailing.
-        if !prefixed || digits.starts_with('_') || digits.ends_with('_') || digits.contains("__")
-        {
+        if !prefixed || digits.starts_with('_') || digits.ends_with('_') || digits.contains("__") {
             return None;
         }
     }
@@ -601,24 +607,15 @@ pub(crate) fn weak_str_map(v: &LValue, path: &str) -> Result<Vec<(String, String
 /// mapstructure field lookup: the exact key first, else the first key equal under Unicode case folding
 /// (`strings.EqualFold`).
 pub(crate) fn field<'a>(m: &'a LMap, name: &str) -> Option<&'a LValue> {
-    m.get(name).or_else(|| {
-        m.iter()
-            .find(|(k, _)| eq_fold(k, name))
-            .map(|(_, v)| v)
-    })
+    m.get(name)
+        .or_else(|| m.iter().find(|(k, _)| eq_fold(k, name)).map(|(_, v)| v))
 }
 
 /// `strings.EqualFold` (simple Unicode case folding approximated by lowercase comparison per char).
-fn eq_fold(a: &str, b: &str) -> bool {
-    let mut x = a.chars().flat_map(char::to_lowercase);
-    let mut y = b.chars().flat_map(char::to_lowercase);
-    loop {
-        match (x.next(), y.next()) {
-            (None, None) => return true,
-            (Some(p), Some(q)) if p == q => {}
-            _ => return false,
-        }
-    }
+fn eq_fold(left: &str, right: &str) -> bool {
+    left.chars()
+        .flat_map(char::to_lowercase)
+        .eq(right.chars().flat_map(char::to_lowercase))
 }
 
 #[cfg(test)]

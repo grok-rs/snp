@@ -6,8 +6,7 @@
 /// single-quoted ([`sh_single`]).
 pub(crate) fn sh_quote(s: &str) -> String {
     if !s.is_empty()
-        && s
-            .chars()
+        && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c))
     {
         s.to_owned()
@@ -48,7 +47,8 @@ pub(crate) fn dq_expand(v: &str) -> String {
             }
             '$' => {
                 let next = chars.get(i.saturating_add(1)).copied();
-                let expands = next.is_some_and(|n| n == '{' || n == '_' || n.is_ascii_alphanumeric());
+                let expands =
+                    next.is_some_and(|n| n == '{' || n == '_' || n.is_ascii_alphanumeric());
                 if !expands {
                     out.push('\\');
                 }
@@ -64,7 +64,8 @@ pub(crate) fn dq_expand(v: &str) -> String {
 /// A shell variable name (`[A-Za-z_][A-Za-z0-9_]*`).
 pub(crate) fn is_var_name(s: &str) -> bool {
     let mut cs = s.chars();
-    cs.next().is_some_and(|c| c == '_' || c.is_ascii_alphabetic())
+    cs.next()
+        .is_some_and(|c| c == '_' || c.is_ascii_alphabetic())
         && cs.all(|c| c == '_' || c.is_ascii_alphanumeric())
 }
 
@@ -133,42 +134,45 @@ pub(crate) struct Occ {
 
 /// Every `{name}` occurrence of `s` (`name` = ASCII letters, digits, `_`). A file template written as `"{t}"` or
 /// `'{t}'` covers its quotes (lefthook's quote-aware replacement, `replacer.go:267-294`).
-pub(crate) fn scan(s: &str) -> Vec<Occ> {
-    let b = s.as_bytes();
+pub(crate) fn scan(text: &str) -> Vec<Occ> {
+    let bytes = text.as_bytes();
     let mut out = Vec::new();
     let mut i = 0_usize;
-    while let Some(&c) = b.get(i) {
+    while let Some(&c) = bytes.get(i) {
         if c != b'{' {
             i = i.saturating_add(1);
             continue;
         }
-        let mut j = i.saturating_add(1);
-        while b.get(j).is_some_and(|x| x.is_ascii_alphanumeric() || *x == b'_') {
-            j = j.saturating_add(1);
+        let mut close = i.saturating_add(1);
+        while bytes
+            .get(close)
+            .is_some_and(|x| x.is_ascii_alphanumeric() || *x == b'_')
+        {
+            close = close.saturating_add(1);
         }
-        if j == i.saturating_add(1) || b.get(j) != Some(&b'}') {
+        if close == i.saturating_add(1) || bytes.get(close) != Some(&b'}') {
             i = i.saturating_add(1);
             continue;
         }
-        let name = s.get(i.saturating_add(1)..j).unwrap_or("");
+        let name = text.get(i.saturating_add(1)..close).unwrap_or("");
         let tpl = match name {
             "staged_files" => Tpl::Staged,
             "push_files" => Tpl::Push,
             "all_files" => Tpl::All,
             "files" => Tpl::Files,
             "lefthook_job_name" => Tpl::JobName,
-            n if n.bytes().all(|d| d.is_ascii_digit()) => match n.parse::<u32>() {
-                Ok(v) => Tpl::Arg(v),
-                Err(_) => Tpl::Other(n.to_owned()),
-            },
-            n => Tpl::Other(n.to_owned()),
+            num if num.bytes().all(|d| d.is_ascii_digit()) => num
+                .parse::<u32>()
+                .map_or_else(|_| Tpl::Other(num.to_owned()), Tpl::Arg),
+            other => Tpl::Other(other.to_owned()),
         };
         let mut start = i;
-        let mut end = j.saturating_add(1);
+        let mut end = close.saturating_add(1);
         if tpl.is_file_list()
-            && let (Some(q), Some(r)) = (i.checked_sub(1).and_then(|k| b.get(k)), b.get(end))
-            && (*q == b'"' || *q == b'\'')
-            && q == r
+            && let (Some(open_q), Some(close_q)) =
+                (i.checked_sub(1).and_then(|k| bytes.get(k)), bytes.get(end))
+            && (*open_q == b'"' || *open_q == b'\'')
+            && open_q == close_q
         {
             start = start.saturating_sub(1);
             end = end.saturating_add(1);
@@ -216,9 +220,15 @@ mod tests {
         assert_eq!(sh_quote(""), "''");
         assert_eq!(sh_quote("a b"), "'a b'");
         assert_eq!(sh_quote("it's"), "'it'\\''s'");
-        assert_eq!(wrapper("echo 'x' \"$@\""), "sh -c 'echo '\\''x'\\'' \"$@\"' --");
+        assert_eq!(
+            wrapper("echo 'x' \"$@\""),
+            "sh -c 'echo '\\''x'\\'' \"$@\"' --"
+        );
         assert_eq!(dq_expand("$HOME/bin:${PATH}"), "\"$HOME/bin:${PATH}\"");
-        assert_eq!(dq_expand("a\"b`c\\d$(x) $"), "\"a\\\"b\\`c\\\\d\\$(x) \\$\"");
+        assert_eq!(
+            dq_expand("a\"b`c\\d$(x) $"),
+            "\"a\\\"b\\`c\\\\d\\$(x) \\$\""
+        );
     }
 
     #[test]
@@ -240,16 +250,30 @@ mod tests {
         let tpls: Vec<Tpl> = scan(s).into_iter().map(|o| o.tpl).collect();
         assert_eq!(
             tpls,
-            [Tpl::Staged, Tpl::Files, Tpl::All, Tpl::Arg(1), Tpl::Other("x".to_owned())]
+            [
+                Tpl::Staged,
+                Tpl::Files,
+                Tpl::All,
+                Tpl::Arg(1),
+                Tpl::Other("x".to_owned())
+            ]
         );
         let occs = scan(s);
-        assert_eq!(&s[occs[1].start..occs[1].end], "\"{files}\"");
+        assert_eq!(s.get(occs[1].start..occs[1].end), Some("\"{files}\""));
         assert_eq!(
-            replace(s, &occs, |o| if o.tpl.is_file_list() { "F".to_owned() } else { "N".to_owned() }),
+            replace(s, &occs, |o| if o.tpl.is_file_list() {
+                "F".to_owned()
+            } else {
+                "N".to_owned()
+            }),
             "a F F F N N {} {a b}"
         );
         assert_eq!(
-            inline_templates("{wrap} {lefthook_job_name} {files} {nope}", &[("wrap".to_owned(), "docker run".to_owned())], "my job"),
+            inline_templates(
+                "{wrap} {lefthook_job_name} {files} {nope}",
+                &[("wrap".to_owned(), "docker run".to_owned())],
+                "my job"
+            ),
             "docker run 'my job' {files} {nope}"
         );
     }

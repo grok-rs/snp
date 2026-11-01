@@ -17,7 +17,7 @@ mod validate {
         let mut v: Vec<_> = std::fs::read_dir(dir)
             .unwrap()
             .map(|e| e.unwrap().path())
-            .filter(|p| p.to_str().unwrap().ends_with(".yaml"))
+            .filter(|p| p.extension().is_some_and(|e| e == "yaml"))
             .collect();
         v.sort();
         assert!(v.len() >= 10, "{v:?}");
@@ -49,7 +49,8 @@ mod validate {
                     display: ".pre-commit-config.yaml".into(),
                     project_root: dir.path().to_path_buf(),
                 };
-                let cfg = snp_config::load_config(&src, &o).unwrap_or_else(|e| panic!("{name}: {}", e.rendered));
+                let cfg = snp_config::load_config(&src, &o)
+                    .unwrap_or_else(|e| panic!("{name}: {}", e.rendered));
                 let mut n = 0;
                 for repo in &cfg.repos {
                     let RepoConfig::Local { hooks } = repo else {
@@ -91,7 +92,8 @@ mod validate {
                 display: ".pre-commit-config.yaml".into(),
                 project_root: dir.path().to_path_buf(),
             };
-            let cfg = snp_config::load_config(&src, &o).unwrap_or_else(|e| panic!("{name}: {}", e.rendered));
+            let cfg = snp_config::load_config(&src, &o)
+                .unwrap_or_else(|e| panic!("{name}: {}", e.rendered));
             for repo in &cfg.repos {
                 if let RepoConfig::Local { hooks } = repo {
                     for h in hooks {
@@ -99,7 +101,11 @@ mod validate {
                     }
                 }
             }
-            assert_eq!(sink.take(), Vec::<String>::new(), "{name}: pre-commit would warn");
+            assert_eq!(
+                sink.take(),
+                Vec::<String>::new(),
+                "{name}: pre-commit would warn"
+            );
         }
     }
 
@@ -121,7 +127,8 @@ mod validate {
                 warn: &sink,
                 diag: &sink,
             };
-            snp_config::overlay::load(&golden, &o).unwrap_or_else(|e| panic!("{name}: {}", e.rendered));
+            snp_config::overlay::load(&golden, &o)
+                .unwrap_or_else(|e| panic!("{name}: {}", e.rendered));
             assert_eq!(sink.take(), Vec::<String>::new(), "{name}");
         }
         assert!(seen > 0);

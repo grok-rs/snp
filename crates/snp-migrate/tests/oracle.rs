@@ -30,7 +30,7 @@ mod oracle {
             .map(|e| e.unwrap().path())
             .filter(|p| {
                 let n = p.file_name().unwrap().to_str().unwrap();
-                n.ends_with(".yaml") && !n.ends_with(".overlay.yaml")
+                p.extension().is_some_and(|e| e == "yaml") && !n.contains(".overlay.")
             })
             .collect();
         v.sort();
@@ -38,16 +38,51 @@ mod oracle {
     }
 
     fn sha(bytes: &[u8]) -> String {
-        Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+        use std::fmt::Write as _;
+        Sha256::digest(bytes)
+            .iter()
+            .fold(String::new(), |mut s, b| {
+                write!(s, "{b:02x}").unwrap();
+                s
+            })
     }
 
     /// The pre-commit invocations of a runnable golden.
     const RUNS: &[&[&str]] = &[
         &["run", "--all-files"],
         &["run", "--hook-stage", "manual", "--all-files"],
-        &["run", "--hook-stage", "pre-push", "--all-files", "--remote-name", "origin", "--remote-url", "https://example.invalid/r.git", "--local-branch", "refs/heads/master", "--remote-branch", "refs/heads/master"],
-        &["run", "--hook-stage", "commit-msg", "--commit-msg-filename", "msg.txt"],
-        &["run", "--hook-stage", "post-checkout", "--from-ref", "HEAD", "--to-ref", "HEAD", "--checkout-type", "1"],
+        &[
+            "run",
+            "--hook-stage",
+            "pre-push",
+            "--all-files",
+            "--remote-name",
+            "origin",
+            "--remote-url",
+            "https://example.invalid/r.git",
+            "--local-branch",
+            "refs/heads/master",
+            "--remote-branch",
+            "refs/heads/master",
+        ],
+        &[
+            "run",
+            "--hook-stage",
+            "commit-msg",
+            "--commit-msg-filename",
+            "msg.txt",
+        ],
+        &[
+            "run",
+            "--hook-stage",
+            "post-checkout",
+            "--from-ref",
+            "HEAD",
+            "--to-ref",
+            "HEAD",
+            "--checkout-type",
+            "1",
+        ],
     ];
 
     fn copy_tree(from: &Path, rel: &Path, out: &mut Vec<(String, Vec<u8>, bool)>) {
@@ -78,7 +113,11 @@ mod oracle {
         })
     }
 
-    /// Asks the oracle about every golden.
+    /// Asks the oracle about every golden (`None`: no oracle installed; anything else failing is a test failure).
+    #[expect(
+        clippy::unwrap_in_result,
+        reason = "test helper: a failing fixture read is a test failure"
+    )]
     fn ask_oracle() -> Option<Value> {
         let env = TestEnv::new(Bins {
             snp: PathBuf::from("snp"),
@@ -93,14 +132,29 @@ mod oracle {
             let mut repo = env.git_repo(&format!("r{k}"));
             if case == "runnable" {
                 let mut files = Vec::new();
-                copy_tree(&manifest().join("tests/fixtures").join(&case), Path::new(""), &mut files);
+                copy_tree(
+                    &manifest().join("tests/fixtures").join(&case),
+                    Path::new(""),
+                    &mut files,
+                );
                 for (p, bytes, exec) in files {
-                    repo = if exec { repo.exec_file(&p, &bytes) } else { repo.file(&p, &bytes) };
+                    repo = if exec {
+                        repo.exec_file(&p, &bytes)
+                    } else {
+                        repo.file(&p, &bytes)
+                    };
                 }
                 repo = repo.file("msg.txt", b"subject\n");
             }
-            let dir = repo.file(".pre-commit-config.yaml", &text).stage_all().commit("init").build();
-            let validate = env.oracle(Oracle::Pc462Py312, &dir)?.args(["validate-config", ".pre-commit-config.yaml"]).output();
+            let dir = repo
+                .file(".pre-commit-config.yaml", &text)
+                .stage_all()
+                .commit("init")
+                .build();
+            let validate = env
+                .oracle(Oracle::Pc462Py312, &dir)?
+                .args(["validate-config", ".pre-commit-config.yaml"])
+                .output();
             let mut runs = Vec::new();
             if case == "runnable" {
                 for args in RUNS {
@@ -108,7 +162,10 @@ mod oracle {
                     runs.push(json!({"args": args, "result": output(&o)}));
                 }
             }
-            out.insert(name, json!({"sha256": sha(&text), "validate": output(&validate), "runs": runs}));
+            out.insert(
+                name,
+                json!({"sha256": sha(&text), "validate": output(&validate), "runs": runs}),
+            );
         }
         Some(Value::Object(out))
     }
@@ -130,14 +187,27 @@ mod oracle {
     fn check(vectors: &Value) {
         let map = vectors.as_object().unwrap();
         let goldens = goldens();
-        assert_eq!(map.len(), goldens.len(), "vectors and goldens differ: regenerate the vectors");
+        assert_eq!(
+            map.len(),
+            goldens.len(),
+            "vectors and goldens differ: regenerate the vectors"
+        );
         for golden in goldens {
             let name = golden.file_name().unwrap().to_str().unwrap();
             let v = &map[name];
-            assert_eq!(v["sha256"], sha(&std::fs::read(&golden).unwrap()), "{name}: stale vector, re-run the oracle");
+            assert_eq!(
+                v["sha256"],
+                sha(&std::fs::read(&golden).unwrap()),
+                "{name}: stale vector, re-run the oracle"
+            );
             let portable = name.contains(".portable.");
             assert_eq!(v["validate"]["exit"], 0, "{name}: {}", v["validate"]);
-            check_lines(name, "validate-config", v["validate"]["stdout"].as_str().unwrap(), portable);
+            check_lines(
+                name,
+                "validate-config",
+                v["validate"]["stdout"].as_str().unwrap(),
+                portable,
+            );
             assert_eq!(v["validate"]["stderr"], "", "{name}");
             if portable {
                 assert_eq!(v["validate"]["stdout"], "", "{name}");
@@ -146,7 +216,11 @@ mod oracle {
                 let r = &run["result"];
                 assert_eq!(r["exit"], 0, "{name} {}: {r}", run["args"]);
                 check_lines(name, "run", r["stdout"].as_str().unwrap(), portable);
-                assert!(r["stdout"].as_str().unwrap().contains("Passed"), "{name} {}: {r}", run["args"]);
+                assert!(
+                    r["stdout"].as_str().unwrap().contains("Passed"),
+                    "{name} {}: {r}",
+                    run["args"]
+                );
             }
             if name.starts_with("runnable.") {
                 assert_eq!(v["runs"].as_array().unwrap().len(), RUNS.len(), "{name}");
@@ -168,6 +242,10 @@ mod oracle {
         };
         check(&v);
         std::fs::create_dir_all(vectors_path().parent().unwrap()).unwrap();
-        std::fs::write(vectors_path(), serde_json::to_string_pretty(&v).unwrap() + "\n").unwrap();
+        std::fs::write(
+            vectors_path(),
+            serde_json::to_string_pretty(&v).unwrap() + "\n",
+        )
+        .unwrap();
     }
 }

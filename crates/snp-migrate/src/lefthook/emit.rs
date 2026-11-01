@@ -27,6 +27,10 @@ pub(crate) enum CondItem {
 
 /// One emitted hook (all fields optional except id/name/language/entry/stages).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "pre-commit's boolean hook keys"
+)]
 pub(crate) struct OutHook {
     /// `# snp-migrate: …` comment lines above the hook.
     pub(crate) comments: Vec<String>,
@@ -73,7 +77,11 @@ pub(crate) fn hook_fields(h: &OutHook) -> Vec<(&'static str, String)> {
     if let Some(v) = &h.exclude {
         f.push(("exclude", regex(v)));
     }
-    for (k, v) in [("types", &h.types), ("types_or", &h.types_or), ("exclude_types", &h.exclude_types)] {
+    for (k, v) in [
+        ("types", &h.types),
+        ("types_or", &h.types_or),
+        ("exclude_types", &h.exclude_types),
+    ] {
         if !v.is_empty() {
             f.push((k, flow_list(v)));
         }
@@ -85,7 +93,11 @@ pub(crate) fn hook_fields(h: &OutHook) -> Vec<(&'static str, String)> {
         f.push(("always_run", "true".to_owned()));
     }
     f.push(("stages", flow_list(&h.stages)));
-    for (k, v) in [("require_serial", h.require_serial), ("fail_fast", h.fail_fast), ("verbose", h.verbose)] {
+    for (k, v) in [
+        ("require_serial", h.require_serial),
+        ("fail_fast", h.fail_fast),
+        ("verbose", h.verbose),
+    ] {
         if v {
             f.push((k, "true".to_owned()));
         }
@@ -130,11 +142,11 @@ pub(crate) fn hook_fields(h: &OutHook) -> Vec<(&'static str, String)> {
 pub(crate) fn write_hook(out: &mut String, h: &OutHook, indent: usize) {
     let pad: String = std::iter::repeat_n(' ', indent).collect();
     for c in &h.comments {
-        let _ = writeln!(out, "{pad}# {}", one_line(c));
+        writeln!(out, "{pad}# {}", one_line(c)).unwrap_or_default();
     }
     for (i, (k, v)) in hook_fields(h).iter().enumerate() {
         let lead = if i == 0 { "- " } else { "  " };
-        let _ = writeln!(out, "{pad}{lead}{k}: {v}");
+        writeln!(out, "{pad}{lead}{k}: {v}").unwrap_or_default();
     }
 }
 
@@ -177,11 +189,17 @@ pub(crate) fn flow_map(kv: &[(String, String)]) -> String {
 
 /// A regex: single-quoted unless it needs double quotes.
 pub(crate) fn regex(s: &str) -> String {
-    if needs_double(s) { double(s) } else { single(s) }
+    if needs_double(s) {
+        double(s)
+    } else {
+        single(s)
+    }
 }
 
 fn needs_double(s: &str) -> bool {
-    s.chars().any(|c| c.is_control() || c == '\u{feff}' || c == '\u{2028}' || c == '\u{2029}' || c == '\u{85}')
+    s.chars().any(|c| {
+        c.is_control() || c == '\u{feff}' || c == '\u{2028}' || c == '\u{2029}' || c == '\u{85}'
+    })
 }
 
 fn single(s: &str) -> String {
@@ -200,9 +218,9 @@ fn double(s: &str) -> String {
             c if needs_double(c.encode_utf8(&mut [0; 4])) => {
                 let n = u32::from(c);
                 if n <= 0xff {
-                    let _ = write!(out, "\\x{n:02X}");
+                    write!(out, "\\x{n:02X}").unwrap_or_default();
                 } else {
-                    let _ = write!(out, "\\u{n:04X}");
+                    write!(out, "\\u{n:04X}").unwrap_or_default();
                 }
             }
             c => out.push(c),
@@ -271,7 +289,10 @@ mod tests {
     fn scalars() {
         assert_eq!(scalar("yarn eslint --fix", false), "yarn eslint --fix");
         assert_eq!(scalar("--parallel", true), "--parallel");
-        assert_eq!(scalar("Run `yarn test` locally", false), "Run `yarn test` locally");
+        assert_eq!(
+            scalar("Run `yarn test` locally", false),
+            "Run `yarn test` locally"
+        );
         assert_eq!(scalar("5m", false), "5m");
         assert_eq!(scalar("yes", false), "'yes'");
         assert_eq!(scalar("1", false), "'1'");
@@ -285,7 +306,10 @@ mod tests {
         assert_eq!(scalar("'x'", false), "'''x'''");
         assert_eq!(scalar("a\nb", false), "\"a\\nb\"");
         assert_eq!(scalar("sh -c 'x' --", false), "sh -c 'x' --");
-        for s in ["yes", "1", "a: b", "a\nb", "'x'", "", "~", "x #y", "-", "- a", "?x", "\u{7}", "é", "{a}", "*a", "=", "<<"] {
+        for s in [
+            "yes", "1", "a: b", "a\nb", "'x'", "", "~", "x #y", "-", "- a", "?x", "\u{7}", "é",
+            "{a}", "*a", "=", "<<",
+        ] {
             reads_back(&scalar(s, true), s);
             reads_back(&regex(s), s);
         }

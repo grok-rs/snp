@@ -4,6 +4,7 @@
 //!
 //! Owner: WP-34.
 
+use std::fmt::Write as _;
 use std::path::Path;
 
 use super::emit::{CondItem, CondOut, OutHook};
@@ -172,13 +173,23 @@ impl Cx<'_> {
 
 /// `TrimRight(root, "/")` plus `./` and `//` normalisation; `None` for nothing left.
 fn normalize_root(r: &str) -> Option<String> {
-    let parts: Vec<&str> = r.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
-    if parts.is_empty() { None } else { Some(parts.join("/")) }
+    let parts: Vec<&str> = r
+        .split('/')
+        .filter(|p| !p.is_empty() && *p != ".")
+        .collect();
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("/"))
+    }
 }
 
 /// Whether snp's `root` key accepts the (normalized) directory: relative, no `..`, no NUL.
 fn root_key_ok(r: &str, original: &str) -> bool {
-    !original.starts_with('/') && !original.starts_with('\\') && !r.contains('\0') && !r.split('/').any(|p| p == "..")
+    !original.starts_with('/')
+        && !original.starts_with('\\')
+        && !r.contains('\0')
+        && !r.split('/').any(|p| p == "..")
 }
 
 /// The id slug of 05 §19.3: lowercase ASCII alphanumeric runs joined by `-`.
@@ -247,13 +258,13 @@ fn msg_file_stage(stage: &str) -> bool {
 
 /// The main file template of a stage (05 §19.5).
 fn main_tpl(stage: &str, t: &Tpl) -> bool {
-    match (stage, t) {
-        ("pre-commit", Tpl::Staged) | ("pre-push", Tpl::Push) | ("commit-msg" | "prepare-commit-msg", Tpl::Arg(1)) => {
-            true
-        }
-        ("commit-msg", Tpl::Arg(0)) => true,
-        _ => false,
-    }
+    matches!(
+        (stage, t),
+        ("pre-commit", Tpl::Staged)
+            | ("pre-push", Tpl::Push)
+            | ("commit-msg" | "prepare-commit-msg", Tpl::Arg(1))
+            | ("commit-msg", Tpl::Arg(0))
+    )
 }
 
 /// The input of the `run` → `entry` rules.
@@ -275,6 +286,10 @@ struct EntryIn<'a> {
 
 /// The result of the rules.
 #[derive(Debug, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "pre-commit's boolean hook keys"
+)]
 struct EntryOut {
     entry: String,
     pass_filenames: bool,
@@ -290,26 +305,46 @@ struct EntryOut {
 }
 
 /// The R5 file-list pipeline: the command's output filtered by glob/exclude/root and lefthook's existence check.
-fn list_pipeline(cmd: &str, i: &EntryIn<'_>, matcher: Matcher, notes: &mut Vec<(Level, String)>) -> String {
+fn list_pipeline(
+    cmd: &str,
+    i: &EntryIn<'_>,
+    matcher: Matcher,
+    notes: &mut Vec<(Level, String)>,
+) -> String {
     let mut p = format!("( {cmd} )");
     match glob::ere(i.glob, matcher, true) {
-        Ok(Some(e)) => p.push_str(&format!(" | grep -iE {}", shell::sh_quote(&e))),
+        Ok(Some(e)) => write!(p, " | grep -iE {}", shell::sh_quote(&e)).unwrap_or_default(),
         Ok(None) => {}
-        Err(e) => notes.push((Level::Lossy, format!("glob not applied to the shell file list: {}", e.0))),
+        Err(e) => notes.push((
+            Level::Lossy,
+            format!("glob not applied to the shell file list: {}", e.0),
+        )),
     }
     match glob::ere(i.exclude, matcher, false) {
-        Ok(Some(e)) => p.push_str(&format!(" | grep -vE {}", shell::sh_quote(&e))),
+        Ok(Some(e)) => write!(p, " | grep -vE {}", shell::sh_quote(&e)).unwrap_or_default(),
         Ok(None) => {}
-        Err(e) => notes.push((Level::Lossy, format!("exclude not applied to the shell file list: {}", e.0))),
+        Err(e) => notes.push((
+            Level::Lossy,
+            format!("exclude not applied to the shell file list: {}", e.0),
+        )),
     }
     let strip = match i.list_root {
         Some(r) => {
-            p.push_str(&format!(" | grep -E {}", shell::sh_quote(&format!("^{}/", glob::ere_literal(r)))));
-            format!("f=${{f#{}/}}; ", r)
+            write!(
+                p,
+                " | grep -E {}",
+                shell::sh_quote(&format!("^{}/", glob::ere_literal(r)))
+            )
+            .unwrap_or_default();
+            format!("f=${{f#{r}/}}; ")
         }
         None => String::new(),
     };
-    p.push_str(&format!(" | while IFS= read -r f; do {strip}[ -f \"$f\" ] && printf '%s\\n' \"$f\"; done"));
+    write!(
+        p,
+        " | while IFS= read -r f; do {strip}[ -f \"$f\" ] && printf '%s\\n' \"$f\"; done"
+    )
+    .unwrap_or_default();
     p
 }
 
@@ -334,7 +369,10 @@ fn entry_rules(i: &EntryIn<'_>, matcher: Matcher) -> EntryOut {
         let cmd = match o.tpl {
             Tpl::Files => {
                 if i.files_cmd.trim().is_empty() {
-                    out.never = Some("{files} without a `files` command: lefthook skips the job every time".to_owned());
+                    out.never = Some(
+                        "{files} without a `files` command: lefthook skips the job every time"
+                            .to_owned(),
+                    );
                     return out;
                 }
                 i.files_cmd.to_owned()
@@ -375,27 +413,42 @@ fn entry_rules(i: &EntryIn<'_>, matcher: Matcher) -> EntryOut {
         if n == 0 {
             let k = positional_count(i.stage);
             if k == 0 {
-                notes.push((Level::Lossy, format!("no pre-commit equivalent for {{0}} in stage '{}'", i.stage)));
+                notes.push((
+                    Level::Lossy,
+                    format!("no pre-commit equivalent for {{0}} in stage '{}'", i.stage),
+                ));
                 return String::new();
             }
-            return (1..=k).filter_map(|m| positional(i.stage, m)).collect::<Vec<_>>().join(" ");
+            return (1..=k)
+                .filter_map(|m| positional(i.stage, m))
+                .collect::<Vec<_>>()
+                .join(" ");
         }
-        match positional(i.stage, n) {
-            Some(v) => v.to_owned(),
-            None => {
-                notes.push((Level::Lossy, format!("no pre-commit equivalent for {{{n}}} in stage '{}'", i.stage)));
-                String::new()
-            }
+        if let Some(v) = positional(i.stage, n) {
+            v.to_owned()
+        } else {
+            notes.push((
+                Level::Lossy,
+                format!(
+                    "no pre-commit equivalent for {{{n}}} in stage '{}'",
+                    i.stage
+                ),
+            ));
+            String::new()
         }
     };
     let pass = main_count > 0;
     let mut prefix = String::new();
     if let Some(r) = i.cd_root {
-        prefix.push_str(&format!("cd {} || exit 1; ", shell::sh_quote(r)));
+        write!(prefix, "cd {} || exit 1; ", shell::sh_quote(r)).unwrap_or_default();
     }
     prefix.push_str(i.env_prefix);
     if let (Some(r), true) = (i.cd_root, pass && !msg_file_stage(i.stage)) {
-        prefix.push_str(&format!("for f in \"$@\"; do set -- \"$@\" \"${{f#{r}/}}\"; shift; done; "));
+        write!(
+            prefix,
+            "for f in \"$@\"; do set -- \"$@\" \"${{f#{r}/}}\"; shift; done; "
+        )
+        .unwrap_or_default();
     }
     out.pass_filenames = pass;
     out.require_serial = pass;
@@ -403,16 +456,21 @@ fn entry_rules(i: &EntryIn<'_>, matcher: Matcher) -> EntryOut {
     out.filters_apply = matches!(i.stage, "pre-commit" | "pre-push") && list.is_none() && !gate;
     if list.is_some() || gate {
         out.always_run = true;
-        out.notes.push((Level::Warning, "best-effort: file list computed in shell".to_owned()));
+        out.notes.push((
+            Level::Warning,
+            "best-effort: file list computed in shell".to_owned(),
+        ));
         let mut script = prefix;
         if let Some((cmd, _)) = &list {
             let p = list_pipeline(cmd, i, matcher, &mut out.notes);
-            script.push_str(&format!(
+            write!(
+                script,
                 "set -f; IFS='\n'; set -- $( {p}); unset IFS; set +f; [ $# -gt 0 ] || exit 0; "
-            ));
+            )
+            .unwrap_or_default();
         } else {
             let p = list_pipeline(i.files_cmd, i, matcher, &mut out.notes);
-            script.push_str(&format!("[ -n \"$( {p})\" ] || exit 0; "));
+            write!(script, "[ -n \"$( {p})\" ] || exit 0; ").unwrap_or_default();
         }
         let mut notes = Vec::new();
         let body = shell::replace(i.cmd, &occs, |o| match &o.tpl {
@@ -428,7 +486,7 @@ fn entry_rules(i: &EntryIn<'_>, matcher: Matcher) -> EntryOut {
     let simple_ok = prefix.is_empty();
     if occs.iter().all(|o| matches!(o.tpl, Tpl::Other(_))) {
         if simple_ok && shell::is_simple(i.cmd) {
-            out.entry = i.cmd.trim().to_owned();
+            i.cmd.trim().clone_into(&mut out.entry);
             out.plain = true;
         } else {
             out.entry = shell::wrapper(&format!("{prefix}{}", i.cmd));
@@ -443,7 +501,7 @@ fn entry_rules(i: &EntryIn<'_>, matcher: Matcher) -> EntryOut {
     {
         let head = i.cmd.get(..only.start).unwrap_or("");
         if shell::is_simple(head) {
-            out.entry = head.trim().to_owned();
+            head.trim().clone_into(&mut out.entry);
             out.plain = true;
             return out;
         }
@@ -495,39 +553,62 @@ fn union(a: C, b: C) -> C {
 fn cond_value(v: &LValue, top: bool, notes: &mut Vec<(Level, String)>) -> C {
     match v {
         LValue::Bool(true) if top => C::Always,
-        LValue::Str(s) if STATES.contains(&s.as_str()) => C::Items(vec![CondItem::State(s.clone())]),
+        LValue::Str(s) if STATES.contains(&s.as_str()) => {
+            C::Items(vec![CondItem::State(s.clone())])
+        }
         LValue::Str(s) => {
-            notes.push((Level::Warning, format!("condition '{s}' never matches (lefthook ignores it)")));
+            notes.push((
+                Level::Warning,
+                format!("condition '{s}' never matches (lefthook ignores it)"),
+            ));
             C::Never
         }
-        LValue::List(items) if top => items.iter().fold(C::Never, |acc, i| union(acc, cond_value(i, false, notes))),
-        LValue::Map(m) => {
-            let mut c = C::Never;
-            if let Some(r) = m.get("ref") {
-                let r = weak_string(r, "ref").unwrap_or_default();
-                match globset::Glob::new(&r) {
-                    Ok(_) => c = union(c, C::Items(vec![CondItem::Map(vec![("ref".to_owned(), r)])])),
-                    Err(e) => notes.push((Level::Lossy, format!("ref pattern '{r}' dropped: {e}"))),
+        LValue::List(items) if top => items
+            .iter()
+            .fold(C::Never, |acc, i| union(acc, cond_value(i, false, notes))),
+        LValue::Map(map) => {
+            let mut cond = C::Never;
+            if let Some(pat) = map.get("ref") {
+                let pat = weak_string(pat, "ref").unwrap_or_default();
+                match globset::Glob::new(&pat) {
+                    Ok(_) => {
+                        cond = union(
+                            cond,
+                            C::Items(vec![CondItem::Map(vec![("ref".to_owned(), pat)])]),
+                        );
+                    }
+                    Err(e) => {
+                        notes.push((Level::Lossy, format!("ref pattern '{pat}' dropped: {e}")));
+                    }
                 }
             }
-            if let Some(cmd) = m.get("run") {
+            if let Some(cmd) = map.get("run") {
                 let cmd = weak_string(cmd, "run").unwrap_or_default();
-                c = if cmd.is_empty() {
+                cond = if cmd.is_empty() {
                     // `sh -c ""` exits 0: the item always matches.
                     C::Always
                 } else {
-                    union(c, C::Items(vec![CondItem::Map(vec![("run".to_owned(), cmd)])]))
+                    union(
+                        cond,
+                        C::Items(vec![CondItem::Map(vec![("run".to_owned(), cmd)])]),
+                    )
                 };
             }
-            c
+            cond
         }
         _ => C::Never,
     }
 }
 
 /// `skip` levels OR, `only` levels AND (05 §6.3, §8.1); an `only` that never matches skips the job.
-fn conditions(skips: &[LValue], onlys: &[LValue], notes: &mut Vec<(Level, String)>) -> (Option<CondOut>, Option<CondOut>) {
-    let skip = skips.iter().fold(C::Never, |acc, v| union(acc, cond_value(v, true, notes)));
+fn conditions(
+    skips: &[LValue],
+    onlys: &[LValue],
+    notes: &mut Vec<(Level, String)>,
+) -> (Option<CondOut>, Option<CondOut>) {
+    let skip = skips
+        .iter()
+        .fold(C::Never, |acc, v| union(acc, cond_value(v, true, notes)));
     let mut levels = Vec::new();
     let mut never = false;
     for v in onlys {
@@ -587,7 +668,10 @@ fn conditions(skips: &[LValue], onlys: &[LValue], notes: &mut Vec<(Level, String
 }
 
 /// `file_types` → identify tags (05 §19.7): `(types, types_or, exclude_types)`.
-fn file_types(fts: &[String], notes: &mut Vec<(Level, String)>) -> (Vec<String>, Vec<String>, Vec<String>) {
+fn file_types(
+    fts: &[String],
+    notes: &mut Vec<(Level, String)>,
+) -> (Vec<String>, Vec<String>, Vec<String>) {
     let (mut types, mut types_or, mut exclude) = (Vec::new(), Vec::new(), Vec::new());
     let push = |v: &mut Vec<String>, t: &str| {
         if !v.iter().any(|x| x == t) {
@@ -614,10 +698,16 @@ fn file_types(fts: &[String], notes: &mut Vec<(Level, String)>) -> (Vec<String>,
                 };
                 match tag.filter(|t| file_identify::ALL_TAGS.contains(t)) {
                     Some(t) => push(&mut types_or, t),
-                    None => notes.push((Level::Lossy, format!("no identify tag for MIME '{m}'; filter dropped"))),
+                    None => notes.push((
+                        Level::Lossy,
+                        format!("no identify tag for MIME '{m}'; filter dropped"),
+                    )),
                 }
             }
-            other => notes.push((Level::Warning, format!("unknown file type '{other}' ignored (as lefthook does)"))),
+            other => notes.push((
+                Level::Warning,
+                format!("unknown file type '{other}' ignored (as lefthook does)"),
+            )),
         }
     }
     (types, types_or, exclude)
@@ -636,12 +726,26 @@ fn fail_on_changes(v: &str) -> Result<&'static str, ()> {
 
 /// The fixer heuristic of 05 §19.8.
 fn looks_like_fixer(run: &str) -> bool {
-    run.split_whitespace()
-        .any(|w| matches!(w, "--fix" | "--write" | "-w" | "fmt" | "format" | "-i" | "--autofix"))
+    run.split_whitespace().any(|w| {
+        matches!(
+            w,
+            "--fix" | "--write" | "-w" | "fmt" | "format" | "-i" | "--autofix"
+        )
+    })
 }
 
+/// lefthook's failure for a job without exactly one of `run` / `script` / `group` (`job.go:20-79`).
+const NEITHER: &str = "either `run`,`script`, or `group` must be provided for a job";
+
 /// Flattens a hook's job list into the scheduling tree.
-fn flatten(cx: &mut Cx<'_>, hook: &Hook, jobs: &[Job], scope: &Scope, leaves: &mut Vec<Leaf>, depth: usize) -> Vec<Node> {
+fn flatten(
+    cx: &mut Cx<'_>,
+    hook: &Hook,
+    jobs: &[Job],
+    scope: &Scope,
+    leaves: &mut Vec<Leaf>,
+    depth: usize,
+) -> Vec<Node> {
     let mut nodes = Vec::new();
     for (pos, j) in jobs.iter().enumerate() {
         let printable = model::printable_name(j, pos);
@@ -659,17 +763,18 @@ fn flatten(cx: &mut Cx<'_>, hook: &Hook, jobs: &[Job], scope: &Scope, leaves: &m
             continue;
         }
         let has_cmd = !j.run.is_empty() || !j.script.is_empty();
-        let mut fail = None;
-        if !j.run.is_empty() && !j.script.is_empty() {
-            fail = Some("either `run`,`script`, or `group` must be provided for a job".to_owned());
-        }
-        if !has_cmd && let Some(g) = &j.group {
+        let fail = if !j.run.is_empty() && !j.script.is_empty() {
+            Some(NEITHER.to_owned())
+        } else if has_cmd {
+            None
+        } else if let Some(g) = &j.group {
             if !g.has_jobs || g.jobs.is_empty() {
-                fail = Some("group must have `jobs`".to_owned());
-            } else if depth < super::value::MAX_DEPTH {
+                Some("group must have `jobs`".to_owned())
+            } else if depth >= super::value::MAX_DEPTH {
+                Some("groups are nested too deeply".to_owned())
+            } else {
                 let mut inner = scope.with(j);
-                let piped = g.piped && !g.parallel;
-                if piped {
+                if g.piped && !g.parallel {
                     inner.piped = true;
                     cx.note(
                         Level::Lossy,
@@ -678,12 +783,16 @@ fn flatten(cx: &mut Cx<'_>, hook: &Hook, jobs: &[Job], scope: &Scope, leaves: &m
                     );
                 }
                 let children = flatten(cx, hook, &g.jobs, &inner, leaves, depth.saturating_add(1));
-                nodes.push(if g.parallel { Node::Par(children) } else { Node::Seq(children) });
+                nodes.push(if g.parallel {
+                    Node::Par(children)
+                } else {
+                    Node::Seq(children)
+                });
                 continue;
             }
-        } else if !has_cmd {
-            fail = Some("either `run`,`script`, or `group` must be provided for a job".to_owned());
-        }
+        } else {
+            Some(NEITHER.to_owned())
+        };
         let index = leaves.len().saturating_add(1);
         nodes.push(Node::Leaf(leaves.len()));
         leaves.push(Leaf {
@@ -763,7 +872,7 @@ fn is_executable(_: &Path) -> bool {
 /// Converts one leaf.
 #[expect(clippy::too_many_arguments, reason = "the leaf's context")]
 fn convert_leaf(
-    cx: &mut Cx<'_>,
+    cx: &Cx<'_>,
     hook: &Hook,
     stage: &str,
     custom_group: Option<&str>,
@@ -784,31 +893,40 @@ fn convert_leaf(
     if portable && let Some(g) = custom_group {
         out.name = format!("{} ({g})", out.name);
     }
-    out.language = "system".to_owned();
+    "system".clone_into(&mut out.language);
     out.stages = vec![stage.to_owned()];
     out.pass_filenames = true;
     out.fail_fast = s.piped;
     out.verbose = hook.follow;
     let fail_hook = |out: &mut OutHook, msg: &str| {
-        out.language = "fail".to_owned();
+        "fail".clone_into(&mut out.language);
         out.entry = format!("lefthook: {msg}");
         out.pass_filenames = false;
         out.always_run = true;
     };
     if let Some(msg) = &leaf.fail {
         fail_hook(out, msg);
-        notes.push((Level::Warning, format!("lefthook fails this job ({msg}); converted to a `fail` hook")));
+        notes.push((
+            Level::Warning,
+            format!("lefthook fails this job ({msg}); converted to a `fail` hook"),
+        ));
         return true;
     }
     // Conditions.
     let (skip, only) = conditions(&s.skip, &s.only, notes);
     if portable {
         if skip == Some(CondOut::Always) {
-            notes.push((Level::Warning, "always skipped by lefthook; not converted".to_owned()));
+            notes.push((
+                Level::Warning,
+                "always skipped by lefthook; not converted".to_owned(),
+            ));
             return false;
         }
         if skip.is_some() || only.is_some() {
-            notes.push((Level::Lossy, "skip/only conditions dropped (portable mode)".to_owned()));
+            notes.push((
+                Level::Lossy,
+                "skip/only conditions dropped (portable mode)".to_owned(),
+            ));
         }
     } else {
         out.skip = skip;
@@ -818,7 +936,13 @@ fn convert_leaf(
     let root = normalize_root(&s.root);
     let root_ok = root.as_deref().is_some_and(|r| root_key_ok(r, &s.root));
     if root.is_some() && !root_ok {
-        notes.push((Level::Lossy, format!("root '{}' must be a relative directory inside the repository; ignored", s.root)));
+        notes.push((
+            Level::Lossy,
+            format!(
+                "root '{}' must be a relative directory inside the repository; ignored",
+                s.root
+            ),
+        ));
     }
     let root = root.filter(|_| root_ok);
     // Environment.
@@ -827,12 +951,18 @@ fn convert_leaf(
         let in_wrapper = portable || v.contains('$');
         if in_wrapper {
             if shell::is_var_name(k) {
-                env_prefix.push_str(&format!("{k}={}; export {k}; ", shell::dq_expand(v)));
+                write!(env_prefix, "{k}={}; export {k}; ", shell::dq_expand(v)).unwrap_or_default();
             } else {
-                notes.push((Level::Lossy, format!("env '{k}' is not a shell variable name; dropped")));
+                notes.push((
+                    Level::Lossy,
+                    format!("env '{k}' is not a shell variable name; dropped"),
+                ));
             }
         } else if k.is_empty() || k.contains(['=', '\0']) || v.contains('\0') {
-            notes.push((Level::Lossy, format!("env '{k}' is not a valid variable; dropped")));
+            notes.push((
+                Level::Lossy,
+                format!("env '{k}' is not a valid variable; dropped"),
+            ));
         } else {
             out.env.push((k.clone(), v.clone()));
         }
@@ -845,14 +975,25 @@ fn convert_leaf(
         let (path, n) = find_script(cx, &hook.name, &j.script);
         let Some(path) = path else {
             fail_hook(out, &format!("script does not exist: {}", j.script));
-            notes.push((Level::Warning, format!("script '{}' not found in the source directories; converted to a `fail` hook", j.script)));
+            notes.push((
+                Level::Warning,
+                format!(
+                    "script '{}' not found in the source directories; converted to a `fail` hook",
+                    j.script
+                ),
+            ));
             return true;
         };
         if n > 1 {
             notes.push((Level::Lossy, format!("script '{}' exists in {n} source directories; lefthook ran every copy, only {path} is converted", j.script)));
         }
         if j.runner.is_empty() && !is_executable(&cx.o.root.join(&path)) {
-            notes.push((Level::Lossy, format!("{path} is not executable (lefthook ran chmod on it); run `chmod +x {path}`")));
+            notes.push((
+                Level::Lossy,
+                format!(
+                    "{path} is not executable (lefthook ran chmod on it); run `chmod +x {path}`"
+                ),
+            ));
         }
         cmd_src = if j.runner.is_empty() {
             shell::sh_quote(&path)
@@ -890,7 +1031,10 @@ fn convert_leaf(
     if let Some(msg) = e.never {
         if msg.starts_with("one of") {
             fail_hook(out, &msg);
-            notes.push((Level::Warning, format!("lefthook fails this job ({msg}); converted to a `fail` hook")));
+            notes.push((
+                Level::Warning,
+                format!("lefthook fails this job ({msg}); converted to a `fail` hook"),
+            ));
             return true;
         }
         notes.push((Level::Warning, format!("{msg}; not converted")));
@@ -901,7 +1045,7 @@ fn convert_leaf(
     out.always_run = e.always_run;
     out.require_serial = e.require_serial;
     if j.origin == Origin::Script && j.runner.is_empty() && e.plain {
-        out.language = "script".to_owned();
+        "script".clone_into(&mut out.language);
     }
     if root_key {
         out.root.clone_from(&root);
@@ -913,11 +1057,23 @@ fn convert_leaf(
             Ok(f) => out.files = f,
             Err(err) if cx.matcher == Matcher::Gobwas => {
                 fail_hook(out, &format!("invalid glob pattern: {}", err.0));
-                notes.push((Level::Warning, format!("lefthook panics on this job's glob ({}); converted to a `fail` hook", err.0)));
+                notes.push((
+                    Level::Warning,
+                    format!(
+                        "lefthook panics on this job's glob ({}); converted to a `fail` hook",
+                        err.0
+                    ),
+                ));
                 return true;
             }
             Err(err) => {
-                notes.push((Level::Warning, format!("doublestar treats an invalid glob as no match ({}); not converted", err.0)));
+                notes.push((
+                    Level::Warning,
+                    format!(
+                        "doublestar treats an invalid glob as no match ({}); not converted",
+                        err.0
+                    ),
+                ));
                 return false;
             }
         }
@@ -925,10 +1081,22 @@ fn convert_leaf(
             Ok(x) => out.exclude = x,
             Err(err) if cx.matcher == Matcher::Gobwas => {
                 fail_hook(out, &format!("invalid glob pattern: {}", err.0));
-                notes.push((Level::Warning, format!("lefthook panics on this job's exclude ({}); converted to a `fail` hook", err.0)));
+                notes.push((
+                    Level::Warning,
+                    format!(
+                        "lefthook panics on this job's exclude ({}); converted to a `fail` hook",
+                        err.0
+                    ),
+                ));
                 return true;
             }
-            Err(err) => notes.push((Level::Warning, format!("doublestar treats an invalid exclude as no match ({}); exclude dropped", err.0))),
+            Err(err) => notes.push((
+                Level::Warning,
+                format!(
+                    "doublestar treats an invalid exclude as no match ({}); exclude dropped",
+                    err.0
+                ),
+            )),
         }
         let (t, to, xt) = file_types(&s.file_types, notes);
         out.types = t;
@@ -949,17 +1117,27 @@ fn convert_leaf(
             }
         }
     } else if !s.file_types.is_empty() && matches!(stage, "pre-commit" | "pre-push") {
-        notes.push((Level::Lossy, "file_types cannot filter a shell-computed file list; dropped".to_owned()));
+        notes.push((
+            Level::Lossy,
+            "file_types cannot filter a shell-computed file list; dropped".to_owned(),
+        ));
     }
     // Groups.
     let mut groups: Vec<String> = Vec::new();
-    for g in custom_group.into_iter().map(str::to_owned).chain(s.tags.iter().cloned()) {
+    for g in custom_group
+        .into_iter()
+        .map(str::to_owned)
+        .chain(s.tags.iter().cloned())
+    {
         if groups.contains(&g) {
             continue;
         }
         if g.is_empty() || g.starts_with('@') || g.chars().any(char::is_whitespace) {
             if !portable {
-                notes.push((Level::Warning, format!("tag '{g}' is not a valid snp group name; dropped")));
+                notes.push((
+                    Level::Warning,
+                    format!("tag '{g}' is not a valid snp group name; dropped"),
+                ));
             }
         } else {
             groups.push(g);
@@ -975,7 +1153,10 @@ fn convert_leaf(
     // Per-job keys.
     if !j.fail_text.is_empty() {
         if portable {
-            notes.push((Level::Warning, "fail_text dropped (portable mode)".to_owned()));
+            notes.push((
+                Level::Warning,
+                "fail_text dropped (portable mode)".to_owned(),
+            ));
         } else {
             out.fail_text = Some(j.fail_text.clone());
         }
@@ -983,14 +1164,17 @@ fn convert_leaf(
     if let Some(t) = &j.timeout {
         match snp_config::ext::parse_go_duration(t) {
             Ok(d) if d.is_zero() => {}
-            Ok(d) if d <= std::time::Duration::from_secs(86_400) => {
+            Ok(d) if d <= std::time::Duration::from_hours(24) => {
                 if portable {
                     notes.push((Level::Lossy, "timeout dropped (portable mode)".to_owned()));
                 } else {
                     out.timeout = Some(t.clone());
                 }
             }
-            Ok(_) => notes.push((Level::Lossy, format!("timeout '{t}' is longer than 24h; dropped"))),
+            Ok(_) => notes.push((
+                Level::Lossy,
+                format!("timeout '{t}' is longer than 24h; dropped"),
+            )),
             Err(e) => notes.push((Level::Lossy, format!("timeout '{t}' dropped: {e}"))),
         }
     }
@@ -1003,13 +1187,22 @@ fn convert_leaf(
     }
     if j.interactive {
         out.require_serial = true;
-        notes.push((Level::Lossy, "interactive (TTY passthrough) is not supported yet; dropped".to_owned()));
+        notes.push((
+            Level::Lossy,
+            "interactive (TTY passthrough) is not supported yet; dropped".to_owned(),
+        ));
     }
     if j.stage_fixed {
         if stage != "pre-commit" {
-            notes.push((Level::Warning, "stage_fixed only applies to the pre-commit hook; dropped".to_owned()));
+            notes.push((
+                Level::Warning,
+                "stage_fixed only applies to the pre-commit hook; dropped".to_owned(),
+            ));
         } else if portable {
-            notes.push((Level::Lossy, "stage_fixed dropped (portable mode): fixes are no longer staged".to_owned()));
+            notes.push((
+                Level::Lossy,
+                "stage_fixed dropped (portable mode): fixes are no longer staged".to_owned(),
+            ));
         } else {
             out.stage_fixed = true;
         }
@@ -1025,7 +1218,11 @@ fn convert_leaf(
         && fail_value.is_none_or(|v| v == "never")
         && looks_like_fixer(&cmd)
     {
-        notes.push((Level::Warning, "looks like a fixer: consider `stage_fixed: true` and removing fail_on_changes".to_owned()));
+        notes.push((
+            Level::Warning,
+            "looks like a fixer: consider `stage_fixed: true` and removing fail_on_changes"
+                .to_owned(),
+        ));
     }
     true
 }
@@ -1033,7 +1230,11 @@ fn convert_leaf(
 /// Converts every hook of `loaded` (05 §19.2 step 4).
 pub(crate) fn convert(loaded: &Loaded, o: Opts<'_>) -> Result<Conversion, String> {
     let g = &loaded.global;
-    let gs = |k: &str| g.get(k).and_then(|v| weak_string(v, k).ok()).unwrap_or_default();
+    let gs = |k: &str| {
+        g.get(k)
+            .and_then(|v| weak_string(v, k).ok())
+            .unwrap_or_default()
+    };
     let matcher = match gs("glob_matcher").as_str() {
         "doublestar" => Matcher::Doublestar,
         _ => Matcher::Gobwas,
@@ -1084,22 +1285,28 @@ pub(crate) fn convert(loaded: &Loaded, o: Opts<'_>) -> Result<Conversion, String
     // fail_on_changes (05 §19.8).
     let mut values = Vec::new();
     for h in &hooks {
-        match fail_on_changes(&h.fail_on_changes) {
-            Ok(v) => values.push(v),
-            Err(()) => {
-                cx.note(
-                    Level::Lossy,
-                    &h.name,
-                    format!("invalid value for fail_on_changes: {} (lefthook fails the hook); treated as never", h.fail_on_changes),
-                );
-                values.push("never");
-            }
+        if let Ok(v) = fail_on_changes(&h.fail_on_changes) {
+            values.push(v);
+        } else {
+            cx.note(
+                Level::Lossy,
+                &h.name,
+                format!(
+                    "invalid value for fail_on_changes: {} (lefthook fails the hook); treated as never",
+                    h.fail_on_changes
+                ),
+            );
+            values.push("never");
         }
     }
     let all_never = values.iter().all(|v| *v == "never");
     conv.root_never = !o.portable && all_never && !hooks.is_empty();
     if o.portable && values.contains(&"never") {
-        cx.note(Level::Warning, &main_name, "pre-commit fails hooks that modify files; lefthook did not");
+        cx.note(
+            Level::Warning,
+            &main_name,
+            "pre-commit fails hooks that modify files; lefthook did not",
+        );
     }
     let mut pending: Vec<Pending> = Vec::new();
     let mut stage_par: Vec<(String, bool, usize)> = Vec::new(); // stage, has Par, next free bucket
@@ -1111,13 +1318,20 @@ pub(crate) fn convert(loaded: &Loaded, o: Opts<'_>) -> Result<Conversion, String
                 cx.note(
                     Level::Lossy,
                     &h.name,
-                    format!("git hook '{}' is not supported by pre-commit; converted to manual stage", h.name),
+                    format!(
+                        "git hook '{}' is not supported by pre-commit; converted to manual stage",
+                        h.name
+                    ),
                 );
             }
             ("manual".to_owned(), Some(h.name.clone()))
         };
         for s in &h.setup {
-            cx.note(Level::Lossy, &h.name, format!("setup command not converted: {}", display_name(s)));
+            cx.note(
+                Level::Lossy,
+                &h.name,
+                format!("setup command not converted: {}", display_name(s)),
+            );
         }
         let mut piped = h.piped;
         let mut parallel = h.parallel;
@@ -1140,11 +1354,18 @@ pub(crate) fn convert(loaded: &Loaded, o: Opts<'_>) -> Result<Conversion, String
         };
         let mut leaves = Vec::new();
         let children = flatten(&mut cx, h, &h.jobs, &scope, &mut leaves, 0);
-        let tree = if parallel { Node::Par(children) } else { Node::Seq(children) };
+        let tree = if parallel {
+            Node::Par(children)
+        } else {
+            Node::Seq(children)
+        };
         conv.jobs = conv.jobs.saturating_add(leaves.len());
         let mut buckets = vec![0_usize; leaves.len()];
         let mut reduced = false;
-        let start = stage_par.iter().find(|(s, _, _)| *s == stage).map_or(0, |(_, _, n)| *n);
+        let start = stage_par
+            .iter()
+            .find(|(s, _, _)| *s == stage)
+            .map_or(0, |(_, _, n)| *n);
         let end = schedule(&tree, start, &mut buckets, &mut reduced);
         let par = has_par(&tree);
         match stage_par.iter_mut().find(|(s, _, _)| *s == stage) {
@@ -1155,17 +1376,38 @@ pub(crate) fn convert(loaded: &Loaded, o: Opts<'_>) -> Result<Conversion, String
             None => stage_par.push((stage.clone(), par, end)),
         }
         if reduced {
-            cx.note(Level::Warning, &h.name, "parallelism reduced: a sequential group inside a parallel one is serialised");
+            cx.note(
+                Level::Warning,
+                &h.name,
+                "parallelism reduced: a sequential group inside a parallel one is serialised",
+            );
         }
-        let fail_value = if o.portable || all_never { None } else { Some(fval) };
+        let fail_value = if o.portable || all_never {
+            None
+        } else {
+            Some(fval)
+        };
         for (k, leaf) in leaves.iter().enumerate() {
             let mut notes = Vec::new();
             let mut out = OutHook::default();
-            let keep = convert_leaf(&mut cx, h, &stage, custom_group.as_deref(), leaf, fail_value, &mut notes, &mut out);
+            let keep = convert_leaf(
+                &cx,
+                h,
+                &stage,
+                custom_group.as_deref(),
+                leaf,
+                fail_value,
+                &mut notes,
+                &mut out,
+            );
             let printable = model::printable_name(&leaf.job, leaf.index.saturating_sub(1));
             let scope = format!("{}/{}", h.name, display_name(&printable));
             for (level, msg) in notes {
-                let n = Note { level, scope: scope.clone(), msg };
+                let n = Note {
+                    level,
+                    scope: scope.clone(),
+                    msg,
+                };
                 if keep {
                     out.comments.push(n.line());
                 }
@@ -1174,7 +1416,11 @@ pub(crate) fn convert(loaded: &Loaded, o: Opts<'_>) -> Result<Conversion, String
             if !keep {
                 continue;
             }
-            let base = if leaf.job.name.is_empty() { String::new() } else { slug(&leaf.job.name) };
+            let base = if leaf.job.name.is_empty() {
+                String::new()
+            } else {
+                slug(&leaf.job.name)
+            };
             out.id = if base.is_empty() {
                 let s = slug(&printable);
                 if leaf.job.name.is_empty() || s.is_empty() {
@@ -1197,8 +1443,12 @@ pub(crate) fn convert(loaded: &Loaded, o: Opts<'_>) -> Result<Conversion, String
     for (stage, par, _) in &stage_par {
         let mut group: Vec<Pending> = Vec::new();
         let mut rest = Vec::new();
-        for p in pending.drain(..) {
-            if p.stage == *stage { group.push(p) } else { rest.push(p) }
+        for p in std::mem::take(&mut pending) {
+            if p.stage == *stage {
+                group.push(p);
+            } else {
+                rest.push(p);
+            }
         }
         pending = rest;
         group.sort_by_key(|p| (p.bucket, p.dfs));
@@ -1214,7 +1464,8 @@ pub(crate) fn convert(loaded: &Loaded, o: Opts<'_>) -> Result<Conversion, String
             used.push(id.clone());
             p.hook.id = id;
             if *par && !o.portable {
-                p.hook.priority = Some(u32::try_from(p.bucket.saturating_mul(10)).unwrap_or(u32::MAX));
+                p.hook.priority =
+                    Some(u32::try_from(p.bucket.saturating_mul(10)).unwrap_or(u32::MAX));
             }
             conv.stages.push(stage.clone());
             conv.hooks.push(p.hook);
@@ -1279,7 +1530,10 @@ mod tests {
         let e = rules("eslint {staged_files} && echo ok", "pre-commit");
         assert_eq!(e.entry, "sh -c 'eslint \"$@\" && echo ok' --");
         let e = rules("echo {1} {2}", "pre-push");
-        assert_eq!(e.entry, "sh -c 'echo \"$PRE_COMMIT_REMOTE_NAME\" \"$PRE_COMMIT_REMOTE_URL\"' --");
+        assert_eq!(
+            e.entry,
+            "sh -c 'echo \"$PRE_COMMIT_REMOTE_NAME\" \"$PRE_COMMIT_REMOTE_URL\"' --"
+        );
         assert!(!e.pass_filenames && !e.always_run);
         let e = rules("echo {0}", "post-checkout");
         assert_eq!(
@@ -1320,7 +1574,11 @@ mod tests {
 
     #[test]
     fn incompatible_templates() {
-        assert!(rules("x {staged_files} {push_files}", "pre-commit").never.is_some());
+        assert!(
+            rules("x {staged_files} {push_files}", "pre-commit")
+                .never
+                .is_some()
+        );
     }
 
     #[test]
@@ -1335,7 +1593,11 @@ mod tests {
     #[test]
     fn condition_translation() {
         let mut notes = Vec::new();
-        let v = super::super::value::parse("s: [merge, {ref: main, run: test -f x}, bogus]\n", super::super::value::Format::Yaml).unwrap();
+        let v = super::super::value::parse(
+            "s: [merge, {ref: main, run: test -f x}, bogus]\n",
+            super::super::value::Format::Yaml,
+        )
+        .unwrap();
         let (skip, only) = conditions(&[v["s"].clone()], &[], &mut notes);
         assert_eq!(
             skip,

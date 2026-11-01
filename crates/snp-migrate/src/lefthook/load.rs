@@ -16,7 +16,11 @@ const CMD: &str = "{cmd}";
 /// Main config base names (`loader.go:37`).
 const MAIN_NAMES: [&str; 3] = ["lefthook", ".lefthook", ".config/lefthook"];
 /// Local config base names (`loader.go:36`).
-const LOCAL_NAMES: [&str; 3] = ["lefthook-local", ".lefthook-local", ".config/lefthook-local"];
+const LOCAL_NAMES: [&str; 3] = [
+    "lefthook-local",
+    ".lefthook-local",
+    ".config/lefthook-local",
+];
 /// Extensions in lookup order (extension-major, `loader.go:89-102`).
 const EXTENSIONS: [&str; 5] = [".yml", ".yaml", ".json", ".jsonc", ".toml"];
 
@@ -130,7 +134,11 @@ pub(crate) fn has_main(root: &Path) -> bool {
 pub(crate) fn display(root: &Path, p: &Path) -> String {
     let rel = p.strip_prefix(root).unwrap_or(p);
     let s = rel.to_string_lossy().into_owned();
-    if cfg!(windows) { s.replace('\\', "/") } else { s }
+    if cfg!(windows) {
+        s.replace('\\', "/")
+    } else {
+        s
+    }
 }
 
 /// Reads and parses one config file (format by extension).
@@ -251,7 +259,8 @@ fn merge_hooks(src: LMap, dest: &mut LMap) {
     let mut dest_jobs: Vec<(String, Vec<LValue>)> = hook_slices(dest, "jobs");
     let src_setup = hook_slices(&src, "setup");
     let mut dest_setup: Vec<(String, Vec<LValue>)> = hook_slices(dest, "setup");
-    if (src_jobs.is_empty() || dest_jobs.is_empty()) && (src_setup.is_empty() || dest_setup.is_empty())
+    if (src_jobs.is_empty() || dest_jobs.is_empty())
+        && (src_setup.is_empty() || dest_setup.is_empty())
     {
         maps_merge(src, dest);
         return;
@@ -586,7 +595,11 @@ pub(crate) fn go_glob(pattern: &str, depth: usize) -> Result<Vec<String>, &'stat
 }
 
 /// `glob(dir, pattern, matches)`: the sorted entries of `dir` matching `pattern`.
-fn glob_dir(dir: &str, pattern: &str, mut matches: Vec<String>) -> Result<Vec<String>, &'static str> {
+fn glob_dir(
+    dir: &str,
+    pattern: &str,
+    mut matches: Vec<String>,
+) -> Result<Vec<String>, &'static str> {
     if !Path::new(dir).is_dir() {
         return Ok(matches);
     }
@@ -646,9 +659,8 @@ impl Ctx<'_> {
             } else {
                 self.root.join(p).to_string_lossy().into_owned()
             };
-            let paths = go_glob(&joined, 0).map_err(|e| {
-                LoadError(format!("bad glob syntax for '{joined}': {e}"))
-            })?;
+            let paths = go_glob(&joined, 0)
+                .map_err(|e| LoadError(format!("bad glob syntax for '{joined}': {e}")))?;
             for path in paths {
                 if visited.contains(&path) {
                     self.warnings.push(format!(
@@ -728,9 +740,8 @@ fn is_custom_hook(name: &str, v: &LValue) -> bool {
         return false;
     }
     v.as_map().is_some_and(|m| {
-        m.keys().any(|k| {
-            k.starts_with("scripts") || k.starts_with("commands") || k.starts_with("jobs")
-        })
+        m.keys()
+            .any(|k| k.starts_with("scripts") || k.starts_with("commands") || k.starts_with("jobs"))
     })
 }
 
@@ -855,5 +866,44 @@ mod tests {
             .map(|j| j.as_map().unwrap()["run"].as_str().unwrap().to_owned())
             .collect();
         assert_eq!(runs, ["w x", "u", "v", "y"]);
+    }
+
+    /// lefthook's own integration fixtures: the merged tree equals `lefthook dump` (compared after typing, since the
+    /// dump is already weakly typed: `glob: 3` is dumped as `- "3"`).
+    #[test]
+    fn merge_equals_lefthook_dump() {
+        for fixture in ["job_merging", "many_extends_levels"] {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(fixture);
+            let loaded = load(&root, None, false).unwrap();
+            let dump_text =
+                std::fs::read_to_string(root.join("lefthook-dump.yml.expected")).unwrap();
+            let dump = value::parse(&dump_text, Format::Yaml).unwrap();
+            let names: Vec<&str> = loaded.hooks.iter().map(|h| h.name.as_str()).collect();
+            assert_eq!(names, ["pre-commit", "e1", "e2", "e3"], "{fixture}");
+            for h in &loaded.hooks {
+                let want =
+                    super::super::model::hook(&h.name, dump[&h.name].as_map().unwrap()).unwrap();
+                let got = super::super::model::hook(&h.name, &h.map).unwrap();
+                assert_eq!(
+                    format!("{got:?}"),
+                    format!("{want:?}"),
+                    "{fixture}: {}",
+                    h.name
+                );
+            }
+            assert_eq!(
+                loaded.files,
+                [
+                    "lefthook.yml",
+                    "extends/e1.yml",
+                    "extends/e2.yml",
+                    "extends/e3.yml"
+                ],
+                "{fixture}"
+            );
+            assert_eq!(loaded.warnings, Vec::<String>::new());
+        }
     }
 }

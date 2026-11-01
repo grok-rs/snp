@@ -125,10 +125,10 @@ impl Parser<'_> {
     /// After `[`: `!` (and `^` for doublestar) negates; `a-z` ranges; `\x` escapes; `]` closes.
     fn class(&mut self) -> Result<Tok, GlobError> {
         let unclosed = || GlobError("unclosed '['".to_owned());
-        let mut negated = false;
-        if self.peek() == Some('!') || (self.matcher == Matcher::Doublestar && self.peek() == Some('^')) {
+        let negated = self.peek() == Some('!')
+            || (self.matcher == Matcher::Doublestar && self.peek() == Some('^'));
+        if negated {
             self.bump();
-            negated = true;
         }
         let mut items = Vec::new();
         loop {
@@ -140,7 +140,8 @@ impl Parser<'_> {
                 c => c,
             };
             let mut hi = lo;
-            if self.peek() == Some('-') && self.chars.get(self.pos.saturating_add(1)) != Some(&']') {
+            if self.peek() == Some('-') && self.chars.get(self.pos.saturating_add(1)) != Some(&']')
+            {
                 self.bump();
                 hi = match self.bump().ok_or_else(unclosed)? {
                     '\\' => self.bump().ok_or_else(unclosed)?,
@@ -206,7 +207,13 @@ fn py_class_char(c: char, out: &mut String) {
 }
 
 /// Renders a bracket expression.
-fn class(neg: bool, items: &[(char, char)], flavor: Flavor, no_sep: bool, out: &mut String) -> Result<(), GlobError> {
+fn class(
+    neg: bool,
+    items: &[(char, char)],
+    flavor: Flavor,
+    no_sep: bool,
+    out: &mut String,
+) -> Result<(), GlobError> {
     match flavor {
         Flavor::Python => {
             out.push('[');
@@ -277,7 +284,13 @@ fn class(neg: bool, items: &[(char, char)], flavor: Flavor, no_sep: bool, out: &
 }
 
 /// Renders a sequence. `top` = the sequence is the whole pattern (a trailing `/**` may only end the pattern).
-fn render(toks: &[Tok], m: Matcher, f: Flavor, top: bool, out: &mut String) -> Result<(), GlobError> {
+fn render(
+    toks: &[Tok],
+    m: Matcher,
+    f: Flavor,
+    top: bool,
+    out: &mut String,
+) -> Result<(), GlobError> {
     let group_open = match f {
         Flavor::Python => "(?:",
         Flavor::Ere => "(",
@@ -305,14 +318,18 @@ fn render(toks: &[Tok], m: Matcher, f: Flavor, top: bool, out: &mut String) -> R
             },
             Tok::Star(n) => match m {
                 Matcher::Gobwas => out.push_str(".*"),
-                Matcher::Doublestar if *n >= 2 && at_segment_start && matches!(next, Some(Tok::Lit('/'))) => {
+                Matcher::Doublestar
+                    if *n >= 2 && at_segment_start && matches!(next, Some(Tok::Lit('/'))) =>
+                {
                     // `**/`: zero or more leading directories.
                     out.push_str(group_open);
                     out.push_str(".*/)?");
                     i = i.saturating_add(2);
                     continue;
                 }
-                Matcher::Doublestar if *n >= 2 && at_segment_start && next.is_none() => out.push_str(".*"),
+                Matcher::Doublestar if *n >= 2 && at_segment_start && next.is_none() => {
+                    out.push_str(".*");
+                }
                 Matcher::Doublestar => out.push_str("[^/]*"),
             },
             Tok::Any => match m {
@@ -348,7 +365,11 @@ pub(crate) fn translate(pattern: &str, m: Matcher, f: Flavor) -> Result<String, 
 /// The `files` regex of a `glob` list: `^(?i:(?:<g1>)|(?:<g2>))$` (05 §19.6), `None` when every pattern is empty.
 /// Patterns are lowercased like lefthook's (`strings.ToLower`). With `root_prefix`, the portable form
 /// `^(?=<root>/)(?i:…)$` restricts matches to the root directory.
-pub(crate) fn files_regex(globs: &[String], m: Matcher, root_prefix: Option<&str>) -> Result<Option<String>, GlobError> {
+pub(crate) fn files_regex(
+    globs: &[String],
+    m: Matcher,
+    root_prefix: Option<&str>,
+) -> Result<Option<String>, GlobError> {
     let pats: Vec<&String> = globs.iter().filter(|g| !g.is_empty()).collect();
     if pats.is_empty() {
         return Ok(root_prefix.map(|r| {
@@ -375,7 +396,7 @@ pub(crate) fn files_regex(globs: &[String], m: Matcher, root_prefix: Option<&str
         }
         let body = translate(&g.to_lowercase(), m, Flavor::Python)
             .map_err(|e| GlobError(format!("glob {}: {}", quote(g), e.0)))?;
-        let _ = write!(out, "(?:{body})");
+        write!(out, "(?:{body})").unwrap_or_default();
     }
     out.push_str(")$");
     check_python(&out)?;
@@ -413,8 +434,15 @@ pub(crate) fn ere(globs: &[String], m: Matcher, lower: bool) -> Result<Option<St
         if k > 0 {
             out.push('|');
         }
-        let src = if lower { g.to_lowercase() } else { (*g).clone() };
-        out.push_str(&translate(&src, m, Flavor::Ere).map_err(|e| GlobError(format!("glob {}: {}", quote(g), e.0)))?);
+        let src = if lower {
+            g.to_lowercase()
+        } else {
+            (*g).clone()
+        };
+        out.push_str(
+            &translate(&src, m, Flavor::Ere)
+                .map_err(|e| GlobError(format!("glob {}: {}", quote(g), e.0)))?,
+        );
     }
     out.push_str(")$");
     Ok(Some(out))
@@ -473,10 +501,15 @@ mod tests {
 
     #[test]
     fn worked_example_regexes() {
-        assert_eq!(files(&["*.{js,ts}"], Matcher::Gobwas), "^(?i:(?:.*\\.(?:js|ts)))$");
+        assert_eq!(
+            files(&["*.{js,ts}"], Matcher::Gobwas),
+            "^(?i:(?:.*\\.(?:js|ts)))$"
+        );
         assert_eq!(files(&["*.rb"], Matcher::Gobwas), "^(?i:(?:.*\\.rb))$");
         assert_eq!(
-            exclude_regex(&["config/routes.rb".to_owned()], Matcher::Gobwas).unwrap().unwrap(),
+            exclude_regex(&["config/routes.rb".to_owned()], Matcher::Gobwas)
+                .unwrap()
+                .unwrap(),
             "^(?:config/routes\\.rb)$"
         );
     }
@@ -509,11 +542,17 @@ mod tests {
         let g = files(&["src/*.js"], Matcher::Doublestar);
         assert!(!matches(&g, "src/lib/util.js"));
         assert!(matches(&g, "src/util.js"));
-        let e = exclude_regex(&["*.txt".to_owned()], Matcher::Gobwas).unwrap().unwrap();
+        let e = exclude_regex(&["*.txt".to_owned()], Matcher::Gobwas)
+            .unwrap()
+            .unwrap();
         assert!(matches(&e, "dir/a.txt"));
-        let e = exclude_regex(&["a.txt".to_owned()], Matcher::Gobwas).unwrap().unwrap();
+        let e = exclude_regex(&["a.txt".to_owned()], Matcher::Gobwas)
+            .unwrap()
+            .unwrap();
         assert!(!matches(&e, "dir/a.txt"));
-        let e = exclude_regex(&["*.TXT".to_owned()], Matcher::Gobwas).unwrap().unwrap();
+        let e = exclude_regex(&["*.TXT".to_owned()], Matcher::Gobwas)
+            .unwrap()
+            .unwrap();
         assert!(!matches(&e, "a.txt"), "exclude is case-sensitive");
     }
 
@@ -535,12 +574,22 @@ mod tests {
 
     #[test]
     fn root_lookahead() {
-        let g = files_regex(&["*.rb".to_owned()], Matcher::Gobwas, Some("backend")).unwrap().unwrap();
+        let g = files_regex(&["*.rb".to_owned()], Matcher::Gobwas, Some("backend"))
+            .unwrap()
+            .unwrap();
         assert_eq!(g, "^(?=backend/)(?i:(?:.*\\.rb))$");
         assert!(matches(&g, "backend/a.rb"));
         assert!(!matches(&g, "backend-old/a.rb"));
-        assert_eq!(files_regex(&[], Matcher::Gobwas, Some("a.b")).unwrap().unwrap(), "^a\\.b/");
-        assert_eq!(files_regex(&[String::new()], Matcher::Gobwas, None).unwrap(), None);
+        assert_eq!(
+            files_regex(&[], Matcher::Gobwas, Some("a.b"))
+                .unwrap()
+                .unwrap(),
+            "^a\\.b/"
+        );
+        assert_eq!(
+            files_regex(&[String::new()], Matcher::Gobwas, None).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -551,7 +600,233 @@ mod tests {
         assert_eq!(e("[!^x]"), "[^x^]");
         assert_eq!(e("[^]"), "\\^");
         assert_eq!(e("a+b"), "a\\+b");
-        assert_eq!(ere(&["*.JS".to_owned()], Matcher::Gobwas, true).unwrap().unwrap(), "^(.*\\.js)$");
+        assert_eq!(
+            ere(&["*.JS".to_owned()], Matcher::Gobwas, true)
+                .unwrap()
+                .unwrap(),
+            "^(.*\\.js)$"
+        );
         assert!(translate("[*-/]", Matcher::Gobwas, Flavor::Ere).is_err());
+    }
+
+    /// A reference gobwas matcher written independently of the translator: braces are expanded first, then a
+    /// backtracking wildcard match (`*` = any run, `?` = any character, `[…]` / `[!…]` classes, `\x` literal), both
+    /// sides lowercased like lefthook's `glob` filter.
+    mod reference {
+        fn expand(p: &[char]) -> Vec<Vec<char>> {
+            // The first top-level `{…}` (outside classes and escapes).
+            let mut i = 0;
+            let mut in_class = false;
+            while i < p.len() {
+                match p[i] {
+                    '\\' => i += 1,
+                    '[' => in_class = true,
+                    ']' => in_class = false,
+                    '{' if !in_class => {
+                        let mut depth = 0;
+                        let mut parts = Vec::new();
+                        let mut start = i + 1;
+                        let mut j = i;
+                        while j < p.len() {
+                            match p[j] {
+                                '\\' => j += 1,
+                                '{' => depth += 1,
+                                '}' => {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        parts.push(&p[start..j]);
+                                        break;
+                                    }
+                                }
+                                ',' if depth == 1 => {
+                                    parts.push(&p[start..j]);
+                                    start = j + 1;
+                                }
+                                _ => {}
+                            }
+                            j += 1;
+                        }
+                        let mut out = Vec::new();
+                        for part in parts {
+                            let mut v = p[..i].to_vec();
+                            v.extend_from_slice(part);
+                            v.extend_from_slice(&p[j + 1..]);
+                            out.extend(expand(&v));
+                        }
+                        return out;
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            vec![p.to_vec()]
+        }
+
+        fn class_len_and_match(p: &[char], c: char) -> (usize, bool) {
+            let mut i = 1;
+            let neg = p.get(1) == Some(&'!');
+            if neg {
+                i += 1;
+            }
+            let mut hit = false;
+            let mut first = true;
+            while i < p.len() && (p[i] != ']' || first) {
+                first = false;
+                if p[i] == '\\' {
+                    i += 1;
+                }
+                let lo = p[i];
+                let mut hi = lo;
+                if p.get(i + 1) == Some(&'-') && p.get(i + 2).is_some_and(|x| *x != ']') {
+                    hi = p[i + 2];
+                    i += 2;
+                }
+                if lo <= c && c <= hi {
+                    hit = true;
+                }
+                i += 1;
+            }
+            (i + 1, hit != neg)
+        }
+
+        fn wild(p: &[char], s: &[char]) -> bool {
+            match p.first() {
+                None => s.is_empty(),
+                Some('*') => (0..=s.len()).any(|k| wild(&p[1..], &s[k..])),
+                Some('?') => !s.is_empty() && wild(&p[1..], &s[1..]),
+                Some('[') => {
+                    let Some(&c) = s.first() else { return false };
+                    let (n, hit) = class_len_and_match(p, c);
+                    hit && wild(&p[n..], &s[1..])
+                }
+                Some('\\') => s.first() == p.get(1) && !s.is_empty() && wild(&p[2..], &s[1..]),
+                Some(c) => s.first() == Some(c) && wild(&p[1..], &s[1..]),
+            }
+        }
+
+        pub(super) fn matches(pattern: &str, path: &str) -> bool {
+            let p: Vec<char> = pattern.to_lowercase().chars().collect();
+            let s: Vec<char> = path.to_lowercase().chars().collect();
+            expand(&p).iter().any(|alt| wild(alt, &s))
+        }
+    }
+
+    fn pattern() -> impl proptest::strategy::Strategy<Value = String> {
+        use proptest::prelude::*;
+        let tok = prop_oneof![
+            Just("a"),
+            Just("b"),
+            Just("B"),
+            Just("."),
+            Just("/"),
+            Just("-"),
+            Just("+"),
+            Just("*"),
+            Just("**"),
+            Just("?"),
+            Just("[ab]"),
+            Just("[!a]"),
+            Just("[a-c]"),
+            Just("[.]"),
+            Just("{a,b}"),
+            Just("{x*,y,}"),
+            Just("{a,{b,c}}"),
+            Just("\\*"),
+            Just("\\a"),
+        ];
+        proptest::collection::vec(tok, 0..7).prop_map(|v| v.concat())
+    }
+
+    fn path() -> impl proptest::strategy::Strategy<Value = String> {
+        use proptest::prelude::*;
+        proptest::collection::vec(
+            prop_oneof![
+                Just('a'),
+                Just('b'),
+                Just('c'),
+                Just('A'),
+                Just('.'),
+                Just('/'),
+                Just('*'),
+                Just('-'),
+                Just('x'),
+                Just('y')
+            ],
+            0..8,
+        )
+        .prop_map(|v| v.into_iter().collect())
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(4000))]
+        /// 05 §19.6: the translated `files` regex ≡ the reference gobwas matcher.
+        #[test]
+        fn gobwas_translation_matches_reference(pat in pattern(), p in path()) {
+            proptest::prop_assume!(!pat.is_empty());
+            let re = files_regex(std::slice::from_ref(&pat), Matcher::Gobwas, None).unwrap().unwrap();
+            let want = reference::matches(&pat, &p);
+            proptest::prop_assert_eq!(matches(&re, &p), want, "pattern {:?} regex {:?} path {:?}", pat, re, p);
+            // The ERE form (the shell filter) agrees with the Python form on the same inputs.
+            let ere = ere(std::slice::from_ref(&pat), Matcher::Gobwas, true).unwrap().unwrap();
+            let rust = regex_syntax_like(&ere);
+            proptest::prop_assert_eq!(matches(&rust, &p.to_lowercase()), want, "ere {:?}", ere);
+        }
+    }
+
+    /// An ERE of [`ere`] as a Python regex: `(` → `(?:`, POSIX bracket expressions (a leading `]` and `^`-not-first
+    /// are literal, a trailing `-` is literal, no escapes) re-written with Python escapes.
+    fn regex_syntax_like(ere: &str) -> String {
+        let chars: Vec<char> = ere.chars().collect();
+        let mut out = String::from("(?i:");
+        let mut i = 0;
+        while i < chars.len() {
+            match chars[i] {
+                '\\' => {
+                    out.push('\\');
+                    out.push(chars[i + 1]);
+                    i += 2;
+                }
+                '(' => {
+                    out.push_str("(?:");
+                    i += 1;
+                }
+                '[' => {
+                    i += 1;
+                    out.push('[');
+                    if chars[i] == '^' {
+                        out.push('^');
+                        i += 1;
+                    }
+                    let mut first = true;
+                    while first || chars[i] != ']' {
+                        first = false;
+                        let c = chars[i];
+                        let range = c != '-'
+                            && chars.get(i + 1) == Some(&'-')
+                            && chars.get(i + 2).is_some_and(|x| *x != ']');
+                        if range {
+                            out.push(c);
+                            out.push('-');
+                            out.push(chars[i + 2]);
+                            i += 3;
+                        } else {
+                            if c.is_ascii_punctuation() {
+                                out.push('\\');
+                            }
+                            out.push(c);
+                            i += 1;
+                        }
+                    }
+                    out.push(']');
+                    i += 1;
+                }
+                c => {
+                    out.push(c);
+                    i += 1;
+                }
+            }
+        }
+        out.push(')');
+        out
     }
 }

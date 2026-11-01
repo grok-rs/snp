@@ -4,7 +4,10 @@
 //!
 //! Owner: WP-34.
 
-use super::value::{self, LMap, LValue, TypeError, field, weak_bool, weak_int, weak_str_list, weak_str_map, weak_string};
+use super::value::{
+    self, LMap, LValue, TypeError, field, weak_bool, weak_int, weak_str_list, weak_str_map,
+    weak_string,
+};
 
 /// Where a job came from (the keys each kind accepts differ, 05 §5).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -128,19 +131,23 @@ impl Dec<'_> {
     }
 
     fn string(&self, k: &str) -> Result<String, TypeError> {
-        self.get(k).map_or_else(|| Ok(String::new()), |v| weak_string(v, &self.key(k)))
+        self.get(k)
+            .map_or_else(|| Ok(String::new()), |v| weak_string(v, &self.key(k)))
     }
 
     fn boolean(&self, k: &str) -> Result<bool, TypeError> {
-        self.get(k).map_or(Ok(false), |v| weak_bool(v, &self.key(k)))
+        self.get(k)
+            .map_or(Ok(false), |v| weak_bool(v, &self.key(k)))
     }
 
     fn list(&self, k: &str) -> Result<Vec<String>, TypeError> {
-        self.get(k).map_or_else(|| Ok(Vec::new()), |v| weak_str_list(v, &self.key(k)))
+        self.get(k)
+            .map_or_else(|| Ok(Vec::new()), |v| weak_str_list(v, &self.key(k)))
     }
 
     fn map(&self, k: &str) -> Result<Vec<(String, String)>, TypeError> {
-        self.get(k).map_or_else(|| Ok(Vec::new()), |v| weak_str_map(v, &self.key(k)))
+        self.get(k)
+            .map_or_else(|| Ok(Vec::new()), |v| weak_str_map(v, &self.key(k)))
     }
 
     fn int(&self, k: &str) -> Result<i64, TypeError> {
@@ -182,7 +189,10 @@ fn job(v: &LValue, path: &str, depth: usize) -> Result<Job, TypeError> {
         Some(g) => {
             let gpath = d.key("group");
             let gm = as_map(g, &gpath)?;
-            let gd = Dec { m: gm, path: &gpath };
+            let gd = Dec {
+                m: gm,
+                path: &gpath,
+            };
             let mut jobs = Vec::new();
             let has_jobs = gd.get("jobs").is_some();
             if let Some(js) = gd.get("jobs") {
@@ -196,7 +206,11 @@ fn job(v: &LValue, path: &str, depth: usize) -> Result<Job, TypeError> {
                     });
                 }
                 for (i, item) in items.iter().enumerate() {
-                    jobs.push(job(item, &format!("{gpath}.jobs[{i}]"), depth.saturating_add(1))?);
+                    jobs.push(job(
+                        item,
+                        &format!("{gpath}.jobs[{i}]"),
+                        depth.saturating_add(1),
+                    )?);
                 }
             }
             Some(Group {
@@ -336,7 +350,9 @@ pub(crate) fn hook(name: &str, m: &LMap) -> Result<Hook, TypeError> {
             jobs.push(job(item, &format!("{name}.jobs[{i}]"), 0)?);
         }
     }
-    let named = |key: &str, f: fn(&str, &LValue, &str) -> Result<Job, TypeError>| -> Result<Vec<Job>, TypeError> {
+    let named = |key: &str,
+                 f: fn(&str, &LValue, &str) -> Result<Job, TypeError>|
+     -> Result<Vec<Job>, TypeError> {
         let mut out = Vec::new();
         match d.get(key) {
             None => {}
@@ -426,7 +442,13 @@ mod tests {
         assert_eq!(j.glob, ["3"]);
         assert_eq!(j.tags, ["a b"]);
         assert_eq!(j.timeout.as_deref(), Some("15ns"));
-        assert_eq!(j.env, [("A".to_owned(), "1".to_owned()), ("B".to_owned(), "1".to_owned())]);
+        assert_eq!(
+            j.env,
+            [
+                ("A".to_owned(), "1".to_owned()),
+                ("B".to_owned(), "1".to_owned())
+            ]
+        );
         assert_eq!(j.group.as_ref().unwrap().jobs[0].run, "y");
     }
 
