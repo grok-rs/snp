@@ -54,7 +54,13 @@ impl Yv {
             .map_err(|e| YamlLoadError(e.to_string()))?;
         match doc.root {
             None => Ok(Self::Null),
-            Some(root) => convert(&doc, root, 0),
+            Some(root) => {
+                let mut budget = Budget {
+                    nodes: lim.max_constructed_nodes,
+                    bytes: MAX_EXPANDED_BYTES,
+                };
+                convert(&doc, root, 0, &mut budget)
+            }
         }
     }
 
@@ -147,7 +153,41 @@ impl Yv {
 /// Maximum nesting the harness accepts in its own files (far above any scenario; snp-yaml bounds the composer).
 const MAX_DEPTH: u32 = 256;
 
-fn convert(doc: &Document, id: NodeId, depth: u32) -> Result<Yv, YamlLoadError> {
+/// Most scalar bytes the expanded tree may hold (aliases counted at every use). Harness files are kilobytes; the
+/// composer's own input limit is 16 MiB, so one anchored scalar reused a few times stays well inside.
+const MAX_EXPANDED_BYTES: usize = 64 * 1024 * 1024;
+
+/// What the owned tree may still grow by. snp-yaml's composer shares an alias's target (a DAG, each node counted
+/// once), but [`convert`] copies every alias use, so a "billion laughs" document of a few hundred bytes would
+/// expand exponentially without this: every node visit and every scalar byte copied is charged.
+struct Budget {
+    nodes: u32,
+    bytes: usize,
+}
+
+impl Budget {
+    fn charge(&mut self, bytes: usize) -> Result<(), YamlLoadError> {
+        self.nodes = self.nodes.checked_sub(1).ok_or_else(|| {
+            YamlLoadError(format!(
+                "YAML document expands to more than {} nodes (alias bomb?)",
+                Limits::default().max_constructed_nodes
+            ))
+        })?;
+        self.bytes = self.bytes.checked_sub(bytes).ok_or_else(|| {
+            YamlLoadError(format!(
+                "YAML document expands to more than {MAX_EXPANDED_BYTES} bytes of scalars (alias bomb?)"
+            ))
+        })?;
+        Ok(())
+    }
+}
+
+fn convert(
+    doc: &Document,
+    id: NodeId,
+    depth: u32,
+    budget: &mut Budget,
+) -> Result<Yv, YamlLoadError> {
     if depth > MAX_DEPTH {
         return Err(YamlLoadError(String::from("YAML nesting too deep")));
     }
@@ -158,6 +198,7 @@ fn convert(doc: &Document, id: NodeId, depth: u32) -> Result<Yv, YamlLoadError> 
         .ok_or_else(|| YamlLoadError(String::from("dangling YAML node")))?;
     match &node.kind {
         NodeKind::Scalar(text) => {
+            budget.charge(text.len())?;
             if &*node.tag == NULL_TAG {
                 Ok(Yv::Null)
             } else if &*node.tag == BINARY_TAG {
@@ -172,16 +213,18 @@ fn convert(doc: &Document, id: NodeId, depth: u32) -> Result<Yv, YamlLoadError> 
             }
         }
         NodeKind::Seq(items) => {
+            budget.charge(0)?;
             let mut out = Vec::new();
             for item in items {
-                out.push(convert(doc, *item, next)?);
+                out.push(convert(doc, *item, next, budget)?);
             }
             Ok(Yv::Seq(out))
         }
         NodeKind::Map(pairs) => {
+            budget.charge(0)?;
             let mut out = Vec::new();
             for (k, v) in pairs {
-                let key = match convert(doc, *k, next)? {
+                let key = match convert(doc, *k, next, budget)? {
                     Yv::Null => String::from("null"),
                     Yv::Scalar { text, .. } => text,
                     other => {
@@ -191,7 +234,7 @@ fn convert(doc: &Document, id: NodeId, depth: u32) -> Result<Yv, YamlLoadError> 
                         )));
                     }
                 };
-                out.push((key, convert(doc, *v, next)?));
+                out.push((key, convert(doc, *v, next, budget)?));
             }
             Ok(Yv::Map(out))
         }
@@ -200,8 +243,15 @@ fn convert(doc: &Document, id: NodeId, depth: u32) -> Result<Yv, YamlLoadError> 
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    use std::fmt::Write as _;
+
     use super::*;
+
+    /// `s` repeated `n` times (`str::repeat` is disallowed).
+    fn rep(s: &str, n: usize) -> String {
+        std::iter::repeat_n(s, n).collect()
+    }
 
     #[test]
     fn parses_scalars_by_tag() {
@@ -215,6 +265,42 @@ mod tests {
         assert_eq!(v.get("f").unwrap().as_seq().unwrap().len(), 2);
         assert!(Yv::parse("").unwrap().is_null());
         assert!(Yv::parse("a: [").is_err());
+    }
+
+    /// `a0: &a0 [x, x, …]` then `aN: &aN [*aN-1, …]`: `fan`^`levels` nodes once expanded.
+    pub(crate) fn alias_bomb(levels: usize, fan: usize) -> String {
+        let mut doc = format!("a0: &a0 [{}]\n", vec!["x"; fan].join(", "));
+        for l in 1..=levels {
+            let prev = format!("*a{}", l - 1);
+            writeln!(doc, "a{l}: &a{l} [{}]", vec![prev.as_str(); fan].join(", ")).unwrap();
+        }
+        doc
+    }
+
+    #[test]
+    fn alias_bomb_is_refused_quickly() {
+        // 10^9 nodes once expanded: the session-killing input (59 GB RSS before the budget).
+        let start = std::time::Instant::now();
+        let err = Yv::parse(&alias_bomb(9, 10)).unwrap_err();
+        assert!(err.0.contains("alias bomb"), "{err}");
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    #[test]
+    fn big_scalar_fan_out_is_refused() {
+        // ~3000 nodes, but each alias use would copy 2 MB: 6 GB of strings.
+        let mut doc = format!("a: &a {}\nb:\n", rep("x", 2_000_000));
+        for _ in 0..3000 {
+            doc.push_str("- *a\n");
+        }
+        let err = Yv::parse(&doc).unwrap_err();
+        assert!(err.0.contains("bytes of scalars"), "{err}");
+    }
+
+    #[test]
+    fn moderate_alias_use_still_parses() {
+        let v = Yv::parse(&alias_bomb(3, 10)).unwrap();
+        assert_eq!(v.get("a3").unwrap().as_seq().unwrap().len(), 10);
     }
 
     #[test]
