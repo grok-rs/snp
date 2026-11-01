@@ -1620,6 +1620,7 @@ version = "2.0.0"
 dependencies = [
  "criterion",
  "dhat",
+ "memchr",
  "mimalloc",
  "snp-argparse",
  "snp-cli",
@@ -1665,6 +1666,9 @@ dependencies = [
 name = "snp-cmd"
 version = "2.0.0"
 dependencies = [
+ "blake3",
+ "memchr",
+ "proptest",
  "snp-cli",
  "snp-config",
  "snp-core",
@@ -1677,6 +1681,7 @@ dependencies = [
  "snp-stash",
  "snp-store",
  "snp-yaml",
+ "tempfile",
 ]
 
 [[package]]

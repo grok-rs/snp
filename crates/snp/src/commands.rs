@@ -132,9 +132,14 @@ pub(crate) fn run(cli: Cli, s: &Session) -> Result<i32, Failure> {
         Cli::Cache(a) => with_cmd_ctx(s, STORE_ONLY, &|c| snp_cmd::cache(&a, c)),
         Cli::Migrate(a) => migrate(&a, s),
         Cli::Doctor(a) => doctor(&a, s),
-        Cli::SelfCmd(a) => with_cmd_ctx(s, Needs { git: true, store: false }, &|c| {
-            snp_cmd::self_cmd(&a, c)
-        }),
+        Cli::SelfCmd(a) => with_cmd_ctx(
+            s,
+            Needs {
+                git: true,
+                store: false,
+            },
+            &|c| snp_cmd::self_cmd(&a, c),
+        ),
         Cli::Completions(shell) => Ok(completions(shell, &s.printer)),
         _ => Err(Failure::unexpected(
             "NotImplementedError",
@@ -397,10 +402,7 @@ fn write_output(path: &Path, bytes: &[u8], force: bool) -> Result<(), Failure> {
     if !force && std::fs::symlink_metadata(path).is_ok() {
         return Err(Failure::fatal(
             "FatalError",
-            format!(
-                "refusing to overwrite {}; use --force",
-                path.display()
-            ),
+            format!("refusing to overwrite {}; use --force", path.display()),
         ));
     }
     snp_os::fs::atomic_replace(path, bytes, None)
@@ -442,15 +444,18 @@ fn remove_lefthook_shims(git_dir: &Path) -> Result<bool, Failure> {
             if memchr_find(&bytes, b"LEFTHOOK").is_none() {
                 continue;
             }
-            std::fs::remove_file(&p).map_err(|err| Failure::from_io(&err, Some(p.as_os_str()), None))?;
+            std::fs::remove_file(&p)
+                .map_err(|err| Failure::from_io(&err, Some(p.as_os_str()), None))?;
             let mut old = p.as_os_str().to_os_string();
             old.push(".old");
             let old = PathBuf::from(old);
             if old.is_file() {
                 let ob = snp_os::fs::read_capped(&old, 1 << 20).unwrap_or_default();
-                lfs |= memchr_find(&ob, b"git lfs").is_some() || memchr_find(&ob, b"git-lfs").is_some();
-                snp_os::fs::rename_with_retry(&old, &p)
-                    .map_err(|err| Failure::from_io(&err, Some(old.as_os_str()), Some(p.as_os_str())))?;
+                lfs |= memchr_find(&ob, b"git lfs").is_some()
+                    || memchr_find(&ob, b"git-lfs").is_some();
+                snp_os::fs::rename_with_retry(&old, &p).map_err(|err| {
+                    Failure::from_io(&err, Some(old.as_os_str()), Some(p.as_os_str()))
+                })?;
             }
         }
     }
@@ -466,10 +471,7 @@ fn remove_lefthook_shims(git_dir: &Path) -> Result<bool, Failure> {
 
 /// The first position of `needle` in `hay`.
 fn memchr_find(hay: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() {
-        return Some(0);
-    }
-    hay.windows(needle.len()).position(|w| w == needle)
+    memchr::memmem::find(hay, needle)
 }
 
 /// Whether the repository uses git-lfs (`filter=lfs` in its `.gitattributes`).
@@ -551,10 +553,15 @@ fn migrate_install(s: &Session, root: &Path, config: &Path) -> Result<i32, Failu
                 "git failed. Is it installed, and are you in a Git repository directory?",
             ));
         };
-        let (git, info) = snp_git::Git::discover(Arc::clone(exe), c.env, root, Arc::clone(&c.git_backend))?;
+        let (git, info) =
+            snp_git::Git::discover(Arc::clone(exe), c.env, root, Arc::clone(&c.git_backend))?;
         let shim_lfs = remove_lefthook_shims(&info.common_dir)?;
         if shim_lfs || uses_lfs(root) {
-            let out = git.run_raw(&[OsStr::new("lfs"), OsStr::new("update"), OsStr::new("--force")])?;
+            let out = git.run_raw(&[
+                OsStr::new("lfs"),
+                OsStr::new("update"),
+                OsStr::new("--force"),
+            ])?;
             if out.status.0 != 0 {
                 c.printer.diag(&format!(
                     "warning: `git lfs update --force` failed: {}",
@@ -603,8 +610,7 @@ fn rewrite_config(
     convert: fn(&[u8]) -> Result<Vec<u8>, Failure>,
 ) -> Result<i32, Failure> {
     let path = s.cwd()?.join(config);
-    let bytes =
-        std::fs::read(&path).map_err(|e| Failure::from_io(&e, Some(config), None))?;
+    let bytes = std::fs::read(&path).map_err(|e| Failure::from_io(&e, Some(config), None))?;
     let new = convert(&bytes)?;
     if new == bytes {
         s.printer.py_print("Configuration is already migrated.");

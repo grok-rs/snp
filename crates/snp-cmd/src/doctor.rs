@@ -197,7 +197,11 @@ fn global_checks(cx: &CmdCtx<'_>, r: &mut Report) {
     );
     if cx.store.exists() {
         if tempfile::tempfile_in(&loc.path).is_err() {
-            r.add(Lvl::Warn, "store", format!("{} is not writable", lossy(&loc.path)));
+            r.add(
+                Lvl::Warn,
+                "store",
+                format!("{} is not writable", lossy(&loc.path)),
+            );
         }
         let readme = snp_os::fs::read_capped(&loc.path.join("README"), 256).unwrap_or_default();
         if String::from_utf8_lossy(&readme).lines().next() == Some(V1_README) {
@@ -257,7 +261,8 @@ fn python_has(py: &Path, module: &str, root: &Path) -> Option<bool> {
     let code = format!(
         "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('{module}') else 1)"
     );
-    let (status, _) = scripts::probe_output(py, &[OsStr::new("-c"), OsStr::new(&code)], Some(root))?;
+    let (status, _) =
+        scripts::probe_output(py, &[OsStr::new("-c"), OsStr::new(&code)], Some(root))?;
     Some(status == Some(0))
 }
 
@@ -288,7 +293,11 @@ fn hook_check(
                 .and_then(|p| p.snp_exe)
                 .is_some_and(|e| is_executable(&path_of(&e)));
             if *stale {
-                r.fixable(Lvl::Warn, disp, "an older snp hook script; `--fix` rewrites it");
+                r.fixable(
+                    Lvl::Warn,
+                    disp,
+                    "an older snp hook script; `--fix` rewrites it",
+                );
             } else if !exe_ok {
                 r.fixable(
                     Lvl::Warn,
@@ -389,7 +398,11 @@ fn repo_checks(cx: &CmdCtx<'_>, f: &Frame, dir: &HooksDir, stash: bool, r: &mut 
                 ),
             );
         } else if !matches!(lowner, Owner::Missing) {
-            r.add(Lvl::Info, ldisp, "migration mode (the legacy hook runs first)");
+            r.add(
+                Lvl::Info,
+                ldisp,
+                "migration mode (the legacy hook runs first)",
+            );
         }
     }
     if f.exe.caps.config_hooks
@@ -480,8 +493,18 @@ fn config_check(cx: &CmdCtx<'_>, f: &Frame, r: &mut Report) {
     let cfg = match snp_config::load_config(&f.source(), &o) {
         Ok(c) => c,
         Err(e) => {
-            let first = e.rendered.trim().lines().last().unwrap_or_default().to_owned();
-            r.add(Lvl::Warn, format!("config {disp}"), format!("does not load: {first}"));
+            let first = e
+                .rendered
+                .trim()
+                .lines()
+                .last()
+                .unwrap_or_default()
+                .to_owned();
+            r.add(
+                Lvl::Warn,
+                format!("config {disp}"),
+                format!("does not load: {first}"),
+            );
             return;
         }
     };
@@ -546,7 +569,11 @@ fn stash_checks(cx: &CmdCtx<'_>, f: &Frame, verify: bool, r: &mut Report) {
         r.add(
             Lvl::Error,
             subject,
-            format!("unrestored changes (state {}): {}", u.state, u.hint().trim_end()),
+            format!(
+                "unrestored changes (state {}): {}",
+                u.state,
+                u.hint().trim_end()
+            ),
         );
     }
 }
@@ -578,7 +605,8 @@ fn fix_one(cx: &CmdCtx<'_>, dir: &HooksDir, t: HookType, exe: &Path) -> Result<(
     if !rewrite {
         // Only the `.legacy` is a manager script: delete it (M2), leave the hook alone.
         let lowner = classify(&legacy).unwrap_or(Owner::Foreign);
-        fs::remove_file(&legacy).map_err(|e| Failure::from_io(&e, Some(legacy.as_os_str()), None))?;
+        fs::remove_file(&legacy)
+            .map_err(|e| Failure::from_io(&e, Some(legacy.as_os_str()), None))?;
         let (_, legacy_disp, _, _) = dir.paths(t);
         let mut m2 = messages::note(
             cx.brand,

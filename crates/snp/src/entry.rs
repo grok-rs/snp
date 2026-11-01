@@ -96,14 +96,13 @@ pub fn entry() -> Exit {
         signals: OnceLock::new(),
         git_version: OnceLock::new(),
     };
-    let outcome = match parsed {
-        Some(p) => panic::catch_unwind(AssertUnwindSafe(|| dispatch::dispatch(p, &session))),
-        None => Err(Box::new("parser panic") as Box<dyn std::any::Any + Send>),
-    };
+    let outcome = parsed.and_then(|p| {
+        panic::catch_unwind(AssertUnwindSafe(|| dispatch::dispatch(p, &session))).ok()
+    });
     let exit = match outcome {
-        Ok(Ok(code)) => envelope::success(code, &session.printer, &session.cancel),
-        Ok(Err(f)) => envelope::report(f, &session),
-        Err(_payload) => envelope::report(panic_hook::take_failure(), &session),
+        Some(Ok(code)) => envelope::success(code, &session.printer, &session.cancel),
+        Some(Err(f)) => envelope::report(f, &session),
+        None => envelope::report(panic_hook::take_failure(), &session),
     };
     // SIGTERM/SIGHUP: die by the re-raised signal after every restore (143/129 if the process survives it).
     if let Some(guard) = session.signals.get()

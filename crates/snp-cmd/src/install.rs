@@ -22,10 +22,10 @@ use snp_core::stage::HookType;
 use snp_git::hookscripts::{Owner, classify};
 use snp_pyre::RegexCache;
 
+use crate::CmdCtx;
 use crate::frame::{self, Frame};
 use crate::messages::{self, os_bytes};
 use crate::scripts::{self, parse_script_args};
-use crate::CmdCtx;
 
 /// Where hook scripts go: `{dir}/hooks/{type}` as printed and as opened.
 #[derive(Debug, Clone)]
@@ -39,7 +39,10 @@ pub(crate) struct HooksDir {
 impl HooksDir {
     /// `_hook_paths` (`install_uninstall.py:47-53`): `(hook_path, legacy_path)` as displayed and on disk.
     pub(crate) fn paths(&self, t: HookType) -> (OsString, OsString, PathBuf, PathBuf) {
-        let disp = snp_pycompat::ospath::join(&self.display, &[OsStr::new("hooks"), OsStr::new(t.as_str())]);
+        let disp = snp_pycompat::ospath::join(
+            &self.display,
+            &[OsStr::new("hooks"), OsStr::new(t.as_str())],
+        );
         let mut legacy_disp = disp.clone();
         legacy_disp.push(".legacy");
         let path = self.path.join("hooks").join(t.as_str());
@@ -166,7 +169,10 @@ fn lexists(p: &Path) -> bool {
 )]
 fn script_mode(hook: &Path, hooks: &Path, keep_existing: bool) -> Option<u32> {
     use std::os::unix::fs::PermissionsExt;
-    let base = if keep_existing && let Ok(md) = fs::metadata(hook) && md.is_file() {
+    let base = if keep_existing
+        && let Ok(md) = fs::metadata(hook)
+        && md.is_file()
+    {
         md.permissions().mode() & 0o7777
     } else {
         umask_mode(hooks)
@@ -184,7 +190,11 @@ fn script_mode(_hook: &Path, _hooks: &Path, _keep_existing: bool) -> Option<u32>
 #[cfg(unix)]
 fn umask_mode(dir: &Path) -> u32 {
     use std::os::unix::fs::PermissionsExt;
-    let probe = dir.join(format!(".snp-umask-{}-{}", std::process::id(), probe_nonce()));
+    let probe = dir.join(format!(
+        ".snp-umask-{}-{}",
+        std::process::id(),
+        probe_nonce()
+    ));
     let mode = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -223,7 +233,11 @@ fn replaced_notes(
         && let Some(py) = parsed.as_ref().and_then(|p| p.install_python.as_ref())
         && !py.is_empty()
     {
-        m1.extend(messages::note(cx.brand, messages::M1_PYTHON, &[("python", py)]));
+        m1.extend(messages::note(
+            cx.brand,
+            messages::M1_PYTHON,
+            &[("python", py)],
+        ));
     }
     if note_defaults && parsed.is_none() {
         m1.extend(messages::note(cx.brand, messages::M1_DEFAULTS, &[]));
@@ -291,12 +305,14 @@ pub(crate) fn install_one(
                     fs::remove_file(&legacy).map_err(|e| io_fail(&e, &legacy_disp))?;
                     note_m2(cx, &legacy_disp, &lowner);
                 } else if !o.overwrite {
-                    return Err(Failure::fatal("FatalError", messages::refuse_legacy(&legacy_disp)));
+                    return Err(Failure::fatal(
+                        "FatalError",
+                        messages::refuse_legacy(&legacy_disp),
+                    ));
                 }
             }
-            snp_os::fs::rename_with_retry(&hook, &legacy).map_err(|e| {
-                Failure::from_io(&e, Some(&hook_disp), Some(&legacy_disp))
-            })?;
+            snp_os::fs::rename_with_retry(&hook, &legacy)
+                .map_err(|e| Failure::from_io(&e, Some(&hook_disp), Some(&legacy_disp)))?;
         }
         _ => {}
     }
@@ -308,14 +324,16 @@ pub(crate) fn install_one(
             fs::remove_file(&legacy).map_err(|e| io_fail(&e, &legacy_disp))?;
             note_m2(cx, &legacy_disp, &lowner);
         } else {
-            cx.printer.write_line(&messages::migration_mode(cx.brand, &legacy_disp));
+            cx.printer
+                .write_line(&messages::migration_mode(cx.brand, &legacy_disp));
         }
     }
     let (config, skip) = fixed_args.unwrap_or((o.config, o.skip_missing));
     let script = scripts::render(config, t, skip, o.exe);
     let mode = script_mode(&hook, &hooks_dir, keep_mode);
     snp_os::fs::atomic_replace(&hook, &script, mode).map_err(|e| io_fail(&e, &hook_disp))?;
-    cx.printer.write_line(&messages::installed_at(cx.brand, &hook_disp));
+    cx.printer
+        .write_line(&messages::installed_at(cx.brand, &hook_disp));
     Ok(())
 }
 
@@ -481,7 +499,10 @@ pub fn uninstall(a: &UninstallArgs, cx: &CmdCtx<'_>) -> Result<i32, Failure> {
 fn uninstall_one(cx: &CmdCtx<'_>, dir: &HooksDir, t: HookType) -> Result<(), Failure> {
     let (hook_disp, legacy_disp, hook, legacy) = dir.paths(t);
     let owner = classify_hook(&hook, &hook_disp)?;
-    if !matches!(owner, Owner::Snp { .. } | Owner::SnpV1 | Owner::PreCommit { .. }) {
+    if !matches!(
+        owner,
+        Owner::Snp { .. } | Owner::SnpV1 | Owner::PreCommit { .. }
+    ) {
         return Ok(());
     }
     fs::remove_file(&hook).map_err(|e| io_fail(&e, &hook_disp))?;
@@ -504,9 +525,8 @@ fn uninstall_one(cx: &CmdCtx<'_>, dir: &HooksDir, t: HookType) -> Result<(), Fai
                 note_m2(cx, &legacy_disp, &lowner);
             }
             _ => {
-                snp_os::fs::rename_with_retry(&legacy, &hook).map_err(|e| {
-                    Failure::from_io(&e, Some(&legacy_disp), Some(&hook_disp))
-                })?;
+                snp_os::fs::rename_with_retry(&legacy, &hook)
+                    .map_err(|e| Failure::from_io(&e, Some(&legacy_disp), Some(&hook_disp)))?;
                 cx.printer.write_line(&messages::restored(&hook_disp));
             }
         }
@@ -547,9 +567,12 @@ pub fn init_templatedir(a: &InitTemplatedirArgs, cx: &CmdCtx<'_>) -> Result<i32,
     let dest = snp_os::realpath::realpath_nonstrict(Path::new(&a.directory), cx.cwd)
         .unwrap_or_else(|_| cx.cwd.join(&a.directory));
     if configured.as_deref() != Some(dest.as_path()) {
-        cx.printer.log(Level::Warning, messages::TEMPLATEDIR_NOT_SET);
         cx.printer
-            .log(Level::Warning, &messages::templatedir_maybe(dest.as_os_str()));
+            .log(Level::Warning, messages::TEMPLATEDIR_NOT_SET);
+        cx.printer.log(
+            Level::Warning,
+            &messages::templatedir_maybe(dest.as_os_str()),
+        );
     }
     Ok(0)
 }
@@ -596,6 +619,6 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let m = umask_mode(d.path());
         assert_eq!(m & !0o666, 0);
-        assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(d.path()).unwrap().count(), 0);
     }
 }

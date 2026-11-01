@@ -10,7 +10,9 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use snp_cli::{CacheAction, CacheArgs};
-use snp_config::{ConfigSource, Manifest, RepoConfig, load_config, load_manifest, load_manifest_bytes};
+use snp_config::{
+    ConfigSource, Manifest, RepoConfig, load_config, load_manifest, load_manifest_bytes,
+};
 use snp_core::failure::Failure;
 use snp_core::output::Level;
 use snp_pyre::RegexCache;
@@ -81,12 +83,19 @@ fn gc_manifest(
 
 /// `_mark_used_repos` (`gc.py:18-58`) for one loaded config, with every key derived by
 /// `RepoId::from_config(repo, tracked.project_root)` (ADR-075).
-fn mark_used(cx: &CmdCtx<'_>, cfg: &snp_config::Config, root: &Path, used: &mut Used, regexes: &RegexCache) {
+fn mark_used(
+    cx: &CmdCtx<'_>,
+    cfg: &snp_config::Config,
+    root: &Path,
+    used: &mut Used,
+    regexes: &RegexCache,
+) {
     for repo in &cfg.repos {
         match repo {
             RepoConfig::Local { hooks } => {
                 for h in hooks {
-                    used.keys.insert(Store::local_key(&h.additional_dependencies));
+                    used.keys
+                        .insert(Store::local_key(&h.additional_dependencies));
                     used.local_markers
                         .insert(db_repo_name("local", &h.additional_dependencies));
                 }
@@ -127,7 +136,11 @@ fn mark_used(cx: &CmdCtx<'_>, cfg: &snp_config::Config, root: &Path, used: &mut 
 
 /// Loads one tracked config for gc: `None` = dead (pre-commit catches `InvalidConfigError`; snp also treats the
 /// configs that would crash pre-commit's loader as dead, X13-CFG-14 / X13-CMD-09).
-fn load_tracked(cx: &CmdCtx<'_>, t: &TrackedConfig, regexes: &RegexCache) -> Option<snp_config::Config> {
+fn load_tracked(
+    cx: &CmdCtx<'_>,
+    t: &TrackedConfig,
+    regexes: &RegexCache,
+) -> Option<snp_config::Config> {
     let src = ConfigSource {
         path: t.path.clone(),
         display: t.path.as_os_str().to_os_string(),
@@ -268,7 +281,11 @@ pub fn cache(a: &CacheArgs, cx: &CmdCtx<'_>) -> Result<i32, Failure> {
             Ok(0)
         }
         CacheAction::Size => {
-            let n = if cx.store.exists() { tree_size(path) } else { 0 };
+            let n = if cx.store.exists() {
+                tree_size(path)
+            } else {
+                0
+            };
             cx.printer
                 .write_line(format!("{} ({n} bytes)", human_size(n)).as_bytes());
             Ok(0)
@@ -297,6 +314,9 @@ mod tests {
     fn deps_default_to_the_manifest() {
         let m: Vec<Arc<str>> = vec![Arc::from("six")];
         assert_eq!(config_hook_deps(None, &m), m);
-        assert!(config_hook_deps(Some(Vec::new()), &m).is_empty());
+        assert_eq!(
+            config_hook_deps(Some(Vec::new()), &m),
+            Vec::<Arc<str>>::new()
+        );
     }
 }

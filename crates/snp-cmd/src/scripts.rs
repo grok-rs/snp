@@ -330,4 +330,30 @@ mod tests {
              --skip-on-missing-config --"
         );
     }
+
+    #[cfg(unix)]
+    mod roundtrip {
+        use std::os::unix::ffi::OsStrExt;
+
+        use proptest::prelude::*;
+
+        use super::*;
+
+        proptest! {
+            /// Every embedded token of a rendered script reads back unchanged through the snp-script parser
+            /// (`doctor --fix` keeps an snp script's options).
+            #[test]
+            fn rendered_tokens_parse_back(
+                cfg in proptest::collection::vec(any::<u8>().prop_filter("no NUL/LF/CR", |b| !matches!(b, 0 | b'\n' | b'\r')), 1..64),
+                exe in proptest::collection::vec(any::<u8>().prop_filter("no NUL/LF/CR", |b| !matches!(b, 0 | b'\n' | b'\r')), 1..64),
+                skip in any::<bool>(),
+            ) {
+                let script = render(OsStr::from_bytes(&cfg), HookType::CommitMsg, skip, Path::new(OsStr::from_bytes(&exe)));
+                let parsed = parse_script_args(&Owner::Snp { stale: false }, &script).unwrap();
+                prop_assert_eq!(parsed.config.as_deref(), Some(cfg.as_slice()));
+                prop_assert_eq!(parsed.snp_exe.as_deref(), Some(exe.as_slice()));
+                prop_assert_eq!(parsed.skip_on_missing_config, skip);
+            }
+        }
+    }
 }

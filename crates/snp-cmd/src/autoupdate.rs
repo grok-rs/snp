@@ -91,7 +91,12 @@ fn update_one(
         .prefix("tmp")
         .tempdir()
         .map_err(|e| Failure::from_io(&e, None, None))?;
-    let owned = OwnedRepo::open(Arc::clone(exe), cx.env, tmp.path(), Arc::clone(&cx.git_backend));
+    let owned = OwnedRepo::open(
+        Arc::clone(exe),
+        cx.env,
+        tmp.path(),
+        Arc::clone(&cx.git_backend),
+    );
     let mut info = match owned.rev_info(&remote_arg(&r.repo, root), tags_only, freeze) {
         Ok(info) => info,
         Err(f @ (Failure::Interrupted(_) | Failure::StdoutClosed)) => return Err(f),

@@ -1009,6 +1009,8 @@ dependencies = [
 name = "snp-cmd"
 version = "2.0.0"
 dependencies = [
+ "blake3",
+ "memchr",
  "snp-cli",
  "snp-config",
  "snp-core",
@@ -1021,6 +1023,7 @@ dependencies = [
  "snp-stash",
  "snp-store",
  "snp-yaml",
+ "tempfile",
 ]
 
 [[package]]

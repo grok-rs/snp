@@ -453,6 +453,9 @@ mod tests {
             repo_error("r", missing_hooks(&["a", "b"]).as_bytes()),
             b"[r] Cannot update because the update target is missing these hooks: a, b"
         );
-        assert_eq!(doctor_summary(1, 2), "3 problem(s): 1 error(s), 2 warning(s).");
+        assert_eq!(
+            doctor_summary(1, 2),
+            "3 problem(s): 1 error(s), 2 warning(s)."
+        );
     }
 }

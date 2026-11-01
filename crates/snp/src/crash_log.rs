@@ -46,7 +46,7 @@ fn line(out: &mut Vec<u8>, s: &str) {
 
 /// The log body: `### version information` … `### error information` with `line1` and the details block.
 pub(crate) fn body(info: &LogInfo<'_>, line1: &[u8], exc: Option<&PyExc>) -> Vec<u8> {
-    let mut out = Vec::with_capacity(1024);
+    let mut out = Vec::new();
     line(&mut out, "### version information");
     line(&mut out, "");
     line(&mut out, "```");
@@ -59,10 +59,7 @@ pub(crate) fn body(info: &LogInfo<'_>, line1: &[u8], exc: Option<&PyExc>) -> Vec
     }
     line(
         &mut out,
-        &format!(
-            "git --version: {}",
-            info.git_version.unwrap_or("(not run)")
-        ),
+        &format!("git --version: {}", info.git_version.unwrap_or("(not run)")),
     );
     line(&mut out, "sys.version:");
     line(
@@ -125,7 +122,12 @@ mod tests {
             executable: Path::new("/usr/bin/snp"),
         };
         let exc = PyExc::new("CalledProcessError", "x");
-        let b = String::from_utf8(body(&info, b"An unexpected error has occurred: CalledProcessError: x", Some(&exc))).unwrap();
+        let b = String::from_utf8(body(
+            &info,
+            b"An unexpected error has occurred: CalledProcessError: x",
+            Some(&exc),
+        ))
+        .unwrap();
         assert!(b.starts_with("### version information\n\n```\npre-commit version: 4.6.2\ngit --version: git version 2.43.0\nsys.version:\n    snp "));
         assert!(b.contains("\nsys.executable: /usr/bin/snp\n"));
         assert!(b.contains("```\n\n### error information\n\n```\nAn unexpected error has occurred: CalledProcessError: x\n```\n\n```\n"));
@@ -136,7 +138,12 @@ mod tests {
             executable: Path::new("/x"),
         };
         let p = PyExc::panic("boom", Some("src/a.rs:1:2"), Some("0: frame".to_owned()));
-        let b = String::from_utf8(body(&info, b"An unexpected error has occurred: PanicException: boom", Some(&p))).unwrap();
+        let b = String::from_utf8(body(
+            &info,
+            b"An unexpected error has occurred: PanicException: boom",
+            Some(&p),
+        ))
+        .unwrap();
         assert!(b.contains("snp version: 2.0.0\n"));
         assert!(b.contains("panicked at src/a.rs:1:2\nstack backtrace:\n0: frame\n"));
         assert!(b.contains("https://github.com/grok-rs/snp/issues"));

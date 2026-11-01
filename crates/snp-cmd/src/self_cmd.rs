@@ -86,7 +86,13 @@ fn default_dir(cx: &CmdCtx<'_>) -> PathBuf {
 
 /// How the alias was made.
 #[derive(Debug, Clone, Copy)]
-#[cfg_attr(unix, expect(dead_code, reason = "hard links and copies are the Windows alias forms"))]
+#[cfg_attr(
+    unix,
+    expect(
+        dead_code,
+        reason = "hard links and copies are the Windows alias forms"
+    )
+)]
 enum Made {
     Symlink,
     HardLink,
@@ -232,7 +238,10 @@ fn vector_checks() -> Vec<Check> {
         format!("quote(\"it's a $x\") = {quoted}"),
     ));
     let split = snp_pycompat::shlex::split("a 'b c' \"d\\\"e\"");
-    let want: Vec<String> = ["a", "b c", "d\"e"].iter().map(|s| (*s).to_owned()).collect();
+    let want: Vec<String> = ["a", "b c", "d\"e"]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
     out.push(check(
         "shlex.split",
         split.as_ref().is_ok_and(|v| *v == want),
@@ -245,10 +254,7 @@ fn vector_checks() -> Vec<Check> {
             && r.search("src/a.pyc") == Ok(false)
     });
     out.push(check("re", re_ok, r"^(src|tests)/.*\.py$ over 3 paths"));
-    let yaml = snp_yaml::load(
-        "a: [1, yes, '1.0', ~]\n",
-        &snp_yaml::Limits::default(),
-    );
+    let yaml = snp_yaml::load("a: [1, yes, '1.0', ~]\n", &snp_yaml::Limits::default());
     out.push(check(
         "yaml",
         yaml.as_ref().is_ok_and(|v| {
@@ -283,8 +289,14 @@ fn script_check() -> Check {
         classify(&p)
     });
     match result {
-        Ok(Owner::Snp { stale: false }) => check("hook script", true, "rendered script classifies as snp"),
-        Ok(o) => check("hook script", false, format!("rendered script classifies as {o:?}")),
+        Ok(Owner::Snp { stale: false }) => {
+            check("hook script", true, "rendered script classifies as snp")
+        }
+        Ok(o) => check(
+            "hook script",
+            false,
+            format!("rendered script classifies as {o:?}"),
+        ),
         Err(e) => check("hook script", false, format!("temporary directory: {e}")),
     }
 }
@@ -368,9 +380,7 @@ fn self_check(cx: &CmdCtx<'_>) -> i32 {
 /// default, ADR-049); `check` is the embedded vector self-test plus capability probes (ARCHITECTURE §9.3).
 pub fn self_cmd(a: &SelfArgs, cx: &CmdCtx<'_>) -> Result<i32, Failure> {
     match a {
-        SelfArgs::AliasInstall { dir, force } => {
-            alias_install(cx, dir.as_deref(), *force)
-        }
+        SelfArgs::AliasInstall { dir, force } => alias_install(cx, dir.as_deref(), *force),
         SelfArgs::AliasUninstall => alias_uninstall(cx),
         SelfArgs::AliasStatus => Ok(alias_status(cx)),
         SelfArgs::Check => Ok(self_check(cx)),

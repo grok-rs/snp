@@ -238,7 +238,9 @@ mod tests {
         };
         let (e, out, err, _, _d) = render(f);
         assert_eq!(e, Exit::Code(3));
-        assert!(out.starts_with("An unexpected error has occurred: CalledProcessError: x\nCheck the log at "));
+        assert!(out.starts_with(
+            "An unexpected error has occurred: CalledProcessError: x\nCheck the log at "
+        ));
         assert_eq!(err, "try y\n");
 
         let (e, out, _, _, _d) = render(Failure::Interrupted(CancelReason::Interrupt));
@@ -250,7 +252,10 @@ mod tests {
         let (e, _, err, _, _d) = render(Failure::Usage {
             stderr: "usage: x\nx: error: y\n".to_owned(),
         });
-        assert_eq!((e, err.as_str()), (Exit::Code(2), "usage: x\nx: error: y\n"));
+        assert_eq!(
+            (e, err.as_str()),
+            (Exit::Code(2), "usage: x\nx: error: y\n")
+        );
         let (e, _, err, _, _d) = render(Failure::SystemExit {
             code: 1,
             stderr: b"msg\n".to_vec(),

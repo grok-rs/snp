@@ -351,7 +351,10 @@ mod tests {
 
     #[test]
     fn py_literals() {
-        assert_eq!(py_str(b"'a\\'b' rest").unwrap(), (b"a'b".to_vec(), &b" rest"[..]));
+        assert_eq!(
+            py_str(b"'a\\'b' rest").unwrap(),
+            (b"a'b".to_vec(), &b" rest"[..])
+        );
         assert_eq!(py_str(b"\"\\x41\\u00e9\"").unwrap().0, "Aé".as_bytes());
         assert!(py_str(b"'open").is_none());
         assert!(py_str(b"'\\x4'").is_none());
@@ -368,7 +371,10 @@ mod tests {
         let s = b"#!/usr/bin/env bash\n# ID: 138fd403232d2ddd5efb44317e38bf03\n# start templated\n\
 INSTALL_PYTHON=/home/u/.venv/bin/python\nARGS=(hook-impl '--config=my cfg.yaml' --hook-type=pre-commit --skip-on-missing-config)\n# end templated\n";
         let a = parse_script_args(&Owner::PreCommit { era: Some(3) }, s).unwrap();
-        assert_eq!(a.install_python.as_deref(), Some(&b"/home/u/.venv/bin/python"[..]));
+        assert_eq!(
+            a.install_python.as_deref(),
+            Some(&b"/home/u/.venv/bin/python"[..])
+        );
         assert_eq!(a.config.as_deref(), Some(&b"my cfg.yaml"[..]));
         assert!(a.skip_on_missing_config);
     }

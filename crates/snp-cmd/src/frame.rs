@@ -75,7 +75,12 @@ pub(crate) fn git_frame_untracked(cx: &CmdCtx<'_>, config: &OsStr) -> Result<Fra
 
 fn frame_impl(cx: &CmdCtx<'_>, config: &OsStr, track: bool) -> Result<Frame, Failure> {
     let exe = git_exe(cx)?;
-    let (git, info) = Git::discover(Arc::clone(&exe), cx.env, cx.cwd, Arc::clone(&cx.git_backend))?;
+    let (git, info) = Git::discover(
+        Arc::clone(&exe),
+        cx.env,
+        cx.cwd,
+        Arc::clone(&cx.git_backend),
+    )?;
     let git = git.with_brand(cx.brand);
     let config_display = adjust_config(config, cx.cwd, &info.root);
     let config_path = info.root.join(&config_display);
@@ -243,7 +248,10 @@ mod tests {
             ".pre-commit-config.yaml"
         );
         std::fs::write(sub.join("c.yaml"), b"").unwrap();
-        assert_eq!(adjust_config(OsStr::new("c.yaml"), &sub, root), "a/b/c.yaml");
+        assert_eq!(
+            adjust_config(OsStr::new("c.yaml"), &sub, root),
+            "a/b/c.yaml"
+        );
         let out = tempfile::tempdir().unwrap();
         std::fs::write(out.path().join("o.yaml"), b"").unwrap();
         let rel = adjust_config(out.path().join("o.yaml").as_os_str(), &sub, root);

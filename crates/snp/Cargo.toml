@@ -33,6 +33,7 @@ snp-pyre.workspace = true
 snp-repo.workspace = true
 snp-run.workspace = true
 snp-store.workspace = true
+memchr.workspace = true
 dhat = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
