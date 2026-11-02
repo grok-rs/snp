@@ -123,7 +123,13 @@ pub(crate) fn run_hook(
     }
     let ran = match &h.exec {
         ExecKind::Meta(m) => {
-            let (code, out) = meta::run(e.meta, *m, &h.def.args, files)?;
+            // `language: unsupported` runs through `lang_base.run_xargs`, which shuffles the file arguments unless
+            // the hook is `require_serial` (`identity` prints them in that order).
+            let order: Vec<OsString> = shuffled(files, !h.def.require_serial)
+                .into_iter()
+                .map(OsStr::to_os_string)
+                .collect();
+            let (code, out) = meta::run(e.meta, *m, &h.def.args, &order)?;
             Ran {
                 code: i64::from(code),
                 out: HookOutput::bytes(out),
