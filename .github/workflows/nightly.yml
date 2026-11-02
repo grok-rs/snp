@@ -254,10 +254,19 @@ jobs:
       - run: rustup toolchain install
       - uses: taiki-e/install-action@v2
         with: { tool: "cargo-mutants,cargo-nextest" }
+      # cargo-mutants builds a copy of the tree in $TMPDIR, where the workspace's `../cfgv-rs` and
+      # `../file-identify` path dependencies must resolve too: the copy goes to a directory of its own that holds
+      # links to the user crates checked out next to the repository.
       - name: cargo mutants
         env:
           MUTANTS_ARGS: ${{ matrix.target.args }}
         run: |
+          export TMPDIR="$RUNNER_TEMP/mutants"
+          mkdir -p "$TMPDIR"
+          for dep in cfgv-rs file-identify; do
+            ln -sfn "$GITHUB_WORKSPACE/$dep" "$TMPDIR/$dep"
+            test -f "$TMPDIR/$dep/Cargo.toml"
+          done
           # shellcheck disable=SC2086
           cargo mutants --test-tool nextest --no-shuffle $MUTANTS_ARGS
       - uses: actions/upload-artifact@v4
