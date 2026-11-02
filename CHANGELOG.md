@@ -4,7 +4,7 @@ All notable changes to snp are documented here. The format follows [Keep a Chang
 and the project uses [Semantic Versioning](https://semver.org/). A release tag `vX.Y.Z` requires a `## [X.Y.Z]`
 section (`cargo xtask release gates` checks it, and the GitHub release notes are that section).
 
-## [Unreleased]
+## [2.0.0] - 2026-11-02
 
 snp 2.0.0 is a complete rewrite: a drop-in replacement for pre-commit 4.6.2. It shares only the name with the
 unrelated snp 1.x releases of the crate.
