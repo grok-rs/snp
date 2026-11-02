@@ -10,7 +10,7 @@ POSIX sh template, LF everywhere, atomic write that replaces a symlink instead o
 
 ## Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | hook script: bash template written through symlinks, CRLF on Windows | POSIX `sh` template, LF everywhere, atomic write that replaces a symlink instead of writing through it (template identity: BRAND) |
 
@@ -37,7 +37,7 @@ hooks through a symlink keep sharing the configuration file, which is what the s
 ```text
 $ ls -l .git/hooks/pre-commit
 .git/hooks/pre-commit -> ../../tools/hook      # tools/hook: a tracked pre-commit script, INSTALL_PYTHON=/old/python
-$ pre-commit install                           # pre-commit 4.6.2
+$ pre-commit install                           # pre-commit 4.7.0
 pre-commit installed at .git/hooks/pre-commit
 $ git status --short
  M tools/hook                                  # rewritten through the link

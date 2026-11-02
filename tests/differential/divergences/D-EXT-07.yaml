@@ -1,7 +1,7 @@
 # D-EXT-07 (EXT, owner WP-12): snp-brand commands and flags (§8), including their presence in the snp brand's usage/help blocks
 # Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands` and `expect_divergence` (ARCHITECTURE §13.2).
 # In the snp brand the extension commands and flags appear in the usage/help blocks and are accepted, where the
-# (prog-patched) pre-commit 4.6.2 oracle lists none of them and rejects them with exit 2. Exact snp bytes:
+# (prog-patched) pre-commit 4.7.0 oracle lists none of them and rejects them with exit 2. Exact snp bytes:
 # crates/snp-cli/tests/goldens/snp.json; rationale: docs/divergences/D-EXT-07.md.
 name: divergences/D-EXT-07
 expect_divergence: D-EXT-07

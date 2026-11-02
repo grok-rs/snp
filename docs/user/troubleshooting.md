@@ -8,10 +8,10 @@ is an error. An example (the wording of the lines is informative, not a stable i
 
 ```console
 $ snp doctor
-info  snp: 2.0.0, /home/me/.cargo/bin/snp, invoked as snp
+info  snp: 2.0.1, /home/me/.cargo/bin/snp, invoked as snp
 info  store: /home/me/.cache/snp (from default)
 info  pre-commit cache: /home/me/.cache/pre-commit exists; snp does not use it
-info  pre-commit on PATH: /home/me/.local/bin/pre-commit (Python pre-commit 4.6.2)
+info  pre-commit on PATH: /home/me/.local/bin/pre-commit (Python pre-commit 4.7.0)
 info  git: 2.43.0
 warn  pre-commit: .git/hooks/pre-commit runs Python pre-commit, not snp
 ok    pre-push: .git/hooks/pre-push is snp's
@@ -34,7 +34,7 @@ What it checks:
 | `.legacy` files | a hook-manager script left in `.legacy` is an **error** (it would run a second tool) |
 | git config hooks (git ≥ 2.54) | entries calling `hook-impl`; an event with both a config hook and a hooks-directory script is an **error** |
 | `init.templateDir` | the scripts future clones will get |
-| config | `entry: pre-commit …` hooks that need a `pre-commit` executable; `minimum_pre_commit_version` above 4.6.2 |
+| config | `entry: pre-commit …` hooks that need a `pre-commit` executable; `minimum_pre_commit_version` above 4.7.0 |
 
 `snp doctor --fix` switches every hook type of the repository to snp (the same as `snp install` for each installed
 type, keeping its options) and checks again. `snp doctor --fast-path` explains for every hook whether it runs natively

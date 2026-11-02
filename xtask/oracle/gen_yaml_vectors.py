@@ -1,6 +1,6 @@
 """Generate snp-yaml's PyYAML vectors (WP-14).
 
-Run by `cargo xtask yaml-vectors` under the pre-commit 4.6.2 oracle interpreter (target/oracle/pc462-py312:
+Run by `cargo xtask yaml-vectors` under the pre-commit 4.7.0 oracle interpreter (target/oracle/pc470-py312:
 CPython 3.12.3, PyYAML 6.0.3 with libyaml 0.2.5) as
 
     python -I gen_yaml_vectors.py OUT_DIR

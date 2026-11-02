@@ -31,7 +31,7 @@ Safe: stderr only; stdout and exit codes are unchanged.
 ## Examples
 
 `gc` with `SNP_HOME` pointing at a directory that holds an snp 1.x README and `db.db`
-(`tests/differential/divergences/D-DIAG-05.yaml`). pre-commit 4.6.2 (its own store), exit 0, stdout
+(`tests/differential/divergences/D-DIAG-05.yaml`). pre-commit 4.7.0 (its own store), exit 0, stdout
 `0 repo(s) removed.`, empty stderr. snp, exit 0, the same stdout and on stderr:
 
 ```text

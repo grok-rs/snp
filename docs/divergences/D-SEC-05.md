@@ -1,27 +1,31 @@
 # D-SEC-05
 
-installers and owned repos get pre-commit's no_git_env allow-list
+the pip/uv, cargo and gem installers and owned repos get pre-commit's no_git_env allow-list
 
 * **Class:** SEC (COMPATIBILITY §5.3)
 * **Owner:** WP-18 (contributing: WP-24, WP-25); the first package of the register row owns this file and
   `tests/differential/divergences/D-SEC-05.yaml` (WBS "Divergence files", ADR-071).
 * **Status:** owned repositories implemented by WP-18 (`snp_git::no_git_env`, `snp_git::OwnedRepo`,
   `crates/snp-git/src/owned.rs`; 02 G.7 rows 4–5, ADR-018); the installer half is WP-24/WP-25's
-  (`installer_env = no_git_env(hook_env)`, ARCHITECTURE §2.5).
+  (`installer_env = no_git_env(hook_env)`, ARCHITECTURE §2.5). Narrowed for pre-commit 4.7.0 (ADR-089): the node
+  installer's `npm install` gets `no_git_env()` upstream too (pre-commit#3774), so that part is parity; the golang
+  installer always was.
 
 ## Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
-| installers and snp-owned repo operations inherit `GIT_DIR`/`GIT_INDEX_FILE` (index corruption in linked worktrees; autoupdate writes partial-clone config into the user's repo — hazard c) | installers and owned repos get pre-commit's `no_git_env` allow-list |
+| the pip, cargo and gem installers and snp-owned repo operations inherit `GIT_DIR`/`GIT_INDEX_FILE` (index corruption in linked worktrees; autoupdate writes partial-clone config into the user's repo — hazard c) | the pip/uv, cargo and gem installers and owned repos get pre-commit's `no_git_env` allow-list |
 
 ## Rationale
 
 git exports `GIT_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE` while it runs hooks, and shells export `GIT_DIR` for
 dotfile setups and `git --git-dir` wrappers. pre-commit strips them for its store clone (`git.no_git_env`,
 `git.py:27-48`) but not for `autoupdate`'s temporary repository after `init_repo` (`autoupdate.py:40-72`: `config`,
-`fetch`, `describe`, `tag`, `rev-parse`, `show`, `checkout` run with the full environment), nor for language
-installers (`pip`, `npm`, `go install` building packages with git). With `GIT_DIR` exported, `git -C <tmp> config
+`fetch`, `describe`, `tag`, `rev-parse`, `show`, `checkout` run with the full environment), nor for the python,
+rust and ruby installers (`pip install`, `cargo install`, `gem install` building packages with git). Only `go
+install` (`golang.py:145`) and, since 4.7.0, `npm install` (`node.py:107`, pre-commit#3774) run with `no_git_env`;
+those two are parity. With `GIT_DIR` exported, `git -C <tmp> config
 extensions.partialClone true` writes into the **user's** repository, the following `fetch` from `origin` fails, and
 the user is left with `repositoryformatversion = 1`, `extensions.partialClone = true` and a promisor remote that
 changes how every later fetch of their repository behaves (02 G.3 hazard c). In a linked worktree an installer that
@@ -34,14 +38,20 @@ with `no_git_env(base)`: pre-commit's own allow-list (every `GIT_*` variable dro
 `os.environ` copy, ADR-074), plus `core.fsmonitor=` and `core.useBuiltinFSMonitor=false` appended through
 `GIT_CONFIG_COUNT` (an existing count is extended, a malformed one left alone). The argv stays pre-commit's (error
 texts are unchanged); only the environment of calls on snp's own repositories differs, and only where pre-commit
-reads or writes the wrong repository. User-repository calls keep the full environment (parity, 02 G.6).
+reads or writes the wrong repository. User-repository calls keep the full environment (parity, 02 G.6). The
+installers get the same allow-list (without the fsmonitor injection): `pip`/`uv` (python), `cargo` (rust) and `gem`
+(ruby) where pre-commit passes the full environment, `npm` (node) and `go` (golang) as pre-commit does.
+
+pre-commit 4.6.2 still ran `npm install` with the full environment, so with `language: node` hooks a commit with
+`-a` or inside a submodule failed or wrote the caller's index (pre-commit#3773, regressed in 4.6.1 by the
+`git+file://<prefix>` install); 4.7.0 fixed it the way snp always did, and the node part of this entry was retired.
 
 ## Examples
 
 A hooks repository with tags `v1.0.0`, `v2.0.0`; the user repository's config pins `rev: v1.0.0`; the shell exports
 `GIT_DIR=<user>/.git`; `pre-commit autoupdate`.
 
-pre-commit 4.6.2 (oracle `pc462-py312`, git 2.43.0), exit **3**, stdout:
+pre-commit 4.7.0 (oracle `pc470-py312`, git 2.43.0), exit **3**, stdout:
 
 ```
 An unexpected error has occurred: CalledProcessError: command: ('/usr/bin/git', '-c', 'core.useBuiltinFSMonitor=false', '-C', '/tmp/tmpsblpeqct', 'fetch', 'origin', 'HEAD', '--quiet', '--filter=blob:none', '--tags')

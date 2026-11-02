@@ -1,6 +1,6 @@
 {
   "generator": "cargo xtask cli-goldens",
-  "source": "CPython 3.13 argparse (target/oracle/pc462-py313) built from export_json of crates/snp-argparse/tests/zoo/spec.rs",
+  "source": "CPython 3.13 argparse (target/oracle/pc470-py313) built from export_json of crates/snp-argparse/tests/zoo/spec.rs",
   "cases": [
     {
       "id": "zoo: COLUMNS=10 -h",

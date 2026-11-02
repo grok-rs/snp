@@ -1,6 +1,6 @@
 //! The `rust` language backend (§6.2; `pre_commit/languages/rust.py`).
 //!
-//! | pre-commit 4.6.2 | snp |
+//! | pre-commit 4.7.0 | snp |
 //! |---|---|
 //! | `get_default_version`: `system` iff `cargo --version` (cwd `/`) exits 0 | the same, memoised by [`crate::ToolProbe`] (a rustup proxy is never persisted) |
 //! | non-system: `rustup` from `PATH` or `sh.rustup.rs`/`win.rustup.rs` (unverified script) installed into `<env>` with a throw-away `RUSTUP_HOME`, `rustup toolchain install`, then a **second** throw-away `RUSTUP_HOME` (the toolchain is downloaded twice and never kept) | `rustup` from `PATH`, else the rustup-init binary verified by its `.sha256`; one persistent `RUSTUP_HOME` in `tools-v1/rustup` shared by every environment, toolchains installed with `--profile minimal` (04a Q13) |

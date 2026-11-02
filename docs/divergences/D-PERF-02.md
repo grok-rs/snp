@@ -9,13 +9,13 @@ placeholder install skipped
 
 ## Register entry (COMPATIBILITY §5.6)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | local `language: python` hooks without deps `pip install` a placeholder package | placeholder install skipped |
 
 ## Rationale
 
-A `repo: local` hook's prefix is the store's local-template directory (03 §7.7): the 4.6.2 `empty_template_*` files
+A `repo: local` hook's prefix is the store's local-template directory (03 §7.7): the 4.7.0 `empty_template_*` files
 for every language, `setup.py` among them (`setup(name='pre-commit-placeholder-package', version='0.0.0',
 py_modules=[])`). pre-commit's python install always runs `python -mpip install . *deps` in the prefix
 (`python.py:214-228`), so a local python hook **without** dependencies installs that empty placeholder package — a
@@ -37,7 +37,7 @@ depend on.
 A local python hook without dependencies that lists the distributions named like the placeholder
 (`tests/differential/divergences/D-PERF-02.yaml`):
 
-pre-commit 4.6.2, exit 0 (the four install lines, then):
+pre-commit 4.7.0, exit 0 (the four install lines, then):
 
 ```
 placeholder..............................................................Passed

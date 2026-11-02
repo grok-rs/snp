@@ -297,7 +297,7 @@ mod tests {
         assert!(rel.to_string_lossy().starts_with(".."), "{rel:?}");
     }
 
-    /// Oracle (pc462): `os.path.relpath` normalises a missing config after the chdir to the root.
+    /// Oracle (pc470): `os.path.relpath` normalises a missing config after the chdir to the root.
     #[test]
     fn missing_config_is_normalised_by_relpath() {
         let d = tempfile::tempdir().unwrap();

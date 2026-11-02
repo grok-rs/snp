@@ -41,6 +41,6 @@ repos:
         groups: [fast]
 ```
 
-pre-commit 4.6.2 `run --all-files` prints `[WARNING] Unexpected key(s) present at root: priorities` and
+pre-commit 4.7.0 `run --all-files` prints `[WARNING] Unexpected key(s) present at root: priorities` and
 `[WARNING] Unexpected key(s) present on local => fmt: groups, priority` before the hook line. snp prints only the
 hook line (and with `SNP_COMPAT_STRICT=1` prints both warnings exactly like pre-commit).

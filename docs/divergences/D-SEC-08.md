@@ -9,13 +9,13 @@ TLS + sha256 verified before extraction; safe extraction
 
 ## Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | toolchain downloads (node, go, rustup, ruby helpers) are not verified | TLS + sha256 verified before extraction; safe extraction |
 
 ## Rationale
 
-pre-commit 4.6.2 trusts whatever bytes its toolchain bootstraps receive:
+pre-commit 4.7.0 trusts whatever bytes its toolchain bootstraps receive:
 
 * **go** — `golang._install_go` (`golang.py:101-121`) streams `https://dl.google.com/go/go{version}.{os}-{arch}.{ext}`
   with `urllib.request.urlopen` and unpacks it with `tarfile.extractall`/`zipfile.extractall`, no checksum and no
@@ -62,7 +62,7 @@ A go hook whose archive is replaced in transit (scenario `tests/differential/div
 HTTPS interception proxy trusted through `SSL_CERT_FILE` serves the genuine go.dev JSON and a tampered
 `go1.23.2.linux-amd64.tar.gz` whose `bin/go` prints `pwned`):
 
-pre-commit 4.6.2 installs the tampered toolchain and the hook runs it (exit 1 here, because the fake `go install`
+pre-commit 4.7.0 installs the tampered toolchain and the hook runs it (exit 1 here, because the fake `go install`
 does not produce the hook binary; a real attacker's archive simply succeeds):
 
 ```

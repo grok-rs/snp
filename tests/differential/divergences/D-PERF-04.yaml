@@ -53,7 +53,7 @@ steps:
     tty: false
 # Both tools print the same transcript (install lines, then `fake docker….Passed` twice) and exit 0; the worktree
 # differs in docker.log:
-#   pre-commit 4.6.2: build --pull / build / run / build / run   (recorded with pc462-py312)
+#   pre-commit 4.7.0: build --pull / build / run / build / run   (recorded with pc470-py312)
 #   snp:              build --pull / image inspect / run / image inspect / run
 compare:
   stdout: exact

@@ -9,14 +9,14 @@ GIT_DIFF_OPTS removed for the stash diff-index
 
 ## Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `GIT_DIFF_OPTS=--unified=0` makes the stash patch unrestorable (hazard a) | `GIT_DIFF_OPTS` removed for the stash `diff-index` |
 
 ## Rationale
 
 `GIT_DIFF_OPTS=--unified=<n>` changes the context of every patch git prints, `diff-index` included (02 G.0 hazard (a),
-observed on 4.6.2). With `--unified=0` the stash patch has no context lines; `git apply` refuses zero-context hunks
+observed on 4.7.0). With `--unified=0` the stash patch has no context lines; `git apply` refuses zero-context hunks
 unless `--unidiff-zero` is given, so both applies fail, the rollback does not help, and pre-commit exits 3 with the
 user's unstaged changes only in the patch file — on every commit with unstaged changes, as long as the variable is
 exported (some users set it for their own `git diff`).

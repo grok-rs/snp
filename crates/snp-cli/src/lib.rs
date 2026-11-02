@@ -1,4 +1,4 @@
-//! pre-commit 4.6.2 and snp-brand `ParserSpec` tables (verbatim help strings) and the typed [`Cli`] facade
+//! pre-commit 4.7.0 and snp-brand `ParserSpec` tables (verbatim help strings) and the typed [`Cli`] facade
 //! (ARCHITECTURE §1.4.4, §9, 12 §A.8.1, COMPATIBILITY §3, §8.1).
 //!
 //! [`parse`] picks the tree by brand: the compat brand (`argv[0]` named `pre-commit`) accepts exactly

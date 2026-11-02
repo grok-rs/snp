@@ -11,7 +11,7 @@ containing a line break fails the hook with a clear message.
 
 ## Register entry (COMPATIBILITY §5.5)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | Windows: batch-file (`.cmd`/`.bat`) arguments with `&`, `^`, `%VAR%` are interpreted by cmd.exe | Rust's BatBadBut-safe quoting; arguments containing CR/LF fail the hook with ``Executable `{cmd0}` cannot receive an argument containing a line break: {repr}`` (rc 1) — class SEC |
 
@@ -39,7 +39,7 @@ arguments are passed unchanged. The longer quoted lines are kept under cmd.exe's
 Windows, a local hook `entry: run.cmd` (`@echo %*`), `language: system`, run on a tracked file `a&echo.INJECTED.txt`
 (no space: CPython quotes an argument with a space or tab too, and cmd.exe does not split a quoted `&`):
 
-pre-commit 4.6.2: cmd.exe runs `run.cmd a` and then `echo.INJECTED.txt`; the output contains `INJECTED.txt` on a line
+pre-commit 4.7.0: cmd.exe runs `run.cmd a` and then `echo.INJECTED.txt`; the output contains `INJECTED.txt` on a line
 of its own.
 
 snp: the batch file receives the single argument `"a&echo.INJECTED.txt"` and echoes it verbatim.

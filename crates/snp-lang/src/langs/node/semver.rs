@@ -408,7 +408,7 @@ mod tests {
             reason = "test switch selecting the oracle venv"
         )]
         let root = std::env::var_os("SNP_ORACLE_PY312").map_or_else(
-            || std::path::PathBuf::from("../../target/oracle/pc462-py312"),
+            || std::path::PathBuf::from("../../target/oracle/pc470-py312"),
             Into::into,
         );
         let python = root.join("bin/python");

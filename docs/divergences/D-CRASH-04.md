@@ -9,7 +9,7 @@ validation error '<repr>' is not a valid python regex, exit 1
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | regex repeat ≥ 4294967295, nesting ≥ 485, `(?a)(?u)` in `files`/`exclude` → `OverflowError`/`RecursionError`/`ValueError` exit 3 (X13-CFG-05…07, 13) | validation error `'<repr>' is not a valid python regex`, exit 1 |
 
@@ -33,7 +33,7 @@ files: 'a{4294967296}'
 repos: []
 ```
 
-pre-commit 4.6.2, exit **3**: `An unexpected error has occurred: OverflowError: the repetition number is too large`.
+pre-commit 4.7.0, exit **3**: `An unexpected error has occurred: OverflowError: the repetition number is too large`.
 
 snp, exit **1**:
 

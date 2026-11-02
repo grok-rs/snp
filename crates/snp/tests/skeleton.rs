@@ -64,7 +64,7 @@ mod skeleton {
             assert_eq!(out.status.code(), Some(0));
             assert_eq!(
                 String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n"),
-                "snp 2.0.0\n"
+                "snp 2.0.1\n"
             );
             assert_eq!(out.stderr, b"");
         }
@@ -78,7 +78,7 @@ mod skeleton {
         assert_eq!(out.status.code(), Some(0));
         assert_eq!(
             String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n"),
-            "pre-commit 4.6.2\n"
+            "pre-commit 4.7.0\n"
         );
     }
 

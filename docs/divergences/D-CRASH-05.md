@@ -9,7 +9,7 @@ the hook fails (Executable not found, ValueError: No closing quotation, [Errno 7
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | empty `entry`, shlex errors, `ArgumentTooLong`, unreadable entry script → exit 3 (X13-EXE-01…04) | the hook fails (`Executable `` not found`, `ValueError: No closing quotation`, `[Errno 7] Argument list too long: '<exe>'`, …), the run continues |
 

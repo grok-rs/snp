@@ -1,6 +1,6 @@
 //! The `python` language backend (§6.2; `pre_commit/languages/python.py`).
 //!
-//! | pre-commit 4.6.2 | snp |
+//! | pre-commit 4.7.0 | snp |
 //! |---|---|
 //! | `get_default_version`: `python{X.Y}`/`python{X}` of pre-commit's own interpreter on `PATH`, its `sys.executable` names, the `py` launcher, else `default` (`python.py:108-131`) | the same rules relative to a reference interpreter (`python3`, `python`; Windows `py -3`, `python`), memoised by [`crate::ToolProbe`] (persisted only for a native, non-proxy interpreter: a pyenv `#!` shim is probed in every process) |
 //! | `virtualenv <env> [-p norm_version(v)]` with cwd `/`, then `python -mpip install . *deps` in the prefix under `in_env` | installer per environment, `SNP_PYTHON_INSTALLER = auto` (default) \| `uv` \| `pip` (ADR-073): **uv** `uv venv <env> --python <abs interp> --seed --no-project --no-config --no-python-downloads` and `uv pip install --python <env py> --no-config [translated pip config] [.] *deps`; **pip** `<interp> -m venv <env>` and pre-commit's `python -mpip install . *deps` (D-PERF-01) |

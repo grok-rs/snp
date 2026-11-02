@@ -1,6 +1,6 @@
 # D-BRAND-01
 
-snp brand: snp 2.0.0, the §3.3 substitutions and argparse texts rendered with prog snp; compat brand: byte-identical
+snp brand: snp 2.0.1, the §3.3 substitutions and argparse texts rendered with prog snp; compat brand: byte-identical
 
 * **Class:** BRAND (COMPATIBILITY §5.4)
 * **Owner:** WP-12 (contributing: all packages emitting branded texts); the first package of the register row owns this file and
@@ -10,14 +10,14 @@ snp brand: snp 2.0.0, the §3.3 substitutions and argparse texts rendered with p
 
 ## Register entry (COMPATIBILITY §5.4)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
-| `--version` and texts | snp brand: `snp 2.0.0`, the §3.3 substitutions and argparse texts rendered with prog `snp`; compat brand: byte-identical |
+| `--version` and texts | snp brand: `snp 2.0.1`, the §3.3 substitutions and argparse texts rendered with prog `snp`; compat brand: byte-identical |
 
 ## Rationale
 
 FD-1 fixes the product identity: invoked under any name but `pre-commit`, the tool is snp and says so. Under the
-`pre-commit` name (a symlink, hard link or copy; COMPATIBILITY §3.1) every byte stays pre-commit 4.6.2's, so scripts,
+`pre-commit` name (a symlink, hard link or copy; COMPATIBILITY §3.1) every byte stays pre-commit 4.7.0's, so scripts,
 CI greps and `pre-commit --version` parsers keep working (ADR-023).
 
 In the snp brand the argparse texts are **rendered**, not substituted (ADR-058): argparse wraps usage, help and usage
@@ -25,15 +25,15 @@ errors relative to `usage: {prog} {cmd} `, so the 7-character-shorter prog `snp`
 indents (`init-templatedir`: 35 → 28 columns). `snp_argparse` renders them from `SNP_SPEC` with prog `snp`; the goldens
 (`crates/snp-cli/tests/goldens/snp.json`, `cargo xtask cli-goldens`) are produced by a real CPython 3.13.14 argparse
 built from `export_json(SNP_SPEC, "snp")` and, for every parser identical to pre-commit's, cross-checked against the
-prog-patched oracle `target/oracle/pc462-py313/bin/pre-commit-snp-prog`. The help strings of `main.py` that name the
+prog-patched oracle `target/oracle/pc470-py313/bin/pre-commit-snp-prog`. The help strings of `main.py` that name the
 tool (`main.py:222, 245, 273, 290, 299, 335`) read `snp` in the snp brand (COMPATIBILITY §3.3).
 
-`--version` is the one argparse text that is not a pure prog substitution: `%(prog)s 4.6.2` would print `snp 4.6.2`,
-which names a version of snp that does not exist; the snp brand's version action is `%(prog)s 2.0.0`.
+`--version` is the one argparse text that is not a pure prog substitution: `%(prog)s 4.7.0` would print `snp 4.7.0`,
+which names a version of snp that does not exist; the snp brand's version action is `%(prog)s 2.0.1`.
 
 Why it is safe: the divergence is confined to the snp brand, which pre-commit users only reach by typing `snp`; the
-compat brand reproduces pre-commit 4.6.2 byte for byte (`crates/snp-cli/tests/goldens/compat.json`, 490 cases at
-the 12 §A.16 width matrix, all generated from pre-commit 4.6.2 on CPython 3.13.14). Exit codes and streams are the
+compat brand reproduces pre-commit 4.7.0 byte for byte (`crates/snp-cli/tests/goldens/compat.json`, 490 cases at
+the 12 §A.16 width matrix, all generated from pre-commit 4.7.0 on CPython 3.13.14). Exit codes and streams are the
 same in both brands.
 
 ## Examples
@@ -41,10 +41,10 @@ same in both brands.
 `--version` (stdout, exit 0):
 
 ```text
-$ pre-commit --version          # pre-commit 4.6.2, and snp through a `pre-commit` link
-pre-commit 4.6.2
+$ pre-commit --version          # pre-commit 4.7.0, and snp through a `pre-commit` link
+pre-commit 4.7.0
 $ snp --version
-snp 2.0.0
+snp 2.0.1
 ```
 
 `init-templatedir -h` (first lines; the continuation indent follows the prog):

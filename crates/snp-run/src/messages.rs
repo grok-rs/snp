@@ -1,5 +1,5 @@
 //! Every user-visible text of the run pipeline, hook-impl and try-repo (ARCHITECTURE §1.3 "Messages"): compat texts
-//! are pre-commit 4.6.2's bytes; snp-brand texts are the `brand_map` substitutions of COMPATIBILITY §3.3.
+//! are pre-commit 4.7.0's bytes; snp-brand texts are the `brand_map` substitutions of COMPATIBILITY §3.3.
 //!
 //! Owner: WP-32.
 

@@ -12,13 +12,13 @@ treated as "not rootless"
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `docker system info` fails during the rootless probe → `CalledProcessError` exit 3 | treated as "not rootless" |
 
 ## Rationale
 
-Before every `docker` / `docker_image` hook run pre-commit 4.6.2 decides whether to pass `-u <uid>:<gid>` to
+Before every `docker` / `docker_image` hook run pre-commit 4.7.0 decides whether to pass `-u <uid>:<gid>` to
 `docker run` by asking the daemon whether it is rootless (`docker.py:109-128`):
 
 ```python
@@ -56,7 +56,7 @@ unconditionally.
 A local `docker_image` hook with a fake `docker` on `PATH` whose `system info` exits 1
 (`tests/differential/divergences/D-CRASH-21.yaml`):
 
-pre-commit 4.6.2, exit 3:
+pre-commit 4.7.0, exit 3:
 
 ```
 fake docker..............................................................An unexpected error has occurred: CalledProcessError: command: ('/bin/sh', '<work>/tools/docker', 'system', 'info', '--format', '{{ json . }}')

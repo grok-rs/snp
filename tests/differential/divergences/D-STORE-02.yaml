@@ -1,6 +1,6 @@
 # D-STORE-02 (STORE, owner WP-33): snp never touches pre-commit's directories; `clean` prints `Cleaned {snp store}.`
 # Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands`, `expect_divergence` and `expected` (ARCHITECTURE §13.2).
-# A pre-1.0 store ~/.pre-commit exists. pre-commit 4.6.2 removes it (second `Cleaned …` line); snp prints its own
+# A pre-1.0 store ~/.pre-commit exists. pre-commit 4.7.0 removes it (second `Cleaned …` line); snp prints its own
 # store once and leaves ~/.pre-commit alone (the shell steps run with the scenario's HOME).
 name: divergences/D-STORE-02-clean-keeps-pre-commit-dirs
 expect_divergence: D-STORE-02

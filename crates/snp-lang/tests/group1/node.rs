@@ -1,5 +1,5 @@
 //! `language: node` (10 §5.10 node row: default version; health after the system node disappears; WP-24: the
-//! nodeenv `.node-version`/`[nodeenv]` quirk, shared toolchains, the 4.6.2 package rule, the health fast path).
+//! nodeenv `.node-version`/`[nodeenv]` quirk, shared toolchains, the 4.6.1+ package rule, the health fast path).
 
 use std::sync::Arc;
 
@@ -122,6 +122,31 @@ fn lang_node_system_layout_and_npm_install() {
         ]
     );
     assert_eq!(c[0].cwd, "{PREFIX}");
+}
+
+/// 4.7.0 (pre-commit#3774, `test_node_hook_install_does_not_write_callers_index`): `npm install` runs with
+/// `no_git_env()`, so the `GIT_DIR`/`GIT_INDEX_FILE` git exports to hooks (a commit with `-a`, a submodule) never
+/// reach the `git+file://` install; the allow-listed `GIT_*` variables stay.
+#[test]
+fn lang_node_npm_install_gets_no_git_env() {
+    let w = World::new();
+    let t = host(
+        &w,
+        &[
+            ("GIT_DIR", "/user/.git"),
+            ("GIT_INDEX_FILE", "/user/.git/index"),
+            ("GIT_WORK_TREE", "/user"),
+            ("GIT_SSH_COMMAND", "ssh -i k"),
+        ],
+    );
+    install(&t, &w, "system", &[]).unwrap();
+    let c = t.runner.golden(&w.subst());
+    assert_eq!(c.len(), 1);
+    assert_eq!(c[0].argv[0], "npm");
+    for k in ["GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"] {
+        assert_eq!(c[0].env.get(k), Some(&None), "{k} reaches npm install");
+    }
+    assert_eq!(c[0].env.get("GIT_SSH_COMMAND"), None, "kept unchanged");
 }
 
 /// 4.6.1+: a repository without `package.json` (every local repository) installs only its dependencies; none is

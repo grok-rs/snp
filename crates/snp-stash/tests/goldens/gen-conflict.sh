@@ -1,14 +1,14 @@
 #!/bin/sh
-# Regenerates the stash-conflict transcript goldens from the pre-commit 4.6.2 oracle (CPython 3.12.3):
+# Regenerates the stash-conflict transcript goldens from the pre-commit 4.7.0 oracle (CPython 3.12.3):
 #
-#   ORACLE=target/oracle/pc462-py312 crates/snp-stash/tests/goldens/gen-conflict.sh
+#   ORACLE=target/oracle/pc470-py312 crates/snp-stash/tests/goldens/gen-conflict.sh
 #
 # Scenario (02 §7.2 "Observed conflict transcript"): `foo` staged with FOO_CONTENTS, an unstaged `1`→`a`, a local
 # `system` hook rewriting `1`→`b`. Writes conflict.full.txt / conflict.color.full.txt (the whole stdout) and
 # conflict.txt / conflict.color.txt (the stash lines only), with the patch path replaced by `<PATCH>`.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
-oracle=${ORACLE:-/home/dromix/projects/snp/target/oracle/pc462-py312}
+oracle=${ORACLE:-/home/dromix/projects/snp/target/oracle/pc470-py312}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export HOME="$work/home" GIT_CONFIG_NOSYSTEM=1 PRE_COMMIT_HOME="$work/store" LC_ALL=C TZ=UTC

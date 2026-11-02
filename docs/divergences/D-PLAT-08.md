@@ -9,7 +9,7 @@ clear error, exit 1
 
 ## Register entry (COMPATIBILITY §5.5)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | cygwin/MSYS2 git on Windows: a warning, then undefined behaviour | clear error, exit 1 |
 
@@ -32,7 +32,7 @@ changes (the check is compiled out of the decision on Unix).
 Windows, `PATH` starting with `C:\msys64\usr\bin` (MSYS2's `git.exe` next to `msys-2.0.dll`), `pre-commit run`
 through the compat alias.
 
-pre-commit 4.6.2 (native Windows Python): no warning (dead check), then undefined behaviour — typically
+pre-commit 4.7.0 (native Windows Python): no warning (dead check), then undefined behaviour — typically
 `An unexpected error has occurred: …` once a POSIX path from git meets a Windows path API, or a silent mis-selection
 of files.
 

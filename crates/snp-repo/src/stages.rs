@@ -17,7 +17,7 @@
 //! (`mapping values are not allowed here`, a nested block sequence where a scalar was expected, a stray indentation
 //! level, an unknown escape, a non-printable character) yields `None`: no warning. The asymmetry is deliberate — an
 //! unfollowed construct can only lose a warning, never invent one. `tests/vectors/legacy_stages.tsv` holds
-//! pre-commit 4.6.2's own verdict on hand-written edge cases, every upstream pre-commit-hooks manifest and a
+//! pre-commit 4.7.0's own verdict on hand-written edge cases, every upstream pre-commit-hooks manifest and a
 //! generated differential corpus.
 //!
 //! Owner: WP-31.
@@ -1588,7 +1588,7 @@ mod tests {
         );
     }
 
-    /// pre-commit 4.6.2's own verdict on hand-written edge cases and on every upstream tag's manifest.
+    /// pre-commit 4.7.0's own verdict on hand-written edge cases and on every upstream tag's manifest.
     #[test]
     fn oracle_vectors() {
         let tsv = include_str!("../tests/vectors/legacy_stages.tsv");
@@ -1616,7 +1616,7 @@ mod tests {
         assert_eq!(bad, Vec::<String>::new());
     }
 
-    /// pre-commit 4.6.2's verdict on a generated differential corpus (`gen_legacy_stages_fuzz.py`): never a
+    /// pre-commit 4.7.0's verdict on a generated differential corpus (`gen_legacy_stages_fuzz.py`): never a
     /// warning pre-commit does not print; a missed one only behind a construct this composer does not follow
     /// (a `?` complex key).
     #[test]

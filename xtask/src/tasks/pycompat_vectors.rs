@@ -9,7 +9,7 @@
 //! * `crates/snp-pycompat/src/generated/tables.rs` — `gen_pycompat_tables.py` under CPython
 //!   3.13.14 (UCD 15.1, ADR-020).
 //!
-//! The interpreters default to the oracle venvs (`target/oracle/pc462-py31{2,3}`, built by
+//! The interpreters default to the oracle venvs (`target/oracle/pc470-py31{2,3}`, built by
 //! `cargo xtask oracle install`), else `python3.12` / `python3.13` on `PATH`; their exact versions
 //! are verified because every output records them. The generators run isolated (`-I`) from an empty
 //! scratch directory under `target/`. Every run also regenerates the original 59-section file with
@@ -83,7 +83,7 @@ struct Interpreter {
 
 const PY312: Interpreter = Interpreter {
     flag: "--py312",
-    venv: "pc462-py312",
+    venv: "pc470-py312",
     fallback: "python3.12",
     version: "3.12.3",
     unicode: "15.0.0",
@@ -91,7 +91,7 @@ const PY312: Interpreter = Interpreter {
 
 const PY313: Interpreter = Interpreter {
     flag: "--py313",
-    venv: "pc462-py313",
+    venv: "pc470-py313",
     fallback: "python3.13",
     version: "3.13.14",
     unicode: "15.1.0",

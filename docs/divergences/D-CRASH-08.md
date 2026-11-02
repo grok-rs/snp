@@ -9,7 +9,7 @@ file excluded from this and later hooks
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | file deleted by an earlier hook before its tags were computed → `ValueError … does not exist.` exit 3 (X13-CLS-01/04) | file excluded from this and later hooks |
 
@@ -39,13 +39,13 @@ cached files (the hook then reports the missing file itself).
 
 ## Examples
 
-Recorded with pre-commit 4.6.2 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc462.txt`); `<W>` is the scratch root, `<store>` the store directory.
+Recorded with pre-commit 4.7.0 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc470.txt`); `<W>` is the scratch root, `<store>` the store directory.
 
 Hook 1 (`files: ^a\.txt$`, `always_run`, `pass_filenames: false`) runs `rm -f b.txt`; hook 2 is `echo`; both
 `a.txt` and `b.txt` are committed; `run --all-files`
 (`tests/differential/divergences/D-CRASH-08.yaml`).
 
-pre-commit 4.6.2, exit 3:
+pre-commit 4.7.0, exit 3:
 
 ```text
 rm b.....................................................................Failed

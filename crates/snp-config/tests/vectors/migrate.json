@@ -1,6 +1,6 @@
 {
  "generator": "crates/snp-config/tests/oracle/gen_config_vectors.py",
- "pre_commit": "4.6.2",
+ "pre_commit": "4.7.0",
  "python": "3.12.3",
  "cases": [
   {

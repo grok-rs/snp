@@ -5,7 +5,7 @@
 pub const SNP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The pre-commit release snp reproduces: compared by `minimum_pre_commit_version`; the compat
 /// brand's `--version`.
-pub const PRE_COMMIT: &str = "4.6.2";
+pub const PRE_COMMIT: &str = "4.7.0";
 /// CPython whose argparse texts are reproduced (pre-commit CLI, `pygrep.py`, `hazmat.py`,
 /// pre-commit-hooks console scripts).
 pub const ARGPARSE_PY: &str = "3.13.14";
@@ -29,7 +29,7 @@ pub const LOCAL_TEMPLATE_VERSION: u32 = 1;
 mod tests {
     #[test]
     fn versions() {
-        assert_eq!(super::SNP_VERSION, "2.0.0");
+        assert_eq!(super::SNP_VERSION, "2.0.1");
         assert_eq!(super::TEXT_UNICODE, snp_pycompat::chars::UNICODE_VERSION);
     }
 }

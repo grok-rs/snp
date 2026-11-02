@@ -264,7 +264,7 @@ fn old_git_dedup_fallback_on_a_git_2_30_container() {
     let fallback = git.all_files().unwrap();
     let joined: Vec<u8> = fallback.iter().flat_map(|r| [r, b"\0"].concat()).collect();
     assert_eq!(joined, sb.git(&repo, &["ls-files", "-z", "--deduplicate"]));
-    // and the real flag fails on that git exactly as pre-commit 4.6.2 does (rc 129)
+    // and the real flag fails on that git exactly as pre-commit 4.7.0 does (rc 129)
     let raw = git
         .run_raw(&[
             OsStr::new("ls-files"),

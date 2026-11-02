@@ -9,7 +9,7 @@ stderr message, legacy rc 1, snp's hooks still run
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | broken legacy hook (missing shebang interpreter, directory) → exit 3 (X13-HI-07) | stderr message, legacy rc 1, snp's hooks still run |
 

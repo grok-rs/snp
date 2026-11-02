@@ -11,7 +11,7 @@ After installing, check:
 
 ```console
 $ snp --version
-snp 2.0.0
+snp 2.0.1
 ```
 
 ## Release installers (Linux, macOS, Windows)
@@ -162,7 +162,7 @@ On Unix the alias is a symbolic link, on Windows a hard link `pre-commit.exe` (o
 `pre-commit.snp-backup`, which `snp self alias uninstall` restores. When another `pre-commit` comes earlier on `PATH`
 the command warns that typing `pre-commit` will still not run snp.
 
-Invoked through the alias, snp is in the *compat brand*: byte-identical to pre-commit 4.6.2, snp-only commands and
+Invoked through the alias, snp is in the *compat brand*: byte-identical to pre-commit 4.7.0, snp-only commands and
 options rejected. See [Compatibility](compatibility.md#brands).
 
 On Windows a hard link goes stale when an updater replaces `snp.exe`; `snp self alias status` and `snp doctor` report

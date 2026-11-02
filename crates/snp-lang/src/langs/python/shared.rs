@@ -45,9 +45,9 @@ const NO_GIT_ENV_KEEP: [&str; 9] = [
 /// `git.no_git_env(env)` (`git.py:27-48`): every `GIT_*` variable is dropped except `GIT_CONFIG_KEY_*`,
 /// `GIT_CONFIG_VALUE_*` and the nine allow-listed names.
 ///
-/// pre-commit applies it to golang's `go install` only; snp gives it to every installer it spawns (pip/uv, npm,
-/// cargo, gem) so the `GIT_DIR`/`GIT_INDEX_FILE` that git exports to hooks never reach an installer that runs git
-/// (D-SEC-05; `setuptools_scm` in linked worktrees). On Windows the names are upper-cased like CPython's `os.environ`
+/// pre-commit applies it to golang's `go install` and (since 4.7.0) node's `npm install`; snp gives it to every
+/// installer it spawns (also pip/uv, cargo, gem) so the `GIT_DIR`/`GIT_INDEX_FILE` that git exports to hooks never
+/// reach an installer that runs git (D-SEC-05; `setuptools_scm` in linked worktrees). On Windows the names are upper-cased like CPython's `os.environ`
 /// copy (ADR-074). The same allow-list as `snp_git::no_git_env`, which snp-lang cannot depend on.
 pub(crate) fn no_git_env(env: &Env) -> Env {
     Env::from_pairs(env.iter().filter_map(|(k, v)| {

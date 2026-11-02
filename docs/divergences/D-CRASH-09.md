@@ -9,7 +9,7 @@ opened non-blocking, classified, never blocks
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | FIFO / device passed via `--files` → hangs forever (X13-CLS-03) | opened non-blocking, classified, never blocks |
 
@@ -33,11 +33,11 @@ Safe: only a hang becomes a result, and the result is the one identify gives whe
 
 ## Examples
 
-Recorded with pre-commit 4.6.2 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc462.txt`); `<W>` is the scratch root, `<store>` the store directory.
+Recorded with pre-commit 4.7.0 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc470.txt`); `<W>` is the scratch root, `<store>` the store directory.
 
 A FIFO `ff` in the worktree, one `echo` hook, `run --files ff` (`tests/differential/divergences/D-CRASH-09.yaml`).
 
-pre-commit 4.6.2 hangs; killed by `timeout 5` it prints nothing (exit 124).
+pre-commit 4.7.0 hangs; killed by `timeout 5` it prints nothing (exit 124).
 
 snp, exit 0 (the FIFO is tagged `file, non-executable, text`):
 

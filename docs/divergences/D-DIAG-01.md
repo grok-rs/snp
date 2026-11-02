@@ -15,7 +15,7 @@ git < 2.31: `[WARNING] git <V> is older than 2.31.0, the oldest git version snp 
 
 ## Rationale
 
-pre-commit 4.6.2 has no git version check, yet needs git ≥ 2.31 for `ls-files --deduplicate` and ≥ 2.19 for
+pre-commit 4.7.0 has no git version check, yet needs git ≥ 2.31 for `ls-files --deduplicate` and ≥ 2.19 for
 intent-to-add detection in the stash (02 G.0 item 1). snp never refuses a git (ADR-063: below 2.31 it falls back —
 D-CRASH-26 — and only a stash that would need intent-to-add detection is refused below 2.19, D-DATA-17), but a user on
 a warning-band git runs combinations snp's CI tests only as smoke tests (Debian 11's 2.30.2, Ubuntu 20.04's 2.25.1).
@@ -31,7 +31,7 @@ brands. `SNP_ALLOW_OLD_GIT` set to any non-empty value silences it.
 
 `pre-commit run` (compat alias) on Debian 11 (git 2.30.2), a staged file and a passing hook.
 
-pre-commit 4.6.2: stdout `x........Passed`, no stderr, exit 0.
+pre-commit 4.7.0: stdout `x........Passed`, no stderr, exit 0.
 
 snp: the same stdout bytes and exit 0; stderr:
 

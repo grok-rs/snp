@@ -1,4 +1,4 @@
-//! Oracle-backed acceptance tests of the harness itself (WP-35): they need the pre-commit 4.6.2 oracle venvs of
+//! Oracle-backed acceptance tests of the harness itself (WP-35): they need the pre-commit 4.7.0 oracle venvs of
 //! `cargo xtask oracle install` and are `#[ignore]`d otherwise; the `difftest` CI workflow runs them with
 //! `cargo test -p snp-difftest --test oracle -- --ignored`.
 //!
@@ -22,15 +22,15 @@ mod oracle {
         Brand, Options, Runner, Scenario, StepKind, Verdict, load_scenarios, workspace_root,
     };
 
-    const NEEDS: &str = "needs the pre-commit 4.6.2 oracle (cargo xtask oracle install)";
+    const NEEDS: &str = "needs the pre-commit 4.7.0 oracle (cargo xtask oracle install)";
 
     fn oracle_dir() -> PathBuf {
-        workspace_root().join("target/oracle/pc462-py312")
+        workspace_root().join("target/oracle/pc470-py312")
     }
 
     fn runner(snp_bin: PathBuf, root: &Path) -> Runner {
         let o = oracle_dir();
-        let cli = workspace_root().join("target/oracle/pc462-py313");
+        let cli = workspace_root().join("target/oracle/pc470-py313");
         let cli = if cli.exists() { cli } else { o.clone() };
         Runner {
             snp_bin,
@@ -41,7 +41,7 @@ mod oracle {
     }
 
     #[test]
-    #[ignore = "needs the pre-commit 4.6.2 oracle (cargo xtask oracle install)"]
+    #[ignore = "needs the pre-commit 4.7.0 oracle (cargo xtask oracle install)"]
     fn seed_scenarios_are_self_consistent() {
         assert!(oracle_dir().exists(), "{NEEDS}");
         let seeds =
@@ -98,7 +98,7 @@ mod oracle {
     }
 
     #[test]
-    #[ignore = "needs the pre-commit 4.6.2 oracle (cargo xtask oracle install)"]
+    #[ignore = "needs the pre-commit 4.7.0 oracle (cargo xtask oracle install)"]
     fn shrinker_reduces_a_planted_divergence_and_writes_a_working_repro() {
         assert!(oracle_dir().exists(), "{NEEDS}");
         let tmp = tempfile::tempdir().unwrap();

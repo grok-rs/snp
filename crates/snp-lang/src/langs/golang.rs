@@ -1,6 +1,6 @@
 //! The `golang` language backend (§6.2; `pre_commit/languages/golang.py`).
 //!
-//! | pre-commit 4.6.2 | snp |
+//! | pre-commit 4.7.0 | snp |
 //! |---|---|
 //! | `get_default_version`: `system` iff `exe_exists('go')` | the same (`SNP_PREFER_SYSTEM_TOOLCHAINS=1` drops the `$HOME` heuristic) |
 //! | non-system: `go.dev/dl/?mode=json` `[0]` for `default`, else the version verbatim; `dl.google.com/go/go{v}.{os}-{arch}.{ext}` unverified, extracted into `<env>` and moved to `<env>/.go`; 404 ⇒ `ValueError` | the same URL and version rules, verified by the go.dev JSON sha256 (D-SEC-08), extracted once into the shared `tools-v1/go/<version>` and linked as `<env>/.go` (a private copy where links are unavailable); 404 ⇒ the same `ValueError` text |
@@ -28,7 +28,7 @@ use crate::{
     RunPlan, Support,
 };
 
-/// The texts of the golang backend (pre-commit 4.6.2's).
+/// The texts of the golang backend (pre-commit 4.7.0's).
 mod messages {
     /// `_install_go` on a 404 (`golang.py:96-103`): `ValueError`.
     pub(super) fn no_such_version(os: &str, arch: &str) -> String {

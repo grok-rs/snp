@@ -9,7 +9,7 @@ shim-less system env
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | Windows node hook with explicit `language_version: system` → exit 3 | shim-less system env |
 
@@ -35,7 +35,7 @@ node behave differently — and they get what they asked for instead of a crash.
 A local node hook with `language_version: system` and a dependency given as an absolute path to a package in the
 repository (no network), run on Windows (`tests/differential/divergences/D-CRASH-20.yaml`):
 
-pre-commit 4.6.2, exit 3 (the install lines, then nodeenv's failure as a `CalledProcessError`):
+pre-commit 4.7.0, exit 3 (the install lines, then nodeenv's failure as a `CalledProcessError`):
 
 ```
 [INFO] Initializing environment for local:<work>\pkg.

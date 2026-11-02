@@ -26,7 +26,7 @@ use crate::frame;
 /// X13-CMD-11 / CFG-09) aborts with exit 3, later files unprocessed.
 ///
 /// snp brand: `--strict` also reports the hook keys `run` would warn about (W11) at validation time; `--portable`
-/// validates as pre-commit 4.6.2 would (`SNP_COMPAT_STRICT=1` semantics: every extension key is an unexpected key
+/// validates as pre-commit 4.7.0 would (`SNP_COMPAT_STRICT=1` semantics: every extension key is an unexpected key
 /// and `repo: builtin` is an ordinary URL), which lists every key a pre-commit user of the same file would see
 /// warned about.
 fn validate_files(kind: FileKind, a: &ValidateArgs, cx: &CmdCtx<'_>) -> Result<i32, Failure> {

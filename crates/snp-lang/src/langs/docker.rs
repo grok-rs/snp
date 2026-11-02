@@ -1,6 +1,6 @@
 //! The `docker` language backend (§6.2; `pre_commit/languages/docker.py`).
 //!
-//! pre-commit 4.6.2 builds the hook repository's `Dockerfile` into an image tagged `pre-commit-<md5>` at install time
+//! pre-commit 4.7.0 builds the hook repository's `Dockerfile` into an image tagged `pre-commit-<md5>` at install time
 //! (`docker build --tag <tag> --label PRE_COMMIT --pull .`, cwd = the repository, `docker.py:78-106`), creates the
 //! empty environment directory for its state files, and **rebuilds** the image (without `--pull`) before every hook
 //! run (`docker.py:159-181`). The hook then runs as

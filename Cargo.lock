@@ -1640,7 +1640,7 @@ checksum = "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"
 
 [[package]]
 name = "snp"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "criterion",
  "dhat",
@@ -1671,7 +1671,7 @@ dependencies = [
 
 [[package]]
 name = "snp-argparse"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "serde_json",
  "snp-core",
@@ -1680,7 +1680,7 @@ dependencies = [
 
 [[package]]
 name = "snp-cli"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "serde_json",
  "snp-argparse",
@@ -1689,7 +1689,7 @@ dependencies = [
 
 [[package]]
 name = "snp-cmd"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "blake3",
  "memchr",
@@ -1711,7 +1711,7 @@ dependencies = [
 
 [[package]]
 name = "snp-config"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "cfgv",
  "file-identify",
@@ -1729,7 +1729,7 @@ dependencies = [
 
 [[package]]
 name = "snp-core"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "rustix",
  "snp-pycompat",
@@ -1737,7 +1737,7 @@ dependencies = [
 
 [[package]]
 name = "snp-difftest"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "proptest",
  "rustix",
@@ -1750,7 +1750,7 @@ dependencies = [
 
 [[package]]
 name = "snp-files"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "dhat",
  "file-identify",
@@ -1767,7 +1767,7 @@ dependencies = [
 
 [[package]]
 name = "snp-git"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "blake3",
  "memchr",
@@ -1782,7 +1782,7 @@ dependencies = [
 
 [[package]]
 name = "snp-hooks"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "bstr",
  "cfgv",
@@ -1805,14 +1805,14 @@ dependencies = [
 
 [[package]]
 name = "snp-hooks-data"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "snp-core",
 ]
 
 [[package]]
 name = "snp-lang"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "blake3",
  "flate2",
@@ -1835,7 +1835,7 @@ dependencies = [
 
 [[package]]
 name = "snp-migrate"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "file-identify",
  "globset",
@@ -1855,7 +1855,7 @@ dependencies = [
 
 [[package]]
 name = "snp-net"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "flate2",
  "liblzma",
@@ -1874,7 +1874,7 @@ dependencies = [
 
 [[package]]
 name = "snp-os"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "proptest",
  "rustix",
@@ -1887,7 +1887,7 @@ dependencies = [
 
 [[package]]
 name = "snp-probe"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "ctrlc",
  "rustix",
@@ -1897,7 +1897,7 @@ dependencies = [
 
 [[package]]
 name = "snp-proc"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "ctrlc",
  "file-identify",
@@ -1915,11 +1915,11 @@ dependencies = [
 
 [[package]]
 name = "snp-pycompat"
-version = "2.0.0"
+version = "2.0.1"
 
 [[package]]
 name = "snp-pyparsers"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "serde_json",
  "snp-core",
@@ -1928,7 +1928,7 @@ dependencies = [
 
 [[package]]
 name = "snp-pyre"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "fancy-regex",
  "indexmap",
@@ -1945,7 +1945,7 @@ dependencies = [
 
 [[package]]
 name = "snp-repo"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "blake3",
  "snp-config",
@@ -1966,7 +1966,7 @@ dependencies = [
 
 [[package]]
 name = "snp-run"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "snp-cli",
  "snp-config",
@@ -1989,7 +1989,7 @@ dependencies = [
 
 [[package]]
 name = "snp-stash"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "blake3",
  "rustix",
@@ -2004,7 +2004,7 @@ dependencies = [
 
 [[package]]
 name = "snp-store"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "blake3",
  "memchr",
@@ -2020,7 +2020,7 @@ dependencies = [
 
 [[package]]
 name = "snp-testkit"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "insta",
  "rustix",
@@ -2032,7 +2032,7 @@ dependencies = [
 
 [[package]]
 name = "snp-yaml"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "cfgv",
  "dhat",
@@ -2668,7 +2668,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "clap",

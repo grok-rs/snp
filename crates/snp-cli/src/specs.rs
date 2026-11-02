@@ -1,4 +1,4 @@
-//! The static `ParserSpec` trees: pre-commit 4.6.2 (`main.py:202-365`, verbatim help strings, 12 §A.8.1) and the
+//! The static `ParserSpec` trees: pre-commit 4.7.0 (`main.py:202-365`, verbatim help strings, 12 §A.8.1) and the
 //! snp brand (compat ⊕ the extensions of ARCHITECTURE §9.3 / COMPATIBILITY §8.1, prefix-stable), plus the
 //! generated shell completions.
 //!
@@ -137,12 +137,12 @@ pub(crate) const STAGES: &[&str] = &[
 const VERSION_PC: ActionSpec = ActionSpec {
     nargs: Nargs::Zero,
     kind: Kind::Version,
-    default: DefaultValue::Const("%(prog)s 4.6.2"),
+    default: DefaultValue::Const("%(prog)s 4.7.0"),
     help: Some("show program's version number and exit"),
     ..store(&["-V", "--version"], "version")
 };
 
-/// `-V/--version` of the snp brand: `snp 2.0.0` (ADR-023).
+/// `-V/--version` of the snp brand: `snp 2.0.1` (ADR-023).
 const VERSION_SNP: ActionSpec = ActionSpec {
     default: DefaultValue::Const(concat!("%(prog)s ", env!("CARGO_PKG_VERSION"))),
     ..VERSION_PC
@@ -312,7 +312,7 @@ const REF: ActionSpec = ActionSpec {
     ..store(&["--ref", "--rev"], "ref")
 };
 
-// ----- the pre-commit 4.6.2 tree ------------------------------------------------------------------------------
+// ----- the pre-commit 4.7.0 tree ------------------------------------------------------------------------------
 
 /// `autoupdate` (`main.py:220-243`).
 const AUTOUPDATE_ACTIONS: [ActionSpec; 6] = [

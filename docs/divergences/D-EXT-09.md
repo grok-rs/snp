@@ -42,7 +42,7 @@ pre-commit's lookup.
 
 ## Examples
 
-A repository with only `.snp.yaml`, `run --all-files`: pre-commit 4.6.2 prints `An error has occurred:
+A repository with only `.snp.yaml`, `run --all-files`: pre-commit 4.7.0 prints `An error has occurred:
 InvalidConfigError: ` / `=====> .pre-commit-config.yaml is not a file` (exit 1); snp, in both brands, runs the hooks of
 `.snp.yaml`. With `.pre-commit-config.yaml` beside it, the snp brand prints on stderr:
 

@@ -1,6 +1,6 @@
 [package]
 name = "snp-cli"
-description = "pre-commit 4.6.2 and snp-brand ParserSpec tables and the typed Cli facade"
+description = "pre-commit 4.7.0 and snp-brand ParserSpec tables and the typed Cli facade"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

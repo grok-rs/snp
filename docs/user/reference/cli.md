@@ -2,17 +2,17 @@
 
 # CLI reference
 
-Every command of snp 2.0.0 with its help text exactly as `snp <command> --help` prints it at `COLUMNS=100`.
+Every command of snp 2.0.1 with its help text exactly as `snp <command> --help` prints it at `COLUMNS=100`.
 The texts are rendered from the same parser tables the binary uses, so this page cannot drift from the
 program. Invoked as `pre-commit` (the compat brand, see [Compatibility](../compatibility.md)) snp accepts
-exactly the commands and options of pre-commit 4.6.2; the commands and options marked *snp only* exist only
+exactly the commands and options of pre-commit 4.7.0; the commands and options marked *snp only* exist only
 under the `snp` name.
 
 Environment variables are listed in [Environment variables](environment.md).
 
 ## Commands
 
-| Command | Summary | In pre-commit 4.6.2 |
+| Command | Summary | In pre-commit 4.7.0 |
 |---|---|---|
 | [`snp`](#snp) | The top-level parser. | yes |
 | [`snp autoupdate`](#snp-autoupdate) | Auto-update snp config to the latest repos' versions. | yes |
@@ -362,7 +362,7 @@ options:
 
 ## snp install
 
-Also in pre-commit 4.6.2. *snp only* options: `--git-config-hooks`.
+Also in pre-commit 4.7.0. *snp only* options: `--git-config-hooks`.
 
 ```text
 usage: snp install [-h] [--color {auto,always,never}] [-c CONFIG] [-f] [--install-hooks]
@@ -387,7 +387,7 @@ options:
 
 ## snp install-hooks
 
-Also in pre-commit 4.6.2. *snp only* options: `--with-fallback`.
+Also in pre-commit 4.7.0. *snp only* options: `--with-fallback`.
 
 ```text
 usage: snp install-hooks [-h] [--color {auto,always,never}] [-c CONFIG] [--with-fallback]
@@ -505,7 +505,7 @@ options:
 
 ## snp run
 
-Also in pre-commit 4.6.2. *snp only* options: `--group`, `--jobs`, `--no-fast-path`, `--no-group`, `--no-local-config`, `--require-group`, `--stdin-files`, `--summary`, `-j`.
+Also in pre-commit 4.7.0. *snp only* options: `--group`, `--jobs`, `--no-fast-path`, `--no-group`, `--no-local-config`, `--require-group`, `--stdin-files`, `--summary`, `-j`.
 
 ```text
 usage: snp run [-h] [--color {auto,always,never}] [-c CONFIG] [--verbose] [--all-files |
@@ -688,7 +688,7 @@ options:
 
 ## snp try-repo
 
-Also in pre-commit 4.6.2. *snp only* options: `--group`, `--jobs`, `--no-fast-path`, `--no-group`, `--no-local-config`, `--require-group`, `--stdin-files`, `--summary`, `-j`.
+Also in pre-commit 4.7.0. *snp only* options: `--group`, `--jobs`, `--no-fast-path`, `--no-group`, `--no-local-config`, `--require-group`, `--stdin-files`, `--summary`, `-j`.
 
 ```text
 usage: snp try-repo [-h] [--color {auto,always,never}] [-c CONFIG] [--ref REF] [--verbose]
@@ -784,7 +784,7 @@ options:
 
 ## snp uninstall
 
-Also in pre-commit 4.6.2. *snp only* options: `--git-config-hooks`.
+Also in pre-commit 4.7.0. *snp only* options: `--git-config-hooks`.
 
 ```text
 usage: snp uninstall [-h] [--color {auto,always,never}] [-c CONFIG]
@@ -802,7 +802,7 @@ options:
 
 ## snp validate-config
 
-Also in pre-commit 4.6.2. *snp only* options: `--portable`, `--strict`.
+Also in pre-commit 4.7.0. *snp only* options: `--portable`, `--strict`.
 
 ```text
 usage: snp validate-config [-h] [--color {auto,always,never}] [--strict] [--portable]
@@ -822,7 +822,7 @@ options:
 
 ## snp validate-manifest
 
-Also in pre-commit 4.6.2. *snp only* options: `--portable`, `--strict`.
+Also in pre-commit 4.7.0. *snp only* options: `--portable`, `--strict`.
 
 ```text
 usage: snp validate-manifest [-h] [--color {auto,always,never}] [--strict] [--portable]

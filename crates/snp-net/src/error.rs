@@ -7,7 +7,7 @@ use std::io;
 
 /// An expected digest.
 ///
-/// pre-commit 4.6.2 verifies no download at all (D-SEC-08); every artifact snp fetches carries one of these, taken
+/// pre-commit 4.7.0 verifies no download at all (D-SEC-08); every artifact snp fetches carries one of these, taken
 /// from an embedded table (uv, the ruby helpers) or from a checksum manifest fetched over TLS (node `SHASUMS256.txt`,
 /// the go.dev JSON, rustup's `.sha256` sidecars), ADR-034/ADR-077.
 #[derive(Clone, Debug, PartialEq, Eq)]

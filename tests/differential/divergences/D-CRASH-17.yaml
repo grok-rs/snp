@@ -1,6 +1,6 @@
 # D-CRASH-17 (CRASH, owner WP-22, contributing WP-33): commands that do not need the store work, and the error
 # handler never double-faults. The store path lies below a regular file, so it can be created by nobody (root
-# included): pre-commit 4.6.2 builds Store() for every command and its error handler builds it again (two
+# included): pre-commit 4.7.0 builds Store() for every command and its error handler builds it again (two
 # tracebacks on stderr, exit 1); snp's validate-config never touches the store. Stale-entry and gc ENOENT cases need
 # a store edit between steps and are unit-tested (crates/snp-store/tests/catalog.rs, x13_st_10_*).
 expect_divergence: D-CRASH-17

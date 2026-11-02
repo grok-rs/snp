@@ -6,7 +6,7 @@
 //! | node | `nodejs.org/dist` (official), `unofficial-builds.nodejs.org` (musl, riscv64, …) | `SHASUMS256.txt` over TLS |
 //! | go | `dl.google.com/go` (pre-commit's `golang.py` URL) | sha256 of the go.dev JSON (`include=all`) over TLS |
 //! | rustup-init | `static.rust-lang.org/rustup` | `.sha256` sidecar over TLS |
-//! | rbenv, ruby-build, ruby-download | embedded: pre-commit 4.6.2's `resources/*.tar.gz` | sha256 embedded |
+//! | rbenv, ruby-build, ruby-download | embedded: pre-commit 4.7.0's `resources/*.tar.gz` | sha256 embedded |
 //!
 //! Every URL returned here is the canonical one; [`crate::HttpFetch`] applies the mirror overrides (`SNP_NODE_MIRROR`
 //! for archives; `SNP_NODE_SHASUMS_URL`/`SNP_GO_JSON_URL`, which must be https, for manifests), so an `http://` mirror
@@ -39,7 +39,7 @@ pub enum Tool {
     /// rbenv.
     Rbenv,
     /// pre-commit's `ruby-download` rbenv plugin (`rbenv download`, `ruby.py:96-103`), embedded like rbenv and
-    /// ruby-build (additive to ARCHITECTURE §1.4.9: pre-commit 4.6.2 vendors three ruby archives).
+    /// ruby-build (additive to ARCHITECTURE §1.4.9: pre-commit 4.7.0 vendors three ruby archives).
     RubyDownload,
 }
 
@@ -80,11 +80,12 @@ pub enum Layout {
 /// The pinned uv version (+ embedded sha256 per target triple, generated table).
 pub const UV_PINNED: &str = uv_checksums::UV_VERSION;
 
-/// The release the ruby helpers come from (pre-commit 4.6.2 vendors rbenv 1.3.2 and ruby-build 20251023).
+/// The release the ruby helpers come from (pre-commit 4.7.0 vendors rbenv 1.3.2 and ruby-build 20251023).
 const RBENV_VERSION: &str = "1.3.2";
 /// See [`RBENV_VERSION`].
 const RUBY_BUILD_VERSION: &str = "20251023";
-/// `ruby-download` carries no version of its own: it is the copy vendored by pre-commit 4.6.2.
+/// `ruby-download` carries no version of its own: it is the copy vendored by pre-commit 4.6.2, byte-identical in
+/// 4.7.0 (the name is kept so existing tool caches stay valid, ADR-089).
 const RUBY_DOWNLOAD_VERSION: &str = "pre-commit-4.6.2";
 
 /// URL scheme of the embedded archives (served from the binary by [`crate::HttpFetch::get_verified`]).
@@ -561,7 +562,7 @@ fn rustup_latest(f: &dyn Fetch) -> Result<String, NetError> {
 }
 
 /// The embedded ruby helper archive of `tool` (each archive holds one top-level directory named after the tool,
-/// exactly as pre-commit 4.6.2 vendors it).
+/// exactly as pre-commit 4.7.0 vendors it).
 fn ruby_helper(tool: Tool, version: &str) -> Result<Artifact, NetError> {
     let (url, want) = match tool {
         Tool::Rbenv => ("snp-embedded:rbenv-1.3.2.tar.gz", RBENV_VERSION),

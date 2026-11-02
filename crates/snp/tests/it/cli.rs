@@ -249,9 +249,9 @@ fn t10_cli_07_usage_errors_and_version() {
     );
     let out = compat(&env, env.root(), &["--version"]);
     assert_code(&out, 0);
-    assert_eq!(text(&out.stdout), "pre-commit 4.6.2\n");
+    assert_eq!(text(&out.stdout), "pre-commit 4.7.0\n");
     let out = snp(&env, env.root(), &["--version"]);
-    assert_eq!(text(&out.stdout), "snp 2.0.0\n");
+    assert_eq!(text(&out.stdout), "snp 2.0.1\n");
     let out = snp(&env, env.root(), &["run", "--nope"]);
     assert_code(&out, 2);
     assert!(text(&out.stderr).ends_with("snp: error: unrecognized arguments: --nope\n"));
@@ -262,7 +262,7 @@ fn t10_cli_07_usage_errors_and_version() {
 #[test]
 fn compat_brand_cli_texts_equal_the_oracle() {
     let env = tenv();
-    let Some(_) = env.oracle(snp_testkit::Oracle::Pc462Py313, env.root()) else {
+    let Some(_) = env.oracle(snp_testkit::Oracle::Pc470Py313, env.root()) else {
         return;
     };
     for args in [
@@ -280,7 +280,7 @@ fn compat_brand_cli_texts_equal_the_oracle() {
             .args(args)
             .output();
         let theirs = env
-            .oracle(snp_testkit::Oracle::Pc462Py313, env.root())
+            .oracle(snp_testkit::Oracle::Pc470Py313, env.root())
             .unwrap()
             .env("COLUMNS", "80")
             .args(args)
@@ -314,7 +314,7 @@ fn perf_b1_version_under_9ms() {
             let start = std::time::Instant::now();
             let out = cmd.output().unwrap();
             let took = start.elapsed();
-            assert_eq!(text(&out.stdout), "snp 2.0.0\n");
+            assert_eq!(text(&out.stdout), "snp 2.0.1\n");
             took
         })
         .collect();

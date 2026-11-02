@@ -1,6 +1,6 @@
 # D-MISC-02 (BRAND, owner WP-33): `argv[1] == "__hazmat"` is reserved (in-hook hazmat entry, both brands)
 # Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands`, `expect_divergence` and `expected` (ARCHITECTURE §13.2).
-# pre-commit 4.6.2 rejects `__hazmat` as an invalid subcommand (usage, exit 2); snp runs the hazmat tool.
+# pre-commit 4.7.0 rejects `__hazmat` as an invalid subcommand (usage, exit 2); snp runs the hazmat tool.
 name: divergences/D-MISC-02-reserved-hazmat-entry
 expect_divergence: D-MISC-02
 status: active

@@ -1,5 +1,5 @@
 # D-CRASH-10 (CRASH, owner WP-18): any all-zero OID (40 or 64 hex) is null
-# A branch deletion pushed from a SHA-256 repository: pre-commit 4.6.2 compares the local sha with Z40 only, runs
+# A branch deletion pushed from a SHA-256 repository: pre-commit 4.7.0 compares the local sha with Z40 only, runs
 # the hooks on `<remote>..<64 zeros>` and crashes (exit 3); snp skips the deletion (exit 0, no output).
 # Extensions of the 10 §7.4.3 schema used here: `object_format` on `work` and on a `repos` entry, `bare: true` for an
 # empty remote, and the `${head}` / `${z64}` substitutions (the work repo's HEAD sha, 64 zeros).

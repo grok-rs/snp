@@ -1,6 +1,6 @@
 # snp — Architecture (authoritative)
 
-> **snp** ("You Shell Not Pass") is a Rust drop-in replacement for **pre-commit 4.6.2** with optional,
+> **snp** ("You Shell Not Pass") is a Rust drop-in replacement for **pre-commit 4.7.0** with optional,
 > lefthook-inspired extensions. Repository `github.com/grok-rs/snp`, MIT, author Serhii Kaliuzhnyi.
 >
 > This document is the **contract** the parallel implementers code against. §1.4 lists every cross-crate public
@@ -31,12 +31,12 @@
 
 | ID | Decision |
 |---|---|
-| FD-1 | Binary `snp`. In-place replacement for pre-commit: same `.pre-commit-config.yaml` / `.pre-commit-hooks.yaml`, CLI subcommands/flags, output layout, exit codes, env vars. Branding follows `argv[0]`: through a `pre-commit` name the user-facing text is byte-identical to pre-commit 4.6.2 (product name included); as `snp` the layout is identical but the product name is `snp`. |
+| FD-1 | Binary `snp`. In-place replacement for pre-commit: same `.pre-commit-config.yaml` / `.pre-commit-hooks.yaml`, CLI subcommands/flags, output layout, exit codes, env vars. Branding follows `argv[0]`: through a `pre-commit` name the user-facing text is byte-identical to pre-commit 4.7.0 (product name included); as `snp` the layout is identical but the product name is `snp`. |
 | FD-2 | Own cache store: `SNP_HOME` > `$XDG_CACHE_HOME/snp` > `~/.cache/snp` (Windows `%USERPROFILE%\.cache\snp`, the platform equivalent of pre-commit's own default, 14 P-65). Never read or write pre-commit's store; no SQLite; hash-keyed directories with marker files written last. |
 | FD-3 | User crates as path deps with version requirements: `cfgv = { path = "../cfgv-rs", version = "0.3" }`, `file-identify = { path = "../file-identify", version = "0.5" }` (branch `snp-support`; the real APIs are bound in §1.5). |
 | FD-4 | `rust-toolchain.toml` channel `1.99.0`; `rust-version = "1.98"`; edition 2024; resolver 3. |
 | FD-5 | `unsafe_code = "forbid"` in every snp crate; no panics on any input; `panic = "unwind"` + top-level guard (exit 3 + crash log) so the stash guard always restores; SIGINT/SIGTERM/SIGHUP-safe restore; fail closed. |
-| FD-6 | Behave exactly like pre-commit 4.6.2 except where pre-commit crashes, loses user data or has security bugs; every deliberate divergence is in the DIVERGENCES register (`docs/COMPATIBILITY.md` §5). |
+| FD-6 | Behave exactly like pre-commit 4.7.0 except where pre-commit crashes, loses user data or has security bugs; every deliberate divergence is in the DIVERGENCES register (`docs/COMPATIBILITY.md` §5). |
 | FD-7 | Maximal performance and memory efficiency: `--version` ≤ 3 ms, no-op run of 10 hooks ≤ 25 ms (Linux; per-OS budgets in §12). |
 | FD-8 | v1 scope: all 16 pre-commit commands, all 21 languages, native pygrep/fail/meta, native pre-commit-hooks fast path ON by default (opt-out flag/env/config), lefthook MUST/SHOULD features as optional extension keys, extra snp commands. Multi-project workspace mode: seams in v1, implementation in v1.1 (§1.6). |
 | FD-9 | Repo `github.com/grok-rs/snp`, MIT, author "Serhii Kaliuzhnyi"; workspace at `/home/dromix/projects/snp`. |
@@ -51,7 +51,7 @@ Each invariant has an owner, a mechanism and a test family; weakening one needs 
 | S2 | No panic reachable from input | clippy `unwrap_used/expect_used/panic/indexing_slicing/string_slice/todo/unimplemented/unreachable/arithmetic_side_effects/unchecked_time_subtraction = deny`, `disallowed-macros` (`assert*!`) and `disallowed-methods` (panicking std APIs, thread spawns, §1.3) outside tests; thread creation through `Builder::spawn_scoped` (an OS refusal is a `Failure`, not a panic); duration env vars parsed with `Duration::try_from_secs_f64` and an upper bound; bounded recursion (§11.4); `overflow-checks` only as a backstop (ADR-066) | fuzz targets (256 KiB stacks, 512 MB RSS) |
 | S3 | The user's unstaged work survives any single failure | durable patch re-verified immediately before the stash checkout, journal + pointer file in the git dir, worktree lock, restore on every exit path, restore-critical git commands in their own process group and never signalled (`Role::Critical`), descendants of cancelled hooks killed before the restore (Linux subreaper, Windows job; macOS residual risk documented in D-DATA-02), next-run recovery notice (snp-stash, §4) | fault-injection FI-01…FI-30, kill-9, signal, disk-full matrices (§13.6) |
 | S4 | Fail closed | no error path exits 0 unless every selected hook ran and passed; EPIPE → 120; malformed pre-push → 3; missing binary in hook script → 1 | `fail_closed_*` property tests over injected faults |
-| S5 | Parity by default, divergence by register | every difference from 4.6.2 has an ID in COMPATIBILITY §5 and a differential scenario asserting it still diverges | difftest fails on unlisted diffs *and* on listed diffs that no longer reproduce |
+| S5 | Parity by default, divergence by register | every difference from 4.7.0 has an ID in COMPATIBILITY §5 and a differential scenario asserting it still diverges | difftest fails on unlisted diffs *and* on listed diffs that no longer reproduce |
 | S6 | No process-global mutable state | immutable `Env` snapshot threaded explicitly; never `set_var`/`remove_var`/`set_current_dir` (clippy `disallowed-methods`) | lint; tests run in parallel |
 | S7 | Bounded resources | one global `JobPool` for hook processes and native partitions, sized `min(target_concurrency, available_parallelism)` unless `-j`/`SNP_JOBS`, clamped to the fd budget; separate `Limiter`s for network and installs (compile-heavy installs exclusive); one global output byte budget with spill to unnamed files (§3.4, §3.6) | `pool_never_exceeds_permits`, low-`ulimit -n` test, RSS gate B12 |
 | S8 | Untrusted input never reaches a shell, a path join or the store layout unvalidated | argv-only spawning, env-dir name sanitising, archive validation, containment checks | SEC-01…SEC-14 suite |
@@ -76,7 +76,7 @@ Each invariant has an owner, a mechanism and a test family; weakening one needs 
 | identify tag tables | identify **2.6.20** (`file_identify::IDENTIFY_VERSION`) | 08 §4 |
 
 Constants live in `snp_core::profile`. The differential harness knows which oracle produced each byte stream
-(`pc462-py312` = pre-commit 4.6.2 on CPython 3.12.3, used for runtime behaviour and regex; `pc462-py313` = 4.6.2 on
+(`pc470-py312` = pre-commit 4.7.0 on CPython 3.12.3, used for runtime behaviour and regex; `pc470-py313` = 4.7.0 on
 CPython ≥ 3.13.14, used for argparse texts) and normalises the documented 3.12→3.13 argparse deltas (12 §A.4.1).
 
 ### 0.4 Decision summary (details in DECISIONS.md)
@@ -106,7 +106,7 @@ CPython ≥ 3.13.14, used for argparse texts) and normalises the documented 3.12
 ```
 snp/
 ├─ Cargo.toml              virtual workspace; members = ["crates/*", "xtask"]; resolver = "3";
-│                          [workspace.package] version = "2.0.0" (crates.io `snp` 1.x exists, 11 §A.1), edition = "2024",
+│                          [workspace.package] version = "2.0.1" (crates.io `snp` 1.x exists, 11 §A.1), edition = "2024",
 │                          rust-version = "1.98", license = "MIT", authors = ["Serhii Kaliuzhnyi"],
 │                          repository = "https://github.com/grok-rs/snp"; [workspace.lints]; COMPLETE [workspace.dependencies]
 ├─ Cargo.lock              committed; regenerated mechanically on merge (`cargo update -w`), never hand-merged
@@ -275,7 +275,7 @@ its tests run with a fake resolver before snp-repo lands. Critical path: pycompa
   data or receive `&Printer`/`&dyn WarnSink`/`&dyn DiagSink`. Children write to inherited fds only where pre-commit
   does (legacy hooks, show-diff, hazmat children).
 * **Messages**: every user-visible string lives in a `messages.rs` of the emitting crate, takes `Brand` when it names
-  the tool, and has golden tests for both brands (compat = 4.6.2 bytes; snp = the `brand_map` substitution for
+  the tool, and has golden tests for both brands (compat = 4.7.0 bytes; snp = the `brand_map` substitution for
   non-argparse texts and the SNP_SPEC goldens rendered with prog `snp` for argparse texts, §9.6, ADR-058).
 * **API documentation**: every public item names the Python/pre-commit source it reproduces (`run.py:142-235`).
 * **Contract tests**: every crate has `tests/api.rs` (WP-00) that references every public signature with explicit
@@ -347,13 +347,13 @@ pub mod brand {
         /// ASCII-case-insensitive on Windows) ⇒ PreCommit. Never `current_exe()` (Linux resolves symlinks). No env override.
         pub fn detect(arg0: Option<&std::ffi::OsStr>) -> Self;
         pub const fn prog(self) -> &'static str;            // "pre-commit" | "snp"
-        pub fn version_line(self) -> String;                // "pre-commit 4.6.2" | "snp 2.0.0" (ADR-023)
+        pub fn version_line(self) -> String;                // "pre-commit 4.7.0" | "snp 2.0.1" (ADR-023)
         pub const fn crash_log_name(self) -> &'static str;  // "pre-commit.log" | "snp.log" (ADR-013)
     }
 }
 pub mod profile {
     pub const SNP_VERSION: &str = env!("CARGO_PKG_VERSION");
-    pub const PRE_COMMIT: &str = "4.6.2";                   // minimum_pre_commit_version comparisons, compat --version
+    pub const PRE_COMMIT: &str = "4.7.0";                   // minimum_pre_commit_version comparisons, compat --version
     pub const ARGPARSE_PY: &str = "3.13.14";
     pub const RE_GRAMMAR_PY: &str = "3.12";
     pub const RE_UNICODE: &str = "16.0.0";
@@ -1338,7 +1338,7 @@ pub trait Language: Send + Sync + 'static {
 pub fn backend(id: LanguageId) -> &'static dyn Language;                    // static match over the ZSTs in `langs`
 /// Verbatim assert_version_default / assert_no_additional_deps texts (brand-aware); run BEFORE any FS mutation (04b §5.1).
 pub fn check_support(id: LanguageId, version: &str, deps: &[Arc<str>], brand: snp_core::brand::Brand) -> Result<(), LangError>;
-pub const LOCAL_TEMPLATE: &[(&str, &[u8])];                                    // 4.6.2 empty_template_* bytes (03 §7.7)
+pub const LOCAL_TEMPLATE: &[(&str, &[u8])];                                    // 4.7.0 empty_template_* bytes (03 §7.7)
 pub use snp_core::profile::LOCAL_TEMPLATE_VERSION;                              // single definition (snp-store keys use it)
 pub mod common {   // shared helpers, owned by the framework (WP-16)
     pub fn exe_exists(name: &std::ffi::OsStr, env: &Env, cwd: &Path) -> bool;      // lang_base.exe_exists
@@ -1572,7 +1572,7 @@ impl TestEnv {
     pub fn filters(&self) -> Vec<(String, String)>;                 // insta filters (10 §7.3.4)
     pub fn probe(&self) -> &Path;                                   // bins.probe
 }
-#[derive(Copy, Clone, Debug)] pub enum Oracle { Pc462Py312, Pc462Py313 }
+#[derive(Copy, Clone, Debug)] pub enum Oracle { Pc470Py312, Pc470Py313 }
 /// One variant per repository of pre-commit's `testing/resources` (10 §3, recreated verbatim under
 /// `crates/snp-testkit/resources/<name>/`), plus the conftest scenario helpers of 10 §7.3.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)] pub enum Fixture {
@@ -2185,7 +2185,7 @@ pub fn entry() -> Exit;   // §10.1
 ```rust
 #[derive(Debug, Clone)] pub struct Scenario { /* 10 §7.4.3 schema: requires, repos, tree, config, steps, compare, brands, expect_divergence */ }
 pub fn load_scenarios(dir: &std::path::Path) -> Result<Vec<Scenario>, String>;
-/// `oracle_snp_prog` = the pc462 oracle launched with argparse prog patched to `snp` (ADR-058), used for snp-brand runs.
+/// `oracle_snp_prog` = the pc470 oracle launched with argparse prog patched to `snp` (ADR-058), used for snp-brand runs.
 #[derive(Debug)] pub struct Runner { pub snp_bin: std::path::PathBuf, pub oracle_bin: std::path::PathBuf,
     pub oracle_snp_prog: std::path::PathBuf, pub root: std::path::PathBuf }
 #[derive(Debug)] pub enum Verdict { Same, Diverged { id: Option<String>, diff: String }, StaleDivergence(String) }
@@ -2284,7 +2284,7 @@ compiled once per distinct `(pattern, Options)` and lazily (engines built on fir
 `HookType` (10, source order), `Stage = Hook(HookType) | Manual` (11), `StageSet(u16)`, `LanguageId` (21, sorted).
 Legacy stage aliases are accepted only where pre-commit accepts them (`stages`, `default_stages`, `--hook-stage`),
 never for `default_install_hook_types`/`-t` (01 §1.3). `system`/`script` are translated before the one-of check so
-every message names `unsupported`/`unsupported_script` (01 §1.4). Meta hooks accept only `unsupported` (4.6.2
+every message names `unsupported`/`unsupported_script` (01 §1.4). Meta hooks accept only `unsupported` (4.7.0
 parity). `Stage::ALL` source order drives help texts and argparse `choices`; sorted order drives cfgv `one_of` messages.
 
 ### 2.3 File table (`snp-files`)
@@ -2979,7 +2979,7 @@ hooks; they spawn install/probe commands only through `CmdRunner` (= `normalize_
 | Language (WP) | env dir | Versions (default) | Install & bootstrap | Activation (EnvPatch) | Health / notes |
 |---|---|---|---|---|---|
 | python (24) | `py_env` | Any; default = `python{X.Y}` of the reference interpreter (`python3` then `python` on PATH; Windows `py -3`, `python`), facts cached by exe fingerprint (native interpreters only, §6.1) | Installer per env (04a §11.4 step 1, ADR-073): `SNP_PYTHON_INSTALLER=auto` (default) \| `uv` \| `pip`, recorded in `InstallState.installer` — `pip` is the escape hatch for uv-vs-pip resolver differences (pre-releases, yanked versions, extra-index strategy, 04a §11.3 G7); `uv` forces uv and fails instead of falling back. **uv** (ADR-033): `$SNP_UV` → sibling of snp → PATH uv ≥ 0.8.0 (flags probed once) → pinned download (`UV_PINNED`, sha256 embedded per target). `uv venv <env> --python <abs interp> --seed --no-project --no-config --no-python-downloads`, `uv pip install --python <env py> --no-config [translated pip config] . *deps` (cwd prefix, installer env). Untranslatable pip config or non-allow-listed `-`-prefixed deps ⇒ pip backend (`<interp> -m venv`, `-m pip install . *deps`). Missing explicitly-requested interpreter ⇒ uv-managed download (`SNP_PYTHON_DOWNLOADS=never` disables; D-CRASH-19). Local hook without deps skips the placeholder `pip install .` (invisible) | `PIP_DISABLE_PIP_VERSION_CHECK=1`, `PYTHONHOME`⊘, `VIRTUAL_ENV`, PATH `bin`/`Scripts`; strip `UV_PYTHON*`, `UV_PROJECT*`, `UV_CONSTRAINT`, `UV_OVERRIDE`, `UV_RESOLUTION`, `UV_CONFIG_FILE` (04a §11.5) | fingerprint fast path, else pre-commit's `version_info` probe accepting uv's pyvenv.cfg format; uv cache `cache-v1/uv` unless `UV_CACHE_DIR` |
-| node (24) | `node_env` | Any; `system` iff `exe_exists(node) ∧ exe_exists(npm)` (non-Windows, `$HOME`/shims heuristic kept), else `default` = `index.json[0]` (latest Current), `lts`, `X.Y.Z`; nodeenv `.node-version`/`[nodeenv]` quirk replicated (04a Q9); explicit `system` on Windows allowed (D-CRASH-20) | nodejs.org (or `SNP_NODE_MIRROR`) archive verified against `SHASUMS256.txt` (TLS), musl/riscv64 → unofficial-builds, arm64→x64 retry; shared `tools-v1/node/<ver>` linked into the env; `npm install --allow-git=root --install-links -g <pkgs>` (4.6.2 rule; empty ⇒ AssertionError text) | `NODE_VIRTUAL_ENV`, `NPM_CONFIG_PREFIX`/`npm_config_prefix`, `NPM_CONFIG_USERCONFIG`⊘, `NODE_PATH`, PATH | `node --version` (stamp-cached); Windows `.cmd` shims → batch budget + Rust quoting (D-PLAT-03) |
+| node (24) | `node_env` | Any; `system` iff `exe_exists(node) ∧ exe_exists(npm)` (non-Windows, `$HOME`/shims heuristic kept), else `default` = `index.json[0]` (latest Current), `lts`, `X.Y.Z`; nodeenv `.node-version`/`[nodeenv]` quirk replicated (04a Q9); explicit `system` on Windows allowed (D-CRASH-20) | nodejs.org (or `SNP_NODE_MIRROR`) archive verified against `SHASUMS256.txt` (TLS), musl/riscv64 → unofficial-builds, arm64→x64 retry; shared `tools-v1/node/<ver>` linked into the env; `npm install --allow-git=root --install-links -g <pkgs>` (4.7.0 rule; empty ⇒ AssertionError text) | `NODE_VIRTUAL_ENV`, `NPM_CONFIG_PREFIX`/`npm_config_prefix`, `NPM_CONFIG_USERCONFIG`⊘, `NODE_PATH`, PATH | `node --version` (stamp-cached); Windows `.cmd` shims → batch budget + Rust quoting (D-PLAT-03) |
 | golang (24) | `golangenv` | Any; `system` iff `exe_exists(go)`; `default` = go.dev JSON `[0]` | go.dev archive verified by the JSON sha256 (404 ⇒ pre-commit's ValueError text) → `<env>/.go`; `go install ./...` + each dep with installer env + `GOPATH=<env>`, `GOBIN`⊘, `GOTOOLCHAIN=local`; remove `<env>/pkg` (read-only-safe) | managed: `GOROOT`, `GOTOOLCHAIN=local`, PATH; system: PATH | none; GOPATH not set at run time (parity) |
 | rust (24) | `rustenv` | Any; `system` iff `cargo --version` (cwd `/`) exits 0; `default` = stable | rustup-init **binary** verified by `.sha256`, persistent `tools-v1/rustup` (`--profile minimal`); lib deps `cargo add` in the (per-deps) prefix; `cargo install --bins --root <env>` per package (`cli:` deps in config order) | PATH `<env>/bin`, `RUSTUP_TOOLCHAIN` (managed) | none |
 | ruby (24) | `rbenv` | Any; `system` iff `ruby` ∧ `gem`; else embedded rbenv/ruby-build/ruby-download tarballs (sha256 embedded) | `rbenv download` → `rbenv install` fallback, `rehash`; `gem build` (sorted `*.gemspec`) + `gem install --no-document --no-format-executable --no-user-install --install-dir … --bindir …` | `GEM_HOME`, `GEM_PATH`⊘, `BUNDLE_IGNORE_CONFIG=1`, `RBENV_ROOT`/`RBENV_VERSION`, PATH | Windows: system only (parity) |
@@ -3190,7 +3190,7 @@ with argv-safe `sh -c '…' --` wrappers passing data as `"$@"`, gobwas glob →
 `snp_pyre::validate`, `file_types` → identify tags, `--local` overlay conversion, git-lfs detection and re-chaining as a
 legacy hook, report, `--strict` exit 2 on lossy features, `--portable` emits only pre-commit keys). lefthook YAML is
 read with `snp-yaml` `Schema::Yaml12Core`, TOML with `toml`, JSON/JSONC with `serde_json` + comment stripping. Output is
-validated by `snp-config` and, in CI (WP-35), executed by the 4.6.2 oracle (portable: zero errors; snp mode: only
+validated by `snp-config` and, in CI (WP-35), executed by the 4.7.0 oracle (portable: zero errors; snp mode: only
 `Unexpected key(s)` warnings).
 
 ---
@@ -3219,7 +3219,7 @@ is `--git-config-hooks`, ADR-057). A planted-option fixture keeps both rejected 
 
 ### 9.3 Commands and flags
 
-| Command | Flags (pre-commit 4.6.2, 12 §A.8.1) | snp-brand extensions |
+| Command | Flags (pre-commit 4.7.0, 12 §A.8.1) | snp-brand extensions |
 |---|---|---|
 | `run [hook]` | `--color`, `-c/--config`, `-v/--verbose`, `-a/--all-files` ⟂ `--files [F…]`, `--show-diff-on-failure`, `--fail-fast`, `--hook-stage`, `--remote-branch`, `--local-branch`, `-s/--source/--from-ref`, `-o/--origin/--to-ref`, `--pre-rebase-upstream`, `--pre-rebase-branch`, `--commit-msg-filename`, `--prepare-commit-message-source`, `--commit-object-name`, `--remote-name`, `--remote-url`, `--checkout-type`, `--is-squash-merge`, `--rewrite-command` | several positional hook ids (literal ids/aliases, `:` allowed, §1.6), `-j/--jobs N`, `--group G`*, `--require-group G`*, `--no-group G`*, `--no-fast-path`, `--stdin-files[=nul\|lines]` (⟂ `-a`/`--files`), `--summary`, `--no-local-config` |
 | `install` | `--color -c -f/--overwrite --install-hooks -t/--hook-type* --allow-missing-config` | `--git-config-hooks` (git ≥ 2.54; ADR-057) |
@@ -3246,17 +3246,17 @@ is `--git-config-hooks`, ADR-057). A planted-option fixture keeps both rejected 
 
 ### 9.4 Help, usage, errors, `--version`
 
-Help/usage/error text is golden-tested against the canonical oracle `pc462-py313` at `COLUMNS=80` and the width set of
+Help/usage/error text is golden-tested against the canonical oracle `pc470-py313` at `COLUMNS=80` and the width set of
 12 §A.16. Usage errors: stderr, exit 2, the owning parser's usage block, except unrecognized arguments → top-level
 usage + `{prog}: error: unrecognized arguments: …` (ADR-008). `PRE_COMMIT_COLOR` is converted at end of parse only
-when `--color` was absent (ADR-007). `--version`/`-V`: compat brand prints exactly `pre-commit 4.6.2`; snp brand prints
-`snp 2.0.0` (identical layout, own product name; an explicit row of the brand mapping, since substituting the product
-name alone would give `snp 4.6.2`). "Which tool is this?" is answered by `snp doctor`, `snp self check`,
+when `--color` was absent (ADR-007). `--version`/`-V`: compat brand prints exactly `pre-commit 4.7.0`; snp brand prints
+`snp 2.0.1` (identical layout, own product name; an explicit row of the brand mapping, since substituting the product
+name alone would give `snp 4.7.0`). "Which tool is this?" is answered by `snp doctor`, `snp self check`,
 `snp self alias status` and the crash log. Width = `COLUMNS` (Python `int`) → stdout terminal width → 80, minus 2.
 
 ### 9.5 Branded strings
 
-Compat brand: every byte as pre-commit 4.6.2 — including `pip install --upgrade pre-commit` in the min-version text and
+Compat brand: every byte as pre-commit 4.7.0 — including `pip install --upgrade pre-commit` in the min-version text and
 pre-commit's own bug-report URL in the migration-mode text — except what the separate store forces (store paths, the
 crash-log body) and the registered divergences. snp brand: the `brand_map` substitutions (§9.6).
 
@@ -3266,7 +3266,7 @@ crash-log body) and the registered divergences. snp brand: the `brand_map` subst
 relative to `usage: {prog} {cmd} `; with `snp` the first line is 7 characters shorter, so wrap points and continuation
 indentation change (e.g. `init-templatedir`'s continuation indent moves from 35 to 28 columns). The snp brand's
 argparse texts are therefore **rendered** by snp-argparse from `SNP_SPEC` with prog `snp`, and golden-tested against
-two independent CPython 3.13.14 references produced by `xtask cli-goldens`: (a) the pc462-py313 oracle with argparse
+two independent CPython 3.13.14 references produced by `xtask cli-goldens`: (a) the pc470-py313 oracle with argparse
 `prog` patched to `snp` (a launcher that rewrites `prog='pre-commit'` before `main()` builds its parser) for every
 parser whose snp-brand spec equals the compat spec, and (b) a real `argparse.ArgumentParser` built from
 `snp_argparse::export_json(SNP_SPEC, "snp")` for every parser that carries snp-only options or commands (D-EXT-07).
@@ -3274,13 +3274,13 @@ The difftest's snp-brand runs use the prog-patched oracle (`Runner::oracle_snp_p
 transcripts (usage errors) compare exactly; snp-only parsers compare against the committed goldens.
 
 **`brand_map`** (`tests/differential/brand_map.yaml`) applies to every **non-argparse** text: substitute `pre-commit` →
-`snp` only where the string names the tool or a command to type (11 §A.8.2 B2): `--version` (`pre-commit 4.6.2` →
-`snp 2.0.0`, a whole-line rule); `{prog} installed at`; `Use -f to use only {prog}.`; ``Skipping `{prog}`.``; missing-config block lines
+`snp` only where the string names the tool or a command to type (11 §A.8.2 B2): `--version` (`pre-commit 4.7.0` →
+`snp 2.0.1`, a whole-line rule); `{prog} installed at`; `Use -f to use only {prog}.`; ``Skipping `{prog}`.``; missing-config block lines
 3–4; show-diff banner lines 2–3; hints `` `{prog} autoupdate` ``, `` `{prog} migrate-config` ``, ``{prog} autoupdate
 --repo``; `{prog} normalizes …`, `{prog} failed to diff`, `for now, {prog} requires/does not support …`, `{prog}
 requires system-installed "cs" …`, `{prog} has detected a mix of cygwin…`, `Locking {prog} directory`,
 `Try upgrading identify and pre-commit?` → `Try upgrading snp?`, the min-version sentence →
-`pre-commit version {required} is required but snp {SNP_VERSION} is compatible with pre-commit 4.6.2.  Perhaps upgrade
+`pre-commit version {required} is required but snp {SNP_VERSION} is compatible with pre-commit 4.7.0.  Perhaps upgrade
 snp.`, the migration-mode text → `bug: snp's script is installed in migration mode` / `` run `snp install -f
 --hook-type {T}` to fix this `` / `Please report this bug at https://github.com/grok-rs/snp/issues`, crash-log name.
 **Never** substituted: file names (`.pre-commit-config.yaml`, `.pre-commit-hooks.yaml`), env var names,
@@ -3429,10 +3429,10 @@ restore (§4.3). `dispatch` sequences `install` + `install --install-hooks` and 
   ### version information
 
   ```
-  pre-commit version: 4.6.2            (snp brand: "snp version: 2.0.0")
+  pre-commit version: 4.7.0            (snp brand: "snp version: 2.0.1")
   git --version: git version 2.43.0
   sys.version:
-      snp 2.0.0 (rustc 1.99.0) [x86_64-unknown-linux-gnu]
+      snp 2.0.1 (rustc 1.99.0) [x86_64-unknown-linux-gnu]
   sys.executable: /home/u/.cargo/bin/snp
   os.name: posix
   sys.platform: linux
@@ -3566,7 +3566,7 @@ artifact attestations, checksums for every release asset, dependency budget ≤ 
 
 ### 12.1 Budgets (release `dist` profile, warm caches; baselines from 10 §0.2; ADR-043)
 
-| ID | Scenario | pre-commit 4.6.2 | Linux x86_64 (gate) | macOS arm64 | Windows x64 |
+| ID | Scenario | pre-commit 4.7.0 | Linux x86_64 (gate) | macOS arm64 | Windows x64 |
 |---|---|---|---|---|---|
 | B1 | `--version` | 172 ms | **≤ 3 ms (hard)** | ≤ 5 ms | ≤ 15 ms |
 | B2 | `run`, 1 local `true` hook (`always_run`, no filenames) | 234 ms | ≤ 10 ms (hard) | ≤ 15 ms | ≤ 0.4× pre-commit |
@@ -3611,7 +3611,7 @@ the critical path (≈ 1 ms each measured); B2 (one hook, no Stat mode below thr
 
 ### 12.3 Measurement and gates
 
-`cargo xtask bench setup|run|gate` (WP-36): hyperfine `-N -w 5 -r 50` against the oracle (`pc462-py312`) and pinned
+`cargo xtask bench setup|run|gate` (WP-36): hyperfine `-N -w 5 -r 50` against the oracle (`pc470-py312`) and pinned
 prek, JSON history, PR comment; gate fails on a > 5 % median regression with non-overlapping 95 % CIs or any hard-budget
 breach. RSS via `/usr/bin/time -v` (median of 10). Spawn budgets: integration tests run against a `--features testing`
 build of `snp` with `SNP_TEST_SPAWN_LOG` (`snp_proc::spawn_log`, feature `testing`) and assert upper bounds per
@@ -3635,7 +3635,7 @@ tagging tiers, YAML load of the pre-commit-hooks manifest, argparse parse of a h
 | L0 static | fmt, clippy (deny set), cargo-deny, `xtask check-dag`, `xtask check-unsafe`, `xtask lint-guards`, typos, machete | every push |
 | L1 unit | per crate; committed CPython vectors (pycompat, repr, shlex, paths, MT19937, EAW, duration, argparse, YAML resolver, regex accept/match) — no Python at test time | every push |
 | L2 integration | `crates/snp/tests/it/*.rs` (one test binary), `snp-testkit::TestEnv` hermetic env, insta snapshots with filters; every catalog row of 10 §5, 13 X.4 and 11 §A.20 is a test named with its namespaced ID (§13.8) | every push |
-| L3 differential | `snp-difftest` vs pre-commit 4.6.2 (`pc462-py312` runtime oracle, `pc462-py313` CLI-text oracle, both built hash-locked by `xtask oracle install`) in **both brands** | curated on push, generated nightly |
+| L3 differential | `snp-difftest` vs pre-commit 4.7.0 (`pc470-py312` runtime oracle, `pc470-py313` CLI-text oracle, both built hash-locked by `xtask oracle install`) in **both brands** | curated on push, generated nightly |
 | L4 property/fuzz | proptest (256 cases push / 10 000 nightly), cargo-fuzz targets with 256 KiB stacks and 512 MB RSS | push (short) / nightly |
 | L5 toolchain/network | `tc_<lang>_*`, `net_*` (nextest default-filter excludes) | nightly / label |
 | L6 platform | Linux x64/arm64 (gnu + musl smoke), macOS arm64 + x64, Windows x64/arm64 × git 2.18.5 (warn; stash refused, D-DATA-17; `--all-files` fallback, D-CRASH-26 — both `expect_divergence` scenarios), 2.30 (warn; fallback), 2.31, 2.34, 2.39, 2.43, 2.54 (config hooks), latest, Git for Windows latest | PR |

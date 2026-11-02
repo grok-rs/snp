@@ -911,11 +911,11 @@ zope==1\n# trailing\n"
     }
 
     /// Every code point (alone and as `A<c>Σ` and `Σ<c>`, exercising the final-sigma context) against
-    /// `str.lower()` of the pc462 oracles, when they are present (skipped on machines without them).
+    /// `str.lower()` of the pc470 oracles, when they are present (skipped on machines without them).
     #[test]
     fn lower_table_matches_the_oracle() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/oracle");
-        for py in ["pc462-py312/bin/python", "pc462-py313/bin/python"] {
+        for py in ["pc470-py312/bin/python", "pc470-py313/bin/python"] {
             let exe = root.join(py);
             if !exe.exists() {
                 continue;

@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 /// the store location only (never for cwd, config or file arguments: 14 P-61/P-64). An error from `readlink` after
 /// `lstat` reported a link propagates (Python does the same). Delegates to `snp_pycompat::ospath::realpath`.
 ///
-/// Runtime profile: CPython 3.12 (COMPATIBILITY.md, the `pc462-py312` oracle). CPython 3.13 rewrote the POSIX
+/// Runtime profile: CPython 3.12 (COMPATIBILITY.md, the `pc470-py312` oracle). CPython 3.13 rewrote the POSIX
 /// `realpath` loop: after a symlink loop it keeps resolving the remaining components where 3.12 appends them
 /// unresolved (`loop//a` → `/a` on 3.12, `$ROOT/loop/a` on 3.13; `self/../dangling` → `$ROOT/dangling` vs
 /// `$ROOT/nonexistent`). Only paths through a symlink loop differ; snp keeps the 3.12 results (pinned by the

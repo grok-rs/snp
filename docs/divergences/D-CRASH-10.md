@@ -9,7 +9,7 @@ any all-zero OID (40 or 64 hex) is null
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | pre-push with a 64-hex all-zero OID (SHA-256 repo) → crash on branch deletion | any all-zero OID (40 or 64 hex) is null |
 
@@ -35,7 +35,7 @@ SHA-256 repository with remote branch `gone` at `1200b96c…df49`; `git push ori
 `(delete) 0000…0000 (64) refs/heads/gone 1200b96c26decb6aeb6921e88cae7cee8e01c47af133f254e9f8bfc66172df49`, and the hook
 runs `pre-commit hook-impl --hook-type=pre-push --hook-dir .git/hooks -- origin ../remote.git`.
 
-pre-commit 4.6.2 (oracle `pc462-py312`, git 2.43.0), exit **3**, stdout:
+pre-commit 4.7.0 (oracle `pc470-py312`, git 2.43.0), exit **3**, stdout:
 
 ```
 An unexpected error has occurred: CalledProcessError: command: ('/usr/bin/git', 'diff', '--name-only', '--no-ext-diff', '-z', '1200b96c26decb6aeb6921e88cae7cee8e01c47af133f254e9f8bfc66172df49..0000000000000000000000000000000000000000000000000000000000000000')

@@ -78,7 +78,7 @@ fn print_stdout_only(text: &str, brand: Brand, cancel: &CancelToken) -> Exit {
 
 /// `SNP_VERSION_PROBE=1 <file> --version` (exactly that argv): the brand-independent identification line that
 /// `doctor` and `self alias` match against `^pre-commit [0-9.]+ \(snp ([^)]+)\)$` (11 §A.19.4). A plain `--version`
-/// keeps the brand's exact text (`pre-commit 4.6.2` under the compat brand, ADR-023), which cannot tell an snp alias
+/// keeps the brand's exact text (`pre-commit 4.7.0` under the compat brand, ADR-023), which cannot tell an snp alias
 /// from Python pre-commit; Python pre-commit ignores the variable.
 fn is_version_probe(argv: &[OsString], env: &Env) -> bool {
     argv.len() == 2
@@ -86,7 +86,7 @@ fn is_version_probe(argv: &[OsString], env: &Env) -> bool {
         && env.get("SNP_VERSION_PROBE").is_some_and(|v| v == "1")
 }
 
-/// `pre-commit 4.6.2 (snp 2.0.0)`.
+/// `pre-commit 4.7.0 (snp 2.0.1)`.
 fn version_probe_line() -> String {
     format!(
         "pre-commit {} (snp {})\n",

@@ -8,7 +8,7 @@
 //! * [`archive`]: two-pass extraction into `<dest>.part-<rand>` that refuses escaping names, links and special files.
 //! * [`tools`]: where each toolchain comes from and how it is verified.
 //!
-//! pre-commit 4.6.2 verifies none of its toolchain downloads (D-SEC-08, `docs/divergences/D-SEC-08.md`).
+//! pre-commit 4.7.0 verifies none of its toolchain downloads (D-SEC-08, `docs/divergences/D-SEC-08.md`).
 //!
 //! Owner: WP-16.
 

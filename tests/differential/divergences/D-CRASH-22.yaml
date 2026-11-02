@@ -1,5 +1,5 @@
 # D-CRASH-22 (CRASH, owner WP-26): `hazmat` with no tool is an argparse usage error, exit 2.
-# pre-commit 4.6.2 parses `hazmat` to Namespace(tool=None) and crashes in `impl` (AttributeError, exit 3, crash log);
+# pre-commit 4.7.0 parses `hazmat` to Namespace(tool=None) and crashes in `impl` (AttributeError, exit 3, crash log);
 # snp reports the missing tool with the command's usage (docs/divergences/D-CRASH-22.md).
 name: divergences/D-CRASH-22
 since: "4.5.0"

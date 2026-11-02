@@ -9,7 +9,7 @@ the one-of / type-tag validation errors, exit 1
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | unhashable `stages`/`language`/`types` values → `TypeError` exit 3 (X13-CFG-04, X13-CFG-13 in manifests) | the one-of / type-tag validation errors, exit 1 |
 
@@ -37,7 +37,7 @@ repos:
         stages: [[a]]
 ```
 
-pre-commit 4.6.2, `validate-config`, exit **3**: `An unexpected error has occurred: TypeError: unhashable type: 'list'`.
+pre-commit 4.7.0, `validate-config`, exit **3**: `An unexpected error has occurred: TypeError: unhashable type: 'list'`.
 
 snp, exit **1**:
 

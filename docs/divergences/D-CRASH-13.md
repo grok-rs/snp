@@ -10,7 +10,7 @@ decoded lossily
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | non-UTF-8 output of tool probes (`node --version`, …) → exit 3 | decoded lossily |
 
@@ -41,9 +41,9 @@ actually run and pass (COMPATIBILITY K5).
 ## Examples
 
 A local `language: lua` hook whose `luarocks` prints `5.4\xff` for `luarocks config --lua-ver`
-(`tests/differential/divergences/D-CRASH-13.yaml`; recorded with `target/oracle/pc462-py312`):
+(`tests/differential/divergences/D-CRASH-13.yaml`; recorded with `target/oracle/pc470-py312`):
 
-pre-commit 4.6.2, exit 3:
+pre-commit 4.7.0, exit 3:
 
 ```
 [INFO] Initializing environment for local.

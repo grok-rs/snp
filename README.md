@@ -6,13 +6,13 @@
 
 > *"You shall not pass!"* — every git hook, guarding your commits.
 
-**snp** is a Rust drop-in replacement for [pre-commit](https://pre-commit.com) 4.6.2: the same
+**snp** is a Rust drop-in replacement for [pre-commit](https://pre-commit.com) 4.7.0: the same
 `.pre-commit-config.yaml` and `.pre-commit-hooks.yaml`, the same commands, flags, output and exit codes, with optional
 [lefthook](https://github.com/evilmartians/lefthook)-inspired extensions (priorities and parallel buckets, groups,
 per-hook `env`, `stage_fixed`, conditions, timeouts, a local overlay config) and native fast paths for the most popular
 hooks.
 
-* **Compatible to the byte.** Invoked as `pre-commit`, snp prints exactly what pre-commit 4.6.2 prints for any config
+* **Compatible to the byte.** Invoked as `pre-commit`, snp prints exactly what pre-commit 4.7.0 prints for any config
   that uses no snp extension. Every deliberate difference is registered, justified (pre-commit crashes, loses data or
   has a security bug there, or an owner decision forces it) and guarded by a differential test:
   [DIVERGENCES](docs/user/divergences.md).
@@ -27,7 +27,7 @@ hooks.
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/grok-rs/snp/releases/latest/download/snp-installer.sh | sh
 # or: brew install grok-rs/tap/snp  |  cargo install --locked snp  |  pipx install snp-cli  |  uv tool install snp-cli
-snp --version   # snp 2.0.0
+snp --version   # snp 2.0.1
 ```
 
 Windows (PowerShell):
@@ -52,7 +52,7 @@ snp reads your `.pre-commit-config.yaml` as it is. A repository that uses snp on
 (snp looks for `.snp.yaml`, `.snp.yml`, then `.pre-commit-config.yaml`): [Config file name](docs/user/configuration.md#config-file-name).
 
 To keep scripts that call `pre-commit` working, create the opt-in alias: `snp self alias install`. Under that name snp
-behaves as pre-commit 4.6.2 to the byte.
+behaves as pre-commit 4.7.0 to the byte.
 
 In GitHub Actions, replace `pre-commit/action` with `grok-rs/snp-action` (same `extra_args`) and change your cache
 keys: [CI integration](docs/user/ci.md).
@@ -116,8 +116,8 @@ cargo build --workspace --bins --features snp/testing
 cargo nextest run --workspace --features snp/testing
 ```
 
-The differential tests need the pre-commit 4.6.2 oracles: `cargo xtask oracle install` (requires `uv`) creates
-`target/oracle/pc462-py312` and `target/oracle/pc462-py313`.
+The differential tests need the pre-commit 4.7.0 oracles: `cargo xtask oracle install` (requires `uv`) creates
+`target/oracle/pc470-py312` and `target/oracle/pc470-py313`.
 
 ## Releasing
 

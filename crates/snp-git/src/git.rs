@@ -1019,7 +1019,7 @@ mod tests {
         })
     }
 
-    /// The parse of every V-PP stdin (generated with the pre-commit 4.6.2 oracle by `tests/vectors/gen_v_pp.py`)
+    /// The parse of every V-PP stdin (generated with the pre-commit 4.7.0 oracle by `tests/vectors/gen_v_pp.py`)
     /// equals the vectors: pre-commit's own records for valid UTF-8, the bytes algorithm (D-CRASH-11) otherwise.
     #[test]
     fn pre_push_records_match_v_pp_vectors() {

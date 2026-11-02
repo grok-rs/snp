@@ -6,7 +6,7 @@ fn meta(hooks: &str) -> String {
     format!("-   repo: meta\n    hooks:\n{hooks}")
 }
 
-/// The fixture of the pc462-py312 transcript below (bare warnings before the hook's own lines).
+/// The fixture of the pc470-py312 transcript below (bare warnings before the hook's own lines).
 #[test]
 fn x13_sm_04_bare_warnings_inside_meta_output() {
     let h = H::new();

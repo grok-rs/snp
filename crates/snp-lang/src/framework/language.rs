@@ -64,7 +64,7 @@ pub fn backend(id: LanguageId) -> &'static dyn Language {
     crate::langs::registry(id)
 }
 
-/// What `install_environment` of `id` asserts in pre-commit 4.6.2 (04b §3, §4.5):
+/// What `install_environment` of `id` asserts in pre-commit 4.7.0 (04b §3, §4.5):
 ///
 /// * `assert_version_default`: conda, coursier, dart, docker, dotnet, haskell, lua, perl, r, swift;
 /// * `assert_no_additional_deps`: docker, dotnet, swift;
@@ -126,7 +126,7 @@ pub fn check_support(
     Ok(())
 }
 
-/// 4.6.2 `empty_template_*` bytes (03 §7.7), in `store._LOCAL_RESOURCES` order: `(path relative to the local repo,
+/// 4.7.0 `empty_template_*` bytes (03 §7.7), in `store._LOCAL_RESOURCES` order: `(path relative to the local repo,
 /// bytes)`, `/`-separated (`renv/activate.R`).
 ///
 /// pre-commit writes them with `open(target, 'w')` from `resource_text(...)` (`store.py:48-56`), i.e. in text mode:

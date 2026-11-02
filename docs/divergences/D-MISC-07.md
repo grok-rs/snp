@@ -10,7 +10,7 @@ An in-hook hazmat failure prints only the final line of Python's traceback.
 
 ## Register entry (COMPATIBILITY §5.9)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | in-hook hazmat exec failure: full Python traceback | only the final traceback line (`pre_commit.parse_shebang.ExecutableNotFoundError: Executable `x` not found`) |
 
@@ -36,7 +36,7 @@ message block (Tier B, 03 Addendum §H.8.6).
 
 A local hook `entry: pre-commit hazmat n1 nope-not-here --`, `language: system`, on one file:
 
-pre-commit 4.6.2 (`- exit code: 1`):
+pre-commit 4.7.0 (`- exit code: 1`):
 
 ```
 Traceback (most recent call last):

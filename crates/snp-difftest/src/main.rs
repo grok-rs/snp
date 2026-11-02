@@ -248,11 +248,11 @@ fn runner(a: &Args) -> Result<(Runner, Options), String> {
     let oracle = a
         .oracle
         .clone()
-        .unwrap_or_else(|| ws.join("target/oracle/pc462-py312"));
+        .unwrap_or_else(|| ws.join("target/oracle/pc470-py312"));
     let cli_oracle = a
         .cli_oracle
         .clone()
-        .unwrap_or_else(|| ws.join("target/oracle/pc462-py313"));
+        .unwrap_or_else(|| ws.join("target/oracle/pc470-py313"));
     let cli_oracle = if cli_oracle.exists() {
         cli_oracle
     } else {

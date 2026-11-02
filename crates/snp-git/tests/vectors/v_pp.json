@@ -1,5 +1,5 @@
 {
- "source": "pre-commit 4.6.2 hook_impl._pre_push_ns (oracle pc462-py312)",
+ "source": "pre-commit 4.7.0 hook_impl._pre_push_ns (oracle pc470-py312)",
  "python": "3.12.3",
  "vectors": [
   {

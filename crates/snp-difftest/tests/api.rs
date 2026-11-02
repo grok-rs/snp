@@ -31,8 +31,8 @@ mod api {
         has::<fn(&Path) -> Result<Vec<Scenario>, String>>(snp_difftest::load_scenarios);
         has::<Runner>(Runner {
             snp_bin: PathBuf::from("target/debug/snp"),
-            oracle_bin: PathBuf::from("target/oracle/pc462-py312/bin/pre-commit"),
-            oracle_snp_prog: PathBuf::from("target/oracle/pc462-py312/bin/pre-commit-snp-prog"),
+            oracle_bin: PathBuf::from("target/oracle/pc470-py312/bin/pre-commit"),
+            oracle_snp_prog: PathBuf::from("target/oracle/pc470-py312/bin/pre-commit-snp-prog"),
             root: PathBuf::from("/tmp/snp-difftest"),
         });
         has::<[Verdict; 3]>([

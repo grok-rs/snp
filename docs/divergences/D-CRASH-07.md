@@ -9,7 +9,7 @@ validation-style errors, exit 1
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `migrate-config`/`autoupdate` with a missing config, a non-UTF-8 config, or an invalid re-indented fallback → exit 3 (X13-CFG-10…12) | validation-style errors, exit 1 |
 
@@ -37,7 +37,7 @@ of these cases (pre-commit does not write either).
     hooks: []
 ```
 
-pre-commit 4.6.2, `pre-commit migrate-config`, exit **3**:
+pre-commit 4.7.0, `pre-commit migrate-config`, exit **3**:
 
 ```
 An unexpected error has occurred: ScannerError: while scanning for the next token

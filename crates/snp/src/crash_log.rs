@@ -16,7 +16,7 @@ const RUSTC: &str = "1.99.0";
 /// What the version block names.
 #[derive(Debug)]
 pub(crate) struct LogInfo<'a> {
-    /// The brand (`pre-commit version: 4.6.2` | `snp version: 2.0.0`).
+    /// The brand (`pre-commit version: 4.7.0` | `snp version: 2.0.1`).
     pub(crate) brand: Brand,
     /// `git --version`'s line, when git was resolved during the command.
     pub(crate) git_version: Option<&'a str>,
@@ -128,7 +128,7 @@ mod tests {
             Some(&exc),
         ))
         .unwrap();
-        assert!(b.starts_with("### version information\n\n```\npre-commit version: 4.6.2\ngit --version: git version 2.43.0\nsys.version:\n    snp "));
+        assert!(b.starts_with("### version information\n\n```\npre-commit version: 4.7.0\ngit --version: git version 2.43.0\nsys.version:\n    snp "));
         assert!(b.contains("\nsys.executable: /usr/bin/snp\n"));
         assert!(b.contains("```\n\n### error information\n\n```\nAn unexpected error has occurred: CalledProcessError: x\n```\n\n```\n"));
         assert!(b.ends_with("```\n"));
@@ -144,7 +144,7 @@ mod tests {
             Some(&p),
         ))
         .unwrap();
-        assert!(b.contains("snp version: 2.0.0\n"));
+        assert!(b.contains("snp version: 2.0.1\n"));
         assert!(b.contains("panicked at src/a.rs:1:2\nstack backtrace:\n0: frame\n"));
         assert!(b.contains("https://github.com/grok-rs/snp/issues"));
     }

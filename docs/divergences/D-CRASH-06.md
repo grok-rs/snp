@@ -10,7 +10,7 @@ per-repo [{repo}] <error> lines, the others are updated and written, exit 1
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `autoupdate`: one unreachable repo → `CalledProcessError` exit 3, nothing written (X13-GIT-02) | per-repo `[{repo}] <error>` lines, the others are updated and written, exit 1 |
 
@@ -40,7 +40,7 @@ crashed.
 One reachable repository with a newer tag, one deleted remote (paths shortened):
 
 ```text
-$ pre-commit autoupdate        # pre-commit 4.6.2
+$ pre-commit autoupdate        # pre-commit 4.7.0
 [/w/hooks] updating v1 -> v2
 An unexpected error has occurred: CalledProcessError: command: ('/usr/bin/git', '-c', 'core.useBuiltinFSMonitor=false', '-C', '/tmp/tmp_vls6xdv', 'fetch', 'origin', 'HEAD', '--quiet', '--filter=blob:none', '--tags')
 return code: 128

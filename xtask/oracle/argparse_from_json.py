@@ -1,6 +1,6 @@
 """Oracle driver of `cargo xtask cli-goldens` (WP-12, ADR-058, 12 §A.16).
 
-Run with an oracle interpreter (`target/oracle/pc462-py313/bin/python -I`). Two modes:
+Run with an oracle interpreter (`target/oracle/pc470-py313/bin/python -I`). Two modes:
 
     argparse_from_json.py json SPEC.json -- ARGV...
         Build a real CPython argparse parser from `snp_argparse::export_json(spec, prog)` and handle ARGV the way

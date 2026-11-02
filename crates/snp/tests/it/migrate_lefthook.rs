@@ -330,7 +330,7 @@ fn install_replaces_lefthook_hooks() {
     assert!(!hooks.join("pre-push.legacy").exists());
 }
 
-/// The snp-mode conversion of the `runnable` fixture runs with exit 0 under snp itself (the pre-commit 4.6.2 side is
+/// The snp-mode conversion of the `runnable` fixture runs with exit 0 under snp itself (the pre-commit 4.7.0 side is
 /// `crates/snp-migrate/tests/oracle.rs`).
 #[cfg(unix)]
 #[test]

@@ -9,7 +9,7 @@ rewrites deduplicated by YAML node
 
 ## Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | migrate-config doubles the rewrite of an aliased `stages` list (`[pre-commitpre-commit]`) | rewrites deduplicated by YAML node |
 
@@ -46,7 +46,7 @@ repos:
         stages: *s
 ```
 
-pre-commit 4.6.2 `migrate-config` writes `default_stages: &s [pre-commitpre-commit]` (exit 0; every later command
+pre-commit 4.7.0 `migrate-config` writes `default_stages: &s [pre-commitpre-commit]` (exit 0; every later command
 fails validation). snp writes `default_stages: &s [pre-commit]` and leaves `stages: *s` as is.
 
 ```yaml
@@ -57,5 +57,5 @@ repos:
 x: *k
 ```
 
-pre-commit 4.6.2 writes `    rev: v1` and leaves `x: *k` (exit 0; the next load fails with `=====> found undefined
+pre-commit 4.7.0 writes `    rev: v1` and leaves `x: *k` (exit 0; the next load fails with `=====> found undefined
 alias`). snp writes `    &k rev: v1`, and the file still loads.

@@ -6,7 +6,7 @@ and writes, deterministically,
 * crates/snp-pyre/tests/vectors/*.json - acceptance (ok / error class, message, position, str(e), warnings) and
   match results (re.search / re.match / re.fullmatch; spans for bytes patterns) for
   - edge.json: a hand-written edge list covering every rule and message of §A.6.2 and the rows of §A.2-§A.5;
-  - corpus.json: the files/exclude/pygrep-entry patterns of pre-commit 4.6.2, pre-commit-hooks 6.0.0 and
+  - corpus.json: the files/exclude/pygrep-entry patterns of pre-commit 4.7.0, pre-commit-hooks 6.0.0 and
     pygrep-hooks (plus the other reference repositories' YAML), over real repository paths;
   - fuzz_str.json / fuzz_bytes.json: grammar-fuzzed patterns (valid and mutated);
   - nesting.json: nesting rows evaluated at pre-commit's stack depth (484 groups accepted, 485 rejected);

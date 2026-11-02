@@ -3,7 +3,7 @@
 //! Writes `crates/snp-cli/tests/goldens/{compat,snp}.json`: for every case (argv + env) the exit code and the
 //! stdout/stderr bytes, or for a successful parse the namespace (`vars(args)` as JSON). Sources:
 //!
-//! * **compat brand**: pre-commit 4.6.2 on `target/oracle/pc462-py313` (CPython ≥ 3.13.14). Help and error cases
+//! * **compat brand**: pre-commit 4.7.0 on `target/oracle/pc470-py313` (CPython ≥ 3.13.14). Help and error cases
 //!   come from the real `bin/pre-commit`; successful parses from `xtask/oracle/argparse_from_json.py pre-commit`,
 //!   which dumps pre-commit's own namespace before any command runs. Every case is also run through a real CPython
 //!   argparse built from `snp_argparse::export_json(PRE_COMMIT_SPEC, "pre-commit")` and must agree: this proves the
@@ -1110,7 +1110,7 @@ fn generate(oracle: &Oracle) -> anyhow::Result<(Value, Value)> {
     })?;
     let compat_doc = golden_doc(
         "compat",
-        "pre-commit 4.6.2 (target/oracle/pc462-py313)",
+        "pre-commit 4.7.0 (target/oracle/pc470-py313)",
         &cases,
         &compat,
     );
@@ -1360,7 +1360,7 @@ fn generate_zoo(oracle: &Oracle) -> anyhow::Result<Value> {
         .collect();
     Ok(json!({
         "generator": "cargo xtask cli-goldens",
-        "source": "CPython 3.13 argparse (target/oracle/pc462-py313) built from export_json of crates/snp-argparse/tests/zoo/spec.rs",
+        "source": "CPython 3.13 argparse (target/oracle/pc470-py313) built from export_json of crates/snp-argparse/tests/zoo/spec.rs",
         "cases": docs,
     }))
 }
@@ -1469,7 +1469,7 @@ fn generate_textwrap(oracle: &Oracle) -> anyhow::Result<Value> {
     workspace::say(&format!("cli-goldens: {} textwrap vectors", docs.len()));
     Ok(json!({
         "generator": "cargo xtask cli-goldens",
-        "source": "CPython 3.13 textwrap.wrap (target/oracle/pc462-py313)",
+        "source": "CPython 3.13 textwrap.wrap (target/oracle/pc470-py313)",
         "cases": docs,
     }))
 }
@@ -1482,7 +1482,7 @@ pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
         _ => bail!("usage: cargo xtask cli-goldens [--check]"),
     };
     let root = workspace::root()?;
-    let bin = root.join("target/oracle/pc462-py313/bin");
+    let bin = root.join("target/oracle/pc470-py313/bin");
     ensure!(
         bin.join("python").exists(),
         "missing oracle {} (run `cargo xtask oracle install`)",

@@ -10,7 +10,7 @@ descendants of the cancelled hooks are killed (Linux subreaper, Windows job), th
 
 ## Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | SIGTERM/SIGHUP kill pre-commit without restoring the stash (unstaged work only in the patch) | descendants of the cancelled hooks are killed (Linux subreaper, Windows job), then the stash is restored (restore messages printed), then death by the same signal (exit status 143/129 as before). Residual risk, documented: on macOS an orphaned descendant of an Inherit-group hook (e.g. a formatter started by a shell entry) cannot be found and may still write after the restore; the patch file is kept, so the work stays recoverable |
 
@@ -36,7 +36,7 @@ recoverable.
 
 ```text
 $ kill -TERM <pid of `pre-commit run`, during a slow hook>
-# pre-commit 4.6.2: the process dies (status 143), stdout ends after `slow.....`, foo has the staged content,
+# pre-commit 4.7.0: the process dies (status 143), stdout ends after `slow.....`, foo has the staged content,
 # the unstaged change is only in /s/patch1791403833-1793278
 
 $ kill -TERM <pid of `snp run`, during a slow hook>

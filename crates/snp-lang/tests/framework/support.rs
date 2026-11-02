@@ -8,7 +8,7 @@ use snp_core::failure::Failure;
 use snp_core::lang::LanguageId;
 use snp_lang::{LangError, VersionSupport, backend, check_support};
 
-/// pre-commit 4.6.2's `install_environment` assertions: (language, asserts the version, asserts no deps).
+/// pre-commit 4.7.0's `install_environment` assertions: (language, asserts the version, asserts no deps).
 const TABLE: [(LanguageId, bool, bool); 16] = [
     (LanguageId::Conda, true, false),
     (LanguageId::Coursier, true, false),

@@ -1,8 +1,8 @@
-"""Generate the V-PP pre-push stdin vectors (15 §A V-PP, 02 §16.3, ADR-022) with the pre-commit 4.6.2 oracle.
+"""Generate the V-PP pre-push stdin vectors (15 §A V-PP, 02 §16.3, ADR-022) with the pre-commit 4.7.0 oracle.
 
 Run with the oracle interpreter (never a PATH python):
 
-    target/oracle/pc462-py312/bin/python -I crates/snp-git/tests/vectors/gen_v_pp.py > crates/snp-git/tests/vectors/v_pp.json
+    target/oracle/pc470-py312/bin/python -I crates/snp-git/tests/vectors/gen_v_pp.py > crates/snp-git/tests/vectors/v_pp.json
 
 For every stdin it records what pre-commit's `hook_impl._pre_push_ns` parses, line by line, until the first error
 (`stdin.decode().splitlines()` + `line.rsplit(maxsplit=3)` + 4-way unpack), and what snp parses: the same for valid
@@ -103,7 +103,7 @@ def main() -> int:
         vectors.append({'stdin_hex': raw.hex(), 'pre_commit': pc, 'snp': snp})
     json.dump(
         {
-            'source': 'pre-commit 4.6.2 hook_impl._pre_push_ns (oracle pc462-py312)',
+            'source': 'pre-commit 4.7.0 hook_impl._pre_push_ns (oracle pc470-py312)',
             'python': sys.version.split()[0],
             'vectors': vectors,
         },

@@ -150,8 +150,8 @@ pub(crate) fn snp_version_of(line: &str) -> Option<&str> {
 
 /// Runs `exe --version` with stdin `/dev/null`, a 10 s deadline (killed after it) and the inherited environment
 /// plus `SNP_VERSION_PROBE=1` (11 §A.19.8: the probe mirrors what a hook would see); the first stdout line, `None`
-/// on any failure. With the variable an snp of any brand prints `pre-commit 4.6.2 (snp X)` (§A.19.4), which a plain
-/// compat-brand `--version` (`pre-commit 4.6.2`, ADR-023) would not reveal; Python pre-commit ignores it.
+/// on any failure. With the variable an snp of any brand prints `pre-commit 4.7.0 (snp X)` (§A.19.4), which a plain
+/// compat-brand `--version` (`pre-commit 4.7.0`, ADR-023) would not reveal; Python pre-commit ignores it.
 pub(crate) fn version_probe(exe: &Path) -> Option<String> {
     let env = Env::capture_process().patched(&EnvPatch::default().set("SNP_VERSION_PROBE", "1"));
     let out = probe_output_env(exe, &[OsStr::new("--version")], None, &env, PROBE_DEADLINE)?;
@@ -324,13 +324,13 @@ mod tests {
     #[test]
     fn version_line_shape() {
         assert_eq!(
-            snp_version_of("pre-commit 4.6.2 (snp 2.0.0)"),
+            snp_version_of("pre-commit 4.7.0 (snp 2.0.0)"),
             Some("2.0.0")
         );
-        assert_eq!(snp_version_of("pre-commit 4.6.2"), None);
-        assert_eq!(snp_version_of("pre-commit 4.6.2 (snp )"), None);
+        assert_eq!(snp_version_of("pre-commit 4.7.0"), None);
+        assert_eq!(snp_version_of("pre-commit 4.7.0 (snp )"), None);
         assert_eq!(snp_version_of("pre-commit x (snp 1)"), None);
-        assert_eq!(snp_version_of("pre-commit 4.6.2 (snp 1) x"), None);
+        assert_eq!(snp_version_of("pre-commit 4.7.0 (snp 1) x"), None);
         assert_eq!(snp_version_of("snp 2.0.0"), None);
     }
 

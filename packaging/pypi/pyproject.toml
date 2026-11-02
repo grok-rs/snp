@@ -11,7 +11,7 @@ build-backend = "maturin"
 
 [project]
 name = "snp-cli"
-description = "You Shell Not Pass: a drop-in replacement for pre-commit 4.6.2, as a single native binary"
+description = "You Shell Not Pass: a drop-in replacement for pre-commit 4.7.0, as a single native binary"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.8"

@@ -4,6 +4,13 @@ These files are the research specifications the design in `docs/ARCHITECTURE.md`
 (`02 §7.2` = `02-run-pipeline.md` section 7.2). `01 Addendum` = the normative regex addendum at the end of
 `01-config-schema.md` (§A.0–§A.11); it overrides every earlier regex statement in any document.
 
+## Reference version
+
+The research cites the pre-commit **4.6.2** source (`file.py:line`). snp 2.0.1 targets pre-commit 4.7.0 (ADR-089),
+whose shipped package differs from 4.6.2 only in `pre_commit/languages/node.py` (`npm install` runs with
+`env=no_git_env()`, two added lines: the import and `node.py:107`; later lines of that file shift by one) and the
+version number; every other citation holds for 4.7.0 unchanged. The files below are kept as written.
+
 ## Provenance and known gaps
 
 The original working copies lived in a session scratch directory that was wiped by a machine reboot on

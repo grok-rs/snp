@@ -9,7 +9,7 @@ block scalars rewritten safely
 
 ## Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | migrate-config turns a folded `language: >-\n  python_venv` into invalid YAML | block scalars rewritten safely |
 
@@ -37,5 +37,5 @@ repos:
         files: a
 ```
 
-pre-commit 4.6.2 writes `        language: >python>        files: a` (invalid YAML). snp writes
+pre-commit 4.7.0 writes `        language: >python>        files: a` (invalid YAML). snp writes
 `        language: python\n        files: a\n`.

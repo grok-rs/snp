@@ -1,4 +1,4 @@
-//! Shim-harness goldens against pre-commit 4.6.2 (WBS WP-24 acceptance 1; 04b §5.12).
+//! Shim-harness goldens against pre-commit 4.7.0 (WBS WP-24 acceptance 1; 04b §5.12).
 //!
 //! Each scenario installs and runs one hook of the hook repository of [`HOOK_FILES`] — python, node, golang, rust and
 //! ruby, with and without `additional_dependencies`, `language_version` default (resolved), `system` and explicit —
@@ -659,7 +659,7 @@ fn snp_matches_the_pre_commit_goldens() {
     }
 }
 
-/// The oracle venv: `target/oracle/pc462-py312`, or `$SNP_ORACLE_PY312`.
+/// The oracle venv: `target/oracle/pc470-py312`, or `$SNP_ORACLE_PY312`.
 pub(crate) fn oracle_root() -> PathBuf {
     #[expect(
         clippy::disallowed_methods,
@@ -667,12 +667,12 @@ pub(crate) fn oracle_root() -> PathBuf {
     )]
     let explicit = std::env::var_os("SNP_ORACLE_PY312");
     explicit.map_or_else(
-        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/oracle/pc462-py312"),
+        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/oracle/pc470-py312"),
         PathBuf::from,
     )
 }
 
-/// Records one scenario with pre-commit 4.6.2.
+/// Records one scenario with pre-commit 4.7.0.
 #[cfg(unix)]
 fn record(sc: &Sc, python: &Path) -> String {
     let w = World::new();
@@ -826,7 +826,7 @@ fn record(sc: &Sc, python: &Path) -> String {
     render_log(&calls)
 }
 
-/// Re-records every golden with pre-commit 4.6.2 and requires the committed files to be current.
+/// Re-records every golden with pre-commit 4.7.0 and requires the committed files to be current.
 #[cfg(unix)]
 #[test]
 #[ignore = "oracle"]

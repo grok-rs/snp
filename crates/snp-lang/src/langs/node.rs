@@ -1,11 +1,11 @@
 //! The `node` language backend (§6.2; `pre_commit/languages/node.py`).
 //!
-//! | pre-commit 4.6.2 | snp |
+//! | pre-commit 4.7.0 | snp |
 //! |---|---|
 //! | `get_default_version`: `default` on Windows, `system` iff `exe_exists('node') and exe_exists('npm')` (the `$HOME`/`shims` heuristic) | the same (`SNP_PREFER_SYSTEM_TOOLCHAINS=1` drops the heuristic) |
 //! | `python -mnodeenv --prebuilt --clean-src <env> [-n V]` (cwd = the user's repository; `.node-version` and `[nodeenv] node=` of `tox.ini`/`setup.cfg`/`~/.nodeenvrc` steer `default`) | nodeenv reimplemented: the same version choice (`default` = newest release, `lts`, `X.Y.Z`, the nodeenv files quirk, 04a Q9), the archive verified against `SHASUMS256.txt` (TLS; musl and riscv64 from the unofficial builds, arm64 → x64 retry on macOS) into the shared `tools-v1/node/<version>` and linked into the environment; `system` gets the directory layout without nodeenv's bash shim |
 //! | Windows `system`: nodeenv refuses, exit 3 | a shim-less system environment (D-CRASH-20) |
-//! | `npm install --allow-git=root --install-links -g <pkgs>` in the prefix under `in_env` (`git+file://<prefix>` when the clone has `package.json`; none ⇒ `AssertionError`) | the same, with the installer environment (`no_git_env`, D-SEC-05) |
+//! | `npm install --allow-git=root --install-links -g <pkgs>` in the prefix under `in_env` with `env=no_git_env()` (4.7.0, pre-commit#3774; `git+file://<prefix>` when the clone has `package.json`; none ⇒ `AssertionError`) | the same |
 //! | `health_check`: `node --version` per environment and run | fingerprint fast path: no spawn while the `node` the environment resolves is unchanged |
 //!
 //! Owner: WP-24.
@@ -31,7 +31,7 @@ use crate::{
     Language, PlanCtx, RunPlan, Support,
 };
 
-/// The texts of the node backend (pre-commit 4.6.2's).
+/// The texts of the node backend (pre-commit 4.7.0's).
 mod messages {
     /// `install_environment` without anything to install (`node.py:84-88`).
     pub(super) const NOTHING_TO_INSTALL: &str =

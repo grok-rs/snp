@@ -1,7 +1,7 @@
 //! Every user-visible text of snp-config, in both brands (ARCHITECTURE §1.3 "Messages"; 01 §7; COMPATIBILITY
 //! §3.3 for the snp-brand substitutions).
 //!
-//! The compat brand is pre-commit 4.6.2 byte for byte (`clientlib.py`, `repository.py`, `hook.py`); the snp brand
+//! The compat brand is pre-commit 4.7.0 byte for byte (`clientlib.py`, `repository.py`, `hook.py`); the snp brand
 //! is the `brand_map` substitution of the same text. snp-only texts (extension keys, overlay notes, regex
 //! `FutureWarning` lines) are brand-independent.
 //!
@@ -355,11 +355,11 @@ mod tests {
         );
         assert_eq!(
             min_version(Brand::PreCommit, "99"),
-            "pre-commit version 99 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`."
+            "pre-commit version 99 is required but version 4.7.0 is installed.  Perhaps run `pip install --upgrade pre-commit`."
         );
         assert_eq!(
             min_version(Brand::Snp, "99"),
-            "pre-commit version 99 is required but snp 2.0.0 is compatible with pre-commit 4.6.2.  Perhaps upgrade snp."
+            "pre-commit version 99 is required but snp 2.0.1 is compatible with pre-commit 4.7.0.  Perhaps upgrade snp."
         );
     }
 }

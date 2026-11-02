@@ -54,7 +54,7 @@ repos:
 ```
 
 `run --all-files` without a terminal (the differential harness runs the tools in their own process group):
-pre-commit 4.6.2 prints `[WARNING] Unexpected key(s) present on local => ask: interactive` and the hook's block; snp
+pre-commit 4.7.0 prints `[WARNING] Unexpected key(s) present on local => ask: interactive` and the hook's block; snp
 prints `snp: interactive: …; running 'ask' without a terminal` on stderr and the same block, without the warning. On a
 terminal (`crates/snp/tests/it/interactive.rs`):
 

@@ -26,7 +26,7 @@ pub(crate) fn exit(code: i32) -> Exit {
 /// Printer latches `closed` on ENOSPC (`> /dev/full`), EIO or EAGAIN exactly as on EPIPE and the invocation fails
 /// closed with 120 instead of reporting success after its output was lost. CPython's shutdown flush of `sys.stdout`
 /// fails the same way (`Exception ignored ... OSError: [Errno 28] No space left on device`, exit 120; pre-commit
-/// 4.6.2, oracle); snp drops the noise as for EPIPE (D-CRASH-24).
+/// 4.7.0, oracle); snp drops the noise as for EPIPE (D-CRASH-24).
 #[derive(Debug)]
 pub(crate) struct FailClosedStdout<W>(pub(crate) W);
 

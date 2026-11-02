@@ -12,13 +12,13 @@ use snp_testkit::{Bins, Fixture, TestEnv};
 /// The upstream pre-commit-hooks URL: a Tier A repository at `v6.0.0` is never contacted (D-PERF-03).
 const PCH: &str = "https://github.com/pre-commit/pre-commit-hooks";
 
-/// pre-commit 4.6.2 on CPython 3.12.3 (`target/oracle/pc462-py312`), cold `run --all-files` of the three hooks of
+/// pre-commit 4.7.0 on CPython 3.12.3 (`target/oracle/pc470-py312`), cold `run --all-files` of the three hooks of
 /// [`pch_config`] over `a.json` = `{}\n` (the clone redirected to a local mirror of the upstream repository).
 const PC462_COLD: &str =
-    include_str!("../../../snp-repo/tests/goldens/pc462-py312-pch-v6-cold.txt");
+    include_str!("../../../snp-repo/tests/goldens/pc470-py312-pch-v6-cold.txt");
 /// The same run repeated with the warm store.
 const PC462_WARM: &str =
-    include_str!("../../../snp-repo/tests/goldens/pc462-py312-pch-v6-warm.txt");
+    include_str!("../../../snp-repo/tests/goldens/pc470-py312-pch-v6-warm.txt");
 
 fn bins() -> Bins {
     Bins::locate().expect("`cargo build --workspace --bins` first (CI does)")
@@ -65,7 +65,7 @@ fn text(b: &[u8]) -> String {
 }
 
 #[test]
-fn tier_a_pre_commit_hooks_cold_and_warm_transcripts_match_pc462_py312() {
+fn tier_a_pre_commit_hooks_cold_and_warm_transcripts_match_pc470_py312() {
     let t = TestEnv::new(bins());
     let proj = project(&t, &pch_config(), &[("a.json", b"{}\n")]);
     let cold = t

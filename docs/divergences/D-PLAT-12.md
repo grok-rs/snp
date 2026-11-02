@@ -9,7 +9,7 @@ tagged symlink (reading the reparse tag needs unsafe)
 
 ## Register entry (COMPATIBILITY §5.5)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | Windows: a directory junction is tagged `directory` | tagged `symlink` (reading the reparse tag needs `unsafe`) |
 
@@ -29,7 +29,7 @@ regular file under either classification, so the default `types: [file]` exclude
 ## Examples
 
 Windows only. A junction `j` (`mklink /J j subdir`) passed with `run --files j` to two hooks, `types: [directory]` and
-`types: [symlink]` (`tests/differential/divergences/D-PLAT-12.yaml`): pre-commit 4.6.2 passes `j` to the
+`types: [symlink]` (`tests/differential/divergences/D-PLAT-12.yaml`): pre-commit 4.7.0 passes `j` to the
 `directory` hook and skips the `symlink` hook (`(no files to check)`); snp does the opposite. Both skip it for a
 default `types: [file]` hook. Recorded on a Windows runner by WP-35's harness (no Windows oracle on the development
 machine).

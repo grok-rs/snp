@@ -9,7 +9,7 @@ UTF-8 always (see D-DATA-09)
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `migrate-config` on a list-root / non-UTF-8 config under a non-UTF-8 locale (Windows cp1252) → crash or mis-decode | UTF-8 always (see D-DATA-09) |
 
@@ -28,7 +28,7 @@ file is the validation error `run` prints (D-CRASH-07).
 
 A config whose comment contains the byte `0xe9` (Latin-1 `é`) at byte 15:
 
-pre-commit 4.6.2 on a UTF-8 locale, `migrate-config`, exit **3**: `An unexpected error has occurred:
+pre-commit 4.7.0 on a UTF-8 locale, `migrate-config`, exit **3**: `An unexpected error has occurred:
 UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9 in position 15: invalid continuation byte`.
 On cp1252 Windows the same file is decoded as `é` and silently re-encoded.
 

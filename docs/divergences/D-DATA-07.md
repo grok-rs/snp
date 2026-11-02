@@ -9,7 +9,7 @@ value repaired (all lines equal and an existing directory ⇒ use one line)
 
 ## Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | an exported `CDPATH` corrupts `--hook-dir`; legacy hooks (git-lfs pre-push) are silently skipped | value repaired (all lines equal and an existing directory ⇒ use one line) |
 

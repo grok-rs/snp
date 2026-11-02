@@ -36,7 +36,7 @@ steps:
       PATH: "${work}/tools:${PATH}"
     stdin: ""
     tty: false
-# pre-commit 4.6.2: `fake docker….An unexpected error has occurred: CalledProcessError: command: ('/bin/sh', '…/tools/docker',
+# pre-commit 4.7.0: `fake docker….An unexpected error has occurred: CalledProcessError: command: ('/bin/sh', '…/tools/docker',
 #   'system', 'info', '--format', '{{ json . }}')` / `return code: 1` / `stdout: (none)` / `stderr:` /
 #   `    Cannot connect to the Docker daemon`, `Check the log at …`, exit 3.
 # snp: `fake docker….Passed`, exit 0.

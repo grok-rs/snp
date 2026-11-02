@@ -327,7 +327,7 @@ mod testkit {
         let sample = format!(
             "Check the log at {root}/store/pre-commit.log\n[INFO] Initializing environment for file://{root}/repos/x.\n\
              [WARNING] Stashing unstaged files to {root}/store/patch1791403647-1780651.\r\n- duration: 0.12s\n\
-             [master (root-commit) 1a2b3c4] msg\npre-commit 4.6.2\n"
+             [master (root-commit) 1a2b3c4] msg\npre-commit 4.7.0\n"
         );
         // apply them the way insta does (each regex in order) — through insta itself
         let mut settings = insta::Settings::clone_current();
@@ -358,16 +358,16 @@ mod testkit {
         let out = env.snp(env.root()).arg("--version").output();
         // argparse's `print`: CRLF in Windows text mode
         let version: &[u8] = if cfg!(windows) {
-            b"snp 2.0.0\r\n"
+            b"snp 2.0.1\r\n"
         } else {
-            b"snp 2.0.0\n"
+            b"snp 2.0.1\n"
         };
         assert_eq!((out.code, out.stdout.as_slice()), (0, version));
         let out = env.snp_as_pre_commit(env.root()).arg("--version").output();
         let version: &[u8] = if cfg!(windows) {
-            b"pre-commit 4.6.2\r\n"
+            b"pre-commit 4.7.0\r\n"
         } else {
-            b"pre-commit 4.6.2\n"
+            b"pre-commit 4.7.0\n"
         };
         assert_eq!((out.code, out.stdout.as_slice()), (0, version));
         snp_testkit::snp_snapshot!(env, out, @"
@@ -382,7 +382,7 @@ mod testkit {
     #[test]
     fn oracles_run_from_the_target_dir_never_path() {
         let env = TestEnv::new(no_bins());
-        for which in [Oracle::Pc462Py312, Oracle::Pc462Py313] {
+        for which in [Oracle::Pc470Py312, Oracle::Pc470Py313] {
             let Some(cmd) = env.oracle(which, env.root()) else {
                 eprintln!("oracle {which:?} not installed (cargo xtask oracle install): skipped");
                 continue;
@@ -390,7 +390,7 @@ mod testkit {
             let out = cmd.arg("--version").output();
             assert_eq!(
                 (out.code, out.stdout.as_slice()),
-                (0, &b"pre-commit 4.6.2\n"[..]),
+                (0, &b"pre-commit 4.7.0\n"[..]),
                 "{which:?}"
             );
         }

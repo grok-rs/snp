@@ -1,6 +1,6 @@
 # D-DATA-05 (DATA, owner WP-33): atomic LF sh template that replaces a symlink instead of writing through it
 # Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands`, `expect_divergence` and `expected` (ARCHITECTURE §13.2).
-# .git/hooks/pre-commit is a symlink to the tracked tools/hook (a pre-commit 4.6.2 script with another
+# .git/hooks/pre-commit is a symlink to the tracked tools/hook (a pre-commit 4.7.0 script with another
 # INSTALL_PYTHON). pre-commit rewrites tools/hook through the link (worktree diff); snp replaces the link with a
 # regular file and tools/hook stays as committed (`compare.tree` diverges).
 name: divergences/D-DATA-05-install-over-a-symlink

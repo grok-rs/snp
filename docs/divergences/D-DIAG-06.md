@@ -29,7 +29,7 @@ Safe: stderr only; stdout and exit codes are unchanged.
 ## Examples
 
 `snp run --all-files` in a repository without a config file (`tests/differential/divergences/D-DIAG-06.yaml`):
-pre-commit 4.6.2 and snp both print `An error has occurred: InvalidConfigError: ` / `=====> .pre-commit-config.yaml is
+pre-commit 4.7.0 and snp both print `An error has occurred: InvalidConfigError: ` / `=====> .pre-commit-config.yaml is
 not a file` on stdout and exit 1; snp's stderr also has:
 
 ```text

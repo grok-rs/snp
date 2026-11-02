@@ -1,9 +1,9 @@
-//! The env-less argv against pre-commit 4.6.2, through the shim harness (04b §5.12).
+//! The env-less argv against pre-commit 4.7.0, through the shim harness (04b §5.12).
 //!
 //! Scenario: a repository with one `a.txt` and four local hooks — `docker_image`, `system` (alias of
 //! `unsupported`), `script` (alias of `unsupported_script`, a committed script) and `fail`-free — run with
 //! `require_serial: true` (no shuffle) and fake `docker`/`fakehook` tools on `PATH` that log every call in the golden
-//! log format v1. `golden/oracle_envless.jsonl` is the log pre-commit 4.6.2 produced (`cargo test -p snp-lang
+//! log format v1. `golden/oracle_envless.jsonl` is the log pre-commit 4.7.0 produced (`cargo test -p snp-lang
 //! --features testing --test envless -- --ignored oracle_`, with `SNP_UPDATE_GOLDENS=1` to rewrite it); the hermetic
 //! test renders snp's side — the rootless probe recorded by the `ShimRunner`, then each plan's argv with the file
 //! appended — and requires equality.
@@ -145,7 +145,7 @@ fn snp_matches_the_pre_commit_golden() {
     assert_eq!(render_log(&ours), render_log(&theirs));
 }
 
-/// Records the golden from pre-commit 4.6.2 (`target/oracle/pc462-py312`).
+/// Records the golden from pre-commit 4.7.0 (`target/oracle/pc470-py312`).
 #[cfg(unix)]
 #[test]
 #[ignore = "oracle"]
@@ -153,7 +153,7 @@ fn oracle_envless_golden_is_current() {
     use std::collections::BTreeMap;
     use std::fmt::Write as _;
     use std::os::unix::fs::PermissionsExt;
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/oracle/pc462-py312");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/oracle/pc470-py312");
     let python = root.join("bin/python");
     let pre_commit = root.join("bin/pre-commit");
     assert!(pre_commit.exists(), "run `cargo xtask oracle install`");

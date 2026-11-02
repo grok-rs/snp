@@ -1,4 +1,4 @@
-# snp — "You Shell Not Pass": a Rust drop-in replacement for pre-commit 4.6.2.
+# snp — "You Shell Not Pass": a Rust drop-in replacement for pre-commit 4.7.0.
 #
 # Owned by WP-00 (integration lead). Nobody edits this file after wave 0: a new external
 # dependency needs an ADR in docs/DECISIONS.md and the integration lead adds it here
@@ -11,7 +11,7 @@ exclude = ["docs/research/pycompat-proto"]
 resolver = "3"
 
 [workspace.package]
-version = "2.0.0"
+version = "2.0.1"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -30,29 +30,29 @@ publish = false
 # ADR-088: the published crates require exactly the workspace version (`=X.Y.Z`, checked by `cargo xtask release
 # gates`), so a crates.io install never mixes the internal crates of two releases. snp-testkit is never published and
 # has no `version`: `cargo publish` strips it from the dev-dependencies of the published crates.
-snp-argparse = { path = "crates/snp-argparse", version = "=2.0.0" }
-snp-cli = { path = "crates/snp-cli", version = "=2.0.0" }
-snp-cmd = { path = "crates/snp-cmd", version = "=2.0.0" }
-snp-config = { path = "crates/snp-config", version = "=2.0.0" }
-snp-core = { path = "crates/snp-core", version = "=2.0.0" }
-snp-files = { path = "crates/snp-files", version = "=2.0.0" }
-snp-git = { path = "crates/snp-git", version = "=2.0.0" }
-snp-hooks = { path = "crates/snp-hooks", version = "=2.0.0" }
-snp-hooks-data = { path = "crates/snp-hooks-data", version = "=2.0.0" }
-snp-lang = { path = "crates/snp-lang", version = "=2.0.0" }
-snp-migrate = { path = "crates/snp-migrate", version = "=2.0.0" }
-snp-net = { path = "crates/snp-net", version = "=2.0.0" }
-snp-os = { path = "crates/snp-os", version = "=2.0.0" }
-snp-proc = { path = "crates/snp-proc", version = "=2.0.0" }
-snp-pycompat = { path = "crates/snp-pycompat", version = "=2.0.0" }
-snp-pyparsers = { path = "crates/snp-pyparsers", version = "=2.0.0" }
-snp-pyre = { path = "crates/snp-pyre", version = "=2.0.0" }
-snp-repo = { path = "crates/snp-repo", version = "=2.0.0" }
-snp-run = { path = "crates/snp-run", version = "=2.0.0" }
-snp-stash = { path = "crates/snp-stash", version = "=2.0.0" }
-snp-store = { path = "crates/snp-store", version = "=2.0.0" }
+snp-argparse = { path = "crates/snp-argparse", version = "=2.0.1" }
+snp-cli = { path = "crates/snp-cli", version = "=2.0.1" }
+snp-cmd = { path = "crates/snp-cmd", version = "=2.0.1" }
+snp-config = { path = "crates/snp-config", version = "=2.0.1" }
+snp-core = { path = "crates/snp-core", version = "=2.0.1" }
+snp-files = { path = "crates/snp-files", version = "=2.0.1" }
+snp-git = { path = "crates/snp-git", version = "=2.0.1" }
+snp-hooks = { path = "crates/snp-hooks", version = "=2.0.1" }
+snp-hooks-data = { path = "crates/snp-hooks-data", version = "=2.0.1" }
+snp-lang = { path = "crates/snp-lang", version = "=2.0.1" }
+snp-migrate = { path = "crates/snp-migrate", version = "=2.0.1" }
+snp-net = { path = "crates/snp-net", version = "=2.0.1" }
+snp-os = { path = "crates/snp-os", version = "=2.0.1" }
+snp-proc = { path = "crates/snp-proc", version = "=2.0.1" }
+snp-pycompat = { path = "crates/snp-pycompat", version = "=2.0.1" }
+snp-pyparsers = { path = "crates/snp-pyparsers", version = "=2.0.1" }
+snp-pyre = { path = "crates/snp-pyre", version = "=2.0.1" }
+snp-repo = { path = "crates/snp-repo", version = "=2.0.1" }
+snp-run = { path = "crates/snp-run", version = "=2.0.1" }
+snp-stash = { path = "crates/snp-stash", version = "=2.0.1" }
+snp-store = { path = "crates/snp-store", version = "=2.0.1" }
 snp-testkit = { path = "crates/snp-testkit" }
-snp-yaml = { path = "crates/snp-yaml", version = "=2.0.0" }
+snp-yaml = { path = "crates/snp-yaml", version = "=2.0.1" }
 
 # --- the owner's crates: sibling checkouts on branch `snp-support`, pinned by deps.lock (ADR-061) ---
 cfgv = { path = "../cfgv-rs", version = "0.3", default-features = false }

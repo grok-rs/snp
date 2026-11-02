@@ -9,7 +9,7 @@ one stderr line per distinct (pattern, warning): [WARNING] regex {pattern!r}: {m
 
 ## Register entry (COMPATIBILITY §5.9)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | regex `FutureWarning` lines: `…/cfgv.py:386: FutureWarning: Possible nested set at position 1` + `  re.compile(v)` on stderr | one stderr line per distinct (pattern, warning): `[WARNING] regex {pattern!r}: {msg} (Python FutureWarning)`; `SNP_PYTHON_WARNINGS=0` silences |
 
@@ -38,7 +38,7 @@ files: '[[]'
 repos: []
 ```
 
-pre-commit 4.6.2 `validate-config`, exit 0, stderr:
+pre-commit 4.7.0 `validate-config`, exit 0, stderr:
 
 ```
 <site-packages>/cfgv.py:386: FutureWarning: Possible nested set at position 1

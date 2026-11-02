@@ -8,7 +8,7 @@ use crate::profile;
 /// Which product name user-facing text uses (FD-1).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Brand {
-    /// Invoked as `pre-commit`: every byte as pre-commit 4.6.2.
+    /// Invoked as `pre-commit`: every byte as pre-commit 4.7.0.
     PreCommit,
     /// Any other name: same layout, product name `snp`.
     Snp,
@@ -51,7 +51,7 @@ impl Brand {
         }
     }
 
-    /// `--version` output (without newline): `pre-commit 4.6.2` | `snp 2.0.0` (ADR-023).
+    /// `--version` output (without newline): `pre-commit 4.7.0` | `snp 2.0.1` (ADR-023).
     pub fn version_line(self) -> String {
         match self {
             Self::PreCommit => format!("pre-commit {}", profile::PRE_COMMIT),
@@ -102,8 +102,8 @@ mod tests {
     fn names() {
         assert_eq!(Brand::PreCommit.prog(), "pre-commit");
         assert_eq!(Brand::Snp.prog(), "snp");
-        assert_eq!(Brand::PreCommit.version_line(), "pre-commit 4.6.2");
-        assert_eq!(Brand::Snp.version_line(), "snp 2.0.0");
+        assert_eq!(Brand::PreCommit.version_line(), "pre-commit 4.7.0");
+        assert_eq!(Brand::Snp.version_line(), "snp 2.0.1");
         assert_eq!(Brand::PreCommit.crash_log_name(), "pre-commit.log");
         assert_eq!(Brand::Snp.crash_log_name(), "snp.log");
     }

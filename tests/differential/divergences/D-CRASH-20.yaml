@@ -34,7 +34,7 @@ steps:
     env: {}
     stdin: ""
     tty: false
-# pre-commit 4.6.2: the install lines, `An unexpected error has occurred: CalledProcessError: …` (nodeenv:
+# pre-commit 4.7.0: the install lines, `An unexpected error has occurred: CalledProcessError: …` (nodeenv:
 #   `Installing system node.js on win32 is not supported!`), exit 3.
 # snp: the install lines, `hello….Passed` and `hello from node`, exit 0.
 compare:

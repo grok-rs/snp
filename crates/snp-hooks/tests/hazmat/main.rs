@@ -4,7 +4,7 @@
 //! Path H is a process of its own (`raise SystemExit(main())` of `python -m pre_commit.commands.hazmat`), so this
 //! harness-less test binary re-executes itself as that process: with `SNP_HOOKS_TEST_HAZMAT_ARGV` (a JSON array)
 //! set, `main` is `in_hook_main` over those arguments. The goldens come from `cargo xtask pch-goldens hazmat`
-//! (pre-commit 4.6.2, CPython 3.13). POSIX only (the fixtures are shell scripts).
+//! (pre-commit 4.7.0, CPython 3.13). POSIX only (the fixtures are shell scripts).
 //!
 //! Owner: WP-26.
 #![expect(
@@ -218,7 +218,7 @@ fn sh_is_dash() -> bool {
         .is_ok_and(|p| p.file_name().is_some_and(|n| n == "dash"))
 }
 
-/// Every case of `cases.json` against the pre-commit 4.6.2 goldens.
+/// Every case of `cases.json` against the pre-commit 4.7.0 goldens.
 fn hazmat_goldens() {
     let cases = support::json("hazmat/cases.json");
     let goldens = support::json("hazmat/goldens.json");

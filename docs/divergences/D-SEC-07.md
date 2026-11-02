@@ -9,13 +9,13 @@ With `PATH` unset or empty, snp's activation patches put no empty entry (the cur
 
 ## Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | unset `PATH` ⇒ activation patches produce `"<bin>:"` (cwd on PATH) | no trailing separator |
 
 ## Rationale
 
-Every environment language of pre-commit 4.6.2 activates its environment with an `envcontext` patch of the form
+Every environment language of pre-commit 4.7.0 activates its environment with an `envcontext` patch of the form
 `('PATH', (bin_dir, os.pathsep, Var('PATH')))` (`languages/python.py:60`, `node.py:56`, `golang.py:73,82`,
 `rust.py:53`, `ruby.py:65`, `conda.py:29`, `coursier.py:67`, `dart.py:27`, `dotnet.py:28`, `haskell.py:23`,
 `lua.py:32`, `perl.py:23`, `swift.py:26`). `Var('PATH')` defaults to `''`, so when `PATH` is unset or empty the hook
@@ -33,7 +33,7 @@ the missing current-directory entry.
 
 Patch `('PATH', ('/env/bin', os.pathsep, Var('PATH')))` applied to three environments (POSIX):
 
-| startup `PATH` | pre-commit 4.6.2 hook `PATH` | snp hook `PATH` |
+| startup `PATH` | pre-commit 4.7.0 hook `PATH` | snp hook `PATH` |
 |---|---|---|
 | unset | `/env/bin:` | `/env/bin` |
 | `` (empty) | `/env/bin:` | `/env/bin` |

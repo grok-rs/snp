@@ -1,8 +1,8 @@
-"""Generates snp-config's oracle vectors from pre-commit 4.6.2 (WP-21).
+"""Generates snp-config's oracle vectors from pre-commit 4.7.0 (WP-21).
 
-Run with the interpreter of a pre-commit 4.6.2 venv (`target/oracle/pc462-py312`, CPython 3.12.3):
+Run with the interpreter of a pre-commit 4.7.0 venv (`target/oracle/pc470-py312`, CPython 3.12.3):
 
-    target/oracle/pc462-py312/bin/python -I crates/snp-config/tests/oracle/gen_config_vectors.py \
+    target/oracle/pc470-py312/bin/python -I crates/snp-config/tests/oracle/gen_config_vectors.py \
         crates/snp-config/tests/vectors [refs-dir]
 
 It writes `load.json` (config / manifest validation: warnings, `str(InvalidConfigError)`, uncaught exceptions,
@@ -33,7 +33,7 @@ from pre_commit.commands.migrate_config import migrate_config
 from pre_commit.hook import Hook
 from pre_commit.prefix import Prefix
 
-assert C.VERSION == '4.6.2', C.VERSION
+assert C.VERSION == '4.7.0', C.VERSION
 
 LOG = logging.getLogger('pre_commit')
 
@@ -192,8 +192,8 @@ case('V11 hook missing id', 'repos:\n-   repo: https://x/y\n    rev: v1\n    hoo
 case('V12 min version 99', 'minimum_pre_commit_version: "99"\nrepos: []\n')
 case('V12 min version before repos', 'minimum_pre_commit_version: "99"\nrepos: 5\n')
 case('V12 min version float', 'minimum_pre_commit_version: 1.0\nrepos: []\n')
-case('V12 min version ok', 'minimum_pre_commit_version: "4.6.2"\nrepos: []\n')
-case('V12 min version 4.6.2.0', 'minimum_pre_commit_version: "4.6.2.0"\nrepos: []\n')
+case('V12 min version ok', 'minimum_pre_commit_version: "4.7.0"\nrepos: []\n')
+case('V12 min version 4.7.0.0', 'minimum_pre_commit_version: "4.7.0.0"\nrepos: []\n')
 case('V12 min version unicode digit', 'minimum_pre_commit_version: "\u0664"\nrepos: []\n')
 case('V12 min version spaces', 'minimum_pre_commit_version: " 4 "\nrepos: []\n')
 case('V12 min version underscore', 'minimum_pre_commit_version: "4_0"\nrepos: []\n')

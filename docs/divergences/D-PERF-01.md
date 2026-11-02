@@ -11,7 +11,7 @@ resolver per env (ADR-073)
 
 ## Register entry (COMPATIBILITY §5.6)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | Python envs built with virtualenv + pip | uv (`--seed`) with pip-config translation and a pip fallback; seeded packages may differ in version, and uv's resolver can differ on pre-releases, yanked versions and extra-index strategy (FD-7); `SNP_PYTHON_INSTALLER=pip` restores pip's resolver per env (ADR-073) |
 
@@ -58,7 +58,7 @@ on pip's resolution set `SNP_PYTHON_INSTALLER=pip`.
 A local python hook with a dependency that prints which tool created its environment
 (`tests/differential/divergences/D-PERF-01.yaml`; needs the network for `six`):
 
-pre-commit 4.6.2, exit 0:
+pre-commit 4.7.0, exit 0:
 
 ```
 [INFO] Initializing environment for local:six.

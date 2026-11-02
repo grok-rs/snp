@@ -1,5 +1,5 @@
 # D-PLAT-08 (PLAT, owner WP-18): clear error, exit 1
-# Windows with MSYS2's git first on PATH: pre-commit 4.6.2's cygwin check is dead code on native Python and the run
+# Windows with MSYS2's git first on PATH: pre-commit 4.7.0's cygwin check is dead code on native Python and the run
 # misbehaves; snp stops before any repository call with a FatalError (exit 1).
 # Uses `requires.tools: [msys2-git]` (the CI Windows runner's C:\msys64\usr\bin\git.exe, put first on PATH through
 # `env.PATH_PREPEND`) — an extension of the 10 §7.4.3 schema.

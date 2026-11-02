@@ -33,7 +33,7 @@ Why it is safe:
 
 * **Only the snp brand has them.** Under the `pre-commit` name the parser tree is exactly pre-commit's
   (`PRE_COMMIT_SPEC`): every extension is rejected with pre-commit's own texts (`invalid choice: 'list' (choose from
-  …)`, `unrecognized arguments: --summary`), byte-identical to pre-commit 4.6.2 (`compat.json` goldens).
+  …)`, `unrecognized arguments: --summary`), byte-identical to pre-commit 4.7.0 (`compat.json` goldens).
 * **No existing command line changes meaning.** `snp_argparse::prefix_stable(PRE_COMMIT_SPEC, SNP_SPEC)` checks that
   every long-option abbreviation pre-commit resolves uniquely resolves to the same option in the snp brand
   (`run --all`, `run --fi`, `install --conf x.yaml`, …); the planted names `--files-from-stdin` and `--config-hooks` fail

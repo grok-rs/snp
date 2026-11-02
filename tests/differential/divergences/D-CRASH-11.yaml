@@ -1,5 +1,5 @@
 # D-CRASH-11 (CRASH, owner WP-18): same algorithm on bytes (ASCII whitespace), hooks run
-# A push whose ref name is not UTF-8: pre-commit 4.6.2 decodes the stdin strictly and crashes (exit 3); snp parses the
+# A push whose ref name is not UTF-8: pre-commit 4.7.0 decodes the stdin strictly and crashes (exit 3); snp parses the
 # bytes and runs the pre-push hooks (a root push: --all-files).
 # Extensions of the 10 §7.4.3 schema used here: `bare: true` for an empty remote; the non-UTF-8 stdin is written by
 # `printf` in a shell step that runs `${tool}` (HEAD's sha is only known after the setup).

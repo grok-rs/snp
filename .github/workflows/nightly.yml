@@ -2,7 +2,7 @@
 #
 # * tests: the nextest `nightly` profile on every platform (proptest at 10 000 cases);
 # * toolchains / network: the opt-in `tc_*` (real language toolchains) and `net_*` (real downloads) suites;
-# * oracle: the pre-commit 4.6.2 oracles are rebuilt and verified;
+# * oracle: the pre-commit 4.7.0 oracles are rebuilt and verified;
 # * fuzz: 300 s per cargo-fuzz target (no panic, no hang > 5 s, <= 512 MB RSS, 256 KiB stacks);
 # * difftest: the generated differential suite against the oracle (WP-35's harness);
 # * catalog-status: WP-35's catalog report (the scheduled performance gates are bench.yml's, owned by WP-36; this
@@ -150,7 +150,7 @@ jobs:
           --run-ignored only -E 'test(/^net_/)'
 
   oracle:
-    # The pre-commit 4.6.2 oracles (WP-00): created and verified every night.
+    # The pre-commit 4.7.0 oracles (WP-00): created and verified every night.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -161,7 +161,7 @@ jobs:
       - run: rustup toolchain install
       - uses: astral-sh/setup-uv@v6
       - run: cargo xtask oracle install
-      - run: target/oracle/pc462-py312/bin/pre-commit --version
+      - run: target/oracle/pc470-py312/bin/pre-commit --version
 
   fuzz:
     # 300 s per target (ARCHITECTURE §13.5).

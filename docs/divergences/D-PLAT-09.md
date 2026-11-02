@@ -11,7 +11,7 @@ Windows: partitions of a `.cmd`/`.bat` hook are re-split when the real (quoted) 
 
 ## Register entry (COMPATIBILITY §5.5)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | Windows: `.cmd` partitions can exceed 8191 characters after quoting (crash) | partitions re-split |
 
@@ -35,7 +35,7 @@ partitions that could not have run at all.
 Windows, a local hook `entry: check.cmd` (`@exit /b 0`), `language: system`, `require_serial: true`, and 1 000
 tracked files named `a b0000` … `a b0999` (7 characters, one space each).
 
-pre-commit 4.6.2: the unquoted budget (~7 100 characters with `C:\Windows\system32\cmd.exe`) admits ~887 names
+pre-commit 4.7.0: the unquoted budget (~7 100 characters with `C:\Windows\system32\cmd.exe`) admits ~887 names
 per partition at 8 characters each; `list2cmdline` quotes every name (10 characters each), so cmd.exe receives
 ~8 900 characters and the hook fails with `The command line is too long.` (`- exit code: 1`).
 

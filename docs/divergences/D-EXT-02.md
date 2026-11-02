@@ -38,5 +38,5 @@ hooks:
     args: [-x]
 ```
 
-pre-commit 4.6.2 runs `pytest -q …` as configured. snp prints `snp: using local overrides from
+pre-commit 4.7.0 runs `pytest -q …` as configured. snp prints `snp: using local overrides from
 .pre-commit-config.local.yaml` on stderr and runs `docker compose run --rm app pytest -q -x …`.

@@ -30,7 +30,7 @@ steps:
     env: {}
     stdin: ""
     tty: false
-# pre-commit 4.6.2: `['pre_commit_placeholder_package']`, exit 0.
+# pre-commit 4.7.0: `['pre_commit_placeholder_package']`, exit 0.
 # snp: `[]`, exit 0.
 compare:
   stdout: tierB

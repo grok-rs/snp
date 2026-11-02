@@ -30,7 +30,7 @@ steps:
     env: {}
     stdin: ""
     tty: false
-# pre-commit 4.6.2: the four install lines, `creator….Passed` and `virtualenv`, exit 0.
+# pre-commit 4.7.0: the four install lines, `creator….Passed` and `virtualenv`, exit 0.
 # snp: the same lines with `uv` (`venv` under SNP_PYTHON_INSTALLER=pip), exit 0.
 compare:
   stdout: tierB

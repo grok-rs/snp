@@ -1,9 +1,9 @@
-//! Differential harness against pre-commit 4.6.2 (tooling, not shipped): scenarios, materialiser, normaliser,
+//! Differential harness against pre-commit 4.7.0 (tooling, not shipped): scenarios, materialiser, normaliser,
 //! `brand_map`, divergence register, shrinker (ARCHITECTURE §1.4.25, §13.2; ADR-054, ADR-058).
 //!
 //! A [`Scenario`] (research 10 §7.4.3 plus `brands`, `expect_divergence`, `strict`, `expected`) is materialised at
 //! one fixed absolute root for each tool in turn (identical paths, identical commit dates and therefore identical
-//! SHAs); the [`Runner`] runs its steps under the pre-commit 4.6.2 oracle and under snp, snapshots every observable
+//! SHAs); the [`Runner`] runs its steps under the pre-commit 4.7.0 oracle and under snp, snapshots every observable
 //! effect after each step (streams, exit code, worktree bytes and modes, index, refs, stash list, config bytes,
 //! hook scripts, the logical store) and compares them after the normalisation tiers of COMPATIBILITY §2
 //! ([`normalise()`], [`Tier`]). snp-brand runs compare against the prog-patched oracle with the [`BrandMap`] applied to

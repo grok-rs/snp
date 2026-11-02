@@ -1,7 +1,7 @@
 # D-MISC-08 (TIERB, owner WP-33): the crash-log body below the version block is snp's (Tier B)
 # Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands`, `expect_divergence` and `expected` (ARCHITECTURE §13.2).
 # `install` with .git/hooks/pre-commit being a directory crashes both tools identically on stdout (exit 3,
-# IsADirectoryError, `Check the log at …`); the log bodies differ: a Python traceback in pre-commit 4.6.2, the
+# IsADirectoryError, `Check the log at …`); the log bodies differ: a Python traceback in pre-commit 4.7.0, the
 # error chain (here `(no further details)`) in snp. `crash_log_*` read the file named by `Check the log at`.
 name: divergences/D-MISC-08-crash-log-body
 expect_divergence: D-MISC-08

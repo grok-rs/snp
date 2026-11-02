@@ -2,7 +2,7 @@
 # `cargo xtask docs` regenerates reference/cli.md and divergences.md and checks every link and anchor.
 [book]
 title = "snp — You Shell Not Pass"
-description = "A drop-in replacement for pre-commit 4.6.2"
+description = "A drop-in replacement for pre-commit 4.7.0"
 authors = ["Serhii Kaliuzhnyi"]
 language = "en"
 src = "."

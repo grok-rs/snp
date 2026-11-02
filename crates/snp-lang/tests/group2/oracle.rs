@@ -1,4 +1,4 @@
-//! The group-2 commands against pre-commit 4.6.2, through the shim harness (04b §5.12).
+//! The group-2 commands against pre-commit 4.7.0, through the shim harness (04b §5.12).
 //!
 //! One scenario per language: a repository with one `a.txt` and one local hook of that language (`require_serial`,
 //! `files: \.txt$`, args and `additional_dependencies` where the language takes them), run with
@@ -7,8 +7,8 @@
 //! package a `pub cache add` downloads, the nupkg `dotnet pack` builds) and copies the temporary `script.R` and
 //! `nuget.config` files the backends write. `testdata/group2/golden/<lang>.jsonl` is the log pre-commit produced,
 //! `<lang>.captures.json` the captured files (`cargo test -p snp-lang --features testing --test group2 --
-//! --ignored oracle_`, `SNP_UPDATE_GOLDENS=1` rewrites them; `SNP_ORACLE_PC462` names another pre-commit 4.6.2
-//! venv than `target/oracle/pc462-py312`).
+//! --ignored oracle_`, `SNP_UPDATE_GOLDENS=1` rewrites them; `SNP_ORACLE_PC462` names another pre-commit 4.7.0
+//! venv than `target/oracle/pc470-py312`).
 //!
 //! The hermetic tests replay each scenario through the backend — install, the post-install health check, activation,
 //! plan — with a `ShimRunner` answering like the fake tools, render every recorded command, the plan's pre-steps and
@@ -546,18 +546,18 @@ fn oracle_golden_swift() {
     check("swift");
 }
 
-/// The pre-commit 4.6.2 venv.
+/// The pre-commit 4.7.0 venv.
 #[cfg(unix)]
 fn oracle_venv() -> PathBuf {
     #[expect(clippy::disallowed_methods, reason = "test switch naming the oracle")]
     let over = std::env::var_os("SNP_ORACLE_PC462");
     over.map_or_else(
-        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/oracle/pc462-py312"),
+        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/oracle/pc470-py312"),
         PathBuf::from,
     )
 }
 
-/// Records scenario `s` with pre-commit 4.6.2.
+/// Records scenario `s` with pre-commit 4.7.0.
 #[cfg(unix)]
 fn record(s: &Scenario) -> (Vec<GoldenCall>, Captures) {
     use std::fmt::Write as _;
@@ -724,7 +724,7 @@ fn record(s: &Scenario) -> (Vec<GoldenCall>, Captures) {
     (calls, caps)
 }
 
-/// Records every scenario with pre-commit 4.6.2 and compares with (or, with `SNP_UPDATE_GOLDENS=1`, rewrites) the
+/// Records every scenario with pre-commit 4.7.0 and compares with (or, with `SNP_UPDATE_GOLDENS=1`, rewrites) the
 /// committed goldens.
 #[cfg(unix)]
 #[test]

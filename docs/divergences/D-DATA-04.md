@@ -9,7 +9,7 @@ gc removes *restored* patches older than 30 days (never unrestored ones) — cla
 
 ## Register entry (COMPATIBILITY §5.4)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | restored stash patches are kept forever | gc removes *restored* patches older than 30 days (never unrestored ones) — class STORE |
 
@@ -49,5 +49,5 @@ Not reproducible through the CLI within a test run (the patch must be 30 days ol
 `Store::sweep` with a clock 31 days ahead: `patch1700000000-41` (no journal) is removed, `patch1700000000-42`
 (mentioned by `run-42-abcd.snp-journal`, state `failed`) and the journal stay, and `patch1700000000-43` (mentioned by
 the `restored` journal `run-43-abcd.snp-journal`) is removed. `clean_retires_the_layout_but_keeps_unknown_and_recovery_data`
-pins the `clean` entries above. pre-commit 4.6.2 keeps both patches
+pins the `clean` entries above. pre-commit 4.7.0 keeps both patches
 (`gc` prints `0 repo(s) removed.` and never looks at them); the scenario file records `status: unit`.

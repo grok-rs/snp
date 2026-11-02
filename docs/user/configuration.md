@@ -1,7 +1,7 @@
 # Configuration
 
 snp reads `.pre-commit-config.yaml` (or `.snp.yaml`, see [Config file name](#config-file-name), or the file named by
-`-c/--config`) and the `.pre-commit-hooks.yaml` manifests of hook repositories exactly as pre-commit 4.6.2 does: the same schema, the same defaults, the same validation messages,
+`-c/--config`) and the `.pre-commit-hooks.yaml` manifests of hook repositories exactly as pre-commit 4.7.0 does: the same schema, the same defaults, the same validation messages,
 the same `[WARNING]` lines. pre-commit's documentation of
 [the config file](https://pre-commit.com/#plugins) and of
 [creating new hooks](https://pre-commit.com/#creating-new-hooks) applies unchanged and is not repeated here.
@@ -208,7 +208,7 @@ skip:
 | Key | Value | Default | Effect |
 |---|---|---|---|
 | `priorities` | map name → integer | `{}` | Names usable in `priority`. |
-| `minimum_snp_version` | version | — | Older snp versions refuse the config: `snp {v} is required but snp {installed} is installed.` (exit 1). `minimum_pre_commit_version` keeps its pre-commit meaning (snp counts as 4.6.2). |
+| `minimum_snp_version` | version | — | Older snp versions refuse the config: `snp {v} is required but snp {installed} is installed.` (exit 1). `minimum_pre_commit_version` keeps its pre-commit meaning (snp counts as 4.7.0). |
 | `fail_on_changes` | as the hook key | `always` | Default for every hook. |
 | `skip` / `only` | conditions | — | Conditions for the whole run, evaluated once. |
 | `allow_disable` | boolean | `true` | `false` makes snp ignore the `SNP=0` kill switch (with a note on stderr). |

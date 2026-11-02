@@ -1,5 +1,5 @@
 #!/bin/sh
-# planted-divergence.sh: a stand-in for the snp binary that is the pre-commit 4.6.2 oracle plus ONE deliberate
+# planted-divergence.sh: a stand-in for the snp binary that is the pre-commit 4.7.0 oracle plus ONE deliberate
 # difference, used to prove that the shrinker works end to end (WP-35 acceptance: "the shrinker reduces a planted
 # divergence to <= 3 hooks/files and writes a working repro.sh"; crates/snp-difftest/tests/oracle.rs).
 #

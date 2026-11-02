@@ -528,13 +528,13 @@ fn version_by_brand() {
     let CliOutcome::Stdout(v) = run(Brand::PreCommit, &["-V"]) else {
         panic!()
     };
-    assert_eq!(v, "pre-commit 4.6.2\n");
+    assert_eq!(v, "pre-commit 4.7.0\n");
     let CliOutcome::Stdout(v) = run(Brand::Snp, &["--version"]) else {
         panic!()
     };
     assert_eq!(v, format!("snp {}\n", snp_core::profile::SNP_VERSION));
-    assert_eq!(v, "snp 2.0.0\n");
-    assert_eq!(snp_core::profile::PRE_COMMIT, "4.6.2");
+    assert_eq!(v, "snp 2.0.1\n");
+    assert_eq!(snp_core::profile::PRE_COMMIT, "4.7.0");
 }
 
 #[test]

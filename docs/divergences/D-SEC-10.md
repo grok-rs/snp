@@ -10,7 +10,7 @@ an error.
 
 ## Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | catastrophic regexes hang (tier-1-able patterns are exponential in CPython; backtracking patterns unbounded) | linear tier 1; tier 2 `backtrack_limit` 1e8 → `An error has occurred: snp: regular expression {pattern!r} exceeded the backtracking limit on {path!r}` (exit 1) |
 
@@ -37,7 +37,7 @@ magnitude below the limit (corpus frequency 0): a regex that takes 10⁸ steps o
 A local hook `language: fail`, `entry: the files pattern matched`, `files: '(?:(?=a)a+)+(?<!a)b'`; the repository
 holds the empty file `aaaaaaaaaaaaaaaaaaaaaaaaaab` (26 × `a` + `b`) and the config; `run --all-files`.
 
-pre-commit 4.6.2 (CPython 3.12.3; bytes captured with the same `fail`/filter code of pre-commit 4.1.0 on 3.12.3):
+pre-commit 4.7.0 (CPython 3.12.3; bytes captured with the same `fail`/filter code of pre-commit 4.1.0 on 3.12.3):
 `re.search` explores 2²⁵ partitions of the `a` run for ≈ 5.4 s, finds no match and prints, exit 0:
 
 ```text

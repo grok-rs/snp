@@ -85,17 +85,17 @@ mod tests {
             "    -   id: trailing-whitespace\n    -   id: end-of-file-fixer\n    -   id: check-json\n",
         ));
         let hooks = h.resolve_and_install(&cfg).unwrap();
-        // pre-commit 4.6.2: one Initializing line (the clone) and one triplet (the shared python env).
+        // pre-commit 4.7.0: one Initializing line (the clone) and one triplet (the shared python env).
         let out = h.out.take();
         assert_eq!(out, format!("{}{}", initializing(PCH), installing(PCH)));
         // The resolution/install part of the oracle's cold transcript (the hook lines are the run's, WP-32).
-        let golden: String = include_str!("goldens/pc462-py312-pch-v6-cold.txt")
+        let golden: String = include_str!("goldens/pc470-py312-pch-v6-cold.txt")
             .split_inclusive('\n')
             .filter(|l| l.starts_with("[INFO] "))
             .collect();
-        assert_eq!(out, golden, "pc462-py312 cold transcript");
+        assert_eq!(out, golden, "pc470-py312 cold transcript");
         assert!(
-            include_str!("goldens/pc462-py312-pch-v6-warm.txt")
+            include_str!("goldens/pc470-py312-pch-v6-warm.txt")
                 .lines()
                 .all(|l| !l.starts_with('[')),
             "the oracle's warm run prints no resolution line"

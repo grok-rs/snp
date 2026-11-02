@@ -1,6 +1,6 @@
 {
  "generator": "crates/snp-config/tests/oracle/gen_config_vectors.py",
- "pre_commit": "4.6.2",
+ "pre_commit": "4.7.0",
  "python": "3.12.3",
  "cases": [
   {
@@ -343,7 +343,7 @@
       "--foo"
      ],
      "description": "",
-     "entry": "/tmp/claude-1000/-home-dromix-projects-snp/484ec4f1-c0f7-4123-b7cd-bc3e3cb59b63/scratchpad/pc462-py312/bin/python -m pre_commit.meta_hooks.identity",
+     "entry": "/home/dromix/projects/snp/.claude/worktrees/agent-a732e675efa7b4498/target/oracle/pc470-py312/bin/python -m pre_commit.meta_hooks.identity",
      "exclude": "^$",
      "exclude_types": [],
      "fail_fast": false,
@@ -371,7 +371,7 @@
      "always_run": false,
      "args": [],
      "description": "",
-     "entry": "/tmp/claude-1000/-home-dromix-projects-snp/484ec4f1-c0f7-4123-b7cd-bc3e3cb59b63/scratchpad/pc462-py312/bin/python -m pre_commit.meta_hooks.check_useless_excludes",
+     "entry": "/home/dromix/projects/snp/.claude/worktrees/agent-a732e675efa7b4498/target/oracle/pc470-py312/bin/python -m pre_commit.meta_hooks.check_useless_excludes",
      "exclude": "^$",
      "exclude_types": [],
      "fail_fast": false,

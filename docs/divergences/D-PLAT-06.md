@@ -9,7 +9,7 @@ absolute path kept
 
 ## Register entry (COMPATIBILITY §5.5)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | Windows: config/`--files` on another drive → `ValueError` (relpath) exit 3 | absolute path kept |
 

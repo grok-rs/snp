@@ -37,7 +37,7 @@ steps:
       PATH: "${work}/tools:${PATH}"
     stdin: ""
     tty: false
-# pre-commit 4.6.2: the four install lines, then
+# pre-commit 4.7.0: the four install lines, then
 #   `An unexpected error has occurred: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 3:
 #   invalid start byte`, `Check the log at …`, exit 3.
 # snp: the four install lines, then `lua hook….Passed`, exit 0.

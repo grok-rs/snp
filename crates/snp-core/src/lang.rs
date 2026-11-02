@@ -1,6 +1,6 @@
 //! pre-commit's languages (`all_languages.py:27-50`; 01 §1.4).
 
-/// One of the 21 languages of pre-commit 4.6.2, in `language_names` (sorted) order.
+/// One of the 21 languages of pre-commit 4.7.0, in `language_names` (sorted) order.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum LanguageId {

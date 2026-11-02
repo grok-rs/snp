@@ -1,5 +1,5 @@
 # D-CRASH-26 (CRASH, owner WP-18): `ls-files -z` + adjacent dedup below git 2.31
-# `run --all-files` on git 2.19–2.30: pre-commit 4.6.2 crashes on `ls-files -z --deduplicate` (rc 129, exit 3); snp
+# `run --all-files` on git 2.19–2.30: pre-commit 4.7.0 crashes on `ls-files -z --deduplicate` (rc 129, exit 3); snp
 # lists the files with the byte-identical fallback and runs the hook. Runs on the CI git 2.30 container (ADR-063).
 expect_divergence: D-CRASH-26
 name: divergences/D-CRASH-26-all-files-on-git-2.30
