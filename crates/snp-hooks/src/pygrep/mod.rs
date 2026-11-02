@@ -209,7 +209,7 @@ pub fn run_partition(
         if cancel.is_cancelled() {
             break;
         }
-        let content = match std::fs::read(root.join(name)) {
+        let content = match std::fs::read(framework::in_root(root, name)) {
             Ok(b) => b,
             Err(e) => {
                 out.extend_from_slice(&framework::crash_line(&framework::io_exc(&e, name)));

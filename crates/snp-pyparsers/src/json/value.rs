@@ -330,8 +330,8 @@ pub(super) fn py_lt(left: &Val, right: &Val) -> Result<bool, TypeErr> {
 
 /// `pairs_first(pairs)`: top keys first (stable by `top_keys.index(key)`), the rest `list.sort()`ed as
 /// `(key, value)` tuples when `sort_keys`, then `dict(before + after)`. `minor` selects the emulated `list.sort`
-/// (3.12 and 3.13 differ in run detection); `None` is the lenient variant that never raises (pairs whose values
-/// Python cannot order keep their relative order).
+/// (3.12 and 3.13 differ in run detection); `None` is the lenient variant that never raises nor panics (3.13's sort
+/// with `<` taken as `False` wherever Python raises `TypeError`).
 pub(super) fn pairs_first(
     pairs: Pairs,
     o: &DumpOpts,
@@ -351,16 +351,15 @@ pub(super) fn pairs_first(
             }
             py_lt(&x.1, &y.1)
         };
-        match minor {
-            Some(v) => pysort::sort(&mut after, v, lt)?,
-            None => after.sort_by(|x, y| match lt(x, y) {
-                Ok(true) => Ordering::Less,
-                Ok(false) => match lt(y, x) {
-                    Ok(true) => Ordering::Greater,
-                    _ => Ordering::Equal,
-                },
-                Err(_) => Ordering::Equal,
-            }),
+        if let Some(v) = minor {
+            pysort::sort(&mut after, v, lt)?;
+        } else {
+            // CPython's sort with a `<` that answers `False` where Python raises: like CPython, it tolerates the
+            // inconsistent order this describes (mixed value types, NaN), where `slice::sort_by` panics on it.
+            let lenient = |x: &(Box<[u8]>, Val), y: &(Box<[u8]>, Val)| {
+                Ok::<bool, std::convert::Infallible>(lt(x, y).unwrap_or(false))
+            };
+            let Ok(()) = pysort::sort(&mut after, PyMinor::P313, lenient);
         }
     }
     let mut out: Vec<(Box<[u8]>, Val)> = Vec::new();

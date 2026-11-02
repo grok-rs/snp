@@ -134,26 +134,11 @@ fn encode_crash(
     PyExc::new(exc.ty.clone(), shift_positions(&exc.text, delta))
 }
 
-/// `_get_pretty_format(...)`, with Python's order of failures: `json.loads` (and its `object_pairs_hook`) runs
-/// before the `--indent` is applied, so a decode error or a `TypeError` wins over an indent `OverflowError` /
-/// `MemoryError`.
+/// `_get_pretty_format(...)`, with Python's order of failures (kept by [`snp_pyparsers::json::pretty_format`]):
+/// `json.loads` (and its `object_pairs_hook`) runs before the `--indent` is applied, so a decode error or a
+/// `TypeError` wins over an indent `OverflowError` / `MemoryError`.
 fn pretty(contents: &str, opts: &DumpOpts) -> Result<String, CheckError> {
-    match snp_pyparsers::json::pretty_format(contents, opts, MINOR) {
-        Err(CheckError::Crash(e)) if e.ty == "OverflowError" || e.ty == "MemoryError" => {
-            let probe = DumpOpts {
-                indent: String::new(),
-                ..opts.clone()
-            };
-            match snp_pyparsers::json::pretty_format(contents, &probe, MINOR) {
-                Err(CheckError::Crash(p)) if p.ty == "UnicodeEncodeError" => {
-                    Err(CheckError::Crash(e))
-                }
-                Err(other) => Err(other),
-                Ok(_) => Err(CheckError::Crash(e)),
-            }
-        }
-        other => other,
-    }
+    snp_pyparsers::json::pretty_format(contents, opts, MINOR)
 }
 
 impl NativeHook for PrettyFormatJson {

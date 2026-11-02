@@ -278,3 +278,58 @@ fn dumps_pretty_never_fails() {
     ]);
     assert_eq!(json::dumps_pretty(&dup, &o), "{\n \"a\": {}\n}\n");
 }
+
+/// Fuzz regression (nightly `pyparsers_json`, crash-4a8b4b04…, minimised): duplicate keys whose values mix `int`
+/// and `str` make the lenient `pairs_first` order inconsistent, which `slice::sort_by` reported by panicking
+/// ("does not correctly implement a total order"). Python's `list.sort` raises `TypeError` on the exact path and
+/// the lenient variant now sorts like CPython with those comparisons taken as `False`.
+#[test]
+fn dumps_pretty_survives_inconsistent_duplicate_key_orders() {
+    let doc = concat!(
+        r#"{"6":1," 5":1," 6":"2","11":",2","1":1,"#,
+        "\t",
+        r#""5":1,"6":",","2":1,"#,
+        "\t",
+        r#"" ":1," ":1," ":1,"#,
+        "\t",
+        r#"" 6":"2" ,"11":1," 6":""," 6":11," ":"" ,"1":1,"#,
+        "\t",
+        r#"" ":""," 1":1,"#,
+        "\t",
+        r#"" 6":"" ,"32":1 }"#,
+    );
+    let o = DumpOpts {
+        indent: "  ".into(),
+        ensure_ascii: true,
+        sort_keys: true,
+        top_keys: vec!["a".into(), String::new()],
+    };
+    for v in [PyMinor::P312, PyMinor::P313] {
+        match json::pretty_format(doc, &o, v) {
+            Err(snp_pyparsers::CheckError::Crash(e)) => assert_eq!(e.ty, "TypeError"),
+            other => panic!("{v:?}: {other:?}"),
+        }
+        let val = json::loads(doc.as_bytes(), v).unwrap();
+        let out = json::dumps_pretty(&val, &o);
+        assert_eq!(out, json::dumps_pretty(&val, &o));
+        assert_eq!(
+            out,
+            concat!(
+                "{\n  \" \": \"\",\n  \" 1\": 1,\n  \" 5\": 1,\n  \" 6\": 11,\n  \"1\": 1,\n  \"11\": 1,\n",
+                "  \"2\": 1,\n  \"32\": 1,\n  \"5\": 1,\n  \"6\": \",\"\n}\n",
+            ),
+            "{v:?}"
+        );
+    }
+    // NaN values among duplicate keys order inconsistently too, and Python's sort still succeeds
+    // (pre-commit-hooks' `pretty-format-json --autofix` on CPython 3.12 writes `{"k": 3}` for this document).
+    let nan = r#"{"k":1,"k":NaN,"k":0,"k":NaN,"k":2,"k":-1,"k":NaN,"k":3}"#;
+    for v in [PyMinor::P312, PyMinor::P313] {
+        let val = json::loads(nan.as_bytes(), v).unwrap();
+        assert_eq!(json::dumps_pretty(&val, &o), "{\n  \"k\": 3\n}\n");
+        assert_eq!(
+            json::pretty_format(nan, &o, v).unwrap(),
+            "{\n  \"k\": 3\n}\n"
+        );
+    }
+}

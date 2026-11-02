@@ -1,0 +1,14 @@
+name: meta/identity-shuffled
+# `identity` is `language: unsupported`, run through `lang_base.run_xargs`: its file arguments are shuffled with
+# pre-commit's fixed seed unless the hook is `require_serial` (nightly generated difftest, 41422001568-35).
+work:
+  files: {a.py: "", b.txt: "", c.md: "", d.json: "{}\n", e.yaml: "a: 1\n", f.sh: "", g.cfg: ""}
+  config: |
+    repos:
+    -   repo: meta
+        hooks:
+        -   {id: identity, verbose: true}
+        -   {id: identity, alias: serial, verbose: true, require_serial: true}
+  commit: [.pre-commit-config.yaml, a.py, b.txt, c.md, d.json, e.yaml, f.sh, g.cfg]
+steps:
+  - tool: [run, --all-files]

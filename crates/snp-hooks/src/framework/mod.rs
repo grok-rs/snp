@@ -13,7 +13,7 @@
 mod spec;
 
 use std::ffi::OsStr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use snp_argparse::{Namespace, ParseCfg, ParserSpec};
 use snp_core::env::Env;
@@ -315,9 +315,20 @@ pub fn os_bytes(s: &OsStr) -> &[u8] {
     s.as_encoded_bytes()
 }
 
-/// `os.path.join(cwd, name)` for a hook whose cwd is `cx.root` (absolute names are kept).
+/// `name` opened relative to a hook whose cwd is `cx.root` (absolute names are kept): see [`in_root`].
 pub fn at(cx: &HookCx<'_>, name: &OsStr) -> PathBuf {
-    cx.root.join(name)
+    in_root(cx.root, name)
+}
+
+/// The path that a process with cwd `root` opens for the argv name `name`. An empty name stays empty: Python's
+/// `open('')` / `os.stat('')` fail with `FileNotFoundError: [Errno 2] No such file or directory: ''`, where
+/// `root.join("")` would name the directory itself (`IsADirectoryError`).
+pub fn in_root(root: &Path, name: &OsStr) -> PathBuf {
+    if name.is_empty() {
+        PathBuf::new()
+    } else {
+        root.join(name)
+    }
 }
 
 /// `RepoPath` of an argv file name, when it is one (relative, non-empty, no NUL).

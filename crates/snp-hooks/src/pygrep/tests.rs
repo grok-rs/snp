@@ -104,3 +104,28 @@ fn future_warnings_precede_matches() {
         "[WARNING] regex '[[x]]': Possible nested set at position 1 (Python FutureWarning)\na:1:x]\n"
     );
 }
+
+/// An empty file name (a hook's `args: ['']`) is Python's `open('')`: `FileNotFoundError`, not the work tree's
+/// `IsADirectoryError` (nightly generated difftest).
+#[test]
+fn empty_file_name_is_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let c = prepare(&[], "x", 80).unwrap();
+    let o = run_partition(
+        &c,
+        &[OsStr::new("x"), OsStr::new("")],
+        dir.path(),
+        &RegexCache::new(),
+        &CancelToken::new(),
+    );
+    assert_eq!(o.code, 1);
+    assert!(o.crashed);
+    let text = String::from_utf8_lossy(&o.output);
+    assert!(text.starts_with("FileNotFoundError: "), "{text}");
+    if cfg!(unix) {
+        assert!(
+            text.starts_with("FileNotFoundError: [Errno 2] No such file or directory: ''"),
+            "{text}"
+        );
+    }
+}
