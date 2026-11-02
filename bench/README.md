@@ -80,9 +80,10 @@ the tool waited for, so a git child larger than the tool itself is what gets rep
 
 * **Regression**: snp's median more than 5 % above the baseline's **and** the two 95 % confidence intervals of the
   medians disjoint (distribution-free order-statistic intervals, ranks `n/2 ∓ 1.96·√n/2`) fails; a > 5 % change with
-  overlapping intervals is a warning. Pull requests use the base commit measured on the same runner as the baseline;
-  main and the nightly use the last history record of the same platform and variant.
-* **Drift** (main and the nightly, which compare against the history): the same rule against the record with the
+  overlapping intervals is a warning. Pull requests and pushes to main use the base commit (the PR base, or the commit
+  before the push) measured on the same runner as the baseline, because records from different runner VMs differ by
+  more than 5 % for identical binaries; the nightly uses the last history record of the same platform and variant.
+* **Drift** (the nightly, and a push without a previous commit, which compare against the history): the same rule against the record with the
   median snp time among the last 10 history records (at least 3 needed). Without it, a series of slowdowns each just
   under 5 % of the previous record would pass forever, since every passing run becomes the next baseline. The gate reads the records and
   criterion's results from cargo's target directory (`CARGO_TARGET_DIR` respected), like `run` writes them, and uses

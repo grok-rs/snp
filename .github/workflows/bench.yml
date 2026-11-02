@@ -112,15 +112,18 @@ jobs:
           key: bench-history-gnu-${{ github.run_id }}
           restore-keys: bench-history-gnu-
       - run: cargo xtask bench setup --scenarios "$BENCH_SCENARIOS"
-      # Pull requests: the base commit's snp, built and measured on this runner, is the baseline.
+      # Pull requests and pushes: the base commit's snp (the PR base, or the commit before the push), built and
+      # measured on this runner, is the baseline. A baseline from the history comes from another VM, and runner
+      # variance alone exceeds the 5 % regression threshold on millisecond scenarios (B1: +31.5 % for an
+      # identical binary). The nightly run keeps the history baseline and its drift check.
       - name: Base commit
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000')
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.pull_request.base.sha || github.event.before }}
           path: snp-base
       - name: Measure the base commit
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000')
         run: |
           cargo build --manifest-path ../snp-base/Cargo.toml --profile dist --locked -p snp --bin snp \
             --target-dir target/bench/base-target
@@ -136,6 +139,9 @@ jobs:
           if [ "${{ github.event_name }}" = pull_request ]; then
             cargo xtask bench gate --baseline target/bench/results/base.json --comment target/bench/comment.md \
               --allow-missing "$BENCH_PENDING"
+          elif [ -f target/bench/results/base.json ]; then
+            cargo xtask bench gate --baseline target/bench/results/base.json --comment target/bench/comment.md \
+              --record --allow-missing "$BENCH_PENDING"
           else
             cargo xtask bench gate --comment target/bench/comment.md --record --allow-missing "$BENCH_PENDING"
           fi
