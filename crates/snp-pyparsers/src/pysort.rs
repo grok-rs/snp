@@ -4,7 +4,7 @@
 //! machinery is the same.
 //!
 //! The port sorts a permutation of indices and applies it at the end; every array access is checked (an
-//! impossible out-of-range index degrades to Rust's stable sort instead of panicking).
+//! impossible out-of-range index degrades to a stable insertion sort instead of panicking).
 //!
 //! Owner: WP-17.
 
@@ -57,19 +57,28 @@ pub(crate) fn sort<T, E>(
         Ok(()) => {}
         Err(Stop::Raised(e)) => return Err(e),
         Err(Stop::Internal) => {
+            // A stable binary-insertion sort: unlike `slice::sort_by`, it cannot panic on the inconsistent orders
+            // (NaN, mixed types) that `lt` may describe.
             keys = (0..n).collect();
-            keys.sort_by(|&a, &b| match (items.get(a), items.get(b)) {
-                (Some(x), Some(y)) => {
-                    if lt(x, y).unwrap_or(false) {
-                        std::cmp::Ordering::Less
-                    } else if lt(y, x).unwrap_or(false) {
-                        std::cmp::Ordering::Greater
+            for i in 1..n {
+                let Some(&k) = keys.get(i) else { break };
+                let (mut lo, mut hi) = (0, i);
+                while lo < hi {
+                    let mid = lo.midpoint(hi);
+                    let less = match (items.get(k), keys.get(mid).and_then(|&m| items.get(m))) {
+                        (Some(x), Some(y)) => lt(x, y).unwrap_or(false),
+                        _ => false,
+                    };
+                    if less {
+                        hi = mid;
                     } else {
-                        std::cmp::Ordering::Equal
+                        lo = mid.saturating_add(1);
                     }
                 }
-                _ => std::cmp::Ordering::Equal,
-            });
+                if let Some(run) = keys.get_mut(lo..=i) {
+                    run.rotate_right(1);
+                }
+            }
         }
     }
     apply_permutation(items, &keys);
