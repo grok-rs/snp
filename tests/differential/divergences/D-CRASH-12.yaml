@@ -4,7 +4,8 @@
 expect_divergence: D-CRASH-12
 name: divergences/D-CRASH-12-non-utf8-file-name
 since: "4.6.2"
-requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos], pty: false}
+# Linux only: APFS refuses a non-UTF-8 file name (EILSEQ), Windows names are UTF-16.
+requires: {git: ">=2.31", net: false, tools: [], os: [linux], pty: false}
 repos: {}
 work:
   files: {}
