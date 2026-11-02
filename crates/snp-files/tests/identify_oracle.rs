@@ -232,32 +232,60 @@ mod oracle {
         TagSet::from_names(picks.iter().map(|&i| POOL[i % POOL.len()])).unwrap()
     }
 
-    proptest! {
-        #![proptest_config(ProptestConfig { cases: 256, .. ProptestConfig::default() })]
-
-        /// Partial-tier filter outcome == full-tag filter outcome, for every file of the tree.
-        #[test]
-        fn partial_tiers_decide_like_full_tags(
-            types in proptest::collection::vec(0usize..64, 0..3),
-            types_or in proptest::collection::vec(0usize..64, 0..3),
-            exclude in proptest::collection::vec(0usize..64, 0..3),
-        ) {
-            let (_guard, root, entries, _socks) = tree();
-            let cache = RegexCache::new();
-            let f = HookFilter::compile("", "^$", set(&types), set(&types_or), set(&exclude), None, &cache).unwrap();
-            // A fresh table per case: no tier is cached by an earlier, larger request.
-            let partial = table_of(&root, &entries);
-            let full = table_of(&root, &entries);
-            for (i, entry) in entries.iter().enumerate() {
-                let id = FileId(u32::try_from(i).unwrap());
-                let TagOutcome::Tags(all) = full.tags(id, FULL) else { panic!() };
-                let expected = all.matches_types(&f.types, &f.types_or, &f.exclude_types);
-                let got = match partial.tags(id, f.needs) {
-                    TagOutcome::Tags(t) => t.matches_types(&f.types, &f.types_or, &f.exclude_types),
-                    other => panic!("{other:?}"),
-                };
-                prop_assert_eq!(got, expected, "{:?} needs={:?}", String::from_utf8_lossy(&entry.path), f.needs);
-            }
+    /// Partial-tier filter outcome == full-tag filter outcome, for every file of the tree. The tree is laid out
+    /// once (it is read-only here); each case gets fresh tables, so no tier is cached by an earlier, larger
+    /// request. 256 cases, scaled by `PROPTEST_CASES` as in `proptest!`.
+    #[test]
+    fn partial_tiers_decide_like_full_tags() {
+        let (_guard, root, entries, _socks) = tree();
+        let cache = RegexCache::new();
+        let picks = || proptest::collection::vec(0usize..64, 0..3);
+        let config = proptest::test_runner::contextualize_config(ProptestConfig {
+            cases: 256,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        });
+        let mut runner = proptest::test_runner::TestRunner::new(config);
+        let result = runner.run(
+            &(picks(), picks(), picks()),
+            |(types, types_or, exclude)| {
+                let f = HookFilter::compile(
+                    "",
+                    "^$",
+                    set(&types),
+                    set(&types_or),
+                    set(&exclude),
+                    None,
+                    &cache,
+                )
+                .unwrap();
+                let partial = table_of(&root, &entries);
+                let full = table_of(&root, &entries);
+                for (i, entry) in entries.iter().enumerate() {
+                    let id = FileId(u32::try_from(i).unwrap());
+                    let TagOutcome::Tags(all) = full.tags(id, FULL) else {
+                        panic!()
+                    };
+                    let expected = all.matches_types(&f.types, &f.types_or, &f.exclude_types);
+                    let got = match partial.tags(id, f.needs) {
+                        TagOutcome::Tags(t) => {
+                            t.matches_types(&f.types, &f.types_or, &f.exclude_types)
+                        }
+                        other => panic!("{other:?}"),
+                    };
+                    prop_assert_eq!(
+                        got,
+                        expected,
+                        "{:?} needs={:?}",
+                        String::from_utf8_lossy(&entry.path),
+                        f.needs
+                    );
+                }
+                Ok(())
+            },
+        );
+        if let Err(e) = result {
+            panic!("{e}");
         }
     }
 

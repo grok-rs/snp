@@ -158,39 +158,77 @@ mod robustness {
     /// Generous for debug builds: the budgets make each of these a few milliseconds in release.
     const BOUND: Duration = Duration::from_secs(10);
 
-    proptest! {
-        #![proptest_config(ProptestConfig { cases: 64, failure_persistence: None, ..ProptestConfig::default() })]
-
-        #[test]
-        fn alias_chains_are_bounded(depth in 1_usize..=10, fan in 1_usize..=10, scenario in any::<bool>()) {
-            let mut doc = alias_chain(depth, fan);
-            let start = Instant::now();
-            if scenario {
-                doc.push_str("name: b\nsteps: [{tool: [run]}]\n");
-                drop(Scenario::parse(&doc, Path::new("bomb.yaml")));
-            } else {
-                drop(Yv::parse(&doc));
-                drop(BrandMap::parse(&doc));
+    /// Every alias chain of the domain (`depth`, `fan` in 1..=10, both parsers): 200 parses, so it is exhaustive
+    /// rather than sampled, and its cost does not scale with `PROPTEST_CASES` (the nightly's 10 000 cases of this
+    /// 200-point domain ran past nextest's 20-minute limit).
+    #[test]
+    fn alias_chains_are_bounded() {
+        for depth in 1_usize..=10 {
+            for fan in 1_usize..=10 {
+                for scenario in [false, true] {
+                    let mut doc = alias_chain(depth, fan);
+                    let start = Instant::now();
+                    if scenario {
+                        doc.push_str("name: b\nsteps: [{tool: [run]}]\n");
+                        drop(Scenario::parse(&doc, Path::new("bomb.yaml")));
+                    } else {
+                        drop(Yv::parse(&doc));
+                        drop(BrandMap::parse(&doc));
+                    }
+                    assert!(
+                        start.elapsed() < BOUND,
+                        "{depth}x{fan}: {:?}",
+                        start.elapsed()
+                    );
+                }
             }
-            prop_assert!(start.elapsed() < BOUND, "{depth}x{fan}: {:?}", start.elapsed());
         }
+    }
 
-        #[test]
-        fn extreme_integers_are_bounded(
-            count in extreme_int(),
-            timeout in extreme_int(),
-            unit in prop_oneof![Just(""), Just("x"), Just("0123456789abcdef")],
-            files in 1_usize..=8,
-        ) {
+    /// `extreme_integers_are_bounded`'s case count: fixed, because `PROPTEST_CASES` overrides an explicit
+    /// `proptest_config` and each case costs tens of milliseconds in a debug build (10 000 took 500-1000 s).
+    const EXTREME_CASES: u32 = 256;
+
+    #[test]
+    fn extreme_integers_are_bounded() {
+        let strategy = (
+            extreme_int(),
+            extreme_int(),
+            prop_oneof![Just(""), Just("x"), Just("0123456789abcdef")],
+            1_usize..=8,
+        );
+        let config = ProptestConfig {
+            cases: EXTREME_CASES,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        };
+        let mut runner = proptest::test_runner::TestRunner::new(config);
+        let result = runner.run(&strategy, |(count, timeout, unit, files)| {
             let mut doc = String::from("name: n\nwork:\n  files:\n");
             for i in 0..files {
-                writeln!(doc, "    f{i}: {{generate: {{count: {count}, repeat: {unit:?}}}}}").unwrap();
+                writeln!(
+                    doc,
+                    "    f{i}: {{generate: {{count: {count}, repeat: {unit:?}}}}}"
+                )
+                .unwrap();
             }
-            writeln!(doc, "  generated: {{pattern: \"g{{i}}\", count: {count}, content: {unit:?}}}").unwrap();
+            writeln!(
+                doc,
+                "  generated: {{pattern: \"g{{i}}\", count: {count}, content: {unit:?}}}"
+            )
+            .unwrap();
             writeln!(doc, "steps: [{{tool: [run], timeout: {timeout}}}]").unwrap();
             let start = Instant::now();
             drop(Scenario::parse(&doc, Path::new("ints.yaml")));
-            prop_assert!(start.elapsed() < BOUND, "{count}/{timeout}: {:?}", start.elapsed());
+            prop_assert!(
+                start.elapsed() < BOUND,
+                "{count}/{timeout}: {:?}",
+                start.elapsed()
+            );
+            Ok(())
+        });
+        if let Err(e) = result {
+            panic!("{e}");
         }
     }
 }
