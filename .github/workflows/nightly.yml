@@ -287,8 +287,19 @@ jobs:
       - run: rustup toolchain install
       - uses: taiki-e/install-action@v2
         with: { tool: "cargo-llvm-cov,cargo-nextest" }
-      - run: cargo llvm-cov nextest --workspace --features snp/testing --locked --profile ci --no-tests=warn --lcov --output-path lcov.info
-      - run: cargo llvm-cov report --summary-only | tee -a "$GITHUB_STEP_SUMMARY"
+      # The integration tests spawn the workspace binaries (snp-testkit's `Bins::locate`, snp-proc's probe) from the
+      # test executable's target dir, which `cargo llvm-cov nextest` alone neither builds them into nor makes the
+      # default one. `show-env` instruments plain cargo instead: the binaries are built (as in ci.yml) with the same
+      # flags and target dir as the tests, and their runs count towards the report too.
+      - name: cargo llvm-cov
+        run: |
+          # shellcheck disable=SC1090
+          source <(cargo llvm-cov show-env --export-prefix)
+          cargo llvm-cov clean --workspace
+          cargo build --workspace --bins --features snp/testing --locked
+          cargo nextest run --workspace --features snp/testing --locked --profile ci --no-tests=warn
+          cargo llvm-cov report --lcov --output-path lcov.info
+          cargo llvm-cov report --summary-only | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-lcov
