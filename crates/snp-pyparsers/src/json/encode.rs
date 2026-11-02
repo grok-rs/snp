@@ -58,10 +58,12 @@ impl<'a> Indent<'a> {
         if n > MAX_OUTPUT {
             return Err(memory_error());
         }
-        let mut ind = String::new();
+        let mut ind = Vec::new();
         ind.try_reserve_exact(n).map_err(|_| memory_error())?;
-        ind.extend(std::iter::repeat_n(' ', n));
-        Ok(Self::Str(Cow::Owned(ind)))
+        ind.resize(n, b' ');
+        Ok(Self::Str(Cow::Owned(
+            String::from_utf8(ind).unwrap_or_default(),
+        )))
     }
 
     fn as_bytes(&self) -> &[u8] {

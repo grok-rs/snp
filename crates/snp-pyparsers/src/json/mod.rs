@@ -149,8 +149,11 @@ pub fn dumps_pretty(v: &JsonValue, o: &DumpOpts) -> String {
 /// a lone surrogate kept by `ensure_ascii=False` (the hook writes or diffs the text later, after printing
 /// `Fixing file …` with `--autofix`; the position is the index in the pretty text).
 pub fn pretty_format(contents: &str, o: &DumpOpts, v: PyMinor) -> Result<String, CheckError> {
-    let indent = encode::Indent::parse(&o.indent)?;
+    // Python's order: `json.loads` (with `pairs_first` as its `object_pairs_hook`) fails before `json.dumps` turns
+    // the `--indent` into `' ' * n` (`OverflowError` / `MemoryError`), so a huge indent never costs an invalid file
+    // its report, nor the time to build that indent.
     let tree = scan::pretty(contents.as_bytes(), o, v)?;
+    let indent = encode::Indent::parse(&o.indent)?;
     let mut out = Vec::new();
     encode::dumps(&tree, &indent, o.ensure_ascii, &mut out)?;
     out.push(b'\n');
@@ -314,6 +317,34 @@ mod tests {
         // The infallible encoder's documented fallback: no indent.
         let v = JsonValue::Array(vec![JsonValue::Null]);
         assert_eq!(dumps_pretty(&v, &opts("2000000000")), "[\nnull\n]\n");
+    }
+
+    /// Fuzz regression (nightly `pch_p1_pretty_format_json`, timeout-985293e4…: `--indent '444444444\n'` on a file
+    /// that is not JSON): pre-commit-hooks reports the invalid file before `json.dumps` builds `' ' * indent`, so
+    /// neither the indent's error nor its 444 MB (seconds under the fuzzer's instrumentation) comes first.
+    #[test]
+    fn invalid_documents_are_reported_before_the_indent_is_built() {
+        let bad = "\0\0\0\0\0\0444[8";
+        for ind in ["444444444\n", "2000000000", "99999999999999999999"] {
+            let start = std::time::Instant::now();
+            match pretty_format(bad, &opts(ind), PyMinor::P313) {
+                Err(CheckError::Reported(_)) => {}
+                other => panic!("{ind:?}: {other:?}"),
+            }
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(1),
+                "{ind:?}"
+            );
+        }
+        // A `TypeError` from `pairs_first` (inside `json.loads`) wins over the indent too.
+        match pretty_format(
+            r#"{"a":1,"a":"x"}"#,
+            &opts("99999999999999999999"),
+            PyMinor::P313,
+        ) {
+            Err(CheckError::Crash(e)) => assert_eq!(e.ty, "TypeError"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
