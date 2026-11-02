@@ -26,7 +26,7 @@ hooks.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/grok-rs/snp/releases/latest/download/snp-installer.sh | sh
-# or: pipx install snp-cli  |  uv tool install snp-cli   (not crates.io yet: `snp` there is the unrelated 1.x)
+# or: brew install grok-rs/tap/snp  |  cargo install --locked snp  |  pipx install snp-cli  |  uv tool install snp-cli
 snp --version   # snp 2.0.0
 ```
 
@@ -124,9 +124,13 @@ The differential tests need the pre-commit 4.6.2 oracles: `cargo xtask oracle in
 Releases are cut by pushing a tag `vX.Y.Z` that matches the workspace version and has a `## [X.Y.Z]` section in
 [`CHANGELOG.md`](CHANGELOG.md). The `release` workflow first runs `cargo xtask release gates` (ADR-061): `deps.lock`
 pins exactly the user crates, the sibling checkouts are clean at the pinned commits, the snp checkout is clean, and
-cfgv and file-identify are published on crates.io from exactly those commits (`.cargo_vcs_info.json`). It then builds
-the eight targets with cargo-dist (auditable binaries, CycloneDX SBOMs, SHA-256 checksums, GitHub attestations), the
-`snp-cli` wheels with maturin, and publishes the GitHub release. A manual run (`workflow_dispatch`) with a tag must
+cfgv and file-identify are published on crates.io from exactly those commits (`.cargo_vcs_info.json`), and the
+crates.io publish set (`snp` and its internal crates) is pinned to the release version (ADR-088); `cargo publish
+--workspace --dry-run` then builds every crate to be published. It builds the eight targets with cargo-dist
+(auditable binaries, CycloneDX SBOMs, SHA-256 checksums, GitHub attestations, the Homebrew formula), the `snp-cli`
+wheels with maturin, publishes the wheels to PyPI and the GitHub release, and then publishes the crates to crates.io
+(`CARGO_REGISTRY_TOKEN`) and the formula to [grok-rs/homebrew-tap](https://github.com/grok-rs/homebrew-tap)
+(`HOMEBREW_TAP_DEPLOY_KEY`); pre-releases skip PyPI, crates.io and Homebrew. A manual run (`workflow_dispatch`) with a tag must
 be dispatched from that tag ("Use workflow from: Tags / vX.Y.Z"), never from a branch; with the default input
 `dry-run` it builds everything and publishes nothing. `packaging/` holds the wheel project and the `snp-action`
 composite action.

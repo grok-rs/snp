@@ -7,13 +7,34 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-publish.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+# ADR-088: published to crates.io; the package carries the sources only (tests, vectors and benches stay in
+# the repository).
+include = ["/src/"]
 default-run = "snp"
 
-# cargo-dist skips `publish = false` packages even when `dist-workspace.toml` names them in `packages` (`dist plan`:
-# "doesn't have anything for dist to Release"): snp, the one released package, opts in.
+# cargo-dist releases snp, the one released package, explicitly (it skips `publish = false` packages, and snp was one
+# until ADR-088 published it to crates.io).
 [package.metadata.dist]
 dist = true
+
+# `cargo binstall snp` (ADR-088): the release archives of dist-workspace.toml. The `.tar.xz` archives hold a
+# `snp-<target>/` directory, the Windows `.zip` archives the files at their root.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }{ archive-suffix }"
+bin-dir = "{ name }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "txz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+bin-dir = "{ bin }{ binary-ext }"
+
+[package.metadata.binstall.overrides.aarch64-pc-windows-msvc]
+pkg-fmt = "zip"
+bin-dir = "{ bin }{ binary-ext }"
 
 [lib]
 path = "src/lib.rs"

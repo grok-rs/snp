@@ -24,7 +24,11 @@
 //!    (`git.sha1 == rev`), a clean tree (`dirty` absent or false) and `path_in_vcs == ""`. `--skip-registry` skips
 //!    this check (pull requests before the user crates are published). `--index`/`--dl` replace the sparse index
 //!    (`https://index.crates.io`) and download (`https://static.crates.io/crates`) base URLs; `file://` URLs are read
-//!    from disk (tests, mirrors).
+//!    from disk (tests, mirrors);
+//! 6. **crates** (ADR-088): every workspace package published to crates.io (`snp` and its normal dependency
+//!    closure) has the workspace version, requires the other published packages with exactly `=<version>`, depends
+//!    on no `publish = false` package except through version-less dev-dependencies (which `cargo publish` strips),
+//!    and `snp` itself is published.
 //!
 //! Downloads use `curl` (`--proto =https`), checksums `sha256sum` or `shasum -a 256`, and `.crate` extraction
 //! `tar`; all three exist on every GitHub-hosted runner.
@@ -591,7 +595,144 @@ fn gates(opts: &GateOpts) -> Report {
             }
         }
     }
+
+    // 6. the crates.io publish set (ADR-088)
+    match (workspace_version(&root), workspace::metadata(&root)) {
+        (Ok(version), Ok(meta)) => {
+            for (gate, r) in check_crates(&meta, &version) {
+                report.record(&gate, r);
+            }
+        }
+        (Err(e), _) | (_, Err(e)) => report.fail("crates", e.to_string()),
+    }
     report
+}
+
+/// The publish set of `cargo metadata --no-deps` (ADR-088): one row per workspace package published to crates.io
+/// (`publish` is not `false`), plus a `crates` summary row.
+///
+/// A published package has the workspace version (so every published crate's version equals the release tag, which
+/// gate 4 compares with that version); its normal and build dependencies on workspace packages name published
+/// packages with the exact requirement `=<version>`; its dev-dependencies on unpublished packages have no version
+/// requirement (`cargo publish` strips those; a versioned one would have to exist on crates.io). A package named
+/// `snp`, the crates.io channel, must be published.
+fn check_crates(meta: &serde_json::Value, version: &str) -> Vec<(String, Result<String, String>)> {
+    let empty = Vec::new();
+    let packages = meta
+        .get("packages")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or(&empty);
+    let members: Vec<Member<'_>> = packages.iter().filter_map(Member::new).collect();
+    let mut rows = Vec::new();
+    let mut set = Vec::new();
+    for m in &members {
+        if !m.published {
+            if m.name == "snp" {
+                rows.push((
+                    "crates/snp".to_owned(),
+                    Err("snp is `publish = false`: `cargo install snp` would not install this release".to_owned()),
+                ));
+            }
+            continue;
+        }
+        set.push(m.name);
+        rows.push((
+            format!("crates/{}", m.name),
+            check_member(m, &members, version),
+        ));
+    }
+    set.sort_unstable();
+    rows.push((
+        "crates".to_owned(),
+        Ok(format!(
+            "{} published to crates.io: {}",
+            set.len(),
+            set.join(", ")
+        )),
+    ));
+    rows
+}
+
+/// One workspace package of `cargo metadata`.
+#[derive(Debug)]
+struct Member<'a> {
+    name: &'a str,
+    dir: &'a Path,
+    published: bool,
+    json: &'a serde_json::Value,
+}
+
+impl<'a> Member<'a> {
+    fn new(json: &'a serde_json::Value) -> Option<Self> {
+        let name = json.get("name")?.as_str()?;
+        let dir = Path::new(json.get("manifest_path")?.as_str()?).parent()?;
+        // `publish`: null = any registry, [] = `publish = false`, a list = those registries only
+        let published = json
+            .get("publish")
+            .and_then(serde_json::Value::as_array)
+            .is_none_or(|regs| regs.iter().any(|r| r.as_str() == Some("crates-io")));
+        Some(Self {
+            name,
+            dir,
+            published,
+            json,
+        })
+    }
+}
+
+/// The checks of one published package (see [`check_crates`]).
+fn check_member(m: &Member<'_>, members: &[Member<'_>], version: &str) -> Result<String, String> {
+    let mut problems = Vec::new();
+    let own = m.json.get("version").and_then(serde_json::Value::as_str);
+    if own != Some(version) {
+        problems.push(format!(
+            "version {} != the workspace version {version}",
+            own.unwrap_or("?")
+        ));
+    }
+    let exact = format!("={version}");
+    let mut pinned = 0_usize;
+    let deps = m
+        .json
+        .get("dependencies")
+        .and_then(serde_json::Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    for d in deps {
+        let (Some(dep), Some(path)) = (
+            d.get("name").and_then(serde_json::Value::as_str),
+            d.get("path").and_then(serde_json::Value::as_str),
+        ) else {
+            continue;
+        };
+        // out-of-tree path dependencies (the user crates) are gates 1 and 5
+        let Some(target) = members.iter().find(|o| o.dir == Path::new(path)) else {
+            continue;
+        };
+        let req = d
+            .get("req")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("*");
+        let dev = d.get("kind").and_then(serde_json::Value::as_str) == Some("dev");
+        match (dev, target.published) {
+            (false, false) => problems.push(format!(
+                "depends on {dep}, which is not published (`publish = false`)"
+            )),
+            (true, false) if req != "*" => problems.push(format!(
+                "dev-dependency {dep} is not published but requires {req:?}: without a `version`, `cargo publish` \
+                 strips it"
+            )),
+            (true, false) => {}
+            (_, true) if req == exact => pinned = pinned.saturating_add(1),
+            (_, true) => problems.push(format!("{dep} requires {req:?}, not {exact:?}")),
+        }
+    }
+    if problems.is_empty() {
+        Ok(format!(
+            "published as {version}; {pinned} internal requirement(s) {exact}"
+        ))
+    } else {
+        Err(problems.join("; "))
+    }
 }
 
 /// `tag` exists and names the commit checked out at `HEAD` of `root`.
@@ -933,6 +1074,116 @@ mod tests {
             let p = pins.iter().find(|p| p.name == name).unwrap();
             assert_eq!(p.path, path);
             assert!(caret_matches(req.as_deref().unwrap(), &p.version), "{name}");
+        }
+    }
+
+    /// `cargo metadata` of a three-package workspace: `deps` are (name, kind, req) edges between them.
+    fn meta(
+        publish: &[(&str, bool, &str)],
+        deps: &[(&str, &str, Option<&str>, &str)],
+    ) -> serde_json::Value {
+        let packages: Vec<serde_json::Value> = publish
+            .iter()
+            .map(|(name, published, version)| {
+                let dependencies: Vec<serde_json::Value> = deps
+                    .iter()
+                    .filter(|(from, ..)| from == name)
+                    .map(|(_, to, kind, req)| {
+                        serde_json::json!({"name": to, "path": format!("/ws/crates/{to}"), "kind": kind, "req": req})
+                    })
+                    .chain([serde_json::json!({"name": "cfgv", "path": "/cfgv-rs", "kind": null, "req": "^0.3"})])
+                    .collect();
+                serde_json::json!({
+                    "name": name,
+                    "version": version,
+                    "manifest_path": format!("/ws/crates/{name}/Cargo.toml"),
+                    "publish": if *published { serde_json::Value::Null } else { serde_json::json!([]) },
+                    "dependencies": dependencies,
+                })
+            })
+            .collect();
+        serde_json::json!({ "packages": packages })
+    }
+
+    fn failures(rows: &[(String, Result<String, String>)]) -> Vec<String> {
+        rows.iter()
+            .filter_map(|(g, r)| r.as_ref().err().map(|e| format!("{g}: {e}")))
+            .collect()
+    }
+
+    #[test]
+    fn the_publish_set_is_pinned_and_self_contained() {
+        let ok = meta(
+            &[
+                ("snp", true, "2.0.0"),
+                ("snp-core", true, "2.0.0"),
+                ("snp-testkit", false, "2.0.0"),
+            ],
+            &[
+                ("snp", "snp-core", None, "=2.0.0"),
+                ("snp", "snp-testkit", Some("dev"), "*"),
+                ("snp-testkit", "snp-core", None, "=2.0.0"),
+            ],
+        );
+        let rows = check_crates(&ok, "2.0.0");
+        assert!(failures(&rows).is_empty(), "{rows:?}");
+        assert!(
+            rows.iter()
+                .any(|(g, r)| g == "crates" && r.as_ref().unwrap().contains("2 published"))
+        );
+        // a caret requirement, a normal and a versioned dev-dependency on an unpublished crate, a stray version
+        let bad = meta(
+            &[
+                ("snp", true, "2.0.0"),
+                ("snp-core", true, "2.0.1"),
+                ("snp-testkit", false, "2.0.0"),
+            ],
+            &[
+                ("snp", "snp-core", None, "^2.0.0"),
+                ("snp", "snp-testkit", Some("dev"), "^2.0.0"),
+                ("snp-core", "snp-testkit", None, "*"),
+            ],
+        );
+        let text = failures(&check_crates(&bad, "2.0.0")).join("\n");
+        assert!(
+            text.contains("snp-core requires \"^2.0.0\", not \"=2.0.0\""),
+            "{text}"
+        );
+        assert!(
+            text.contains("dev-dependency snp-testkit is not published"),
+            "{text}"
+        );
+        assert!(
+            text.contains("depends on snp-testkit, which is not published"),
+            "{text}"
+        );
+        assert!(
+            text.contains("version 2.0.1 != the workspace version 2.0.0"),
+            "{text}"
+        );
+        // snp itself unpublished
+        let private = meta(&[("snp", false, "2.0.0")], &[]);
+        assert!(failures(&check_crates(&private, "2.0.0"))[0].contains("cargo install snp"));
+    }
+
+    #[test]
+    fn the_workspace_publish_set_passes() {
+        let root = workspace::root().unwrap();
+        let rows = check_crates(
+            &workspace::metadata(&root).unwrap(),
+            &workspace_version(&root).unwrap(),
+        );
+        assert!(failures(&rows).is_empty(), "{rows:?}");
+        let published: Vec<&str> = rows
+            .iter()
+            .filter_map(|(g, _)| g.strip_prefix("crates/"))
+            .collect();
+        assert!(published.contains(&"snp") && published.contains(&"snp-core"));
+        for tooling in ["xtask", "snp-testkit", "snp-difftest", "snp-probe"] {
+            assert!(
+                !published.contains(&tooling),
+                "{tooling} must stay unpublished"
+            );
         }
     }
 
@@ -1663,6 +1914,143 @@ mod tests {
                 let action = read("packaging/snp-action/action.yml");
                 assert!(action.contains("path: ${{ steps.cache-dir.outputs.path }}"));
                 assert!(!action.contains("path: ~/.cache/snp"));
+            }
+
+            fn executable(path: &Path, body: &str) {
+                use std::os::unix::fs::PermissionsExt as _;
+                std::fs::write(path, body).unwrap();
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+
+            /// publish-crates.sh against a fake `cargo` (metadata from `$FAKE_META`; `publish` logs its arguments,
+            /// answers 429 once while `$FAKE_DIR/429` exists and always while `always429` does, fails while `fail` exists, and adds
+            /// each `-p` crate to the fake index) and a fake `curl` (serves `$FAKE_DIR/index/<name>`, 404 otherwise).
+            struct Publish {
+                dir: Scratch,
+            }
+
+            impl Publish {
+                fn new(meta: &str) -> Self {
+                    let dir = scratch();
+                    let bin = dir.0.join("bin");
+                    std::fs::create_dir_all(bin.clone()).unwrap();
+                    std::fs::create_dir_all(dir.0.join("index")).unwrap();
+                    std::fs::write(dir.0.join("meta.json"), meta).unwrap();
+                    executable(
+                        &bin.join("cargo"),
+                        concat!(
+                            "#!/usr/bin/env bash\n",
+                            "case \"$1\" in\n",
+                            "  metadata) cat \"$FAKE_DIR/meta.json\" ;;\n",
+                            "  publish)\n",
+                            "    echo \"$*\" >> \"$FAKE_DIR/log\"\n",
+                            "    if [ -e \"$FAKE_DIR/429\" ]; then rm \"$FAKE_DIR/429\"; echo 'error: failed to publish: the remote server responded with an error (status 429 Too Many Requests)' >&2; exit 101; fi\n",
+                            "    if [ -e \"$FAKE_DIR/always429\" ]; then echo 'error: 429 Too Many Requests' >&2; exit 101; fi\n",
+                            "    if [ -e \"$FAKE_DIR/fail\" ]; then echo 'error: failed to verify' >&2; exit 101; fi\n",
+                            "    shift\n",
+                            "    while [ $# -gt 0 ]; do\n",
+                            "      if [ \"$1\" = -p ]; then echo \"{\\\"vers\\\":\\\"$FAKE_VERSION\\\"}\" >> \"$FAKE_DIR/index/$2\"; shift; fi\n",
+                            "      shift\n",
+                            "    done ;;\n",
+                            "  *) exit 99 ;;\n",
+                            "esac\n",
+                        ),
+                    );
+                    executable(
+                        &bin.join("curl"),
+                        concat!(
+                            "#!/usr/bin/env bash\n",
+                            "for a; do url=\"$a\"; done\n",
+                            "f=\"$FAKE_DIR/index/${url##*/}\"\n",
+                            "[ -f \"$f\" ] || exit 22\n",
+                            "cat \"$f\"\n",
+                        ),
+                    );
+                    Self { dir }
+                }
+
+                fn path(&self, rel: &str) -> PathBuf {
+                    self.dir.0.join(rel)
+                }
+
+                fn run(&self, version: &str, token: &str) -> (Option<i32>, String, String) {
+                    let o = bash()
+                        .arg(".github/scripts/publish-crates.sh")
+                        .arg(version)
+                        .env("PUBLISH_CARGO", self.path("bin/cargo"))
+                        .env("PUBLISH_CURL", self.path("bin/curl"))
+                        .env("FAKE_DIR", &self.dir.0)
+                        .env("FAKE_VERSION", version)
+                        .env("CARGO_REGISTRY_TOKEN", token)
+                        .env("PUBLISH_RETRY_SECONDS", "0")
+                        .env("PUBLISH_MAX_ROUNDS", "3")
+                        .output()
+                        .unwrap();
+                    let log = std::fs::read_to_string(self.path("log")).unwrap_or_default();
+                    (
+                        o.status.code(),
+                        log,
+                        String::from_utf8_lossy(&o.stderr).into_owned(),
+                    )
+                }
+            }
+
+            const META: &str = r#"{"packages":[
+                {"name":"snp","version":"2.0.0","publish":null},
+                {"name":"snp-core","version":"2.0.0","publish":null},
+                {"name":"snp-testkit","version":"2.0.0","publish":[]}
+            ]}"#;
+
+            #[test]
+            fn publish_crates_skips_published_crates_and_waits_out_rate_limits() {
+                // a first release, rate-limited once: two rounds, the unpublished crate never offered
+                let p = Publish::new(META);
+                std::fs::write(p.path("429"), "").unwrap();
+                let (code, log, err) = p.run("2.0.0", "t");
+                assert_eq!(code, Some(0), "{err}");
+                assert_eq!(
+                    log,
+                    "publish --locked -p snp -p snp-core\npublish --locked -p snp -p snp-core\n"
+                );
+                // a re-run: everything is on the index, nothing is published (no token needed)
+                std::fs::remove_file(p.path("log")).unwrap();
+                let (code, log, err) = p.run("2.0.0", "");
+                assert_eq!((code, log.as_str()), (Some(0), ""), "{err}");
+                // a partial publication (an older snp is on the index too): only the rest is published
+                let p = Publish::new(META);
+                std::fs::write(
+                    p.path("index/snp-core"),
+                    "{\"vers\":\"1.0.0\"}\n{\"vers\":\"2.0.0\"}\n",
+                )
+                .unwrap();
+                std::fs::write(p.path("index/snp"), "{\"vers\":\"1.0.1\"}\n").unwrap();
+                let (code, log, err) = p.run("2.0.0", "t");
+                assert_eq!(
+                    (code, log.as_str()),
+                    (Some(0), "publish --locked -p snp\n"),
+                    "{err}"
+                );
+            }
+
+            #[test]
+            fn publish_crates_stops_on_other_failures() {
+                let p = Publish::new(META);
+                std::fs::write(p.path("fail"), "").unwrap();
+                let (code, log, _) = p.run("2.0.0", "t");
+                assert_eq!((code, log.lines().count()), (Some(101), 1));
+                // no token, a version that is not the workspace's, a bad version argument, endless rate limits
+                assert!(p.run("2.0.0", "").2.contains("CARGO_REGISTRY_TOKEN"));
+                assert!(p.run("2.0.1", "t").2.contains("not at 2.0.1: snp 2.0.0"));
+                assert_eq!(p.run("v2.0.0", "t").0, Some(2));
+                let limited = Publish::new(META);
+                std::fs::write(limited.path("always429"), "").unwrap();
+                let (code, log, err) = limited.run("2.0.0", "t");
+                assert_eq!((code, log.lines().count()), (Some(1), 3), "{err}");
+                assert!(err.contains("still rate-limited after 3 rounds"), "{err}");
+                assert!(
+                    read(".github/workflows/release.yml")
+                        .contains(r#"run: .github/scripts/publish-crates.sh "${TAG#v}""#)
+                );
             }
 
             #[test]

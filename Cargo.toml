@@ -17,33 +17,42 @@ rust-version = "1.98"
 license = "MIT"
 authors = ["Serhii Kaliuzhnyi"]
 repository = "https://github.com/grok-rs/snp"
+homepage = "https://github.com/grok-rs/snp"
+readme = "README.md"
+keywords = ["pre-commit", "git-hooks", "hooks", "lefthook", "linter"]
+categories = ["development-tools", "command-line-utilities"]
+# ADR-088: the crates of the `snp` binary's dependency closure are published (they do not inherit this); the tooling
+# and test crates (xtask, snp-testkit, snp-difftest, snp-probe) inherit it and stay unpublished.
 publish = false
 
 [workspace.dependencies]
 # --- internal crates (ARCHITECTURE §1.1; edges are enforced by `cargo xtask check-dag`) ---
-snp-argparse = { path = "crates/snp-argparse", version = "2.0.0" }
-snp-cli = { path = "crates/snp-cli", version = "2.0.0" }
-snp-cmd = { path = "crates/snp-cmd", version = "2.0.0" }
-snp-config = { path = "crates/snp-config", version = "2.0.0" }
-snp-core = { path = "crates/snp-core", version = "2.0.0" }
-snp-files = { path = "crates/snp-files", version = "2.0.0" }
-snp-git = { path = "crates/snp-git", version = "2.0.0" }
-snp-hooks = { path = "crates/snp-hooks", version = "2.0.0" }
-snp-hooks-data = { path = "crates/snp-hooks-data", version = "2.0.0" }
-snp-lang = { path = "crates/snp-lang", version = "2.0.0" }
-snp-migrate = { path = "crates/snp-migrate", version = "2.0.0" }
-snp-net = { path = "crates/snp-net", version = "2.0.0" }
-snp-os = { path = "crates/snp-os", version = "2.0.0" }
-snp-proc = { path = "crates/snp-proc", version = "2.0.0" }
-snp-pycompat = { path = "crates/snp-pycompat", version = "2.0.0" }
-snp-pyparsers = { path = "crates/snp-pyparsers", version = "2.0.0" }
-snp-pyre = { path = "crates/snp-pyre", version = "2.0.0" }
-snp-repo = { path = "crates/snp-repo", version = "2.0.0" }
-snp-run = { path = "crates/snp-run", version = "2.0.0" }
-snp-stash = { path = "crates/snp-stash", version = "2.0.0" }
-snp-store = { path = "crates/snp-store", version = "2.0.0" }
-snp-testkit = { path = "crates/snp-testkit", version = "2.0.0" }
-snp-yaml = { path = "crates/snp-yaml", version = "2.0.0" }
+# ADR-088: the published crates require exactly the workspace version (`=X.Y.Z`, checked by `cargo xtask release
+# gates`), so a crates.io install never mixes the internal crates of two releases. snp-testkit is never published and
+# has no `version`: `cargo publish` strips it from the dev-dependencies of the published crates.
+snp-argparse = { path = "crates/snp-argparse", version = "=2.0.0" }
+snp-cli = { path = "crates/snp-cli", version = "=2.0.0" }
+snp-cmd = { path = "crates/snp-cmd", version = "=2.0.0" }
+snp-config = { path = "crates/snp-config", version = "=2.0.0" }
+snp-core = { path = "crates/snp-core", version = "=2.0.0" }
+snp-files = { path = "crates/snp-files", version = "=2.0.0" }
+snp-git = { path = "crates/snp-git", version = "=2.0.0" }
+snp-hooks = { path = "crates/snp-hooks", version = "=2.0.0" }
+snp-hooks-data = { path = "crates/snp-hooks-data", version = "=2.0.0" }
+snp-lang = { path = "crates/snp-lang", version = "=2.0.0" }
+snp-migrate = { path = "crates/snp-migrate", version = "=2.0.0" }
+snp-net = { path = "crates/snp-net", version = "=2.0.0" }
+snp-os = { path = "crates/snp-os", version = "=2.0.0" }
+snp-proc = { path = "crates/snp-proc", version = "=2.0.0" }
+snp-pycompat = { path = "crates/snp-pycompat", version = "=2.0.0" }
+snp-pyparsers = { path = "crates/snp-pyparsers", version = "=2.0.0" }
+snp-pyre = { path = "crates/snp-pyre", version = "=2.0.0" }
+snp-repo = { path = "crates/snp-repo", version = "=2.0.0" }
+snp-run = { path = "crates/snp-run", version = "=2.0.0" }
+snp-stash = { path = "crates/snp-stash", version = "=2.0.0" }
+snp-store = { path = "crates/snp-store", version = "=2.0.0" }
+snp-testkit = { path = "crates/snp-testkit" }
+snp-yaml = { path = "crates/snp-yaml", version = "=2.0.0" }
 
 # --- the owner's crates: sibling checkouts on branch `snp-support`, pinned by deps.lock (ADR-061) ---
 cfgv = { path = "../cfgv-rs", version = "0.3", default-features = false }

@@ -92,13 +92,35 @@ In tox, nox or `requirements-dev.txt` you can depend on `snp-cli` and call `snp`
 `pre-commit` into the same environment if you also create the alias there (see the
 [migration guide](migration.md#scripts-and-tools-that-call-pre-commit)).
 
-## crates.io (not yet available)
+## Homebrew (macOS, Linux)
 
-snp 2.x is **not published on crates.io yet**. The crate name `snp` on crates.io currently holds the unrelated snp 1.x,
-so `cargo install snp` and `cargo binstall snp` install that older tool, not this one. Use the installers, the archives,
-PyPI or a build from source until a release note announces the crates.io channel. If `~/.cargo/bin/snp --version`
-prints `1.x`, that is the old crate: `cargo uninstall snp` removes it. `snp doctor` warns when the first `snp` on `PATH`
-is not the one you are running.
+```sh
+brew install grok-rs/tap/snp
+brew upgrade snp
+```
+
+The formula lives in the [grok-rs/homebrew-tap](https://github.com/grok-rs/homebrew-tap) tap, which the release
+workflow updates for every release (pre-releases excluded). It installs the release archive for your platform
+(macOS Apple silicon and Intel, Linux glibc arm64 and x86_64) and only `snp`. Hook scripts installed from a Homebrew
+snp embed the stable `$(brew --prefix)/bin/snp`, so `brew upgrade` keeps commits working
+([Platforms](platforms.md)).
+
+## crates.io: `cargo install snp`
+
+```sh
+cargo install --locked snp
+cargo binstall snp      # cargo-binstall fetches the release archive instead of compiling
+```
+
+snp 2.x is published on crates.io as `snp` together with the internal crates it is built from (`snp-core`,
+`snp-cli`, `snp-run`, ...; they exist only to build `snp` and have no stable API). `--locked` builds with the
+dependency versions the release was tested with. `cargo install` compiles with Cargo's default release profile rather
+than the release archives' (fat LTO, overflow checks), and needs Rust 1.98 or newer; the installers and archives above
+are the recommended channel when you do not need a source build.
+
+The crate name `snp` previously held the unrelated snp 1.x. If `~/.cargo/bin/snp --version` prints `1.x`, that is the
+old crate: `cargo install --locked snp` replaces it with 2.x (or `cargo uninstall snp` removes it). `snp doctor` warns
+when the first `snp` on `PATH` is not the one you are running.
 
 ## From source
 
@@ -152,5 +174,5 @@ it, and `snp self alias install --force` refreshes it.
    (`snp uninstall`); see [Rollback](migration.md#rollback).
 2. `snp self alias uninstall` if you created the alias.
 3. `snp clean` removes snp's cache (`~/.cache/snp` or `$SNP_HOME`).
-4. Remove the binary: `rm ~/.cargo/bin/snp` (shell installer), `pipx uninstall snp-cli` or
-   `uv tool uninstall snp-cli`.
+4. Remove the binary: `rm ~/.cargo/bin/snp` (shell installer), `brew uninstall snp`, `cargo uninstall snp`,
+   `pipx uninstall snp-cli` or `uv tool uninstall snp-cli`.

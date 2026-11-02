@@ -46,5 +46,10 @@ unrelated snp 1.x releases of the crate.
 - Releases for Linux (glibc and static musl, x86_64 and arm64), macOS (arm64 and x86_64) and Windows (MSVC with static
   CRT, x86_64 and arm64) with shell and PowerShell installers, SHA-256 checksums, CycloneDX SBOMs, auditable binaries
   and GitHub attestations; the `snp-cli` wheel on PyPI; the `snp-action` GitHub Action.
+- snp 2.x on crates.io (ADR-088): `cargo install --locked snp` (and `cargo binstall snp`, which fetches the release
+  archive) installs this release; the internal crates it is built from (`snp-core`, `snp-cli`, ...) are published
+  with it, each requiring exactly the same version. The crate name `snp` previously held the unrelated snp 1.x.
+- A Homebrew formula in the grok-rs/homebrew-tap tap: `brew install grok-rs/tap/snp` (macOS and Linux; `snp` only,
+  no `pre-commit` alias).
 - User documentation: installation, migration guide, CI integration, configuration reference, troubleshooting, the CLI
   reference generated from the parser tables and the DIVERGENCES book generated from the register.

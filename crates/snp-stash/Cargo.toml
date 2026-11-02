@@ -7,7 +7,13 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-publish.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+# ADR-088: published to crates.io; the package carries the sources only (tests, vectors and benches stay in
+# the repository).
+include = ["/src/"]
 
 [dependencies]
 snp-core.workspace = true
@@ -32,6 +38,10 @@ rustix.workspace = true
 test-driver = ["snp-core/fault-injection"]
 # Test-only panic injection at the stash's transitions (`snp_core::fault`, ADR-066).
 fault-injection = ["snp-core/fault-injection"]
+
+# The test driver is a binary of a published package: cargo-dist would release it as an app of its own.
+[package.metadata.dist]
+dist = false
 
 [[bin]]
 name = "snp-stash-driver"

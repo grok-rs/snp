@@ -7,17 +7,20 @@
 #   commits (ADR-061), so `../cfgv-rs` and `../file-identify` resolve;
 # * `gates` runs first: `cargo xtask release gates` (deps.lock pins exactly the user crates; the siblings are clean at
 #   the pinned commits; the snp checkout is clean; the tag is `v` + the workspace version with a CHANGELOG section;
-#   cfgv and file-identify are published on crates.io from exactly the pinned commits, `.cargo_vcs_info.json`). A
-#   mismatch stops the release before anything is built;
+#   cfgv and file-identify are published on crates.io from exactly the pinned commits, `.cargo_vcs_info.json`; the
+#   crates.io publish set is pinned and self-contained, ADR-088), then `cargo publish --workspace --dry-run` packages
+#   and builds every published crate against the registry. A mismatch stops the release before anything is built;
 # * `dist` builds the eight targets with cargo-auditable, a CycloneDX SBOM per package and SHA-256 checksums, plus the
-#   shell and PowerShell installers (no bin-aliases);
+#   shell and PowerShell installers and the Homebrew formula `snp.rb` (no bin-aliases);
 # * `wheels` builds the snp-cli wheels with maturin (bindings = "bin") and smoke-tests them;
 # * `announce` attests every asset (GitHub artifact attestations) and creates the GitHub release with the CHANGELOG
-#   section as notes; `publish-pypi` uploads the wheels with trusted publishing.
+#   section as notes; `publish-pypi` uploads the wheels with trusted publishing (before the release);
+#   `publish-crates` (`cargo publish`, CARGO_REGISTRY_TOKEN) and `publish-homebrew` (Formula/snp.rb in
+#   grok-rs/homebrew-tap, HOMEBREW_TAP_DEPLOY_KEY) run after it (ADR-088). Pre-releases skip all three channels.
 #
 # Triggers: a pushed tag `vX.Y.Z` releases. A pull request that changes the release configuration, and a manual run
-# with the default tag `dry-run`, run the gates (without the registry check), `dist plan` and the builds, but publish
-# nothing.
+# with the default tag `dry-run`, run the gates (without the registry check), the crates.io dry run, `dist plan` and
+# the builds, but publish nothing.
 #
 # Runners: the arm64 Linux and Windows runners exist for public repositories only. While the repository is private a
 # dry run builds the other targets (the dist matrix and the wheel matrix drop the arm64 Linux/Windows entries, as
@@ -31,6 +34,7 @@ on:
     paths:
       - dist-workspace.toml
       - .github/workflows/release.yml
+      - .github/scripts/publish-crates.sh
       - packaging/pypi/**
       - xtask/src/tasks/release.rs
   workflow_dispatch:
@@ -63,7 +67,7 @@ jobs:
   gates:
     name: release gates (ADR-061)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       publishing: ${{ steps.tag.outputs.publishing }}
@@ -137,6 +141,10 @@ jobs:
             # dry runs and pull requests: the user crates need not be published yet, the version not be released
             cargo xtask release gates --skip-registry --allow-unreleased
           fi
+      # ADR-088: every crate of the publish set packages and builds on its own against crates.io (cargo resolves
+      # the not-yet-published ones from the packages it just made), before anything is built or published.
+      - name: crates.io dry run
+        run: cargo publish --workspace --dry-run --locked
       - name: Release notes
         if: steps.tag.outputs.publishing == 'true'
         env:
@@ -346,6 +354,34 @@ jobs:
           sbom="$(jq --raw-output '.upload_files[]' dist-manifest.json | grep -E '\.cdx\.xml$' | head -n 1)"
           [ -n "$sbom" ] && [ -f "$sbom" ] || { echo "::error::no CycloneDX SBOM (upload list: $sbom)"; exit 1; }
           test -f target/distrib/snp-installer.sh && test -f target/distrib/snp-installer.ps1
+      # ADR-088: the Homebrew formula publish-homebrew commits to the tap. It is valid Ruby, has this release's
+      # version and a checksum per archive URL, and installs `snp` only: no `pre-commit` alias (ADR-049).
+      - name: The Homebrew formula installs snp only
+        env:
+          PRIVATE: ${{ needs.gates.outputs.private }}
+        run: |
+          set -euo pipefail
+          f=target/distrib/snp.rb
+          jq --raw-output '.upload_files[]' dist-manifest.json | grep -Eq '(^|/)snp\.rb$' \
+            || { echo "::error::snp.rb is not in the global upload list"; exit 1; }
+          test -f "$f" || { echo "::error::missing $f"; exit 1; }
+          ruby -c "$f"
+          version="$(jq --raw-output '.releases[] | select(.app_name == "snp") | .app_version' dist-manifest.json)"
+          grep -Fq "version \"$version\"" "$f" || { echo "::error::snp.rb does not say version $version"; exit 1; }
+          urls="$(grep -Ec '^\s*url "' "$f" || true)"
+          sums="$(grep -Ec '^\s*sha256 "[0-9a-f]{64}"' "$f" || true)"
+          echo "snp.rb: $urls archive URLs, $sums checksums"
+          [ "$urls" -eq 4 ] || { echo "::error::snp.rb has $urls archive URLs, not 4 (macOS and Linux x arm64/x86_64)"; exit 1; }
+          # a private dry run builds no arm64 Linux archive, so that URL has no checksum
+          if [ "$PRIVATE" != true ] && [ "$sums" -ne "$urls" ]; then echo "::error::snp.rb has $sums checksums for $urls URLs"; exit 1; fi
+          # (the description names pre-commit; nothing else may)
+          if grep -v '^\s*desc "' "$f" | grep -n 'pre-commit'; then
+            echo "::error::snp.rb mentions pre-commit outside its description (ADR-049: no alias)"; exit 1
+          fi
+          if grep -E '^\s*"[^"]+": \{[^}]' "$f"; then echo "::error::snp.rb installs binary aliases"; exit 1; fi
+          if grep -E '^\s*bin\.install ' "$f" | grep -vE '^\s*bin\.install "snp"$'; then
+            echo "::error::snp.rb installs something besides snp"; exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: artifacts-build-global
@@ -505,3 +541,82 @@ jobs:
           # shellcheck disable=SC2086
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG \
             --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
+
+  # ADR-088: `cargo install snp` (and the internal crates it needs) once the GitHub release exists. Re-runnable: the
+  # crates whose version is already on crates.io are skipped (a re-run after a partial failure publishes the rest;
+  # `cargo publish` alone refuses an existing version), and crates.io's rate limit for new crates (a first release
+  # creates every crate) is waited out. See .github/scripts/publish-crates.sh.
+  publish-crates:
+    name: publish to crates.io
+    needs: [gates, plan, announce]
+    if: ${{ !fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases }}
+    runs-on: ubuntu-24.04
+    # a first release creates 23 crates: past crates.io's burst, about one new crate per ten minutes
+    timeout-minutes: 330
+    environment:
+      name: release
+      url: https://crates.io/crates/snp
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: snp
+          ref: ${{ needs.gates.outputs.tag }}
+          persist-credentials: false
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - name: cargo publish
+        env:
+          TAG: ${{ needs.gates.outputs.tag }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: .github/scripts/publish-crates.sh "${TAG#v}"
+
+  # ADR-088: `brew install grok-rs/tap/snp`. dist's formula (built and checked by build-global-artifacts, released as
+  # an asset) is committed to the tap as Formula/snp.rb with the tap's deploy key. Not for pre-releases.
+  publish-homebrew:
+    name: publish the Homebrew formula
+    needs: [gates, plan, announce]
+    if: ${{ !fromJson(needs.plan.outputs.val).announcement_is_prerelease }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: artifacts-build-global, path: global }
+      - name: Commit Formula/snp.rb to grok-rs/homebrew-tap
+        env:
+          TAG: ${{ needs.gates.outputs.tag }}
+          TAP: grok-rs/homebrew-tap
+          DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          formula="$PWD/global/snp.rb"
+          test -f "$formula" || { echo "::error::the global artifacts have no snp.rb"; exit 1; }
+          ruby -c "$formula"
+          grep -Fq "version \"$version\"" "$formula" || { echo "::error::snp.rb is not version $version"; exit 1; }
+          [ -n "$DEPLOY_KEY" ] || { echo "::error::the HOMEBREW_TAP_DEPLOY_KEY secret is not set"; exit 1; }
+          ssh_dir="$RUNNER_TEMP/tap-ssh"
+          rm -rf "$ssh_dir" && mkdir -m 700 "$ssh_dir"
+          trap 'rm -rf "$ssh_dir"' EXIT
+          (umask 077 && printf '%s\n' "$DEPLOY_KEY" > "$ssh_dir/key")
+          # github.com's SSH host keys from the API (over TLS), never trust-on-first-use
+          curl --proto '=https' --tlsv1.2 -fsS https://api.github.com/meta \
+            | jq --raw-output '.ssh_keys[] | "github.com " + .' > "$ssh_dir/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $ssh_dir/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$ssh_dir/known_hosts -o StrictHostKeyChecking=yes"
+          git clone --depth 1 "git@github.com:$TAP.git" tap
+          mkdir -p tap/Formula
+          cp "$formula" tap/Formula/snp.rb
+          cd tap
+          git add Formula/snp.rb
+          if git diff --cached --quiet; then
+            echo "Formula/snp.rb already is snp $version"
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -q -m "snp $version"
+          git push origin HEAD
+          echo "pushed snp $version to $TAP"
