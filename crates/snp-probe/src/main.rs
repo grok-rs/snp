@@ -326,38 +326,45 @@ fn daemonize(rest: &[OsString]) -> Result<i32, End> {
     let exe = std::env::current_exe().map_err(|e| End::Usage(format!("daemonize: {e}")))?;
     // Windows: a Rust child inherits every inheritable handle of its parent (`bInheritHandles`), including the
     // probe's own stdout/stderr pipes, so a "detached" copy would hold the hook's output open. A daemoniser that
-    // lets go of them (CPython's `close_fds`, a shell's `start`) is started through PowerShell with .NET's
-    // `Process.Start` and `UseShellExecute` (ShellExecuteEx inherits no handles). No cmdlet is called: in the
-    // test's hermetic environment a `Start-Process` (module autoloading) took about 50 s on the CI runners.
+    // lets go of them (CPython's `close_fds`) is played by `rundll32 shell32.dll,ShellExec_RunDLL`: ShellExecuteEx
+    // inherits no handles, and rundll32 has no console, so the daemon gets a console of its own instead of
+    // duplicates of the launcher's standard handles (what a console launcher such as PowerShell passes on: its
+    // daemon then held the probe's capture pipe, and the probe waited for the daemon). The daemon reports its pid
+    // through a file.
     #[cfg(windows)]
     if !hold {
-        let script = format!(
-            "$i = New-Object System.Diagnostics.ProcessStartInfo; $i.FileName = '{}'; $i.Arguments = '__daemon {secs}'; \
-             $i.UseShellExecute = $true; $i.WindowStyle = 'Hidden'; [System.Diagnostics.Process]::Start($i).Id",
-            exe.to_string_lossy().replace('\'', "''")
-        );
-        // PowerShell is named by its absolute path (the hermetic `PATH` is POSIX) and gets the `SystemRoot` it
+        let pidfile = std::env::current_dir()
+            .map_err(|e| End::Usage(format!("daemonize: {e}")))?
+            .join(format!(".snp-probe-daemon-{}", std::process::id()));
+        let _ignored = std::fs::remove_file(&pidfile);
+        // rundll32 is named by its absolute path (the hermetic `PATH` is POSIX) and gets the `SystemRoot` it
         // needs to start.
         let root = system_root();
-        let powershell =
-            std::path::Path::new(&root).join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
-        let o = std::process::Command::new(powershell)
+        let rundll32 = std::path::Path::new(&root).join(r"System32\rundll32.exe");
+        let st = std::process::Command::new(rundll32)
             .env("SystemRoot", &root)
-            .args([
-                "-NoLogo",
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                &script,
-            ])
+            .arg("shell32.dll,ShellExec_RunDLL")
+            .arg(&exe)
+            .args([OsStr::new("__daemon"), OsStr::new(&secs.to_string())])
+            .arg(&pidfile)
             .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .output()
+            .status()
             .map_err(|e| End::Usage(format!("daemonize: {e}")))?;
-        let pid = String::from_utf8_lossy(&o.stdout).trim().to_owned();
-        if !o.status.success() || pid.is_empty() {
-            return Err(End::Usage("daemonize: Process.Start failed".to_owned()));
-        }
+        let t0 = std::time::Instant::now();
+        let pid = loop {
+            match std::fs::read_to_string(&pidfile) {
+                Ok(s) if s.ends_with('\n') => break s.trim().to_owned(),
+                _ if t0.elapsed() > Duration::from_secs(10) => {
+                    return Err(End::Usage(format!(
+                        "daemonize: no daemon started (rundll32 {st})"
+                    )));
+                }
+                _ => std::thread::sleep(Duration::from_millis(10)),
+            }
+        };
+        let _ignored = std::fs::remove_file(&pidfile);
         line(format!("daemon {pid}"));
         return Ok(0);
     }
@@ -396,6 +403,10 @@ fn daemon_child(rest: &[OsString]) {
         let _ignored = rustix::process::setsid();
     }
     let secs = parse_int::<u64>(rest.first(), "__daemon").unwrap_or(30);
+    // `__daemon SECS PIDFILE` (the Windows launcher): the pid, then a newline marks the file complete.
+    if let Some(pidfile) = rest.get(1) {
+        let _ignored = std::fs::write(pidfile, format!("{}\n", std::process::id()));
+    }
     std::thread::sleep(Duration::from_secs(secs));
 }
 
