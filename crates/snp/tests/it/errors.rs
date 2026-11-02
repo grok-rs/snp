@@ -9,7 +9,9 @@ use std::time::Duration;
 
 use snp_testkit::TestEnv;
 
-use crate::cli::{LOCAL_CONFIG, assert_code, compat, git, repo_with, snp, store, tenv, text};
+use crate::cli::{
+    LOCAL_CONFIG, assert_code, compat, git, repo_with, slashed, snp, store, tenv, text,
+};
 
 /// Whether permission bits are enforced (not root).
 #[cfg(unix)]
@@ -52,7 +54,7 @@ fn t10_err_01_banners_and_exit_codes() {
     let r = hook_is_a_directory(&env);
     let out = compat(&env, &r, &["install"]);
     assert_code(&out, 3);
-    assert!(text(&out.stdout).starts_with("An unexpected error has occurred: IsADirectoryError: "));
+    assert!(text(&out.stdout).starts_with(is_a_directory_line()));
     // success → nothing
     let out = compat(&env, env.root(), &["sample-config"]);
     assert_code(&out, 0);
@@ -128,10 +130,7 @@ fn t10_err_04_real_process_last_two_lines() {
     let o = text(&out.stdout);
     let lines: Vec<&str> = o.lines().collect();
     assert_eq!(lines.len(), 2, "{o}");
-    assert_eq!(
-        lines[0],
-        "An unexpected error has occurred: IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-commit'"
-    );
+    assert_eq!(lines[0], is_a_directory_line());
     assert_eq!(
         lines[1],
         format!("Check the log at {}", compat_log(&env).display())
@@ -166,7 +165,7 @@ fn x13_cfg_14_side_loads_fall_back() {
     let r = repo_with(&env, "r", "repos: []\n1: x\n");
     let out = compat(&env, &r, &["install"]);
     assert_code(&out, 0);
-    assert!(text(&out.stdout).contains("pre-commit installed at .git/hooks/pre-commit"));
+    assert!(slashed(&text(&out.stdout)).contains("pre-commit installed at .git/hooks/pre-commit"));
     // gc treats a tracked config that fails to load as dead
     std::fs::write(r.join(".pre-commit-config.yaml"), "repos: [\n").unwrap();
     assert_eq!(
@@ -181,7 +180,17 @@ fn x13_cmd_01_hook_path_is_a_directory() {
     let r = hook_is_a_directory(&env);
     let out = compat(&env, &r, &["install"]);
     assert_code(&out, 3);
-    assert!(text(&out.stdout).starts_with("An unexpected error has occurred: IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-commit'\n"));
+    assert!(text(&out.stdout).starts_with(&format!("{}\n", is_a_directory_line())));
+}
+
+/// pre-commit's crash line for a directory at the hook path: CPython's `open()` of a directory is `EISDIR` on POSIX
+/// and `EACCES` on Windows (whose path pre-commit joins with `\`).
+fn is_a_directory_line() -> &'static str {
+    if cfg!(windows) {
+        r"An unexpected error has occurred: PermissionError: [Errno 13] Permission denied: '.git\\hooks\\pre-commit'"
+    } else {
+        "An unexpected error has occurred: IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-commit'"
+    }
 }
 
 #[cfg(unix)]

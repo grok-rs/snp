@@ -19,6 +19,35 @@ pub(crate) fn text(b: &[u8]) -> String {
     String::from_utf8_lossy(b).replace("\r\n", "\n")
 }
 
+/// A `PATH` with git but neither snp nor pre-commit: the system directories (POSIX), or git's own directory
+/// (Windows).
+pub(crate) fn path_without_snp(env: &TestEnv) -> String {
+    if cfg!(windows) {
+        env.env()
+            .get("PATH")
+            .map(std::env::split_paths)
+            .into_iter()
+            .flatten()
+            .find(|d| d.join("git.exe").is_file())
+            .expect("git on PATH")
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        "/usr/bin:/bin".to_owned()
+    }
+}
+
+/// `s` with `\` read as `/` on Windows, for texts whose only platform difference is the path separator: pre-commit
+/// prints `os.path.join`ed paths (`.git\hooks\pre-commit` there), which the Windows difftest platform scenarios
+/// compare against the oracle itself.
+pub(crate) fn slashed(s: &str) -> String {
+    if cfg!(windows) {
+        s.replace('\\', "/")
+    } else {
+        s.to_owned()
+    }
+}
+
 /// `git <args>` in `cwd` with the hermetic env: `(code, stdout, stderr)`.
 pub(crate) fn git(env: &TestEnv, cwd: &Path, args: &[&str]) -> (i32, String, String) {
     let mut cmd = Command::new("git");
@@ -108,7 +137,11 @@ fn t10_cli_01_adjust_args_and_chdir() {
     let out = compat(&env, &r.join("foo"), &["install", "-c", "cfg.yaml"]);
     assert_code(&out, 0);
     let script = std::fs::read_to_string(r.join(".git/hooks/pre-commit")).unwrap();
-    assert!(script.contains("--config=foo/cfg.yaml"), "{script}");
+    // `os.path.relpath` joins with `\` on Windows (and shlex then quotes the argument)
+    assert!(
+        slashed(&script).contains("--config=foo/cfg.yaml"),
+        "{script}"
+    );
     // A missing relative config is kept as typed (re-interpreted relative to the root).
     let out = compat(
         &env,

@@ -38,10 +38,11 @@ fn prepare_reports_once() {
         &CancelToken::new(),
     );
     assert_eq!(o.code, 2);
-    assert!(
-        o.output
-            .ends_with(b"pygrep.py: error: unrecognized arguments: --bogus\n")
-    );
+    assert!(o.output.ends_with(if cfg!(windows) {
+        b"pygrep.py: error: unrecognized arguments: --bogus\r\n"
+    } else {
+        b"pygrep.py: error: unrecognized arguments: --bogus\n"
+    }));
     let (code, _) = prepare(&[Arc::from("-h")], "x", 80).unwrap_err();
     assert_eq!(code, 0);
 }

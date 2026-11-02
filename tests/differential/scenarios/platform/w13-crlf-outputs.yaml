@@ -2,7 +2,7 @@ name: platform/w13-crlf-outputs
 description: '14 §A.6.4 W13 — CRLF in Python''s text streams and migrate-config writes on Windows'
 tags: [platform]
 requires: {os: [windows]}
-expect_divergence: D-DATA-05
+# Parity: no step writes a hook script, so D-DATA-05 (the script's EOL) never shows here (first Windows run).
 work:
   files: {bad.yaml: "repos: 5\n"}
   config: |

@@ -269,7 +269,8 @@ fn runner(a: &Args) -> Result<(Runner, Options), String> {
         snp_bin,
         oracle_bin: bin("pre-commit"),
         oracle_snp_prog: if cfg!(windows) {
-            cli_oracle.join("Scripts").join("pre-commit-snp-prog")
+            // `cargo xtask oracle` writes a `.cmd` launcher on Windows.
+            cli_oracle.join("Scripts").join("pre-commit-snp-prog.cmd")
         } else {
             cli_oracle.join("bin").join("pre-commit-snp-prog")
         },

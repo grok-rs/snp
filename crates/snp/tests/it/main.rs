@@ -4,6 +4,14 @@
 //! declared `#[cfg(test)]` so their `#[test]` functions and helpers count as test code for clippy.
 //!
 //! Owner: WP-00 (this file); each module file belongs to the package named next to its declaration.
+#![cfg_attr(
+    windows,
+    allow(
+        dead_code,
+        unused_imports,
+        reason = "most cases are posix-only (sh scripts, modes, signals): on Windows their shared helpers go unused"
+    )
+)]
 
 // The shared test harness of every module (`cargo machete --with-metadata` needs a real reference).
 use snp_testkit as _;

@@ -118,6 +118,7 @@ Checks a run record against bench/budgets.toml and a baseline; exits non-zero on
   --since SECS           --micro: ignore results older than this Unix time (stale results of an earlier run);
                          required unless --any-age
   --any-age              --micro: accept criterion results of any age
+  --reference            --micro: this is the reference machine (`reference_only` thresholds are hard)
   --compare A B          print the per-scenario effect of record B against record A (no gate)";
 
 /// Runs the task with the arguments that follow its name.
@@ -739,6 +740,13 @@ fn write_file(dir: &Path, rel: &str, bytes: &[u8]) -> anyhow::Result<()> {
 }
 
 /// Marks `path` executable (Unix; git records the mode).
+#[cfg_attr(
+    not(unix),
+    expect(
+        clippy::unnecessary_wraps,
+        reason = "fallible on Unix, a no-op elsewhere"
+    )
+)]
 fn make_executable(path: &Path) -> anyhow::Result<()> {
     #[cfg(unix)]
     {
@@ -2569,6 +2577,9 @@ struct MicroThreshold {
     max_ns: Option<f64>,
     min_per_sec: Option<f64>,
     source: String,
+    /// The limit is the target on the reference machine (`--reference`); elsewhere a breach is a warning
+    /// (ADR-086 amendment of the budgets: shared CI runners are slower than the reference machine).
+    reference_only: bool,
 }
 
 /// `bench/budgets.toml`.
@@ -2700,6 +2711,10 @@ impl Budgets {
                     .and_then(toml::Value::as_str)
                     .unwrap_or_default()
                     .to_owned(),
+                reference_only: m
+                    .get("reference_only")
+                    .and_then(toml::Value::as_bool)
+                    .unwrap_or(false),
             });
         }
         Ok(Self {
@@ -3136,7 +3151,7 @@ fn gate(root: &Path, args: &[String]) -> anyhow::Result<()> {
             "allow-missing-reference",
             "since",
         ],
-        &["record", "micro", "compare", "any-age"],
+        &["record", "micro", "compare", "any-age", "reference"],
     )?
     else {
         say(GATE_HELP);
@@ -3167,7 +3182,7 @@ fn gate(root: &Path, args: &[String]) -> anyhow::Result<()> {
             "gate --micro needs --since <unix-secs> (the time `cargo bench` started), or --any-age to accept results \
              of any age"
         );
-        return gate_micro(&budgets, &dir, since);
+        return gate_micro(&budgets, &dir, since, o.has("reference"));
     }
     if o.has("compare") {
         let [a, b] = o.positional.as_slice() else {
@@ -3358,6 +3373,7 @@ fn read_criterion(
 fn evaluate_micro(
     thresholds: &[MicroThreshold],
     results: &BTreeMap<String, CritResult>,
+    reference: bool,
 ) -> Vec<Check> {
     thresholds
         .iter()
@@ -3402,6 +3418,19 @@ fn evaluate_micro(
                     "empty threshold".to_owned(),
                 ),
             };
+            // a measured breach of a reference-machine limit off the reference machine is a warning
+            let (verdict, detail) = if verdict == Verdict::Fail
+                && t.reference_only
+                && !reference
+                && results.contains_key(&t.id)
+            {
+                (
+                    Verdict::Warn,
+                    format!("{detail} (hard on the reference machine only, `--reference`)"),
+                )
+            } else {
+                (verdict, detail)
+            };
             Check {
                 scenario: t.id.clone(),
                 what,
@@ -3426,16 +3455,21 @@ fn fmt_ns(ns: f64) -> String {
     }
 }
 
-fn gate_micro(b: &Budgets, dir: &Path, since: Option<std::time::SystemTime>) -> anyhow::Result<()> {
+fn gate_micro(
+    b: &Budgets,
+    dir: &Path,
+    since: Option<std::time::SystemTime>,
+    reference: bool,
+) -> anyhow::Result<()> {
     let results = read_criterion(dir, since)?;
-    let checks = evaluate_micro(&b.micro, &results);
+    let checks = evaluate_micro(&b.micro, &results, reference);
     for c in &checks {
         say(&format!(
             "{:<5} {:<40} {:<18} {}",
-            if c.verdict == Verdict::Pass {
-                "ok"
-            } else {
-                "FAIL"
+            match c.verdict {
+                Verdict::Pass => "ok",
+                Verdict::Warn => "WARN",
+                Verdict::Fail => "FAIL",
             },
             c.scenario,
             c.what,
@@ -4105,12 +4139,26 @@ mod tests {
                 elements: Some(1_200_000),
             },
         );
-        let checks = evaluate_micro(&b.micro, &results);
+        let checks = evaluate_micro(&b.micro, &results, true);
         let v = |id: &str| checks.iter().find(|c| c.scenario == id).unwrap().verdict;
         assert_eq!(v("argparse/hook_impl_cli_compat"), Verdict::Pass);
         // 1.2 M searches in 2 s = 600 k/s < 1 M/s
         assert_eq!(v("pyre_tier1/typical_12x100k"), Verdict::Fail);
         assert_eq!(v("classify/50k_files_10_filters"), Verdict::Fail);
+        // Off the reference machine a `reference_only` breach warns; the others still fail.
+        let checks = evaluate_micro(&b.micro, &results, false);
+        let v = |id: &str| checks.iter().find(|c| c.scenario == id).unwrap().verdict;
+        assert_eq!(v("pyre_tier1/typical_12x100k"), Verdict::Fail);
+        let classify = checks
+            .iter()
+            .find(|c| c.scenario == "classify/50k_files_10_filters")
+            .unwrap();
+        if b.micro
+            .iter()
+            .any(|t| t.id == classify.scenario && t.reference_only)
+        {
+            assert!(matches!(classify.verdict, Verdict::Warn | Verdict::Fail));
+        }
     }
 
     #[test]

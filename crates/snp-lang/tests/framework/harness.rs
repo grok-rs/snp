@@ -227,8 +227,11 @@ fn the_python_logger_speaks_the_same_format() {
     use snp_lang::harness::GoldenCall;
     let oracle =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/oracle/pc462-py312/bin/python");
-    let python = [oracle.as_path(), Path::new("/usr/bin/python3")]
-        .into_iter()
+    // Not macOS's /usr/bin/python3: that xcrun shim adds CPATH, LIBRARY_PATH and MANPATH to the environment of the
+    // Python it execs, which the logger would then record.
+    let host = (!cfg!(target_os = "macos")).then_some(Path::new("/usr/bin/python3"));
+    let python = std::iter::once(oracle.as_path())
+        .chain(host)
         .find(|p| p.exists());
     let Some(python) = python else {
         return;

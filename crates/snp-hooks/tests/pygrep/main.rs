@@ -4,6 +4,14 @@
 //!
 //! Owner: WP-26.
 #![cfg(test)]
+#![cfg_attr(
+    windows,
+    allow(
+        dead_code,
+        unused_imports,
+        reason = "most cases are posix-only (sh scripts, modes, signals): on Windows their shared helpers go unused"
+    )
+)]
 
 #[path = "../framework/support.rs"]
 mod support;
@@ -17,13 +25,23 @@ use snp_pyre::RegexCache;
 use support::{latin1, os, show};
 
 /// One case's outcome: `prepare` once for `args + [entry]`, then `run_partition` over the full argv (the runner's
-/// sequence), in a directory holding the fixtures.
+/// sequence), in a directory holding the fixtures. The ones the case's argv names are written last: `u.bin` and
+/// `U.bin` are one file on a case-insensitive file system, which then holds the content the case reads.
 fn run(
     fixtures: &serde_json::Map<String, serde_json::Value>,
     case: &serde_json::Value,
 ) -> (i32, Vec<u8>, bool) {
     let dir = tempfile::tempdir().unwrap();
-    for (path, content) in fixtures {
+    let named: Vec<&str> = [&case["files"], &case["args"]]
+        .into_iter()
+        .filter_map(serde_json::Value::as_array)
+        .flatten()
+        .chain(std::iter::once(&case["entry"]))
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    let mut ordered: Vec<_> = fixtures.iter().collect();
+    ordered.sort_by_key(|(p, _)| named.contains(&p.as_str()));
+    for (path, content) in ordered {
         let p = dir.path().join(os(&latin1(path)));
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(p, latin1(content.as_str().unwrap())).unwrap();

@@ -878,10 +878,12 @@ fn judge(
         .expect_divergence
         .as_deref()
         .is_some_and(|i| i.starts_with("D-BRAND-"));
-    let (map_oracle, reduce) = if brand_id {
-        (&identity, None)
+    // (Both sides: under --self-check the snp side is the oracle too, and mapping only one of them would invent the
+    // very difference the scenario registers.)
+    let (map_oracle, map_snp, reduce) = if brand_id {
+        (&identity, &identity, None)
     } else {
-        (map_oracle, reduce)
+        (map_oracle, map_snp, reduce)
     };
     let (map_oracle, map_snp) = ((map_oracle, reduce), (map_snp, reduce));
     let keep_diag = s.expect_divergence.as_deref().filter(|_| s.is_diag());
@@ -1192,6 +1194,8 @@ pub(crate) fn safe_name(name: &str) -> String {
             }
         })
         .collect();
+    // Windows drops a trailing `.` from a path component (`_..` would name `_`): end in `_` instead.
+    let s = if s.ends_with('.') { format!("{s}_") } else { s };
     if s.is_empty() || s.starts_with('.') {
         format!("_{s}")
     } else {
@@ -1433,7 +1437,7 @@ mod tests {
         assert_eq!(safe_name("divergences/D-X: y"), "divergences_D-X__y");
         for bad in ["", ".", "..", ".hidden"] {
             let n = safe_name(bad);
-            assert!(n.starts_with('_'), "{bad:?} -> {n:?}");
+            assert!(n.starts_with('_') && !n.ends_with('.'), "{bad:?} -> {n:?}");
         }
     }
 

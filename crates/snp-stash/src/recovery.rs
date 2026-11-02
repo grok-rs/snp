@@ -105,8 +105,13 @@ pub(crate) fn kept_ita_file(base: &Path, ita: &[Vec<u8>]) -> Option<PathBuf> {
         t.push(format!(".tmp{}", std::process::id()));
         PathBuf::from(t)
     };
-    let written = std::fs::write(&tmp, &body)
-        .and_then(|()| std::fs::File::open(&tmp)?.sync_all())
+    // synced through the handle that wrote it: Windows' FlushFileBuffers refuses a read-only handle (EACCES), which
+    // made every long list fall back to the spelled-out form there
+    let written = std::fs::File::create(&tmp)
+        .and_then(|mut f| {
+            std::io::Write::write_all(&mut f, &body)?;
+            f.sync_all()
+        })
         .and_then(|()| std::fs::rename(&tmp, &file));
     if written.is_err() {
         let _ignored = std::fs::remove_file(&tmp);
@@ -556,7 +561,7 @@ pub(crate) fn report_locked(
     out
 }
 
-/// Non-blocking: try the worktree lock, run [`report_locked`], release (`run`/`hook-impl` start, ARCHITECTURE
+/// Non-blocking: try the worktree lock, run `report_locked`, release (`run`/`hook-impl` start, ARCHITECTURE
 /// §4.6). `None` when another run holds the lock (it owns the journals it is writing; a stash entered later reports
 /// once it holds the lock). The lock token is not written: the probe never exempts a nested run.
 pub fn recovery_report(

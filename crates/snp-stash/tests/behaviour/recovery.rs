@@ -74,10 +74,11 @@ fn hint_texts() {
         u.hint(),
         format!(
             "snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in {0} \
-             (index tree abc). Restore with: git apply --whitespace=nowarn {0} && git --literal-pathspecs reset -q \
+             (index tree abc). Restore with: git apply --whitespace=nowarn {2} && git --literal-pathspecs reset -q \
              abc -- 'x*'{1}git --literal-pathspecs restore --source=abc --worktree -- foo, then run the command again",
             patch.display(),
-            fallback("abc", &patch)
+            fallback("abc", &patch),
+            snp_pycompat::shlex::quote(&patch.display().to_string())
         )
     );
     // An unreadable patch: the fallback covers the whole worktree.
@@ -101,8 +102,8 @@ fn hint_texts() {
 pub(crate) fn fallback(tree: &str, patch: &Path) -> String {
     format!(
         "; if git apply reports that the patch does not apply, those files changed after the stash (hook fixes or \
-         later edits): keep a copy with git diff --binary {tree} > {}.now, put them back with ",
-        patch.display()
+         later edits): keep a copy with git diff --binary {tree} > {}, put them back with ",
+        snp_pycompat::shlex::quote(&format!("{}.now", patch.display()))
     )
 }
 
@@ -129,11 +130,12 @@ fn next_run_prints_the_notice_and_keeps_the_orphan() {
         err.text(),
         format!(
             "snp: an earlier run was interrupted before it restored your unstaged changes; they are saved in {0} \
-             (index tree {tree}). Restore with: git apply --whitespace=nowarn {0}{1}git --literal-pathspecs restore \
+             (index tree {tree}). Restore with: git apply --whitespace=nowarn {2}{1}git --literal-pathspecs restore \
              --source={tree} --worktree -- foo, then run the command again\nsnp: this notice repeats until those \
              changes are back in the worktree; to dismiss it and keep the patch, run: snp doctor --fix --stash\n",
             p.display(),
-            fallback(&tree, &p)
+            fallback(&tree, &p),
+            snp_pycompat::shlex::quote(&p.display().to_string())
         )
     );
     assert!(p.is_file());
@@ -207,9 +209,10 @@ fn stale_files_are_cleaned_and_garbage_is_ignored() {
     std::fs::write(&patch, b"x").unwrap();
     let journal = |state: &str| {
         format!(
-            "{{\"v\":1,\"state\":\"{state}\",\"worktree\":\"{}\",\"patch\":\"{}\",\"tree\":null}}",
-            repo.display(),
-            patch.display()
+            "{{\"v\":1,\"state\":\"{state}\",\"worktree\":{},\"patch\":{},\"tree\":null}}",
+            // JSON strings: a Windows path's `\` is escaped
+            serde_json::to_string(&repo).unwrap(),
+            serde_json::to_string(&patch).unwrap()
         )
     };
     let restored = sb.patches().join("run-1-aa.snp-journal");
@@ -221,8 +224,8 @@ fn stale_files_are_cleaned_and_garbage_is_ignored() {
     std::fs::write(
         repo.join(".git/snp-stash.journal"),
         format!(
-            "{{\"v\":1,\"journal\":\"{}\",\"state\":\"restored\"}}",
-            restored.display()
+            "{{\"v\":1,\"journal\":{},\"state\":\"restored\"}}",
+            serde_json::to_string(&restored).unwrap()
         ),
     )
     .unwrap();
@@ -471,7 +474,15 @@ fn a_long_intent_to_add_list_survives_the_retirement() {
         .lines()
         .find(|l| l.contains("re-added its intent-to-add files"))
         .unwrap_or_else(|| panic!("{err}"));
-    let file = ita.split("--pathspec-from-file=").nth(1).unwrap();
+    // the shell word may be quoted (a Windows path is) and the notice may continue after it
+    let file = err
+        .split("--pathspec-from-file=")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .map_or_else(
+            || panic!("{err}"),
+            |w| w.trim_matches(|c| c == '\'' || c == ';'),
+        );
     assert!(Path::new(file).is_file(), "{ita}");
     // The journal is gone; running the notice re-adds every entry.
     assert!(snp_stash::find_unrestored(&repo.join(".git"), &sb.patches(), &repo).is_empty());

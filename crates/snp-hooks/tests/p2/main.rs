@@ -5,6 +5,14 @@
 //!
 //! Owner: WP-27.
 #![cfg(test)]
+#![cfg_attr(
+    windows,
+    allow(
+        dead_code,
+        unused_imports,
+        reason = "most cases are posix-only (sh scripts, modes, signals): on Windows their shared helpers go unused"
+    )
+)]
 
 #[path = "../framework/support.rs"]
 mod support;
@@ -85,7 +93,9 @@ fn fix_encoding_pragma_deprecation_first() {
     assert!(want.starts_with("warning: this hook is deprecated"));
 }
 
-/// sort-simple-yaml rewrites a file that is exactly `\n` on every run (exit 1) without changing a byte.
+/// sort-simple-yaml rewrites a file that is exactly `\n` on every run (exit 1) without changing a byte. (Not on
+/// Windows: text mode writes that `\n` back as `\r\n`, the next test's subject.)
+#[cfg(not(windows))]
 #[test]
 fn sort_simple_yaml_newline_quirk() {
     let sb = Sandbox::new(true);

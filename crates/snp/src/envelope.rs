@@ -152,7 +152,15 @@ pub(crate) fn report(failure: Failure, s: &Session) -> Exit {
             printer.write_line(line);
             write_log(s, line, None);
         }
-        Failure::SystemExit { stderr, .. } => printer.write_stderr(stderr),
+        // `raise SystemExit(msg)`: the interpreter prints `str(msg)` through the stderr text layer (CRLF in Windows
+        // text mode)
+        Failure::SystemExit { stderr, .. } => match std::str::from_utf8(stderr)
+            .ok()
+            .and_then(|t| t.strip_suffix('\n'))
+        {
+            Some(text) => printer.py_eprint(text),
+            None => printer.write_stderr(stderr),
+        },
         Failure::Usage { stderr } => match stderr.strip_suffix('\n') {
             // argparse writes through the stderr text layer (CRLF in Windows text mode).
             Some(text) => printer.py_eprint(text),
@@ -237,9 +245,17 @@ mod tests {
         }
     }
 
-    fn render(f: Failure) -> (Exit, String, String, PathBuf, tempfile::TempDir) {
+    /// A temp directory and its real path: the store location is realpath'd, as pre-commit's
+    /// `os.path.realpath(PRE_COMMIT_HOME)` (macOS `/var` -> `/private/var`, Windows 8.3 short names).
+    fn real_tempdir() -> (tempfile::TempDir, PathBuf) {
         let d = tempfile::tempdir().unwrap();
-        let store = d.path().join("store");
+        let real = snp_pycompat::ospath::realpath(d.path().as_os_str(), d.path()).unwrap();
+        (d, real)
+    }
+
+    fn render(f: Failure) -> (Exit, String, String, PathBuf, tempfile::TempDir) {
+        let (d, base) = real_tempdir();
+        let store = base.join("store");
         let (out, err) = (Buf::default(), Buf::default());
         let s = session(&store, &out, &err);
         let exit = report(f, &s);
@@ -340,8 +356,8 @@ mod tests {
     /// X13-EH-02: a directory where the log goes → `Failed to write to log at …` + the body on stdout, exit 3.
     #[test]
     fn unwritable_log_prints_the_body() {
-        let d = tempfile::tempdir().unwrap();
-        let store = d.path().join("store");
+        let (_d, base) = real_tempdir();
+        let store = base.join("store");
         std::fs::create_dir_all(store.join("pre-commit.log")).unwrap();
         let (out, err) = (Buf::default(), Buf::default());
         let s = session(&store, &out, &err);

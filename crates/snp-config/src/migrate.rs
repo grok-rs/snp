@@ -340,7 +340,7 @@ mod tests {
             src.replace("sha:", "rev:")
                 .replace("[commit]", "[pre-commit]")
         );
-        // pre-commit 4.6.2 splices these rewrites one code point too early (`   reva: v1`, `pre-committ]`); a
+        // pre-commit 4.6.2 splices these rewrites one code point too early (`   reva: v1`, `pre-committ]`); a // spellchecker:disable-line
         // list root behind a BOM re-indents into invalid YAML (pre-commit: ScannerError, exit 3; D-CRASH-07).
         let list = "\u{feff}-   repo: local\n    hooks: []\n";
         let e = migrate_config(list.as_bytes(), OsStr::new("c")).unwrap_err();

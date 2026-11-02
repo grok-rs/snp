@@ -289,7 +289,6 @@ pub(crate) fn inline_templates(s: &str, templates: &[(String, String)], job_name
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fmt::Write as _;
 
     #[test]
     fn quoting() {
@@ -314,6 +313,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn dq_expand_matches_go_expand_env() {
+        use std::fmt::Write as _;
         let mut script = String::new();
         let mut want = Vec::new();
         for line in include_str!("../../tests/vectors/expandenv.jsonl").lines() {

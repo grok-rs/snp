@@ -19,6 +19,9 @@ mod skeleton {
         cmd.args(args)
             .env_clear()
             .env("HOME", home.path())
+            // `~` on Windows is USERPROFILE (ntpath.expanduser ignores HOME): without it there is no store and
+            // so no crash log line
+            .env("USERPROFILE", home.path())
             .env("PRE_COMMIT_HOME", home.path().join("store"))
             .envs(extra.iter().copied())
             .current_dir(home.path())
@@ -100,7 +103,8 @@ mod skeleton {
             &[("SNP_FAULT", "PrinterWrite")],
         );
         assert_eq!(out.status.code(), Some(3));
-        let stdout = String::from_utf8_lossy(&out.stdout);
+        // CRLF folded: the panic path prints through the text-mode Printer (ADR-029)
+        let stdout = String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n");
         let (line1, rest) = stdout.split_once('\n').unwrap_or_default();
         assert_eq!(
             line1,

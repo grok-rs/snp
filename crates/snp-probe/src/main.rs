@@ -8,7 +8,7 @@
 //! | `args A…` | each argument on its own line |
 //! | `count A…` | the number of arguments |
 //! | `env NAME…` | `NAME=value` or `NAME unset` per name |
-//! | `envnames` | every environment variable name, sorted, raw case |
+//! | `envnames` | every environment variable name, sorted, raw case (on Windows without `=X:` and `PROMPT`) |
 //! | `cwd` | the working directory |
 //! | `tty` | `stdin: <bool>` / `stdout: <bool>` / `stderr: <bool>` (Python `isatty()`) |
 //! | `stdin-kind` | `file-type: char\|pipe\|disk\|other` and `crt-isatty: 0\|1` |
@@ -69,6 +69,13 @@ fn line(s: impl AsRef<[u8]>) {
     out(&v);
 }
 
+/// Windows shell state rather than configuration, left out of `envnames`: the hidden per-drive working directories
+/// (`=C:`; CPython's `os.chdir` sets them, so pre-commit's hooks inherit them, and so does every child of `cmd.exe`)
+/// and `cmd.exe`'s `PROMPT` (the oracle's `.cmd` launchers run through `cmd.exe`).
+fn cmd_shell_state(name: &OsStr) -> bool {
+    cfg!(windows) && (raw(name).starts_with(b"=") || name.eq_ignore_ascii_case("PROMPT"))
+}
+
 /// The raw bytes of an argument (`WTF-8` on Windows).
 fn raw(s: &OsStr) -> &[u8] {
     s.as_encoded_bytes()
@@ -119,7 +126,10 @@ fn run(args: &[OsString]) -> End {
                 clippy::disallowed_methods,
                 reason = "the probe reports its own environment"
             )]
-            let mut names: Vec<OsString> = std::env::vars_os().map(|(k, _)| k).collect();
+            let mut names: Vec<OsString> = std::env::vars_os()
+                .map(|(k, _)| k)
+                .filter(|k| !cmd_shell_state(k))
+                .collect();
             names.sort();
             for n in names {
                 line(raw(&n));
@@ -314,6 +324,50 @@ fn daemonize(rest: &[OsString]) -> Result<i32, End> {
         .get(usize::from(hold))
         .map_or(Ok(30), |s| parse_int::<u64>(Some(s), "daemonize"))?;
     let exe = std::env::current_exe().map_err(|e| End::Usage(format!("daemonize: {e}")))?;
+    // Windows: a Rust child inherits every inheritable handle of its parent (`bInheritHandles`), including the
+    // probe's own stdout/stderr pipes, so a "detached" copy would hold the hook's output open. A daemoniser that
+    // lets go of them (CPython's `close_fds`) is played by `rundll32 shell32.dll,ShellExec_RunDLL`: ShellExecuteEx
+    // inherits no handles, and rundll32 has no console, so the daemon gets a console of its own instead of
+    // duplicates of the launcher's standard handles (what a console launcher such as PowerShell passes on: its
+    // daemon then held the probe's capture pipe, and the probe waited for the daemon). The daemon reports its pid
+    // through a file.
+    #[cfg(windows)]
+    if !hold {
+        let pidfile = std::env::current_dir()
+            .map_err(|e| End::Usage(format!("daemonize: {e}")))?
+            .join(format!(".snp-probe-daemon-{}", std::process::id()));
+        let _ignored = std::fs::remove_file(&pidfile);
+        // rundll32 is named by its absolute path (the hermetic `PATH` is POSIX) and gets the `SystemRoot` it
+        // needs to start.
+        let root = system_root();
+        let rundll32 = std::path::Path::new(&root).join(r"System32\rundll32.exe");
+        let st = std::process::Command::new(rundll32)
+            .env("SystemRoot", &root)
+            .arg("shell32.dll,ShellExec_RunDLL")
+            .arg(&exe)
+            .args([OsStr::new("__daemon"), OsStr::new(&secs.to_string())])
+            .arg(&pidfile)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_err(|e| End::Usage(format!("daemonize: {e}")))?;
+        let t0 = std::time::Instant::now();
+        let pid = loop {
+            match std::fs::read_to_string(&pidfile) {
+                Ok(s) if s.ends_with('\n') => break s.trim().to_owned(),
+                _ if t0.elapsed() > Duration::from_secs(10) => {
+                    return Err(End::Usage(format!(
+                        "daemonize: no daemon started (rundll32 {st})"
+                    )));
+                }
+                _ => std::thread::sleep(Duration::from_millis(10)),
+            }
+        };
+        let _ignored = std::fs::remove_file(&pidfile);
+        line(format!("daemon {pid}"));
+        return Ok(0);
+    }
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("__daemon").arg(secs.to_string());
     cmd.stdin(std::process::Stdio::null());
@@ -330,6 +384,18 @@ fn daemonize(rest: &[OsString]) -> Result<i32, End> {
     Ok(0)
 }
 
+/// The Windows directory: the probe's `SystemRoot` or `windir`, else the default `C:\Windows`.
+#[cfg(windows)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "snp-probe is a dev-only test binary with no Env snapshot; it reads its own environment"
+)]
+fn system_root() -> OsString {
+    std::env::var_os("SystemRoot")
+        .or_else(|| std::env::var_os("windir"))
+        .unwrap_or_else(|| OsString::from(r"C:\Windows"))
+}
+
 /// The detached copy: a new session (no controlling terminal, own process group), then sleep.
 fn daemon_child(rest: &[OsString]) {
     #[cfg(unix)]
@@ -337,6 +403,10 @@ fn daemon_child(rest: &[OsString]) {
         let _ignored = rustix::process::setsid();
     }
     let secs = parse_int::<u64>(rest.first(), "__daemon").unwrap_or(30);
+    // `__daemon SECS PIDFILE` (the Windows launcher): the pid, then a newline marks the file complete.
+    if let Some(pidfile) = rest.get(1) {
+        let _ignored = std::fs::write(pidfile, format!("{}\n", std::process::id()));
+    }
     std::thread::sleep(Duration::from_secs(secs));
 }
 

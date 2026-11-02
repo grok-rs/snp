@@ -1547,6 +1547,9 @@ mod tests {
             Case::new(&["-h"], &[("COLUMNS", "40")]).id(),
             "COLUMNS=40 -h"
         );
-        assert_eq!(quote(&bytes_arg("a\\xff")), "$'a\\xff'");
+        // Arbitrary bytes are POSIX argv only (a Windows argument is UTF-16).
+        if cfg!(unix) {
+            assert_eq!(quote(&bytes_arg("a\\xff")), "$'a\\xff'");
+        }
     }
 }

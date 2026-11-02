@@ -361,6 +361,8 @@ fn pch_facts_use_upstream_argv_and_invalidate_on_index_changes() {
 fn file_mode_is_memoised_until_the_config_changes() {
     let sb = Sandbox::new();
     let repo = sb.init("filemode");
+    // `git init` writes `filemode = false` where the file system has no executable bit (Windows).
+    sb.git(&repo, &["config", "core.fileMode", "true"]);
     let (git, _) = sb.discover(&repo);
     let facts = PchFacts::new(git);
     let ask = || {
@@ -374,7 +376,7 @@ fn file_mode_is_memoised_until_the_config_changes() {
     let config = repo.join(".git/config");
     let before = std::fs::metadata(&config).unwrap().modified().unwrap();
     let text = std::fs::read_to_string(&config).unwrap();
-    std::fs::write(&config, text.replace("filemode = true", "filemode = fals")).unwrap();
+    std::fs::write(&config, text.replace("filemode = true", "filemode = fals")).unwrap(); // spellchecker:disable-line
     std::fs::File::options()
         .write(true)
         .open(&config)

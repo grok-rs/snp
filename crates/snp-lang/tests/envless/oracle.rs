@@ -127,7 +127,21 @@ fn snp_matches_the_pre_commit_golden() {
     std::fs::create_dir_all(&repo).unwrap();
     let ours = snp_side(&repo);
     let golden = std::fs::read_to_string(golden_path()).unwrap();
-    let theirs = parse_log(&golden, &Substitutions::new()).unwrap();
+    let mut theirs = parse_log(&golden, &Substitutions::new()).unwrap();
+    // The golden is POSIX pre-commit's; on Windows `docker.get_docker_user()` finds no `os.getuid` and adds no `-u`.
+    if cfg!(windows) {
+        for call in &mut theirs {
+            if let Some(i) = call.argv.iter().position(|a| a == "-u") {
+                let user = [i, i.saturating_add(1)];
+                call.argv = std::mem::take(&mut call.argv)
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(j, _)| !user.contains(j))
+                    .map(|(_, a)| a)
+                    .collect();
+            }
+        }
+    }
     assert_eq!(render_log(&ours), render_log(&theirs));
 }
 

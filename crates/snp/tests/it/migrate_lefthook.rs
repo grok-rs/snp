@@ -60,8 +60,9 @@ fn fixture_repo(env: &TestEnv, fixture: &str) -> PathBuf {
     repo.stage_all().commit("lefthook").build()
 }
 
+/// Output bytes as text with CRLF folded (Windows text mode, like `cli::text`).
 fn text(b: &[u8]) -> String {
-    String::from_utf8(b.to_vec()).unwrap()
+    String::from_utf8_lossy(b).replace("\r\n", "\n")
 }
 
 #[test]

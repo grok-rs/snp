@@ -5,6 +5,14 @@
 //! end through the binary in `crates/snp/tests/it/repository.rs`.
 //!
 //! Owner: WP-31.
+#![cfg_attr(
+    windows,
+    allow(
+        dead_code,
+        unused_imports,
+        reason = "most cases are posix-only (sh scripts, modes, signals): on Windows their shared helpers go unused"
+    )
+)]
 
 #[cfg(test)]
 mod support;
@@ -89,9 +97,15 @@ mod tests {
         );
         let cfg = h.config(&yaml);
         h.resolve(&cfg).unwrap();
+        // `shlex.quote(repo)`: a Windows path holds `\`, which shlex quotes.
+        let quoted = if cfg!(windows) {
+            format!("'{old}'")
+        } else {
+            old.clone()
+        };
         let warning = format!(
             "[WARNING] repo `{old}` uses deprecated stage names (commit, push, merge-commit) which will be removed in a \
-             future version.  Hint: often `pre-commit autoupdate --repo {old}` will fix this.  if it does not -- \
+             future version.  Hint: often `pre-commit autoupdate --repo {quoted}` will fix this.  if it does not -- \
              consider reporting an issue to that repo.\n"
         );
         assert_eq!(

@@ -215,7 +215,16 @@ jobs:
       - run: rustup toolchain install
       - name: Install dist
         working-directory: .
-        run: ${{ matrix.install_dist.run }}
+        # dist's plan gives the installer command for its shell (`pwsh` on Windows: `irm … | iex`).
+        env:
+          INSTALL_DIST: ${{ matrix.install_dist.run }}
+          INSTALL_DIST_SHELL: ${{ matrix.install_dist.shell }}
+        run: |
+          if [ "$INSTALL_DIST_SHELL" = pwsh ]; then
+            pwsh -NoProfile -Command "$INSTALL_DIST"
+          else
+            sh -c "$INSTALL_DIST"
+          fi
       - name: Install cargo-auditable, cargo-cyclonedx and rust-audit-info
         uses: taiki-e/install-action@v2
         with: { tool: "cargo-auditable,cargo-cyclonedx,rust-audit-info" }
@@ -289,6 +298,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { name: cargo-dist-cache, path: ~/.cargo/bin/ }
       - run: chmod +x ~/.cargo/bin/dist
+      - name: Install cargo-cyclonedx
+        uses: taiki-e/install-action@v2
+        with: { tool: cargo-cyclonedx }
       - uses: actions/download-artifact@v4
         with:
           pattern: artifacts-*
@@ -306,6 +318,15 @@ jobs:
           jq --raw-output ".upload_files[]" dist-manifest.json | sed -E '/^(\/|[A-Za-z]:)/! s|^|snp/|' >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
           cp dist-manifest.json "$BUILD_MANIFEST_NAME"
+      # dist lists the SBOM as a global artifact (target/distrib/snp.cdx.xml) but does not write it: its own CI template
+      # runs cargo-cyclonedx in this job. cargo-cyclonedx writes one SBOM per workspace member next to its manifest;
+      # only the binary package's is released, and it covers the dependencies of every target.
+      - name: CycloneDX SBOM
+        run: |
+          set -euo pipefail
+          cargo cyclonedx --format xml --target all --manifest-path crates/snp/Cargo.toml
+          mv crates/snp/snp.cdx.xml target/distrib/snp.cdx.xml
+          find . -path ./target -prune -o -name '*.cdx.xml' -type f -exec rm -f '{}' +
       # every target of the plan: all eight for a release, without the arm64 Linux/Windows ones for a private dry run
       - name: Every target has an archive, a checksum and an SBOM
         env:
@@ -321,7 +342,9 @@ jobs:
             test -f "target/distrib/$a.sha256" || { echo "::error::missing $a.sha256"; exit 1; }
           done
           ls target/distrib
-          ls target/distrib | grep -Eq '\.cdx\.xml$' || { echo "::error::no CycloneDX SBOM"; exit 1; }
+          # the SBOM's path comes from the global manifest's upload list (the step above writes it there)
+          sbom="$(jq --raw-output '.upload_files[]' dist-manifest.json | grep -E '\.cdx\.xml$' | head -n 1)"
+          [ -n "$sbom" ] && [ -f "$sbom" ] || { echo "::error::no CycloneDX SBOM (upload list: $sbom)"; exit 1; }
           test -f target/distrib/snp-installer.sh && test -f target/distrib/snp-installer.ps1
       - uses: actions/upload-artifact@v4
         with:
@@ -367,8 +390,10 @@ jobs:
         run: |
           uv venv --python 3.13 venv
           if [ "$RUNNER_OS" = Windows ]; then bin=venv/Scripts; else bin=venv/bin; fi
-          uv pip install --python "$bin/python" dist/snp_cli-*.whl
-          "$bin/snp" --version | tee version.txt
+          # `--python` takes the environment directory (a bare `venv/Scripts/python` has no `.exe` to find).
+          uv pip install --python venv dist/snp_cli-*.whl
+          # Windows prints `\r\n` (Python text-mode stdout, which snp reproduces).
+          "$bin/snp" --version | tr -d '\r' | tee version.txt
           grep -Eq '^snp [0-9]+\.[0-9]+\.[0-9]+$' version.txt
           if ls "$bin" | grep -qi '^pre-commit'; then echo "::error::the wheel installed a pre-commit executable"; exit 1; fi
       - uses: actions/upload-artifact@v4

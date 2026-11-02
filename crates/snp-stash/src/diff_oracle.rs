@@ -173,8 +173,10 @@ impl St {
             Kind::Symlink
         } else if ft.is_dir() {
             Kind::Dir
-        } else {
+        } else if md.is_file() {
             Kind::File
+        } else {
+            Kind::Other
         };
         let mtime = md
             .modified()

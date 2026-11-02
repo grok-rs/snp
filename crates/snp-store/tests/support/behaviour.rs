@@ -282,9 +282,10 @@ fn m7_refuses_pre_commit_store_by_path_and_by_readme() {
         ("SNP_HOME", copy.to_str().unwrap()),
     ]);
     assert_eq!(resolve_location(&e, &base).unwrap_err().exit_code(), 1);
-    // The default pre-commit store (`~/.cache/pre-commit`) too.
+    // The default pre-commit store (`~/.cache/pre-commit`) too (`~` is USERPROFILE on Windows).
     let e = env(&[
         ("HOME", base.to_str().unwrap()),
+        ("USERPROFILE", base.to_str().unwrap()),
         ("SNP_HOME", base.join(".cache/pre-commit").to_str().unwrap()),
     ]);
     assert_eq!(resolve_location(&e, &base).unwrap_err().exit_code(), 1);
@@ -695,9 +696,10 @@ fn sweep_keeps_unrestored_patches_and_referenced_tools() {
     .unwrap();
     std::fs::write(
         patches.join("run-43-abcd.snp-journal"),
+        // a JSON string (a Windows path's `\` is escaped)
         format!(
-            r#"{{"v":1,"state":"restored","patch":"{}"}}"#,
-            patches.join("patch1700000000-43").display()
+            r#"{{"v":1,"state":"restored","patch":{}}}"#,
+            serde_json::to_string(&patches.join("patch1700000000-43")).unwrap()
         ),
     )
     .unwrap();
@@ -705,8 +707,8 @@ fn sweep_keeps_unrestored_patches_and_referenced_tools() {
     std::fs::write(
         &journal,
         format!(
-            r#"{{"v":1,"state":"failed","patch":"{}"}}"#,
-            patches.join("patch1700000000-42").display()
+            r#"{{"v":1,"state":"failed","patch":{}}}"#,
+            serde_json::to_string(&patches.join("patch1700000000-42")).unwrap()
         ),
     )
     .unwrap();

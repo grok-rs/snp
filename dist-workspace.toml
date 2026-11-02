@@ -4,7 +4,8 @@
 # deps.lock commits, the ADR-061 release gates, the snp-cli wheels), hence `allow-dirty = ["ci"]`: never let
 # `dist init`/`dist generate` overwrite it.
 #
-# Only the `snp` package is released (`packages`, which overrides `publish = false` inherited from the workspace);
+# Only the `snp` package is released (`packages`, plus `dist = true` in its manifest: dist skips the `publish = false`
+# inherited from the workspace otherwise);
 # every other binary of the workspace (xtask, snp-probe) is tooling and stays out of the release.
 
 [workspace]

@@ -410,6 +410,13 @@ pub(crate) fn replace(path: &Path, bytes: &[u8], durable: bool) -> io::Result<()
 }
 
 /// fsync a directory (Unix; a no-op elsewhere, where directory entries are durable with the file).
+#[cfg_attr(
+    not(unix),
+    expect(
+        clippy::unnecessary_wraps,
+        reason = "fallible on Unix, a no-op elsewhere"
+    )
+)]
 pub(crate) fn sync_dir(dir: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {

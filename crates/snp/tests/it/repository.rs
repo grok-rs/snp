@@ -135,7 +135,8 @@ fn t10_rep_04_hook_cwd_is_the_repository_root() {
     let cfg = remote(
         &repo,
         &rev,
-        "    -   id: prints_cwd\n        args: [-L]\n        verbose: true\n",
+        // No file names: BSD `pwd` (macOS) refuses operands.
+        "    -   id: prints_cwd\n        args: [-L]\n        pass_filenames: false\n        verbose: true\n",
     );
     let proj = project(&t, &cfg, &[("a.sh", b"\n")]);
     let sub = proj.join("sub");

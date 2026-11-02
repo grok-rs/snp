@@ -178,7 +178,7 @@ mod oracle {
                 continue;
             }
             assert!(
-                !line.starts_with('[') && !line.contains("rror"),
+                !line.starts_with('[') && !line.contains("rror"), // spellchecker:disable-line
                 "{name} {what}: unexpected line {line:?}"
             );
         }

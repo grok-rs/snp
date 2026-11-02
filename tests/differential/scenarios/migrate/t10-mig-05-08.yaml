@@ -44,3 +44,7 @@ steps:
   - tool: [migrate-config, -c, stages.yaml]
   - tool: [migrate-config, -c, broken.yaml]
   - shell: cat sha.yaml venv.yaml stages.yaml
+compare:
+  # pre-commit rewrites the config through a text-mode file (CRLF on Windows); snp keeps each line's ending
+  # (D-DATA-09, pinned by its divergence file)
+  eol: windows

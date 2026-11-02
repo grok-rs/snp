@@ -589,7 +589,9 @@ mod tests {
         }
     }
 
-    /// A home with a user file, a site directory with a global file, and `extra` variables.
+    /// A home with a user file, a site directory with a global file, and `extra` variables (the layering tests
+    /// below are XDG-only: not Windows or macOS, whose site directories differ).
+    #[cfg(not(any(windows, target_os = "macos")))]
     fn layered(user: &str, site: &str, extra: &[(&str, &str)]) -> (tempfile::TempDir, PipConfig) {
         let d = tempfile::tempdir().unwrap();
         let home = d.path().join("home");
@@ -612,6 +614,7 @@ mod tests {
         (d, c)
     }
 
+    #[cfg(not(any(windows, target_os = "macos")))]
     fn value(c: &PipConfig, n: &str) -> Option<String> {
         c.options
             .iter()
@@ -620,8 +623,9 @@ mod tests {
     }
 
     /// The host's own global file would take part in pip's layering too.
+    #[cfg(not(any(windows, target_os = "macos")))]
     fn host_has_global_conf() -> bool {
-        cfg!(unix) && !cfg!(target_os = "macos") && Path::new("/etc/pip.conf").exists()
+        Path::new("/etc/pip.conf").exists()
     }
 
     /// pip merges every file first and then applies `[global]`, `[install]`, the environment: a site file's

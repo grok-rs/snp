@@ -19,7 +19,8 @@ work:
         hooks:
         -   id: fixer
             name: fixer
-            entry: sed -i s/8/eight/
+            # portable in-place edit (BSD sed's `-i` takes a suffix argument)
+            entry: sh -c 'sed s/8/eight/ "$1" > "$1.tmp" && cat "$1.tmp" > "$1" && rm "$1.tmp"' --
             language: system
             files: ^foo$
   commit: [".pre-commit-config.yaml"]

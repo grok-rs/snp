@@ -18,7 +18,7 @@ use crate::minire::Regex;
 use crate::normalise::BrandMap;
 use crate::scenario::Brand;
 use crate::snapshot::{Entry, State};
-use crate::text::{contains_bytes, show};
+use crate::text::{contains_bytes, replace_bytes, show};
 use crate::yamlv::Yv;
 
 /// What one check sees.
@@ -235,11 +235,12 @@ fn stream_check(key: &str, v: &Yv, cx: &CheckCx<'_>, mapped: bool) -> Result<(),
     let Some(got) = stream(name, cx).map(Stream::bytes) else {
         return Err(String::from("unknown check"));
     };
+    let windows = cfg!(windows);
     if op == "_matches" {
         let pat = v.to_text().ok_or("expected a pattern")?;
         let re = Regex::new(&pat).map_err(|e| format!("bad pattern {pat:?}: {e}"))?;
         let got = got.ok_or("absent")?;
-        let text = show(got);
+        let text = show(&platform_text(got, windows, false));
         return if re.search(&text)? {
             Ok(())
         } else {
@@ -254,12 +255,17 @@ fn stream_check(key: &str, v: &Yv, cx: &CheckCx<'_>, mapped: bool) -> Result<(),
             Err(String::from("absent"))
         };
     };
+    let (got, want) = (
+        platform_text(got, windows, true),
+        platform_text(&want, windows, true),
+    );
+    let (got, want) = (got.as_slice(), want.as_slice());
     let ok = match op {
-        "" => got == want.as_slice(),
-        "_contains" => contains_bytes(got, &want),
-        "_not_contains" => !contains_bytes(got, &want),
-        "_starts_with" => got.starts_with(&want),
-        _ => got.ends_with(&want),
+        "" => got == want,
+        "_contains" => contains_bytes(got, want),
+        "_not_contains" => !contains_bytes(got, want),
+        "_starts_with" => got.starts_with(want),
+        _ => got.ends_with(want),
     };
     if ok {
         Ok(())
@@ -267,9 +273,25 @@ fn stream_check(key: &str, v: &Yv, cx: &CheckCx<'_>, mapped: bool) -> Result<(),
         Err(format!(
             "want {}{}, got {}",
             op.trim_start_matches('_'),
-            shown(&want),
+            shown(want),
             shown(got)
         ))
+    }
+}
+
+/// A stream's text as the checks see it. The expectations are written as on POSIX; on Windows, Python's text-mode
+/// streams and file writes end lines with `\r\n` and `os.path` joins with `\`, while the substituted paths of an
+/// expectation (`${root}`, …) are written with `/`: there both line endings and both separators compare equal
+/// (`separators`: not for a `_matches` pattern, whose `\` is an escape).
+fn platform_text(b: &[u8], windows: bool, separators: bool) -> Vec<u8> {
+    if !windows {
+        return b.to_vec();
+    }
+    let lf = replace_bytes(b, b"\r\n", b"\n");
+    if separators {
+        replace_bytes(&lf, b"\\", b"/")
+    } else {
+        lf
     }
 }
 
@@ -347,6 +369,13 @@ mod tests {
         );
         let bad = "exit: 1\nstdout_starts_with: nope\nbogus_key: 1\ntree: {foo: x}\nconfig_file_contains: zzz\n";
         assert_eq!(run(bad, &cap, &state, Brand::Compat, None).len(), 5);
+    }
+
+    #[test]
+    fn windows_texts_fold_line_endings_and_separators() {
+        assert_eq!(platform_text(b"a\r\nb\\c\n", false, true), b"a\r\nb\\c\n");
+        assert_eq!(platform_text(b"a\r\nb\\c\n", true, true), b"a\nb/c\n");
+        assert_eq!(platform_text(b"a\r\nb\\c\n", true, false), b"a\nb\\c\n");
     }
 
     #[test]

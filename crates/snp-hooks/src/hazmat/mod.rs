@@ -16,7 +16,7 @@
 //!
 //! Owner: WP-26.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -210,7 +210,7 @@ fn os_from_bytes(b: &[u8]) -> OsString {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt as _;
-        OsStr::from_bytes(b).to_os_string()
+        std::ffi::OsStr::from_bytes(b).to_os_string()
     }
     #[cfg(not(unix))]
     {

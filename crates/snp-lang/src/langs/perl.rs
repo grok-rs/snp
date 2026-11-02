@@ -12,7 +12,6 @@
 //!
 //! Owner: WP-25.
 
-use std::borrow::Cow;
 use std::ffi::OsString;
 use std::path::Path;
 use std::sync::Arc;
@@ -42,7 +41,8 @@ fn quote(p: &Path) -> OsString {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::{OsStrExt, OsStringExt};
-        let q: Cow<'_, [u8]> = snp_pycompat::shlex::quote_bytes(p.as_os_str().as_bytes());
+        let q: std::borrow::Cow<'_, [u8]> =
+            snp_pycompat::shlex::quote_bytes(p.as_os_str().as_bytes());
         OsString::from_vec(q.into_owned())
     }
     #[cfg(not(unix))]

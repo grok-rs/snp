@@ -30,6 +30,43 @@ pub(crate) struct Run {
 }
 
 /// Applies the steps of a case, including the WP-27 additions `rm` and `home` (and latin-1 `git` arguments).
+/// Whether two of the paths a case writes (or their parent directories) differ only in case.
+fn writes_case_colliding_paths(case: &serde_json::Value) -> bool {
+    let mut seen: Vec<(String, String)> = Vec::new();
+    for step in case["steps"].as_array().into_iter().flatten() {
+        let parts: Vec<&str> = step
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        let ["w", path, ..] = parts.as_slice() else {
+            continue;
+        };
+        let path = String::from_utf8_lossy(&latin1(path)).into_owned();
+        let mut prefix = String::new();
+        for component in path.split('/') {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(component);
+            let folded = prefix.to_lowercase();
+            if seen.iter().any(|(p, f)| *f == folded && *p != prefix) {
+                return true;
+            }
+            seen.push((prefix.clone(), folded));
+        }
+    }
+    false
+}
+
+/// Whether the temp directory's file system tells `a` from `A`.
+fn case_sensitive_fs() -> bool {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("a"), b"").unwrap();
+    !d.path().join("A").exists()
+}
+
 fn steps(sb: &Sandbox, steps: &serde_json::Value) -> Vec<String> {
     let mut written: Vec<String> = Vec::new();
     for step in steps.as_array().into_iter().flatten() {
@@ -213,6 +250,11 @@ pub(crate) fn replay(group: &str) -> usize {
             let Some(epoch) = case_epoch(case, tag) else {
                 continue;
             };
+            // The goldens were recorded on a case-sensitive file system; a case whose files differ only in case
+            // (check-case-conflict's) cannot be laid out on a case-insensitive one (macOS APFS by default).
+            if writes_case_colliding_paths(case) && !case_sensitive_fs() {
+                continue;
+            }
             let got = run_case(case, epoch);
             checked += 1;
             let want_out = latin1(want["out"].as_str().unwrap());

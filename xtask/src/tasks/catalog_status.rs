@@ -311,7 +311,7 @@ X13-CFG-01\t13\tc\tWP-21\tno\ty.rs\n";
         assert_eq!(rows.len(), 3);
         let mut fns = BTreeMap::new();
         catalog_fns(
-            "fn t10_run_01_basic() {}\nfn t10_run_010() {}\n  pub fn x13_cfg_01() {}\nfn nott10_run_10_x() {}",
+            "fn t10_run_01_basic() {}\nfn t10_run_010() {}\n  pub fn x13_cfg_01() {}\nfn nott10_run_10_x() {}", // spellchecker:disable-line
             &mut fns,
             "a.rs",
         );

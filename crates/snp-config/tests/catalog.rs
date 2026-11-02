@@ -55,8 +55,9 @@ mod catalog {
 
     #[test]
     fn t10_cfg_01_type_tag_check() {
+        let unknown = ["definitely-not-a-tag", "fiel"]; // spellchecker:disable-line
         for brand in BRANDS {
-            for tag in ["definitely-not-a-tag", "fiel"] {
+            for tag in unknown {
                 let e = err(&load_config_text(
                     &local(&format!("types: [{tag}]")),
                     brand,

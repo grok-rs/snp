@@ -66,6 +66,9 @@ struct Sc {
     /// `PATH` holds only the shims directory (plus `git` for pre-commit), so the host's toolchains (a system ruby)
     /// do not steer the default version.
     bare_path: bool,
+    /// The default version is resolved with `PATH` = the shims only (the rest of the lifecycle keeps the default
+    /// `PATH`): the goldens were recorded where `/usr/bin` holds no `go`, but CI runners ship `/usr/bin/go`.
+    bare_default: bool,
     /// Maps one of snp's calls to pre-commit's equivalent (documented differences of form).
     rewrite: fn(GoldenCall) -> GoldenCall,
 }
@@ -183,9 +186,9 @@ fn narrow_cargo(c: &GoldenCall) -> Option<&'static [&'static str]> {
 /// The go.dev JSON of the default go version.
 const GO_LATEST: &str = r#"[{"version": "go1.27.1", "stable": true, "files": []}]"#;
 /// node's index.json with several 20.x releases (the newest first, like nodejs.org).
-const NODE_INDEX_20: &str = r#"[{"version": "v21.0.0", "lts": false, "files": ["linux-x64", "osx-arm64-tar", "osx-x64-tar", "win-x64-zip", "linux-x64-musl"]},
-{"version": "v20.11.1", "lts": "Iron", "files": ["linux-x64", "osx-arm64-tar", "osx-x64-tar", "win-x64-zip", "linux-x64-musl"]},
-{"version": "v20.9.0", "lts": "Iron", "files": ["linux-x64", "osx-arm64-tar", "osx-x64-tar", "win-x64-zip", "linux-x64-musl"]}]"#;
+const NODE_INDEX_20: &str = r#"[{"version": "v21.0.0", "lts": false, "files": ["linux-x64", "linux-arm64", "osx-arm64-tar", "osx-x64-tar", "win-x64-zip", "win-arm64-zip", "linux-x64-musl", "linux-arm64-musl"]},
+{"version": "v20.11.1", "lts": "Iron", "files": ["linux-x64", "linux-arm64", "osx-arm64-tar", "osx-x64-tar", "win-x64-zip", "win-arm64-zip", "linux-x64-musl", "linux-arm64-musl"]},
+{"version": "v20.9.0", "lts": "Iron", "files": ["linux-x64", "linux-arm64", "osx-arm64-tar", "osx-x64-tar", "win-x64-zip", "win-arm64-zip", "linux-x64-musl", "linux-arm64-musl"]}]"#;
 /// node's index.json.
 const NODE_INDEX: &str = r#"[{"version": "v26.1.0", "lts": false, "files": ["linux-x64", "linux-arm64", "osx-arm64-tar", "osx-x64-tar", "win-x64-zip", "win-arm64-zip", "linux-x64-musl", "linux-arm64-musl"]}]"#;
 
@@ -229,6 +232,7 @@ fn scenarios() -> Vec<Sc> {
         narrow: narrow_none,
         rewrite: rewrite_none,
         bare_path: false,
+        bare_default: false,
     };
     vec![
         Sc {
@@ -248,6 +252,8 @@ fn scenarios() -> Vec<Sc> {
             replies: python_replies(),
             snp_replies: python_snp_replies(),
             snp_env: &[("SNP_PYTHON_INSTALLER", "pip")],
+            // The reference interpreter (`python3`, CPython 3.12) and its `python3.12` are shims, not the host's.
+            shims: &["python3", "python3.12"],
             skip: skip_python,
             ..base("python_default", "py-hook", LanguageId::Python)
         },
@@ -399,6 +405,7 @@ fn scenarios() -> Vec<Sc> {
             go_stub: true,
             tools: &[("go", "1.27.1", &["bin/go"])],
             fetch: &[("https://go.dev/dl/?mode=json", GO_LATEST)],
+            bare_default: true,
             ..base("golang_default", "go-hook", LanguageId::Golang)
         },
         Sc {
@@ -533,8 +540,24 @@ fn snp_side(sc: &Sc) -> Vec<GoldenCall> {
     }
     let host = t.host();
     let be = backend(sc.lang);
+    let bare_env = host
+        .base_env
+        .patched(&snp_core::env::EnvPatch::default().set("PATH", w.shims.as_os_str()));
+    let default_host = snp_lang::Host {
+        base_env: &bare_env,
+        cwd: host.cwd,
+        self_exe: host.self_exe,
+        probe: host.probe,
+        fetch: host.fetch,
+        tools: host.tools,
+        runner: host.runner,
+        printer: host.printer,
+        cancel: host.cancel,
+        brand: host.brand,
+    };
     let version: Arc<str> = match sc.version {
         Some(v) => Arc::from(v),
+        None if sc.bare_default => be.default_version(&default_host).unwrap(),
         None => be.default_version(&host).unwrap(),
     };
     assert_eq!(&*version, sc.resolved, "{}", sc.name);

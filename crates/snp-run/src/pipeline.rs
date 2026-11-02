@@ -722,15 +722,39 @@ mod tests {
         let base = snp_pycompat::ospath::realpath(tmp.path().as_os_str(), Path::new("/")).unwrap();
         let root = base.join("repo");
         std::fs::create_dir_all(&root).unwrap();
-        let env = Env::from_pairs([
-            ("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        // The process's PATH (git lives elsewhere on Windows) and the variables a Windows git needs to start.
+        let process = Env::capture_process();
+        let mut pairs: Vec<(String, String)> = [
+            "PATH",
+            "SYSTEMROOT",
+            "WINDIR",
+            "PATHEXT",
+            "COMSPEC",
+            "TEMP",
+            "TMP",
+        ]
+        .into_iter()
+        .filter_map(|k| {
+            process
+                .get(k)
+                .map(|v| (k.to_owned(), v.to_string_lossy().into_owned()))
+        })
+        .collect();
+        if pairs.is_empty() {
+            pairs.push(("PATH".to_owned(), "/usr/local/bin:/usr/bin:/bin".to_owned()));
+        }
+        for (k, v) in [
             ("HOME", base.to_str().unwrap()),
+            ("USERPROFILE", base.to_str().unwrap()),
             ("GIT_CONFIG_NOSYSTEM", "1"),
             ("GIT_AUTHOR_NAME", "a"),
             ("GIT_AUTHOR_EMAIL", "a@b"),
             ("GIT_COMMITTER_NAME", "a"),
             ("GIT_COMMITTER_EMAIL", "a@b"),
-        ]);
+        ] {
+            pairs.push((k.to_owned(), v.to_owned()));
+        }
+        let env = Env::from_pairs(pairs);
         git(&root, &env, &["init", "-q"]);
         std::fs::write(root.join("a.txt"), b"a\n").unwrap();
         git(&root, &env, &["add", "a.txt"]);

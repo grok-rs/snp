@@ -106,6 +106,8 @@ the tool waited for, so a git child larger than the tool itself is what gets rep
   3× regression: argparse hook-impl parse < 5 µs (WP-12), tier-1 path searches ≥ 1,000,000/s (WP-13),
   classification of 50 k files with 10 filters ≤ 40 ms (WP-22), alias bomb and 10,000-deep nesting rejected in
   < 100 ms (WP-14).
+  A threshold with `reference_only = true` (the WP-22 classification limit) is hard only with `--reference`, on
+  the reference machine; on the shared CI runners its breach is a warning (ADR-086 amendment of ADR-043).
 
 ## Spawn budgets
 

@@ -11,8 +11,15 @@ use std::process::Command;
 use snp_testkit::{Fixture, Oracle, TestEnv};
 
 use crate::cli::{
-    LOCAL_CONFIG, assert_code, compat, empty_repo, git, is_executable, repo_with, snp, tenv, text,
+    LOCAL_CONFIG, assert_code, compat, empty_repo, git, is_executable, repo_with, slashed, snp,
+    tenv, text as raw_text,
 };
+
+/// [`crate::cli::text`] with the path separator read as `/`: the messages print `os.path.join`ed hook paths
+/// (`.git\hooks\pre-commit` on Windows, see [`slashed`]).
+fn text(b: &[u8]) -> String {
+    slashed(&raw_text(b))
+}
 
 /// pre-commit 4.6.2's era-3 template as `pre-commit install` renders it (`INSTALL_PYTHON`, `ARGS`).
 pub(crate) fn pre_commit_script(python: &str, extra: &str) -> String {
@@ -577,7 +584,8 @@ fn t10_ins_22_install_hooks_then_commit_prints_no_initializing() {
 
 #[test]
 fn t10_ins_23_commit_without_snp_on_path() {
-    let env = tenv().with_env("PATH", "/usr/bin:/bin");
+    let base = tenv();
+    let env = base.with_env("PATH", crate::cli::path_without_snp(&base));
     let r = env.fixture_repo(Fixture::ConsumingRepo("script_hooks_repo"));
     assert_code(&compat(&env, &r, &["install"]), 0);
     let (code, out) = commit_file(&env, &r, "foo", "commit!");
@@ -1354,10 +1362,13 @@ fn m11_mig_12_pre_commit_script_cdpath_legacy_via_alias() {
     );
     write_hook(&legacy(&r, "pre-commit"), b"#!/bin/sh\necho legacy ran\n");
     compat(&env, &r, &["--version"]);
-    let env = env.with_env("CDPATH", ".").with_env(
-        "PATH",
-        format!("{}:/usr/bin:/bin", env.root().join("bin").display()),
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    let path = format!(
+        "{}{sep}{}",
+        env.root().join("bin").display(),
+        crate::cli::path_without_snp(&env)
     );
+    let env = env.with_env("CDPATH", ".").with_env("PATH", path);
     let (_, out) = commit_file(&env, &r, "foo", "x");
     assert!(out.contains("legacy ran"), "{out}");
 }
@@ -1481,7 +1492,10 @@ fn m11_mig_17_snp_v1_layout() {
     assert_eq!(text(&out.stdout), "0 repo(s) removed.\n");
     assert_eq!(
         text(&out.stderr),
-        format!("Removed snp 1.x cache data from {}.\n", st.display())
+        slashed(&format!(
+            "Removed snp 1.x cache data from {}.\n",
+            st.display()
+        ))
     );
     assert!(!st.join("db.db").exists() && !st.join("resource-pools").exists());
 }
@@ -1544,7 +1558,9 @@ fn m11_mig_21_alias_refuses_foreign_pre_commit() {
     let env = tenv();
     let dir = env.root().join("aliasdir");
     std::fs::create_dir_all(&dir).unwrap();
-    write_hook(&dir.join("pre-commit"), b"#!/bin/sh\necho foreign\n");
+    // The alias is `pre-commit.exe` on Windows.
+    let alias = format!("pre-commit{}", std::env::consts::EXE_SUFFIX);
+    write_hook(&dir.join(&alias), b"#!/bin/sh\necho foreign\n");
     let d = dir.to_str().unwrap();
     let out = snp(&env, env.root(), &["self", "alias", "install", "--dir", d]);
     assert_code(&out, 1);
@@ -1559,10 +1575,10 @@ fn m11_mig_21_alias_refuses_foreign_pre_commit() {
         &["self", "alias", "install", "--dir", d, "--force"],
     );
     assert_code(&out, 0);
-    assert!(dir.join("pre-commit.snp-backup").is_file());
+    assert!(dir.join(format!("{alias}.snp-backup")).is_file());
     assert!(text(&out.stdout).starts_with("Created "));
     // The alias is snp: `--version` through it is the compat brand.
-    let o = Command::new(dir.join("pre-commit"))
+    let o = Command::new(dir.join(&alias))
         .arg("--version")
         .output()
         .unwrap();
@@ -1579,10 +1595,14 @@ fn m11_mig_22_run_hint_only_on_a_terminal() {
     );
     let piped = snp(&env, &r, &["run", "--all-files"]);
     assert!(!text(&piped.stderr).contains("hint:"));
-    let tty = env.snp(&r).args(["run", "--all-files"]).tty().output();
-    assert!(
-        text(&tty.stdout).contains("hint: .git/hooks/pre-commit runs Python pre-commit, not snp")
-    );
+    // The terminal half needs a pty, which snp-testkit has on POSIX only (plain pipes on Windows).
+    if cfg!(unix) {
+        let tty = env.snp(&r).args(["run", "--all-files"]).tty().output();
+        assert!(
+            text(&tty.stdout)
+                .contains("hint: .git/hooks/pre-commit runs Python pre-commit, not snp")
+        );
+    }
 }
 
 #[test]

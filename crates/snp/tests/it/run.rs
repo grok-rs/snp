@@ -22,8 +22,9 @@ fn env() -> TestEnv {
     TestEnv::new(Bins { snp, probe })
 }
 
+/// Output bytes as text with CRLF folded (Windows text mode, like `cli::text`).
 fn text(b: &[u8]) -> String {
-    String::from_utf8_lossy(b).into_owned()
+    String::from_utf8_lossy(b).replace("\r\n", "\n")
 }
 
 /// `{name}{dots}{status}` at 80 columns.

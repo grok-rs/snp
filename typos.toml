@@ -11,6 +11,15 @@ extend-exclude = [
     "tests/differential/scenarios/**",
     # Generated from the research documents (titles quote them verbatim).
     "tests/catalog/index.tsv",
+    # Recorded upstream outputs, oracle goldens and real-world corpora: verbatim third-party bytes.
+    "crates/*/testdata/**",
+    "crates/*/tests/goldens/**",
+    "crates/snp-hooks/tests/*/goldens/**",
+    "crates/snp-hooks/tests/*/cases.json",
+    "crates/snp-hooks/tests/caveats/corpus/**",
+    "crates/snp-migrate/tests/fixtures/**",
+    # Pixel-art rows (letters are colours).
+    "docs/assets/src/pixel_logo.py",
 ]
 
 [default]
@@ -19,6 +28,10 @@ extend-ignore-re = [
     "[0-9a-f]{12,}",
     # escaped byte strings
     "\\\\x[0-9a-fA-F]{2}",
+    # abbreviation glosses of short names: `s(cenario)`, `v(alue)`
+    "\\b[a-z]\\([a-z]+\\)",
+    # a line that misspells on purpose (an invalid value, a substring) says so
+    "(?m)^.*spellchecker:disable-line.*$",
 ]
 
 [default.extend-words]
@@ -33,6 +46,12 @@ mis = "mis"
 caf = "caf"
 flate = "flate"
 unparseable = "unparseable"
+# Upstream texts snp reproduces verbatim: pre-commit-hooks' help typos (`Maxmimum` before v4.1.0, `contstructs`
+# before v4.5.0), its `path_splitted` variable, node's LTS codename `Jod`
+Maxmimum = "Maxmimum"
+contstructs = "contstructs"
+splitted = "splitted"
+Jod = "Jod"
 # Unicode / CPython identifiers in the pycompat oracle scripts
 TIO = "TIO"
 PN = "PN"

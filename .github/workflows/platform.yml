@@ -139,7 +139,7 @@ jobs:
         include:
           # ADR-063, by each scenario's `requires.git`: the stash refusal (D-DATA-17, >=2.5 <2.19) on 2.18.5; the
           # warning (D-DIAG-01) and the --deduplicate fallback (D-CRASH-26), both >=2.19 <2.31, on 2.30.
-          # The tests that still assume a newer git (17 on 2.18.5, 5 on 2.30.9, owners WP-18 and WP-23) are listed one
+          # The tests that still assume a newer git (owners WP-18 and WP-23; the spawn budgets, autoupdate) are listed one
           # by one in packaging/ci/git-known-failures/<version>.txt; every other test is blocking on every version.
           - { git: 2.18.5, divergences: "D-DATA-17" }
           - { git: 2.30.9, divergences: "D-CRASH-26 D-DIAG-01" }
@@ -288,7 +288,7 @@ jobs:
         run: |
           bin="target/${{ matrix.target }}/dist/snp"
           file "$bin"
-          file "$bin" | grep -Eq 'static(-pie)? linked'
+          file "$bin" | grep -Eq 'statically linked|static-pie linked'
       - name: Runs without glibc
         run: >-
           docker run --rm -v "$PWD/target/${{ matrix.target }}/dist:/snp:ro" alpine:3.22
@@ -430,6 +430,9 @@ jobs:
         run: |
           cargo xtask difftest list --suite curated --tag platform | tee platform-scenarios.txt
           [ -s platform-scenarios.txt ] || { echo "::error::no scenario is tagged platform"; exit 1; }
+      # The rust-cache'd target/ can carry scenario roots of an earlier run without their marker file, which the
+      # harness then refuses to delete: start from no roots.
+      - run: rm -rf target/difftest/roots
       - run: cargo xtask difftest run --suite curated --tag platform --keep
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
@@ -465,8 +468,10 @@ jobs:
         run: |
           uv venv --python 3.13 venv
           if [ "$RUNNER_OS" = Windows ]; then bin=venv/Scripts; else bin=venv/bin; fi
-          uv pip install --python "$bin/python" dist/snp_cli-*.whl
-          "$bin/snp" --version | tee version.txt
+          # `--python` takes the environment directory (a bare `venv/Scripts/python` has no `.exe` to find).
+          uv pip install --python venv dist/snp_cli-*.whl
+          # Windows prints `\r\n` (Python text-mode stdout, which snp reproduces).
+          "$bin/snp" --version | tr -d '\r' | tee version.txt
           grep -Eq '^snp [0-9]+\.[0-9]+\.[0-9]+$' version.txt
           # the wheel ships `snp` only: never a `pre-commit` executable (ADR-049)
           if ls "$bin" | grep -qi '^pre-commit'; then echo "::error::the wheel installed a pre-commit executable"; exit 1; fi

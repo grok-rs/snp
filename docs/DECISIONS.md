@@ -8,7 +8,7 @@ approved by the integration lead and the owners of the affected packages; the am
 naming the amending ADR, which is normative where they differ. ADR-056…ADR-080 apply the second design review
 (2026-10-08); Appendix B lists every finding and its disposition. ADR-081 applies the verification of the W0 skeleton;
 ADR-082 the end-to-end integration of the merged packages; ADR-083 the verification of the integrated `main`; ADR-084
-the final multi-lens review.
+the final multi-lens review; ADR-086 the first CI run on macOS.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -1087,6 +1087,41 @@ poll(2) loop instead of two reader threads per spawn, the B4 path copies, and th
 **Consequences.** COMPATIBILITY §3.3, D-DATA-01, D-DATA-13, D-DIAG-04 (texts and scenarios), ARCHITECTURE §4.2, §4.6,
 §8, the user configuration and troubleshooting pages state the new behaviour. Amends ADR-065 (forwarding), ADR-067
 (recovery commands) and ADR-083 (retirement check).
+
+### ADR-086 — First CI run on macOS: exec semantics and portable tests
+
+**Context.** The first CI run built and tested macOS (and Windows, musl and old git) for the first time. On macOS:
+(a) a hook whose executable is neither a `#!` script nor a Mach-O binary ran under `/bin/sh`, because std spawns with
+Apple's `posix_spawnp`, which emulates `execvp` and retries `ENOEXEC` with the shell; pre-commit (CPython's `fork` +
+`execve`, no fallback) raises `OSError: [Errno 8] Exec format error` and the hook fails; (b) a spawn whose cwd is a
+regular file failed with `ENOENT` instead of the `ENOTDIR` CPython's child `chdir` reports; (c) `current_exe()` is the
+invoked path made absolute (`<repo>/../pbin/snp`), so `install` could embed a `..` path as `SNP_EXE` (11 §A.19.3
+forbids it); (d) the lefthook converter emitted EREs with empty branches (`(x.*|y|)` from `{x*,y,}`), which BSD
+`grep -E` refuses ("empty (sub)expression"); (e) many tests assumed Linux: the `/var` → `/private/var` and `/home`
+→ `/System/Volumes/Data/home` real paths, GNU `sed -i`/`head -c 0`/`pwd` with operands, a case-sensitive file system,
+non-UTF-8 file names (APFS refuses them with `EILSEQ`), dash as `/bin/sh`, Linux's 128 KiB per-argument limit, the
+xcrun `/usr/bin/python3` shim (it adds `CPATH`/`LIBRARY_PATH`/`MANPATH` to the Python it starts, and ADR-079 never
+persists its probe facts).
+**Decision.** (1) On macOS the spawn pre-checks a program given as a path: an executable regular file whose first bytes
+are neither `#!` nor a Mach-O/universal magic fails with `ENOEXEC` before `posix_spawnp` sees it — the kernel's own
+rule, so the result equals Linux's and CPython's. (2) A spawn error attributed to the cwd carries the errno `chdir(cwd)`
+gives (`ENOTDIR` for a file, `EACCES` for an inaccessible directory, the stat error otherwise). (3) The `SNP_EXE`
+fallback (`current`) is canonicalised when it holds a `..` component; every other candidate stays uncanonicalised. (4)
+An ERE alternation drops its empty branches and becomes optional (`(x.*|y)?`; all-empty → nothing); Python-flavour
+regexes are unchanged. (5) The tests compare real paths, use portable shell, and skip only what the platform cannot
+express, each with a comment: case-colliding fixtures on a case-insensitive file system, non-UTF-8 names where the
+file system refuses them, dash's error texts where `/bin/sh` is not dash; B6 accepts the one `python3` probe of the
+macOS shim.
+**Consequences.** No divergence from pre-commit: (1), (2) and (4) restore parity on macOS, (3) applies 11 §A.19.3.
+COMPATIBILITY §6.3 notes (1).
+
+**Amendment to ADR-043 (micro limits on shared runners).** The micro gate's absolute WP-22 limit, classification of
+50 k files with 10 filters in ≤ 40 ms, was set on the reference machine (29 ms there); the 4-vCPU GitHub runners
+measure 44–52 ms for the same binary, dominated by the 50 k `lstat` calls `Classifier::new` makes (pre-commit's
+`os.path.lexists` filter). A `[[micro]]` threshold may carry `reference_only = true`: `cargo xtask bench gate --micro
+--reference` (the reference machine) keeps it hard, every other run reports a breach as a warning. The other micro
+limits stay hard everywhere, and the release-mode `perf_classify*` smoke test still fails a 3× regression on every
+runner (ADR-071).
 
 ---
 

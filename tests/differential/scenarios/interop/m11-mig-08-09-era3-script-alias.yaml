@@ -3,6 +3,10 @@ description: '11 §A.20 MIG-08 — an era-3 pre-commit script whose INSTALL_PYTH
 covers: [M11-MIG-08]
 tags: [migration]
 brands: [compat]
+requires:
+  # The fallback finds the side's `pre-commit` on PATH. On Windows the oracle runs from its venv's Scripts directory
+  # (a pip console-script launcher does not work as a copy), so no oracle `pre-commit` is on the scenario's PATH.
+  os: [linux, macos]
 work:
   files: {a.txt: ""}
   config: |

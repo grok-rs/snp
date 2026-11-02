@@ -132,7 +132,11 @@ mod tests {
     #[test]
     fn store_filters_come_before_the_root() {
         let f = filters(Path::new("/r/oot"));
-        assert_eq!(f[0], (escape("/r/oot/store"), "[STORE]".to_owned()));
+        let store = Path::new("/r/oot").join("store");
+        assert_eq!(
+            f[0],
+            (escape(&store.to_string_lossy()), "[STORE]".to_owned())
+        );
         let root_at = f.iter().position(|(_, r)| r == "[ROOT]").unwrap();
         assert!(f.iter().take(root_at).all(|(_, r)| r == "[STORE]"));
     }

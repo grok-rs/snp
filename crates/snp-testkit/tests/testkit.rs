@@ -119,6 +119,7 @@ mod testkit {
             ("GIT_AUTHOR_DATE", "1577836800 +0000"),
             ("GIT_ALLOW_PROTOCOL", "file"),
             ("VIRTUALENV_NO_DOWNLOAD", "1"),
+            ("SNP_ALLOW_OLD_GIT", "1"),
         ] {
             assert_eq!(get(k).as_deref(), Some(want), "{k}");
         }
@@ -150,6 +151,7 @@ mod testkit {
             "LANG",
             "TZ",
             "VIRTUALENV_NO_DOWNLOAD",
+            "SNP_ALLOW_OLD_GIT",
             "GIT_CEILING_DIRECTORIES",
         ];
         for (k, _) in &vars {
@@ -251,7 +253,8 @@ mod testkit {
             cfg,
             format!(
                 "repos:\n-   repo: file://{}\n    rev: {rev}\n    hooks:\n    -   id: bash_hook\n",
-                hooks.display()
+                // the fixture's URL is `/`-separated (Windows too)
+                hooks.to_string_lossy().replace('\\', "/")
             )
         );
 
@@ -319,7 +322,8 @@ mod testkit {
         let env = TestEnv::new(no_bins());
         let filters = env.filters();
         assert!(filters.len() >= 12);
-        let root = env.root().display().to_string();
+        // the `/`-separated spelling (Windows git and `file://` URLs), one of the spellings the filters cover
+        let root = env.root().to_string_lossy().replace('\\', "/");
         let sample = format!(
             "Check the log at {root}/store/pre-commit.log\n[INFO] Initializing environment for file://{root}/repos/x.\n\
              [WARNING] Stashing unstaged files to {root}/store/patch1791403647-1780651.\r\n- duration: 0.12s\n\
@@ -352,12 +356,20 @@ mod testkit {
         assert_eq!(env.probe(), bins.probe);
         // both brands through the runners (argv[0] decides, COMPATIBILITY §3.1)
         let out = env.snp(env.root()).arg("--version").output();
-        assert_eq!((out.code, out.stdout.as_slice()), (0, &b"snp 2.0.0\n"[..]));
+        // argparse's `print`: CRLF in Windows text mode
+        let version: &[u8] = if cfg!(windows) {
+            b"snp 2.0.0\r\n"
+        } else {
+            b"snp 2.0.0\n"
+        };
+        assert_eq!((out.code, out.stdout.as_slice()), (0, version));
         let out = env.snp_as_pre_commit(env.root()).arg("--version").output();
-        assert_eq!(
-            (out.code, out.stdout.as_slice()),
-            (0, &b"pre-commit 4.6.2\n"[..])
-        );
+        let version: &[u8] = if cfg!(windows) {
+            b"pre-commit 4.6.2\r\n"
+        } else {
+            b"pre-commit 4.6.2\n"
+        };
+        assert_eq!((out.code, out.stdout.as_slice()), (0, version));
         snp_testkit::snp_snapshot!(env, out, @"
         exit_code: 0
         ----- stdout -----

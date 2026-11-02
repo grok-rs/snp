@@ -494,8 +494,8 @@ mod rows {
         assert_eq!(
             text,
             format!(
-                "command: ('{}', 'write-tree')\nreturn code: 128\nstdout: (none)\nstderr:\n    fatal: boom",
-                git_exe(&sb, &repo)
+                "command: ({}, 'write-tree')\nreturn code: 128\nstdout: (none)\nstderr:\n    fatal: boom",
+                snp_pycompat::repr::repr_str(&git_exe(&sb, &repo))
             )
         );
         assert_eq!(out.text(), "");
@@ -521,9 +521,9 @@ mod rows {
         assert_eq!(
             text,
             format!(
-                "command: ('{}', '-c', 'submodule.recurse=0', 'checkout', '--', '.')\nreturn code: 1\nstdout: \
+                "command: ({}, '-c', 'submodule.recurse=0', 'checkout', '--', '.')\nreturn code: 1\nstdout: \
                  (none)\nstderr:\n    error: boom",
-                git_exe(&sb, &repo)
+                snp_pycompat::repr::repr_str(&git_exe(&sb, &repo))
             )
         );
         // The `finally` still restored: the applies fail (changes still present), rollback, apply.
@@ -561,21 +561,24 @@ mod rows {
         assert_eq!(
             text,
             format!(
-                "command: ('{}', '-c', 'core.autocrlf=false', 'apply', '--whitespace=nowarn', '{}')\nreturn code: \
+                "command: ({}, '-c', 'core.autocrlf=false', 'apply', '--whitespace=nowarn', {})\nreturn code: \
                  1\nstdout: (none)\nstderr:\n    error: patch failed: foo:1",
-                git_exe(&sb, &repo),
-                patch.display()
+                snp_pycompat::repr::repr_str(&git_exe(&sb, &repo)),
+                snp_pycompat::repr::repr_str(&patch.display().to_string())
             )
         );
         assert_eq!(
             hint.unwrap(),
             format!(
                 "[ERROR] Your unstaged changes are saved in {0}; restore them with: git apply --whitespace=nowarn \
-                 {0}; if git apply reports that the patch does not apply, those files changed after the stash (hook \
-                 fixes or later edits): keep a copy with git diff --binary {1} > {0}.now, put them back with git \
+                 {2}; if git apply reports that the patch does not apply, those files changed after the stash (hook \
+                 fixes or later edits): keep a copy with git diff --binary {1} > {3}, put them back with git \
                  --literal-pathspecs restore --source={1} --worktree -- foo, then apply it again",
                 patch.display(),
-                sb.git_text(&repo, &["write-tree"])
+                sb.git_text(&repo, &["write-tree"]),
+                // shell words (a Windows path is quoted)
+                snp_pycompat::shlex::quote(&patch.display().to_string()),
+                snp_pycompat::shlex::quote(&format!("{}.now", patch.display()))
             )
         );
         let lines: Vec<String> = out.text().lines().map(str::to_owned).collect();

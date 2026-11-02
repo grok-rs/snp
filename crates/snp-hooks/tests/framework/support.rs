@@ -81,7 +81,30 @@ impl Sandbox {
         .unwrap();
         let process = Env::capture_process();
         let mut pairs: Vec<(OsString, OsString)> = Vec::new();
+        // The goldens were recorded without git-lfs; a host git-lfs (CI runners ship one) changes what
+        // `git lfs status --json` reports (check-added-large-files before v4.1.0). A `git-lfs` stub ahead of the
+        // host's on `PATH` answers like a missing one.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let bin = home.join("bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            let stub = bin.join("git-lfs");
+            std::fs::write(
+                &stub,
+                "#!/bin/sh\necho \"git: 'lfs' is not a git command. See 'git --help'.\" >&2\nexit 1\n",
+            )
+            .unwrap();
+            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let mut path = bin.into_os_string();
+            if let Some(host) = process.get("PATH") {
+                path.push(":");
+                path.push(host);
+            }
+            pairs.push(("PATH".into(), path));
+        }
         for k in [
+            #[cfg(not(unix))]
             "PATH",
             "SYSTEMROOT",
             "PATHEXT",
@@ -283,8 +306,16 @@ pub(crate) fn argv_of(v: &serde_json::Value) -> Vec<OsString> {
 }
 
 /// A short, readable rendering of bytes for failure messages.
+///
+/// On Windows Python's text-mode `print()` writes `\r\n`, which `PyOut` reproduces (its unit tests check the
+/// translation); the expectations here are written with `\n`, so `\r\n` folds to `\n` there.
 pub(crate) fn show(b: &[u8]) -> String {
-    String::from_utf8_lossy(b).into_owned()
+    let s = String::from_utf8_lossy(b);
+    if cfg!(windows) {
+        s.replace("\r\n", "\n")
+    } else {
+        s.into_owned()
+    }
 }
 
 /// The hook epoch of `hook` at `tag` (the generated per-tag profile).

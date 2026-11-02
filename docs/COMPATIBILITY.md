@@ -283,6 +283,8 @@ warm transcripts identical with the fast path (ADR-032).
   elsewhere (14 P-83/D-WIN-05, ADR-074); VT processing is re-enabled before coloured writes after inherited-stdio
   children (no byte change, P-52).
 * Hook ids containing `:` are plain ids (no selector syntax in v1).
+* macOS: an executable that is neither a `#!` script nor a Mach-O binary fails with `[Errno 8] Exec format error`, as
+  under CPython's `execve`; Apple's `posix_spawnp` would run it with `/bin/sh` (ADR-086).
 
 ## 7. Config extension keys (lefthook-inspired; all optional)
 
