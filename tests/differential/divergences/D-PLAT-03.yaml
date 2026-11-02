@@ -1,6 +1,7 @@
 # D-PLAT-03 (PLAT/SEC, owner WP-15): Windows batch hooks receive file names literally (BatBadBut-safe quoting).
 # pre-commit lets cmd.exe interpret `&` in an unquoted file name (the second command runs); snp passes the name
-# quoted (docs/divergences/D-PLAT-03.md).
+# quoted (docs/divergences/D-PLAT-03.md). The name has no space: CPython's `list2cmdline` quotes an argument with a
+# space or tab, and inside quotes cmd.exe does not split on `&` (`echo.` echoes the rest of its word).
 name: divergences/D-PLAT-03
 since: "4.1.0"
 expect_divergence: D-PLAT-03
@@ -13,7 +14,7 @@ requires:
 work:
   files:
     run.cmd: "@echo off\r\necho %*\r\n"
-    "a&echo INJECTED.txt": "x\n"
+    "a&echo.INJECTED.txt": "x\n"
   config: |
     repos:
     -   repo: local
@@ -24,7 +25,7 @@ work:
             language: system
             files: \.txt$
             verbose: true
-  commit: [".pre-commit-config.yaml", run.cmd, "a&echo INJECTED.txt"]
+  commit: [".pre-commit-config.yaml", run.cmd, "a&echo.INJECTED.txt"]
 steps:
   - tool: [run, --all-files]
     env:

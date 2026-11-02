@@ -3354,12 +3354,13 @@ arguments are passed unchanged. The longer quoted lines are kept under cmd.exe's
 
 ##### Examples
 
-Windows, a local hook `entry: run.cmd` (`@echo %*`), `language: system`, run on a tracked file `a&echo INJECTED.txt`:
+Windows, a local hook `entry: run.cmd` (`@echo %*`), `language: system`, run on a tracked file `a&echo.INJECTED.txt`
+(no space: CPython quotes an argument with a space or tab too, and cmd.exe does not split a quoted `&`):
 
-pre-commit 4.6.2: cmd.exe runs `run.cmd a` and then `echo INJECTED.txt`; the output contains `INJECTED.txt` on a line
+pre-commit 4.6.2: cmd.exe runs `run.cmd a` and then `echo.INJECTED.txt`; the output contains `INJECTED.txt` on a line
 of its own.
 
-snp: the batch file receives the single argument `"a&echo INJECTED.txt"` and echoes it verbatim.
+snp: the batch file receives the single argument `"a&echo.INJECTED.txt"` and echoes it verbatim.
 
 With `args: ["line1\nline2"]` pre-commit's line is cut at the line feed by cmd.exe; snp fails the hook with
 ``Executable `run.cmd` cannot receive an argument containing a line break: 'line1\nline2'`` (`- exit code: 1`).

@@ -17,7 +17,8 @@ steps:
   - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=pre-commit]
   - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=pre-commit, --hook-dir, "${work}/.git/hooks", --]
     env: {PRE_COMMIT_RUNNING_LEGACY: "1"}
-  - shell: mkdir -p .git/hooks && printf '#!/bin/sh\necho hi "$@"\nexit 1\n' > .git/hooks/pre-commit.legacy && chmod +x .git/hooks/pre-commit.legacy
+  # `env sh`, not `/bin/sh`: Windows has no /bin/sh for pre-commit (snp falls back to `sh` on PATH, D-PLAT-02)
+  - shell: mkdir -p .git/hooks && printf '#!/usr/bin/env sh\necho hi "$@"\nexit 1\n' > .git/hooks/pre-commit.legacy && chmod +x .git/hooks/pre-commit.legacy
   - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=pre-commit, --hook-dir, "${work}/.git/hooks", --]
   - tool: [hook-impl, --config=.pre-commit-config.yaml, --hook-type=pre-commit, --hook-dir, "${work}/.git/hooks", --]
     env: {PRE_COMMIT_RUNNING_LEGACY: "1"}
