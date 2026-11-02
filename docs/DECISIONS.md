@@ -9,7 +9,7 @@ naming the amending ADR, which is normative where they differ. ADR-056…ADR-080
 (2026-10-08); Appendix B lists every finding and its disposition. ADR-081 applies the verification of the W0 skeleton;
 ADR-082 the end-to-end integration of the merged packages; ADR-083 the verification of the integrated `main`; ADR-084
 the final multi-lens review; ADR-085 the `interactive` extension key; ADR-086 the first CI run on macOS; ADR-087 the
-`.snp.yaml` config file name.
+`.snp.yaml` config file name; ADR-088 the crates.io and Homebrew release channels.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -490,6 +490,8 @@ replacing symlinks; foreign `.legacy` never clobbered without `-f`; manager-scri
 
 ### ADR-049 — Distribution and the `pre-commit` name
 
+*Status: Accepted; amended by ADR-088 (crates.io and Homebrew channels). The amending ADR is normative where they differ.*
+
 **Context.** 11 §A.1 rules out installing a `pre-commit` executable by default (no silent takeover); a judge suggested
 cargo-dist `bin-aliases` as a cheap alias channel. **Decision.** Release with cargo-dist (Linux gnu/musl × x86-64/arm64,
 macOS × 2, Windows msvc × 2; auditable binaries, checksums, attestations); PyPI `snp-cli` (maturin `bindings = "bin"`,
@@ -498,6 +500,8 @@ binary `snp` only; PEP 541 request for `snp`); the `pre-commit` name only throug
 default installers (it would silently shadow Python pre-commit).
 
 ### ADR-050 — Version number
+
+*Status: Accepted; amended by ADR-088 (snp 2.x takes over the crates.io name `snp`). The amending ADR is normative where they differ.*
 
 **Decision.** Workspace version `2.0.0` (crates.io `snp` 1.x exists, 11 §A.1). `PRE_COMMIT = "4.6.2"` is the value
 compared by `minimum_pre_commit_version`; `SNP_VERSION` is compared only by `minimum_snp_version`.
@@ -1220,6 +1224,63 @@ every existing differential scenario byte-identical in both brands.
 missing-config line). `snp_cli::ConfigArg` replaces `OsString` for `-c` in the facade (ARCHITECTURE §1.4.4);
 `snp_run::doctor_fast_path` takes it; `snp_config::discover` is new API. The configuration, migration and README pages
 and COMPATIBILITY §5.7/§5.8/§7.4 describe it.
+
+### ADR-088 — Release channels: crates.io and Homebrew
+
+**Context.** ADR-049 released snp through cargo-dist (GitHub releases, shell/PowerShell installers) and PyPI
+`snp-cli`; the whole workspace was `publish = false`, and ADR-050 chose 2.0.0 because the crates.io name `snp` held
+the unrelated 1.x, so `cargo install snp` installed that older tool (installation guide: "not yet available").
+The owner holds the crates.io name `snp` (grok-rs, 1.0.1) and wants `cargo install snp` and Homebrew to install
+2.x. A crates.io package can only depend on crates.io packages, so `snp` alone cannot be published: its normal
+dependency closure has 22 internal crates (all free names on crates.io) plus the user crates cfgv 0.3 and
+file-identify 0.5, which ADR-061 already requires to be published from the `deps.lock` commits. Packages must stay
+far below crates.io's 10 MB limit (the snp-pyre test vectors alone are ~5 MB).
+**Decision.** (1) **crates.io.** `snp` and the 22 crates of its normal (non-dev) dependency closure — snp-argparse,
+-cli, -cmd, -config, -core, -files, -git, -hooks, -hooks-data, -lang, -migrate, -net, -os, -proc, -pycompat,
+-pyparsers, -pyre, -repo, -run, -stash, -store, -yaml — are published at the workspace version; xtask, snp-testkit,
+snp-difftest, snp-probe and fuzz stay `publish = false` (the workspace default; the published crates do not inherit
+it). Metadata (license, repository, homepage, README, keywords, categories) is inherited from `[workspace.package]`;
+each published package is `include = ["/src/"]` (snp-cli also `/completions/`), so tests, vectors, fixtures and
+benches stay in the repository (cargo drops the test and bench targets whose files are not packaged); the largest
+package is under 1 MB. (2) **Exact internal requirements.** `[workspace.dependencies]` requires every published
+internal crate as `version = "=X.Y.Z"` (the workspace version), not `X.Y.Z` (caret): the internal APIs have no semver
+promise, and a caret requirement would let `cargo install snp@2.0.0` (or a later `cargo update`) combine, e.g.,
+snp-run 2.0.0 with a snp-core 2.0.1 it was never built or tested with. The price is that every release republishes
+every crate, which the shared workspace version already implies. snp-testkit has no `version`: `cargo publish`
+strips version-less path dev-dependencies, so the published crates' tests may keep using it, and no published crate
+may depend on it (or any `publish = false` crate) otherwise. (3) **Gates.** `cargo xtask release gates` gains gate 6
+(`crates`): every published package has the workspace version (hence the tag's), requires the other published
+packages with exactly `=X.Y.Z`, has no normal or build dependency on an unpublished package and no versioned
+dev-dependency on one, and `snp` is published; an xtask unit test runs it on the workspace in every CI run. The
+release `gates` job then runs `cargo publish --workspace --dry-run --locked`, which packages and builds each crate
+against crates.io before anything is built. (4) **Publishing.** The release workflow's `publish-crates` job runs
+after the GitHub release is created (not for pre-releases, unless dist's `publish-prereleases`, like PyPI), checks
+out the tag with the pinned siblings and runs `.github/scripts/publish-crates.sh`: it skips each crate whose version
+is already in the crates.io index and publishes the rest with one `cargo publish --locked -p … -p …` (dependency
+order, waiting for each crate to reach the index), so a re-run after a partial failure finishes the set — `cargo
+publish --workspace` alone fails on the first existing version. crates.io rate-limits new crates (a small burst, then
+about one per ten minutes); a first release creates 23 crates, so on HTTP 429 the script waits ten minutes and
+retries (up to 30 rounds, job timeout 5.5 h). The token is the `CARGO_REGISTRY_TOKEN` secret (scope publish-new and
+publish-update), used in the `release` environment. (5) **Homebrew.** dist's `homebrew` installer (`tap =
+"grok-rs/homebrew-tap"`, `formula = "snp"`) builds `snp.rb` as a global artifact (released as an asset);
+`build-global-artifacts` checks it (valid Ruby, the release version, one checksum per archive URL, `bin.install
+"snp"` only, no binary aliases, no `pre-commit` outside the description). The `publish-homebrew` job (after the
+release, never for pre-releases) clones the tap over SSH with the `HOMEBREW_TAP_DEPLOY_KEY` deploy key (github.com's
+host keys from the API, never trust-on-first-use), writes `Formula/snp.rb` and commits it as `snp X.Y.Z` with the
+github-actions[bot] identity; an unchanged formula is not committed. (6) `cargo binstall snp` uses the release
+archives (`[package.metadata.binstall]` of crates/snp). The ADR-049 rule stands for every channel: only `snp` is
+installed, never a `pre-commit` alias.
+**Rationale.** Publishing the closure is the only way to make `cargo install snp` work while keeping the crate split
+of ARCHITECTURE §1.1; exact pins make the 23 crates behave as one versioned unit on crates.io. Skipping published
+versions keeps the job safe to re-run, which the new-crate rate limit makes likely on the first release. Committing
+dist's own formula (rather than a hand-written one) keeps Homebrew on the same archives, checksums and targets as the
+installers. A deploy key limits the workflow's write access to the tap.
+**Consequences.** `cargo install --locked snp` builds with Cargo's default release profile (not the workspace's fat
+LTO and overflow checks, which apply only to builds of this workspace); the archives remain the recommended channel.
+The installation guide, the README and the CHANGELOG describe crates.io and Homebrew; users of snp 1.x get 2.x from
+`cargo install snp`. The internal crates appear on crates.io with "no stable API" semantics. The owner adds the
+`CARGO_REGISTRY_TOKEN` secret; `HOMEBREW_TAP_DEPLOY_KEY` and the PyPI pending publisher (project `snp-cli`, workflow
+`release.yml`, environment `release`) are prerequisites of the respective jobs.
 
 ---
 

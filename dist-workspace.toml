@@ -4,9 +4,9 @@
 # deps.lock commits, the ADR-061 release gates, the snp-cli wheels), hence `allow-dirty = ["ci"]`: never let
 # `dist init`/`dist generate` overwrite it.
 #
-# Only the `snp` package is released (`packages`, plus `dist = true` in its manifest: dist skips the `publish = false`
-# inherited from the workspace otherwise);
-# every other binary of the workspace (xtask, snp-probe) is tooling and stays out of the release.
+# Only the `snp` package is released (`packages`, plus `dist = true` in its manifest); every other binary of the
+# workspace is tooling and stays out of the release: xtask and snp-probe are `publish = false`, which dist skips, and
+# the published snp-stash opts out with `dist = false` (its test driver).
 
 [workspace]
 members = ["cargo:."]
@@ -25,7 +25,16 @@ hosting = "github"
 # ADR-049: shell and PowerShell installers that install `snp` only. `bin-aliases` is deliberately not configured: it
 # would create a `pre-commit` link unconditionally and silently shadow Python pre-commit. The alias is opt-in
 # (`snp self alias install`).
-installers = ["shell", "powershell"]
+#
+# ADR-088: and a Homebrew formula, `snp.rb` (a global artifact), that the release workflow's `publish-homebrew` job
+# commits to the tap grok-rs/homebrew-tap as Formula/snp.rb (`brew install grok-rs/tap/snp`). It installs `snp`
+# only, for the same reason.
+installers = ["shell", "powershell", "homebrew"]
+tap = "grok-rs/homebrew-tap"
+formula = "snp"
+# Read only by dist's generated workflow (release.yml is maintained by hand and has its own `publish-homebrew` job);
+# declared so the configuration says what the release does.
+publish-jobs = ["homebrew"]
 install-path = "CARGO_HOME"
 install-updater = false
 # Linux gnu/musl x x86_64/arm64, macOS x 2, Windows msvc x 2 (14 §A.5.1).

@@ -50,7 +50,7 @@ the alias). The [migration guide](migration.md) walks through the switch and the
 
 ## Where to go next
 
-* [Installation](installation.md) — release installers, archives, PyPI, building from source (crates.io is not available yet).
+* [Installation](installation.md) — release installers, archives, Homebrew, crates.io, PyPI, building from source.
 * [Migrating from pre-commit](migration.md) — the step-by-step checklist, hook scripts, template directories, scripts
   that call `pre-commit`, rollback.
 * [CI integration](ci.md) — replacing `pre-commit/action`, cache keys, GitLab/Azure/CircleCI recipes, pre-commit.ci.
