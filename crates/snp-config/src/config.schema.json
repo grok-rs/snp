@@ -119,6 +119,7 @@
         "fail_text": {"type": "string"},
         "root": {"type": "string", "description": "relative directory inside the repository"},
         "use_stdin": {"type": "boolean"},
+        "interactive": {"type": "boolean", "description": "the hook reads the terminal; its output is not captured"},
         "fail_on_changes": {"$ref": "#/$defs/failOnChanges"}
       }
     },

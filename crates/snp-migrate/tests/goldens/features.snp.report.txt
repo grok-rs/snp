@@ -14,10 +14,9 @@ snp-migrate: warning: pre-commit/env and root: exclude 'vendor/*' is matched fro
 snp-migrate: warning: pre-commit/broken: lefthook fails this job (either `run`,`script`, or `group` must be provided for a job); converted to a `fail` hook
 snp-migrate: warning: pre-commit/empty group: lefthook fails this job (group must have `jobs`); converted to a `fail` hook
 snp-migrate: lossy: pre-commit/interactive one: timeout '48h' is longer than 24h; dropped
-snp-migrate: lossy: pre-commit/interactive one: interactive (TTY passthrough) is not supported yet; dropped
 snp-migrate: lossy: post-checkout: setup command not converted: npm ci
 snp-migrate: warning: pre-push/20_slow: tag 'slow tests' is not a valid snp group name; dropped
 snp-migrate: warning: pre-push/missing.sh: script 'missing.sh' not found in the source directories; converted to a `fail` hook
 snp-migrate: lossy: pre-receive: git hook 'pre-receive' is not supported by pre-commit; converted to manual stage
 snp-migrate: lossy: pre-receive/guard: no pre-commit equivalent for {1} in stage 'manual'
-Converted 17 jobs from 6 lefthook hooks into 17 hooks (14 warnings, 8 lossy conversions).
+Converted 17 jobs from 6 lefthook hooks into 17 hooks (14 warnings, 7 lossy conversions).

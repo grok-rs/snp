@@ -810,10 +810,15 @@ pub fn parse(brand: Brand, argv: &[OsString], env: &Env, stdout_tty_cols: Option
     SelfCmd(SelfArgs), Completions(Shell),
 }
 #[derive(Clone, Debug)] pub struct ColorArgs { pub color: ColorSetting }
-#[derive(Clone, Debug)] pub struct ConfigArgs { pub color: ColorSetting, pub config: OsString }
+/// `-c/--config` as given (`given`, argparse `was_given`), else `{ path: ".pre-commit-config.yaml", given: false }`:
+/// the commands then discover the config in the repository root (`snp_config::discover`, ADR-087).
+#[derive(Clone, Debug, PartialEq, Eq, Default)] pub struct ConfigArg { pub path: OsString, pub given: bool }
+impl ConfigArg { pub const DEFAULT: &'static str; pub fn given(path: impl Into<OsString>) -> Self; pub fn absent() -> Self;
+                 pub fn explicit(&self) -> Option<&std::ffi::OsStr>; }
+#[derive(Clone, Debug)] pub struct ConfigArgs { pub color: ColorSetting, pub config: ConfigArg }
 /// One field per argparse dest of 12 §A.8.1; `Some("")` ref options normalised to None (Python truthiness).
 #[derive(Clone, Debug)] pub struct RunArgs {
-    pub color: ColorSetting, pub config: OsString, pub hooks: Vec<OsString> /* compat: ≤ 1 */, pub verbose: bool,
+    pub color: ColorSetting, pub config: ConfigArg, pub hooks: Vec<OsString> /* compat: ≤ 1 */, pub verbose: bool,
     pub all_files: bool, pub files: Vec<OsString>, pub show_diff_on_failure: bool, pub fail_fast: bool,
     pub hook_stage: Stage, pub remote_branch: Option<OsString>, pub local_branch: Option<OsString>,
     pub from_ref: Option<OsString>, pub to_ref: Option<OsString>, pub pre_rebase_upstream: Option<OsString>,
@@ -829,34 +834,34 @@ pub fn parse(brand: Brand, argv: &[OsString], env: &Env, stdout_tty_cols: Option
 }
 #[derive(Copy, Clone, Debug, PartialEq, Eq)] pub enum StdinFormat { Nul, Lines }
 #[derive(Clone, Debug)] pub struct TryRepoArgs { pub repo: OsString, pub rev: Option<OsString>, pub run: RunArgs }
-#[derive(Clone, Debug)] pub struct HookImplArgs { pub color: ColorSetting, pub config: OsString,
+#[derive(Clone, Debug)] pub struct HookImplArgs { pub color: ColorSetting, pub config: ConfigArg,
     pub hook_type: OsString /* free string */, pub hook_dir: Option<OsString>, pub skip_on_missing_config: bool,
     pub rest: Vec<OsString> /* raw REMAINDER, `--` kept */ }
-#[derive(Clone, Debug)] pub struct InstallArgs { pub color: ColorSetting, pub config: OsString, pub overwrite: bool,
+#[derive(Clone, Debug)] pub struct InstallArgs { pub color: ColorSetting, pub config: ConfigArg, pub overwrite: bool,
     pub install_hooks: bool, pub hook_types: Vec<HookType>, pub allow_missing_config: bool,
     pub git_config_hooks: bool /* snp brand `--git-config-hooks` (ADR-057) */ }
-#[derive(Clone, Debug)] pub struct UninstallArgs { pub color: ColorSetting, pub config: OsString,
+#[derive(Clone, Debug)] pub struct UninstallArgs { pub color: ColorSetting, pub config: ConfigArg,
     pub hook_types: Vec<HookType>, pub git_config_hooks: bool }
-#[derive(Clone, Debug)] pub struct InstallHooksArgs { pub color: ColorSetting, pub config: OsString, pub with_fallback: bool }
-#[derive(Clone, Debug)] pub struct InitTemplatedirArgs { pub color: ColorSetting, pub config: OsString,
+#[derive(Clone, Debug)] pub struct InstallHooksArgs { pub color: ColorSetting, pub config: ConfigArg, pub with_fallback: bool }
+#[derive(Clone, Debug)] pub struct InitTemplatedirArgs { pub color: ColorSetting, pub config: ConfigArg,
     pub directory: OsString, pub no_allow_missing_config: bool, pub hook_types: Vec<HookType> }
-#[derive(Clone, Debug)] pub struct AutoupdateArgs { pub color: ColorSetting, pub config: OsString, pub bleeding_edge: bool,
+#[derive(Clone, Debug)] pub struct AutoupdateArgs { pub color: ColorSetting, pub config: ConfigArg, pub bleeding_edge: bool,
     pub freeze: bool, pub repos: Vec<OsString>, pub jobs: i64 }
 #[derive(Clone, Debug)] pub struct ValidateArgs { pub color: ColorSetting, pub filenames: Vec<OsString>,
     pub strict: bool /* snp brand */, pub portable: bool /* snp brand */ }
 #[derive(Clone, Debug)] pub struct HazmatArgs { pub color: ColorSetting, pub tool: HazmatTool }
 #[derive(Clone, Debug)] pub enum HazmatTool { Cd { subdir: OsString, cmd: Vec<OsString> },
                                               IgnoreExitCode { cmd: Vec<OsString> }, N1 { cmd: Vec<OsString> } }
-#[derive(Clone, Debug)] pub struct ListArgs { pub config: OsString, pub json: bool, pub stage: Option<Stage>, pub groups: Vec<OsString>,
+#[derive(Clone, Debug)] pub struct ListArgs { pub config: ConfigArg, pub json: bool, pub stage: Option<Stage>, pub groups: Vec<OsString>,
     pub require_groups: Vec<OsString>, pub no_groups: Vec<OsString> }
-#[derive(Clone, Debug)] pub enum ConfigCmd { Dump { config: OsString, json: bool, no_local_config: bool }, Schema }
+#[derive(Clone, Debug)] pub enum ConfigCmd { Dump { config: ConfigArg, json: bool, no_local_config: bool }, Schema }
 #[derive(Clone, Debug)] pub struct CacheArgs { pub action: CacheAction }
 #[derive(Copy, Clone, Debug)] pub enum CacheAction { Dir, Size, Gc, Clean }
 #[derive(Clone, Debug)] pub enum MigrateArgs {
     Lefthook { root: Option<OsString>, config: Option<OsString>, output: Option<OsString>, portable: bool, local: bool,
                strict: bool, install: bool, force: bool },
-    Builtin { config: OsString }, Upstream { config: OsString } }
-#[derive(Clone, Debug)] pub struct DoctorArgs { pub fix: bool, pub fast_path: bool, pub stash: bool, pub config: OsString }
+    Builtin { config: ConfigArg }, Upstream { config: ConfigArg } }
+#[derive(Clone, Debug)] pub struct DoctorArgs { pub fix: bool, pub fast_path: bool, pub stash: bool, pub config: ConfigArg }
 #[derive(Clone, Debug)] pub enum SelfArgs { AliasInstall { dir: Option<OsString>, force: bool }, AliasUninstall, AliasStatus, Check }
 #[derive(Copy, Clone, Debug)] pub enum Shell { Bash, Zsh, Fish, PowerShell }
 pub static PRE_COMMIT_SPEC: &snp_argparse::ParserSpec;     // compat brand tree (12 §A.8.1, verbatim help strings)
@@ -1028,7 +1033,7 @@ pub fn same_file(a: &Path, b: &Path) -> io::Result<bool>;
 use std::{ffi::{OsStr, OsString}, io, num::NonZeroUsize, path::{Path, PathBuf}, sync::Arc};
 use snp_core::{cancel::CancelToken, env::Env, failure::Failure};
 pub mod spawn {
-    #[derive(Clone, Debug)] pub enum Stdin { EmptyPipe, Null, Bytes(Arc<[u8]>), Inherit }
+    #[derive(Clone, Debug)] pub enum Stdin { EmptyPipe, Null, Bytes(Arc<[u8]>), Inherit, Terminal(tty::Terminal) /* ADR-085 */ }
     /// Inherit: child stays in snp's process group (terminal ^C reaches it, parity).
     /// Isolated: Unix `process_group(0)`, Windows `CREATE_NEW_PROCESS_GROUP` — hooks with a `timeout` and every
     /// `Role::Critical` command (ADR-026). Both keep std's posix_spawn path (no `pre_exec`).
@@ -1080,6 +1085,18 @@ pub mod spawn {
     /// stdout streamed into `sink` (diff hashing, stash patch), stderr captured. Returns status and stderr.
     pub fn stream(spec: &Spec<'_>, sink: &mut dyn io::Write) -> Result<(PyStatus, Vec<u8>), SpawnError>;
     pub fn inherit(spec: &Spec<'_>) -> Result<PyStatus, SpawnError>;   // legacy hooks, show-diff, hazmat children
+    /// ADR-085 `interactive` hooks: stdin per spec (`Stdin::Terminal`), stdout/stderr inherited, supervised like any
+    /// Hook child (the caller passes Group::Inherit, so a deadline signals the child process only); terminal modes saved
+    /// before and restored when the child was killed or died of a signal.
+    #[derive(Debug)] pub struct Interactive { pub status: PyStatus, pub timed_out: bool, pub interrupted: bool }
+    pub fn interactive(spec: &Spec<'_>) -> Result<Interactive, SpawnError>;
+}
+pub mod tty {
+    /// ADR-085: snp's stdin when it is a terminal, else `/dev/tty` (Windows `CONIN$`); Unix: `Err(Background)` unless
+    /// `tcgetpgrp(terminal) == getpgrp()`. snp never calls `tcsetpgrp`.
+    #[derive(Clone, Debug)] pub struct Terminal { /* Option<Arc<File>> */ }
+    #[derive(Debug)] pub enum NoTerminal { Unavailable(io::Error), Background }
+    impl Terminal { pub fn open() -> Result<Self, NoTerminal>; }
 }
 pub mod pool {
     /// N (S7, ADR-065): `explicit` (`-j`/`SNP_JOBS`) when given, else min(target, available_parallelism()) — cgroup-aware,
@@ -1663,13 +1680,29 @@ pub mod ext {   // §8
         Env(Arc<str>), Ci(bool), Run(Arc<str>), All(Vec<Condition>) }
     pub fn parse_go_duration(s: &str) -> Result<std::time::Duration, String>;
 }
+pub mod discover {  // ADR-087: the config without `-c` (D-EXT-09, D-DIAG-06)
+    pub const PRE_COMMIT_CONFIG: &str;            // ".pre-commit-config.yaml"
+    pub const SNP_CONFIGS: [&str; 2];             // [".snp.yaml", ".snp.yml"], lookup order
+    #[derive(Debug, Clone, PartialEq, Eq)] pub struct Discovery {
+        pub config: OsString /* as given | ".pre-commit-config.yaml" (pre-commit's lookup) | <root>/<snp name> */,
+        pub chosen: Option<&'static str>, pub ignored: Option<&'static str>, pub missing: bool }
+    impl Discovery { /// the ignored-file note, or (require) the missing-config note; once per process, stderr
+                     pub fn note(&self, diag: &dyn DiagSink, require: bool); }
+    /// given ⇒ as is; SNP_COMPAT_STRICT ⇒ pre-commit's default; snp brand: .snp.yaml, .snp.yml, .pre-commit-config.yaml;
+    /// compat brand: .pre-commit-config.yaml when it exists (cwd or root), else the snp names. Both snp names ⇒ FatalError.
+    pub fn discover(given: Option<&OsStr>, cwd: &Path, root: &Path, brand: Brand, env: &Env) -> Result<Discovery, Failure>;
+    pub fn is_snp_config(config: &Path) -> bool;
+    /// [".snp.local.yaml", ".snp.local.yml"] beside an snp config, else the `.pre-commit-config.local.y[a]ml` pair
+    pub fn overlay_names(config: &Path) -> [&'static str; 2];
+}
 pub mod overlay {   // §8.4 — split: root items are applied to the Config, hook patches are data merged by merge_hook
     #[derive(Debug, Clone)] pub struct Overlay { /* hooks by alias|id, skip_groups, fail_on_changes, repos */ }
     /// One hook entry of the overlay: validated hook keys (any hook key except id/alias/repo), `entry` possibly
     /// containing `{entry}`, parsed extension keys. `keys()` counts as user config for fast-path G4 (§7.2).
     #[derive(Debug, Clone)] pub struct HookPatch { pub raw: cfgv::Map, pub ext: super::ext::HookExt }
     impl HookPatch { pub fn keys(&self) -> impl Iterator<Item = &str>; }
-    /// `<config dir>/.pre-commit-config.local.y[a]ml` or SNP_LOCAL_CONFIG; ignored when tracked by git or when CI is
+    /// `<config dir>/.pre-commit-config.local.y[a]ml` (`discover::overlay_names`: `.snp.local.y[a]ml` beside an
+    /// `.snp.y[a]ml`) or SNP_LOCAL_CONFIG; ignored when tracked by git or when CI is
     /// truthy unless named by SNP_LOCAL_CONFIG; `Err(note)` = ignored with a stderr note.
     pub fn locate(cfg: &std::path::Path, env: &snp_core::env::Env, is_tracked: &dyn Fn(&std::path::Path) -> bool)
         -> Result<Option<std::path::PathBuf>, String>;
@@ -2051,7 +2084,7 @@ pub fn install_hooks(a: snp_cli::InstallHooksArgs, cx: &RunCtx) -> Result<i32, F
 pub fn list(a: snp_cli::ListArgs, cx: &RunCtx) -> Result<i32, Failure>;
 /// `snp doctor --fast-path`: loads the config and returns `snp_repo::decision_table` rows as (ok, text); the binary wraps
 /// it in a `snp_cmd::DoctorCheck` (no snp → snp-config edge needed; ADR-070).
-pub fn doctor_fast_path(config: &std::ffi::OsStr, cx: &RunCtx) -> Result<Vec<(bool, String)>, Failure>;
+pub fn doctor_fast_path(config: &snp_cli::ConfigArg, cx: &RunCtx) -> Result<Vec<(bool, String)>, Failure>;
 pub mod render {   // pure: events → bytes, snapshot-tested without processes (10 §9.1)
     pub fn cols(names: &[&str]) -> usize;                       // max(80, max len_cjk + 30)
     pub fn start_msg(name: &str, cols: usize) -> String;
@@ -2085,6 +2118,13 @@ pub fn validate_config(a: &snp_cli::ValidateArgs, cx: &CmdCtx<'_>) -> Result<i32
 pub fn validate_manifest(a: &snp_cli::ValidateArgs, cx: &CmdCtx<'_>) -> Result<i32, Failure>;
 pub fn migrate_config(a: &snp_cli::ConfigArgs, cx: &CmdCtx<'_>) -> Result<i32, Failure>;
 pub fn sample_config(cx: &CmdCtx<'_>) -> Result<i32, Failure>;
+/// ADR-087, for the binary (no snp → snp-config edge): `snp migrate lefthook`'s default output (`.snp.yaml`;
+/// `.pre-commit-config.yaml` with `--portable`), the overlay written beside an output, and the file
+/// `snp migrate builtin|upstream` rewrites (`-c` against `cwd`, else discovered in `root`).
+pub fn migrate_output_name(portable: bool) -> &'static str;
+pub fn overlay_name(config: &Path) -> &'static str;
+pub fn rewrite_target(config: &snp_cli::ConfigArg, cwd: &Path, root: &Path, brand: Brand, env: &Env,
+                      diag: &dyn snp_core::output::DiagSink) -> Result<(std::path::PathBuf, std::ffi::OsString), Failure>;
 pub fn config(a: &snp_cli::ConfigCmd, cx: &CmdCtx<'_>) -> Result<i32, Failure>;
 pub fn cache(a: &snp_cli::CacheArgs, cx: &CmdCtx<'_>) -> Result<i32, Failure>;
 /// Checks that need crates snp-cmd cannot depend on are injected by the binary: the fast-path table (wrapping
@@ -2354,7 +2394,7 @@ startup Env (captured once in main, minus __PYVENV_LAUNCHER__/PYTHONEXECUTABLE)
 | 1 | `snp::entry`: brand from `argv[0]`; `argv[1] == "__hazmat"` raw dispatch; `[]`→`["run"]`; argparse; `Usage`/`Help`/`Version` exit before anything touches the store | 12 §A.17 #1, #9 | no store, no git, no thread; `--version` ≤ 3 ms |
 | 2 | Signals installed (Linux: child subreaper for run/hook-impl/try-repo); `CancelToken`; `Printer(color)`; `Store::new` (lazy); `JobPool` (`pool_size`), `Limiter`s (net 8, installs min(N,4)), `OutputBudget`, `ToolProbe`, `ProcRunner` — all carried by `RunCtx` | 02 §4 | signal thread only cancels the token and applies the §10.4 table |
 | 3 | `GitExe::resolve` (cached version, 02 G.4), then `Git::discover` (one combined `rev-parse`; it needs `caps` for the 2.19–2.30 fallback) → FatalError texts unchanged | 02 §3, G.4 | never refuses here; < 2.31 warns once on stderr (D-DIAG-01); a stash on < 2.19 is refused at step 9 (D-DATA-17) |
-| 4 | `_adjust_args_and_chdir` as a **pure function** (`ospath::abspath/relpath`, explicit cwd; no chdir) | 02 §3, 15 V-ADJ | cross-drive relpath keeps the absolute path (D-PLAT-06) |
+| 4 | Without `-c`: `snp_config::discover` picks the config in the root (`.snp.yaml`, `.snp.yml`, `.pre-commit-config.yaml`; compat brand: `.pre-commit-config.yaml` first; ADR-087), its stderr note once; then `_adjust_args_and_chdir` as a **pure function** (`ospath::abspath/relpath`, explicit cwd; no chdir) | 02 §3, 15 V-ADJ | cross-drive relpath keeps the absolute path (D-PLAT-06); the same `snp_run::common::resolve_config` / `snp_cmd::frame::git_frame` serves every git command |
 | 5 | `store.mark_config_used(realpath(cfg), project_root)` (best effort, skipped if read-only / store absent); stash recovery scan when the worktree lock is free and the run is not nested (§4.6); the `run` hint (TTY only, §9.7) | 03 §7.8 | never creates the store just for tracking |
 | 6 | **Git fan-out** (read-only, scoped threads, same argv as pre-commit): A `ls-files --unmerged`, B `diff --quiet --no-ext-diff <cfg>`, C ITA query, E staged list, F `ls-files -s -z` when Stat mode is possible (Unix, `stat_oracle_safe`, index-header count ≤ 16 384), otherwise the staged-only `diff --staged --raw -z --no-renames --diff-filter=ACMRTUXB` for git-mode tags, G `config --list --show-origin -z` when Stat mode is possible (DiffOracle inputs). Main thread meanwhile reads + validates the config **speculatively** with warnings buffered (ADR-047) | 02 §5 | results consumed strictly in pre-commit's order; E/F/G skipped when unused (P17, all-files, files) |
 | 7 | Preflight in exact order: unmerged → from/to-ref pairing → unstaged config → commit-msg filename → `_PRE_COMMIT_SKIP_POST_CHECKOUT` early 0 | 02 §5 | — |
@@ -2419,8 +2459,10 @@ startup Env (captured once in main, minus __PYVENV_LAUNCHER__/PYTHONEXECUTABLE)
 * **Default (no extension keys):** hooks strictly sequential in config order — pre-commit semantics. Parallelism exists
   only across xargs partitions of one hook (and across native partitions).
 * **`priority` extension (prek semantics):** implicit priority = index in the flattened config; hooks are bucketed by
-  priority ascending; a bucket is a barrier; hooks inside a bucket run concurrently; `interactive` (v1.1) hooks are
-  singleton buckets. `fail_fast` inside a bucket lets running hooks finish (their lines print), later buckets don't start.
+  priority ascending; a bucket is a barrier; hooks inside a bucket run concurrently; `interactive` hooks are
+  singleton buckets (ADR-085: the members of their priority before them form one bucket, the ones after another; their
+  partitions run one at a time; every finished block prints before their `(interactive)` line and their own block
+  prints as soon as it is done). `fail_fast` inside a bucket lets running hooks finish (their lines print), later buckets don't start.
 * **One global `JobPool`** (snp-proc) with `N` permits bounds *all* concurrently running child processes and native
   partitions (S7, fixes prek #2272). `N = pool_size(--jobs | SNP_JOBS, target_concurrency())`: an explicit value as
   given, otherwise `min(target_concurrency(), available_parallelism())` — `target_concurrency` follows pre-commit
@@ -3105,13 +3147,13 @@ mechanics.
 | hook | `root` (relative dir) | cwd = `<repo>/<root>`, files filtered by boundary-aware prefix and passed relative to root; missing ⇒ `Failed` + `- root directory '<r>' does not exist` |
 | hook | `use_stdin` (bool) | gets a copy of the git hook's stdin (cap 64 MiB) instead of an empty pipe |
 | hook, root | `fail_on_changes` (`always` \| `never` \| `ci` \| `non-ci`) | `ci` = `CI` non-empty and not `0`/`false` |
+| hook | `interactive` (bool) | ADR-085: stdin = the terminal (snp's stdin when it is a terminal, else `/dev/tty`; Windows `CONIN$`), stdout/stderr inherited, never captured; the child stays in snp's process group (the terminal's foreground group, checked with `tcgetpgrp`), so raw-mode prompts are never stopped by SIGTTIN/SIGTTOU and ^C reaches it once from the kernel (`registry::forward` never re-sends a tty-generated signal to an Inherit child); singleton bucket (§3.4); `{name}{dots}(interactive)` written and flushed before it, its usual status line and a block without an output section after (a line break first when it was killed); `timeout` signals the child process only (no group), terminal modes restored after a killed hook; no usable terminal (none, or snp in a background group) ⇒ stderr `snp: interactive: …; running '<id>' without a terminal` and a normal captured run; `SNP_NO_TTY=1` ⇒ a normal captured run; `true` refused for meta, `repo: builtin`, `language: fail`/`pygrep`; G4 delegates such a pre-commit-hooks hook (never native) |
 | root | `minimum_snp_version` (semver) | `snp {v} is required but snp {SNP_VERSION} is installed.` exit 1 |
 | root | `allow_disable` (bool, default true) | `false` ⇒ `SNP=0` is ignored (stderr note) |
 | root | `fast_path` (`off`\|`exact`\|`auto`), `fast_path_exclude` (ids), `fast_path_coalesce` (bool) | §7.2 |
 | root | `output` (`default`\|`summary`\|`quiet`) | `summary`: footer with wall time, per-hook durations, counts (stdout, after the last hook); `quiet`: failures only. Default output unchanged |
 
-`interactive` and `follow` (COULD) are reserved names that validate but are rejected with "not available in this
-version" until v1.1.
+`follow` (COULD) is a reserved name that validates but is rejected with "not available in this version".
 
 ### 8.3 `stage_fixed` (fix → verify → stage, 05 §18.4 A4)
 
@@ -3125,7 +3167,8 @@ staged. `fail_on_changes` combines (e.g. stage locally, fail in CI).
 
 ### 8.4 Local overlay (05 §18.4 A3)
 
-`<config dir>/.pre-commit-config.local.yaml` (or `.yml`), or `SNP_LOCAL_CONFIG=<path>` (empty/`0` disables),
+`<config dir>/.pre-commit-config.local.yaml` (or `.yml`) — `.snp.local.yaml` (or `.yml`) beside an `.snp.yaml`/`.snp.yml`
+config (ADR-087) —, or `SNP_LOCAL_CONFIG=<path>` (empty/`0` disables),
 `--no-local-config`. **Ignored** (one stderr line) when it is **tracked by git** (it is per-developer by definition) or
 when `CI` is truthy, unless named explicitly by `SNP_LOCAL_CONFIG`. Schema: `hooks: {<alias|id>: {skip, entry
 ("{entry}" = merged base entry), args (replace), env (merge, overlay wins), priority, stage_fixed, …any hook key except

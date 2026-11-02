@@ -31,6 +31,8 @@ mod cli; // WP-33
 #[cfg(test)]
 mod config; // WP-33
 #[cfg(test)]
+mod config_discovery; // WP-33 (ADR-087)
+#[cfg(test)]
 mod doctor; // WP-33
 #[cfg(test)]
 mod errors; // WP-33
@@ -46,6 +48,9 @@ mod hook_impl; // WP-32
 mod init_templatedir; // WP-33
 #[cfg(test)]
 mod install; // WP-33
+#[cfg(test)]
+#[cfg(unix)]
+mod interactive; // WP-32 (ADR-085)
 #[cfg(test)]
 mod list; // WP-32
 #[cfg(test)]

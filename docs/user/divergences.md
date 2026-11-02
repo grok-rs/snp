@@ -2,7 +2,7 @@
 
 # DIVERGENCES
 
-snp reproduces pre-commit 4.6.2 byte for byte. This book lists **every** deliberate difference (86
+snp reproduces pre-commit 4.6.2 byte for byte. This book lists **every** deliberate difference (89
 entries): each one is admissible only because pre-commit crashes, loses data or has a security bug there, or
 because an owner decision forces it (snp's own store, its name, no `unsafe`, performance), or because it is
 visible only when you use an snp extension. Every entry has a differential test that fails the build when the
@@ -21,8 +21,8 @@ the normative register is `docs/COMPATIBILITY.md` §5 in the repository.
 | [5.4 STORE and BRAND — forced by FD-2 and FD-1](#54-store-and-brand--forced-by-fd-2-and-fd-1) | [D-STORE-01](#d-store-01) [D-STORE-02](#d-store-02) [D-DATA-04](#d-data-04) [D-BRAND-01](#d-brand-01) [D-BRAND-02](#d-brand-02) [D-MISC-02](#d-misc-02) |
 | [5.5 PLAT — platform](#55-plat--platform) | [D-PLAT-02](#d-plat-02) [D-PLAT-03](#d-plat-03) [D-PLAT-06](#d-plat-06) [D-PLAT-08](#d-plat-08) [D-PLAT-09](#d-plat-09) [D-PLAT-10](#d-plat-10) [D-PLAT-12](#d-plat-12) |
 | [5.6 PERF — forced by FD-7/FD-8, invisible in hook output](#56-perf--forced-by-fd-7fd-8-invisible-in-hook-output) | [D-PERF-01](#d-perf-01) [D-PERF-02](#d-perf-02) [D-PERF-03](#d-perf-03) [D-PERF-04](#d-perf-04) |
-| [5.7 EXT — observable only when an snp extension is used](#57-ext--observable-only-when-an-snp-extension-is-used) | [D-EXT-01](#d-ext-01) [D-EXT-02](#d-ext-02) [D-EXT-03](#d-ext-03) [D-EXT-04](#d-ext-04) [D-EXT-05](#d-ext-05) [D-EXT-06](#d-ext-06) [D-EXT-07](#d-ext-07) |
-| [5.8 DIAG — always-on stderr diagnostics (stdout and exit codes unchanged)](#58-diag--always-on-stderr-diagnostics-stdout-and-exit-codes-unchanged) | [D-DIAG-01](#d-diag-01) [D-DIAG-02](#d-diag-02) [D-DIAG-03](#d-diag-03) [D-DIAG-04](#d-diag-04) [D-DIAG-05](#d-diag-05) |
+| [5.7 EXT — observable only when an snp extension is used](#57-ext--observable-only-when-an-snp-extension-is-used) | [D-EXT-01](#d-ext-01) [D-EXT-02](#d-ext-02) [D-EXT-03](#d-ext-03) [D-EXT-04](#d-ext-04) [D-EXT-05](#d-ext-05) [D-EXT-06](#d-ext-06) [D-EXT-07](#d-ext-07) [D-EXT-08](#d-ext-08) [D-EXT-09](#d-ext-09) |
+| [5.8 DIAG — always-on stderr diagnostics (stdout and exit codes unchanged)](#58-diag--always-on-stderr-diagnostics-stdout-and-exit-codes-unchanged) | [D-DIAG-01](#d-diag-01) [D-DIAG-02](#d-diag-02) [D-DIAG-03](#d-diag-03) [D-DIAG-04](#d-diag-04) [D-DIAG-05](#d-diag-05) [D-DIAG-06](#d-diag-06) |
 | [5.9 TIERB — Python-internal bytes](#59-tierb--python-internal-bytes) | [D-MISC-04](#d-misc-04) [D-MISC-05](#d-misc-05) [D-MISC-06](#d-misc-06) [D-MISC-07](#d-misc-07) [D-MISC-08](#d-misc-08) |
 
 ## 5.1 CRASH — pre-commit crashes or hangs; snp behaves and fails closed
@@ -4209,6 +4209,121 @@ usage: snp run [-h] [--color {auto,always,never}] [-c CONFIG] [--verbose]
 The scenario `tests/differential/divergences/D-EXT-07.yaml` runs `snp -h`, `snp run -h` and `snp run a b` against the
 oracle, where they must keep differing.
 
+### D-EXT-08
+
+`interactive: true` hooks read and write the terminal directly: `{name}....(interactive)` before the hook, no captured
+output in its block, a singleton bucket; without a usable terminal one stderr note
+`snp: interactive: …; running '<id>' without a terminal` (ADR-085)
+
+* **Class:** EXT (COMPATIBILITY §5.7)
+
+##### Register entry (COMPATIBILITY §5.7)
+
+| Divergence |
+|---|
+| `interactive: true` hooks read and write the terminal directly: `{name}....(interactive)` before the hook, no captured output in its block, a singleton bucket; without a usable terminal one stderr note `snp: interactive: …; running '<id>' without a terminal` (ADR-085) |
+
+##### Rationale
+
+pre-commit has no way to run a hook that prompts: every hook gets an empty stdin and its output is captured and shown
+after it ends. lefthook's `interactive: true` gives the job the terminal; `snp migrate lefthook` keeps the key, and a
+commitizen-style `prepare-commit-msg` hook (`test -n "$PRE_COMMIT_COMMIT_MSG_SOURCE" || cz --hook`) then prompts during
+`git commit`.
+
+For pre-commit `interactive` is an unknown key: it prints `[WARNING] Unexpected key(s) present on local => <id>:
+interactive` and runs the hook as usual (D-EXT-01). snp, with a usable terminal (snp's stdin, or `/dev/tty` when stdin
+is `/dev/null` as in a git hook; snp's process group must be the terminal's foreground group):
+
+* prints `{name}{dots}(interactive)` (aligned with the status lines) and flushes it, then runs the hook with stdin on
+  the terminal and stdout/stderr inherited, in snp's process group;
+* prints the usual status line when the hook ends; the failure block has no output section (nothing was captured);
+* runs it alone (a singleton bucket) and its xargs partitions one after another.
+
+Without a usable terminal (CI, cron, a background job) it prints one stderr line and runs the hook exactly as without
+the key — stdin an empty pipe, output captured. `SNP_NO_TTY=1` does the same without the line. The divergence is
+therefore observable only in a config that uses the key; `SNP_COMPAT_STRICT=1` restores pre-commit's behaviour.
+
+Why it is safe: only configs that opt in change; the opt-in key is lefthook's, with lefthook's semantics (terminal
+stdin, no capture, the child in the parent's process group); a missing terminal never hangs the hook.
+
+##### Examples
+
+```yaml
+repos:
+-   repo: local
+    hooks:
+    -   id: ask
+        name: ask
+        entry: echo asked
+        language: system
+        interactive: true
+        verbose: true
+```
+
+`run --all-files` without a terminal (the differential harness runs the tools in their own process group):
+pre-commit 4.6.2 prints `[WARNING] Unexpected key(s) present on local => ask: interactive` and the hook's block; snp
+prints `snp: interactive: …; running 'ask' without a terminal` on stderr and the same block, without the warning. On a
+terminal (`crates/snp/tests/it/interactive.rs`):
+
+```text
+ask...............................................................(interactive)
+asked
+ask......................................................................Passed
+```
+
+The scenario `tests/differential/divergences/D-EXT-08.yaml` checks the no-terminal case against the oracle.
+
+### D-EXT-09
+
+the config file name: without `-c`, `.snp.yaml`/`.snp.yml` in the repository root are read (snp brand: before
+`.pre-commit-config.yaml`, with the stderr note `snp: using .snp.yaml; ignoring .pre-commit-config.yaml (pass -c/--config
+to choose)`; compat brand: only when `.pre-commit-config.yaml` is absent, silently); both snp names ⇒ `FatalError: both
+.snp.yaml and .snp.yml exist; …`; their overlay is `.snp.local.y[a]ml`; `SNP_COMPAT_STRICT=1` turns it off (ADR-087)
+
+* **Class:** EXT (COMPATIBILITY §5.7)
+
+##### Register entry (COMPATIBILITY §5.7)
+
+| Divergence |
+|---|
+| the config file name: without `-c`, `.snp.yaml`/`.snp.yml` in the repository root are read (snp brand: before `.pre-commit-config.yaml`, with the stderr note `snp: using .snp.yaml; ignoring .pre-commit-config.yaml (pass -c/--config to choose)`; compat brand: only when `.pre-commit-config.yaml` is absent, silently); both snp names ⇒ `FatalError: both .snp.yaml and .snp.yml exist; …`; their overlay is `.snp.local.y[a]ml`; `SNP_COMPAT_STRICT=1` turns it off (ADR-087) |
+
+##### Rationale
+
+pre-commit reads `.pre-commit-config.yaml` and nothing else unless `-c` names another file. snp also accepts a file
+named after itself, so a repository that uses snp's extensions (or was converted by `snp migrate lefthook`) can say so
+in its file name. Without `-c`, every command that reads the project's config looks in the repository root:
+
+| Present in the root | snp brand reads | compat brand (`pre-commit`) reads |
+|---|---|---|
+| `.pre-commit-config.yaml` only | `.pre-commit-config.yaml` | `.pre-commit-config.yaml` |
+| `.snp.yaml` (or `.snp.yml`) only | `.snp.yaml` | `.snp.yaml` |
+| `.snp.yaml` and `.pre-commit-config.yaml` | `.snp.yaml`, with one stderr note | `.pre-commit-config.yaml`, silently |
+| `.snp.yaml` and `.snp.yml` | error (exit 1) | error, unless `.pre-commit-config.yaml` exists |
+| none | `.pre-commit-config.yaml` (missing: pre-commit's error, plus D-DIAG-06) | `.pre-commit-config.yaml` (missing: pre-commit's error) |
+
+`.pre-commit-config.yaml` keeps pre-commit's lookup (the invocation cwd first, then the root). The installed hook
+scripts embed the file found (`--config=.snp.yaml`); the overlay beside `.snp.yaml` is `.snp.local.yaml` (then
+`.snp.local.yml`); `snp migrate lefthook` writes `.snp.yaml` unless `--portable`. An explicit `-c` always wins.
+
+Why it is safe: the compat brand changes only where pre-commit would fail (no `.pre-commit-config.yaml`), so a
+repository that works with pre-commit gets pre-commit's bytes from the `pre-commit` alias; the snp brand reads an snp
+name only when one exists, and says so when it hides a `.pre-commit-config.yaml`. `SNP_COMPAT_STRICT=1` restores
+pre-commit's lookup.
+
+##### Examples
+
+A repository with only `.snp.yaml`, `run --all-files`: pre-commit 4.6.2 prints `An error has occurred:
+InvalidConfigError: ` / `=====> .pre-commit-config.yaml is not a file` (exit 1); snp, in both brands, runs the hooks of
+`.snp.yaml`. With `.pre-commit-config.yaml` beside it, the snp brand prints on stderr:
+
+```text
+snp: using .snp.yaml; ignoring .pre-commit-config.yaml (pass -c/--config to choose)
+```
+
+The scenario `tests/differential/divergences/D-EXT-09.yaml` checks the `.snp.yaml`-only case against the oracle; the
+other rows are pinned by `crates/snp-config/src/discover.rs` and `crates/snp/tests/it/config_discovery.rs`.
+
 ## 5.8 DIAG — always-on stderr diagnostics (stdout and exit codes unchanged)
 
 ### D-DIAG-01
@@ -4436,6 +4551,41 @@ Removed snp 1.x cache data from <W>/snpstore.
 
 Unit coverage: `crates/snp-store/tests/support/behaviour.rs::sweep_removes_other_versions_and_snp1_leftovers`;
 the foreign-owner text is golden-tested in `crates/snp-store/src/messages.rs`.
+
+### D-DIAG-06
+
+snp brand, `-c` not given and no config file in the repository: `snp: no .snp.yaml or .pre-commit-config.yaml file was
+found in the repository root` before the unchanged error of the commands that need a config (`run`, `install-hooks`,
+`list`, `autoupdate`, `migrate-config`, `config dump`, `migrate builtin|upstream`, `hook-impl` without `--config`; once
+per process; ADR-087)
+
+* **Class:** DIAG (COMPATIBILITY §5.8)
+
+##### Register entry (COMPATIBILITY §5.8)
+
+| Diagnostic (stderr only) |
+|---|
+| snp brand, `-c` not given and no config file in the repository: `snp: no .snp.yaml or .pre-commit-config.yaml file was found in the repository root` before the unchanged error of the commands that need a config (`run`, `install-hooks`, `list`, `autoupdate`, `migrate-config`, `config dump`, `migrate builtin\|upstream`, `hook-impl` without `--config`; once per process; ADR-087) |
+
+##### Rationale
+
+snp also reads `.snp.yaml` (D-EXT-09), so pre-commit's `=====> .pre-commit-config.yaml is not a file` names only one
+of the files snp looked for. The error texts stay pre-commit's — the snp brand's bytes remain the brand-mapped oracle's,
+and an installed hook script, which always passes `--config`, still says `No .pre-commit-config.yaml file was found` —
+and one stderr line says what else was tried. `install`, `uninstall` and `doctor` work without a config and print
+nothing; the compat brand never prints it.
+
+Safe: stderr only; stdout and exit codes are unchanged.
+
+##### Examples
+
+`snp run --all-files` in a repository without a config file (`tests/differential/divergences/D-DIAG-06.yaml`):
+pre-commit 4.6.2 and snp both print `An error has occurred: InvalidConfigError: ` / `=====> .pre-commit-config.yaml is
+not a file` on stdout and exit 1; snp's stderr also has:
+
+```text
+snp: no .snp.yaml or .pre-commit-config.yaml file was found in the repository root
+```
 
 ## 5.9 TIERB — Python-internal bytes
 

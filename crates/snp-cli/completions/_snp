@@ -262,12 +262,12 @@ _arguments "${_arguments_options[@]}" : \
 '--root=[Repository root (default\: the current git repository).]:DIR:_default' \
 '-c+[lefthook configuration to convert (default\: lefthook'\''s lookup).]:FILE:_default' \
 '--config=[lefthook configuration to convert (default\: lefthook'\''s lookup).]:FILE:_default' \
-'-o+[Where to write the result (default\: .pre-commit-config.yaml; \`-\` for stdout).]:FILE:_default' \
-'--output=[Where to write the result (default\: .pre-commit-config.yaml; \`-\` for stdout).]:FILE:_default' \
+'-o+[Where to write the result (default\: .snp.yaml, .pre-commit-config.yaml with --portable; \`-\` for stdout).]:FILE:_default' \
+'--output=[Where to write the result (default\: .snp.yaml, .pre-commit-config.yaml with --portable; \`-\` for stdout).]:FILE:_default' \
 '-h[show this help message and exit]' \
 '--help[show this help message and exit]' \
 '--portable[Emit only keys pre-commit 4.x understands.]' \
-'--local[Also convert lefthook-local.yml into .pre-commit-config.local.yaml.]' \
+'--local[Also convert lefthook-local.yml into the local overlay beside the output (.snp.local.yaml, .pre-commit-config.local.yaml with --portable).]' \
 '--strict[Fail (exit 2) when a feature cannot be converted faithfully.]' \
 '--install[Afterwards remove lefthook'\''s hooks and install snp'\''s.]' \
 '-f[Overwrite an existing output file.]' \

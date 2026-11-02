@@ -6,7 +6,7 @@
 
 #[cfg(test)]
 mod api {
-    use std::ffi::{OsStr, OsString};
+    use std::ffi::OsString;
     use std::io;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -97,7 +97,7 @@ mod api {
         has::<fn(TryRepoArgs, &RunCtx) -> Result<i32, Failure>>(snp_run::try_repo);
         has::<fn(InstallHooksArgs, &RunCtx) -> Result<i32, Failure>>(snp_run::install_hooks);
         has::<fn(ListArgs, &RunCtx) -> Result<i32, Failure>>(snp_run::list);
-        has::<fn(&OsStr, &RunCtx) -> Result<Vec<(bool, String)>, Failure>>(
+        has::<fn(&snp_cli::ConfigArg, &RunCtx) -> Result<Vec<(bool, String)>, Failure>>(
             snp_run::doctor_fast_path,
         );
     }

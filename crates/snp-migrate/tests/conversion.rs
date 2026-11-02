@@ -285,12 +285,12 @@ mod conversion {
                 false,
             ),
             (
-                "interactive",
+                "portable interactive",
                 &[(
                     "lefthook.yml",
                     "pre-commit:\n  commands:\n    a: {run: x, interactive: true}\n",
                 )],
-                false,
+                true,
             ),
             (
                 "unknown MIME type",
@@ -470,5 +470,37 @@ mod conversion {
         let mut o = opts(d.path());
         o.strict = true;
         assert!(snp_migrate::lefthook(&o).is_ok());
+    }
+
+    /// The commitizen hook of a real monorepo (ADR-085): `interactive` is kept (no longer lossy), and the `{2}`
+    /// placeholder inside double quotes becomes the variable without quotes of its own.
+    #[test]
+    fn interactive_commitizen_hook() {
+        const CZ: &str = "prepare-commit-msg:\n  commands:\n    commitzen:\n      interactive: true\n      run: test -n \"{2}\" || bun x cz --hook\n      env: {LEFTHOOK: \"0\"}\n";
+        let d = tree(&[("lefthook.yml", CZ)]);
+        let mut o = opts(d.path());
+        o.strict = true;
+        let c = snp_migrate::lefthook(&o).unwrap();
+        assert!(!c.lossy, "{:?}", c.report);
+        let yaml = &c.config_yaml;
+        assert!(yaml.contains("\n        interactive: true\n"), "{yaml}");
+        assert!(
+            yaml.contains("test -n \"$PRE_COMMIT_COMMIT_MSG_SOURCE\" || bun x cz --hook"),
+            "{yaml}"
+        );
+        assert!(!yaml.contains("\"\"$PRE_COMMIT"), "{yaml}");
+        assert!(yaml.contains("stages: [prepare-commit-msg]"), "{yaml}");
+        // outside quotes the value keeps its own quotes
+        let d = tree(&[(
+            "lefthook.yml",
+            "prepare-commit-msg:\n  commands:\n    a:\n      run: echo {2} '{2}'\n",
+        )]);
+        let c = snp_migrate::lefthook(&opts(d.path())).unwrap();
+        assert!(
+            c.config_yaml
+                .contains("echo \"$PRE_COMMIT_COMMIT_MSG_SOURCE\" '"),
+            "{}",
+            c.config_yaml
+        );
     }
 }

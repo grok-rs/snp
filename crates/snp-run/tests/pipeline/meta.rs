@@ -239,7 +239,7 @@ fn meta_hooks_read_the_default_config_not_dash_c() {
     );
     h.stage("other.yaml");
     let mut a = all();
-    a.config = "other.yaml".into();
+    a.config = snp_cli::ConfigArg::given("other.yaml");
     let o = h.run(a);
     assert_eq!(o.code, 1, "{}", o.stdout);
     assert!(

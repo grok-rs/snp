@@ -25,8 +25,8 @@ use snp_yaml as _;
 
 pub use autoupdate::autoupdate;
 pub use config_cmds::{
-    config, migrate_config, read_config_for_rewrite, sample_config, validate_config,
-    validate_manifest,
+    config, migrate_config, migrate_output_name, overlay_name, read_config_for_rewrite,
+    rewrite_target, sample_config, validate_config, validate_manifest,
 };
 pub use ctx::CmdCtx;
 pub use doctor::{DoctorCheck, DoctorLine, doctor};

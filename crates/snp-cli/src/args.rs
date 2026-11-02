@@ -4,7 +4,7 @@
 //!
 //! Owner: WP-12.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::num::NonZeroUsize;
 
 use snp_core::output::ColorSetting;
@@ -76,6 +76,49 @@ pub enum Cli {
     Completions(Shell),
 }
 
+/// `-c/--config`: the path given, or pre-commit's default `.pre-commit-config.yaml` when the option was not on the
+/// command line — then the commands discover the config in the repository root instead (`.snp.yaml`, `.snp.yml`,
+/// `.pre-commit-config.yaml`; `snp_config::discover`, ADR-087).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfigArg {
+    /// The value (the default when not given).
+    pub path: OsString,
+    /// `-c/--config` appeared on the command line.
+    pub given: bool,
+}
+
+impl ConfigArg {
+    /// pre-commit's default (`C.CONFIG_FILE`).
+    pub const DEFAULT: &'static str = ".pre-commit-config.yaml";
+
+    /// `-c <path>`.
+    pub fn given(path: impl Into<OsString>) -> Self {
+        Self {
+            path: path.into(),
+            given: true,
+        }
+    }
+
+    /// `-c` not given.
+    pub fn absent() -> Self {
+        Self {
+            path: OsString::from(Self::DEFAULT),
+            given: false,
+        }
+    }
+
+    /// The path when given (`None`: discover it).
+    pub fn explicit(&self) -> Option<&OsStr> {
+        self.given.then_some(self.path.as_os_str())
+    }
+}
+
+impl Default for ConfigArg {
+    fn default() -> Self {
+        Self::absent()
+    }
+}
+
 /// Commands with only `--color` (`clean`, `gc`, `sample-config`; `color.py:add_color_option`).
 #[derive(Clone, Debug)]
 pub struct ColorArgs {
@@ -89,7 +132,7 @@ pub struct ConfigArgs {
     /// `--color`.
     pub color: ColorSetting,
     /// `-c/--config`.
-    pub config: OsString,
+    pub config: ConfigArg,
 }
 
 /// `run` / `try-repo` options (`main.py:_add_run_options`, 64-172): one field per argparse dest of 12 §A.8.1;
@@ -104,7 +147,7 @@ pub struct RunArgs {
     /// `--color`.
     pub color: ColorSetting,
     /// `-c/--config`.
-    pub config: OsString,
+    pub config: ConfigArg,
     /// `hook` positional(s) (compat: ≤ 1); empty ids dropped (`if not args.hook`, `run.py:427`).
     pub hooks: Vec<OsString>,
     /// `-v/--verbose`.
@@ -199,7 +242,7 @@ pub struct HookImplArgs {
     /// `--color`.
     pub color: ColorSetting,
     /// `-c/--config`.
-    pub config: OsString,
+    pub config: ConfigArg,
     /// `--hook-type` (free string).
     pub hook_type: OsString,
     /// `--hook-dir`.
@@ -220,7 +263,7 @@ pub struct InstallArgs {
     /// `--color`.
     pub color: ColorSetting,
     /// `-c/--config`.
-    pub config: OsString,
+    pub config: ConfigArg,
     /// `-f/--overwrite`.
     pub overwrite: bool,
     /// `--install-hooks`.
@@ -239,7 +282,7 @@ pub struct UninstallArgs {
     /// `--color`.
     pub color: ColorSetting,
     /// `-c/--config`.
-    pub config: OsString,
+    pub config: ConfigArg,
     /// `-t/--hook-type`.
     pub hook_types: Vec<HookType>,
     /// snp brand `--git-config-hooks` (ADR-057).
@@ -252,7 +295,7 @@ pub struct InstallHooksArgs {
     /// `--color`.
     pub color: ColorSetting,
     /// `-c/--config`.
-    pub config: OsString,
+    pub config: ConfigArg,
     /// snp brand `--with-fallback` (ARCHITECTURE §7.2: also provision the delegate environments of native hooks).
     pub with_fallback: bool,
 }
@@ -263,7 +306,7 @@ pub struct InitTemplatedirArgs {
     /// `--color`.
     pub color: ColorSetting,
     /// `-c/--config`.
-    pub config: OsString,
+    pub config: ConfigArg,
     /// `directory` positional.
     pub directory: OsString,
     /// `--no-allow-missing-config` given (`store_false` into `allow_missing_config`).
@@ -278,7 +321,7 @@ pub struct AutoupdateArgs {
     /// `--color`.
     pub color: ColorSetting,
     /// `-c/--config`.
-    pub config: OsString,
+    pub config: ConfigArg,
     /// `--bleeding-edge`.
     pub bleeding_edge: bool,
     /// `--freeze`.
@@ -338,7 +381,7 @@ pub enum HazmatTool {
 #[derive(Clone, Debug)]
 pub struct ListArgs {
     /// `-c/--config`.
-    pub config: OsString,
+    pub config: ConfigArg,
     /// `--json`.
     pub json: bool,
     /// `--hook-stage`.
@@ -358,7 +401,7 @@ pub enum ConfigCmd {
     /// `config dump`.
     Dump {
         /// `-c/--config`.
-        config: OsString,
+        config: ConfigArg,
         /// `--json`.
         json: bool,
         /// `--no-local-config`.
@@ -415,12 +458,12 @@ pub enum MigrateArgs {
     /// `migrate builtin`.
     Builtin {
         /// `-c/--config`.
-        config: OsString,
+        config: ConfigArg,
     },
     /// `migrate upstream`.
     Upstream {
         /// `-c/--config`.
-        config: OsString,
+        config: ConfigArg,
     },
 }
 
@@ -434,7 +477,7 @@ pub struct DoctorArgs {
     /// `--stash`.
     pub stash: bool,
     /// `-c/--config`.
-    pub config: OsString,
+    pub config: ConfigArg,
 }
 
 /// `self` (snp brand; 11 §A.9.2).

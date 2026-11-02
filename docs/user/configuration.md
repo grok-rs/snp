@@ -1,7 +1,7 @@
 # Configuration
 
-snp reads `.pre-commit-config.yaml` (or the file named by `-c/--config`) and the `.pre-commit-hooks.yaml` manifests of
-hook repositories exactly as pre-commit 4.6.2 does: the same schema, the same defaults, the same validation messages,
+snp reads `.pre-commit-config.yaml` (or `.snp.yaml`, see [Config file name](#config-file-name), or the file named by
+`-c/--config`) and the `.pre-commit-hooks.yaml` manifests of hook repositories exactly as pre-commit 4.6.2 does: the same schema, the same defaults, the same validation messages,
 the same `[WARNING]` lines. pre-commit's documentation of
 [the config file](https://pre-commit.com/#plugins) and of
 [creating new hooks](https://pre-commit.com/#creating-new-hooks) applies unchanged and is not repeated here.
@@ -31,6 +31,35 @@ schema, for editor integration.
 
 On top of that, snp understands a small set of **extension keys**, all optional. Absent keys mean exact pre-commit
 behaviour.
+
+## Config file name
+
+Without `-c/--config`, snp looks in the repository root for, in this order:
+
+1. `.snp.yaml`
+2. `.snp.yml`
+3. `.pre-commit-config.yaml` (pre-commit's name, found as pre-commit finds it)
+
+Name the file `.snp.yaml` when the repository uses snp only, or keep `.pre-commit-config.yaml` when pre-commit users
+share it. Every command that reads the config uses the file found: `run`, `install` (the hook scripts embed
+`--config=.snp.yaml`; run `snp install` again after renaming the file), `install-hooks`, `autoupdate`, `migrate-config`,
+`list`, `config dump`, `doctor`, `migrate builtin|upstream`; messages such as ``git add .snp.yaml` to fix this`` name it.
+
+* Both `.snp.yaml` and `.snp.yml`: an error (`both .snp.yaml and .snp.yml exist; keep one, or choose with
+  -c/--config`).
+* `.snp.yaml` and `.pre-commit-config.yaml`: snp reads `.snp.yaml` and says once on stderr `snp: using .snp.yaml;
+  ignoring .pre-commit-config.yaml (pass -c/--config to choose)`.
+* Through the `pre-commit` alias snp behaves as pre-commit wherever pre-commit works: `.pre-commit-config.yaml`
+  always wins there, silently, and `.snp.yaml` is read only when `.pre-commit-config.yaml` does not exist (Python
+  pre-commit never reads `.snp.yaml`).
+* No config at all: pre-commit's error (`=====> .pre-commit-config.yaml is not a file`), preceded on stderr by
+  `snp: no .snp.yaml or .pre-commit-config.yaml file was found in the repository root`.
+* `-c/--config` always wins; `SNP_COMPAT_STRICT=1` turns the lookup off (only `.pre-commit-config.yaml`).
+* The [local overlay](#local-overlay) of `.snp.yaml` is `.snp.local.yaml`.
+* `init-templatedir` has no repository to look in: its scripts name `.pre-commit-config.yaml` unless `-c` is given.
+* The meta hooks (`check-hooks-apply`, `check-useless-excludes`) keep pre-commit's `files: ^\.pre-commit-config\.yaml$`
+  and default argument, as they do for any `-c` file: with `.snp.yaml` set `files: ^\.snp\.yaml$` and
+  `args: [.snp.yaml]` on them.
 
 ## Sharing a config with pre-commit
 
@@ -67,8 +96,9 @@ Unknown keys, including `x-*` keys, keep pre-commit's warnings in snp too.
 | `root` | relative directory | — | The hook runs in `<repo>/<root>` and receives only the files under it, relative to it. A missing directory fails the hook with `- root directory '<r>' does not exist`. |
 | `use_stdin` | boolean | `false` | The hook receives a copy of the git hook's stdin (e.g. the ref lines of `pre-push`); more than 64 MiB fails closed. |
 | `fail_on_changes` | `always`, `never`, `ci`, `non-ci` (or `true`/`false`) | the root value | Whether modifying files fails the hook. `ci` fails only when `CI` is set to something other than empty, `0` or `false`. |
+| `interactive` | boolean | `false` | The hook talks to you on the terminal (a commit-message prompt such as `cz --hook`): it reads the keyboard and its output appears live instead of being captured. See [Interactive hooks](#interactive-hooks). |
 
-`interactive` and `follow` are reserved and rejected with "not available in this version".
+`follow` is reserved and rejected with "not available in this version".
 
 ```yaml
 repos:
@@ -122,6 +152,57 @@ skip:
   - {ref: "release/*", env: HOTFIX}   # on a release branch *and* HOTFIX set
 ```
 
+### Interactive hooks
+
+`interactive: true` (lefthook's key of the same name) is for hooks that prompt — commitizen's `cz --hook` in
+`prepare-commit-msg`, a confirmation before a push:
+
+```yaml
+      - id: commitizen
+        name: commitizen
+        language: system
+        entry: sh -c 'test -n "$PRE_COMMIT_COMMIT_MSG_SOURCE" || exec npx cz --hook' --
+        stages: [prepare-commit-msg]
+        always_run: true
+        pass_filenames: false
+        interactive: true
+```
+
+* **Input.** The hook's stdin is the terminal: snp's own stdin when that is a terminal, otherwise the controlling
+  terminal `/dev/tty` (git runs hooks with stdin on `/dev/null`; on Windows the console input, `CONIN$`). Prompt
+  libraries that switch the terminal to raw mode work: the hook runs in snp's process group, which is the terminal's
+  foreground group, so job control never stops it.
+* **Output.** stdout and stderr go straight to the terminal; nothing is captured. snp prints the hook's name before it
+  starts and its usual status line when it ends:
+
+  ```text
+  commitizen........................................................(interactive)
+  ? Select the type of change that you're committing: feat
+  commitizen...............................................................Passed
+  ```
+
+  The failure block has what snp knows without the output: `- hook id`, `- exit code`, `- hook timed out after …`,
+  your `fail_text`, and the duration with `--verbose`. A hook that was killed (timeout, signal) gets a line break before
+  its status line, since its prompt was cut off. The `(interactive)` line is printed in `quiet` output mode too.
+* **Scheduling.** An interactive hook runs alone: hooks of the same `priority` before it in the config finish first,
+  the ones after it start after it, and a hook split into xargs partitions runs them one after another. Everything that
+  finished earlier is printed before its line (with `priority`, also blocks that would otherwise wait for config
+  order), and its own block prints as soon as it ends. It never runs on the fast path.
+* **Ctrl-C** at the prompt reaches the hook once (from the terminal, as for any hook) and ends the run like any
+  interruption: the stash is restored, exit code 130.
+* **`timeout`** still applies, but the hook stays in snp's process group (an isolated group could not read the
+  terminal), so the TERM and the KILL reach the hook's own process, not processes it started: write
+  `exec npx cz --hook` rather than `npx cz --hook` in a `sh -c` entry. After a killed hook snp puts the terminal modes
+  back.
+* **No terminal** (CI, cron, an IDE without one, `git commit &` in the background): snp prints one line on stderr,
+  `snp: interactive: no terminal is available; running 'commitizen' without a terminal`, and runs the hook like any
+  other: stdin is an empty pipe and the output is captured. `SNP_NO_TTY=1` does the same without the note (lefthook's
+  `no_tty`).
+* **Hooks without a process.** `interactive: true` is refused for meta hooks, `repo: builtin` hooks and `language:
+  fail` / `pygrep` hooks (`interactive: true needs a hook that runs a process; meta hooks run inside snp`); a remote
+  hook whose manifest says `fail` or `pygrep` ignores it.
+* With `use_stdin` as well, the terminal wins. `SNP_COMPAT_STRICT=1` ignores the key like every extension key.
+
 ## Root-level extension keys
 
 | Key | Value | Default | Effect |
@@ -169,7 +250,8 @@ upstream, and `snp migrate builtin` prints why (`pre-commit-hooks (line N) not c
 ## Local overlay
 
 A personal, untracked file next to the config adjusts hooks for one working copy without touching the shared config:
-`.pre-commit-config.local.yaml` (or `.yml`) in the config's directory, or the file named by `SNP_LOCAL_CONFIG`.
+`.pre-commit-config.local.yaml` (or `.yml`) in the config's directory — `.snp.local.yaml` (or `.snp.local.yml`) when the
+config is `.snp.yaml` or `.snp.yml` —, or the file named by `SNP_LOCAL_CONFIG`.
 
 ```yaml
 # .pre-commit-config.local.yaml — add it to .git/info/exclude

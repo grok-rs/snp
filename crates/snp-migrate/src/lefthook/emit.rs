@@ -60,6 +60,7 @@ pub(crate) struct OutHook {
     pub(crate) fail_text: Option<String>,
     pub(crate) timeout: Option<String>,
     pub(crate) use_stdin: bool,
+    pub(crate) interactive: bool,
     pub(crate) fail_on_changes: Option<String>,
 }
 
@@ -131,6 +132,9 @@ pub(crate) fn hook_fields(h: &OutHook) -> Vec<(&'static str, String)> {
     }
     if h.use_stdin {
         f.push(("use_stdin", "true".to_owned()));
+    }
+    if h.interactive {
+        f.push(("interactive", "true".to_owned()));
     }
     if let Some(v) = &h.fail_on_changes {
         f.push(("fail_on_changes", scalar(v, false)));

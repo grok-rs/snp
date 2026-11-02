@@ -1,0 +1,36 @@
+# D-EXT-08 (EXT, owner WP-32, ADR-085): `interactive: true` hooks; without a usable terminal snp notes it on stderr
+# and runs the hook captured, as pre-commit does (which only warns about the unknown key).
+# Scenario in the schema of docs/research/10-test-strategy.md §7.4.3; `expected` states how each side
+# must differ (WP-35's harness fails when the difference stops reproducing).
+expect_divergence: D-EXT-08
+name: divergences/D-EXT-08-interactive-without-a-terminal
+since: "4.6.2"
+requires: {git: ">=2.19", net: false, tools: [], os: [linux, macos], pty: false}
+work:
+  files: {a.txt: "a\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: ask
+            name: ask
+            entry: echo asked
+            language: system
+            interactive: true
+            verbose: true
+  commit: [".pre-commit-config.yaml", a.txt]
+steps:
+  - tool: [run, --all-files]
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+expected:
+  oracle:
+    stdout_starts_with: "[WARNING] Unexpected key(s) present on local => ask: interactive\n"
+    stderr: ""
+  snp:
+    stdout_starts_with: "ask....."
+    stdout_contains: "\n- hook id: ask\n"
+    stderr_contains: "snp: interactive: "
+    stderr_contains_2: "; running 'ask' without a terminal\n"

@@ -578,7 +578,7 @@ fn list_text_and_json() {
     )));
     let la = |json: bool, stage: Option<snp_core::stage::Stage>, groups: Vec<OsString>| {
         snp_cli::ListArgs {
-            config: ".pre-commit-config.yaml".into(),
+            config: snp_cli::ConfigArg::absent(),
             json,
             stage,
             groups,
@@ -897,7 +897,7 @@ fn local_overlay_tracked_check_is_literal() {
         b"hooks:\n  a:\n    entry: \"echo wrapped {entry}\"\n",
     );
     let mut a = args();
-    a.config = OsString::from("sub[1]/cfg.yaml");
+    a.config = snp_cli::ConfigArg::given("sub[1]/cfg.yaml");
     let o = h.run(a);
     assert_eq!(o.code, 0, "{o:?}");
     assert!(

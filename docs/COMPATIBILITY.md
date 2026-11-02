@@ -233,6 +233,8 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 | D-EXT-05 | `SNP=0`/`false` makes `hook-impl` skip snp's hooks (the legacy hook still runs) | 32 |
 | D-EXT-06 | `repo: builtin` (pre-commit rejects these configs) | 21, 26, 31 |
 | D-EXT-07 | snp-brand commands and flags (§8), including their presence in the snp brand's usage/help blocks | 12 |
+| D-EXT-08 | `interactive: true` hooks read and write the terminal directly: `{name}....(interactive)` before the hook, no captured output in its block, a singleton bucket; without a usable terminal one stderr note `snp: interactive: …; running '<id>' without a terminal` (ADR-085) | 32 |
+| D-EXT-09 | the config file name: without `-c`, `.snp.yaml`/`.snp.yml` in the repository root are read (snp brand: before `.pre-commit-config.yaml`, with the stderr note `snp: using .snp.yaml; ignoring .pre-commit-config.yaml (pass -c/--config to choose)`; compat brand: only when `.pre-commit-config.yaml` is absent, silently); both snp names ⇒ `FatalError: both .snp.yaml and .snp.yml exist; …`; their overlay is `.snp.local.y[a]ml`; `SNP_COMPAT_STRICT=1` turns it off (ADR-087) | 21, 32, 33 |
 
 ### 5.8 DIAG — always-on stderr diagnostics (stdout and exit codes unchanged)
 
@@ -243,6 +245,7 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 | D-DIAG-03 | `run` hint, only when stderr is a TTY, `SNP_NO_HINTS` unset/empty and `core.hooksPath` unset: ``hint: {hook_path} runs {owner}, not snp; run `{prog} install` to switch`` (11 §A.14) | 32 |
 | D-DIAG-04 | stash notices: the next-run recovery notice (§4.6), `snp: waiting for another snp run in this worktree…`, `snp: restoring stashed changes, please wait`, `snp: git needed the terminal during the restore and was stopped` | 23 |
 | D-DIAG-05 | store notices: the foreign-owner warning (ADR-044), `Removed snp 1.x cache data from {store}.` (gc) | 22 |
+| D-DIAG-06 | snp brand, `-c` not given and no config file in the repository: `snp: no .snp.yaml or .pre-commit-config.yaml file was found in the repository root` before the unchanged error of the commands that need a config (`run`, `install-hooks`, `list`, `autoupdate`, `migrate-config`, `config dump`, `migrate builtin\|upstream`, `hook-impl` without `--config`; once per process; ADR-087) | 32, 33 |
 
 ### 5.9 TIERB — Python-internal bytes
 
@@ -307,7 +310,8 @@ Unknown keys, including `x-*`, keep pre-commit's warnings in snp.
 | `root` | relative directory | — | normalised, no `..`, not absolute | cwd = `<repo>/<root>`; only files under it (boundary-aware) are passed, relative to it; missing directory ⇒ `Failed` + `- root directory '<r>' does not exist` |
 | `use_stdin` | bool | `false` | — | the hook receives a copy of the git hook's stdin (pre-push ref lines); stdin over 64 MiB fails closed (D-SEC-12) |
 | `fail_on_changes` | `always` \| `never` \| `ci` \| `non-ci` (+ `true`/`false`) | root value | — | `never`: modifications do not fail the hook; `ci`: only when `CI` is non-empty and not `0`/`false` |
-| `interactive`, `follow` | bool | `false` | reserved | rejected with "not available in this version" until v1.1 |
+| `interactive` | bool | `false` | `true` refused for hooks that never spawn a process (meta, `repo: builtin`, `language: fail`/`pygrep`) | ADR-085: the hook's stdin is the terminal (snp's stdin when it is one, else `/dev/tty`; Windows `CONIN$`), stdout/stderr inherited (never captured), snp's process group; a singleton bucket (nothing else runs), partitions one after another; `{name}....(interactive)` before, the usual status line after (no output section); `timeout` signals the child process only; no usable terminal ⇒ one stderr note and a normal captured run; `SNP_NO_TTY=1` ⇒ normal captured run; a pre-commit-hooks hook with it is never run natively (D-EXT-08) |
+| `follow` | bool | `false` | reserved | rejected with "not available in this version" |
 
 ### 7.2 Root-level keys
 
@@ -331,7 +335,8 @@ Unknown keys, including `x-*`, keep pre-commit's warnings in snp.
 
 ### 7.4 Local overlay
 
-`<config dir>/.pre-commit-config.local.yaml` (or `.yml`), or `SNP_LOCAL_CONFIG=<path>` (empty/`0` disables);
+`<config dir>/.pre-commit-config.local.yaml` (or `.yml`) — `.snp.local.yaml` (or `.yml`) beside an `.snp.yaml`/`.snp.yml`
+config (ADR-087, D-EXT-09) —, or `SNP_LOCAL_CONFIG=<path>` (empty/`0` disables);
 `--no-local-config` disables. Ignored (stderr note) when tracked by git or when `CI` is truthy, unless named by
 `SNP_LOCAL_CONFIG`. Schema:
 
@@ -375,7 +380,7 @@ pre-commit's, unchanged: `SKIP`, `PRE_COMMIT_COLOR`, `TERM`, `PRE_COMMIT_NO_CONC
 `COLUMNS`. `PRE_COMMIT_HOME` is read only to refuse pre-commit's store. `CI` is read only by extensions.
 
 snp-only: `SNP_HOME`, `SNP` (`0`/`false` kill switch), `SNP_BIN` (hook script), `SNP_RUNNING_LEGACY`,
-`SNP_ALLOW_NO_CONFIG`, `SNP_JOBS`, `SNP_SKIP_GROUPS`, `SNP_OUTPUT`, `SNP_NO_FAST_PATH`, `SNP_COMPAT_STRICT`,
+`SNP_ALLOW_NO_CONFIG`, `SNP_JOBS`, `SNP_SKIP_GROUPS`, `SNP_OUTPUT`, `SNP_NO_TTY` (`interactive` hooks run captured, ADR-085), `SNP_NO_FAST_PATH`, `SNP_COMPAT_STRICT`,
 `SNP_LOCAL_CONFIG`, `SNP_NO_HINTS`, `SNP_LOG`, `SNP_LOG_FILE`, `SNP_OFFLINE`, `SNP_UV`, `SNP_PYTHON_DOWNLOADS`,
 `SNP_NODE_MIRROR`, `SNP_ALLOW_INSECURE_MIRROR`, `SNP_DOCKER_ALWAYS_BUILD`, `SNP_PREFER_SYSTEM_TOOLCHAINS`,
 `SNP_ALLOW_OLD_GIT`, `SNP_STASH_LOCK_TIMEOUT`, `SNP_STASH_VERIFY`, `SNP_KILL_GRACE`, `SNP_DIFF_MODE`,

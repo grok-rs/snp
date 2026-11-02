@@ -32,7 +32,7 @@ pub struct LefthookOpts {
     pub root: PathBuf,
     /// The lefthook config (default: discovered).
     pub config: Option<PathBuf>,
-    /// The output path (default: `.pre-commit-config.yaml`).
+    /// The output path (default: `.snp.yaml`; `.pre-commit-config.yaml` with `--portable`; ADR-087).
     pub output: Option<PathBuf>,
     /// Emit only pre-commit-compatible keys.
     pub portable: bool,
@@ -250,7 +250,7 @@ fn default_of(key: &str) -> Option<&'static str> {
         "types_or" | "exclude_types" | "groups" => "[]",
         "pass_filenames" => "true",
         "always_run" | "require_serial" | "fail_fast" | "verbose" | "stage_fixed" | "use_stdin"
-        | "skip" | "only" => "false",
+        | "interactive" | "skip" | "only" => "false",
         _ => return None,
     })
 }

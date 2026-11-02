@@ -8,7 +8,8 @@ approved by the integration lead and the owners of the affected packages; the am
 naming the amending ADR, which is normative where they differ. ADR-056…ADR-080 apply the second design review
 (2026-10-08); Appendix B lists every finding and its disposition. ADR-081 applies the verification of the W0 skeleton;
 ADR-082 the end-to-end integration of the merged packages; ADR-083 the verification of the integrated `main`; ADR-084
-the final multi-lens review; ADR-086 the first CI run on macOS.
+the final multi-lens review; ADR-085 the `interactive` extension key; ADR-086 the first CI run on macOS; ADR-087 the
+`.snp.yaml` config file name.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -1088,6 +1089,55 @@ poll(2) loop instead of two reader threads per spawn, the B4 path copies, and th
 §8, the user configuration and troubleshooting pages state the new behaviour. Amends ADR-065 (forwarding), ADR-067
 (recovery commands) and ADR-083 (retirement check).
 
+### ADR-085 — `interactive` hooks (TTY passthrough)
+
+**Context.** `interactive` was reserved for v1.1 (Appendix A, 05 item 11: "v1.1, Unix only"; COMPATIBILITY §7.1) and
+`snp migrate lefthook` dropped it as lossy. Real configs need it: a monorepo's `prepare-commit-msg` job `commitzen:
+{interactive: true, run: test -n "{2}" || bun x cz --hook}` must show commitizen's prompts and read the keyboard during
+`git commit`, although git runs hooks with stdin on `/dev/null`. lefthook (`exec_unix.go`) opens `/dev/tty` when its
+stdin is not a terminal (an open failure is logged and the job runs with its normal input), gives the job the terminal's
+stdin and its own stdout/stderr, does not `setpgid` it, kills only the direct child on cancellation, and ignores
+`interactive` under `no_tty`. Two process-group designs were possible: (a) keep the child in snp's process group; (b)
+put it in its own group and hand it the terminal with `tcsetpgrp`, taking it back afterwards.
+**Decision.** (1) `interactive: true` is a hook-level bool (also in the local overlay). `true` is refused at validation
+for hooks that never spawn a process — meta hooks, `repo: builtin` hooks, `language: fail` / `pygrep` (`interactive:
+true needs a hook that runs a process; <kind> hooks run inside snp`); a remote hook whose manifest language is
+`fail`/`pygrep` ignores it; G4 of the fast path treats it as a user override, so a pre-commit-hooks hook with it runs
+its real process. `SNP_COMPAT_STRICT=1` ignores it like every extension key; both brands behave the same (the texts are
+snp's, like `timeout`'s). (2) Terminal: snp's stdin when it is a terminal (inherited), else `/dev/tty` opened read-write
+(Windows: `CONIN$`). On Unix it must be usable: `tcgetpgrp(terminal) == getpgrp()`. stdout and stderr are inherited,
+never captured. (3) Process group: design (a), lefthook's. The child stays in snp's group, which is the terminal's
+foreground group (git, run by the shell as a foreground job, runs hooks in its own group), so reads and `tcsetattr`
+(raw-mode prompt libraries) never raise SIGTTIN/SIGTTOU, ^C is delivered once by the kernel to snp and the hook
+(`registry::forward` never re-sends a kernel-origin signal to an Inherit child, §10.4), and snp never owns or transfers
+the terminal, so it can never leave it owned by a dead group. Design (b) was rejected: between the spawn and `tcsetpgrp`
+the child can already read and be stopped (it needs a `SIGCONT` dance); taking the terminal back from a background group
+needs SIGTTOU blocked or ignored in snp, which no safe wrapper offers (`unsafe_code = forbid`, no `pre_exec`); and ^C
+would reach only the hook, so snp would have to infer the interruption from its exit. The price of (a): `timeout` (TERM,
+grace, KILL) and the cancellation escalation signal the hook's own process, not its descendants (lefthook's behaviour
+too); the docs advise `exec` in `sh -c` entries. snp saves the terminal modes before the spawn and restores them when
+the hook was killed (deadline, cancellation) or died of a signal. (4) Scheduling: an interactive hook is a singleton
+bucket — the members of its priority before it in config order form one bucket, the ones after it another — and its
+xargs partitions run one at a time. Before it starts, every finished block is printed (with `priority`, also blocks
+still waiting for config order), then `{name}{dots}(interactive)` (aligned with the status lines; also in `quiet` mode)
+is written and flushed; when it ends its usual status line and details print at once (a line break first when it was
+killed, since its prompt was cut off). The block has no output section: hook id, exit code, `- hook timed out after …`,
+`fail_text`, the verbose duration. Config order is kept (lefthook 2.2.0 does not reorder interactive jobs either,
+despite its docs; 05 "docs vs. code" item 6). (5) No usable terminal (no controlling terminal, `/dev/tty` unopenable, or
+snp in a background group): one stderr line `snp: interactive: no terminal is available; running '<id>' without a
+terminal` (or `…: snp is not in the terminal's foreground process group; …`) and a normal captured run — clearer than
+lefthook's error-and-continue, and it never hangs. `SNP_NO_TTY=1` (lefthook's `no_tty`) runs interactive hooks as normal
+captured hooks without a note. No `--no-tty` flag (it would change the snp-brand `run` parser and its goldens for no
+gain over the variable). (6) Windows: compiled and supported best-effort: the console is inherited, `CONIN$` replaces
+`/dev/tty` when stdin is redirected, no foreground check and no mode restore; the child is in snp's console group, so
+`CTRL_C` reaches it once. (7) `snp migrate lefthook` maps `interactive: true` to `interactive: true`; with `--portable`
+it stays lossy (dropped, the old note). A positional template inside a double-quoted string is substituted without its
+own quotes (`test -n "{2}"` → `test -n "$PRE_COMMIT_COMMIT_MSG_SOURCE"`, was `""$…""`, field-split).
+**Consequences.** Registered as D-EXT-08. COMPATIBILITY §7.1, ARCHITECTURE §3.4 and §8.2, the configuration, migration
+and environment pages describe it; `snp_proc::tty`, `spawn::interactive` and `Stdin::Terminal` are new API (ARCHITECTURE
+§1.4); `snp_testkit::Session` runs commands on a pty that is their controlling terminal (util-linux `setsid --ctty`).
+Amends the Appendix A entry "05 item 11" (`interactive` → v1.1), which this ADR implements.
+
 ### ADR-086 — First CI run on macOS: exec semantics and portable tests
 
 **Context.** The first CI run built and tested macOS (and Windows, musl and old git) for the first time. On macOS:
@@ -1122,6 +1172,54 @@ measure 44–52 ms for the same binary, dominated by the 50 k `lstat` calls `Cla
 --reference` (the reference machine) keeps it hard, every other run reports a breach as a warning. The other micro
 limits stay hard everywhere, and the release-mode `perf_classify*` smoke test still fails a 3× regression on every
 runner (ADR-071).
+
+### ADR-087 — `.snp.yaml`: discovering the config file
+
+**Context.** Every command that reads a config defaults `-c/--config` to `.pre-commit-config.yaml` (`main.py:50-54`,
+`C.CONFIG_FILE`); pre-commit accepts no other name (Appendix A, 01 Q6: no `.pre-commit-config.yml` fallback). Repos that
+use snp's extension keys (or come from lefthook through `snp migrate lefthook`) want a file named after the tool that
+reads them, and lefthook users expect a single short name. The compat brand must keep pre-commit's bytes (K2), the
+installed hook scripts embed an explicit `--config=<file>`, the local overlay is named after the config
+(`.pre-commit-config.local.y[a]ml`, ADR-070), and gc keeps the repos of every tracked config.
+**Decision.** (1) Without `-c/--config` (the facade's `snp_cli::ConfigArg { path, given }`: argparse's `was_given`, so
+`-c .pre-commit-config.yaml` is explicit) every command that reads the project's config — `run`, `hook-impl`,
+`try-repo` (tracking only), `install`/`uninstall` (hook types and the embedded name), `install-hooks`, `autoupdate`,
+`migrate-config`, `list`, `config dump`, `doctor` (also `--fast-path`), `migrate builtin|upstream` — discovers it in the
+repository root with `snp_config::discover`: snp brand `.snp.yaml`, `.snp.yml`, `.pre-commit-config.yaml`; compat brand
+`.pre-commit-config.yaml` whenever it exists, else `.snp.yaml`, `.snp.yml`. `.pre-commit-config.yaml` keeps pre-commit's
+lookup (the invocation cwd when it exists there, else the root); an snp name is always the root's file, rebased like an
+existing `-c` path (so it displays as `.snp.yaml`). (2) `.snp.yaml` and `.snp.yml` both present is `An error has
+occurred: FatalError: both .snp.yaml and .snp.yml exist; keep one, or choose with -c/--config` (exit 1) — unless the
+compat brand already chose `.pre-commit-config.yaml`. (3) snp brand, an snp name and `.pre-commit-config.yaml` both
+present: the snp name wins and one stderr line `snp: using .snp.yaml; ignoring .pre-commit-config.yaml (pass
+-c/--config to choose)` is printed, once per process (`install --install-hooks` discovers twice). The compat brand is
+silent: with `.pre-commit-config.yaml` it is pre-commit. (4) snp brand, nothing found: the error texts stay pre-commit's
+(`=====> .pre-commit-config.yaml is not a file`, `No .pre-commit-config.yaml file was found`; the brand map stays a pure
+substitution), and the commands that cannot work without a config (`run`, `hook-impl` without `--config`,
+`install-hooks`, `list`, `autoupdate`, `migrate-config`, `config dump`, `migrate builtin|upstream`) first print the
+stderr line `snp: no .snp.yaml or .pre-commit-config.yaml file was found in the repository root` (class DIAG, so the
+snp-brand differential comparison strips it). `install`, `uninstall` and `doctor` work without a config and print
+nothing. (5) Explicit `-c` always wins, unchanged; `SNP_COMPAT_STRICT=1` turns discovery off (pre-commit's lookup). (6)
+`install` embeds the discovered name relative to the root (`--config=.snp.yaml`, also in `--git-config-hooks`
+commands); a re-install after a rename rewrites the script; script identification (`# ID:` hashes, ADR-048) is
+unaffected. `init-templatedir` has no repository and keeps `.pre-commit-config.yaml` unless `-c` is given. (7) The local
+overlay of `.snp.yaml`/`.snp.yml` is `.snp.local.yaml`, then `.snp.local.yml`; every other config keeps
+`.pre-commit-config.local.y[a]ml`. (8) `snp migrate lefthook` writes `.snp.yaml` by default and `.pre-commit-config.yaml`
+with `--portable` (pre-commit must find it); `--local` writes the overlay paired with the output name. (9) The
+messages naming the config (`git add <config>` of the unstaged check, the `is not a file` error, hook-impl's missing
+config texts, autoupdate/migrate-config) name the file actually read; tracking records its realpath. (10) The meta hooks
+keep pre-commit's `files: ^\.pre-commit-config\.yaml$` and default argument (the existing `-c` quirk, Appendix A 01
+Q8): with `.snp.yaml` they need `files`/`args` overrides. No `.pre-commit-config.yml` fallback (01 Q6 stands).
+**Rationale.** The compat brand diverges only where pre-commit would fail (no `.pre-commit-config.yaml`), so a repo
+that works with pre-commit gets pre-commit's bytes from the `pre-commit` alias, and a repo with only `.snp.yaml` works
+with both entry points. Preferring the snp name in the snp brand makes the newer, snp-specific file authoritative when
+both exist (a portable copy for pre-commit users beside it); the note keeps that visible without failing. An error for
+two snp names avoids a silent, order-dependent choice. Keeping the missing-config texts and adding a DIAG line keeps
+every existing differential scenario byte-identical in both brands.
+**Consequences.** Registered as D-EXT-09 (discovery, the note, the error, the overlay names) and D-DIAG-06 (the
+missing-config line). `snp_cli::ConfigArg` replaces `OsString` for `-c` in the facade (ARCHITECTURE §1.4.4);
+`snp_run::doctor_fast_path` takes it; `snp_config::discover` is new API. The configuration, migration and README pages
+and COMPATIBILITY §5.7/§5.8/§7.4 describe it.
 
 ---
 
@@ -1195,7 +1293,7 @@ tracked or in CI unless named by `SNP_LOCAL_CONFIG`. 3 `env` expansion → liter
 index (prek). 5 `stage_fixed` UX → `Passed` + `- files were modified by this hook and staged`, verify re-run, pre-commit
 stage only, `trust` opt-in. 6 non-pre-commit git hooks → not v1. 7 remote `extends` → not v1. 8 CI detection → `CI`
 non-empty and not `0`/`false`. 9 `{all_files}` sources → v1.1. 10 parallel output → config-order head-of-line. 11
-`interactive` → v1.1, Unix only. 12 Windows `sh` for migrated entries → Git-for-Windows `sh` lookup (as D-PLAT-02). 13
+`interactive` → v1.1, Unix only (implemented by ADR-085, Unix and best-effort Windows). 12 Windows `sh` for migrated entries → Git-for-Windows `sh` lookup (as D-PLAT-02). 13
 timeout scope → whole hook. 14 `SNP=0` → ADR-038. 15 LFS → legacy chaining. 16 AI-agent hooks (`ai:`, `snp install
 --agent`) → out of v1 scope (COULD, 05 C9); revisit after v1.1. §18.4 A5 item 6 `SNP_STASH_BACKUP` → rejected (ADR-067).
 Groups (`--require-group`, `@ungrouped`) → prek semantics (ADR-080).

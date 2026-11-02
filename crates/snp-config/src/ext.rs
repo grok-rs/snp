@@ -13,7 +13,7 @@ use snp_core::path::RepoPath;
 
 use crate::messages;
 
-/// Hook-level extension keys, in validation order (`interactive` and `follow` are reserved, ARCHITECTURE §8.2).
+/// Hook-level extension keys, in validation order (`follow` is reserved, ARCHITECTURE §8.2).
 pub(crate) const HOOK_EXT_KEYS: [&str; 13] = [
     "priority",
     "env",
@@ -77,6 +77,8 @@ pub struct HookExt {
     pub use_stdin: bool,
     /// `fail_on_changes`.
     pub fail_on_changes: Option<FailOnChanges>,
+    /// `interactive`: the hook reads the terminal and writes to it directly (ADR-085).
+    pub interactive: bool,
 }
 
 /// Root-level extension keys (§8.2).
@@ -454,12 +456,26 @@ pub(crate) fn check_root() -> CheckFn {
     })
 }
 
-/// `interactive` / `follow`: reserved until v1.1 (ARCHITECTURE §8.2).
+/// `follow`: reserved (ARCHITECTURE §8.2).
 pub(crate) fn check_reserved(key: &'static str) -> CheckFn {
     CheckFn::custom(move |_| {
         Err(ValidationError::new(messages::reserved_key(
             &snp_pycompat::repr::repr_str(key),
         )))
+    })
+}
+
+/// `interactive`: a bool; `true` is refused for a hook that never spawns a process (`in_process` names its kind:
+/// meta and `repo: builtin` hooks, `language: fail` / `pygrep`; ADR-085).
+pub(crate) fn check_interactive(in_process: Option<&'static str>) -> CheckFn {
+    CheckFn::custom(move |v| {
+        CheckFn::check_bool().check(v)?;
+        match in_process {
+            Some(kind) if v.as_bool() == Some(true) => {
+                Err(ValidationError::new(messages::interactive_in_process(kind)))
+            }
+            _ => Ok(()),
+        }
     })
 }
 
@@ -476,6 +492,7 @@ pub(crate) fn hook_check(key: &'static str) -> CheckFn {
         "root" => check_root(),
         "use_stdin" => CheckFn::check_bool(),
         "fail_on_changes" => check_fail_on_changes(),
+        "interactive" => check_interactive(None),
         _ => check_reserved(key),
     }
 }
@@ -612,6 +629,7 @@ pub(crate) fn apply_hook_key(ext: &mut HookExt, key: &str, v: &Value) {
         "root" => ext.root = v.as_str().and_then(normalize_root),
         "use_stdin" => ext.use_stdin = v.as_bool().unwrap_or(false),
         "fail_on_changes" => ext.fail_on_changes = parse_fail_on_changes(v),
+        "interactive" => ext.interactive = v.as_bool().unwrap_or(false),
         _ => {}
     }
 }

@@ -1,7 +1,7 @@
 //! Unit tests of the typed facade, the brand split and the prefix-stability guard (WP-12 acceptance). The byte
 //! goldens of every help/usage/error text live in `tests/goldens.rs`.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::num::NonZeroUsize;
 
 use snp_core::brand::Brand;
@@ -11,8 +11,8 @@ use snp_core::stage::{HookType, Stage};
 
 use crate::specs::{self, planted};
 use crate::{
-    CacheAction, Cli, CliOutcome, ConfigCmd, HazmatTool, MigrateArgs, SelfArgs, Shell, StdinFormat,
-    parse,
+    CacheAction, Cli, CliOutcome, ConfigArg, ConfigCmd, HazmatTool, MigrateArgs, SelfArgs, Shell,
+    StdinFormat, parse,
 };
 
 fn argv(a: &[&str]) -> Vec<OsString> {
@@ -55,7 +55,9 @@ fn empty_argv_is_run() {
             panic!()
         };
         assert_eq!(r.color, ColorSetting::Auto);
-        assert_eq!(r.config, ".pre-commit-config.yaml");
+        assert_eq!(r.config, ConfigArg::absent());
+        assert_eq!(r.config.path, ".pre-commit-config.yaml");
+        assert_eq!(r.config.explicit(), None);
         assert_eq!(r.hook_stage, Stage::Hook(HookType::PreCommit));
         assert!(r.hooks.is_empty() && r.files.is_empty() && !r.all_files);
     }
@@ -89,7 +91,7 @@ fn run_values() {
     };
     assert_eq!(r.hooks, argv(&["lint:js"]));
     assert_eq!(r.color, ColorSetting::Never);
-    assert_eq!(r.config, "x.yaml");
+    assert_eq!(r.config, ConfigArg::given("x.yaml"));
     assert!(r.all_files && r.verbose && r.show_diff_on_failure && r.fail_fast);
     assert_eq!(r.hook_stage, Stage::Hook(HookType::PrePush));
     // `Some("")` ref options are falsy in pre-commit; `--commit-msg-filename` is tested with `is not None`.
@@ -229,12 +231,12 @@ fn install_conf_abbreviation_still_means_config() {
         let Cli::Install(i) = cli(brand, &["install", "--conf", "x.yaml"]) else {
             panic!()
         };
-        assert_eq!(i.config, "x.yaml");
+        assert_eq!(i.config, ConfigArg::given("x.yaml"));
         assert!(!i.git_config_hooks);
         let Cli::Uninstall(u) = cli(brand, &["uninstall", "--con", "y.yaml"]) else {
             panic!()
         };
-        assert_eq!(u.config, "y.yaml");
+        assert_eq!(u.config, ConfigArg::given("y.yaml"));
     }
     let Cli::Install(i) = cli(
         Brand::Snp,
@@ -682,5 +684,28 @@ fn completions_cover_every_option() {
             let bare = n.trim_start_matches('-');
             assert!(script.contains(bare), "{shell:?} completion lacks {n}");
         }
+    }
+}
+
+#[test]
+fn config_given_versus_default() {
+    for brand in BOTH {
+        // the default's own value, given explicitly, is still explicit (an installed script's `--config=…` wins)
+        let Cli::Run(r) = cli(brand, &["run", "-c", ".pre-commit-config.yaml"]) else {
+            panic!()
+        };
+        assert_eq!(r.config, ConfigArg::given(".pre-commit-config.yaml"));
+        assert_eq!(
+            r.config.explicit(),
+            Some(OsStr::new(".pre-commit-config.yaml"))
+        );
+        let Cli::Install(i) = cli(brand, &["install"]) else {
+            panic!()
+        };
+        assert!(!i.config.given);
+        let Cli::MigrateConfig(m) = cli(brand, &["migrate-config", "--config=.snp.yaml"]) else {
+            panic!()
+        };
+        assert_eq!(m.config, ConfigArg::given(".snp.yaml"));
     }
 }

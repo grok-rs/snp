@@ -42,7 +42,7 @@ fn t10_hki_09_hook_dir_is_optional() {
 fn t10_hki_01_missing_config() {
     let mut h = H::new();
     let mut a = hook_impl_args("pre-commit", &["--"], None);
-    a.config = "DNE.yaml".into();
+    a.config = snp_cli::ConfigArg::given("DNE.yaml");
     let o = h.hook_impl(a.clone(), b"");
     assert_eq!(o.code, 1);
     assert_eq!(
@@ -55,7 +55,7 @@ fn t10_hki_01_missing_config() {
     let dir = hooks_dir(&h);
     h.exec(".git/hooks/pre-commit.legacy", b"#!/bin/sh\nexit 123\n");
     let mut b = hook_impl_args("pre-commit", &["--"], Some(&dir));
-    b.config = "DNE.yaml".into();
+    b.config = snp_cli::ConfigArg::given("DNE.yaml");
     b.skip_on_missing_config = true;
     let o = h.hook_impl(b, b"");
     assert_eq!(

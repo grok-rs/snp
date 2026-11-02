@@ -149,10 +149,10 @@ complete -c snp -n "__fish_snp_using_subcommand migrate; and not __fish_seen_sub
 complete -c snp -n "__fish_snp_using_subcommand migrate; and not __fish_seen_subcommand_from lefthook builtin upstream" -f -a "upstream" -d 'Switch `repo: builtin` back to pre-commit-hooks.'
 complete -c snp -n "__fish_snp_using_subcommand migrate; and __fish_seen_subcommand_from lefthook" -l root -d 'Repository root (default: the current git repository).' -r
 complete -c snp -n "__fish_snp_using_subcommand migrate; and __fish_seen_subcommand_from lefthook" -s c -l config -d 'lefthook configuration to convert (default: lefthook\'s lookup).' -r
-complete -c snp -n "__fish_snp_using_subcommand migrate; and __fish_seen_subcommand_from lefthook" -s o -l output -d 'Where to write the result (default: .pre-commit-config.yaml; `-` for stdout).' -r
+complete -c snp -n "__fish_snp_using_subcommand migrate; and __fish_seen_subcommand_from lefthook" -s o -l output -d 'Where to write the result (default: .snp.yaml, .pre-commit-config.yaml with --portable; `-` for stdout).' -r
 complete -c snp -n "__fish_snp_using_subcommand migrate; and __fish_seen_subcommand_from lefthook" -s h -l help -d 'show this help message and exit'
 complete -c snp -n "__fish_snp_using_subcommand migrate; and __fish_seen_subcommand_from lefthook" -l portable -d 'Emit only keys pre-commit 4.x understands.'
-complete -c snp -n "__fish_snp_using_subcommand migrate; and __fish_seen_subcommand_from lefthook" -l local -d 'Also convert lefthook-local.yml into .pre-commit-config.local.yaml.'
+complete -c snp -n "__fish_snp_using_subcommand migrate; and __fish_seen_subcommand_from lefthook" -l local -d 'Also convert lefthook-local.yml into the local overlay beside the output (.snp.local.yaml, .pre-commit-config.local.yaml with --portable).'
 complete -c snp -n "__fish_snp_using_subcommand migrate; and __fish_seen_subcommand_from lefthook" -l strict -d 'Fail (exit 2) when a feature cannot be converted faithfully.'
 complete -c snp -n "__fish_snp_using_subcommand migrate; and __fish_seen_subcommand_from lefthook" -l install -d 'Afterwards remove lefthook\'s hooks and install snp\'s.'
 complete -c snp -n "__fish_snp_using_subcommand migrate; and __fish_seen_subcommand_from lefthook" -s f -l force -d 'Overwrite an existing output file.'

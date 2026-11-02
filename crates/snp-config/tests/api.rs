@@ -231,6 +231,7 @@ mod api {
             root: RepoPath::new(b"sub"),
             use_stdin: false,
             fail_on_changes: Some(FailOnChanges::Ci),
+            interactive: true,
         };
         has::<HookExt>(hook);
         let root = RootExt {

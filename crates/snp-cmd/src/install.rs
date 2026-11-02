@@ -77,7 +77,7 @@ pub(crate) struct WriteOpts<'a> {
 /// config cannot be loaded; its warnings still print), then M3 for every other hook type still owned by another
 /// manager. `--git-config-hooks` (snp brand, git ≥ 2.54, ADR-057) writes `hook.snp-<type>.{command,event}` instead.
 pub fn install(a: &InstallArgs, cx: &CmdCtx<'_>) -> Result<i32, Failure> {
-    let f = frame::git_frame(cx, &a.config)?;
+    let f = frame::git_frame(cx, &a.config, false)?;
     let exe = scripts::select_exe(cx.brand, cx.arg0, cx.env, cx.self_exe);
     if a.git_config_hooks {
         let types = hook_types(cx, &f.source(), &a.hook_types)?;
@@ -487,7 +487,7 @@ fn config_hooks_uninstall(cx: &CmdCtx<'_>, f: &Frame, types: &[HookType]) -> Res
 /// deleted with M12 (11 §A.5.2). Other scripts (prek, foreign) are left alone silently. No `core.hooksPath` check.
 /// Always 0.
 pub fn uninstall(a: &UninstallArgs, cx: &CmdCtx<'_>) -> Result<i32, Failure> {
-    let f = frame::git_frame(cx, &a.config)?;
+    let f = frame::git_frame(cx, &a.config, false)?;
     let types = hook_types(cx, &f.source(), &a.hook_types)?;
     if a.git_config_hooks {
         return config_hooks_uninstall(cx, &f, &types);
@@ -551,8 +551,8 @@ fn uninstall_one(cx: &CmdCtx<'_>, dir: &HooksDir, t: HookType) -> Result<(), Fai
 /// (`~`-expanded, realpath'd) is not `realpath(directory)`. Always 0.
 pub fn init_templatedir(a: &InitTemplatedirArgs, cx: &CmdCtx<'_>) -> Result<i32, Failure> {
     let src = ConfigSource {
-        path: cx.cwd.join(&a.config),
-        display: a.config.clone(),
+        path: cx.cwd.join(&a.config.path),
+        display: a.config.path.clone(),
         project_root: cx.cwd.to_path_buf(),
     };
     let types = hook_types(cx, &src, &a.hook_types)?;
@@ -562,7 +562,7 @@ pub fn init_templatedir(a: &InitTemplatedirArgs, cx: &CmdCtx<'_>) -> Result<i32,
         path: cx.cwd.join(&a.directory),
     };
     let opts = WriteOpts {
-        config: &a.config,
+        config: &a.config.path,
         overwrite: true,
         skip_missing: !a.no_allow_missing_config,
         exe: &exe,

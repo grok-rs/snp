@@ -178,6 +178,11 @@ pub(crate) fn fail_text(text: &str) -> String {
     format!("- {text}")
 }
 
+/// ADR-085: an `interactive` hook found no usable terminal and runs like any other hook (stderr, before its line).
+pub(crate) fn interactive_no_tty(id: &str, why: &str) -> String {
+    format!("snp: interactive: {why}; running '{id}' without a terminal")
+}
+
 /// `stage_fixed`: the stash patch would not apply over the staged fixes, so nothing was staged (stderr; the run
 /// fails closed).
 pub(crate) const STAGE_FIXED_REFUSED: &str =

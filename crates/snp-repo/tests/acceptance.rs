@@ -336,7 +336,8 @@ mod tests {
             "v6.0.0",
             "    -   id: trailing-whitespace\n        args: [--markdown-linebreak-ext=md]\n    -   id: check-json\n        \
              language: python\n    -   id: end-of-file-fixer\n        additional_dependencies: []\n    -   id: \
-             check-yaml\n        entry: check-yaml --unsafe\n",
+             check-yaml\n        entry: check-yaml --unsafe\n    -   id: check-toml\n        interactive: true\n    \
+             -   id: check-xml\n        interactive: false\n",
         ));
         let rows = h.with_ctx(&cfg, None, |cx| snp_repo::decision_table(&cfg, cx));
         let decisions: Vec<(&str, &str)> = rows.iter().map(|r| (&*r.1, r.2.as_str())).collect();
@@ -347,6 +348,12 @@ mod tests {
             "an empty additional_dependencies is no override"
         );
         assert_eq!(decisions[3], ("delegate", "user override (`entry`)"));
+        // ADR-085: an interactive hook needs a real process
+        assert_eq!(decisions[4], ("delegate", "user override (`interactive`)"));
+        assert_eq!(
+            decisions[5].0, "native",
+            "interactive: false is no override"
+        );
 
         let ov_path = h.project.join(".pre-commit-config.local.yaml");
         std::fs::write(

@@ -2,8 +2,6 @@
 //!
 //! Owner: WP-32.
 
-use std::ffi::OsStr;
-
 use snp_core::failure::Failure;
 use snp_core::output::CollectWarnings;
 
@@ -15,10 +13,13 @@ use crate::common::{self, ResolveParts};
 ///
 /// One row per hook: `{id}: {decision} ({reason})`; a row is `ok` unless the decision is an error. Config warnings
 /// are not printed (doctor is read-only and quiet about the config).
-pub fn doctor_fast_path(config: &OsStr, cx: &RunCtx) -> Result<Vec<(bool, String)>, Failure> {
+pub fn doctor_fast_path(
+    config: &snp_cli::ConfigArg,
+    cx: &RunCtx,
+) -> Result<Vec<(bool, String)>, Failure> {
     let (_git, info) = common::discover(cx)?;
     let root = info.root;
-    let config = common::adjust_config(config, &cx.invocation_cwd, &root);
+    let config = common::resolve_config(cx, config, &root, false)?;
     let src = common::config_source(&config, &root);
     let sink = CollectWarnings::new();
     let cfg = common::load_config_with(cx, &src, &sink, &sink)?;
