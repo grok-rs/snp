@@ -351,19 +351,15 @@ pub(super) fn pairs_first(
             }
             py_lt(&x.1, &y.1)
         };
-        match minor {
-            Some(v) => pysort::sort(&mut after, v, lt)?,
+        if let Some(v) = minor {
+            pysort::sort(&mut after, v, lt)?;
+        } else {
             // CPython's sort with a `<` that answers `False` where Python raises: like CPython, it tolerates the
-            // inconsistent order that leaves (and NaN) describe, where `slice::sort_by` panics on it.
-            None => {
-                let lenient = |x: &(Box<[u8]>, Val), y: &(Box<[u8]>, Val)| {
-                    Ok::<bool, std::convert::Infallible>(lt(x, y).unwrap_or(false))
-                };
-                match pysort::sort(&mut after, PyMinor::P313, lenient) {
-                    Ok(()) => {}
-                    Err(never) => match never {},
-                }
-            }
+            // inconsistent order this describes (mixed value types, NaN), where `slice::sort_by` panics on it.
+            let lenient = |x: &(Box<[u8]>, Val), y: &(Box<[u8]>, Val)| {
+                Ok::<bool, std::convert::Infallible>(lt(x, y).unwrap_or(false))
+            };
+            let Ok(()) = pysort::sort(&mut after, PyMinor::P313, lenient);
         }
     }
     let mut out: Vec<(Box<[u8]>, Val)> = Vec::new();

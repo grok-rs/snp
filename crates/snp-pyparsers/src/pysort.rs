@@ -61,12 +61,12 @@ pub(crate) fn sort<T, E>(
             // (NaN, mixed types) that `lt` may describe.
             keys = (0..n).collect();
             for i in 1..n {
-                let Some(&k) = keys.get(i) else { break };
+                let Some(&key) = keys.get(i) else { break };
                 let (mut lo, mut hi) = (0, i);
                 while lo < hi {
                     let mid = lo.midpoint(hi);
-                    let less = match (items.get(k), keys.get(mid).and_then(|&m| items.get(m))) {
-                        (Some(x), Some(y)) => lt(x, y).unwrap_or(false),
+                    let less = match (items.get(key), keys.get(mid).and_then(|&at| items.get(at))) {
+                        (Some(held), Some(placed)) => lt(held, placed).unwrap_or(false),
                         _ => false,
                     };
                     if less {

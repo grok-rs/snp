@@ -324,7 +324,7 @@ mod tests {
     /// neither the indent's error nor its 444 MB (seconds under the fuzzer's instrumentation) comes first.
     #[test]
     fn invalid_documents_are_reported_before_the_indent_is_built() {
-        let bad = "\0\0\0\0\0\0444[8";
+        let bad = "\0\0\0\0\0\0\x34\x34\x34[8";
         for ind in ["444444444\n", "2000000000", "99999999999999999999"] {
             let start = std::time::Instant::now();
             match pretty_format(bad, &opts(ind), PyMinor::P313) {
