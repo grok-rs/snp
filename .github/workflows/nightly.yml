@@ -267,7 +267,8 @@ jobs:
       #
       # Some mutants make a test allocate without bound; the runner VM (16 GB) then loses its runner process ("The
       # runner has received a shutdown signal") and the whole shard with it. The run is confined to a memory-capped
-      # scope, so the kernel kills only the mutated test, which counts that mutant as caught.
+      # scope, so the kernel kills only the mutated test, which counts that mutant as caught (`OOMPolicy=continue`:
+      # by default systemd would then stop the whole scope, cargo-mutants included).
       #
       # Mutation testing is reported, not gated (ARCHITECTURE §13.7): missed mutants (exit 2) and timeouts (exit 3)
       # go to the job summary and the artifact; a failed baseline (4) or any other error fails the job.
@@ -284,7 +285,7 @@ jobs:
           done
           status=0
           # shellcheck disable=SC2086
-          sudo systemd-run --scope --quiet -p MemoryMax=10G -p MemorySwapMax=0 \
+          sudo systemd-run --scope --quiet -p MemoryMax=10G -p MemorySwapMax=0 -p OOMPolicy=continue \
             --uid="$(id -u)" --gid="$(id -g)" -- \
             env "PATH=$PATH" "HOME=$HOME" "TMPDIR=$TMPDIR" "GITHUB_ACTIONS=$GITHUB_ACTIONS" \
             CARGO_TERM_COLOR=always CARGO_INCREMENTAL=0 RUST_BACKTRACE=1 \
