@@ -46,7 +46,9 @@ published() {
 }
 
 meta="$("$cargo" metadata --format-version 1 --no-deps --locked)"
-mapfile -t crates < <(jq -r '.packages[] | select(.publish == null) | .name' <<< "$meta" | sort)
+# A read loop rather than `mapfile`: macOS still ships bash 3.2, and the script's tests run there too.
+crates=()
+while IFS= read -r c; do crates+=("$c"); done < <(jq -r '.packages[] | select(.publish == null) | .name' <<< "$meta" | sort)
 [ "${#crates[@]}" -gt 0 ] || { echo "publish-crates: the workspace publishes no crate" >&2; exit 1; }
 stray="$(jq -r --arg v "$version" '.packages[] | select(.publish == null and .version != $v) | "\(.name) \(.version)"' <<< "$meta")"
 [ -z "$stray" ] || { echo "publish-crates: not at $version: $stray" >&2; exit 1; }
