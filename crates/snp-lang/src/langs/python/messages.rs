@@ -1,5 +1,5 @@
 //! Every user-visible text of the python backend (ARCHITECTURE §1.3 "Messages"). The health texts are pre-commit
-//! 4.6.2's (`python.py:175-211`); they reach the user only inside the `BUG: expected environment … healthy` assertion
+//! 4.7.0's (`python.py:175-211`); they reach the user only inside the `BUG: expected environment … healthy` assertion
 //! of an environment that is unhealthy right after its install. None names the tool, so both brands share them.
 //!
 //! Owner: WP-24.

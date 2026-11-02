@@ -9,7 +9,7 @@ keyed by the canonical absolute path; messages unchanged
 
 ## Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | relative local-path repos (`repo: ../tools`) share one cache entry across projects | keyed by the canonical absolute path; messages unchanged |
 
@@ -31,11 +31,11 @@ what the configs ask for.
 
 ## Examples
 
-Recorded with pre-commit 4.6.2 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc462.txt`); `<W>` is the scratch root, `<store>` the store directory.
+Recorded with pre-commit 4.7.0 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc470.txt`); `<W>` is the scratch root, `<store>` the store directory.
 
 Projects `one/proj` and `two/proj`, each with `repo: ../tools`, `rev: HEAD` and a hook `which` whose entry echoes the
 project name of its `tools` directory; `run --all-files` in `one/proj`, then in `two/proj`
-(`tests/differential/divergences/D-DATA-08.yaml`). pre-commit 4.6.2 in `two/proj`, exit 0:
+(`tests/differential/divergences/D-DATA-08.yaml`). pre-commit 4.7.0 in `two/proj`, exit 0:
 
 ```text
 [WARNING] The 'rev' field of repo '../tools' appears to be a mutable reference (moving tag / branch).  Mutable references are never updated after first install and are not supported.  See https://pre-commit.com/#using-the-latest-version-for-a-repository for more details.  Hint: `pre-commit autoupdate` often fixes this.

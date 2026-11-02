@@ -10,7 +10,7 @@ a SIGINT sent with kill(2) to the tool is forwarded to the running hooks before 
 
 ## Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | a SIGINT sent to pre-commit alone (`kill -INT <pid>`: an IDE or CI cancel) becomes `KeyboardInterrupt` in its own process only: the running hook never sees it and keeps running, orphaned, after the stash was restored (X13-EH-04) | the sent SIGINT is forwarded to every running hook (ARCHITECTURE §10.4, ADR-065), leftover descendants are killed (Linux), then the stash is restored and the run exits 130 as before; a terminal ^C (kernel origin) is not re-sent |
 
@@ -39,7 +39,7 @@ A `trap` hook that appends the name of each signal it receives to `.hook-started
 (`tests/differential/divergences/D-DATA-18.yaml`, also `tests/differential/scenarios/run/x13-eh-04-interrupt.yaml`):
 
 ```text
-# pre-commit 4.6.2: exit 130, .hook-started was never written (the hook got no signal and kept running)
+# pre-commit 4.7.0: exit 130, .hook-started was never written (the hook got no signal and kept running)
 $ echo signals:; cat .hook-started
 signals:
 

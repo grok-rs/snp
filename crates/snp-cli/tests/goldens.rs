@@ -1,6 +1,6 @@
 //! The argparse goldens of `cargo xtask cli-goldens` (12 §A.16, ADR-058), replayed through snp:
 //!
-//! * `goldens/compat.json`: pre-commit 4.6.2 on CPython 3.13.14 (`pc462-py313`), compat brand;
+//! * `goldens/compat.json`: pre-commit 4.7.0 on CPython 3.13.14 (`pc470-py313`), compat brand;
 //! * `goldens/snp.json`: a real CPython 3.13.14 argparse built from `export_json(SNP_SPEC, "snp")`, cross-checked by
 //!   the generator against the prog-patched oracle for every parser identical to pre-commit's.
 //!

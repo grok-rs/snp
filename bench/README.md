@@ -16,7 +16,7 @@ against.
 ## Running
 
 ```sh
-cargo xtask oracle install          # pre-commit 4.6.2 on CPython 3.12.3 (target/oracle/pc462-py312)
+cargo xtask oracle install          # pre-commit 4.7.0 on CPython 3.12.3 (target/oracle/pc470-py312)
 cargo xtask bench setup             # hyperfine 1.19.0, prek 0.5.5, fixtures, snp (dist), warm stores
 cargo xtask bench run               # target/bench/results/current.json
 cargo xtask bench gate              # budgets + regression against the last history record

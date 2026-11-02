@@ -35,21 +35,21 @@ pub struct TestEnv {
     alias: Arc<OnceLock<PathBuf>>,
 }
 
-/// The pre-commit 4.6.2 oracle venvs built by `cargo xtask oracle install`.
+/// The pre-commit 4.7.0 oracle venvs built by `cargo xtask oracle install`.
 #[derive(Copy, Clone, Debug)]
 #[non_exhaustive]
 pub enum Oracle {
-    /// `target/oracle/pc462-py312` (CPython 3.12.3).
-    Pc462Py312,
-    /// `target/oracle/pc462-py313` (CPython ≥ 3.13.14).
-    Pc462Py313,
+    /// `target/oracle/pc470-py312` (CPython 3.12.3).
+    Pc470Py312,
+    /// `target/oracle/pc470-py313` (CPython ≥ 3.13.14).
+    Pc470Py313,
 }
 
 impl Oracle {
     const fn dir_name(self) -> &'static str {
         match self {
-            Self::Pc462Py312 => "pc462-py312",
-            Self::Pc462Py313 => "pc462-py313",
+            Self::Pc470Py312 => "pc470-py312",
+            Self::Pc470Py313 => "pc470-py313",
         }
     }
 }

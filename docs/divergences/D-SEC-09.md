@@ -9,7 +9,7 @@ Shebang lines are read at most 64 KiB deep; a longer first line counts as "no sh
 
 ## Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | shebang reads are unbounded | shebang line capped at 64 KiB (file-identify) |
 
@@ -33,7 +33,7 @@ interpret the script (which truncates the line at 256 bytes). Exit statuses for 
 `long.sh` (mode 755) = `#!/bin/echo ` + 70 000 × `a` + `\n`; a local hook `entry: ./long.sh`, `language: system`,
 `pass_filenames: false`, `verbose: true`; `run --all-files` on Linux ≥ 5.1.
 
-pre-commit 4.6.2 (verified with `pre_commit.xargs.xargs(('./long.sh',), ())` of the 4.6.2 oracle): `normalize_cmd`
+pre-commit 4.7.0 (verified with `pre_commit.xargs.xargs(('./long.sh',), ())` of the 4.7.0 oracle): `normalize_cmd`
 returns `('/bin/echo', 'a'×70000, './long.sh')`; the hook output is 70 011 bytes: 70 000 × `a` + ` ./long.sh\n`.
 
 snp: no shebang is parsed, `./long.sh` is spawned directly and the kernel runs `/bin/echo` with the first 256 bytes of

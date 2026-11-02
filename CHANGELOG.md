@@ -4,6 +4,22 @@ All notable changes to snp are documented here. The format follows [Keep a Chang
 and the project uses [Semantic Versioning](https://semver.org/). A release tag `vX.Y.Z` requires a `## [X.Y.Z]`
 section (`cargo xtask release gates` checks it, and the GitHub release notes are that section).
 
+## [Unreleased]
+
+Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
+
+### Changed
+
+- The compat brand is pre-commit 4.7.0: `pre-commit --version` prints `pre-commit 4.7.0`, `minimum_pre_commit_version`
+  compares against 4.7.0 (a config requiring `4.7.0` is now accepted), and the `version … is installed` message and
+  the crash log's `pre-commit version:` line name 4.7.0. pre-commit 4.7.0 differs from 4.6.2 only in
+  `language: node` installs, which now run `npm install` without the `GIT_*` variables git exports to hooks
+  (pre-commit#3774); snp already did, so no runtime behaviour changes.
+- Divergence D-SEC-05 is narrowed to the pip/uv, cargo and gem installers and snp-owned repositories: the node
+  installer is now parity with pre-commit.
+- The differential-test oracles are `target/oracle/pc470-py312` and `pc470-py313` (`cargo xtask oracle install`, lock
+  `xtask/oracle/requirements-pc470.txt`); rerun `cargo xtask oracle install` after updating.
+
 ## [2.0.0] - 2026-11-02
 
 snp 2.0.0 is a complete rewrite: a drop-in replacement for pre-commit 4.6.2. It shares only the name with the

@@ -1,7 +1,7 @@
 {
   "generator": "cargo xtask cli-goldens",
   "brand": "compat",
-  "source": "pre-commit 4.6.2 (target/oracle/pc462-py313)",
+  "source": "pre-commit 4.7.0 (target/oracle/pc470-py313)",
   "cases": [
     {
       "id": "COLUMNS=10 -h",
@@ -2475,7 +2475,7 @@
         "COLUMNS": "80"
       },
       "exit": 0,
-      "stdout": "pre-commit 4.6.2\n",
+      "stdout": "pre-commit 4.7.0\n",
       "stderr": "",
       "ns": null
     },
@@ -2615,7 +2615,7 @@
         "COLUMNS": "80"
       },
       "exit": 0,
-      "stdout": "pre-commit 4.6.2\n",
+      "stdout": "pre-commit 4.7.0\n",
       "stderr": "",
       "ns": null
     },
@@ -2628,7 +2628,7 @@
         "COLUMNS": "80"
       },
       "exit": 0,
-      "stdout": "pre-commit 4.6.2\n",
+      "stdout": "pre-commit 4.7.0\n",
       "stderr": "",
       "ns": null
     },
@@ -2641,7 +2641,7 @@
         "COLUMNS": "80"
       },
       "exit": 0,
-      "stdout": "pre-commit 4.6.2\n",
+      "stdout": "pre-commit 4.7.0\n",
       "stderr": "",
       "ns": null
     },
@@ -2654,7 +2654,7 @@
         "COLUMNS": "80"
       },
       "exit": 0,
-      "stdout": "pre-commit 4.6.2\n",
+      "stdout": "pre-commit 4.7.0\n",
       "stderr": "",
       "ns": null
     },
@@ -2669,7 +2669,7 @@
         "COLUMNS": "80"
       },
       "exit": 0,
-      "stdout": "pre-commit 4.6.2\n",
+      "stdout": "pre-commit 4.7.0\n",
       "stderr": "",
       "ns": null
     },
@@ -2682,7 +2682,7 @@
         "COLUMNS": "80"
       },
       "exit": 0,
-      "stdout": "pre-commit 4.6.2\n",
+      "stdout": "pre-commit 4.7.0\n",
       "stderr": "",
       "ns": null
     },
@@ -7543,7 +7543,7 @@
         "PRE_COMMIT_COLOR": "bogus"
       },
       "exit": 0,
-      "stdout": "pre-commit 4.6.2\n",
+      "stdout": "pre-commit 4.7.0\n",
       "stderr": "",
       "ns": null
     },
@@ -7755,7 +7755,7 @@
         "COLUMNS": "10"
       },
       "exit": 0,
-      "stdout": "pre-commit\n4.6.2\n",
+      "stdout": "pre-commit\n4.7.0\n",
       "stderr": "",
       "ns": null
     },
@@ -7768,7 +7768,7 @@
         "COLUMNS": "1"
       },
       "exit": 0,
-      "stdout": "pre-commit\n4.6.2\n",
+      "stdout": "pre-commit\n4.7.0\n",
       "stderr": "",
       "ns": null
     },

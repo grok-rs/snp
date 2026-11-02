@@ -199,7 +199,7 @@ jobs:
           DIVERGENCES: ${{ matrix.divergences }}
       - uses: astral-sh/setup-uv@v6
         if: ${{ matrix.divergences != '' && needs.tasks.outputs.difftest == 'ready' }}
-      - name: Oracle (pre-commit 4.6.2)
+      - name: Oracle (pre-commit 4.7.0)
         if: ${{ matrix.divergences != '' && needs.tasks.outputs.difftest == 'ready' }}
         run: cargo xtask oracle install
       # ADR-063: the differences on old git are registered divergences; the harness fails when one stops reproducing.

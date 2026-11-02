@@ -2,7 +2,7 @@
 #
 # * micro:  criterion micro-benches (`cargo bench -p snp`) + `cargo xtask bench gate --micro` (the exact W1/W2
 #           thresholds; the perf-smoke tests of ci.yml only catch a 3x regression).
-# * e2e:    hyperfine scenarios B1-B12 of snp (dist) vs pre-commit 4.6.2 (pc462-py312) and prek 0.5.5 on the Linux
+# * e2e:    hyperfine scenarios B1-B12 of snp (dist) vs pre-commit 4.7.0 (pc470-py312) and prek 0.5.5 on the Linux
 #           reference runner. Pull requests compare against the base commit built on the same runner and get a PR
 #           comment; main and the nightly compare against the JSON-lines history and append to it. The nightly
 #           also enforces the syscall ceiling (`strace -f -c`, B1 <= 64) and the B3 allocation budget (dhat).

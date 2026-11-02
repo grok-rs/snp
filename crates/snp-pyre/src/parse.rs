@@ -3,7 +3,7 @@
 //! of `re/_compiler.py` (look-behind widths, the `(?t)` template rule) computed bottom-up.
 //!
 //! The recursion of `_parse_sub`/`_parse` is replaced by an explicit frame stack. Python's `nested` argument
-//! is tracked exactly and bounded by [`PARSE_NEST_LIMIT`], the depth at which pre-commit 4.6.2 raises
+//! is tracked exactly and bounded by [`PARSE_NEST_LIMIT`], the depth at which pre-commit 4.7.0 raises
 //! `RecursionError` (01 Addendum §A.4: 484 nested groups accepted, 485 rejected), or for bytes patterns by
 //! [`PYGREP_NEST_LIMIT`], pygrep's (494 accepted, 495 rejected).
 //!
@@ -23,7 +23,7 @@ use crate::options::Mode;
 use crate::tok::{Tok, Tokenizer, unit_char};
 use crate::unicode;
 
-/// The largest `nested` argument of a `_parse` frame that pre-commit 4.6.2 survives (01 Addendum §A.4, §A.6.2
+/// The largest `nested` argument of a `_parse` frame that pre-commit 4.7.0 survives (01 Addendum §A.4, §A.6.2
 /// P6): each group costs two frames (`_parse_sub` + `_parse`), each conditional branch one, so 484 nested groups
 /// (innermost `_parse` at `nested = 969`) and 969 nested conditionals (`nested = 970`) compile, while 485 groups
 /// (whose `_parse_sub` sits at `nested = 970`) and 970 conditionals raise `RecursionError` (calibrated against

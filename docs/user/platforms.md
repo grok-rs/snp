@@ -77,7 +77,7 @@ reports are published as workflow artifacts.
 
 ## Manual release checklist
 
-Some contexts cannot run in CI. Before each release they are checked by hand, with snp and with pre-commit 4.6.2 for
+Some contexts cannot run in CI. Before each release they are checked by hand, with snp and with pre-commit 4.7.0 for
 comparison:
 
 * **mintty (Git Bash default):** `git commit` with a failing hook — no ANSI colour from either tool, the same lines.

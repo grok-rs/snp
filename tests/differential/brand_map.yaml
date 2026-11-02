@@ -1,7 +1,7 @@
 # brand_map: the machine-readable form of COMPATIBILITY §3.3 / ARCHITECTURE §9.6 (ADR-023, ADR-058).
 #
-# snp-difftest applies it to every NON-argparse text of the prog-patched pre-commit 4.6.2 oracle
-# (`target/oracle/pc462-py313/bin/pre-commit-snp-prog`) in snp-brand runs, then requires byte equality with snp.
+# snp-difftest applies it to every NON-argparse text of the prog-patched pre-commit 4.7.0 oracle
+# (`target/oracle/pc470-py313/bin/pre-commit-snp-prog`) in snp-brand runs, then requires byte equality with snp.
 # argparse texts (usage, help, usage errors) are never substituted: they are rendered with prog `snp`.
 #
 # Created by WP-00 from COMPATIBILITY §3.3; owned by WP-35 (snp-difftest validates it at load: `version: 1`, non-empty
@@ -9,13 +9,13 @@
 version: 1
 
 # A line exactly equal to `from` becomes `to`; applied before the substring rules (a plain substitution would give
-# `snp 4.6.2`).
+# `snp 4.7.0`).
 whole_line:
-  - from: "pre-commit 4.6.2"
-    to: "snp 2.0.0"
-  # The prog-patched oracle renders argparse's `%(prog)s 4.6.2` version action as `snp 4.6.2`.
-  - from: "snp 4.6.2"
-    to: "snp 2.0.0"
+  - from: "pre-commit 4.7.0"
+    to: "snp 2.0.1"
+  # The prog-patched oracle renders argparse's `%(prog)s 4.7.0` version action as `snp 4.7.0`.
+  - from: "snp 4.7.0"
+    to: "snp 2.0.1"
 
 # Substring rules, applied in this order to every non-argparse line of stdout and stderr.
 substitutions:
@@ -64,8 +64,8 @@ substitutions:
   # identify / min-version (clientlib.py:46,57-61)
   - from: "Try upgrading identify and pre-commit?"
     to: "Try upgrading snp?"
-  - from: " is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`."
-    to: " is required but snp 2.0.0 is compatible with pre-commit 4.6.2.  Perhaps upgrade snp."
+  - from: " is required but version 4.7.0 is installed.  Perhaps run `pip install --upgrade pre-commit`."
+    to: " is required but snp 2.0.1 is compatible with pre-commit 4.7.0.  Perhaps upgrade snp."
   # migration mode (hook_impl.py:22-29)
   - from: "bug: pre-commit's script is installed in migration mode"
     to: "bug: snp's script is installed in migration mode"
@@ -79,8 +79,8 @@ substitutions:
   # the same path joined by os.path on Windows
   - from: "\\pre-commit.log"
     to: "\\snp.log"
-  - from: "pre-commit version: 4.6.2"
-    to: "snp version: 2.0.0"
+  - from: "pre-commit version: 4.7.0"
+    to: "snp version: 2.0.1"
 
 # Never substituted (a rule that would touch one of these is a bug of this file).
 never:

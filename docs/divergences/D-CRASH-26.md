@@ -9,14 +9,14 @@
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | git < 2.31: `run --all-files`, the pre-push root push and the meta hooks call `ls-files -z --deduplicate` → `CalledProcessError` (rc 129) exit 3 (a traceback inside the meta hook's output) (02 G.3) | `ls-files -z` + adjacent dedup (byte-identical list); the real flag is kept on ≥ 2.31 for argv parity in error texts |
 
 ## Rationale
 
 `git.get_all_files` (`git.py:154-155`) has used `git ls-files -z --deduplicate` since pre-commit 4.6.1;
-`--deduplicate` exists from git 2.31.0. pre-commit 4.6.2 has no version check, so on git 2.19–2.30 (Debian 11 ships
+`--deduplicate` exists from git 2.31.0. pre-commit 4.7.0 has no version check, so on git 2.19–2.30 (Debian 11 ships
 2.30.2, Ubuntu 20.04 2.25.1, older macOS Xcode 2.30–2.32) every `--all-files` run, every pre-push of a new history
 and the `check-hooks-apply`/`check-useless-excludes` meta hooks die with git's usage error — while the default staged
 run works (02 G.3). ADR-063 keeps every such git usable: snp never refuses an old git, it falls back.

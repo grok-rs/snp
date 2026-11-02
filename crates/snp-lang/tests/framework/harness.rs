@@ -226,7 +226,7 @@ fn the_python_logger_speaks_the_same_format() {
 
     use snp_lang::harness::GoldenCall;
     let oracle =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/oracle/pc462-py312/bin/python");
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/oracle/pc470-py312/bin/python");
     // Not macOS's /usr/bin/python3: that xcrun shim adds CPATH, LIBRARY_PATH and MANPATH to the environment of the
     // Python it execs, which the logger would then record.
     let host = (!cfg!(target_os = "macos")).then_some(Path::new("/usr/bin/python3"));

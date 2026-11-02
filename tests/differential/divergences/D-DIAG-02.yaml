@@ -1,6 +1,6 @@
 # D-DIAG-02 (DIAG, owner WP-33): M1/M1b/M2/M3/M12 notes on stderr when replacing other managers' scripts
 # Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands`, `expect_divergence` and `expected` (ARCHITECTURE §13.2).
-# pre-commit holds a pre-commit 4.6.2 script (INSTALL_PYTHON=/old/python), pre-push a prek script. stdout and
+# pre-commit holds a pre-commit 4.7.0 script (INSTALL_PYTHON=/old/python), pre-push a prek script. stdout and
 # exit are pre-commit's (`pre-commit installed at …`); stderr carries snp's M1 and M3 notes only.
 name: divergences/D-DIAG-02-migration-notes
 expect_divergence: D-DIAG-02

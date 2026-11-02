@@ -1,4 +1,4 @@
-//! Native pygrep against `python -m pre_commit.languages.pygrep` (pre-commit 4.6.2, CPython 3.13): every row of
+//! Native pygrep against `python -m pre_commit.languages.pygrep` (pre-commit 4.7.0, CPython 3.13): every row of
 //! 04a §8.4, the §12.5 vectors and the 10 pygrep-hooks patterns from `cases.json`, recorded by
 //! `cargo xtask pch-goldens pygrep` (WP-26 acceptance; X13-EXE-07; ADR-072 flag-shaped file names).
 //!

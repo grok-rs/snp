@@ -10,7 +10,7 @@ silent, exit 120, stash restored
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | stdout closed (EPIPE) → chained Python tracebacks on stderr, exit 120 (X13-EH-03) | silent, exit 120, stash restored |
 
@@ -30,12 +30,12 @@ writing anything to stderr and without a crash log (ARCHITECTURE §10.3; S4 "fai
 
 Any other stdout write error is treated the same way: ENOSPC (`> /dev/full`), EIO or EAGAIN latch the Printer as
 EPIPE does (`snp::envelope::FailClosedStdout`), so the command exits 120 silently instead of 0 with its output lost.
-pre-commit 4.6.2 also exits 120 there (CPython's shutdown flush fails: `Exception ignored in: <_io.TextIOWrapper
+pre-commit 4.7.0 also exits 120 there (CPython's shutdown flush fails: `Exception ignored in: <_io.TextIOWrapper
 name='<stdout>' ...>` / `OSError: [Errno 28] No space left on device`). Test: `errors::x13_eh_03_stdout_full`.
 
 A stdout that is already closed when the process starts (`snp sample-config >&-`) is not a write error for snp: the
 Rust runtime reopens fds 0-2 on `/dev/null` before `main` (so no file snp opens can become fd 1 and receive output),
-and the command behaves as under `> /dev/null` (exit 0). pre-commit 4.6.2 exits 1 with an import-time traceback
+and the command behaves as under `> /dev/null` (exit 0). pre-commit 4.7.0 exits 1 with an import-time traceback
 (`sys.stdout` is `None`), an interpreter crash rather than a designed status. Test:
 `errors::x13_eh_03_stdout_closed_at_start_is_dev_null`.
 
@@ -45,7 +45,7 @@ Python traceback that describes the interpreter's own failure to report a closed
 ## Examples
 
 ```text
-$ { sleep 0.5; pre-commit sample-config; } | true          # pre-commit 4.6.2
+$ { sleep 0.5; pre-commit sample-config; } | true          # pre-commit 4.7.0
 Exception ignored on flushing sys.stdout:
 BrokenPipeError: [Errno 32] Broken pipe
 $ # exit 120

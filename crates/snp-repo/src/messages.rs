@@ -1,6 +1,6 @@
 //! Every user-visible text snp-repo produces (ARCHITECTURE §1.3 "Messages").
 //!
-//! The compat brand is pre-commit 4.6.2 byte for byte (`store.py`, `clientlib.py`, `repository.py`); the snp brand is
+//! The compat brand is pre-commit 4.7.0 byte for byte (`store.py`, `clientlib.py`, `repository.py`); the snp brand is
 //! the `brand_map` substitution of the same text (only the tool name in the autoupdate hint changes). The texts
 //! that `snp-config` (unknown id, env-less guards), `snp-store` (lock contention) and `snp-lang` (support checks)
 //! own are used through those crates.

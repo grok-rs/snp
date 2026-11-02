@@ -9,7 +9,7 @@ uv-managed download into the store (`SNP_PYTHON_DOWNLOADS=never` restores the fa
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | explicitly requested Python version not installed → install crash exit 3 | uv-managed download into the store (`SNP_PYTHON_DOWNLOADS=never` restores the failure) |
 
@@ -40,12 +40,12 @@ installer (`SNP_PYTHON_INSTALLER=pip`) has no discovery and fails like pre-commi
 ## Examples
 
 A local hook pinned to `language_version: python3.11` on a host that has only 3.12 and 3.13
-(`tests/differential/divergences/D-CRASH-19.yaml`). Note that the virtualenv pinned with pre-commit 4.6.2 (21.x)
+(`tests/differential/divergences/D-CRASH-19.yaml`). Note that the virtualenv pinned with pre-commit 4.7.0 (21.x)
 also discovers uv-managed interpreters in uv's default directory (verified: with a uv-managed 3.11.13 present it
 builds the environment from it), and so does snp's `uv python find`; the scenario needs a host where neither `PATH`
 nor uv's directory has 3.11.
 
-pre-commit 4.6.2, exit 3 — the install lines, then the `CalledProcessError` of the virtualenv command, whose output
+pre-commit 4.7.0, exit 3 — the install lines, then the `CalledProcessError` of the virtualenv command, whose output
 carries virtualenv's `RuntimeError: failed to find interpreter for Builtin discover of python_spec='python3.11'`
 (04a §2.2 observed the same text for `python_spec='system'`):
 

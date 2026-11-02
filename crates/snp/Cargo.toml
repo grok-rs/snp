@@ -1,6 +1,6 @@
 [package]
 name = "snp"
-description = "You Shell Not Pass: a drop-in replacement for pre-commit 4.6.2 with lefthook-inspired extensions"
+description = "You Shell Not Pass: a drop-in replacement for pre-commit 4.7.0 with lefthook-inspired extensions"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

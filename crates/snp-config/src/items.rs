@@ -2,7 +2,7 @@
 //! functions they share.
 //!
 //! Every item reproduces its Python counterpart's `check` / `apply_default` exactly: the same contexts (`At key:`
-//! added manually where 4.6.2 adds it), the same messages, the same warning order through `Cx`. Where pre-commit
+//! added manually where 4.7.0 adds it), the same messages, the same warning order through `Cx`. Where pre-commit
 //! raises a non-`ValidationError` (unhashable stage/language/tag values, `int()` failures in `parse_version`), the
 //! Rust port produces the validation error that pre-commit's intent implies (D-CRASH-01, D-CRASH-03).
 //!
@@ -31,7 +31,7 @@ pub(crate) const BUILTIN: &str = "builtin";
 pub(crate) const LEGACY_STAGES: [&str; 3] = ["commit", "merge-commit", "push"];
 
 /// `parse_version(C.VERSION)`.
-const PRE_COMMIT_VERSION: [i128; 3] = [4, 6, 2];
+const PRE_COMMIT_VERSION: [i128; 3] = [4, 7, 0];
 
 /// `transform_stage` over a value: strings are looked up, every other value passes through unchanged (where
 /// Python's dict lookup would raise `TypeError` for an unhashable value, the value is kept and fails the one-of
@@ -689,9 +689,9 @@ mod tests {
 
     #[test]
     fn min_version_errors() {
-        assert!(min_version_error(Brand::PreCommit, "4.6.2").is_none());
+        assert!(min_version_error(Brand::PreCommit, "4.7.0").is_none());
         assert!(min_version_error(Brand::PreCommit, "0").is_none());
-        assert!(min_version_error(Brand::PreCommit, "4.6.2.0").is_some());
+        assert!(min_version_error(Brand::PreCommit, "4.7.0.0").is_some());
         assert_eq!(
             min_version_error(Brand::PreCommit, "abc").map(|e| e.message().to_owned()),
             Some("invalid literal for int() with base 10: 'abc'".to_owned())

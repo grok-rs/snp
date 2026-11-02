@@ -11,7 +11,7 @@ A read-only file that needs no change passes `end-of-file-fixer`.
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `end-of-file-fixer` (and the other fixers) on a read-only file that needs no change → crash in the hook | passes (opens for writing only when a change is needed) |
 
@@ -38,7 +38,7 @@ spurious crash becomes the result the hook would have had with write permission.
 A repository with `ro.txt` = `ok\n` (mode 0444) and `b.txt` = `x` (no newline), hook `end-of-file-fixer` (any tag),
 partition order `ro.txt b.txt`:
 
-pre-commit 4.6.2 (hook output, `- exit code: 1`, `b.txt` unchanged):
+pre-commit 4.7.0 (hook output, `- exit code: 1`, `b.txt` unchanged):
 
 ```
 Traceback (most recent call last):

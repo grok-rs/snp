@@ -4,7 +4,7 @@
 //! check passes, `install_environment` is `lang_base.no_install` (an `AssertionError`, unreachable because hook
 //! resolution never installs them), `in_env` is a no-op. Only `plan` differs:
 //!
-//! | language | `run_hook` (pre-commit 4.6.2) | snp [`RunPlan`] |
+//! | language | `run_hook` (pre-commit 4.7.0) | snp [`RunPlan`] |
 //! |---|---|---|
 //! | `fail` | `(1, f'{entry}\n\n' + '\n'.join(files) + '\n')` (`fail.py:15-27`) | `Fail { entry }` (in-process) |
 //! | `pygrep` | `xargs((sys.executable, '-m', 'pre_commit.languages.pygrep', *args, entry), files)`, serial, unshuffled (`pygrep.py:90-101`) | `Pygrep { args, entry }` (in-process) |

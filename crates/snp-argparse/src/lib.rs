@@ -1,7 +1,7 @@
 //! CPython 3.13 `argparse`-compatible parser and `HelpFormatter` driven by static [`ParserSpec`] tables
 //! (ARCHITECTURE §1.4.3, §9.1, 12 §A.13, ADR-010).
 //!
-//! A port of `Lib/argparse.py` and `Lib/textwrap.py` of CPython 3.13.14 for the subset pre-commit 4.6.2
+//! A port of `Lib/argparse.py` and `Lib/textwrap.py` of CPython 3.13.14 for the subset pre-commit 4.7.0
 //! (`pre_commit/main.py`), `pygrep.py`, `hazmat.py` and the pre-commit-hooks console scripts use: optionals and
 //! positionals, `nargs` (`None`, `?`, `*`, `+`, `REMAINDER`, `PARSER`), the `store`/`store_true`/`store_false`/
 //! `store_const`/`append`/`help`/`version` actions, `choices`, mutually exclusive groups, sub-parsers (listed and

@@ -1,4 +1,4 @@
-//! CPython 3.12 stdlib semantics (+ the 3.13 delta) that pre-commit 4.6.2 relies on, verified by
+//! CPython 3.12 stdlib semantics (+ the 3.13 delta) that pre-commit 4.7.0 relies on, verified by
 //! committed vectors (docs/research/15-python-semantics-shims.md §A1–§A7).
 //!
 //! This is the frozen production contract of ARCHITECTURE §1.4.2 (ADR-056). The crate has **no

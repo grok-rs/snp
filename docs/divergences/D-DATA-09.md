@@ -9,7 +9,7 @@ UTF-8 always, each line's original EOL kept, atomic replace keeping the mode
 
 ## Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | migrate-config/autoupdate read/write with the locale encoding and rewrite CRLF files as LF; non-atomic writes | UTF-8 always, each line's original EOL kept, atomic replace keeping the mode |
 
@@ -39,6 +39,6 @@ Input (CRLF endings):
         stages: [commit]␍␊
 ```
 
-pre-commit 4.6.2 on Linux writes `repos:\n-   repo: local\n …        stages: [pre-commit]\n` (every ending LF).
+pre-commit 4.7.0 on Linux writes `repos:\n-   repo: local\n …        stages: [pre-commit]\n` (every ending LF).
 snp writes `repos:\r\n-   repo: local\r\n …        stages: [pre-commit]\r\n` (every ending kept, the inserted
 line uses the file's CRLF). Both print `Configuration has been migrated.`.

@@ -229,7 +229,7 @@ fn b1_version_spawns_nothing() {
     let nl = if cfg!(windows) { "\r\n" } else { "\n" };
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        format!("snp 2.0.0{nl}")
+        format!("snp 2.0.1{nl}")
     );
     assert_eq!(log.total(), 0, "--version spawned:\n{}", log.dump());
 }

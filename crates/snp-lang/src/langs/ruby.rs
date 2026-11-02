@@ -1,6 +1,6 @@
 //! The `ruby` language backend (§6.2; `pre_commit/languages/ruby.py`).
 //!
-//! | pre-commit 4.6.2 | snp |
+//! | pre-commit 4.7.0 | snp |
 //! |---|---|
 //! | `get_default_version`: `system` iff `exe_exists('ruby') and exe_exists('gem')` | the same (`SNP_PREFER_SYSTEM_TOOLCHAINS=1` drops the `$HOME`/`shims` heuristic) |
 //! | non-system: the vendored `rbenv.tar.gz` (rbenv 1.3.2) extracted into the prefix and moved to `<env>`; for a version also `ruby-download.tar.gz` and `ruby-build.tar.gz` into `<env>/plugins`; `rbenv init -`, `rbenv download V` (falling back to `rbenv install V`), `rbenv rehash` | the same archives, embedded with their sha256 and extracted safely straight into `<env>` (D-SEC-08); the same commands |

@@ -5,12 +5,14 @@ says *how*; DECISIONS.md says *why*.
 
 ## 1. Reference
 
-* **Reference implementation:** pre-commit **4.6.2** with its pinned dependencies (cfgv 3.5.0, identify 2.6.20,
-  PyYAML 6.0.3 with libyaml `CSafeLoader`/`CSafeDumper`, virtualenv 21.14.5, nodeenv 1.11.0).
+* **Reference implementation:** pre-commit **4.7.0** with its pinned dependencies (cfgv 3.5.0, identify 2.6.20,
+  PyYAML 6.0.3 with libyaml `CSafeLoader`/`CSafeDumper`, virtualenv 21.14.5, nodeenv 1.11.0). snp 2.0.0 targeted
+  4.6.2; 4.7.0 differs from it only in `languages/node.py` (`npm install` with `no_git_env()`, which narrows
+  D-SEC-05) and the version (ADR-089).
 * **Oracles** (built hash-locked by `cargo xtask oracle install`, never taken from `PATH`):
-  * `pc462-py312` — pre-commit 4.6.2 on CPython 3.12.3: runtime behaviour, regex accept/reject and matching, the
+  * `pc470-py312` — pre-commit 4.7.0 on CPython 3.12.3: runtime behaviour, regex accept/reject and matching, the
     performance baselines of 10 §0 (`--version` 172 ms, 1-hook run 234 ms, 10-hook run 243 ms);
-  * `pc462-py313` — pre-commit 4.6.2 on CPython ≥ 3.13.14: argparse help/usage/error texts (canonical; identical to
+  * `pc470-py313` — pre-commit 4.7.0 on CPython ≥ 3.13.14: argparse help/usage/error texts (canonical; identical to
     3.14.8 texts).
 * **Pre-commit-hooks** fast-path references: upstream tags v3.0.0 … v6.0.0, each in a pinned venv on CPython 3.13.
 * **Python semantics profiles** per subsystem: ARCHITECTURE §0.3 (regex grammar CPython 3.12 with UCD 16 data;
@@ -20,7 +22,7 @@ says *how*; DECISIONS.md says *why*.
 
 | # | Contract | How it is proven |
 |---|---|---|
-| K1 | **Inputs.** Every `.pre-commit-config.yaml` / `.pre-commit-hooks.yaml` that pre-commit 4.6.2 accepts is accepted with identical meaning; every one it rejects is rejected with the identical message — except where pre-commit crashes (§5, CRASH). | YAML/schema corpus through the differential oracle |
+| K1 | **Inputs.** Every `.pre-commit-config.yaml` / `.pre-commit-hooks.yaml` that pre-commit 4.7.0 accepts is accepted with identical meaning; every one it rejects is rejected with the identical message — except where pre-commit crashes (§5, CRASH). | YAML/schema corpus through the differential oracle |
 | K2 | **Bytes.** For configs that use no snp extension, in the **compat brand**, stdout, stderr and exit code are byte-identical to the oracle (Tier A), except registered divergences. In the **snp brand** the reference is the oracle run with argparse `prog` patched to `snp` (so usage/help/error blocks are wrapped exactly as argparse wraps them for the shorter prog), with the deterministic `brand_map` (§3.3) applied to every non-argparse text; snp's bytes must then be identical. Parsers that carry snp-only options are compared with the WP-12 goldens rendered by a real CPython argparse built from `SNP_SPEC` (D-EXT-07). | `snp-difftest` runs every scenario in both brands |
 | K3 | **Side effects.** Worktree bytes and modes, index (`git ls-files -s`), refs, stash list and the behaviour of installed hook scripts are identical. | difftest snapshots tree/index/refs after each step |
 | K4 | **Divergence policy.** snp differs only (a) where pre-commit crashes (exit-3 traceback, double fault, hang), (b) where it loses or corrupts user data, (c) where it has a security bug, or (d) where an owner decision forces it (FD-1 branding, FD-2 own store, FD-5 no `unsafe`, FD-7 uv/performance, FD-8 fast path, extensions that are active only when used). Every divergence has an ID below, a rationale, and a differential scenario asserting it **still diverges**. | `tests/differential/divergences/<ID>.yaml`; an unexpectedly matching scenario fails CI |
@@ -29,7 +31,7 @@ says *how*; DECISIONS.md says *why*.
 
 **Comparison tiers.** **A** byte-exact. **B** semantic — same exit code and stream, structured comparison: crash-log
 body below the version block, Python tracebacks reduced to their last line, usage/help blocks compared against the
-`pc462-py312` oracle with the documented 12 §A.4.1 deltas, localized `[WinError N]` texts until verified on Windows
+`pc470-py312` oracle with the documented 12 §A.4.1 deltas, localized `[WinError N]` texts until verified on Windows
 runners. **C** ignored — durations, stash patch file names and pids, random directory suffixes, store root paths (the
 stores differ by design), installer chatter between `Installing environment` lines, xargs partition boundaries within a
 few bytes of ARG_MAX (synthetic interpreter prefix).
@@ -48,28 +50,28 @@ distribution.
 
 ### 3.2 Compat brand
 
-Every byte as pre-commit 4.6.2 — command set, help, usage, choices lists, abbreviations, messages, `--version`
-(`pre-commit 4.6.2`), the min-version hint (`Perhaps run \`pip install --upgrade pre-commit\`.`), pre-commit's bug URL in
+Every byte as pre-commit 4.7.0 — command set, help, usage, choices lists, abbreviations, messages, `--version`
+(`pre-commit 4.7.0`), the min-version hint (`Perhaps run \`pip install --upgrade pre-commit\`.`), pre-commit's bug URL in
 the migration-mode text — except: store-derived paths (the store is snp's own, FD-2), the crash-log body, and the
 registered divergences. snp-only commands and flags are **not accepted** in the compat brand (pre-commit's own
 `invalid choice`/`unrecognized arguments` texts result). Environment variables (`SNP_*`) work under both brands.
 
 ### 3.3 snp brand and `brand_map`
 
-Same layout; `--version` prints `snp 2.0.0`; snp-only commands and flags are available.
+Same layout; `--version` prints `snp 2.0.1`; snp-only commands and flags are available.
 
 **argparse texts** (usage, help, usage errors: `usage: snp …`, `snp: error: …`, `snp run: error: …`) are **not** produced
 by substitution: argparse wraps them relative to `usage: {prog} {cmd} `, so the shorter prog moves wrap points and
 continuation indentation. They are rendered by snp-argparse from `SNP_SPEC` with prog `snp` and tested against the
-pc462-py313 oracle with argparse `prog` patched to `snp` (parsers identical to pre-commit's) and against a real CPython
+pc470-py313 oracle with argparse `prog` patched to `snp` (parsers identical to pre-commit's) and against a real CPython
 3.13 argparse built from `snp_argparse::export_json(SNP_SPEC, "snp")` (parsers with snp-only options; ADR-058).
 
 **Every other text** is the compat text with these substitutions only (`tests/differential/brand_map.yaml` is the
 machine-readable form; the difftest applies it to the prog-patched oracle's output and then requires byte equality):
 
-| Compat text (pre-commit 4.6.2) | snp brand |
+| Compat text (pre-commit 4.7.0) | snp brand |
 |---|---|
-| `--version` / `-V` line `pre-commit 4.6.2` (whole-line rule: a plain substitution would give `snp 4.6.2`) | `snp 2.0.0` |
+| `--version` / `-V` line `pre-commit 4.7.0` (whole-line rule: a plain substitution would give `snp 4.7.0`) | `snp 2.0.1` |
 | `pre-commit installed at {path}` | `snp installed at {path}` (`{hook_type} uninstalled`, e.g. `pre-commit uninstalled`, names the hook type and is not branded, ADR-084) |
 | `Use -f to use only pre-commit.` | `Use -f to use only snp.` |
 | ``Skipping `pre-commit`.`` | ``Skipping `snp`.`` |
@@ -78,9 +80,9 @@ machine-readable form; the difftest applies it to the prog-patched oracle's outp
 | hints `` `pre-commit autoupdate` ``, `` `pre-commit migrate-config` ``, `pre-commit autoupdate --repo …` | `snp …` |
 | `pre-commit normalizes …`, `pre-commit failed to diff …`, `for now, pre-commit requires/does not support …`, `pre-commit requires system-installed "cs" …`, `pre-commit has detected a mix of cygwin …`, `Locking pre-commit directory` | `snp …` |
 | `Try upgrading identify and pre-commit?` | `Try upgrading snp?` |
-| `pre-commit version {v} is required but version 4.6.2 is installed.  Perhaps run \`pip install --upgrade pre-commit\`.` | `pre-commit version {v} is required but snp 2.0.0 is compatible with pre-commit 4.6.2.  Perhaps upgrade snp.` |
+| `pre-commit version {v} is required but version 4.7.0 is installed.  Perhaps run \`pip install --upgrade pre-commit\`.` | `pre-commit version {v} is required but snp 2.0.1 is compatible with pre-commit 4.7.0.  Perhaps upgrade snp.` |
 | migration-mode text: `bug: pre-commit's script is installed in migration mode` / ``run `pre-commit install -f --hook-type {T}` to fix this`` / `Please report this bug at https://github.com/pre-commit/pre-commit/issues` | `bug: snp's script …` / ``run `snp install -f --hook-type {T}` …`` / `Please report this bug at https://github.com/grok-rs/snp/issues` |
-| crash-log file name `pre-commit.log`; crash-log key `pre-commit version: 4.6.2` | `snp.log`; `snp version: 2.0.0` |
+| crash-log file name `pre-commit.log`; crash-log key `pre-commit version: 4.7.0` | `snp.log`; `snp version: 2.0.1` |
 | help strings naming the tool (`main.py:222,245,273,290,299,335`) | `snp` (part of the rendered SNP_SPEC help, compared exactly against the prog-patched/JSON-built argparse references) |
 
 **Never substituted:** file names (`.pre-commit-config.yaml`, `.pre-commit-hooks.yaml`), environment variable names
@@ -90,7 +92,7 @@ cfgv object names.
 
 ## 4. Divergence policy and audit rule
 
-A difference from pre-commit 4.6.2 is admissible only in these classes; every entry of §5 names one:
+A difference from pre-commit 4.7.0 is admissible only in these classes; every entry of §5 names one:
 
 | Class | Admissible because |
 |---|---|
@@ -107,8 +109,8 @@ A difference from pre-commit 4.6.2 is admissible only in these classes; every en
 
 Rejected during the audit (now parity): chronological piped output, LF instead of CRLF for `print()` on Windows,
 `anstyle-query` colour detection, `clean` silent when the store is absent, post-rewrite stdin forwarded to legacy hooks,
-`\z` accepted in regexes, silently ignored `x-*` keys, `NO_COLOR`/`FORCE_COLOR` support, `snp X (pre-commit 4.6.2
-compatible)` / `pre-commit 4.6.2 (snp X)` version strings, snp bug URLs and upgrade hints in the compat brand,
+`\z` accepted in regexes, silently ignored `x-*` keys, `NO_COLOR`/`FORCE_COLOR` support, `snp X (pre-commit 4.7.0
+compatible)` / `pre-commit 4.7.0 (snp X)` version strings, snp bug URLs and upgrade hints in the compat brand,
 `Terminated: SIGTERM:` banners, refusing foreign-owned stores (except root over a user's store, D-SEC-13),
 `%LOCALAPPDATA%` store on Windows, lazy installation of delegated fast-path hooks, missing `Initializing`/`Installing`
 lines for fast-path repos, `--config-hooks` (broke `--conf` abbreviations), a persistent store for try-repo (dropped the
@@ -116,7 +118,7 @@ per-run `Initializing`/`Installing` lines), M1–M3 install notes on stdout, a b
 foreground-clone retry only after locale-dependent auth errors, native hooks that ignore file names shaped like flags,
 upper-case-free Windows env copies, mimalloc-less musl without measurement.
 
-## 5. DIVERGENCES register (every deliberate difference from pre-commit 4.6.2)
+## 5. DIVERGENCES register (every deliberate difference from pre-commit 4.7.0)
 
 Each ID has `docs/divergences/<ID>.md` (rationale, examples) and `tests/differential/divergences/<ID>.yaml` (a scenario
 that must keep diverging). WP-00 pre-creates both as stubs; the **first** work package in the WP column owns and fills
@@ -125,7 +127,7 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 
 ### 5.1 CRASH — pre-commit crashes or hangs; snp behaves and fails closed
 
-| ID | pre-commit 4.6.2 | snp | WP |
+| ID | pre-commit 4.7.0 | snp | WP |
 |---|---|---|---|
 | D-CRASH-01 | `minimum_pre_commit_version: "abc"` (also `""`, `"4."`, `"4.6.3rc1"`) → `ValueError` exit 3 (X13-CFG-01) | validation error leaf `invalid literal for int() with base 10: 'abc'`, exit 1 | 21 |
 | D-CRASH-02 | non-string / mixed root keys → `TypeError` exit 3 (X13-CFG-02/03) | `[WARNING] Unexpected key(s) present at root: …` (Python `str()` of the keys, sorted by type rank) | 21 |
@@ -156,7 +158,7 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 
 ### 5.2 DATA — pre-commit loses or corrupts user data
 
-| ID | pre-commit 4.6.2 | snp | WP |
+| ID | pre-commit 4.7.0 | snp | WP |
 |---|---|---|---|
 | D-DATA-01 | final stash-restore failure prints only a traceback; the user does not learn where the unstaged work is | one stderr line after the envelope: `[ERROR] Your unstaged changes are saved in <patch>; restore them with: git apply --whitespace=nowarn <patch>`, plus what to do when it does not apply (X13-STASH-02) | 23 |
 | D-DATA-02 | SIGTERM/SIGHUP kill pre-commit without restoring the stash (unstaged work only in the patch) | descendants of the cancelled hooks are killed (Linux subreaper, Windows job), then the stash is restored (restore messages printed), then death by the same signal (exit status 143/129 as before). Residual risk, documented: on macOS an orphaned descendant of an Inherit-group hook (e.g. a formatter started by a shell entry) cannot be found and may still write after the restore; the patch file is kept, so the work stays recoverable | 23, 15 |
@@ -177,10 +179,10 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 
 ### 5.3 SEC — security
 
-| ID | pre-commit 4.6.2 | snp | WP |
+| ID | pre-commit 4.7.0 | snp | WP |
 |---|---|---|---|
 | D-SEC-01 | `language_version: ../../x` (or an absolute path) makes the install step delete arbitrary directories; Windows `C:` versions break | sanitized-or-hashed env dir names; deletion contained in the repo's `envs/` | 22 |
-| D-SEC-05 | installers and snp-owned repo operations inherit `GIT_DIR`/`GIT_INDEX_FILE` (index corruption in linked worktrees; autoupdate writes partial-clone config into the user's repo — hazard c) | installers and owned repos get pre-commit's `no_git_env` allow-list | 18, 24, 25 |
+| D-SEC-05 | the pip, cargo and gem installers and snp-owned repo operations inherit `GIT_DIR`/`GIT_INDEX_FILE` (index corruption in linked worktrees; autoupdate writes partial-clone config into the user's repo — hazard c) | the pip/uv, cargo and gem installers and owned repos get pre-commit's `no_git_env` allow-list | 18, 24, 25 |
 | D-SEC-06 | clones fail when the user's git defaults to SHA-256 objects (hazard d) | one retry with the other `--object-format` after `mismatched algorithms` | 18 |
 | D-SEC-07 | unset `PATH` ⇒ activation patches produce `"<bin>:"` (cwd on PATH) | no trailing separator | 00 |
 | D-SEC-08 | toolchain downloads (node, go, rustup, ruby helpers) are not verified | TLS + sha256 verified before extraction; safe extraction | 16 |
@@ -192,18 +194,18 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 
 ### 5.4 STORE and BRAND — forced by FD-2 and FD-1
 
-| ID | pre-commit 4.6.2 | snp | WP |
+| ID | pre-commit 4.7.0 | snp | WP |
 |---|---|---|---|
 | D-STORE-01 | store `$PRE_COMMIT_HOME` or `~/.cache/pre-commit` (SQLite `db.db`); crash log `pre-commit.log` there | own store `SNP_HOME` > `$XDG_CACHE_HOME/snp` > `~/.cache/snp` (Windows `%USERPROFILE%\.cache\snp`), versioned layout, no SQLite; refuses pre-commit's store; crash log named by brand in snp's store; the crash-log body (below the version block) is snp's | 22, 33 |
 | D-STORE-02 | `clean` also removes `~/.pre-commit`; `gc`/`clean` operate on pre-commit's store | snp never touches pre-commit's directories; `clean` always prints `Cleaned {snp store}.` | 33 |
 | D-DATA-04 | restored stash patches are kept forever | gc removes *restored* patches older than 30 days (never unrestored ones); `clean` keeps journals, unrestored and < 1 h old patches, `.lock` and files outside snp's layout — class STORE | 22 |
-| D-BRAND-01 | `--version` and texts | snp brand: `snp 2.0.0`, the §3.3 substitutions and argparse texts rendered with prog `snp`; compat brand: byte-identical | 12, all |
+| D-BRAND-01 | `--version` and texts | snp brand: `snp 2.0.1`, the §3.3 substitutions and argparse texts rendered with prog `snp`; compat brand: byte-identical | 12, all |
 | D-BRAND-02 | `install` treats prek and snp 1.x hook scripts as foreign: moves them to `.legacy` and prints `Running in migration mode with existing hooks at …` / `Use -f to use only pre-commit.` (both tools then run on every commit; a pre-commit script in `.legacy` blocks every commit, 11 §A.5.2 chains C1–C4) | prek and snp 1.x scripts are manager scripts (hook-script identity): replaced in place, no `.legacy`, no migration-mode lines; `uninstall` still restores a `PreCommit`/`Prek` `.legacy` (rollback) | 33 |
 | D-MISC-02 | `pre-commit __hazmat …` → `invalid choice: '__hazmat'`, exit 2 | `argv[1] == "__hazmat"` is reserved (in-hook hazmat entry, both brands) — class BRAND | 33 |
 
 ### 5.5 PLAT — platform
 
-| ID | pre-commit 4.6.2 | snp | WP |
+| ID | pre-commit 4.7.0 | snp | WP |
 |---|---|---|---|
 | D-PLAT-02 | Windows: a missing absolute shebang interpreter (`#!/bin/sh`) fails the hook / crashes the legacy hook | falls back to the interpreter's basename on PATH (Git for Windows semantics) | 15 |
 | D-PLAT-03 | Windows: batch-file (`.cmd`/`.bat`) arguments with `&`, `^`, `%VAR%` are interpreted by cmd.exe | Rust's BatBadBut-safe quoting; arguments containing CR/LF fail the hook with ``Executable `{cmd0}` cannot receive an argument containing a line break: {repr}`` (rc 1) — class SEC | 15 |
@@ -215,7 +217,7 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 
 ### 5.6 PERF — forced by FD-7/FD-8, invisible in hook output
 
-| ID | pre-commit 4.6.2 | snp | WP |
+| ID | pre-commit 4.7.0 | snp | WP |
 |---|---|---|---|
 | D-PERF-01 | Python envs built with virtualenv + pip | uv (`--seed`) with pip-config translation and a pip fallback; seeded packages may differ in version, and uv's resolver can differ on pre-releases, yanked versions and extra-index strategy (FD-7); `SNP_PYTHON_INSTALLER=pip` restores pip's resolver per env (ADR-073) | 24 |
 | D-PERF-02 | local `language: python` hooks without deps `pip install` a placeholder package | placeholder install skipped | 24 |
@@ -249,7 +251,7 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 
 ### 5.9 TIERB — Python-internal bytes
 
-| ID | pre-commit 4.6.2 | snp | WP |
+| ID | pre-commit 4.7.0 | snp | WP |
 |---|---|---|---|
 | D-MISC-04 | regex `FutureWarning` lines: `…/cfgv.py:386: FutureWarning: Possible nested set at position 1` + `  re.compile(v)` on stderr | one stderr line per distinct (pattern, warning): `[WARNING] regex {pattern!r}: {msg} (Python FutureWarning)`; `SNP_PYTHON_WARNINGS=0` silences | 21 |
 | D-MISC-05 | invalid pygrep entry: one full traceback per xargs partition | one line in Python's form (`re.error: … at position N`), exit 1 | 26 |

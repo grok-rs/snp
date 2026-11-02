@@ -75,7 +75,7 @@ mod api {
         has::<fn(&TestEnv, Oracle, &Path) -> Option<Cmd>>(TestEnv::oracle);
         has::<fn(&TestEnv) -> Vec<(String, String)>>(TestEnv::filters);
         has::<fn(&TestEnv) -> &Path>(TestEnv::probe);
-        has::<[Oracle; 2]>([Oracle::Pc462Py312, Oracle::Pc462Py313]);
+        has::<[Oracle; 2]>([Oracle::Pc470Py312, Oracle::Pc470Py313]);
         has::<[Fixture; 11]>([
             Fixture::Resource("script_hooks_repo"),
             Fixture::MergeConflict,

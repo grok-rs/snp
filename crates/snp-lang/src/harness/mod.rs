@@ -3,7 +3,7 @@
 //! Backends run setup and probe commands only through [`CmdRunner`]; in tests the runner is a [`ShimRunner`], which
 //! records every call ([`Recorded`]: argv as given, cwd, environment delta against a base env) and replays scripted
 //! [`Reply`]s (optionally with a side effect, e.g. creating the files the next step expects). WP-24/WP-25 compare
-//! these records with logs recorded from pre-commit 4.6.2 running the same scenario with fake tools on `PATH`
+//! these records with logs recorded from pre-commit 4.7.0 running the same scenario with fake tools on `PATH`
 //! ([`install_shims`]), both rendered in the **golden log format v1**:
 //!
 //! * UTF-8 text, one JSON object per line and per call, in call order, compact separators (`,` `:`), no ASCII

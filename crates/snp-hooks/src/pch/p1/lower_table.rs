@@ -1,6 +1,6 @@
 //! GENERATED — do not edit. CPython `str.lower()` simple mappings (UCD 15.1.0, identical for CPython 3.12's UCD
 //! 15.0.0): every code point whose `chr(cp).lower()` is one other code point, sorted. The single multi-code-point
-//! mapping, U+0130 -> U+0069 U+0307, is handled in `kernels::py_lower`; [`SIGMA_CONTEXT`] holds CPython's `_PyUnicode_IsCaseIgnorable` / `_PyUnicode_IsCased` classes for the final-sigma rule. Generated from the pc462-py313 oracle: `LOWER`
+//! mapping, U+0130 -> U+0069 U+0307, is handled in `kernels::py_lower`; [`SIGMA_CONTEXT`] holds CPython's `_PyUnicode_IsCaseIgnorable` / `_PyUnicode_IsCased` classes for the final-sigma rule. Generated from the pc470-py313 oracle: `LOWER`
 //! from `chr(cp).lower()`; `SIGMA_CONTEXT` from the probes `('A'+c+'\u03a3').lower()[-1]` (final iff c is
 //! case-ignorable or cased) and `('A\u03a3'+c).lower()[1]` (final iff c is case-ignorable or not cased);
 //! `kernels::tests::lower_table_matches_the_oracle` checks every code point against both oracles.

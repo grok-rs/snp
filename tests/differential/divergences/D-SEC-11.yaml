@@ -1,6 +1,6 @@
 # D-SEC-11 (SEC, owner WP-14): depth 512, 1 M constructed nodes, 16 MiB file limits → YAML error.
 # Schema: docs/research/10-test-strategy.md §7.4.3. Rationale and the exact bytes of both tools:
-# docs/divergences/D-SEC-11.md. pre-commit 4.6.2 loads every file below (it only warns about the unknown key `x`,
+# docs/divergences/D-SEC-11.md. pre-commit 4.7.0 loads every file below (it only warns about the unknown key `x`,
 # exit 0); snp rejects each with a YAML load error (exit 1).
 expect_divergence: D-SEC-11
 name: divergences/D-SEC-11-yaml-limits

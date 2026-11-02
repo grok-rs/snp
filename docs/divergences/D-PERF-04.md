@@ -12,7 +12,7 @@ skipped when the tagged image exists (SNP_DOCKER_ALWAYS_BUILD=1 restores it)
 
 ## Register entry (COMPATIBILITY §5.6)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | docker hooks run `docker build` every run | skipped when the tagged image exists (`SNP_DOCKER_ALWAYS_BUILD=1` restores it) |
 
@@ -55,7 +55,7 @@ fake docker..............................................................Passed
 fake docker..............................................................Passed
 ```
 
-The fake docker's log differs. pre-commit 4.6.2 (recorded with `pc462-py312`):
+The fake docker's log differs. pre-commit 4.7.0 (recorded with `pc470-py312`):
 
 ```
 build --pull

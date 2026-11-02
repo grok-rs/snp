@@ -1,7 +1,7 @@
 # D-CRASH-24 (CRASH, owner WP-33): stdout closed (EPIPE) → silent, exit 120, stash restored
 # Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands`, `expect_divergence` and `expected` (ARCHITECTURE §13.2).
 # The step key `stdout_closed: true` (an extension for WP-35's harness) starts the tool with its stdout connected to
-# a pipe whose read end is already closed. Both tools exit 120; pre-commit 4.6.2 prints `BrokenPipeError` noise on
+# a pipe whose read end is already closed. Both tools exit 120; pre-commit 4.7.0 prints `BrokenPipeError` noise on
 # stderr (X13-EH-03, X13-SM-08), snp prints nothing. The second step also checks the restored unstaged change.
 name: divergences/D-CRASH-24-stdout-closed
 expect_divergence: D-CRASH-24

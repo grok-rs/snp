@@ -10,7 +10,7 @@ one stderr line after the envelope: [ERROR] Your unstaged changes are saved in <
 
 ## Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | final stash-restore failure prints only a traceback; the user does not learn where the unstaged work is | one stderr line after the envelope: `[ERROR] Your unstaged changes are saved in <patch>; restore them with: git apply --whitespace=nowarn <patch>`, plus what to do when it does not apply (X13-STASH-02) |
 
@@ -41,7 +41,7 @@ printed only on the path where pre-commit has already failed with exit 3.
 A restore that keeps failing (a hook left a file the patch cannot apply to, and the rollback cannot help either):
 
 ```text
-$ pre-commit run          # pre-commit 4.6.2, stdout
+$ pre-commit run          # pre-commit 4.7.0, stdout
 [WARNING] Unstaged files detected.
 [INFO] Stashing unstaged files to /s/patch1791403656-1781218.
 …

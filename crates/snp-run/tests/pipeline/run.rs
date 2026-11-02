@@ -1,4 +1,4 @@
-//! `run` (T10-RUN, X13-EXE, X13-SM): transcripts recorded with pre-commit 4.6.2 (`pc462-py312`) on the same trees.
+//! `run` (T10-RUN, X13-EXE, X13-SM): transcripts recorded with pre-commit 4.7.0 (`pc470-py312`) on the same trees.
 
 use std::ffi::OsString;
 use std::time::Duration;

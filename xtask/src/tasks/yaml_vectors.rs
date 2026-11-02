@@ -1,7 +1,7 @@
 //! `cargo xtask yaml-vectors [--python PATH] [--out DIR]`: regenerate snp-yaml's PyYAML vectors and error corpus.
 //!
-//! Runs `xtask/oracle/gen_yaml_vectors.py` under the pre-commit 4.6.2 oracle interpreter
-//! (`target/oracle/pc462-py312`, CPython 3.12.3 with PyYAML 6.0.3 and libyaml 0.2.5; `cargo xtask oracle install`)
+//! Runs `xtask/oracle/gen_yaml_vectors.py` under the pre-commit 4.7.0 oracle interpreter
+//! (`target/oracle/pc470-py312`, CPython 3.12.3 with PyYAML 6.0.3 and libyaml 0.2.5; `cargo xtask oracle install`)
 //! with `python -I`, writing `crates/snp-yaml/tests/vectors/*.json`. The vectors are committed; CI needs no
 //! Python. `--python` selects another interpreter (it must have PyYAML with libyaml), `--out` another directory.
 //!
@@ -20,7 +20,7 @@ const SCRIPT: &str = "xtask/oracle/gen_yaml_vectors.py";
 /// The default output directory (relative to the workspace root).
 const OUT: &str = "crates/snp-yaml/tests/vectors";
 /// The default oracle venv (relative to the workspace root).
-const ORACLE: &str = "target/oracle/pc462-py312";
+const ORACLE: &str = "target/oracle/pc470-py312";
 
 /// Runs the task with the arguments that follow its name.
 pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {

@@ -1,6 +1,6 @@
-# Divergences from pre-commit 4.6.2
+# Divergences from pre-commit 4.7.0
 
-snp reproduces pre-commit 4.6.2 byte for byte (COMPATIBILITY §2, K1–K6). Every deliberate difference has an ID in
+snp reproduces pre-commit 4.7.0 byte for byte (COMPATIBILITY §2, K1–K6). Every deliberate difference has an ID in
 the register of `docs/COMPATIBILITY.md` §5 and, per ID, two files (ADR-071):
 
 | File | Content | Checked by |
@@ -24,7 +24,7 @@ One sentence: what snp does differently.
 
 ## Register entry (COMPATIBILITY §5.x)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | … | … |
 

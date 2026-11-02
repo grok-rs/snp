@@ -2,7 +2,7 @@
 //! swift.
 //!
 //! * `oracle` — the shim-harness golden logs (argv/cwd/env of every install and run command, plus the bytes of the
-//!   temporary R scripts and `nuget.config` files) compared with the logs recorded from pre-commit 4.6.2 running the
+//!   temporary R scripts and `nuget.config` files) compared with the logs recorded from pre-commit 4.7.0 running the
 //!   same scenarios with fake tools on `PATH` (04b §5.12);
 //! * `docker` — tags (ADR-035), the per-run build step (D-PERF-04), rootless detection (D-CRASH-21), the mountinfo and
 //!   inspect parsers with pre-commit's verbatim fixtures, bind-path translation;

@@ -1,6 +1,6 @@
 # snp-cli
 
-**snp** ("You Shell Not Pass") is a drop-in replacement for [pre-commit](https://pre-commit.com) 4.6.2, written in
+**snp** ("You Shell Not Pass") is a drop-in replacement for [pre-commit](https://pre-commit.com) 4.7.0, written in
 Rust: the same `.pre-commit-config.yaml`, the same commands, options, output and exit codes, with optional
 lefthook-inspired extensions and native fast paths for the most popular hooks.
 
@@ -14,7 +14,7 @@ uvx --from snp-cli snp run --all-files
 
 ```console
 $ snp --version
-snp 2.0.0
+snp 2.0.1
 ```
 
 Notes:

@@ -31,4 +31,4 @@ a repository without an overlay prints nothing new.
   not exist`
 * an overlay hook matching no hook: `snp: local config overrides unknown hook 'nonexistent'`
 
-pre-commit 4.6.2 prints none of these (it never reads the overlay).
+pre-commit 4.7.0 prints none of these (it never reads the overlay).

@@ -9,7 +9,8 @@ naming the amending ADR, which is normative where they differ. ADR-056…ADR-080
 (2026-10-08); Appendix B lists every finding and its disposition. ADR-081 applies the verification of the W0 skeleton;
 ADR-082 the end-to-end integration of the merged packages; ADR-083 the verification of the integrated `main`; ADR-084
 the final multi-lens review; ADR-085 the `interactive` extension key; ADR-086 the first CI run on macOS; ADR-087 the
-`.snp.yaml` config file name; ADR-088 the crates.io and Homebrew release channels.
+`.snp.yaml` config file name; ADR-088 the crates.io and Homebrew release channels; ADR-089 the retarget to pre-commit
+4.7.0.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -241,7 +242,7 @@ rejected (fail-open for a push guard).
 
 ### ADR-023 — Branding, `--version`, compat strings, snp-only surface
 
-*Status: Accepted; amended by ADR-058 (argparse texts rendered with prog `snp`; `brand_map` for non-argparse texts only, plus the `--version` row) and ADR-060 (hook-time brand follows the installing brand). The amending ADR is normative where they differ.*
+*Status: Accepted; amended by ADR-058 (argparse texts rendered with prog `snp`; `brand_map` for non-argparse texts only, plus the `--version` row) and ADR-060 (hook-time brand follows the installing brand); ADR-089 retargets the compat brand to pre-commit 4.7.0. The amending ADR is normative where they differ.*
 
 **Context.** FD-1 (byte-identical in the compat brand, product name included; same layout with product name `snp` in
 the snp brand). 11 §A.8 proposed exceptions (E1 `--version` suffix, E2 snp bug URLs, E4 a different min-version hint);
@@ -501,7 +502,7 @@ default installers (it would silently shadow Python pre-commit).
 
 ### ADR-050 — Version number
 
-*Status: Accepted; amended by ADR-088 (snp 2.x takes over the crates.io name `snp`). The amending ADR is normative where they differ.*
+*Status: Accepted; amended by ADR-088 (snp 2.x takes over the crates.io name `snp`) and ADR-089 (`PRE_COMMIT = "4.7.0"`, snp 2.0.1). The amending ADR is normative where they differ.*
 
 **Decision.** Workspace version `2.0.0` (crates.io `snp` 1.x exists, 11 §A.1). `PRE_COMMIT = "4.6.2"` is the value
 compared by `minimum_pre_commit_version`; `SNP_VERSION` is compared only by `minimum_snp_version`.
@@ -535,7 +536,7 @@ lost pycompat vectors from the committed generator (WP-11); the regex corpus is 
 
 ### ADR-054 — Testing architecture: two oracles, tiers, divergence register
 
-*Status: Accepted; amended by ADR-058 (snp-brand runs use the prog-patched oracle), ADR-062 (namespaced catalog IDs) and ADR-071 (per-ID divergence-file ownership). The amending ADR is normative where they differ.*
+*Status: Accepted; amended by ADR-058 (snp-brand runs use the prog-patched oracle), ADR-062 (namespaced catalog IDs), ADR-071 (per-ID divergence-file ownership) and ADR-089 (the oracles are `pc470-py312`/`pc470-py313`, pre-commit 4.7.0). The amending ADR is normative where they differ.*
 
 **Decision.** ARCHITECTURE §13: `xtask oracle install` builds hash-locked `pc462-py312` (CPython 3.12.3: runtime and
 regex oracle, the 10 §0 baseline) and `pc462-py313` (CPython ≥ 3.13.14: CLI-text oracle); comparison tiers A/B/C; snp
@@ -1281,6 +1282,46 @@ The installation guide, the README and the CHANGELOG describe crates.io and Home
 `cargo install snp`. The internal crates appear on crates.io with "no stable API" semantics. The owner adds the
 `CARGO_REGISTRY_TOKEN` secret; `HOMEBREW_TAP_DEPLOY_KEY` and the PyPI pending publisher (project `snp-cli`, workflow
 `release.yml`, environment `release`) are prerequisites of the respective jobs.
+
+### ADR-089 — Retarget to pre-commit 4.7.0 (snp 2.0.1)
+
+**Context.** snp 2.0.0 reproduces pre-commit 4.6.2 (COMPATIBILITY §1, ADR-050, ADR-054). pre-commit 4.7.0
+(2026-10-12) is the current release. Its diff against 4.6.2 (`git diff v4.6.2 v4.7.0`) changes, in the shipped
+package, only `pre_commit/languages/node.py` — `install_environment` runs `npm install` with
+`lang_base.setup_cmd(prefix, install, env=no_git_env())` (pre-commit#3774, issue #3773: `language: node` hooks failed
+or wrote the caller's index during `git commit -a` and in submodules since 4.6.1's `git+file://` install) — plus the
+version (`setup.cfg`, `C.VERSION`) and `python_requires = >=3.11` (was `>=3.10`; both oracles are 3.12/3.13).
+Everything else is upstream CI, linters, the zipapp builder, the test suite (`testing.util.cwd` →
+`contextlib.chdir`, the new `test_node_hook_install_does_not_write_callers_index`) and the CHANGELOG. No resource
+(hook templates, empty templates, ruby/rbenv archives) and no message changed. snp already ran every installer with
+`no_git_env` (D-SEC-05), so 4.7.0's node behaviour is snp's.
+**Decision.** (1) The reference is pre-commit **4.7.0**: `snp_core::profile::PRE_COMMIT = "4.7.0"` (the compat
+brand's `--version`, `minimum_pre_commit_version`, the `version … is installed` text and the crash log's `pre-commit
+version:` line). (2) The oracles are `target/oracle/pc470-py312` and `pc470-py313`, built by `cargo xtask oracle
+install` from `xtask/oracle/requirements-pc470.{in,txt}`; the lock differs from the 4.6.2 one only in the
+`pre-commit==4.7.0` pin and its two PyPI hashes (every other pin unchanged). CI workflows, the harness defaults
+(`snp-difftest`, `snp-testkit::Oracle::Pc470Py312/Pc470Py313`) and the generators use them. (3) D-SEC-05 is narrowed:
+the node installer is parity (4.7.0 strips the variables itself, `node.py:107`; the golang installer always did,
+`golang.py:145`); the divergence remains for the pip/uv, cargo and gem installers and for snp-owned repository
+operations (autoupdate's temporary repository, hazard c). (4) The release is **2.0.1** (workspace version and the
+exact `=2.0.1` internal requirements of ADR-088). (5) Version-bearing goldens and vectors are regenerated from the new
+oracles (`cargo xtask cli-goldens`, `gen_config_vectors.py`, `gen_v_pp.py`, `gen_partition.py`,
+`gen_legacy_stages_fuzz.py`, `cargo xtask pch-goldens pygrep|hazmat`, `yaml-vectors`, `pycompat-vectors`): apart from
+the version strings and provenance headers they are byte-identical. The `minimum_pre_commit_version` boundary cases
+move to `4.7.0`/`4.7.0.0`. Data whose generator needs external inputs (the pre-commit-hooks P0 goldens, the tag-manifest
+`legacy_stages.tsv`) is not regenerated: the pre-commit modules it exercises are byte-identical. (6) History stays as
+written: `docs/research/*` (file:line citations of the 4.6.2 source, still valid for 4.7.0 except `node.py`), the
+CHANGELOG, WBS.md and the text of earlier ADRs; where they say 4.6.2 or `pc462` as the target, read 4.7.0 and
+`pc470`. Scenario `since:` fields keep the release where a behaviour first appeared. The embedded
+`ruby-download-pre-commit-4.6.2` resource keeps its name (4.7.0 vendors the same bytes; renaming would only
+invalidate caches).
+**Rationale.** A drop-in replacement targets the current release; a one-function upstream change that snp already
+matched makes the retarget a version bump plus a narrowed divergence, not a behaviour change. Renaming the oracles
+(rather than reusing `pc462-*` for 4.7.0) keeps an old checkout's `target/oracle` from passing silently against the
+wrong release: `cargo xtask oracle install` verifies `pre-commit --version` in the venv it creates.
+**Consequences.** `pre-commit --version` through the alias prints `pre-commit 4.7.0`; configs with
+`minimum_pre_commit_version: 4.7.0` are accepted. Developers rerun `cargo xtask oracle install`. The CHANGELOG's
+`[Unreleased]` section records the change; the 2.0.1 tag is cut by the owner.
 
 ---
 

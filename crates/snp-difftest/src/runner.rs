@@ -31,13 +31,13 @@ use crate::scenario::{Brand, Compare, Scenario, Status, Step, StepKind, StreamMo
 use crate::snapshot::{self, State, StoreKind, Wanted};
 use crate::text::{fnv64, replace_bytes, show};
 
-/// `oracle_snp_prog` = the pc462 oracle launched with argparse prog patched to `snp` (ADR-058), used for snp-brand
+/// `oracle_snp_prog` = the pc470 oracle launched with argparse prog patched to `snp` (ADR-058), used for snp-brand
 /// runs.
 #[derive(Debug)]
 pub struct Runner {
     /// The snp binary under test.
     pub snp_bin: PathBuf,
-    /// `target/oracle/pc462-py312/bin/pre-commit`.
+    /// `target/oracle/pc470-py312/bin/pre-commit`.
     pub oracle_bin: PathBuf,
     /// The `pre-commit-snp-prog` launcher.
     pub oracle_snp_prog: PathBuf,
@@ -466,7 +466,7 @@ impl Runner {
         let tool = link_tool(&w, self.program(brand, side, opts), brand)?;
         w.vars
             .push((String::from("tool"), tool.to_string_lossy().into_owned()));
-        // The plain pre-commit 4.6.2 oracle on both sides: interop scenarios (11 §A.20) run it explicitly next to the
+        // The plain pre-commit 4.7.0 oracle on both sides: interop scenarios (11 §A.20) run it explicitly next to the
         // tool under test (`- shell: ${oracle} install` then `- tool: [install]`), so the oracle side is the baseline.
         let oracle = std::path::absolute(&self.oracle_bin)
             .map_err(|e| format!("resolving {}: {e}", self.oracle_bin.display()))?;
@@ -579,7 +579,7 @@ fn skip_reason(s: &Scenario, opts: &Options) -> Option<String> {
         return Some(format!("unsupported: {}", s.unsupported.join("; ")));
     }
     if let Some(since) = &s.since
-        && crate::scenario::parse_version(since).is_some_and(|v| v > [4, 6, 2])
+        && crate::scenario::parse_version(since).is_some_and(|v| v > [4, 7, 0])
     {
         return Some(format!("needs pre-commit {since}"));
     }

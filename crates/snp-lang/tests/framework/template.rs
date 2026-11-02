@@ -1,4 +1,4 @@
-//! `LOCAL_TEMPLATE`: pre-commit 4.6.2's `store._LOCAL_RESOURCES` with the `empty_template_*` bytes (03 §7.7).
+//! `LOCAL_TEMPLATE`: pre-commit 4.7.0's `store._LOCAL_RESOURCES` with the `empty_template_*` bytes (03 §7.7).
 
 use std::path::Path;
 
@@ -64,7 +64,7 @@ fn names_order_and_key_contents() {
 #[ignore = "oracle"]
 fn oracle_resources_are_byte_identical() {
     let res = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/oracle/pc462-py312/lib/python3.12/site-packages/pre_commit/resources");
+        .join("../../target/oracle/pc470-py312/lib/python3.12/site-packages/pre_commit/resources");
     for (name, bytes) in LOCAL_TEMPLATE {
         let base = name.rsplit('/').next().unwrap();
         let oracle = std::fs::read(res.join(format!("empty_template_{base}"))).unwrap();

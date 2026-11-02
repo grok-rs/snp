@@ -9,7 +9,7 @@ snp never touches pre-commit's directories; clean always prints Cleaned {snp sto
 
 ## Register entry (COMPATIBILITY §5.4)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `clean` also removes `~/.pre-commit`; `gc`/`clean` operate on pre-commit's store | snp never touches pre-commit's directories; `clean` always prints `Cleaned {snp store}.` |
 
@@ -34,7 +34,7 @@ check for it keep working; only the path differs, which the differential harness
 ```text
 $ ls -a ~ ~/.cache
 .pre-commit  .cache            # ~/.pre-commit exists, ~/.cache/pre-commit exists
-$ pre-commit clean             # pre-commit 4.6.2
+$ pre-commit clean             # pre-commit 4.7.0
 Cleaned /home/u/.cache/pre-commit.
 Cleaned /home/u/.pre-commit.
 $ snp clean                    # both pre-commit directories stay

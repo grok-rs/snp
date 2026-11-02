@@ -9,7 +9,7 @@ validation error leaf invalid literal for int() with base 10: 'abc', exit 1
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `minimum_pre_commit_version: "abc"` (also `""`, `"4."`, `"4.6.3rc1"`) → `ValueError` exit 3 (X13-CFG-01) | validation error leaf `invalid literal for int() with base 10: 'abc'`, exit 1 |
 
@@ -35,7 +35,7 @@ minimum_pre_commit_version: "4.6.3rc1"
 repos: []
 ```
 
-pre-commit 4.6.2, `pre-commit validate-config .pre-commit-config.yaml`, exit **3**:
+pre-commit 4.7.0, `pre-commit validate-config .pre-commit-config.yaml`, exit **3**:
 
 ```
 An unexpected error has occurred: ValueError: invalid literal for int() with base 10: '3rc1'

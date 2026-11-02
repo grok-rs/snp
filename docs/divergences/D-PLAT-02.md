@@ -9,7 +9,7 @@ Windows: a missing absolute shebang interpreter (`#!/bin/sh`) falls back to the 
 
 ## Register entry (COMPATIBILITY §5.5)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | Windows: a missing absolute shebang interpreter (`#!/bin/sh`) fails the hook / crashes the legacy hook | falls back to the interpreter's basename on PATH (Git for Windows semantics) |
 
@@ -34,7 +34,7 @@ unaffected (the fallback is compiled in but disabled).
 Windows, Git for Windows on `PATH` (`C:\Program Files\Git\usr\bin` provides `sh.exe`), a local hook
 `entry: ./hook.sh`, `language: script`, where `hook.sh` is `#!/bin/sh` + `echo ran`; `run --all-files`:
 
-pre-commit 4.6.2 (exit 1):
+pre-commit 4.7.0 (exit 1):
 
 ```
 script hook..............................................................Failed

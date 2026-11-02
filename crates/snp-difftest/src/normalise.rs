@@ -38,7 +38,7 @@ pub enum Tier {
 /// One substring rule.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rule {
-    /// The compat (pre-commit 4.6.2) text.
+    /// The compat (pre-commit 4.7.0) text.
     pub from: String,
     /// The snp-brand text.
     pub to: String,
@@ -707,7 +707,7 @@ fn mask_winerror(line: &[u8]) -> Vec<u8> {
     out
 }
 
-/// `pre-commit 4.6.2` / `snp 2.0.0` / `version 4.6.2` → `… [VERSION]`.
+/// `pre-commit 4.7.0` / `snp 2.0.1` / `version 4.7.0` → `… [VERSION]`.
 fn mask_version(line: &[u8]) -> Vec<u8> {
     let mut cur = line.to_vec();
     for prefix in [&b"pre-commit "[..], b"snp ", b"version "] {
@@ -839,9 +839,9 @@ mod tests {
         assert!(
             m.whole_line()
                 .iter()
-                .any(|r| r.from == "pre-commit 4.6.2" && r.to == "snp 2.0.0")
+                .any(|r| r.from == "pre-commit 4.7.0" && r.to == "snp 2.0.1")
         );
-        assert!(m.whole_line().iter().any(|r| r.from == "snp 4.6.2"));
+        assert!(m.whole_line().iter().any(|r| r.from == "snp 4.7.0"));
         assert!(m.never().iter().any(|n| n == ".pre-commit-config.yaml"));
         let bad = "version: 1\nsubstitutions:\n  - {from: \"pre-commit-config\", to: \"x\"}\nnever: [\".pre-commit-config.yaml\"]\n";
         assert!(BrandMap::parse(bad).is_err());
@@ -852,12 +852,12 @@ mod tests {
     #[test]
     fn version_line_is_a_whole_line_rule() {
         let m = map();
-        assert_eq!(m.apply(b"pre-commit 4.6.2\n"), b"snp 2.0.0\n");
-        assert_eq!(m.apply(b"snp 4.6.2\n"), b"snp 2.0.0\n");
+        assert_eq!(m.apply(b"pre-commit 4.7.0\n"), b"snp 2.0.1\n");
+        assert_eq!(m.apply(b"snp 4.7.0\n"), b"snp 2.0.1\n");
         // Not a plain substring rule: inside a sentence it stays.
         assert_eq!(
-            m.apply(b"see pre-commit 4.6.2 docs\n"),
-            b"see pre-commit 4.6.2 docs\n"
+            m.apply(b"see pre-commit 4.7.0 docs\n"),
+            b"see pre-commit 4.7.0 docs\n"
         );
     }
 
@@ -900,7 +900,7 @@ mod tests {
             .iter()
             .map(|r| format!("x {} y\n", r.from).into_bytes())
             .collect();
-        corpus.push(b"pre-commit 4.6.2\n".to_vec());
+        corpus.push(b"pre-commit 4.7.0\n".to_vec());
         corpus.push(b"plain text with nothing to map\r\n".to_vec());
         corpus.push(
             b"An error has occurred: FatalError: x\nCheck the log at /tmp/r/store/pre-commit.log\n"
@@ -916,8 +916,8 @@ mod tests {
             assert_eq!(m.apply(&m.invert(&snp)), snp, "{}", r.to);
         }
         assert_eq!(
-            BrandMap::identity().apply(b"pre-commit 4.6.2\n"),
-            b"pre-commit 4.6.2\n"
+            BrandMap::identity().apply(b"pre-commit 4.7.0\n"),
+            b"pre-commit 4.7.0\n"
         );
     }
 
@@ -1063,7 +1063,7 @@ mod tests {
             b"PermissionError: [WinError 32] [TEXT]: 'C:\\\\x'\n"
         );
         assert_eq!(
-            normalise(Tier::B, b"pre-commit 4.6.2\n", &BrandMap::identity()),
+            normalise(Tier::B, b"pre-commit 4.7.0\n", &BrandMap::identity()),
             b"pre-commit [VERSION]\n"
         );
     }

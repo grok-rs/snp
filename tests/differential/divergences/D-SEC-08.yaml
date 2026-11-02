@@ -52,7 +52,7 @@ steps:
       SSL_CERT_FILE: "${fixture:mitm_https_proxy.ca_file}"
     stdin: ""
     tty: false
-# pre-commit 4.6.2: installs the tampered toolchain; `go install ./...` prints `pwned` → CalledProcessError, exit 3
+# pre-commit 4.7.0: installs the tampered toolchain; `go install ./...` prints `pwned` → CalledProcessError, exit 3
 #   (with a real malicious archive the hook would run the attacker's code and pass).
 # snp: `NetError: checksum mismatch for https://dl.google.com/go/go1.23.2.linux-amd64.tar.gz: expected …, got …`,
 #   exit 3, nothing extracted.

@@ -9,7 +9,7 @@ the line keeps its \r (DEV-PY-1)
 
 ## Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `autoupdate --freeze` rewrites a CRLF `rev:` line with LF (mixed endings) | the line keeps its `\r` (DEV-PY-1) |
 
@@ -27,5 +27,5 @@ byte-identical to pre-commit's (the `\r` is still in the kept group 5), and LF f
 
 `    rev: v1  # note␍␊` updated with `--freeze` to `bbbb…` (tag `v2`):
 
-pre-commit 4.6.2 writes `    rev: bbbb…  # frozen: v2␊`; snp writes `    rev: bbbb…  # frozen: v2␍␊`.
+pre-commit 4.7.0 writes `    rev: bbbb…  # frozen: v2␊`; snp writes `    rev: bbbb…  # frozen: v2␍␊`.
 Un-freezing `    rev: bbbb…  # frozen: v1␍␊` to `v2`: pre-commit `    rev: v2␊`, snp `    rev: v2␍␊`.

@@ -1,5 +1,5 @@
-# clientlib.warn_for_stages_on_repo_init of pre-commit 4.6.2 (pc462-py312): <manifest hex>	<warned legacy stages, comma-separated>.
-# Hand-written cases, then the .pre-commit-hooks.yaml of every pre-commit-hooks tag. Regenerate (do not edit): head -2 of this file, then `target/oracle/pc462-py312/bin/python -I crates/snp-repo/tests/vectors/gen_legacy_stages.py <dir of the tag manifests>`.
+# clientlib.warn_for_stages_on_repo_init of pre-commit 4.7.0 (pc470-py312): <manifest hex>	<warned legacy stages, comma-separated>.
+# Hand-written cases, then the .pre-commit-hooks.yaml of every pre-commit-hooks tag. Regenerate (do not edit): head -2 of this file, then `target/oracle/pc470-py312/bin/python -I crates/snp-repo/tests/vectors/gen_legacy_stages.py <dir of the tag manifests>`.
 2d20202069643a20610a202020207374616765733a205b707573682c206d616e75616c5d0a2d20202069643a20620a202020207374616765733a0a202020202d20636f6d6d69740a202020202d202020276d657267652d636f6d6d6974270a202020202d20707573680a	push,commit,merge-commit
 2d20202069643a20610a202020207374616765733a205b7072652d636f6d6d69742c207072652d707573685d0a202020206e616d653a20636f6d6d697420707573680a20202020617267733a205b636f6d6d69745d0a	
 2d20202069643a20610a202020207374616765733a20636f6d6d69740a	

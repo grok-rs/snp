@@ -10,7 +10,7 @@ error source chain / Rust backtrace (crash-log body is Tier B)
 
 ## Register entry (COMPATIBILITY §5.9)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | Python tracebacks in the crash log body | error source chain / Rust backtrace (crash-log body is Tier B) |
 
@@ -34,7 +34,7 @@ below the version block is Tier B by design (ADR-013), read by people filing bug
 `pre-commit install` with `.git/hooks/pre-commit` being a directory (both: exit 3, same two stdout lines):
 
 ~~~text
-### error information                                   # pre-commit 4.6.2 log, abridged
+### error information                                   # pre-commit 4.7.0 log, abridged
 
 ```
 An unexpected error has occurred: IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-commit'
@@ -55,10 +55,10 @@ IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-commit'
 ### version information                                 # snp log (compat brand)
 
 ```
-pre-commit version: 4.6.2
+pre-commit version: 4.7.0
 git --version: git version 2.43.0
 sys.version:
-    snp 2.0.0 (rustc 1.99.0) [x86_64-linux]
+    snp 2.0.1 (rustc 1.99.0) [x86_64-linux]
 sys.executable: /usr/local/bin/snp
 os.name: posix
 sys.platform: linux

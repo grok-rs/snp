@@ -5,16 +5,16 @@
 //!
 //! * `venvs [--dir DIR] [--python PY]` creates one venv per supported tag (v3.0.0…v6.0.0) in `DIR` (default
 //!   `target/pch-oracle`) with `uv`: `pre-commit-hooks==<tag>` from PyPI plus `ruamel.yaml==0.19.1`,
-//!   `toml==0.10.2` (the v3.x–v4.2.0 check-toml import) and `pre-commit==4.6.2` (its `_shuffled` and
+//!   `toml==0.10.2` (the v3.x–v4.2.0 check-toml import) and `pre-commit==4.7.0` (its `_shuffled` and
 //!   `xargs.partition` emulate partitions).
 //! * `help [--dir DIR]` regenerates the lost 09 Appendix A: `crates/snp-hooks/tests/goldens/appendix_a/<tag>.json`
 //!   holds, for every console script of every tag (P0, P1, P2 and caveat hooks alike), the bytes and exit code of
 //!   `<script> -h` and of `<script> --snp-no-such-option` with `COLUMNS=80` (WP-27 reads them).
 //! * `p0 [--dir DIR]` runs `crates/snp-hooks/tests/p0/cases.json` under the venvs of the golden tags and writes
 //!   `crates/snp-hooks/tests/p0/goldens/<tag>.json` ((argv, files before) → (exit, output, files after)).
-//! * `pygrep [--pc462 PY]` / `hazmat [--pc462 PY]` run `tests/{pygrep,hazmat}/cases.json` through
-//!   `python -m pre_commit.languages.pygrep` / `python -m pre_commit.commands.hazmat` of the pre-commit 4.6.2
-//!   oracle (default `target/oracle/pc462-py313/bin/python`) and write `goldens.json` next to the cases.
+//! * `pygrep [--pc470 PY]` / `hazmat [--pc470 PY]` run `tests/{pygrep,hazmat}/cases.json` through
+//!   `python -m pre_commit.languages.pygrep` / `python -m pre_commit.commands.hazmat` of the pre-commit 4.7.0
+//!   oracle (default `target/oracle/pc470-py313/bin/python`) and write `goldens.json` next to the cases.
 //! * no subcommand (or `all`): everything above, in that order.
 //!
 //! Every run happens in a fresh directory with the hermetic environment the replaying tests build (fixed git
@@ -40,7 +40,7 @@ const TAGS: [&str; 16] = [
 ];
 
 /// Extra packages of every tag venv.
-const EXTRA: [&str; 3] = ["ruamel.yaml==0.19.1", "toml==0.10.2", "pre-commit==4.6.2"];
+const EXTRA: [&str; 3] = ["ruamel.yaml==0.19.1", "toml==0.10.2", "pre-commit==4.7.0"];
 
 /// The crate whose tests read the goldens.
 const HOOKS: &str = "crates/snp-hooks/tests";
@@ -49,7 +49,7 @@ const HOOKS: &str = "crates/snp-hooks/tests";
 const DRIVER: &str = r#"
 """Golden generator of `cargo xtask pch-goldens` (WP-26); embedded in pch_goldens.rs and written to a temp file.
 
-Runs the pinned upstream Python (pre-commit-hooks console scripts from PyPI, pre-commit 4.6.2) and records what the
+Runs the pinned upstream Python (pre-commit-hooks console scripts from PyPI, pre-commit 4.7.0) and records what the
 processes produce, for snp-hooks' native ports to replay byte for byte:
 
     help   --out FILE                       every pre-commit-hooks console script of this venv: `-h` and an
@@ -326,7 +326,7 @@ if __name__ == '__main__':
 struct Opts {
     dir: PathBuf,
     python: PathBuf,
-    pc462: PathBuf,
+    pc470: PathBuf,
 }
 
 /// The `bin` directory of a venv.
@@ -472,14 +472,14 @@ fn p0(root: &Path, o: &Opts) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `pygrep` / `hazmat`: the module goldens under the pre-commit 4.6.2 oracle.
+/// `pygrep` / `hazmat`: the module goldens under the pre-commit 4.7.0 oracle.
 fn module(root: &Path, o: &Opts, which: &str) -> anyhow::Result<()> {
     let drv = driver(o)?;
     let dir = root.join(HOOKS).join(which);
     let cases = dir.join("cases.json");
     let out = dir.join("goldens.json");
     drive(
-        &o.pc462,
+        &o.pc470,
         &drv,
         &[
             which.as_ref(),
@@ -500,7 +500,7 @@ pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
     let mut o = Opts {
         dir: root.join("target/pch-oracle"),
         python: PathBuf::from("/usr/bin/python3.13"),
-        pc462: venv_python(&root.join("target/oracle/pc462-py313")),
+        pc470: venv_python(&root.join("target/oracle/pc470-py313")),
     };
     let mut what: Option<String> = None;
     let mut it = args.iter();
@@ -509,14 +509,14 @@ pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
         let slot = match a.as_str() {
             "--dir" => &mut o.dir,
             "--python" => &mut o.python,
-            "--pc462" => &mut o.pc462,
+            "--pc470" => &mut o.pc470,
             "venvs" | "help" | "p0" | "pygrep" | "hazmat" | "all" if what.is_none() => {
                 what = Some(a);
                 continue;
             }
             _ => bail!(
                 "usage: cargo xtask pch-goldens [venvs|help|p0|pygrep|hazmat|all] [--dir DIR] \
-                 [--python PY] [--pc462 PY]"
+                 [--python PY] [--pc470 PY]"
             ),
         };
         *slot = PathBuf::from(it.next().with_context(|| format!("{a} needs a value"))?);

@@ -1,5 +1,5 @@
-# D-SEC-05 (SEC, owner WP-18): installers and owned repos get pre-commit's no_git_env allow-list
-# `pre-commit autoupdate` with GIT_DIR exported (hazard c): pre-commit 4.6.2 writes partial-clone config into the
+# D-SEC-05 (SEC, owner WP-18): the pip/uv, cargo and gem installers and owned repos get pre-commit's no_git_env allow-list
+# `pre-commit autoupdate` with GIT_DIR exported (hazard c): pre-commit 4.7.0 writes partial-clone config into the
 # user's repository and crashes (exit 3); snp updates the rev and leaves .git/config untouched.
 # Uses `${root}` (the scenario root R, identical for both tools) to point GIT_DIR at the work repository, and
 # `compare.git_config: exact` (bytes of .git/config after the step) — extensions of the 10 §7.4.3 schema.

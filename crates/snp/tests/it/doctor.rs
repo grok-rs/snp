@@ -21,7 +21,7 @@ fn doctor_clean_repository() {
     assert_code(&out, 0);
     let o = text(&out.stdout);
     assert!(
-        o.starts_with("info  snp: 2.0.0 (pre-commit 4.6.2 compatible), "),
+        o.starts_with("info  snp: 2.0.1 (pre-commit 4.7.0 compatible), "),
         "{o}"
     );
     assert!(o.contains("ok    .git/hooks/pre-commit: runs snp\n"), "{o}");

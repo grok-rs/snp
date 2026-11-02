@@ -35,7 +35,7 @@ repos:
     -   id: trailing-whitespace
 ```
 
-pre-commit 4.6.2 `validate-config`, exit **1**:
+pre-commit 4.7.0 `validate-config`, exit **1**:
 
 ```
 

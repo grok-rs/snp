@@ -10,7 +10,7 @@
 //!
 //! Hermetic = runnable without a language toolchain, the network, the pre-commit oracle or a Windows-only host:
 //! T10 rows whose "Needs" cell names `tc:…`, `net` or `win` (or that say "win only") are not hermetic (10 Appendix A);
-//! X13 rows that need a language toolchain ([`X13_TOOLCHAIN_ROWS`]) are not; M11 rows that run the 4.6.2 oracle or
+//! X13 rows that need a language toolchain ([`X13_TOOLCHAIN_ROWS`]) are not; M11 rows that run the 4.7.0 oracle or
 //! need the network (`interop_*`, `net_*`, 11 §A.20) are not (except [`M11_HERMETIC_DESPITE_ORACLE`]).
 //!
 //! Owner: WP-00.

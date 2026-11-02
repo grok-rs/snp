@@ -10,7 +10,7 @@ integration lead). None occurs in the 4 858-pattern corpus.
 
 ## Register entry (COMPATIBILITY §5.9)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | regex corner cases (01 Addendum §A.6.13 D1–D6): IGNORECASE backreferences across `K`/`k`, `ſ`/`s`, `ς`/`σ`; code points unassigned in UCD 15.0 treated as UCD 16; `\N{…}` without the `py-re-names` feature; `(?L)` under a single-byte non-UTF-8 locale; patterns too large for the engines (`Unsupported`, reported as the validation error plus a stderr hint); D7: `\U` above 0x7FFFFFFF in a str pattern (`OverflowError` in CPython, `bad escape` in snp); D8: nullable loop bodies that are bounded, possessive, or `{2,}` with captures a back-reference or conditional observes | as stated (corpus frequency 0) |
 
@@ -71,7 +71,7 @@ D1, the scenario of `tests/differential/divergences/D-MISC-06.yaml`: a local hoo
 `entry: the files pattern matched`, `files: '(?i)(σ)\1'`; the repository holds the empty file `σς.txt`;
 `run --all-files`.
 
-pre-commit 4.6.2 (CPython 3.12.3: `re.search(r'(?i)(σ)\1', 'σς.txt')` is `None`; bytes captured with the same code
+pre-commit 4.7.0 (CPython 3.12.3: `re.search(r'(?i)(σ)\1', 'σς.txt')` is `None`; bytes captured with the same code
 of pre-commit 4.1.0 on 3.12.3), exit 0:
 
 ```text

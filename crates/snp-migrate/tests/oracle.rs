@@ -1,9 +1,9 @@
-//! The converted configs under the pre-commit 4.6.2 oracle (WP-34 acceptance): `validate-config` accepts every golden
+//! The converted configs under the pre-commit 4.7.0 oracle (WP-34 acceptance): `validate-config` accepts every golden
 //! (portable: silently; snp mode: only `Unexpected key(s)` warnings), and the `runnable` fixture's conversions run
 //! every stage with exit 0 (portable: no warning at all).
 //!
 //! `tests/vectors/oracle.json` holds the oracle's answers, keyed by golden with its SHA-256, so CI checks them without
-//! Python; `cargo test -p snp-migrate --test oracle -- --ignored` re-runs the oracle (target/oracle/pc462-py312) and
+//! Python; `cargo test -p snp-migrate --test oracle -- --ignored` re-runs the oracle (target/oracle/pc470-py312) and
 //! rewrites the vectors.
 //!
 //! Owner: WP-34.
@@ -123,7 +123,7 @@ mod oracle {
             snp: PathBuf::from("snp"),
             probe: PathBuf::from("snp-probe"),
         });
-        env.oracle(Oracle::Pc462Py312, env.root())?;
+        env.oracle(Oracle::Pc470Py312, env.root())?;
         let mut out = serde_json::Map::new();
         for (k, golden) in goldens().iter().enumerate() {
             let name = golden.file_name().unwrap().to_str().unwrap().to_owned();
@@ -152,13 +152,13 @@ mod oracle {
                 .commit("init")
                 .build();
             let validate = env
-                .oracle(Oracle::Pc462Py312, &dir)?
+                .oracle(Oracle::Pc470Py312, &dir)?
                 .args(["validate-config", ".pre-commit-config.yaml"])
                 .output();
             let mut runs = Vec::new();
             if case == "runnable" {
                 for args in RUNS {
-                    let o = env.oracle(Oracle::Pc462Py312, &dir)?.args(*args).output();
+                    let o = env.oracle(Oracle::Pc470Py312, &dir)?.args(*args).output();
                     runs.push(json!({"args": args, "result": output(&o)}));
                 }
             }
@@ -238,7 +238,7 @@ mod oracle {
     #[ignore = "oracle"]
     fn oracle_regenerate_vectors() {
         let Some(v) = ask_oracle() else {
-            panic!("the pc462-py312 oracle is not installed (cargo xtask oracle install)");
+            panic!("the pc470-py312 oracle is not installed (cargo xtask oracle install)");
         };
         check(&v);
         std::fs::create_dir_all(vectors_path().parent().unwrap()).unwrap();

@@ -1,4 +1,4 @@
-# snp WP-24 oracle recorder: runs pre-commit 4.6.2 in-process with its process layer faked for the language tools
+# snp WP-24 oracle recorder: runs pre-commit 4.7.0 in-process with its process layer faked for the language tools
 # and appends one line per faked spawn to a golden log (format v1 of crates/snp-lang/src/harness: argv with the tool
 # basename first, cwd, env delta against a base env).
 #

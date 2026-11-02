@@ -110,7 +110,7 @@ fn self_check_passes() {
 }
 
 /// A different snp build (another version, a stale Windows hard link) named `pre-commit` is recognised as snp
-/// although its compat-brand `--version` prints only `pre-commit 4.6.2`: the probe sets `SNP_VERSION_PROBE=1`
+/// although its compat-brand `--version` prints only `pre-commit 4.7.0`: the probe sets `SNP_VERSION_PROBE=1`
 /// (11 §A.19.4). Python pre-commit (which ignores the variable) is still reported as such.
 #[cfg(unix)]
 #[test]
@@ -143,7 +143,7 @@ fn alias_status_recognises_another_snp_build() {
     let py = env.root().join("py");
     crate::install::write_hook(
         &py.join("pre-commit"),
-        b"#!/bin/sh\necho 'pre-commit 4.6.2'\n",
+        b"#!/bin/sh\necho 'pre-commit 4.7.0'\n",
     );
     let env3 = env.with_env("PATH", path_with(&py));
     let out = snp(&env3, env.root(), &["self", "alias", "status"]);
@@ -151,7 +151,7 @@ fn alias_status_recognises_another_snp_build() {
     assert_eq!(
         text(&out.stdout),
         format!(
-            "pre-commit -> {} (Python pre-commit 4.6.2)\n",
+            "pre-commit -> {} (Python pre-commit 4.7.0)\n",
             py.join("pre-commit").display()
         )
     );
@@ -167,7 +167,7 @@ fn version_probe_is_bounded_when_a_grandchild_holds_the_pipe() {
     let dir = env.root().join("slow");
     crate::install::write_hook(
         &dir.join("pre-commit"),
-        b"#!/bin/sh\nsleep 25 &\necho 'pre-commit 4.6.2'\n",
+        b"#!/bin/sh\nsleep 25 &\necho 'pre-commit 4.7.0'\n",
     );
     let env = env.with_env("PATH", path_with(&dir));
     let r = crate::cli::repo_with(&env, "r", crate::cli::LOCAL_CONFIG);

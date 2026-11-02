@@ -1,4 +1,4 @@
-# Differential tests against pre-commit 4.6.2 (WBS WP-35; ARCHITECTURE §13.2; research 10 §7.4, §7.12).
+# Differential tests against pre-commit 4.7.0 (WBS WP-35; ARCHITECTURE §13.2; research 10 §7.4, §7.12).
 # Owned by WP-35.
 #
 # * harness   — every push: the harness's own acceptance (oracle-vs-oracle self-consistency of the seed scenarios,

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/grok-rs/snp/config.schema.json",
-  "title": ".pre-commit-config.yaml (pre-commit 4.6.2 + snp extension keys)",
+  "title": ".pre-commit-config.yaml (pre-commit 4.7.0 + snp extension keys)",
   "description": "pre-commit's CONFIG_SCHEMA (clientlib.py) plus snp's extension keys (docs/COMPATIBILITY.md §7). Unknown keys are allowed: pre-commit and snp only warn about them.",
   "type": "object",
   "required": ["repos"],

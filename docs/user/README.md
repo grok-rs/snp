@@ -1,6 +1,6 @@
 # snp — You Shell Not Pass
 
-**snp** is a drop-in replacement for [pre-commit](https://pre-commit.com) 4.6.2, written in Rust. It reads the same
+**snp** is a drop-in replacement for [pre-commit](https://pre-commit.com) 4.7.0, written in Rust. It reads the same
 `.pre-commit-config.yaml` and `.pre-commit-hooks.yaml`, accepts the same commands and options, and produces the same
 output, exit codes and side effects. It also adds optional extensions inspired by
 [lefthook](https://github.com/evilmartians/lefthook): hook priorities and parallel buckets, groups, per-hook `env`,
@@ -9,7 +9,7 @@ output, exit codes and side effects. It also adds optional extensions inspired b
 What you get:
 
 * **Byte-for-byte compatibility.** For a config that uses no snp extension, invoked as `pre-commit` snp prints exactly
-  what pre-commit 4.6.2 prints. Every deliberate difference is listed in the [DIVERGENCES](divergences.md) book and
+  what pre-commit 4.7.0 prints. Every deliberate difference is listed in the [DIVERGENCES](divergences.md) book and
   guarded by a differential test, and every one of them exists only because pre-commit crashes, loses data or has a
   security bug there, or because an owner decision forces it.
 * **Speed.** One static binary with no Python start-up: `snp --version` takes a few milliseconds instead of ~170 ms, and
@@ -26,7 +26,7 @@ What you get:
 ```sh
 # 1. install (see Installation for every channel)
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/grok-rs/snp/releases/latest/download/snp-installer.sh | sh
-snp --version                  # snp 2.0.0
+snp --version                  # snp 2.0.1
 
 # 2. in a repository with a .pre-commit-config.yaml
 snp doctor                     # which tool does git run today for each hook type?
@@ -42,7 +42,7 @@ The same binary behaves as one of two *brands*, chosen by the name it is invoked
 
 * as **`snp`** (the default) it accepts every command and option, including the snp-only ones (`snp doctor`,
   `snp list`, `snp run --group …`), and names itself `snp` in its messages;
-* as **`pre-commit`** (an alias you create with `snp self alias install`) it is pre-commit 4.6.2 to the byte: the
+* as **`pre-commit`** (an alias you create with `snp self alias install`) it is pre-commit 4.7.0 to the byte: the
   snp-only commands and options are rejected exactly as pre-commit rejects unknown ones.
 
 Installing snp therefore changes nothing for git, CI or scripts until you run `snp install` in a repository (or create

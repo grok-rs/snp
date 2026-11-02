@@ -1,8 +1,8 @@
 """Generate `identify_tree.json`: identify 2.6.20's `tags_from_path` over a generated tree.
 
-Run with the oracle's interpreter (pre-commit 4.6.2 pins identify 2.6.20), from any directory:
+Run with the oracle's interpreter (pre-commit 4.7.0 pins identify 2.6.20), from any directory:
 
-    target/oracle/pc462-py312/bin/python -I crates/snp-files/tests/vectors/gen_identify_tree.py \
+    target/oracle/pc470-py312/bin/python -I crates/snp-files/tests/vectors/gen_identify_tree.py \
         > crates/snp-files/tests/vectors/identify_tree.json
 
 The tree is defined below; `crates/snp-files/tests/identify_oracle.rs` materialises the same entries and compares

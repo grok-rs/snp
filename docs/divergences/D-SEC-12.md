@@ -9,7 +9,7 @@ more than 64 MiB fails closed before the legacy hook and the hooks run: An error
 
 ## Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | pre-push stdin (and the `use_stdin` copy) is read without a limit | more than 64 MiB fails closed before the legacy hook and the hooks run: `An error has occurred: FatalError: snp: hook stdin exceeds 64 MiB; refusing to run hooks on a truncated ref list` (exit 1); never truncated |
 

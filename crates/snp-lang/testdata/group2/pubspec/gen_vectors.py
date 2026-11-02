@@ -1,8 +1,8 @@
-"""Generates vectors.jsonl: what pre-commit 4.6.2's dart `_install_dir` sees in `pubspec_contents['executables']`.
+"""Generates vectors.jsonl: what pre-commit 4.7.0's dart `_install_dir` sees in `pubspec_contents['executables']`.
 
-Run with the pre-commit 4.6.2 oracle venv (PyYAML 6.0.3 with LibYAML, `CSafeLoader`), isolated:
+Run with the pre-commit 4.7.0 oracle venv (PyYAML 6.0.3 with LibYAML, `CSafeLoader`), isolated:
 
-    target/oracle/pc462-py312/bin/python -I crates/snp-lang/testdata/group2/pubspec/gen_vectors.py \
+    target/oracle/pc470-py312/bin/python -I crates/snp-lang/testdata/group2/pubspec/gen_vectors.py \
         crates/snp-lang/testdata/group2/pubspec/vectors.jsonl [random-count]
 
 Each line is {"src": <pubspec text>, "want": <outcome>, "accept": <bool>}; `accept` marks realistic pubspecs the snp

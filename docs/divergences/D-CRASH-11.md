@@ -9,7 +9,7 @@ same algorithm on bytes (ASCII whitespace), hooks run
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | non-UTF-8 pre-push stdin → `UnicodeDecodeError` exit 3, push blocked (X13-HI-04) | same algorithm on bytes (ASCII whitespace), hooks run |
 
@@ -34,7 +34,7 @@ A repository whose `master` (`d1fe…`, any sha) is pushed to a new remote branc
 `refs/heads/caf\xe9 <sha> refs/heads/caf\xe9 0000000000000000000000000000000000000000\n`, the hook runs
 `pre-commit hook-impl --hook-type=pre-push --hook-dir .git/hooks -- origin ../remote.git`.
 
-pre-commit 4.6.2 (oracle `pc462-py312`), exit **3**, stdout:
+pre-commit 4.7.0 (oracle `pc470-py312`), exit **3**, stdout:
 
 ```
 An unexpected error has occurred: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9 in position 14: invalid continuation byte

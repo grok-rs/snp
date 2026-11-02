@@ -9,20 +9,20 @@ native implementations (fast path, ADR-031); output byte-identical; Tier A repos
   `StoreResolver::all_hooks` (`crates/snp-repo/src/resolve.rs`); the `keys-v1` markers and the virtual python
   `InstallKey` that keep the transcript (`crates/snp-repo/src/install.rs`, ADR-032). The native hooks themselves are
   WP-26 / WP-27 (`snp_hooks::native`). Tests: `crates/snp-repo/tests/acceptance.rs`
-  (`tier_a_cold_and_warm_transcripts_without_a_clone` against the committed pc462-py312 golden,
+  (`tier_a_cold_and_warm_transcripts_without_a_clone` against the committed pc470-py312 golden,
   `tier_b_identical_fork_is_native_and_a_modified_one_delegates`, `g4_overrides_from_the_config_and_from_an_overlay_patch`,
   `tier_a_hook_whose_preflight_fails_is_cloned_in_all_hooks_and_installed_later`) and end to end in
   `crates/snp/tests/it/repository.rs`.
 
 ## Register entry (COMPATIBILITY §5.6)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | pre-commit-hooks run from a cloned venv | native implementations (fast path, ADR-031); output byte-identical; Tier A repos are never cloned (FD-8) |
 
 ## Rationale
 
-`pre-commit/pre-commit-hooks` is by far the most used hook repository. pre-commit 4.6.2 clones it, builds a
+`pre-commit/pre-commit-hooks` is by far the most used hook repository. pre-commit 4.7.0 clones it, builds a
 virtualenv, `pip install`s the package and then starts one CPython interpreter per xargs partition for every hook. The
 owner decision FD-8 makes snp run these hooks natively instead (ARCHITECTURE §7.2, ADR-031): no clone, no venv, no
 interpreter start-up, and — for Tier A revisions (a known tag or its full commit) — no network at all.
@@ -59,8 +59,8 @@ repos:
     -   id: check-json
 ```
 
-`run --all-files` over `a.json` = `{}\n` on a cold store. pre-commit 4.6.2 (pc462-py312) and snp print the same bytes,
-exit 0 (`crates/snp-repo/tests/goldens/pc462-py312-pch-v6-cold.txt`):
+`run --all-files` over `a.json` = `{}\n` on a cold store. pre-commit 4.7.0 (pc470-py312) and snp print the same bytes,
+exit 0 (`crates/snp-repo/tests/goldens/pc470-py312-pch-v6-cold.txt`):
 
 ```
 [INFO] Initializing environment for https://github.com/pre-commit/pre-commit-hooks.

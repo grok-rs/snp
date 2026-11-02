@@ -2,7 +2,7 @@
 
 # DIVERGENCES
 
-snp reproduces pre-commit 4.6.2 byte for byte. This book lists **every** deliberate difference (89
+snp reproduces pre-commit 4.7.0 byte for byte. This book lists **every** deliberate difference (89
 entries): each one is admissible only because pre-commit crashes, loses data or has a security bug there, or
 because an owner decision forces it (snp's own store, its name, no `unsafe`, performance), or because it is
 visible only when you use an snp extension. Every entry has a differential test that fails the build when the
@@ -35,7 +35,7 @@ validation error leaf invalid literal for int() with base 10: 'abc', exit 1
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `minimum_pre_commit_version: "abc"` (also `""`, `"4."`, `"4.6.3rc1"`) → `ValueError` exit 3 (X13-CFG-01) | validation error leaf `invalid literal for int() with base 10: 'abc'`, exit 1 |
 
@@ -61,7 +61,7 @@ minimum_pre_commit_version: "4.6.3rc1"
 repos: []
 ```
 
-pre-commit 4.6.2, `pre-commit validate-config .pre-commit-config.yaml`, exit **3**:
+pre-commit 4.7.0, `pre-commit validate-config .pre-commit-config.yaml`, exit **3**:
 
 ```
 An unexpected error has occurred: ValueError: invalid literal for int() with base 10: '3rc1'
@@ -90,7 +90,7 @@ variants.
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | non-string / mixed root keys → `TypeError` exit 3 (X13-CFG-02/03) | `[WARNING] Unexpected key(s) present at root: …` (Python `str()` of the keys, sorted by type rank) |
 
@@ -123,7 +123,7 @@ repos: []
 foo: y
 ```
 
-pre-commit 4.6.2, `validate-config`, exit **3**:
+pre-commit 4.7.0, `validate-config`, exit **3**:
 
 ```
 An unexpected error has occurred: TypeError: '<' not supported between instances of 'str' and 'int'
@@ -144,7 +144,7 @@ the one-of / type-tag validation errors, exit 1
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | unhashable `stages`/`language`/`types` values → `TypeError` exit 3 (X13-CFG-04, X13-CFG-13 in manifests) | the one-of / type-tag validation errors, exit 1 |
 
@@ -172,7 +172,7 @@ repos:
         stages: [[a]]
 ```
 
-pre-commit 4.6.2, `validate-config`, exit **3**: `An unexpected error has occurred: TypeError: unhashable type: 'list'`.
+pre-commit 4.7.0, `validate-config`, exit **3**: `An unexpected error has occurred: TypeError: unhashable type: 'list'`.
 
 snp, exit **1**:
 
@@ -201,7 +201,7 @@ validation error '<repr>' is not a valid python regex, exit 1
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | regex repeat ≥ 4294967295, nesting ≥ 485, `(?a)(?u)` in `files`/`exclude` → `OverflowError`/`RecursionError`/`ValueError` exit 3 (X13-CFG-05…07, 13) | validation error `'<repr>' is not a valid python regex`, exit 1 |
 
@@ -225,7 +225,7 @@ files: 'a{4294967296}'
 repos: []
 ```
 
-pre-commit 4.6.2, exit **3**: `An unexpected error has occurred: OverflowError: the repetition number is too large`.
+pre-commit 4.7.0, exit **3**: `An unexpected error has occurred: OverflowError: the repetition number is too large`.
 
 snp, exit **1**:
 
@@ -245,7 +245,7 @@ the hook fails (Executable not found, ValueError: No closing quotation, [Errno 7
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | empty `entry`, shlex errors, `ArgumentTooLong`, unreadable entry script → exit 3 (X13-EXE-01…04) | the hook fails (`Executable `` not found`, `ValueError: No closing quotation`, `[Errno 7] Argument list too long: '<exe>'`, …), the run continues |
 
@@ -306,7 +306,7 @@ per-repo [{repo}] <error> lines, the others are updated and written, exit 1
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `autoupdate`: one unreachable repo → `CalledProcessError` exit 3, nothing written (X13-GIT-02) | per-repo `[{repo}] <error>` lines, the others are updated and written, exit 1 |
 
@@ -336,7 +336,7 @@ crashed.
 One reachable repository with a newer tag, one deleted remote (paths shortened):
 
 ```text
-$ pre-commit autoupdate        # pre-commit 4.6.2
+$ pre-commit autoupdate        # pre-commit 4.7.0
 [/w/hooks] updating v1 -> v2
 An unexpected error has occurred: CalledProcessError: command: ('/usr/bin/git', '-c', 'core.useBuiltinFSMonitor=false', '-C', '/tmp/tmp_vls6xdv', 'fetch', 'origin', 'HEAD', '--quiet', '--filter=blob:none', '--tags')
 return code: 128
@@ -378,7 +378,7 @@ validation-style errors, exit 1
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `migrate-config`/`autoupdate` with a missing config, a non-UTF-8 config, or an invalid re-indented fallback → exit 3 (X13-CFG-10…12) | validation-style errors, exit 1 |
 
@@ -406,7 +406,7 @@ of these cases (pre-commit does not write either).
     hooks: []
 ```
 
-pre-commit 4.6.2, `pre-commit migrate-config`, exit **3**:
+pre-commit 4.7.0, `pre-commit migrate-config`, exit **3**:
 
 ```
 An unexpected error has occurred: ScannerError: while scanning for the next token
@@ -434,7 +434,7 @@ file excluded from this and later hooks
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | file deleted by an earlier hook before its tags were computed → `ValueError … does not exist.` exit 3 (X13-CLS-01/04) | file excluded from this and later hooks |
 
@@ -464,13 +464,13 @@ cached files (the hook then reports the missing file itself).
 
 ##### Examples
 
-Recorded with pre-commit 4.6.2 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc462.txt`); `<W>` is the scratch root, `<store>` the store directory.
+Recorded with pre-commit 4.7.0 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc470.txt`); `<W>` is the scratch root, `<store>` the store directory.
 
 Hook 1 (`files: ^a\.txt$`, `always_run`, `pass_filenames: false`) runs `rm -f b.txt`; hook 2 is `echo`; both
 `a.txt` and `b.txt` are committed; `run --all-files`
 (`tests/differential/divergences/D-CRASH-08.yaml`).
 
-pre-commit 4.6.2, exit 3:
+pre-commit 4.7.0, exit 3:
 
 ```text
 rm b.....................................................................Failed
@@ -500,7 +500,7 @@ opened non-blocking, classified, never blocks
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | FIFO / device passed via `--files` → hangs forever (X13-CLS-03) | opened non-blocking, classified, never blocks |
 
@@ -524,11 +524,11 @@ Safe: only a hang becomes a result, and the result is the one identify gives whe
 
 ##### Examples
 
-Recorded with pre-commit 4.6.2 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc462.txt`); `<W>` is the scratch root, `<store>` the store directory.
+Recorded with pre-commit 4.7.0 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc470.txt`); `<W>` is the scratch root, `<store>` the store directory.
 
 A FIFO `ff` in the worktree, one `echo` hook, `run --files ff` (`tests/differential/divergences/D-CRASH-09.yaml`).
 
-pre-commit 4.6.2 hangs; killed by `timeout 5` it prints nothing (exit 124).
+pre-commit 4.7.0 hangs; killed by `timeout 5` it prints nothing (exit 124).
 
 snp, exit 0 (the FIFO is tagged `file, non-executable, text`):
 
@@ -548,7 +548,7 @@ any all-zero OID (40 or 64 hex) is null
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | pre-push with a 64-hex all-zero OID (SHA-256 repo) → crash on branch deletion | any all-zero OID (40 or 64 hex) is null |
 
@@ -574,7 +574,7 @@ SHA-256 repository with remote branch `gone` at `1200b96c…df49`; `git push ori
 `(delete) 0000…0000 (64) refs/heads/gone 1200b96c26decb6aeb6921e88cae7cee8e01c47af133f254e9f8bfc66172df49`, and the hook
 runs `pre-commit hook-impl --hook-type=pre-push --hook-dir .git/hooks -- origin ../remote.git`.
 
-pre-commit 4.6.2 (oracle `pc462-py312`, git 2.43.0), exit **3**, stdout:
+pre-commit 4.7.0 (oracle `pc470-py312`, git 2.43.0), exit **3**, stdout:
 
 ```
 An unexpected error has occurred: CalledProcessError: command: ('/usr/bin/git', 'diff', '--name-only', '--no-ext-diff', '-z', '1200b96c26decb6aeb6921e88cae7cee8e01c47af133f254e9f8bfc66172df49..0000000000000000000000000000000000000000000000000000000000000000')
@@ -601,7 +601,7 @@ same algorithm on bytes (ASCII whitespace), hooks run
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | non-UTF-8 pre-push stdin → `UnicodeDecodeError` exit 3, push blocked (X13-HI-04) | same algorithm on bytes (ASCII whitespace), hooks run |
 
@@ -626,7 +626,7 @@ A repository whose `master` (`d1fe…`, any sha) is pushed to a new remote branc
 `refs/heads/caf\xe9 <sha> refs/heads/caf\xe9 0000000000000000000000000000000000000000\n`, the hook runs
 `pre-commit hook-impl --hook-type=pre-push --hook-dir .git/hooks -- origin ../remote.git`.
 
-pre-commit 4.6.2 (oracle `pc462-py312`), exit **3**, stdout:
+pre-commit 4.7.0 (oracle `pc470-py312`), exit **3**, stdout:
 
 ```
 An unexpected error has occurred: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9 in position 14: invalid continuation byte
@@ -649,7 +649,7 @@ bytes end to end (argv, identify); lossy UTF-8 view for regex matching
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | non-UTF-8 file names from git or `--files` → `UnicodeDecodeError`/`UnicodeEncodeError` exit 3 (X13-GIT-05…08) | bytes end to end (argv, identify); lossy UTF-8 view for regex matching |
 
@@ -675,18 +675,18 @@ match or not match a byte that Python would have represented as a lone surrogate
 
 ##### Examples
 
-Recorded with pre-commit 4.6.2 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc462.txt`); `<W>` is the scratch root, `<store>` the store directory.
+Recorded with pre-commit 4.7.0 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc470.txt`); `<W>` is the scratch root, `<store>` the store directory.
 
 A committed file `bad\xff.txt` and one `echo` hook (`tests/differential/divergences/D-CRASH-12.yaml`).
 
-`run --all-files`, pre-commit 4.6.2, exit 3:
+`run --all-files`, pre-commit 4.7.0, exit 3:
 
 ```text
 An unexpected error has occurred: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 27: invalid start byte
 Check the log at <store>/pre-commit.log
 ```
 
-`run --files $'bad\xff.txt'`, pre-commit 4.6.2, exit 3:
+`run --files $'bad\xff.txt'`, pre-commit 4.7.0, exit 3:
 
 ```text
 echo.....................................................................An unexpected error has occurred: UnicodeEncodeError: 'utf-8' codec can't encode character '\udcff' in position 3: surrogates not allowed
@@ -710,7 +710,7 @@ decoded lossily
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | non-UTF-8 output of tool probes (`node --version`, …) → exit 3 | decoded lossily |
 
@@ -741,9 +741,9 @@ actually run and pass (COMPATIBILITY K5).
 ##### Examples
 
 A local `language: lua` hook whose `luarocks` prints `5.4\xff` for `luarocks config --lua-ver`
-(`tests/differential/divergences/D-CRASH-13.yaml`; recorded with `target/oracle/pc462-py312`):
+(`tests/differential/divergences/D-CRASH-13.yaml`; recorded with `target/oracle/pc470-py312`):
 
-pre-commit 4.6.2, exit 3:
+pre-commit 4.7.0, exit 3:
 
 ```
 [INFO] Initializing environment for local.
@@ -776,7 +776,7 @@ stderr message, legacy rc 1, snp's hooks still run
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | broken legacy hook (missing shebang interpreter, directory) → exit 3 (X13-HI-07) | stderr message, legacy rc 1, snp's hooks still run |
 
@@ -819,7 +819,7 @@ output printed, [WARNING] line, run continues
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | unwritable `log_file` → exit 3 and the hook output is lost (X13-EXE-05) | output printed, `[WARNING]` line, run continues |
 
@@ -869,7 +869,7 @@ A pty that cannot be allocated in colour mode falls back to pipes.
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | pty allocation failure in colour mode → exit 3 (X13-EXE-06) | falls back to pipes |
 
@@ -897,7 +897,7 @@ the hook's own colours.
 Repository with one local hook `entry: echo coloured`, `language: system`, `pass_filenames: false`, `verbose: true`,
 run in a sandbox whose `/dev/ptmx` is unusable, `pre-commit run --all-files --color always`:
 
-pre-commit 4.6.2 (exit 3; the exception class and text depend on how the pty fails — `FileNotFoundError: [Errno 2] No
+pre-commit 4.7.0 (exit 3; the exception class and text depend on how the pty fails — `FileNotFoundError: [Errno 2] No
 such file or directory` without `/dev/ptmx`, `OSError: out of pty devices` when exhausted):
 
 ```
@@ -928,7 +928,7 @@ marker-based store never needs repair; commands that do not need the store work;
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | store not creatable/corrupt (stale db rows, locked `db.db`, gc ENOENT, double faults in the error handler: X13-ST-*, X13-CMD-07, X13-EH-01/02) → exit 3 / tracebacks | marker-based store never needs repair; commands that do not need the store work; the error handler never double-faults |
 
@@ -962,10 +962,10 @@ line (`PermissionError: [Errno 13] Permission denied: '<store>'`, exit 3) instea
 
 ##### Examples
 
-Recorded with pre-commit 4.6.2 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc462.txt`); `<W>` is the scratch root, `<store>` the store directory.
+Recorded with pre-commit 4.7.0 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc470.txt`); `<W>` is the scratch root, `<store>` the store directory.
 
 `validate-config` with the store path below a regular file (`PRE_COMMIT_HOME`/`SNP_HOME` = `<W>/a.txt/store`;
-`tests/differential/divergences/D-CRASH-17.yaml`). pre-commit 4.6.2, exit 1, stdout:
+`tests/differential/divergences/D-CRASH-17.yaml`). pre-commit 4.7.0, exit 1, stdout:
 
 ```text
 An unexpected error has occurred: NotADirectoryError: [Errno 20] Not a directory: '<W>/a.txt/store'
@@ -975,7 +975,7 @@ and 30 lines of stderr: two tracebacks joined by `During handling of the above e
 occurred:`. With a read-only parent the same shape reads `PermissionError: [Errno 13] Permission denied: '<W>/ro/pch'`.
 snp: `validate-config` does not need the store, exit 0, no output.
 
-A cached remote repository whose clone directory was deleted. pre-commit 4.6.2, `run --all-files`, exit 1:
+A cached remote repository whose clone directory was deleted. pre-commit 4.7.0, `run --all-files`, exit 1:
 
 ```text
 An error has occurred: InvalidManifestError:
@@ -1004,7 +1004,7 @@ crash (exit 3, same text) only when a selected hook's filter needs the content t
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | an unreadable file is identified (and crashes, exit 3) even when no hook needs its contents (X13-CLS-02) | crash (exit 3, same text) only when a selected hook's filter needs the content tier |
 
@@ -1027,12 +1027,12 @@ kept wherever the content matters.
 
 ##### Examples
 
-Recorded with pre-commit 4.6.2 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc462.txt`); `<W>` is the scratch root, `<store>` the store directory.
+Recorded with pre-commit 4.7.0 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc470.txt`); `<W>` is the scratch root, `<store>` the store directory.
 
 A committed, unreadable (`chmod 000`) file `noext` and one `echo` hook with the default `types: [file]`; `run
 --all-files` as a non-root user (`tests/differential/divergences/D-CRASH-18.yaml`).
 
-pre-commit 4.6.2, exit 3:
+pre-commit 4.7.0, exit 3:
 
 ```text
 An unexpected error has occurred: PermissionError: [Errno 13] Permission denied: 'noext'
@@ -1058,7 +1058,7 @@ uv-managed download into the store (`SNP_PYTHON_DOWNLOADS=never` restores the fa
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | explicitly requested Python version not installed → install crash exit 3 | uv-managed download into the store (`SNP_PYTHON_DOWNLOADS=never` restores the failure) |
 
@@ -1089,12 +1089,12 @@ installer (`SNP_PYTHON_INSTALLER=pip`) has no discovery and fails like pre-commi
 ##### Examples
 
 A local hook pinned to `language_version: python3.11` on a host that has only 3.12 and 3.13
-(`tests/differential/divergences/D-CRASH-19.yaml`). Note that the virtualenv pinned with pre-commit 4.6.2 (21.x)
+(`tests/differential/divergences/D-CRASH-19.yaml`). Note that the virtualenv pinned with pre-commit 4.7.0 (21.x)
 also discovers uv-managed interpreters in uv's default directory (verified: with a uv-managed 3.11.13 present it
 builds the environment from it), and so does snp's `uv python find`; the scenario needs a host where neither `PATH`
 nor uv's directory has 3.11.
 
-pre-commit 4.6.2, exit 3 — the install lines, then the `CalledProcessError` of the virtualenv command, whose output
+pre-commit 4.7.0, exit 3 — the install lines, then the `CalledProcessError` of the virtualenv command, whose output
 carries virtualenv's `RuntimeError: failed to find interpreter for Builtin discover of python_spec='python3.11'`
 (04a §2.2 observed the same text for `python_spec='system'`):
 
@@ -1135,7 +1135,7 @@ shim-less system env
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | Windows node hook with explicit `language_version: system` → exit 3 | shim-less system env |
 
@@ -1161,7 +1161,7 @@ node behave differently — and they get what they asked for instead of a crash.
 A local node hook with `language_version: system` and a dependency given as an absolute path to a package in the
 repository (no network), run on Windows (`tests/differential/divergences/D-CRASH-20.yaml`):
 
-pre-commit 4.6.2, exit 3 (the install lines, then nodeenv's failure as a `CalledProcessError`):
+pre-commit 4.7.0, exit 3 (the install lines, then nodeenv's failure as a `CalledProcessError`):
 
 ```
 [INFO] Initializing environment for local:<work>\pkg.
@@ -1196,13 +1196,13 @@ treated as "not rootless"
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `docker system info` fails during the rootless probe → `CalledProcessError` exit 3 | treated as "not rootless" |
 
 ##### Rationale
 
-Before every `docker` / `docker_image` hook run pre-commit 4.6.2 decides whether to pass `-u <uid>:<gid>` to
+Before every `docker` / `docker_image` hook run pre-commit 4.7.0 decides whether to pass `-u <uid>:<gid>` to
 `docker run` by asking the daemon whether it is rootless (`docker.py:109-128`):
 
 ```python
@@ -1240,7 +1240,7 @@ unconditionally.
 A local `docker_image` hook with a fake `docker` on `PATH` whose `system info` exits 1
 (`tests/differential/divergences/D-CRASH-21.yaml`):
 
-pre-commit 4.6.2, exit 3:
+pre-commit 4.7.0, exit 3:
 
 ```
 fake docker..............................................................An unexpected error has occurred: CalledProcessError: command: ('/bin/sh', '<work>/tools/docker', 'system', 'info', '--format', '{{ json . }}')
@@ -1269,7 +1269,7 @@ and with `--verbose` the hook output shows `run --rm -u <uid>:<gid> -v <work>:/s
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `pre-commit hazmat` with no tool → `AttributeError` exit 3 | argparse usage error, exit 2 |
 
@@ -1299,7 +1299,7 @@ pre_commit.commands.hazmat` shows it (final traceback line `AttributeError: 'Nam
 
 `pre-commit hazmat` (any directory, fresh `PRE_COMMIT_HOME`):
 
-pre-commit 4.6.2 (stdout, exit 3; `README`, `db.db`, `.lock` and `pre-commit.log` created in the store):
+pre-commit 4.7.0 (stdout, exit 3; `README`, `db.db`, `.lock` and `pre-commit.log` created in the store):
 
 ```
 An unexpected error has occurred: AttributeError: 'Namespace' object has no attribute 'cmd'
@@ -1326,7 +1326,7 @@ A read-only file that needs no change passes `end-of-file-fixer`.
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `end-of-file-fixer` (and the other fixers) on a read-only file that needs no change → crash in the hook | passes (opens for writing only when a change is needed) |
 
@@ -1353,7 +1353,7 @@ spurious crash becomes the result the hook would have had with write permission.
 A repository with `ro.txt` = `ok\n` (mode 0444) and `b.txt` = `x` (no newline), hook `end-of-file-fixer` (any tag),
 partition order `ro.txt b.txt`:
 
-pre-commit 4.6.2 (hook output, `- exit code: 1`, `b.txt` unchanged):
+pre-commit 4.7.0 (hook output, `- exit code: 1`, `b.txt` unchanged):
 
 ```
 Traceback (most recent call last):
@@ -1378,7 +1378,7 @@ silent, exit 120, stash restored
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | stdout closed (EPIPE) → chained Python tracebacks on stderr, exit 120 (X13-EH-03) | silent, exit 120, stash restored |
 
@@ -1398,12 +1398,12 @@ writing anything to stderr and without a crash log (ARCHITECTURE §10.3; S4 "fai
 
 Any other stdout write error is treated the same way: ENOSPC (`> /dev/full`), EIO or EAGAIN latch the Printer as
 EPIPE does (`snp::envelope::FailClosedStdout`), so the command exits 120 silently instead of 0 with its output lost.
-pre-commit 4.6.2 also exits 120 there (CPython's shutdown flush fails: `Exception ignored in: <_io.TextIOWrapper
+pre-commit 4.7.0 also exits 120 there (CPython's shutdown flush fails: `Exception ignored in: <_io.TextIOWrapper
 name='<stdout>' ...>` / `OSError: [Errno 28] No space left on device`). Test: `errors::x13_eh_03_stdout_full`.
 
 A stdout that is already closed when the process starts (`snp sample-config >&-`) is not a write error for snp: the
 Rust runtime reopens fds 0-2 on `/dev/null` before `main` (so no file snp opens can become fd 1 and receive output),
-and the command behaves as under `> /dev/null` (exit 0). pre-commit 4.6.2 exits 1 with an import-time traceback
+and the command behaves as under `> /dev/null` (exit 0). pre-commit 4.7.0 exits 1 with an import-time traceback
 (`sys.stdout` is `None`), an interpreter crash rather than a designed status. Test:
 `errors::x13_eh_03_stdout_closed_at_start_is_dev_null`.
 
@@ -1413,7 +1413,7 @@ Python traceback that describes the interpreter's own failure to report a closed
 ##### Examples
 
 ```text
-$ { sleep 0.5; pre-commit sample-config; } | true          # pre-commit 4.6.2
+$ { sleep 0.5; pre-commit sample-config; } | true          # pre-commit 4.7.0
 Exception ignored on flushing sys.stdout:
 BrokenPipeError: [Errno 32] Broken pipe
 $ # exit 120
@@ -1450,7 +1450,7 @@ UTF-8 always (see D-DATA-09)
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `migrate-config` on a list-root / non-UTF-8 config under a non-UTF-8 locale (Windows cp1252) → crash or mis-decode | UTF-8 always (see D-DATA-09) |
 
@@ -1469,7 +1469,7 @@ file is the validation error `run` prints (D-CRASH-07).
 
 A config whose comment contains the byte `0xe9` (Latin-1 `é`) at byte 15:
 
-pre-commit 4.6.2 on a UTF-8 locale, `migrate-config`, exit **3**: `An unexpected error has occurred:
+pre-commit 4.7.0 on a UTF-8 locale, `migrate-config`, exit **3**: `An unexpected error has occurred:
 UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9 in position 15: invalid continuation byte`.
 On cp1252 Windows the same file is decoded as `é` and silently re-encoded.
 
@@ -1489,14 +1489,14 @@ An error has occurred: InvalidConfigError:
 
 ##### Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | git < 2.31: `run --all-files`, the pre-push root push and the meta hooks call `ls-files -z --deduplicate` → `CalledProcessError` (rc 129) exit 3 (a traceback inside the meta hook's output) (02 G.3) | `ls-files -z` + adjacent dedup (byte-identical list); the real flag is kept on ≥ 2.31 for argv parity in error texts |
 
 ##### Rationale
 
 `git.get_all_files` (`git.py:154-155`) has used `git ls-files -z --deduplicate` since pre-commit 4.6.1;
-`--deduplicate` exists from git 2.31.0. pre-commit 4.6.2 has no version check, so on git 2.19–2.30 (Debian 11 ships
+`--deduplicate` exists from git 2.31.0. pre-commit 4.7.0 has no version check, so on git 2.19–2.30 (Debian 11 ships
 2.30.2, Ubuntu 20.04 2.25.1, older macOS Xcode 2.30–2.32) every `--all-files` run, every pre-push of a new history
 and the `check-hooks-apply`/`check-useless-excludes` meta hooks die with git's usage error — while the default staged
 run works (02 G.3). ADR-063 keeps every such git usable: snp never refuses an old git, it falls back.
@@ -1544,7 +1544,7 @@ one stderr line after the envelope: [ERROR] Your unstaged changes are saved in <
 
 ##### Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | final stash-restore failure prints only a traceback; the user does not learn where the unstaged work is | one stderr line after the envelope: `[ERROR] Your unstaged changes are saved in <patch>; restore them with: git apply --whitespace=nowarn <patch>`, plus what to do when it does not apply (X13-STASH-02) |
 
@@ -1575,7 +1575,7 @@ printed only on the path where pre-commit has already failed with exit 3.
 A restore that keeps failing (a hook left a file the patch cannot apply to, and the rollback cannot help either):
 
 ```text
-$ pre-commit run          # pre-commit 4.6.2, stdout
+$ pre-commit run          # pre-commit 4.7.0, stdout
 [WARNING] Unstaged files detected.
 [INFO] Stashing unstaged files to /s/patch1791403656-1781218.
 …
@@ -1602,7 +1602,7 @@ descendants of the cancelled hooks are killed (Linux subreaper, Windows job), th
 
 ##### Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | SIGTERM/SIGHUP kill pre-commit without restoring the stash (unstaged work only in the patch) | descendants of the cancelled hooks are killed (Linux subreaper, Windows job), then the stash is restored (restore messages printed), then death by the same signal (exit status 143/129 as before). Residual risk, documented: on macOS an orphaned descendant of an Inherit-group hook (e.g. a formatter started by a shell entry) cannot be found and may still write after the restore; the patch file is kept, so the work stays recoverable |
 
@@ -1628,7 +1628,7 @@ recoverable.
 
 ```text
 $ kill -TERM <pid of `pre-commit run`, during a slow hook>
-# pre-commit 4.6.2: the process dies (status 143), stdout ends after `slow.....`, foo has the staged content,
+# pre-commit 4.7.0: the process dies (status 143), stdout ends after `slow.....`, foo has the staged content,
 # the unstaged change is only in /s/patch1791403833-1793278
 
 $ kill -TERM <pid of `snp run`, during a slow hook>
@@ -1648,7 +1648,7 @@ refused unless -f; a .legacy that is itself a manager script is removed
 
 ##### Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `install` silently overwrites an existing foreign `.legacy` hook | refused unless `-f`; a `.legacy` that is itself a manager script is removed |
 
@@ -1676,7 +1676,7 @@ own `install`.
 A foreign `pre-commit` hook and a foreign `pre-commit.legacy`:
 
 ```text
-$ pre-commit install           # pre-commit 4.6.2, exit 0: the old pre-commit.legacy ("echo legacy") is gone
+$ pre-commit install           # pre-commit 4.7.0, exit 0: the old pre-commit.legacy ("echo legacy") is gone
 Running in migration mode with existing hooks at .git/hooks/pre-commit.legacy
 Use -f to use only pre-commit.
 pre-commit installed at .git/hooks/pre-commit
@@ -1709,7 +1709,7 @@ POSIX sh template, LF everywhere, atomic write that replaces a symlink instead o
 
 ##### Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | hook script: bash template written through symlinks, CRLF on Windows | POSIX `sh` template, LF everywhere, atomic write that replaces a symlink instead of writing through it (template identity: BRAND) |
 
@@ -1736,7 +1736,7 @@ hooks through a symlink keep sharing the configuration file, which is what the s
 ```text
 $ ls -l .git/hooks/pre-commit
 .git/hooks/pre-commit -> ../../tools/hook      # tools/hook: a tracked pre-commit script, INSTALL_PYTHON=/old/python
-$ pre-commit install                           # pre-commit 4.6.2
+$ pre-commit install                           # pre-commit 4.7.0
 pre-commit installed at .git/hooks/pre-commit
 $ git status --short
  M tools/hook                                  # rewritten through the link
@@ -1770,7 +1770,7 @@ value repaired (all lines equal and an existing directory ⇒ use one line)
 
 ##### Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | an exported `CDPATH` corrupts `--hook-dir`; legacy hooks (git-lfs pre-push) are silently skipped | value repaired (all lines equal and an existing directory ⇒ use one line) |
 
@@ -1812,7 +1812,7 @@ keyed by the canonical absolute path; messages unchanged
 
 ##### Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | relative local-path repos (`repo: ../tools`) share one cache entry across projects | keyed by the canonical absolute path; messages unchanged |
 
@@ -1834,11 +1834,11 @@ what the configs ask for.
 
 ##### Examples
 
-Recorded with pre-commit 4.6.2 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc462.txt`); `<W>` is the scratch root, `<store>` the store directory.
+Recorded with pre-commit 4.7.0 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc470.txt`); `<W>` is the scratch root, `<store>` the store directory.
 
 Projects `one/proj` and `two/proj`, each with `repo: ../tools`, `rev: HEAD` and a hook `which` whose entry echoes the
 project name of its `tools` directory; `run --all-files` in `one/proj`, then in `two/proj`
-(`tests/differential/divergences/D-DATA-08.yaml`). pre-commit 4.6.2 in `two/proj`, exit 0:
+(`tests/differential/divergences/D-DATA-08.yaml`). pre-commit 4.7.0 in `two/proj`, exit 0:
 
 ```text
 [WARNING] The 'rev' field of repo '../tools' appears to be a mutable reference (moving tag / branch).  Mutable references are never updated after first install and are not supported.  See https://pre-commit.com/#using-the-latest-version-for-a-repository for more details.  Hint: `pre-commit autoupdate` often fixes this.
@@ -1873,7 +1873,7 @@ UTF-8 always, each line's original EOL kept, atomic replace keeping the mode
 
 ##### Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | migrate-config/autoupdate read/write with the locale encoding and rewrite CRLF files as LF; non-atomic writes | UTF-8 always, each line's original EOL kept, atomic replace keeping the mode |
 
@@ -1903,7 +1903,7 @@ Input (CRLF endings):
         stages: [commit]␍␊
 ```
 
-pre-commit 4.6.2 on Linux writes `repos:\n-   repo: local\n …        stages: [pre-commit]\n` (every ending LF).
+pre-commit 4.7.0 on Linux writes `repos:\n-   repo: local\n …        stages: [pre-commit]\n` (every ending LF).
 snp writes `repos:\r\n-   repo: local\r\n …        stages: [pre-commit]\r\n` (every ending kept, the inserted
 line uses the file's CRLF). Both print `Configuration has been migrated.`.
 
@@ -1915,7 +1915,7 @@ the line keeps its \r (DEV-PY-1)
 
 ##### Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `autoupdate --freeze` rewrites a CRLF `rev:` line with LF (mixed endings) | the line keeps its `\r` (DEV-PY-1) |
 
@@ -1933,7 +1933,7 @@ byte-identical to pre-commit's (the `\r` is still in the kept group 5), and LF f
 
 `    rev: v1  # note␍␊` updated with `--freeze` to `bbbb…` (tag `v2`):
 
-pre-commit 4.6.2 writes `    rev: bbbb…  # frozen: v2␊`; snp writes `    rev: bbbb…  # frozen: v2␍␊`.
+pre-commit 4.7.0 writes `    rev: bbbb…  # frozen: v2␊`; snp writes `    rev: bbbb…  # frozen: v2␍␊`.
 Un-freezing `    rev: bbbb…  # frozen: v1␍␊` to `v2`: pre-commit `    rev: v2␊`, snp `    rev: v2␍␊`.
 
 ### D-DATA-11
@@ -1944,14 +1944,14 @@ GIT_DIFF_OPTS removed for the stash diff-index
 
 ##### Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `GIT_DIFF_OPTS=--unified=0` makes the stash patch unrestorable (hazard a) | `GIT_DIFF_OPTS` removed for the stash `diff-index` |
 
 ##### Rationale
 
 `GIT_DIFF_OPTS=--unified=<n>` changes the context of every patch git prints, `diff-index` included (02 G.0 hazard (a),
-observed on 4.6.2). With `--unified=0` the stash patch has no context lines; `git apply` refuses zero-context hunks
+observed on 4.7.0). With `--unified=0` the stash patch has no context lines; `git apply` refuses zero-context hunks
 unless `--unidiff-zero` is given, so both applies fail, the rollback does not help, and pre-commit exits 3 with the
 user's unstaged changes only in the patch file — on every commit with unstaged changes, as long as the variable is
 exported (some users set it for their own `git diff`).
@@ -1995,7 +1995,7 @@ Proof: `crates/snp-stash/tests/behaviour/guard.rs::hazard_a_git_diff_opts_unifie
 
 ##### Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | an intent-to-add file paired as a rename is missed ⇒ restore fails and a deletion is lost (hazard b) | `--no-renames` on the ITA query |
 
@@ -2004,7 +2004,7 @@ Proof: `crates/snp-stash/tests/behaviour/guard.rs::hazard_a_git_diff_opts_unifie
 `git.intent_to_add_files` (`git.py:146-151`) lists intent-to-add files as `--diff-filter=A` entries of `git diff`.
 With rename detection on (`diff.renames=true`, git's default), an intent-to-add file whose content resembles a tracked
 file deleted in the worktree is reported as a rename (`R`), not an addition, so it is missed (02 G.0 hazard (b),
-observed on 4.6.2). It then stays in the index as an intent-to-add entry: the stash patch contains it as a new file,
+observed on 4.7.0). It then stays in the index as an intent-to-add entry: the stash patch contains it as a new file,
 the checkout leaves it in place, every `git apply` fails with `already exists in working directory`, pre-commit exits
 3, and the user's unstaged deletion is lost from the worktree (it exists only in the patch).
 
@@ -2045,7 +2045,7 @@ per-worktree lock (nested runs exempt via token only while the lock is held), du
 
 ##### Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | two concurrent runs in one worktree can stash over each other; a killed run leaves no recovery hint | per-worktree lock (nested runs exempt via token only while the lock is held), durable journal + git-dir pointer, patch re-verified before the checkout, next-run recovery notice on stderr (`git apply --whitespace=nowarn`, never overwriting later edits) |
 
@@ -2134,7 +2134,7 @@ rewrites deduplicated by YAML node
 
 ##### Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | migrate-config doubles the rewrite of an aliased `stages` list (`[pre-commitpre-commit]`) | rewrites deduplicated by YAML node |
 
@@ -2171,7 +2171,7 @@ repos:
         stages: *s
 ```
 
-pre-commit 4.6.2 `migrate-config` writes `default_stages: &s [pre-commitpre-commit]` (exit 0; every later command
+pre-commit 4.7.0 `migrate-config` writes `default_stages: &s [pre-commitpre-commit]` (exit 0; every later command
 fails validation). snp writes `default_stages: &s [pre-commit]` and leaves `stages: *s` as is.
 
 ```yaml
@@ -2182,7 +2182,7 @@ repos:
 x: *k
 ```
 
-pre-commit 4.6.2 writes `    rev: v1` and leaves `x: *k` (exit 0; the next load fails with `=====> found undefined
+pre-commit 4.7.0 writes `    rev: v1` and leaves `x: *k` (exit 0; the next load fails with `=====> found undefined
 alias`). snp writes `    &k rev: v1`, and the file still loads.
 
 ### D-DATA-15
@@ -2193,7 +2193,7 @@ block scalars rewritten safely
 
 ##### Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | migrate-config turns a folded `language: >-\n  python_venv` into invalid YAML | block scalars rewritten safely |
 
@@ -2221,7 +2221,7 @@ repos:
         files: a
 ```
 
-pre-commit 4.6.2 writes `        language: >python>        files: a` (invalid YAML). snp writes
+pre-commit 4.7.0 writes `        language: >python>        files: a` (invalid YAML). snp writes
 `        language: python\n        files: a\n`.
 
 ### D-DATA-16
@@ -2232,7 +2232,7 @@ end of file treated as a line end; comments kept
 
 ##### Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | autoupdate: a config without a final newline triggers a full PyYAML re-dump that drops all comments | end of file treated as a line end; comments kept |
 
@@ -2257,7 +2257,7 @@ repos:
     rev: v1  # c        ← no final newline
 ```
 
-pre-commit 4.6.2 `autoupdate` (to `v2`) writes `repos:\n-   repo: a\n    hooks: []\n    rev: v2\n` — the header and
+pre-commit 4.7.0 `autoupdate` (to `v2`) writes `repos:\n-   repo: a\n    hooks: []\n    rev: v2\n` — the header and
 the comment are gone. snp writes the file unchanged except `    rev: v2  # c` (still no final newline).
 
 ### D-DATA-17
@@ -2268,7 +2268,7 @@ a stash that would be non-empty on git < 2.19 is refused before any mutation: An
 
 ##### Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | git < 2.19 does not report intent-to-add files: a stash with an ITA file fails after the rollback (`already exists in working directory`, exit 3), leaving the unstaged work only in the patch (02 G.3); runs without a stash work | a stash that would be non-empty on git < 2.19 is refused before any mutation: `An error has occurred: FatalError: git <V> cannot stash intent-to-add files safely; snp requires git 2.19.0 or newer to stash unstaged changes (found <git>).` (exit 1); every run that needs no stash works as in pre-commit |
 
@@ -2316,7 +2316,7 @@ a SIGINT sent with kill(2) to the tool is forwarded to the running hooks before 
 
 ##### Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | a SIGINT sent to pre-commit alone (`kill -INT <pid>`: an IDE or CI cancel) becomes `KeyboardInterrupt` in its own process only: the running hook never sees it and keeps running, orphaned, after the stash was restored (X13-EH-04) | the sent SIGINT is forwarded to every running hook (ARCHITECTURE §10.4, ADR-065), leftover descendants are killed (Linux), then the stash is restored and the run exits 130 as before; a terminal ^C (kernel origin) is not re-sent |
 
@@ -2345,7 +2345,7 @@ A `trap` hook that appends the name of each signal it receives to `.hook-started
 (`tests/differential/divergences/D-DATA-18.yaml`, also `tests/differential/scenarios/run/x13-eh-04-interrupt.yaml`):
 
 ```text
-# pre-commit 4.6.2: exit 130, .hook-started was never written (the hook got no signal and kept running)
+# pre-commit 4.7.0: exit 130, .hook-started was never written (the hook got no signal and kept running)
 $ echo signals:; cat .hook-started
 signals:
 
@@ -2369,7 +2369,7 @@ sanitized-or-hashed env dir names; deletion contained in the repo's envs/
 
 ##### Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `language_version: ../../x` (or an absolute path) makes the install step delete arbitrary directories; Windows `C:` versions break | sanitized-or-hashed env dir names; deletion contained in the repo's `envs/` |
 
@@ -2395,10 +2395,10 @@ the install itself receives the original `language_version` and fails or succeed
 
 ##### Examples
 
-Recorded with pre-commit 4.6.2 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc462.txt`); `<W>` is the scratch root, `<store>` the store directory.
+Recorded with pre-commit 4.7.0 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc470.txt`); `<W>` is the scratch root, `<store>` the store directory.
 
 A local `language: python` hook with `language_version: ../../../../sec01-victim`, where `<W>/sec01-victim/keep.txt`
-exists next to the store (`<W>/store`). pre-commit 4.6.2, `run --all-files`, exit 3:
+exists next to the store (`<W>/store`). pre-commit 4.7.0, `run --all-files`, exit 3:
 
 ```text
 [INFO] Initializing environment for local.
@@ -2423,23 +2423,25 @@ Unit coverage: `crates/snp-store/tests/support/behaviour.rs::env_dir_names_are_s
 
 ### D-SEC-05
 
-installers and owned repos get pre-commit's no_git_env allow-list
+the pip/uv, cargo and gem installers and owned repos get pre-commit's no_git_env allow-list
 
 * **Class:** SEC (COMPATIBILITY §5.3)
 
 ##### Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
-| installers and snp-owned repo operations inherit `GIT_DIR`/`GIT_INDEX_FILE` (index corruption in linked worktrees; autoupdate writes partial-clone config into the user's repo — hazard c) | installers and owned repos get pre-commit's `no_git_env` allow-list |
+| the pip, cargo and gem installers and snp-owned repo operations inherit `GIT_DIR`/`GIT_INDEX_FILE` (index corruption in linked worktrees; autoupdate writes partial-clone config into the user's repo — hazard c) | the pip/uv, cargo and gem installers and owned repos get pre-commit's `no_git_env` allow-list |
 
 ##### Rationale
 
 git exports `GIT_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE` while it runs hooks, and shells export `GIT_DIR` for
 dotfile setups and `git --git-dir` wrappers. pre-commit strips them for its store clone (`git.no_git_env`,
 `git.py:27-48`) but not for `autoupdate`'s temporary repository after `init_repo` (`autoupdate.py:40-72`: `config`,
-`fetch`, `describe`, `tag`, `rev-parse`, `show`, `checkout` run with the full environment), nor for language
-installers (`pip`, `npm`, `go install` building packages with git). With `GIT_DIR` exported, `git -C <tmp> config
+`fetch`, `describe`, `tag`, `rev-parse`, `show`, `checkout` run with the full environment), nor for the python,
+rust and ruby installers (`pip install`, `cargo install`, `gem install` building packages with git). Only `go
+install` (`golang.py:145`) and, since 4.7.0, `npm install` (`node.py:107`, pre-commit#3774) run with `no_git_env`;
+those two are parity. With `GIT_DIR` exported, `git -C <tmp> config
 extensions.partialClone true` writes into the **user's** repository, the following `fetch` from `origin` fails, and
 the user is left with `repositoryformatversion = 1`, `extensions.partialClone = true` and a promisor remote that
 changes how every later fetch of their repository behaves (02 G.3 hazard c). In a linked worktree an installer that
@@ -2452,14 +2454,20 @@ with `no_git_env(base)`: pre-commit's own allow-list (every `GIT_*` variable dro
 `os.environ` copy, ADR-074), plus `core.fsmonitor=` and `core.useBuiltinFSMonitor=false` appended through
 `GIT_CONFIG_COUNT` (an existing count is extended, a malformed one left alone). The argv stays pre-commit's (error
 texts are unchanged); only the environment of calls on snp's own repositories differs, and only where pre-commit
-reads or writes the wrong repository. User-repository calls keep the full environment (parity, 02 G.6).
+reads or writes the wrong repository. User-repository calls keep the full environment (parity, 02 G.6). The
+installers get the same allow-list (without the fsmonitor injection): `pip`/`uv` (python), `cargo` (rust) and `gem`
+(ruby) where pre-commit passes the full environment, `npm` (node) and `go` (golang) as pre-commit does.
+
+pre-commit 4.6.2 still ran `npm install` with the full environment, so with `language: node` hooks a commit with
+`-a` or inside a submodule failed or wrote the caller's index (pre-commit#3773, regressed in 4.6.1 by the
+`git+file://<prefix>` install); 4.7.0 fixed it the way snp always did, and the node part of this entry was retired.
 
 ##### Examples
 
 A hooks repository with tags `v1.0.0`, `v2.0.0`; the user repository's config pins `rev: v1.0.0`; the shell exports
 `GIT_DIR=<user>/.git`; `pre-commit autoupdate`.
 
-pre-commit 4.6.2 (oracle `pc462-py312`, git 2.43.0), exit **3**, stdout:
+pre-commit 4.7.0 (oracle `pc470-py312`, git 2.43.0), exit **3**, stdout:
 
 ```
 An unexpected error has occurred: CalledProcessError: command: ('/usr/bin/git', '-c', 'core.useBuiltinFSMonitor=false', '-C', '/tmp/tmpsblpeqct', 'fetch', 'origin', 'HEAD', '--quiet', '--filter=blob:none', '--tags')
@@ -2503,7 +2511,7 @@ one retry with the other `--object-format` after `mismatched algorithms`
 
 ##### Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | clones fail when the user's git defaults to SHA-256 objects (hazard d) | one retry with the other `--object-format` after `mismatched algorithms` |
 
@@ -2528,7 +2536,7 @@ into a working clone of exactly the requested revision.
 A SHA-256 hook repository (`git init --object-format=sha256`, one commit `<64-hex>`); the user's git has the default
 SHA-1 object format; `.pre-commit-config.yaml` pins `rev: <64-hex>`; `pre-commit run --all-files`.
 
-pre-commit 4.6.2 (oracle `pc462-py312`, git 2.43.0), exit **3**, stdout:
+pre-commit 4.7.0 (oracle `pc470-py312`, git 2.43.0), exit **3**, stdout:
 
 ```
 [INFO] Initializing environment for <root>/hooks.
@@ -2556,13 +2564,13 @@ With `PATH` unset or empty, snp's activation patches put no empty entry (the cur
 
 ##### Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | unset `PATH` ⇒ activation patches produce `"<bin>:"` (cwd on PATH) | no trailing separator |
 
 ##### Rationale
 
-Every environment language of pre-commit 4.6.2 activates its environment with an `envcontext` patch of the form
+Every environment language of pre-commit 4.7.0 activates its environment with an `envcontext` patch of the form
 `('PATH', (bin_dir, os.pathsep, Var('PATH')))` (`languages/python.py:60`, `node.py:56`, `golang.py:73,82`,
 `rust.py:53`, `ruby.py:65`, `conda.py:29`, `coursier.py:67`, `dart.py:27`, `dotnet.py:28`, `haskell.py:23`,
 `lua.py:32`, `perl.py:23`, `swift.py:26`). `Var('PATH')` defaults to `''`, so when `PATH` is unset or empty the hook
@@ -2580,7 +2588,7 @@ the missing current-directory entry.
 
 Patch `('PATH', ('/env/bin', os.pathsep, Var('PATH')))` applied to three environments (POSIX):
 
-| startup `PATH` | pre-commit 4.6.2 hook `PATH` | snp hook `PATH` |
+| startup `PATH` | pre-commit 4.7.0 hook `PATH` | snp hook `PATH` |
 |---|---|---|
 | unset | `/env/bin:` | `/env/bin` |
 | `` (empty) | `/env/bin:` | `/env/bin` |
@@ -2601,13 +2609,13 @@ TLS + sha256 verified before extraction; safe extraction
 
 ##### Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | toolchain downloads (node, go, rustup, ruby helpers) are not verified | TLS + sha256 verified before extraction; safe extraction |
 
 ##### Rationale
 
-pre-commit 4.6.2 trusts whatever bytes its toolchain bootstraps receive:
+pre-commit 4.7.0 trusts whatever bytes its toolchain bootstraps receive:
 
 * **go** — `golang._install_go` (`golang.py:101-121`) streams `https://dl.google.com/go/go{version}.{os}-{arch}.{ext}`
   with `urllib.request.urlopen` and unpacks it with `tarfile.extractall`/`zipfile.extractall`, no checksum and no
@@ -2654,7 +2662,7 @@ A go hook whose archive is replaced in transit (scenario `tests/differential/div
 HTTPS interception proxy trusted through `SSL_CERT_FILE` serves the genuine go.dev JSON and a tampered
 `go1.23.2.linux-amd64.tar.gz` whose `bin/go` prints `pwned`):
 
-pre-commit 4.6.2 installs the tampered toolchain and the hook runs it (exit 1 here, because the fake `go install`
+pre-commit 4.7.0 installs the tampered toolchain and the hook runs it (exit 1 here, because the fake `go install`
 does not produce the hook binary; a real attacker's archive simply succeeds):
 
 ```
@@ -2695,7 +2703,7 @@ Shebang lines are read at most 64 KiB deep; a longer first line counts as "no sh
 
 ##### Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | shebang reads are unbounded | shebang line capped at 64 KiB (file-identify) |
 
@@ -2719,7 +2727,7 @@ interpret the script (which truncates the line at 256 bytes). Exit statuses for 
 `long.sh` (mode 755) = `#!/bin/echo ` + 70 000 × `a` + `\n`; a local hook `entry: ./long.sh`, `language: system`,
 `pass_filenames: false`, `verbose: true`; `run --all-files` on Linux ≥ 5.1.
 
-pre-commit 4.6.2 (verified with `pre_commit.xargs.xargs(('./long.sh',), ())` of the 4.6.2 oracle): `normalize_cmd`
+pre-commit 4.7.0 (verified with `pre_commit.xargs.xargs(('./long.sh',), ())` of the 4.7.0 oracle): `normalize_cmd`
 returns `('/bin/echo', 'a'×70000, './long.sh')`; the hook output is 70 011 bytes: 70 000 × `a` + ` ./long.sh\n`.
 
 snp: no shebang is parsed, `./long.sh` is spawned directly and the kernel runs `/bin/echo` with the first 256 bytes of
@@ -2734,7 +2742,7 @@ an error.
 
 ##### Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | catastrophic regexes hang (tier-1-able patterns are exponential in CPython; backtracking patterns unbounded) | linear tier 1; tier 2 `backtrack_limit` 1e8 → `An error has occurred: snp: regular expression {pattern!r} exceeded the backtracking limit on {path!r}` (exit 1) |
 
@@ -2761,7 +2769,7 @@ magnitude below the limit (corpus frequency 0): a regex that takes 10⁸ steps o
 A local hook `language: fail`, `entry: the files pattern matched`, `files: '(?:(?=a)a+)+(?<!a)b'`; the repository
 holds the empty file `aaaaaaaaaaaaaaaaaaaaaaaaaab` (26 × `a` + `b`) and the config; `run --all-files`.
 
-pre-commit 4.6.2 (CPython 3.12.3; bytes captured with the same `fail`/filter code of pre-commit 4.1.0 on 3.12.3):
+pre-commit 4.7.0 (CPython 3.12.3; bytes captured with the same `fail`/filter code of pre-commit 4.1.0 on 3.12.3):
 `re.search` explores 2²⁵ partitions of the `a` run for ≈ 5.4 s, finds no match and prints, exit 0:
 
 ```text
@@ -2790,7 +2798,7 @@ depth 512, 1 M constructed nodes, 16 MiB file limits → YAML error
 
 ##### Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | YAML alias bombs / deep nesting / huge files exhaust memory or the stack | depth 512, 1 M constructed nodes, 16 MiB file limits → YAML error |
 
@@ -2843,7 +2851,7 @@ x:
   a9: &a9 [*a8, *a8, *a8, *a8, *a8, *a8, *a8, *a8, *a8, *a8]
 ```
 
-`pre-commit validate-config .pre-commit-config.yaml` (4.6.2): exit 0, stdout
+`pre-commit validate-config .pre-commit-config.yaml` (4.7.0): exit 0, stdout
 
 ```
 [WARNING] Unexpected key(s) present at root: x
@@ -2874,7 +2882,7 @@ more than 64 MiB fails closed before the legacy hook and the hooks run: An error
 
 ##### Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | pre-push stdin (and the `use_stdin` copy) is read without a limit | more than 64 MiB fails closed before the legacy hook and the hooks run: `An error has occurred: FatalError: snp: hook stdin exceeds 64 MiB; refusing to run hooks on a truncated ref list` (exit 1); never truncated |
 
@@ -2912,7 +2920,7 @@ as root (euid 0), a store owned by a non-root uid is refused unless `SNP_ALLOW_F
 
 ##### Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | a store writable by another user is used as is, including when running as root (tools and environments that user can replace get executed) | as root (euid 0), a store owned by a non-root uid is refused with `An error has occurred: FatalError: snp refuses to run as root from a store owned by uid <n>: <path>; set SNP_ALLOW_FOREIGN_STORE=1 to trust it` (exit 1) unless `SNP_ALLOW_FOREIGN_STORE=1`; other foreign owners only warn (D-DIAG-05) |
 
@@ -2944,7 +2952,7 @@ An error has occurred: FatalError: snp refuses to run as root from a store owned
 ```
 
 and, re-run with `SNP_ALLOW_FOREIGN_STORE=1`, success with the stderr warning
-`[WARNING] the snp store <store> is owned by uid 1000, not by the current user`. pre-commit 4.6.2 uses such a store
+`[WARNING] the snp store <store> is owned by uid 1000, not by the current user`. pre-commit 4.7.0 uses such a store
 without a word.
 
 ## 5.4 STORE and BRAND — forced by FD-2 and FD-1
@@ -2957,7 +2965,7 @@ own store `SNP_HOME` > `$XDG_CACHE_HOME/snp` > `~/.cache/snp`, versioned layout,
 
 ##### Register entry (COMPATIBILITY §5.4)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | store `$PRE_COMMIT_HOME` or `~/.cache/pre-commit` (SQLite `db.db`); crash log `pre-commit.log` there | own store `SNP_HOME` > `$XDG_CACHE_HOME/snp` > `~/.cache/snp` (Windows `%USERPROFILE%\.cache\snp`), versioned layout, no SQLite; refuses pre-commit's store; crash log named by brand in snp's store; the crash-log body (below the version block) is snp's |
 
@@ -2981,12 +2989,12 @@ files to …`), which the comparison tiers treat as Tier C. CI cache recipes mus
 
 ##### Examples
 
-Recorded with pre-commit 4.6.2 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc462.txt`); `<W>` is the scratch root, `<store>` the store directory.
+Recorded with pre-commit 4.7.0 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc470.txt`); `<W>` is the scratch root, `<store>` the store directory.
 
 An invalid config (`repos: 1`), `run --all-files` with `HOME=<W>/home`, `XDG_CACHE_HOME` unset
 (`tests/differential/divergences/D-STORE-01.yaml`).
 
-pre-commit 4.6.2 with `PRE_COMMIT_HOME=<W>/pch`, exit 1:
+pre-commit 4.7.0 with `PRE_COMMIT_HOME=<W>/pch`, exit 1:
 
 ```text
 An error has occurred: InvalidConfigError:
@@ -3013,7 +3021,7 @@ snp never touches pre-commit's directories; clean always prints Cleaned {snp sto
 
 ##### Register entry (COMPATIBILITY §5.4)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `clean` also removes `~/.pre-commit`; `gc`/`clean` operate on pre-commit's store | snp never touches pre-commit's directories; `clean` always prints `Cleaned {snp store}.` |
 
@@ -3038,7 +3046,7 @@ check for it keep working; only the path differs, which the differential harness
 ```text
 $ ls -a ~ ~/.cache
 .pre-commit  .cache            # ~/.pre-commit exists, ~/.cache/pre-commit exists
-$ pre-commit clean             # pre-commit 4.6.2
+$ pre-commit clean             # pre-commit 4.7.0
 Cleaned /home/u/.cache/pre-commit.
 Cleaned /home/u/.pre-commit.
 $ snp clean                    # both pre-commit directories stay
@@ -3057,7 +3065,7 @@ gc removes *restored* patches older than 30 days (never unrestored ones) — cla
 
 ##### Register entry (COMPATIBILITY §5.4)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | restored stash patches are kept forever | gc removes *restored* patches older than 30 days (never unrestored ones) — class STORE |
 
@@ -3097,25 +3105,25 @@ Not reproducible through the CLI within a test run (the patch must be 30 days ol
 `Store::sweep` with a clock 31 days ahead: `patch1700000000-41` (no journal) is removed, `patch1700000000-42`
 (mentioned by `run-42-abcd.snp-journal`, state `failed`) and the journal stay, and `patch1700000000-43` (mentioned by
 the `restored` journal `run-43-abcd.snp-journal`) is removed. `clean_retires_the_layout_but_keeps_unknown_and_recovery_data`
-pins the `clean` entries above. pre-commit 4.6.2 keeps both patches
+pins the `clean` entries above. pre-commit 4.7.0 keeps both patches
 (`gc` prints `0 repo(s) removed.` and never looks at them); the scenario file records `status: unit`.
 
 ### D-BRAND-01
 
-snp brand: snp 2.0.0, the §3.3 substitutions and argparse texts rendered with prog snp; compat brand: byte-identical
+snp brand: snp 2.0.1, the §3.3 substitutions and argparse texts rendered with prog snp; compat brand: byte-identical
 
 * **Class:** BRAND (COMPATIBILITY §5.4)
 
 ##### Register entry (COMPATIBILITY §5.4)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
-| `--version` and texts | snp brand: `snp 2.0.0`, the §3.3 substitutions and argparse texts rendered with prog `snp`; compat brand: byte-identical |
+| `--version` and texts | snp brand: `snp 2.0.1`, the §3.3 substitutions and argparse texts rendered with prog `snp`; compat brand: byte-identical |
 
 ##### Rationale
 
 FD-1 fixes the product identity: invoked under any name but `pre-commit`, the tool is snp and says so. Under the
-`pre-commit` name (a symlink, hard link or copy; COMPATIBILITY §3.1) every byte stays pre-commit 4.6.2's, so scripts,
+`pre-commit` name (a symlink, hard link or copy; COMPATIBILITY §3.1) every byte stays pre-commit 4.7.0's, so scripts,
 CI greps and `pre-commit --version` parsers keep working (ADR-023).
 
 In the snp brand the argparse texts are **rendered**, not substituted (ADR-058): argparse wraps usage, help and usage
@@ -3123,15 +3131,15 @@ errors relative to `usage: {prog} {cmd} `, so the 7-character-shorter prog `snp`
 indents (`init-templatedir`: 35 → 28 columns). `snp_argparse` renders them from `SNP_SPEC` with prog `snp`; the goldens
 (`crates/snp-cli/tests/goldens/snp.json`, `cargo xtask cli-goldens`) are produced by a real CPython 3.13.14 argparse
 built from `export_json(SNP_SPEC, "snp")` and, for every parser identical to pre-commit's, cross-checked against the
-prog-patched oracle `target/oracle/pc462-py313/bin/pre-commit-snp-prog`. The help strings of `main.py` that name the
+prog-patched oracle `target/oracle/pc470-py313/bin/pre-commit-snp-prog`. The help strings of `main.py` that name the
 tool (`main.py:222, 245, 273, 290, 299, 335`) read `snp` in the snp brand (COMPATIBILITY §3.3).
 
-`--version` is the one argparse text that is not a pure prog substitution: `%(prog)s 4.6.2` would print `snp 4.6.2`,
-which names a version of snp that does not exist; the snp brand's version action is `%(prog)s 2.0.0`.
+`--version` is the one argparse text that is not a pure prog substitution: `%(prog)s 4.7.0` would print `snp 4.7.0`,
+which names a version of snp that does not exist; the snp brand's version action is `%(prog)s 2.0.1`.
 
 Why it is safe: the divergence is confined to the snp brand, which pre-commit users only reach by typing `snp`; the
-compat brand reproduces pre-commit 4.6.2 byte for byte (`crates/snp-cli/tests/goldens/compat.json`, 490 cases at
-the 12 §A.16 width matrix, all generated from pre-commit 4.6.2 on CPython 3.13.14). Exit codes and streams are the
+compat brand reproduces pre-commit 4.7.0 byte for byte (`crates/snp-cli/tests/goldens/compat.json`, 490 cases at
+the 12 §A.16 width matrix, all generated from pre-commit 4.7.0 on CPython 3.13.14). Exit codes and streams are the
 same in both brands.
 
 ##### Examples
@@ -3139,10 +3147,10 @@ same in both brands.
 `--version` (stdout, exit 0):
 
 ```text
-$ pre-commit --version          # pre-commit 4.6.2, and snp through a `pre-commit` link
-pre-commit 4.6.2
+$ pre-commit --version          # pre-commit 4.7.0, and snp through a `pre-commit` link
+pre-commit 4.7.0
 $ snp --version
-snp 2.0.0
+snp 2.0.1
 ```
 
 `init-templatedir -h` (first lines; the continuation indent follows the prog):
@@ -3185,7 +3193,7 @@ prek and snp 1.x scripts are manager scripts (hook-script identity): replaced in
 
 ##### Register entry (COMPATIBILITY §5.4)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `install` treats prek and snp 1.x hook scripts as foreign: moves them to `.legacy` and prints `Running in migration mode with existing hooks at …` / `Use -f to use only pre-commit.` (both tools then run on every commit; a pre-commit script in `.legacy` blocks every commit, 11 §A.5.2 chains C1–C4) | prek and snp 1.x scripts are manager scripts (hook-script identity): replaced in place, no `.legacy`, no migration-mode lines; `uninstall` still restores a `PreCommit`/`Prek` `.legacy` (rollback) |
 
@@ -3214,7 +3222,7 @@ running exactly once instead of twice; nothing user-written is moved or deleted 
 $ head -2 .git/hooks/pre-commit
 #!/bin/sh
 # File generated by prek: https://github.com/j178/prek
-$ pre-commit install           # pre-commit 4.6.2: hooks/ now holds pre-commit and pre-commit.legacy (prek)
+$ pre-commit install           # pre-commit 4.7.0: hooks/ now holds pre-commit and pre-commit.legacy (prek)
 Running in migration mode with existing hooks at .git/hooks/pre-commit.legacy
 Use -f to use only pre-commit.
 pre-commit installed at .git/hooks/pre-commit
@@ -3237,13 +3245,13 @@ argv[1] == "__hazmat" is reserved (in-hook hazmat entry, both brands) — class 
 
 ##### Register entry (COMPATIBILITY §5.4)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `pre-commit __hazmat …` → `invalid choice: '__hazmat'`, exit 2 | `argv[1] == "__hazmat"` is reserved (in-hook hazmat entry, both brands) — class BRAND |
 
 ##### Rationale
 
-pre-commit 4.6.2 has a public `hazmat` command whose rewritten entries run `pre-commit hazmat …` inside hooks; its
+pre-commit 4.7.0 has a public `hazmat` command whose rewritten entries run `pre-commit hazmat …` inside hooks; its
 top-level parser rejects anything else, so `pre-commit __hazmat …` is a usage error (`invalid choice: '__hazmat'`,
 exit 2). snp reserves `argv[1] == "__hazmat"` in both brands as the in-hook hazmat entry: dispatch hands the
 remaining arguments to `snp_hooks::hazmat::cli` before the argparse model is consulted (12 §A.17), so a hook entry
@@ -3257,7 +3265,7 @@ in pre-commit it is only ever an error. The public `hazmat` command keeps pre-co
 ##### Examples
 
 ```text
-$ pre-commit __hazmat n1 echo -- a b          # pre-commit 4.6.2, stderr, exit 2
+$ pre-commit __hazmat n1 echo -- a b          # pre-commit 4.7.0, stderr, exit 2
 usage: pre-commit [-h] [-V]
                   {autoupdate,clean,gc,hazmat,init-templatedir,install,install-hooks,migrate-config,run,sample-config,try-repo,uninstall,validate-config,validate-manifest,help,hook-impl} ...
 pre-commit: error: argument command: invalid choice: '__hazmat' (choose from 'autoupdate', 'clean', 'gc', 'hazmat', 'init-templatedir', 'install', 'install-hooks', 'migrate-config', 'run', 'sample-config', 'try-repo', 'uninstall', 'validate-config', 'validate-manifest', 'help', 'hook-impl')
@@ -3281,7 +3289,7 @@ Windows: a missing absolute shebang interpreter (`#!/bin/sh`) falls back to the 
 
 ##### Register entry (COMPATIBILITY §5.5)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | Windows: a missing absolute shebang interpreter (`#!/bin/sh`) fails the hook / crashes the legacy hook | falls back to the interpreter's basename on PATH (Git for Windows semantics) |
 
@@ -3306,7 +3314,7 @@ unaffected (the fallback is compiled in but disabled).
 Windows, Git for Windows on `PATH` (`C:\Program Files\Git\usr\bin` provides `sh.exe`), a local hook
 `entry: ./hook.sh`, `language: script`, where `hook.sh` is `#!/bin/sh` + `echo ran`; `run --all-files`:
 
-pre-commit 4.6.2 (exit 1):
+pre-commit 4.7.0 (exit 1):
 
 ```
 script hook..............................................................Failed
@@ -3329,7 +3337,7 @@ containing a line break fails the hook with a clear message.
 
 ##### Register entry (COMPATIBILITY §5.5)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | Windows: batch-file (`.cmd`/`.bat`) arguments with `&`, `^`, `%VAR%` are interpreted by cmd.exe | Rust's BatBadBut-safe quoting; arguments containing CR/LF fail the hook with ``Executable `{cmd0}` cannot receive an argument containing a line break: {repr}`` (rc 1) — class SEC |
 
@@ -3357,7 +3365,7 @@ arguments are passed unchanged. The longer quoted lines are kept under cmd.exe's
 Windows, a local hook `entry: run.cmd` (`@echo %*`), `language: system`, run on a tracked file `a&echo.INJECTED.txt`
 (no space: CPython quotes an argument with a space or tab too, and cmd.exe does not split a quoted `&`):
 
-pre-commit 4.6.2: cmd.exe runs `run.cmd a` and then `echo.INJECTED.txt`; the output contains `INJECTED.txt` on a line
+pre-commit 4.7.0: cmd.exe runs `run.cmd a` and then `echo.INJECTED.txt`; the output contains `INJECTED.txt` on a line
 of its own.
 
 snp: the batch file receives the single argument `"a&echo.INJECTED.txt"` and echoes it verbatim.
@@ -3373,7 +3381,7 @@ absolute path kept
 
 ##### Register entry (COMPATIBILITY §5.5)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | Windows: config/`--files` on another drive → `ValueError` (relpath) exit 3 | absolute path kept |
 
@@ -3409,7 +3417,7 @@ clear error, exit 1
 
 ##### Register entry (COMPATIBILITY §5.5)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | cygwin/MSYS2 git on Windows: a warning, then undefined behaviour | clear error, exit 1 |
 
@@ -3432,7 +3440,7 @@ changes (the check is compiled out of the decision on Unix).
 Windows, `PATH` starting with `C:\msys64\usr\bin` (MSYS2's `git.exe` next to `msys-2.0.dll`), `pre-commit run`
 through the compat alias.
 
-pre-commit 4.6.2 (native Windows Python): no warning (dead check), then undefined behaviour — typically
+pre-commit 4.7.0 (native Windows Python): no warning (dead check), then undefined behaviour — typically
 `An unexpected error has occurred: …` once a POSIX path from git meets a Windows path API, or a silent mis-selection
 of files.
 
@@ -3459,7 +3467,7 @@ Windows: partitions of a `.cmd`/`.bat` hook are re-split when the real (quoted) 
 
 ##### Register entry (COMPATIBILITY §5.5)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | Windows: `.cmd` partitions can exceed 8191 characters after quoting (crash) | partitions re-split |
 
@@ -3483,7 +3491,7 @@ partitions that could not have run at all.
 Windows, a local hook `entry: check.cmd` (`@exit /b 0`), `language: system`, `require_serial: true`, and 1 000
 tracked files named `a b0000` … `a b0999` (7 characters, one space each).
 
-pre-commit 4.6.2: the unquoted budget (~7 100 characters with `C:\Windows\system32\cmd.exe`) admits ~887 names
+pre-commit 4.7.0: the unquoted budget (~7 100 characters with `C:\Windows\system32\cmd.exe`) admits ~887 names
 per partition at 8 characters each; `list2cmdline` quotes every name (10 characters each), so cmd.exe receives
 ~8 900 characters and the hook fails with `The command line is too long.` (`- exit code: 1`).
 
@@ -3504,7 +3512,7 @@ macOS and Windows: `PYTHON_CPU_COUNT` is ignored, while pre-commit on CPython �
 
 ##### Register entry (COMPATIBILITY §5.5)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | Windows CPU count = `GetActiveProcessorCount(ALL_PROCESSOR_GROUPS)`; on macOS and Windows under CPython ≥ 3.13 a positive `PYTHON_CPU_COUNT` replaces the count (`multiprocessing.cpu_count()`; Linux uses `sched_getaffinity`, which ignores it) | `available_parallelism` (differs only above 64 logical CPUs; no `unsafe`); `PYTHON_CPU_COUNT` ignored on every OS (14 A.9 Q3; `SNP_JOBS` sets the count) |
 
@@ -3535,16 +3543,16 @@ partitioning described above (the number of invocations, never the set of files 
 
 Windows with 128 logical CPUs in two processor groups, a hook `entry: snp-probe count` over 2 000 files.
 
-pre-commit 4.6.2: `target_concurrency()` = 128, `max_args` = max(4, ⌈2000/128⌉) = 16 → 125 invocations, 125 output
+pre-commit 4.7.0: `target_concurrency()` = 128, `max_args` = max(4, ⌈2000/128⌉) = 16 → 125 invocations, 125 output
 lines `16`.
 
 snp: `cpu_count()` = 64 (the current group), `max_args` = ⌈2000/64⌉ = 32 → 63 invocations (62 × `32`, 1 × `16`).
 
 Both exit 0 and check all 2 000 files.
 
-macOS with 10 CPUs, `PYTHON_CPU_COUNT=3`, pre-commit 4.6.2 on CPython 3.13, the same hook over 2 000 files.
+macOS with 10 CPUs, `PYTHON_CPU_COUNT=3`, pre-commit 4.7.0 on CPython 3.13, the same hook over 2 000 files.
 
-pre-commit 4.6.2: `target_concurrency()` = 3, `max_args` = ⌈2000/3⌉ = 667 → 3 invocations (667, 667, 666).
+pre-commit 4.7.0: `target_concurrency()` = 3, `max_args` = ⌈2000/3⌉ = 667 → 3 invocations (667, 667, 666).
 
 snp: `cpu_count()` = 10, `max_args` = 200 → 10 invocations of 200 files.
 
@@ -3558,7 +3566,7 @@ tagged symlink (reading the reparse tag needs unsafe)
 
 ##### Register entry (COMPATIBILITY §5.5)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | Windows: a directory junction is tagged `directory` | tagged `symlink` (reading the reparse tag needs `unsafe`) |
 
@@ -3578,7 +3586,7 @@ regular file under either classification, so the default `types: [file]` exclude
 ##### Examples
 
 Windows only. A junction `j` (`mklink /J j subdir`) passed with `run --files j` to two hooks, `types: [directory]` and
-`types: [symlink]` (`tests/differential/divergences/D-PLAT-12.yaml`): pre-commit 4.6.2 passes `j` to the
+`types: [symlink]` (`tests/differential/divergences/D-PLAT-12.yaml`): pre-commit 4.7.0 passes `j` to the
 `directory` hook and skips the `symlink` hook (`(no files to check)`); snp does the opposite. Both skip it for a
 default `types: [file]` hook. Recorded on a Windows runner by WP-35's harness (no Windows oracle on the development
 machine).
@@ -3595,7 +3603,7 @@ resolver per env (ADR-073)
 
 ##### Register entry (COMPATIBILITY §5.6)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | Python envs built with virtualenv + pip | uv (`--seed`) with pip-config translation and a pip fallback; seeded packages may differ in version, and uv's resolver can differ on pre-releases, yanked versions and extra-index strategy (FD-7); `SNP_PYTHON_INSTALLER=pip` restores pip's resolver per env (ADR-073) |
 
@@ -3642,7 +3650,7 @@ on pip's resolution set `SNP_PYTHON_INSTALLER=pip`.
 A local python hook with a dependency that prints which tool created its environment
 (`tests/differential/divergences/D-PERF-01.yaml`; needs the network for `six`):
 
-pre-commit 4.6.2, exit 0:
+pre-commit 4.7.0, exit 0:
 
 ```
 [INFO] Initializing environment for local:six.
@@ -3680,13 +3688,13 @@ placeholder install skipped
 
 ##### Register entry (COMPATIBILITY §5.6)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | local `language: python` hooks without deps `pip install` a placeholder package | placeholder install skipped |
 
 ##### Rationale
 
-A `repo: local` hook's prefix is the store's local-template directory (03 §7.7): the 4.6.2 `empty_template_*` files
+A `repo: local` hook's prefix is the store's local-template directory (03 §7.7): the 4.7.0 `empty_template_*` files
 for every language, `setup.py` among them (`setup(name='pre-commit-placeholder-package', version='0.0.0',
 py_modules=[])`). pre-commit's python install always runs `python -mpip install . *deps` in the prefix
 (`python.py:214-228`), so a local python hook **without** dependencies installs that empty placeholder package — a
@@ -3708,7 +3716,7 @@ depend on.
 A local python hook without dependencies that lists the distributions named like the placeholder
 (`tests/differential/divergences/D-PERF-02.yaml`):
 
-pre-commit 4.6.2, exit 0 (the four install lines, then):
+pre-commit 4.7.0, exit 0 (the four install lines, then):
 
 ```
 placeholder..............................................................Passed
@@ -3736,13 +3744,13 @@ native implementations (fast path, ADR-031); output byte-identical; Tier A repos
 
 ##### Register entry (COMPATIBILITY §5.6)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | pre-commit-hooks run from a cloned venv | native implementations (fast path, ADR-031); output byte-identical; Tier A repos are never cloned (FD-8) |
 
 ##### Rationale
 
-`pre-commit/pre-commit-hooks` is by far the most used hook repository. pre-commit 4.6.2 clones it, builds a
+`pre-commit/pre-commit-hooks` is by far the most used hook repository. pre-commit 4.7.0 clones it, builds a
 virtualenv, `pip install`s the package and then starts one CPython interpreter per xargs partition for every hook. The
 owner decision FD-8 makes snp run these hooks natively instead (ARCHITECTURE §7.2, ADR-031): no clone, no venv, no
 interpreter start-up, and — for Tier A revisions (a known tag or its full commit) — no network at all.
@@ -3779,8 +3787,8 @@ repos:
     -   id: check-json
 ```
 
-`run --all-files` over `a.json` = `{}\n` on a cold store. pre-commit 4.6.2 (pc462-py312) and snp print the same bytes,
-exit 0 (`crates/snp-repo/tests/goldens/pc462-py312-pch-v6-cold.txt`):
+`run --all-files` over `a.json` = `{}\n` on a cold store. pre-commit 4.7.0 (pc470-py312) and snp print the same bytes,
+exit 0 (`crates/snp-repo/tests/goldens/pc470-py312-pch-v6-cold.txt`):
 
 ```
 [INFO] Initializing environment for https://github.com/pre-commit/pre-commit-hooks.
@@ -3806,7 +3814,7 @@ skipped when the tagged image exists (SNP_DOCKER_ALWAYS_BUILD=1 restores it)
 
 ##### Register entry (COMPATIBILITY §5.6)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | docker hooks run `docker build` every run | skipped when the tagged image exists (`SNP_DOCKER_ALWAYS_BUILD=1` restores it) |
 
@@ -3849,7 +3857,7 @@ fake docker..............................................................Passed
 fake docker..............................................................Passed
 ```
 
-The fake docker's log differs. pre-commit 4.6.2 (recorded with `pc462-py312`):
+The fake docker's log differs. pre-commit 4.7.0 (recorded with `pc470-py312`):
 
 ```
 build --pull
@@ -3913,7 +3921,7 @@ repos:
         groups: [fast]
 ```
 
-pre-commit 4.6.2 `run --all-files` prints `[WARNING] Unexpected key(s) present at root: priorities` and
+pre-commit 4.7.0 `run --all-files` prints `[WARNING] Unexpected key(s) present at root: priorities` and
 `[WARNING] Unexpected key(s) present on local => fmt: groups, priority` before the hook line. snp prints only the
 hook line (and with `SNP_COMPAT_STRICT=1` prints both warnings exactly like pre-commit).
 
@@ -3954,7 +3962,7 @@ hooks:
     args: [-x]
 ```
 
-pre-commit 4.6.2 runs `pytest -q …` as configured. snp prints `snp: using local overrides from
+pre-commit 4.7.0 runs `pytest -q …` as configured. snp prints `snp: using local overrides from
 .pre-commit-config.local.yaml` on stderr and runs `docker compose run --rm app pytest -q -x …`.
 
 ### D-EXT-03
@@ -3987,7 +3995,7 @@ a repository without an overlay prints nothing new.
   not exist`
 * an overlay hook matching no hook: `snp: local config overrides unknown hook 'nonexistent'`
 
-pre-commit 4.6.2 prints none of these (it never reads the overlay).
+pre-commit 4.7.0 prints none of these (it never reads the overlay).
 
 ### D-EXT-04
 
@@ -4110,7 +4118,7 @@ repos:
     -   id: trailing-whitespace
 ```
 
-pre-commit 4.6.2 `validate-config`, exit **1**:
+pre-commit 4.7.0 `validate-config`, exit **1**:
 
 ```
 
@@ -4155,7 +4163,7 @@ Why it is safe:
 
 * **Only the snp brand has them.** Under the `pre-commit` name the parser tree is exactly pre-commit's
   (`PRE_COMMIT_SPEC`): every extension is rejected with pre-commit's own texts (`invalid choice: 'list' (choose from
-  …)`, `unrecognized arguments: --summary`), byte-identical to pre-commit 4.6.2 (`compat.json` goldens).
+  …)`, `unrecognized arguments: --summary`), byte-identical to pre-commit 4.7.0 (`compat.json` goldens).
 * **No existing command line changes meaning.** `snp_argparse::prefix_stable(PRE_COMMIT_SPEC, SNP_SPEC)` checks that
   every long-option abbreviation pre-commit resolves uniquely resolves to the same option in the snp brand
   (`run --all`, `run --fi`, `install --conf x.yaml`, …); the planted names `--files-from-stdin` and `--config-hooks` fail
@@ -4261,7 +4269,7 @@ repos:
 ```
 
 `run --all-files` without a terminal (the differential harness runs the tools in their own process group):
-pre-commit 4.6.2 prints `[WARNING] Unexpected key(s) present on local => ask: interactive` and the hook's block; snp
+pre-commit 4.7.0 prints `[WARNING] Unexpected key(s) present on local => ask: interactive` and the hook's block; snp
 prints `snp: interactive: …; running 'ask' without a terminal` on stderr and the same block, without the warning. On a
 terminal (`crates/snp/tests/it/interactive.rs`):
 
@@ -4313,7 +4321,7 @@ pre-commit's lookup.
 
 ##### Examples
 
-A repository with only `.snp.yaml`, `run --all-files`: pre-commit 4.6.2 prints `An error has occurred:
+A repository with only `.snp.yaml`, `run --all-files`: pre-commit 4.7.0 prints `An error has occurred:
 InvalidConfigError: ` / `=====> .pre-commit-config.yaml is not a file` (exit 1); snp, in both brands, runs the hooks of
 `.snp.yaml`. With `.pre-commit-config.yaml` beside it, the snp brand prints on stderr:
 
@@ -4340,7 +4348,7 @@ git < 2.31: `[WARNING] git <V> is older than 2.31.0, the oldest git version snp 
 
 ##### Rationale
 
-pre-commit 4.6.2 has no git version check, yet needs git ≥ 2.31 for `ls-files --deduplicate` and ≥ 2.19 for
+pre-commit 4.7.0 has no git version check, yet needs git ≥ 2.31 for `ls-files --deduplicate` and ≥ 2.19 for
 intent-to-add detection in the stash (02 G.0 item 1). snp never refuses a git (ADR-063: below 2.31 it falls back —
 D-CRASH-26 — and only a stash that would need intent-to-add detection is refused below 2.19, D-DATA-17), but a user on
 a warning-band git runs combinations snp's CI tests only as smoke tests (Debian 11's 2.30.2, Ubuntu 20.04's 2.25.1).
@@ -4356,7 +4364,7 @@ brands. `SNP_ALLOW_OLD_GIT` set to any non-empty value silences it.
 
 `pre-commit run` (compat alias) on Debian 11 (git 2.30.2), a staged file and a passing hook.
 
-pre-commit 4.6.2: stdout `x........Passed`, no stderr, exit 0.
+pre-commit 4.7.0: stdout `x........Passed`, no stderr, exit 0.
 
 snp: the same stdout bytes and exit 0; stderr:
 
@@ -4411,7 +4419,7 @@ strips class DIAG lines from stderr only through this scenario (ARCHITECTURE §1
 `pre-commit` holds a pre-commit script (`INSTALL_PYTHON=/old/python`), `pre-push` a prek script:
 
 ```text
-$ pre-commit install           # pre-commit 4.6.2: stdout, stderr empty
+$ pre-commit install           # pre-commit 4.7.0: stdout, stderr empty
 pre-commit installed at .git/hooks/pre-commit
 $ pre-commit install           # snp, compat brand: the same stdout; stderr:
 Replaced hook script from pre-commit at .git/hooks/pre-commit (Python: /old/python)
@@ -4542,7 +4550,7 @@ Safe: stderr only; stdout and exit codes are unchanged.
 ##### Examples
 
 `gc` with `SNP_HOME` pointing at a directory that holds an snp 1.x README and `db.db`
-(`tests/differential/divergences/D-DIAG-05.yaml`). pre-commit 4.6.2 (its own store), exit 0, stdout
+(`tests/differential/divergences/D-DIAG-05.yaml`). pre-commit 4.7.0 (its own store), exit 0, stdout
 `0 repo(s) removed.`, empty stderr. snp, exit 0, the same stdout and on stderr:
 
 ```text
@@ -4580,7 +4588,7 @@ Safe: stderr only; stdout and exit codes are unchanged.
 ##### Examples
 
 `snp run --all-files` in a repository without a config file (`tests/differential/divergences/D-DIAG-06.yaml`):
-pre-commit 4.6.2 and snp both print `An error has occurred: InvalidConfigError: ` / `=====> .pre-commit-config.yaml is
+pre-commit 4.7.0 and snp both print `An error has occurred: InvalidConfigError: ` / `=====> .pre-commit-config.yaml is
 not a file` on stdout and exit 1; snp's stderr also has:
 
 ```text
@@ -4597,7 +4605,7 @@ one stderr line per distinct (pattern, warning): [WARNING] regex {pattern!r}: {m
 
 ##### Register entry (COMPATIBILITY §5.9)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | regex `FutureWarning` lines: `…/cfgv.py:386: FutureWarning: Possible nested set at position 1` + `  re.compile(v)` on stderr | one stderr line per distinct (pattern, warning): `[WARNING] regex {pattern!r}: {msg} (Python FutureWarning)`; `SNP_PYTHON_WARNINGS=0` silences |
 
@@ -4626,7 +4634,7 @@ files: '[[]'
 repos: []
 ```
 
-pre-commit 4.6.2 `validate-config`, exit 0, stderr:
+pre-commit 4.7.0 `validate-config`, exit 0, stderr:
 
 ```
 <site-packages>/cfgv.py:386: FutureWarning: Possible nested set at position 1
@@ -4649,7 +4657,7 @@ An invalid pygrep entry fails the hook once, with the last line of Python's trac
 
 ##### Register entry (COMPATIBILITY §5.9)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | invalid pygrep entry: one full traceback per xargs partition | one line in Python's form (`re.error: … at position N`), exit 1 |
 
@@ -4676,7 +4684,7 @@ CPython's exactly (snp-pyre).
 `.pre-commit-config.yaml` with a local hook `id: grep`, `language: pygrep`, `entry: '('`, run on a repository whose
 file list makes two xargs partitions:
 
-pre-commit 4.6.2 (`- exit code: 1`):
+pre-commit 4.7.0 (`- exit code: 1`):
 
 ```
 Traceback (most recent call last):
@@ -4728,7 +4736,7 @@ integration lead). None occurs in the 4 858-pattern corpus.
 
 ##### Register entry (COMPATIBILITY §5.9)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | regex corner cases (01 Addendum §A.6.13 D1–D6): IGNORECASE backreferences across `K`/`k`, `ſ`/`s`, `ς`/`σ`; code points unassigned in UCD 15.0 treated as UCD 16; `\N{…}` without the `py-re-names` feature; `(?L)` under a single-byte non-UTF-8 locale; patterns too large for the engines (`Unsupported`, reported as the validation error plus a stderr hint); D7: `\U` above 0x7FFFFFFF in a str pattern (`OverflowError` in CPython, `bad escape` in snp); D8: nullable loop bodies that are bounded, possessive, or `{2,}` with captures a back-reference or conditional observes | as stated (corpus frequency 0) |
 
@@ -4789,7 +4797,7 @@ D1, the scenario of `tests/differential/divergences/D-MISC-06.yaml`: a local hoo
 `entry: the files pattern matched`, `files: '(?i)(σ)\1'`; the repository holds the empty file `σς.txt`;
 `run --all-files`.
 
-pre-commit 4.6.2 (CPython 3.12.3: `re.search(r'(?i)(σ)\1', 'σς.txt')` is `None`; bytes captured with the same code
+pre-commit 4.7.0 (CPython 3.12.3: `re.search(r'(?i)(σ)\1', 'σς.txt')` is `None`; bytes captured with the same code
 of pre-commit 4.1.0 on 3.12.3), exit 0:
 
 ```text
@@ -4824,7 +4832,7 @@ An in-hook hazmat failure prints only the final line of Python's traceback.
 
 ##### Register entry (COMPATIBILITY §5.9)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | in-hook hazmat exec failure: full Python traceback | only the final traceback line (`pre_commit.parse_shebang.ExecutableNotFoundError: Executable `x` not found`) |
 
@@ -4850,7 +4858,7 @@ message block (Tier B, 03 Addendum §H.8.6).
 
 A local hook `entry: pre-commit hazmat n1 nope-not-here --`, `language: system`, on one file:
 
-pre-commit 4.6.2 (`- exit code: 1`):
+pre-commit 4.7.0 (`- exit code: 1`):
 
 ```
 Traceback (most recent call last):
@@ -4880,7 +4888,7 @@ error source chain / Rust backtrace (crash-log body is Tier B)
 
 ##### Register entry (COMPATIBILITY §5.9)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | Python tracebacks in the crash log body | error source chain / Rust backtrace (crash-log body is Tier B) |
 
@@ -4904,7 +4912,7 @@ below the version block is Tier B by design (ADR-013), read by people filing bug
 `pre-commit install` with `.git/hooks/pre-commit` being a directory (both: exit 3, same two stdout lines):
 
 ~~~text
-### error information                                   # pre-commit 4.6.2 log, abridged
+### error information                                   # pre-commit 4.7.0 log, abridged
 
 ```
 An unexpected error has occurred: IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-commit'
@@ -4925,10 +4933,10 @@ IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-commit'
 ### version information                                 # snp log (compat brand)
 
 ```
-pre-commit version: 4.6.2
+pre-commit version: 4.7.0
 git --version: git version 2.43.0
 sys.version:
-    snp 2.0.0 (rustc 1.99.0) [x86_64-linux]
+    snp 2.0.1 (rustc 1.99.0) [x86_64-linux]
 sys.executable: /usr/local/bin/snp
 os.name: posix
 sys.platform: linux

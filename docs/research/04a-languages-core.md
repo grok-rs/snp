@@ -492,6 +492,10 @@ The patch is applied in order:
 
 ### 3.4 `install_environment(prefix, version, deps)` (`:76-106`, 4.6.2)
 
+> **4.7.0 note (ADR-089).** This is the one function of the shipped package that changed in 4.7.0: the final
+> `npm install` runs as `lang_base.setup_cmd(prefix, install, env=no_git_env())` (`node.py:107`, pre-commit#3774), so
+> it no longer inherits `GIT_DIR`/`GIT_INDEX_FILE` (§10.3). Everything else below holds for 4.7.0.
+
 1. **Choose the packages:**
    * If `prefix/.git` **and** `prefix/package.json` both exist: `pkgs = (f'git+file://{prefix_dir}', *deps)`. Cloned remote repos always have `.git`, because the store does `git init` + fetch.
    * Otherwise `pkgs = (*deps,)`. Local repos have **no `.git`**, so local node hooks install **only** their deps.
@@ -1010,7 +1014,7 @@ Notes:
 * those with the prefixes `GIT_CONFIG_KEY_` and `GIT_CONFIG_VALUE_`;
 * the names `GIT_EXEC_PATH`, `GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_SSL_CAINFO`, `GIT_SSL_NO_VERIFY`, `GIT_CONFIG_COUNT`, `GIT_HTTP_PROXY_AUTHMETHOD`, `GIT_ALLOW_PROTOCOL`, `GIT_ASKPASS`.
 
-Only golang install and store git operations use it. pip and npm installs inherit the `GIT_*` vars that git exported, such as `GIT_INDEX_FILE` and `GIT_DIR` in worktrees. prek found this breaks `setuptools_scm` (prek CHANGELOG "Remove git env vars from `uv pip install` subprocess", #1355).
+Only golang install and store git operations use it (4.7.0 adds node's `npm install`, ADR-089). pip and (before 4.7.0) npm installs inherit the `GIT_*` vars that git exported, such as `GIT_INDEX_FILE` and `GIT_DIR` in worktrees. prek found this breaks `setuptools_scm` (prek CHANGELOG "Remove git env vars from `uv pip install` subprocess", #1355).
 
 ### 10.4 Third-party variables that change backend behaviour (inherited, honoured by the tools)
 

@@ -9,7 +9,7 @@ one retry with the other `--object-format` after `mismatched algorithms`
 
 ## Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | clones fail when the user's git defaults to SHA-256 objects (hazard d) | one retry with the other `--object-format` after `mismatched algorithms` |
 
@@ -34,7 +34,7 @@ into a working clone of exactly the requested revision.
 A SHA-256 hook repository (`git init --object-format=sha256`, one commit `<64-hex>`); the user's git has the default
 SHA-1 object format; `.pre-commit-config.yaml` pins `rev: <64-hex>`; `pre-commit run --all-files`.
 
-pre-commit 4.6.2 (oracle `pc462-py312`, git 2.43.0), exit **3**, stdout:
+pre-commit 4.7.0 (oracle `pc470-py312`, git 2.43.0), exit **3**, stdout:
 
 ```
 [INFO] Initializing environment for <root>/hooks.

@@ -32,7 +32,7 @@ steps:
     env: {}
     stdin: ""
     tty: false
-# pre-commit 4.6.2: the four install lines, `An unexpected error has occurred: CalledProcessError: …` with virtualenv's
+# pre-commit 4.7.0: the four install lines, `An unexpected error has occurred: CalledProcessError: …` with virtualenv's
 #   `failed to find interpreter for Builtin discover of python_spec='python3.11'`, exit 3.
 # snp: the four install lines, `py311….Passed` and `3.11`, exit 0.
 compare:

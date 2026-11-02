@@ -25,7 +25,7 @@ package(snp) & binary(it) & test(=budgets::b3_spawns_do_not_grow_with_tracked_fi
 package(snp) & binary(it) & test(=budgets::b3_ten_noop_hooks_within_18_spawns)
 package(snp) & binary(it) & test(=budgets::b4_shape_one_partition_no_per_file_spawns)
 package(snp) & binary(it) & test(=budgets::b6_shape_fast_path_within_13_spawns)
-# pre-commit 4.6.2 autoupdate fetches with `--filter=blob:none`, which git 2.18 refuses for a remote that is not
+# pre-commit 4.7.0 autoupdate fetches with `--filter=blob:none`, which git 2.18 refuses for a remote that is not
 # a partial-clone remote ("--filter can only be used with the remote configured in extensions.partialClone"):
 # pre-commit fails the same way there.
 package(snp) & binary(it) & test(=autoupdate::parallel_jobs)

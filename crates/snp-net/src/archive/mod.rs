@@ -1,6 +1,6 @@
 //! Safe two-pass archive extraction (ADR-077).
 //!
-//! pre-commit 4.6.2 unpacks go archives with `tarfile.extractall`/`zipfile.extractall` and the ruby helpers with
+//! pre-commit 4.7.0 unpacks go archives with `tarfile.extractall`/`zipfile.extractall` and the ruby helpers with
 //! `tarfile.extractall` (`golang.py:108-110`, `ruby.py:81-84`), without a filter: absolute names, `..`, links that
 //! leave the destination and device entries are all honoured (D-SEC-08). snp extracts into `<dest>.part-<rand>` (same
 //! filesystem) in two passes — directories, regular files and hard links first, symlinks last — and renames the

@@ -49,7 +49,7 @@ mod robustness {
             Just(String::from(
                 "[WinError 32] The process cannot access the file: 'C:\\x'"
             )),
-            Just(String::from("pre-commit 4.6.2")),
+            Just(String::from("pre-commit 4.7.0")),
             Just(String::from("  in \"<unicode string>\", line 2, column 1")),
             "[ -~]{0,40}",
             "\\PC{0,20}",

@@ -1,5 +1,5 @@
 # D-DATA-18 (DATA, owner WP-15): a SIGINT sent to the tool with kill(2) is forwarded to the running hooks
-# pre-commit 4.6.2 turns the SIGINT into KeyboardInterrupt in its own process only: the hook never sees it and keeps
+# pre-commit 4.7.0 turns the SIGINT into KeyboardInterrupt in its own process only: the hook never sees it and keeps
 # running (orphaned) after pre-commit restored the stash and exited 130. snp forwards a process-sent SIGINT to every
 # hook child (ARCHITECTURE §10.4, ADR-065, ADR-083), so the hook stops before the restore (docs/divergences/D-DATA-18.md).
 # The trap hook appends the name of each signal it gets to `.hook-started`.

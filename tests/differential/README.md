@@ -1,7 +1,7 @@
-# Differential tests (snp vs pre-commit 4.6.2)
+# Differential tests (snp vs pre-commit 4.7.0)
 
 The differential harness (`snp-difftest`, ARCHITECTURE §13.2, research 10 §7.4) runs every scenario against snp and
-against the pre-commit 4.6.2 oracle and compares everything a user can observe: stdout, stderr and exit code of each
+against the pre-commit 4.7.0 oracle and compares everything a user can observe: stdout, stderr and exit code of each
 step, the working tree (bytes, exec bits, symlink targets), the index (`git ls-files -s`), refs, the stash list,
 `.pre-commit-config.yaml` and `.git/config` bytes, the installed hook scripts (by name and mode; their bytes differ by
 design) and the logical store contents. Every scenario runs in both brands: the **compat** brand compares bytes with
@@ -18,7 +18,7 @@ the oracle directly; the **snp** brand compares with the oracle whose argparse `
 ## Running
 
 ```sh
-cargo xtask oracle install                         # target/oracle/pc462-py312 and pc462-py313 (once)
+cargo xtask oracle install                         # target/oracle/pc470-py312 and pc470-py313 (once)
 cargo xtask difftest                               # curated corpus, release binaries, both brands
 cargo xtask difftest --suite all                   # curated corpus + divergence files (the CI job)
 cargo xtask difftest --scenario run --brand compat # every scenario whose name starts with `run/`
@@ -173,7 +173,7 @@ expected:                         # divergence files: how each side must behave 
 **Substitutions** in every text value: `${root}`, `${work}`, `${home}`, `${store}` (`PRE_COMMIT_HOME`),
 `${snp_store}` (`SNP_HOME`), `${repo:NAME}` (path), `${url:NAME}` (`file://…`), `${rev:NAME}` (HEAD of the hook
 repository after `then:`), `${head}` (the work repository's HEAD after setup), `${probe}` (shell-quoted snp-probe),
-`${probe_path}`, `${tool}` (the side's entry point), `${oracle}` (the plain pre-commit 4.6.2 oracle on **both**
+`${probe_path}`, `${tool}` (the side's entry point), `${oracle}` (the plain pre-commit 4.7.0 oracle on **both**
 sides, shell-quoted: interop scenarios run it next to the tool under test), `${z40}`, `${z64}`, `${PATH}`. An
 unknown name is an error; write shell variables without braces (`$VAR`).
 

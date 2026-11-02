@@ -1,7 +1,7 @@
 //! `cargo xtask bench setup|run|gate`: the end-to-end performance and memory gates of ARCHITECTURE §12 (research 10
 //! §0.2, §7.11; ADR-043, ADR-047, ADR-071, ADR-079).
 //!
-//! * `setup` installs the measuring tools (hyperfine 1.19.0 and prek 0.5.5, both pinned; the pre-commit 4.6.2 oracle
+//! * `setup` installs the measuring tools (hyperfine 1.19.0 and prek 0.5.5, both pinned; the pre-commit 4.7.0 oracle
 //!   comes from `cargo xtask oracle install`), mirrors pre-commit-hooks locally (every clone is redirected to the
 //!   mirror through `url.<mirror>.insteadOf`), downloads the hash-locked wheelhouse every Python install resolves from
 //!   with no index and puts the pinned uv on the hermetic PATH (so no scenario touches the network), generates the
@@ -1465,10 +1465,10 @@ fn prek_version_ok(exe: &Path) -> bool {
         })
 }
 
-/// The pre-commit 4.6.2 oracle `target/oracle/pc462-py312` (`cargo xtask oracle install`).
+/// The pre-commit 4.7.0 oracle `target/oracle/pc470-py312` (`cargo xtask oracle install`).
 fn oracle_pre_commit(work: &Work) -> anyhow::Result<PathBuf> {
     let exe = venv_exe(
-        &work.target_dir.join("oracle").join("pc462-py312"),
+        &work.target_dir.join("oracle").join("pc470-py312"),
         "pre-commit",
     );
     ensure!(

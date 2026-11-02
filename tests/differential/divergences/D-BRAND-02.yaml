@@ -1,6 +1,6 @@
 # D-BRAND-02 (BRAND, owner WP-33): prek and snp 1.x hook scripts are manager scripts, replaced in place
 # Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands`, `expect_divergence` and `expected` (ARCHITECTURE §13.2).
-# .git/hooks/pre-commit is prek's script: pre-commit 4.6.2 moves it to pre-commit.legacy and prints the
+# .git/hooks/pre-commit is prek's script: pre-commit 4.7.0 moves it to pre-commit.legacy and prints the
 # migration-mode lines; snp replaces it in place (no .legacy, M1 on stderr).
 name: divergences/D-BRAND-02-prek-script-replaced
 expect_divergence: D-BRAND-02

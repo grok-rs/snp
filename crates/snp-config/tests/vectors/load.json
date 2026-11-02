@@ -1,6 +1,6 @@
 {
  "generator": "crates/snp-config/tests/oracle/gen_config_vectors.py",
- "pre_commit": "4.6.2",
+ "pre_commit": "4.7.0",
  "python": "3.12.3",
  "cases": [
   {
@@ -361,7 +361,7 @@
    "file": "cfg.yaml",
    "input": "minimum_pre_commit_version: \"99\"\nrepos: []\n",
    "warnings": [],
-   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 99 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 99 is required but version 4.7.0 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
    "exc": null,
    "future_warnings": []
   },
@@ -371,7 +371,7 @@
    "file": "cfg.yaml",
    "input": "minimum_pre_commit_version: \"99\"\nrepos: 5\n",
    "warnings": [],
-   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 99 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 99 is required but version 4.7.0 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
    "exc": null,
    "future_warnings": []
   },
@@ -389,19 +389,19 @@
    "name": "V12 min version ok",
    "kind": "config",
    "file": "cfg.yaml",
-   "input": "minimum_pre_commit_version: \"4.6.2\"\nrepos: []\n",
+   "input": "minimum_pre_commit_version: \"4.7.0\"\nrepos: []\n",
    "warnings": [],
    "error": null,
    "exc": null,
    "future_warnings": []
   },
   {
-   "name": "V12 min version 4.6.2.0",
+   "name": "V12 min version 4.7.0.0",
    "kind": "config",
    "file": "cfg.yaml",
-   "input": "minimum_pre_commit_version: \"4.6.2.0\"\nrepos: []\n",
+   "input": "minimum_pre_commit_version: \"4.7.0.0\"\nrepos: []\n",
    "warnings": [],
-   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 4.6.2.0 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 4.7.0.0 is required but version 4.7.0 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
    "exc": null,
    "future_warnings": []
   },
@@ -431,7 +431,7 @@
    "file": "cfg.yaml",
    "input": "minimum_pre_commit_version: \"4_0\"\nrepos: []\n",
    "warnings": [],
-   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 4_0 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 4_0 is required but version 4.7.0 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
    "exc": null,
    "future_warnings": []
   },
@@ -644,7 +644,7 @@
    "file": "h2.yaml",
    "input": "hooks:\n  - id: a\n",
    "warnings": [],
-   "error": "\n==> File h2.yaml\n=====> \n=====> pre-commit version 5 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "error": "\n==> File h2.yaml\n=====> \n=====> pre-commit version 5 is required but version 4.7.0 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
    "exc": null,
    "future_warnings": []
   },
@@ -664,7 +664,7 @@
    "file": "cfg.yaml",
    "input": "- {id: a, name: a, entry: a, language: system, minimum_pre_commit_version: \"99.0\"}\n",
    "warnings": [],
-   "error": "\n==> File cfg.yaml\n==> At Hook(id='a')\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 99.0 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "error": "\n==> File cfg.yaml\n==> At Hook(id='a')\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 99.0 is required but version 4.7.0 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
    "exc": null,
    "future_warnings": []
   },
@@ -1628,7 +1628,7 @@
    "file": "cfg.yaml",
    "input": "minimum_pre_commit_version: '999'\nrepos: []\n",
    "warnings": [],
-   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 999 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 999 is required but version 4.7.0 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
    "exc": null,
    "future_warnings": []
   },
@@ -1638,7 +1638,7 @@
    "file": "cfg.yaml",
    "input": "repos:\n-   repo: local\n    hooks:\n    -   id: do_not_commit\n        name: Block if \"DO NOT COMMIT\" is found\n        entry: DO NOT COMMIT\n        language: pygrep\n        files: ^(.*)$\n        minimum_pre_commit_version: '999'\n",
    "warnings": [],
-   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='do_not_commit')\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 999 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: repos\n==> At Repository(repo='local')\n==> At key: hooks\n==> At Hook(id='do_not_commit')\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 999 is required but version 4.7.0 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
    "exc": null,
    "future_warnings": []
   },
@@ -1648,7 +1648,7 @@
    "file": "cfg.yaml",
    "input": "minimum_pre_commit_version: '999'\nrepos: 5\n",
    "warnings": [],
-   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 999 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "error": "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 999 is required but version 4.7.0 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
    "exc": null,
    "future_warnings": []
   },
@@ -1704,7 +1704,7 @@
    "file": ".pre-commit-hooks.yaml",
    "input": "hooks: {}",
    "warnings": [],
-   "error": "\n==> File .pre-commit-hooks.yaml\n=====> \n=====> pre-commit version 5 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+   "error": "\n==> File .pre-commit-hooks.yaml\n=====> \n=====> pre-commit version 5 is required but version 4.7.0 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
    "exc": null,
    "future_warnings": []
   },

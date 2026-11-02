@@ -1,5 +1,5 @@
 # D-STORE-01 (STORE, owner WP-22, contributing WP-33): snp keeps its own store; PRE_COMMIT_HOME never moves it.
-# An invalid config makes both tools write a crash log and name it: pre-commit 4.6.2 under $PRE_COMMIT_HOME, snp
+# An invalid config makes both tools write a crash log and name it: pre-commit 4.7.0 under $PRE_COMMIT_HOME, snp
 # under ~/.cache/snp (`pre-commit.log` in the compat brand, `snp.log` in the snp brand).
 expect_divergence: D-STORE-01
 name: divergences/D-STORE-01-store-location

@@ -9,7 +9,7 @@
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | non-string / mixed root keys → `TypeError` exit 3 (X13-CFG-02/03) | `[WARNING] Unexpected key(s) present at root: …` (Python `str()` of the keys, sorted by type rank) |
 
@@ -42,7 +42,7 @@ repos: []
 foo: y
 ```
 
-pre-commit 4.6.2, `validate-config`, exit **3**:
+pre-commit 4.7.0, `validate-config`, exit **3**:
 
 ```
 An unexpected error has occurred: TypeError: '<' not supported between instances of 'str' and 'int'

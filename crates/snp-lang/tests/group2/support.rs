@@ -12,7 +12,7 @@ use snp_lang::{VersionSupport, backend, check_support};
 use super::langs::GROUP2;
 use super::util::Fx;
 
-/// (language, `DefaultOnly`, deps allowed) as pre-commit 4.6.2's `install_environment` asserts them.
+/// (language, `DefaultOnly`, deps allowed) as pre-commit 4.7.0's `install_environment` asserts them.
 const TABLE: [(LanguageId, bool, bool); 11] = [
     (LanguageId::Conda, true, true),
     (LanguageId::Coursier, true, true),

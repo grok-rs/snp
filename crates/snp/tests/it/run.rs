@@ -198,7 +198,7 @@ fn x13_exe_08_language_setup_errors_crash_like_pre_commit() {
 fn cold_and_warm_transcripts_match_the_oracle() {
     let env = env();
     let dir = consuming(&env, "script_hooks_repo", &[("foo.py", b"")]);
-    let Some(oracle) = env.oracle(Oracle::Pc462Py312, &dir) else {
+    let Some(oracle) = env.oracle(Oracle::Pc470Py312, &dir) else {
         return;
     };
     let want = oracle.arg("run").output();

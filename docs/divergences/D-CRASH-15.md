@@ -9,7 +9,7 @@ output printed, [WARNING] line, run continues
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | unwritable `log_file` → exit 3 and the hook output is lost (X13-EXE-05) | output printed, `[WARNING]` line, run continues |
 

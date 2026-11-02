@@ -1,5 +1,5 @@
 //! The process-level matrices through `snp-stash-driver` (feature `test-driver`, posix): the conflict transcript
-//! against the pre-commit 4.6.2 golden, SIGTERM/SIGHUP during hooks (sent and kernel origin), SIGTERM at each
+//! against the pre-commit 4.7.0 golden, SIGTERM/SIGHUP during hooks (sent and kernel origin), SIGTERM at each
 //! transition, ^C with a slow `git apply` across the 2 s grace, a second ^C during `git apply`, the kill -9 matrix
 //! (an abort at every transition) with recovery through the pointer, and a full disk at the patch and journal writes.
 //!

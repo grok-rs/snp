@@ -1,6 +1,6 @@
 //! Group-1 language backends (WBS WP-24): python, node, golang, rust, ruby — the 10 §5.10 rows of these languages
 //! (pure-logic rows with injected probes; the hermetic parts of the health-check and hook tests), the shim-harness
-//! goldens recorded from pre-commit 4.6.2 (`oracle`), the uv command lines and pip-config fallback triggers, the
+//! goldens recorded from pre-commit 4.7.0 (`oracle`), the uv command lines and pip-config fallback triggers, the
 //! health fast path, the installer switch, deps-variant isolation, and the nightly real-toolchain tests
 //! (`tc_<lang>_*`, `#[ignore = "toolchain"]`). Marked `posix` (ARCHITECTURE §13): the fixtures are POSIX paths, `:`
 //! `PATH`s and `bin/` layouts; the pure-logic rows also run on every OS as unit tests in `src/langs/`. The modules are

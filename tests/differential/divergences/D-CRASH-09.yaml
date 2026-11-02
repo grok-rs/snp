@@ -1,6 +1,6 @@
 # D-CRASH-09 (CRASH, owner WP-22): a FIFO passed via --files is classified without blocking.
 # Extension of the 10 §7.4.3 schema: `fifos` (posix) lists worktree FIFOs the materialiser creates with mkfifo
-# (git cannot track them); `timeout` bounds the step (pre-commit 4.6.2 hangs forever in identify's open()).
+# (git cannot track them); `timeout` bounds the step (pre-commit 4.7.0 hangs forever in identify's open()).
 expect_divergence: D-CRASH-09
 name: divergences/D-CRASH-09-fifo-via-files
 since: "4.6.2"

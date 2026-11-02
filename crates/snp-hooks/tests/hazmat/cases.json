@@ -1,5 +1,5 @@
 {
-  "_doc": "Path H hazmat golden cases (WP-26; 03 Addendum §H.5, 10 §5.18): `cargo xtask pch-goldens hazmat` runs `python -m pre_commit.commands.hazmat *argv` (pre-commit 4.6.2, CPython 3.13) in a fresh copy of the fixture tree with PATH=/usr/bin:/bin and writes goldens.json (the work-tree path is replaced by <root>, a traceback by its last line). tests/hazmat replays them through snp_hooks::hazmat::in_hook_main in a child process. POSIX only.",
+  "_doc": "Path H hazmat golden cases (WP-26; 03 Addendum §H.5, 10 §5.18): `cargo xtask pch-goldens hazmat` runs `python -m pre_commit.commands.hazmat *argv` (pre-commit 4.7.0, CPython 3.13) in a fresh copy of the fixture tree with PATH=/usr/bin:/bin and writes goldens.json (the work-tree path is replaced by <root>, a traceback by its last line). tests/hazmat replays them through snp_hooks::hazmat::in_hook_main in a child process. POSIX only.",
   "fixtures": {
     "b.txt": "b\n",
     "bin/reltool": "#!/bin/sh\necho TOP-bin-tool \"$@\"\n",

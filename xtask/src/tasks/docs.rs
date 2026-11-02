@@ -5,7 +5,7 @@
 //!
 //! 1. generates `docs/user/reference/cli.md` from the `snp_cli` parser tables: every command of `SNP_SPEC` with its
 //!    help text rendered by `snp_argparse::format_help` (exactly what `snp <cmd> --help` prints at `COLUMNS=100`),
-//!    whether pre-commit 4.6.2 has the command, and the snp-only options of shared commands (compared with
+//!    whether pre-commit 4.7.0 has the command, and the snp-only options of shared commands (compared with
 //!    `PRE_COMMIT_SPEC`);
 //! 2. generates the DIVERGENCES book `docs/user/divergences.md` from the register of `docs/COMPATIBILITY.md` §5 (the
 //!    class sections and their ID order) and the per-ID pages `docs/divergences/<ID>.md` (rationale and examples;
@@ -197,7 +197,7 @@ fn cli_reference() -> String {
     );
 
     out.push_str("## Commands\n\n");
-    out.push_str("| Command | Summary | In pre-commit 4.6.2 |\n|---|---|---|\n");
+    out.push_str("| Command | Summary | In pre-commit 4.7.0 |\n|---|---|---|\n");
     out.push_str("| [`snp`](#snp) | The top-level parser. | yes |\n");
     for c in &cmds {
         let compat = find(snp_cli::PRE_COMMIT_SPEC, &c.path).is_some();
@@ -245,7 +245,7 @@ fn cli_reference() -> String {
                 } else {
                     writeln!(
                         out,
-                        "Also in pre-commit 4.6.2. *snp only* options: {}.\n",
+                        "Also in pre-commit 4.7.0. *snp only* options: {}.\n",
                         extra.join(", ")
                     )
                     .unwrap_or_default();

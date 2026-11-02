@@ -1,13 +1,13 @@
 # Migrating from pre-commit
 
-Your `.pre-commit-config.yaml` needs no change: snp reads it exactly as pre-commit 4.6.2 does. What changes is *which
+Your `.pre-commit-config.yaml` needs no change: snp reads it exactly as pre-commit 4.7.0 does. What changes is *which
 program git runs* when it fires a hook, which program your scripts and CI call, and which cache directory is used.
 Every step below can be undone (see [Rollback](#rollback)), and until you run `snp install` (or create the alias)
 installing snp changes nothing at all.
 
 ## Checklist
 
-1. **Install snp** ([Installation](installation.md)) and check `snp --version` prints `snp 2.0.0`.
+1. **Install snp** ([Installation](installation.md)) and check `snp --version` prints `snp 2.0.1`.
 2. **Inspect a repository** with `snp doctor`. For each of the ten hook types it shows which tool git runs today
    (Python pre-commit, prek, snp 1.x, snp, a foreign script or nothing) and predicts whether commits keep working.
 3. **Switch the repository's hook scripts:**
@@ -86,7 +86,7 @@ Three options, from the most explicit to the least invasive:
 
 * **Call `snp`.** `snp run --all-files` accepts exactly the options of `pre-commit run --all-files`.
 * **Keep the name** with `snp self alias install` (see [Installation](installation.md#the-pre-commit-alias)). Every
-  `pre-commit …` invocation that resolves to the alias runs snp in the compat brand: pre-commit 4.6.2 to the byte.
+  `pre-commit …` invocation that resolves to the alias runs snp in the compat brand: pre-commit 4.7.0 to the byte.
 * **In Python environments** (tox, nox, `requirements-dev.txt`): depend on `snp-cli` instead of `pre-commit` and call
   `snp`. Never install both into one environment with the alias in it: the first `pre-commit` on `PATH` wins and the
   result depends on installation order.
@@ -113,7 +113,7 @@ Running as root (for example in a CI container) against a cache directory owned 
 
 ## git versions
 
-snp works with every git that pre-commit 4.6.2 works with. Below git 2.31 it prints one warning per run on stderr
+snp works with every git that pre-commit 4.7.0 works with. Below git 2.31 it prints one warning per run on stderr
 (`SNP_ALLOW_OLD_GIT=1` silences it) and uses fallbacks where pre-commit crashes (for example `run --all-files` on
 git < 2.31, [D-CRASH-26](divergences.md#d-crash-26)). Below git 2.19 snp refuses to stash unstaged changes, before
 touching anything, because git cannot report intent-to-add files there and pre-commit then strands the work in a patch

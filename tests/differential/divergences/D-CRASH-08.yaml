@@ -1,6 +1,6 @@
 # D-CRASH-08 (CRASH, owner WP-22): a file deleted by an earlier hook is excluded from this and later hooks.
 # Scenario schema: docs/research/10-test-strategy.md §7.4.3. Hook 1 deletes b.txt before any hook needed its tags;
-# pre-commit 4.6.2 then crashes identifying it for hook 2 (ValueError, exit 3); snp drops it and runs hook 2.
+# pre-commit 4.7.0 then crashes identifying it for hook 2 (ValueError, exit 3); snp drops it and runs hook 2.
 expect_divergence: D-CRASH-08
 name: divergences/D-CRASH-08-file-deleted-by-an-earlier-hook
 since: "4.6.2"

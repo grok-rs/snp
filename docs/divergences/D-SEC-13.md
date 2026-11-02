@@ -9,7 +9,7 @@ as root (euid 0), a store owned by a non-root uid is refused unless `SNP_ALLOW_F
 
 ## Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | a store writable by another user is used as is, including when running as root (tools and environments that user can replace get executed) | as root (euid 0), a store owned by a non-root uid is refused with `An error has occurred: FatalError: snp refuses to run as root from a store owned by uid <n>: <path>; set SNP_ALLOW_FOREIGN_STORE=1 to trust it` (exit 1) unless `SNP_ALLOW_FOREIGN_STORE=1`; other foreign owners only warn (D-DIAG-05) |
 
@@ -41,5 +41,5 @@ An error has occurred: FatalError: snp refuses to run as root from a store owned
 ```
 
 and, re-run with `SNP_ALLOW_FOREIGN_STORE=1`, success with the stderr warning
-`[WARNING] the snp store <store> is owned by uid 1000, not by the current user`. pre-commit 4.6.2 uses such a store
+`[WARNING] the snp store <store> is owned by uid 1000, not by the current user`. pre-commit 4.7.0 uses such a store
 without a word.

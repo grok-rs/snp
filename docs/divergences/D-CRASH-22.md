@@ -11,7 +11,7 @@
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `pre-commit hazmat` with no tool → `AttributeError` exit 3 | argparse usage error, exit 2 |
 
@@ -41,7 +41,7 @@ pre_commit.commands.hazmat` shows it (final traceback line `AttributeError: 'Nam
 
 `pre-commit hazmat` (any directory, fresh `PRE_COMMIT_HOME`):
 
-pre-commit 4.6.2 (stdout, exit 3; `README`, `db.db`, `.lock` and `pre-commit.log` created in the store):
+pre-commit 4.7.0 (stdout, exit 3; `README`, `db.db`, `.lock` and `pre-commit.log` created in the store):
 
 ```
 An unexpected error has occurred: AttributeError: 'Namespace' object has no attribute 'cmd'

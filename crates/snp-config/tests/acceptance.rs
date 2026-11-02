@@ -398,7 +398,7 @@ repos:
         let root = |t: &str| err(&load_config_text(&format!("{t}\nrepos: []\n"), PC, E));
         assert_eq!(
             root("minimum_snp_version: '99'"),
-            "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_snp_version\n=====> snp 99 is required but snp 2.0.0 is installed."
+            "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_snp_version\n=====> snp 99 is required but snp 2.0.1 is installed."
         );
         assert_eq!(
             root("minimum_snp_version: v2"),

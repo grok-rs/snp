@@ -10,7 +10,7 @@ refused unless -f; a .legacy that is itself a manager script is removed
 
 ## Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `install` silently overwrites an existing foreign `.legacy` hook | refused unless `-f`; a `.legacy` that is itself a manager script is removed |
 
@@ -38,7 +38,7 @@ own `install`.
 A foreign `pre-commit` hook and a foreign `pre-commit.legacy`:
 
 ```text
-$ pre-commit install           # pre-commit 4.6.2, exit 0: the old pre-commit.legacy ("echo legacy") is gone
+$ pre-commit install           # pre-commit 4.7.0, exit 0: the old pre-commit.legacy ("echo legacy") is gone
 Running in migration mode with existing hooks at .git/hooks/pre-commit.legacy
 Use -f to use only pre-commit.
 pre-commit installed at .git/hooks/pre-commit

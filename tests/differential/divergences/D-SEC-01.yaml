@@ -1,6 +1,6 @@
 # D-SEC-01 (SEC, owner WP-22): environment directory names are sanitised or hashed; deletion stays inside envs/.
 # `language_version` climbs 40 levels (normpath stops at `/`) and comes back down into the worktree's `victim/`
-# directory. pre-commit 4.6.2 computes that directory as the environment and removes it when the install fails
+# directory. pre-commit 4.7.0 computes that directory as the environment and removes it when the install fails
 # (clean_path_on_failure): the committed `victim/keep.txt` disappears. snp names the environment
 # `py_env-h<hex16>` inside the store entry; the install fails the same way and the worktree is untouched.
 expect_divergence: D-SEC-01

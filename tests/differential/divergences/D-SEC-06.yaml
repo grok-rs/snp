@@ -1,5 +1,5 @@
 # D-SEC-06 (SEC, owner WP-18): one retry with the other --object-format after `mismatched algorithms`
-# A SHA-256 hook repository used from a SHA-1 default: pre-commit 4.6.2's store clone fails (`mismatched algorithms`,
+# A SHA-256 hook repository used from a SHA-1 default: pre-commit 4.7.0's store clone fails (`mismatched algorithms`,
 # exit 3); snp re-inits the clone as SHA-256 once and runs the hook.
 # Uses `object_format` on a `repos` entry and `${rev:hooks}` (its 64-hex HEAD) — `object_format` extends the
 # 10 §7.4.3 schema.

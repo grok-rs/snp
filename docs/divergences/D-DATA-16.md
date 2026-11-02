@@ -9,7 +9,7 @@ end of file treated as a line end; comments kept
 
 ## Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | autoupdate: a config without a final newline triggers a full PyYAML re-dump that drops all comments | end of file treated as a line end; comments kept |
 
@@ -34,5 +34,5 @@ repos:
     rev: v1  # c        ← no final newline
 ```
 
-pre-commit 4.6.2 `autoupdate` (to `v2`) writes `repos:\n-   repo: a\n    hooks: []\n    rev: v2\n` — the header and
+pre-commit 4.7.0 `autoupdate` (to `v2`) writes `repos:\n-   repo: a\n    hooks: []\n    rev: v2\n` — the header and
 the comment are gone. snp writes the file unchanged except `    rev: v2  # c` (still no final newline).

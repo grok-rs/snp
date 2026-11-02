@@ -1,6 +1,6 @@
 # D-CRASH-06 (CRASH, owner WP-33): per-repo [{repo}] <error> lines, the others are updated and written, exit 1
 # Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands`, `expect_divergence` and `expected` (ARCHITECTURE §13.2).
-# `autoupdate` over one reachable repository with a newer tag and one remote that does not exist: pre-commit 4.6.2
+# `autoupdate` over one reachable repository with a newer tag and one remote that does not exist: pre-commit 4.7.0
 # aborts on the `git fetch` CalledProcessError (exit 3, crash log, config unchanged, X13-GIT-02); snp prints the
 # error as that repository's line, updates and writes the other one, and exits 1.
 name: divergences/D-CRASH-06-autoupdate-one-unreachable-repo

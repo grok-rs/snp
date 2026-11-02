@@ -9,7 +9,7 @@ marker-based store never needs repair; commands that do not need the store work;
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | store not creatable/corrupt (stale db rows, locked `db.db`, gc ENOENT, double faults in the error handler: X13-ST-*, X13-CMD-07, X13-EH-01/02) → exit 3 / tracebacks | marker-based store never needs repair; commands that do not need the store work; the error handler never double-faults |
 
@@ -43,10 +43,10 @@ line (`PermissionError: [Errno 13] Permission denied: '<store>'`, exit 3) instea
 
 ## Examples
 
-Recorded with pre-commit 4.6.2 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc462.txt`); `<W>` is the scratch root, `<store>` the store directory.
+Recorded with pre-commit 4.7.0 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc470.txt`); `<W>` is the scratch root, `<store>` the store directory.
 
 `validate-config` with the store path below a regular file (`PRE_COMMIT_HOME`/`SNP_HOME` = `<W>/a.txt/store`;
-`tests/differential/divergences/D-CRASH-17.yaml`). pre-commit 4.6.2, exit 1, stdout:
+`tests/differential/divergences/D-CRASH-17.yaml`). pre-commit 4.7.0, exit 1, stdout:
 
 ```text
 An unexpected error has occurred: NotADirectoryError: [Errno 20] Not a directory: '<W>/a.txt/store'
@@ -56,7 +56,7 @@ and 30 lines of stderr: two tracebacks joined by `During handling of the above e
 occurred:`. With a read-only parent the same shape reads `PermissionError: [Errno 13] Permission denied: '<W>/ro/pch'`.
 snp: `validate-config` does not need the store, exit 0, no output.
 
-A cached remote repository whose clone directory was deleted. pre-commit 4.6.2, `run --all-files`, exit 1:
+A cached remote repository whose clone directory was deleted. pre-commit 4.7.0, `run --all-files`, exit 1:
 
 ```text
 An error has occurred: InvalidManifestError:

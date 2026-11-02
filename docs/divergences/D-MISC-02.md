@@ -9,13 +9,13 @@ argv[1] == "__hazmat" is reserved (in-hook hazmat entry, both brands) — class 
 
 ## Register entry (COMPATIBILITY §5.4)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `pre-commit __hazmat …` → `invalid choice: '__hazmat'`, exit 2 | `argv[1] == "__hazmat"` is reserved (in-hook hazmat entry, both brands) — class BRAND |
 
 ## Rationale
 
-pre-commit 4.6.2 has a public `hazmat` command whose rewritten entries run `pre-commit hazmat …` inside hooks; its
+pre-commit 4.7.0 has a public `hazmat` command whose rewritten entries run `pre-commit hazmat …` inside hooks; its
 top-level parser rejects anything else, so `pre-commit __hazmat …` is a usage error (`invalid choice: '__hazmat'`,
 exit 2). snp reserves `argv[1] == "__hazmat"` in both brands as the in-hook hazmat entry: dispatch hands the
 remaining arguments to `snp_hooks::hazmat::cli` before the argparse model is consulted (12 §A.17), so a hook entry
@@ -29,7 +29,7 @@ in pre-commit it is only ever an error. The public `hazmat` command keeps pre-co
 ## Examples
 
 ```text
-$ pre-commit __hazmat n1 echo -- a b          # pre-commit 4.6.2, stderr, exit 2
+$ pre-commit __hazmat n1 echo -- a b          # pre-commit 4.7.0, stderr, exit 2
 usage: pre-commit [-h] [-V]
                   {autoupdate,clean,gc,hazmat,init-templatedir,install,install-hooks,migrate-config,run,sample-config,try-repo,uninstall,validate-config,validate-manifest,help,hook-impl} ...
 pre-commit: error: argument command: invalid choice: '__hazmat' (choose from 'autoupdate', 'clean', 'gc', 'hazmat', 'init-templatedir', 'install', 'install-hooks', 'migrate-config', 'run', 'sample-config', 'try-repo', 'uninstall', 'validate-config', 'validate-manifest', 'help', 'hook-impl')

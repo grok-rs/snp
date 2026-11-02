@@ -1,4 +1,4 @@
-# Commands that exist everywhere, so the converted config runs under pre-commit 4.6.2 and snp.
+# Commands that exist everywhere, so the converted config runs under pre-commit 4.7.0 and snp.
 pre-commit:
   parallel: true
   jobs:

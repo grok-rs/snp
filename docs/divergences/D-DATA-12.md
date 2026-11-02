@@ -9,7 +9,7 @@
 
 ## Register entry (COMPATIBILITY §5.2)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | an intent-to-add file paired as a rename is missed ⇒ restore fails and a deletion is lost (hazard b) | `--no-renames` on the ITA query |
 
@@ -18,7 +18,7 @@
 `git.intent_to_add_files` (`git.py:146-151`) lists intent-to-add files as `--diff-filter=A` entries of `git diff`.
 With rename detection on (`diff.renames=true`, git's default), an intent-to-add file whose content resembles a tracked
 file deleted in the worktree is reported as a rename (`R`), not an addition, so it is missed (02 G.0 hazard (b),
-observed on 4.6.2). It then stays in the index as an intent-to-add entry: the stash patch contains it as a new file,
+observed on 4.7.0). It then stays in the index as an intent-to-add entry: the stash patch contains it as a new file,
 the checkout leaves it in place, every `git apply` fails with `already exists in working directory`, pre-commit exits
 3, and the user's unstaged deletion is lost from the worktree (it exists only in the patch).
 

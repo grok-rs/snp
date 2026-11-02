@@ -9,7 +9,7 @@ A pty that cannot be allocated in colour mode falls back to pipes.
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | pty allocation failure in colour mode → exit 3 (X13-EXE-06) | falls back to pipes |
 
@@ -37,7 +37,7 @@ the hook's own colours.
 Repository with one local hook `entry: echo coloured`, `language: system`, `pass_filenames: false`, `verbose: true`,
 run in a sandbox whose `/dev/ptmx` is unusable, `pre-commit run --all-files --color always`:
 
-pre-commit 4.6.2 (exit 3; the exception class and text depend on how the pty fails — `FileNotFoundError: [Errno 2] No
+pre-commit 4.7.0 (exit 3; the exception class and text depend on how the pty fails — `FileNotFoundError: [Errno 2] No
 such file or directory` without `/dev/ptmx`, `OSError: out of pty devices` when exhausted):
 
 ```

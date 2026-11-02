@@ -1,6 +1,6 @@
 [package]
 name = "snp-difftest"
-description = "Differential harness against pre-commit 4.6.2 (tooling, not shipped)"
+description = "Differential harness against pre-commit 4.7.0 (tooling, not shipped)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -10,7 +10,7 @@ An invalid pygrep entry fails the hook once, with the last line of Python's trac
 
 ## Register entry (COMPATIBILITY §5.9)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | invalid pygrep entry: one full traceback per xargs partition | one line in Python's form (`re.error: … at position N`), exit 1 |
 
@@ -37,7 +37,7 @@ CPython's exactly (snp-pyre).
 `.pre-commit-config.yaml` with a local hook `id: grep`, `language: pygrep`, `entry: '('`, run on a repository whose
 file list makes two xargs partitions:
 
-pre-commit 4.6.2 (`- exit code: 1`):
+pre-commit 4.7.0 (`- exit code: 1`):
 
 ```
 Traceback (most recent call last):

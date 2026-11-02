@@ -1,5 +1,5 @@
 {
-  "_doc": "pygrep golden cases (WP-26): `cargo xtask pch-goldens pygrep` runs `python -m pre_commit.languages.pygrep *argv` (pre-commit 4.6.2, CPython 3.13) in a fresh directory per case and writes goldens.json; tests/pygrep replays them with snp_hooks::pygrep. Steps and byte strings as in tests/p0/cases.json. `args` + [`entry`] is what `prepare` sees; argv = args + [entry] + files.",
+  "_doc": "pygrep golden cases (WP-26): `cargo xtask pch-goldens pygrep` runs `python -m pre_commit.languages.pygrep *argv` (pre-commit 4.7.0, CPython 3.13) in a fresh directory per case and writes goldens.json; tests/pygrep replays them with snp_hooks::pygrep. Steps and byte strings as in tests/p0/cases.json. `args` + [`entry`] is what `prepare` sees; argv = args + [entry] + files.",
   "fixtures": {
     "a.txt": "hello TODO world\nfoo\nbar baz\n",
     "c.txt": "line1\r\nTODO crlf\r\n",

@@ -42,7 +42,7 @@ strips class DIAG lines from stderr only through this scenario (ARCHITECTURE §1
 `pre-commit` holds a pre-commit script (`INSTALL_PYTHON=/old/python`), `pre-push` a prek script:
 
 ```text
-$ pre-commit install           # pre-commit 4.6.2: stdout, stderr empty
+$ pre-commit install           # pre-commit 4.7.0: stdout, stderr empty
 pre-commit installed at .git/hooks/pre-commit
 $ pre-commit install           # snp, compat brand: the same stdout; stderr:
 Replaced hook script from pre-commit at .git/hooks/pre-commit (Python: /old/python)

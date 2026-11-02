@@ -1,6 +1,6 @@
 # snp-action
 
-Run [snp](https://github.com/grok-rs/snp) — a drop-in replacement for pre-commit 4.6.2 — in GitHub Actions. It
+Run [snp](https://github.com/grok-rs/snp) — a drop-in replacement for pre-commit 4.7.0 — in GitHub Actions. It
 replaces [`pre-commit/action`](https://github.com/pre-commit/action) with a one-line change:
 
 ```yaml

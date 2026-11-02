@@ -57,17 +57,17 @@ mod guard {
         // the reference implementation run in the kit's env writes its store under the root only
         // the oracle half runs whenever the venv exists; `SNP_REQUIRE_ORACLE=1` (CI jobs that install it) turns a
         // missing venv into a failure instead of a reported skip
-        let oracle = env.oracle(Oracle::Pc462Py312, &repo);
+        let oracle = env.oracle(Oracle::Pc470Py312, &repo);
         if oracle.is_none() {
             let required = Env::capture_process()
                 .get_nonempty("SNP_REQUIRE_ORACLE")
                 .is_some();
             assert!(
                 !required,
-                "SNP_REQUIRE_ORACLE is set but the pc462-py312 oracle is not installed (cargo xtask oracle install)"
+                "SNP_REQUIRE_ORACLE is set but the pc470-py312 oracle is not installed (cargo xtask oracle install)"
             );
             eprintln!(
-                "guard: oracle half SKIPPED (pc462-py312 not installed; set SNP_REQUIRE_ORACLE=1 to require it)"
+                "guard: oracle half SKIPPED (pc470-py312 not installed; set SNP_REQUIRE_ORACLE=1 to require it)"
             );
         }
         if let Some(cmd) = oracle {

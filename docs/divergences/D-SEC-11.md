@@ -10,7 +10,7 @@ depth 512, 1 M constructed nodes, 16 MiB file limits → YAML error
 
 ## Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | YAML alias bombs / deep nesting / huge files exhaust memory or the stack | depth 512, 1 M constructed nodes, 16 MiB file limits → YAML error |
 
@@ -63,7 +63,7 @@ x:
   a9: &a9 [*a8, *a8, *a8, *a8, *a8, *a8, *a8, *a8, *a8, *a8]
 ```
 
-`pre-commit validate-config .pre-commit-config.yaml` (4.6.2): exit 0, stdout
+`pre-commit validate-config .pre-commit-config.yaml` (4.7.0): exit 0, stdout
 
 ```
 [WARNING] Unexpected key(s) present at root: x

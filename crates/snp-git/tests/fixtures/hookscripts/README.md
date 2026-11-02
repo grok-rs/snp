@@ -4,7 +4,7 @@ One file per script shape the classifier must recognise (`crates/snp-git/tests/b
 
 | File | Shape | Expected class |
 |---|---|---|
-| `pre-commit-era3`, `pre-commit-era3-windows` | pre-commit ≥ 2.16 bash template (`resources/hook-tmpl`, verbatim at 4.6.2; the Windows variant has `#!/bin/sh` first) | `PreCommit { era: Some(3) }` |
+| `pre-commit-era3`, `pre-commit-era3-windows` | pre-commit ≥ 2.16 bash template (`resources/hook-tmpl`, verbatim at 4.7.0; the Windows variant has `#!/bin/sh` first) | `PreCommit { era: Some(3) }` |
 | `pre-commit-era2` | pre-commit 2.0–2.15 Python template (`ARGS = [...]`; reconstructed from 11 §A.3) | `PreCommit { era: Some(2) }` |
 | `pre-commit-era1` | pre-commit 1.x Python template (`ID_HASH`, `HOOK_TYPE = …`; reconstructed) | `PreCommit { era: Some(1) }` |
 | `pre-commit-prior-<hash>` | pre-2018 bash templates carrying one of the five `PRIOR_HASHES` (reconstructed) | `PreCommit { era: None }` |

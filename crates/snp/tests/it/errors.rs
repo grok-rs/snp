@@ -72,12 +72,12 @@ fn t10_err_02_line_two_and_log_skeleton() {
     let log = std::fs::read_to_string(compat_log(&env)).unwrap();
     assert!(
         log.starts_with(
-            "### version information\n\n```\npre-commit version: 4.6.2\ngit --version: "
+            "### version information\n\n```\npre-commit version: 4.7.0\ngit --version: "
         ),
         "{log}"
     );
     assert!(
-        log.contains("\nsys.version:\n    snp 2.0.0 (rustc "),
+        log.contains("\nsys.version:\n    snp 2.0.1 (rustc "),
         "{log}"
     );
     assert!(log.contains("\nsys.executable: "), "{log}");
@@ -95,7 +95,7 @@ fn t10_err_02_line_two_and_log_skeleton() {
         store(&env).join("snp.log").display()
     )));
     let log = std::fs::read_to_string(store(&env).join("snp.log")).unwrap();
-    assert!(log.contains("\nsnp version: 2.0.0\n"), "{log}");
+    assert!(log.contains("\nsnp version: 2.0.1\n"), "{log}");
     // overwritten each time, never an environment dump
     assert!(!log.contains("SNP_HOME") && !log.contains("PATH="));
 }
@@ -280,7 +280,7 @@ fn x13_cmd_05_could_not_find_rev_lines() {
         "{}",
         text(&out.stdout)
     );
-    // Oracle (pc462): `_original_lines` writes `yaml_dump(yaml_load(original))` before raising.
+    // Oracle (pc470): `_original_lines` writes `yaml_dump(yaml_load(original))` before raising.
     assert_eq!(
         std::fs::read_to_string(r.join(".pre-commit-config.yaml")).unwrap(),
         format!(
@@ -510,7 +510,7 @@ fn x13_eh_03_stdout_closed() {
     assert!(!store(&env).join("snp.log").exists());
 }
 
-/// `> /dev/full` (ENOSPC): the output is lost, so the command fails closed with 120 (pre-commit 4.6.2: CPython's
+/// `> /dev/full` (ENOSPC): the output is lost, so the command fails closed with 120 (pre-commit 4.7.0: CPython's
 /// shutdown flush fails, exit 120 with `Exception ignored ... OSError: [Errno 28]`); snp prints nothing on stderr
 /// (D-CRASH-24).
 #[cfg(target_os = "linux")]
@@ -542,7 +542,7 @@ fn x13_eh_03_stdout_full() {
 }
 
 /// stdout closed before the start (`>&-`): the Rust runtime reopens fd 1 on `/dev/null` before `main` (so no file
-/// snp opens can become fd 1), and the command then behaves as under `> /dev/null`. pre-commit 4.6.2 exits 1 with an
+/// snp opens can become fd 1), and the command then behaves as under `> /dev/null`. pre-commit 4.7.0 exits 1 with an
 /// import-time traceback instead (`sys.stdout` is `None`); recorded in D-CRASH-24.
 #[cfg(unix)]
 #[test]

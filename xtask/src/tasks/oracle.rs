@@ -1,14 +1,14 @@
-//! `cargo xtask oracle install|lock`: the hash-locked pre-commit 4.6.2 oracles `target/oracle/pc462-py31{2,3}`
+//! `cargo xtask oracle install|lock`: the hash-locked pre-commit 4.7.0 oracles `target/oracle/pc470-py31{2,3}`
 //! (WBS "Oracles and vectors", ADR-058, 10 §7.4.2).
 //!
-//! * `install [--py312 REQ] [--py313 REQ]` (re)creates both venvs with `uv venv`: `pc462-py312` on CPython 3.12.3
-//!   (default request `3.12.3`) and `pc462-py313` on CPython ≥ 3.13.14 (default `>=3.13.14,<3.14`); a request is
+//! * `install [--py312 REQ] [--py313 REQ]` (re)creates both venvs with `uv venv`: `pc470-py312` on CPython 3.12.3
+//!   (default request `3.12.3`) and `pc470-py313` on CPython ≥ 3.13.14 (default `>=3.13.14,<3.14`); a request is
 //!   anything `uv venv --python` accepts (a version, a specifier or an interpreter path). Packages come only from
-//!   `xtask/oracle/requirements-pc462.txt` (`--require-hashes`, wheels only, no uv config files). Each venv gets the
+//!   `xtask/oracle/requirements-pc470.txt` (`--require-hashes`, wheels only, no uv config files). Each venv gets the
 //!   `pre-commit-snp-prog` launcher, which patches argparse's `prog='pre-commit'` to `snp` before
 //!   `pre_commit.main` builds its parser (ADR-058). The interpreter version, `pre-commit --version`
-//!   (`pre-commit 4.6.2`) and the launcher (`snp 4.6.2`) are verified.
-//! * `lock` regenerates the hash lock from `requirements-pc462.in` (`uv pip compile --universal --generate-hashes`).
+//!   (`pre-commit 4.7.0`) and the launcher (`snp 4.7.0`) are verified.
+//! * `lock` regenerates the hash lock from `requirements-pc470.in` (`uv pip compile --universal --generate-hashes`).
 //!
 //! Owner: WP-00.
 
@@ -22,10 +22,10 @@ use crate::workspace;
 
 /// The directory holding the lock files (relative to the workspace root).
 const ORACLE_DIR: &str = "xtask/oracle";
-const LOCK_IN: &str = "requirements-pc462.in";
-const LOCK: &str = "requirements-pc462.txt";
+const LOCK_IN: &str = "requirements-pc470.in";
+const LOCK: &str = "requirements-pc470.txt";
 /// The pinned oracle version (`pre-commit --version`).
-const PRE_COMMIT_VERSION: &str = "4.6.2";
+const PRE_COMMIT_VERSION: &str = "4.7.0";
 
 /// What the interpreter of one oracle must be.
 #[derive(Debug, Clone, Copy)]
@@ -56,13 +56,13 @@ struct Oracle {
 
 const ORACLES: [Oracle; 2] = [
     Oracle {
-        name: "pc462-py312",
+        name: "pc470-py312",
         flag: "--py312",
         default_request: "3.12.3",
         wanted: Wanted::Exact(3, 12, 3),
     },
     Oracle {
-        name: "pc462-py313",
+        name: "pc470-py313",
         flag: "--py313",
         default_request: ">=3.13.14,<3.14",
         wanted: Wanted::AtLeast(3, 13, 14),
@@ -70,7 +70,7 @@ const ORACLES: [Oracle; 2] = [
 ];
 
 /// The launcher: pre-commit's console script with argparse `prog` patched to `snp` (ADR-058).
-const LAUNCHER_BODY: &str = "# pre-commit 4.6.2 with argparse prog 'snp' (ADR-058). Installed by `cargo xtask oracle install`; do not edit.
+const LAUNCHER_BODY: &str = "# pre-commit 4.7.0 with argparse prog 'snp' (ADR-058). Installed by `cargo xtask oracle install`; do not edit.
 import argparse
 
 _init = argparse.ArgumentParser.__init__
@@ -327,7 +327,7 @@ mod tests {
         let root = workspace::root().unwrap();
         let lock = std::fs::read_to_string(root.join(ORACLE_DIR).join(LOCK)).unwrap();
         for pin in [
-            "pre-commit==4.6.2",
+            "pre-commit==4.7.0",
             "identify==2.6.20",
             "cfgv==3.5.0",
             "pyyaml==6.0.3",

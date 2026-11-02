@@ -9,7 +9,7 @@ bytes end to end (argv, identify); lossy UTF-8 view for regex matching
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | non-UTF-8 file names from git or `--files` → `UnicodeDecodeError`/`UnicodeEncodeError` exit 3 (X13-GIT-05…08) | bytes end to end (argv, identify); lossy UTF-8 view for regex matching |
 
@@ -35,18 +35,18 @@ match or not match a byte that Python would have represented as a lone surrogate
 
 ## Examples
 
-Recorded with pre-commit 4.6.2 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc462.txt`); `<W>` is the scratch root, `<store>` the store directory.
+Recorded with pre-commit 4.7.0 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc470.txt`); `<W>` is the scratch root, `<store>` the store directory.
 
 A committed file `bad\xff.txt` and one `echo` hook (`tests/differential/divergences/D-CRASH-12.yaml`).
 
-`run --all-files`, pre-commit 4.6.2, exit 3:
+`run --all-files`, pre-commit 4.7.0, exit 3:
 
 ```text
 An unexpected error has occurred: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 27: invalid start byte
 Check the log at <store>/pre-commit.log
 ```
 
-`run --files $'bad\xff.txt'`, pre-commit 4.6.2, exit 3:
+`run --files $'bad\xff.txt'`, pre-commit 4.7.0, exit 3:
 
 ```text
 echo.....................................................................An unexpected error has occurred: UnicodeEncodeError: 'utf-8' codec can't encode character '\udcff' in position 3: surrogates not allowed

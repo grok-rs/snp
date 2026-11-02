@@ -14,7 +14,7 @@ macOS and Windows: `PYTHON_CPU_COUNT` is ignored, while pre-commit on CPython �
 
 ## Register entry (COMPATIBILITY §5.5)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | Windows CPU count = `GetActiveProcessorCount(ALL_PROCESSOR_GROUPS)`; on macOS and Windows under CPython ≥ 3.13 a positive `PYTHON_CPU_COUNT` replaces the count (`multiprocessing.cpu_count()`; Linux uses `sched_getaffinity`, which ignores it) | `available_parallelism` (differs only above 64 logical CPUs; no `unsafe`); `PYTHON_CPU_COUNT` ignored on every OS (14 A.9 Q3; `SNP_JOBS` sets the count) |
 
@@ -45,16 +45,16 @@ partitioning described above (the number of invocations, never the set of files 
 
 Windows with 128 logical CPUs in two processor groups, a hook `entry: snp-probe count` over 2 000 files.
 
-pre-commit 4.6.2: `target_concurrency()` = 128, `max_args` = max(4, ⌈2000/128⌉) = 16 → 125 invocations, 125 output
+pre-commit 4.7.0: `target_concurrency()` = 128, `max_args` = max(4, ⌈2000/128⌉) = 16 → 125 invocations, 125 output
 lines `16`.
 
 snp: `cpu_count()` = 64 (the current group), `max_args` = ⌈2000/64⌉ = 32 → 63 invocations (62 × `32`, 1 × `16`).
 
 Both exit 0 and check all 2 000 files.
 
-macOS with 10 CPUs, `PYTHON_CPU_COUNT=3`, pre-commit 4.6.2 on CPython 3.13, the same hook over 2 000 files.
+macOS with 10 CPUs, `PYTHON_CPU_COUNT=3`, pre-commit 4.7.0 on CPython 3.13, the same hook over 2 000 files.
 
-pre-commit 4.6.2: `target_concurrency()` = 3, `max_args` = ⌈2000/3⌉ = 667 → 3 invocations (667, 667, 666).
+pre-commit 4.7.0: `target_concurrency()` = 3, `max_args` = ⌈2000/3⌉ = 667 → 3 invocations (667, 667, 666).
 
 snp: `cpu_count()` = 10, `max_args` = 200 → 10 invocations of 200 files.
 

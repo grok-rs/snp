@@ -1,6 +1,6 @@
 //! The catalog rows WP-21 owns (`tests/catalog/index.tsv`): T10-CFG-01…29 and T10-MIG-01…09 (research 10 §5.1,
 //! §5.12), X13-CFG-01…13 and X13-SM-03/10 (research 13 X.4.1, X.5). Each test is named after its row; expected
-//! texts are pre-commit 4.6.2's (and, for registered divergences, snp's documented text). Both brands are checked
+//! texts are pre-commit 4.7.0's (and, for registered divergences, snp's documented text). Both brands are checked
 //! where a text names the tool.
 //!
 //! Owner: WP-21.
@@ -426,16 +426,16 @@ mod catalog {
             NONE
         );
         assert_eq!(
-            valid("minimum_pre_commit_version: '4.6.2'\nrepos: []\n"),
+            valid("minimum_pre_commit_version: '4.7.0'\nrepos: []\n"),
             NONE
         );
         assert!(
-            invalid("minimum_pre_commit_version: '4.6.2.0'\nrepos: []\n")
-                .contains("pre-commit version 4.6.2.0 is required")
+            invalid("minimum_pre_commit_version: '4.7.0.0'\nrepos: []\n")
+                .contains("pre-commit version 4.7.0.0 is required")
         );
         assert!(
-            invalid("minimum_pre_commit_version: '4.7'\nrepos: []\n")
-                .contains("pre-commit version 4.7 is required")
+            invalid("minimum_pre_commit_version: '4.8'\nrepos: []\n")
+                .contains("pre-commit version 4.8 is required")
         );
     }
 
@@ -444,7 +444,7 @@ mod catalog {
         for brand in BRANDS {
             let want = brand_text(
                 brand,
-                "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 999 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+                "\n==> File cfg.yaml\n==> At Config()\n==> At key: minimum_pre_commit_version\n=====> pre-commit version 999 is required but version 4.7.0 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
             );
             assert_eq!(
                 err(&load_config_text(
@@ -472,7 +472,7 @@ mod catalog {
                 brand_text(
                     brand,
                     &format!(
-                        "{}==> At key: minimum_pre_commit_version\n=====> pre-commit version 999 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
+                        "{}==> At key: minimum_pre_commit_version\n=====> pre-commit version 999 is required but version 4.7.0 is installed.  Perhaps run `pip install --upgrade pre-commit`.",
                         hook_ctx("'local'", "'do_not_commit'")
                     )
                 )
@@ -572,7 +572,7 @@ mod catalog {
                 e.rendered,
                 brand_text(
                     brand,
-                    "\n==> File /r/.pre-commit-hooks.yaml\n=====> \n=====> pre-commit version 5 is required but version 4.6.2 is installed.  Perhaps run `pip install --upgrade pre-commit`."
+                    "\n==> File /r/.pre-commit-hooks.yaml\n=====> \n=====> pre-commit version 5 is required but version 4.7.0 is installed.  Perhaps run `pip install --upgrade pre-commit`."
                 )
             );
         }

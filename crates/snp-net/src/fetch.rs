@@ -1,6 +1,6 @@
 //! The `Fetch` seam (S12) and its ureq implementation (ARCHITECTURE §1.4.9, §6.3; ADR-034, ADR-077).
 //!
-//! pre-commit 4.6.2 downloads go archives with `urllib.request.urlopen` and leaves node, rustup and ruby to nodeenv,
+//! pre-commit 4.7.0 downloads go archives with `urllib.request.urlopen` and leaves node, rustup and ruby to nodeenv,
 //! `curl … | sh` and its vendored tarballs, verifying nothing beyond TLS (`golang.py:95-112`, D-SEC-08). snp's
 //! downloads are TLS-only (an `http://` archive mirror needs `SNP_ALLOW_INSECURE_MIRROR`; checksum manifests are
 //! never fetched over plain HTTP), sha256-verified while streaming, and renamed to their final name only after the

@@ -513,7 +513,7 @@ impl<'c, 'a> Resolution<'c, 'a> {
         self.materialize_announced(&key, meta, a, &mut fill)
     }
 
-    /// `store.make_local(deps)` (`store.py:212-215`): the 4.6.2 local template.
+    /// `store.make_local(deps)` (`store.py:212-215`): the 4.7.0 local template.
     fn materialize_local(&mut self, deps: &Arc<[Arc<str>]>) -> Result<RepoHandle, Failure> {
         let key = Store::local_key(deps);
         let meta = RepoMeta {

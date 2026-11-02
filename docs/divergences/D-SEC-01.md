@@ -9,7 +9,7 @@ sanitized-or-hashed env dir names; deletion contained in the repo's envs/
 
 ## Register entry (COMPATIBILITY §5.3)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | `language_version: ../../x` (or an absolute path) makes the install step delete arbitrary directories; Windows `C:` versions break | sanitized-or-hashed env dir names; deletion contained in the repo's `envs/` |
 
@@ -35,10 +35,10 @@ the install itself receives the original `language_version` and fails or succeed
 
 ## Examples
 
-Recorded with pre-commit 4.6.2 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc462.txt`); `<W>` is the scratch root, `<store>` the store directory.
+Recorded with pre-commit 4.7.0 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc470.txt`); `<W>` is the scratch root, `<store>` the store directory.
 
 A local `language: python` hook with `language_version: ../../../../sec01-victim`, where `<W>/sec01-victim/keep.txt`
-exists next to the store (`<W>/store`). pre-commit 4.6.2, `run --all-files`, exit 3:
+exists next to the store (`<W>/store`). pre-commit 4.7.0, `run --all-files`, exit 3:
 
 ```text
 [INFO] Initializing environment for local.

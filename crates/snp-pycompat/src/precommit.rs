@@ -1,4 +1,4 @@
-//! pre-commit 4.6.2 expressions that are pure compositions of the shims (15 §A4.5, §A4.6,
+//! pre-commit 4.7.0 expressions that are pure compositions of the shims (15 §A4.5, §A4.6,
 //! §A4.11). Consumers call these, never re-implement them; each is verified by vectors.
 
 use std::ffi::{OsStr, OsString};

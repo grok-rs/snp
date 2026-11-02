@@ -9,7 +9,7 @@ crash (exit 3, same text) only when a selected hook's filter needs the content t
 
 ## Register entry (COMPATIBILITY §5.1)
 
-| pre-commit 4.6.2 | snp |
+| pre-commit 4.7.0 | snp |
 |---|---|
 | an unreadable file is identified (and crashes, exit 3) even when no hook needs its contents (X13-CLS-02) | crash (exit 3, same text) only when a selected hook's filter needs the content tier |
 
@@ -32,12 +32,12 @@ kept wherever the content matters.
 
 ## Examples
 
-Recorded with pre-commit 4.6.2 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc462.txt`); `<W>` is the scratch root, `<store>` the store directory.
+Recorded with pre-commit 4.7.0 on CPython 3.12.3 (a venv built from the hash lock `xtask/oracle/requirements-pc470.txt`); `<W>` is the scratch root, `<store>` the store directory.
 
 A committed, unreadable (`chmod 000`) file `noext` and one `echo` hook with the default `types: [file]`; `run
 --all-files` as a non-root user (`tests/differential/divergences/D-CRASH-18.yaml`).
 
-pre-commit 4.6.2, exit 3:
+pre-commit 4.7.0, exit 3:
 
 ```text
 An unexpected error has occurred: PermissionError: [Errno 13] Permission denied: 'noext'
