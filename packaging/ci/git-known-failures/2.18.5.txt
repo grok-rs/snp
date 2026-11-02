@@ -59,3 +59,4 @@ package(snp) & binary(it) & test(=install::t10_ins_30_stash_does_not_trigger_pos
 package(snp) & binary(it) & test(=stash::sigint_during_a_hook_restores_the_stash)
 package(snp) & binary(it) & test(=errors::panic_during_run_restores_the_stash_before_the_banner)
 package(snp-stash) & binary(catalog) & test(=behaviour::recovery::a_long_intent_to_add_list_survives_the_retirement)
+package(snp) & binary(it) & test(=interactive::ctrl_c_at_the_prompt_interrupts_once_and_restores_the_stash)
