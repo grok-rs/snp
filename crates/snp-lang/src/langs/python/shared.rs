@@ -694,22 +694,42 @@ mod tests {
         assert_eq!(items(&ini, "s"), pairs(&[("a", "3"), ("b", "2")]));
     }
 
-    /// Linear time: 100k distinct keys and 100k section headers parse quickly.
+    /// Linear time: eight times the keys and section headers take about eight times as long, against 64 times for a
+    /// quadratic parser. The sizes are compared with each other, on one machine, so a slow runner cannot fail this.
     #[test]
     fn ini_parsing_is_linear() {
         use std::fmt::Write as _;
-        let mut text = String::from("[global]\n");
-        for i in 0..100_000 {
-            writeln!(text, "k{i} = v").unwrap();
-        }
-        for i in 0..100_000 {
-            writeln!(text, "[s{i}]\nk = v").unwrap();
-        }
-        let start = std::time::Instant::now();
-        let ini = parse_ini(&text);
-        assert_eq!(ini.items("global").map(|v| v.len()), Some(100_000));
-        assert_eq!(ini.sections().count(), 100_001);
-        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+        let ini_of = |n: usize| {
+            let mut text = String::from("[global]\n");
+            for i in 0..n {
+                writeln!(text, "k{i} = v").unwrap();
+            }
+            for i in 0..n {
+                writeln!(text, "[s{i}]\nk = v").unwrap();
+            }
+            text
+        };
+        // The fastest of three: noise only ever adds time.
+        let parse_time = |n: usize| {
+            let text = ini_of(n);
+            (0..3)
+                .map(|_| {
+                    let start = std::time::Instant::now();
+                    let ini = parse_ini(&text);
+                    let elapsed = start.elapsed();
+                    assert_eq!(ini.items("global").map(|v| v.len()), Some(n));
+                    assert_eq!(ini.sections().count(), n + 1);
+                    elapsed
+                })
+                .min()
+                .unwrap()
+        };
+        let (small, large) = (parse_time(12_500), parse_time(100_000));
+        let ratio = large.as_secs_f64() / small.as_secs_f64();
+        assert!(
+            ratio < 24.0,
+            "{small:?} -> {large:?}: {ratio:.1}x for 8x the input"
+        );
     }
 
     /// Differential against CPython's `RawConfigParser(strict=False)` (when `python3.12`/`python3.13` exists):
