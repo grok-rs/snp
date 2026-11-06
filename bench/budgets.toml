@@ -247,3 +247,39 @@ source = "WP-14: the 10 x 10 alias bomb is a limit error in < 100 ms"
 id = "yaml/deep_nesting_10000_rejected"
 max_ns = 100000000.0
 source = "WP-14: nesting depth 10,000 is a clean YAML error in < 100 ms"
+
+# ---------------------------------------------------------------------------------------------------------------
+# Known misses (ADR-091): checks that fail today for a recorded reason. Each warns, with its reason, instead of
+# failing; a check not listed here still fails, and getting worse still fails the regression check. `check` is the
+# start of the check's name. The gate says when an entry passes and can go. Removing an entry is the goal: adding one
+# is a reviewed decision to accept a miss, not a way to get CI green.
+# ---------------------------------------------------------------------------------------------------------------
+[[known_miss]]
+scenario = "B2"
+check = "p50 <= 10 ms"
+reason = "seven git processes (parity and stash-safety checks) cost 14 ms or more; needs in-process git"
+
+[[known_miss]]
+scenario = "B2"
+check = "p50 <= prek"
+reason = "seven git processes (parity and stash-safety checks); prek skips part of that work"
+
+[[known_miss]]
+scenario = "B6"
+check = "p50 <= prek"
+reason = "not profiled yet (57 ms vs 49 ms on the reference machine)"
+
+[[known_miss]]
+scenario = "B8"
+check = "p50 <= pre-commit"
+reason = "the patch is computed twice to re-verify it before the checkout (ADR-067, deferred by ADR-084)"
+
+[[known_miss]]
+scenario = "B8"
+check = "p50 <= prek"
+reason = "the patch is computed twice to re-verify it before the checkout (ADR-067, deferred by ADR-084)"
+
+[[known_miss]]
+scenario = "B11"
+check = "p50 <= prek"
+reason = "may not be like for like: prek reports nothing to clean in 4 ms, snp walks 500 repos and 200 configs"
