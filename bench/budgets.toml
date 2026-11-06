@@ -257,17 +257,17 @@ source = "WP-14: nesting depth 10,000 is a clean YAML error in < 100 ms"
 [[known_miss]]
 scenario = "B2"
 check = "p50 <= 10 ms"
-reason = "seven git processes (parity and stash-safety checks) cost 14 ms or more; needs in-process git"
+reason = "seven git processes (parity and stash-safety checks): 7.9-10.7 ms across CI runner VMs, 16 ms on slower machines"
 
 [[known_miss]]
 scenario = "B2"
 check = "p50 <= prek"
-reason = "seven git processes (parity and stash-safety checks); prek skips part of that work"
+reason = "seven git processes (parity and stash-safety checks); prek spawns fewer"
 
 [[known_miss]]
 scenario = "B6"
 check = "p50 <= prek"
-reason = "not profiled yet (57 ms vs 49 ms on the reference machine)"
+reason = "not profiled yet (17-26 % behind prek on CI, more on musl)"
 
 [[known_miss]]
 scenario = "B8"
@@ -282,4 +282,19 @@ reason = "the patch is computed twice to re-verify it before the checkout (ADR-0
 [[known_miss]]
 scenario = "B11"
 check = "p50 <= prek"
-reason = "may not be like for like: prek reports nothing to clean in 4 ms, snp walks 500 repos and 200 configs"
+reason = "may not be like for like: prek reports nothing to clean, snp walks 500 repos and 200 configs"
+
+[[known_miss]]
+scenario = "B4"
+check = "p50 <= prek"
+reason = "not profiled yet (4-20 % behind prek on CI, the most on musl)"
+
+[[known_miss]]
+scenario = "B5"
+check = "p50 <= prek"
+reason = "not profiled yet (3 % behind prek on CI, within runner variation)"
+
+[[known_miss]]
+scenario = "B12u"
+check = "p50 <= prek"
+reason = "not profiled yet (6-18 % behind prek on CI, the most on musl)"

@@ -2873,7 +2873,7 @@ fn apply_known_misses(checks: &mut [Check], misses: &[KnownMiss]) {
                 }
                 Verdict::Pass => c
                     .detail
-                    .push_str(" (listed as a known miss: remove the entry)"),
+                    .push_str(" (a known miss: remove the entry once this holds on every runner)"),
                 Verdict::Warn => {}
             }
         }

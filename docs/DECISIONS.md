@@ -1371,16 +1371,17 @@ own history stays a gate, since `--advisory-history` is opt-in.
 ### ADR-091 — Every scenario is measured; accepted misses are listed
 
 **Context.** `bench.yml` measured only B1: the list was to grow when `snp run` (WP-32) merged, and never did, so B2–B12
-and their budgets were unchecked on a released product. Measuring them shows real misses on an idle reference machine
-(numbers in `bench/budgets.toml`). B2 is seven git processes at about 2 ms each against a 10 ms budget. B8 computes the
-stash patch twice to re-verify it (ADR-067, deferred by ADR-084). B11 is far behind prek, though prek reports nothing
-to clean and may not do the same work. B6 is 16 % behind prek and not profiled.
+and their budgets were unchecked on a released product. Measuring them on CI shows real misses (`bench/budgets.toml`).
+B2 is seven git processes against a 10 ms budget: 7.9 to 10.7 ms across runner VMs, so it depends on the VM. B8 computes
+the stash patch twice to re-verify it (ADR-067, deferred by ADR-084). B11 is far behind prek, though prek reports
+nothing to clean and may not do the same work. B4, B5, B6 and B12u are 3 to 26 % behind prek and not profiled. All 12
+scenarios agree between two binaries on one runner, so the same-runner regression check holds at this scale.
 **Decision.** CI measures every scenario. A miss accepted for now is a `[[known_miss]]` entry (scenario, check, reason):
 that check warns, with its reason. Unlisted checks still fail, and the regression check is separate, so a listed
 scenario that gets worse still fails. The budgets themselves do not change.
 **Rationale.** Unmeasured budgets protect nothing, and red every night hides the next regression, which is how
-ADR-090 began. Editing the numbers would hide that they are missed. Reaching them means in-process git or a weaker
-stash re-check, which needs a design of its own because that path protects user data.
+ADR-090 began. Editing the numbers would hide that they are missed. Closing B2 and B8 reliably touches the stash path,
+which protects user data, so that needs a design of its own.
 **Consequences.** The bench jobs take longer, and each entry is open work. Meeting ARCHITECTURE §12.1 in full remains
 the goal; the list records how far away it is.
 
