@@ -3,9 +3,10 @@
 # * micro:  criterion micro-benches (`cargo bench -p snp`) + `cargo xtask bench gate --micro` (the exact W1/W2
 #           thresholds; the perf-smoke tests of ci.yml only catch a 3x regression).
 # * e2e:    hyperfine scenarios B1-B12 of snp (dist) vs pre-commit 4.7.0 (pc470-py312) and prek 0.5.5 on the Linux
-#           reference runner. Pull requests compare against the base commit built on the same runner and get a PR
-#           comment; main and the nightly compare against the JSON-lines history and append to it. The nightly
-#           also enforces the syscall ceiling (`strace -f -c`, B1 <= 64) and the B3 allocation budget (dhat).
+#           reference runner. Pull requests and pushes to main compare against the base commit built on the same
+#           runner (pull requests get a PR comment). The nightly has no base commit: it reports the JSON-lines history
+#           without gating on it (`--advisory-history`, ADR-090). All but pull requests append to the history. The
+#           nightly also enforces the syscall ceiling (`strace -f -c`, B1 <= 64) and the B3 allocation budget (dhat).
 # * musl:   B3/B4/B6/B12 of the musl artifact with the system allocator and with mimalloc (ADR-079); the adopted
 #           allocator (bench/budgets.toml [musl]) is held to the never-slower-than-prek rule.
 #
@@ -114,8 +115,8 @@ jobs:
       - run: cargo xtask bench setup --scenarios "$BENCH_SCENARIOS"
       # Pull requests and pushes: the base commit's snp (the PR base, or the commit before the push), built and
       # measured on this runner, is the baseline. A baseline from the history comes from another VM, and runner
-      # variance alone exceeds the 5 % regression threshold on millisecond scenarios (B1: +31.5 % for an
-      # identical binary). The nightly run keeps the history baseline and its drift check.
+      # variance alone exceeds the 5 % regression threshold on millisecond scenarios (B1: +57 % for an identical
+      # binary), which is why the nightly run reports its history baseline and drift check without gating on them.
       - name: Base commit
         if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000')
         uses: actions/checkout@v4
@@ -143,7 +144,8 @@ jobs:
             cargo xtask bench gate --baseline target/bench/results/base.json --comment target/bench/comment.md \
               --record --allow-missing "$BENCH_PENDING"
           else
-            cargo xtask bench gate --comment target/bench/comment.md --record --allow-missing "$BENCH_PENDING"
+            cargo xtask bench gate --advisory-history --comment target/bench/comment.md --record \
+              --allow-missing "$BENCH_PENDING"
           fi
       - name: Job summary
         if: always()
@@ -210,7 +212,7 @@ jobs:
       - name: Gate
         run: |
           for alloc in system mimalloc; do
-            cargo xtask bench gate --current "target/bench/results/musl-$alloc.json" --record \
+            cargo xtask bench gate --current "target/bench/results/musl-$alloc.json" --advisory-history --record \
               --allow-missing "$MUSL_PENDING"
           done
       - name: Save the bench history

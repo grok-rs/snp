@@ -440,6 +440,14 @@ pub fn generate(seed: u64, index: u64, probe: bool) -> Scenario {
             String::from("--"),
             n.clone(),
         ]));
+        // Contents come from a small pool, so an unstaged deletion can pair with the intent-to-add file as a rename:
+        // pre-commit then misses the file and crashes, which is D-DATA-12 (its own scenario pins that). Without
+        // rename detection the same git state stays under test.
+        if s.work.unstaged.iter().any(|(_, change)| change.is_none()) {
+            s.work
+                .git_config
+                .push((String::from("diff.renames"), String::from("false")));
+        }
     }
     if r.chance(1, 10)
         && let Some(n) = committed.iter().skip(1).find(|c| {
@@ -578,6 +586,28 @@ mod tests {
             generate(1, 0, true).to_yaml(),
             generate(2, 0, true).to_yaml()
         );
+    }
+
+    #[test]
+    fn no_rename_of_an_intent_to_add_file_is_ever_generated() {
+        let is_ita = |op: &Op| matches!(op, Op::Git(a) if a.get(1).is_some_and(|f| f == "-N"));
+        let mut hit = 0;
+        for i in 0..3000 {
+            let s = generate(11, i, true);
+            let deleted = s.work.unstaged.iter().any(|(_, change)| change.is_none());
+            let off = s
+                .work
+                .git_config
+                .iter()
+                .any(|(k, v)| k == "diff.renames" && v == "false");
+            if deleted && s.work.setup.iter().any(is_ita) {
+                assert!(off, "case {i}");
+                hit += 1;
+            } else {
+                assert!(!off, "case {i}: the default stays under test");
+            }
+        }
+        assert_ne!(hit, 0);
     }
 
     #[test]

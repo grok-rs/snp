@@ -3612,8 +3612,8 @@ the critical path (≈ 1 ms each measured); B2 (one hook, no Stat mode below thr
 ### 12.3 Measurement and gates
 
 `cargo xtask bench setup|run|gate` (WP-36): hyperfine `-N -w 5 -r 50` against the oracle (`pc470-py312`) and pinned
-prek, JSON history, PR comment; gate fails on a > 5 % median regression with non-overlapping 95 % CIs or any hard-budget
-breach. RSS via `/usr/bin/time -v` (median of 10). Spawn budgets: integration tests run against a `--features testing`
+prek, JSON history, PR comment; gate fails on a > 5 % and > 0.1 ms median regression with non-overlapping 95 % CIs
+against a same-runner baseline, or on any hard-budget breach (history from other runner VMs is reported, ADR-090). RSS via `/usr/bin/time -v` (median of 10). Spawn budgets: integration tests run against a `--features testing`
 build of `snp` with `SNP_TEST_SPAWN_LOG` (`snp_proc::spawn_log`, feature `testing`) and assert upper bounds per
 scenario (catches accidental O(files) spawns); timing gates use the `dist` build. Micro-benchmark thresholds stated in
 package acceptance lists are enforced in two places: a release-mode `#[test] #[ignore = "perf"]` per threshold with a

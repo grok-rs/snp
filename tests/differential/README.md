@@ -81,6 +81,22 @@ comparing unless the scenario names that DIAG ID.
 * `--self-check` runs the oracle on both sides (registered expectations are ignored): the harness's own
   determinism check.
 
+## The generated suite
+
+Generated scenarios run with the same protocol and verdicts, but the suite exists to find the difference nobody has
+seen, so it must stay green on the ones everybody has. Exactly these are taken out, and only for scenarios tagged
+`generated` (a curated scenario sees them all):
+
+| Difference | What the suite does | What still checks it |
+|---|---|---|
+| D-MISC-09: pygrep fails to `open()` a file (random `args` read as file names) | `reduce_generated` collapses the traceback to its uncoloured exception line, in streams and worktree files (`log_file`) | that final line and the exit code here, `divergences/D-MISC-09` for the traceback |
+| CPython 3.12.3's argparse stops filling `nargs='*'` at an unknown option, so `pygrep.py: error: unrecognized arguments:` lists more than on 3.13.14+, the canonical profile (`-dash.txt` as a file name) | compat brand: the list is masked | the snp brand compares the line byte for byte against the 3.13 oracle |
+| D-EXT-07: `snp run` takes several hook ids, so `snp: error: unrecognized arguments:` lists fewer names | snp brand: the list is masked | the compat brand compares the line byte for byte |
+| D-DATA-12: an intent-to-add file paired with an unstaged deletion as a rename crashes pre-commit | the generator sets `diff.renames=false` on exactly those scenarios, so the git state stays under test without the crash | `divergences/D-DATA-12`, `hazard_b_intent_to_add_paired_as_a_rename` |
+
+Every other traceback, argparse line and state difference stays a failure. A new class gets a register ID (or a
+reason it is not a divergence), a row here and a test next to `reduce_generated`, never a wider reduction.
+
 ## Scenario schema
 
 Research 10 §7.4.3 plus the extensions below. Unknown keys are errors, except keys the harness knows but cannot
