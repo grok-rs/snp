@@ -341,7 +341,7 @@ pub fn repo_path(name: &OsStr) -> Option<RepoPath> {
 pub fn io_exc(e: &std::io::Error, name: &OsStr) -> PyExc {
     PyExc::new(
         pyerr::os_error_class(e),
-        pyerr::os_error_text(e, Some(name), None),
+        snp_pycompat::repr::oserror_from_open(e, name),
     )
 }
 

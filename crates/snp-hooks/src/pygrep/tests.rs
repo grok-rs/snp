@@ -105,6 +105,25 @@ fn future_warnings_precede_matches() {
     );
 }
 
+/// A missing file reads as Python's `open()` on every platform: `[Errno 2]`, not Windows' `[WinError 2]` (D-MISC-09).
+#[test]
+fn missing_file_is_the_error_of_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let c = prepare(&[], "x", 80).unwrap();
+    let o = run_partition(
+        &c,
+        &[OsStr::new("x"), OsStr::new("missing")],
+        dir.path(),
+        &RegexCache::new(),
+        &CancelToken::new(),
+    );
+    assert_eq!(o.code, 1);
+    assert_eq!(
+        String::from_utf8_lossy(&o.output),
+        "FileNotFoundError: [Errno 2] No such file or directory: 'missing'\n"
+    );
+}
+
 /// An empty file name (a hook's `args: ['']`) is Python's `open('')`: `FileNotFoundError`, not the work tree's
 /// `IsADirectoryError` (nightly generated difftest).
 #[test]

@@ -28,7 +28,7 @@ use crate::expect::{self, CheckCx};
 use crate::materialise::{self, World};
 use crate::normalise::{self, BrandMap, Tier};
 use crate::scenario::{Brand, Compare, Scenario, Status, Step, StepKind, StreamMode};
-use crate::snapshot::{self, State, StoreKind, Wanted};
+use crate::snapshot::{self, Entry, State, StoreKind, Wanted};
 use crate::text::{fnv64, replace_bytes, show};
 
 /// `oracle_snp_prog` = the pc470 oracle launched with argparse prog patched to `snp` (ADR-058), used for snp-brand
@@ -887,6 +887,18 @@ fn judge(
     };
     let (map_oracle, map_snp) = ((map_oracle, reduce), (map_snp, reduce));
     let keep_diag = s.expect_divergence.as_deref().filter(|_| s.is_diag());
+    // The generated suite's known differences go first, on the raw bytes: the rest of the comparison stays exact.
+    let generated = s
+        .tags
+        .iter()
+        .any(|t| t == "generated")
+        .then_some(variant.brand);
+    let known = |bytes: &[u8]| {
+        generated.map_or_else(
+            || bytes.to_vec(),
+            |brand| normalise::reduce_generated(bytes, brand),
+        )
+    };
     let mut diffs = Vec::new();
     let mut stripped: Vec<&'static str> = Vec::new();
     for (i, (project, step)) in flat_steps(s).into_iter().enumerate() {
@@ -920,7 +932,7 @@ fn judge(
                 ),
             });
             // Normalising and diffing two 64 MiB prefixes would only restate that; the step's state still counts.
-            state_diffs(&mut diffs, &label, c, &a.state, &b.state);
+            step_state_diffs(&mut diffs, &label, c, (&a.state, &b.state), generated);
             continue;
         }
         if ca.timed_out != cb.timed_out {
@@ -948,10 +960,12 @@ fn judge(
             cb.stdout.clone()
         };
         stripped.extend(ids);
+        let (snp_out, snp_err) = (known(&snp_out), known(&snp_err));
+        let (oracle_stdout, oracle_stderr) = (known(&ca.stdout), known(&ca.stderr));
         let eol = c.eol_insensitive;
         // Under a pty stdout and stderr are one stream: a difference that is only the kept DIAG ID's own lines is
         // that ID's stderr difference (it is labelled as such, so the class-DIAG rule holds).
-        let oracle_out = norm_stream(c.stdout, &ca.stdout, map_oracle, &stores, eol);
+        let oracle_out = norm_stream(c.stdout, &oracle_stdout, map_oracle, &stores, eol);
         let snp_norm = norm_stream(c.stdout, &snp_out, map_snp, &stores, eol);
         let diag_only = step.tty
             && keep_diag.is_some()
@@ -978,11 +992,11 @@ fn judge(
             format!("{label} stderr"),
             c.stderr,
             (
-                &norm_stream(c.stderr, &ca.stderr, map_oracle, &stores, eol),
+                &norm_stream(c.stderr, &oracle_stderr, map_oracle, &stores, eol),
                 &norm_stream(c.stderr, &snp_err, map_snp, &stores, eol),
             ),
         );
-        state_diffs(&mut diffs, &label, c, &a.state, &b.state);
+        step_state_diffs(&mut diffs, &label, c, (&a.state, &b.state), generated);
     }
     stripped.sort_unstable();
     stripped.dedup();
@@ -1034,6 +1048,30 @@ fn judge(
         oracle: oracle.report.clone(),
         snp: snp.report,
     }
+}
+
+/// [`state_diffs`] of one step; in a generated scenario (`generated` = its brand) the worktree's files are reduced
+/// first, since a hook's `log_file` holds what the hook printed.
+fn step_state_diffs(
+    diffs: &mut Vec<Difference>,
+    label: &str,
+    c: &Compare,
+    (a, b): (&State, &State),
+    generated: Option<Brand>,
+) {
+    let Some(brand) = generated else {
+        return state_diffs(diffs, label, c, a, b);
+    };
+    let reduced = |s: &State| {
+        let mut s = s.clone();
+        for e in s.tree.values_mut() {
+            if let Entry::File { bytes, .. } = e {
+                *bytes = normalise::reduce_generated(bytes, brand);
+            }
+        }
+        s
+    };
+    state_diffs(diffs, label, c, &reduced(a), &reduced(b));
 }
 
 #[expect(

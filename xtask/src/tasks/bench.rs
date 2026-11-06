@@ -13,9 +13,10 @@
 //!   dhat total allocation of B3 (`--dhat`, a `--features dhat-heap` build); it writes one JSON run record.
 //! * `gate` checks a run record against `bench/budgets.toml` and a baseline (an explicit record — the PR base — or the
 //!   last record of the JSON-lines history `bench/history/<platform>-<variant>.jsonl`): it fails on a median
-//!   regression above 5 % whose 95 % confidence intervals do not overlap (against the history: also against the
-//!   median of its last 10 records, the drift check), on a hard-budget breach, and when snp's p50 is slower than
-//!   pre-commit's or prek's or that comparison could not be made; `--comment` writes the Markdown PR comment,
+//!   regression above 5 % and 0.1 ms whose 95 % confidence intervals do not overlap (against the history: also against
+//!   the median of its last 10 records, the drift check; `--advisory-history` reports both as warnings when the history
+//!   comes from other machines, ADR-090), on a hard-budget breach, and when snp's p50 is slower than pre-commit's or
+//!   prek's or that comparison could not be made; `--comment` writes the Markdown PR comment,
 //!   `--record` appends to the history. `gate --micro` enforces the exact micro thresholds of the W1/W2 acceptance lists on criterion's results
 //!   (`cargo bench -p snp`). `gate --compare A B` prints the per-scenario effect of B against A (ADR-047 speculative
 //!   config load on/off, ADR-079 musl system allocator vs mimalloc).
@@ -107,6 +108,8 @@ Checks a run record against bench/budgets.toml and a baseline; exits non-zero on
   --current FILE         the record to check (default <target-dir>/bench/results/current.json)
   --baseline FILE        the baseline record (default: the last history record of the same platform and variant)
   --history DIR          the JSON-lines history (default bench/history)
+  --advisory-history     the history comes from other machines (hosted CI runners): the regression and drift checks
+                         against it warn instead of failing; everything else still gates (not with --baseline)
   --comment FILE         write the Markdown PR comment here
   --record               append the current record to the history when the gate passes
   --allow-missing LIST   scenarios not measured on purpose (comma-separated): their budgets warn instead of failing
@@ -2586,6 +2589,7 @@ struct MicroThreshold {
 #[derive(Debug, Clone, PartialEq)]
 struct Budgets {
     regression_pct: f64,
+    regression_min_ms: f64,
     never_slower_than: Vec<String>,
     musl_adopted: String,
     limits: Vec<Budget>,
@@ -2611,6 +2615,10 @@ impl Budgets {
             .get("regression_pct")
             .and_then(toml_f64)
             .context("[gate] regression_pct")?;
+        let regression_min_ms = gate
+            .get("regression_min_ms")
+            .and_then(toml_f64)
+            .context("[gate] regression_min_ms")?;
         let mut never_slower_than = Vec::new();
         for v in gate
             .get("never_slower_than")
@@ -2719,6 +2727,7 @@ impl Budgets {
         }
         Ok(Self {
             regression_pct,
+            regression_min_ms,
             never_slower_than,
             musl_adopted,
             limits,
@@ -2768,10 +2777,11 @@ fn drift_reference<'a>(history: &'a [Record], id: &str) -> Option<(&'a Measure, 
     ms.get(n.saturating_sub(1) / 2).map(|m| (*m, n))
 }
 
-/// The regression rule of `snp` against `prev`: more than `pct` % slower with disjoint 95 % CIs fails, slower with
-/// overlapping CIs warns.
-fn regression(snp: &Measure, prev: &Measure, pct: f64, against: &str) -> (Verdict, String) {
-    let limit = prev.median_ms * (1.0 + pct / 100.0);
+/// The regression rule of `snp` against `prev`: slower by more than `[gate] regression_pct` and
+/// `regression_min_ms` with disjoint 95 % CIs fails, slower with overlapping CIs warns.
+fn regression(snp: &Measure, prev: &Measure, b: &Budgets, against: &str) -> (Verdict, String) {
+    let limit = (prev.median_ms * (1.0 + b.regression_pct / 100.0))
+        .max(prev.median_ms + b.regression_min_ms);
     let slower = snp.median_ms > limit;
     let disjoint = snp.ci95_ms.0 > prev.ci95_ms.1;
     let verdict = if slower && disjoint {
@@ -2794,6 +2804,20 @@ fn regression(snp: &Measure, prev: &Measure, pct: f64, against: &str) -> (Verdic
             (snp.median_ms / prev.median_ms - 1.0) * 100.0
         ),
     )
+}
+
+/// `--advisory-history`: the checks that compare with a baseline warn instead of failing. A record from another
+/// machine says nothing at this resolution: one binary measured 0.76 to 1.19 ms for B1 across hosted runner VMs
+/// (ADR-090). Only those checks change; budgets and the never-slower rule are measured within the run.
+fn advisory_history(checks: &mut [Check]) {
+    for c in checks {
+        if c.verdict == Verdict::Fail
+            && (c.what.starts_with("no regression") || c.what.starts_with("no drift"))
+        {
+            c.verdict = Verdict::Warn;
+            c.detail.push_str(" (--advisory-history)");
+        }
+    }
 }
 
 /// Every check of `cur` (and against `base`) under `b` (the e2e gate; pure). Nothing passes silently: a budget whose
@@ -2888,7 +2912,7 @@ fn evaluate(
             );
         }
         if let Some(prev) = base.and_then(|r| r.get(id, "snp")) {
-            let (verdict, detail) = regression(snp, prev, b.regression_pct, "baseline");
+            let (verdict, detail) = regression(snp, prev, b, "baseline");
             push(
                 &mut out,
                 id,
@@ -2898,12 +2922,8 @@ fn evaluate(
             );
         }
         if let Some((prev, n)) = drift_reference(history, id) {
-            let (verdict, detail) = regression(
-                snp,
-                prev,
-                b.regression_pct,
-                &format!("median of the last {n} records"),
-            );
+            let (verdict, detail) =
+                regression(snp, prev, b, &format!("median of the last {n} records"));
             push(
                 &mut out,
                 id,
@@ -3151,7 +3171,14 @@ fn gate(root: &Path, args: &[String]) -> anyhow::Result<()> {
             "allow-missing-reference",
             "since",
         ],
-        &["record", "micro", "compare", "any-age", "reference"],
+        &[
+            "record",
+            "micro",
+            "compare",
+            "any-age",
+            "reference",
+            "advisory-history",
+        ],
     )?
     else {
         say(GATE_HELP);
@@ -3203,6 +3230,11 @@ fn gate(root: &Path, args: &[String]) -> anyhow::Result<()> {
     let hist_file = history_file(&history, &cur.platform, &cur.variant);
     // an explicit baseline (a pull request's base commit) has no history; otherwise the last record is the baseline
     // and the window of the latest ones the drift reference
+    // (an explicit baseline is measured on this machine: nothing may turn that comparison off)
+    ensure!(
+        !(o.has("advisory-history") && o.one("baseline").is_some()),
+        "--advisory-history is about the history: it does not apply to --baseline"
+    );
     let (base, recent) = if let Some(p) = o.one("baseline") {
         (Some(Record::read(Path::new(p))?), Vec::new())
     } else {
@@ -3212,7 +3244,7 @@ fn gate(root: &Path, args: &[String]) -> anyhow::Result<()> {
     let allow_missing: BTreeSet<String> = o.list("allow-missing").into_iter().collect();
     let allow_missing_reference: BTreeSet<String> =
         o.list("allow-missing-reference").into_iter().collect();
-    let checks = evaluate(
+    let mut checks = evaluate(
         &cur,
         base.as_ref(),
         &budgets,
@@ -3220,6 +3252,9 @@ fn gate(root: &Path, args: &[String]) -> anyhow::Result<()> {
         &allow_missing_reference,
         &recent,
     );
+    if o.has("advisory-history") {
+        advisory_history(&mut checks);
+    }
     for c in &checks {
         say(&format!(
             "{:<5} {:<5} {:<34} {}",
@@ -3665,6 +3700,7 @@ mod tests {
     fn committed_budgets_hold_the_adr_043_hard_gates() {
         let b = budgets();
         assert!((b.regression_pct - 5.0).abs() < f64::EPSILON);
+        assert!((b.regression_min_ms - 0.1).abs() < f64::EPSILON);
         assert_eq!(b.never_slower_than, ["pre-commit", "prek"]);
         let hard = |s: &str, metric: Metric| {
             b.limits
@@ -3711,7 +3747,7 @@ mod tests {
 
     #[test]
     fn budgets_reject_malformed_entries() {
-        let base = "[gate]\nregression_pct = 5\nnever_slower_than = []\n";
+        let base = "[gate]\nregression_pct = 5\nregression_min_ms = 0\nnever_slower_than = []\n";
         assert!(Budgets::parse(base).is_ok());
         assert!(Budgets::parse("").is_err());
         let bad_os = format!(
@@ -3937,13 +3973,15 @@ mod tests {
 
     #[test]
     fn never_slower_than_names_real_tools() {
-        let ok = "[gate]\nregression_pct = 5\nnever_slower_than = [\"pre-commit\", \"prek\"]\n";
+        let ok = "[gate]\nregression_pct = 5\nregression_min_ms = 0\nnever_slower_than = [\"pre-commit\", \"prek\"]\n";
         assert_eq!(
             Budgets::parse(ok).unwrap().never_slower_than,
             ["pre-commit", "prek"]
         );
         for bad in ["[\"prekk\"]", "[\"snp\"]", "[1]"] {
-            let text = format!("[gate]\nregression_pct = 5\nnever_slower_than = {bad}\n");
+            let text = format!(
+                "[gate]\nregression_pct = 5\nregression_min_ms = 0\nnever_slower_than = {bad}\n"
+            );
             assert!(Budgets::parse(&text).is_err(), "{bad}");
         }
     }
@@ -3997,6 +4035,55 @@ mod tests {
         );
         let checks = evaluate(&cur, flat.last(), &b, &none(), &none(), &flat[..2]);
         assert!(verdict_of(&checks, "B1", "no drift").is_none());
+    }
+
+    #[test]
+    fn the_regression_floor_absorbs_same_runner_noise() {
+        let b = budgets();
+        let base = m(0.769, (0.739, 0.781));
+        // the false alarm of run 41492075808: one runner, +5.8 %, disjoint intervals, but only 0.045 ms
+        let noise = m(0.814, (0.792, 0.825));
+        assert_eq!(regression(&noise, &base, &b, "baseline").0, Verdict::Pass);
+        // past the floor the rule is the old one
+        let real = m(0.95, (0.93, 0.97));
+        assert_eq!(regression(&real, &base, &b, "baseline").0, Verdict::Fail);
+        // from 2 ms up the percentage decides: +4 % passes, +6 % fails
+        let slow = m(10.0, (9.9, 10.1));
+        let within = m(10.4, (10.3, 10.5));
+        assert_eq!(regression(&within, &slow, &b, "baseline").0, Verdict::Pass);
+        let beyond = m(10.6, (10.5, 10.7));
+        assert_eq!(regression(&beyond, &slow, &b, "baseline").0, Verdict::Fail);
+    }
+
+    #[test]
+    fn advisory_history_softens_only_the_comparisons_with_other_machines() {
+        let b = budgets();
+        let snp = |t: f64| ("B1", "snp", Outcome::Ok(m(t, (t * 0.99, t * 1.01))));
+        let history: Vec<Record> = (0..4).map(|_| record("gnu-system", &[snp(0.76)])).collect();
+        // over the hard 3 ms budget and slower than prek, both measured within this run
+        let cur = record(
+            "gnu-system",
+            &[
+                snp(4.0),
+                ("B1", "pre-commit", Outcome::Ok(m(100.0, (99.0, 101.0)))),
+                ("B1", "prek", Outcome::Ok(m(2.0, (1.9, 2.1)))),
+            ],
+        );
+        let mut checks = evaluate(&cur, history.last(), &b, &none(), &none(), &history);
+        for what in ["no regression", "no drift"] {
+            let c = verdict_of(&checks, "B1", what).unwrap();
+            assert_eq!(c.verdict, Verdict::Fail, "{what}: {}", c.detail);
+        }
+        advisory_history(&mut checks);
+        for what in ["no regression", "no drift"] {
+            let c = verdict_of(&checks, "B1", what).unwrap();
+            assert_eq!(c.verdict, Verdict::Warn, "{what}: {}", c.detail);
+            assert!(c.detail.ends_with("(--advisory-history)"), "{}", c.detail);
+        }
+        for what in ["p50 <= prek", "p50 <= 3"] {
+            let c = verdict_of(&checks, "B1", what).unwrap();
+            assert_eq!(c.verdict, Verdict::Fail, "{what}: {}", c.detail);
+        }
     }
 
     #[test]

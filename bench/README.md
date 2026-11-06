@@ -78,16 +78,23 @@ the tool waited for, so a git child larger than the tool itself is what gets rep
 
 ## The gate
 
-* **Regression**: snp's median more than 5 % above the baseline's **and** the two 95 % confidence intervals of the
-  medians disjoint (distribution-free order-statistic intervals, ranks `n/2 ∓ 1.96·√n/2`) fails; a > 5 % change with
-  overlapping intervals is a warning. Pull requests and pushes to main use the base commit (the PR base, or the commit
-  before the push) measured on the same runner as the baseline, because records from different runner VMs differ by
-  more than 5 % for identical binaries; the nightly uses the last history record of the same platform and variant.
+* **Regression**: snp's median more than 5 % **and** 0.1 ms above the baseline's, **and** the two 95 % confidence
+  intervals of the medians disjoint (distribution-free order-statistic intervals, ranks `n/2 ∓ 1.96·√n/2`) fails; such
+  a change with overlapping intervals is a warning. The 0.1 ms floor is twice the largest same-runner difference
+  seen (0.045 ms over 22 CI runs, ADR-090), so it only matters below 2 ms. Pull requests and pushes to main use the
+  base commit (the PR base, or the commit before the push) measured on the same runner as the baseline, because
+  records from different runner VMs differ by far more than 5 % for identical binaries; the nightly uses the last
+  history record of the same platform and variant.
 * **Drift** (the nightly, and a push without a previous commit, which compare against the history): the same rule against the record with the
   median snp time among the last 10 history records (at least 3 needed). Without it, a series of slowdowns each just
   under 5 % of the previous record would pass forever, since every passing run becomes the next baseline. The gate reads the records and
   criterion's results from cargo's target directory (`CARGO_TARGET_DIR` respected), like `run` writes them, and uses
   hyperfine 1.19.0 only (another hyperfine on PATH is ignored).
+* **History from other machines** (`--advisory-history`): the regression and drift checks against the history report
+  warnings instead of failing. CI passes it wherever it has no same-runner baseline: the history then comes from other
+  runner VMs, where one binary measured 0.76–1.19 ms for B1 (glibc) and 0.48–0.66 ms (musl), and not even the ratio to
+  prek is stable (+30 %). Budgets, syscall and allocation counts and the never-slower rule are measured within the run
+  and still gate. Without the flag (a developer's machine, whose history is its own) both checks fail as above.
 * **Budgets**: every `[[budget]]` of the running OS; `hard = true` fails, a soft breach is a warning.
 * **Nothing passes silently**: a hard budget whose scenario is not in the record fails (a soft one warns), unless the
   scenario is listed in `--allow-missing` (the scenarios a workflow knowingly does not run yet, `BENCH_PENDING` in

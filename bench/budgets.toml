@@ -11,6 +11,10 @@
 # A median regression above this percentage fails the gate when the 95 % confidence intervals of the two medians do
 # not overlap (distribution-free order-statistic intervals).
 regression_pct = 5.0
+# ... and by at least this many milliseconds. Two measurements on one runner differ by up to 0.045 ms however good the
+# binary (22 CI runs, 2026-11; that +5.8 % at B1's 0.8 ms failed a version bump), so a percentage alone has no margin on
+# a sub-millisecond scenario. From 2 ms up the percentage is the stricter of the two (ADR-090).
+regression_min_ms = 0.1
 # snp's p50 must never be slower than these tools on any scenario both measured (ARCHITECTURE §12.1).
 never_slower_than = ["pre-commit", "prek"]
 

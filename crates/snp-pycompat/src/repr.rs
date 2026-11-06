@@ -348,6 +348,36 @@ pub fn oserror_from_io(e: &io::Error, f1: Option<&OsStr>, f2: Option<&OsStr>) ->
     }
 }
 
+/// The CRT's `errno` and `strerror` for a Win32 error code (`_dosmaperr`, whose default is `EINVAL`).
+const fn crt_error(win32: i32) -> (i32, &'static str) {
+    match win32 {
+        // ERROR_FILE_NOT_FOUND, _PATH_NOT_FOUND, _INVALID_DRIVE, _NO_MORE_FILES, _BAD_NETPATH, _BAD_NET_NAME,
+        // _BAD_PATHNAME and names over the length limit
+        2 | 3 | 15 | 18 | 53 | 67 | 161 | 206 => (2, "No such file or directory"),
+        4 => (24, "Too many open files"),
+        // ERROR_ACCESS_DENIED, _SHARING_VIOLATION, _LOCK_VIOLATION
+        5 | 32 | 33 => (13, "Permission denied"),
+        6 => (9, "Bad file descriptor"),
+        8 | 14 => (12, "Not enough space"),
+        // ERROR_FILE_EXISTS, _ALREADY_EXISTS
+        80 | 183 => (17, "File exists"),
+        _ => (22, "Invalid argument"),
+    }
+}
+
+/// `str(OSError)` of the builtin `open(name)`: [`oserror_from_io`] on POSIX, the CRT's `[Errno N] strerror` on
+/// Windows, where `open()` goes through `_wopen` while Rust's `File::open` reports the Win32 code.
+#[must_use]
+pub fn oserror_from_open(e: &io::Error, name: &OsStr) -> String {
+    match e.raw_os_error() {
+        Some(code) if cfg!(windows) => {
+            let (errno, text) = crt_error(code);
+            oserror_str(errno, text, Some(name), None)
+        }
+        _ => oserror_from_io(e, Some(name), None),
+    }
+}
+
 /// `str(subprocess.CalledProcessError(rc, cmd))` (stdlib `Lib/subprocess.py`; raised by
 /// `subprocess.check_output` in `hook_impl.py:143-165`). `cmd_str` is `str(cmd)` (the tuple/list
 /// repr). A negative `rc` is a signal: `died with <Signals.SIGKILL: 9>.` or `died with unknown
@@ -612,6 +642,17 @@ mod tests {
             .unwrap();
         assert_eq!(out.len(), 2 * (depth + 1));
         assert!(out.starts_with("[[[") && out.ends_with("]]]"));
+    }
+
+    #[test]
+    fn crt_errors_follow_dosmaperr() {
+        assert_eq!(crt_error(2), (2, "No such file or directory"));
+        assert_eq!(crt_error(3), (2, "No such file or directory"));
+        assert_eq!(crt_error(5), (13, "Permission denied"));
+        assert_eq!(crt_error(32), (13, "Permission denied"));
+        assert_eq!(crt_error(183), (17, "File exists"));
+        // ERROR_INVALID_NAME: `open('a?b')` is `[Errno 22] Invalid argument`
+        assert_eq!(crt_error(123), (22, "Invalid argument"));
     }
 
     #[test]

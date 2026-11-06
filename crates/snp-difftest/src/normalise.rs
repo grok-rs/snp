@@ -11,6 +11,9 @@
 //!   to their `error:` lines (the py312 oracle wraps differently, 12 §A.4.1), YAML error bodies below the `=====> `
 //!   line, localized `[WinError N]` texts and version numbers.
 //!
+//! * **Generated reductions** — [`reduce_generated`], on top of a tier, only for the nightly generated suite: the
+//!   differences it is known to hit, which would otherwise hide every new one (tests/differential/README.md).
+//!
 //! The brand map ([`BrandMap`]) is the machine form of COMPATIBILITY §3.3 (`tests/differential/brand_map.yaml`). It
 //! is applied to the prog-patched oracle's output in snp-brand runs, never inside argparse blocks (a `usage: `
 //! line through the next `…: error: …` line, or to the end of a help text), whose bytes the patched oracle already
@@ -20,6 +23,7 @@
 
 use std::path::Path;
 
+use crate::scenario::Brand;
 use crate::text::{contains_bytes, lines_with_ends, replace_bytes};
 use crate::yamlv::Yv;
 
@@ -610,6 +614,106 @@ fn mask_rand(line: &[u8], prefix: &[u8], repl: &[u8]) -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Generated suite
+
+/// The argparse error line whose argument list the two argparse profiles disagree on, in one brand of a generated
+/// scenario. Python 3.12.3 (the compat oracle) lets a `nargs='*'` positional match nothing before an unknown option
+/// and reports everything after it, 3.13.14+ (the canonical profile, the snp oracle, snp-argparse) goes on filling
+/// it. The snp brand keeps that hook-time line byte-exact against 3.13. The other way round, snp-brand `run` takes
+/// several hook ids (D-EXT-07), so positionals the oracle rejects are accepted; the compat brand keeps that one.
+const fn unrecognized_prefix(brand: Brand) -> &'static [u8] {
+    match brand {
+        Brand::Compat => b"pygrep.py: error: unrecognized arguments: ",
+        Brand::Snp => b"snp: error: unrecognized arguments: ",
+    }
+}
+
+/// Reduces what the generated suite is known to hit (raw bytes, both sides, streams and files alike):
+///
+/// * the traceback of pygrep failing to `open()` a file collapses to its exception line, uncoloured (D-MISC-09;
+///   CPython 3.13 colours tracebacks in a `--color always` run, where the hook has a pty);
+/// * the argument list of [`unrecognized_prefix`] is masked.
+///
+/// Anything else stays exact: the suite's job is to find the difference nobody has seen yet, and a blanket Tier B
+/// would hide the next one. Curated scenarios never come here, so `divergences/D-MISC-09` still sees the traceback.
+pub(crate) fn reduce_generated(bytes: &[u8], brand: Brand) -> Vec<u8> {
+    let lines = lines_with_ends(bytes);
+    let prefix = unrecognized_prefix(brand);
+    let mut out = Vec::new();
+    let mut i = 0_usize;
+    while let Some(line) = lines.get(i).copied() {
+        if let Some((end, exception)) = pygrep_open_traceback(&lines, i) {
+            out.extend_from_slice(&exception);
+            i = end;
+            continue;
+        }
+        i = i.saturating_add(1);
+        if line.starts_with(prefix) {
+            out.extend_from_slice(prefix);
+            out.extend_from_slice(b"[ARGS]");
+            out.extend_from_slice(split_eol(line).1);
+        } else {
+            out.extend_from_slice(line);
+        }
+    }
+    out
+}
+
+/// When a traceback starts at `lines[start]` and is pygrep's failed `open()`: the index after it and its uncoloured
+/// exception line. Every other traceback is left alone (`None`).
+fn pygrep_open_traceback(lines: &[&[u8]], start: usize) -> Option<(usize, Vec<u8>)> {
+    const HEADER: &[u8] = b"Traceback (most recent call last):";
+    let header = lines.get(start)?;
+    if !contains_bytes(header, HEADER) || split_eol(&strip_ansi(header)).0 != HEADER {
+        return None;
+    }
+    let mut i = start.saturating_add(1);
+    let mut in_pygrep = false;
+    let mut opens = false;
+    while let Some(line) = lines.get(i) {
+        if !line.starts_with(b" ") {
+            break;
+        }
+        let frame = strip_ansi(line);
+        in_pygrep |= contains_bytes(&frame, b"/pre_commit/languages/pygrep.py\"");
+        opens = contains_bytes(&frame, b"with open(filename, 'rb') as f:")
+            || (opens && is_caret_line(&frame));
+        i = i.saturating_add(1);
+    }
+    (in_pygrep && opens)
+        .then(|| lines.get(i).map(|l| (i.saturating_add(1), strip_ansi(l))))
+        .flatten()
+}
+
+/// The `^^^^` / `~~~~` marker line CPython prints under a traceback's source line.
+fn is_caret_line(line: &[u8]) -> bool {
+    let body = split_eol(line).0.trim_ascii();
+    !body.is_empty() && body.iter().all(|b| matches!(b, b'^' | b'~'))
+}
+
+/// `bytes` without its SGR colour sequences (`ESC [ … m`).
+fn strip_ansi(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut rest = bytes;
+    while let Some((&first, tail)) = rest.split_first() {
+        if first == 0x1b
+            && tail.first() == Some(&b'[')
+            && let Some(len) = tail
+                .iter()
+                .skip(1)
+                .position(|b| !(b.is_ascii_digit() || *b == b';'))
+            && tail.get(len.saturating_add(1)) == Some(&b'm')
+        {
+            rest = tail.get(len.saturating_add(2)..).unwrap_or_default();
+        } else {
+            out.push(first);
+            rest = tail;
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Tier B
 
 fn tier_b(b: &[u8]) -> Vec<u8> {
@@ -1038,6 +1142,105 @@ mod tests {
             normalise(Tier::B, plain, &BrandMap::identity()),
             b"ValueError: v\n\nnext\n"
         );
+    }
+
+    /// The traceback of `pygrep.py` on a missing file, as CPython 3.12 prints it (`~` markers from 3.13 on).
+    const PYGREP_TRACEBACK: &str = concat!(
+        "Traceback (most recent call last):\n",
+        "  File \"<frozen runpy>\", line 198, in _run_module_as_main\n",
+        "  File \"<frozen runpy>\", line 88, in _run_code\n",
+        "  File \"/v/lib/python3.12/site-packages/pre_commit/languages/pygrep.py\", line 133, in <module>\n",
+        "    raise SystemExit(main())\n",
+        "                     ^^^^^^\n",
+        "  File \"/v/lib/python3.12/site-packages/pre_commit/languages/pygrep.py\", line 128, in main\n",
+        "    retv |= process_fn(pattern, filename)\n",
+        "            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n",
+        "  File \"/v/lib/python3.12/site-packages/pre_commit/languages/pygrep.py\", line 24, in _process_filename_by_line\n",
+        "    with open(filename, 'rb') as f:\n",
+        "         ^^^^^^^^^^^^^^^^^^^^\n",
+        "FileNotFoundError: [Errno 2] No such file or directory: 'TODO'\n",
+    );
+
+    #[test]
+    fn generated_reduces_the_pygrep_open_traceback() {
+        const LAST: &[u8] = b"FileNotFoundError: [Errno 2] No such file or directory: 'TODO'\n";
+        let mut text = b"- exit code: 1\n\n".to_vec();
+        text.extend_from_slice(PYGREP_TRACEBACK.as_bytes());
+        text.extend_from_slice(PYGREP_TRACEBACK.as_bytes());
+        text.extend_from_slice(b"\nnext hook\n");
+        let mut want = b"- exit code: 1\n\n".to_vec();
+        want.extend_from_slice(LAST);
+        want.extend_from_slice(LAST);
+        want.extend_from_slice(b"\nnext hook\n");
+        assert_eq!(reduce_generated(&text, Brand::Compat), want);
+        assert_eq!(reduce_generated(&text, Brand::Snp), want);
+    }
+
+    #[test]
+    fn generated_reduces_the_coloured_traceback_of_python_313() {
+        let text = concat!(
+            "Traceback (most recent call last):\n",
+            "  File \x1b[35m\"/v/pre_commit/languages/pygrep.py\"\x1b[0m, line \x1b[35m24\x1b[0m, in \x1b[35mf\x1b[0m\n",
+            "    with \x1b[31mopen\x1b[0m\x1b[1;31m(filename, 'rb')\x1b[0m as f:\n",
+            "         \x1b[31m~~~~\x1b[0m\x1b[1;31m^^^^^^^^^^^^^^^^\x1b[0m\n",
+            "\x1b[1;35mFileNotFoundError\x1b[0m: \x1b[35m[Errno 2] No such file or directory: ''\x1b[0m\n",
+        );
+        assert_eq!(
+            reduce_generated(text.as_bytes(), Brand::Snp),
+            b"FileNotFoundError: [Errno 2] No such file or directory: ''\n".to_vec()
+        );
+    }
+
+    #[test]
+    fn generated_leaves_every_other_traceback_alone() {
+        // pygrep's own frames, but not its `open()`: an invalid entry stays D-MISC-05's
+        let invalid_entry = PYGREP_TRACEBACK.replace(
+            "    with open(filename, 'rb') as f:\n",
+            "    pattern = re.compile(args.pattern.encode(), flags)\n",
+        );
+        // `open()` in the same words, somewhere other than pygrep
+        let elsewhere = PYGREP_TRACEBACK.replace("pre_commit/languages/pygrep.py", "tool.py");
+        // a source line after `open()` must end the match: the failure is not `open()`'s
+        let later_frame = PYGREP_TRACEBACK.replace(
+            "         ^^^^^^^^^^^^^^^^^^^^\n",
+            "         ^^^^^^^^^^^^^^^^^^^^\n    f.read()\n",
+        );
+        let truncated = PYGREP_TRACEBACK
+            .strip_suffix("FileNotFoundError: [Errno 2] No such file or directory: 'TODO'\n")
+            .unwrap();
+        for text in [invalid_entry.as_str(), &elsewhere, &later_frame, truncated] {
+            assert_eq!(
+                reduce_generated(text.as_bytes(), Brand::Compat),
+                text.as_bytes().to_vec()
+            );
+        }
+    }
+
+    #[test]
+    fn generated_masks_the_argument_list_of_one_brand_only() {
+        let py312 = b"pygrep.py: error: unrecognized arguments: -x=1 -dash.txt a.py b.py\n";
+        assert_eq!(
+            reduce_generated(py312, Brand::Compat),
+            b"pygrep.py: error: unrecognized arguments: [ARGS]\n".to_vec()
+        );
+        // the snp brand holds this line to Python 3.13, the compat brand the next one
+        assert_eq!(reduce_generated(py312, Brand::Snp), py312.to_vec());
+        let top = b"snp: error: unrecognized arguments: -dash.txt CRLF.txt\r\n";
+        assert_eq!(
+            reduce_generated(top, Brand::Snp),
+            b"snp: error: unrecognized arguments: [ARGS]\r\n".to_vec()
+        );
+        assert_eq!(reduce_generated(top, Brand::Compat), top.to_vec());
+        // not a usage error at all
+        let other = b"see pygrep.py: error: unrecognized arguments: x\n";
+        assert_eq!(reduce_generated(other, Brand::Compat), other.to_vec());
+    }
+
+    #[test]
+    fn strip_ansi_only_removes_sgr_sequences() {
+        assert_eq!(strip_ansi(b"\x1b[1;35mA\x1b[0m: \x1b[m"), b"A: ".to_vec());
+        assert_eq!(strip_ansi(b"\x1b[2Kkept"), b"\x1b[2Kkept".to_vec());
+        assert_eq!(strip_ansi(b"tail\x1b["), b"tail\x1b[".to_vec());
     }
 
     #[test]

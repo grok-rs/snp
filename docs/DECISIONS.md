@@ -10,7 +10,7 @@ naming the amending ADR, which is normative where they differ. ADR-056…ADR-080
 ADR-082 the end-to-end integration of the merged packages; ADR-083 the verification of the integrated `main`; ADR-084
 the final multi-lens review; ADR-085 the `interactive` extension key; ADR-086 the first CI run on macOS; ADR-087 the
 `.snp.yaml` config file name; ADR-088 the crates.io and Homebrew release channels; ADR-089 the retarget to pre-commit
-4.7.0.
+4.7.0; ADR-090 what the scheduled gates can judge.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -447,6 +447,8 @@ project_root`, `Vec<Project>` planning (length 1), `project_prefix` filters, per
 `dir:hook` selectors (rejected in v1). v1.1: explicit opt-in only (`snp run --workspace` / root `workspace: true`).
 
 ### ADR-043 — Performance budgets per OS
+
+*Status: Accepted; amended by ADR-086 (`reference_only` micro thresholds) and ADR-090 (the regression rule's absolute floor; history from other runner VMs is reported, not gated). The amending ADR is normative where they differ.*
 
 **Decision.** ARCHITECTURE §12.1. Linux hard gates: B1 ≤ 3 ms, B2 ≤ 10 ms, B3 ≤ 25 ms, B12 ≤ 30 MB. macOS soft
 budgets (B1 ≤ 5 ms, B3 ≤ 40 ms). Windows soft ratios to pre-commit (B1 ≤ 15 ms, B3 ≤ 0.5×) because every per-hook `git
@@ -1322,6 +1324,47 @@ wrong release: `cargo xtask oracle install` verifies `pre-commit --version` in t
 **Consequences.** `pre-commit --version` through the alias prints `pre-commit 4.7.0`; configs with
 `minimum_pre_commit_version: 4.7.0` are accepted. Developers rerun `cargo xtask oracle install`. The CHANGELOG's
 `[Unreleased]` section records the change; the 2.0.1 tag is cut by the owner.
+
+---
+
+### ADR-090 — What the scheduled gates can judge
+
+**Context.** The scheduled workflows stayed red on a `main` that had not changed since 2026-11-02, for reasons that
+were not defects of snp. (a) The generated difftest failed every night, 8 runs of 2,000 cases on 56c58a4: 1,603
+failures out of 16,000, in four classes and nothing else. pygrep's `open()` traceback (about 1,060), unregistered; the
+`pygrep.py: error: unrecognized arguments:` list in the compat brand only (about 550), where CPython 3.12.3 stops
+filling a `nargs='*'` positional at an unknown option and 3.13.14+, the canonical argparse profile, does not;
+`snp: error: unrecognized arguments:` in the snp brand only (about 30), since `snp run` takes several hook ids
+(D-EXT-07); and an intent-to-add file paired as a rename (about 20), the registered D-DATA-12. With every night red,
+a new difference could not be told from the known ones. (b) `bench` failed on 2026-11-05 and 11-06 with no commit:
+B1's "regression" of +21.6 % (glibc) and +36.7 % (musl) compared records from different runner VMs. One binary
+measured B1 at 0.757, 0.820, 0.921 and 1.186 ms across VMs, and 0.482 to 0.659 ms on musl; the ratio to prek, measured
+in the same run, still moved by 30 %. (c) Same-runner comparison is sound but not exact: over 22 CI runs of two
+binaries differing by little or nothing, the difference never exceeded 0.045 ms, yet that was +5.8 % on B1 and failed
+the push of 56c58a4, a version bump with no behaviour change (ADR-089).
+**Decision.** (1) The pygrep failure is registered as D-MISC-09 (class TIERB). (2) `snp-difftest` reduces, for
+scenarios tagged `generated` only: pygrep's `open()` traceback to its uncoloured exception line (D-MISC-09), in streams
+and worktree files; the `pygrep.py:` argument list in the compat brand; the `snp:` argument list in the snp brand.
+Each masked line stays byte-exact in the other brand. (3) The generator disables rename detection
+(`diff.renames=false`) on scenarios combining an intent-to-add file with an unstaged deletion. (4) The regression rule
+gains an absolute floor, `[gate] regression_min_ms = 0.1`: a regression must exceed 5 % **and** 0.1 ms. (5) `bench gate
+--advisory-history` turns the regression and drift checks against the history into warnings; CI passes it wherever it
+has no same-runner baseline (the nightly e2e and musl jobs). It refuses to combine with `--baseline`.
+(6) D-MISC-09's scenario, run on Windows, showed `framework::io_exc` rendering `open()` failures in the Win32 form:
+it now uses the CRT's `errno` (`repr::oserror_from_open`), which is what CPython's `open()` reports.
+**Rationale.** A fuzzing suite is worth what its red means: narrow, named exclusions keep every other byte exact, where
+Tier B or fewer generated `args` would have hidden more (that path found the `open('')` bug in 9ebf1f1). Masking one
+brand loses nothing, because the other brand checks the same line against the right oracle. Rename detection is the
+smallest way out of D-DATA-12: pre-commit crashes there, so nothing past the crash is comparable, and the state stays
+in the suite. A 5 % threshold cannot be gated across VMs that differ by 57 %: it detects nothing and fails on nothing
+but the hardware, and normalising by prek does not rescue it. 0.1 ms is twice the worst same-runner difference and
+only matters below 2 ms; B1's hard 3 ms budget still bounds that scenario.
+**Consequences.** The generated suite is green unless something new appears, and `tests/differential/README.md` lists
+exactly what it leaves out. A slow creep below 5 % per commit is no longer a nightly failure: it shows as a warning in
+the job summary, among noise, until a hard budget or a same-runner comparison catches it. Syscall counts, allocations
+and the never-slower rule still gate the nightly. A same-runner drift check (building an older anchor commit in the
+nightly) would restore that gate at the cost of a second `dist` build; it is not part of this decision. A developer's
+own history stays a gate, since `--advisory-history` is opt-in.
 
 ---
 

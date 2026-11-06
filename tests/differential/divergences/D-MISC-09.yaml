@@ -1,0 +1,53 @@
+# D-MISC-09 (TIERB, owner WP-26): a file pygrep cannot open prints the final traceback line only.
+# A pygrep hook's `args` precede its entry on the command line, so `args: [x]` makes `x` the pattern and the entry a
+# file name. pre-commit prints a full traceback (exit 1); snp prints its last line, same exit code
+# (docs/divergences/D-MISC-09.md).
+name: divergences/D-MISC-09
+since: "4.1.0"
+expect_divergence: D-MISC-09
+status: active
+requires: {git: ">=2.31", net: false, tools: [], os: [linux, macos, windows], pty: false}
+repos: {}
+work:
+  files: {a.txt: "a\n"}
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   id: grep
+            name: grep
+            entry: TODO
+            language: pygrep
+            args: [x]
+  commit: [".pre-commit-config.yaml", a.txt]
+  stage: []
+  unstaged: {}
+  git_config: {}
+steps:
+  - tool: [run, --all-files]
+    env: {}
+    stdin: ""
+    tty: false
+compare:
+  # The traceback frames differ: compared at Tier C, since Tier B reduces both sides to the same final line and the
+  # divergence would no longer be observable; `expected:` pins each side.
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    exit: 1
+    stdout_contains: "Traceback (most recent call last):"
+    stdout_contains_2: "FileNotFoundError: [Errno 2] No such file or directory: 'TODO'\n"
+  snp:
+    exit: 1
+    stdout_contains: "FileNotFoundError: [Errno 2] No such file or directory: 'TODO'\n"
+    stdout_not_contains: "Traceback"

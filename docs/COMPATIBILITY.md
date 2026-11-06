@@ -34,7 +34,8 @@ body below the version block, Python tracebacks reduced to their last line, usag
 `pc470-py312` oracle with the documented 12 §A.4.1 deltas, localized `[WinError N]` texts until verified on Windows
 runners. **C** ignored — durations, stash patch file names and pids, random directory suffixes, store root paths (the
 stores differ by design), installer chatter between `Installing environment` lines, xargs partition boundaries within a
-few bytes of ARG_MAX (synthetic interpreter prefix).
+few bytes of ARG_MAX (synthetic interpreter prefix). The generated suite additionally reduces what it is known to hit
+(`tests/differential/README.md`, ADR-090).
 
 ## 3. Branding by `argv[0]`
 
@@ -258,6 +259,7 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 | D-MISC-06 | regex corner cases (01 Addendum §A.6.13 D1–D6): IGNORECASE backreferences across `K`/`k`, `ſ`/`s`, `ς`/`σ`; code points unassigned in UCD 15.0 treated as UCD 16; `\N{…}` without the `py-re-names` feature; `(?L)` under a single-byte non-UTF-8 locale; patterns too large for the engines (`Unsupported`, reported as the validation error plus a stderr hint) | as stated (corpus frequency 0) | 13 |
 | D-MISC-07 | in-hook hazmat exec failure: full Python traceback | only the final traceback line (`pre_commit.parse_shebang.ExecutableNotFoundError: Executable `x` not found`) | 26 |
 | D-MISC-08 | Python tracebacks in the crash log body | error source chain / Rust backtrace (crash-log body is Tier B) | 33 |
+| D-MISC-09 | pygrep cannot open a file (in practice: a hook's `args` read as file names): a full Python traceback, coloured by CPython ≥ 3.13 in a colour run | only the final traceback line, uncoloured (`FileNotFoundError: [Errno 2] No such file or directory: 'x'`), same exit code | 26 |
 
 ## 6. Not divergences
 
