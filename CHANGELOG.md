@@ -19,6 +19,9 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   installer is now parity with pre-commit.
 - The differential-test oracles are `target/oracle/pc470-py312` and `pc470-py313` (`cargo xtask oracle install`, lock
   `xtask/oracle/requirements-pc470.txt`); rerun `cargo xtask oracle install` after updating.
+- Windows: pygrep and the native hooks report a file they cannot open as Python's `open()` does
+  (`[Errno 2] No such file or directory: 'x'`), not as a Win32 error (`[WinError 2] The system cannot find the file
+  specified: 'x'`).
 - Divergence D-MISC-09 is registered: a file pygrep cannot open prints the final line of Python's traceback, as snp
   has always done. No behaviour changes (ADR-090).
 

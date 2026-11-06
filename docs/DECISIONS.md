@@ -1350,6 +1350,8 @@ Each masked line stays byte-exact in the other brand. (3) The generator disables
 gains an absolute floor, `[gate] regression_min_ms = 0.1`: a regression must exceed 5 % **and** 0.1 ms. (5) `bench gate
 --advisory-history` turns the regression and drift checks against the history into warnings; CI passes it wherever it
 has no same-runner baseline (the nightly e2e and musl jobs). It refuses to combine with `--baseline`.
+(6) D-MISC-09's scenario, run on Windows, showed `framework::io_exc` rendering `open()` failures in the Win32 form:
+it now uses the CRT's `errno` (`repr::oserror_from_open`), which is what CPython's `open()` reports.
 **Rationale.** A fuzzing suite is worth what its red means: narrow, named exclusions keep every other byte exact, where
 Tier B or fewer generated `args` would have hidden more (that path found the `open('')` bug in 9ebf1f1). Masking one
 brand loses nothing, because the other brand checks the same line against the right oracle. Rename detection is the
