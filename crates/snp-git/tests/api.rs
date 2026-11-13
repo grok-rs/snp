@@ -83,6 +83,7 @@ mod api {
             init_object_format: true,
             config_hooks: false,
             pathspec_from_file: true,
+            diff_no_relative: true,
         };
         has::<GitExe>(GitExe {
             argv0: vec![OsString::from("/usr/bin/git")],

@@ -520,11 +520,17 @@ mod rows {
         let e = snp_stash::enter(cx).unwrap_err();
         let (ty, text, _) = exc(&e);
         assert_eq!((ty.as_str(), e.exit_code()), ("CalledProcessError", 3));
+        // git < 2.25 has no `--pathspec-from-file`: the literal pathspec is an argument there.
+        let checkout = if sb.exe().caps.pathspec_from_file {
+            "'--pathspec-from-file=-', '--pathspec-file-nul'"
+        } else {
+            "'--', ':(literal)foo'"
+        };
         assert_eq!(
             text,
             format!(
-                "command: ({}, '-c', 'submodule.recurse=0', 'checkout', '--pathspec-from-file=-', \
-                 '--pathspec-file-nul')\nreturn code: 1\nstdout: (none)\nstderr:\n    error: boom",
+                "command: ({}, '-c', 'submodule.recurse=0', 'checkout', {checkout})\nreturn code: 1\n\
+                 stdout: (none)\nstderr:\n    error: boom",
                 snp_pycompat::repr::repr_str(&git_exe(&sb, &repo))
             )
         );

@@ -202,6 +202,7 @@ fn dedup_fallback_equals_ls_files_deduplicate() {
             init_object_format: true,
             config_hooks: false,
             pathspec_from_file: true,
+            diff_no_relative: true,
         },
     });
     let (old_git, old_info) = Git::discover(old_exe, &sb.env, &repo, sb.backend()).unwrap();
@@ -488,6 +489,7 @@ fn checkout_paths_without_pathspec_from_file_chunks_literal_arguments() {
             init_object_format: false,
             config_hooks: false,
             pathspec_from_file: false,
+            diff_no_relative: false,
         },
     });
     let (git, _) = Git::discover(old_exe, &sb.env, &repo, sb.backend()).unwrap();

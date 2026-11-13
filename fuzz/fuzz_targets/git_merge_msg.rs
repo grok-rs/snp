@@ -80,6 +80,7 @@ fuzz_target!(|data: &[u8]| {
             init_object_format: true,
             config_hooks: false,
             pathspec_from_file: true,
+            diff_no_relative: true,
         },
     });
     let env = Env::from_pairs([("PATH", "")]);

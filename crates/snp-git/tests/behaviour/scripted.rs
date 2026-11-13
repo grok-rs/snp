@@ -146,21 +146,31 @@ fn every_call_can_fail_and_is_recorded() {
         exc(&git.patch_paths(&patch).unwrap_err()).0,
         "CalledProcessError"
     );
-    scripted.on(
-        "-c submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul",
-        exit(1, b"", b"error: x\n"),
-    );
+    // one call either way (stdin-fed from git 2.25, else the literal pathspecs as arguments)
+    let checkout = git.checkout_path_calls(&touched);
+    assert_eq!(checkout.len(), 1);
+    let checkout_args: Vec<String> = checkout[0]
+        .args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let checkout_call = checkout_args.join(" ");
+    scripted.on(&checkout_call, exit(1, b"", b"error: x\n"));
     let e = git
         .checkout_paths(&touched, true, Group::Isolated)
         .unwrap_err();
+    let shown: Vec<String> = checkout_args
+        .iter()
+        .map(|a| snp_pycompat::repr::repr_str(a))
+        .collect();
     assert_eq!(
         exc(&e),
         (
             "CalledProcessError".to_owned(),
             format!(
-                "command: ({}, '-c', 'submodule.recurse=0', 'checkout', '--pathspec-from-file=-', \
-                 '--pathspec-file-nul')\nreturn code: 1\nstdout: (none)\nstderr:\n    error: x",
-                snp_pycompat::repr::repr_str(&git_exe_path(&scripted))
+                "command: ({}, {})\nreturn code: 1\nstdout: (none)\nstderr:\n    error: x",
+                snp_pycompat::repr::repr_str(&git_exe_path(&scripted)),
+                shown.join(", ")
             )
         )
     );
@@ -248,7 +258,7 @@ fn every_call_can_fail_and_is_recorded() {
     let calls: Vec<String> = scripted.calls().iter().map(|c| args(c)).collect();
     for want in [
         "write-tree",
-        "-c submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul",
+        &checkout_call,
         "rm --cached -- x y",
         "add --intent-to-add -- x y",
         "config --get core.x",
@@ -425,6 +435,17 @@ fn every_user_repo_call_has_pre_commits_exact_argv() {
     git.run_raw(&[OsStr::new("ls-files"), OsStr::new("--")])
         .unwrap();
 
+    let changed_paths = if sb.exe().caps.diff_no_relative {
+        "diff --name-only -z --no-renames --no-ext-diff --no-color --ignore-submodules --no-relative"
+    } else {
+        "diff --name-only -z --no-renames --no-ext-diff --no-color --ignore-submodules"
+    };
+    let checkout_call = git.checkout_path_calls(&ita)[0]
+        .args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ");
     let all_files = if sb.exe().caps.ls_files_dedup {
         "ls-files -z --deduplicate"
     } else {
@@ -441,8 +462,8 @@ fn every_user_repo_call_has_pre_commits_exact_argv() {
             "diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff {tree} --"
         ),
         "apply --numstat -z --whitespace=nowarn p.patch",
-        "diff --name-only -z --no-renames --no-ext-diff --no-color --ignore-submodules --no-relative",
-        "-c submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul",
+        changed_paths,
+        &checkout_call,
         "apply --whitespace=nowarn p.patch",
         "-c core.autocrlf=false apply --whitespace=nowarn p.patch",
         "apply --check --whitespace=nowarn p.patch",

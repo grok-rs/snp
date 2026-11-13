@@ -721,7 +721,7 @@ impl Git {
     /// the stat data — what a whole-tree checkout visibly changes, without the files whose differences git cannot see:
     /// `git diff --name-only -z --no-renames --no-ext-diff --no-color --ignore-submodules --no-relative` (checked).
     pub fn changed_paths(&self) -> Result<ZList, Failure> {
-        self.checked_zlist(&[
+        let mut args = vec![
             "diff",
             "--name-only",
             "-z",
@@ -729,8 +729,13 @@ impl Git {
             "--no-ext-diff",
             "--no-color",
             "--ignore-submodules",
-            "--no-relative",
-        ])
+        ];
+        // `diff.relative` (git ≥ 2.28) would list only the files under the cwd, relative to it; older git has no such
+        // setting and no `--no-relative`.
+        if self.exe.caps.diff_no_relative {
+            args.push("--no-relative");
+        }
+        self.checked_zlist(&args)
     }
 
     /// D-DATA-19: what the stash rollback checks out — the patch's paths (so it applies again) followed by every other

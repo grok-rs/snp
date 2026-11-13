@@ -60,6 +60,7 @@ fn exe(version: GitVersion) -> Arc<GitExe> {
             init_object_format: true,
             config_hooks: false,
             pathspec_from_file: modern,
+            diff_no_relative: modern,
         },
     })
 }

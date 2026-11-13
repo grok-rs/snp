@@ -216,6 +216,12 @@ fn journal_and_pointer_are_durable_before_the_checkout() {
     let calls = spy.calls();
     let p = patch_of(&g);
     let tree_arg = sb.git_text(&repo, &["write-tree"]);
+    // git < 2.25 has no `--pathspec-from-file`: the same literal pathspecs are arguments there.
+    let checkout = if sb.exe().caps.pathspec_from_file {
+        "-c submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul".to_owned()
+    } else {
+        "-c submodule.recurse=0 checkout -- :(literal)foo".to_owned()
+    };
     assert_eq!(
         calls,
         vec![
@@ -229,7 +235,7 @@ fn journal_and_pointer_are_durable_before_the_checkout() {
                 "diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff {tree_arg} --"
             ),
             format!("apply --numstat -z --whitespace=nowarn {}", p.display()),
-            "-c submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul".to_owned(),
+            checkout,
         ]
     );
     g.restore().unwrap();
@@ -477,12 +483,13 @@ fn a_tty_stopped_rollback_checkout_alone_is_reported() {
     assert_eq!(e.exit_code(), 3);
     let (ty, text, hint) = exc(&e);
     assert_eq!(ty, "CalledProcessError");
-    assert!(
-        text.contains(
-            "'checkout', '--pathspec-from-file=-', '--pathspec-file-nul')\nreturn code: -9"
-        ),
-        "{text}"
-    );
+    let checkout = if sb.exe().caps.pathspec_from_file {
+        "'checkout', '--pathspec-from-file=-', '--pathspec-file-nul')"
+    } else {
+        "'checkout', '--', ':(literal)"
+    };
+    assert!(text.contains(checkout), "{text}");
+    assert!(text.contains(")\nreturn code: -9"), "{text}");
     assert!(
         hint.unwrap()
             .starts_with("[ERROR] Your unstaged changes are saved in ")

@@ -148,10 +148,20 @@ fn many_files_take_one_checkout_with_a_fixed_argv() {
         .into_iter()
         .filter(|c| c.contains(" checkout"))
         .collect();
-    assert_eq!(
-        checkouts,
-        ["-c submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul"]
-    );
+    if sb.exe().caps.pathspec_from_file {
+        assert_eq!(
+            checkouts,
+            ["-c submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul"]
+        );
+    } else {
+        // git < 2.25: the literal pathspecs are arguments, in chunks.
+        assert!(checkouts.len() > 1, "{checkouts:?}");
+        assert!(
+            checkouts
+                .iter()
+                .all(|c| c.starts_with("-c submodule.recurse=0 checkout -- :(literal)"))
+        );
+    }
     g.restore().unwrap();
     assert!(names.iter().all(|n| sb.read(&repo, n) == b"user\n"));
 }

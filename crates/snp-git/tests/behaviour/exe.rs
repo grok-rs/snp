@@ -54,6 +54,7 @@ fn exe_at(v: Option<GitVersion>) -> GitExe {
             init_object_format: true,
             config_hooks: false,
             pathspec_from_file: true,
+            diff_no_relative: true,
         },
     }
 }
