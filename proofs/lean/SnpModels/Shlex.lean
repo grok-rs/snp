@@ -7,7 +7,8 @@
 * `split`   – the one-pass state machine snp implements (`snp_pycompat::shlex::split`);
 * `quote`   – `shlex.quote`.
 
-Proved: `split (quote s) = .ok [s]` for every string.
+Proved: `split (quote s) = .ok [s]` and `split (join ts) = .ok ts` for every string and list of strings, and
+`pySplit s = split s` (the transliteration and the state machine agree on results and errors).
 -/
 
 namespace SnpModels.Shlex
@@ -228,6 +229,61 @@ theorem split_quote (s : List Char) : split (quote s) = .ok [s] := by
       rw [h0, h]
       simp [step, finish, flush]
 
+/-! ## Proof: `split (join ts) = .ok ts` -/
+
+/-- From the separator state, `quote s` ends in the word state holding exactly `s`, and the token is emitted
+at the next separator or at the end (`s` is non-empty, or it was quoted). -/
+theorem quote_run (s : List Char) (o : List (List Char)) :
+    ∃ b, (quote s).foldl step ⟨.ws, [], false, o⟩ = ⟨.word, s, b, o⟩ ∧ (!s.isEmpty || b) = true := by
+  unfold quote
+  by_cases he : s.isEmpty
+  · simp at he; subst he
+    exact ⟨true, by simp [step, isWs]⟩
+  · simp only [he, Bool.false_eq_true, ite_false]
+    by_cases hs : s.all isSafe
+    · simp only [hs, ite_true]
+      obtain ⟨c, cs, rfl⟩ := List.exists_cons_of_ne_nil (by simpa using he : s ≠ [])
+      simp only [List.all_cons, Bool.and_eq_true] at hs
+      obtain ⟨h1, h2, h3⟩ := safe_not_special c hs.1
+      have h0 : step ⟨.ws, [], false, o⟩ c = ⟨.word, [c], false, o⟩ := by simp [step, h1, h2, h3]
+      refine ⟨false, ?_, by simp⟩
+      rw [List.foldl_cons, h0, safe_word cs [c] hs.2]
+      simp
+    · simp only [hs, Bool.false_eq_true, ite_false]
+      obtain ⟨b', h⟩ := quoted_body s [] false o
+      refine ⟨true, ?_, by simp⟩
+      simp only [List.foldl_append, List.foldl_cons, List.foldl_nil]
+      have h0 : step ⟨.ws, [], false, o⟩ '\'' = ⟨.quote '\'', [], false, o⟩ := by simp [step, isWs]
+      rw [h0, h]
+      simp [step]
+
+theorem join_cons_cons (t u : List Char) (rest : List (List Char)) :
+    join (t :: u :: rest) = quote t ++ ' ' :: join (u :: rest) := by
+  simp [join, List.intersperse_cons_cons]
+
+/-- `join` run from the separator state appends its arguments to the output, one token each. -/
+theorem join_run (ts : List (List Char)) (o : List (List Char)) :
+    finish ((join ts).foldl step ⟨.ws, [], false, o⟩) = .ok (o ++ ts) := by
+  induction ts generalizing o with
+  | nil => simp [join, finish, flush]
+  | cons t rest ih =>
+    obtain ⟨b, h, hb⟩ := quote_run t o
+    cases rest with
+    | nil =>
+      have hj : join [t] = quote t := by simp [join]
+      rw [hj, h]
+      simp [finish, flush, hb]
+    | cons u rest' =>
+      rw [join_cons_cons, List.foldl_append, h, List.foldl_cons]
+      have hs : step ⟨.word, t, b, o⟩ ' ' = ⟨.ws, [], false, o ++ [t]⟩ := by
+        simp [step, isWs, flush, hb]
+      rw [hs, ih]
+      simp
+
+/-- **Join round trip**: `shlex.split(shlex.join(ts)) == ts` for every list of strings. -/
+theorem split_join (ts : List (List Char)) : split (join ts) = .ok ts := by
+  simpa [split, init] using join_run ts []
+
 /-! ## Proof: the Python transliteration equals the one-pass state machine -/
 
 /-- Python `(self.state, escapedstate)` ↔ the state-machine state (`escapedstate` matters only in the escape). -/
@@ -409,5 +465,7 @@ def splitStringFsm (s : String) : Except Err (List String) :=
   (split s.toList).map (·.map String.ofList)
 
 def quoteString (s : String) : String := String.ofList (quote s.toList)
+
+def joinStrings (ts : List String) : String := String.ofList (join (ts.map String.toList))
 
 end SnpModels.Shlex

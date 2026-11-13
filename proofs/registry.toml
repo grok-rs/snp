@@ -49,9 +49,6 @@ mutants = [
     { find = "if c0 == b'/' || c0 ==", replace = "if c0 == b'/' || false && c0 ==" },
 ]
 
-# [[model]]: Lean models with oracle tests and fingerprinted anchors (K3, K4 add theirs).
-# [[trusted]]: empty in M1 (§10 row 8). From M2: { item = "Memchr: FindByte", kernel = "K5", test = "…" }
-
 [[kernel]]
 id = "K3-end-of-file-fixer"
 status = "verified"
@@ -67,6 +64,9 @@ mutants = [
     { find = "Some(&b) if is_eol(b) => start = i,", replace = "Some(&b) if b == 10 => start = i," },
 ]
 
+# [[model]]: Lean models with oracle tests and fingerprinted anchors (K3, K4).
+# [[trusted]]: empty in M1 (§10 row 8). From M2: { item = "Memchr: FindByte", kernel = "K5", test = "…" }
+
 [[model]]
 id = "K3-end-of-file-fixer"
 lean = "proofs/lean/SnpModels/Eof.lean"
@@ -79,10 +79,22 @@ theorems = [
 ]
 oracle = "eof-model"
 oracle_test = "crates/snp-hooks/tests/lean_oracle.rs"
-# fingerprint: "TBD" until `cargo xtask proofs check` defines the normalised-token hash (§3.1); the tooling
-# change that adds it fills these in. `kernelRun` in Eof.lean transliterates `end_of_file_run`, `kernel` the
-# whole-file `end_of_file`.
+# fingerprint: `cargo xtask proofs fingerprint <file.rs::item>` (§3.1, G10). `kernelRun` in Eof.lean
+# transliterates `end_of_file_run`, `kernel` the whole-file `end_of_file`.
 anchors = [
     { item = "crates/snp-hooks/src/pch/p0/kernels/eof.rs::end_of_file_run", fingerprint = "TBD" },
     { item = "crates/snp-hooks/src/pch/p0/kernels/eof.rs::end_of_file", fingerprint = "TBD" },
+]
+
+[[model]]
+id = "K4-shlex-split"
+lean = "proofs/lean/SnpModels/Shlex.lean"
+theorems = ["SnpModels.Shlex.pySplit_eq_split", "SnpModels.Shlex.split_quote", "SnpModels.Shlex.split_join"]
+oracle = "shlex-model"
+oracle_test = "crates/snp-pycompat/tests/lean_oracle.rs"
+# fingerprint: `cargo xtask proofs fingerprint <file.rs::item>` (§3.1, G10).
+anchors = [
+    { item = "crates/snp-pycompat/src/shlex.rs::split", fingerprint = "TBD" },
+    { item = "crates/snp-pycompat/src/shlex.rs::quote", fingerprint = "TBD" },
+    { item = "crates/snp-pycompat/src/shlex.rs::join", fingerprint = "TBD" },
 ]
