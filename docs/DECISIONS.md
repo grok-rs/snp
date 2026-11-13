@@ -10,7 +10,8 @@ naming the amending ADR, which is normative where they differ. ADR-056…ADR-080
 ADR-082 the end-to-end integration of the merged packages; ADR-083 the verification of the integrated `main`; ADR-084
 the final multi-lens review; ADR-085 the `interactive` extension key; ADR-086 the first CI run on macOS; ADR-087 the
 `.snp.yaml` config file name; ADR-088 the crates.io and Homebrew release channels; ADR-089 the retarget to pre-commit
-4.7.0; ADR-090 what the scheduled gates can judge; ADR-092 the November 2026 upstream refresh; ADR-094 Rust 1.100.
+4.7.0; ADR-090 what the scheduled gates can judge; ADR-091 measuring every scenario; ADR-092 the November 2026
+upstream refresh; ADR-094 Rust 1.100.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -450,7 +451,7 @@ project_root`, `Vec<Project>` planning (length 1), `project_prefix` filters, per
 
 ### ADR-043 — Performance budgets per OS
 
-*Status: Accepted; amended by ADR-086 (`reference_only` micro thresholds) and ADR-090 (the regression rule's absolute floor; history from other runner VMs is reported, not gated). The amending ADR is normative where they differ.*
+*Status: Accepted; amended by ADR-086 (`reference_only` micro thresholds) ADR-090 (the regression rule's absolute floor; history from other runner VMs is reported, not gated) and ADR-091 (`[[known_miss]]`). The amending ADR is normative where they differ.*
 
 **Decision.** ARCHITECTURE §12.1. Linux hard gates: B1 ≤ 3 ms, B2 ≤ 10 ms, B3 ≤ 25 ms, B12 ≤ 30 MB. macOS soft
 budgets (B1 ≤ 5 ms, B3 ≤ 40 ms). Windows soft ratios to pre-commit (B1 ≤ 15 ms, B3 ≤ 0.5×) because every per-hook `git
@@ -1367,6 +1368,25 @@ the job summary, among noise, until a hard budget or a same-runner comparison ca
 and the never-slower rule still gate the nightly. A same-runner drift check (building an older anchor commit in the
 nightly) would restore that gate at the cost of a second `dist` build; it is not part of this decision. A developer's
 own history stays a gate, since `--advisory-history` is opt-in.
+
+---
+
+### ADR-091 — Every scenario is measured; accepted misses are listed
+
+**Context.** `bench.yml` measured only B1: the list was to grow when `snp run` (WP-32) merged, and never did, so B2–B12
+and their budgets were unchecked on a released product. Measuring them on CI shows real misses (`bench/budgets.toml`).
+B2 is seven git processes against a 10 ms budget: 7.9 to 10.7 ms across runner VMs, so it depends on the VM. B8 computes
+the stash patch twice to re-verify it (ADR-067, deferred by ADR-084). B11 is far behind prek, though prek reports
+nothing to clean and may not do the same work. B4, B5, B6 and B12u are 3 to 26 % behind prek and not profiled. All 12
+scenarios agree between two binaries on one runner, so the same-runner regression check holds at this scale.
+**Decision.** CI measures every scenario. A miss accepted for now is a `[[known_miss]]` entry (scenario, check, reason):
+that check warns, with its reason. Unlisted checks still fail, and the regression check is separate, so a listed
+scenario that gets worse still fails. The budgets themselves do not change.
+**Rationale.** Unmeasured budgets protect nothing, and red every night hides the next regression, which is how
+ADR-090 began. Editing the numbers would hide that they are missed. Closing B2 and B8 reliably touches the stash path,
+which protects user data, so that needs a design of its own.
+**Consequences.** The bench jobs take longer, and each entry is open work. Meeting ARCHITECTURE §12.1 in full remains
+the goal; the list records how far away it is.
 
 ---
 

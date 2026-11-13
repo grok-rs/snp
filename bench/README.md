@@ -96,9 +96,12 @@ the tool waited for, so a git child larger than the tool itself is what gets rep
   prek is stable (+30 %). Budgets, syscall and allocation counts and the never-slower rule are measured within the run
   and still gate. Without the flag (a developer's machine, whose history is its own) both checks fail as above.
 * **Budgets**: every `[[budget]]` of the running OS; `hard = true` fails, a soft breach is a warning.
+* **Known misses**: a `[[known_miss]]` of `budgets.toml` names a scenario, a check and the reason it fails today
+  (ADR-091). That one check warns with its reason, and the gate says when it passes so the entry can go. Every other
+  check still fails, and getting worse still fails the regression check.
 * **Nothing passes silently**: a hard budget whose scenario is not in the record fails (a soft one warns), unless the
-  scenario is listed in `--allow-missing` (the scenarios a workflow knowingly does not run yet, `BENCH_PENDING` in
-  `.github/workflows/bench.yml`), which turns it into a warning. A syscall or allocation budget is checked only when
+  scenario is listed in `--allow-missing` (the scenarios a workflow knowingly does not run: `MUSL_PENDING` in
+  `.github/workflows/bench.yml`, those outside the musl matrix), which turns it into a warning. A syscall or allocation budget is checked only when
   the run asked for that metric (`--syscalls`, `--dhat`, recorded in the record's `extras`); asked for but without a
   value, it fails. A missing baseline is a warning (the regression check is skipped), and so is a baseline without
   the scenario.
