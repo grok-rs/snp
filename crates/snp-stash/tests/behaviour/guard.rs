@@ -415,8 +415,9 @@ fn vanished_changes_win_over_a_failing_patch_listing() {
     let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
     let (cx, out, _) = sb.ctx_with(git, info);
     let g = snp_stash::enter(cx).unwrap();
+    // (Whether `diff_index_clean()` is true depends on the stat data of the rewritten file: a stat-dirty entry makes
+    // `diff-index --exit-code` exit 1 with an empty patch, the CRLF-quirk path. Either way nothing is stashed.)
     assert_eq!(g.stashed(), &Stashed::Nothing);
-    assert!(g.diff_index_clean());
     g.restore().unwrap();
     assert_eq!(out.text(), "");
     assert!(sb.patch_files().is_empty(), "{:?}", sb.patch_files());
