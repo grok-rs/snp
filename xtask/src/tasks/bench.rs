@@ -1595,11 +1595,20 @@ fn write_gitconfig(work: &Work) -> anyhow::Result<()> {
     std::fs::write(work.gitconfig(), text).context("writing the bench .gitconfig")
 }
 
-/// The bare pre-commit-hooks mirror (cloned once; the source must have `PCH_REV`).
+/// The bare pre-commit-hooks mirror (cloned once; the source must have `PCH_REV`). A mirror directory without `HEAD`
+/// is what an interrupted clone (or a partially restored cache) leaves behind: it is removed and cloned again, since
+/// `git clone` refuses an existing non-empty destination.
 fn ensure_mirror(work: &Work, from: Option<&str>) -> anyhow::Result<()> {
     let mirror = work.mirror();
     if mirror.join("HEAD").is_file() {
         return Ok(());
+    }
+    if std::fs::symlink_metadata(&mirror).is_ok() {
+        say(&format!(
+            "bench: removing the incomplete mirror {} (no HEAD)",
+            mirror.display()
+        ));
+        remove_tree(&mirror)?;
     }
     let src = from.unwrap_or(PCH_URL);
     say(&format!("bench: mirroring pre-commit-hooks from {src}"));
