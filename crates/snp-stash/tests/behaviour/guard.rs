@@ -228,7 +228,7 @@ fn journal_and_pointer_are_durable_before_the_checkout() {
             format!(
                 "diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff {tree_arg} --"
             ),
-            format!("apply --numstat -z {}", p.display()),
+            format!("apply --numstat -z --whitespace=nowarn {}", p.display()),
             "-c submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul".to_owned(),
         ]
     );

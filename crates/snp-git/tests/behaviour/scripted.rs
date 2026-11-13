@@ -440,7 +440,7 @@ fn every_user_repo_call_has_pre_commits_exact_argv() {
         &format!(
             "diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff {tree} --"
         ),
-        "apply --numstat -z p.patch",
+        "apply --numstat -z --whitespace=nowarn p.patch",
         "diff --name-only -z --no-renames --no-ext-diff --no-color --ignore-submodules --no-relative",
         "-c submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul",
         "apply --whitespace=nowarn p.patch",

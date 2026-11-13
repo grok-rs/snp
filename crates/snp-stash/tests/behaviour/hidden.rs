@@ -154,3 +154,22 @@ fn many_files_take_one_checkout_with_a_fixed_argv() {
     g.restore().unwrap();
     assert!(names.iter().all(|n| sb.read(&repo, n) == b"user\n"));
 }
+
+/// `apply.whitespace=error` must not break the stash: listing the patch's files is a `git apply --numstat`, which
+/// that setting turns into an error (exit 128) for a patch adding trailing whitespace unless `--whitespace=nowarn`
+/// is passed, as on the stash's other applies.
+#[test]
+fn a_patch_with_trailing_whitespace_stashes_under_apply_whitespace_error() {
+    let sb = Sandbox::new();
+    let repo = sb.foo_staged("r");
+    sb.git(&repo, &["config", "apply.whitespace", "error"]);
+    let changed = FOO.replace('4', "four  \t");
+    sb.write(&repo, "foo", changed.as_bytes());
+    let (cx, out, _) = sb.ctx(&repo);
+    let g = snp_stash::enter(cx).unwrap();
+    assert!(matches!(g.stashed(), Stashed::Patch(_)));
+    assert_eq!(sb.read(&repo, "foo"), FOO.as_bytes());
+    g.restore().unwrap();
+    assert!(!out.text().contains("Rolling back"));
+    assert_eq!(sb.read(&repo, "foo"), changed.as_bytes());
+}

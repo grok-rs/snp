@@ -648,10 +648,13 @@ impl Git {
     /// (checked; it reads the patch and changes nothing). Exactly the files whose content `git diff-index` found
     /// different — never a file that is only stat-dirty, which `diff-index --name-only` would list.
     pub fn patch_paths(&self, patch: &Path) -> Result<ZList, Failure> {
+        // `--whitespace=nowarn`, as on every apply of the stash (`staged_files_only.py:26-33`): with
+        // `apply.whitespace=error` a patch adding trailing whitespace would otherwise fail the listing (exit 128).
         let args = [
             os("apply"),
             os("--numstat"),
             os("-z"),
+            os("--whitespace=nowarn"),
             patch.as_os_str().to_os_string(),
         ];
         parse_numstat_z(&self.checked(&args)?.stdout)

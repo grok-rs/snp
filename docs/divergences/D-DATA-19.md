@@ -53,7 +53,10 @@ What stays identical: every transcript line, the patch bytes, the index, refs, t
 every repository without such hidden changes (the checkout rewrites the same files). What differs: the argv shown in
 the `CalledProcessError` of a failing stash or rollback checkout (X13-STASH-01: `('git', '-c',
 'submodule.recurse=0', 'checkout', '--pathspec-from-file=-', '--pathspec-file-nul')` instead of `… 'checkout', '--',
-'.')`), and the worktree after a run with hidden changes.
+'.')`), the worktree after a run with hidden changes, and what hooks read from such a file during the run: its
+working-tree content including the hidden change (pre-commit showed the index version, then lost the change). The
+listing runs `git apply --numstat -z --whitespace=nowarn`, like the stash's other applies, so `apply.whitespace=error`
+cannot fail it.
 
 Residual risk, documented: a file that has both a visible change and a hidden one is in the patch and is checked out,
 so its hidden part is lost exactly as in pre-commit (git cannot represent it in a patch); likewise a hidden change in a
