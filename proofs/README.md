@@ -8,9 +8,23 @@ Contributors who do not touch a kernel file need none of this: build, test, clip
 registry.toml          kernels, models, mutants and trusted items (the single machine-readable source, §3.1)
 verus/kernels.rs       Verus root: mounts the production kernel files under crates/ unchanged
 verus/spec/            specs and lemmas, one module per kernel; generic lemmas in spec/lib/
-verus/run.sh           interim runner of the exact Verus command (later wrapped by `cargo xtask proofs verus`)
+verus/run.sh           dependency-free reference runner of the same Verus command (`cargo xtask proofs verus` is the gate)
 lean/                  Lake package SnpModels (core library only) and the oracle executables
 lean/client.rs         std-only line-protocol client that home-crate oracle tests include via #[path]
+```
+
+## Commands (docs/VERIFICATION.md §6)
+
+```sh
+cargo xtask proofs check                    # guards G1-G10: tool-free, runs in the required `xtask gates` job
+cargo xtask proofs install                  # pinned Verus, its rustc and verusfmt (.github/scripts/proofs-tools.sh)
+cargo xtask proofs verus                    # V1-V4: --no-cheating, manifest, verified floor, mutants, verusfmt
+cargo xtask proofs verus --module <mount>   # one mount, without --no-cheating: iteration only
+cargo xtask proofs mutants                  # V3 alone
+cargo xtask proofs lean                     # L1-L4: lake build --wfail, axiom audit, leanchecker, forbidden tokens
+cargo xtask proofs oracles [-k <model id>]  # Lean oracle executables + home-crate oracle tests
+cargo xtask proofs status                   # pins, tools, kernels, models, stale anchors
+cargo xtask proofs fingerprint <file.rs::item>   # value for a [[model]] anchor
 ```
 
 ## Install
@@ -65,5 +79,5 @@ SNP_LEAN_ORACLES=$PWD/proofs/lean/.lake/build/bin SNP_REQUIRE_LEAN_ORACLES=1 \
    module to `verus/spec/mod.rs`.
 4. Mount the file in `verus/kernels.rs` with `#[verus_verify]` and a one-line `#[path = "../../crates/…"]`.
 5. Add the `[[kernel]]` entry to `registry.toml` (callers, `verified_min`, at least one mutant) and check that
-   every mutant fails with `run.sh --mutant`.
+   every mutant fails with `cargo xtask proofs mutants`; `cargo xtask proofs check` must pass.
 6. Add the G/¬G row to docs/VERIFICATION.md §9, and an oracle test if a Lean model exists.

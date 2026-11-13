@@ -15,7 +15,7 @@ verusfmt = { version = "0.7.4", sha256 = { x86_64-unknown-linux-gnu = "bbc5cb02c
 # `verified_min` is the number of items Verus reports verified for this kernel's mount, spec and the lib lemmas it
 # brought (measured when the entry was added); a whole-root run must verify at least the sum over all kernels.
 # Every mutant, applied to a temporary copy of `file` (first occurrence of `find`), must make verification fail
-# (V3; today `proofs/verus/run.sh --mutant <file> <find> <replace>`).
+# (V3; `cargo xtask proofs mutants`).
 [[kernel]]
 id = "K1-xargs-partition"
 status = "verified"                # verified | pending (§8.3)
