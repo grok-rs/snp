@@ -108,6 +108,11 @@ jobs:
           path: snp/bench/history
           key: bench-history-gnu-${{ github.run_id }}
           restore-keys: bench-history-gnu-
+      # rust-cache restores target/ and its cleanup leaves the bench work state there incomplete (a mirror without
+      # HEAD, tool stores whose repos lost files), which broke setup and the reference pre-commit's install-hooks on
+      # PR runs. Only base-target is a cargo cache worth keeping; setup rebuilds the rest.
+      - name: Fresh bench work state
+        run: find target/bench -mindepth 1 -maxdepth 1 ! -name base-target -exec rm -rf {} + 2>/dev/null || true
       - run: cargo xtask bench setup --scenarios "$BENCH_SCENARIOS"
       # Pull requests and pushes: the base commit's snp (the PR base, or the commit before the push), built and
       # measured on this runner, is the baseline. A baseline from the history comes from another VM, and runner
@@ -191,6 +196,11 @@ jobs:
           path: snp/bench/history
           key: bench-history-musl-${{ github.run_id }}
           restore-keys: bench-history-musl-
+      # rust-cache restores target/ and its cleanup leaves the bench work state there incomplete (a mirror without
+      # HEAD, tool stores whose repos lost files), which broke setup and the reference pre-commit's install-hooks on
+      # PR runs. Only base-target is a cargo cache worth keeping; setup rebuilds the rest.
+      - name: Fresh bench work state
+        run: find target/bench -mindepth 1 -maxdepth 1 ! -name base-target -exec rm -rf {} + 2>/dev/null || true
       - run: cargo xtask bench setup --scenarios "$MUSL_SCENARIOS" --target x86_64-unknown-linux-musl
       - name: Measure both allocators
         run: |
