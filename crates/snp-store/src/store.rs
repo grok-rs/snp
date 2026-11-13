@@ -11,7 +11,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 use snp_core::brand::Brand;
@@ -70,6 +70,11 @@ pub struct Store {
     ephemeral: bool,
     /// Set by a successful `ensure_created`.
     created: OnceLock<Created>,
+    /// `(cfg_realpath, project_root)` pairs [`Store::mark_config_used`] saw while the store did not exist yet; the
+    /// first successful `ensure_created` records them (pre-commit creates its store before `mark_config_used`, so a
+    /// fresh-store `install-hooks`/`run` tracks its config). Shared with [`Store::handle_copy`] handles, so try-repo's
+    /// ephemeral store, which creates the main store, records the user's config too.
+    pending_configs: Arc<Mutex<Vec<(PathBuf, PathBuf)>>>,
 }
 
 impl Store {
@@ -85,6 +90,7 @@ impl Store {
             shared: None,
             ephemeral: false,
             created: OnceLock::new(),
+            pending_configs: Arc::default(),
         }
     }
 
@@ -109,6 +115,7 @@ impl Store {
             shared,
             ephemeral: true,
             created: OnceLock::new(),
+            pending_configs: Arc::default(),
         }
     }
 
@@ -133,7 +140,8 @@ impl Store {
     /// is used with one stderr warning (D-DIAG-05), except as root over a non-root owner's store, which is refused
     /// unless `SNP_ALLOW_FOREIGN_STORE=1` (D-SEC-13). Creates the layout's top-level directories (0700) and records
     /// the store path in `store-v1.json`; a different recorded path is reported by [`Store::relocated_from`]. A
-    /// read-only store is accepted as it is (parity, 03 §7.9). Idempotent; cheap after the first success.
+    /// read-only store is accepted as it is (parity, 03 §7.9). Idempotent; cheap after the first success. Configs
+    /// [`Store::mark_config_used`] saw before the store existed are recorded right after the layout is created.
     ///
     /// When the recorded path differs (the store was moved, 11 §A.10.4), every environment's install state is
     /// removed under its repository lock *before* the new path is recorded, so the invalidation is durable: no later
@@ -210,6 +218,7 @@ impl Store {
             }
         }
         let _already: Result<(), Created> = self.created.set(Created { relocated_from });
+        self.flush_pending_configs();
         Ok(())
     }
 
@@ -508,13 +517,26 @@ impl Store {
 
     /// Best effort, lock-free, never creates the store.
     ///
-    /// `Store.mark_config_used` (`store.py:225-235`, T10-STO-11/12): a no-op for a read-only or missing store or a
-    /// config that does not exist; otherwise records `(cfg_realpath, project_root)` in `configs-v1` (one `stat` when
-    /// already tracked; written by temp + rename, so a reader never sees a partial entry). Never blocks on a lock
+    /// `Store.mark_config_used` (`store.py:225-235`, T10-STO-11/12): a no-op for a read-only store or a config that
+    /// does not exist; otherwise records `(cfg_realpath, project_root)` in `configs-v1` (one `stat` when already
+    /// tracked; written by temp + rename, so a reader never sees a partial entry). Never blocks on a lock
     /// (X13-ST-05) and never fails (X13-ST-06…09).
+    ///
+    /// pre-commit's `Store()` exists before `mark_config_used` runs; snp's is created lazily (X13-ST-01). While the
+    /// store is missing the pair is kept in memory and recorded by this handle's first successful
+    /// [`Store::ensure_created`] (so a fresh-store `install-hooks` protects its repositories from gc, as in
+    /// pre-commit); a process that never creates the store records nothing.
     pub fn mark_config_used(&self, cfg_realpath: &Path, project_root: &Path) {
         let root = self.root();
-        if !root.is_dir() || fs::symlink_metadata(cfg_realpath).is_err() {
+        if fs::symlink_metadata(cfg_realpath).is_err() {
+            return;
+        }
+        if !root.is_dir() {
+            let mut pending = snp_core::sync::lock(&self.pending_configs);
+            let pair = (cfg_realpath.to_path_buf(), project_root.to_path_buf());
+            if !pending.contains(&pair) {
+                pending.push(pair);
+            }
             return;
         }
         let dir = root.join(layout::CONFIGS);
@@ -694,6 +716,14 @@ impl Store {
 
     // ----- private -----
 
+    /// Records the configs [`Store::mark_config_used`] kept while the store was missing (each re-checked as usual).
+    fn flush_pending_configs(&self) {
+        let pending = std::mem::take(&mut *snp_core::sync::lock(&self.pending_configs));
+        for (cfg, project_root) in pending {
+            self.mark_config_used(&cfg, &project_root);
+        }
+    }
+
     /// A not-yet-created handle on the same store (an ephemeral store's copy of its main store).
     fn handle_copy(&self) -> Self {
         Self {
@@ -702,6 +732,7 @@ impl Store {
             shared: self.shared.as_ref().map(|s| Box::new(s.handle_copy())),
             ephemeral: self.ephemeral,
             created: self.created.clone(),
+            pending_configs: Arc::clone(&self.pending_configs),
         }
     }
 

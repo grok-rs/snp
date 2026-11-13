@@ -2955,6 +2955,11 @@ directory` (snp brand) once per process, then waits (cancel observed every 50 ms
   `(db_repo_name, rev)` keys that are neither present nor Tier-A-loadable, snp 1.x leftovers only when the README
   carries the 1.x signature (an snp-only stderr line `Removed snp 1.x cache data from {store}.`, D-DIAG-05).
   Output: `{n} repo(s) removed.` (n counts `(db_repo_name, rev)` keys, like pre-commit's rows).
+* **Config tracking on a fresh store** (C1): pre-commit creates its store before `mark_config_used`. snp's store is
+  lazy, so `Store::mark_config_used` on a missing store keeps `(cfg_realpath, project_root)` in memory and the first
+  successful `ensure_created` of that handle (or of try-repo's copy of it) records it; a fresh-store
+  `install-hooks --config c` therefore protects `c`'s repositories from gc, as in pre-commit. A process that never
+  creates the store records nothing (the store is never created just for tracking).
 * **clean** (exclusive): retire snp's whole layout — every journal, the patches of unrestored journals and their
   siblings (all patches, with the same warning, when a journal cannot be read), `patch*`
   files younger than an hour, `.lock` and files outside snp's layout are kept (D-DATA-04); always prints `Cleaned {store}.` (pre-commit re-creates its store

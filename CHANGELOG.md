@@ -46,6 +46,10 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
 - `cargo xtask bench setup` no longer fails with `destination path … already exists` when an interrupted clone left
   the pre-commit-hooks mirror directory without `HEAD`: it removes it and clones again.
 
+- `snp gc` no longer removes repositories still in use after a first `install-hooks` (or `run`, `try-repo`) on a
+  fresh store: the config was not tracked when the store did not exist yet, so a following gc removed its
+  repositories (for example `3 repo(s) removed.` where pre-commit 4.7.0 prints `0 repo(s) removed.`). The config is
+  now recorded as soon as the store is created.
 - The stash no longer loses a working-tree change that `git diff` cannot see: a line a clean filter hides (for
   example `filter.<name>.clean = grep -v SECRET`) or an edit in an `--assume-unchanged` file was overwritten whenever
   another file had an unstaged change, because the stash checked out the whole tree (pre-commit 4.7.0 does the same;

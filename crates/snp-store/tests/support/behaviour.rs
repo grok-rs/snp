@@ -1406,3 +1406,74 @@ fn foreign_store_as_root_is_refused_unless_allowed() {
         String::from_utf8_lossy(&out.stdout)
     );
 }
+
+// ----- config tracking on a fresh store, gc fast paths (C1, P20) -----
+
+/// C1: pre-commit creates its store before `mark_config_used`, so a fresh-store `install-hooks --config c` tracks
+/// `c` and a later gc keeps its repositories. snp's lazy store keeps the pair until `ensure_created` and records it
+/// then; a store that is never created stays absent, and a config that does not exist is never recorded.
+#[test]
+fn configs_marked_before_the_store_exists_are_tracked_on_creation() {
+    let d = tempfile::tempdir().unwrap();
+    let base = snp_os::realpath::realpath_nonstrict(d.path(), Path::new("/")).unwrap();
+    let proj = base.join("proj");
+    std::fs::create_dir_all(&proj).unwrap();
+    let cfg = proj.join("c.yaml");
+    std::fs::write(&cfg, b"repos: []\n").unwrap();
+    let want = vec![snp_store::TrackedConfig {
+        path: cfg.clone(),
+        project_root: proj.clone(),
+    }];
+
+    let s = store_at(&base.join("store"));
+    s.mark_config_used(&cfg, &proj);
+    s.mark_config_used(&cfg, &proj);
+    s.mark_config_used(&proj.join("missing.yaml"), &proj);
+    assert!(!s.exists(), "tracking never creates the store");
+    assert!(s.tracked_configs().is_empty());
+    s.ensure_created(Brand::Snp, &CollectWarnings::new())
+        .unwrap();
+    assert_eq!(s.tracked_configs(), want);
+    let entries = std::fs::read_dir(base.join("store/configs-v1"))
+        .unwrap()
+        .count();
+    assert_eq!(entries, 1, "recorded once");
+
+    // A config deleted before the store is created is not recorded (re-checked at the flush).
+    let gone = proj.join("gone.yaml");
+    std::fs::write(&gone, b"repos: []\n").unwrap();
+    let late = store_at(&base.join("late"));
+    late.mark_config_used(&gone, &proj);
+    std::fs::remove_file(&gone).unwrap();
+    late.ensure_created(Brand::Snp, &CollectWarnings::new())
+        .unwrap();
+    assert!(late.tracked_configs().is_empty());
+
+    // A process that never creates the store leaves nothing behind.
+    let never = store_at(&base.join("never"));
+    never.mark_config_used(&cfg, &proj);
+    drop(never);
+    assert!(!base.join("never").exists());
+}
+
+/// C1 for try-repo: the user's config is marked on the main store, which try-repo's ephemeral store creates through
+/// its own copy of the main store's handle; the pending config is recorded in the main store only.
+#[test]
+fn ephemeral_store_records_the_main_stores_pending_configs() {
+    let d = tempfile::tempdir().unwrap();
+    let base = snp_os::realpath::realpath_nonstrict(d.path(), Path::new("/")).unwrap();
+    let cfg = base.join(".pre-commit-config.yaml");
+    std::fs::write(&cfg, b"repos: []\n").unwrap();
+    let main = store_at(&base.join("main"));
+    main.mark_config_used(&cfg, &base);
+    let e = Store::ephemeral(&base.join("eph"), Some(&main));
+    e.ensure_created(Brand::Snp, &CollectWarnings::new())
+        .unwrap();
+    let tracked = store_at(&base.join("main")).tracked_configs();
+    assert_eq!(tracked.len(), 1);
+    assert_eq!(tracked.first().unwrap().path, cfg);
+    assert!(
+        e.tracked_configs().is_empty(),
+        "never tracked in the throwaway store"
+    );
+}
