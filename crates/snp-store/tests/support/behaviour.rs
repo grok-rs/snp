@@ -1430,7 +1430,7 @@ fn configs_marked_before_the_store_exists_are_tracked_on_creation() {
     s.mark_config_used(&cfg, &proj);
     s.mark_config_used(&proj.join("missing.yaml"), &proj);
     assert!(!s.exists(), "tracking never creates the store");
-    assert!(s.tracked_configs().is_empty());
+    assert_eq!(s.tracked_configs(), Vec::new());
     s.ensure_created(Brand::Snp, &CollectWarnings::new())
         .unwrap();
     assert_eq!(s.tracked_configs(), want);
@@ -1447,7 +1447,7 @@ fn configs_marked_before_the_store_exists_are_tracked_on_creation() {
     std::fs::remove_file(&gone).unwrap();
     late.ensure_created(Brand::Snp, &CollectWarnings::new())
         .unwrap();
-    assert!(late.tracked_configs().is_empty());
+    assert_eq!(late.tracked_configs(), Vec::new());
 
     // A process that never creates the store leaves nothing behind.
     let never = store_at(&base.join("never"));
@@ -1472,8 +1472,9 @@ fn ephemeral_store_records_the_main_stores_pending_configs() {
     let tracked = store_at(&base.join("main")).tracked_configs();
     assert_eq!(tracked.len(), 1);
     assert_eq!(tracked.first().unwrap().path, cfg);
-    assert!(
-        e.tracked_configs().is_empty(),
+    assert_eq!(
+        e.tracked_configs(),
+        Vec::new(),
         "never tracked in the throwaway store"
     );
 }
