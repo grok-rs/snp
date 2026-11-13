@@ -26,6 +26,7 @@ use std::path::Path;
 
 use crate::NetError;
 
+mod entry;
 mod path;
 mod tar;
 mod tree;

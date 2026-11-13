@@ -17,3 +17,8 @@ pub mod spec;
 #[verus_verify]
 #[path = "../../crates/snp-proc/src/xargs/partition.rs"]
 pub mod snp_proc_xargs_partition;
+
+/// K2: archive entry-name check (snp-net).
+#[verus_verify]
+#[path = "../../crates/snp-net/src/archive/entry.rs"]
+pub mod snp_net_archive_entry;
