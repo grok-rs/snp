@@ -5,7 +5,8 @@
 //! * `verus [--module M] [--json F]`: V1-V4: the root verifies with `--no-cheating`, every function of a kernel file is
 //!   in Verus's JSON report and the verified count reaches the registry's floor, every registered mutant fails, and
 //!   `verusfmt --check` passes on the root and the specs (with `--module`: one mount, no mutants, not a gate);
-//! * `lean`: L1-L4: `lake build --wfail`, the axiom audit, `leanchecker`, forbidden tokens;
+//! * `lean`: L1-L5: `lake build --wfail`, the axiom audit, `leanchecker`, forbidden tokens, the elaborated-package
+//!   audit and theorem statement pins;
 //! * `oracles [-k ID]`: builds the Lean oracle executables and runs the home-crate oracle tests of every model (or of
 //!   model `ID`) with `SNP_LEAN_ORACLES` and `SNP_REQUIRE_LEAN_ORACLES=1`;
 //! * `mutants`: V3 alone;

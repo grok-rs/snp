@@ -1,4 +1,4 @@
-//! The tool-backed commands of `cargo xtask proofs`: Verus (V1-V4), Lean (L1-L4), the oracle tests, mutants,
+//! The tool-backed commands of `cargo xtask proofs`: Verus (V1-V4), Lean (L1-L5), the oracle tests, mutants,
 //! install and status (docs/VERIFICATION.md §3.3, §3.4, §6).
 //!
 //! Tools are found through `.github/scripts/proofs-tools.sh path` (the pinned install directory, which
@@ -514,7 +514,7 @@ fn copy_tree(src: &Path, dst: &Path) -> anyhow::Result<()> {
 // ---------------------------------------------------------------------------------------------------------------
 // Lean
 
-/// `proofs lean`: L1-L4.
+/// `proofs lean`: L1-L5.
 pub(crate) fn lean(root: &Path) -> anyhow::Result<()> {
     let tree = Tree::disk(root);
     let reg = Registry::load(&tree)?;
