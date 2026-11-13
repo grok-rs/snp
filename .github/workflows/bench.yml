@@ -2,7 +2,7 @@
 #
 # * micro:  criterion micro-benches (`cargo bench -p snp`) + `cargo xtask bench gate --micro` (the exact W1/W2
 #           thresholds; the perf-smoke tests of ci.yml only catch a 3x regression).
-# * e2e:    hyperfine scenarios B1-B12 of snp (dist) vs pre-commit 4.7.0 (pc470-py312) and prek 0.5.5 on the Linux
+# * e2e:    hyperfine scenarios B1-B12 of snp (dist) vs pre-commit 4.7.0 (pc470-py312) and prek 0.5.10 on the Linux
 #           reference runner. Pull requests and pushes to main compare against the base commit built on the same
 #           runner (pull requests get a PR comment). The nightly has no base commit: it reports the JSON-lines history
 #           without gating on it (`--advisory-history`, ADR-090). All but pull requests append to the history. The

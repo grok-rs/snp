@@ -7,8 +7,8 @@ against.
 | File | What |
 |---|---|
 | `budgets.toml` | every gated number: the hard/soft budgets per OS of ARCHITECTURE §12.1, the regression rule, the never-slower-than tools, the syscall ceiling, the allocation budget, the micro thresholds of the W1/W2 packages and the adopted musl allocator |
-| `prek-requirements.{in,txt}` | prek 0.5.5, hash-locked (`uv pip compile --universal --generate-hashes`); installed wheels-only by `bench setup` |
-| `tools-requirements.{in,txt}` | the bench helpers, hash-locked: uv 0.12.19 (linked as `target/bench/tools/path/uv`, the head of the hermetic PATH, so prek and snp never download a uv) and pip (downloads the wheelhouse) |
+| `prek-requirements.{in,txt}` | prek 0.5.10, hash-locked (`uv pip compile --universal --generate-hashes`); installed wheels-only by `bench setup` |
+| `tools-requirements.{in,txt}` | the bench helpers, hash-locked: uv 0.13.5 (linked as `target/bench/tools/path/uv`, the head of the hermetic PATH, so prek and snp never download a uv) and pip (downloads the wheelhouse) |
 | `wheelhouse-requirements.{in,txt}` | the Python packages B6/B7 install (pre-commit-hooks' `ruamel.yaml` and the `setuptools` build backend of its `setup.py`), hash-locked; `bench setup` downloads them into `target/bench/tools/wheels`, and every measured install resolves from there with no index |
 | `history/<platform>-<variant>.jsonl` | one run record per line, appended by `cargo xtask bench gate --record` (CI keeps it in the Actions cache and uploads it as an artifact; git-ignored, so a local `--record` leaves the tree clean) |
 | `musl-allocator.md` | the ADR-079 musl allocator measurement and decision |
@@ -17,7 +17,7 @@ against.
 
 ```sh
 cargo xtask oracle install          # pre-commit 4.7.0 on CPython 3.12.3 (target/oracle/pc470-py312)
-cargo xtask bench setup             # hyperfine 1.19.0, prek 0.5.5, fixtures, snp (dist), warm stores
+cargo xtask bench setup             # hyperfine 1.19.0, prek 0.5.10, fixtures, snp (dist), warm stores
 cargo xtask bench run               # target/bench/results/current.json
 cargo xtask bench gate              # budgets + regression against the last history record
 start=$(date +%s) && cargo bench -p snp --bench pyre_kinds ... -- --noplot && cargo xtask bench gate --micro --since "$start"
