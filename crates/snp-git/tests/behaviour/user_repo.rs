@@ -454,9 +454,14 @@ fn lfs_files_memo_agrees_with_check_attr() {
 fn checkout_paths_without_pathspec_from_file_chunks_literal_arguments() {
     let sb = Sandbox::new();
     let repo = sb.init("chunks");
-    let long = rep('n', 200);
-    let mut names: Vec<String> = (0..300).map(|i| format!("{long}{i}")).collect();
-    names.extend(["[ab]".to_owned(), "*".to_owned(), "with space".to_owned()]);
+    // 600 names of ~100 bytes (short enough for Windows' MAX_PATH under a temp dir) need several 24 KiB chunks.
+    let long = rep('n', 96);
+    let mut names: Vec<String> = (0..600).map(|i| format!("{long}{i}")).collect();
+    names.extend(["[ab]".to_owned(), "with space".to_owned()]);
+    if cfg!(unix) {
+        // Not a valid Windows file name.
+        names.push("*".to_owned());
+    }
     for n in &names {
         sb.write(&repo, n, b"base\n");
     }
@@ -493,10 +498,7 @@ fn checkout_paths_without_pathspec_from_file_chunks_literal_arguments() {
         "the assume-unchanged edit is not listed"
     );
     let calls = git.checkout_path_calls(&paths);
-    assert!(
-        calls.len() > 1,
-        "300 names of 200+ bytes need several chunks"
-    );
+    assert!(calls.len() > 1, "{} names need several chunks", names.len());
     for c in &calls {
         let first: Vec<&str> = c.args.iter().take(4).map(|a| a.to_str().unwrap()).collect();
         assert_eq!(first, ["-c", "submodule.recurse=0", "checkout", "--"]);
