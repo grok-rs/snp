@@ -24,18 +24,33 @@ def answer (op : String) (arg : ByteArray) : String :=
     else if op == "quote" then encTokens [Shlex.quoteString s]
     else "ERR bad-op"
 
-/-- `--lines`: `split <hex utf8>` / `quote <hex utf8>` per line → `OK <n> :<hex>…` or `ERR <msg>` (flushed). -/
+/-- `join <n> :<hex>…` (the reply framing): `shlex.join` of the `n` decoded UTF-8 arguments. -/
+def answerJoin (fields : List String) : String :=
+  match fields with
+  | n :: args =>
+    let decoded := args.mapM fun a =>
+      if a.startsWith ":" then (Hex.decode (a.drop 1).toString).bind String.fromUTF8? else none
+    match decoded with
+    | some ts => if n == toString ts.length then encTokens [Shlex.joinStrings ts] else "ERR bad-count"
+    | none => "ERR bad-hex"
+  | [] => "ERR bad-count"
+
+/-- `--lines`: `split <hex utf8>` / `quote <hex utf8>` / `join <n> :<hex>…` per line → `OK <n> :<hex>…` or
+`ERR <msg>` (flushed). -/
 partial def lineLoop (stdin stdout : IO.FS.Stream) : IO Unit := do
   let line ← stdin.getLine
   if line.isEmpty then return
   let line := line.trimAsciiEnd.toString
-  let (op, hex) := match line.splitOn " " with
-    | [op, hex] => (op, hex)
-    | [op] => (op, "")
-    | _ => ("", "")
-  let reply := match Hex.decode hex with
-    | none => "ERR bad-hex"
-    | some bytes => answer op bytes
+  let reply := match line.splitOn " " with
+    | "join" :: fields => answerJoin fields
+    | fields =>
+      let (op, hex) := match fields with
+        | [op, hex] => (op, hex)
+        | [op] => (op, "")
+        | _ => ("", "")
+      match Hex.decode hex with
+      | none => "ERR bad-hex"
+      | some bytes => answer op bytes
   stdout.putStrLn reply
   stdout.flush
   lineLoop stdin stdout
