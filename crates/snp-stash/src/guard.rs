@@ -674,12 +674,14 @@ impl Inner {
         }
     }
 
-    /// Steps 6–7: make the patch durable, re-verify it and list its paths. `w` is closed before this returns, so the
+    /// Steps 6–7: make the patch durable, list its paths and re-verify it. `w` is closed before this returns, so the
     /// caller can delete the file (Windows refuses to delete an open file). Anything but [`Secured::Paths`] means the
     /// caller abandons the patch.
     ///
     /// The order is load-bearing: `self.patch` is set before the journal names it; the patch is synced, the journal
-    /// and pointer (state `stashed`) written, the directory synced, and only then is the patch verified.
+    /// and pointer (state `stashed`) written, the directory synced; the paths are listed and only then is the patch
+    /// verified, so the verification is the last read of the worktree before the checkout. The verification wins: a
+    /// listing error counts only once the patch is verified, and a rewritten patch is listed again.
     fn secure(
         &mut self,
         tree: &ObjectId,
@@ -701,7 +703,11 @@ impl Inner {
                 .map_err(|e| Failure::from_io(&e, Some(self.cx.patches_dir.as_os_str()), None))?;
         }
         fault::hit(Point::StashState(4));
-        let verdict = self.reverify(tree, path, &mut w, digest)?;
+        // 7. D-DATA-19: the checkout rewrites exactly the files of the patch, so a change `git diff` cannot see (a
+        // clean filter hides it, or the file is `--assume-unchanged`) is never overwritten. git's own parser lists
+        // them, and refuses a patch it could not apply before anything is changed.
+        let mut listed = self.git().patch_paths(path);
+        let verdict = self.reverify(tree, path, &mut w, digest, &mut listed)?;
         drop(w);
         match verdict {
             Verdict::Verified => {}
@@ -710,9 +716,7 @@ impl Inner {
                 return Err(Failure::fatal("FatalError", messages::KEPT_CHANGING));
             }
         }
-        // 7. D-DATA-19: the checkout rewrites exactly the files of the patch, so a change `git diff` cannot see (a
-        // clean filter hides it, or the file is `--assume-unchanged`) is never overwritten.
-        let paths = self.git().patch_paths(path)?;
+        let paths = listed?;
         if paths.is_empty() {
             return Err(Failure::unexpected(
                 "ValueError",
@@ -723,13 +727,15 @@ impl Inner {
     }
 
     /// The ADR-067 re-verification: a second digest must equal the streamed one (an autosave between the two is
-    /// caught and the patch rewritten), at most [`MAX_REWRITES`] rewrites.
+    /// caught, the patch rewritten and `listed` taken again from the rewritten patch), at most [`MAX_REWRITES`]
+    /// rewrites.
     fn reverify(
         &self,
         tree: &ObjectId,
         path: &Path,
         w: &mut BufWriter<File>,
         mut digest: blake3::Hash,
+        listed: &mut Result<ZList, Failure>,
     ) -> Result<Verdict, Failure> {
         let mut rewrites = 0_u8;
         loop {
@@ -755,7 +761,10 @@ impl Inner {
                 .sync_all()
                 .map_err(|e| Failure::from_io(&e, Some(path.as_os_str()), None))?;
             match outcome {
-                DiffIndex::Patch { .. } => digest = d,
+                DiffIndex::Patch { .. } => {
+                    digest = d;
+                    *listed = self.git().patch_paths(path);
+                }
                 other => {
                     return Ok(Verdict::Vanished {
                         clean: matches!(other, DiffIndex::Clean),

@@ -2709,16 +2709,22 @@ notice).
      only for rc 0).
    * other rc → FatalError `{prog} failed to diff -- perhaps due to permissions?\n\n<CalledProcessError format A>`.
 6. **Make the patch durable.** `sync_all` the patch, write the journal (`{state:"stashed", tree, patch}`, `create_new`)
-   and the pointer, `sync_all` them, fsync the directory **once**. Then **re-verify**: run `diff-index` again into a
-   blake3 hasher (no file); a different digest (an editor autosave landed during the fsyncs) rewrites the patch and
-   re-verifies, at most 3 times, else FatalError `snp: unstaged files kept changing while stashing; nothing was
-   modified` (exit 1). The capture→checkout window is then as short as pre-commit's. Print `[WARNING] Unstaged files
-   detected.` / `[INFO] Stashing unstaged files to <abs path>.`. A full disk or EIO here aborts **before any worktree
-   mutation**.
+   and the pointer, `sync_all` them. The directory of the patch is synced once: by the creation or replacement of the
+   store journal (both sync `patches/` after the patch was created), or, when there is no store journal (intent-to-add
+   files were cleared with an unwritable store and the patch could be created later), by an explicit fsync of
+   `patches/`. Then **list the patch's paths** (step 8's `git apply --numstat -z --whitespace=nowarn <patch>`) and
+   only then **re-verify**: run `diff-index` again into a blake3 hasher (no file); a different digest (an editor
+   autosave landed during the fsyncs) rewrites the patch, lists its paths again and re-verifies, at most 3 times, else
+   FatalError `snp: unstaged files kept changing while stashing; nothing was modified` (exit 1). The verification is
+   the last read of the worktree before the checkout, and its outcome wins: a listing error is reported only once the
+   patch is verified (vanished changes and the FatalError print no stash line). The capture→checkout window is then
+   as short as pre-commit's. Print `[WARNING] Unstaged files detected.` / `[INFO] Stashing unstaged files to <abs
+   path>.`. A full disk or EIO here aborts **before any worktree mutation**.
 7. (No process-wide restore registry, ADR-066: the explicit `restore()` on the main thread, the panic-path
    `RunState::drop` and token cancellation cover every exit path; the panic hook and the signal thread never restore.)
 8. **Checkout of the patch's files** (D-DATA-19, ADR-093; pre-commit: `git -c submodule.recurse=0 checkout -- .`):
-   `git apply --numstat -z <patch>` lists them (no file listed: `ValueError` before any mutation), then `git -c
+   `git apply --numstat -z <patch>`, run in step 6 before the re-verification, lists them (no file listed:
+   `ValueError` before any mutation), then `git -c
    submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul` reads them as `:(literal)` pathspecs
    from stdin, with `_PRE_COMMIT_SKIP_POST_CHECKOUT=1` and without `GIT_*_PATHSPECS`, `Role::Critical` (checked). A
    change git cannot see (a clean filter, `--assume-unchanged`) is never overwritten. A failure here still goes

@@ -87,6 +87,9 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   milliseconds (as in pre-commit) instead of taking seconds or aborting the run with a backtracking-limit error
   (for example `^(.+/)*\bconfig\.yaml$` on a deep non-ASCII path). On the B12u benchmark the backtracking engine runs
   1 060 times instead of 20 000, and snp's own user CPU falls by about 19 % (ADR-098).
+- The stash lists its patch's files (`git apply --numstat`) before the re-verification instead of after it, so an
+  editor autosave that lands while the list is taken is caught and stashed instead of overwritten by the checkout
+  (the window was about 48 ms for a 10 MB patch). A listing error is still reported only once the patch is verified.
 
 ### Security
 

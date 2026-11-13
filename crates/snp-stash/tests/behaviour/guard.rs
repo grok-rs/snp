@@ -211,8 +211,8 @@ fn journal_and_pointer_are_durable_before_the_checkout() {
     );
     assert_eq!(patch, original);
     assert!(in_store);
-    // The command sequence is pre-commit's (02 §7) plus the re-verification diff-index and, D-DATA-19, the
-    // patch's paths for a checkout limited to them.
+    // The command sequence is pre-commit's (02 §7) plus, D-DATA-19, the patch's paths for a checkout limited to them
+    // and then the re-verification diff-index: the verification is the last read of the worktree before the checkout.
     let calls = spy.calls();
     let p = patch_of(&g);
     let tree_arg = sb.git_text(&repo, &["write-tree"]);
@@ -231,10 +231,10 @@ fn journal_and_pointer_are_durable_before_the_checkout() {
             format!(
                 "diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff {tree_arg} --"
             ),
+            format!("apply --numstat -z --whitespace=nowarn {}", p.display()),
             format!(
                 "diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff {tree_arg} --"
             ),
-            format!("apply --numstat -z --whitespace=nowarn {}", p.display()),
             checkout,
         ]
     );
@@ -260,10 +260,11 @@ fn autosave_between_diff_index_and_checkout_is_caught() {
     sb.write(&repo, "foo", b"herp\n");
     let spy = Spy::new();
     {
+        // After the patch is durable, while its paths are listed: the latest point before the verification.
         let repo = repo.clone();
         spy.before(
-            &["diff-index"],
-            Some(2),
+            &["apply", "--numstat"],
+            Some(1),
             Box::new(move |_| std::fs::write(repo.join("foo"), b"herp\nautosaved\n").unwrap()),
         );
     }
@@ -272,17 +273,75 @@ fn autosave_between_diff_index_and_checkout_is_caught() {
     let g = snp_stash::enter(cx).unwrap();
     let p = patch_of(&g);
     assert_eq!(sb.read(&repo, "foo"), FOO.as_bytes());
-    // The patch was rewritten with the autosave and verified again.
+    // The patch was rewritten with the autosave, listed again and verified again.
+    let calls = spy.calls();
+    let count = |prefix: &str| calls.iter().filter(|c| c.starts_with(prefix)).count();
     assert_eq!(
-        spy.calls()
-            .iter()
-            .filter(|c| c.starts_with("diff-index"))
-            .count(),
-        4
+        (count("diff-index"), count("apply --numstat")),
+        (4, 2),
+        "{calls:?}"
     );
     assert!(String::from_utf8_lossy(&std::fs::read(&p).unwrap()).contains("+autosaved"));
     g.restore().unwrap();
     assert_eq!(sb.read(&repo, "foo"), b"herp\nautosaved\n");
+}
+
+/// git refuses to list the patch (`git apply --numstat` exits 128): the run fails before the checkout, the worktree
+/// is untouched and no stash line is printed; patch and journal are gone.
+#[test]
+fn a_failing_patch_listing_leaves_the_worktree_untouched() {
+    let sb = Sandbox::new();
+    let repo = sb.foo_staged("r");
+    sb.write(&repo, "foo", b"herp\n");
+    let spy = Spy::new();
+    spy.on(
+        &["apply", "--numstat"],
+        None,
+        Reply::Exit(128, Vec::new(), b"error: patch too large\n".to_vec()),
+    );
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+    let (cx, out, _) = sb.ctx_with(git, info);
+    let e = snp_stash::enter(cx).unwrap_err();
+    let (ty, text, _) = exc(&e);
+    assert_eq!((ty.as_str(), e.exit_code()), ("CalledProcessError", 3));
+    assert!(text.contains("return code: 128"), "{text}");
+    assert_eq!(out.text(), "");
+    assert!(!spy.calls().iter().any(|c| c.contains("checkout")));
+    assert_eq!(sb.read(&repo, "foo"), b"herp\n");
+    assert!(sb.patch_files().is_empty(), "{:?}", sb.patch_files());
+    assert!(!repo.join(".git/snp-stash.journal").exists());
+}
+
+/// The verification outcome wins over a listing error: the changes vanished while the paths were listed, so there
+/// is nothing to stash and the listing's failure does not matter.
+#[test]
+fn vanished_changes_win_over_a_failing_patch_listing() {
+    let sb = Sandbox::new();
+    let repo = sb.foo_staged("r");
+    sb.write(&repo, "foo", b"herp\n");
+    let spy = Spy::new();
+    {
+        let repo = repo.clone();
+        spy.before(
+            &["apply", "--numstat"],
+            Some(1),
+            Box::new(move |_| std::fs::write(repo.join("foo"), FOO).unwrap()),
+        );
+    }
+    spy.on(
+        &["apply", "--numstat"],
+        None,
+        Reply::Exit(128, Vec::new(), Vec::new()),
+    );
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+    let (cx, out, _) = sb.ctx_with(git, info);
+    let g = snp_stash::enter(cx).unwrap();
+    assert_eq!(g.stashed(), &Stashed::Nothing);
+    assert!(g.diff_index_clean());
+    g.restore().unwrap();
+    assert_eq!(out.text(), "");
+    assert!(sb.patch_files().is_empty(), "{:?}", sb.patch_files());
+    assert!(!repo.join(".git/snp-stash.journal").exists());
 }
 
 #[test]
