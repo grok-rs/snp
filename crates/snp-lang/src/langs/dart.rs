@@ -1005,7 +1005,7 @@ struct FlowCursor {
 /// Splits the document into lines, after the checks of LibYAML's reader (printable characters only) and the
 /// document markers (one document; `%` directives and content on a `---` line are refused).
 fn document_lines(text: &str) -> Result<Vec<SrcLine>, PubspecError> {
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let text = text.trim_prefix('\u{feff}');
     for c in text.chars() {
         match c {
             '\t' => return Err(bad(None, "unsupported tab character")),

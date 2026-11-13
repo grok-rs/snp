@@ -101,7 +101,7 @@ fn body(text: &str, id: &str) -> String {
     let mut in_fence = false;
     for line in text.lines() {
         if line.starts_with("```") {
-            in_fence = !in_fence;
+            in_fence.toggle();
         }
         if !in_fence && line.trim() == format!("# {id}") {
             continue;
@@ -195,8 +195,7 @@ fn check(root: &Path, entries: &[Entry]) -> anyhow::Result<(Vec<String>, Vec<Str
             let p = f.path();
             let stem = p
                 .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
+                .map_or_default(|s| s.to_string_lossy().into_owned());
             if p.extension().is_some_and(|x| x == ext)
                 && stem != "README"
                 && !entries.iter().any(|e| e.id == stem)

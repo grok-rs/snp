@@ -58,9 +58,7 @@ fn probe_with(
 /// The fact files written so far.
 #[cfg(unix)]
 fn facts(dir: &Path) -> Vec<PathBuf> {
-    std::fs::read_dir(dir)
-        .map(|rd| rd.map(|e| e.unwrap().path()).collect())
-        .unwrap_or_default()
+    std::fs::read_dir(dir).map_or_default(|rd| rd.map(|e| e.unwrap().path()).collect())
 }
 
 #[test]

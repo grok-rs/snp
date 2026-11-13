@@ -58,7 +58,7 @@ IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-commit'
 pre-commit version: 4.7.0
 git --version: git version 2.43.0
 sys.version:
-    snp 2.0.1 (rustc 1.99.0) [x86_64-linux]
+    snp 2.0.1 (rustc 1.100.0) [x86_64-linux]
 sys.executable: /usr/local/bin/snp
 os.name: posix
 sys.platform: linux

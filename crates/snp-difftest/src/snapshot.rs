@@ -133,7 +133,7 @@ pub(crate) fn capture(
 }
 
 fn rel_bytes(base: &Path, p: &Path) -> Vec<u8> {
-    let rel = p.strip_prefix(base).unwrap_or(p);
+    let rel = p.trim_prefix(base);
     let mut out = Vec::new();
     for (i, c) in rel.components().enumerate() {
         if i > 0 {
@@ -263,13 +263,12 @@ fn snp_store(store: &Path) -> Vec<String> {
         let deps: Vec<String> = v
             .get("deps")
             .and_then(serde_json::Value::as_array)
-            .map(|a| {
+            .map_or_default(|a| {
                 a.iter()
                     .filter_map(serde_json::Value::as_str)
                     .map(str::to_owned)
                     .collect()
-            })
-            .unwrap_or_default();
+            });
         let repo = match v.get("kind").and_then(serde_json::Value::as_str) {
             Some("local") => String::from("local"),
             _ => match v.get("repo") {

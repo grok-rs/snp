@@ -187,7 +187,7 @@ fn patch_paths_upto(patch: &Path, max: usize) -> Option<Vec<(Vec<u8>, bool)>> {
             if out.len() > max {
                 break;
             }
-            let rest = rest.strip_suffix(b"\n").unwrap_or(rest);
+            let rest = rest.trim_suffix(b"\n");
             out.push((diff_git_name(rest)?, false));
             in_header = true;
         } else if in_header {
@@ -542,12 +542,8 @@ fn retire(o: &Orphan) {
     for f in &o.files {
         let _ignored = std::fs::remove_file(f);
     }
-    if let Ok(f) = std::fs::File::options()
-        .write(true)
-        .open(&o.unrestored.patch)
-    {
-        let _ignored = f.set_modified(std::time::SystemTime::now());
-    }
+    let now = std::fs::FileTimes::new().set_modified(std::time::SystemTime::now());
+    let _ignored = std::fs::set_times(&o.unrestored.patch, now);
 }
 
 /// One recovery pass with the worktree lock held (ARCHITECTURE §4.6, ADR-083): the stderr notices, in order.
@@ -707,7 +703,7 @@ fn patch_modes(patch: &Path) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
         if r.read_until(b'\n', &mut line).ok()? == 0 {
             break;
         }
-        let text = line.strip_suffix(b"\n").unwrap_or(&line);
+        let text = line.trim_suffix(b"\n");
         if let Some(rest) = text.strip_prefix(b"diff --git ") {
             current = Some(diff_git_name(rest)?);
         } else if let Some(path) = &current {

@@ -20,7 +20,7 @@ pub fn universal_newlines(s: &str) -> Cow<'_, str> {
     out.push_str(parts.next().unwrap_or_default());
     for part in parts {
         out.push('\n');
-        out.push_str(part.strip_prefix('\n').unwrap_or(part));
+        out.push_str(part.trim_prefix('\n'));
     }
     Cow::Owned(out)
 }

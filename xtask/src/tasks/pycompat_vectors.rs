@@ -136,7 +136,7 @@ fn run_ok(cmd: &mut Command, what: &str) -> anyhow::Result<String> {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    Ok(String::from_utf8_lossy_owned(out.stdout))
 }
 
 /// The interpreter to use for `want`, verified to be exactly the expected CPython.

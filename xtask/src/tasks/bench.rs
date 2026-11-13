@@ -709,7 +709,7 @@ fn run_ok(cmd: &mut Command, what: &str) -> anyhow::Result<String> {
             tail(&String::from_utf8_lossy(&out.stderr), 40)
         );
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    Ok(String::from_utf8_lossy_owned(out.stdout))
 }
 
 /// The last `n` lines of `s`.
@@ -1655,12 +1655,11 @@ impl SetupState {
         let unavailable = v
             .get("unavailable")
             .and_then(Value::as_object)
-            .map(|m| {
+            .map_or_default(|m| {
                 m.iter()
                     .map(|(k, r)| (k.clone(), r.as_str().unwrap_or_default().to_owned()))
                     .collect()
-            })
-            .unwrap_or_default();
+            });
         Ok(Self { unavailable })
     }
 
@@ -2210,9 +2209,7 @@ fn measure(root: &Path, args: &[String]) -> anyhow::Result<()> {
         platform: platform(),
         variant: build.variant(),
         label: label.clone(),
-        commit: git(&work, root, &["rev-parse", "HEAD"])
-            .map(|s| s.trim().to_owned())
-            .unwrap_or_default(),
+        commit: git(&work, root, &["rev-parse", "HEAD"]).map_or_default(|s| s.trim().to_owned()),
         unix_time: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs()),
@@ -2258,9 +2255,7 @@ fn measure(root: &Path, args: &[String]) -> anyhow::Result<()> {
                         m.median_ms,
                         m.ci95_ms.0,
                         m.ci95_ms.1,
-                        m.rss_mib
-                            .map(|r| format!(", RSS {r:.1} MiB"))
-                            .unwrap_or_default()
+                        m.rss_mib.map_or_default(|r| format!(", RSS {r:.1} MiB"))
                     ));
                     Outcome::Ok(m)
                 }
@@ -2585,6 +2580,15 @@ struct MicroThreshold {
     reference_only: bool,
 }
 
+/// One `[[known_miss]]`: a check that fails today for a recorded reason (ADR-091).
+#[derive(Debug, Clone, PartialEq)]
+struct KnownMiss {
+    scenario: String,
+    /// The start of the check's name (`p50 <= prek`).
+    check: String,
+    reason: String,
+}
+
 /// `bench/budgets.toml`.
 #[derive(Debug, Clone, PartialEq)]
 struct Budgets {
@@ -2594,6 +2598,7 @@ struct Budgets {
     musl_adopted: String,
     limits: Vec<Budget>,
     micro: Vec<MicroThreshold>,
+    known_misses: Vec<KnownMiss>,
 }
 
 fn toml_f64(v: &toml::Value) -> Option<f64> {
@@ -2725,6 +2730,33 @@ impl Budgets {
                     .unwrap_or(false),
             });
         }
+        let mut known_misses = Vec::new();
+        for (i, m) in t
+            .get("known_miss")
+            .and_then(toml::Value::as_array)
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            let field = |key: &str| {
+                m.get(key)
+                    .and_then(toml::Value::as_str)
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_owned)
+                    .with_context(|| format!("[[known_miss]] #{}: {key}", i.saturating_add(1)))
+            };
+            let scenario = field("scenario")?;
+            ensure!(
+                SCENARIOS.iter().any(|s| s.id == scenario),
+                "[[known_miss]] #{}: unknown scenario {scenario}",
+                i.saturating_add(1)
+            );
+            known_misses.push(KnownMiss {
+                scenario,
+                check: field("check")?,
+                reason: field("reason")?,
+            });
+        }
         Ok(Self {
             regression_pct,
             regression_min_ms,
@@ -2732,6 +2764,7 @@ impl Budgets {
             musl_adopted,
             limits,
             micro,
+            known_misses,
         })
     }
 
@@ -2816,6 +2849,28 @@ fn advisory_history(checks: &mut [Check]) {
         {
             c.verdict = Verdict::Warn;
             c.detail.push_str(" (--advisory-history)");
+        }
+    }
+}
+
+/// `[[known_miss]]`: a listed check that fails warns, with its reason, and one that passes says the entry can go.
+/// Only the budget or never-slower check itself is covered: getting worse still fails the regression check.
+fn apply_known_misses(checks: &mut [Check], misses: &[KnownMiss]) {
+    for m in misses {
+        for c in checks
+            .iter_mut()
+            .filter(|c| c.scenario == m.scenario && c.what.starts_with(&m.check))
+        {
+            match c.verdict {
+                Verdict::Fail => {
+                    c.verdict = Verdict::Warn;
+                    write!(c.detail, " (known miss: {})", m.reason).unwrap_or_default();
+                }
+                Verdict::Pass => c
+                    .detail
+                    .push_str(" (a known miss: remove the entry once this holds on every runner)"),
+                Verdict::Warn => {}
+            }
         }
     }
 }
@@ -3095,12 +3150,11 @@ fn comment(cur: &Record, base: Option<&Record>, checks: &[Check]) -> String {
             Verdict::Fail => "FAIL",
         },
         cur.commit.get(..12).unwrap_or(&cur.commit),
-        base.map(|b| format!(
+        base.map_or_default(|b| format!(
             ", baseline `{}` ({})",
             b.commit.get(..12).unwrap_or(&b.commit),
             b.label
         ))
-        .unwrap_or_default()
     );
     s.push_str(
         "| Scenario | snp p50 ms (95% CI) | baseline | Δ | pre-commit | prek | snp RSS MiB |\n",
@@ -3255,6 +3309,7 @@ fn gate(root: &Path, args: &[String]) -> anyhow::Result<()> {
     if o.has("advisory-history") {
         advisory_history(&mut checks);
     }
+    apply_known_misses(&mut checks, &budgets.known_misses);
     for c in &checks {
         say(&format!(
             "{:<5} {:<5} {:<34} {}",
@@ -4084,6 +4139,51 @@ mod tests {
             let c = verdict_of(&checks, "B1", what).unwrap();
             assert_eq!(c.verdict, Verdict::Fail, "{what}: {}", c.detail);
         }
+    }
+
+    #[test]
+    fn known_misses_warn_with_their_reason_and_nothing_else_changes() {
+        let check = |scenario: &str, what: &str, verdict| Check {
+            scenario: scenario.into(),
+            what: what.into(),
+            verdict,
+            detail: String::from("d"),
+        };
+        let misses = [KnownMiss {
+            scenario: "B8".into(),
+            check: "p50 <= prek".into(),
+            reason: "the re-check".into(),
+        }];
+        let mut checks = [
+            check("B8", "p50 <= prek", Verdict::Fail),
+            check("B8", "p50 <= pre-commit", Verdict::Fail),
+            check("B3", "p50 <= prek", Verdict::Fail),
+            check("B8", "no regression > 5%", Verdict::Fail),
+        ];
+        apply_known_misses(&mut checks, &misses);
+        assert_eq!(checks[0].verdict, Verdict::Warn);
+        assert_eq!(checks[0].detail, "d (known miss: the re-check)");
+        // the other check, the other scenario, and getting worse all still fail
+        assert!(checks[1..].iter().all(|c| c.verdict == Verdict::Fail));
+        let mut fixed = [check("B8", "p50 <= prek", Verdict::Pass)];
+        apply_known_misses(&mut fixed, &misses);
+        assert_eq!(fixed[0].verdict, Verdict::Pass);
+        assert!(
+            fixed[0].detail.contains("remove the entry"),
+            "{}",
+            fixed[0].detail
+        );
+    }
+
+    #[test]
+    fn known_misses_must_name_a_scenario_and_a_reason() {
+        let base = "[gate]\nregression_pct = 5\nregression_min_ms = 0\nnever_slower_than = []\n";
+        let with = |entry: &str| Budgets::parse(&format!("{base}[[known_miss]]\n{entry}"));
+        let ok = with("scenario = \"B2\"\ncheck = \"p50\"\nreason = \"r\"\n").unwrap();
+        assert_eq!(ok.known_misses.len(), 1);
+        assert!(with("scenario = \"B99\"\ncheck = \"p50\"\nreason = \"r\"\n").is_err());
+        assert!(with("scenario = \"B2\"\ncheck = \"p50\"\nreason = \"\"\n").is_err());
+        assert!(with("scenario = \"B2\"\nreason = \"r\"\n").is_err());
     }
 
     #[test]

@@ -64,7 +64,7 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> anyhow::Result<()> {
 
 /// `path` relative to `root`, with `/` separators (stable report and TSV output on every OS).
 pub(crate) fn rel(root: &Path, path: &Path) -> String {
-    let p = path.strip_prefix(root).unwrap_or(path);
+    let p = path.trim_prefix(root);
     p.components()
         .map(|c| c.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()

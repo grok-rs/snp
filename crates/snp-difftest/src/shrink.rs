@@ -205,11 +205,7 @@ fn model_pass(cur: Scenario, b: &mut Budget<'_>) -> Scenario {
     cur = reduce_list(cur, b, |s| s.work.stage.clone(), |s, v| s.work.stage = v, 0);
     for i in 0..cur.steps.len() {
         let base = cur.clone();
-        let env = base
-            .steps
-            .get(i)
-            .map(|st| st.env.clone())
-            .unwrap_or_default();
+        let env = base.steps.get(i).map_or_default(|st| st.env.clone());
         if env.is_empty() {
             continue;
         }
@@ -493,8 +489,7 @@ pub fn repro_script(s: &Scenario, r: &Runner, root: &Path) -> String {
     let probe = r
         .snp_bin
         .parent()
-        .map(|d| slash(&d.join("snp-probe")))
-        .unwrap_or_default();
+        .map_or_default(|d| slash(&d.join("snp-probe")));
     writeln!(o, "PROBE=${{PROBE:-{}}}", sh_quote(&probe)).unwrap_or_default();
     writeln!(
         o,

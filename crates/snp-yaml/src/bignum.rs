@@ -203,7 +203,7 @@ impl Big {
     /// `-self`.
     pub(crate) fn negate(&mut self) {
         if !self.mag.is_empty() {
-            self.neg = !self.neg;
+            self.neg.toggle();
         }
     }
 

@@ -7,7 +7,6 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
@@ -22,13 +21,11 @@ snp-os.workspace = true
 snp-proc.workspace = true
 snp-pycompat.workspace = true
 blake3.workspace = true
-flate2.workspace = true
 md-5.workspace = true
 roxmltree.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-tar.workspace = true
 tempfile.workspace = true
 zip.workspace = true
 
@@ -40,6 +37,11 @@ snp-net = { workspace = true, features = ["xz"] }
 [target.'cfg(windows)'.dependencies]
 # `ToolProbe::fingerprint`: the file index of an executable (`GetFileInformationByHandle`).
 winapi-util.workspace = true
+
+[dev-dependencies]
+# The fake toolchain archives of the group-1 tests (tests/group1/support.rs).
+flate2.workspace = true
+tar.workspace = true
 
 [features]
 testing = []

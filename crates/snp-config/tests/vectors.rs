@@ -28,10 +28,7 @@ mod vectors {
         if let Some(s) = c["input"].as_str() {
             return Some(s.as_bytes().to_vec());
         }
-        let hex = c["input_hex"]
-            .as_str()
-            .map(str::as_bytes)
-            .unwrap_or_default();
+        let hex = c["input_hex"].as_str().map_or_default(str::as_bytes);
         let digit = |b: u8| char::from(b).to_digit(16).unwrap_or(0);
         Some(
             hex.as_chunks::<2>()
@@ -43,13 +40,11 @@ mod vectors {
     }
 
     fn strs(v: &Json) -> Vec<String> {
-        v.as_array()
-            .map(|a| {
-                a.iter()
-                    .map(|s| s.as_str().expect("str").to_owned())
-                    .collect()
-            })
-            .unwrap_or_default()
+        v.as_array().map_or_default(|a| {
+            a.iter()
+                .map(|s| s.as_str().expect("str").to_owned())
+                .collect()
+        })
     }
 
     #[test]

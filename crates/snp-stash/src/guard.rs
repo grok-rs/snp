@@ -389,8 +389,7 @@ impl Inner {
     fn new_journal_data(&self) -> JournalData {
         let info = &self.cx.info;
         let head = journal::read_small(&info.git_dir.join("HEAD"))
-            .map(|b| String::from_utf8_lossy(&b).trim().to_owned())
-            .unwrap_or_default();
+            .map_or_default(|b| String::from_utf8_lossy(&b).trim().to_owned());
         JournalData {
             state: State::Started.as_str().to_owned(),
             token: self.token.clone(),
@@ -813,7 +812,7 @@ impl Inner {
             .run_raw(&[OsStr::new("--version")])
             .ok()
             .and_then(|c| {
-                let text = String::from_utf8_lossy(&c.stdout).into_owned();
+                let text = String::from_utf8_lossy_owned(c.stdout);
                 let rest = text.trim().strip_prefix("git version ")?.to_owned();
                 let v: String = rest
                     .chars()
@@ -916,7 +915,7 @@ impl Inner {
             }
             Err(f) => {
                 let mut text = match f {
-                    Failure::Exc { exc, .. } => String::from_utf8_lossy(&exc.text).into_owned(),
+                    Failure::Exc { exc, .. } => String::from_utf8_lossy_owned(exc.text),
                     _ => String::new(),
                 };
                 while text.ends_with('\n') {

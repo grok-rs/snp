@@ -330,8 +330,7 @@ impl P {
     fn slice(&self, from: usize, to: usize) -> String {
         self.src
             .get(from..to.min(self.src.len()))
-            .map(|s| s.iter().collect())
-            .unwrap_or_default()
+            .map_or_default(|s| s.iter().collect())
     }
 
     /// Entering a Python function.

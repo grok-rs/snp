@@ -321,7 +321,7 @@ mod vectors {
             let ok = match (kind, &got) {
                 ("error", Err(e)) => {
                     // A decode error carries go-yaml's text; a syntax error only has to be an error.
-                    let decode = want.strip_prefix("yaml: ").unwrap_or(want);
+                    let decode = want.trim_prefix("yaml: ");
                     !decode.starts_with("cannot decode") || e.to_string().contains(decode)
                 }
                 (_, Ok(Value::Map(m))) => {

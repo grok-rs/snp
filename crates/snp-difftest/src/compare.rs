@@ -166,7 +166,7 @@ fn fallback_ops<'a>(x: &[&'a [u8]], y: &[&'a [u8]]) -> Vec<Op<'a>> {
 }
 
 fn escape_line(l: &[u8]) -> String {
-    let body = l.strip_suffix(b"\n").unwrap_or(l);
+    let body = l.trim_suffix(b"\n");
     let s = show(body);
     let mut out = String::new();
     for c in s.chars() {

@@ -554,8 +554,7 @@ fn parse_doc(doc: &Yv, path: &Path) -> Result<Scenario, String> {
     let root = map_of(doc, "scenario")?;
     let default_name = path
         .file_stem()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
+        .map_or_default(|n| n.to_string_lossy().into_owned());
     let mut sc = Scenario::new(&default_name);
     sc.path = path.to_path_buf();
     for (k, _) in root {
@@ -844,11 +843,11 @@ fn parse_repo(name: &str, v: &Yv, unsupported: &mut Vec<String>) -> Result<RepoS
             "bare" => r.bare = bool_of(val, &what)?,
             "object_format" => r.object_format = Some(s(val, &what)?),
             "url" => {
-                let rev = r.external.take().map(|(_, rev)| rev).unwrap_or_default();
+                let rev = r.external.take().map_or_default(|(_, rev)| rev);
                 r.external = Some((s(val, &what)?, rev));
             }
             "rev" => {
-                let url = r.external.take().map(|(u, _)| u).unwrap_or_default();
+                let url = r.external.take().map_or_default(|(u, _)| u);
                 r.external = Some((url, s(val, &what)?));
             }
             other => return Err(format!("{what}: unknown key {other:?}")),

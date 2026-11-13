@@ -165,8 +165,7 @@ pub(crate) fn fill(template: &str, vars: &[(&str, &[u8])]) -> Vec<u8> {
 pub(crate) fn note(brand: Brand, idx: usize, vars: &[(&str, &[u8])]) -> Vec<u8> {
     migration_notes(brand)
         .get(idx)
-        .map(|t| fill(t, vars))
-        .unwrap_or_default()
+        .map_or_default(|t| fill(t, vars))
 }
 
 // ---------------------------------------------------------------------------------------------------------------

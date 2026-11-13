@@ -6,9 +6,10 @@ says *how*; DECISIONS.md says *why*.
 ## 1. Reference
 
 * **Reference implementation:** pre-commit **4.7.0** with its pinned dependencies (cfgv 3.5.0, identify 2.6.20,
-  PyYAML 6.0.3 with libyaml `CSafeLoader`/`CSafeDumper`, virtualenv 21.14.5, nodeenv 1.11.0). snp 2.0.0 targeted
+  PyYAML 6.0.3 with libyaml `CSafeLoader`/`CSafeDumper`, virtualenv 21.14.5, nodeenv 1.12.0). snp 2.0.0 targeted
   4.6.2; 4.7.0 differs from it only in `languages/node.py` (`npm install` with `no_git_env()`, which narrows
-  D-SEC-05) and the version (ADR-089).
+  D-SEC-05) and the version (ADR-089). nodeenv 1.12.0 (snp 2.0.1; 2.0.0 followed 1.11.0) reads `[nodeenv]` values
+  without one pair of outer quotes and tolerates a lone `%`, and its `latest` and ranges skip pre-releases (ADR-092).
 * **Oracles** (built hash-locked by `cargo xtask oracle install`, never taken from `PATH`):
   * `pc470-py312` — pre-commit 4.7.0 on CPython 3.12.3: runtime behaviour, regex accept/reject and matching, the
     performance baselines of 10 §0 (`--version` 172 ms, 1-hook run 234 ms, 10-hook run 243 ms);

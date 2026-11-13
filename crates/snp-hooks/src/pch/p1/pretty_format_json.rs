@@ -169,8 +169,7 @@ impl NativeHook for PrettyFormatJson {
             sort_keys: !ns.flag("no_sort_keys"),
             top_keys: ns
                 .value("top_keys")
-                .map(|v| v.to_string_lossy().split(',').map(str::to_owned).collect())
-                .unwrap_or_default(),
+                .map_or_default(|v| v.to_string_lossy().split(',').map(str::to_owned).collect()),
         };
         let files = filenames(&ns);
         let mut out = PyOut::default();

@@ -434,8 +434,7 @@ fn repo_checks(cx: &CmdCtx<'_>, f: &Frame, dir: &HooksDir, stash: bool, fix: boo
                 .config_get(&format!("hook.{name}.event"))
                 .ok()
                 .flatten()
-                .map(|e| e.to_string_lossy().into_owned())
-                .unwrap_or_default();
+                .map_or_default(|e| e.to_string_lossy().into_owned());
             if manager_events.contains(event.as_str()) {
                 r.add(
                     Lvl::Error,

@@ -130,7 +130,7 @@ pub(crate) fn start(
 impl Session {
     /// Everything the terminal showed so far, `\r\n` folded to `\n`.
     pub fn transcript(&self) -> String {
-        let raw = self.out.lock().map(|o| o.clone()).unwrap_or_default();
+        let raw = self.out.lock().map_or_default(|o| o.clone());
         String::from_utf8_lossy(&raw).replace("\r\n", "\n")
     }
 

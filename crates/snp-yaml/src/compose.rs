@@ -260,7 +260,7 @@ impl<'a> Composer<'a> {
                 None,
             ));
         }
-        let body = text.strip_prefix('\u{feff}').unwrap_or(text);
+        let body = text.trim_prefix('\u{feff}');
         Ok(Self {
             events: Events::new(text),
             schema,

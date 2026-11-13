@@ -221,9 +221,9 @@ pub(crate) fn default_str(a: &ActionSpec, env: &Env) -> Option<String> {
     Some(match a.default {
         DefaultValue::None => "None".to_owned(),
         DefaultValue::Str(s) | DefaultValue::Const(s) => s.to_owned(),
-        DefaultValue::Env { .. } => raw_default(a, env)
-            .map(|v| pystr::display(&v).into_owned())
-            .unwrap_or_default(),
+        DefaultValue::Env { .. } => {
+            raw_default(a, env).map_or_default(|v| pystr::display(&v).into_owned())
+        }
         DefaultValue::False => "False".to_owned(),
         DefaultValue::True => "True".to_owned(),
         DefaultValue::Int(n) => n.to_string(),

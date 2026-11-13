@@ -357,7 +357,7 @@ pub(super) fn pairs_first(
             // CPython's sort with a `<` that answers `False` where Python raises: like CPython, it tolerates the
             // inconsistent order this describes (mixed value types, NaN), where `slice::sort_by` panics on it.
             let lenient = |x: &(Box<[u8]>, Val), y: &(Box<[u8]>, Val)| {
-                Ok::<bool, std::convert::Infallible>(lt(x, y).unwrap_or(false))
+                Ok::<bool, !>(lt(x, y).unwrap_or(false))
             };
             let Ok(()) = pysort::sort(&mut after, PyMinor::P313, lenient);
         }

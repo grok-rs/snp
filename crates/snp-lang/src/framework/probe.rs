@@ -294,8 +294,7 @@ fn is_proxy(found: &Path, real: &Path) -> bool {
     }
     let stem = real
         .file_stem()
-        .map(|s| s.to_string_lossy().to_ascii_lowercase())
-        .unwrap_or_default();
+        .map_or_default(|s| s.to_string_lossy().to_ascii_lowercase());
     if MANAGERS.contains(&stem.as_str()) {
         return true;
     }

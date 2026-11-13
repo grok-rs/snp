@@ -2,7 +2,7 @@
 #
 # Layout: the repository is checked out at $GITHUB_WORKSPACE/snp and the user crates cfgv-rs and file-identify
 # next to it at the commits pinned in deps.lock (ADR-061), so the path dependencies `../cfgv-rs` and
-# `../file-identify` resolve. Every job does that first. The toolchain comes from rust-toolchain.toml (1.99.0).
+# `../file-identify` resolve. Every job does that first. The toolchain comes from rust-toolchain.toml (1.100.0).
 name: ci
 
 on:
@@ -112,10 +112,10 @@ jobs:
         with: { path: snp }
       - name: User crates at the deps.lock commits
         run: .github/scripts/deps-lock.sh checkout
-      - run: rustup toolchain install 1.98.0 --profile minimal
+      - run: rustup toolchain install 1.100.0 --profile minimal
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: snp, key: msrv }
-      - run: cargo +1.98.0 check --workspace --all-targets --all-features --locked
+      - run: cargo +1.100.0 check --workspace --all-targets --all-features --locked
 
   xtask:
     name: xtask gates

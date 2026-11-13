@@ -163,7 +163,7 @@ mod corpus {
                 "case {i}: {:?}",
                 back.unsupported
             );
-            assert!(names.insert(s.name.clone()));
+            assert!(names.insert(s.name));
         }
     }
 }

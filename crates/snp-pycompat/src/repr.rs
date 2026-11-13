@@ -314,7 +314,7 @@ fn push_filenames(out: &mut String, f1: Option<&OsStr>, f2: Option<&OsStr>) {
 fn os_message(code: i32) -> String {
     let full = io::Error::from_raw_os_error(code).to_string();
     let suffix = format!(" (os error {code})");
-    let msg = full.strip_suffix(&suffix).unwrap_or(&full);
+    let msg = full.trim_suffix(&suffix);
     if cfg!(windows) {
         msg.trim_end_matches(|c: char| c == '.' || c <= ' ')
             .to_owned()

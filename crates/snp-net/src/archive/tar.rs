@@ -71,8 +71,7 @@ fn in_data<T>(gate: &Gate, f: impl FnOnce() -> T) -> T {
 fn link_name<R: Read>(entry: &tar::Entry<'_, R>) -> Vec<u8> {
     entry
         .link_name_bytes()
-        .map(std::borrow::Cow::into_owned)
-        .unwrap_or_default()
+        .map_or_default(std::borrow::Cow::into_owned)
 }
 
 /// Feeds every entry of the tar stream `r` (of the archive file `label`) to `x`.

@@ -60,7 +60,7 @@ fn scan(s: &str) -> Scan {
     let t = s.trim_matches(is_int_space);
     let (neg, digits) = match t.strip_prefix('-') {
         Some(rest) => (true, rest),
-        None => (false, t.strip_prefix('+').unwrap_or(t)),
+        None => (false, t.trim_prefix('+')),
     };
     // Accumulate towards the sign so that i128::MIN parses.
     let mut val: Option<i128> = Some(0);

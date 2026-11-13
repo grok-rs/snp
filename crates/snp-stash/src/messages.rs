@@ -290,7 +290,7 @@ pub(crate) fn ita_notice(ita: &[Vec<u8>], file: Option<&Path>) -> String {
         .to_owned();
     let mut tail = String::new();
     push_ita(&mut tail, ita, file);
-    s.push_str(tail.strip_prefix(" && ").unwrap_or(&tail));
+    s.push_str(tail.trim_prefix(" && "));
     s
 }
 

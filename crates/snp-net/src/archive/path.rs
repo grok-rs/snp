@@ -84,10 +84,7 @@ pub(crate) fn entry_path(raw: &[u8], strip: u8) -> Result<Option<RelPath>, NetEr
         return Ok(None);
     }
     Ok(Some(
-        comps
-            .get(strip..)
-            .map(<[OsString]>::to_vec)
-            .unwrap_or_default(),
+        comps.get(strip..).map_or_default(<[OsString]>::to_vec),
     ))
 }
 

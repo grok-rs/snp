@@ -466,8 +466,7 @@ fn theirs(lang: &str) -> (Vec<GoldenCall>, Captures) {
     let log = std::fs::read_to_string(golden_log(lang)).unwrap();
     let calls = parse_log(&log, &Substitutions::new()).unwrap();
     let caps: Captures = std::fs::read(golden_captures(lang))
-        .map(|b| serde_json::from_slice(&b).unwrap())
-        .unwrap_or_default();
+        .map_or_default(|b| serde_json::from_slice(&b).unwrap());
     (calls, caps)
 }
 

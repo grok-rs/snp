@@ -357,7 +357,7 @@ fn scenarios() -> Vec<Sc> {
             skip: skip_node,
             ..base("node_explicit", "node-hook", LanguageId::Node)
         },
-        // nodeenv 1.11.0 resolves a range against index.json: `20` is the newest 20.x release.
+        // nodeenv 1.12.0 resolves a range against index.json: `20` is the newest 20.x release.
         Sc {
             version: Some("20"),
             resolved: "20",

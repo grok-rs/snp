@@ -115,7 +115,7 @@ fn run_ok(cmd: &mut Command, what: &str) -> anyhow::Result<String> {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    Ok(String::from_utf8_lossy_owned(out.stdout))
 }
 
 /// `CPython 3.12.3` → (3, 12, 3).
@@ -332,7 +332,7 @@ mod tests {
             "cfgv==3.5.0",
             "pyyaml==6.0.3",
             "virtualenv==21.14.5",
-            "nodeenv==1.11.0",
+            "nodeenv==1.12.0",
         ] {
             assert!(lock.contains(&format!("{pin} \\")), "{pin} missing");
         }

@@ -16,8 +16,7 @@ mod guard {
     fn stamp(p: &Path) -> Option<(SystemTime, Vec<PathBuf>)> {
         let md = std::fs::metadata(p).ok()?;
         let mut entries: Vec<PathBuf> = std::fs::read_dir(p)
-            .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect())
-            .unwrap_or_default();
+            .map_or_default(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect());
         entries.sort();
         Some((md.modified().ok()?, entries))
     }

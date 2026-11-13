@@ -59,7 +59,7 @@ pub(crate) fn legacy_stages(manifest: &[u8]) -> Vec<&'static str> {
 /// Python's text-mode read (`\r\n` and a lone `\r` become `\n`) plus libyaml's reader: NEL, LS and PS are line
 /// breaks as well, and `None` for a character libyaml rejects.
 fn universal_newlines(text: &str) -> Option<String> {
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let text = text.trim_prefix('\u{feff}');
     let mut out = String::new();
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {

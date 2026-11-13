@@ -326,7 +326,7 @@ fn run_notice(sb: &Sandbox, repo: &Path, notice: &str) -> (bool, String) {
         .unwrap();
     (
         out.status.success(),
-        String::from_utf8_lossy(&out.stderr).into_owned(),
+        String::from_utf8_lossy_owned(out.stderr),
     )
 }
 

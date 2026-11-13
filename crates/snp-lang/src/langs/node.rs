@@ -76,9 +76,9 @@ fn env_patch(env_dir: &Path) -> EnvPatch {
 /// nodeenv's version choice for `default` (no `-n`): `Config._load` reads `[nodeenv] node=` from `~/.nodeenvrc`,
 /// `./setup.cfg`, `./tox.ini` (later files win) and then, when `./.node-version` exists, its first line stripped and
 /// with leading `v`s removed (an empty first line resets the choice to nodeenv's default), all relative to the cwd
-/// pre-commit runs nodeenv in — the user's repository (nodeenv 1.11.0, 04a §3.4, Q9). `None`: nodeenv's own default
-/// (`latest`). The other `[nodeenv]` keys (`mirror`, `prefer_system`, …) are not read: downloads come only from the
-/// verified sources of D-SEC-08 (not yet a register entry of its own; COMPATIBILITY.md is not WP-24's to edit).
+/// pre-commit runs nodeenv in — the user's repository (nodeenv 1.12.0, 04a §3.4, Q9); each `node=` value is read as
+/// [`nodeenv_option`] reads it. `None`: nodeenv's own default (`latest`). The other `[nodeenv]` keys (`mirror`,
+/// `prefer_system`, …) are not read: downloads come only from the verified sources of D-SEC-08.
 pub(crate) fn nodeenv_default(h: &Host<'_>) -> Option<String> {
     let home = PathBuf::from(crate::common::home_dir(h.base_env));
     let mut node: Option<String> = None;
@@ -90,8 +90,8 @@ pub(crate) fn nodeenv_default(h: &Host<'_>) -> Option<String> {
         let Some(ini) = read_ini(&file) else {
             continue;
         };
-        if let Some(v) = ini.get("nodeenv", "node") {
-            node = Some(v.to_owned());
+        if let Some(v) = nodeenv_option(&ini, "node") {
+            node = Some(v);
         }
     }
     if let Ok(bytes) = snp_os::fs::read_capped(&h.cwd.join(".node-version"), shared::MAX_INI) {
@@ -106,6 +106,27 @@ pub(crate) fn nodeenv_default(h: &Host<'_>) -> Option<String> {
         );
     }
     node.filter(|v| !v.is_empty())
+}
+
+/// A string option of a `[nodeenv]` section as nodeenv 1.12.0's `Config._load` reads it: `ConfigParser.get` (with
+/// `%%` and `%(name)s` interpolation); a value whose interpolation is a syntax error is read as written unless it
+/// holds `%(` (nodeenv#440); then one pair of matching outer `"` or `'` quotes is dropped (nodeenv#321). Where nodeenv
+/// itself crashes (an unknown or too deeply nested reference, a malformed `%(` reference: a traceback, so
+/// pre-commit's install fails) the value is used as written, and the version check fails the install instead.
+fn nodeenv_option(ini: &shared::Ini, option: &str) -> Option<String> {
+    let raw = ini.get("nodeenv", option)?;
+    let value = match ini.get_interpolated("nodeenv", option)? {
+        Ok(v) => v,
+        Err(shared::InterpolationError::Syntax) if !raw.contains("%(") => raw.to_owned(),
+        Err(_) => return Some(raw.to_owned()),
+    };
+    let mut chars = value.chars();
+    Some(match (chars.next(), chars.next_back()) {
+        (Some(first), Some(last)) if first == last && matches!(first, '"' | '\'') => {
+            chars.as_str().to_owned()
+        }
+        _ => value,
+    })
 }
 
 /// The node version to download for `language_version` (`None`: a system environment); an npm-style range is kept
@@ -169,7 +190,7 @@ fn index_for(target: &str) -> Option<(&'static str, Vec<String>)> {
 /// Cap on node's `index.json` (~300 KB in 2026).
 const MAX_NODE_INDEX: u64 = 16 << 20;
 
-/// nodeenv 1.11.0's `args.node` handling for a value that is not `latest`/`lts`/`system`: an exact version
+/// nodeenv 1.12.0's `args.node` handling for a value that is not `latest`/`lts`/`system`: an exact version
 /// (`_is_exact_version`) or a string that is not a range is used as written; a range (`20`, `18.19`, `^20.1`,
 /// `>=18 <20`, …) resolves to the highest release of `index.json` that has a build for the host and matches
 /// (`resolve_node_version`); no match is nodeenv's `No available node.js version matches '<spec>'` (exit 1).

@@ -136,7 +136,7 @@ struct RawRow {
 /// Splits a Markdown table line into trimmed cells (`\|` is an escaped pipe).
 fn cells(line: &str) -> Vec<String> {
     let inner = line.trim().trim_start_matches('|');
-    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    let inner = inner.trim_suffix('|');
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut escaped = false;
@@ -246,16 +246,14 @@ fn parse_source(src: &Source, text: &str) -> anyhow::Result<Vec<RawRow>> {
                     && h.as_str() != "where"
                     && !matches!(v.as_str(), "" | "—" | "-")
             })
-            .map(|(v, _)| clean_title(v))
-            .unwrap_or_default();
+            .map_or_default(|(v, _)| clean_title(v));
         let hermetic = match src.prefix {
             "T10" => {
                 let needs = header
                     .iter()
                     .position(|h| h.starts_with("needs"))
                     .and_then(|i| c.get(i))
-                    .map(String::as_str)
-                    .unwrap_or_default();
+                    .map_or_default(String::as_str);
                 let row_text = c.join(" ");
                 !(needs.contains("tc:")
                     || has_word(needs, "net")

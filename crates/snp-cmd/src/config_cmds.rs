@@ -237,5 +237,5 @@ pub fn config(a: &ConfigCmd, cx: &CmdCtx<'_>) -> Result<i32, Failure> {
 
 /// Writes `s` with exactly one trailing newline (text layer).
 fn write_text(cx: &CmdCtx<'_>, s: &str) {
-    cx.printer.py_print(s.strip_suffix('\n').unwrap_or(s));
+    cx.printer.py_print(s.trim_suffix('\n'));
 }

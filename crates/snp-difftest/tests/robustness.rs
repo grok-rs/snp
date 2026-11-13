@@ -103,7 +103,7 @@ mod robustness {
                 for tier in [Tier::A, Tier::B, Tier::C] {
                     let once = normalise(tier, input, &m);
                     if !matches!(tier, Tier::A) {
-                        prop_assert_eq!(normalise(tier, &once, &BrandMap::identity()), once.clone());
+                        prop_assert_eq!(normalise(tier, &once, &BrandMap::identity()), once);
                     }
                 }
                 let u = canonical_usage(input);

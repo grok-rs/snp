@@ -136,7 +136,7 @@ const fn allowed(c: char) -> bool {
 
 impl<'a> Reader<'a> {
     pub(crate) fn new(text: &'a str) -> Self {
-        let body = text.strip_prefix('\u{feff}').unwrap_or(text);
+        let body = text.trim_prefix('\u{feff}');
         Self {
             body,
             bom: text.len().saturating_sub(body.len()),

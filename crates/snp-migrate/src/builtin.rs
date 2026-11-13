@@ -207,8 +207,7 @@ impl<'a> Doc<'a> {
             return Vec::new();
         };
         self.get(root, "repos")
-            .map(|(_, v)| self.items(v).to_vec())
-            .unwrap_or_default()
+            .map_or_default(|(_, v)| self.items(v).to_vec())
     }
 
     /// The `# was: …` comment line directly above the line of `item`: `(line start, line end, text after "# was: ")`.

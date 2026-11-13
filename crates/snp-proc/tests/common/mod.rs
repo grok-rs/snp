@@ -19,9 +19,28 @@ pub(crate) fn probe() -> PathBuf {
     static PROBE: OnceLock<PathBuf> = OnceLock::new();
     PROBE
         .get_or_init(|| {
+            // The test executable is in `<profile>/deps/` (Cargo before 1.100) or `<profile>/build/<package>/<hash>/out/`
+            // (Cargo 1.100's build-dir layout); `snp-probe` is in `<profile>/`.
             let exe = std::env::current_exe().unwrap();
-            let profile_dir = exe.parent().unwrap().parent().unwrap().to_path_buf();
-            let probe = profile_dir.join(format!("snp-probe{}", std::env::consts::EXE_SUFFIX));
+            let name = format!("snp-probe{}", std::env::consts::EXE_SUFFIX);
+            let profile_dir = exe
+                .ancestors()
+                .skip(1)
+                .take(5)
+                .find(|d| d.join(&name).is_file())
+                .or_else(|| {
+                    exe.ancestors()
+                        .find(|d| {
+                            matches!(
+                                d.file_name().and_then(|n| n.to_str()),
+                                Some("deps" | "build")
+                            )
+                        })
+                        .and_then(Path::parent)
+                })
+                .unwrap()
+                .to_path_buf();
+            let probe = profile_dir.join(name);
             if !probe.exists() {
                 let profile = match profile_dir.file_name().and_then(|n| n.to_str()) {
                     Some("debug") | None => "dev".to_owned(),

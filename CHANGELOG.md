@@ -24,6 +24,12 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   specified: 'x'`).
 - Divergence D-MISC-09 is registered: a file pygrep cannot open prints the final line of Python's traceback, as snp
   has always done. No behaviour changes (ADR-090).
+- `language: node` follows nodeenv 1.12.0 (was 1.11.0) for the `[nodeenv] node=` value of `setup.cfg`, `tox.ini` and
+  `~/.nodeenvrc`: one pair of outer quotes is dropped (`node = "20"` selects node 20) and `%%` / `%(name)s` are
+  interpolated as `configparser` does (ADR-092). The oracle lock pins `nodeenv==1.12.0`.
+
+- Built with Rust 1.100.0; the minimum supported Rust version is 1.100 (was 1.98), so `cargo install snp` needs Rust
+  1.100 or newer (ADR-094). The crash log's `sys.version` names rustc 1.100.0.
 
 ### Fixed
 
@@ -34,6 +40,14 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   those plus every file `git diff` shows changed, so hook fixes are still discarded as before. A failing stash
   checkout's `CalledProcessError` names the new command; recovery hints with too many files to spell out read them
   from a kept `<patch>.paths` list instead of restoring the whole worktree. New divergence D-DATA-19 (ADR-093).
+
+### Security
+
+- The embedded uv is 0.13.8 (was 0.12.23): uv 0.13.5 and later reject certificate chains through the compromised
+  eMudhra intermediate CAs.
+- The TLS trust store follows Mozilla's latest removals: webpki-roots and webpki-root-certs 1.0.12 and rustls-webpki
+  0.103.17 (also in the fuzz workspace, which was still on rustls-webpki 0.103.15 without the eMudhra distrust).
+- rustix 1.1.6 (RUSTSEC-2026-0486; snp calls none of the affected xattr functions).
 
 ## [2.0.0] - 2026-11-02
 

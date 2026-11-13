@@ -324,8 +324,7 @@ pub(crate) fn repo_dict(brand: Brand, ext: ExtMode) -> Schema {
         |extra: &[Value], _keys: &[Value], dct: &Map, cx: &mut Cx<'_>| {
             let repo = dct
                 .get(&Value::from("repo"))
-                .map(|r| r.try_to_string().unwrap_or_else(|_| r.to_string()))
-                .unwrap_or_default();
+                .map_or_default(|r| r.try_to_string().unwrap_or_else(|_| r.to_string()));
             cx.warn(messages::unexpected_keys_repo(&repo, &join_keys(extra)));
         },
     );

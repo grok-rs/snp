@@ -12,7 +12,7 @@
 //! | check-json | a document nested deeper than CPython allows is reported, not a crash |
 //! | check-added-large-files | `-z` git plumbing (non-ASCII names are checked), input order, `--include-renames` |
 //! | check-executables-have-shebangs | `:(literal)` pathspecs; one message per path |
-//! | check-merge-conflict | also `CHERRY_PICK_HEAD` / `REVERT_HEAD`; `--diff3` (`||||||| `) |
+//! | check-merge-conflict | also `CHERRY_PICK_HEAD` / `REVERT_HEAD`; `--diff3` (`\|\|\|\|\|\|\| `) |
 //! | detect-private-key, no-commit-to-branch | as upstream v6.0.0 |
 //!
 //! The other ids of `snp_hooks_data::BUILTIN_MANIFEST_YAML` (the P1/P2/caveat hooks and the `language: fail`

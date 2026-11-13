@@ -762,8 +762,7 @@ impl Loader<'_, '_> {
                         .tag_handles
                         .iter()
                         .find(|(k, _)| k == h)
-                        .map(|(_, v)| v.clone())
-                        .unwrap_or_default();
+                        .map_or_default(|(_, v)| v.clone());
                     prefix + &decoded
                 }
             })

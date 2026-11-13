@@ -145,8 +145,7 @@ fn global_notes(o: &LefthookOpts, loaded: &load::Loaded, scope: &str) -> (Vec<No
             .as_map()
             .and_then(|m| m.get("ref"))
             .and_then(LValue::as_str)
-            .map(|s| format!("@{s}"))
-            .unwrap_or_default();
+            .map_or_default(|s| format!("@{s}"));
         note(
             Level::Lossy,
             format!("remote config {url}{rf} not converted; convert its configs and add the hooks"),

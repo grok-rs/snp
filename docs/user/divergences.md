@@ -2709,7 +2709,8 @@ pre-commit 4.7.0 trusts whatever bytes its toolchain bootstraps receive:
   with `urllib.request.urlopen` and unpacks it with `tarfile.extractall`/`zipfile.extractall`, no checksum and no
   extraction filter (Python 3.12 still defaults to the `fully_trusted` filter: absolute names, `..`, links out of the
   tree and device files are honoured);
-* **node** — `nodeenv --prebuilt` downloads the node archive (`nodeenv.py:811-865`) without checking `SHASUMS256.txt`;
+* **node** — `nodeenv --prebuilt` downloads the node archive (nodeenv 1.12.0 `nodeenv.py:857-928`) without checking
+  `SHASUMS256.txt`;
 * **rust** — `rust.install_rust_with_toolchain` (`rust.py:83-108`) downloads `https://sh.rustup.rs` and **executes**
   it;
 * **ruby** — the vendored `rbenv`/`ruby-build`/`ruby-download` tarballs are unpacked with `tarfile.extractall`
@@ -2736,9 +2737,10 @@ and a hostile archive can write outside the environment directory. snp (ADR-034,
   CPython `tarfile.extractall`: directories without an entry get `0o777 & ~umask`, a hard link's mode applies to the
   shared file.
 * resolves node's `default`/`latest`/`lts` to the newest release of `index.json` that is not a pre-release and lists
-  a build for the target (the unofficial builds' index for musl and riscv64). nodeenv 1.11.0 takes the first entry
-  (only checking the x86_64-musl/riscv64 builds), which in October 2026 is `v27.0.0-alpha.0.0.0` — a pre-release
-  everywhere and a 404 on x86_64 macOS (no `darwin-x64` build) — and has no arm64-musl case at all.
+  a build for the target (the unofficial builds' index for musl and riscv64). nodeenv 1.12.0 skips pre-releases too
+  (1.11.0 took the first entry, which in October 2026 is `v27.0.0-alpha.0.0.0`), but checks for a build only on
+  x86_64-musl and riscv64: elsewhere it takes the newest release even when that release has no build for the host (a
+  404), and it has no arm64-musl case at all.
 
 The divergence is invisible for genuine downloads: the same archives are installed at the same places. It only
 appears when the bytes are not the published ones — then snp fails closed (exit 3, the message names the URL and
@@ -5024,7 +5026,7 @@ IsADirectoryError: [Errno 21] Is a directory: '.git/hooks/pre-commit'
 pre-commit version: 4.7.0
 git --version: git version 2.43.0
 sys.version:
-    snp 2.0.1 (rustc 1.99.0) [x86_64-linux]
+    snp 2.0.1 (rustc 1.100.0) [x86_64-linux]
 sys.executable: /usr/local/bin/snp
 os.name: posix
 sys.platform: linux

@@ -393,10 +393,7 @@ impl CloneFacts {
         let (blobs, setup_cfg) = read()?;
         let facts = Self {
             blobs,
-            scripts: setup_cfg
-                .as_deref()
-                .map(console_scripts)
-                .unwrap_or_default(),
+            scripts: setup_cfg.as_deref().map_or_default(console_scripts),
         };
         // Best effort: a read-only store recomputes next time.
         let _cached: std::io::Result<()> =

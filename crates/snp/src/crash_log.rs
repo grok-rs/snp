@@ -11,7 +11,7 @@ use snp_core::failure::PyExc;
 use snp_core::profile;
 
 /// The toolchain the release is built with (`rust-toolchain.toml`).
-const RUSTC: &str = "1.99.0";
+const RUSTC: &str = "1.100.0";
 
 /// What the version block names.
 #[derive(Debug)]
@@ -113,6 +113,21 @@ pub(crate) fn body(info: &LogInfo<'_>, line1: &[u8], exc: Option<&PyExc>) -> Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The version block names the pinned toolchain (the published crate has no `rust-toolchain.toml`: skipped).
+    #[test]
+    fn rustc_is_the_pinned_toolchain() {
+        let pin = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../rust-toolchain.toml");
+        let Ok(text) = std::fs::read_to_string(&pin) else {
+            return;
+        };
+        let channel = format!("channel = \"{RUSTC}\"");
+        assert!(
+            text.lines().any(|l| l.trim() == channel),
+            "crash_log::RUSTC ({RUSTC}) is not the channel of {}",
+            pin.display()
+        );
+    }
 
     #[test]
     fn skeleton() {
