@@ -1,0 +1,130 @@
+# Verified kernels, Lean models and trusted items: the single machine-readable source of ADR-095
+# (docs/VERIFICATION.md §3.1). `cargo xtask proofs check` (G1-G10) keeps it, the kernel markers and the mounts of
+# proofs/verus/kernels.rs in agreement; `cargo xtask proofs verus` (V1-V4) and `mutants` read it too.
+
+[verus]
+version = "0.2026.11.02.8bf68ee"   # bundles rust_verify, Z3 4.16.0 and the prebuilt vstd
+rustc = "1.99.1"                   # from the zip's version.json; never the rustup default
+# sha256 of the release zip `verus-<version>-<platform>.zip` (github.com/verus-lang/verus/releases). Only the
+# platform CI and the owner use is pinned; add others when a contributor needs them.
+sha256 = { x86-linux = "f3a0119292df8855e4435da8130bee1873b0e6a60c306accf81a08ea687bba3c" }
+# sha256 of `verusfmt-<target>.tar.xz` (github.com/verus-lang/verusfmt/releases).
+verusfmt = { version = "0.7.4", sha256 = { x86_64-unknown-linux-gnu = "bbc5cb02c01efeaf9e66c93443ae782b11c5d8fd88c67d558c23216222971f4f" } }
+
+# One entry per kernel file (rule K1 of §2.3). `mount` is the module name in proofs/verus/kernels.rs;
+# `verified_min` is the number of items Verus reports verified for this kernel's mount, spec and the lib lemmas it
+# brought (measured when the entry was added); a whole-root run must verify at least the sum over all kernels.
+# Every mutant, applied to a temporary copy of `file` (first occurrence of `find`), must make verification fail
+# (V3; `cargo xtask proofs mutants`).
+[[kernel]]
+id = "K1-xargs-partition"
+status = "verified"                # verified | pending (§8.3)
+file = "crates/snp-proc/src/xargs/partition.rs"
+mount = "snp_proc_xargs_partition"
+spec = "proofs/verus/spec/xargs_partition.rs"
+callers = ["crates/snp-proc/src/xargs.rs::partition"]
+verified_min = 10
+mutants = [
+    { find = "Some(t) => t <= max_len", replace = "Some(t) => t < max_len" },
+    # F2: the former saturating budget accepts an argument whose length overflows the sum.
+    { find = "match total.checked_add(arg_len) {", replace = "match Some(total.saturating_add(arg_len)) {" },
+]
+
+[[kernel]]
+id = "K2-archive-entry"
+status = "verified"
+file = "crates/snp-net/src/archive/entry.rs"
+mount = "snp_net_archive_entry"
+spec = "proofs/verus/spec/archive_entry.rs"
+callers = ["crates/snp-net/src/archive/path.rs::entry_path"]
+verified_min = 16
+mutants = [
+    # Accepts a `..` component (the ADR-077 escape).
+    { find = "return Err(Refusal::DotDot);", replace = "return Ok(true);" },
+    # Lets a NUL byte through in the first position.
+    { find = "if b == 0 {", replace = "if b == 0 && i > 0 {" },
+    # Forgets `\` as a separator when `windows`.
+    { find = "(windows && b == ", replace = "(false && b == " },
+    # Forgets `\x` as a rooted name.
+    { find = "if c0 == b'/' || c0 ==", replace = "if c0 == b'/' || false && c0 ==" },
+    # Spec mutants of the `..` branch of `norm_step` (lemma_normpath_dotdot): `..` always pushed, `..` clears all.
+    { file = "proofs/verus/spec/archive_entry.rs", find = "if stack.len() > 0 && !is_dotdot(stack.last()) {", replace = "if false {" },
+    { file = "proofs/verus/spec/archive_entry.rs", find = "            stack.drop_last()\n", replace = "            Seq::<Seq<u8>>::empty()\n" },
+]
+
+[[kernel]]
+id = "K3-end-of-file-fixer"
+status = "verified"
+file = "crates/snp-hooks/src/pch/p0/kernels/eof.rs"
+mount = "snp_hooks_pch_p0_kernels_eof"
+spec = "proofs/verus/spec/eof.rs"
+callers = ["crates/snp-hooks/src/pch/p0/end_of_file_fixer.rs::tail_action"]
+verified_min = 14
+mutants = [
+    # A file made only of line endings is no longer emptied (`fix_file`'s `tell() == 1` branch).
+    { find = "if run >= len {", replace = "if run > len {" },
+    # The trailing run stops at the first `\r`, so `a\n\r` keeps its `\r`.
+    { find = "Some(&b) if is_eol(b) => start = i,", replace = "Some(&b) if b == 10 => start = i," },
+]
+
+# [[model]]: Lean models with oracle tests and fingerprinted anchors (K3, K4).
+# [[trusted]]: empty in M1 (§10 row 8). From M2: { item = "Memchr: FindByte", kernel = "K5", test = "…" }
+
+[[model]]
+id = "K3-end-of-file-fixer"
+lean = "proofs/lean/SnpModels/Eof.lean"
+theorems = [
+    "SnpModels.Eof.pyFixFile_eq",
+    "SnpModels.Eof.kernel_apply",
+    "SnpModels.Eof.fix_idem",
+    "SnpModels.Eof.fix_body",
+    "SnpModels.Eof.pyFixFile_twice",
+]
+oracle = "eof-model"
+oracle_test = "crates/snp-hooks/tests/lean_oracle.rs"
+# The oracle driver (proofs/lean/EofMain.lean) and the oracle test are trust points: any edit asks for a re-review
+# (`cargo xtask proofs fingerprint <file>`, G10).
+driver_fingerprint = "1acfebe5b9966dcd"
+oracle_test_fingerprint = "e4017b3d13ff06bd"
+# fingerprint: `cargo xtask proofs fingerprint <file.rs::item>` (§3.1, G10). `kernelRun` in Eof.lean
+# transliterates `end_of_file_run`, `kernel` the whole-file `end_of_file` (with `is_eol`); the oracle test calls
+# `end_of_file_bytes`.
+anchors = [
+    { item = "crates/snp-hooks/src/pch/p0/kernels/eof.rs::end_of_file_run", fingerprint = "450ba6b0d698d9c2" },
+    { item = "crates/snp-hooks/src/pch/p0/kernels/eof.rs::end_of_file", fingerprint = "81448e4d8ba287b6" },
+    { item = "crates/snp-hooks/src/pch/p0/kernels/eof.rs::is_eol", fingerprint = "1ec1e575101fc612" },
+    { item = "crates/snp-hooks/src/pch/p0/kernels/eof.rs::end_of_file_bytes", fingerprint = "7a11e1bbaf64dfd4" },
+]
+# L5 (`cargo xtask proofs lean`): fingerprint of each theorem's statement and of every model definition it reaches
+# (never a proof); a change prints the new value. Lean upgrades change them too: re-review, then refresh.
+[model.statements]
+"SnpModels.Eof.pyFixFile_eq" = "c30752f13fe18854"
+"SnpModels.Eof.kernel_apply" = "37978ca884d2591c"
+"SnpModels.Eof.fix_idem" = "6f65ed378938e8d5"
+"SnpModels.Eof.fix_body" = "5dd9c663de5fbe04"
+"SnpModels.Eof.pyFixFile_twice" = "1536400bcf2c674b"
+
+[[model]]
+id = "K4-shlex-split"
+lean = "proofs/lean/SnpModels/Shlex.lean"
+theorems = ["SnpModels.Shlex.pySplit_eq_split", "SnpModels.Shlex.split_quote", "SnpModels.Shlex.split_join"]
+oracle = "shlex-model"
+oracle_test = "crates/snp-pycompat/tests/lean_oracle.rs"
+driver_fingerprint = "af906ff552d63f5c"
+oracle_test_fingerprint = "a54309f336092389"
+# fingerprint: `cargo xtask proofs fingerprint <file.rs::item>` (§3.1, G10). The helpers `split` and `quote` call
+# (`is_ws`, `St`, `Esc`, `is_safe`, `quote_bytes`) are anchored too: an anchor hashes its own item only.
+anchors = [
+    { item = "crates/snp-pycompat/src/shlex.rs::split", fingerprint = "71f6ef5a43be5b96" },
+    { item = "crates/snp-pycompat/src/shlex.rs::quote", fingerprint = "00a8f6564f6491e1" },
+    { item = "crates/snp-pycompat/src/shlex.rs::join", fingerprint = "8e2d42c5e4ce29b1" },
+    { item = "crates/snp-pycompat/src/shlex.rs::is_ws", fingerprint = "d94f06c56190310a" },
+    { item = "crates/snp-pycompat/src/shlex.rs::St", fingerprint = "f55e6abc0db7e0e7" },
+    { item = "crates/snp-pycompat/src/shlex.rs::Esc", fingerprint = "bd7630144abb5859" },
+    { item = "crates/snp-pycompat/src/shlex.rs::is_safe", fingerprint = "b7ec02e51135e6f3" },
+    { item = "crates/snp-pycompat/src/shlex.rs::quote_bytes", fingerprint = "939a1fcd4c229284" },
+]
+[model.statements]
+"SnpModels.Shlex.pySplit_eq_split" = "67a279bf3ae4866e"
+"SnpModels.Shlex.split_quote" = "4ab0fa788ac59903"
+"SnpModels.Shlex.split_join" = "c86111f19da7c967"

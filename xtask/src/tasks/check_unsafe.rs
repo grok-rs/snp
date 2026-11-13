@@ -3,9 +3,12 @@
 //! Checks (all must hold):
 //! * the root manifest sets `[workspace.lints.rust] unsafe_code = "forbid"`;
 //! * every workspace member inherits it (`[lints] workspace = true`), and the fuzz crate forbids it too;
-//! * no Rust source under `crates/`, `xtask/` or `fuzz/` contains an `unsafe` block, fn, impl or trait, an
-//!   `extern` block, an unsafe attribute (`#[unsafe(..)]`, `no_mangle`, `export_name`, `link_section`), the
-//!   `unsafe` keyword inside a macro invocation, or an attribute that relaxes the `unsafe_code` lint.
+//! * no Rust source under `crates/`, `xtask/`, `fuzz/` or `proofs/` contains an `unsafe` block, fn, impl or trait,
+//!   an `extern` block, an unsafe attribute (`#[unsafe(..)]`, `no_mangle`, `export_name`, `link_section`), the
+//!   `unsafe` keyword inside a macro invocation, or an attribute that relaxes the `unsafe_code` lint;
+//! * the Verus root `proofs/verus/kernels.rs`, which no Cargo manifest covers, carries `#![forbid(unsafe_code)]`
+//!   itself (ADR-095: that also makes `assume_specification` impossible in the mounted kernel files). Only
+//!   `proofs/verus/trusted/`, which does not exist in M1, would be exempt from these checks (docs/VERIFICATION.md §6).
 //!
 //! Owner: WP-00.
 
@@ -19,7 +22,9 @@ use syn::visit::{self, Visit};
 use crate::workspace;
 
 /// Directories whose Rust sources are scanned.
-const SOURCE_DIRS: [&str; 3] = ["crates", "xtask", "fuzz"];
+const SOURCE_DIRS: [&str; 4] = ["crates", "xtask", "fuzz", "proofs"];
+/// Crate roots outside every Cargo manifest that must forbid `unsafe_code` themselves (ADR-095).
+const STANDALONE_ROOTS: [&str; 1] = [super::proofs::ROOT];
 /// Attributes that are unsafe in edition 2024.
 const UNSAFE_ATTRS: [&str; 3] = ["no_mangle", "export_name", "link_section"];
 /// Lint-level attributes that could relax `unsafe_code`.
@@ -126,6 +131,16 @@ pub(crate) fn scan_source(src: &str) -> anyhow::Result<Vec<String>> {
     Ok(f.hits)
 }
 
+/// Whether `src` carries the inner attribute `#![forbid(unsafe_code)]` (possibly among other lints).
+fn forbids_unsafe(src: &str) -> anyhow::Result<bool> {
+    let file = syn::parse_file(src).context("parsing Rust source")?;
+    Ok(file.attrs.iter().any(|a| {
+        matches!(a.style, syn::AttrStyle::Inner(_))
+            && matches!(&a.meta, syn::Meta::List(l)
+                if l.path.is_ident("forbid") && l.tokens.to_string().contains("unsafe_code"))
+    }))
+}
+
 /// `[lints] workspace = true` in a member manifest.
 fn inherits_workspace_lints(manifest: &toml::Table) -> bool {
     manifest
@@ -197,9 +212,26 @@ pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
         }
     }
 
+    for rel in STANDALONE_ROOTS {
+        let path = root.join(rel);
+        if !path.is_file() {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).with_context(|| format!("reading {rel}"))?;
+        if !forbids_unsafe(&src).with_context(|| rel.to_owned())? {
+            problems.push(format!(
+                "{rel}: a standalone root must carry `#![forbid(unsafe_code)]`"
+            ));
+        }
+    }
+
+    let trusted = root.join(super::proofs::TRUSTED_DIR);
     let mut files = 0_usize;
     for dir in SOURCE_DIRS {
         for path in workspace::rust_files(&root.join(dir))? {
+            if path.starts_with(&trusted) {
+                continue;
+            }
             files = files.saturating_add(1);
             let src = std::fs::read_to_string(&path)
                 .with_context(|| format!("reading {}", path.display()))?;
@@ -252,6 +284,14 @@ mod tests {
         "#;
         let w = whats(src);
         assert_eq!(w.len(), 10, "{w:?}");
+    }
+
+    #[test]
+    fn standalone_roots_must_forbid_unsafe() {
+        assert!(forbids_unsafe("#![forbid(unsafe_code)]\nfn f() {}").unwrap());
+        assert!(forbids_unsafe("#![forbid(missing_docs, unsafe_code)]\n").unwrap());
+        assert!(!forbids_unsafe("#![deny(unsafe_code)]\n").unwrap());
+        assert!(!forbids_unsafe("#[forbid(unsafe_code)]\nfn f() {}").unwrap());
     }
 
     #[test]

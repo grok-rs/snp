@@ -1,0 +1,8 @@
+name = "demo"
+
+[[lean_lib]]
+name = "Demo"
+
+[[lean_exe]]
+name = "demo-model"
+root = "DemoMain"

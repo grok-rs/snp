@@ -231,6 +231,10 @@ its tests run with a fake resolver before snp-repo lands. Critical path: pycompa
   resolves (clippy warns on an unresolvable path; `-Dwarnings` makes it an error). CI builds with
   `RUSTFLAGS=-Dwarnings`: `cargo clippy --workspace --lib --bins` with the full set, and `cargo clippy --workspace
   --tests --benches --examples -- -A clippy::disallowed_macros -A clippy::arithmetic_side_effects` for test code.
+* **check-cfg** (`[workspace.lints.rust] unexpected_cfgs`): the known custom cfgs are `coverage_nightly` and
+  `verus_keep_ghost` (ADR-095). Only the standalone Verus run sets `verus_keep_ghost`; every normal build, test, clippy,
+  rustdoc, fuzz and `cargo install` strips the items and attributes gated on it, so a kernel file's contract adds no
+  dependency. Kernel files follow docs/VERIFICATION.md §2.3 (rules K1–K10), enforced by `cargo xtask proofs check`.
 * **W0 stubs.** Each stub lives in a module file that has exactly one owning package (WBS), and that file starts with
   the inner attribute `#![expect(clippy::todo, reason = "W0 stub, removed by WP-xx")]` (never a crate-level attribute
   in a `lib.rs` shared by several owners). When the owner removes the file's last `todo!()` the expectation becomes
@@ -3568,7 +3572,11 @@ crates), `cargo audit` nightly, committed `Cargo.lock` + `--locked` everywhere, 
 `tar ≥ 0.4.46`, no build scripts in snp crates, `cargo auditable` release builds, SBOM (cargo-cyclonedx), GitHub
 artifact attestations, checksums for every release asset, dependency budget ≤ 120 packages in the release graph.
 `libyaml-safer` (single maintainer) is wrapped by `snp-yaml`'s event adapter, fuzzed, and fork-ready via
-`[patch.crates-io]`.
+`[patch.crates-io]`. **CI tool supply chain (ADR-095):** the proof tools never enter a build, a lockfile or the release
+graph. The Verus release zip and verusfmt are pinned by version and per-platform sha256 in `proofs/registry.toml` and
+installed by `.github/scripts/proofs-tools.sh` (download, sha256 check, unpack; Verus's rustc 1.99.1 as a minimal
+rustup toolchain that is never the default); Lean is pinned by `proofs/lean/lean-toolchain` (elan) and the Lake package
+uses the core library only; `leanprover/lean-action` is pinned by commit SHA. A bump of any of them is a dedicated PR.
 
 ---
 
@@ -3651,6 +3659,7 @@ tagging tiers, YAML load of the pre-commit-hooks manifest, argparse parse of a h
 | L6 platform | Linux x64/arm64 (gnu + musl smoke), macOS arm64 + x64, Windows x64/arm64 × git 2.18.5 (warn; stash refused, D-DATA-17; `--all-files` fallback, D-CRASH-26 — both `expect_divergence` scenarios), 2.30 (warn; fallback), 2.31, 2.34, 2.39, 2.43, 2.54 (config hooks), latest, Git for Windows latest | PR |
 | L7 performance | §12.3 | nightly + PR comment |
 | L8 fault injection | snp-stash FI matrix, kill-9 crash matrix for store/install/stash, signal matrix, EPIPE, ENOSPC (tmpfs with a size limit), concurrency matrix | every push (posix) |
+| L9 proofs (ADR-095) | `cargo xtask proofs check` (guards G1–G10, tool-free; in `xtask gates`); `proofs verus` (Verus on the mounted kernel files, `--no-cheating`, manifest, mutants) and `proofs lean` + `proofs oracles` (Lean models, axiom audit, home-crate oracle tests) in `proofs.yml`; claims per docs/VERIFICATION.md §0 and §9 | guards every push; Verus and Lean on relevant changes (advisory until the owner makes the Verus step blocking) |
 
 Rules: no test mutates the process env or cwd; every spawned process gets the hermetic env (10 §7.3.2); tests run with
 and without `PRE_COMMIT_NO_CONCURRENCY=1`; binaries are referenced by `CARGO_BIN_EXE_*` inside their package and by
@@ -3744,7 +3753,9 @@ git versions per §13.1 L6 via containers; nextest profiles `default` (hermetic)
 (all). Coverage (llvm-cov) reported; mutation testing (`cargo mutants`) nightly on snp-stash, snp-proc::xargs,
 snp-argparse, snp-pyre. Every workflow first checks out the user crates as siblings at the `deps.lock` SHAs (ADR-061);
 a scheduled drift job compares those SHAs with the `snp-support` branch heads and opens an issue when they differ.
-`perf-smoke` (release-mode `#[ignore = "perf"]` tests) runs on push.
+`perf-smoke` (release-mode `#[ignore = "perf"]` tests) runs on push. Proofs (ADR-095, docs/VERIFICATION.md §7): the
+required `xtask gates` job runs `cargo xtask proofs check`; `proofs.yml` has the advisory `verus` and `lean` jobs, which
+always start and exit early when no proof-relevant path changed (no `on.paths` filter), with read-only permissions.
 
 ### 13.8 Test-catalog IDs (ADR-062)
 

@@ -14,6 +14,8 @@ use snp_core::env::Env;
 
 use crate::spawn::PyStatus;
 
+mod partition;
+
 /// `py_cpu_count()`: `sched_getaffinity` on Linux (14 A.4.3).
 ///
 /// `xargs.cpu_count`: `len(os.sched_getaffinity(0))` where it exists (Linux; cgroup CPU quotas are ignored, as in
@@ -149,6 +151,9 @@ pub struct ArgumentTooLong(pub OsString);
 ///
 /// `max_len` is `_max_length`; like Python's `_max_length or _get_platform_max_length()`, 0 selects
 /// [`platform_max_length`] (computed here with an empty environment: callers pass the real budget).
+///
+/// Unverified shell of kernel K1 (ADR-095): it computes the per-argument lengths, `base` and `max_args`, calls the
+/// verified `partition::partition_lens` and maps its error; the Windows batch resplit stays here.
 pub fn partition(
     cmd: &[OsString],
     files: &[&OsStr],
@@ -163,29 +168,15 @@ pub fn partition(
     // max(4, math.ceil(len(varargs) / target_concurrency))
     let max_args = files.len().div_ceil(jobs.get()).max(4);
     let base = command_length(cmd).saturating_add(1);
-
-    let mut ret = Vec::new();
-    let mut start = 0_usize;
-    let mut count = 0_usize;
-    let mut total = base;
-    let mut i = 0_usize;
-    while let Some(arg) = files.get(i) {
-        let arg_len = cmdlen(arg).saturating_add(1);
-        if total.saturating_add(arg_len) <= max_len && count < max_args {
-            count = count.saturating_add(1);
-            total = total.saturating_add(arg_len);
-            i = i.saturating_add(1);
-        } else if count == 0 {
-            return Err(ArgumentTooLong(arg.to_os_string()));
-        } else {
-            // Exceeded the budget: emit a command and retry this argument in a fresh one.
-            ret.push(start..i);
-            start = i;
-            count = 0;
-            total = base;
-        }
-    }
-    ret.push(start..i);
+    let lens: Vec<usize> = files.iter().map(|f| cmdlen(f).saturating_add(1)).collect();
+    // The verified greedy loop (ADR-095 K1); `Err(i)` is proved to be in bounds.
+    let ret = partition::partition_lens(&lens, base, max_len, max_args).map_err(|i| {
+        ArgumentTooLong(
+            files
+                .get(i)
+                .map_or_else(OsString::new, |f| f.to_os_string()),
+        )
+    })?;
     #[cfg(windows)]
     if let Some(script) = cmd.first().filter(|c| is_batch(c)) {
         return Ok(resplit_batch(
@@ -405,6 +396,29 @@ mod tests {
     fn t10_xrg_07_argument_too_long() {
         let e = partition(&os(&["aaaaa"]), &[OsStr::new("aaaaa")], n(1), 10).unwrap_err();
         assert_eq!(e.0, OsString::from("aaaaa"));
+    }
+
+    /// F2 (ADR-095 K1): Python's sums are unbounded, so an argument whose length overflows the budget arithmetic
+    /// never fits, even at `max_len == usize::MAX` (the former saturating sum accepted it).
+    #[test]
+    fn partition_lens_never_wraps_at_usize_max() {
+        let max = usize::MAX;
+        assert_eq!(partition::partition_lens(&[max], 1, max, 4), Err(0));
+        assert_eq!(partition::partition_lens(&[1, max], 1, max, 4), Err(1));
+        assert_eq!(
+            partition::partition_lens(&[max - 1], 1, max, 4),
+            Ok(std::iter::once(0..1).collect())
+        );
+        // A sum that would wrap closes the command instead of being accepted.
+        assert_eq!(
+            partition::partition_lens(&[max / 2, max / 2, 2], 1, max, 4),
+            Ok(vec![0..2, 2..3])
+        );
+        assert_eq!(
+            partition::partition_lens(&[], max, max, 0),
+            Ok(std::iter::once(0..0).collect())
+        );
+        assert_eq!(partition::partition_lens(&[0], 0, max, 0), Err(0));
     }
 
     #[test]

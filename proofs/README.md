@@ -1,0 +1,94 @@
+# proofs/
+
+Machine-checked proofs for snp (ADR-095). The reference is [docs/VERIFICATION.md](../docs/VERIFICATION.md): what
+is claimed and what is not (§0), the kernel rules K1-K10 (§2.3), the guards (§3) and the kernel table (§9).
+Contributors who do not touch a kernel file need none of this: build, test, clippy and fmt are unaffected.
+
+```
+registry.toml          kernels, models, mutants and trusted items (the single machine-readable source, §3.1)
+verus/kernels.rs       Verus root: mounts the production kernel files under crates/ unchanged
+verus/spec/            specs and lemmas, one module per kernel; generic lemmas in spec/lib/
+lean/                  Lake package SnpModels (core library only) and the oracle executables
+lean/client.rs         std-only line-protocol client that home-crate oracle tests include via #[path]
+```
+
+## Commands (docs/VERIFICATION.md §6)
+
+```sh
+cargo xtask proofs check                    # guards G1-G10: tool-free, runs in the required `xtask gates` job
+cargo xtask proofs install                  # pinned Verus, its rustc and verusfmt (.github/scripts/proofs-tools.sh)
+cargo xtask proofs verus                    # V1-V4: --no-cheating, manifest, verified floor, mutants, verusfmt
+cargo xtask proofs verus --module <mount>   # one mount, without --no-cheating: iteration only
+cargo xtask proofs mutants                  # V3 alone
+cargo xtask proofs lean                     # L1-L5: lake build --wfail, axiom audit, leanchecker, forbidden tokens,
+                                            #   compiler-attribute audit and theorem statement pins
+cargo xtask proofs oracles [-k <model id>]  # Lean oracle executables + home-crate oracle tests
+cargo xtask proofs status                   # pins, tools, kernels, models, stale anchors
+cargo xtask proofs fingerprint <file.rs::item>   # value for a [[model]] anchor
+cargo xtask proofs fingerprint <file>            # whole-file value for driver_/oracle_test_fingerprint
+```
+
+## Install
+
+- **Verus** `0.2026.11.02.8bf68ee` (pin and sha256 in `registry.toml`): unzip the release into a tools directory
+  and put it on `PATH`. It needs the rustup toolchain `1.99.1` (`rustup toolchain install 1.99.1 --profile
+  minimal`); the `verus` launcher selects it through `RUSTUP_TOOLCHAIN`, so never make it the rustup default.
+  verusfmt `0.7.4` goes next to it. On the owner's machine: `. ~/.cache/snp-dev/tools/verus/env.sh`.
+- **Lean** through elan; `proofs/lean/lean-toolchain` pins `leanprover/lean4:v4.34.1`, which elan fetches on the
+  first `lake` call. Where `release.lean-lang.org` does not resolve, download the GitHub release tarball and run
+  `elan toolchain link`.
+
+## Run Verus
+
+`cargo xtask proofs verus` is the gate (see Commands). For extra Verus flags while iterating, run the same
+command by hand from the repository root:
+
+```sh
+verus proofs/verus/kernels.rs --crate-type=lib --edition=2024 --no-cheating --expand-errors
+```
+
+To try an ad-hoc mutant, edit the kernel file, run `cargo xtask proofs verus` (it must fail), then revert the edit;
+register the mutant in `registry.toml` if it is worth keeping.
+
+Verus refuses `--verify-module` together with `--no-cheating`, so a module run omits that flag and is an
+iteration aid; the gate is the whole-root run. Kernel files are formatted by rustfmt (`cargo fmt`); the root and
+`spec/` by `verusfmt` (`verusfmt --check proofs/verus/kernels.rs proofs/verus/spec/*.rs proofs/verus/spec/lib/*.rs`).
+
+## Run Lean
+
+```sh
+cd proofs/lean
+lake build --wfail                # --wfail is mandatory: a `sorry` is only a warning
+lake env lean Axioms.lean         # every theorem: only propext, Classical.choice, Quot.sound
+lake env leanchecker SnpModels    # independent re-check of the environment
+```
+
+Oracle tests in the kernels' home crates read the executables from `SNP_LEAN_ORACLES` and are skipped when it is
+unset; `SNP_REQUIRE_LEAN_ORACLES=1` turns a skip into a failure:
+
+```sh
+SNP_LEAN_ORACLES=$PWD/proofs/lean/.lake/build/bin SNP_REQUIRE_LEAN_ORACLES=1 \
+    cargo nextest run -p snp-pycompat --test lean_oracle
+```
+
+`xtask/oracle/py_vs_lean.py` checks the models themselves against the Python they transliterate (CPython 3.12
+`shlex`, pre-commit-hooks v6.0.0 `end_of_file_fixer`); it is the only Python in the proof pipeline. No workflow runs
+it yet (a nightly job is planned, docs/VERIFICATION.md §7 and §9.1 S4), so run it by hand after a model change:
+
+```sh
+git clone --depth 1 --branch v6.0.0 https://github.com/pre-commit/pre-commit-hooks target/pch-v6.0.0
+python3 -I xtask/oracle/py_vs_lean.py --bin proofs/lean/.lake/build/bin --pch target/pch-v6.0.0 --expect-python 3.12
+```
+
+## Add a kernel (§8.4)
+
+1. Fix any known bug first, with its own test and CHANGELOG entry.
+2. Move the pure core into its own file next to the shell, behaviour-preserving. The first line is
+   `//! Verified kernel (ADR-095): …`; follow rules K1-K10 (no `verus!` block, only the allowed
+   `cfg_attr(verus_keep_ghost, …)` forms, `pub(crate)`, no `requires` on a non-private function, std-only code).
+3. Write the spec and the property lemmas in `verus/spec/<kernel>.rs` (cite the upstream `file:line`) and add the
+   module to `verus/spec/mod.rs`.
+4. Mount the file in `verus/kernels.rs` with `#[verus_verify]` and a one-line `#[path = "../../crates/…"]`.
+5. Add the `[[kernel]]` entry to `registry.toml` (callers, `verified_min`, at least one mutant) and check that
+   every mutant fails with `cargo xtask proofs mutants`; `cargo xtask proofs check` must pass.
+6. Add the G/¬G row to docs/VERIFICATION.md §9, and an oracle test if a Lean model exists.

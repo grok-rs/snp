@@ -1,0 +1,161 @@
+# Machine-checked kernels (ADR-095, docs/VERIFICATION.md §7). Owned by WP-00.
+#
+# Both jobs are ADVISORY: they are not required checks, so a red run does not block a merge. The tool-free guards
+# (`cargo xtask proofs check`) run in the required `xtask gates` job of ci.yml instead. Making the Verus step
+# blocking (a step of `xtask gates` plus release gate 7) is an owner decision due at M1 exit.
+#
+# Jobs always start and exit early when no relevant path changed: an `on.paths` filter would leave a check that is
+# later made required pending forever. Layout as in ci.yml: the repository at $GITHUB_WORKSPACE/snp, the user
+# crates next to it at the deps.lock commits.
+name: proofs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: proofs-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: -Dwarnings
+  RUST_BACKTRACE: "1"
+
+defaults:
+  run:
+    shell: bash
+    working-directory: snp
+
+jobs:
+  verus:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp, fetch-depth: 0 }
+      - name: Relevant change?
+        id: paths
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          # The registry, the Verus tree, every kernel file, and the tooling itself.
+          kernels="$(sed -n 's/^file = "\(.*\)".*/\1/p' proofs/registry.toml | sed 's/[.]/[.]/g' | paste -sd'|' -)"
+          pattern="^(proofs/registry[.]toml|proofs/verus/|xtask/src/tasks/proofs|[.]github/workflows/proofs[.]yml|[.]github/scripts/proofs-tools[.]sh${kernels:+|$kernels})"
+          base=""
+          case "$EVENT" in
+            pull_request) base="$PR_BASE" ;;
+            push) base="$PUSH_BEFORE" ;;
+          esac
+          if [ -z "$base" ] || [ "$base" = 0000000000000000000000000000000000000000 ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$base" HEAD | grep -Eq "$pattern"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No proof-relevant change: nothing to verify."
+          fi
+      - name: User crates at the deps.lock commits
+        if: steps.paths.outputs.run == 'true'
+        run: .github/scripts/deps-lock.sh checkout
+      - if: steps.paths.outputs.run == 'true'
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        if: steps.paths.outputs.run == 'true'
+        with: { workspaces: snp, key: proofs }
+      - name: Key of the Verus pins
+        id: pins
+        if: steps.paths.outputs.run == 'true'
+        # Only the [verus] table: a kernel, model or mutant edit must not miss the tools cache.
+        run: |
+          echo "key=$(awk '/^\[verus\][[:space:]]*$/ { on = 1; next } /^\[/ { on = 0 } on && /^[a-z]/' proofs/registry.toml | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - name: Cache the pinned Verus tools and their rustc
+        if: steps.paths.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/snp-dev/tools/verus
+            ~/.rustup/toolchains/1.99.1-*
+          key: verus-${{ runner.os }}-${{ steps.pins.outputs.key }}-${{ hashFiles('snp/.github/scripts/proofs-tools.sh') }}
+      - if: steps.paths.outputs.run == 'true'
+        run: cargo xtask proofs install
+      - if: steps.paths.outputs.run == 'true'
+        run: cargo xtask proofs check
+      - name: Verus (V1-V4)
+        if: steps.paths.outputs.run == 'true'
+        run: cargo xtask proofs verus --json "$RUNNER_TEMP/verus.json"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.paths.outputs.run == 'true'
+        with:
+          name: verus-report
+          path: ${{ runner.temp }}/verus.json
+          if-no-files-found: ignore
+
+  lean:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp, fetch-depth: 0 }
+      - name: Relevant change?
+        id: paths
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          # The registry, the Lake package, the home crates of the oracle tests, and the tooling itself.
+          crates="$(sed -n 's|^oracle_test = "\(crates/[^/]*/\).*|\1|p' proofs/registry.toml | sort -u | paste -sd'|' -)"
+          pattern="^(proofs/registry[.]toml|proofs/lean/|xtask/src/tasks/proofs|[.]github/workflows/proofs[.]yml${crates:+|$crates})"
+          base=""
+          case "$EVENT" in
+            pull_request) base="$PR_BASE" ;;
+            push) base="$PUSH_BEFORE" ;;
+          esac
+          if [ -z "$base" ] || [ "$base" = 0000000000000000000000000000000000000000 ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$base" HEAD | grep -Eq "$pattern"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No model-relevant change: nothing to check."
+          fi
+      - name: User crates at the deps.lock commits
+        if: steps.paths.outputs.run == 'true'
+        run: .github/scripts/deps-lock.sh checkout
+      # leanprover/lean-action v1.7.1: installs elan and the toolchain of proofs/lean/lean-toolchain, builds with
+      # --wfail (a `sorry` is only a warning otherwise). Its own axiom-audit and leanchecker steps stay off: they derive
+      # the module name from the package name ("Snpmodels", not SnpModels) and find no oleans. `cargo xtask proofs lean`
+      # below runs both on the right module (L2, L3).
+      - uses: leanprover/lean-action@ba3fdfe5c4476c925da13bf11a005ddb47e47aee # v1.7.1
+        if: steps.paths.outputs.run == 'true'
+        with:
+          lake-package-directory: snp/proofs/lean
+          build-args: --wfail
+          test: false
+          lint: false
+          axiom-audit: false
+          leanchecker: false
+          use-mathlib-cache: false
+      - if: steps.paths.outputs.run == 'true'
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        if: steps.paths.outputs.run == 'true'
+        with: { workspaces: snp, key: proofs-lean }
+      - uses: taiki-e/install-action@v2
+        if: steps.paths.outputs.run == 'true'
+        with: { tool: cargo-nextest }
+      - name: Lean (L1-L5)
+        if: steps.paths.outputs.run == 'true'
+        run: cargo xtask proofs lean
+      - name: Oracle tests (SNP_REQUIRE_LEAN_ORACLES=1)
+        if: steps.paths.outputs.run == 'true'
+        run: cargo xtask proofs oracles

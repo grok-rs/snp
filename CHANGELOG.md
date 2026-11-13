@@ -40,6 +40,10 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   those plus every file `git diff` shows changed, so hook fixes are still discarded as before. A failing stash
   checkout's `CalledProcessError` names the new command; recovery hints with too many files to spell out read them
   from a kept `<patch>.paths` list instead of restoring the whole worktree. New divergence D-DATA-19 (ADR-093).
+- xargs partitioning no longer accepts an argument whose length overflows the command-length arithmetic: with a
+  budget of `usize::MAX` the saturating sum let such an argument fit, where pre-commit's unbounded integers raise
+  `ArgumentTooLongError`. The greedy loop is now the kernel `partition_lens`, which is proved to satisfy a spec transcribed
+  from `xargs.partition` (ADR-095). Real budgets are at most 131072, so no run changes in practice.
 
 ### Security
 

@@ -31,7 +31,7 @@ packages). Every package description below is self-contained; `NN §x` = `docs/r
   `crates/snp-lang/tests/api.rs` (WP-16/24/25) and `crates/snp-hooks/tests/api.rs` (WP-26/27); the ADR-061 drift checks
   `crates/snp-config/tests/user_crates.rs` and `crates/snp-files/tests/user_crates.rs`; `crates/snp/tests/it/main.rs`;
   `fuzz/Cargo.toml`, `fuzz/Cargo.lock`; `xtask/Cargo.toml`, `xtask/src/main.rs`, `xtask/src/workspace.rs`,
-  `xtask/src/tasks/mod.rs` and WP-00's own tasks (`check_dag`, `check_unsafe`, `lint_guards`, `catalog_index`, `oracle`,
+  `xtask/src/tasks/mod.rs` and WP-00's own tasks (`check_dag`, `check_unsafe`, `lint_guards`, `catalog_index`, `oracle`, `proofs`,
   `xtask/oracle/requirements-pc462.*`); `.github/scripts/**`; `tests/catalog/**`. Shared manifests: `fuzz/Cargo.toml`
   depends on every crate a §13.5 target needs, `snp-core` and `snp-os` included; `xtask/Cargo.toml` pre-declares clap,
   clap_complete and clap_mangen for WP-12's `completions`; a fuzz-target or xtask-task owner needing a further workspace
@@ -124,6 +124,7 @@ scenario corpus, `brand_map.yaml`, the READMEs and the register tooling, never a
 | W3 | WP-35 | Differential harness, corpus, divergence-register tooling | WP-14, WP-18, WP-21 |
 | W3 | WP-36 | Performance and memory gates | WP-11, WP-12, WP-13, WP-14, WP-22, WP-23, WP-26 |
 | W3 | WP-37 | Platform CI, release, packaging, user documentation | WP-18, WP-21 |
+| post-v2 | WP-38 | Formal verification: machine-checked kernels and Lean models (ADR-095) | WP-00 (xtask, CI), the owners of each kernel's crate |
 
 W3 packages start together; WP-32/33/35/36/37 code against frozen APIs immediately (WP-32 uses a fake `Resolve`), and
 their end-to-end acceptance items marked **[e2e]** are run once WP-31…WP-33 are merged (wave-internal integration
@@ -629,6 +630,21 @@ External dependencies (roxmltree for the dotnet nuspec, serde_json for JSON prob
 - [e2e] cargo-dist dry run produces all targets with checksums, auditable binaries, SBOM and attestations; the snp-cli wheel installs and runs `snp --version` on all three OSes
 - user documentation builds (xtask docs) with no broken links and includes the generated DIVERGENCES book and CLI reference
 - [e2e] the release workflow fails when a user crate's published version does not match deps.lock, and passes from a clean checkout otherwise
+
+### WP-38 — Formal verification: machine-checked kernels and Lean models (post-v2, ADR-095)
+
+* **Depends on:** WP-00 (root manifest check-cfg line, `xtask/src/tasks/proofs.rs`, `.github/workflows/proofs.yml`, `.github/scripts/proofs-tools.sh`); the owners of each kernel's crate review its kernel file
+* **Owned paths:** `proofs/**` (registry, Verus root, specs, Lean package, oracle client), `docs/VERIFICATION.md`; the kernel files listed in `proofs/registry.toml` are co-owned with their crate's package (the package owns the behaviour, WP-38 the contract), and each kernel's home-crate oracle test (`crates/<crate>/tests/lean_oracle.rs`)
+* **Spec references:** ADR-095; docs/VERIFICATION.md (all); ADR-056 (snp-pycompat stays dependency-free), ADR-066 (proven sites), ADR-088 (published closure unchanged); ARCH §1.3, §11.7, §13.1 (L9), §13.7
+
+**Brief.** Prove kernels of the shipped source with Verus in place (zero-dependency `cfg_attr(verus_keep_ghost, …)` contracts in the production files, mounted unchanged by `proofs/verus/kernels.rs`) and prove Lean 4 models of pre-commit's Python, linked to the code by home-crate oracle tests and fingerprinted anchors. Milestones (VERIFICATION §12): M0 pipeline (registry, root, spec library, Lean package, `xtask proofs`, guards in `xtask gates`, advisory `proofs.yml`; done); M1 K1–K4 (xargs partition core, archive entry-name check, end-of-file-fixer with its Lean model, shlex split model; all four landed, the exit decision on a blocking Verus step is pending); M2 K5–K9 with the fixes F1/F3; M3 K10–K13 and generated mutants. Every claim follows the wording rule of VERIFICATION §0 ("kernel X is proved to satisfy spec Y"; never "snp is formally verified"), and every kernel row lists its guarantees next to its non-guarantees.
+
+**Acceptance.**
+- `cargo xtask proofs check` green in `xtask gates` on every PR (guards G1–G10 with fixture unit tests)
+- M1: `cargo xtask proofs verus` green with `--no-cheating`, a complete manifest and an empty trusted list; the root verification (mutants excluded) under 15 s and the whole command, mutants included, under about 60 s; every kernel has a mutant that fails; production calls K1–K3
+- M1: `cargo xtask proofs lean` (`--wfail`, axiom allowlist, `leanchecker`, forbidden tokens, the L5 attribute audit and statement pins) and both oracle tests with `SNP_REQUIRE_LEAN_ORACLES=1` green
+- `Cargo.lock`, `cargo deny check`, the published closure and an empty `cargo tree -p snp-pycompat` unchanged by any kernel
+- the §9 G/¬G rows of docs/VERIFICATION.md complete for every registered kernel and model
 
 ## Crates
 
