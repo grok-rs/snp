@@ -996,6 +996,15 @@ fn a_patch_stashed_with_only_the_pointer_journal_is_restored() {
             return;
         }
         let sb = Sandbox::new();
+        // git < 2.19 does not report intent-to-add files (D-DATA-17): no journal before the patch there.
+        let floor = snp_git::GitVersion {
+            major: 2,
+            minor: 19,
+            patch: 0,
+        };
+        if sb.exe().caps.version.is_some_and(|v| v < floor) {
+            return;
+        }
         let repo = sb.foo_staged("r");
         sb.write(&repo, "n", b"x\n");
         sb.git(&repo, &["add", "--intent-to-add", "n"]);
