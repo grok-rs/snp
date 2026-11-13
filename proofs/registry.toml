@@ -30,5 +30,24 @@ mutants = [
     { find = "match total.checked_add(arg_len) {", replace = "match Some(total.saturating_add(arg_len)) {" },
 ]
 
+[[kernel]]
+id = "K2-archive-entry"
+status = "verified"
+file = "crates/snp-net/src/archive/entry.rs"
+mount = "snp_net_archive_entry"
+spec = "proofs/verus/spec/archive_entry.rs"
+callers = ["crates/snp-net/src/archive/path.rs::entry_path"]
+verified_min = 15
+mutants = [
+    # Accepts a `..` component (the ADR-077 escape).
+    { find = "return Err(Refusal::DotDot);", replace = "return Ok(true);" },
+    # Lets a NUL byte through in the first position.
+    { find = "if b == 0 {", replace = "if b == 0 && i > 0 {" },
+    # Forgets `\` as a separator when `windows` (finds avoid backslashes: run.sh's awk may unescape them).
+    { find = "(windows && b == ", replace = "(false && b == " },
+    # Forgets `\x` as a rooted name.
+    { find = "if c0 == b'/' || c0 ==", replace = "if c0 == b'/' || false && c0 ==" },
+]
+
 # [[model]]: Lean models with oracle tests and fingerprinted anchors (K3, K4 add theirs).
 # [[trusted]]: empty in M1 (§10 row 8). From M2: { item = "Memchr: FindByte", kernel = "K5", test = "…" }

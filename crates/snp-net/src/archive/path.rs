@@ -4,6 +4,7 @@
 
 use std::ffi::OsString;
 
+use super::entry::entry_components;
 use crate::NetError;
 
 /// A validated path inside the extracted tree: one or more plain components (never empty, `.`, `..`, absolute or
@@ -68,16 +69,16 @@ fn component(comp: &[u8]) -> Option<OsString> {
 /// The validated path of an archive entry named `raw`, with the first `strip` components removed (`tar
 /// --strip-components`). `Ok(None)`: the entry lies entirely within the stripped prefix (e.g. the top directory).
 /// Absolute, drive-prefixed and `..` names are rejected; empty and `.` components are dropped.
+///
+/// The name check is the verified kernel [`entry_components`] (ADR-095); this shell only converts each component
+/// to an OS string, which on Windows adds refusals (non-UTF-8, NTFS-illegal characters, reserved device names) and
+/// never removes one. Every component is converted before stripping, so the stripped prefix is checked too.
 pub(crate) fn entry_path(raw: &[u8], strip: u8) -> Result<Option<RelPath>, NetError> {
-    if raw.is_empty() || is_rooted(raw) {
-        return Err(unsafe_entry(raw));
-    }
+    let spans = entry_components(raw, cfg!(windows)).map_err(|_| unsafe_entry(raw))?;
     let mut comps: RelPath = Vec::new();
-    for c in split(raw) {
-        if c.is_empty() || c == b"." {
-            continue;
-        }
-        comps.push(component(c).ok_or_else(|| unsafe_entry(raw))?);
+    for (start, end) in spans {
+        let c = raw.get(start..end).and_then(component);
+        comps.push(c.ok_or_else(|| unsafe_entry(raw))?);
     }
     let strip = usize::from(strip);
     if comps.len() <= strip {
@@ -170,6 +171,80 @@ mod tests {
         }
         // `..` is refused even inside the stripped prefix.
         assert_eq!(p("../top/x", 1), Err(()));
+    }
+
+    /// The name check as it was before the verified kernel (ADR-095), with the platform made a parameter: the
+    /// components (not yet converted to OS strings), or `None` for a refused name.
+    fn reference(raw: &[u8], windows: bool) -> Option<Vec<Vec<u8>>> {
+        let rooted = matches!(raw.first(), Some(b'/' | b'\\'))
+            || matches!(raw, [d, b':', ..] if d.is_ascii_alphabetic());
+        if raw.is_empty() || rooted {
+            return None;
+        }
+        let mut comps = Vec::new();
+        for c in raw.split(|b| *b == b'/' || (windows && *b == b'\\')) {
+            if c.is_empty() || c == b"." {
+                continue;
+            }
+            if c == b".." || c.contains(&0) {
+                return None;
+            }
+            comps.push(c.to_vec());
+        }
+        Some(comps)
+    }
+
+    /// The kernel equals the former check on every name over a separator-rich alphabet up to length 6, for both
+    /// values of `windows` (the proof covers every input; this pins the extraction itself).
+    #[test]
+    fn kernel_matches_the_former_check() {
+        const ALPHABET: &[u8] = b"a./\\\0:C";
+        let mut name = Vec::new();
+        let mut cases = 0_usize;
+        for len in 0..=6_u32 {
+            let total = ALPHABET.len().checked_pow(len).unwrap_or(0);
+            for mut code in 0..total {
+                name.clear();
+                for _ in 0..len {
+                    name.extend(ALPHABET.get(code % ALPHABET.len()));
+                    code /= ALPHABET.len();
+                }
+                for windows in [false, true] {
+                    let got = entry_components(&name, windows).ok().map(|spans| {
+                        spans
+                            .iter()
+                            .map(|&(s, e)| name.get(s..e).map(<[u8]>::to_vec))
+                            .collect::<Option<Vec<_>>>()
+                    });
+                    assert_eq!(
+                        got,
+                        reference(&name, windows).map(Some),
+                        "{name:?} windows={windows}"
+                    );
+                    cases += 1;
+                }
+            }
+        }
+        assert_eq!(cases, 2 * (1 + 7 + 49 + 343 + 2401 + 16807 + 117_649));
+    }
+
+    #[test]
+    fn kernel_separators_follow_the_platform_flag() {
+        use super::super::entry::Refusal;
+        assert!(entry_components(b"a\\..\\b", true).is_err());
+        assert_eq!(entry_components(b"a\\..\\b", false), Ok(vec![(0, 6)]));
+        assert_eq!(
+            entry_components(b"a\\.\\\\b/c", true),
+            Ok(vec![(0, 1), (5, 6), (7, 8)])
+        );
+        assert_eq!(entry_components(b"./x/", false), Ok(vec![(2, 3)]));
+        assert_eq!(entry_components(b"", false), Err(Refusal::Rooted));
+        assert_eq!(entry_components(b"c:x", false), Err(Refusal::Rooted));
+        assert_eq!(entry_components(b"a/../b", false), Err(Refusal::DotDot));
+        assert_eq!(entry_components(b"a/b\0/..", false), Err(Refusal::Nul));
+        // A NUL or `..` in what --strip-components removes still refuses the whole name.
+        assert!(entry_path(b"t\0p/x", 1).is_err());
+        assert!(entry_path(b"a/../x/y", 2).is_err());
     }
 
     #[test]
