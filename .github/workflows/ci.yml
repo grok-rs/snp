@@ -133,6 +133,8 @@ jobs:
       - run: cargo xtask check-unsafe
       - run: cargo xtask lint-guards
       - run: cargo xtask catalog-index --check
+      # ADR-095: the tool-free proof guards G1-G10 (docs/VERIFICATION.md §3.2). Verus and Lean run in proofs.yml.
+      - run: cargo xtask proofs check
 
   test:
     name: test (${{ matrix.os }})

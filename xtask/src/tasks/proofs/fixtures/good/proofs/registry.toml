@@ -1,0 +1,29 @@
+# Fixture registry for the guard unit tests (xtask/src/tasks/proofs/guards/tests.rs); not a real kernel.
+[verus]
+version = "0.2026.11.02.8bf68ee"
+rustc = "1.99.1"
+sha256 = { x86-linux = "f3a0119292df8855e4435da8130bee1873b0e6a60c306accf81a08ea687bba3c" }
+verusfmt = { version = "0.7.4", sha256 = { x86_64-unknown-linux-gnu = "bbc5cb02c01efeaf9e66c93443ae782b11c5d8fd88c67d558c23216222971f4f" } }
+
+[[kernel]]
+id = "K9-demo"
+status = "verified"
+file = "crates/demo/src/kern.rs"
+mount = "demo_kern"
+spec = "proofs/verus/spec/demo.rs"
+callers = ["crates/demo/src/lib.rs::split"]
+verified_min = 3
+mutants = [{ find = "out.push(start..i);", replace = "out.push(start..start);" }]
+
+[[model]]
+id = "M9-demo"
+lean = "proofs/lean/Demo.lean"
+theorems = ["Demo.t"]
+oracle = "demo-model"
+oracle_test = "crates/demo/tests/oracle.rs"
+anchors = [{ item = "crates/demo/src/lib.rs::split", fingerprint = "0000000000000000" }]
+
+[[trusted]]
+item = "Fast: FindByte"
+kernel = "K9-demo"
+test = "crates/demo/tests/oracle.rs::fast_matches_scalar"

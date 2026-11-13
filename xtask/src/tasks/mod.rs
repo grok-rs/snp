@@ -21,6 +21,7 @@ mod oracle;
 mod pch_gates;
 mod pch_goldens;
 mod platform_facts;
+mod proofs;
 mod pycompat_vectors;
 mod pyre_vectors;
 mod release;
@@ -120,6 +121,11 @@ pub(crate) const TASKS: &[Task] = &[
         name: "platform-facts",
         owner: "WP-37",
         run: platform_facts::run,
+    },
+    Task {
+        name: "proofs",
+        owner: "WP-00",
+        run: proofs::run,
     },
     Task {
         name: "pycompat-vectors",
