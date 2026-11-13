@@ -651,6 +651,72 @@ fn ita_only_with_an_unwritable_store_writes_the_pointer_and_notes_it() {
     }
 }
 
+/// The pointer-only case: intent-to-add files are cleared while the store cannot take the journal, and the store is
+/// writable again when the patch is created. The run stashes with the git-dir pointer alone (the patch's directory
+/// entry is synced by the stash itself, as no store journal did it), and restores everything.
+#[test]
+fn a_patch_stashed_with_only_the_pointer_journal_is_restored() {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if rustix::process::geteuid().is_root() {
+            return;
+        }
+        let sb = Sandbox::new();
+        let repo = sb.foo_staged("r");
+        sb.write(&repo, "n", b"x\n");
+        sb.git(&repo, &["add", "--intent-to-add", "n"]);
+        sb.write(&repo, "foo", b"herp\n");
+        std::fs::create_dir_all(sb.patches()).unwrap();
+        std::fs::set_permissions(sb.patches(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        let spy = Spy::new();
+        {
+            let patches = sb.patches();
+            spy.before(
+                &["rm", "--cached"],
+                Some(1),
+                Box::new(move |_| {
+                    std::fs::set_permissions(&patches, std::fs::Permissions::from_mode(0o700))
+                        .unwrap();
+                }),
+            );
+        }
+        let seen = Arc::new(Mutex::new(None));
+        {
+            let seen = Arc::clone(&seen);
+            let repo = repo.clone();
+            spy.before(
+                &["-c", "submodule.recurse=0", "checkout"],
+                Some(1),
+                Box::new(move |_| *seen.lock().unwrap() = Some(pointer(&repo))),
+            );
+        }
+        let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+        let (cx, out, err) = sb.ctx_with(git, info);
+        let g = snp_stash::enter(cx).unwrap();
+        let p = patch_of(&g);
+        let ptr = seen.lock().unwrap().take().unwrap();
+        assert_eq!(
+            (
+                ptr["state"].as_str(),
+                ptr["journal"].is_null(),
+                ptr["patch"].as_str()
+            ),
+            (Some("stashed"), true, Some(&*p.to_string_lossy()))
+        );
+        assert_eq!(sb.read(&repo, "foo"), FOO.as_bytes());
+        g.restore().unwrap();
+        assert!(
+            err.text()
+                .starts_with("snp: could not write the stash journal in ")
+        );
+        assert!(out.text().contains("[INFO] Restored changes from "));
+        assert_eq!(sb.read(&repo, "foo"), b"herp\n");
+        assert_eq!(sb.status_of(&repo, "n"), "A");
+        assert!(!repo.join(".git/snp-stash.journal").exists());
+    }
+}
+
 #[test]
 fn linked_worktrees_have_their_own_lock() {
     let sb = Sandbox::new();

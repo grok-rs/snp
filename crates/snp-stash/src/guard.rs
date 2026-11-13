@@ -366,6 +366,36 @@ enum StashOutcome {
     Patch(PathBuf),
 }
 
+/// The result of the first `diff-index` (step 5).
+enum FirstPass {
+    /// No patch: rc 0 (`clean`) or the CRLF quirk; no file is left behind.
+    Nothing { clean: bool },
+    /// The patch file, written and flushed (not yet durable), and the digest of its bytes.
+    Patch {
+        path: PathBuf,
+        w: BufWriter<File>,
+        digest: blake3::Hash,
+    },
+}
+
+/// What [`Inner::secure`] made of a written patch.
+enum Secured {
+    /// Durable and verified; these are its paths, the checkout list.
+    Paths(ZList),
+    /// The unstaged changes vanished meanwhile: nothing to stash.
+    Vanished { clean: bool },
+}
+
+/// The outcome of the re-verification.
+enum Verdict {
+    /// The patch file holds what `diff-index` prints now.
+    Verified,
+    /// The unstaged changes vanished meanwhile.
+    Vanished { clean: bool },
+    /// Still different after [`MAX_REWRITES`] rewrites.
+    KeptChanging,
+}
+
 impl Inner {
     fn git(&self) -> &Git {
         &self.cx.git
@@ -542,6 +572,10 @@ impl Inner {
     }
 
     /// Steps 3–8.
+    ///
+    /// Every exit after the patch was written goes through the one `abandon_patch` below; the exits of the first
+    /// pass (no patch, or the patch could not be written) only discard the file and never touch the journal. A panic
+    /// unwinds without deleting anything (the `Drop` restore and the recovery notice still name the patch).
     fn stash(&mut self) -> Result<StashOutcome, Failure> {
         // 3. intent-to-add (`_intent_to_add_cleared`, + `--no-renames`: hazard b).
         let ita = self.git().intent_to_add()?;
@@ -558,22 +592,49 @@ impl Inner {
         let tree = self.git().write_tree()?;
         self.tree = Some(tree.clone());
         // 5. diff-index.
+        let (path, w, digest) = match self.first_pass(&tree)? {
+            FirstPass::Nothing { clean } => return Ok(StashOutcome::Nothing { clean }),
+            FirstPass::Patch { path, w, digest } => (path, w, digest),
+        };
+        // 6–7. durable, verified and listed; any other outcome abandons the patch, here and only here.
+        let secured = self.secure(&tree, &path, w, digest);
+        if !matches!(secured, Ok(Secured::Paths(_))) {
+            self.abandon_patch(&path);
+        }
+        let paths = match secured? {
+            Secured::Paths(p) => p,
+            Secured::Vanished { clean } => return Ok(StashOutcome::Nothing { clean }),
+        };
+        self.printer()
+            .log(Level::Warning, messages::UNSTAGED_DETECTED);
+        self.printer().log(Level::Info, &messages::stashing(&path));
+        // 8. checkout (pre-commit's `try` starts here: a failing checkout still restores).
+        self.flags.patch = PatchStep::Due;
+        self.git().checkout_paths(&paths, true, Group::Isolated)?;
+        fault::hit(Point::StashState(5));
+        Ok(StashOutcome::Patch(path))
+    }
+
+    /// Step 5: the first `diff-index`, streamed into the lazily created patch file. Every exit without a usable
+    /// patch deletes the file it created and leaves the journal alone; git < 2.19 only learns whether a stash would
+    /// be needed.
+    fn first_pass(&self, tree: &ObjectId) -> Result<FirstPass, Failure> {
         if self.cx.old_git {
             let mut sink = PatchSink::hash_only();
-            return match self.git().diff_index_patch(&tree, &mut sink)? {
+            return match self.git().diff_index_patch(tree, &mut sink)? {
                 DiffIndex::Patch { .. } => Err(self.old_git_refusal()),
-                DiffIndex::Clean => Ok(StashOutcome::Nothing { clean: true }),
-                _ => Ok(StashOutcome::Nothing { clean: false }),
+                DiffIndex::Clean => Ok(FirstPass::Nothing { clean: true }),
+                _ => Ok(FirstPass::Nothing { clean: false }),
             };
         }
         let (first, opened, failed, digest) = {
             let mut sink = LazyPatch {
-                inner: &*self,
+                inner: self,
                 opened: None,
                 failed: None,
                 hasher: blake3::Hasher::new(),
             };
-            let res = self.git().diff_index_patch(&tree, &mut sink);
+            let res = self.git().diff_index_patch(tree, &mut sink);
             let flushed = sink.opened.as_mut().map_or(Ok(()), |(_, w)| w.flush());
             if let (Err(e), Some((p, _))) = (flushed, &sink.opened) {
                 sink.failed = Some((e, p.clone()));
@@ -592,7 +653,7 @@ impl Inner {
             return match created {
                 // Created but not writable (ENOSPC, EIO): before any worktree mutation.
                 Some(p) => Err(Failure::from_io(&e, Some(p.as_os_str()), None)),
-                None => self.unwritable_store(&tree, &e, &shown),
+                None => self.unwritable_store(tree, &e, &shown),
             };
         }
         let outcome = match first {
@@ -602,117 +663,106 @@ impl Inner {
                 return Err(e);
             }
         };
-        let (path, mut w) = match (outcome, opened) {
-            (DiffIndex::Patch { .. }, Some(v)) => v,
+        match (outcome, opened) {
+            (DiffIndex::Patch { .. }, Some((path, w))) => Ok(FirstPass::Patch { path, w, digest }),
             (other, opened) => {
                 discard(opened);
-                return Ok(StashOutcome::Nothing {
+                Ok(FirstPass::Nothing {
                     clean: matches!(other, DiffIndex::Clean),
-                });
+                })
             }
-        };
-        // 6. durable: the patch, then the journal + pointer (state `stashed`), one directory fsync.
-        self.patch = Some(path.clone());
-        let durable = w
-            .get_ref()
+        }
+    }
+
+    /// Steps 6–7: make the patch durable, re-verify it and list its paths. `w` is closed before this returns, so the
+    /// caller can delete the file (Windows refuses to delete an open file). Anything but [`Secured::Paths`] means the
+    /// caller abandons the patch.
+    ///
+    /// The order is load-bearing: `self.patch` is set before the journal names it; the patch is synced, the journal
+    /// and pointer (state `stashed`) written, the directory synced, and only then is the patch verified.
+    fn secure(
+        &mut self,
+        tree: &ObjectId,
+        path: &Path,
+        mut w: BufWriter<File>,
+        digest: blake3::Hash,
+    ) -> Result<Secured, Failure> {
+        // 6. durable: the patch, then the journal + pointer (state `stashed`).
+        self.patch = Some(path.to_path_buf());
+        w.get_ref()
             .sync_all()
-            .map_err(|e| Failure::from_io(&e, Some(path.as_os_str()), None))
-            .and_then(|()| self.journal_state(State::Stashed))
-            .and_then(|()| {
-                journal::sync_dir(&self.cx.patches_dir)
-                    .map_err(|e| Failure::from_io(&e, Some(self.cx.patches_dir.as_os_str()), None))
-            });
-        if let Err(e) = durable {
-            drop(w);
-            self.abandon_patch(&path);
-            return Err(e);
+            .map_err(|e| Failure::from_io(&e, Some(path.as_os_str()), None))?;
+        self.journal_state(State::Stashed)?;
+        // Creating or replacing a store journal has synced `patches/` already, after the patch file was created.
+        // Without one (intent-to-add files were cleared while the store journal could not be written, then the patch
+        // was created) this is the only sync of the patch's directory entry.
+        if self.journal.as_ref().is_none_or(|j| j.file.is_none()) {
+            journal::sync_dir(&self.cx.patches_dir)
+                .map_err(|e| Failure::from_io(&e, Some(self.cx.patches_dir.as_os_str()), None))?;
         }
         fault::hit(Point::StashState(4));
-        // Re-verification: a second digest must equal the streamed one (an autosave between the two is caught and
-        // the patch rewritten), at most 3 rewrites.
-        let mut digest = digest;
-        let mut verified = false;
-        let mut rewrites = 0_u8;
-        loop {
-            let mut check = PatchSink::hash_only();
-            match self.git().diff_index_patch(&tree, &mut check) {
-                Ok(DiffIndex::Patch { .. }) if check.hasher.finalize() == digest => {
-                    verified = true;
-                    break;
-                }
-                Ok(DiffIndex::Patch { .. }) => {}
-                Ok(other) => {
-                    // The unstaged changes vanished meanwhile: nothing to stash.
-                    drop(w);
-                    self.abandon_patch(&path);
-                    return Ok(StashOutcome::Nothing {
-                        clean: matches!(other, DiffIndex::Clean),
-                    });
-                }
-                Err(e) => {
-                    drop(w);
-                    self.abandon_patch(&path);
-                    return Err(e);
-                }
-            }
-            if rewrites >= MAX_REWRITES {
-                break;
-            }
-            rewrites = rewrites.saturating_add(1);
-            let rewritten = rewind(&mut w)
-                .map_err(|e| Failure::from_io(&e, Some(path.as_os_str()), None))
-                .and_then(|()| self.stream_patch(&tree, &mut w, &path))
-                .and_then(|(o, d)| {
-                    w.get_ref()
-                        .sync_all()
-                        .map_err(|e| Failure::from_io(&e, Some(path.as_os_str()), None))
-                        .map(|()| (o, d))
-                });
-            match rewritten {
-                Ok((DiffIndex::Patch { .. }, d)) => digest = d,
-                Ok((other, _)) => {
-                    drop(w);
-                    self.abandon_patch(&path);
-                    return Ok(StashOutcome::Nothing {
-                        clean: matches!(other, DiffIndex::Clean),
-                    });
-                }
-                Err(e) => {
-                    drop(w);
-                    self.abandon_patch(&path);
-                    return Err(e);
-                }
-            }
-        }
+        let verdict = self.reverify(tree, path, &mut w, digest)?;
         drop(w);
-        if !verified {
-            self.abandon_patch(&path);
-            return Err(Failure::fatal("FatalError", messages::KEPT_CHANGING));
+        match verdict {
+            Verdict::Verified => {}
+            Verdict::Vanished { clean } => return Ok(Secured::Vanished { clean }),
+            Verdict::KeptChanging => {
+                return Err(Failure::fatal("FatalError", messages::KEPT_CHANGING));
+            }
         }
         // 7. D-DATA-19: the checkout rewrites exactly the files of the patch, so a change `git diff` cannot see (a
         // clean filter hides it, or the file is `--assume-unchanged`) is never overwritten.
-        let paths = match self.git().patch_paths(&path) {
-            Ok(p) if !p.is_empty() => p,
-            Ok(_) => {
-                self.abandon_patch(&path);
-                return Err(Failure::unexpected(
-                    "ValueError",
-                    messages::no_patch_paths(&path),
-                ));
+        let paths = self.git().patch_paths(path)?;
+        if paths.is_empty() {
+            return Err(Failure::unexpected(
+                "ValueError",
+                messages::no_patch_paths(path),
+            ));
+        }
+        Ok(Secured::Paths(paths))
+    }
+
+    /// The ADR-067 re-verification: a second digest must equal the streamed one (an autosave between the two is
+    /// caught and the patch rewritten), at most [`MAX_REWRITES`] rewrites.
+    fn reverify(
+        &self,
+        tree: &ObjectId,
+        path: &Path,
+        w: &mut BufWriter<File>,
+        mut digest: blake3::Hash,
+    ) -> Result<Verdict, Failure> {
+        let mut rewrites = 0_u8;
+        loop {
+            let mut check = PatchSink::hash_only();
+            match self.git().diff_index_patch(tree, &mut check)? {
+                DiffIndex::Patch { .. } if check.hasher.finalize() == digest => {
+                    return Ok(Verdict::Verified);
+                }
+                DiffIndex::Patch { .. } => {}
+                other => {
+                    return Ok(Verdict::Vanished {
+                        clean: matches!(other, DiffIndex::Clean),
+                    });
+                }
             }
-            Err(e) => {
-                self.abandon_patch(&path);
-                return Err(e);
+            if rewrites >= MAX_REWRITES {
+                return Ok(Verdict::KeptChanging);
             }
-        };
-        self.printer()
-            .log(Level::Warning, messages::UNSTAGED_DETECTED);
-        self.printer().log(Level::Info, &messages::stashing(&path));
-        // 8. checkout (pre-commit's `try` starts here: a failing checkout still restores).
-        self.flags.patch = PatchStep::Due;
-        self.git().checkout_paths(&paths, true, Group::Isolated)?;
-        fault::hit(Point::StashState(5));
-        Ok(StashOutcome::Patch(path))
+            rewrites = rewrites.saturating_add(1);
+            rewind(w).map_err(|e| Failure::from_io(&e, Some(path.as_os_str()), None))?;
+            let (outcome, d) = self.stream_patch(tree, w, path)?;
+            w.get_ref()
+                .sync_all()
+                .map_err(|e| Failure::from_io(&e, Some(path.as_os_str()), None))?;
+            match outcome {
+                DiffIndex::Patch { .. } => digest = d,
+                other => {
+                    return Ok(Verdict::Vanished {
+                        clean: matches!(other, DiffIndex::Clean),
+                    });
+                }
+            }
+        }
     }
 
     /// The patch is not needed (or not safe): delete it and the journal state that names it.
@@ -782,7 +832,7 @@ impl Inner {
         tree: &ObjectId,
         e: &io::Error,
         shown: &Path,
-    ) -> Result<StashOutcome, Failure> {
+    ) -> Result<FirstPass, Failure> {
         let mut sink = PatchSink::hash_only();
         match self.git().diff_index_patch(tree, &mut sink)? {
             DiffIndex::Patch { .. } => {
@@ -800,8 +850,8 @@ impl Inner {
                 self.printer().log(Level::Info, &messages::stashing(&patch));
                 Err(Failure::from_io(e, Some(shown.as_os_str()), None))
             }
-            DiffIndex::Clean => Ok(StashOutcome::Nothing { clean: true }),
-            _ => Ok(StashOutcome::Nothing { clean: false }),
+            DiffIndex::Clean => Ok(FirstPass::Nothing { clean: true }),
+            _ => Ok(FirstPass::Nothing { clean: false }),
         }
     }
 
