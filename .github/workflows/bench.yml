@@ -10,10 +10,9 @@
 # * musl:   B3/B4/B6/B12 of the musl artifact with the system allocator and with mimalloc (ADR-079); the adopted
 #           allocator (bench/budgets.toml [musl]) is held to the never-slower-than-prek rule.
 #
-# The run pipeline (`snp run`, WP-32) is not merged yet: BENCH_SCENARIOS lists the scenarios snp can run today
-# (B1), and BENCH_PENDING the ones knowingly not run, whose budgets the gate reports as warnings instead of failures
-# (`--allow-missing`). WP-32 moves every BENCH_PENDING scenario into BENCH_SCENARIOS (and B3,B4,B6,B12u from
-# MUSL_PENDING into MUSL_SCENARIOS) when it merges: a scenario in neither list fails every hard budget it has.
+# Every scenario runs; a miss accepted for now is a `[[known_miss]]` of bench/budgets.toml, with its reason (ADR-091).
+# MUSL_PENDING lists the scenarios outside the musl matrix (ADR-079: B3/B4/B6/B12), whose budgets warn
+# (`--allow-missing`): a scenario in neither list fails every hard budget it has.
 #
 # The history caches of the gnu (e2e) and musl jobs use prefixes that cannot match each other: actions/cache
 # restore-keys are prefix matches, and a shared prefix would restore the other job's history.
@@ -46,12 +45,9 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   RUST_BACKTRACE: "1"
-  BENCH_SCENARIOS: B1
-  BENCH_PENDING: B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12u
-  MUSL_SCENARIOS: B1
-  # B2, B5, B7-B11 are not part of the musl matrix (ADR-079: B3/B4/B6/B12) and stay here; B3, B4, B6, B12u are
-  # pending WP-32
-  MUSL_PENDING: B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12u
+  BENCH_SCENARIOS: B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12u
+  MUSL_SCENARIOS: B1,B3,B4,B6,B12u
+  MUSL_PENDING: B2,B5,B7,B8,B9,B10,B11
 
 defaults:
   run:
@@ -138,14 +134,11 @@ jobs:
       - name: Gate
         run: |
           if [ "${{ github.event_name }}" = pull_request ]; then
-            cargo xtask bench gate --baseline target/bench/results/base.json --comment target/bench/comment.md \
-              --allow-missing "$BENCH_PENDING"
+            cargo xtask bench gate --baseline target/bench/results/base.json --comment target/bench/comment.md
           elif [ -f target/bench/results/base.json ]; then
-            cargo xtask bench gate --baseline target/bench/results/base.json --comment target/bench/comment.md \
-              --record --allow-missing "$BENCH_PENDING"
+            cargo xtask bench gate --baseline target/bench/results/base.json --comment target/bench/comment.md --record
           else
-            cargo xtask bench gate --advisory-history --comment target/bench/comment.md --record \
-              --allow-missing "$BENCH_PENDING"
+            cargo xtask bench gate --advisory-history --comment target/bench/comment.md --record
           fi
       - name: Job summary
         if: always()
