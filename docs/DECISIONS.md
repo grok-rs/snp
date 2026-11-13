@@ -10,7 +10,7 @@ naming the amending ADR, which is normative where they differ. ADR-056…ADR-080
 ADR-082 the end-to-end integration of the merged packages; ADR-083 the verification of the integrated `main`; ADR-084
 the final multi-lens review; ADR-085 the `interactive` extension key; ADR-086 the first CI run on macOS; ADR-087 the
 `.snp.yaml` config file name; ADR-088 the crates.io and Homebrew release channels; ADR-089 the retarget to pre-commit
-4.7.0; ADR-090 what the scheduled gates can judge.
+4.7.0; ADR-090 what the scheduled gates can judge; ADR-092 the November 2026 upstream refresh.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -1367,6 +1367,41 @@ nightly) would restore that gate at the cost of a second `dist` build; it is not
 own history stays a gate, since `--advisory-history` is opt-in.
 
 ---
+
+### ADR-092 — November 2026 upstream refresh: nodeenv 1.12.0, uv 0.13.8, TLS roots
+
+**Context.** A check of every upstream snp reproduces or ships (2026-11-13): pre-commit 4.7.0 is still the latest
+release and its `main` has changed only CI and linter pins since; identify 2.6.20, cfgv 3.5.0, PyYAML 6.0.3,
+pre-commit-hooks 6.0.0 and pygrep-hooks are the pinned versions (their `main` branches carry only `py311+`
+refactors). lefthook 2.2.2 is still the latest tag; its unreleased `master` stops hooks on SIGTERM/SIGHUP (leaving an
+inherited `SIG_IGN` alone), gives every `use_stdin` job its own reader, deduplicates files matched by several globs
+and moves to doublestar 4.10.4 — snp already behaves that way (`snp-proc` signals, `Arc<[u8]>` stdin fed through a
+pipe per process, one alternation regex per glob list, textual brace expansion that keeps the segment position). Two
+dependencies pre-commit does not pin moved: nodeenv 1.12.0 (2026-10-31; 1.11.1 skips node pre-releases, which
+`index.json` lists first since `v27.0.0-alpha.0.0.0`) and virtualenv 21.15.6. uv 0.13.5 is the first uv that rejects
+chains through the compromised eMudhra intermediates (rustls-webpki 0.103.16); snp pinned uv 0.12.23. webpki-roots
+1.0.12 follows Mozilla's removal of further roots; the fuzz lock still had rustls-webpki 0.103.15.
+**Decision.** (1) The nodeenv reference is **1.12.0**: a `[nodeenv]` value is read with `ConfigParser.get`
+(`%%`, `%(name)s`), read as written when interpolation is a syntax error and the value has no `%(` (nodeenv#440), and
+loses one pair of matching outer quotes (nodeenv#321); where nodeenv crashes (an unknown or too deep reference) the
+written value fails the version check. The oracle lock moves only the `nodeenv==1.12.0` pin. Pre-release skipping was
+already snp's; D-SEC-08 now describes 1.12.0 (it still checks for a build only on x86_64-musl and riscv64).
+(2) virtualenv stays **21.14.5**: snp creates environments with uv or `venv`, and nothing 21.15.x changed
+(activators, app-data handling, the embedded pip) reaches an output snp reproduces; moving the pin would only perturb
+the oracle. (3) The embedded uv is **0.13.8** (`cargo xtask tool-checksums --uv 0.13.8`). uv 0.13's breaking changes
+miss snp's invocations: interpreters are passed as absolute paths with `--no-python-downloads` (the 3.15 default does
+not apply), `uv python install` always gets an explicit request, pip-config constraints are already one
+`--constraint` per file, and the omitted distutils patch matches virtualenv >= 21.6. Every flag snp passes is in
+0.13.8's `--help`, and a Python environment built through the downloaded pin runs its hook. (4) rustls-webpki
+0.103.17 and webpki-roots / webpki-root-certs 1.0.12 in `Cargo.lock` and `fuzz/Cargo.lock`, and rustix 1.1.6
+(RUSTSEC-2026-0486, published after the last green `cargo deny`: xattr calls with a zero-length buffer; snp makes
+none, but the advisory fails the `deny` gate); no other crate moves here. (5) Not in this change: Rust 1.100.0 (a new clippy lint on `map(..).unwrap_or_default()` and new cargo manifest
+lints need their own change), prek 0.5.10 as the bench comparator, and the converter documentation's doublestar
+version (it moves to 4.10.4 when a lefthook release ships it).
+**Rationale.** pre-commit users installing 4.7.0 today get nodeenv 1.12.0, so that is the behaviour to reproduce; a
+uv that trusts a distrusted intermediate weakens the TLS that D-SEC-08 relies on for PyPI traffic.
+**Consequences.** Developers rerun `cargo xtask oracle install`. A quoted `node = "20"` in `setup.cfg`, `tox.ini` or
+`~/.nodeenvrc` now selects node 20. The first Python install after upgrading downloads uv 0.13.8 into `tools-v1/uv`.
 
 ## Appendix A — Open questions of the research documents, resolved
 

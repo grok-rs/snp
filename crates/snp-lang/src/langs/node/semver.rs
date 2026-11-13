@@ -1,4 +1,4 @@
-//! nodeenv 1.11.0's version ranges (`_is_exact_version`, `parse_node_range`, `_parse_comparator`,
+//! nodeenv 1.12.0's version ranges (`_is_exact_version`, `parse_node_range`, `_parse_comparator`,
 //! `_comparator_constraints`, `_pad_version`, `match_node_range`, `resolve_node_version`): `20`, `18.19`, `^20.1`,
 //! `20.x`, `>=18 <20`, `4.3.1 - 6.2.0`, `a || b` resolve to the highest matching release of `index.json`.
 //!
@@ -306,7 +306,7 @@ mod tests {
         }
     }
 
-    /// The values printed by nodeenv 1.11.0's `parse_node_range` (oracle venv, CPython 3.12).
+    /// The values printed by nodeenv's `parse_node_range` (1.11.0; unchanged in 1.12.0; oracle venv, CPython 3.12).
     #[test]
     fn ranges_like_nodeenv() {
         let r = |s: &str| parse_range(s);
@@ -393,7 +393,7 @@ mod tests {
         assert_eq!(index_version("v20.11.1-rc.1"), None);
     }
 
-    /// Differential against nodeenv 1.11.0 itself (the oracle venv's `nodeenv` module, `$SNP_ORACLE_PY312`):
+    /// Differential against nodeenv 1.12.0 itself (the oracle venv's `nodeenv` module, `$SNP_ORACLE_PY312`):
     /// random specs built from the atoms the grammar cares about, compared on `_is_exact_version` and
     /// `parse_node_range`.
     #[test]
