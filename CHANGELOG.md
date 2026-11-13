@@ -32,7 +32,19 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
 - Built with Rust 1.100.0; the minimum supported Rust version is 1.100 (was 1.98), so `cargo install snp` needs Rust
   1.100 or newer (ADR-094). The crash log's `sys.version` names rustc 1.100.0.
 
+- Benchmarks (developer tooling, no runtime change): pull requests and pushes measure the base commit's snp, built
+  against its own `deps.lock` crates and toolchain and primed into its own stores, in interleaved ABBA rounds with the
+  head, and the regression gate pairs the rounds (`cargo xtask bench setup|run --base-snp`, ADR-099). Records are
+  schema 2 (schema 1 is still read). `--counts` gates clones, `statx` and `newfstatat` base against head and shows the
+  exec argv diff; B8's memory budget is snp's dhat heap peak (≤ B3's + 2 MB, hard, nightly) instead of the tree RSS,
+  which is git's; the RSS column names the largest process of the tree; new soft nightly allocation ceilings; a
+  `perf_patch_stream` perf-smoke test bounds the stash's resident growth on a 24 MB patch; B8's stash patches no longer
+  pile up in the stores; prek's B11 store tracks its 200 configs (ADR-100).
+
 ### Fixed
+
+- `cargo xtask bench setup` no longer fails with `destination path … already exists` when an interrupted clone left
+  the pre-commit-hooks mirror directory without `HEAD`: it removes it and clones again.
 
 - The stash no longer loses a working-tree change that `git diff` cannot see: a line a clean filter hides (for
   example `filter.<name>.clean = grep -v SECRET`) or an edit in an `--assume-unchanged` file was overwritten whenever

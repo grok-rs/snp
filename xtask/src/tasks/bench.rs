@@ -1,5 +1,5 @@
 //! `cargo xtask bench setup|run|gate`: the end-to-end performance and memory gates of ARCHITECTURE §12 (research 10
-//! §0.2, §7.11; ADR-043, ADR-047, ADR-071, ADR-079, ADR-098, ADR-099).
+//! §0.2, §7.11; ADR-043, ADR-047, ADR-071, ADR-079, ADR-099, ADR-100).
 //!
 //! * `setup` installs the measuring tools (hyperfine 1.19.0 and prek 0.5.10, both pinned; the pre-commit 4.7.0 oracle
 //!   comes from `cargo xtask oracle install`), mirrors pre-commit-hooks locally (every clone is redirected to the
@@ -8,20 +8,20 @@
 //!   deterministic
 //!   fixture repositories of B1–B12 under `target/bench/fixtures` (fixed author, committer and dates: identical trees
 //!   and SHAs on every machine), builds snp with the `dist` profile and primes every tool's warm store. With
-//!   `--base-snp`, the base commit's binary gets its own stores and B9 fixture, primed by that binary (ADR-098).
+//!   `--base-snp`, the base commit's binary gets its own stores and B9 fixture, primed by that binary (ADR-099).
 //! * `run` measures each scenario × tool with `hyperfine -N` in the hermetic environment, peak RSS with
 //!   `/usr/bin/time` (median of 10; the largest process of the tree), and optionally the `strace -f -c` syscall count
 //!   (`--syscalls`, B1/B3), the dhat totals and heap peak (`--dhat`, a `--features dhat-heap` build) and the
 //!   deterministic counters (`--counts`: clones, `statx`, `newfstatat`, opens, dirents, execs); it writes one JSON run
 //!   record. With `--base-snp`, snp and the base binary run in interleaved ABBA rounds per scenario, pre-commit and
-//!   prek right after (ADR-098).
+//!   prek right after (ADR-099).
 //! * `gate` checks a run record against `bench/budgets.toml` and a baseline: the paired base rounds of the record itself
 //!   (a regression fails when the median per-round ratio exceeds 5 % and 0.1 ms and its 95 % interval excludes 1,
-//!   ADR-098), else an explicit record or the last record of the JSON-lines history
+//!   ADR-099), else an explicit record or the last record of the JSON-lines history
 //!   `bench/history/<platform>-<variant>.jsonl` (a median regression above 5 % and 0.1 ms whose 95 % confidence
 //!   intervals do not overlap; against the history: also against the median of its last 10 records, the drift check;
 //!   `--advisory-history` reports both as warnings when the history comes from other machines, ADR-090). It also fails
-//!   on a hard-budget breach, on a counter of the head above the base's beyond its margin (ADR-099), and when snp's
+//!   on a hard-budget breach, on a counter of the head above the base's beyond its margin (ADR-100), and when snp's
 //!   p50 is slower than pre-commit's or prek's or that comparison could not be made; `--comment` writes the Markdown
 //!   PR comment, `--record` appends to the history. `gate --micro` enforces the exact micro thresholds of the W1/W2
 //!   acceptance lists on criterion's results (`cargo bench -p snp`). `gate --compare A B` prints the per-scenario
@@ -61,7 +61,7 @@ const GIT_DATE: &str = "2024-01-01T00:00:00Z";
 const GIT_NAME: &str = "snp bench";
 const GIT_EMAIL: &str = "bench@snp.invalid";
 /// The run-record schema version written; schema 1 records (before the paired rounds, counters and host facts of
-/// ADR-098/098) are still read, so a history mixing both stays usable.
+/// ADR-099/098) are still read, so a history mixing both stays usable.
 const SCHEMA: u64 = 2;
 /// The run-record schema versions read.
 const SCHEMAS_READ: [u64; 2] = [1, 2];
@@ -273,7 +273,7 @@ impl Opts {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Tool {
     Snp,
-    /// The base commit's snp (`--base-snp`, ADR-098): its own stores and B9 fixture, never selected by `--tools`.
+    /// The base commit's snp (`--base-snp`, ADR-099): its own stores and B9 fixture, never selected by `--tools`.
     SnpBase,
     PreCommit,
     Prek,
@@ -1606,7 +1606,7 @@ fn existing_binary(option: &str, p: &str) -> anyhow::Result<PathBuf> {
     Ok(p)
 }
 
-/// The base commit's snp of `--base-snp` (ADR-098), if given.
+/// The base commit's snp of `--base-snp` (ADR-099), if given.
 fn resolve_base(o: &Opts) -> anyhow::Result<Option<PathBuf>> {
     o.one("base-snp")
         .map(|p| existing_binary("base-snp", p))
@@ -2091,13 +2091,13 @@ struct Measure {
     rss_mib: Option<f64>,
     syscalls: Option<u64>,
     alloc_mib: Option<f64>,
-    /// dhat's total blocks allocated (`--dhat`; the ceiling of the multi-threaded scenarios, ADR-099).
+    /// dhat's total blocks allocated (`--dhat`; the ceiling of the multi-threaded scenarios, ADR-100).
     alloc_blocks: Option<u64>,
-    /// dhat's heap peak: the bytes live at the global maximum (`--dhat`; B8's budget, ADR-099).
+    /// dhat's heap peak: the bytes live at the global maximum (`--dhat`; B8's budget, ADR-100).
     heap_peak_mib: Option<f64>,
-    /// The median of each interleaved round's block, in round order (`--base-snp`, ADR-098; empty otherwise).
+    /// The median of each interleaved round's block, in round order (`--base-snp`, ADR-099; empty otherwise).
     rounds_ms: Vec<f64>,
-    /// The deterministic counters of one traced run (`--counts`, ADR-099; empty otherwise).
+    /// The deterministic counters of one traced run (`--counts`, ADR-100; empty otherwise).
     counts: BTreeMap<String, u64>,
     /// The exec argv lines only the head (`+`) or only the base (`-`) ran (`--counts --base-snp`; snp only).
     exec_diff: Vec<String>,
@@ -2252,9 +2252,9 @@ struct Record {
     label: String,
     commit: String,
     unix_time: u64,
-    /// The runner's logical CPUs (snp's default job count and partition count follow it; ADR-099).
+    /// The runner's logical CPUs (snp's default job count and partition count follow it; ADR-100).
     cpu_count: Option<u64>,
-    /// `git --version` of the runner (tree-wide counters and timings depend on it; ADR-099).
+    /// `git --version` of the runner (tree-wide counters and timings depend on it; ADR-100).
     git_version: String,
     /// The optional metrics this run was asked to measure (`syscalls` for `--syscalls`; `alloc_mib`, `alloc_blocks`
     /// and `heap_peak_mib` for `--dhat`; `counts` for `--counts`): a budget on a requested metric that has no value
@@ -2446,13 +2446,13 @@ impl Record {
 
 /// The scenarios `--syscalls` counts (the ceilings of ADR-083).
 const SYSCALL_SCENARIOS: [&str; 2] = ["B1", "B3"];
-/// The scenarios `--dhat` profiles (ADR-099): B3 and B8 for B8's heap-peak budget (relative to B3's), and the absolute
+/// The scenarios `--dhat` profiles (ADR-100): B3 and B8 for B8's heap-peak budget (relative to B3's), and the absolute
 /// allocation ceilings of the single-threaded (bytes) and multi-threaded (blocks) scenarios.
 const DHAT_SCENARIOS: [&str; 7] = ["B2", "B3", "B4", "B6", "B8", "B10", "B12u"];
-/// The most interleaved rounds of a paired measurement (ADR-098).
+/// The most interleaved rounds of a paired measurement (ADR-099).
 const ROUNDS: u32 = 10;
 
-/// `(rounds, runs per block)` of a paired measurement of `total` runs per binary (ADR-098): at most [`ROUNDS`]
+/// `(rounds, runs per block)` of a paired measurement of `total` runs per binary (ADR-099): at most [`ROUNDS`]
 /// rounds, every block at least one run. 50 runs: 10 × 5; 20: 10 × 2; B7's 5: 5 × 1.
 fn paired_rounds(total: u32) -> (u32, u32) {
     let rounds = total.clamp(1, ROUNDS);
@@ -2868,7 +2868,7 @@ fn add_rss(
     Ok(())
 }
 
-/// snp and the base commit's snp on `s` in interleaved ABBA rounds (ADR-098), then snp's RSS runs (the gate never
+/// snp and the base commit's snp on `s` in interleaved ABBA rounds (ADR-099), then snp's RSS runs (the gate never
 /// reads the base's). Each round runs one block of each binary; each binary has one warm-up, in its first block.
 /// A failure of the base marks it not measured and the head still runs every round; a failure of the head ends the
 /// scenario.
@@ -3086,7 +3086,7 @@ fn count_syscalls(work: &Work, snp: &Path, s: &Scenario) -> anyhow::Result<u64> 
     parse_strace_total(&text).context("strace printed no total row")
 }
 
-/// The syscalls `--counts` traces (ADR-099); `?` ignores a name the architecture lacks (aarch64 has no `fork`).
+/// The syscalls `--counts` traces (ADR-100); `?` ignores a name the architecture lacks (aarch64 has no `fork`).
 const COUNTED_SYSCALLS: &str =
     "trace=?clone,?clone3,?fork,?vfork,?execve,?statx,?newfstatat,?openat,?getdents64";
 
@@ -3105,7 +3105,7 @@ fn counters_of(table: &BTreeMap<String, u64>) -> BTreeMap<String, u64> {
     out
 }
 
-/// One counting pass of `tool` on `s` after the timing runs (ADR-099, P15): `strace -f --seccomp-bpf -c` over the
+/// One counting pass of `tool` on `s` after the timing runs (ADR-100, P15): `strace -f --seccomp-bpf -c` over the
 /// counted syscalls, then one `strace -f -e trace=execve` pass for the exec argv list (normalized: paths of the
 /// bench directory, store and binary replaced, long digit runs folded). B7 replays the cold store's removal before
 /// each pass, B8 its patch cleanup.
@@ -3409,9 +3409,9 @@ enum Metric {
     RssMib,
     Syscalls,
     AllocMib,
-    /// dhat's total blocks allocated (ADR-099).
+    /// dhat's total blocks allocated (ADR-100).
     AllocBlocks,
-    /// dhat's heap peak (ADR-099): what snp itself holds at once, whatever its children use.
+    /// dhat's heap peak (ADR-100): what snp itself holds at once, whatever its children use.
     HeapPeakMib,
 }
 
@@ -3761,11 +3761,11 @@ fn regression(snp: &Measure, prev: &Measure, b: &Budgets, against: &str) -> (Ver
     )
 }
 
-/// The name of the paired regression check (ADR-098). It does not start with `no regression`, so
+/// The name of the paired regression check (ADR-099). It does not start with `no regression`, so
 /// `--advisory-history`, which is about the history, never softens it.
 const PAIRED_CHECK: &str = "no paired regression";
 
-/// The paired regression rule of ADR-098 on the interleaved rounds of `head` and `base`: with
+/// The paired regression rule of ADR-099 on the interleaved rounds of `head` and `base`: with
 /// `d_r = ln(head_r / base_r)`, it fails when `exp(median d) > 1 + regression_pct`, the effect
 /// `base × (exp(median d) − 1)` exceeds `regression_min_ms`, and the 95 % interval of the median of `d` lies above 0;
 /// the point estimate alone above the threshold warns. `None` when the rounds cannot be paired (missing, unequal in
@@ -3810,7 +3810,7 @@ fn paired_regression(head: &Measure, base: &Measure, b: &Budgets) -> Option<(Ver
     ))
 }
 
-/// The counters gated base against head on the same runner (ADR-099): `(counter, percent, at least)`; the head fails
+/// The counters gated base against head on the same runner (ADR-100): `(counter, percent, at least)`; the head fails
 /// when it exceeds the base by more than the percentage **and** by at least the absolute amount. Opens, dirents and
 /// execs are reported only (`openat` varies by ±1; an exec change is reviewed through the argv diff), and nothing is
 /// gated against the history (runner images change git and glibc).
@@ -3963,7 +3963,7 @@ fn evaluate(
                 ),
             );
         }
-        // the paired regression against the base binary measured in the same rounds (ADR-098): it gates, and the
+        // the paired regression against the base binary measured in the same rounds (ADR-099): it gates, and the
         // unpaired comparisons below are then advisory (they compare measurements minutes or VMs apart)
         let paired_base = tools.get(Tool::SnpBase.name());
         match paired_base {
@@ -4035,7 +4035,7 @@ fn evaluate(
                 }
             }
         }
-        // the deterministic counters against the base, same runner (ADR-099); never against the history
+        // the deterministic counters against the base, same runner (ADR-100); never against the history
         if cur.extras.contains("counts") {
             match (snp.counts.is_empty(), paired_base) {
                 (true, _) => push(
@@ -4257,7 +4257,7 @@ fn comment(cur: &Record, base: Option<&Record>, checks: &[Check]) -> String {
     if paired {
         s.push_str(
             "The baseline is the base commit's snp, measured in the same interleaved rounds (Δ: the median per-round \
-             ratio, ADR-098).\n\n",
+             ratio, ADR-099).\n\n",
         );
     }
     let mut header = String::from(
@@ -4966,7 +4966,7 @@ mod tests {
                 "{s} {metric:?}: {max} MiB is not {mb} MB"
             );
         }
-        // B8 (ADR-099): snp's own heap peak, at most B3's + 2 MB, hard (nightly); the tree RSS, which measures
+        // B8 (ADR-100): snp's own heap peak, at most B3's + 2 MB, hard (nightly); the tree RSS, which measures
         // git's diff of the 10 MB file, is no longer budgeted
         let b8 = b
             .limits
@@ -5433,7 +5433,7 @@ mod tests {
             ],
         );
         let checks = evaluate(&cur, None, &b, &none(), &none(), &[]);
-        // B8's tree RSS (git's) is information only (ADR-099); its heap peak is a nightly metric
+        // B8's tree RSS (git's) is information only (ADR-100); its heap peak is a nightly metric
         assert!(verdict_of(&checks, "B8", "RSS").is_none());
         assert!(verdict_of(&checks, "B8", "heap peak").is_none());
         // B9 ≤ B3 + 3 ms = 23 ms

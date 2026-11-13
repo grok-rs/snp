@@ -1,7 +1,7 @@
 # Benchmarks and budgets
 
 Owned by WP-36. This directory holds the budgets of the performance and memory gates (ARCHITECTURE §12, research
-10 §0.2 and §7.11, ADR-043, ADR-071, ADR-079), the pinned prek lock, and the JSON-lines history the gate compares
+10 §0.2 and §7.11, ADR-043, ADR-071, ADR-079, ADR-099, ADR-100), the pinned prek lock, and the JSON-lines history the gate compares
 against.
 
 | File | What |
@@ -24,10 +24,20 @@ start=$(date +%s) && cargo bench -p snp --bench pyre_kinds ... -- --noplot && ca
 ```
 
 `setup`, `run` and `gate` take `--help`. Useful options: `--scenarios B1,B3`, `--tools snp,prek`, `--snp PATH` (an
-existing binary instead of the dist build), `--target x86_64-unknown-linux-musl --allocator mimalloc`, `--syscalls`
-(`strace -f -c`), `--dhat` (B3's total allocation), `gate --baseline FILE`, `gate --comment FILE`,
-`gate --compare A.json B.json`. Everything is written under `target/bench/`; `--mirror-from` lets `setup` clone the
-pre-commit-hooks mirror from a local repository.
+existing binary instead of the dist build), `--base-snp PATH` (a second snp, e.g. the base commit's, measured paired
+with the first: pass it to `setup` and to `run`), `--target x86_64-unknown-linux-musl --allocator mimalloc`,
+`--syscalls` (`strace -f -c`), `--counts` (the deterministic counters), `--dhat` (dhat totals and heap peaks),
+`gate --baseline FILE`, `gate --comment FILE`, `gate --compare A.json B.json`. Everything is written under
+`target/bench/`; `--mirror-from` lets `setup` clone the pre-commit-hooks mirror from a local repository (an
+interrupted clone, a mirror directory without `HEAD`, is removed and cloned again).
+
+To compare two builds the way CI does (ADR-099):
+
+```sh
+cargo xtask bench setup --snp target/dist/snp --base-snp ../base/target/dist/snp
+cargo xtask bench run --snp target/dist/snp --base-snp ../base/target/dist/snp --counts
+cargo xtask bench gate --advisory-history
+```
 
 **Cost on a shared machine.** `setup` and `run` build snp with the fat-LTO `dist` profile, `setup` compiles
 hyperfine (`cargo install`), and `run --dhat` makes a second complete release build of the workspace in
@@ -61,41 +71,78 @@ succeeded, so an interrupted setup leaves nothing for `run` to measure.
 |---|---|---|---|
 | B1 | `noop10` | `--version` | time; nightly: syscalls (`strace -f -c`, ceiling 64) |
 | B2 | `noop10`: 10 local `true` hooks, `always_run`, `pass_filenames: false` (prek's corpus) | `run noop-01` | time |
-| B3 | `noop10` | `run` | time, RSS; nightly: syscalls (`strace -f -c` over the whole tree, ceiling 4230) and dhat total allocation (≤ 2 MB = 1.907 MiB) |
+| B3 | `noop10` | `run` | time, RSS; nightly: syscalls (`strace -f -c` over the whole tree, ceiling 4230), dhat total allocation (≤ 2 MB = 1.907 MiB) and heap peak (B8's reference) |
 | B4 | `files50k`: 50 000 tracked files, one `true` hook with filenames | `run --all-files` | time, RSS (B12 ≤ 30 MB = 28.61 MiB) |
 | B5 | `files50k` with `types`/`types_or`/`exclude_types` | `run --all-files --config types.yaml` | time (≤ 1.3× B4) |
 | B6 | `pch960`: 960 clean files, 13 pre-commit-hooks hooks at v6.0.0 (prek's medium corpus) | `run --all-files` | time, RSS (B12 ≤ 25 MB = 23.84 MiB) |
 | B7 | `pch960`, store removed before every run (`--prepare`) | `run --all-files` | time |
-| B8 | `stash10m`: a 10 MiB unstaged rewrite of a tracked file + one staged change | `run` | time, RSS (≤ B3 + 2 MB) |
+| B8 | `stash10m`: a 10 MiB unstaged rewrite of a tracked file + one staged change | `run` | time, RSS (information: git's diff is the largest process); nightly: heap peak (dhat, ≤ B3's + 2 MB, hard) |
 | B9 | `noop10` with the tool's own installed hook | `git commit --allow-empty` | time (≤ B3 + 3 ms) |
 | B10 | `validate1000`: 1 000 local hooks | `validate-config big.yaml` | time |
-| B11 | `gc500`: 500 hook repositories used by 200 configurations, all installed | `gc` | time |
+| B11 | `gc500`: 500 hook repositories used by 200 configurations, all installed and tracked (prek primed with `run --config`, its tracking path; `setup` checks 200 configs and 500 repositories per store) | `gc` | time |
 | B12u | `unicode20`: 20 000 non-ASCII paths, 20 hooks with Unicode `files` patterns, `SNP_JOBS=32` | `run --all-files` | time, RSS (≤ 30 MB = 28.61 MiB; the ADR-079 regex-cache case) |
 
-Timing: `hyperfine -N -w 5 -r 50` (the slow scenarios use fewer runs, listed in `xtask/src/tasks/bench.rs`). RSS:
-the median of 10 runs under `/usr/bin/time -v` (`-l` on macOS); it is the peak resident set of the largest process
-the tool waited for, so a git child larger than the tool itself is what gets reported (B8).
+Timing: `hyperfine -N -w 5 -r 50` (the slow scenarios use fewer runs, listed in `xtask/src/tasks/bench.rs`). With
+`--base-snp`, snp and the base run in deterministic ABBA rounds per scenario (base, head; head, base; …): 10 rounds of
+5 runs for the 50-run scenarios, 10 × 2 for the 20-run ones, 5 × 1 for B7, one warm-up per binary in its first block;
+pre-commit and prek follow in the same window, and snp's budgets and the never-slower rule use its pooled runs. The
+base has its own warm, cold and gc stores and B9 fixture, primed by the base binary, and no RSS runs. RSS: the median
+of 10 runs under `/usr/bin/time -v` (`-l` on macOS); it is the peak resident set of the **largest process of the
+tree** the tool waited for (a maximum, not a sum), so a git child larger than the tool itself is what gets reported
+(B8). It can only overstate snp's own, so the hard RSS budgets (B4, B6, B12u) fail closed.
+
+B8 leaves a stash patch per run in every tool's store (about 2.8 GB per CI job otherwise). Before every run
+hyperfine's `--prepare` deletes exactly the patches of the previous one (snp `<store>/patches/patch[0-9]*-[0-9]*`,
+pre-commit `<store>/patch[0-9]*-[0-9]*`, prek `<store>/patches/[0-9]*-[0-9]*.patch`), and so does the harness before
+each RSS run, after the scenario and at the start of `run`. Journals, pointers and every other store file stay; when a
+`run-*.snp-journal` or a fixture's `.git/snp-stash*.journal` exists, a run was interrupted, and the harness refuses
+rather than delete its patch.
+
+Counters (`--counts`, Linux): after the timing runs, one `strace -f --seccomp-bpf -c` pass per binary over clones
+(`clone` + `clone3` + `fork` + `vfork`), `statx`, `newfstatat`, `openat`, `getdents64` and `execve` across the whole
+tree, and one `strace -f -e trace=execve` pass for the exec argv list (paths and digit runs normalized). B7 replays
+the cold store's removal first, B8 its patch cleanup. They do not depend on the runner's load: the same binary counts
+the same.
 
 ## The gate
 
-* **Regression**: snp's median more than 5 % **and** 0.1 ms above the baseline's, **and** the two 95 % confidence
+* **Paired regression** (pull requests and pushes to main, ADR-099): the base commit (the PR base, or the commit before
+  the push) is built like the head and measured in the same interleaved rounds. With `d_r = ln(head_r / base_r)` per
+  round (each the median of its block), the check `no paired regression > 5%` fails when `exp(median d)` exceeds
+  1.05, the effect `base × (exp(median d) − 1)` exceeds 0.1 ms, **and** the lower end of the 95 % interval of the
+  median of `d` is above 1; the point estimate alone above 5 % is a warning. Measuring base and head minutes apart
+  failed same-code changes about once per 15 scenarios (runner drift between the two windows); interleaving brings
+  that to about zero, while +10 % is still detected. A base that could not be measured (for example a fail-closed
+  stash on B8) is a warning, and the head's checks still run. With a paired base in the record, every comparison
+  with another record below is advisory.
+* **Regression** against another record (`--baseline FILE`, or the last history record of the same platform and
+  variant): snp's median more than 5 % **and** 0.1 ms above the baseline's, **and** the two 95 % confidence
   intervals of the medians disjoint (distribution-free order-statistic intervals, ranks `n/2 ∓ 1.96·√n/2`) fails; such
   a change with overlapping intervals is a warning. The 0.1 ms floor is twice the largest same-runner difference
-  seen (0.045 ms over 22 CI runs, ADR-090), so it only matters below 2 ms. Pull requests and pushes to main use the
-  base commit (the PR base, or the commit before the push) measured on the same runner as the baseline, because
-  records from different runner VMs differ by far more than 5 % for identical binaries; the nightly uses the last
-  history record of the same platform and variant.
+  seen (0.045 ms over 22 CI runs, ADR-090), so it only matters below 2 ms. Records from different runner VMs differ
+  by far more than 5 % for identical binaries, so CI reads the history only as advice.
+* **Counters** (`--counts` with a paired base, ADR-100): clones fail above the base's by more than 10 % and at least
+  5; `statx` and `newfstatat`, separately, by more than 2 % and at least 50 (a change of git's own lstat calls shows
+  in `newfstatat`, snp's in `statx`). Opens, dirents and execs are reported only, execs with the argv lines only the
+  head (`+`) or only the base (`-`) ran, so a dropped parity or safety git call is visible in review. Counters are
+  never compared with the history: runner images change git and glibc. A run that asked for `--counts` and has no
+  head counters fails.
 * **Drift** (the nightly, and a push without a previous commit, which compare against the history): the same rule against the record with the
   median snp time among the last 10 history records (at least 3 needed). Without it, a series of slowdowns each just
   under 5 % of the previous record would pass forever, since every passing run becomes the next baseline. The gate reads the records and
   criterion's results from cargo's target directory (`CARGO_TARGET_DIR` respected), like `run` writes them, and uses
   hyperfine 1.19.0 only (another hyperfine on PATH is ignored).
 * **History from other machines** (`--advisory-history`): the regression and drift checks against the history report
-  warnings instead of failing. CI passes it wherever it has no same-runner baseline: the history then comes from other
+  warnings instead of failing (never the paired check or the counters). CI passes it on every event: the history comes from other
   runner VMs, where one binary measured 0.76–1.19 ms for B1 (glibc) and 0.48–0.66 ms (musl), and not even the ratio to
   prek is stable (+30 %). Budgets, syscall and allocation counts and the never-slower rule are measured within the run
   and still gate. Without the flag (a developer's machine, whose history is its own) both checks fail as above.
-* **Budgets**: every `[[budget]]` of the running OS; `hard = true` fails, a soft breach is a warning.
+* **Budgets**: every `[[budget]]` of the running OS; `hard = true` fails, a soft breach is a warning. The nightly
+  `--dhat` run profiles B2, B3, B4, B6, B8, B10 and B12u: B8's heap peak (dhat's bytes live at the global maximum) must
+  stay within B3's + 2 MB (hard, ADR-100: the streamed patch measures 0.48 MiB, a buffered one would add 20+ MiB),
+  and the absolute allocation ceilings (measured + ~10 %) use bytes on the single-threaded scenarios and blocks on the
+  multi-threaded ones (soft until the reference runner's nightly records confirm them). The per-push guard of the
+  streamed patch is `crates/snp-stash/tests/perf_patch_stream.rs` in the `perf-smoke` job.
 * **Known misses**: a `[[known_miss]]` of `budgets.toml` names a scenario, a check and the reason it fails today
   (ADR-091). That one check warns with its reason, and the gate says when it passes so the entry can go. Every other
   check still fails, and getting worse still fails the regression check.

@@ -1,4 +1,4 @@
-//! The per-push guard of the streamed stash patch (ADR-099; ARCHITECTURE §12.1 B8, T6): stashing a patch of more than
+//! The per-push guard of the streamed stash patch (ADR-100; ARCHITECTURE §12.1 B8, T6): stashing a patch of more than
 //! 20 MB must not grow the resident memory of the process by more than a few MiB. The nightly bench gates B8's dhat heap
 //! peak (B3's + 2 MB); this test catches a buffered patch on every push, in the `perf-smoke` job (release mode,
 //! `--run-ignored only -E 'test(/perf_/)'`).

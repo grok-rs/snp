@@ -6,12 +6,12 @@
 #           reference runner. Pull requests and pushes to main also build the base commit (the PR base, or the commit
 #           before the push) at base/snp, against its own deps.lock crates (base/cfgv-rs, base/file-identify) and its
 #           own toolchain, with its own stores; `bench run --base-snp` measures the two binaries in interleaved ABBA
-#           rounds per scenario, pre-commit and prek right after, and the gate pairs the rounds (ADR-098). Every event
+#           rounds per scenario, pre-commit and prek right after, and the gate pairs the rounds (ADR-099). Every event
 #           counts clones, statx, newfstatat, opens, dirents and execs with strace (`--counts`); with a base, clones,
-#           statx and newfstatat are gated against it and the exec argv diff is in the comment (ADR-099). Pull
+#           statx and newfstatat are gated against it and the exec argv diff is in the comment (ADR-100). Pull
 #           requests get a PR comment. The JSON-lines history is reported, never gated (`--advisory-history`,
 #           ADR-090); all but pull requests append to it. The nightly also enforces the syscall ceilings
-#           (`strace -f -c`, B1 <= 64), the B3 allocation budget and B8's heap peak (dhat, ADR-099).
+#           (`strace -f -c`, B1 <= 64), the B3 allocation budget and B8's heap peak (dhat, ADR-100).
 # * musl:   B3/B4/B6/B12 of the musl artifact with the system allocator and with mimalloc (ADR-079); the adopted
 #           allocator (bench/budgets.toml [musl]) is held to the never-slower-than-prek rule.
 #
@@ -119,7 +119,7 @@ jobs:
         run: find target/bench -mindepth 1 -maxdepth 1 ! -name base-target -exec rm -rf {} + 2>/dev/null || true
       - run: cargo xtask bench setup --scenarios "$BENCH_SCENARIOS"
       # Pull requests and pushes: the base commit's snp (the PR base, or the commit before the push), built on this
-      # runner like the head (ADR-098): checked out at base/snp, its own deps.lock crates next to it (base/cfgv-rs,
+      # runner like the head (ADR-099): checked out at base/snp, its own deps.lock crates next to it (base/cfgv-rs,
       # base/file-identify, so its `../cfgv-rs` paths resolve to them), its own rust-toolchain.toml and .cargo, and
       # `--locked`. A baseline from the history comes from another VM, and runner variance alone exceeds the 5 %
       # regression threshold on millisecond scenarios (B1: +57 % for an identical binary), which is why the history

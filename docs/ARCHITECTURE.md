@@ -3598,7 +3598,7 @@ uses the core library only; `leanprover/lean-action` is pinned by commit SHA. A 
 | B5 | B4 + `types`/`types_or`/`exclude_types` | — | ≤ 1.3× B4 | | |
 | B6 | 13 pre-commit-hooks hooks, 960 files, fast path, warm | ≈ 1.5 s | ≤ 60 ms (soft) | | |
 | B7 | B6 cold (fresh store, network excluded) | tens of s | ≤ 1 s | | |
-| B8 | stash with a 10 MB unstaged patch | — | ≤ pre-commit, RSS + ≤ 2 MB (streamed patch) | | |
+| B8 | stash with a 10 MB unstaged patch | — | ≤ pre-commit, heap peak ≤ B3's + 2 MB (streamed patch; dhat, nightly, hard; ADR-100) | | |
 | B9 | `git commit` through the installed hook | — | ≤ B3 + 3 ms | | |
 | B10 | `validate-config` with 1 000 hooks | — | ≤ 50 ms | | |
 | B11 | `gc` with 500 repos / 200 configs | — | ≤ 1 s | | |
@@ -3635,8 +3635,16 @@ the critical path (≈ 1 ms each measured); B2 (one hook, no Stat mode below thr
 ### 12.3 Measurement and gates
 
 `cargo xtask bench setup|run|gate` (WP-36): hyperfine `-N -w 5 -r 50` against the oracle (`pc470-py312`) and pinned
-prek, JSON history, PR comment; gate fails on a > 5 % and > 0.1 ms median regression with non-overlapping 95 % CIs
-against a same-runner baseline, or on any hard-budget breach (history from other runner VMs is reported, ADR-090). RSS via `/usr/bin/time -v` (median of 10). Spawn budgets: integration tests run against a `--features testing`
+prek, JSON history, PR comment. Pull requests and pushes build the base commit like the head (its own `deps.lock`
+crates, toolchain and stores) and measure both in interleaved ABBA rounds per scenario, pre-commit and prek right
+after (ADR-099); the gate fails when the median per-round ratio exceeds 5 % and 0.1 ms with its 95 % interval above 1,
+or on any hard-budget breach; a comparison with another record (> 5 % and > 0.1 ms with non-overlapping 95 % CIs) is
+reported (history from other runner VMs, ADR-090). Deterministic counters (`strace -f --seccomp-bpf -c`, every
+event): clones, `statx` and `newfstatat` are gated base against head on the same runner (+10 % and ≥ 5; +2 % and ≥ 50
+each), opens, dirents and execs (with the base/head argv diff) reported, nothing against the history (ADR-100). RSS
+via `/usr/bin/time -v` (median of 10): the peak RSS of the largest process of the tree, which can only overstate snp's
+own, so the hard B4/B6/B12u RSS budgets fail closed; B8's memory budget is snp's own heap peak (dhat, nightly, ADR-100),
+since its largest process is git. Spawn budgets: integration tests run against a `--features testing`
 build of `snp` with `SNP_TEST_SPAWN_LOG` (`snp_proc::spawn_log`, feature `testing`) and assert upper bounds per
 scenario (catches accidental O(files) spawns); timing gates use the `dist` build. Micro-benchmark thresholds stated in
 package acceptance lists are enforced in two places: a release-mode `#[test] #[ignore = "perf"]` per threshold with a
@@ -3644,7 +3652,9 @@ package acceptance lists are enforced in two places: a release-mode `#[test] #[i
 xtask bench gate` (WP-36). The bench matrix includes the musl artifacts (system allocator vs mimalloc, ADR-079) and a
 B12 case with 32 threads × 20 patterns on non-ASCII paths (regex cache memory). Syscalls: nightly Linux `strace -f
 -c` on B1/B3 with committed hard ceilings (B1 ≤ 64 syscalls; B3 ≤ 4230 over the whole process tree, ADR-083).
-Allocations: bench feature `dhat-heap` (B3 ≤ 2 MB total allocated). Criterion micro-benches: pyre kinds vs engines on 100 k paths, shuffle + partition on 50 k,
+Allocations: bench feature `dhat-heap` (B3 ≤ 2 MB total allocated; B8 heap peak ≤ B3's + 2 MB; nightly ceilings of
+measured + ~10 % in bytes for single-threaded and blocks for multi-threaded scenarios, ADR-100), and a per-push
+`perf_patch_stream` guard bounding the stash's resident growth on a ≥ 20 MB patch. Criterion micro-benches: pyre kinds vs engines on 100 k paths, shuffle + partition on 50 k,
 tagging tiers, YAML load of the pre-commit-hooks manifest, argparse parse of a hook-impl argv, `len_cjk`.
 
 ---
