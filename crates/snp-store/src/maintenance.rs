@@ -7,7 +7,7 @@
 //!
 //! Owner: WP-22.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -48,10 +48,21 @@ pub(crate) fn config_entries(dir: &Path) -> Vec<(PathBuf, PathBuf, PathBuf)> {
         .collect()
 }
 
-/// Keeps the markers `keep` accepts; removes the rest (and undecodable files). Returns the number removed.
-pub(crate) fn retain_markers(dir: &Path, keep: &mut dyn FnMut(&MarkerKey) -> bool) -> usize {
+/// Keeps the markers `keep` accepts and, unread, the files named in `kept_names`; removes the rest (and undecodable
+/// files). Returns the number removed.
+pub(crate) fn retain_markers(
+    dir: &Path,
+    kept_names: &HashSet<String>,
+    keep: &mut dyn FnMut(&MarkerKey) -> bool,
+) -> usize {
     let mut removed: usize = 0;
     for e in entries(dir) {
+        if e.file_name()
+            .to_str()
+            .is_some_and(|n| kept_names.contains(n))
+        {
+            continue;
+        }
         let path = e.path();
         if e.file_type().is_ok_and(|t| t.is_dir()) {
             continue;
@@ -227,20 +238,24 @@ pub(crate) fn sweep(root: &Path, tools_root: &Path, now: SystemTime) -> SweepRep
         }
     }
 
-    // 2. Repository lock files whose repository is gone (retired by gc).
+    // 2. Repository lock files whose repository is gone (retired by gc), decided from this one listing of
+    // `repos-v1`, taken after gc's retirements under its exclusive lock (no repository can appear meanwhile; the
+    // lock file's own `try_acquire` still protects a holder).
     let repos = root.join(layout::REPOS);
-    for e in entries(&repos) {
+    let repo_entries = entries(&repos);
+    let names: HashSet<Vec<u8>> = repo_entries
+        .iter()
+        .map(|e| e.file_name().as_encoded_bytes().to_vec())
+        .collect();
+    for e in &repo_entries {
         let name = e.file_name();
-        let Some(stem) = name.as_encoded_bytes().strip_suffix(b".lock") else {
+        let Some(stem) = lock_stem(name.as_encoded_bytes()) else {
             continue;
         };
-        if RepoKey::from_hex(stem).is_none() {
+        if names.contains(stem) {
             continue;
         }
         let path = e.path();
-        if fs::symlink_metadata(path.with_extension("")).is_ok() {
-            continue;
-        }
         if let Ok(Some(lock)) = FileLock::try_acquire(&path, LockMode::Exclusive) {
             drop(lock);
             let _removed: io::Result<()> = fs::remove_file(&path);
@@ -249,7 +264,7 @@ pub(crate) fn sweep(root: &Path, tools_root: &Path, now: SystemTime) -> SweepRep
 
     // 3. Tool versions no environment references (only for a store that owns its tools).
     if tools_root == root {
-        for removed in sweep_tools(root, &trash, now) {
+        for removed in sweep_tools(root, &repo_entries, &trash, now) {
             count(removed);
         }
     }
@@ -323,10 +338,66 @@ fn snp1_db_files() -> [String; 4] {
     ]
 }
 
+/// `<hex32>` of a repository lock file's name `<hex32>.lock`.
+fn lock_stem(name: &[u8]) -> Option<&[u8]> {
+    let stem = name.strip_suffix(b".lock")?;
+    RepoKey::from_hex(stem).map(|_| stem)
+}
+
+/// A tool directory of `tools-v1` and its versions older than [`ORPHAN_AGE`].
+struct ToolCandidates {
+    /// `tools-v1/<tool>`.
+    dir: PathBuf,
+    /// The directory name.
+    name: String,
+    /// `(version name, path)` of each version old enough to be removed.
+    old: Vec<(String, PathBuf)>,
+}
+
 /// Removes tool versions that no `.snp-tools.json` references; one `bool` per attempted removal.
-fn sweep_tools(root: &Path, trash: &Path, now: SystemTime) -> Vec<bool> {
+///
+/// `repo_entries` is sweep's listing of `repos-v1`. Repository lock files (`<hex32>.lock`) are skipped by name, so
+/// symlinked or `DT_UNKNOWN` repository entries are still walked. The sidecars are read only when some version is
+/// old enough to be removed; nothing is removed when one is unreadable.
+fn sweep_tools(
+    root: &Path,
+    repo_entries: &[fs::DirEntry],
+    trash: &Path,
+    now: SystemTime,
+) -> Vec<bool> {
+    let tools_dir = root.join(layout::TOOLS);
+    let mut tools: Vec<ToolCandidates> = Vec::new();
+    for tool in entries(&tools_dir) {
+        if !tool.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        let Some(name) = tool.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let dir = tool.path();
+        let old = entries(&dir)
+            .into_iter()
+            .filter_map(|version| {
+                let v = version.file_name().to_str()?.to_owned();
+                let path = version.path();
+                age(&path, now)
+                    .is_some_and(|a| a >= ORPHAN_AGE)
+                    .then_some((v, path))
+            })
+            .collect();
+        tools.push(ToolCandidates { dir, name, old });
+    }
+    if tools.iter().all(|t| t.old.is_empty()) {
+        for t in &tools {
+            let _empty_removed: io::Result<()> = fs::remove_dir(&t.dir);
+        }
+        return Vec::new();
+    }
     let mut referenced: BTreeSet<(String, String)> = BTreeSet::new();
-    for repo in entries(&root.join(layout::REPOS)) {
+    for repo in repo_entries {
+        if lock_stem(repo.file_name().as_encoded_bytes()).is_some() {
+            continue;
+        }
         for env in entries(&repo.path().join("envs")) {
             let sidecar = env.path().join(layout::TOOLS_SIDECAR);
             let bytes = match snp_os::fs::read_capped(&sidecar, marker::META_CAP) {
@@ -346,24 +417,11 @@ fn sweep_tools(root: &Path, trash: &Path, now: SystemTime) -> Vec<bool> {
             }
         }
     }
-    let tools_dir = root.join(layout::TOOLS);
     let mut out = Vec::new();
-    for tool in entries(&tools_dir) {
-        if !tool.file_type().is_ok_and(|t| t.is_dir()) {
-            continue;
-        }
-        let Some(tool_name) = tool.file_name().to_str().map(str::to_owned) else {
-            continue;
-        };
-        let lock_path = tools_dir.join(format!("{tool_name}.lock"));
-        for version in entries(&tool.path()) {
-            let Some(v) = version.file_name().to_str().map(str::to_owned) else {
-                continue;
-            };
-            let path = version.path();
-            if referenced.contains(&(tool_name.clone(), v))
-                || age(&path, now).is_none_or(|a| a < ORPHAN_AGE)
-            {
+    for t in tools {
+        let lock_path = tools_dir.join(format!("{}.lock", t.name));
+        for (v, path) in t.old {
+            if referenced.contains(&(t.name.clone(), v)) {
                 continue;
             }
             // A bootstrap in progress holds the tool lock: leave its tool alone.
@@ -373,7 +431,7 @@ fn sweep_tools(root: &Path, trash: &Path, now: SystemTime) -> Vec<bool> {
             out.push(snp_os::fs::retire_dir(&path, trash).is_ok());
             drop(lock);
         }
-        let _empty_removed: io::Result<()> = fs::remove_dir(tool.path());
+        let _empty_removed: io::Result<()> = fs::remove_dir(&t.dir);
     }
     out
 }

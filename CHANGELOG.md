@@ -31,6 +31,10 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
 
 - Built with Rust 1.100.0; the minimum supported Rust version is 1.100 (was 1.98), so `cargo install snp` needs Rust
   1.100 or newer (ADR-094). The crash log's `sys.version` names rustc 1.100.0.
+- `snp gc` does less I/O: one `repos-v1` snapshot under the exclusive lock instead of a marker read per manifest
+  lookup, the markers of used repositories kept without being read, orphan repository locks decided from one listing,
+  and the tool sweep reads no environment sidecar when no tool version is old enough. Output and the removal set are
+  unchanged.
 
 - Benchmarks (developer tooling, no runtime change): pull requests and pushes measure the base commit's snp, built
   against its own `deps.lock` crates and toolchain and primed into its own stores, in interleaved ABBA rounds with the

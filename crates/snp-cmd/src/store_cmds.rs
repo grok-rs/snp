@@ -2,7 +2,7 @@
 //!
 //! Owner: WP-33.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
@@ -17,7 +17,8 @@ use snp_core::failure::Failure;
 use snp_core::output::Level;
 use snp_pyre::RegexCache;
 use snp_store::{
-    MarkerKey, RepoId, RepoKey, Store, StoreGuard, TrackedConfig, db_repo_name, marker_repo_name,
+    MarkerKey, RepoHandle, RepoId, RepoKey, Store, StoreGuard, TrackedConfig, db_repo_name,
+    marker_repo_name,
 };
 
 use crate::{CmdCtx, frame, messages};
@@ -55,15 +56,19 @@ fn config_hook_deps(raw_deps: Option<Vec<Arc<str>>>, manifest_deps: &[Arc<str>])
 /// The manifest of a remote `(repo, rev)` as gc can load it: from the materialised clone, else from the embedded
 /// Tier A profile of pre-commit-hooks (ADR-075). `None` = not cloned, or `InvalidManifestError` (the repository
 /// stays unused and is removed, `gc.py:33-38`).
+///
+/// `present` is gc's one `repos-v1` snapshot, taken under the exclusive lock (pre-commit's single `SELECT repo, ref,
+/// path FROM repos`, `gc.py:65-70`): nothing can materialise or retire a repository while gc holds that lock.
 fn gc_manifest(
     cx: &CmdCtx<'_>,
     repo: &str,
     rev: &str,
     key: &RepoKey,
+    present: &HashMap<RepoKey, &RepoHandle>,
     regexes: &RegexCache,
 ) -> Option<(Manifest, bool)> {
     let o = frame::load_opts(cx, regexes, frame::ext_mode(cx));
-    if let Some(h) = cx.store.lookup(key) {
+    if let Some(h) = present.get(key) {
         let path = h.src.join(".pre-commit-hooks.yaml");
         return load_manifest(&path, path.as_os_str(), &o)
             .ok()
@@ -89,6 +94,7 @@ fn mark_used(
     cx: &CmdCtx<'_>,
     cfg: &snp_config::Config,
     root: &Path,
+    present: &HashMap<RepoKey, &RepoHandle>,
     used: &mut Used,
     regexes: &RegexCache,
 ) {
@@ -105,7 +111,8 @@ fn mark_used(
             RepoConfig::Remote { repo, rev, hooks } => {
                 let id = RepoId::from_config(repo, root);
                 let key = Store::remote_key(&id, rev, &[]);
-                let Some((manifest, _present)) = gc_manifest(cx, repo, rev, &key, regexes) else {
+                let Some((manifest, _present)) = gc_manifest(cx, repo, rev, &key, present, regexes)
+                else {
                     continue;
                 };
                 used.keys.insert(key);
@@ -167,6 +174,9 @@ pub fn gc(cx: &CmdCtx<'_>) -> Result<i32, Failure> {
     }
     cx.store.ensure_created(cx.brand, cx.printer)?;
     let _lock = exclusive(cx)?;
+    // One snapshot of the repositories (ordered by key, so the retirements and the first failure are deterministic).
+    let repos = cx.store.all_repos();
+    let present: HashMap<RepoKey, &RepoHandle> = repos.iter().map(|h| (h.key, h)).collect();
     let regexes = RegexCache::default();
     let mut used = Used::default();
     let mut dead = Vec::new();
@@ -175,13 +185,13 @@ pub fn gc(cx: &CmdCtx<'_>) -> Result<i32, Failure> {
             return Err(f);
         }
         match load_tracked(cx, &t, &regexes) {
-            Some(cfg) => mark_used(cx, &cfg, &t.project_root, &mut used, &regexes),
+            Some(cfg) => mark_used(cx, &cfg, &t.project_root, &present, &mut used, &regexes),
             None => dead.push(t.path),
         }
     }
     cx.store.forget_configs(&dead);
     let mut removed: usize = 0;
-    for h in cx.store.all_repos() {
+    for h in &repos {
         if used.keys.contains(&h.key) {
             continue;
         }
@@ -202,7 +212,16 @@ pub fn gc(cx: &CmdCtx<'_>) -> Result<i32, Failure> {
         _ => true,
     };
     let mut keep_marker = keep_marker;
-    let _stale = cx.store.retain_markers(&mut keep_marker);
+    // The `Initialized` markers of used remote keys are kept without being read (their file names are derived).
+    let kept: Vec<MarkerKey> = used
+        .remote_markers
+        .iter()
+        .map(|(name, rev)| MarkerKey::Initialized {
+            db_repo_name: Arc::from(name.as_str()),
+            rev: Arc::from(rev.as_str()),
+        })
+        .collect();
+    let _stale = cx.store.retain_markers_keeping(&kept, &mut keep_marker);
     if report.legacy_v1_removed {
         cx.printer
             .diag(&messages::removed_v1(cx.store.location().path.as_os_str()));

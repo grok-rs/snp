@@ -138,6 +138,9 @@ mod api {
         has::<fn(&Path, &[u8], &[ToolRef]) -> io::Result<()>>(Store::commit_install_marker);
         has::<fn(&Store, &MarkerKey) -> bool>(Store::marker_exists);
         has::<fn(&Store, &MarkerKey)>(Store::set_marker);
+        has::<fn(&Store, &[MarkerKey], &mut dyn FnMut(&MarkerKey) -> bool) -> usize>(
+            Store::retain_markers_keeping,
+        );
         has::<fn(&Store, &Path, &Path)>(Store::mark_config_used);
         has::<fn(&Store) -> Vec<TrackedConfig>>(Store::tracked_configs);
         has::<fn(&Store, &[PathBuf])>(Store::forget_configs);

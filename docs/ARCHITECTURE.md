@@ -2955,6 +2955,12 @@ directory` (snp brand) once per process, then waits (cancel observed every 50 ms
   `(db_repo_name, rev)` keys that are neither present nor Tier-A-loadable, snp 1.x leftovers only when the README
   carries the 1.x signature (an snp-only stderr line `Removed snp 1.x cache data from {store}.`, D-DIAG-05).
   Output: `{n} repo(s) removed.` (n counts `(db_repo_name, rev)` keys, like pre-commit's rows).
+  gc reads `repos-v1` once, after taking the exclusive lock (pre-commit's single `SELECT … FROM repos`): that
+  key-sorted snapshot answers every manifest lookup and drives the retirements, so their order and the first failing
+  path (exit 3) are deterministic. The `Initialized` markers of used remote keys are kept unread (their file names are
+  derived); sweep decides orphan repository locks from its own `repos-v1` listing taken after the retirements, skips
+  `<hex32>.lock` entries by name when it walks the environments' `.snp-tools.json` sidecars, and reads no sidecar
+  when no tool version is older than an hour.
 * **Config tracking on a fresh store** (C1): pre-commit creates its store before `mark_config_used`. snp's store is
   lazy, so `Store::mark_config_used` on a missing store keeps `(cfg_realpath, project_root)` in memory and the first
   successful `ensure_created` of that handle (or of try-repo's copy of it) records it; a fresh-store

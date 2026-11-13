@@ -7,6 +7,7 @@
 //!
 //! Owner: WP-22.
 
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -512,7 +513,21 @@ impl Store {
     /// gc's marking (`snp_cmd::gc`, ADR-075) decides which `(db_repo_name, rev)` and virtual-install markers are still
     /// backed by a present or Tier-A-loadable repository. Undecodable files are removed. Additive API (WP-22).
     pub fn retain_markers(&self, keep: &mut dyn FnMut(&MarkerKey) -> bool) -> usize {
-        maintenance::retain_markers(&self.root().join(layout::KEYS), keep)
+        maintenance::retain_markers(&self.root().join(layout::KEYS), &HashSet::new(), keep)
+    }
+
+    /// [`Store::retain_markers`] that keeps the markers of `kept` without reading them; returns how many were removed.
+    ///
+    /// gc knows the `Initialized` keys it keeps, so their `keys-v1` files (named by [`MarkerKey`]'s derived file name)
+    /// are kept unread; every other file is read and decided by `keep` as in [`Store::retain_markers`]. Additive API
+    /// (P20).
+    pub fn retain_markers_keeping(
+        &self,
+        kept: &[MarkerKey],
+        keep: &mut dyn FnMut(&MarkerKey) -> bool,
+    ) -> usize {
+        let names: HashSet<String> = kept.iter().map(MarkerKey::file_name).collect();
+        maintenance::retain_markers(&self.root().join(layout::KEYS), &names, keep)
     }
 
     /// Best effort, lock-free, never creates the store.
@@ -573,6 +588,9 @@ impl Store {
     ///
     /// gc's `DELETE FROM configs WHERE path = ?` (`gc.py:82-84`): every entry recording one of `dead` is removed.
     pub fn forget_configs(&self, dead: &[PathBuf]) {
+        if dead.is_empty() {
+            return;
+        }
         for (file, path, _) in maintenance::config_entries(&self.root().join(layout::CONFIGS)) {
             if dead.contains(&path) {
                 let _removed: io::Result<()> = fs::remove_file(file);
