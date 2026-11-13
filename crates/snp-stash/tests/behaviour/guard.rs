@@ -211,9 +211,17 @@ fn journal_and_pointer_are_durable_before_the_checkout() {
     );
     assert_eq!(patch, original);
     assert!(in_store);
-    // The command sequence is pre-commit's (02 §7) plus the re-verification diff-index.
+    // The command sequence is pre-commit's (02 §7) plus the re-verification diff-index and, D-DATA-19, the
+    // patch's paths for a checkout limited to them.
     let calls = spy.calls();
+    let p = patch_of(&g);
     let tree_arg = sb.git_text(&repo, &["write-tree"]);
+    // git < 2.25 has no `--pathspec-from-file`: the same literal pathspecs are arguments there.
+    let checkout = if sb.exe().caps.pathspec_from_file {
+        "-c submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul".to_owned()
+    } else {
+        "-c submodule.recurse=0 checkout -- :(literal)foo".to_owned()
+    };
     assert_eq!(
         calls,
         vec![
@@ -226,16 +234,16 @@ fn journal_and_pointer_are_durable_before_the_checkout() {
             format!(
                 "diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff {tree_arg} --"
             ),
-            "-c submodule.recurse=0 checkout -- .".to_owned(),
+            format!("apply --numstat -z --whitespace=nowarn {}", p.display()),
+            checkout,
         ]
     );
-    let p = patch_of(&g);
     g.restore().unwrap();
     assert_eq!(
-        spy.calls()[5],
+        spy.calls()[6],
         format!("apply --whitespace=nowarn {}", p.display())
     );
-    assert_eq!(spy.calls().len(), 6);
+    assert_eq!(spy.calls().len(), 7);
     assert!(!repo.join(".git/snp-stash.journal").exists());
     assert_eq!(
         sb.patch_files().len(),
@@ -413,7 +421,7 @@ fn a_tty_stopped_restore_is_reported_and_the_k_plus_path_keeps_the_patch() {
     let repo = sb.foo_staged("r");
     sb.write(&repo, "foo", b"herp\n");
     let spy = Spy::new();
-    spy.on(&["apply"], None, Reply::TtyStop);
+    spy.on(&["apply", "--whitespace=nowarn"], None, Reply::TtyStop);
     spy.on(
         &["-c", "core.autocrlf=false", "apply"],
         None,
@@ -451,7 +459,11 @@ fn a_tty_stopped_rollback_checkout_alone_is_reported() {
     let repo = sb.foo_staged("r");
     sb.write(&repo, "foo", b"herp\n");
     let spy = Spy::new();
-    spy.on(&["apply"], None, Reply::Exit(1, Vec::new(), Vec::new()));
+    spy.on(
+        &["apply", "--whitespace=nowarn"],
+        None,
+        Reply::Exit(1, Vec::new(), Vec::new()),
+    );
     spy.on(
         &["-c", "core.autocrlf=false", "apply"],
         None,
@@ -471,10 +483,13 @@ fn a_tty_stopped_rollback_checkout_alone_is_reported() {
     assert_eq!(e.exit_code(), 3);
     let (ty, text, hint) = exc(&e);
     assert_eq!(ty, "CalledProcessError");
-    assert!(
-        text.contains("'checkout', '--', '.')\nreturn code: -9"),
-        "{text}"
-    );
+    let checkout = if sb.exe().caps.pathspec_from_file {
+        "'checkout', '--pathspec-from-file=-', '--pathspec-file-nul')"
+    } else {
+        "'checkout', '--', ':(literal)"
+    };
+    assert!(text.contains(checkout), "{text}");
+    assert!(text.contains(")\nreturn code: -9"), "{text}");
     assert!(
         hint.unwrap()
             .starts_with("[ERROR] Your unstaged changes are saved in ")
@@ -486,7 +501,12 @@ fn a_tty_stopped_rollback_checkout_alone_is_reported() {
     assert!(out.text().contains("Rolling back fixes..."));
     assert!(p.is_file());
     // No second apply pair after a failed rollback checkout.
-    let applies = spy.calls().iter().filter(|c| c.contains("apply")).count();
+    // (D-DATA-19's `apply --numstat` only lists the patch's files.)
+    let applies = spy
+        .calls()
+        .iter()
+        .filter(|c| c.contains("apply") && !c.contains("--numstat"))
+        .count();
     assert_eq!(applies, 2, "{:?}", spy.calls());
 }
 

@@ -46,8 +46,9 @@ snp adds, with no change to any byte pre-commit prints on a working path (ARCHIT
   `--pathspec-file-nul --pathspec-from-file=<patch>.ita`). The notice then says what to do when the apply refuses:
   `; if git apply reports that the patch does not apply, those files changed after the stash (hook fixes or later
   edits): keep a copy with git diff --binary <tree> > <patch>.now, put them back with git --literal-pathspecs restore
-  --source=<tree> --worktree -- <patch paths…>, then run the command again` (`git restore --source=<tree> --worktree
-  -- :/` for a long or unparseable list). Paths are literal pathspecs; the commands are run from the top of the
+  --source=<tree> --worktree -- <patch paths…>, then run the command again` (a long list is kept in `<patch>.paths`
+  and read with `--pathspec-file-nul --pathspec-from-file=<patch>.paths`, D-DATA-19; `git restore --source=<tree>
+  --worktree -- :/` only for an unparseable list or a store that cannot take it). Paths are literal pathspecs; the commands are run from the top of the
   worktree. A run killed after clearing intent-to-add entries but with no patch at risk (before the patch, or after
   the restore) gets one notice `snp: an earlier run was interrupted before it re-added its intent-to-add files.
   Restore with: git --literal-pathspecs add --intent-to-add -- <paths…>` (or the kept-list form), printed once.

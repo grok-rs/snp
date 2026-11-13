@@ -33,6 +33,15 @@ pub(crate) const TTY_STOPPED: &str =
 pub(crate) const KEPT_CHANGING: &str =
     "snp: unstaged files kept changing while stashing; nothing was modified";
 
+/// D-DATA-19: `git apply --numstat` listed no file of a non-empty stash patch (git would have to contradict itself),
+/// so snp cannot tell which files to check out; nothing was modified.
+pub(crate) fn no_patch_paths(patch: &Path) -> String {
+    format!(
+        "`git apply --numstat` listed no files for the stash patch {}; nothing was modified",
+        shown(patch)
+    )
+}
+
 /// A path as pre-commit prints it in its log lines (`str` of the joined path).
 pub(crate) fn shown(p: &Path) -> String {
     p.to_string_lossy().into_owned()
@@ -63,8 +72,17 @@ fn apply_cmd(patch: &str) -> String {
 /// The second step of a hint, for when the apply refuses (ADR-084): the files changed after the stash (hook fixes, or
 /// later edits). Their current state is saved first (`git diff --binary <tree>`: worktree against the stash-time
 /// tree), then only the worktree copies of the patch's files go back to the stash-time tree (`git restore
-/// --worktree` leaves the index alone), and `again` says what to run then.
-fn push_fallback(s: &mut String, patch: &str, tree: &str, existing: Option<&[&[u8]]>, again: &str) {
+/// --worktree` leaves the index alone), and `again` says what to run then. A list too long to spell out is named by
+/// its kept file `paths_file` (D-DATA-19: a whole-worktree restore would overwrite changes git cannot see, in files the
+/// patch does not touch); only without one (an unparsable patch, an unwritable store) is the whole worktree restored.
+fn push_fallback(
+    s: &mut String,
+    patch: &str,
+    tree: &str,
+    existing: Option<&[&[u8]]>,
+    paths_file: Option<&Path>,
+    again: &str,
+) {
     s.push_str("; if git apply reports that the patch does not apply, those files changed after the stash (hook fixes \
                 or later edits): keep a copy with git diff --binary ");
     s.push_str(tree);
@@ -76,6 +94,11 @@ fn push_fallback(s: &mut String, patch: &str, tree: &str, existing: Option<&[&[u
         s.push_str(tree);
         s.push_str(" --worktree --");
         push_paths(s, paths);
+    } else if let Some(f) = paths_file {
+        s.push_str("git --literal-pathspecs restore --source=");
+        s.push_str(tree);
+        s.push_str(" --worktree --pathspec-file-nul --pathspec-from-file=");
+        s.push_str(&sh(&shown(f)));
     } else {
         s.push_str("git restore --source=");
         s.push_str(tree);
@@ -85,7 +108,8 @@ fn push_fallback(s: &mut String, patch: &str, tree: &str, existing: Option<&[&[u
     s.push_str(again);
 }
 
-/// The patch's paths that exist in the stash-time tree (`None` for an unparsed or long list: the whole worktree).
+/// The patch's paths that exist in the stash-time tree (`None` for an unparsed or long list: the kept list of
+/// `recovery::kept_paths_file`, else the whole worktree).
 fn existing_paths(patch_paths: Option<&[(Vec<u8>, bool)]>) -> Option<Vec<&[u8]>> {
     let touched = patch_paths?;
     let existing: Vec<&[u8]> = touched
@@ -106,6 +130,7 @@ pub(crate) fn k_plus_hint(
     patch: &Path,
     tree: Option<&str>,
     patch_paths: Option<&[(Vec<u8>, bool)]>,
+    paths_file: Option<&Path>,
 ) -> String {
     let p = shown(patch);
     let mut s = format!(
@@ -115,7 +140,14 @@ pub(crate) fn k_plus_hint(
     if let Some(t) = tree {
         let existing = existing_paths(patch_paths);
         if existing.as_ref().is_none_or(|e| !e.is_empty()) {
-            push_fallback(&mut s, &p, t, existing.as_deref(), "apply it again");
+            push_fallback(
+                &mut s,
+                &p,
+                t,
+                existing.as_deref(),
+                paths_file,
+                "apply it again",
+            );
         }
     }
     s
@@ -153,6 +185,8 @@ pub(crate) struct Recovery<'a> {
     /// The paths the patch touches, each with whether the patch creates it (`None` when the patch could not be read
     /// or parsed).
     pub(crate) patch_paths: Option<&'a [(Vec<u8>, bool)]>,
+    /// A kept NUL-separated file listing the patch's paths (used when they are too many to spell out, D-DATA-19).
+    pub(crate) paths_file: Option<&'a Path>,
     /// The paths `stage_fixed` staged (or was about to stage).
     pub(crate) staged_fixed: &'a [Vec<u8>],
     /// Whether the run used the worktree's own index (not a temporary `GIT_INDEX_FILE`, as `git commit -- <paths>`
@@ -201,7 +235,14 @@ pub(crate) fn recovery_notice(r: &Recovery<'_>) -> String {
     if let Some(t) = r.tree {
         let existing = existing_paths(r.patch_paths);
         if existing.as_ref().is_none_or(|e| !e.is_empty()) {
-            push_fallback(&mut s, &p, t, existing.as_deref(), "run the command again");
+            push_fallback(
+                &mut s,
+                &p,
+                t,
+                existing.as_deref(),
+                r.paths_file,
+                "run the command again",
+            );
         }
     }
     s
@@ -327,6 +368,7 @@ mod tests {
             patch,
             tree,
             patch_paths,
+            paths_file: None,
             staged_fixed,
             own_index: true,
             ita,
@@ -345,19 +387,19 @@ mod tests {
     fn k_plus_hints() {
         let p = Path::new("/s/patches/patch1-2");
         assert_eq!(
-            k_plus_hint(p, None, None),
+            k_plus_hint(p, None, None, None),
             "[ERROR] Your unstaged changes are saved in /s/patches/patch1-2; restore them with: git apply \
              --whitespace=nowarn /s/patches/patch1-2"
         );
         let spaced = Path::new("/h o/patch1-2");
         assert_eq!(
-            k_plus_hint(spaced, None, None),
+            k_plus_hint(spaced, None, None, None),
             "[ERROR] Your unstaged changes are saved in /h o/patch1-2; restore them with: git apply \
              --whitespace=nowarn '/h o/patch1-2'"
         );
         let foo = [(b"foo".to_vec(), false), (b"new".to_vec(), true)];
         assert_eq!(
-            k_plus_hint(p, Some("abc"), Some(&foo)),
+            k_plus_hint(p, Some("abc"), Some(&foo), None),
             format!(
                 "[ERROR] Your unstaged changes are saved in /s/patches/patch1-2; restore them with: git apply \
                  --whitespace=nowarn /s/patches/patch1-2{FALLBACK}git --literal-pathspecs restore --source=abc \
@@ -365,7 +407,21 @@ mod tests {
             )
         );
         // Never `--3way` (it implies `--index`: it would stage the unstaged changes).
-        assert!(!k_plus_hint(p, Some("abc"), None).contains("3way"));
+        assert!(!k_plus_hint(p, Some("abc"), None, None).contains("3way"));
+        // D-DATA-19: a list too long to spell out is named by its kept file, never the whole worktree.
+        let long: Vec<(Vec<u8>, bool)> = (0..=LIST_MAX_PATHS)
+            .map(|i| (format!("f{i}").into_bytes(), false))
+            .collect();
+        let kept = Path::new("/s/patches/patch1-2.paths");
+        assert_eq!(
+            k_plus_hint(p, Some("abc"), Some(&long), Some(kept)),
+            format!(
+                "[ERROR] Your unstaged changes are saved in /s/patches/patch1-2; restore them with: git apply \
+                 --whitespace=nowarn /s/patches/patch1-2{FALLBACK}git --literal-pathspecs restore --source=abc \
+                 --worktree --pathspec-file-nul --pathspec-from-file=/s/patches/patch1-2.paths, then apply it again"
+            )
+        );
+        assert!(k_plus_hint(p, Some("abc"), Some(&long), None).contains(" --worktree -- :/, then"));
     }
 
     #[test]
@@ -411,6 +467,18 @@ mod tests {
         assert_eq!(
             recovery_notice(&rec(p, Some("abc"), Some(&many_touched), &[], &[])),
             format!("{HEAD}{whole}")
+        );
+        // D-DATA-19: with the kept list, a long list is restored by name, never as the whole worktree.
+        let kept = Recovery {
+            paths_file: Some(Path::new("/s/patches/patch1-2.paths")),
+            ..rec(p, Some("abc"), Some(&many_touched), &[], &[])
+        };
+        assert_eq!(
+            recovery_notice(&kept),
+            format!(
+                "{HEAD}{FALLBACK}git --literal-pathspecs restore --source=abc --worktree --pathspec-file-nul \
+                 --pathspec-from-file=/s/patches/patch1-2.paths, then run the command again"
+            )
         );
         // A path the patch creates is not restored (it is not in the tree); a patch that only creates files has no
         // fallback.

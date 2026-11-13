@@ -2,7 +2,7 @@
 
 # DIVERGENCES
 
-snp reproduces pre-commit 4.7.0 byte for byte. This book lists **every** deliberate difference (90
+snp reproduces pre-commit 4.7.0 byte for byte. This book lists **every** deliberate difference (91
 entries): each one is admissible only because pre-commit crashes, loses data or has a security bug there, or
 because an owner decision forces it (snp's own store, its name, no `unsafe`, performance), or because it is
 visible only when you use an snp extension. Every entry has a differential test that fails the build when the
@@ -16,7 +16,7 @@ the normative register is `docs/COMPATIBILITY.md` §5 in the repository.
 | Class | Entries |
 |---|---|
 | [5.1 CRASH — pre-commit crashes or hangs; snp behaves and fails closed](#51-crash--pre-commit-crashes-or-hangs-snp-behaves-and-fails-closed) | [D-CRASH-01](#d-crash-01) [D-CRASH-02](#d-crash-02) [D-CRASH-03](#d-crash-03) [D-CRASH-04](#d-crash-04) [D-CRASH-05](#d-crash-05) [D-CRASH-06](#d-crash-06) [D-CRASH-07](#d-crash-07) [D-CRASH-08](#d-crash-08) [D-CRASH-09](#d-crash-09) [D-CRASH-10](#d-crash-10) [D-CRASH-11](#d-crash-11) [D-CRASH-12](#d-crash-12) [D-CRASH-13](#d-crash-13) [D-CRASH-14](#d-crash-14) [D-CRASH-15](#d-crash-15) [D-CRASH-16](#d-crash-16) [D-CRASH-17](#d-crash-17) [D-CRASH-18](#d-crash-18) [D-CRASH-19](#d-crash-19) [D-CRASH-20](#d-crash-20) [D-CRASH-21](#d-crash-21) [D-CRASH-22](#d-crash-22) [D-CRASH-23](#d-crash-23) [D-CRASH-24](#d-crash-24) [D-CRASH-25](#d-crash-25) [D-CRASH-26](#d-crash-26) |
-| [5.2 DATA — pre-commit loses or corrupts user data](#52-data--pre-commit-loses-or-corrupts-user-data) | [D-DATA-01](#d-data-01) [D-DATA-02](#d-data-02) [D-DATA-03](#d-data-03) [D-DATA-05](#d-data-05) [D-DATA-07](#d-data-07) [D-DATA-08](#d-data-08) [D-DATA-09](#d-data-09) [D-DATA-10](#d-data-10) [D-DATA-11](#d-data-11) [D-DATA-12](#d-data-12) [D-DATA-13](#d-data-13) [D-DATA-14](#d-data-14) [D-DATA-15](#d-data-15) [D-DATA-16](#d-data-16) [D-DATA-17](#d-data-17) [D-DATA-18](#d-data-18) |
+| [5.2 DATA — pre-commit loses or corrupts user data](#52-data--pre-commit-loses-or-corrupts-user-data) | [D-DATA-01](#d-data-01) [D-DATA-02](#d-data-02) [D-DATA-03](#d-data-03) [D-DATA-05](#d-data-05) [D-DATA-07](#d-data-07) [D-DATA-08](#d-data-08) [D-DATA-09](#d-data-09) [D-DATA-10](#d-data-10) [D-DATA-11](#d-data-11) [D-DATA-12](#d-data-12) [D-DATA-13](#d-data-13) [D-DATA-14](#d-data-14) [D-DATA-15](#d-data-15) [D-DATA-16](#d-data-16) [D-DATA-17](#d-data-17) [D-DATA-18](#d-data-18) [D-DATA-19](#d-data-19) |
 | [5.3 SEC — security](#53-sec--security) | [D-SEC-01](#d-sec-01) [D-SEC-05](#d-sec-05) [D-SEC-06](#d-sec-06) [D-SEC-07](#d-sec-07) [D-SEC-08](#d-sec-08) [D-SEC-09](#d-sec-09) [D-SEC-10](#d-sec-10) [D-SEC-11](#d-sec-11) [D-SEC-12](#d-sec-12) [D-SEC-13](#d-sec-13) |
 | [5.4 STORE and BRAND — forced by FD-2 and FD-1](#54-store-and-brand--forced-by-fd-2-and-fd-1) | [D-STORE-01](#d-store-01) [D-STORE-02](#d-store-02) [D-DATA-04](#d-data-04) [D-BRAND-01](#d-brand-01) [D-BRAND-02](#d-brand-02) [D-MISC-02](#d-misc-02) |
 | [5.5 PLAT — platform](#55-plat--platform) | [D-PLAT-02](#d-plat-02) [D-PLAT-03](#d-plat-03) [D-PLAT-06](#d-plat-06) [D-PLAT-08](#d-plat-08) [D-PLAT-09](#d-plat-09) [D-PLAT-10](#d-plat-10) [D-PLAT-12](#d-plat-12) |
@@ -1564,7 +1564,8 @@ what a failed rollback leaves. When the hooks' edits are still in the worktree t
 goes on: `; if git apply reports that the patch does not apply, those files changed after the stash (hook fixes or
 later edits): keep a copy with git diff --binary <tree> > <patch>.now, put them back with git --literal-pathspecs
 restore --source=<tree> --worktree -- <patch paths…>, then apply it again` (`git restore` leaves the index alone; a
-long or unparseable list uses `-- :/`). The patch, the journal and the git-dir pointer are kept, and the next run in
+long list is kept in `<patch>.paths` and read with `--pathspec-file-nul --pathspec-from-file=<patch>.paths`,
+D-DATA-19; only an unparseable list, or a store that cannot take the list, uses `-- :/`). The patch, the journal and the git-dir pointer are kept, and the next run in
 that worktree repeats the notice (D-DATA-13).
 
 Why it is safe: stdout and the exit code are unchanged (K2 holds for stdout), the line goes to stderr only, and it is
@@ -2082,8 +2083,9 @@ snp adds, with no change to any byte pre-commit prints on a working path (ARCHIT
   `--pathspec-file-nul --pathspec-from-file=<patch>.ita`). The notice then says what to do when the apply refuses:
   `; if git apply reports that the patch does not apply, those files changed after the stash (hook fixes or later
   edits): keep a copy with git diff --binary <tree> > <patch>.now, put them back with git --literal-pathspecs restore
-  --source=<tree> --worktree -- <patch paths…>, then run the command again` (`git restore --source=<tree> --worktree
-  -- :/` for a long or unparseable list). Paths are literal pathspecs; the commands are run from the top of the
+  --source=<tree> --worktree -- <patch paths…>, then run the command again` (a long list is kept in `<patch>.paths`
+  and read with `--pathspec-file-nul --pathspec-from-file=<patch>.paths`, D-DATA-19; `git restore --source=<tree>
+  --worktree -- :/` only for an unparseable list or a store that cannot take it). Paths are literal pathspecs; the commands are run from the top of the
   worktree. A run killed after clearing intent-to-add entries but with no patch at risk (before the patch, or after
   the restore) gets one notice `snp: an earlier run was interrupted before it re-added its intent-to-add files.
   Restore with: git --literal-pathspecs add --intent-to-add -- <paths…>` (or the kept-list form), printed once.
@@ -2358,6 +2360,94 @@ INT
 Process-level proof: `crates/snp-proc/tests/suite/signals.rs::{signal_matrix_sent_sigint, signal_matrix_kernel_sigint}`
 (a sent SIGINT reaches Inherit hooks, a kernel one is not re-sent) and
 `crates/snp/tests/it/stash.rs::sigint_during_a_hook_restores_the_stash`.
+
+### D-DATA-19
+
+The stash checks out only the patch's files
+
+* **Class:** DATA (COMPATIBILITY §5.2)
+
+##### Register entry (COMPATIBILITY §5.2)
+
+| pre-commit 4.7.0 | snp |
+|---|---|
+| the stash's whole-tree `git checkout -- .` (and the conflict rollback's) rewrites every stat-dirty file from the index: a change `git diff` cannot see — hidden by a clean filter, or in an `--assume-unchanged` file — is not in the patch and is lost | the checkout rewrites only the patch's files (`git apply --numstat -z`), the rollback those plus every file `git diff` shows changed, as literal pathspecs on stdin (`git -c submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul`); a failing checkout's `CalledProcessError` names that command; a recovery hint with too many files to spell out names them in a kept `<patch>.paths` list instead of restoring the whole worktree |
+
+##### Rationale
+
+`staged_files_only._unstaged_changes_cleared` (`staged_files_only.py:53-104`) saves the unstaged changes as
+`git diff-index --binary <tree>` and then runs `git -c submodule.recurse=0 checkout -- .`; on a conflict the
+rollback runs the same checkout again (`:95`). The patch contains what git can see. The checkout rewrites more: every
+index entry whose file is stat-dirty, without looking at its content when the size differs. Two kinds of change are
+therefore rewritten but never saved:
+
+* **A change a clean filter hides.** A filter that strips machine-local lines (`filter.<name>.clean = grep -v
+  SECRET`, git-crypt, `nbstripout`-style filters) makes the file look unchanged to `git diff`, so it is not in the
+  patch; its size differs from the index entry, so the checkout overwrites it. The restore re-applies only the patch:
+  the hidden lines are gone (prek issue j178/prek#2912, reproduced with pre-commit 4.7.0).
+* **An edit in an `--assume-unchanged` file.** `git diff-index` skips such entries, so the edit is not in the patch;
+  `git checkout -- .` ignores the bit and rewrites the file.
+
+Both happen whenever another file has an ordinary unstaged change (otherwise there is nothing to stash).
+
+snp keeps pre-commit's algorithm and narrows the two checkouts:
+
+1. **Stash.** The paths come from git's own patch parser, `git apply --numstat -z <patch>` (it changes nothing):
+   exactly the files the restore will re-apply. Those, and only those, are checked out:
+   `git -c submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul`, fed `:(literal)<path>\0` per file
+   (no argv limit, no glob or magic; `GIT_*_PATHSPECS` removed from its environment), with
+   `_PRE_COMMIT_SKIP_POST_CHECKOUT=1` as before. A `post-checkout` hook still runs (a file checkout, flag 0).
+   git before 2.25 has no `--pathspec-from-file`: there the same `:(literal)` pathspecs follow
+   `git -c submodule.recurse=0 checkout --` as arguments, in chunks of at most 24 KiB.
+2. **Conflict rollback.** The patch's files again (so the patch applies), followed by every other file `git diff
+   --name-only` lists after refreshing the stat data — what pre-commit's whole-tree checkout visibly changes: every
+   hook fix git can see is discarded exactly as before, the index is untouched, and a change git cannot see stays. A
+   failing listing is the rollback's failure (its `CalledProcessError`; the K+ path keeps the patch, D-DATA-01).
+3. **Recovery hints.** The fallback of a hint whose apply refuses (D-DATA-01, D-DATA-13) restores the patch's files
+   from the stash-time tree. A list too long to spell out used to become `git restore --source=<tree> --worktree --
+   :/`, which overwrites hidden changes in every file; it now names a kept NUL-separated list,
+   `git --literal-pathspecs restore --source=<tree> --worktree --pathspec-file-nul --pathspec-from-file=<patch>.paths`
+   (written next to the patch like `<patch>.ita`; gc removes both with the patch). Only a patch whose headers do not
+   parse, or a store that cannot take the list, keeps the whole-worktree form.
+
+What stays identical: every transcript line, the patch bytes, the index, refs, the stash list, and the worktree of
+every repository without such hidden changes (the checkout rewrites the same files). What differs: the argv shown in
+the `CalledProcessError` of a failing stash or rollback checkout (X13-STASH-01: `('git', '-c',
+'submodule.recurse=0', 'checkout', '--pathspec-from-file=-', '--pathspec-file-nul')` instead of `… 'checkout', '--',
+'.')`), the worktree after a run with hidden changes, and what hooks read from such a file during the run: its
+working-tree content including the hidden change (pre-commit showed the index version, then lost the change). The
+listing runs `git apply --numstat -z --whitespace=nowarn`, like the stash's other applies, so `apply.whitespace=error`
+cannot fail it.
+
+Residual risk, documented: a file that has both a visible change and a hidden one is in the patch and is checked out,
+so its hidden part is lost exactly as in pre-commit (git cannot represent it in a patch); likewise a hidden change in a
+file a hook visibly modifies before a conflict rollback. Files with the skip-worktree bit were never touched by either
+tool.
+
+##### Examples
+
+```text
+$ git config filter.strip.clean 'grep -v SECRET'; echo 'secret.cfg filter=strip' > .gitattributes
+$ printf 'key=1\nSECRET=hunter2\n' > secret.cfg; echo change >> foo     # secret.cfg looks unchanged to git
+$ pre-commit run
+[WARNING] Unstaged files detected.
+[INFO] Stashing unstaged files to /s/patch1794587008-1190673.
+identity.............................................(no files to check)Skipped
+[INFO] Restored changes from /s/patch1794587008-1190673.
+$ cat secret.cfg
+key=1
+$ snp run
+[WARNING] Unstaged files detected.
+[INFO] Stashing unstaged files to /s/patches/patch1794587008-1190673.
+identity.............................................(no files to check)Skipped
+[INFO] Restored changes from /s/patches/patch1794587008-1190673.
+$ cat secret.cfg
+key=1
+SECRET=hunter2
+```
+
+Proof: `crates/snp-stash/tests/behaviour/hidden.rs` (a clean filter at the stash and through a conflict rollback, an
+`--assume-unchanged` edit, literal names, a 400-file list); the scenario `tests/differential/divergences/D-DATA-19.yaml`.
 
 ## 5.3 SEC — security
 

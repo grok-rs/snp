@@ -1,7 +1,7 @@
 //! `cargo xtask bench setup|run|gate`: the end-to-end performance and memory gates of ARCHITECTURE §12 (research 10
 //! §0.2, §7.11; ADR-043, ADR-047, ADR-071, ADR-079).
 //!
-//! * `setup` installs the measuring tools (hyperfine 1.19.0 and prek 0.5.5, both pinned; the pre-commit 4.7.0 oracle
+//! * `setup` installs the measuring tools (hyperfine 1.19.0 and prek 0.5.10, both pinned; the pre-commit 4.7.0 oracle
 //!   comes from `cargo xtask oracle install`), mirrors pre-commit-hooks locally (every clone is redirected to the
 //!   mirror through `url.<mirror>.insteadOf`), downloads the hash-locked wheelhouse every Python install resolves from
 //!   with no index and puts the pinned uv on the hermetic PATH (so no scenario touches the network), generates the
@@ -40,7 +40,7 @@ use crate::workspace::{self, say};
 /// The pinned hyperfine release (`cargo install --locked`).
 const HYPERFINE_VERSION: &str = "1.19.0";
 /// The pinned prek release (hash-locked in `bench/prek-requirements.txt`).
-const PREK_VERSION: &str = "0.5.5";
+const PREK_VERSION: &str = "0.5.10";
 /// The pre-commit-hooks tag of B6/B7 (the snp fast-path tag).
 const PCH_REV: &str = "v6.0.0";
 /// The upstream URL every pre-commit-hooks clone is redirected from.
@@ -1369,7 +1369,7 @@ fn ensure_prek(work: &Work, install: bool) -> anyhow::Result<PathBuf> {
 }
 
 /// The pinned bench helpers and the wheelhouse that make every measurement offline: a venv `tools/bench-tools` from the
-/// hash-locked `bench/tools-requirements.txt` (uv 0.12.19 — linked as `tools/path/uv`, the head of the hermetic PATH —
+/// hash-locked `bench/tools-requirements.txt` (uv 0.13.5 — linked as `tools/path/uv`, the head of the hermetic PATH —
 /// and pip), and `tools/wheels`, the hash-checked wheels of `bench/wheelhouse-requirements.txt` that pre-commit's pip,
 /// prek's uv and snp install B6/B7's hook repository from (`PIP_NO_INDEX`, `UV_NO_INDEX`, `UV_OFFLINE`). Without
 /// them, every cold B7 run would resolve ruamel.yaml and setuptools on PyPI and prek would download uv.

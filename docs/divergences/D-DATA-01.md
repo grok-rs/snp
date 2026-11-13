@@ -30,7 +30,8 @@ what a failed rollback leaves. When the hooks' edits are still in the worktree t
 goes on: `; if git apply reports that the patch does not apply, those files changed after the stash (hook fixes or
 later edits): keep a copy with git diff --binary <tree> > <patch>.now, put them back with git --literal-pathspecs
 restore --source=<tree> --worktree -- <patch paths…>, then apply it again` (`git restore` leaves the index alone; a
-long or unparseable list uses `-- :/`). The patch, the journal and the git-dir pointer are kept, and the next run in
+long list is kept in `<patch>.paths` and read with `--pathspec-file-nul --pathspec-from-file=<patch>.paths`,
+D-DATA-19; only an unparseable list, or a store that cannot take the list, uses `-- :/`). The patch, the journal and the git-dir pointer are kept, and the next run in
 that worktree repeats the notice (D-DATA-13).
 
 Why it is safe: stdout and the exit code are unchanged (K2 holds for stdout), the line goes to stderr only, and it is

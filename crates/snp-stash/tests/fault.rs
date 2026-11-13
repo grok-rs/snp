@@ -226,10 +226,7 @@ mod fi {
         let c = Case::new();
         let (b, cx, out, _) = c.scripted();
         // Only the stash checkout fails; the rollback checkout is real.
-        b.on(
-            "-c submodule.recurse=0 checkout -- .",
-            fail(1, "error: x\n"),
-        );
+        b.on("-c submodule.recurse=0 checkout *", fail(1, "error: x\n"));
         // The scripted rule also fails the rollback checkout: the K+ path keeps the patch.
         let e = snp_stash::enter(cx).unwrap_err();
         assert_eq!(exc(&e).0, "CalledProcessError");
@@ -270,7 +267,7 @@ mod fi {
         let applies = b
             .calls()
             .iter()
-            .filter(|a| a.iter().any(|x| x == "apply"))
+            .filter(|a| a.iter().any(|x| x == "apply") && !a.iter().any(|x| x == "--numstat"))
             .count();
         assert_eq!(applies, 3);
     }
@@ -281,16 +278,16 @@ mod fi {
         let c = Case::new();
         let (b, cx, out, _) = c.scripted();
         let g = snp_stash::enter(cx).unwrap();
-        b.on("apply *", fail(1, ""))
+        b.on("apply --whitespace=nowarn *", fail(1, ""))
             .on("-c core.autocrlf=false apply *", fail(1, ""));
         b.on(
-            "-c submodule.recurse=0 checkout -- .",
+            "-c submodule.recurse=0 checkout *",
             fail(1, "error: rollback\n"),
         );
         let e = g.restore().unwrap_err();
         let (ty, text, hint) = exc(&e);
         assert_eq!(ty, "CalledProcessError");
-        assert!(text.contains("'checkout', '--', '.'"));
+        assert!(text.contains("'checkout', '--pathspec-from-file=-', '--pathspec-file-nul'"));
         assert!(
             hint.unwrap()
                 .starts_with("[ERROR] Your unstaged changes are saved in ")
@@ -310,7 +307,7 @@ mod fi {
         let c = Case::new();
         let (b, cx, _, _) = c.scripted();
         let g = snp_stash::enter(cx).unwrap();
-        b.on("apply *", fail(1, ""))
+        b.on("apply --whitespace=nowarn *", fail(1, ""))
             .on("-c core.autocrlf=false apply *", fail(1, "error: final\n"));
         let e = g.restore().unwrap_err();
         assert!(exc(&e).1.contains("error: final"));
@@ -387,9 +384,9 @@ mod fi {
         let c = Case::new();
         let (b, cx, _, _) = c.scripted();
         let g = snp_stash::enter(cx).unwrap();
-        b.on("apply *", Response::SpawnError(24))
+        b.on("apply --whitespace=nowarn *", Response::SpawnError(24))
             .on("-c core.autocrlf=false apply *", Response::SpawnError(24));
-        b.on("-c submodule.recurse=0 checkout -- .", Case::ok());
+        b.on("-c submodule.recurse=0 checkout *", Case::ok());
         let e = g.restore().unwrap_err();
         assert!(exc(&e).2.is_some());
         c.assert_recoverable();
