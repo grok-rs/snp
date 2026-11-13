@@ -10,7 +10,7 @@ use snp_git::pch_facts::PchFacts;
 use snp_git::{Git, GitCaps, GitExe, GitVersion};
 use snp_proc::spawn::Group;
 
-use crate::common::{Sandbox, sorted, strs, zl};
+use crate::common::{Sandbox, rep, sorted, strs, zl};
 
 #[test]
 fn preflight_queries() {
@@ -454,7 +454,7 @@ fn lfs_files_memo_agrees_with_check_attr() {
 fn checkout_paths_without_pathspec_from_file_chunks_literal_arguments() {
     let sb = Sandbox::new();
     let repo = sb.init("chunks");
-    let long = "n".repeat(200);
+    let long = rep('n', 200);
     let mut names: Vec<String> = (0..300).map(|i| format!("{long}{i}")).collect();
     names.extend(["[ab]".to_owned(), "*".to_owned(), "with space".to_owned()]);
     for n in &names {
@@ -500,7 +500,7 @@ fn checkout_paths_without_pathspec_from_file_chunks_literal_arguments() {
     for c in &calls {
         let first: Vec<&str> = c.args.iter().take(4).map(|a| a.to_str().unwrap()).collect();
         assert_eq!(first, ["-c", "submodule.recurse=0", "checkout", "--"]);
-        assert!(c.stdin.is_empty());
+        assert_eq!(c.stdin, b"");
     }
     git.checkout_paths(&paths, true, Group::Inherit).unwrap();
     for n in &names {
