@@ -1656,13 +1656,6 @@ fn ensure_mirror(work: &Work, from: Option<&str>) -> anyhow::Result<()> {
     if mirror.join("HEAD").is_file() {
         return Ok(());
     }
-    if std::fs::symlink_metadata(&mirror).is_ok() {
-        say(&format!(
-            "bench: removing the incomplete mirror {} (no HEAD)",
-            mirror.display()
-        ));
-        remove_tree(&mirror)?;
-    }
     let src = from.unwrap_or(PCH_URL);
     say(&format!("bench: mirroring pre-commit-hooks from {src}"));
     // a partial mirror (an interrupted clone, or a CI cache restore that kept the directory without its HEAD) would
