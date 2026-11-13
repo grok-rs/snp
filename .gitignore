@@ -2,3 +2,5 @@
 /.claude/
 /docs/research/pycompat-proto/Cargo.lock
 /bench/history/
+/proofs/lean/.lake/
+/proofs/verus/out/

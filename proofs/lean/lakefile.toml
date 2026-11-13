@@ -1,0 +1,17 @@
+name = "snpmodels"
+version = "0.1.0"
+defaultTargets = ["SnpModels", "eof-model", "shlex-model"]
+
+[leanOptions]
+autoImplicit = false
+
+[[lean_lib]]
+name = "SnpModels"
+
+[[lean_exe]]
+name = "eof-model"
+root = "EofMain"
+
+[[lean_exe]]
+name = "shlex-model"
+root = "ShlexMain"

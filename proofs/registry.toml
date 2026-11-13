@@ -1,0 +1,22 @@
+# Verified kernels, Lean models and trusted items: the single machine-readable source of ADR-095
+# (docs/VERIFICATION.md §3.1). `cargo xtask proofs check` (G1-G10) keeps it, the kernel markers and the mounts of
+# proofs/verus/kernels.rs in agreement; `cargo xtask proofs verus` (V1-V4) and `mutants` read it too.
+
+[verus]
+version = "0.2026.11.02.8bf68ee"   # bundles rust_verify, Z3 4.16.0 and the prebuilt vstd
+rustc = "1.99.1"                   # from the zip's version.json; never the rustup default
+# sha256 of the release zip `verus-<version>-<platform>.zip` (github.com/verus-lang/verus/releases). Only the
+# platform CI and the owner use is pinned; add others when a contributor needs them.
+sha256 = { x86-linux = "f3a0119292df8855e4435da8130bee1873b0e6a60c306accf81a08ea687bba3c" }
+# sha256 of `verusfmt-<target>.tar.xz` (github.com/verus-lang/verusfmt/releases).
+verusfmt = { version = "0.7.4", sha256 = { x86_64-unknown-linux-gnu = "bbc5cb02c01efeaf9e66c93443ae782b11c5d8fd88c67d558c23216222971f4f" } }
+
+# One entry per kernel file (rule K1 of §2.3). `mount` is the module name in proofs/verus/kernels.rs;
+# `verified_min` is the number of items Verus reports verified for this kernel's mount, spec and the lib lemmas it
+# brought (measured when the entry was added); a whole-root run must verify at least the sum over all kernels.
+# Every mutant, applied to a temporary copy of `file` (first occurrence of `find`), must make verification fail
+# (V3; today `proofs/verus/run.sh --mutant <file> <find> <replace>`).
+# [[kernel]] entries follow (K1 is the first).
+
+# [[model]]: Lean models with oracle tests and fingerprinted anchors (K3, K4 add theirs).
+# [[trusted]]: empty in M1 (§10 row 8). From M2: { item = "Memchr: FindByte", kernel = "K5", test = "…" }
