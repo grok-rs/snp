@@ -1,5 +1,5 @@
 //! `cargo xtask bench setup|run|gate`: the end-to-end performance and memory gates of ARCHITECTURE §12 (research 10
-//! §0.2, §7.11; ADR-043, ADR-047, ADR-071, ADR-079).
+//! §0.2, §7.11; ADR-043, ADR-047, ADR-071, ADR-079, ADR-098, ADR-099).
 //!
 //! * `setup` installs the measuring tools (hyperfine 1.19.0 and prek 0.5.10, both pinned; the pre-commit 4.7.0 oracle
 //!   comes from `cargo xtask oracle install`), mirrors pre-commit-hooks locally (every clone is redirected to the
@@ -7,19 +7,25 @@
 //!   with no index and puts the pinned uv on the hermetic PATH (so no scenario touches the network), generates the
 //!   deterministic
 //!   fixture repositories of B1–B12 under `target/bench/fixtures` (fixed author, committer and dates: identical trees
-//!   and SHAs on every machine), builds snp with the `dist` profile and primes every tool's warm store.
-//! * `run` measures each scenario × tool with `hyperfine -N -w 5 -r 50` in the hermetic environment, peak RSS with
-//!   `/usr/bin/time` (median of 10), and optionally the `strace -f -c` syscall count (`--syscalls`, B1/B3) and the
-//!   dhat total allocation of B3 (`--dhat`, a `--features dhat-heap` build); it writes one JSON run record.
-//! * `gate` checks a run record against `bench/budgets.toml` and a baseline (an explicit record — the PR base — or the
-//!   last record of the JSON-lines history `bench/history/<platform>-<variant>.jsonl`): it fails on a median
-//!   regression above 5 % and 0.1 ms whose 95 % confidence intervals do not overlap (against the history: also against
-//!   the median of its last 10 records, the drift check; `--advisory-history` reports both as warnings when the history
-//!   comes from other machines, ADR-090), on a hard-budget breach, and when snp's p50 is slower than pre-commit's or
-//!   prek's or that comparison could not be made; `--comment` writes the Markdown PR comment,
-//!   `--record` appends to the history. `gate --micro` enforces the exact micro thresholds of the W1/W2 acceptance lists on criterion's results
-//!   (`cargo bench -p snp`). `gate --compare A B` prints the per-scenario effect of B against A (ADR-047 speculative
-//!   config load on/off, ADR-079 musl system allocator vs mimalloc).
+//!   and SHAs on every machine), builds snp with the `dist` profile and primes every tool's warm store. With
+//!   `--base-snp`, the base commit's binary gets its own stores and B9 fixture, primed by that binary (ADR-098).
+//! * `run` measures each scenario × tool with `hyperfine -N` in the hermetic environment, peak RSS with
+//!   `/usr/bin/time` (median of 10; the largest process of the tree), and optionally the `strace -f -c` syscall count
+//!   (`--syscalls`, B1/B3), the dhat totals and heap peak (`--dhat`, a `--features dhat-heap` build) and the
+//!   deterministic counters (`--counts`: clones, `statx`, `newfstatat`, opens, dirents, execs); it writes one JSON run
+//!   record. With `--base-snp`, snp and the base binary run in interleaved ABBA rounds per scenario, pre-commit and
+//!   prek right after (ADR-098).
+//! * `gate` checks a run record against `bench/budgets.toml` and a baseline: the paired base rounds of the record itself
+//!   (a regression fails when the median per-round ratio exceeds 5 % and 0.1 ms and its 95 % interval excludes 1,
+//!   ADR-098), else an explicit record or the last record of the JSON-lines history
+//!   `bench/history/<platform>-<variant>.jsonl` (a median regression above 5 % and 0.1 ms whose 95 % confidence
+//!   intervals do not overlap; against the history: also against the median of its last 10 records, the drift check;
+//!   `--advisory-history` reports both as warnings when the history comes from other machines, ADR-090). It also fails
+//!   on a hard-budget breach, on a counter of the head above the base's beyond its margin (ADR-099), and when snp's
+//!   p50 is slower than pre-commit's or prek's or that comparison could not be made; `--comment` writes the Markdown
+//!   PR comment, `--record` appends to the history. `gate --micro` enforces the exact micro thresholds of the W1/W2
+//!   acceptance lists on criterion's results (`cargo bench -p snp`). `gate --compare A B` prints the per-scenario
+//!   effect of B against A (ADR-047 speculative config load on/off, ADR-079 musl system allocator vs mimalloc).
 //!
 //! Every subcommand prints `--help`. The statistics are distribution-free: the median and its 95 % order-statistic
 //! confidence interval (ranks `n/2 ∓ 1.96·√n/2`).
@@ -54,8 +60,11 @@ const RSS_RUNS: u32 = 10;
 const GIT_DATE: &str = "2024-01-01T00:00:00Z";
 const GIT_NAME: &str = "snp bench";
 const GIT_EMAIL: &str = "bench@snp.invalid";
-/// The run-record schema version.
-const SCHEMA: u64 = 1;
+/// The run-record schema version written; schema 1 records (before the paired rounds, counters and host facts of
+/// ADR-098/098) are still read, so a history mixing both stays usable.
+const SCHEMA: u64 = 2;
+/// The run-record schema versions read.
+const SCHEMAS_READ: [u64; 2] = [1, 2];
 /// The default PATH of the hermetic environment on Unix (`--path` overrides it).
 const UNIX_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
 
@@ -71,6 +80,7 @@ warm stores. Everything lives under target/bench.
   --scenarios B1,B3,..   only the fixtures of these scenarios (default: all)
   --tools snp,prek,..    only prime these tools (default: snp,pre-commit,prek)
   --snp PATH             use this snp binary instead of building the dist profile
+  --base-snp PATH        also prime this binary (the base commit's snp) with its own stores and B9 fixture
   --target TRIPLE        build snp for this target (e.g. x86_64-unknown-linux-musl)
   --allocator A          system (default) or mimalloc (feature musl-mimalloc; musl targets only)
   --mirror-from SRC      clone the pre-commit-hooks mirror from SRC (default: the GitHub URL)
@@ -81,20 +91,26 @@ warm stores. Everything lives under target/bench.
 const RUN_HELP: &str = "\
 usage: cargo xtask bench run [options]
 
-Measures every scenario x tool (hyperfine -N -w 5 -r 50; RSS by /usr/bin/time, median of 10) and writes a run
-record (default target/bench/results/<label>.json).
+Measures every scenario x tool (hyperfine -N -w 5 -r 50; RSS by /usr/bin/time, median of 10: the largest process
+of the tree) and writes a run record (default target/bench/results/<label>.json).
 
   --scenarios B1,B3,..   the scenarios (default: all)
   --tools snp,prek,..    the tools (default: snp,pre-commit,prek)
   --snp PATH             measure this snp binary instead of building the dist profile
+  --base-snp PATH        the base commit's snp (primed by `setup --base-snp`): measured in interleaved ABBA rounds
+                         with snp on every scenario, pre-commit and prek right after; the gate pairs the rounds
   --target TRIPLE        build snp for this target (the record's variant names it)
   --allocator A          system (default) or mimalloc (musl targets only)
   --label NAME           the record name (default: current)
   --out FILE             write the record here instead
-  --runs N / --warmup N  override hyperfine's counts (50 / 5; the slow scenarios use fewer)
+  --runs N / --warmup N  override hyperfine's counts (50 / 5; the slow scenarios use fewer; with --base-snp, N is
+                         split into the rounds)
   --syscalls             also count snp's syscalls with `strace -f -c` (Linux; B1, B3)
-  --dhat                 also measure B3's total allocation with a `--features dhat-heap` build (a second, full
-                         release build in target/bench/dhat-target)
+  --counts               also count clones, statx, newfstatat, openat, getdents64 and execve over the tree with
+                         `strace -f --seccomp-bpf -c` (Linux; every scenario, snp and the base) and diff the base's
+                         and snp's exec argv lists
+  --dhat                 also measure the dhat totals and heap peak of B2/B3/B4/B6/B8/B10/B12u with a
+                         `--features dhat-heap` build (a second, full release build in target/bench/dhat-target)
   --jobs N               cargo --jobs of the snp builds (default: CARGO_BUILD_JOBS or all cores)
   --path PATH            the PATH of the hermetic environment (Unix)";
 
@@ -103,7 +119,10 @@ usage: cargo xtask bench gate [options]
        cargo xtask bench gate --micro --since SECS [--criterion DIR]
        cargo xtask bench gate --compare A.json B.json
 
-Checks a run record against bench/budgets.toml and a baseline; exits non-zero on a failed check.
+Checks a run record against bench/budgets.toml and a baseline; exits non-zero on a failed check. A record measured
+with `run --base-snp` carries its own baseline: the paired rounds gate the regression (and the counters of
+`--counts` gate clones, statx and newfstatat against the base), and every comparison with another record is
+advisory.
 
   --current FILE         the record to check (default <target-dir>/bench/results/current.json)
   --baseline FILE        the baseline record (default: the last history record of the same platform and variant)
@@ -254,16 +273,20 @@ impl Opts {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Tool {
     Snp,
+    /// The base commit's snp (`--base-snp`, ADR-098): its own stores and B9 fixture, never selected by `--tools`.
+    SnpBase,
     PreCommit,
     Prek,
 }
 
 impl Tool {
+    /// The tools `--tools` selects from (the base comes from `--base-snp`).
     const ALL: [Self; 3] = [Self::Snp, Self::PreCommit, Self::Prek];
 
     const fn name(self) -> &'static str {
         match self {
             Self::Snp => "snp",
+            Self::SnpBase => "snp-base",
             Self::PreCommit => "pre-commit",
             Self::Prek => "prek",
         }
@@ -276,10 +299,15 @@ impl Tool {
             .with_context(|| format!("unknown tool {s:?} (snp, pre-commit, prek)"))
     }
 
+    /// snp itself or the base commit's snp: `SNP_BIN`, the scenario's snp environment and snp's store layout.
+    const fn is_snp(self) -> bool {
+        matches!(self, Self::Snp | Self::SnpBase)
+    }
+
     /// The environment variable naming the tool's store.
     const fn store_var(self) -> &'static str {
         match self {
-            Self::Snp => "SNP_HOME",
+            Self::Snp | Self::SnpBase => "SNP_HOME",
             Self::PreCommit => "PRE_COMMIT_HOME",
             Self::Prek => "PREK_HOME",
         }
@@ -664,7 +692,7 @@ impl Work {
     ) -> Vec<(OsString, OsString)> {
         let mut v = self.env();
         v.push((tool.store_var().into(), self.store(tool, mode).into()));
-        if let (Tool::Snp, Some(s)) = (tool, s) {
+        if let (true, Some(s)) = (tool.is_snp(), s) {
             v.extend(
                 s.snp_env
                     .iter()
@@ -1566,13 +1594,38 @@ fn cargo_jobs(cmd: &mut Command, jobs: Option<u32>) {
 
 fn resolve_snp(work: &Work, o: &Opts, build: &Build) -> anyhow::Result<PathBuf> {
     match o.one("snp") {
-        Some(p) => {
-            // absolute: hyperfine and the tools run in the fixture directories
-            let p = std::path::absolute(p).with_context(|| format!("--snp {p}"))?;
-            ensure!(runs(&p), "--snp {}: does not run", p.display());
-            Ok(p)
-        }
+        Some(p) => existing_binary("snp", p),
         None => build.build(work),
+    }
+}
+
+/// `--<option> PATH` made absolute (hyperfine and the tools run in the fixture directories); it must run.
+fn existing_binary(option: &str, p: &str) -> anyhow::Result<PathBuf> {
+    let p = std::path::absolute(p).with_context(|| format!("--{option} {p}"))?;
+    ensure!(runs(&p), "--{option} {}: does not run", p.display());
+    Ok(p)
+}
+
+/// The base commit's snp of `--base-snp` (ADR-098), if given.
+fn resolve_base(o: &Opts) -> anyhow::Result<Option<PathBuf>> {
+    o.one("base-snp")
+        .map(|p| existing_binary("base-snp", p))
+        .transpose()
+}
+
+/// The binary of a `--tools` tool.
+fn resolve_tool(
+    work: &Work,
+    o: &Opts,
+    build: &Build,
+    t: Tool,
+    install: bool,
+) -> anyhow::Result<PathBuf> {
+    match t {
+        Tool::Snp => resolve_snp(work, o, build),
+        Tool::SnpBase => resolve_base(o)?.context("--base-snp is required for the base"),
+        Tool::PreCommit => oracle_pre_commit(work),
+        Tool::Prek => ensure_prek(work, install),
     }
 }
 
@@ -1720,6 +1773,7 @@ fn setup(root: &Path, args: &[String]) -> anyhow::Result<()> {
             "mirror-from",
             "path",
             "jobs",
+            "base-snp",
         ],
         &["no-install"],
     )?
@@ -1738,12 +1792,11 @@ fn setup(root: &Path, args: &[String]) -> anyhow::Result<()> {
     let hyperfine = ensure_hyperfine(&work, install, build.jobs)?;
     let mut exes = BTreeMap::new();
     for t in &tool_list {
-        let exe = match t {
-            Tool::Snp => resolve_snp(&work, &o, &build)?,
-            Tool::PreCommit => oracle_pre_commit(&work)?,
-            Tool::Prek => ensure_prek(&work, install)?,
-        };
+        let exe = resolve_tool(&work, &o, &build, *t, install)?;
         exes.insert(*t, exe);
+    }
+    if let Some(base) = resolve_base(&o)? {
+        exes.insert(Tool::SnpBase, base);
     }
     let tools = Tools { hyperfine, exes };
 
@@ -1847,14 +1900,18 @@ fn prime(
             remove_tree(&work.store(tool, StoreMode::Gc))?;
             let dir = work.fixture(Fixture::Gc500, tool);
             ensure_own_repo(work, &dir)?;
+            // B11 like for like (P18): every tool must install the 500 repositories and track the 200 configs.
+            // prek tracks a config only on `run` (its `install-hooks` installs without tracking), so it is primed
+            // with `run --config <absolute config>`, which installs, finds no file to check and exits 0.
+            let prime = if tool == Tool::Prek {
+                "run"
+            } else {
+                "install-hooks"
+            };
             for c in gc_configs {
                 tool_cmd(
                     &dir,
-                    &[
-                        OsStr::new("install-hooks"),
-                        OsStr::new("--config"),
-                        c.as_os_str(),
-                    ],
+                    &[OsStr::new(prime), OsStr::new("--config"), c.as_os_str()],
                 )?;
             }
         }
@@ -1867,12 +1924,100 @@ fn prime(
         let (program, argv) = scenario_command(s, exe);
         let mut cmd = Work::command(&program, &env);
         cmd.args(&argv).current_dir(&dir);
-        if tool == Tool::Snp {
+        if tool.is_snp() {
             cmd.env("SNP_BIN", exe);
         }
         run_ok(&mut cmd, &format!("{} ({})", s.id, tool.name()))?;
     }
+    if s.fixture == Fixture::Gc500 {
+        gc_equal_work(work, tool, gc_configs.len())?;
+    }
+    if s.fixture == Fixture::Stash10M {
+        clean_patches(work, tool, s, false)?;
+    }
     Ok(())
+}
+
+/// The repositories in each tool's store (the B11 equal-work count).
+const GC_REPOS: usize = 500;
+
+/// B11's equal-work assertion after the warm-up `gc` (P18): every store holds the 500 repositories, and snp and prek
+/// track every config (prek's `config-tracking.json`, snp's `configs-v1` entries; pre-commit's tracking is in SQLite
+/// and is covered by its repository count, since its `gc` would remove the repositories of an untracked config).
+///
+/// snp's half is a warning, not an error, until the fresh-store tracking fix (C1: `Store::mark_config_used` returns
+/// early when the store does not exist yet, so the first `install-hooks` into an empty store is not tracked and its 3
+/// repositories are collected: 199 configs and 497 repositories) is in both binaries.
+fn gc_equal_work(work: &Work, tool: Tool, configs: usize) -> anyhow::Result<()> {
+    let store = work.store(tool, StoreMode::Gc);
+    let (tracked, repos) = gc_store_counts(tool, &store)?;
+    let mut problems = Vec::new();
+    if let Some(n) = tracked
+        && n != configs
+    {
+        problems.push(format!("tracks {n} configs, not {configs}"));
+    }
+    if repos != GC_REPOS {
+        problems.push(format!("holds {repos} repositories, not {GC_REPOS}"));
+    }
+    if problems.is_empty() {
+        return Ok(());
+    }
+    let msg = format!(
+        "B11 is not like for like: the {} store {} {}",
+        tool.name(),
+        store.display(),
+        problems.join(" and ")
+    );
+    if tool.is_snp() {
+        say(&format!(
+            "bench: warning: {msg} (C1: the fresh-store `install-hooks` is not tracked)"
+        ));
+        return Ok(());
+    }
+    bail!("{msg}")
+}
+
+/// `(tracked configs if the store records them in a file, repositories)` of a primed gc store.
+fn gc_store_counts(tool: Tool, store: &Path) -> anyhow::Result<(Option<usize>, usize)> {
+    let dirs = |dir: &Path, keep: &dyn Fn(&str) -> bool| -> anyhow::Result<usize> {
+        let mut n = 0_usize;
+        for e in std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
+            let e = e?;
+            if e.file_type()?.is_dir() && keep(&e.file_name().to_string_lossy()) {
+                n = n.saturating_add(1);
+            }
+        }
+        Ok(n)
+    };
+    Ok(match tool {
+        Tool::Snp | Tool::SnpBase => {
+            let configs = store.join("configs-v1");
+            let mut tracked = 0_usize;
+            for e in std::fs::read_dir(&configs)
+                .with_context(|| format!("reading {}", configs.display()))?
+            {
+                let e = e?;
+                if !e.file_type()?.is_dir() && !e.file_name().to_string_lossy().starts_with('.') {
+                    tracked = tracked.saturating_add(1);
+                }
+            }
+            (Some(tracked), dirs(&store.join("repos-v1"), &|_| true)?)
+        }
+        Tool::PreCommit => (None, dirs(store, &|n| n.starts_with("repo"))?),
+        Tool::Prek => {
+            let path = store.join("config-tracking.json");
+            let text = std::fs::read_to_string(&path)
+                .with_context(|| format!("reading {}", path.display()))?;
+            let v: Value = serde_json::from_str(&text)
+                .with_context(|| format!("parsing {}", path.display()))?;
+            let tracked = v
+                .as_array()
+                .with_context(|| format!("{}: not a JSON array", path.display()))?
+                .len();
+            (Some(tracked), dirs(&store.join("repos"), &|_| true)?)
+        }
+    })
 }
 
 /// The program and arguments of scenario `s` for the tool binary `exe`.
@@ -1942,13 +2087,50 @@ struct Measure {
     min_ms: f64,
     max_ms: f64,
     runs: u64,
+    /// The peak RSS of the largest process of the tree (`/usr/bin/time` reports a maximum, not a sum).
     rss_mib: Option<f64>,
     syscalls: Option<u64>,
     alloc_mib: Option<f64>,
+    /// dhat's total blocks allocated (`--dhat`; the ceiling of the multi-threaded scenarios, ADR-099).
+    alloc_blocks: Option<u64>,
+    /// dhat's heap peak: the bytes live at the global maximum (`--dhat`; B8's budget, ADR-099).
+    heap_peak_mib: Option<f64>,
+    /// The median of each interleaved round's block, in round order (`--base-snp`, ADR-098; empty otherwise).
+    rounds_ms: Vec<f64>,
+    /// The deterministic counters of one traced run (`--counts`, ADR-099; empty otherwise).
+    counts: BTreeMap<String, u64>,
+    /// The exec argv lines only the head (`+`) or only the base (`-`) ran (`--counts --base-snp`; snp only).
+    exec_diff: Vec<String>,
 }
 
-/// hyperfine's `--export-json` (one command) → [`Measure`].
-fn parse_hyperfine(text: &str) -> anyhow::Result<Measure> {
+impl Measure {
+    /// The statistics of `times` (milliseconds, any order): the pooled runs of every block of one tool.
+    fn from_times(times: &[f64]) -> anyhow::Result<Self> {
+        let med = median(times).context("no run measured")?;
+        let ci = median_ci95(times).context("no run measured")?;
+        let n = usize_f64(times.len());
+        let mean = times.iter().sum::<f64>() / n;
+        // the sample standard deviation, as hyperfine reports it (undefined for one run)
+        let stddev = if times.len() > 1 {
+            (times.iter().map(|t| (t - mean).powi(2)).sum::<f64>() / (n - 1.0)).sqrt()
+        } else {
+            f64::NAN
+        };
+        Ok(Self {
+            median_ms: med,
+            ci95_ms: ci,
+            mean_ms: mean,
+            stddev_ms: stddev,
+            min_ms: times.iter().copied().fold(f64::INFINITY, f64::min),
+            max_ms: times.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+            runs: u64::try_from(times.len()).unwrap_or(u64::MAX),
+            ..Self::default()
+        })
+    }
+}
+
+/// The run times (milliseconds) of hyperfine's `--export-json` (one command).
+fn parse_hyperfine_times(text: &str) -> anyhow::Result<Vec<f64>> {
     let v: Value = serde_json::from_str(text).context("parsing hyperfine JSON")?;
     let r = v
         .get("results")
@@ -1963,19 +2145,8 @@ fn parse_hyperfine(text: &str) -> anyhow::Result<Measure> {
         .filter_map(Value::as_f64)
         .map(|s| s * 1000.0)
         .collect();
-    let med = median(&times).context("hyperfine measured no run")?;
-    let ci = median_ci95(&times).context("hyperfine measured no run")?;
-    let field = |k: &str| r.get(k).and_then(Value::as_f64).unwrap_or(f64::NAN) * 1000.0;
-    Ok(Measure {
-        median_ms: med,
-        ci95_ms: ci,
-        mean_ms: field("mean"),
-        stddev_ms: field("stddev"),
-        min_ms: field("min"),
-        max_ms: field("max"),
-        runs: u64::try_from(times.len()).unwrap_or(u64::MAX),
-        ..Measure::default()
-    })
+    ensure!(!times.is_empty(), "hyperfine measured no run");
+    Ok(times)
 }
 
 /// Peak RSS in KiB from `/usr/bin/time -v` (GNU: `Maximum resident set size (kbytes): N`) or `-l` (BSD/macOS:
@@ -2003,20 +2174,59 @@ fn parse_strace_total(summary: &str) -> Option<u64> {
         .and_then(|c| c.parse().ok())
 }
 
-/// dhat's total bytes allocated: the sum of `tb` over the program points of `dhat-heap.json`.
-fn parse_dhat_total_bytes(text: &str) -> anyhow::Result<u64> {
+/// Every syscall row of a `strace -c` table: name → calls (the `errors` column may be empty, so the calls are the
+/// fourth word and the name the last; the `total` row is left out).
+fn parse_strace_table(summary: &str) -> BTreeMap<String, u64> {
+    summary
+        .lines()
+        .filter_map(|l| {
+            let words: Vec<&str> = l.split_whitespace().collect();
+            if !(5..=6).contains(&words.len()) {
+                return None;
+            }
+            let name = *words.last()?;
+            let calls = words.get(3)?.parse::<u64>().ok()?;
+            // a data row starts with the `% time` number (the header and the rules do not)
+            if words.first()?.parse::<f64>().is_err() || name == "total" {
+                return None;
+            }
+            Some((name.to_owned(), calls))
+        })
+        .collect()
+}
+
+/// dhat's totals of one run (`dhat-heap.json`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DhatSummary {
+    /// The sum of `tb`: total bytes allocated.
+    total_bytes: u64,
+    /// The sum of `tbk`: total blocks allocated.
+    total_blocks: u64,
+    /// The sum of `gb`: the bytes live at the global heap maximum (t-gmax).
+    peak_bytes: u64,
+}
+
+/// dhat's totals: `tb`, `tbk` and `gb` summed over the program points of `dhat-heap.json` (each must be there).
+fn parse_dhat(text: &str) -> anyhow::Result<DhatSummary> {
     let v: Value = serde_json::from_str(text).context("parsing dhat-heap.json")?;
     let pps = v
         .get("pps")
         .and_then(Value::as_array)
         .context("dhat-heap.json has no pps")?;
-    pps.iter()
-        .map(|p| {
-            p.get("tb")
-                .and_then(Value::as_u64)
-                .context("a dhat program point without tb")
-        })
-        .try_fold(0_u64, |acc, tb| Ok(acc.saturating_add(tb?)))
+    let sum = |key: &str| {
+        pps.iter()
+            .map(|p| {
+                p.get(key)
+                    .and_then(Value::as_u64)
+                    .with_context(|| format!("a dhat program point without {key}"))
+            })
+            .try_fold(0_u64, |acc, n| anyhow::Ok(acc.saturating_add(n?)))
+    };
+    Ok(DhatSummary {
+        total_bytes: sum("tb")?,
+        total_blocks: sum("tbk")?,
+        peak_bytes: sum("gb")?,
+    })
 }
 
 fn bytes_to_mib(b: u64) -> f64 {
@@ -2042,8 +2252,13 @@ struct Record {
     label: String,
     commit: String,
     unix_time: u64,
-    /// The optional metrics this run was asked to measure (`syscalls` for `--syscalls`, `alloc_mib` for `--dhat`): a
-    /// budget on a requested metric that has no value fails instead of being skipped.
+    /// The runner's logical CPUs (snp's default job count and partition count follow it; ADR-099).
+    cpu_count: Option<u64>,
+    /// `git --version` of the runner (tree-wide counters and timings depend on it; ADR-099).
+    git_version: String,
+    /// The optional metrics this run was asked to measure (`syscalls` for `--syscalls`; `alloc_mib`, `alloc_blocks`
+    /// and `heap_peak_mib` for `--dhat`; `counts` for `--counts`): a budget on a requested metric that has no value
+    /// fails instead of being skipped.
     extras: BTreeSet<String>,
     scenarios: BTreeMap<String, BTreeMap<String, Outcome>>,
 }
@@ -2060,6 +2275,40 @@ impl Record {
         }
     }
 
+    fn measure_json(m: &Measure) -> Value {
+        let mut v = json!({
+            "median_ms": m.median_ms,
+            "ci95_ms": [m.ci95_ms.0, m.ci95_ms.1],
+            "mean_ms": m.mean_ms,
+            "stddev_ms": m.stddev_ms,
+            "min_ms": m.min_ms,
+            "max_ms": m.max_ms,
+            "runs": m.runs,
+            "rss_mib": m.rss_mib,
+            "syscalls": m.syscalls,
+            "alloc_mib": m.alloc_mib,
+        });
+        // the schema-2 additions are written only when measured, so a history line stays as short as before
+        if let Some(map) = v.as_object_mut() {
+            if let Some(b) = m.alloc_blocks {
+                map.insert("alloc_blocks".into(), json!(b));
+            }
+            if let Some(p) = m.heap_peak_mib {
+                map.insert("heap_peak_mib".into(), json!(p));
+            }
+            if !m.rounds_ms.is_empty() {
+                map.insert("rounds_ms".into(), json!(m.rounds_ms));
+            }
+            if !m.counts.is_empty() {
+                map.insert("counts".into(), json!(m.counts));
+            }
+            if !m.exec_diff.is_empty() {
+                map.insert("exec_diff".into(), json!(m.exec_diff));
+            }
+        }
+        v
+    }
+
     fn to_json(&self) -> Value {
         let scenarios: serde_json::Map<String, Value> = self
             .scenarios
@@ -2069,18 +2318,7 @@ impl Record {
                     .iter()
                     .map(|(name, o)| {
                         let v = match o {
-                            Outcome::Ok(m) => json!({
-                                "median_ms": m.median_ms,
-                                "ci95_ms": [m.ci95_ms.0, m.ci95_ms.1],
-                                "mean_ms": m.mean_ms,
-                                "stddev_ms": m.stddev_ms,
-                                "min_ms": m.min_ms,
-                                "max_ms": m.max_ms,
-                                "runs": m.runs,
-                                "rss_mib": m.rss_mib,
-                                "syscalls": m.syscalls,
-                                "alloc_mib": m.alloc_mib,
-                            }),
+                            Outcome::Ok(m) => Self::measure_json(m),
                             Outcome::Failed(e) => json!({ "error": e }),
                         };
                         (name.clone(), v)
@@ -2096,16 +2334,19 @@ impl Record {
             "label": self.label,
             "commit": self.commit,
             "unix_time": self.unix_time,
+            "cpu_count": self.cpu_count,
+            "git_version": self.git_version,
             "extras": self.extras.iter().collect::<Vec<_>>(),
             "scenarios": scenarios,
         })
     }
 
+    /// A schema 1 or 2 record (unknown keys are ignored; a schema 1 record has no rounds, counters or host facts).
     fn from_json(v: &Value) -> anyhow::Result<Self> {
         let schema = v.get("schema").and_then(Value::as_u64);
         ensure!(
-            schema == Some(SCHEMA),
-            "run record schema {schema:?} (want {SCHEMA})"
+            schema.is_some_and(|n| SCHEMAS_READ.contains(&n)),
+            "run record schema {schema:?} (want one of {SCHEMAS_READ:?})"
         );
         let s = |k: &str| {
             v.get(k)
@@ -2140,6 +2381,30 @@ impl Record {
                         rss_mib: f("rss_mib"),
                         syscalls: m.get("syscalls").and_then(Value::as_u64),
                         alloc_mib: f("alloc_mib"),
+                        alloc_blocks: m.get("alloc_blocks").and_then(Value::as_u64),
+                        heap_peak_mib: f("heap_peak_mib"),
+                        rounds_ms: m
+                            .get("rounds_ms")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(Value::as_f64)
+                            .collect(),
+                        counts: m
+                            .get("counts")
+                            .and_then(Value::as_object)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|(k, n)| Some((k.clone(), n.as_u64()?)))
+                            .collect(),
+                        exec_diff: m
+                            .get("exec_diff")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect(),
                     })
                 };
                 out.insert(tool.clone(), o);
@@ -2152,6 +2417,8 @@ impl Record {
             label: s("label"),
             commit: s("commit"),
             unix_time: v.get("unix_time").and_then(Value::as_u64).unwrap_or(0),
+            cpu_count: v.get("cpu_count").and_then(Value::as_u64),
+            git_version: s("git_version"),
             extras: v
                 .get("extras")
                 .and_then(Value::as_array)
@@ -2177,6 +2444,27 @@ impl Record {
 // run
 // ---------------------------------------------------------------------------------------------------------------
 
+/// The scenarios `--syscalls` counts (the ceilings of ADR-083).
+const SYSCALL_SCENARIOS: [&str; 2] = ["B1", "B3"];
+/// The scenarios `--dhat` profiles (ADR-099): B3 and B8 for B8's heap-peak budget (relative to B3's), and the absolute
+/// allocation ceilings of the single-threaded (bytes) and multi-threaded (blocks) scenarios.
+const DHAT_SCENARIOS: [&str; 7] = ["B2", "B3", "B4", "B6", "B8", "B10", "B12u"];
+/// The most interleaved rounds of a paired measurement (ADR-098).
+const ROUNDS: u32 = 10;
+
+/// `(rounds, runs per block)` of a paired measurement of `total` runs per binary (ADR-098): at most [`ROUNDS`]
+/// rounds, every block at least one run. 50 runs: 10 × 5; 20: 10 × 2; B7's 5: 5 × 1.
+fn paired_rounds(total: u32) -> (u32, u32) {
+    let rounds = total.clamp(1, ROUNDS);
+    (rounds, total.checked_div(rounds).unwrap_or(1).max(1))
+}
+
+/// Whether the base runs first in round `r`: ABBA order (base, head; head, base; …), so a drift of the runner during
+/// the scenario's window falls on both binaries alike.
+const fn base_first(r: u32) -> bool {
+    r.is_multiple_of(2)
+}
+
 fn measure(root: &Path, args: &[String]) -> anyhow::Result<()> {
     let Some(o) = Opts::parse(
         args,
@@ -2184,6 +2472,7 @@ fn measure(root: &Path, args: &[String]) -> anyhow::Result<()> {
             "scenarios",
             "tools",
             "snp",
+            "base-snp",
             "target",
             "allocator",
             "label",
@@ -2193,7 +2482,7 @@ fn measure(root: &Path, args: &[String]) -> anyhow::Result<()> {
             "path",
             "jobs",
         ],
-        &["syscalls", "dhat"],
+        &["syscalls", "dhat", "counts"],
     )?
     else {
         say(RUN_HELP);
@@ -2208,13 +2497,13 @@ fn measure(root: &Path, args: &[String]) -> anyhow::Result<()> {
     let hyperfine = ensure_hyperfine(&work, false, None)?;
     let mut exes = BTreeMap::new();
     for t in &tool_list {
-        let exe = match t {
-            Tool::Snp => resolve_snp(&work, &o, &build)?,
-            Tool::PreCommit => oracle_pre_commit(&work)?,
-            Tool::Prek => ensure_prek(&work, false)?,
-        };
-        exes.insert(*t, exe);
+        exes.insert(*t, resolve_tool(&work, &o, &build, *t, false)?);
     }
+    let base = resolve_base(&o)?;
+    ensure!(
+        base.is_none() || exes.contains_key(&Tool::Snp),
+        "--base-snp is paired with snp: select snp in --tools"
+    );
     let label = o.one("label").unwrap_or("current").to_owned();
     let counts = (o.number("warmup")?, o.number("runs")?);
     let raw = work.results().join("raw").join(&label);
@@ -2228,14 +2517,27 @@ fn measure(root: &Path, args: &[String]) -> anyhow::Result<()> {
         unix_time: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs()),
-        extras: [("syscalls", "syscalls"), ("dhat", "alloc_mib")]
-            .into_iter()
-            .filter(|(switch, _)| o.has(switch))
-            .map(|(_, metric)| metric.to_owned())
-            .collect(),
+        cpu_count: std::thread::available_parallelism()
+            .ok()
+            .and_then(|n| u64::try_from(n.get()).ok()),
+        git_version: git(&work, root, &["--version"]).map_or_default(|s| s.trim().to_owned()),
+        extras: [
+            ("syscalls", "syscalls"),
+            ("dhat", "alloc_mib"),
+            ("dhat", "alloc_blocks"),
+            ("dhat", "heap_peak_mib"),
+            ("counts", "counts"),
+        ]
+        .into_iter()
+        .filter(|(switch, _)| o.has(switch))
+        .map(|(_, metric)| metric.to_owned())
+        .collect(),
         scenarios: BTreeMap::new(),
     };
-    for (switch, needs) in [("syscalls", &["B1", "B3"][..]), ("dhat", &["B3"][..])] {
+    for (switch, needs) in [
+        ("syscalls", &SYSCALL_SCENARIOS[..]),
+        ("dhat", &DHAT_SCENARIOS[..]),
+    ] {
         if o.has(switch) && !scenarios.iter().any(|s| needs.contains(&s.id)) {
             say(&format!(
                 "bench: warning: --{switch} measures {} only, which this run does not select (the gate reports the \
@@ -2244,10 +2546,24 @@ fn measure(root: &Path, args: &[String]) -> anyhow::Result<()> {
             ));
         }
     }
+    let mut all_tools: Vec<Tool> = exes.keys().copied().collect();
+    if base.is_some() {
+        all_tools.push(Tool::SnpBase);
+    }
+    // the patches earlier runs left in every store (B8, P07); an interrupted run's is kept, and its B8 then fails
+    for s in scenarios.iter().filter(|s| s.fixture == Fixture::Stash10M) {
+        for t in &all_tools {
+            if let Err(e) = clean_patches(&work, *t, s, false) {
+                say(&format!("bench: warning: {}: {e:#}", t.name()));
+            }
+        }
+    }
     for s in &scenarios {
         let mut per_tool = BTreeMap::new();
+        let unavailable = |t: Tool| state.unavailable.get(&SetupState::key(s.id, t));
+        // snp first (paired with the base when there is one), then the references in the same window
         for (tool, exe) in &exes {
-            if let Some(reason) = state.unavailable.get(&SetupState::key(s.id, *tool)) {
+            if let Some(reason) = unavailable(*tool) {
                 say(&format!(
                     "bench: {} {}: skipped (setup: {})",
                     s.id,
@@ -2260,38 +2576,79 @@ fn measure(root: &Path, args: &[String]) -> anyhow::Result<()> {
                 );
                 continue;
             }
+            let base_exe = base.as_deref().filter(|_| *tool == Tool::Snp);
+            if let Some(base_exe) = base_exe {
+                let base_exe = match unavailable(Tool::SnpBase) {
+                    Some(reason) => Err(format!("setup: {reason}")),
+                    None => Ok(base_exe),
+                };
+                say(&format!(
+                    "bench: {} snp and snp-base (interleaved) — {}",
+                    s.id, s.title
+                ));
+                let (head, base_out) =
+                    measure_paired(&work, &hyperfine, exe, &base_exe, s, counts, &raw);
+                log_outcome(s, Tool::SnpBase, &base_out);
+                log_outcome(s, Tool::Snp, &head);
+                per_tool.insert(Tool::SnpBase.name().to_owned(), base_out);
+                per_tool.insert(Tool::Snp.name().to_owned(), head);
+                continue;
+            }
             say(&format!("bench: {} {} — {}", s.id, tool.name(), s.title));
-            let outcome = match measure_one(&work, &hyperfine, *tool, exe, s, counts, &raw) {
-                Ok(m) => {
-                    say(&format!(
-                        "bench: {} {}: p50 {:.2} ms [{:.2}, {:.2}]{}",
-                        s.id,
-                        tool.name(),
-                        m.median_ms,
-                        m.ci95_ms.0,
-                        m.ci95_ms.1,
-                        m.rss_mib.map_or_default(|r| format!(", RSS {r:.1} MiB"))
-                    ));
-                    Outcome::Ok(m)
-                }
-                Err(e) => {
-                    say(&format!(
-                        "bench: {} {}: FAILED: {}",
+            let outcome = match measure_single(&work, &hyperfine, *tool, exe, s, counts, &raw) {
+                Ok(m) => Outcome::Ok(m),
+                Err(e) => Outcome::Failed(format!("{e:#}")),
+            };
+            log_outcome(s, *tool, &outcome);
+            per_tool.insert(tool.name().to_owned(), outcome);
+        }
+        if o.has("counts") {
+            let pairs = [
+                (Tool::Snp, exes.get(&Tool::Snp).cloned()),
+                (Tool::SnpBase, base.clone()),
+            ];
+            let mut execs = BTreeMap::new();
+            for (tool, exe) in pairs {
+                let Some(exe) = exe else { continue };
+                let Some(Outcome::Ok(m)) = per_tool.get_mut(tool.name()) else {
+                    continue;
+                };
+                // a failure leaves the counters empty (the gate fails a head without them, warns for the base)
+                match count_pass(&work, tool, &exe, s, &raw) {
+                    Ok((c, argv)) => {
+                        say(&format!("bench: {} {}: counts {c:?}", s.id, tool.name()));
+                        m.counts = c;
+                        execs.insert(tool, argv);
+                    }
+                    Err(e) => say(&format!(
+                        "bench: warning: {} {}: not counted: {}",
                         s.id,
                         tool.name(),
                         one_line(&format!("{e:#}"))
-                    ));
-                    Outcome::Failed(format!("{e:#}"))
+                    )),
                 }
-            };
-            per_tool.insert(tool.name().to_owned(), outcome);
+            }
+            if let (Some(head), Some(base_argv)) =
+                (execs.get(&Tool::Snp), execs.get(&Tool::SnpBase))
+                && let Some(Outcome::Ok(m)) = per_tool.get_mut(Tool::Snp.name())
+            {
+                m.exec_diff = exec_diff(head, base_argv);
+            }
+        }
+        // once after the scenario (P07)
+        if s.fixture == Fixture::Stash10M {
+            for t in &all_tools {
+                if let Err(e) = clean_patches(&work, *t, s, false) {
+                    say(&format!("bench: warning: {}: {e:#}", t.name()));
+                }
+            }
         }
         record.scenarios.insert(s.id.to_owned(), per_tool);
     }
 
     if let Some(snp) = exes.get(&Tool::Snp) {
         if o.has("syscalls") {
-            for id in ["B1", "B3"] {
+            for id in SYSCALL_SCENARIOS {
                 if let Some(s) = scenarios.iter().find(|s| s.id == id)
                     && let Some(Outcome::Ok(m)) =
                         record.scenarios.get_mut(id).and_then(|t| t.get_mut("snp"))
@@ -2311,23 +2668,8 @@ fn measure(root: &Path, args: &[String]) -> anyhow::Result<()> {
                 }
             }
         }
-        if o.has("dhat")
-            && let Some(s) = scenarios.iter().find(|s| s.id == "B3")
-            && let Some(Outcome::Ok(m)) = record
-                .scenarios
-                .get_mut("B3")
-                .and_then(|t| t.get_mut("snp"))
-        {
-            match dhat_total(&work, &build, s) {
-                Ok(bytes) => {
-                    say(&format!("bench: B3 snp: {bytes} bytes allocated (dhat)"));
-                    m.alloc_mib = Some(bytes_to_mib(bytes));
-                }
-                Err(e) => say(&format!(
-                    "bench: warning: B3 snp: allocation not measured: {}",
-                    one_line(&format!("{e:#}"))
-                )),
-            }
+        if o.has("dhat") {
+            measure_dhat(&work, &build, &scenarios, &mut record);
         }
     }
 
@@ -2345,6 +2687,27 @@ fn measure(root: &Path, args: &[String]) -> anyhow::Result<()> {
     .with_context(|| format!("writing {}", out.display()))?;
     say(&format!("bench: wrote {}", out.display()));
     Ok(())
+}
+
+/// The log line of one tool's outcome on `s`.
+fn log_outcome(s: &Scenario, tool: Tool, o: &Outcome) {
+    match o {
+        Outcome::Ok(m) => say(&format!(
+            "bench: {} {}: p50 {:.2} ms [{:.2}, {:.2}]{}",
+            s.id,
+            tool.name(),
+            m.median_ms,
+            m.ci95_ms.0,
+            m.ci95_ms.1,
+            m.rss_mib.map_or_default(|r| format!(", RSS {r:.1} MiB"))
+        )),
+        Outcome::Failed(e) => say(&format!(
+            "bench: {} {}: FAILED: {}",
+            s.id,
+            tool.name(),
+            one_line(e)
+        )),
+    }
 }
 
 /// `s` on one line (whitespace runs collapsed), at most 240 characters: a table cell or a log line.
@@ -2367,16 +2730,32 @@ fn scenario_rank(id: &str) -> usize {
         .unwrap_or(usize::MAX)
 }
 
-/// hyperfine (and the RSS runs) of `tool` on `s`.
-fn measure_one(
+/// `(warm-up runs, measured runs)` of `s` per binary, with the `--warmup`/`--runs` overrides.
+fn run_counts(s: &Scenario, counts: (Option<u32>, Option<u32>)) -> (u32, u32) {
+    let (default_w, default_r) = s.runs.unwrap_or((WARMUP, RUNS));
+    (counts.0.unwrap_or(default_w), counts.1.unwrap_or(default_r))
+}
+
+/// The environment of `tool` on `s`; snp's carries `SNP_BIN`, since B9's hook script runs `$SNP_BIN` first (ADR-048):
+/// the measured binary, whichever one setup installed.
+fn scenario_env(work: &Work, tool: Tool, exe: &Path, s: &Scenario) -> Vec<(OsString, OsString)> {
+    let mut env = work.tool_env(tool, s.store, Some(s));
+    if tool.is_snp() {
+        env.push(("SNP_BIN".into(), exe.as_os_str().to_owned()));
+    }
+    env
+}
+
+/// One hyperfine invocation of `tool` on `s` (`warmup` + `runs`), written to `json_out`; the run times (ms).
+fn hyperfine_block(
     work: &Work,
     hyperfine: &Path,
     tool: Tool,
     exe: &Path,
     s: &Scenario,
-    counts: (Option<u32>, Option<u32>),
-    raw: &Path,
-) -> anyhow::Result<Measure> {
+    (warmup, runs): (u32, u32),
+    json_out: &Path,
+) -> anyhow::Result<Vec<f64>> {
     let dir = work.fixture(s.fixture, tool);
     ensure!(
         dir.is_dir(),
@@ -2385,17 +2764,12 @@ fn measure_one(
     );
     // B9 commits in the fixture 56 times: it must be the fixture's own repository, never an enclosing one
     ensure_own_repo(work, &dir)?;
-    let mut env = work.tool_env(tool, s.store, Some(s));
-    if tool == Tool::Snp {
-        // B9's hook script runs `$SNP_BIN` first (ADR-048): the measured binary, whichever one setup installed
-        env.push(("SNP_BIN".into(), exe.as_os_str().to_owned()));
-    }
-    let (default_w, default_r) = s.runs.unwrap_or((WARMUP, RUNS));
-    let (warmup, runs) = (counts.0.unwrap_or(default_w), counts.1.unwrap_or(default_r));
+    // B8: refuse on an interrupted run, and the directory `find` starts from must exist
+    clean_patches(work, tool, s, true)?;
+    let env = scenario_env(work, tool, exe, s);
     let (program, argv) = scenario_command(s, exe);
-    let mut line = vec![program.clone().into_os_string()];
-    line.extend(argv.iter().cloned());
-    let json_out = raw.join(format!("{}-{}.json", s.id, tool.name()));
+    let mut line = vec![program.into_os_string()];
+    line.extend(argv);
     let mut cmd = Work::command(hyperfine, &env);
     cmd.args([
         "-N",
@@ -2409,33 +2783,171 @@ fn measure_one(
     .arg("--command-name")
     .arg(format!("{} {}", tool.name(), s.id))
     .arg("--export-json")
-    .arg(&json_out)
+    .arg(json_out)
     .current_dir(&dir);
-    if s.store == StoreMode::Cold {
-        let store = work.store(tool, StoreMode::Cold);
-        cmd.arg("--prepare").arg(command_line(&[
-            OsString::from("rm"),
-            OsString::from("-rf"),
-            store.into_os_string(),
-        ]));
+    if let Some(prepare) = prepare_command(work, tool, s) {
+        cmd.arg("--prepare").arg(prepare);
     }
     cmd.arg(command_line(&line));
     run_ok(&mut cmd, "hyperfine")?;
-    let text = std::fs::read_to_string(&json_out)
+    let text = std::fs::read_to_string(json_out)
         .with_context(|| format!("reading {}", json_out.display()))?;
-    let mut m = parse_hyperfine(&text)?;
-    if s.rss && !cfg!(windows) {
-        m.rss_mib = Some(rss_median_kib(&env, &dir, &program, &argv)? / 1024.0);
+    parse_hyperfine_times(&text)
+}
+
+/// hyperfine's `--prepare` of `tool` on `s` (Unix; ARCHITECTURE §12.3): B7 removes the cold store before every run,
+/// B8 the stash patch the previous run left (P07: 50 runs × 3 tools leave about 2.8 GB of patches otherwise).
+fn prepare_command(work: &Work, tool: Tool, s: &Scenario) -> Option<String> {
+    if cfg!(windows) {
+        return None;
     }
+    if s.store == StoreMode::Cold {
+        return Some(command_line(&[
+            OsString::from("rm"),
+            OsString::from("-rf"),
+            work.store(tool, StoreMode::Cold).into_os_string(),
+        ]));
+    }
+    if s.fixture == Fixture::Stash10M {
+        let (dir, pattern) = patch_location(work, tool, s.store);
+        return Some(command_line(&[
+            OsString::from("find"),
+            dir.into_os_string(),
+            OsString::from("-maxdepth"),
+            OsString::from("1"),
+            OsString::from("-type"),
+            OsString::from("f"),
+            OsString::from("-name"),
+            OsString::from(pattern),
+            OsString::from("-delete"),
+        ]));
+    }
+    None
+}
+
+/// hyperfine (and the RSS runs) of `tool` alone on `s`.
+fn measure_single(
+    work: &Work,
+    hyperfine: &Path,
+    tool: Tool,
+    exe: &Path,
+    s: &Scenario,
+    counts: (Option<u32>, Option<u32>),
+    raw: &Path,
+) -> anyhow::Result<Measure> {
+    let json_out = raw.join(format!("{}-{}.json", s.id, tool.name()));
+    let times = hyperfine_block(
+        work,
+        hyperfine,
+        tool,
+        exe,
+        s,
+        run_counts(s, counts),
+        &json_out,
+    )?;
+    let mut m = Measure::from_times(&times)?;
+    add_rss(work, tool, exe, s, &mut m)?;
     Ok(m)
 }
 
-/// The median peak RSS (KiB) of [`RSS_RUNS`] runs under `/usr/bin/time`.
+/// The RSS runs of `tool` on an RSS scenario (not on Windows).
+fn add_rss(
+    work: &Work,
+    tool: Tool,
+    exe: &Path,
+    s: &Scenario,
+    m: &mut Measure,
+) -> anyhow::Result<()> {
+    if s.rss && !cfg!(windows) {
+        let env = scenario_env(work, tool, exe, s);
+        let (program, argv) = scenario_command(s, exe);
+        let dir = work.fixture(s.fixture, tool);
+        let before = || clean_patches(work, tool, s, false);
+        m.rss_mib = Some(rss_median_kib(&env, &dir, &program, &argv, &before)? / 1024.0);
+    }
+    Ok(())
+}
+
+/// snp and the base commit's snp on `s` in interleaved ABBA rounds (ADR-098), then snp's RSS runs (the gate never
+/// reads the base's). Each round runs one block of each binary; each binary has one warm-up, in its first block.
+/// A failure of the base marks it not measured and the head still runs every round; a failure of the head ends the
+/// scenario.
+fn measure_paired(
+    work: &Work,
+    hyperfine: &Path,
+    head: &Path,
+    base: &Result<&Path, String>,
+    s: &Scenario,
+    counts: (Option<u32>, Option<u32>),
+    raw: &Path,
+) -> (Outcome, Outcome) {
+    let (warmup, total) = run_counts(s, counts);
+    let (rounds, per_block) = paired_rounds(total);
+    let mut base_err = base.as_ref().err().cloned();
+    let mut runs: BTreeMap<Tool, (Vec<f64>, Vec<f64>)> = BTreeMap::new();
+    for r in 0..rounds {
+        let order = if base_first(r) {
+            [Tool::SnpBase, Tool::Snp]
+        } else {
+            [Tool::Snp, Tool::SnpBase]
+        };
+        for tool in order {
+            let exe = match (tool, base) {
+                (Tool::SnpBase, Ok(b)) if base_err.is_none() => *b,
+                (Tool::SnpBase, _) => continue,
+                _ => head,
+            };
+            let entry = runs.entry(tool).or_default();
+            let w = if entry.0.is_empty() { warmup } else { 0 };
+            let json_out = raw.join(format!("{}-{}-r{r:02}.json", s.id, tool.name()));
+            match hyperfine_block(work, hyperfine, tool, exe, s, (w, per_block), &json_out) {
+                Ok(times) => {
+                    if let Some(med) = median(&times) {
+                        entry.1.push(med);
+                    }
+                    entry.0.extend(times);
+                }
+                Err(e) if tool == Tool::SnpBase => base_err = Some(format!("{e:#}")),
+                Err(e) => {
+                    return (
+                        Outcome::Failed(format!("{e:#}")),
+                        Outcome::Failed("not measured: snp failed this scenario".into()),
+                    );
+                }
+            }
+        }
+    }
+    let pooled = |tool: Tool| -> anyhow::Result<Measure> {
+        let (times, medians) = runs.get(&tool).context("no block ran")?;
+        let mut m = Measure::from_times(times)?;
+        m.rounds_ms.clone_from(medians);
+        Ok(m)
+    };
+    let head_out = match pooled(Tool::Snp).and_then(|mut m| {
+        add_rss(work, Tool::Snp, head, s, &mut m)?;
+        Ok(m)
+    }) {
+        Ok(m) => Outcome::Ok(m),
+        Err(e) => Outcome::Failed(format!("{e:#}")),
+    };
+    let base_out = match base_err {
+        Some(e) => Outcome::Failed(e),
+        None => match pooled(Tool::SnpBase) {
+            Ok(m) => Outcome::Ok(m),
+            Err(e) => Outcome::Failed(format!("{e:#}")),
+        },
+    };
+    (head_out, base_out)
+}
+
+/// The median peak RSS (KiB) of [`RSS_RUNS`] runs under `/usr/bin/time` (the largest process of the tree: a maximum
+/// over the processes the tool waited for, not a sum); `before` runs before each (B8's patch cleanup).
 fn rss_median_kib(
     env: &[(OsString, OsString)],
     dir: &Path,
     program: &Path,
     argv: &[OsString],
+    before: &dyn Fn() -> anyhow::Result<()>,
 ) -> anyhow::Result<f64> {
     let flag = if cfg!(target_os = "macos") {
         "-l"
@@ -2444,6 +2956,7 @@ fn rss_median_kib(
     };
     let mut samples = Vec::new();
     for _ in 0..RSS_RUNS {
+        before()?;
         let mut cmd = Work::command("/usr/bin/time", env);
         cmd.arg(flag).arg(program).args(argv).current_dir(dir);
         let out = cmd.output().context("running /usr/bin/time")?;
@@ -2460,12 +2973,107 @@ fn rss_median_kib(
     median(&samples).context("no RSS sample")
 }
 
+/// Where `tool` leaves its stash patches and the `find -name` pattern of their names (P07): snp
+/// `<store>/patches/patch<secs>-<pid>[-<n>]`, pre-commit `<store>/patch<secs>-<pid>` (the store root), prek
+/// `<store>/patches/<secs>-<pid>.patch`. Nothing else in a store matches (journals are `run-*.snp-journal`).
+fn patch_location(work: &Work, tool: Tool, mode: StoreMode) -> (PathBuf, &'static str) {
+    let store = work.store(tool, mode);
+    match tool {
+        Tool::Snp | Tool::SnpBase => (store.join("patches"), "patch[0-9]*-[0-9]*"),
+        Tool::PreCommit => (store, "patch[0-9]*-[0-9]*"),
+        Tool::Prek => (store.join("patches"), "[0-9]*-[0-9]*.patch"),
+    }
+}
+
+/// `find -name`'s match of `pattern` (literals, `*` and `[0-9]` only) against a whole file name.
+fn name_matches(pattern: &[u8], name: &[u8]) -> bool {
+    if let Some(rest) = pattern.strip_prefix(b"*") {
+        return (0..=name.len())
+            .any(|i| name.get(i..).is_some_and(|tail| name_matches(rest, tail)));
+    }
+    if let Some(rest) = pattern.strip_prefix(b"[0-9]") {
+        return match name.split_first() {
+            Some((c, tail)) => c.is_ascii_digit() && name_matches(rest, tail),
+            None => false,
+        };
+    }
+    match (pattern.split_first(), name.split_first()) {
+        (Some((p, prest)), Some((c, nrest))) => p == c && name_matches(prest, nrest),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// The trace of an interrupted snp run that B8's cleanup must not hide: a store journal `run-*.snp-journal` or a
+/// git-dir pointer `.git/snp-stash*.journal` of the fixture.
+fn interrupted_run(work: &Work, tool: Tool, s: &Scenario) -> Option<PathBuf> {
+    let mut places = vec![(
+        work.fixture(s.fixture, tool).join(".git"),
+        &b"snp-stash*.journal"[..],
+    )];
+    if tool.is_snp() {
+        places.push((
+            work.store(tool, s.store).join("patches"),
+            &b"run-*.snp-journal"[..],
+        ));
+    }
+    places.into_iter().find_map(|(dir, pattern)| {
+        std::fs::read_dir(&dir).ok()?.find_map(|e| {
+            let e = e.ok()?;
+            name_matches(pattern, e.file_name().as_encoded_bytes()).then(|| e.path())
+        })
+    })
+}
+
+/// Removes the stash patches `tool` left in its store on B8 (P07; a no-op on every other scenario), exactly the
+/// files [`prepare_command`]'s `find` removes. Refuses when a run was interrupted (its patch holds the user's
+/// changes in a real repository; here it means the measurement is broken), and with `require_dir` when the
+/// directory `find` starts from is missing (`find` would exit 1 and abort hyperfine).
+fn clean_patches(work: &Work, tool: Tool, s: &Scenario, require_dir: bool) -> anyhow::Result<()> {
+    if s.fixture != Fixture::Stash10M {
+        return Ok(());
+    }
+    if let Some(trace) = interrupted_run(work, tool, s) {
+        bail!(
+            "{} exists: a run of {} was interrupted, and its patch is kept (inspect it, then remove it and run \
+             `cargo xtask bench setup --scenarios {}`)",
+            trace.display(),
+            tool.name(),
+            s.id
+        );
+    }
+    let (dir, pattern) = patch_location(work, tool, s.store);
+    if !dir.is_dir() {
+        ensure!(
+            !require_dir,
+            "{} is missing (run `cargo xtask bench setup --scenarios {}`)",
+            dir.display(),
+            s.id
+        );
+        return Ok(());
+    }
+    for e in std::fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))? {
+        let e = e?;
+        // `find -type f`: regular files only, never a directory or a symlink
+        let ty = e.file_type()?;
+        if !ty.is_dir()
+            && !ty.is_symlink()
+            && name_matches(pattern.as_bytes(), e.file_name().as_encoded_bytes())
+        {
+            std::fs::remove_file(e.path())
+                .with_context(|| format!("removing {}", e.path().display()))?;
+        }
+    }
+    Ok(())
+}
+
 /// `strace -f -c` of snp on `s` (Linux).
 fn count_syscalls(work: &Work, snp: &Path, s: &Scenario) -> anyhow::Result<u64> {
     let summary = work.results().join(format!("strace-{}.txt", s.id));
     ensure_own_repo(work, &work.fixture(s.fixture, Tool::Snp))?;
-    let env = work.tool_env(Tool::Snp, s.store, Some(s));
+    let env = scenario_env(work, Tool::Snp, snp, s);
     let (program, argv) = scenario_command(s, snp);
+    clean_patches(work, Tool::Snp, s, false)?;
     let mut cmd = Work::command("strace", &env);
     cmd.args(["-f", "-c", "-o"])
         .arg(&summary)
@@ -2473,12 +3081,226 @@ fn count_syscalls(work: &Work, snp: &Path, s: &Scenario) -> anyhow::Result<u64> 
         .args(argv)
         .current_dir(work.fixture(s.fixture, Tool::Snp));
     run_ok(&mut cmd, "strace -f -c")?;
+    clean_patches(work, Tool::Snp, s, false)?;
     let text = std::fs::read_to_string(&summary)?;
     parse_strace_total(&text).context("strace printed no total row")
 }
 
-/// Builds snp with `--features dhat-heap` (release, own target dir) and returns B3's total bytes allocated.
-fn dhat_total(work: &Work, build: &Build, s: &Scenario) -> anyhow::Result<u64> {
+/// The syscalls `--counts` traces (ADR-099); `?` ignores a name the architecture lacks (aarch64 has no `fork`).
+const COUNTED_SYSCALLS: &str =
+    "trace=?clone,?clone3,?fork,?vfork,?execve,?statx,?newfstatat,?openat,?getdents64";
+
+/// The counters of a `strace -c` table: `clones` (`clone` + `clone3` + `fork` + `vfork`, the whole tree) and each of
+/// `execve`, `statx`, `newfstatat`, `openat`, `getdents64` (0 when the table has no row for it).
+fn counters_of(table: &BTreeMap<String, u64>) -> BTreeMap<String, u64> {
+    let get = |k: &str| table.get(k).copied().unwrap_or(0);
+    let clones = ["clone", "clone3", "fork", "vfork"]
+        .into_iter()
+        .map(get)
+        .fold(0_u64, u64::saturating_add);
+    let mut out = BTreeMap::from([("clones".to_owned(), clones)]);
+    for k in ["execve", "statx", "newfstatat", "openat", "getdents64"] {
+        out.insert(k.to_owned(), get(k));
+    }
+    out
+}
+
+/// One counting pass of `tool` on `s` after the timing runs (ADR-099, P15): `strace -f --seccomp-bpf -c` over the
+/// counted syscalls, then one `strace -f -e trace=execve` pass for the exec argv list (normalized: paths of the
+/// bench directory, store and binary replaced, long digit runs folded). B7 replays the cold store's removal before
+/// each pass, B8 its patch cleanup.
+fn count_pass(
+    work: &Work,
+    tool: Tool,
+    exe: &Path,
+    s: &Scenario,
+    raw: &Path,
+) -> anyhow::Result<(BTreeMap<String, u64>, Vec<String>)> {
+    let dir = work.fixture(s.fixture, tool);
+    ensure_own_repo(work, &dir)?;
+    let env = scenario_env(work, tool, exe, s);
+    let (program, argv) = scenario_command(s, exe);
+    let replay = || -> anyhow::Result<()> {
+        if s.store == StoreMode::Cold {
+            remove_tree(&work.store(tool, StoreMode::Cold))?;
+        }
+        clean_patches(work, tool, s, false)
+    };
+    replay()?;
+    let summary = raw.join(format!("{}-{}.counts.txt", s.id, tool.name()));
+    let mut cmd = Work::command("strace", &env);
+    cmd.args(["-f", "--seccomp-bpf", "-c", "-e", COUNTED_SYSCALLS, "-o"])
+        .arg(&summary)
+        .arg(&program)
+        .args(&argv)
+        .current_dir(&dir);
+    run_ok(&mut cmd, "strace -f --seccomp-bpf -c")?;
+    let table = parse_strace_table(&std::fs::read_to_string(&summary)?);
+    ensure!(!table.is_empty(), "strace counted no syscall");
+    replay()?;
+    let trace = raw.join(format!("{}-{}.execve.txt", s.id, tool.name()));
+    let mut cmd = Work::command("strace", &env);
+    cmd.args([
+        "-f",
+        "-qq",
+        "-s",
+        "4096",
+        "-e",
+        "trace=execve",
+        "-e",
+        "status=successful",
+        "-e",
+        "signal=none",
+        "-o",
+    ])
+    .arg(&trace)
+    .arg(&program)
+    .args(&argv)
+    .current_dir(&dir);
+    run_ok(&mut cmd, "strace -f -e trace=execve")?;
+    replay()?;
+    let subs = [
+        (exe.display().to_string(), "$SNP"),
+        (dir.display().to_string(), "$FIXTURE"),
+        (work.store(tool, s.store).display().to_string(), "$STORE"),
+        (work.dir.display().to_string(), "$BENCH"),
+    ];
+    let execs = parse_execve(&std::fs::read_to_string(&trace)?)
+        .iter()
+        .map(|argv| normalize_argv(argv, &subs))
+        .collect();
+    Ok((counters_of(&table), execs))
+}
+
+/// The argv of every `execve` line of an strace log (`[pid] execve("path", ["a", "b"], …) = 0`), each argument as
+/// strace printed it (quoted C escapes kept, so the comparison is exact).
+fn parse_execve(log: &str) -> Vec<Vec<String>> {
+    let mut out = Vec::new();
+    for line in log.lines() {
+        let Some((_, rest)) = line.split_once("execve(") else {
+            continue;
+        };
+        let Some((_, rest)) = rest.split_once(", [") else {
+            continue;
+        };
+        let mut args = Vec::new();
+        let mut cur = String::new();
+        let (mut quoted, mut escaped) = (false, false);
+        for c in rest.chars() {
+            if quoted {
+                cur.push(c);
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == '"' {
+                    quoted = false;
+                }
+            } else if c == '"' {
+                cur.push(c);
+                quoted = true;
+            } else if c == ',' || c == ']' {
+                let arg = cur.trim();
+                if !arg.is_empty() {
+                    args.push(arg.to_owned());
+                }
+                cur.clear();
+                if c == ']' {
+                    break;
+                }
+            } else {
+                cur.push(c);
+            }
+        }
+        out.push(args);
+    }
+    out
+}
+
+/// One exec argv as a comparable line: `subs` replaced, digit runs of 5 or more (times, pids) folded to `N`, and
+/// more than 8 arguments (a hook's file list) cut to the first 8 and a count.
+fn normalize_argv(argv: &[String], subs: &[(String, &str)]) -> String {
+    const SHOWN: usize = 8;
+    let mut parts: Vec<String> = argv
+        .iter()
+        .take(SHOWN)
+        .map(|a| {
+            let mut a = a.clone();
+            for (from, to) in subs {
+                if !from.is_empty() {
+                    a = a.replace(from.as_str(), to);
+                }
+            }
+            fold_digits(&a)
+        })
+        .collect();
+    if argv.len() > SHOWN {
+        parts.push(format!("… ({} arguments)", argv.len()));
+    }
+    parts.join(" ")
+}
+
+/// Runs of 5 or more ASCII digits replaced by `N`.
+fn fold_digits(s: &str) -> String {
+    let mut out = String::new();
+    let mut run = String::new();
+    let flush = |out: &mut String, run: &mut String| {
+        if run.len() >= 5 {
+            out.push('N');
+        } else {
+            out.push_str(run);
+        }
+        run.clear();
+    };
+    for c in s.chars() {
+        if c.is_ascii_digit() {
+            run.push(c);
+        } else {
+            flush(&mut out, &mut run);
+            out.push(c);
+        }
+    }
+    flush(&mut out, &mut run);
+    out
+}
+
+/// The most exec-diff lines a record keeps per scenario.
+const EXEC_DIFF_MAX: usize = 40;
+
+/// The exec argv lines of `head` and `base` as a multiset difference: `+n× line` ran more often in the head, `-n× line`
+/// more often in the base (both directions, so a dropped parity or safety call shows), sorted, at most
+/// [`EXEC_DIFF_MAX`].
+fn exec_diff(head: &[String], base: &[String]) -> Vec<String> {
+    let mut count: BTreeMap<&str, (u64, u64)> = BTreeMap::new();
+    for l in head {
+        let e = count.entry(l).or_default();
+        e.0 = e.0.saturating_add(1);
+    }
+    for l in base {
+        let e = count.entry(l).or_default();
+        e.1 = e.1.saturating_add(1);
+    }
+    let mut out: Vec<String> = count
+        .into_iter()
+        .filter(|(_, (h, b))| h != b)
+        .map(|(l, (h, b))| {
+            if h > b {
+                format!("+{}× {l}", h.saturating_sub(b))
+            } else {
+                format!("-{}× {l}", b.saturating_sub(h))
+            }
+        })
+        .collect();
+    if out.len() > EXEC_DIFF_MAX {
+        let more = out.len().saturating_sub(EXEC_DIFF_MAX);
+        out.truncate(EXEC_DIFF_MAX);
+        out.push(format!("… and {more} more"));
+    }
+    out
+}
+
+/// Builds snp with `--features dhat-heap` (release, own target dir): the binary.
+fn dhat_build(work: &Work, build: &Build) -> anyhow::Result<PathBuf> {
     let target_dir = work.dir.join("dhat-target");
     let mut cmd = Command::new("cargo");
     cmd.args([
@@ -2503,20 +3325,76 @@ fn dhat_total(work: &Work, build: &Build, s: &Scenario) -> anyhow::Result<u64> {
     cargo_jobs(&mut cmd, build.jobs);
     say("bench: building snp (dhat-heap)");
     run_ok(&mut cmd, "cargo build --features dhat-heap")?;
-    let exe = bin_dir.join("release").join(exe_name("snp"));
+    Ok(bin_dir.join("release").join(exe_name("snp")))
+}
+
+/// One run of the dhat build on `s`: its totals and heap peak. The profile `dhat-heap.json` lands in the fixture (the
+/// working directory) and is removed.
+fn dhat_run(work: &Work, exe: &Path, s: &Scenario) -> anyhow::Result<DhatSummary> {
     let dir = work.fixture(s.fixture, Tool::Snp);
     ensure_own_repo(work, &dir)?;
     let profile = dir.join("dhat-heap.json");
     remove_tree(&profile)?;
-    let env = work.tool_env(Tool::Snp, s.store, Some(s));
-    let (program, argv) = scenario_command(s, &exe);
+    clean_patches(work, Tool::Snp, s, false)?;
+    let env = scenario_env(work, Tool::Snp, exe, s);
+    let (program, argv) = scenario_command(s, exe);
     let mut run = Work::command(program, &env);
     run.args(argv).current_dir(&dir);
-    run_ok(&mut run, "snp (dhat-heap)")?;
+    let ran = run_ok(&mut run, "snp (dhat-heap)");
     let text =
         std::fs::read_to_string(&profile).with_context(|| format!("reading {}", profile.display()));
     remove_tree(&profile)?;
-    parse_dhat_total_bytes(&text?)
+    clean_patches(work, Tool::Snp, s, false)?;
+    ran?;
+    parse_dhat(&text?)
+}
+
+/// `--dhat`: the dhat build once, then one profiled run per selected scenario of [`DHAT_SCENARIOS`] that snp measured.
+/// A failure leaves the metrics unmeasured (the gate fails their hard budgets as such).
+fn measure_dhat(work: &Work, build: &Build, scenarios: &[&Scenario], record: &mut Record) {
+    let wanted: Vec<&Scenario> = scenarios
+        .iter()
+        .copied()
+        .filter(|s| DHAT_SCENARIOS.contains(&s.id))
+        .collect();
+    if wanted.is_empty() {
+        return;
+    }
+    let exe = match dhat_build(work, build) {
+        Ok(exe) => exe,
+        Err(e) => {
+            say(&format!(
+                "bench: warning: allocations not measured: {}",
+                one_line(&format!("{e:#}"))
+            ));
+            return;
+        }
+    };
+    for s in wanted {
+        let Some(Outcome::Ok(m)) = record
+            .scenarios
+            .get_mut(s.id)
+            .and_then(|t| t.get_mut("snp"))
+        else {
+            continue;
+        };
+        match dhat_run(work, &exe, s) {
+            Ok(d) => {
+                say(&format!(
+                    "bench: {} snp: {} bytes in {} blocks allocated, heap peak {} bytes (dhat)",
+                    s.id, d.total_bytes, d.total_blocks, d.peak_bytes
+                ));
+                m.alloc_mib = Some(bytes_to_mib(d.total_bytes));
+                m.alloc_blocks = Some(d.total_blocks);
+                m.heap_peak_mib = Some(bytes_to_mib(d.peak_bytes));
+            }
+            Err(e) => say(&format!(
+                "bench: warning: {} snp: allocation not measured: {}",
+                s.id,
+                one_line(&format!("{e:#}"))
+            )),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -2527,9 +3405,14 @@ fn dhat_total(work: &Work, build: &Build, s: &Scenario) -> anyhow::Result<u64> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Metric {
     MedianMs,
+    /// The peak RSS of the largest process of the tree (`/usr/bin/time`): it can only overstate snp's own.
     RssMib,
     Syscalls,
     AllocMib,
+    /// dhat's total blocks allocated (ADR-099).
+    AllocBlocks,
+    /// dhat's heap peak (ADR-099): what snp itself holds at once, whatever its children use.
+    HeapPeakMib,
 }
 
 impl Metric {
@@ -2539,6 +3422,8 @@ impl Metric {
             "rss_mib" => Self::RssMib,
             "syscalls" => Self::Syscalls,
             "alloc_mib" => Self::AllocMib,
+            "alloc_blocks" => Self::AllocBlocks,
+            "heap_peak_mib" => Self::HeapPeakMib,
             other => bail!("unknown metric {other:?}"),
         })
     }
@@ -2546,8 +3431,26 @@ impl Metric {
     const fn unit(self) -> &'static str {
         match self {
             Self::MedianMs => "ms",
-            Self::RssMib | Self::AllocMib => "MiB",
+            Self::RssMib | Self::AllocMib | Self::HeapPeakMib => "MiB",
             Self::Syscalls => "syscalls",
+            Self::AllocBlocks => "blocks",
+        }
+    }
+
+    /// A count, printed without decimals.
+    const fn is_count(self) -> bool {
+        matches!(self, Self::Syscalls | Self::AllocBlocks)
+    }
+
+    /// The start of the check's name.
+    const fn label(self) -> &'static str {
+        match self {
+            Self::MedianMs => "p50",
+            Self::RssMib => "RSS",
+            Self::Syscalls => "syscalls",
+            Self::AllocMib => "allocated",
+            Self::AllocBlocks => "blocks allocated",
+            Self::HeapPeakMib => "heap peak",
         }
     }
 
@@ -2556,6 +3459,8 @@ impl Metric {
         match self {
             Self::Syscalls => Some("syscalls"),
             Self::AllocMib => Some("alloc_mib"),
+            Self::AllocBlocks => Some("alloc_blocks"),
+            Self::HeapPeakMib => Some("heap_peak_mib"),
             Self::MedianMs | Self::RssMib => None,
         }
     }
@@ -2566,6 +3471,8 @@ impl Metric {
             Self::RssMib => m.rss_mib,
             Self::Syscalls => m.syscalls.map(to_f64),
             Self::AllocMib => m.alloc_mib,
+            Self::AllocBlocks => m.alloc_blocks.map(to_f64),
+            Self::HeapPeakMib => m.heap_peak_mib,
         }
     }
 }
@@ -2854,6 +3761,91 @@ fn regression(snp: &Measure, prev: &Measure, b: &Budgets, against: &str) -> (Ver
     )
 }
 
+/// The name of the paired regression check (ADR-098). It does not start with `no regression`, so
+/// `--advisory-history`, which is about the history, never softens it.
+const PAIRED_CHECK: &str = "no paired regression";
+
+/// The paired regression rule of ADR-098 on the interleaved rounds of `head` and `base`: with
+/// `d_r = ln(head_r / base_r)`, it fails when `exp(median d) > 1 + regression_pct`, the effect
+/// `base × (exp(median d) − 1)` exceeds `regression_min_ms`, and the 95 % interval of the median of `d` lies above 0;
+/// the point estimate alone above the threshold warns. `None` when the rounds cannot be paired (missing, unequal in
+/// number, or not positive).
+fn paired_regression(head: &Measure, base: &Measure, b: &Budgets) -> Option<(Verdict, String)> {
+    if head.rounds_ms.is_empty() || head.rounds_ms.len() != base.rounds_ms.len() {
+        return None;
+    }
+    let d: Vec<f64> = head
+        .rounds_ms
+        .iter()
+        .zip(&base.rounds_ms)
+        .map(|(h, b)| (h / b).ln())
+        .collect();
+    if d.iter().any(|x| !x.is_finite()) {
+        return None;
+    }
+    let ratio = median(&d)?.exp();
+    let (lo, hi) = median_ci95(&d)?;
+    let (lo, hi) = (lo.exp(), hi.exp());
+    let effect_ms = base.median_ms * (ratio - 1.0);
+    let slower = ratio > 1.0 + b.regression_pct / 100.0 && effect_ms.abs() > b.regression_min_ms;
+    let verdict = if slower && lo > 1.0 {
+        Verdict::Fail
+    } else if slower {
+        Verdict::Warn
+    } else {
+        Verdict::Pass
+    };
+    Some((
+        verdict,
+        format!(
+            "{:.2} ms vs base {:.2} ms: paired ratio {:+.1}% [{:+.1}%, {:+.1}%] over {} rounds ({:+.2} ms)",
+            head.median_ms,
+            base.median_ms,
+            (ratio - 1.0) * 100.0,
+            (lo - 1.0) * 100.0,
+            (hi - 1.0) * 100.0,
+            d.len(),
+            effect_ms
+        ),
+    ))
+}
+
+/// The counters gated base against head on the same runner (ADR-099): `(counter, percent, at least)`; the head fails
+/// when it exceeds the base by more than the percentage **and** by at least the absolute amount. Opens, dirents and
+/// execs are reported only (`openat` varies by ±1; an exec change is reviewed through the argv diff), and nothing is
+/// gated against the history (runner images change git and glibc).
+const COUNTER_GATES: [(&str, f64, u64); 3] = [
+    ("clones", 10.0, 5),
+    ("statx", 2.0, 50),
+    ("newfstatat", 2.0, 50),
+];
+
+/// The counter checks of `head` against `base` (both counted).
+fn counter_checks(head: &Measure, base: &Measure) -> Vec<(String, Verdict, String)> {
+    COUNTER_GATES
+        .iter()
+        .filter_map(|&(key, pct, min)| {
+            let h = *head.counts.get(key)?;
+            let b = *base.counts.get(key)?;
+            let over = to_f64(h) > to_f64(b) * (1.0 + pct / 100.0) && h.saturating_sub(b) >= min;
+            Some((
+                format!("{key} <= base + {pct}%"),
+                if over { Verdict::Fail } else { Verdict::Pass },
+                format!("{h} vs base {b} ({})", signed_diff(h, b)),
+            ))
+        })
+        .collect()
+}
+
+/// `h − b` with its sign (`+3`, `-2`, `+0`).
+fn signed_diff(h: u64, b: u64) -> String {
+    if h >= b {
+        format!("+{}", h.saturating_sub(b))
+    } else {
+        format!("-{}", b.saturating_sub(h))
+    }
+}
+
 /// `--advisory-history`: the checks that compare with a baseline warn instead of failing. A record from another
 /// machine says nothing at this resolution: one binary measured 0.76 to 1.19 ms for B1 across hosted runner VMs
 /// (ADR-090). Only those checks change; budgets and the never-slower rule are measured within the run.
@@ -2971,6 +3963,39 @@ fn evaluate(
                 ),
             );
         }
+        // the paired regression against the base binary measured in the same rounds (ADR-098): it gates, and the
+        // unpaired comparisons below are then advisory (they compare measurements minutes or VMs apart)
+        let paired_base = tools.get(Tool::SnpBase.name());
+        match paired_base {
+            Some(Outcome::Ok(bm)) => {
+                let (verdict, detail) = paired_regression(snp, bm, b).unwrap_or_else(|| {
+                    (
+                        Verdict::Warn,
+                        format!(
+                            "the rounds cannot be paired ({} head, {} base)",
+                            snp.rounds_ms.len(),
+                            bm.rounds_ms.len()
+                        ),
+                    )
+                });
+                push(
+                    &mut out,
+                    id,
+                    format!("{PAIRED_CHECK} > {}%", b.regression_pct),
+                    verdict,
+                    detail,
+                );
+            }
+            Some(Outcome::Failed(e)) => push(
+                &mut out,
+                id,
+                format!("{PAIRED_CHECK} > {}%", b.regression_pct),
+                Verdict::Warn,
+                format!("the base was not measured: {}", one_line(e)),
+            ),
+            None => {}
+        }
+        let first_unpaired = out.len();
         // regression against the baseline: > pct and non-overlapping 95 % CIs
         if base.is_some_and(|r| r.get(id, "snp").is_none()) {
             push(
@@ -3002,9 +4027,46 @@ fn evaluate(
                 detail,
             );
         }
+        if paired_base.is_some() {
+            for c in out.iter_mut().skip(first_unpaired) {
+                if c.verdict == Verdict::Fail {
+                    c.verdict = Verdict::Warn;
+                    c.detail.push_str(" (advisory: the paired base gates)");
+                }
+            }
+        }
+        // the deterministic counters against the base, same runner (ADR-099); never against the history
+        if cur.extras.contains("counts") {
+            match (snp.counts.is_empty(), paired_base) {
+                (true, _) => push(
+                    &mut out,
+                    id,
+                    "counted".into(),
+                    Verdict::Fail,
+                    "--counts was requested, but snp was not counted".into(),
+                ),
+                (false, Some(Outcome::Ok(bm))) if !bm.counts.is_empty() => {
+                    for (what, verdict, detail) in counter_checks(snp, bm) {
+                        push(&mut out, id, what, verdict, detail);
+                    }
+                }
+                (false, Some(Outcome::Ok(_))) => push(
+                    &mut out,
+                    id,
+                    "counters <= base".into(),
+                    Verdict::Warn,
+                    "the base was not counted".into(),
+                ),
+                (false, Some(Outcome::Failed(_)) | None) => {}
+            }
+        }
     }
     // budgets of this OS
-    if base.is_none() {
+    let paired_anywhere = cur
+        .scenarios
+        .values()
+        .any(|t| t.contains_key(Tool::SnpBase.name()));
+    if base.is_none() && !paired_anywhere {
         push(
             &mut out,
             "*",
@@ -3023,12 +4085,7 @@ fn evaluate(
         }
         let what = format!(
             "{} <= {}{}",
-            match bud.metric {
-                Metric::MedianMs => "p50",
-                Metric::RssMib => "RSS",
-                Metric::Syscalls => "syscalls",
-                Metric::AllocMib => "allocated",
-            },
+            bud.metric.label(),
             budget_text(bud),
             if bud.hard { " (hard)" } else { "" }
         );
@@ -3086,7 +4143,7 @@ fn evaluate(
             Verdict::Warn
         };
         let unit = bud.metric.unit();
-        let detail = if bud.metric == Metric::Syscalls {
+        let detail = if bud.metric.is_count() {
             format!("{value:.0} {unit} (limit {limit:.0})")
         } else {
             format!("{value:.2} {unit} (limit {limit:.2} {unit})")
@@ -3146,6 +4203,24 @@ fn fmt_measure(m: Option<&Measure>) -> String {
     m.map_or_else(|| "—".to_owned(), |m| format!("{:.2}", m.median_ms))
 }
 
+/// The counters of the comment: `clones / statx / newfstatat / execve` of snp, each with its difference to the base.
+fn counts_cell(snp: Option<&Measure>, base: Option<&Measure>) -> String {
+    let Some(h) = snp.filter(|m| !m.counts.is_empty()) else {
+        return "—".to_owned();
+    };
+    ["clones", "statx", "newfstatat", "execve"]
+        .iter()
+        .map(|k| {
+            let hv = h.counts.get(*k).copied().unwrap_or(0);
+            match base.and_then(|b| b.counts.get(*k)) {
+                Some(bv) => format!("{hv} ({})", signed_diff(hv, *bv)),
+                None => hv.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" / ")
+}
+
 /// The Markdown PR comment.
 fn comment(cur: &Record, base: Option<&Record>, checks: &[Check]) -> String {
     let worst = checks
@@ -3171,29 +4246,66 @@ fn comment(cur: &Record, base: Option<&Record>, checks: &[Check]) -> String {
             b.label
         ))
     );
-    s.push_str(
-        "| Scenario | snp p50 ms (95% CI) | baseline | Δ | pre-commit | prek | snp RSS MiB |\n",
+    let paired = cur
+        .scenarios
+        .values()
+        .any(|t| t.contains_key(Tool::SnpBase.name()));
+    let counted = cur
+        .scenarios
+        .keys()
+        .any(|id| cur.get(id, "snp").is_some_and(|m| !m.counts.is_empty()));
+    if paired {
+        s.push_str(
+            "The baseline is the base commit's snp, measured in the same interleaved rounds (Δ: the median per-round \
+             ratio, ADR-098).\n\n",
+        );
+    }
+    let mut header = String::from(
+        "| Scenario | snp p50 ms (95% CI) | baseline | Δ | pre-commit | prek | RSS MiB (largest process) |",
     );
-    s.push_str("|---|---|---|---|---|---|---|\n");
+    let mut rule = String::from("|---|---|---|---|---|---|---|");
+    if counted {
+        header.push_str(" clones / statx / newfstatat / execve (Δ vs base) |");
+        rule.push_str("---|");
+    }
+    _ = writeln!(s, "{header}\n{rule}");
     let mut rows: Vec<(&String, &BTreeMap<String, Outcome>)> = cur.scenarios.iter().collect();
     rows.sort_by_key(|(id, _)| scenario_rank(id));
-    for (id, tools) in rows {
+    for (id, tools) in &rows {
         let snp = cur.get(id, "snp");
-        let prev = base.and_then(|b| b.get(id, "snp"));
+        let paired_base = cur.get(id, Tool::SnpBase.name());
+        let prev = paired_base.or_else(|| base.and_then(|b| b.get(id, "snp")));
         let snp_cell = match (snp, tools.get("snp")) {
             (Some(m), _) => format!("{:.2} ({:.2}–{:.2})", m.median_ms, m.ci95_ms.0, m.ci95_ms.1),
             (None, Some(Outcome::Failed(_))) => "failed".to_owned(),
             (None, _) => "—".to_owned(),
         };
-        let delta = match (snp, prev) {
-            (Some(a), Some(b)) => format!("{:+.1}%", (a.median_ms / b.median_ms - 1.0) * 100.0),
+        let paired_ratio = snp
+            .zip(paired_base)
+            .and_then(|(h, b)| {
+                let d: Vec<f64> = h
+                    .rounds_ms
+                    .iter()
+                    .zip(&b.rounds_ms)
+                    .map(|(x, y)| (x / y).ln())
+                    .collect();
+                (h.rounds_ms.len() == b.rounds_ms.len())
+                    .then(|| median(&d))
+                    .flatten()
+            })
+            .map(f64::exp);
+        let delta = match (snp, prev, paired_ratio) {
+            (_, _, Some(r)) => format!("{:+.1}% (paired)", (r - 1.0) * 100.0),
+            (Some(a), Some(b), None) => {
+                format!("{:+.1}%", (a.median_ms / b.median_ms - 1.0) * 100.0)
+            }
             _ => "—".to_owned(),
         };
         let title = SCENARIOS
             .iter()
-            .find(|x| x.id == id)
+            .find(|x| x.id == id.as_str())
             .map_or("", |x| x.title);
-        _ = writeln!(
+        _ = write!(
             s,
             "| {id} {title} | {snp_cell} | {} | {delta} | {} | {} | {} |",
             fmt_measure(prev),
@@ -3202,6 +4314,31 @@ fn comment(cur: &Record, base: Option<&Record>, checks: &[Check]) -> String {
             snp.and_then(|m| m.rss_mib)
                 .map_or_else(|| "—".to_owned(), |r| format!("{r:.1}"))
         );
+        if counted {
+            _ = write!(s, " {} |", counts_cell(snp, paired_base));
+        }
+        s.push('\n');
+    }
+    let diffs: Vec<(&String, &Vec<String>)> = rows
+        .iter()
+        .filter_map(|(id, _)| {
+            cur.get(id, "snp")
+                .filter(|m| !m.exec_diff.is_empty())
+                .map(|m| (*id, &m.exec_diff))
+        })
+        .collect();
+    if !diffs.is_empty() {
+        s.push_str(
+            "\n<details><summary>Exec changes against the base (+ only in this commit, - only in the base)</summary>\n\n",
+        );
+        for (id, lines) in diffs {
+            _ = writeln!(s, "**{id}**\n\n```");
+            for l in lines {
+                _ = writeln!(s, "{l}");
+            }
+            s.push_str("```\n\n");
+        }
+        s.push_str("</details>\n");
     }
     let notable: Vec<&Check> = checks
         .iter()
@@ -3664,13 +4801,22 @@ mod tests {
     fn hyperfine_json_is_parsed() {
         let text = r#"{"results":[{"command":"snp B1","mean":0.0012,"stddev":0.0001,"median":0.0011,
             "min":0.0010,"max":0.0020,"times":[0.001,0.0011,0.0012,0.002,0.0011],"exit_codes":[0,0,0,0,0]}]}"#;
-        let m = parse_hyperfine(text).unwrap();
+        let m = Measure::from_times(&parse_hyperfine_times(text).unwrap()).unwrap();
         assert!((m.median_ms - 1.1).abs() < 1e-9);
-        assert!((m.mean_ms - 1.2).abs() < 1e-9);
+        // the statistics come from the times (pooled over blocks), not from hyperfine's per-invocation fields
+        assert!((m.mean_ms - 1.28).abs() < 1e-9);
+        assert!((m.min_ms - 1.0).abs() < 1e-9 && (m.max_ms - 2.0).abs() < 1e-9);
+        assert!((m.stddev_ms - 0.167_f64.sqrt()).abs() < 1e-9);
         assert_eq!(m.runs, 5);
         assert!(m.ci95_ms.0 <= m.median_ms && m.median_ms <= m.ci95_ms.1);
-        assert!(parse_hyperfine(r#"{"results":[]}"#).is_err());
-        assert!(parse_hyperfine("not json").is_err());
+        assert!(parse_hyperfine_times(r#"{"results":[]}"#).is_err());
+        assert!(parse_hyperfine_times(r#"{"results":[{"times":[]}]}"#).is_err());
+        assert!(parse_hyperfine_times("not json").is_err());
+        // one run (a B7 block): no standard deviation
+        let one = Measure::from_times(&[5.0]).unwrap();
+        assert_eq!((one.median_ms, one.runs), (5.0, 1));
+        assert!(one.stddev_ms.is_nan());
+        assert!(Measure::from_times(&[]).is_err());
     }
 
     #[test]
@@ -3693,9 +4839,34 @@ mod tests {
         assert_eq!(parse_strace_total(no_errors), Some(10));
         assert_eq!(parse_strace_total(""), None);
 
-        let dhat = r#"{"dhatFileVersion":2,"mode":"rust-heap","pps":[{"tb":1000,"tbk":3},{"tb":24,"tbk":1}]}"#;
-        assert_eq!(parse_dhat_total_bytes(dhat).unwrap(), 1024);
-        assert!(parse_dhat_total_bytes(r#"{"pps":[{"tbk":1}]}"#).is_err());
+        let table = parse_strace_table(strace);
+        assert_eq!(
+            table,
+            BTreeMap::from([("mmap".to_owned(), 6), ("openat".to_owned(), 2)])
+        );
+        let c = counters_of(&BTreeMap::from([
+            ("clone3".to_owned(), 4),
+            ("vfork".to_owned(), 2),
+            ("statx".to_owned(), 9),
+        ]));
+        assert_eq!(c.get("clones"), Some(&6));
+        assert_eq!(c.get("statx"), Some(&9));
+        assert_eq!(c.get("newfstatat"), Some(&0));
+        assert_eq!(c.len(), 6);
+
+        let dhat = r#"{"dhatFileVersion":2,"mode":"rust-heap","pps":[{"tb":1000,"tbk":3,"gb":600},
+            {"tb":24,"tbk":1,"gb":24}]}"#;
+        assert_eq!(
+            parse_dhat(dhat).unwrap(),
+            DhatSummary {
+                total_bytes: 1024,
+                total_blocks: 4,
+                peak_bytes: 624
+            }
+        );
+        // every field must be there: a heap peak without `gb` would read as 0
+        assert!(parse_dhat(r#"{"pps":[{"tbk":1,"gb":1}]}"#).is_err());
+        assert!(parse_dhat(r#"{"pps":[{"tb":1,"tbk":1}]}"#).is_err());
     }
 
     #[test]
@@ -3795,8 +4966,20 @@ mod tests {
                 "{s} {metric:?}: {max} MiB is not {mb} MB"
             );
         }
-        let b8 = b.limits.iter().find(|x| x.scenario == "B8").unwrap();
-        assert!(b8.plus <= mib_of_mb(2.0));
+        // B8 (ADR-099): snp's own heap peak, at most B3's + 2 MB, hard (nightly); the tree RSS, which measures
+        // git's diff of the 10 MB file, is no longer budgeted
+        let b8 = b
+            .limits
+            .iter()
+            .find(|x| x.scenario == "B8" && x.metric == Metric::HeapPeakMib)
+            .unwrap();
+        assert!(b8.hard && b8.plus <= mib_of_mb(2.0) && b8.plus > mib_of_mb(2.0) - 0.01);
+        assert_eq!((b8.max, b8.vs_scenario.as_deref()), (1.0, Some("B3")));
+        assert!(
+            !b.limits
+                .iter()
+                .any(|x| x.scenario == "B8" && x.metric == Metric::RssMib)
+        );
         assert_eq!(hard("B1", Metric::Syscalls), Some(64.0));
         // ARCHITECTURE §12.3: committed, hard syscall ceilings on B1 and B3 (B3 measured + ~10 %, ADR-083)
         assert_eq!(hard("B3", Metric::Syscalls), Some(4230.0));
@@ -4250,11 +5433,9 @@ mod tests {
             ],
         );
         let checks = evaluate(&cur, None, &b, &none(), &none(), &[]);
-        // B8 RSS limit = 1.0 × 8 + 2 = 10 MiB: soft breach
-        assert_eq!(
-            verdict_of(&checks, "B8", "RSS").unwrap().verdict,
-            Verdict::Warn
-        );
+        // B8's tree RSS (git's) is information only (ADR-099); its heap peak is a nightly metric
+        assert!(verdict_of(&checks, "B8", "RSS").is_none());
+        assert!(verdict_of(&checks, "B8", "heap peak").is_none());
         // B9 ≤ B3 + 3 ms = 23 ms
         assert_eq!(
             verdict_of(&checks, "B9", "p50 <= 1x B3").unwrap().verdict,
@@ -4579,5 +5760,540 @@ mod tests {
         );
         assert!(Build::from_opts(&o(&["--allocator", "mimalloc"])).is_err());
         assert!(Build::from_opts(&o(&["--allocator", "jemalloc"])).is_err());
+    }
+
+    /// A measure with interleaved block medians.
+    fn rounds(medians: &[f64]) -> Measure {
+        let mut x = Measure::from_times(medians).unwrap();
+        x.rounds_ms = medians.to_vec();
+        x
+    }
+
+    #[test]
+    fn paired_rounds_split_the_runs_into_abba_blocks() {
+        assert_eq!(paired_rounds(50), (10, 5));
+        assert_eq!(paired_rounds(20), (10, 2));
+        assert_eq!(paired_rounds(5), (5, 1));
+        assert_eq!(paired_rounds(1), (1, 1));
+        assert_eq!(paired_rounds(0), (1, 1));
+        let order: Vec<bool> = (0..4).map(base_first).collect();
+        assert_eq!(order, [true, false, true, false]);
+        // one warm-up per binary per scenario: run_counts keeps the scenario's, the rounds take the runs
+        let b4 = scenario("B4").unwrap();
+        assert_eq!(run_counts(b4, (None, None)), (2, 20));
+        assert_eq!(run_counts(b4, (Some(0), Some(4))), (0, 4));
+        assert_eq!(
+            run_counts(scenario("B1").unwrap(), (None, None)),
+            (WARMUP, RUNS)
+        );
+    }
+
+    #[test]
+    fn the_paired_rule_needs_5_percent_the_floor_and_an_interval_above_1() {
+        let b = budgets();
+        let base = rounds(&[10.0; 10]);
+        // +10 % in every round: fails
+        let slow = rounds(&[11.0; 10]);
+        let (v, detail) = paired_regression(&slow, &base, &b).unwrap();
+        assert_eq!(v, Verdict::Fail, "{detail}");
+        assert!(
+            detail.contains("+10.0%") && detail.contains("10 rounds"),
+            "{detail}"
+        );
+        // +10 % in most rounds, faster in some: the point estimate is over, the interval is not above 1
+        let mixed = rounds(&[11.0, 9.0, 11.0, 9.0, 11.0, 11.0, 9.0, 11.0, 11.0, 9.0]);
+        assert_eq!(
+            paired_regression(&mixed, &base, &b).unwrap().0,
+            Verdict::Warn
+        );
+        // +4 %: passes
+        assert_eq!(
+            paired_regression(&rounds(&[10.4; 10]), &base, &b)
+                .unwrap()
+                .0,
+            Verdict::Pass
+        );
+        // +20 % of 0.3 ms is 0.06 ms, below the 0.1 ms floor of ADR-090
+        assert_eq!(
+            paired_regression(&rounds(&[0.36; 10]), &rounds(&[0.3; 10]), &b)
+                .unwrap()
+                .0,
+            Verdict::Pass
+        );
+        // faster passes
+        assert_eq!(
+            paired_regression(&rounds(&[8.0; 10]), &base, &b).unwrap().0,
+            Verdict::Pass
+        );
+        // rounds that cannot be paired
+        assert!(paired_regression(&rounds(&[11.0; 9]), &base, &b).is_none());
+        assert!(paired_regression(&m(11.0, (10.0, 12.0)), &base, &b).is_none());
+        assert!(paired_regression(&rounds(&[0.0; 10]), &base, &b).is_none());
+    }
+
+    #[test]
+    fn the_paired_base_gates_and_the_unpaired_baseline_only_advises() {
+        let b = budgets();
+        let mut head = rounds(&[11.0; 10]);
+        head.median_ms = 11.0;
+        let cur = record(
+            "gnu-system",
+            &[
+                ("B3", "snp", Outcome::Ok(head)),
+                ("B3", "snp-base", Outcome::Ok(rounds(&[10.0; 10]))),
+                ("B3", "pre-commit", Outcome::Ok(m(240.0, (239.0, 241.0)))),
+                ("B3", "prek", Outcome::Ok(m(30.0, (29.0, 31.0)))),
+            ],
+        );
+        // a history baseline 20 % faster from another VM
+        let old = record(
+            "gnu-system",
+            &[("B3", "snp", Outcome::Ok(m(9.0, (8.9, 9.1))))],
+        );
+        let checks = evaluate(&cur, Some(&old), &b, &none(), &none(), &[]);
+        let paired = verdict_of(&checks, "B3", PAIRED_CHECK).unwrap();
+        assert_eq!(paired.verdict, Verdict::Fail, "{paired:?}");
+        let unpaired = verdict_of(&checks, "B3", "no regression").unwrap();
+        assert_eq!(unpaired.verdict, Verdict::Warn);
+        assert!(unpaired.detail.contains("advisory: the paired base gates"));
+        // --advisory-history does not soften the paired check
+        let mut soft = checks.clone();
+        advisory_history(&mut soft);
+        assert_eq!(
+            verdict_of(&soft, "B3", PAIRED_CHECK).unwrap().verdict,
+            Verdict::Fail
+        );
+        // no "no baseline" warning when the record carries its own base
+        let alone = evaluate(&cur, None, &b, &none(), &none(), &[]);
+        assert!(verdict_of(&alone, "*", "no regression").is_none());
+
+        // a failed base is "not measured" (a warning); the head's own checks still run
+        let mut failed = cur;
+        failed
+            .scenarios
+            .get_mut("B3")
+            .unwrap()
+            .insert("snp-base".into(), Outcome::Failed("orphan pointer".into()));
+        let checks = evaluate(&failed, None, &b, &none(), &none(), &[]);
+        let c = verdict_of(&checks, "B3", PAIRED_CHECK).unwrap();
+        assert_eq!(c.verdict, Verdict::Warn);
+        assert!(c.detail.contains("orphan pointer"));
+        assert!(verdict_of(&checks, "B3", "p50 <= prek").is_some());
+    }
+
+    #[test]
+    fn counters_gate_the_head_against_the_base_only() {
+        let b = budgets();
+        let counted = |clones: u64, statx: u64, newfstatat: u64| {
+            let mut x = rounds(&[10.0; 10]);
+            x.counts = BTreeMap::from([
+                ("clones".to_owned(), clones),
+                ("statx".to_owned(), statx),
+                ("newfstatat".to_owned(), newfstatat),
+                ("execve".to_owned(), 9),
+                ("openat".to_owned(), 100),
+                ("getdents64".to_owned(), 4),
+            ]);
+            x
+        };
+        let rec = |head: Measure, base: Option<Measure>| {
+            let mut rows = vec![("B3", "snp", Outcome::Ok(head))];
+            if let Some(base) = base {
+                rows.push(("B3", "snp-base", Outcome::Ok(base)));
+            }
+            let mut r = record("gnu-system", &rows);
+            r.extras.insert("counts".into());
+            r
+        };
+        let of = |r: &Record, what: &str| {
+            verdict_of(&evaluate(r, None, &b, &none(), &none(), &[]), "B3", what).map(|c| c.verdict)
+        };
+        // +1 thread per spawn (20 → 40 clones) fails; +4 clones on 20 is below the absolute floor of 5
+        let base = counted(20, 1000, 5000);
+        assert_eq!(
+            of(&rec(counted(40, 1000, 5000), Some(base.clone())), "clones"),
+            Some(Verdict::Fail)
+        );
+        assert_eq!(
+            of(&rec(counted(24, 1000, 5000), Some(base.clone())), "clones"),
+            Some(Verdict::Pass)
+        );
+        // statx and newfstatat separately: +2 % and +50
+        assert_eq!(
+            of(&rec(counted(20, 1060, 5000), Some(base.clone())), "statx"),
+            Some(Verdict::Fail)
+        );
+        assert_eq!(
+            of(&rec(counted(20, 1040, 5000), Some(base.clone())), "statx"),
+            Some(Verdict::Pass)
+        );
+        assert_eq!(
+            of(
+                &rec(counted(20, 1000, 5099), Some(base.clone())),
+                "newfstatat"
+            ),
+            Some(Verdict::Pass)
+        );
+        assert_eq!(
+            of(
+                &rec(counted(20, 1000, 5101), Some(base.clone())),
+                "newfstatat"
+            ),
+            Some(Verdict::Fail)
+        );
+        // no base: reported only, never compared with the history
+        assert_eq!(of(&rec(counted(99, 9999, 99999), None), "clones"), None);
+        // requested but not counted: fails; the base not counted: warns
+        assert_eq!(
+            of(&rec(rounds(&[10.0; 10]), Some(base)), "counted"),
+            Some(Verdict::Fail)
+        );
+        assert_eq!(
+            of(
+                &rec(counted(20, 1000, 5000), Some(rounds(&[10.0; 10]))),
+                "counters"
+            ),
+            Some(Verdict::Warn)
+        );
+    }
+
+    #[test]
+    fn a_mixed_history_of_schema_1_and_2_records_is_read() {
+        let (base, work) = scratch_work("history");
+        let old = r#"{"schema":1,"platform":"linux-x86_64","variant":"gnu-system","label":"current","commit":"a","unix_time":1,"extras":[],"scenarios":{"B1":{"snp":{"median_ms":1.0,"ci95_ms":[0.9,1.1],"runs":50,"rss_mib":null,"syscalls":null,"alloc_mib":null}}}}"#;
+        let mut head = rounds(&[1.0, 1.1]);
+        head.counts = BTreeMap::from([("clones".to_owned(), 3)]);
+        head.exec_diff = vec!["+1× git status".into()];
+        head.alloc_blocks = Some(10);
+        head.heap_peak_mib = Some(0.5);
+        let mut new = record(
+            "gnu-system",
+            &[
+                ("B1", "snp", Outcome::Ok(head.clone())),
+                ("B1", "snp-base", Outcome::Ok(rounds(&[1.0, 1.0]))),
+            ],
+        );
+        new.cpu_count = Some(4);
+        new.git_version = "git version 2.43.0".into();
+        let path = work.dir.join("h.jsonl");
+        std::fs::write(
+            &path,
+            format!(
+                "{old}\n{}\n",
+                serde_json::to_string(&new.to_json()).unwrap()
+            ),
+        )
+        .unwrap();
+        let recs = history_records(&path, 10).unwrap();
+        std::fs::remove_dir_all(&base).unwrap();
+        assert_eq!(recs.len(), 2);
+        assert_eq!(recs[0].get("B1", "snp").unwrap().median_ms, 1.0);
+        assert_eq!(
+            recs[0].get("B1", "snp").unwrap().rounds_ms,
+            Vec::<f64>::new()
+        );
+        assert_eq!(recs[0].cpu_count, None);
+        assert_eq!(recs[1], new);
+        assert_eq!(recs[1].get("B1", "snp").unwrap(), &head);
+        // the drift reference reads both
+        assert!(drift_reference(&recs, "B1").is_none());
+        // a schema-2 record without measured extras writes none of the new keys
+        let plain = Record::measure_json(&m(1.0, (0.9, 1.1)));
+        for k in [
+            "rounds_ms",
+            "counts",
+            "exec_diff",
+            "alloc_blocks",
+            "heap_peak_mib",
+        ] {
+            assert!(plain.get(k).is_none(), "{k}");
+        }
+    }
+
+    #[test]
+    fn patch_names_match_exactly_what_each_tool_writes() {
+        let snp = b"patch[0-9]*-[0-9]*";
+        let prek = b"[0-9]*-[0-9]*.patch";
+        for name in ["patch1791403656-4242", "patch1791403656-4242-1"] {
+            assert!(name_matches(snp, name.as_bytes()), "{name}");
+        }
+        for name in [
+            "run-4242-ab.snp-journal",
+            "patch-1",
+            "patchX-1",
+            "patch1-",
+            "README",
+            "1791403656-4242.patch",
+        ] {
+            assert!(!name_matches(snp, name.as_bytes()), "{name}");
+        }
+        assert!(name_matches(prek, b"1791403656-4242.patch"));
+        for name in [
+            "old.patch",
+            "1791403656-4242.patch.tmp",
+            "x1-2.patch",
+            "1-.patch",
+        ] {
+            assert!(!name_matches(prek, name.as_bytes()), "{name}");
+        }
+        assert!(name_matches(b"snp-stash*.journal", b"snp-stash.journal"));
+        assert!(name_matches(b"snp-stash*.journal", b"snp-stash-2.journal"));
+        assert!(!name_matches(
+            b"snp-stash*.journal",
+            b"snp-stash.journal.ita"
+        ));
+        assert!(name_matches(b"run-*.snp-journal", b"run-1-ab.snp-journal"));
+    }
+
+    #[test]
+    fn b8_cleanup_removes_only_patches_and_refuses_an_interrupted_run() {
+        let (base, work) = scratch_work("patches");
+        let b8 = scenario("B8").unwrap();
+        let fixture = work.fixture(Fixture::Stash10M, Tool::Snp);
+        std::fs::create_dir_all(fixture.join(".git")).unwrap();
+        let files = |dir: &Path| -> Vec<String> {
+            let mut v: Vec<String> = std::fs::read_dir(dir)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            v.sort();
+            v
+        };
+        for tool in [Tool::Snp, Tool::SnpBase, Tool::PreCommit, Tool::Prek] {
+            let (dir, _) = patch_location(&work, tool, StoreMode::Warm);
+            // a missing directory: a no-op, unless `find` is about to start there
+            clean_patches(&work, tool, b8, false).unwrap();
+            assert!(clean_patches(&work, tool, b8, true).is_err());
+            std::fs::create_dir_all(&dir).unwrap();
+            for name in [
+                "patch1791403656-11",
+                "patch1791403656-11-1",
+                "1791403656-11.patch",
+                "README",
+                "db.db",
+            ] {
+                std::fs::write(dir.join(name), b"x").unwrap();
+            }
+            clean_patches(&work, tool, b8, true).unwrap();
+            let left = files(&dir);
+            match tool {
+                Tool::Prek => assert_eq!(
+                    left,
+                    [
+                        "README",
+                        "db.db",
+                        "patch1791403656-11",
+                        "patch1791403656-11-1"
+                    ]
+                ),
+                _ => assert_eq!(left, ["1791403656-11.patch", "README", "db.db"]),
+            }
+            // never on another scenario
+            std::fs::write(dir.join("patch1-2"), b"x").unwrap();
+            clean_patches(&work, tool, scenario("B3").unwrap(), true).unwrap();
+            assert!(dir.join("patch1-2").exists() || tool == Tool::Prek);
+            // the B8 prepare deletes the same names with find (Unix)
+            let prepare = prepare_command(&work, tool, b8);
+            if cfg!(unix) {
+                let p = prepare.unwrap();
+                assert!(p.starts_with("find ") && p.ends_with(" -delete"), "{p}");
+                assert!(p.contains("-maxdepth 1 -type f -name"), "{p}");
+            }
+        }
+        // an interrupted run: a store journal of snp, or a git-dir pointer of the fixture
+        let journal = work
+            .store(Tool::Snp, StoreMode::Warm)
+            .join("patches")
+            .join("run-4242-ab.snp-journal");
+        std::fs::write(&journal, b"{}").unwrap();
+        let err = clean_patches(&work, Tool::Snp, b8, true).unwrap_err();
+        assert!(format!("{err:#}").contains("interrupted"), "{err:#}");
+        assert!(
+            work.store(Tool::Snp, StoreMode::Warm)
+                .join("patches/patch1-2")
+                .exists()
+        );
+        // the base's store is its own
+        clean_patches(&work, Tool::SnpBase, b8, true).unwrap();
+        std::fs::remove_file(&journal).unwrap();
+        std::fs::write(fixture.join(".git").join("snp-stash.journal"), b"{}").unwrap();
+        assert!(clean_patches(&work, Tool::PreCommit, b8, true).is_err());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn the_base_has_its_own_stores_and_b9_fixture() {
+        let (base, work) = scratch_work("base-stores");
+        std::fs::remove_dir_all(&base).unwrap();
+        for mode in [StoreMode::Warm, StoreMode::Cold, StoreMode::Gc] {
+            assert_ne!(work.store(Tool::Snp, mode), work.store(Tool::SnpBase, mode));
+        }
+        assert_ne!(
+            work.fixture(Fixture::Hooked, Tool::Snp),
+            work.fixture(Fixture::Hooked, Tool::SnpBase)
+        );
+        assert_eq!(
+            work.fixture(Fixture::Stash10M, Tool::Snp),
+            work.fixture(Fixture::Stash10M, Tool::SnpBase)
+        );
+        let env = scenario_env(
+            &work,
+            Tool::SnpBase,
+            Path::new("/b/snp"),
+            scenario("B12u").unwrap(),
+        );
+        let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        assert_eq!(get("SNP_BIN"), Some(OsString::from("/b/snp")));
+        assert_eq!(get("SNP_JOBS"), Some(OsString::from("32")));
+        assert_eq!(
+            get("SNP_HOME"),
+            Some(work.store(Tool::SnpBase, StoreMode::Warm).into_os_string())
+        );
+        assert!(get("GIT_CEILING_DIRECTORIES").is_some());
+        // `--tools` never selects the base
+        assert!(Tool::parse("snp-base").is_err());
+        assert_eq!(Tool::SnpBase.store_var(), "SNP_HOME");
+    }
+
+    #[test]
+    fn exec_argv_lists_are_parsed_normalized_and_diffed() {
+        let log = r#"4242 execve("/bench/snp", ["/bench/snp", "run"], 0x7ffd /* 30 vars */) = 0
+4243 execve("/usr/bin/git", ["git", "diff", "--quiet", "a b\"c"], 0x5 /* 30 vars */) = 0
+4244 execve("/usr/bin/git", ["git", "apply", "/bench/stores/snp/patches/patch1791403656-4242"], 0x5 /* 3 vars */) = 0
++++ exited with 0 +++
+"#;
+        let argvs = parse_execve(log);
+        assert_eq!(argvs.len(), 3);
+        assert_eq!(
+            argvs[1],
+            ["\"git\"", "\"diff\"", "\"--quiet\"", "\"a b\\\"c\""]
+        );
+        let subs = [
+            ("/bench/stores/snp".to_owned(), "$STORE"),
+            ("/bench/snp".to_owned(), "$SNP"),
+        ];
+        let lines: Vec<String> = argvs.iter().map(|a| normalize_argv(a, &subs)).collect();
+        assert_eq!(lines[0], "\"$SNP\" \"run\"");
+        assert_eq!(lines[2], "\"git\" \"apply\" \"$STORE/patches/patchN-4242\"");
+        let many: Vec<String> = (0..20).map(|i| format!("\"f{i}\"")).collect();
+        assert!(normalize_argv(&many, &[]).ends_with("… (20 arguments)"));
+        assert_eq!(fold_digits("a1234b12345c"), "a1234bNc");
+        let head = vec!["git a".to_owned(), "git b".to_owned(), "git b".to_owned()];
+        let base = vec!["git a".to_owned(), "git b".to_owned(), "git c".to_owned()];
+        assert_eq!(exec_diff(&head, &base), ["+1× git b", "-1× git c"]);
+        assert_eq!(exec_diff(&head, &head), Vec::<String>::new());
+        let wide: Vec<String> = (0..50).map(|i| format!("git {i}")).collect();
+        let d = exec_diff(&wide, &[]);
+        assert_eq!(d.len(), EXEC_DIFF_MAX + 1);
+        assert_eq!(d.last().unwrap(), "… and 10 more");
+    }
+
+    #[test]
+    fn heap_peak_and_block_budgets_are_nightly_metrics() {
+        let b = budgets();
+        let mut b3 = m(10.0, (9.0, 11.0));
+        b3.heap_peak_mib = Some(0.25);
+        let mut b8 = m(400.0, (390.0, 410.0));
+        b8.heap_peak_mib = Some(20.0); // a buffered 21 MB patch
+        let mut cur = record(
+            "gnu-system",
+            &[
+                ("B3", "snp", Outcome::Ok(b3)),
+                ("B8", "snp", Outcome::Ok(b8)),
+            ],
+        );
+        // not requested: not checked
+        let checks = evaluate(&cur, None, &b, &none(), &none(), &[]);
+        assert!(verdict_of(&checks, "B8", "heap peak").is_none());
+        cur.extras.insert("heap_peak_mib".into());
+        let checks = evaluate(&cur, None, &b, &none(), &none(), &[]);
+        let c = verdict_of(&checks, "B8", "heap peak").unwrap();
+        assert_eq!(c.verdict, Verdict::Fail, "{c:?}");
+        assert!(c.detail.contains("limit 2.16 MiB"), "{c:?}");
+        // the streamed patch: 0.48 MiB passes
+        cur.scenarios.get_mut("B8").unwrap().insert("snp".into(), {
+            let mut x = m(400.0, (390.0, 410.0));
+            x.heap_peak_mib = Some(0.48);
+            Outcome::Ok(x)
+        });
+        let checks = evaluate(&cur, None, &b, &none(), &none(), &[]);
+        assert_eq!(
+            verdict_of(&checks, "B8", "heap peak").unwrap().verdict,
+            Verdict::Pass
+        );
+        assert_eq!(Metric::parse("alloc_blocks").unwrap().unit(), "blocks");
+        assert_eq!(
+            Metric::parse("heap_peak_mib").unwrap().extra(),
+            Some("heap_peak_mib")
+        );
+    }
+
+    #[test]
+    fn the_comment_shows_the_paired_delta_counts_and_exec_changes() {
+        let b = budgets();
+        let mut head = rounds(&[11.0; 10]);
+        head.counts = BTreeMap::from([
+            ("clones".to_owned(), 22),
+            ("statx".to_owned(), 5),
+            ("newfstatat".to_owned(), 7),
+            ("execve".to_owned(), 9),
+        ]);
+        head.exec_diff = vec!["+1× \"git\" \"status\"".into()];
+        let mut base = rounds(&[10.0; 10]);
+        base.counts = BTreeMap::from([
+            ("clones".to_owned(), 20),
+            ("statx".to_owned(), 5),
+            ("newfstatat".to_owned(), 8),
+            ("execve".to_owned(), 8),
+        ]);
+        let mut cur = record(
+            "gnu-system",
+            &[
+                ("B3", "snp", Outcome::Ok(head)),
+                ("B3", "snp-base", Outcome::Ok(base)),
+            ],
+        );
+        cur.extras.insert("counts".into());
+        let checks = evaluate(&cur, None, &b, &none(), &none(), &[]);
+        let text = comment(&cur, None, &checks);
+        assert!(text.contains("+10.0% (paired)"), "{text}");
+        assert!(
+            text.contains("22 (+2) / 5 (+0) / 7 (-1) / 9 (+1)"),
+            "{text}"
+        );
+        assert!(text.contains("RSS MiB (largest process)"), "{text}");
+        assert!(text.contains("\"git\" \"status\""), "{text}");
+    }
+
+    #[test]
+    fn gc_stores_are_counted_per_tool() {
+        let (base, work) = scratch_work("gc-counts");
+        let mk = |p: PathBuf| std::fs::create_dir_all(p).unwrap();
+        let snp = work.store(Tool::Snp, StoreMode::Gc);
+        for i in 0..3 {
+            mk(snp.join("repos-v1").join(format!("k{i}")));
+            std::fs::write(snp.join("repos-v1").join(format!("k{i}.lock")), b"").unwrap();
+        }
+        mk(snp.join("configs-v1"));
+        std::fs::write(snp.join("configs-v1").join("0123"), b"x").unwrap();
+        assert_eq!(gc_store_counts(Tool::Snp, &snp).unwrap(), (Some(1), 3));
+        let pc = work.store(Tool::PreCommit, StoreMode::Gc);
+        mk(pc.join("repoabc"));
+        mk(pc.join("repodef"));
+        mk(pc.join("other"));
+        std::fs::write(pc.join("db.db"), b"").unwrap();
+        assert_eq!(gc_store_counts(Tool::PreCommit, &pc).unwrap(), (None, 2));
+        let pk = work.store(Tool::Prek, StoreMode::Gc);
+        mk(pk.join("repos").join("a"));
+        std::fs::write(
+            pk.join("config-tracking.json"),
+            br#"["/c/1.yaml", "/c/2.yaml"]"#,
+        )
+        .unwrap();
+        assert_eq!(gc_store_counts(Tool::Prek, &pk).unwrap(), (Some(2), 1));
+        // pre-commit and prek fail loudly; snp warns until the C1 fix is in both binaries
+        assert!(gc_equal_work(&work, Tool::Prek, 2).is_err());
+        assert!(gc_equal_work(&work, Tool::Snp, 1).is_ok());
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }
