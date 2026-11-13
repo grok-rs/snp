@@ -51,3 +51,38 @@ mutants = [
 
 # [[model]]: Lean models with oracle tests and fingerprinted anchors (K3, K4 add theirs).
 # [[trusted]]: empty in M1 (§10 row 8). From M2: { item = "Memchr: FindByte", kernel = "K5", test = "…" }
+
+[[kernel]]
+id = "K3-end-of-file-fixer"
+status = "verified"
+file = "crates/snp-hooks/src/pch/p0/kernels/eof.rs"
+mount = "snp_hooks_pch_p0_kernels_eof"
+spec = "proofs/verus/spec/eof.rs"
+callers = ["crates/snp-hooks/src/pch/p0/end_of_file_fixer.rs::tail_action"]
+verified_min = 14
+mutants = [
+    # A file made only of line endings is no longer emptied (`fix_file`'s `tell() == 1` branch).
+    { find = "if run >= len {", replace = "if run > len {" },
+    # The trailing run stops at the first `\r`, so `a\n\r` keeps its `\r`.
+    { find = "Some(&b) if is_eol(b) => start = i,", replace = "Some(&b) if b == 10 => start = i," },
+]
+
+[[model]]
+id = "K3-end-of-file-fixer"
+lean = "proofs/lean/SnpModels/Eof.lean"
+theorems = [
+    "SnpModels.Eof.pyFixFile_eq",
+    "SnpModels.Eof.kernel_apply",
+    "SnpModels.Eof.fix_idem",
+    "SnpModels.Eof.fix_body",
+    "SnpModels.Eof.pyFixFile_twice",
+]
+oracle = "eof-model"
+oracle_test = "crates/snp-hooks/tests/lean_oracle.rs"
+# fingerprint: "TBD" until `cargo xtask proofs check` defines the normalised-token hash (§3.1); the tooling
+# change that adds it fills these in. `kernelRun` in Eof.lean transliterates `end_of_file_run`, `kernel` the
+# whole-file `end_of_file`.
+anchors = [
+    { item = "crates/snp-hooks/src/pch/p0/kernels/eof.rs::end_of_file_run", fingerprint = "TBD" },
+    { item = "crates/snp-hooks/src/pch/p0/kernels/eof.rs::end_of_file", fingerprint = "TBD" },
+]

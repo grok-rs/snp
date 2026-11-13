@@ -6,6 +6,9 @@
 
 use memchr::memchr_iter;
 
+mod eof;
+pub use eof::{EofAction, end_of_file, end_of_file_bytes, end_of_file_run};
+
 /// `bytes.isspace()` / `bytes.strip()` whitespace (ASCII-WS): `b' \t\n\r\x0b\x0c'`.
 const fn is_ascii_ws(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)
@@ -79,79 +82,6 @@ pub fn trailing_whitespace(content: &[u8], md: bool, chars: Option<&[u8]>) -> Op
         each(line, start, &mut out);
     }
     out
-}
-
-/// What end-of-file-fixer does to a file (`end_of_file_fixer.fix_file`, `end_of_file_fixer.py:9-49`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EofAction {
-    /// Nothing (empty file, or exactly one line ending at the end).
-    Keep,
-    /// Append `b'\n'` (the last byte is not `\r`/`\n`; a plain `\n` even in CRLF files).
-    Append,
-    /// Truncate to this length (extra line endings removed; a file of only `\r`/`\n` bytes becomes empty).
-    Truncate(u64),
-}
-
-/// The action for a file of `len` bytes whose last `tail.len()` bytes are `tail`. `tail` must hold at least one
-/// byte that is not `\r`/`\n`, or be the whole file.
-pub fn end_of_file(tail: &[u8], len: u64) -> EofAction {
-    if len == 0 || tail.is_empty() {
-        return EofAction::Keep;
-    }
-    let run = tail.iter().rev().take_while(|b| is_eol(**b)).count();
-    let start = tail.len().saturating_sub(run);
-    let head = tail
-        .get(start..start.saturating_add(2).min(tail.len()))
-        .unwrap_or_default();
-    end_of_file_run(head, u64::try_from(run).unwrap_or(u64::MAX), len)
-}
-
-/// `\r` or `\n`.
-const fn is_eol(b: u8) -> bool {
-    b == b'\n' || b == b'\r'
-}
-
-/// The action for a non-empty file of `len` bytes that ends in a run of `run` `\r`/`\n` bytes whose first
-/// `min(run, 2)` bytes are `head` (all [`end_of_file`] needs, so a caller can scan the tail in constant memory).
-pub fn end_of_file_run(head: &[u8], run: u64, len: u64) -> EofAction {
-    if len == 0 {
-        return EofAction::Keep;
-    }
-    if run == 0 {
-        return EofAction::Append;
-    }
-    if run >= len {
-        // `tell() == 1` after reading offset 0: the whole file is line endings.
-        return EofAction::Truncate(0);
-    }
-    let position = len.saturating_sub(run);
-    for seq in [&b"\n"[..], b"\r\n", b"\r"] {
-        if head.starts_with(seq) {
-            let keep = u64::try_from(seq.len()).unwrap_or(0);
-            if run == keep {
-                return EofAction::Keep;
-            }
-            return EofAction::Truncate(position.saturating_add(keep));
-        }
-    }
-    EofAction::Keep
-}
-
-/// end-of-file-fixer over a whole file's bytes: `Some(new bytes)` when it changes.
-pub fn end_of_file_bytes(content: &[u8]) -> Option<Vec<u8>> {
-    let len = u64::try_from(content.len()).unwrap_or(u64::MAX);
-    match end_of_file(content, len) {
-        EofAction::Keep => None,
-        EofAction::Append => {
-            let mut v = content.to_vec();
-            v.push(b'\n');
-            Some(v)
-        }
-        EofAction::Truncate(n) => {
-            let n = usize::try_from(n).unwrap_or(usize::MAX);
-            Some(content.get(..n).unwrap_or(content).to_vec())
-        }
-    }
 }
 
 /// `mixed-line-ending --fix` (`mixed_line_ending.py:22`): `auto`, `no`, `cr`, `crlf` or `lf`.

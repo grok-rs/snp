@@ -22,3 +22,8 @@ pub mod snp_proc_xargs_partition;
 #[verus_verify]
 #[path = "../../crates/snp-net/src/archive/entry.rs"]
 pub mod snp_net_archive_entry;
+
+/// K3: end-of-file-fixer (snp-hooks).
+#[verus_verify]
+#[path = "../../crates/snp-hooks/src/pch/p0/kernels/eof.rs"]
+pub mod snp_hooks_pch_p0_kernels_eof;
