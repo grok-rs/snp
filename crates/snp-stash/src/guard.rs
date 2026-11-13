@@ -99,6 +99,8 @@ pub enum Stashed {
 pub struct StashGuard {
     stashed: Stashed,
     clean: bool,
+    /// The worktree lock was taken on the wait path.
+    contended: bool,
     inner: Option<Box<Inner>>,
 }
 
@@ -337,9 +339,11 @@ pub fn enter(cx: StashCtx) -> Result<StashGuard, Failure> {
         }
         Acquired::Nested(t) => (None, t, true),
     };
+    let contended = lock.as_ref().is_some_and(WorktreeLock::contended);
     let mut guard = StashGuard {
         stashed: Stashed::Nothing,
         clean: false,
+        contended,
         inner: Some(Box::new(Inner {
             cx,
             lock,
@@ -1365,6 +1369,13 @@ impl StashGuard {
     /// before the stash no longer describes it.
     pub fn cleared_intent_to_add(&self) -> bool {
         self.inner.as_ref().is_some_and(|i| !i.ita.is_empty())
+    }
+
+    /// Whether the worktree lock was taken on the wait path: another run held it when this run first tried
+    /// (`snp: waiting for another snp run in this worktree…`), so whatever the caller read from the index or the
+    /// worktree before [`enter`] may be stale. `false` for a nested run (it never waits) and when the lock was free.
+    pub fn lock_contended(&self) -> bool {
+        self.contended
     }
 
     /// `("_SNP_STASH_LOCK", token)` for nested runs.

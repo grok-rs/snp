@@ -1895,6 +1895,7 @@ impl StashGuard {
     pub fn stashed(&self) -> &Stashed;
     pub fn diff_index_clean(&self) -> bool;                              // diff-index rc 0 ⇒ baseline digest known empty
     pub fn child_env_token(&self) -> Option<(&'static str, OsString)>;   // ("_SNP_STASH_LOCK", token) for nested runs
+    pub fn lock_contended(&self) -> bool;                                // the lock was taken on the wait path: earlier reads may be stale
     /// `stage_fixed` (§8.3): apply --check; journal `staging-fixed {paths}` durably; `git --literal-pathspecs add -- <paths>`;
     /// Ok(false) = would not apply (nothing staged).
     pub fn stage_fixed(&mut self, paths: &[RepoPath]) -> Result<bool, Failure>;

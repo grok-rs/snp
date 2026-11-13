@@ -152,12 +152,14 @@ pub(crate) struct WorktreeLock {
     path: PathBuf,
     token: String,
     stamp: Option<LockStamp>,
+    /// The lock was taken on the wait path (another run held it when this one first tried).
+    contended: bool,
 }
 
 impl WorktreeLock {
     /// Writes a fresh token into the held lock (best effort: a failure only disables the nested-run exemption and
     /// the stamp).
-    fn publish(lock: FileLock, path: PathBuf) -> Self {
+    fn publish(lock: FileLock, path: PathBuf, contended: bool) -> Self {
         let token = random_hex(16);
         let written = if cfg!(windows) {
             std::fs::write(token_path(&path), token.as_bytes())
@@ -178,12 +180,19 @@ impl WorktreeLock {
                 String::new()
             },
             stamp,
+            contended,
         }
     }
 
     /// The token (empty when it could not be written).
     pub(crate) fn token(&self) -> &str {
         &self.token
+    }
+
+    /// Whether the lock was taken on the wait path: another run held the worktree when this one first tried, so
+    /// anything read before the lock was taken may be stale.
+    pub(crate) fn contended(&self) -> bool {
+        self.contended
     }
 
     /// The stamp taken when the token was written (`None` on Windows or when the token could not be written).
@@ -245,7 +254,7 @@ pub(crate) fn acquire(
     let path = lock_path(git_dir);
     let io_err = |e: &io::Error| Failure::from_io(e, Some(path.as_os_str()), None);
     if let Some(lock) = FileLock::try_acquire(&path, LockMode::Exclusive).map_err(|e| io_err(&e))? {
-        return Ok(Acquired::Held(WorktreeLock::publish(lock, path)));
+        return Ok(Acquired::Held(WorktreeLock::publish(lock, path, false)));
     }
     // Held by someone: a nested run of the holder is exempt (token equal AND lock really held — it is, we just
     // failed to take it).
@@ -263,7 +272,7 @@ pub(crate) fn acquire(
         cancel,
         Some(timeout),
     ) {
-        Ok(lock) => Ok(Acquired::Held(WorktreeLock::publish(lock, path))),
+        Ok(lock) => Ok(Acquired::Held(WorktreeLock::publish(lock, path, true))),
         Err(e) if e.kind() == io::ErrorKind::TimedOut => Err(Failure::fatal(
             "FatalError",
             messages::lock_timeout(timeout, &path),

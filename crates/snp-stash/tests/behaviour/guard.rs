@@ -102,6 +102,51 @@ fn second_run_proceeds_when_the_first_releases() {
     assert_eq!(sb.read(&repo, "foo"), b"herp\n");
 }
 
+/// `lock_contended` (for the run's stale-read check): true only for the run that waited for the lock, false for the
+/// holder, a nested run and an uncontended run.
+#[test]
+fn lock_contended_is_true_only_after_a_wait() {
+    let sb = Arc::new(Sandbox::new());
+    let repo = sb.foo_staged("r");
+    sb.write(&repo, "foo", b"herp\n");
+    let (cx, _, _) = sb.ctx(&repo);
+    let first = snp_stash::enter(cx).unwrap();
+    assert!(!first.lock_contended());
+    // A nested run never waits.
+    let (k, token) = first.child_env_token().unwrap();
+    let (git, info) = sb.discover(&repo);
+    let git = git.with_env(git.env().patched(&EnvPatch::default().set(k, token)));
+    let (mut cx, _, _) = sb.ctx_with(git, info);
+    cx.lock_timeout = Duration::ZERO;
+    let nested = snp_stash::enter(cx).unwrap();
+    assert!(!nested.lock_contended());
+    nested.restore().unwrap();
+    // A second run waits for the first.
+    let (cx2, _, err2) = sb.ctx(&repo);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let t = std::thread::Builder::new()
+        .spawn(move || {
+            let g = snp_stash::enter(cx2).unwrap();
+            tx.send(g.lock_contended()).unwrap();
+            g.restore().unwrap();
+        })
+        .unwrap();
+    let waited = std::time::Instant::now();
+    while !err2.text().starts_with("snp: waiting") {
+        assert!(waited.elapsed() < Duration::from_secs(10), "no wait notice");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    first.restore().unwrap();
+    assert!(rx.recv().unwrap());
+    t.join().unwrap();
+    // Uncontended again.
+    let (cx, _, _) = sb.ctx(&repo);
+    let g = snp_stash::enter(cx).unwrap();
+    assert!(!g.lock_contended());
+    g.restore().unwrap();
+    assert_eq!(sb.read(&repo, "foo"), b"herp\n");
+}
+
 #[test]
 fn cancelled_lock_wait_is_interrupted() {
     let sb = Sandbox::new();

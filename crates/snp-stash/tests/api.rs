@@ -76,6 +76,7 @@ mod api {
         has::<fn(&StashGuard) -> &Stashed>(StashGuard::stashed);
         has::<fn(&StashGuard) -> bool>(StashGuard::diff_index_clean);
         has::<fn(&StashGuard) -> Option<(&'static str, OsString)>>(StashGuard::child_env_token);
+        has::<fn(&StashGuard) -> bool>(StashGuard::lock_contended);
         has::<fn(&mut StashGuard, &[RepoPath]) -> Result<bool, Failure>>(StashGuard::stage_fixed);
         has::<fn(StashGuard) -> Result<(), Failure>>(StashGuard::restore);
     }
