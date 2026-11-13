@@ -332,7 +332,7 @@ mod tests {
             "cfgv==3.5.0",
             "pyyaml==6.0.3",
             "virtualenv==21.14.5",
-            "nodeenv==1.11.0",
+            "nodeenv==1.12.0",
         ] {
             assert!(lock.contains(&format!("{pin} \\")), "{pin} missing");
         }

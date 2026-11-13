@@ -5,4 +5,4 @@ identify==2.6.20
 cfgv==3.5.0
 PyYAML==6.0.3
 virtualenv==21.14.5
-nodeenv==1.11.0
+nodeenv==1.12.0

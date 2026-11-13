@@ -162,7 +162,7 @@ pub fn resolve(
 
 /// The concrete version an alias stands for on `target`: `default`/`latest`/`""` (every tool), node `lts`; `v`/`go`
 /// prefixes are dropped. uv's default is [`UV_PINNED`]; node's is the newest release of `index.json` that is not a
-/// pre-release (no `-` in the version) and lists a build for `target` (nodeenv 1.11.0 `_get_last_node_version`:
+/// pre-release (no `-` in the version) and lists a build for `target` (nodeenv 1.12.0 `_get_last_node_version`:
 /// `_is_prerelease`, `_has_platform_build`), `lts` the newest such LTS; musl and the unofficial-only architectures
 /// read the unofficial builds' `index.json` (arm64-musl exists only there). go's is the first stable release of the
 /// go.dev list (`golang.py` `_infer_go_version`); rustup's is the current `release-stable.toml` version; the ruby

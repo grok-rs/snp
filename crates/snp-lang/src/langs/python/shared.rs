@@ -419,6 +419,79 @@ impl Ini {
         let own = &self.sections.get(*self.index.get(section)?)?.1;
         own.get(option).or_else(|| self.defaults.get(option))
     }
+
+    /// `parser.get(section, option)` of a `ConfigParser`, whose default `BasicInterpolation` turns `%%` into `%`
+    /// and `%(name)s` into the value of option `name` (lower-cased, `optionxform`) of the section or `[DEFAULT]`,
+    /// itself interpolated, at most [`MAX_INTERPOLATION_DEPTH`] references deep (`_interpolate_some`). `None` when
+    /// the option does not exist.
+    pub(crate) fn get_interpolated(
+        &self,
+        section: &str,
+        option: &str,
+    ) -> Option<Result<String, InterpolationError>> {
+        let raw = self.get(section, option)?;
+        let mut out = String::new();
+        Some(
+            self.interpolate_some(section, raw, 1, &mut out)
+                .map(|()| out),
+        )
+    }
+
+    /// One `_interpolate_some` level over `rest`, appending to `out`.
+    fn interpolate_some(
+        &self,
+        section: &str,
+        mut rest: &str,
+        depth: usize,
+        out: &mut String,
+    ) -> Result<(), InterpolationError> {
+        if depth > MAX_INTERPOLATION_DEPTH {
+            return Err(InterpolationError::Other);
+        }
+        while let Some(p) = rest.find('%') {
+            out.push_str(rest.get(..p).unwrap_or_default());
+            let at = rest.get(p..).unwrap_or_default();
+            if let Some(after) = at.strip_prefix("%%") {
+                out.push('%');
+                rest = after;
+            } else if let Some(after) = at.strip_prefix("%(") {
+                // `_KEYCRE = re.compile(r"%\(([^)]+)\)s")`, matched at the `%`.
+                let close = after.find(')').ok_or(InterpolationError::Syntax)?;
+                let name = after.get(..close).unwrap_or_default();
+                let tail = after.get(close.saturating_add(1)..).unwrap_or_default();
+                let Some(tail) = tail.strip_prefix('s').filter(|_| !name.is_empty()) else {
+                    return Err(InterpolationError::Syntax);
+                };
+                let value = self
+                    .get(section, &name.to_lowercase())
+                    .ok_or(InterpolationError::Other)?;
+                if value.contains('%') {
+                    self.interpolate_some(section, value, depth.saturating_add(1), out)?;
+                } else {
+                    out.push_str(value);
+                }
+                rest = tail;
+            } else {
+                // `'%' must be followed by '%' or '('`.
+                return Err(InterpolationError::Syntax);
+            }
+        }
+        out.push_str(rest);
+        Ok(())
+    }
+}
+
+/// `configparser.MAX_INTERPOLATION_DEPTH`.
+const MAX_INTERPOLATION_DEPTH: usize = 10;
+
+/// Why `BasicInterpolation` rejects a value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InterpolationError {
+    /// `InterpolationSyntaxError`: a `%` followed by neither `%` nor `(`, or a `%(` that does not start a
+    /// `%(name)s` reference.
+    Syntax,
+    /// `InterpolationMissingOptionError` (an unknown name) or `InterpolationDepthError`.
+    Other,
 }
 
 /// Cap on an INI file read by a backend.
@@ -606,6 +679,8 @@ pub(crate) fn os_name(target: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use super::*;
 
     #[test]
@@ -657,6 +732,39 @@ mod tests {
         assert_eq!(parse_ini("no section = 1\n").sections().count(), 0);
         let ini = parse_ini("\r\n\r[x]\rk=v\r");
         assert_eq!(items(&ini, "x"), pairs(&[("k", "v")]));
+    }
+
+    /// `ConfigParser.get` with `BasicInterpolation`; the expected values are CPython 3.12's.
+    #[test]
+    fn ini_basic_interpolation_follows_configparser() {
+        let mut src = String::from(
+            "[DEFAULT]\nbase = 20\ndeep0 = %(deep1)s\n[nodeenv]\nplain = 18.17.0\npct = 20%%\nref = %(base)s.1\n\
+             Mixed = %(BASE)s\nlone = 20%\nbad = %(base)\nempty = %()s\nmissing = %(nope)s\n\
+             twice = %%%(base)s%%\nloop = %(loop)s\nchain = %(chain2)s\nchain2 = %(base)s\n",
+        );
+        for i in 1..12 {
+            writeln!(src, "deep{i} = %(deep{})s", i + 1).unwrap();
+        }
+        src.push_str("deep12 = x\n");
+        let ini = parse_ini(&src);
+        let get = |k: &str| ini.get_interpolated("nodeenv", k);
+        let ok = |v: &str| Some(Ok(v.to_owned()));
+        assert_eq!(get("plain"), ok("18.17.0"));
+        assert_eq!(get("pct"), ok("20%"));
+        assert_eq!(get("ref"), ok("20.1"));
+        assert_eq!(get("mixed"), ok("20"));
+        assert_eq!(get("twice"), ok("%20%"));
+        assert_eq!(get("chain"), ok("20"));
+        for k in ["lone", "bad", "empty"] {
+            assert_eq!(get(k), Some(Err(InterpolationError::Syntax)), "{k}");
+        }
+        for k in ["missing", "loop", "deep0", "deep1"] {
+            assert_eq!(get(k), Some(Err(InterpolationError::Other)), "{k}");
+        }
+        // `MAX_INTERPOLATION_DEPTH`: ten levels resolve, eleven do not.
+        assert_eq!(get("deep2"), ok("x"));
+        assert_eq!(get("absent"), None);
+        assert_eq!(ini.get_interpolated("nosection", "plain"), None);
     }
 
     /// The reviewer's cases: indented options are options, not continuations; a blank line stays inside a

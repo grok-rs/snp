@@ -324,7 +324,7 @@ fn version_aliases() {
     );
 }
 
-/// node's `default`/`latest`/`lts` (nodeenv 1.11.0 `_get_last_node_version`): never a pre-release, and always a
+/// node's `default`/`latest`/`lts` (nodeenv 1.12.0 `_get_last_node_version`): never a pre-release, and always a
 /// version with a build for the target; musl reads the unofficial builds' index.
 #[test]
 fn node_aliases_skip_pre_releases_and_versions_without_a_build() {
