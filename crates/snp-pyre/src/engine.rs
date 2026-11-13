@@ -2,9 +2,15 @@
 //!
 //! * Tier 1: `regex::Regex` (str) / `regex::bytes::Regex` with `unicode(false)` (bytes), `size_limit` 64 MiB,
 //!   `dfa_size_limit` the crate default 2 MiB (the per-regex per-thread lazy-DFA cache, ADR-079),
-//!   `nest_limit` 2048. A haystack that meets a condition bit of the fast text uses the exact variant.
+//!   `nest_limit` 2048. A haystack that meets a condition bit of the fast text uses the exact variant, which
+//!   runs on `fancy_regex` behind a relaxed tier-1 [`Prefilter`] when the condition is a word boundary or a
+//!   nullable-loop span (ADR-097): the prefilter is built on the first haystack that needs the exact variant
+//!   (eagerly with an eager exact fallback) with a 256 KiB lazy-DFA cache.
 //! * Tier 2: `fancy_regex` with `backtrack_limit` 10⁸, delegate limits 64 MiB / 2 MiB, always behind the
 //!   relaxed tier-1 prefilter; bytes patterns run on the Latin-1 lane (each byte `b` becomes `char::from(b)`).
+//!
+//! A prefilter that could not be built, or that would match every haystack, is simply absent: it only ever
+//! turns a haystack the relaxed text rejects into a no-match (relaxed ⊇ exact, §A.6.11), never into an error.
 //!
 //! Engines of deeply nested patterns are built on a helper thread with a large stack: `regex-automata`'s
 //! compiler recurses once per nesting level, and snp's threads (and the fuzzers' 256 KiB stacks) are small.
@@ -22,6 +28,9 @@ use crate::messages;
 const SIZE_LIMIT: usize = 64 << 20;
 /// `dfa_size_limit`: the crate default, the lazy-DFA cache capacity per regex per thread (ADR-079).
 const DFA_SIZE_LIMIT: usize = 2 << 20;
+/// `dfa_size_limit` of the tier-1 exact fallback's prefilter (ADR-097): it runs only on the haystacks that meet a
+/// condition bit, and a full 2 MiB cache per pattern per worker thread would cost B12u ~5 MiB of RSS.
+const PREFILTER_DFA_SIZE_LIMIT: usize = 256 << 10;
 /// `nest_limit` of tier 1 (Python's 484 nested groups lower to well under 2048 levels).
 const NEST_LIMIT: u32 = 2048;
 /// fancy-regex `backtrack_limit` (§A.1 item 10).
@@ -72,16 +81,26 @@ pub(crate) enum T1 {
 impl T1 {
     /// Builds `text` (on a large stack when `depth` is deep).
     pub(crate) fn build(text: &str, bytes: bool, depth: u32) -> Result<Self, String> {
-        on_stack(depth, || Self::build_here(text, bytes))
+        Self::build_limited(text, bytes, depth, DFA_SIZE_LIMIT)
+    }
+
+    /// [`T1::build`] with a lazy-DFA cache capacity of `dfa_size_limit`.
+    fn build_limited(
+        text: &str,
+        bytes: bool,
+        depth: u32,
+        dfa_size_limit: usize,
+    ) -> Result<Self, String> {
+        on_stack(depth, || Self::build_here(text, bytes, dfa_size_limit))
             .unwrap_or_else(|| Err(messages::NO_BUILD_THREAD.into()))
     }
 
-    fn build_here(text: &str, bytes: bool) -> Result<Self, String> {
+    fn build_here(text: &str, bytes: bool, dfa_size_limit: usize) -> Result<Self, String> {
         if bytes {
             regex::bytes::RegexBuilder::new(text)
                 .unicode(false)
                 .size_limit(SIZE_LIMIT)
-                .dfa_size_limit(DFA_SIZE_LIMIT)
+                .dfa_size_limit(dfa_size_limit)
                 .nest_limit(NEST_LIMIT)
                 .build()
                 .map(Self::Bytes)
@@ -89,7 +108,7 @@ impl T1 {
         } else {
             regex::RegexBuilder::new(text)
                 .size_limit(SIZE_LIMIT)
-                .dfa_size_limit(DFA_SIZE_LIMIT)
+                .dfa_size_limit(dfa_size_limit)
                 .nest_limit(NEST_LIMIT)
                 .build()
                 .map(Self::Str)
@@ -114,6 +133,34 @@ impl T1 {
                 .map(|m| (m.start(), m.end())),
             Self::Bytes(re) => re.find(h.bytes()).map(|m| (m.start(), m.end())),
         }
+    }
+}
+
+/// A relaxed tier-1 prefilter in front of a backtracking engine (§A.6.11, ADR-097): a haystack it rejects
+/// has no match, because the relaxed text's language is a superset of the exact text's.
+#[derive(Debug)]
+pub(crate) struct Prefilter(T1);
+
+impl Prefilter {
+    /// The prefilter of the relaxed `text`, or `None` when it cannot be built or is useless: a text without
+    /// anchors that matches the empty string matches every haystack.
+    fn build(
+        text: &str,
+        bytes: bool,
+        depth: u32,
+        anchored: bool,
+        dfa_size_limit: usize,
+    ) -> Option<Self> {
+        T1::build_limited(text, bytes, depth, dfa_size_limit)
+            .ok()
+            .filter(|r| anchored || !r.is_match(Hay::Bytes(b"")))
+            .map(Self)
+    }
+
+    /// `false`: the haystack has no match of the exact text (under search, `re.match` and, on the fullmatch
+    /// engines, `re.fullmatch` semantics alike).
+    fn admits(&self, h: Hay<'_>) -> bool {
+        self.0.is_match(h)
     }
 }
 
@@ -145,6 +192,8 @@ impl T2 {
 
     /// `is_match` (`MatchError::Backtrack` past the backtrack limit).
     pub(crate) fn is_match(&self, h: Hay<'_>) -> Result<bool, MatchError> {
+        #[cfg(test)]
+        probe::count_exact_run();
         if self.latin1 {
             let lane = latin1(h.bytes());
             return self
@@ -160,6 +209,8 @@ impl T2 {
 
     /// A match starting at position 0 (an anchored search: no other start position is tried).
     pub(crate) fn matches_at_start(&self, h: Hay<'_>) -> Result<bool, MatchError> {
+        #[cfg(test)]
+        probe::count_exact_run();
         let anchored = |t: &str| {
             self.re
                 .find_input(fancy_regex::RegexInput::new(t).anchored(true))
@@ -174,6 +225,8 @@ impl T2 {
 
     /// The leftmost-first match span in bytes of the original haystack.
     pub(crate) fn find(&self, h: Hay<'_>) -> Result<Option<(usize, usize)>, MatchError> {
+        #[cfg(test)]
+        probe::count_exact_run();
         if self.latin1 {
             let lane = latin1(h.bytes());
             let m = self
@@ -245,7 +298,8 @@ pub(crate) struct Texts {
     pub(crate) main: Box<str>,
     /// Tier 1: the exact fallback text (when a condition bit is set).
     pub(crate) exact: Option<Box<str>>,
-    /// Tier 2: the relaxed prefilter text.
+    /// The relaxed prefilter text: tier 2, and tier 1 when the exact fallback serves a word-boundary, `\B` or
+    /// span condition (ADR-097; not for a non-MULTILINE `$` alone).
     pub(crate) relaxed: Option<Box<str>>,
     /// Tier 2.
     pub(crate) tier2: bool,
@@ -259,6 +313,64 @@ pub(crate) struct Texts {
     pub(crate) relaxed_anchored: bool,
 }
 
+/// The lazily built exact fallback of a tier-1 pattern and its relaxed prefilter.
+#[derive(Debug)]
+pub(crate) struct Fallback {
+    /// Exact fallback text.
+    exact_src: Option<Box<str>>,
+    /// Exact fallback engine, built on first need.
+    exact: OnceLock<Option<T2>>,
+    /// Relaxed prefilter text (ADR-097).
+    relaxed_src: Option<Box<str>>,
+    /// The relaxed text has anchors.
+    relaxed_anchored: bool,
+    /// The prefilter, built on first need (`None`: none could be built, or it would match everywhere).
+    relaxed: OnceLock<Option<Prefilter>>,
+    /// Depth of the texts.
+    depth: u32,
+    /// Bytes pattern.
+    bytes: bool,
+}
+
+impl Fallback {
+    /// The exact fallback (`None` if it could not be built).
+    fn exact(&self) -> Option<&T2> {
+        self.exact
+            .get_or_init(|| {
+                self.exact_src
+                    .as_deref()
+                    .and_then(|s| T2::build(s, self.bytes, self.depth).ok())
+            })
+            .as_ref()
+    }
+
+    /// The prefilter of the exact fallback, if it has a useful one.
+    fn prefilter(&self) -> Option<&Prefilter> {
+        #[cfg(test)]
+        if probe::prefilter_off() {
+            return None;
+        }
+        self.relaxed
+            .get_or_init(|| {
+                self.relaxed_src.as_deref().and_then(|s| {
+                    Prefilter::build(
+                        s,
+                        self.bytes,
+                        self.depth,
+                        self.relaxed_anchored,
+                        PREFILTER_DFA_SIZE_LIMIT,
+                    )
+                })
+            })
+            .as_ref()
+    }
+
+    /// `false`: the prefilter rejects `h`, so the exact text has no match on it.
+    fn admits(&self, h: Hay<'_>) -> bool {
+        self.prefilter().is_none_or(|p| p.admits(h))
+    }
+}
+
 /// A compiled set of engines for one variant of the texts (`P` for `re.search`/`re.match`, `\A(?:P)\z` for
 /// `re.fullmatch`).
 #[derive(Debug)]
@@ -269,19 +381,13 @@ pub(crate) enum Compiled {
         fast: T1,
         /// Condition bits.
         cond: Cond,
-        /// Exact fallback text.
-        exact_src: Option<Box<str>>,
-        /// Exact fallback engine, built on first need.
-        exact: OnceLock<Option<T2>>,
-        /// Depth of the exact text.
-        depth: u32,
-        /// Bytes pattern.
-        bytes: bool,
+        /// The exact fallback and its prefilter.
+        fallback: Box<Fallback>,
     },
     /// Tier 2.
     T2 {
         /// The prefilter (absent when it would match everywhere or could not be built).
-        relaxed: Option<T1>,
+        relaxed: Option<Prefilter>,
         /// The backtracking engine.
         exact: T2,
     },
@@ -299,13 +405,13 @@ pub(crate) enum Op {
 }
 
 /// `\A(?:P)\z` for the `re.fullmatch` engines.
-fn full(text: &str) -> String {
+pub(crate) fn full(text: &str) -> String {
     format!("\\A(?:{text})\\z")
 }
 
 impl Compiled {
     /// Builds the engines of `texts` (`full`: the `re.fullmatch` variant); `eager_exact` also builds the
-    /// exact fallback now.
+    /// exact fallback (so that an engine limit is a compile error) and its prefilter now.
     pub(crate) fn build(
         texts: &Texts,
         full_match: bool,
@@ -315,40 +421,38 @@ impl Compiled {
         let depth = texts.depth.saturating_add(u32::from(full_match));
         if texts.tier2 {
             let exact = T2::build(&wrap(&texts.main), texts.bytes, depth)?;
-            let relaxed = texts
-                .relaxed
-                .as_deref()
-                .and_then(|r| T1::build(&wrap(r), texts.bytes, depth).ok());
-            let relaxed =
-                relaxed.filter(|r| texts.relaxed_anchored || !r.is_match(Hay::Bytes(b"")));
+            let relaxed = texts.relaxed.as_deref().and_then(|r| {
+                Prefilter::build(
+                    &wrap(r),
+                    texts.bytes,
+                    depth,
+                    texts.relaxed_anchored,
+                    DFA_SIZE_LIMIT,
+                )
+            });
             return Ok(Self::T2 { relaxed, exact });
         }
         let fast = T1::build(&wrap(&texts.main), texts.bytes, depth)?;
-        let exact_src = texts.exact.as_deref().map(|e| wrap(e).into_boxed_str());
-        let exact = OnceLock::new();
-        if eager_exact && let Some(src) = &exact_src {
+        let fallback = Fallback {
+            exact_src: texts.exact.as_deref().map(|e| wrap(e).into_boxed_str()),
+            exact: OnceLock::new(),
+            relaxed_src: texts.relaxed.as_deref().map(|r| wrap(r).into_boxed_str()),
+            relaxed_anchored: texts.relaxed_anchored,
+            relaxed: OnceLock::new(),
+            depth,
+            bytes: texts.bytes,
+        };
+        if eager_exact && let Some(src) = &fallback.exact_src {
             let built = T2::build(src, texts.bytes, depth)?;
-            exact.set(Some(built)).unwrap_or_default();
+            fallback.exact.set(Some(built)).unwrap_or_default();
+            // A prefilter that cannot be built is no error: this only moves its build out of the match path.
+            _ = fallback.prefilter();
         }
         Ok(Self::T1 {
             fast,
             cond: texts.cond,
-            exact_src,
-            exact,
-            depth,
-            bytes: texts.bytes,
+            fallback: Box::new(fallback),
         })
-    }
-
-    /// The exact fallback of a tier-1 pattern (`None` if it could not be built).
-    fn exact<'a>(
-        cell: &'a OnceLock<Option<T2>>,
-        src: Option<&str>,
-        bytes: bool,
-        depth: u32,
-    ) -> Option<&'a T2> {
-        cell.get_or_init(|| src.and_then(|s| T2::build(s, bytes, depth).ok()))
-            .as_ref()
     }
 
     /// `re.search(...) is not None` (`Op::Search`, and `Op::Full` on the fullmatch engines) or `re.match(...)
@@ -359,13 +463,13 @@ impl Compiled {
             Self::T1 {
                 fast,
                 cond,
-                exact_src,
-                exact,
-                depth,
-                bytes,
+                fallback,
             } => {
                 if cond.needs_exact(h.bytes()) {
-                    let Some(e) = Self::exact(exact, exact_src.as_deref(), *bytes, *depth) else {
+                    if !fallback.admits(h) {
+                        return Ok(false);
+                    }
+                    let Some(e) = fallback.exact() else {
                         return Err(MatchError::Backtrack);
                     };
                     return if prefix {
@@ -383,7 +487,7 @@ impl Compiled {
             }
             Self::T2 { relaxed, exact } => {
                 if let Some(r) = relaxed
-                    && !r.is_match(h)
+                    && !r.admits(h)
                 {
                     return Ok(false);
                 }
@@ -402,13 +506,13 @@ impl Compiled {
             Self::T1 {
                 fast,
                 cond,
-                exact_src,
-                exact,
-                depth,
-                bytes,
+                fallback,
             } => {
                 if cond.needs_exact_span(h.bytes()) {
-                    let Some(e) = Self::exact(exact, exact_src.as_deref(), *bytes, *depth) else {
+                    if !fallback.admits(h) {
+                        return Ok(None);
+                    }
+                    let Some(e) = fallback.exact() else {
                         return Err(MatchError::Backtrack);
                     };
                     return e.find(h);
@@ -417,12 +521,44 @@ impl Compiled {
             }
             Self::T2 { relaxed, exact } => {
                 if let Some(r) = relaxed
-                    && !r.is_match(h)
+                    && !r.admits(h)
                 {
                     return Ok(None);
                 }
                 exact.find(h)
             }
         }
+    }
+}
+
+/// Test-only probes of the backtracking path (thread-local: the unit tests run on parallel threads).
+#[cfg(test)]
+pub(crate) mod probe {
+    use std::cell::Cell;
+
+    thread_local! {
+        static EXACT_RUNS: Cell<u64> = const { Cell::new(0) };
+        static PREFILTER_OFF: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// One run of a backtracking engine.
+    pub(super) fn count_exact_run() {
+        EXACT_RUNS.with(|c| c.set(c.get().saturating_add(1)));
+    }
+
+    /// The backtracking-engine runs on this thread so far.
+    pub(crate) fn exact_runs() -> u64 {
+        EXACT_RUNS.with(Cell::get)
+    }
+
+    /// Whether the tier-1 exact fallback's prefilter is switched off on this thread.
+    pub(super) fn prefilter_off() -> bool {
+        PREFILTER_OFF.with(Cell::get)
+    }
+
+    /// Switches the tier-1 exact fallback's prefilter off (`true`: the pre-ADR-097 behaviour, the reference of
+    /// the parity tests) or back on, for this thread.
+    pub(crate) fn set_prefilter_off(off: bool) {
+        PREFILTER_OFF.with(|c| c.set(off));
     }
 }

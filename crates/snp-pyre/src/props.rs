@@ -1,11 +1,12 @@
 //! Property tests (01 Addendum §A.8 item 5): `compile` never panics; the relaxed prefilter never rejects a
-//! haystack the exact pattern matches; the fast tier-1 text agrees with the exact text on every haystack that
-//! meets no condition bit; the cheap match kinds agree with the engines.
+//! haystack the exact pattern matches, and the tier-1 one changes no answer (ADR-097); the fast tier-1 text
+//! agrees with the exact text on every haystack that meets no condition bit; the cheap match kinds agree with
+//! the engines.
 
 use proptest::prelude::*;
 
 use crate::compile::testing::{compile_engines, full_texts};
-use crate::engine::{Hay, T1, T2};
+use crate::engine::{Hay, T1, T2, full, probe};
 use crate::{Haystack, MatchKind, Mode, Options, PyRegex};
 
 /// Pattern fragments covering the lowering rules (str and bytes).
@@ -143,23 +144,63 @@ proptest! {
         }
     }
 
-    /// `L(P) ⊆ L(relaxed)` under search semantics (§A.6.11): the prefilter never rejects a real match.
+    /// `L(P) ⊆ L(relaxed)` under search semantics, and `\A(?:P)\z` ⊆ `\A(?:relaxed)\z` (§A.6.11): the
+    /// prefilter never rejects a real match. The reference is the exact text: tier 2's main text, tier 1's exact
+    /// fallback (ADR-097).
     #[test]
     fn relaxed_is_a_superset(p in pattern(), sel in 0_u8..16, bytes in any::<bool>(), hs in proptest::collection::vec(haystack(), 1..12)) {
         let mode = if bytes { Mode::Bytes } else { Mode::Str };
         let opts = options(mode, sel);
         let Some(texts) = full_texts(&p, opts) else { return Ok(()) };
         let Some(relaxed) = texts.relaxed.as_deref() else { return Ok(()) };
-        let (Ok(exact), Ok(relaxed)) = (T2::build(&texts.main, texts.bytes, texts.depth), T1::build(relaxed, texts.bytes, texts.depth)) else {
+        let reference = if texts.tier2 { Some(&*texts.main) } else { texts.exact.as_deref() };
+        let Some(reference) = reference else { return Ok(()) };
+        let depth = texts.depth.saturating_add(1);
+        let built = (
+            T2::build(reference, texts.bytes, depth),
+            T1::build(relaxed, texts.bytes, depth),
+            T2::build(&full(reference), texts.bytes, depth),
+            T1::build(&full(relaxed), texts.bytes, depth),
+        );
+        let (Ok(exact), Ok(relaxed), Ok(exact_full), Ok(relaxed_full)) = built else {
             return Ok(());
         };
         for h in &hs {
             if opts.haystack == Haystack::Line && !line_shaped(h) {
                 continue;
             }
-            if exact.is_match(Hay::Str(h)) == Ok(true) {
-                prop_assert!(relaxed.is_match(Hay::Str(h)), "{p:?} {opts:?}: relaxed {:?} rejects {h:?}", texts.relaxed);
+            for hay in [Hay::Str(h), Hay::Bytes(h.as_bytes())] {
+                if exact.is_match(hay) == Ok(true) || exact.matches_at_start(hay) == Ok(true) {
+                    prop_assert!(relaxed.is_match(hay), "{p:?} {opts:?}: relaxed {:?} rejects {h:?}", texts.relaxed);
+                }
+                if exact_full.is_match(hay) == Ok(true) {
+                    prop_assert!(relaxed_full.is_match(hay), "{p:?} {opts:?}: fullmatch relaxed {:?} rejects {h:?}", texts.relaxed);
+                }
             }
+        }
+    }
+
+    /// The tier-1 exact fallback answers the same with and without its prefilter (ADR-097), on haystacks that
+    /// meet a condition bit (non-ASCII, empty, or any haystack for match spans): `re.search`, `re.match`,
+    /// `re.fullmatch` and `search_bytes`.
+    #[test]
+    fn tier1_prefilter_keeps_every_answer(p in pattern(), sel in 0_u8..16, bytes in any::<bool>(), hs in proptest::collection::vec(haystack(), 1..12)) {
+        let mode = if bytes { Mode::Bytes } else { Mode::Str };
+        let opts = options(mode, sel);
+        let Ok(re) = compile_engines(&p, opts) else { return Ok(()) };
+        if re.kind() != MatchKind::Tier1 {
+            return Ok(());
+        }
+        let answers = |h: &str| (re.search(h), re.match_prefix(h), re.fullmatch(h), re.search_bytes(h.as_bytes()));
+        for h in &hs {
+            if opts.haystack == Haystack::Line && !line_shaped(h) {
+                continue;
+            }
+            let with = answers(h);
+            probe::set_prefilter_off(true);
+            let without = answers(h);
+            probe::set_prefilter_off(false);
+            prop_assert_eq!(with, without, "{:?} {:?} on {:?}", p, opts, h);
         }
     }
 
