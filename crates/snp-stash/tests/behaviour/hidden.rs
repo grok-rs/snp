@@ -19,6 +19,7 @@ fn with_strip_filter(sb: &Sandbox, repo: &std::path::Path) {
     sb.commit(repo, "base");
 }
 
+#[cfg(unix)]
 const HIDDEN: &[u8] = b"key=1\nSECRET=hunter2\n";
 
 #[cfg(unix)]
