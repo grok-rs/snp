@@ -11,7 +11,7 @@ ADR-082 the end-to-end integration of the merged packages; ADR-083 the verificat
 the final multi-lens review; ADR-085 the `interactive` extension key; ADR-086 the first CI run on macOS; ADR-087 the
 `.snp.yaml` config file name; ADR-088 the crates.io and Homebrew release channels; ADR-089 the retarget to pre-commit
 4.7.0; ADR-090 what the scheduled gates can judge; ADR-091 measuring every scenario; ADR-092 the November 2026
-upstream refresh; ADR-094 Rust 1.100.
+upstream refresh; ADR-094 Rust 1.100; ADR-095 machine-checked proofs.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -724,6 +724,8 @@ cgroup memory limit < 4 GiB; compile-heavy installs (rust, golang, haskell, swif
 permit. **Consequences.** The §10.4 table is the posix signal-test matrix; FI-25…FI-30 added.
 
 ### ADR-066 — Panic-freedom hardening and panic-path ownership
+
+*Status: Accepted; amended by ADR-095 (a `reason = "verus: …"` expectation on a verified function of a mounted kernel file is a proven site). The amending ADR is normative where they differ.*
 
 **Context.** S2's lint set missed panics from arithmetic overflow (`overflow-checks = true`), `assert*!`, panicking std
 APIs (`Duration::from_secs_f64` on a hostile `SNP_KILL_GRACE`, `split_at`, `chunks(0)`, `step_by(0)`,
@@ -1464,6 +1466,100 @@ hold back urgent security updates and `cargo publish`'s verification build, so i
 two versions only keep the codebase from using them.
 **Consequences.** Contributors need Rust 1.100 (`rustup` reads `rust-toolchain.toml`). The crash log names rustc
 1.100.0.
+
+### ADR-095 — Machine-checked kernels: Verus proofs on the shipped source, Lean 4 models beside it
+
+*Amends ADR-066 (a `reason = "verus: …"` expectation on a verified function in a mounted kernel file is a proven
+site) and ARCHITECTURE §1.3, §11.7, §13.1 and §13.7. Clarifies ADR-056: items gated on `cfg(verus_keep_ghost)` are not
+dependencies. Reference: docs/VERIFICATION.md.*
+
+**Context.** snp's parity and data-safety guarantees rest on unit, property, fuzz and differential tests, several of
+which compare snp with a Rust transliteration of itself (`xargs::partition_matches_the_python_model`). The owner asked
+for machine-checked proofs of the critical logic; research and three architecture prototypes followed on 2026-11-13.
+Verus 0.2026.11.02.8bf68ee runs on its own rustc 1.99.1 with Z3 4.16.0 and a prebuilt vstd in a 36 MB zip; it proves
+byte and index kernels in seconds, and it found a real divergence: snp's saturating `xargs.partition` returned
+`Ok([0..1])` for `lens=[usize::MAX], base=1` at `max_len == usize::MAX`, where Python raises `ArgumentTooLongError`.
+Ghost code can be written as `#[cfg_attr(verus_keep_ghost, verus_spec(..))]` attributes plus `#[cfg(verus_keep_ghost)]`
+imports and proof statements, which rustc's own cfg processing strips in every normal build; a production file can
+therefore carry its contract with no dependency, and standalone `verus` verifies that same file through a root that
+mounts it with `#[path]` (prototype: 25 items in 1.7 s with `--no-cheating`; stable 1.100.0 clippy with `-D warnings`,
+rustdoc and `cargo package` clean; rustfmt leaves the files unchanged). Three findings shape the guards: in a mounted
+file Verus silently skips unannotated functions unless the mount carries `#[verus_verify]`; `--no-cheating` rejects
+`assume_specification` but not `#[verifier::external]`; `assume_specification` cannot be declared under
+`forbid(unsafe_code)`. Verus also refuses `--verify-module` together with `--no-cheating`, so only a whole-root run can
+be a gate. The alternatives cost more: vstd as a dependency adds 8 weekly-prerelease crates (a second syn among them)
+to the published closure (ADR-088), eats into the §11.7 budget of 120 packages (109 used) and is impossible in
+snp-pycompat (ADR-056); a stub-macro facade adds two published crates and an optional vstd in the `all-features` deny
+graph; token-mirrored copies need an eraser in the trusted base and a resynchronisation on every edit; Aeneas, Charon
+and hax need a pinned nightly rustc, a Lean release candidate and Mathlib; `cargo verus` compiles the whole dependency
+graph with rustc 1.99.1, which snp's 1.100 APIs rule out. Lean 4.34.1 with the core library only proved the
+end-of-file-fixer and shlex models (7 theorems, axioms within {propext, Classical.choice, Quot.sound}, clean
+`leanchecker`); compiled into oracle executables they agree with CPython and with snp on about 600k inputs. `check-dag`
+gives snp-difftest no edge to snp-hooks (`check_dag.rs:162` and the ancestor rule for dev-dependencies), which fixes
+where oracle tests can live.
+**Decision.** (1) *Scope.* A kernel is a pure function in a production module that the shipped binary calls
+directly. Only kernels are claimed proved, and every claim names its spec ("kernel X satisfies spec Y"); "snp is
+formally verified" is never written. Lean proves models; the link from a model to the code is a test. (2) *In place,
+no dependency.* Kernel files are ordinary production modules whose only ghost forms are
+`#[cfg_attr(verus_keep_ghost, X)]` with X one of `verus_spec(..)`, a bare `verus_verify`, `verifier::external_derive`,
+`verifier::rlimit`, `verifier::loop_isolation` or `verifier::spinoff_prover`; `#[cfg(verus_keep_ghost)]` on a `use` of
+`vstd::prelude` or `crate::spec`; and `#[cfg(verus_keep_ghost)]` on `proof!`/`proof_decl!` statements. They contain no
+`verus!` block and no other cfg (platform behaviour is a `windows: bool` parameter), their exec code reaches only
+`core`, `alloc`, `std` and the same file, and no non-private function has a `requires`. No manifest names vstd or any
+Verus crate; `Cargo.lock`, `deny.toml`, the published closure and ADR-056 are unchanged; `[workspace.lints.rust]
+unexpected_cfgs` gains `cfg(verus_keep_ghost)`. (3) *Proofs tree.* `proofs/` is not a workspace member and sits
+outside every package's `include`: `registry.toml` (tool pins, kernels with their production callers and mutants, Lean
+models with fingerprinted anchors, trusted items), `verus/kernels.rs` (the root, `#![forbid(unsafe_code)]`, one
+`#[verus_verify] #[path]` mount per kernel file), `verus/spec/` (spec functions and lemmas) and `lean/` (a Lake package
+on the core library only). Verification is `verus proofs/verus/kernels.rs --crate-type=lib --edition=2024
+--no-cheating --output-json`; every function syn finds in a kernel file must appear in the JSON, and every registered
+mutant must fail verification. (4) *Toolchains.* The Verus release is pinned by version and per-platform sha256,
+together with verusfmt 0.7.4; its rustc is installed beside the snp toolchain and never made the default, and kernel
+files use no 1.100-only API such as `trim_prefix`. Lean is pinned in `proofs/lean/lean-toolchain` to a stable release
+(v4.34.1 at import). Mathlib, Batteries, release candidates, Aeneas, Charon and hax each need a new ADR; every bump is
+a dedicated PR. (5) *Lints.* In a mounted kernel file, `#[expect(clippy::indexing_slicing,
+clippy::arithmetic_side_effects, …, reason = "verus: …")]` on a verified function is a proven site under ADR-066.
+(6) *Trust.* Kernel files and spec files contain none of `assume`, `admit`, `external`, `external_body`,
+`assume_specification` or `exec_allows_no_decreases_clause`; the root's `forbid(unsafe_code)` excludes
+`assume_specification` from kernel files as well. A trusted std specification, if ever needed, lives in a separate
+`proofs/verus/trusted/` crate listed in the registry. Fast primitives (memchr, memmem, HashSet) enter verified code
+through kernel traits with contracts; each production implementation is listed with a differential test against a
+verified reference implementation. (7) *Lean.* `lake build --wfail`, an axiom allowlist of {propext,
+Classical.choice, Quot.sound} and `leanchecker`; model files contain no `sorry`, `admit`, `native_decide`,
+`implemented_by`, `extern`, `partial def` or `axiom` (assumptions are theorem hypotheses); oracle executables call
+the proved functions; oracle tests live in the home crate's `tests/` and use only std, so snp-pycompat keeps zero
+dev-dependencies, skip without `SNP_LEAN_ORACLES` and fail when skipped under `SNP_REQUIRE_LEAN_ORACLES=1`; each
+Lean-only link pins a token fingerprint of the production items it models. (8) *xtask and CI.* `cargo xtask proofs
+{check, verus, lean, oracles, mutants, install, status, fingerprint}` is a WP-00 task file with no new dependency.
+`proofs check` holds the tool-free guards and runs in the required `xtask gates` job from the start. The `proofs`
+workflow (verus; lean with the oracle tests) is advisory until production first calls a verified kernel; from then on
+`proofs verus` is a step of `xtask gates` (owner decision at M1 exit) and release gate 7 re-verifies the tagged commit.
+The Lean job is promoted under (11). A nightly job checks the Lean models against CPython, runs a Z3 seed sweep and
+reports proofs that fail at half the rlimit. (9) *Kernels.* M1 covers the xargs partition core, the archive
+entry-name check, end-of-file-fixer (Verus and Lean) and the shlex split model (Lean); M2 and M3 are as
+docs/VERIFICATION.md lists them. A kernel extraction is behaviour-preserving. A divergence that a proof exposes is
+either fixed toward pre-commit or registered; the first case: xargs at `max_len == usize::MAX` now raises
+`ArgumentTooLongError` (CHANGELOG "Fixed"). Confirmed defects (gc patch protection, D-DATA-04) are fixed in ordinary
+PRs before a proof locks the behaviour in. (10) *Escape hatch.* An urgent change to a kernel whose proof is not ready
+may land with the kernel marked `pending` in the registry; it is then unmounted, and its marker line says so. Release
+gate 7 fails while any kernel is pending, unless the release notes accept it. (11) *Promotion and exit.* The Lean job
+becomes required after 4 green weeks on main, with p95 under 5 min and the owner's approval. If upkeep exceeds about
+3 engineer-days a month, or two consecutive Verus bumps break more than two proofs, the Verus step returns to
+advisory; the Lean models and oracle tests stay.
+**Rationale.** Verifying the very file `cargo build` compiles, with rustc's own cfg stripping as the eraser, leaves
+the smallest possible gap between what is proved and what ships, and costs users nothing: no crate, no feature, no
+new supply-chain surface. Standalone verification takes seconds and needs no vstd from crates.io. Lean covers what
+SMT handles poorly (simulation proofs against CPython's state machines, inductive and protocol properties), and its
+compiled oracles keep per-PR CI free of Python. Tool-free guards make "only ghost code differs" a mechanical fact
+rather than a review convention.
+**Consequences.** About a dozen kernel files carry contracts; editing one needs Verus (`cargo xtask proofs install`;
+release zips exist for Linux, macOS and Windows, sha256-pinned for x86-linux today); everyone else is unaffected.
+Kernel files trail the newest std API by Verus's rustc lag. Specs and proofs appear in neither rustdoc nor crates.io.
+`xtask gates` gains the sub-second guards now and about 30 s warm (about 1.5 min cold) once the Verus step is made
+blocking; the advisory Lean job takes 3–5 min. docs/VERIFICATION.md lists every kernel with its guarantees, its
+non-guarantees and the trusted base. ARCHITECTURE §13.1 gains layer L9 (proofs). WP-38 owns `proofs/`; package owners
+review their kernel files. Until the Verus step is blocking, a kernel edit that breaks its proof can merge with only
+the advisory job red; release notes must not claim a kernel proved for a commit whose `proofs verus` run failed.
 
 ## Appendix A — Open questions of the research documents, resolved
 
