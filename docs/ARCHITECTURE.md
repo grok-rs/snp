@@ -1471,7 +1471,12 @@ impl Git {
     pub fn write_tree(&self) -> Result<ObjectId, Failure>;
     /// GIT_DIFF_OPTS removed (hazard a); stdout streamed into `sink`; FatalError text for other rcs (02 §7).
     pub fn diff_index_patch(&self, tree: &ObjectId, sink: &mut dyn io::Write) -> Result<DiffIndex, Failure>;
-    pub fn checkout_all(&self, skip_post_checkout: bool, group: Group) -> Result<(), Failure>; // -c submodule.recurse=0 checkout -- .
+    /// D-DATA-19 (ADR-093): `-c submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul`, `:(literal)` paths on stdin,
+    /// `GIT_*_PATHSPECS` removed; the stash's patch paths (`apply --numstat -z`), the rollback's plus `diff --name-only`.
+    pub fn checkout_paths(&self, paths: &ZList, skip_post_checkout: bool, group: Group) -> Result<(), Failure>;
+    pub fn patch_paths(&self, patch: &Path) -> Result<ZList, Failure>;               // apply --numstat -z <patch>
+    pub fn changed_paths(&self) -> Result<ZList, Failure>;                           // diff --name-only -z (refreshed)
+    pub fn rollback_paths(&self, patch: &Path) -> Result<ZList, Failure>;            // patch paths ∪ changed paths
     pub fn apply(&self, patch: &Path, autocrlf_false: bool, group: Group) -> Result<bool, Failure>;
     pub fn apply_check(&self, patch: &Path) -> Result<bool, Failure>;                 // stage_fixed (snp-only)
     pub fn add_literal(&self, paths: &[RepoPath], group: Group) -> Result<(), Failure>; // stage_fixed (snp-only)
@@ -2651,7 +2656,7 @@ make every interruption recoverable.
 
 ```
 Idle ──lock──▶ Locked ──(journal + git-dir pointer created lazily)──▶ Started ──ITA list journaled, rm --cached──▶ ItaCleared
-   ──patch durable + journaled + re-verified──▶ PatchWritten ──checkout -- .──▶ Stashed ──(hooks run)──▶
+   ──patch durable + journaled + re-verified──▶ PatchWritten ──checkout <patch paths>──▶ Stashed ──(hooks run)──▶
    [StagingFixed {paths} journaled ──git add──▶] Restoring
    ──apply ok──▶ Restored ──ITA re-added──▶ Done (journal + pointer deleted, lock token truncated, unlock)
                                       └──apply fails twice──▶ RolledBack ──apply ok──▶ Restored
@@ -2706,8 +2711,12 @@ notice).
    mutation**.
 7. (No process-wide restore registry, ADR-066: the explicit `restore()` on the main thread, the panic-path
    `RunState::drop` and token cancellation cover every exit path; the panic hook and the signal thread never restore.)
-8. **`git -c submodule.recurse=0 checkout -- .`** with `_PRE_COMMIT_SKIP_POST_CHECKOUT=1`, `Role::Critical`
-   (checked). A failure here still goes through restore (pre-commit's `finally` semantics).
+8. **Checkout of the patch's files** (D-DATA-19, ADR-093; pre-commit: `git -c submodule.recurse=0 checkout -- .`):
+   `git apply --numstat -z <patch>` lists them (no file listed: `ValueError` before any mutation), then `git -c
+   submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul` reads them as `:(literal)` pathspecs
+   from stdin, with `_PRE_COMMIT_SKIP_POST_CHECKOUT=1` and without `GIT_*_PATHSPECS`, `Role::Critical` (checked). A
+   change git cannot see (a clean filter, `--assume-unchanged`) is never overwritten. A failure here still goes
+   through restore (pre-commit's `finally` semantics).
 9. Hooks run. `stage_fixed` (extension) may stage files via `StashGuard::stage_fixed` (§8.3).
 10. **Restore** (always, §4.4), every command `Role::Critical` (Isolated group, never signalled, never cancelled,
     `GIT_TERMINAL_PROMPT=0`, a SIGTTIN/SIGTTOU stop fails the command with one stderr line `snp: git needed the
@@ -2715,7 +2724,9 @@ notice).
     first kills the cancelled hooks' remaining descendants (§10.4):
     a. `git apply --whitespace=nowarn <patch>`; on failure `git -c core.autocrlf=false apply --whitespace=nowarn <patch>`.
     b. Both failed → journal `rolling-back`; `[WARNING] Stashed changes conflicted with hook auto-fixes... Rolling back
-       fixes...`; `git -c submodule.recurse=0 checkout -- .` (same env); apply again (both variants).
+       fixes...`; the checkout of step 8 over the patch's files followed by every other file `git diff --name-only`
+       lists (`Git::rollback_paths`: every hook fix git can see is discarded, D-DATA-19); apply again (both
+       variants).
     c. Still failing → journal `failed`; `Failure::Exc(Unexpected, CalledProcessError …)` with the **K+ hint** written
        to **stderr** after the log line: `[ERROR] Your unstaged changes are saved in <patch>; restore them with:
        git apply --whitespace=nowarn <patch>`, plus the fallback for a worktree the rollback could not reset (keep a

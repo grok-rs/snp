@@ -57,6 +57,63 @@ fn os(s: &str) -> OsString {
     OsString::from(s)
 }
 
+/// The pathspec switches [`Git::checkout_env`] removes.
+const PATHSPEC_ENV: [&str; 4] = [
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_NOGLOB_PATHSPECS",
+    "GIT_ICASE_PATHSPECS",
+];
+
+/// D-DATA-19: the arguments of the stash's path-limited checkout ([`Git::checkout_paths`]); its stdin is
+/// [`literal_pathspecs`] of the paths, its environment [`Git::checkout_env`].
+pub const CHECKOUT_PATHS_ARGS: [&str; 5] = [
+    "-c",
+    "submodule.recurse=0",
+    "checkout",
+    "--pathspec-from-file=-",
+    "--pathspec-file-nul",
+];
+
+/// `:(literal)<path>\0` per path: a `--pathspec-file-nul` list in which no name is a glob or carries magic.
+pub fn literal_pathspecs<'a>(paths: impl IntoIterator<Item = &'a [u8]>) -> Vec<u8> {
+    let mut out = Vec::new();
+    for p in paths {
+        out.extend_from_slice(b":(literal)");
+        out.extend_from_slice(p);
+        out.push(0);
+    }
+    out
+}
+
+/// The paths of `git apply --numstat -z`: records `<added>\t<deleted>\t<path>\0` (`-\t-\t` for a binary file); a
+/// rename or copy record (`<added>\t<deleted>\t\0<old>\0<new>\0`, never produced by a stash patch) contributes both
+/// names.
+fn parse_numstat_z(out: &[u8]) -> Result<ZList, Failure> {
+    let mut list = ZList::default();
+    let mut records = out.split(|&b| b == 0);
+    while let Some(rec) = records.next() {
+        if rec.is_empty() {
+            continue;
+        }
+        let mut fields = rec.splitn(3, |&b| b == b'\t');
+        let (Some(_), Some(_), Some(path)) = (fields.next(), fields.next(), fields.next()) else {
+            return Err(bad_record("apply --numstat -z", &BadRecord(rec.to_vec())));
+        };
+        if path.is_empty() {
+            for name in [records.next(), records.next()] {
+                match name {
+                    Some(n) if !n.is_empty() => list.push(n).map_err(too_large)?,
+                    _ => return Err(bad_record("apply --numstat -z", &BadRecord(rec.to_vec()))),
+                }
+            }
+        } else {
+            list.push(path).map_err(too_large)?;
+        }
+    }
+    Ok(list)
+}
+
 /// The brand of this process: `basename(argv[0])` (ADR-023, `Brand::detect`), read once.
 fn process_brand() -> Brand {
     static BRAND: std::sync::OnceLock<Brand> = std::sync::OnceLock::new();
@@ -541,23 +598,95 @@ impl Git {
         }
     }
 
-    /// `git -c submodule.recurse=0 checkout -- .` (checked, `staged_files_only.py:23,81,95`), with
-    /// `_PRE_COMMIT_SKIP_POST_CHECKOUT=1` when `skip_post_checkout` (#1418).
-    pub fn checkout_all(&self, skip_post_checkout: bool, group: Group) -> Result<(), Failure> {
-        let env = if skip_post_checkout {
-            self.env
-                .patched(&EnvPatch::default().set("_PRE_COMMIT_SKIP_POST_CHECKOUT", "1"))
+    /// The environment of [`Git::checkout_paths`]: the pathspec switches removed (`GIT_LITERAL_PATHSPECS=1` would make
+    /// the `:(literal)` prefix part of every name, `GIT_ICASE_PATHSPECS` / `GIT_GLOB_PATHSPECS` /
+    /// `GIT_NOGLOB_PATHSPECS` would change or reject it), plus `_PRE_COMMIT_SKIP_POST_CHECKOUT=1` when
+    /// `skip_post_checkout` (#1418).
+    pub fn checkout_env(&self, skip_post_checkout: bool) -> Env {
+        let env = self.env.without(&PATHSPEC_ENV);
+        if skip_post_checkout {
+            env.patched(&EnvPatch::default().set("_PRE_COMMIT_SKIP_POST_CHECKOUT", "1"))
         } else {
-            self.env.clone()
+            env
+        }
+    }
+
+    /// D-DATA-19: `git -c submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul` fed the
+    /// [`literal_pathspecs`] of `paths` (checked), in [`Git::checkout_env`]. Replaces pre-commit's whole-tree `git -c
+    /// submodule.recurse=0 checkout -- .` (`staged_files_only.py:23,81,95`): only `paths` are rewritten from the index,
+    /// so a working-tree change that `git diff` cannot see (hidden by a clean filter, or in an `--assume-unchanged`
+    /// file) is never overwritten. No argv limit (the list is on stdin), every name literal. An empty list runs
+    /// nothing.
+    pub fn checkout_paths(
+        &self,
+        paths: &ZList,
+        skip_post_checkout: bool,
+        group: Group,
+    ) -> Result<(), Failure> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let argv = self.argv(&CHECKOUT_PATHS_ARGS);
+        let stdin = Stdin::Bytes(Arc::from(literal_pathspecs(paths.iter())));
+        let env = self.checkout_env(skip_post_checkout);
+        let out = match self.backend.capture(&argv, &env, &self.root, stdin, group) {
+            Ok(c) => Out {
+                status: c.status.0,
+                stdout: c.stdout,
+                stderr: Some(c.stderr),
+            },
+            Err(e) => Out::from_spawn_error(&e),
         };
-        run::checked(
-            self.backend.as_ref(),
-            &self.argv(&["-c", "submodule.recurse=0", "checkout", "--", "."]),
-            &env,
-            &self.root,
-            group,
-        )
-        .map(drop)
+        if out.status == 0 {
+            Ok(())
+        } else {
+            Err(out.called_process_error(&argv))
+        }
+    }
+
+    /// D-DATA-19: the paths a stash patch touches, from git's own patch parser: `git apply --numstat -z <patch>`
+    /// (checked; it reads the patch and changes nothing). Exactly the files whose content `git diff-index` found
+    /// different — never a file that is only stat-dirty, which `diff-index --name-only` would list.
+    pub fn patch_paths(&self, patch: &Path) -> Result<ZList, Failure> {
+        let args = [
+            os("apply"),
+            os("--numstat"),
+            os("-z"),
+            patch.as_os_str().to_os_string(),
+        ];
+        parse_numstat_z(&self.checked(&args)?.stdout)
+    }
+
+    /// D-DATA-19: the files whose working-tree content differs from the index as `git diff` sees it after refreshing
+    /// the stat data — what a whole-tree checkout visibly changes, without the files whose differences git cannot see:
+    /// `git diff --name-only -z --no-renames --no-ext-diff --no-color --ignore-submodules --no-relative` (checked).
+    pub fn changed_paths(&self) -> Result<ZList, Failure> {
+        self.checked_zlist(&[
+            "diff",
+            "--name-only",
+            "-z",
+            "--no-renames",
+            "--no-ext-diff",
+            "--no-color",
+            "--ignore-submodules",
+            "--no-relative",
+        ])
+    }
+
+    /// D-DATA-19: what the stash rollback checks out — the patch's paths (so it applies again) followed by every other
+    /// path [`Git::changed_paths`] lists (so every hook fix git can see is discarded, as pre-commit's whole-tree
+    /// checkout discards it), each once.
+    pub fn rollback_paths(&self, patch: &Path) -> Result<ZList, Failure> {
+        let touched = self.patch_paths(patch)?;
+        let changed = self.changed_paths()?;
+        let mut seen: std::collections::HashSet<&[u8]> = std::collections::HashSet::new();
+        let mut out = ZList::default();
+        for p in touched.iter().chain(changed.iter()) {
+            if seen.insert(p) {
+                out.push(p).map_err(too_large)?;
+            }
+        }
+        Ok(out)
     }
 
     /// One `_git_apply` attempt (`staged_files_only.py:26-33`): `git apply --whitespace=nowarn <patch>` or, with
@@ -989,6 +1118,19 @@ impl Git {
                 &self.env,
                 &self.root,
                 Stdin::Null,
+                Group::Inherit,
+            )
+            .map_err(|e| Failure::from_io(&e.io, Some(OsStr::new("git")), None))
+    }
+
+    /// [`Git::run_raw`] with `input` on stdin (the stash rollback's [`CHECKOUT_PATHS_ARGS`] call, D-DATA-19).
+    pub fn run_raw_input(&self, args: &[&OsStr], input: Vec<u8>) -> Result<Captured, Failure> {
+        self.backend
+            .capture(
+                &self.argv(args),
+                &self.env,
+                &self.root,
+                Stdin::Bytes(Arc::from(input)),
                 Group::Inherit,
             )
             .map_err(|e| Failure::from_io(&e.io, Some(OsStr::new("git")), None))

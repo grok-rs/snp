@@ -35,7 +35,11 @@ fn orphan_of(sb: &Sandbox, repo: &Path, foo: &[u8]) -> PathBuf {
 /// A K+ failure of a run over the worktree as it is (the caller made the unstaged changes); returns the patch.
 fn orphan_now(sb: &Sandbox, repo: &Path) -> PathBuf {
     let spy = Spy::new();
-    spy.on(&["apply"], None, Reply::Exit(1, Vec::new(), Vec::new()));
+    spy.on(
+        &["apply", "--whitespace=nowarn"],
+        None,
+        Reply::Exit(1, Vec::new(), Vec::new()),
+    );
     spy.on(
         &["-c", "core.autocrlf=false", "apply"],
         None,
@@ -396,7 +400,25 @@ fn the_long_notice_restores_more_than_64_paths() {
     let p = orphan_now(&sb, &repo);
     sb.git(&repo, &["checkout", "--", "."]);
     let notice = u_hint(&sb, &repo, &p);
-    assert!(notice.contains("-- :/"), "{notice}");
+    // D-DATA-19: the fallback names the kept list of the patch's 70 files, never the whole worktree (`-- :/` would
+    // overwrite changes git cannot see in files the patch does not touch).
+    let kept = format!("{}.paths", p.display());
+    assert!(
+        notice.contains(&format!(
+            " --worktree --pathspec-file-nul --pathspec-from-file={kept}, then run the command again"
+        )),
+        "{notice}"
+    );
+    assert!(!notice.contains(":/"), "{notice}");
+    let listed = std::fs::read(&kept).unwrap();
+    let mut names: Vec<&[u8]> = listed
+        .split(|&b| b == 0)
+        .filter(|n| !n.is_empty())
+        .collect();
+    names.sort_unstable();
+    let mut want: Vec<Vec<u8>> = (0..70).map(|i| format!("f{i}").into_bytes()).collect();
+    want.sort_unstable();
+    assert_eq!(names, want.iter().map(Vec::as_slice).collect::<Vec<_>>());
     let (ok, stderr) = run_notice(&sb, &repo, &notice);
     assert!(ok, "{stderr}");
     assert_eq!(sb.index(&repo), index_before);

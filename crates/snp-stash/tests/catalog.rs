@@ -508,8 +508,10 @@ mod rows {
         let repo = sb.foo_staged("r");
         sb.write(&repo, "foo", b"herp\n");
         let spy = Spy::new();
+        // D-DATA-19: the checkout is limited to the patch's files, so the failing command is that checkout
+        // (pre-commit's text names `checkout -- .`).
         spy.on(
-            &["-c", "submodule.recurse=0", "checkout", "--", "."],
+            &["-c", "submodule.recurse=0", "checkout"],
             Some(1),
             Reply::Exit(1, Vec::new(), b"error: boom\n".to_vec()),
         );
@@ -521,8 +523,8 @@ mod rows {
         assert_eq!(
             text,
             format!(
-                "command: ({}, '-c', 'submodule.recurse=0', 'checkout', '--', '.')\nreturn code: 1\nstdout: \
-                 (none)\nstderr:\n    error: boom",
+                "command: ({}, '-c', 'submodule.recurse=0', 'checkout', '--pathspec-from-file=-', \
+                 '--pathspec-file-nul')\nreturn code: 1\nstdout: (none)\nstderr:\n    error: boom",
                 snp_pycompat::repr::repr_str(&git_exe(&sb, &repo))
             )
         );
@@ -540,7 +542,7 @@ mod rows {
         let original = sb.unstaged_diff(&repo);
         let spy = Spy::new();
         spy.on(
-            &["apply"],
+            &["apply", "--whitespace=nowarn"],
             None,
             Reply::Exit(1, Vec::new(), b"error: nope\n".to_vec()),
         );

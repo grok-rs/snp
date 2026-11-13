@@ -25,6 +25,16 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
 - Divergence D-MISC-09 is registered: a file pygrep cannot open prints the final line of Python's traceback, as snp
   has always done. No behaviour changes (ADR-090).
 
+### Fixed
+
+- The stash no longer loses a working-tree change that `git diff` cannot see: a line a clean filter hides (for
+  example `filter.<name>.clean = grep -v SECRET`) or an edit in an `--assume-unchanged` file was overwritten whenever
+  another file had an unstaged change, because the stash checked out the whole tree (pre-commit 4.7.0 does the same;
+  prek fixed it in j178/prek#2912). The stash now checks out only the files of its patch, and the conflict rollback
+  those plus every file `git diff` shows changed, so hook fixes are still discarded as before. A failing stash
+  checkout's `CalledProcessError` names the new command; recovery hints with too many files to spell out read them
+  from a kept `<patch>.paths` list instead of restoring the whole worktree. New divergence D-DATA-19 (ADR-093).
+
 ## [2.0.0] - 2026-11-02
 
 snp 2.0.0 is a complete rewrite: a drop-in replacement for pre-commit 4.6.2. It shares only the name with the

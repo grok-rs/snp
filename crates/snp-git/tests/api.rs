@@ -149,7 +149,11 @@ mod api {
         has::<fn(&Git, &ObjectId, &mut dyn io::Write) -> Result<DiffIndex, Failure>>(
             Git::diff_index_patch,
         );
-        has::<fn(&Git, bool, Group) -> Result<(), Failure>>(Git::checkout_all);
+        has::<fn(&Git, bool) -> Env>(Git::checkout_env);
+        has::<fn(&Git, &ZList, bool, Group) -> Result<(), Failure>>(Git::checkout_paths);
+        has::<fn(&Git, &Path) -> Result<ZList, Failure>>(Git::patch_paths);
+        has::<fn(&Git) -> Result<ZList, Failure>>(Git::changed_paths);
+        has::<fn(&Git, &Path) -> Result<ZList, Failure>>(Git::rollback_paths);
         has::<fn(&Git, &Path, bool, Group) -> Result<bool, Failure>>(Git::apply);
         has::<fn(&Git, &Path) -> Result<bool, Failure>>(Git::apply_check);
         has::<fn(&Git, &[RepoPath], Group) -> Result<(), Failure>>(Git::add_literal);

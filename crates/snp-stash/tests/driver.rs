@@ -64,7 +64,7 @@ mod process {
             snp_proc::resolve::find_executable(OsStr::new("git"), &sb.env, &sb.root).unwrap();
         let log = sb.path("git-log");
         let script = format!(
-            "#!/bin/sh\nsub=$1\n[ \"$1\" = -c ] && sub=$3\npg=-\n[ -r /proc/$$/stat ] && pg=$(cut -d' ' -f5 /proc/$$/stat)\n\
+            "#!/bin/sh\nsub=$1\n[ \"$1\" = -c ] && sub=$3\n[ \"$1\" = apply ] && [ \"$2\" = --numstat ] && sub=apply-numstat\npg=-\n[ -r /proc/$$/stat ] && pg=$(cut -d' ' -f5 /proc/$$/stat)\n\
              echo \"$pg $*\" >> '{log}'\n\
              if [ -n \"${{SIGTERM_AT:-}}\" ] && [ \"$sub\" = \"$SIGTERM_AT\" ]; then kill -TERM $PPID; sleep 0.2; fi\n\
              if [ \"$sub\" = apply ] && [ -n \"${{SLOW_APPLY:-}}\" ]; then\n\
@@ -118,7 +118,11 @@ mod process {
     fn assert_one_unsignalled_apply(sb: &Sandbox, driver_pid: u32, stdout: &str) {
         let log = std::fs::read_to_string(sb.path("git-log")).unwrap();
         assert!(!log.contains("SIGNALLED"), "{log}");
-        let applies: Vec<&str> = log.lines().filter(|l| l.contains(" apply ")).collect();
+        // D-DATA-19's `apply --numstat` only lists the patch's files: not a restore.
+        let applies: Vec<&str> = log
+            .lines()
+            .filter(|l| l.contains(" apply ") && !l.contains(" apply --numstat "))
+            .collect();
         assert_eq!(applies.len(), 1, "{log}");
         assert!(applies[0].contains(" apply --whitespace=nowarn "), "{log}");
         assert!(!log.contains("core.autocrlf=false"), "{log}");

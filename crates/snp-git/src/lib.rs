@@ -24,7 +24,7 @@ mod zlist;
 
 pub use backend::{GitBackend, ProcBackend};
 pub use exe::{GitCaps, GitExe, GitVersion};
-pub use git::Git;
+pub use git::{CHECKOUT_PATHS_ARGS, Git, literal_pathspecs};
 pub use owned::{CloneMode, OwnedRepo, RevInfo, no_git_env, prefetch_eligible};
 pub use types::{
     DiffFingerprint, DiffIndex, IndexEntries, MergeState, ObjectId, PrePushNs, RepoInfo,
