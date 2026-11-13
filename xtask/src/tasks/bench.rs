@@ -1603,6 +1603,12 @@ fn ensure_mirror(work: &Work, from: Option<&str>) -> anyhow::Result<()> {
     }
     let src = from.unwrap_or(PCH_URL);
     say(&format!("bench: mirroring pre-commit-hooks from {src}"));
+    // a partial mirror (an interrupted clone, or a CI cache restore that kept the directory without its HEAD) would
+    // make `git clone` refuse the non-empty destination: start over
+    if mirror.exists() {
+        std::fs::remove_dir_all(&mirror)
+            .with_context(|| format!("removing the incomplete mirror {}", mirror.display()))?;
+    }
     if let Some(parent) = mirror.parent() {
         std::fs::create_dir_all(parent)?;
     }
