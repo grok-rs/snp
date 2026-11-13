@@ -132,7 +132,9 @@ jobs:
         if: steps.paths.outputs.run == 'true'
         run: .github/scripts/deps-lock.sh checkout
       # leanprover/lean-action v1.7.1: installs elan and the toolchain of proofs/lean/lean-toolchain, builds with
-      # --wfail (a `sorry` is only a warning otherwise), audits axioms and re-checks with leanchecker.
+      # --wfail (a `sorry` is only a warning otherwise). Its own axiom-audit and leanchecker steps stay off: they derive
+      # the module name from the package name ("Snpmodels", not SnpModels) and find no oleans. `cargo xtask proofs lean`
+      # below runs both on the right module (L2, L3).
       - uses: leanprover/lean-action@ba3fdfe5c4476c925da13bf11a005ddb47e47aee # v1.7.1
         if: steps.paths.outputs.run == 'true'
         with:
@@ -140,8 +142,8 @@ jobs:
           build-args: --wfail
           test: false
           lint: false
-          axiom-audit: true
-          leanchecker: true
+          axiom-audit: false
+          leanchecker: false
           use-mathlib-cache: false
       - if: steps.paths.outputs.run == 'true'
         run: rustup toolchain install
