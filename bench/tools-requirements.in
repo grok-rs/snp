@@ -1,4 +1,4 @@
-# The bench helper tools: uv (on the hermetic PATH, so prek and snp never download one; prek 0.5.5 pins 0.12.19) and
+# The bench helper tools: uv (on the hermetic PATH, so prek and snp never download one; prek 0.5.10 defaults to 0.13.5) and
 # pip (downloads the wheelhouse).
-uv==0.12.19
+uv==0.13.5
 pip==25.3
