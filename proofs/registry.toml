@@ -43,7 +43,7 @@ mutants = [
     { find = "return Err(Refusal::DotDot);", replace = "return Ok(true);" },
     # Lets a NUL byte through in the first position.
     { find = "if b == 0 {", replace = "if b == 0 && i > 0 {" },
-    # Forgets `\` as a separator when `windows` (finds avoid backslashes: run.sh's awk may unescape them).
+    # Forgets `\` as a separator when `windows`.
     { find = "(windows && b == ", replace = "(false && b == " },
     # Forgets `\x` as a rooted name.
     { find = "if c0 == b'/' || c0 ==", replace = "if c0 == b'/' || false && c0 ==" },
@@ -82,8 +82,8 @@ oracle_test = "crates/snp-hooks/tests/lean_oracle.rs"
 # fingerprint: `cargo xtask proofs fingerprint <file.rs::item>` (§3.1, G10). `kernelRun` in Eof.lean
 # transliterates `end_of_file_run`, `kernel` the whole-file `end_of_file`.
 anchors = [
-    { item = "crates/snp-hooks/src/pch/p0/kernels/eof.rs::end_of_file_run", fingerprint = "TBD" },
-    { item = "crates/snp-hooks/src/pch/p0/kernels/eof.rs::end_of_file", fingerprint = "TBD" },
+    { item = "crates/snp-hooks/src/pch/p0/kernels/eof.rs::end_of_file_run", fingerprint = "a53899d4a4d77d45" },
+    { item = "crates/snp-hooks/src/pch/p0/kernels/eof.rs::end_of_file", fingerprint = "81448e4d8ba287b6" },
 ]
 
 [[model]]
@@ -94,7 +94,7 @@ oracle = "shlex-model"
 oracle_test = "crates/snp-pycompat/tests/lean_oracle.rs"
 # fingerprint: `cargo xtask proofs fingerprint <file.rs::item>` (§3.1, G10).
 anchors = [
-    { item = "crates/snp-pycompat/src/shlex.rs::split", fingerprint = "TBD" },
-    { item = "crates/snp-pycompat/src/shlex.rs::quote", fingerprint = "TBD" },
-    { item = "crates/snp-pycompat/src/shlex.rs::join", fingerprint = "TBD" },
+    { item = "crates/snp-pycompat/src/shlex.rs::split", fingerprint = "71f6ef5a43be5b96" },
+    { item = "crates/snp-pycompat/src/shlex.rs::quote", fingerprint = "00a8f6564f6491e1" },
+    { item = "crates/snp-pycompat/src/shlex.rs::join", fingerprint = "8e2d42c5e4ce29b1" },
 ]

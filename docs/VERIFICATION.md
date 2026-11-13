@@ -1,6 +1,6 @@
 # Formal verification (ADR-095)
 
-*Status (2026-11-13): ADR-095 accepted. M0 (pipeline, guards, CI, docs) is in place; M1 has started: K1 is verified, K2–K4 are in progress (§9.1). M2 and M3 are planned, not started. Owners: WP-38 "Formal verification" owns `proofs/` and the specs; WP-00 owns the root manifest, xtask (`xtask/src/tasks/proofs.rs`) and CI. Package owners review the kernel files in their crates.*
+*Status (2026-11-13): ADR-095 accepted. M0 (pipeline, guards, CI, docs) is in place; M1's kernels are in: K1–K3 are verified with Verus (39 items with `--no-cheating`) and K3 and K4 have proved Lean models with oracle tests (§9.1); the M1 exit decision on blocking CI is pending (§7). M2 and M3 are planned, not started. Owners: WP-38 "Formal verification" owns `proofs/` and the specs; WP-00 owns the root manifest, xtask (`xtask/src/tasks/proofs.rs`) and CI. Package owners review the kernel files in their crates.*
 
 Where this document and the code disagree, the code and `proofs/registry.toml` are what CI checks; fix whichever is wrong in the same PR.
 
@@ -204,16 +204,20 @@ mutants = [
 ]
 ```
 
-Planned shapes (no entry exists yet; K3 and K4 add the first models):
+Shapes of the other entries (`[[model]]` as registered for K4; `[[trusted]]` is still empty):
 
 ```toml
 [[model]]
 id = "K4-shlex-split"
 lean = "proofs/lean/SnpModels/Shlex.lean"
-theorems = ["SnpModels.Shlex.pySplit_eq_split", "SnpModels.Shlex.split_quote"]
+theorems = ["SnpModels.Shlex.pySplit_eq_split", "SnpModels.Shlex.split_quote", "SnpModels.Shlex.split_join"]
 oracle = "shlex-model"                      # a lean_exe of proofs/lean/lakefile.toml
 oracle_test = "crates/snp-pycompat/tests/lean_oracle.rs"
-anchors = [{ item = "crates/snp-pycompat/src/shlex.rs::split", fingerprint = "<16 hex digits>" }]
+anchors = [
+    { item = "crates/snp-pycompat/src/shlex.rs::split", fingerprint = "71f6ef5a43be5b96" },
+    { item = "crates/snp-pycompat/src/shlex.rs::quote", fingerprint = "00a8f6564f6491e1" },
+    { item = "crates/snp-pycompat/src/shlex.rs::join", fingerprint = "8e2d42c5e4ce29b1" },
+]
 
 [[trusted]]                                 # empty in M1; from M2:
 item = "Memchr: FindByte"                   # `Type: Trait`
@@ -224,7 +228,7 @@ test = "crates/snp-git/tests/find_byte.rs::memchr_matches_scalar"
 **Field rules** (`cargo xtask proofs check` rejects unknown keys, so a typo cannot drop a check):
 
 - Only the pinned platforms have a sha256. Add another platform's hash when a contributor needs it; `proofs-tools.sh` refuses a platform without one.
-- `verified_min` is the number of items Verus reports verified for this kernel's mount, its spec and the lib lemmas it introduced, measured when the entry is added. A whole-root run must verify at least the sum over all verified kernels (V2).
+- `verified_min` is the number of items Verus reports verified for this kernel's mount, its spec and the lib lemmas it introduced, measured when the entry is added (in practice: the whole-root count with the kernel minus the count without it). A whole-root run must verify at least the sum over all verified kernels (V2). Verus's `verified` count is coarse: it does not track the number of `func-details` entries (adding a spec fn can leave it unchanged), so the floor catches a lost kernel or spec module, not a single lost lemma; V2's manifest check covers exec functions one by one.
 - `mutants`: the first occurrence of `find` in `file` is replaced by `replace`. The mutant must fail *verification*; one that fails to compile is reported as invalid.
 - `callers` and `test` name `path/to/file.rs::fn`; anchors name `path/to/file.rs::item`, where `item` is a top-level item, `module::item` of an inline module, or `Type::method`.
 - **Anchor fingerprint**: `fnv1a64` over the item's tokens as syn lexes them, without its `#[doc]` attributes and without a trailing comma before a closing delimiter, each token rendered alone and joined by single spaces, written as 16 lowercase hex digits. Comments, doc comments and rustfmt re-wrapping keep it; any change to the code, its attributes or its signature changes it. `cargo xtask proofs fingerprint <file.rs::item>` prints the current value; a placeholder such as `TBD` fails G10 until it is filled.
@@ -288,8 +292,8 @@ proofs/lean/
 - **Why not snp-difftest.** snp-difftest cannot host them: `check_dag.rs:162` gives it normal edges only to snp-testkit and snp-yaml, and dev-dependencies must be ancestors, so snp-hooks, snp-net, snp-stash and snp-store are out of reach.
 - **Why not a separate harness crate.** A non-member harness crate would add a lockfile and lock-parity tooling. Home-crate tests need neither, and snp-pycompat keeps zero dev-dependencies (ADR-056).
 - **Environment.** Tests read the oracle directory from `SNP_LEAN_ORACLES` and skip when it is unset. With `SNP_REQUIRE_LEAN_ORACLES=1` (CI) a skip is a failure. The oracle runs as a child process with a cleared environment.
-- **Protocol.** One hex line protocol: a request goes in, `OK <hex>…` or `ERR <text>` comes out, flushed per line, at about 21–25 µs per round trip.
-- **Oracles run the proved functions.** `shlex-model` also self-checks `pySplit` against `split` and reports a mismatch.
+- **Protocol.** One hex line protocol: a request goes in, `OK <hex>…` (for `eof-model`, `OK <code> :<hex>`) or `ERR <text>` comes out, flushed per line, at about 21–25 µs per round trip.
+- **Oracles run the proved functions.** `shlex-model` also self-checks `pySplit` against `split`, and `eof-model` checks `(kernel f).apply f` against `pyFixFile`; each reports a mismatch.
 - **Nightly.** `py_vs_lean` (Python, `python3 -I`, in the existing nightly oracle job) compares the models with CPython 3.12 and with pre-commit-hooks at the pinned refs. Per-PR CI stays free of Python, as §13.3 requires.
 
 ---
@@ -328,7 +332,7 @@ Tools are found in the `proofs-tools.sh path` directory, else on `PATH`; `proofs
 
 `check-unsafe` scans `proofs/` too, and requires `#![forbid(unsafe_code)]` in the Verus root, which no Cargo manifest covers. Only `proofs/verus/trusted/`, if it ever exists, is exempt. `.gitignore` has `/proofs/lean/.lake/` and `/proofs/verus/out/`.
 
-`proofs/verus/run.sh` stays as a dependency-free reference runner of the same Verus command (whole root, `--min`, `--mutant`).
+The interim `proofs/verus/run.sh` was removed when `cargo xtask proofs` landed; proofs/README.md shows the raw `verus` command for extra flags.
 
 ## 7. CI and gating
 
@@ -347,7 +351,7 @@ Tools are found in the `proofs-tools.sh path` directory, else on `PATH`; `proofs
 - Permissions are read-only.
 
 **Runtime (measured unless noted):**
-- **Verus:** 25 items in 1.7 s wall. M1 is about 40–60 items (estimated under 10 s) plus about 2 s per mutant. Tool install takes seconds from cache; cold, the 36 MB zip plus the minimal toolchain take about 40–60 s (estimated). Net cost to `xtask gates`: about 30 s warm, about 1.5 min cold.
+- **Verus:** M1's 39 items (K1–K3) in about 3 s wall for the root run; with the 8 mutants `cargo xtask proofs verus` takes about 30 s. Tool install takes seconds from cache; cold, the 36 MB zip plus the minimal toolchain take about 40–60 s (estimated). Net cost to `xtask gates`: about 30 s warm, about 1.5 min cold.
 - **Lean:** build 3.5 s, leanchecker 1.5 s; toolchain fetch 20–40 s (estimated). The oracle tests themselves take about 10–20 s, dominated by building snp-hooks (rust-cache). Expected Lean job: 3–5 min.
 
 ---
@@ -394,8 +398,12 @@ The properties below were checked against the current code. Where a property hol
 
 | ID | Status (2026-11-13) |
 |---|---|
-| K1 | **verified**: registered, mounted, 10 items with `--no-cheating`, both mutants killed, called by `xargs::partition` |
-| K2, K3, K4 | in progress (M1); not registered yet, so nothing below is claimed for them until their registry entries land |
+| K1 | **verified**: registered, mounted, 10 items with `--no-cheating`, 2 mutants killed, called by `xargs::partition` |
+| K2 | **verified**: registered, mounted, 15 items, 4 mutants killed, called by `archive/path.rs::entry_path` |
+| K3 | **verified** (Verus) and **proved model** (Lean): 14 items, 2 mutants killed, called by `end_of_file_fixer.rs::tail_action`; Lean model with 5 theorems and the `eof-model` oracle test in snp-hooks |
+| K4 | **proved model** (Lean only, by design): 3 theorems, `shlex-model` oracle test in snp-pycompat, 3 fingerprinted anchors |
+
+Whole root: 39 items verified, 0 errors, with `--no-cheating`, in about 3 s (the sum of the three floors, 10 + 15 + 14); 8 registered mutants, each failing verification (not compilation). Lean: `lake build --wfail`, the axiom audit (only `propext`, `Classical.choice`, `Quot.sound`) and `leanchecker` pass; both oracle tests pass with `SNP_REQUIRE_LEAN_ORACLES=1`.
 
 
 | ID | Kernel | Tool | Crate | Exercises | Production change |
@@ -426,7 +434,7 @@ The properties below were checked against the current code. Where a property hol
 - **Evidence.** In the repository the root verifies 10 items for K1 in about 1.5 s (`cargo xtask proofs verus`); the prototype's count of 12 covered a different set of items.
 
 **K2: archive entry-name check.**
-- **Code.** `crates/snp-net/src/archive/path.rs:19-91` → new `archive/entry.rs::entry_components(raw, windows) -> Result<Vec<(usize, usize)>, Refusal>`.
+- **Code.** `crates/snp-net/src/archive/path.rs:19-91` → new `archive/entry.rs::entry_components(raw, windows) -> Result<Vec<(usize, usize)>, Refusal>` with `Refusal = Rooted | DotDot | Nul` and the private helpers `is_sep`, `is_rooted`, `classify`. `is_rooted` and `split` stay in `path.rs` too, because `resolve_symlink` uses them.
 - **Definitions.** `sep_w = {/}`, or `{/, \}` when `windows`. `comps_w(raw) = [c ∈ split(raw, sep_w) | c ≠ ε ∧ c ≠ "."]`. `rooted(raw)` means the first byte is `/` or `\`, or `raw` starts with `[A-Za-z]:`.
 - **Properties.**
   - **P0** total for every byte string and both values of `windows`.
@@ -435,9 +443,11 @@ The properties below were checked against the current code. Where a property hol
   - **P3** every returned component is plain: non-empty, not `.` or `..`, no NUL, no separator.
   - **P4** validation precedes stripping, so a `..` inside the stripped prefix still refuses.
   - **P5** lemma: `∀D. normpath(D ++ v) = D ++ v` for plain `v`.
-- **Truth today.** On Unix today's `entry_path` equals the kernel followed by the `OsStr` conversion. On Windows the shell's `component()` (UTF-8, NTFS-illegal characters, reserved names) only adds refusals. The shell is monotone: it may turn `Ok` into `Err`, never the reverse.
+- **Truth today.** On Unix today's `entry_path` equals the kernel followed by the `OsStr` conversion. On Windows the shell's `component()` (UTF-8, NTFS-illegal characters, reserved names) only adds refusals. The shell is monotone: it may turn `Ok` into `Err`, never the reverse. The shell converts **every** kept span with `component()` before stripping, as the former code did, so the Windows-only refusals also cover the stripped prefix.
+- **Proved (Verus).** P0–P3 are the exec contract of `entry_components` (`r is Err ⇔ refused(raw, windows)`, the `Rooted` variant exactly for `ε`/rooted names, and `spans_ok` on `Ok`); P5 is `lemma_normpath_append_plain`, over a component-level `normpath` fold (`norm_step`/`norm_from`). 7 lemmas in `proofs/verus/spec/archive_entry.rs`.
+- **Not proved.** P4 is not a Verus theorem about the shell: the shell is unverified by design (OsString conversion, platform `component()`); P4 rests on the kernel taking no strip count plus P1 over the whole name, and is tested (`../top/x` strip 1, `a/../x/y` strip 2, `t\0p/x` strip 1). The monotonicity of the Windows shell holds by construction but is not machine-checked, and clippy and tests ran only on Linux (the kernel's `windows = true` variant is verified and tested there). P5 is about the component-level model, not Python's string-level `posixpath`/`ntpath.normpath` (drives, the real filesystem walk): out of scope.
 - **G:** no accepted name can leave `dest` lexically, for every byte string. **¬G:** the tar/zip decoders, the O_NOFOLLOW walk, symlinks (backlog), case-insensitive aliasing, TOCTOU, and the Windows-only refusals in the shell.
-- **Evidence.** The zero-dependency prototype verified the safety half (P0, P3) with 6 items, and its `..`-accepting mutant fails. The functional half (P1, P2) is the M1 work.
+- **Evidence.** 15 items in the whole root. Mutants: accept `..`, let a leading NUL through, forget `\` as a Windows separator, forget `\x` as rooted (all fail verification). Unit tests in `path.rs` compare the kernel with the former check, rewritten with the platform as a parameter, on every name over `a . / \ NUL : C` up to length 6 for both `windows` values (274,514 cases).
 
 **K3: end-of-file-fixer.**
 - **Code.** `crates/snp-hooks/src/pch/p0/kernels.rs:84-157` (`EofAction`, `end_of_file`, `is_eol`, `end_of_file_run`, `end_of_file_bytes`) → new `kernels/eof.rs`, re-exported from `kernels`. The re-export is needed because `kernels.rs` imports memchr, which a kernel file may not. The shipped path is `end_of_file_fixer.rs:76-121` (`tail_action` → `end_of_file_run`).
@@ -453,9 +463,11 @@ The properties below were checked against the current code. Where a property hol
   - **E3** no data loss: `Truncate(n) ⇒ n < |s|` and every byte of `s[n..]` is CR or LF. `Append ⇔ s ≠ ε ∧ last(s) ∉ {CR, LF}`.
   - **E4** tail locality (the fuzz invariant as a lemma): `end_of_file(s[k..], |s|) = end_of_file(s, |s|)` when `s[k..]` contains a non-CR/LF byte or `k = 0`.
   - **E5** `F(F(s)) = F(s)`, and `Some(v) ⇒ v ≠ s`.
-- **Pattern.** Exec functions ensure `r == spec(inputs@)`. The relational properties E2, E4 and E5 are spec lemmas, so no ghost parameters are needed.
+- **Pattern.** Exec functions ensure `r == spec(inputs@)` (`run_action`, `tail_action`, `file_action`, `bytes_result` in `proofs/verus/spec/eof.rs`; `run_action` states the saturating `Truncate` faithfully, even for inconsistent inputs). The relational properties are spec lemmas, so no ghost parameters are needed: E2 `lemma_run_action_apply`/`lemma_tail_action_apply`, E3 `lemma_no_data_loss`, E4 `lemma_tail_locality`, E5 `lemma_fix_idempotent`, with `lemma_run_char`, `lemma_run_unique` and `lemma_run_append` as helpers. Rewrites for Verus, each with the same results: the trailing-run count is an index loop, the `[\n, \r\n, \r]` `starts_with` loop a match on the first two bytes, `to_vec` is `Vec::new()` + `extend_from_slice`, and `Result::unwrap_or` is `.ok().unwrap_or(..)` or a match.
+- **Evidence.** 14 items in the whole root; mutants `run >= len` → `>` and "the run stops at the first `\r`" fail verification, and spec mutants (tried, not registered) make E2 fail as well as the contract. Because each contract restates the code's exact result, any kernel edit fails on the contract alone; the lemmas are what carry the properties.
 - **Lean (proved, no `sorry`).** `pyFixFile_eq` (the Python transliteration equals F, including the return code), `kernel_apply`, `fix_idem`, `fix_body`, `pyFixFile_twice`.
-- **Bridge.** `eof-model` against `end_of_file_bytes` on all of `{a, CR, LF}^≤10` (88,573 inputs) plus seeded random inputs.
+- **Bridge.** `crates/snp-hooks/tests/lean_oracle.rs`: `eof-model` against `end_of_file_bytes` on all of `{a, CR, LF}^≤10` (88,573 inputs) plus 20,000 seeded SplitMix64 inputs (seed `0x5eed000300000001`) over a wider alphabet, a quarter ending in line-ending runs of up to 300 bytes. The oracle replies `OK <code> :<hex>` and self-checks `(kernel f).apply f` against `pyFixFile` (`MISMATCH` otherwise). Anchors: `eof.rs::end_of_file_run` and `eof.rs::end_of_file`.
+- **Not proved.** That `tail_action` computes `(head, run)` correctly from its 4 KiB backward block reads (an I/O shell until K6; covered by the unit tests `tail_scan_matches_kernel` and `long_eol_run_is_linear`). That the Rust code equals the Lean model for all inputs: Verus proves the Rust code equals its own spec `fix`, transcribed to match Lean `fix`, but no tool checks that the two definitions are equal; the link is tested. TOCTOU between the decision and `set_len`/append.
 - **G:** byte-exact parity with `fix_file` for the decision and the bytes; only trailing line endings are ever removed. **¬G:** the I/O shell (`tail_action`'s block reads until K6; the TOCTOU window before `set_len`).
 
 **K4: shlex split model.**
@@ -463,11 +475,20 @@ The properties below were checked against the current code. Where a property hol
 - **Properties.**
   - **S1 (Lean)** `pySplit_eq_split: ∀s. pySplit s = split s`. The one-pass state machine snp implements equals the transliteration of CPython's `read_token`/`__next__` (posix, `whitespace_split`, `commenters=''`), with the same tokens and both `ValueError`s.
   - **S2 (Lean)** `split_quote: ∀s. split (quote s) = .ok [s]`.
+  - **S5 (Lean)** `split_join: ∀ts. split (join ts) = .ok ts`, via the helper lemmas `quote_run` and `join_run`. `shlex-model` serves `join` too.
   - **S3 (tested per PR)** `snp_pycompat::shlex::split` agrees with `shlex-model` on all 335,923 strings over `{' ', '\t', '\'', '"', '\\', 'a'}` up to length 7, plus seeded random inputs.
-  - **S4 (tested nightly)** the model agrees with CPython 3.12 (the prototype checked 157,257 split and 20,000 quote cases).
-  - The anchor pins `split` and its state types.
-  - Next theorem: `split (join ts) = .ok ts`.
-- **G:** argv parity with CPython for every string, at model level; the Rust code equals the model on the tested domain. **¬G:** a proof about the Rust `split`; Python lone surrogates, which cannot reach `&str`.
+  - **S3 detail.** `crates/snp-pycompat/tests/lean_oracle.rs` (std only; `cargo tree -p snp-pycompat -e normal,dev` stays empty) also runs 20,000 random `split` strings (seed `0x5eed000400000001`, 16 characters incl. CR, LF, `#`, NUL, non-ASCII and an emoji), all 37,449 `quote` inputs up to length 5 (checking `quote_bytes = quote` too) and 5,002 random `join` lists with a Rust-side `split(join(args)) == args` check.
+  - **S4 (tested nightly, not yet wired into CI)** `xtask/oracle/py_vs_lean.py` compares the model with CPython 3.12 `shlex` (split exhaustive to length 7, quote to length 5, random split/quote/join; 413,372 cases locally) and the eof model with pre-commit-hooks v6.0.0 `fix_file` (39,524 cases locally).
+  - The anchors pin `split`, `quote` and `join`.
+- **G:** argv parity with CPython for every string, at model level; the Rust code equals the model on the tested domain. **¬G:** a proof about the Rust `split`/`quote`/`join` (the Rust–model link is tested, not proved); a proof that the model equals CPython (tested nightly); Python lone surrogates, which cannot reach `&str` (§10 row 14).
+
+**Tooling gaps (M0/M1), stated so nothing above is over-read:**
+- **V2 end to end.** Removing `#[verus_verify]` from the K1 mount still verified `partition_lens`, because it carries `verus_spec`, so V2 had nothing to report. V2's failure path is covered only by the `manifest_gaps` unit test and by G1, which requires `#[verus_verify]` on every mount.
+- **G9 is syntactic.** It allows multi-segment paths rooted in `std`/`core`/`alloc`/`self`/`Self`, prelude or primitive names, or names the file declares. A local item shadowing an external crate name, or a glob re-export from std, is not modelled; the real backstop is that a non-std path does not resolve under the harness crate root.
+- **G8 matches impls by last path segment** (`Type: Trait`), so same-named traits or types in different modules would be conflated. No kernel trait exists yet; it is tested on fixtures only.
+- **CI not yet exercised.** `proofs.yml` passed actionlint and its path filter was tested locally, but it has not run on GitHub; the lean-action `axiom-audit`/`leanchecker` inputs are untested. `cargo xtask proofs oracles` has run end to end locally with both models.
+- **Installer platforms.** Only the x86-linux Verus zip and the x86_64-unknown-linux-gnu verusfmt are sha256-pinned; other platforms fail with "no pinned sha256" until hashes are added.
+- **Mutants are code-only.** The registry names mutants of the kernel file; spec-file mutants (which show the lemmas carry weight, see K3) were run by hand and are not registered.
 
 ### 9.2 M2 (planned, not started)
 
@@ -591,7 +612,7 @@ The properties below were checked against the current code. Where a property hol
 
 **M0: pipeline, no behaviour change (6–8 engineer-days). Done:** the items below exist on the `feat/formal-verification` line. It was planned to start on `main` after PRs #14–#17 merge, because the check-cfg line touches the manifest that #16 changes; the integrator rebases accordingly. Contents:
 - ADR-095; this document; ARCHITECTURE §1.3 (check-cfg), §11.7 (CI tool supply chain: sha256-pinned, never in builds), §13.1 (new layer **L9 proofs**) and §13.7; the DECISIONS preamble.
-- `proofs/` skeleton: registry, root, spec lib, and the Lean package imported from the prototype (Lean models are not yet linked by a `[[model]]` entry: K3 and K4 add them).
+- `proofs/` skeleton: registry, root, spec lib, and the Lean package imported from the prototype (the `[[model]]` entries came with K3 and K4).
 - `xtask proofs` with guard unit tests on fixture files; `proofs-tools.sh`.
 - `proofs.yml` (advisory); `proofs check` in `xtask gates`.
 - `check-unsafe` scope and `.gitignore`.

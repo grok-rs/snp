@@ -8,7 +8,6 @@ Contributors who do not touch a kernel file need none of this: build, test, clip
 registry.toml          kernels, models, mutants and trusted items (the single machine-readable source, §3.1)
 verus/kernels.rs       Verus root: mounts the production kernel files under crates/ unchanged
 verus/spec/            specs and lemmas, one module per kernel; generic lemmas in spec/lib/
-verus/run.sh           dependency-free reference runner of the same Verus command (`cargo xtask proofs verus` is the gate)
 lean/                  Lake package SnpModels (core library only) and the oracle executables
 lean/client.rs         std-only line-protocol client that home-crate oracle tests include via #[path]
 ```
@@ -39,14 +38,15 @@ cargo xtask proofs fingerprint <file.rs::item>   # value for a [[model]] anchor
 
 ## Run Verus
 
+`cargo xtask proofs verus` is the gate (see Commands). For extra Verus flags while iterating, run the same
+command by hand from the repository root:
+
 ```sh
-proofs/verus/run.sh                                  # whole root, --no-cheating; fails on any error or 0 items
-proofs/verus/run.sh --min 10 --output-json out.json  # floor on the verified count, keep the JSON report
-proofs/verus/run.sh --verify-module snp_proc_xargs_partition   # one mount, about 2 s (iteration only, see below)
-proofs/verus/run.sh --mutant crates/snp-proc/src/xargs/partition.rs \
-    'Some(t) => t <= max_len' 'Some(t) => t < max_len'          # succeeds only if the mutant FAILS to verify
-proofs/verus/run.sh -- --expand-errors                # extra arguments go to verus
+verus proofs/verus/kernels.rs --crate-type=lib --edition=2024 --no-cheating --expand-errors
 ```
+
+To try an ad-hoc mutant, edit the kernel file, run `cargo xtask proofs verus` (it must fail), then revert the edit;
+register the mutant in `registry.toml` if it is worth keeping.
 
 Verus refuses `--verify-module` together with `--no-cheating`, so a module run omits that flag and is an
 iteration aid; the gate is the whole-root run. Kernel files are formatted by rustfmt (`cargo fmt`); the root and
