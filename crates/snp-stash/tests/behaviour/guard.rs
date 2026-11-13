@@ -22,6 +22,31 @@ fn patch_of(g: &StashGuard) -> std::path::PathBuf {
     }
 }
 
+/// ADR-097: where the stat-stamp re-verification can apply (Linux, an allow-listed filesystem).
+fn stamps_possible(repo: &Path) -> bool {
+    cfg!(any(target_os = "linux", target_os = "android"))
+        && snp_os::fsinfo::stat_oracle_safe(repo).unwrap_or(false)
+}
+
+/// Lets the filesystem's (coarse) clock move past every write made so far, so a file written before the run is
+/// strictly older than the lock's stamp (ADR-097: an equal stamp falls back, which a test of the stamp pass must
+/// rule out).
+fn settle() {
+    std::thread::sleep(Duration::from_millis(30));
+}
+
+/// The content diff-index calls (the stash's own and the re-verification), not the name-only one.
+fn content_diffs(spy: &Spy) -> usize {
+    spy.calls()
+        .iter()
+        .filter(|c| c.starts_with("diff-index") && c.contains("--binary"))
+        .count()
+}
+
+fn count(spy: &Spy, prefix: &str) -> usize {
+    spy.calls().iter().filter(|c| c.starts_with(prefix)).count()
+}
+
 #[test]
 fn concurrent_second_run_waits_once_then_times_out() {
     let sb = Sandbox::new();
@@ -199,6 +224,7 @@ fn journal_and_pointer_are_durable_before_the_checkout() {
     let (cx, _, _) = sb.ctx_with(git, info);
     let original = sb.unstaged_diff(&repo);
     let tree = sb.git_text(&repo, &["write-tree"]);
+    settle();
     let g = snp_stash::enter(cx).unwrap();
     let (ps, js, jt, patch, in_store) = seen.lock().unwrap().take().unwrap();
     assert_eq!(
@@ -212,7 +238,9 @@ fn journal_and_pointer_are_durable_before_the_checkout() {
     assert_eq!(patch, original);
     assert!(in_store);
     // The command sequence is pre-commit's (02 §7) plus, D-DATA-19, the patch's paths for a checkout limited to them
-    // and then the re-verification diff-index: the verification is the last read of the worktree before the checkout.
+    // and then the re-verification: the verification is the last read of the worktree before the checkout. ADR-097:
+    // where stat stamps can prove nothing changed since the lock was taken, the re-verification is the name-only
+    // diff-index (no file outside the patch changed) plus a stamp pass; elsewhere the second content diff-index.
     let calls = spy.calls();
     let p = patch_of(&g);
     let tree_arg = sb.git_text(&repo, &["write-tree"]);
@@ -221,6 +249,13 @@ fn journal_and_pointer_are_durable_before_the_checkout() {
         "-c submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul".to_owned()
     } else {
         "-c submodule.recurse=0 checkout -- :(literal)foo".to_owned()
+    };
+    let verification = if stamps_possible(&repo) {
+        format!("diff-index --name-only -z --ignore-submodules {tree_arg} --")
+    } else {
+        format!(
+            "diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff {tree_arg} --"
+        )
     };
     assert_eq!(
         calls,
@@ -232,9 +267,7 @@ fn journal_and_pointer_are_durable_before_the_checkout() {
                 "diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff {tree_arg} --"
             ),
             format!("apply --numstat -z --whitespace=nowarn {}", p.display()),
-            format!(
-                "diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff {tree_arg} --"
-            ),
+            verification,
             checkout,
         ]
     );
@@ -270,16 +303,17 @@ fn autosave_between_diff_index_and_checkout_is_caught() {
     }
     let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
     let (cx, _, _) = sb.ctx_with(git, info);
+    settle();
     let g = snp_stash::enter(cx).unwrap();
     let p = patch_of(&g);
     assert_eq!(sb.read(&repo, "foo"), FOO.as_bytes());
-    // The patch was rewritten with the autosave, listed again and verified again.
-    let calls = spy.calls();
-    let count = |prefix: &str| calls.iter().filter(|c| c.starts_with(prefix)).count();
+    // The patch was rewritten with the autosave, listed again and verified again: the autosave is newer than the
+    // lock, so the stamp pass falls back to the content diff-index (ADR-097).
     assert_eq!(
-        (count("diff-index"), count("apply --numstat")),
+        (content_diffs(&spy), count(&spy, "apply --numstat")),
         (4, 2),
-        "{calls:?}"
+        "{:?}",
+        spy.calls()
     );
     assert!(String::from_utf8_lossy(&std::fs::read(&p).unwrap()).contains("+autosaved"));
     g.restore().unwrap();
@@ -344,6 +378,206 @@ fn vanished_changes_win_over_a_failing_patch_listing() {
     assert!(!repo.join(".git/snp-stash.journal").exists());
 }
 
+/// ADR-097: `SNP_STASH_REVERIFY=diff` always runs the second content diff-index (no name-only query, no stamps).
+#[test]
+fn snp_stash_reverify_diff_runs_the_content_verification() {
+    let sb = Sandbox::new();
+    let repo = sb.foo_staged("r");
+    sb.write(&repo, "foo", b"herp\n");
+    let spy = Spy::new();
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+    let git = git.with_env(
+        git.env()
+            .patched(&EnvPatch::default().set("SNP_STASH_REVERIFY", "diff")),
+    );
+    let (cx, out, _) = sb.ctx_with(git, info);
+    settle();
+    let g = snp_stash::enter(cx).unwrap();
+    assert_eq!(sb.read(&repo, "foo"), FOO.as_bytes());
+    assert_eq!(
+        (content_diffs(&spy), count(&spy, "diff-index --name-only")),
+        (2, 0),
+        "{:?}",
+        spy.calls()
+    );
+    g.restore().unwrap();
+    assert!(out.text().contains("[INFO] Restored changes from "));
+    assert_eq!(sb.read(&repo, "foo"), b"herp\n");
+}
+
+/// ADR-097: a file of the patch touched after the lock was taken (same bytes: a `touch`, an editor saving unchanged
+/// content) is not trusted by its stamp: the content verification runs, finds the same patch and rewrites nothing.
+#[test]
+fn a_patch_file_touched_after_the_lock_runs_the_content_verification() {
+    let sb = Sandbox::new();
+    let repo = sb.foo_staged("r");
+    sb.write(&repo, "foo", b"herp\n");
+    let spy = Spy::new();
+    {
+        let repo = repo.clone();
+        spy.before(
+            &["apply", "--numstat"],
+            Some(1),
+            Box::new(move |_| std::fs::write(repo.join("foo"), b"herp\n").unwrap()),
+        );
+    }
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+    let (cx, _, _) = sb.ctx_with(git, info);
+    settle();
+    let g = snp_stash::enter(cx).unwrap();
+    assert_eq!(
+        (content_diffs(&spy), count(&spy, "apply --numstat")),
+        (2, 1),
+        "{:?}",
+        spy.calls()
+    );
+    g.restore().unwrap();
+    assert_eq!(sb.read(&repo, "foo"), b"herp\n");
+}
+
+/// ADR-097 option (a): an autosave of a file the patch does not touch is caught by the name-only diff-index, so the
+/// content verification runs and stashes it (D-DATA-13's guarantee): the checkout leaves it to the patch, the restore
+/// brings it back, and neither a rollback nor `stage_fixed` can lose it.
+#[test]
+fn an_autosaved_clean_file_is_caught_and_stashed() {
+    let sb = Sandbox::new();
+    let repo = sb.init("r");
+    sb.write(&repo, "foo", FOO.as_bytes());
+    sb.write(&repo, "bar", b"bar\n");
+    sb.git(&repo, &["add", "foo", "bar"]);
+    sb.write(&repo, "foo", b"herp\n");
+    let spy = Spy::new();
+    {
+        let repo = repo.clone();
+        spy.before(
+            &["apply", "--numstat"],
+            Some(1),
+            Box::new(move |_| std::fs::write(repo.join("bar"), b"bar\nautosaved\n").unwrap()),
+        );
+    }
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+    let (cx, _, _) = sb.ctx_with(git, info);
+    settle();
+    let g = snp_stash::enter(cx).unwrap();
+    let p = patch_of(&g);
+    let names_only = usize::from(stamps_possible(&repo));
+    assert_eq!(
+        (
+            count(&spy, "diff-index --name-only"),
+            content_diffs(&spy),
+            count(&spy, "apply --numstat")
+        ),
+        (names_only, 4, 2),
+        "{:?}",
+        spy.calls()
+    );
+    assert!(String::from_utf8_lossy(&std::fs::read(&p).unwrap()).contains("+autosaved"));
+    assert_eq!(
+        (sb.read(&repo, "foo"), sb.read(&repo, "bar")),
+        (FOO.as_bytes().to_vec(), b"bar\n".to_vec())
+    );
+    g.restore().unwrap();
+    assert_eq!(
+        (sb.read(&repo, "foo"), sb.read(&repo, "bar")),
+        (b"herp\n".to_vec(), b"bar\nautosaved\n".to_vec())
+    );
+}
+
+/// ADR-097: a git dir on another filesystem than the work tree (here tmpfs) gives stamps from another clock and
+/// device: no name-only query, the content verification runs.
+#[test]
+fn a_git_dir_on_another_device_runs_the_content_verification() {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let shm = Path::new("/dev/shm");
+        if !shm.is_dir() {
+            return;
+        }
+        let Ok(gitdirs) = tempfile::tempdir_in(shm) else {
+            return;
+        };
+        let sb = Sandbox::new();
+        let repo = sb.path("r");
+        std::fs::create_dir_all(&repo).unwrap();
+        if std::fs::metadata(&repo).unwrap().dev()
+            == std::fs::metadata(gitdirs.path()).unwrap().dev()
+        {
+            return;
+        }
+        let git_dir = gitdirs.path().join("r.git");
+        sb.git(
+            &repo,
+            &[
+                OsStr::new("init"),
+                OsStr::new("-q"),
+                OsStr::new("--separate-git-dir"),
+                git_dir.as_os_str(),
+                OsStr::new("."),
+            ],
+        );
+        sb.write(&repo, "foo", FOO.as_bytes());
+        sb.git(&repo, &["add", "foo"]);
+        sb.write(&repo, "foo", b"herp\n");
+        let spy = Spy::new();
+        let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+        assert_eq!(
+            info.git_dir,
+            snp_pycompat::ospath::realpath(git_dir.as_os_str(), &repo).unwrap()
+        );
+        let (cx, _, _) = sb.ctx_with(git, info);
+        settle();
+        let g = snp_stash::enter(cx).unwrap();
+        assert_eq!(
+            (content_diffs(&spy), count(&spy, "diff-index --name-only")),
+            (2, 0),
+            "{:?}",
+            spy.calls()
+        );
+        assert_eq!(sb.read(&repo, "foo"), FOO.as_bytes());
+        g.restore().unwrap();
+        assert_eq!(sb.read(&repo, "foo"), b"herp\n");
+    }
+}
+
+/// ADR-097 with D-DATA-19's rollback: a stash verified by stamps, a hook fix that conflicts with the patch and one in
+/// a file outside the patch. The rollback checks out the patch's files and every file `git diff` shows changed, so
+/// both fixes are discarded and the unstaged work comes back.
+#[test]
+fn a_rollback_after_a_stamp_verified_stash_discards_fixes_outside_the_patch() {
+    let sb = Sandbox::new();
+    let repo = sb.init("r");
+    sb.write(&repo, "foo", FOO.as_bytes());
+    sb.write(&repo, "bar", b"bar\n");
+    sb.git(&repo, &["add", "foo", "bar"]);
+    sb.write(&repo, "foo", FOO.replace('1', "a").as_bytes());
+    let spy = Spy::new();
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+    let (cx, out, _) = sb.ctx_with(git, info);
+    settle();
+    let g = snp_stash::enter(cx).unwrap();
+    let expected_content_diffs = if stamps_possible(&repo) { 1 } else { 2 };
+    assert_eq!(
+        content_diffs(&spy),
+        expected_content_diffs,
+        "{:?}",
+        spy.calls()
+    );
+    // The hook: a fix on the patch's line, and one in a file the patch does not touch.
+    sb.write(&repo, "foo", FOO.replace('1', "b").as_bytes());
+    sb.write(&repo, "bar", b"bar fixed\n");
+    g.restore().unwrap();
+    assert!(
+        out.text().contains("Rolling back fixes..."),
+        "{}",
+        out.text()
+    );
+    assert_eq!(
+        (sb.read(&repo, "foo"), sb.read(&repo, "bar")),
+        (FOO.replace('1', "a").into_bytes(), b"bar\n".to_vec())
+    );
+}
+
 #[test]
 fn files_that_keep_changing_abort_before_any_mutation() {
     let sb = Sandbox::new();
@@ -379,14 +613,9 @@ fn files_that_keep_changing_abort_before_any_mutation() {
             1
         )
     );
-    // 1 streamed + (verify + rewrite) × 3 + the last verify.
-    assert_eq!(
-        spy.calls()
-            .iter()
-            .filter(|c| c.starts_with("diff-index"))
-            .count(),
-        8
-    );
+    // 1 streamed + (verify + rewrite) × 3 + the last verify (the stamp pass falls back: every write is newer than
+    // the lock).
+    assert_eq!(content_diffs(&spy), 8, "{:?}", spy.calls());
     assert!(!spy.calls().iter().any(|c| c.contains("checkout")));
     assert_eq!(
         out.text(),

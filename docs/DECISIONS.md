@@ -14,7 +14,8 @@ the final multi-lens review; ADR-085 the `interactive` extension key; ADR-086 th
 upstream refresh; ADR-093 the path-limited stash checkout; ADR-094 Rust 1.100; ADR-095 machine-checked proofs;
 ADR-096 the owner's decision to make the Verus proofs blocking;
 ADR-099 the paired bench gate; ADR-100 the B8 heap budget and counters;
-ADR-098 the tier-1 prefilter.
+ADR-098 the tier-1 prefilter;
+ADR-097 the stash re-verification by stat stamps.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -748,7 +749,7 @@ locks or restores. `snp_core::fault` (feature `fault-injection`, owner WP-00) pr
 
 ### ADR-067 — Stash hardening, round 2
 
-*Status: Accepted; amended by ADR-083 (dismissal of orphaned-stash notices). The amending ADR is normative where they differ.*
+*Status: Accepted; amended by ADR-083 (dismissal of orphaned-stash notices) and ADR-097 (the re-verification by stat stamps, the patch listed before it). The amending ADRs are normative where they differ.*
 
 **Context.** Renaming the patch to `patch<secs>-<pid>` could replace a concurrent run's live patch (same second and pid
 across PID namespaces sharing a store); the fsyncs between `diff-index` and `git checkout -- .` (F_FULLFSYNC: 10–50 ms
@@ -1784,6 +1785,55 @@ the B12u fixture: backtracking-engine runs 20 000 → 1 060 per run; snp's own u
 backtracking-limit error or seconds of work; haystacks it admits still get the exact engine, so the backtrack limit
 and the D-SEC-10 error remain for them. D-SEC-10's rationale now reads "the tier-1 exact fallback is prefiltered"; no
 new divergence. The 256 KiB cap re-tunes against CI's B12u RSS once batch C halves the classifier threads (P17).
+### ADR-097 — Stash re-verification by stat stamps
+
+*Amends ADR-067 (the second `diff-index` digest before the checkout); decides the stat-based re-verification ADR-084
+deferred.*
+
+**Context.** ADR-067 closes the autosave window its fsyncs open with a second full `git diff-index --binary` whose
+blake3 digest must equal the streamed patch's. On the B8 scenario (a 10 MB unstaged change) that second diff is the
+largest single cost of the run: about 268 ms of the local light-tracer timeline, on the critical path, and blake3 is
+32.7% of snp's own CPU. It is the only scenario where snp is slower than pre-commit. ADR-084 deferred a stat-based
+re-verification because it must stamp every path the diff could include (an autosave of a clean file is what the
+second diff catches) and keep git's racy-timestamp protection. `git apply --numstat`, which lists the checkout's
+files (ADR-093), also ran between the verification and the checkout, reopening the window (C4).
+**Decision.** (1) The paths are listed (`git apply --numstat -z --whitespace=nowarn <patch>`, git's own parser,
+still the only authority for the checkout list) right after the patch is durable and again after every rewrite; the
+verification follows and is the last read of the worktree before the checkout. Its outcome wins: a listing error is
+reported only once the patch is verified. (2) `M0` is `max(ctime, mtime)` of the held lock file, read with `fstat`
+right after this run wrote its token, before the first `diff-index` starts, with the wall and monotonic clocks at
+that moment. There is no `M0` for a nested run, on Windows, when the token could not be written, or with
+`SNP_STASH_REVERIFY=diff` (the escape hatch, like `SNP_DIFF_MODE=git`). (3) The verification is a stamp pass when all
+of these hold, else the ADR-067 loop: Linux (macOS falls back until APFS and HFS+ are shown to bump ctime on every
+rename); work tree and git dir on `stat_oracle_safe` filesystems, the work tree on the lock's device; the wall clock
+not before `M0` and within 100 ms of the monotonic clock's progress since `M0` (taken before and after the pass);
+`git diff-index --name-only -z --ignore-submodules <tree> --` succeeds and lists only files of the patch (option
+(a): an autosave of a file outside the patch makes git list it, which falls back, so D-DATA-13's guarantee stands and
+git's racy check covers every tracked file; it costs one spawn, an index stat walk); every path the listing names is
+a regular file or symlink on the lock's device with `max(ctime, mtime) < M0`, strictly, with no margin (a write after
+the lock carries a stamp of at least `M0`, also with coarse or truncated timestamps; a racy margin would disable the
+path whenever the previous restore wrote the file just before the run); every directory between such a path and the
+work-tree root passes the same test (an older inode swapped in by a rename of an ancestor); `$GIT_DIR/config`,
+`config.worktree`, the common config and both `info/attributes` pass it when present. A missing file, `ENOTDIR`, any
+error or any doubt falls back. (4) The fallback compares the second `diff-index` byte for byte, and in total length,
+with the durable patch read back through a new handle, keeping the 3 rewrites and `KEPT_CHANGING`; blake3 leaves the
+stash (the first pass no longer hashes). (5) The stat-stamp path is not modelled on the `DiffOracle` (which decides
+whether a hook changed files, with a racy margin and content hashes); it has its own argument above. Option (b),
+dropping the name-only query and accepting that a rollback (`rollback_paths`) or `stage_fixed` could then lose a
+clean-file autosave made during the window, is rejected.
+**Rationale.** A file whose change stamps are all older than the lock has not changed since before the first
+`diff-index` started, so the durable patch is still what git would print; the kernel bumps ctime on every write,
+truncate, chmod, link change and (on the allowed Linux filesystems) rename, and the user cannot set it. The only
+files the patch does not cover are covered by git itself.
+**Residual risks.** A write through a shared mapping that was already dirty before `M0` reaches the file without a new
+stamp; a single `write(2)` that straddles `M0` can leave a stamp just below `M0` with bytes written after it; an
+untracked `.gitattributes` or a global or system git config created or changed during the window is not stamped (it
+could change the diff's conversion, which the restore then reports as a conflict; nothing is lost); a filesystem that
+does not bump ctime on rename (hence the macOS fallback). Each needs a concurrent writer inside a window of a few
+milliseconds to tens of milliseconds.
+**Consequences.** B8 runs one content `diff-index` and one name-only `diff-index` instead of two content ones (the exec
+count is unchanged), and snp's own CPU drops by the blake3 share. `KEPT_CHANGING`, every message and the git argv of
+every other call are unchanged. ARCHITECTURE S3 and §4.2 step 6, D-DATA-13 and WBS WP-23 state it.
 
 ## Appendix A — Open questions of the research documents, resolved
 
