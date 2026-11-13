@@ -126,7 +126,7 @@ pub fn read_nuspec(path: &Path) -> Result<String, LangError> {
             path.display()
         )));
     }
-    let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+    let bytes = bytes.trim_prefix(b"\xef\xbb\xbf");
     String::from_utf8(bytes.to_vec())
         .map_err(|_| LangError::Value(format!("{}: {name} is not UTF-8", path.display())))
 }

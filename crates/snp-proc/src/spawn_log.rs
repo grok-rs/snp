@@ -26,14 +26,12 @@ pub fn enable_from_env(env: &Env) {
 ///
 /// A missing or unreadable file reads as no lines.
 pub fn read(path: &Path) -> Vec<String> {
-    std::fs::read(path)
-        .map(|b| {
-            String::from_utf8_lossy(&b)
-                .lines()
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
+    std::fs::read(path).map_or_default(|b| {
+        String::from_utf8_lossy(&b)
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    })
 }
 
 /// Appends `<role> <group> <argv0 basename>` when armed (one `write` with `O_APPEND`: lines of concurrent spawns

@@ -241,7 +241,7 @@ fn int12_full(s: &[u8]) -> bool {
         return true;
     }
     if let Some(p) = t.strip_prefix(b"0") {
-        let p = p.strip_prefix(b"o").unwrap_or(p);
+        let p = p.trim_prefix(b"o");
         if rest(p, |b| matches!(b, b'0'..=b'7' | b'_')) {
             return true;
         }

@@ -65,7 +65,7 @@ mod properties {
                 lines.push(format!("{pad}{dash}repo: local"));
             } else {
                 lines.push(format!("{pad}{dash}repo: https://example.com/r{i}"));
-                let comment = r.comment.map(|c| format!("  {c}")).unwrap_or_default();
+                let comment = r.comment.map_or_default(|c| format!("  {c}"));
                 lines.push(format!(
                     "{pad}{inner}rev: {q}v1.{i}{q}{comment}",
                     q = r.quote
@@ -170,7 +170,7 @@ mod properties {
             if list_root {
                 // The pre-1.0 form: the repos list at the root.
                 src = src.replacen("repos:\n", "", 1).replacen("repos:\r\n", "", 1);
-                let dedented: Vec<String> = src.split_inclusive('\n').map(|l| l.strip_prefix(' ').unwrap_or(l).to_owned()).collect();
+                let dedented: Vec<String> = src.split_inclusive('\n').map(|l| l.trim_prefix(' ').to_owned()).collect();
                 src = dedented.concat();
             }
             let display = OsStr::new(".pre-commit-config.yaml");

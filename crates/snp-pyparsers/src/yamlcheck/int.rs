@@ -50,7 +50,7 @@ impl BigInt {
 
     pub(super) fn negated(mut self) -> Self {
         if !self.is_zero() {
-            self.neg = !self.neg;
+            self.neg.toggle();
         }
         self
     }
@@ -358,7 +358,7 @@ pub(super) fn py_float(s: &[u8]) -> Result<f64, String> {
     let invalid = || format!("could not convert string to float: {}", repr_pystr(s));
     let a = to_ascii(s);
     let t = a.trim_matches(' ');
-    let body = t.strip_prefix(['-', '+']).unwrap_or(t);
+    let body = t.trim_prefix(['-', '+']);
     let lower = body.to_ascii_lowercase();
     if matches!(lower.as_str(), "inf" | "infinity" | "nan") {
         return t.parse::<f64>().map_err(|_| invalid());

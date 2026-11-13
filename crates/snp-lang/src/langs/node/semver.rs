@@ -1,4 +1,4 @@
-//! nodeenv 1.11.0's version ranges (`_is_exact_version`, `parse_node_range`, `_parse_comparator`,
+//! nodeenv 1.12.0's version ranges (`_is_exact_version`, `parse_node_range`, `_parse_comparator`,
 //! `_comparator_constraints`, `_pad_version`, `match_node_range`, `resolve_node_version`): `20`, `18.19`, `^20.1`,
 //! `20.x`, `>=18 <20`, `4.3.1 - 6.2.0`, `a || b` resolve to the highest matching release of `index.json`.
 //!
@@ -28,7 +28,7 @@ pub(crate) type Ranges = Vec<Vec<(Op, Triple)>>;
 
 /// `str` without one trailing `\n` (Python's `$` also matches before a final newline).
 fn dollar(s: &str) -> &str {
-    s.strip_suffix('\n').unwrap_or(s)
+    s.trim_suffix('\n')
 }
 
 /// A run of ASCII digits at the start of `s`: `(value, rest)`.
@@ -48,7 +48,7 @@ fn digits(s: &str) -> Option<(u64, &str)> {
 /// `_EXACT_VERSION_RE = ^v?\d+\.\d+\.\d+(\+\S*)?$`.
 pub(crate) fn is_exact(version: &str) -> bool {
     let s = dollar(version);
-    let s = s.strip_prefix('v').unwrap_or(s);
+    let s = s.trim_prefix('v');
     let mut rest = s;
     for i in 0..3 {
         let Some((_, r)) = digits(rest) else {
@@ -121,7 +121,7 @@ fn parse_comparator(token: &str) -> Option<Vec<(Op, Triple)>> {
     .find_map(|(p, op)| s.strip_prefix(p).map(|r| (op, r)))
     .unwrap_or((CmpOp::Eq, s));
     let rest = rest.trim_start_matches(snp_pycompat::chars::is_space);
-    let rest = rest.strip_prefix('v').unwrap_or(rest);
+    let rest = rest.trim_prefix('v');
     let (major, mut rest) = part(rest)?;
     let mut minor = None;
     let mut patch = None;
@@ -306,7 +306,7 @@ mod tests {
         }
     }
 
-    /// The values printed by nodeenv 1.11.0's `parse_node_range` (oracle venv, CPython 3.12).
+    /// The values printed by nodeenv's `parse_node_range` (1.11.0; unchanged in 1.12.0; oracle venv, CPython 3.12).
     #[test]
     fn ranges_like_nodeenv() {
         let r = |s: &str| parse_range(s);
@@ -393,7 +393,7 @@ mod tests {
         assert_eq!(index_version("v20.11.1-rc.1"), None);
     }
 
-    /// Differential against nodeenv 1.11.0 itself (the oracle venv's `nodeenv` module, `$SNP_ORACLE_PY312`):
+    /// Differential against nodeenv 1.12.0 itself (the oracle venv's `nodeenv` module, `$SNP_ORACLE_PY312`):
     /// random specs built from the atoms the grammar cares about, compared on `_is_exact_version` and
     /// `parse_node_range`.
     #[test]

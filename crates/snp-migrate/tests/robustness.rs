@@ -97,8 +97,7 @@ mod robustness {
             .as_array()
             .unwrap()
             .first()
-            .map(|r| r["hooks"].as_array().unwrap().clone())
-            .unwrap_or_default()
+            .map_or_default(|r| r["hooks"].as_array().unwrap().clone())
     }
 
     fn field<'a>(hook: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {

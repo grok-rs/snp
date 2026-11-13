@@ -410,7 +410,7 @@ impl OwnedRepo {
             v.extend(args.iter().map(|a| os(a)));
             v
         };
-        let text = |out: Out| String::from_utf8_lossy(&out.stdout).into_owned();
+        let text = |out: Out| String::from_utf8_lossy_owned(out.stdout);
         self.init_repo(repo, None)?;
         self.checked_in(
             &self.dir,

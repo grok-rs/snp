@@ -144,8 +144,8 @@ pub(crate) fn hook_def(m: &Map, ext_mode: ExtMode) -> HookDef {
         exclude: str_or(m, "exclude", "^$"),
         types: get(m, "types")
             .map_or_else(|| TagSet::from_names(["file"]).unwrap_or_default(), tag_set),
-        types_or: get(m, "types_or").map(tag_set).unwrap_or_default(),
-        exclude_types: get(m, "exclude_types").map(tag_set).unwrap_or_default(),
+        types_or: get(m, "types_or").map_or_default(tag_set),
+        exclude_types: get(m, "exclude_types").map_or_default(tag_set),
         additional_dependencies: get(m, "additional_dependencies")
             .map_or_else(|| Arc::from([]), str_list),
         args: get(m, "args").map_or_else(|| Arc::from([]), str_list),

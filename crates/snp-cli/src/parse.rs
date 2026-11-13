@@ -117,7 +117,7 @@ fn color(ns: &Namespace) -> ColorSetting {
 }
 
 fn os(ns: &Namespace, dest: &str) -> OsString {
-    ns.value(dest).map(OsStr::to_os_string).unwrap_or_default()
+    ns.value(dest).map_or_default(OsStr::to_os_string)
 }
 
 /// `-c/--config`; not given ⇒ [`ConfigArg::absent`] (discovered by the commands, ADR-087).

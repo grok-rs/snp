@@ -44,7 +44,7 @@ mod goldens {
                 }
                 #[cfg(not(unix))]
                 {
-                    OsString::from(String::from_utf8_lossy(&bytes).into_owned())
+                    OsString::from(String::from_utf8_lossy_owned(bytes))
                 }
             }
             other => panic!("bad string {other:?}"),

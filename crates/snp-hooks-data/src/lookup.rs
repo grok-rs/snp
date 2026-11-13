@@ -58,15 +58,15 @@ pub fn is_pre_commit_hooks_url(url: &str) -> bool {
         (_, None) => (hostport, None),
     };
     let host = host.to_ascii_lowercase();
-    if host.strip_prefix("www.").unwrap_or(&host) != "github.com" {
+    if host.trim_prefix("www.") != "github.com" {
         return false;
     }
     match (scheme.as_deref(), port) {
         (_, None) | (Some("https"), Some("443")) | (Some("ssh" | "git+ssh"), Some("22")) => {}
         _ => return false,
     }
-    let path = path.strip_prefix('/').unwrap_or(path);
-    let path = path.strip_suffix('/').unwrap_or(path);
+    let path = path.trim_prefix('/');
+    let path = path.trim_suffix('/');
     let path = strip_suffix_ascii_ci(path, ".git");
     let mut segments = path.split('/');
     matches!(

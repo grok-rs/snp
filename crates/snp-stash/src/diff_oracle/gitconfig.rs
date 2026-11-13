@@ -283,8 +283,7 @@ pub(crate) fn from_env(env: &Env, root: &Path) -> Option<Facts> {
         let key = key.to_string_lossy().to_ascii_lowercase();
         let value = env
             .get(&format!("GIT_CONFIG_VALUE_{n}"))
-            .map(|v| crate::journal::path_bytes(Path::new(v)).into_owned())
-            .unwrap_or_default();
+            .map_or_default(|v| crate::journal::path_bytes(Path::new(v)).into_owned());
         let is_include = key == "include.path"
             || key
                 .strip_prefix("includeif.")

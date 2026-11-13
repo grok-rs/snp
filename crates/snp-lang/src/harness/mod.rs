@@ -199,7 +199,7 @@ impl CmdRunner for ShimRunner {
             cwd: cwd.to_path_buf(),
             env_delta: env_delta(self.base.as_ref(), env),
         };
-        let tool = argv.first().map(|a| tool_name(a)).unwrap_or_default();
+        let tool = argv.first().map_or_default(|a| tool_name(a));
         let args = argv.get(1..).unwrap_or_default();
         lock(&self.calls).push(recorded.clone());
         let reply = self

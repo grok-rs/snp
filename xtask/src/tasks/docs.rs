@@ -333,7 +333,7 @@ fn chapter(id: &str, page: &str) -> anyhow::Result<String> {
     let mut skipping_section = false;
     for line in lines {
         if line.trim_start().starts_with("```") || line.trim_start().starts_with("~~~") {
-            fence = !fence;
+            fence.toggle();
         }
         if !fence {
             if skipping_bullet {
@@ -380,7 +380,7 @@ fn collapse_blank_lines(s: &str) -> String {
     let mut fence = false;
     for line in s.lines() {
         if line.trim_start().starts_with("```") {
-            fence = !fence;
+            fence.toggle();
         }
         let is_blank = line.trim().is_empty();
         if is_blank && blank && !fence {
@@ -729,10 +729,7 @@ fn check_link(
             return Err("absolute links break outside GitHub; use a relative path".to_owned());
         }
         let base = page.parent().unwrap_or(root);
-        let rel = base
-            .strip_prefix(root)
-            .unwrap_or(base)
-            .join(percent_decode(file));
+        let rel = base.trim_prefix(root).join(percent_decode(file));
         let Some(norm) = normalize(&rel) else {
             return Err("escapes the repository".to_owned());
         };
@@ -781,7 +778,7 @@ fn percent_decode(s: &str) -> String {
         out.push(b);
         i = i.saturating_add(1);
     }
-    String::from_utf8_lossy(&out).into_owned()
+    String::from_utf8_lossy_owned(out)
 }
 
 /// The anchors of a page: GitHub heading slugs (with `-1`, `-2` … for repeats) and explicit `id=`/`name=`
@@ -793,7 +790,7 @@ fn page_anchors(text: &str) -> BTreeSet<String> {
     for line in text.lines() {
         let t = line.trim_start();
         if t.starts_with("```") || t.starts_with("~~~") {
-            fence = !fence;
+            fence.toggle();
             continue;
         }
         if fence {

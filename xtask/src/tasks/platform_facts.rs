@@ -299,15 +299,12 @@ fn print_env() {
             }),
         );
     }
-    let path: Vec<Value> = env
-        .get("PATH")
-        .map(|p| {
-            std::env::split_paths(p)
-                .take(6)
-                .map(|e| Value::String(e.to_string_lossy().into_owned()))
-                .collect()
-        })
-        .unwrap_or_default();
+    let path: Vec<Value> = env.get("PATH").map_or_default(|p| {
+        std::env::split_paths(p)
+            .take(6)
+            .map(|e| Value::String(e.to_string_lossy().into_owned()))
+            .collect()
+    });
     m.insert("PATH_head".to_owned(), Value::Array(path));
     workspace::say(&Value::Object(m).to_string());
 }
@@ -480,13 +477,11 @@ fn fs_facts(cwd: &Path) -> Value {
     let nfd = "a\u{308}.txt";
     match std::fs::create_dir_all(&uni).and_then(|()| std::fs::write(uni.join(nfc), b"")) {
         Ok(()) => {
-            let names: Vec<String> = std::fs::read_dir(&uni)
-                .map(|rd| {
-                    rd.filter_map(Result::ok)
-                        .map(|e| hex(e.file_name().as_encoded_bytes()))
-                        .collect()
-                })
-                .unwrap_or_default();
+            let names: Vec<String> = std::fs::read_dir(&uni).map_or_default(|rd| {
+                rd.filter_map(Result::ok)
+                    .map(|e| hex(e.file_name().as_encoded_bytes()))
+                    .collect()
+            });
             m.insert("nfc_name_listed_as_hex".to_owned(), json!(names));
             m.insert("nfc_name_hex".to_owned(), json!(hex(nfc.as_bytes())));
             m.insert(
@@ -598,15 +593,13 @@ fn parse_bool(r: Result<Ran, String>) -> Value {
 
 /// `PATHEXT` split as Windows does (`;`-separated, empty entries dropped).
 fn pathext(env: &Env) -> Vec<String> {
-    env.get("PATHEXT")
-        .map(|v| {
-            v.to_string_lossy()
-                .split(';')
-                .filter(|s| !s.is_empty())
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
+    env.get("PATHEXT").map_or_default(|v| {
+        v.to_string_lossy()
+            .split(';')
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect()
+    })
 }
 
 /// Every match of `name` on `PATH` in order (with `PATHEXT` extensions on Windows), like `where name`.

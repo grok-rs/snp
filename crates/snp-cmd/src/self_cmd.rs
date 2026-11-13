@@ -328,8 +328,7 @@ fn capability_checks(cx: &CmdCtx<'_>) -> Vec<Check> {
                     "{} {v}; config hooks: {}",
                     exe.argv0
                         .first()
-                        .map(|a| a.to_string_lossy().into_owned())
-                        .unwrap_or_default(),
+                        .map_or_default(|a| a.to_string_lossy().into_owned()),
                     if exe.caps.config_hooks { "yes" } else { "no" }
                 ),
             ));

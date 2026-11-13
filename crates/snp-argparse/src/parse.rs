@@ -46,16 +46,14 @@ fn resolve(spec: &'static ParserSpec, path: &[&str], prog: &str) -> Option<(View
 /// `prog` is `cfg.prog` plus each sub-parser's `prog_suffix`. An unknown name yields an empty string.
 pub fn format_help(spec: &'static ParserSpec, path: &[&str], cfg: &ParseCfg<'_>) -> String {
     resolve(spec, path, cfg.prog)
-        .map(|(view, prog)| Formatter::new(&view, &prog, cfg).help())
-        .unwrap_or_default()
+        .map_or_default(|(view, prog)| Formatter::new(&view, &prog, cfg).help())
 }
 
 /// `parser.format_usage()` of the parser at `path` (`usage: …\n`, wrapped like the usage block of `error()`). An
 /// unknown name yields an empty string.
 pub fn format_usage(spec: &'static ParserSpec, path: &[&str], cfg: &ParseCfg<'_>) -> String {
     resolve(spec, path, cfg.prog)
-        .map(|(view, prog)| Formatter::new(&view, &prog, cfg).usage())
-        .unwrap_or_default()
+        .map_or_default(|(view, prog)| Formatter::new(&view, &prog, cfg).usage())
 }
 
 /// `COLUMNS` (Python `int()`), else the stdout terminal width, else 80 (the formatter subtracts 2).

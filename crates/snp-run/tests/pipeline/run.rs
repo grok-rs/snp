@@ -1222,7 +1222,7 @@ fn x13_git_04_bad_from_ref_reports_the_two_dot_diff() {
     match o.failure {
         Some(snp_core::failure::Failure::Exc { exc, .. }) => {
             assert_eq!(exc.ty, "CalledProcessError");
-            let t = String::from_utf8_lossy(&exc.text).into_owned();
+            let t = String::from_utf8_lossy_owned(exc.text);
             assert!(
                 t.contains("'diff', '--name-only', '--no-ext-diff', '-z', 'bogus..HEAD')"),
                 "{t}"

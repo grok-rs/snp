@@ -7,7 +7,6 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
@@ -17,7 +16,6 @@ include = ["/src/"]
 
 [dependencies]
 snp-core.workspace = true
-snp-os.workspace = true
 flate2.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -29,6 +27,10 @@ liblzma = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
 rustix.workspace = true
+
+# `fetch::rename_into_place` retries sharing violations on Windows only (ADR-068).
+[target.'cfg(windows)'.dependencies]
+snp-os.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

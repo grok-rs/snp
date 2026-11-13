@@ -13,11 +13,10 @@ resolver = "3"
 [workspace.package]
 version = "2.0.1"
 edition = "2024"
-rust-version = "1.98"
+rust-version = "1.100"
 license = "MIT"
 authors = ["Serhii Kaliuzhnyi"]
 repository = "https://github.com/grok-rs/snp"
-homepage = "https://github.com/grok-rs/snp"
 readme = "README.md"
 keywords = ["pre-commit", "git-hooks", "hooks", "lefthook", "linter"]
 categories = ["development-tools", "command-line-utilities"]
@@ -70,8 +69,6 @@ globset = { version = "0.4.20", default-features = false }
 
 # --- collections / hashing ---
 indexmap = "2.14.2"
-foldhash = "0.2.0"
-smallvec = { version = "1.16.2", features = ["const_generics"] }
 blake3 = "1.8.7"
 sha2 = "0.11.0"
 md-5 = "0.11.0"
@@ -107,9 +104,7 @@ mimalloc = { version = "0.1.52", default-features = false }
 # --- dev / test / bench ---
 insta = { version = "1.49", features = ["filters", "redactions", "json"] }
 proptest = "1.11"
-rstest = { version = "0.27", default-features = false }
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
-pretty_assertions = "1.4.1"
 dhat = "0.3"
 
 # --- build-time only (xtask) ---
@@ -133,6 +128,15 @@ trivial_numeric_casts = "warn"
 meta_variable_misuse = "warn"
 rust_2018_idioms = { level = "warn", priority = -1 }
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage_nightly)"] }
+
+[workspace.lints.cargo]
+# Cargo's own lints (Rust 1.100, ADR-094): a dependency no target uses, a workspace entry no member inherits and a
+# `homepage` that repeats `repository` are errors; every member must inherit these tables.
+unused_dependencies = "deny"
+unused_workspace_dependencies = "deny"
+unused_workspace_package_fields = "deny"
+missing_lints_inheritance = "deny"
+redundant_homepage = "deny"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

@@ -83,7 +83,7 @@ fn stripped(b: &[u8]) -> OsString {
 
 /// `stdout` without git's single trailing newline (`rev-parse`, `config --get` print exactly one).
 fn chomp(b: &[u8]) -> &[u8] {
-    b.strip_suffix(b"\n").unwrap_or(b)
+    b.trim_suffix(b"\n")
 }
 
 /// A sink wrapper that counts bytes, records whether a non-`bytes.isspace()` byte was seen (`stdout.strip()`

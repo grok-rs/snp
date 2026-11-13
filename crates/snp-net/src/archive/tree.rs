@@ -149,7 +149,7 @@ mod imp {
                     match rustix::fs::mkdirat(parent, comp.as_os_str(), Mode::RWXU) {
                         Ok(()) => self
                             .implicit
-                            .push(rel.get(..=i).map(<[OsString]>::to_vec).unwrap_or_default()),
+                            .push(rel.get(..=i).map_or_default(<[OsString]>::to_vec)),
                         Err(Errno::EXIST) => {}
                         Err(e) => return Err(e.into()),
                     }

@@ -150,7 +150,7 @@ impl Fetch for Canned {
                 "https://static.rust-lang.org/rustup/archive/{RUSTUP}/"
             )) && u.ends_with(".sha256") =>
             {
-                let u = u.strip_suffix(".sha256").unwrap_or(u);
+                let u = u.trim_suffix(".sha256");
                 let mut parts = u.rsplit('/');
                 let file = parts.next().unwrap_or_default();
                 let exe = format!("{}/{file}", parts.next().unwrap_or_default());
@@ -324,7 +324,7 @@ fn version_aliases() {
     );
 }
 
-/// node's `default`/`latest`/`lts` (nodeenv 1.11.0 `_get_last_node_version`): never a pre-release, and always a
+/// node's `default`/`latest`/`lts` (nodeenv 1.12.0 `_get_last_node_version`): never a pre-release, and always a
 /// version with a build for the target; musl reads the unofficial builds' index.
 #[test]
 fn node_aliases_skip_pre_releases_and_versions_without_a_build() {

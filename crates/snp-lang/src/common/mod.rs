@@ -103,27 +103,14 @@ pub fn clean_path_on_failure<T, E>(
     root: &Path,
     f: impl FnOnce() -> Result<T, E>,
 ) -> Result<T, E> {
-    /// Removes the path when dropped armed (normal failure or unwinding).
-    struct Guard<'a> {
-        path: &'a Path,
-        root: &'a Path,
-        armed: bool,
-    }
-    impl Drop for Guard<'_> {
-        fn drop(&mut self) {
-            if self.armed {
-                let _ignored = rmtree(self.path, self.root);
-            }
-        }
-    }
-    let mut guard = Guard {
-        path,
-        root,
-        armed: true,
-    };
+    // Armed until `f` succeeds: an `Err` or a panic unwinding through `f` drops it, which removes the path.
+    let guard = std::mem::DropGuard::new((), |()| {
+        let _ignored = rmtree(path, root);
+    });
     let result = f();
-    guard.armed = result.is_err();
-    drop(guard);
+    if result.is_ok() {
+        std::mem::DropGuard::dismiss(guard);
+    }
     result
 }
 

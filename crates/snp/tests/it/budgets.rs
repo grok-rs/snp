@@ -102,14 +102,12 @@ impl SpawnLog {
 /// The lines of the spawn log at `path` (a missing file: no spawns). Read directly: `snp_proc::spawn_log` exists
 /// only in the `testing` build of snp-proc, and the format is fixed by ARCHITECTURE §1.4.10.
 fn snp_proc_log_lines(path: &Path) -> Vec<String> {
-    std::fs::read(path)
-        .map(|b| {
-            String::from_utf8_lossy(&b)
-                .lines()
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
+    std::fs::read(path).map_or_default(|b| {
+        String::from_utf8_lossy(&b)
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    })
 }
 
 /// Runs `snp <args>` in `cwd` twice — once unlogged to warm the store (the cached `git --version` of

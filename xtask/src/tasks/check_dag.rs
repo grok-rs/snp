@@ -199,8 +199,7 @@ fn ancestors(allowed: &BTreeMap<&str, BTreeSet<&str>>, name: &str) -> BTreeSet<S
     let mut seen = BTreeSet::new();
     let mut stack: Vec<&str> = allowed
         .get(name)
-        .map(|s| s.iter().copied().collect())
-        .unwrap_or_default();
+        .map_or_default(|s| s.iter().copied().collect());
     while let Some(n) = stack.pop() {
         if seen.insert(n.to_owned())
             && let Some(next) = allowed.get(n)

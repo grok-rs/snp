@@ -112,8 +112,7 @@ pub(crate) fn run_hook(
             .ext
             .root
             .as_ref()
-            .map(|r| r.lossy().into_owned())
-            .unwrap_or_default();
+            .map_or_default(|r| r.lossy().into_owned());
         return Ok(Ran {
             code: 1,
             ext_lines: vec![messages::root_missing(&root)],
@@ -298,8 +297,7 @@ fn run_xargs(
     let Ok(parts) = xargs::partition(&cmd, files, jobs, max_len) else {
         let exe = cmd
             .first()
-            .map(|c| snp_pycompat::repr::repr_os(c))
-            .unwrap_or_default();
+            .map_or_default(|c| snp_pycompat::repr::repr_os(c));
         return Ok(Ran::error(
             1,
             messages::argument_list_too_long(&exe).into_bytes(),

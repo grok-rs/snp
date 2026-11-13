@@ -166,8 +166,7 @@ mod vectors {
         }
         let expected_warnings: Vec<String> = row["w"]
             .as_array()
-            .map(|a| a.iter().map(|x| x.as_str().unwrap().to_owned()).collect())
-            .unwrap_or_default();
+            .map_or_default(|a| a.iter().map(|x| x.as_str().unwrap().to_owned()).collect());
         if row["ok"] == true {
             match got {
                 Ok(re) => {
@@ -256,7 +255,7 @@ mod vectors {
         for (k, key) in ["s", "m", "f"].iter().enumerate() {
             let (count, hash) = pair(&row[*key]);
             let got = (u64::try_from(hits[k].len()).unwrap(), fnv(&hits[k]));
-            if got != (count, hash.clone()) {
+            if got != (count, hash) {
                 out.push(format!(
                     "{p:?} [{key}] over {}: count {} vs CPython {count} (kind {:?})",
                     row["set"],
@@ -358,7 +357,7 @@ mod vectors {
         ];
         for (key, hits, count) in checks {
             let (want_count, want_hash) = pair(&row[key]);
-            if (count, fnv(hits)) != (want_count, want_hash.clone()) {
+            if (count, fnv(hits)) != (want_count, want_hash) {
                 if nullable_loop && key == "s" && count == want_count {
                     tolerated = true;
                     continue;

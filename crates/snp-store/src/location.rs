@@ -103,7 +103,7 @@ fn same_path(a: &Path, b: &Path) -> bool {
 pub(crate) fn readme_first_line(dir: &Path) -> Option<Vec<u8>> {
     let bytes = snp_os::fs::read_capped(&dir.join("README"), 4096).ok()?;
     let line = bytes.split(|&b| b == b'\n').next().unwrap_or_default();
-    Some(line.strip_suffix(b"\r").unwrap_or(line).to_vec())
+    Some(line.trim_suffix(b"\r").to_vec())
 }
 
 #[cfg(test)]

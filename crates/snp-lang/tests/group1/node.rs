@@ -345,7 +345,7 @@ fn range_world() -> (World, TestHost) {
     (w, t)
 }
 
-/// nodeenv 1.11.0 resolves partial versions and npm-style ranges to the highest matching release (the values
+/// nodeenv 1.12.0 resolves partial versions and npm-style ranges to the highest matching release (the values
 /// nodeenv's `resolve_node_version` prints for this index); an exact version is used as written.
 #[test]
 fn lang_node_version_ranges_resolve_like_nodeenv() {
@@ -404,6 +404,26 @@ fn lang_node_node_version_file_values() {
     .unwrap();
     let out = install(&t, &w, "default", &[]).unwrap();
     assert_eq!(&*out.tools[0].1, "18.19.1");
+}
+
+/// nodeenv 1.12.0 reads a `[nodeenv]` value with `ConfigParser.get` and drops one pair of matching outer quotes
+/// (nodeenv#321): `"18.17.0"` and `'20'` work, `%(name)s` interpolates; mismatched quotes stay, and a reference
+/// nodeenv cannot resolve (it crashes) fails the install.
+#[test]
+fn lang_node_nodeenv_config_values() {
+    let pick = |cfg: &str| {
+        let (w, t) = range_world();
+        std::fs::write(w.repo.join("setup.cfg"), cfg).unwrap();
+        install(&t, &w, "default", &[]).map(|o| o.tools[0].1.to_string())
+    };
+    assert_eq!(pick("[nodeenv]\nnode = \"18.17.0\"\n").unwrap(), "18.17.0");
+    assert_eq!(pick("[nodeenv]\nnode = '20'\n").unwrap(), "20.11.1");
+    assert_eq!(
+        pick("[DEFAULT]\nmajor = 18\n[nodeenv]\nnode = \"%(major)s.19\"\n").unwrap(),
+        "18.19.1"
+    );
+    assert!(pick("[nodeenv]\nnode = \"18.17.0'\n").is_err());
+    assert!(pick("[nodeenv]\nnode = %(nope)s\n").is_err());
 }
 
 /// A `language_version` or `.node-version` that is not a plain version never selects a directory outside the

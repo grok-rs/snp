@@ -150,7 +150,7 @@ pub(crate) fn split_records(buf: &[u8], fmt: StdinFormat) -> Vec<OsString> {
     buf.split(|b| *b == sep)
         .map(|r| match fmt {
             StdinFormat::Nul => r,
-            _ => r.strip_suffix(b"\r").unwrap_or(r),
+            _ => r.trim_suffix(b"\r"),
         })
         .filter(|r| !r.is_empty())
         .map(os_from_bytes)

@@ -1259,8 +1259,8 @@ mod tests {
         let out = child.wait_with_output().unwrap();
         (
             out.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&out.stdout).into_owned(),
-            String::from_utf8_lossy(&out.stderr).into_owned(),
+            String::from_utf8_lossy_owned(out.stdout),
+            String::from_utf8_lossy_owned(out.stderr),
         )
     }
 

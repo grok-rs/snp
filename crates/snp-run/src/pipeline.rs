@@ -670,7 +670,7 @@ fn run_hint(cx: &RunCtx, git: &Git, info: &RepoInfo, cfg: &Config) {
                 None => continue,
             },
         };
-        let shown = path.strip_prefix(&info.root).unwrap_or(&path);
+        let shown = path.trim_prefix(&info.root);
         cx.printer.diag(&messages::run_hint(
             cx.brand,
             &shown.to_string_lossy(),

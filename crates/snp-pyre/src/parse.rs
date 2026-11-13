@@ -411,11 +411,7 @@ impl Parser<'_> {
 
     /// "unpack non-capturing groups" (`re/_parser.py:883-889`).
     fn unpack_groups(&mut self, seq: SeqId) {
-        let items = self
-            .seqs
-            .get(ix(seq))
-            .map(|s| s.items.clone())
-            .unwrap_or_default();
+        let items = self.seqs.get(ix(seq)).map_or_default(|s| s.items.clone());
         let plain = |n: &Node| matches!(n, Node::Group { gid: None, add, del, .. } if add.0 == 0 && del.0 == 0);
         if !items
             .iter()
@@ -1377,12 +1373,11 @@ fn compute_info(ast: &mut Ast) {
             let info = ast
                 .seqs
                 .get(ix(sid))
-                .map(|s| {
+                .map_or_default(|s| {
                     s.items.iter().fold(Info::default(), |acc, &it| {
                         acc.then(node_info.get(ix(it)).copied().unwrap_or_default())
                     })
                 })
-                .unwrap_or_default()
                 .clamped();
             if let Some(slot) = seq_info.get_mut(ix(sid)) {
                 *slot = Some(info);
@@ -1516,12 +1511,11 @@ fn compute_info(ast: &mut Ast) {
     let root_info = ast
         .seqs
         .get(ix(root))
-        .map(|s| {
+        .map_or_default(|s| {
             s.items.iter().fold(Info::default(), |acc, &it| {
                 acc.then(node_info.get(ix(it)).copied().unwrap_or_default())
             })
         })
-        .unwrap_or_default()
         .clamped();
     if let Some(slot) = seq_info.get_mut(ix(root)) {
         *slot = Some(root_info);
@@ -1532,12 +1526,11 @@ fn compute_info(ast: &mut Ast) {
         let info = slot.unwrap_or_else(|| {
             ast.seqs
                 .get(sid)
-                .map(|s| {
+                .map_or_default(|s| {
                     s.items.iter().fold(Info::default(), |acc, &it| {
                         acc.then(node_info.get(ix(it)).copied().unwrap_or_default())
                     })
                 })
-                .unwrap_or_default()
                 .clamped()
         });
         filled.push(info);

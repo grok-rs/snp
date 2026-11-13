@@ -162,7 +162,7 @@ pub fn resolve(
 
 /// The concrete version an alias stands for on `target`: `default`/`latest`/`""` (every tool), node `lts`; `v`/`go`
 /// prefixes are dropped. uv's default is [`UV_PINNED`]; node's is the newest release of `index.json` that is not a
-/// pre-release (no `-` in the version) and lists a build for `target` (nodeenv 1.11.0 `_get_last_node_version`:
+/// pre-release (no `-` in the version) and lists a build for `target` (nodeenv 1.12.0 `_get_last_node_version`:
 /// `_is_prerelease`, `_has_platform_build`), `lts` the newest such LTS; musl and the unofficial-only architectures
 /// read the unofficial builds' `index.json` (arm64-musl exists only there). go's is the first stable release of the
 /// go.dev list (`golang.py` `_infer_go_version`); rustup's is the current `release-stable.toml` version; the ruby
@@ -177,9 +177,9 @@ pub fn resolve_version(
     let v = match tool {
         Tool::Uv if alias => UV_PINNED.to_owned(),
         Tool::Node if alias || requested == "lts" => node_alias(requested == "lts", target, f)?,
-        Tool::Node => requested.strip_prefix('v').unwrap_or(requested).to_owned(),
+        Tool::Node => requested.trim_prefix('v').to_owned(),
         Tool::Go if alias => go_latest(f)?,
-        Tool::Go => requested.strip_prefix("go").unwrap_or(requested).to_owned(),
+        Tool::Go => requested.trim_prefix("go").to_owned(),
         Tool::Rustup if alias => rustup_latest(f)?,
         Tool::Rbenv if alias => RBENV_VERSION.to_owned(),
         Tool::RubyBuild if alias => RUBY_BUILD_VERSION.to_owned(),
@@ -390,7 +390,7 @@ fn shasums_lookup(sums: &str, file: &str) -> Option<Checksum> {
         let mut it = line.split_whitespace();
         let hex = it.next()?;
         let name = it.next()?;
-        let name = name.strip_prefix('*').unwrap_or(name);
+        let name = name.trim_prefix('*');
         (name == file && it.next().is_none())
             .then(|| Checksum::sha256_hex(hex))
             .flatten()
@@ -439,7 +439,7 @@ fn node_alias(lts: bool, target: &str, f: &dyn Fetch) -> Result<String, NetError
         (!v.contains('-') && (!lts || is_lts) && has_build).then_some(v)
     });
     let v = pick.ok_or_else(|| unsupported(Tool::Node, target))?;
-    Ok(v.strip_prefix('v').unwrap_or(v).to_owned())
+    Ok(v.trim_prefix('v').to_owned())
 }
 
 /// go's `os-arch` of the archive file name.
@@ -515,7 +515,7 @@ fn go_latest(f: &dyn Fetch) -> Result<String, NetError> {
         .and_then(|r| r.get("version"))
         .and_then(Value::as_str)
         .ok_or_else(|| malformed(GO_JSON_LATEST, "go.dev JSON"))?;
-    Ok(v.strip_prefix("go").unwrap_or(v).to_owned())
+    Ok(v.trim_prefix("go").to_owned())
 }
 
 /// The rustup origin.

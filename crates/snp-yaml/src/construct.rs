@@ -622,7 +622,7 @@ impl<'d> State<'d> {
             // The scan step: one pair of `node.value`, or the end of the loop.
             let Some((key, value)) = self.scan_next(&mut stack, node_id, node_start)? else {
                 {
-                    let merge = stack.pop().map(|f| f.merge).unwrap_or_default();
+                    let merge = stack.pop().map_or_default(|f| f.merge);
                     if !merge.is_empty() {
                         let own = self.live_pairs(node_id)?;
                         self.spend(own.len(), node_start)?;
@@ -1131,7 +1131,7 @@ fn construct_int(
     let cleaned = value.replace('_', "");
     let first = cleaned.chars().next().ok_or_else(index_error)?;
     let negative = first == '-';
-    let v = cleaned.strip_prefix(['+', '-']).unwrap_or(&cleaned);
+    let v = cleaned.trim_prefix(['+', '-']);
     let mut big = if v == "0" {
         Big::zero()
     } else if let Some(bits) = v.strip_prefix("0b") {
@@ -1167,7 +1167,7 @@ fn construct_float(value: &str) -> Result<Value, YamlError> {
     let cleaned = py_lower(&value.replace('_', ""));
     let first = cleaned.chars().next().ok_or_else(index_error)?;
     let sign = if first == '-' { -1.0 } else { 1.0 };
-    let v = cleaned.strip_prefix(['+', '-']).unwrap_or(&cleaned);
+    let v = cleaned.trim_prefix(['+', '-']);
     let x = if v == ".inf" {
         sign * f64::INFINITY
     } else if v == ".nan" {

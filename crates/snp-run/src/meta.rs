@@ -293,15 +293,12 @@ fn raw_hook(h: &ConfigHook) -> RawHook {
         Arc::from(get(key).and_then(|v| v.as_str()).unwrap_or(default))
     };
     let tags = |key: &str| -> Vec<String> {
-        get(key)
-            .and_then(|v| v.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|x| x.as_str())
-                    .map(str::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default()
+        get(key).and_then(|v| v.as_array()).map_or_default(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str())
+                .map(str::to_owned)
+                .collect()
+        })
     };
     RawHook {
         id: Arc::clone(&h.id),
