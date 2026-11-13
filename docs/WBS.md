@@ -641,8 +641,8 @@ External dependencies (roxmltree for the dotnet nuspec, serde_json for JSON prob
 
 **Acceptance.**
 - `cargo xtask proofs check` green in `xtask gates` on every PR (guards G1–G10 with fixture unit tests)
-- M1: `cargo xtask proofs verus` green with `--no-cheating`, a complete manifest, an empty trusted list and a run under 15 s; every kernel has a mutant that fails; production calls K1–K3
-- M1: `cargo xtask proofs lean` (`--wfail`, axiom allowlist, `leanchecker`, forbidden tokens) and both oracle tests with `SNP_REQUIRE_LEAN_ORACLES=1` green
+- M1: `cargo xtask proofs verus` green with `--no-cheating`, a complete manifest and an empty trusted list; the root verification (mutants excluded) under 15 s and the whole command, mutants included, under about 60 s; every kernel has a mutant that fails; production calls K1–K3
+- M1: `cargo xtask proofs lean` (`--wfail`, axiom allowlist, `leanchecker`, forbidden tokens, the L5 attribute audit and statement pins) and both oracle tests with `SNP_REQUIRE_LEAN_ORACLES=1` green
 - `Cargo.lock`, `cargo deny check`, the published closure and an empty `cargo tree -p snp-pycompat` unchanged by any kernel
 - the §9 G/¬G rows of docs/VERIFICATION.md complete for every registered kernel and model
 
