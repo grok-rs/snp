@@ -1,6 +1,6 @@
 //! The `snp` binary (ARCHITECTURE §1.4.24, §10.1): the only `main`, and the only place that may call
 //! `std::process::exit`. `ExitCode` cannot carry a code > 255 on stable Rust (Windows `ExitCodeExt::from_raw` is
-//! unstable in 1.99.0), so `entry` returns `Exit`.
+//! unstable in 1.100.0), so `entry` returns `Exit`.
 //!
 //! The global allocator is the system allocator (ARCHITECTURE §12.2 T17), with two build-time exceptions measured by
 //! `cargo xtask bench` (WP-36): feature `dhat-heap` installs dhat's counting allocator for the B3 allocation budget

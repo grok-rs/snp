@@ -79,7 +79,7 @@ mod passwd {
     #[cfg(any(unix, test))]
     pub(super) fn parse_home(data: &[u8], matches: impl Fn(&[u8], &[u8]) -> bool) -> Option<&[u8]> {
         data.split(|b| *b == b'\n').find_map(|line| {
-            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            let line = line.trim_suffix(b"\r");
             if line.starts_with(b"+") || line.starts_with(b"-") || line.starts_with(b"#") {
                 return None;
             }

@@ -857,7 +857,7 @@ mod tests {
     use super::*;
 
     fn sorted(mut v: Vec<i64>, minor: PyMinor) -> Vec<i64> {
-        sort(&mut v, minor, |a, b| Ok::<bool, ()>(a < b)).unwrap();
+        let Ok(()) = sort(&mut v, minor, |a, b| Ok::<bool, !>(a < b));
         v
     }
 
@@ -887,7 +887,7 @@ mod tests {
         let mut v: Vec<(i32, usize)> = (0..500)
             .map(|i| (i32::try_from(i % 7).unwrap(), i))
             .collect();
-        sort(&mut v, PyMinor::P312, |a, b| Ok::<bool, ()>(a.0 < b.0)).unwrap();
+        let Ok(()) = sort(&mut v, PyMinor::P312, |a, b| Ok::<bool, !>(a.0 < b.0));
         assert!(
             v.iter()
                 .zip(v.iter().skip(1))

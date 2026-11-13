@@ -1,5 +1,5 @@
 [toolchain]
-# FD-4 / ADR-005: pinned toolchain; the MSRV (rust-version = "1.98") is enforced by the CI `msrv` job.
-channel = "1.99.0"
+# FD-4 / ADR-005: pinned toolchain; the MSRV (rust-version = "1.100") is enforced by the CI `msrv` job.
+channel = "1.100.0"
 components = ["rustfmt", "clippy", "llvm-tools-preview"]
 profile = "minimal"

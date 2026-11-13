@@ -107,7 +107,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-features --lib --bins -- -D warnings
 cargo clippy --workspace --all-features --tests --benches --examples -- \
     -D warnings -A clippy::disallowed_macros -A clippy::arithmetic_side_effects
-cargo +1.98.0 check --workspace --all-targets       # MSRV
+cargo +1.100.0 check --workspace --all-targets      # MSRV
 cargo deny check && cargo machete
 .github/scripts/deny-fixture.sh                     # deny.toml still bans regex/which/tokio in snp-pycompat
 cargo xtask check-dag && cargo xtask check-unsafe && cargo xtask lint-guards

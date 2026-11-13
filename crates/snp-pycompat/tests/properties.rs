@@ -183,11 +183,7 @@ mod properties {
             let s = rng.text(TEXT, 12);
             if let Ok(tokens) = shlex::split(&s) {
                 // re-quoting the tokens round-trips through split
-                assert_eq!(
-                    shlex::split(&shlex::join(&tokens)),
-                    Ok(tokens.clone()),
-                    "{s:?}"
-                );
+                assert_eq!(shlex::split(&shlex::join(&tokens)), Ok(tokens), "{s:?}");
             }
         }
     }

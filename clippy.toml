@@ -1,6 +1,6 @@
 # Clippy configuration (ARCHITECTURE §1.3, ADR-066). Every path below is verified to resolve:
 # an unresolvable path is a clippy warning, and CI runs with -Dwarnings.
-msrv = "1.98"
+msrv = "1.100"
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true

@@ -390,8 +390,7 @@ pub(crate) fn replace(path: &Path, bytes: &[u8], durable: bool) -> io::Result<()
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let name = path
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
+        .map_or_default(|n| n.to_string_lossy().into_owned());
     let mut last = io::Error::from(io::ErrorKind::AlreadyExists);
     for _ in 0..16 {
         let tmp = dir.join(format!(".{name}.tmp-{}", crate::lock::random_hex(8)));

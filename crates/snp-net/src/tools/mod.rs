@@ -177,9 +177,9 @@ pub fn resolve_version(
     let v = match tool {
         Tool::Uv if alias => UV_PINNED.to_owned(),
         Tool::Node if alias || requested == "lts" => node_alias(requested == "lts", target, f)?,
-        Tool::Node => requested.strip_prefix('v').unwrap_or(requested).to_owned(),
+        Tool::Node => requested.trim_prefix('v').to_owned(),
         Tool::Go if alias => go_latest(f)?,
-        Tool::Go => requested.strip_prefix("go").unwrap_or(requested).to_owned(),
+        Tool::Go => requested.trim_prefix("go").to_owned(),
         Tool::Rustup if alias => rustup_latest(f)?,
         Tool::Rbenv if alias => RBENV_VERSION.to_owned(),
         Tool::RubyBuild if alias => RUBY_BUILD_VERSION.to_owned(),
@@ -390,7 +390,7 @@ fn shasums_lookup(sums: &str, file: &str) -> Option<Checksum> {
         let mut it = line.split_whitespace();
         let hex = it.next()?;
         let name = it.next()?;
-        let name = name.strip_prefix('*').unwrap_or(name);
+        let name = name.trim_prefix('*');
         (name == file && it.next().is_none())
             .then(|| Checksum::sha256_hex(hex))
             .flatten()
@@ -439,7 +439,7 @@ fn node_alias(lts: bool, target: &str, f: &dyn Fetch) -> Result<String, NetError
         (!v.contains('-') && (!lts || is_lts) && has_build).then_some(v)
     });
     let v = pick.ok_or_else(|| unsupported(Tool::Node, target))?;
-    Ok(v.strip_prefix('v').unwrap_or(v).to_owned())
+    Ok(v.trim_prefix('v').to_owned())
 }
 
 /// go's `os-arch` of the archive file name.
@@ -515,7 +515,7 @@ fn go_latest(f: &dyn Fetch) -> Result<String, NetError> {
         .and_then(|r| r.get("version"))
         .and_then(Value::as_str)
         .ok_or_else(|| malformed(GO_JSON_LATEST, "go.dev JSON"))?;
-    Ok(v.strip_prefix("go").unwrap_or(v).to_owned())
+    Ok(v.trim_prefix("go").to_owned())
 }
 
 /// The rustup origin.

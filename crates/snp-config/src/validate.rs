@@ -88,7 +88,7 @@ pub fn validate(
             let src = ConfigSource {
                 path: p.to_path_buf(),
                 display: path.to_os_string(),
-                project_root: p.parent().map(Path::to_path_buf).unwrap_or_default(),
+                project_root: p.parent().map_or_default(Path::to_path_buf),
             };
             let cfg = crate::load_config(&src, o)?;
             if strict {

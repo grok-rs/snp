@@ -259,8 +259,7 @@ impl Sandbox {
         self.status(repo)
             .into_iter()
             .find(|(p, _)| p == path)
-            .map(|(_, s)| s)
-            .unwrap_or_default()
+            .map_or_default(|(_, s)| s)
     }
 
     /// `git ls-files -s` (the index, K3).
@@ -351,13 +350,11 @@ impl Sandbox {
 
     /// The files in the patches dir (sorted names).
     pub(crate) fn patch_files(&self) -> Vec<String> {
-        let mut v: Vec<String> = std::fs::read_dir(self.patches())
-            .map(|rd| {
-                rd.filter_map(Result::ok)
-                    .map(|e| e.file_name().to_string_lossy().into_owned())
-                    .collect()
-            })
-            .unwrap_or_default();
+        let mut v: Vec<String> = std::fs::read_dir(self.patches()).map_or_default(|rd| {
+            rd.filter_map(Result::ok)
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        });
         v.sort();
         v
     }

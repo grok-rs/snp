@@ -28,6 +28,9 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   `~/.nodeenvrc`: one pair of outer quotes is dropped (`node = "20"` selects node 20) and `%%` / `%(name)s` are
   interpolated as `configparser` does (ADR-092). The oracle lock pins `nodeenv==1.12.0`.
 
+- Built with Rust 1.100.0; the minimum supported Rust version is 1.100 (was 1.98), so `cargo install snp` needs Rust
+  1.100 or newer (ADR-094). The crash log's `sys.version` names rustc 1.100.0.
+
 ### Security
 
 - The embedded uv is 0.13.8 (was 0.12.23): uv 0.13.5 and later reject certificate chains through the compromised

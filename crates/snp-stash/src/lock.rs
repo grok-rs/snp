@@ -81,8 +81,7 @@ fn token_path(lock: &Path) -> PathBuf {
 /// The token currently stored for `lock` (trimmed; empty when none).
 fn read_token(lock: &Path) -> String {
     snp_os::fs::read_capped(&token_path(lock), 1024)
-        .map(|b| String::from_utf8_lossy(&b).trim().to_owned())
-        .unwrap_or_default()
+        .map_or_default(|b| String::from_utf8_lossy(&b).trim().to_owned())
 }
 
 /// `SNP_STASH_LOCK_TIMEOUT` (seconds, `float()` semantics): default 60 s, at most 1 h; anything invalid → 60 s.

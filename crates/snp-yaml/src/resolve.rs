@@ -180,7 +180,7 @@ fn is_null11(t: &str) -> bool {
 
 /// Strips one optional leading `[-+]`.
 fn strip_sign(t: &str) -> &str {
-    t.strip_prefix(['-', '+']).unwrap_or(t)
+    t.trim_prefix(['-', '+'])
 }
 
 /// `[0-9]`.
@@ -648,7 +648,7 @@ fn yaml_style_float(s: &str) -> bool {
     let exp_ok = exp.is_empty()
         || exp
             .get(1..)
-            .is_some_and(|e| plus(e.strip_prefix(['-', '+']).unwrap_or(e), digit));
+            .is_some_and(|e| plus(e.trim_prefix(['-', '+']), digit));
     mantissa_ok && exp_ok
 }
 

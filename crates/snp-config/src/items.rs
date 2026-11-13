@@ -255,10 +255,7 @@ impl MapItem for DeprecatedStagesWarning {
         if !legacy.is_empty() {
             let list = messages::join(&legacy);
             if self.hook {
-                let id = dct
-                    .get(&Value::from("id"))
-                    .map(Value::to_string)
-                    .unwrap_or_default();
+                let id = dct.get(&Value::from("id")).map_or_default(Value::to_string);
                 cx.warn(messages::hook_deprecated_stages(self.brand, &id, &list));
             } else {
                 cx.warn(messages::top_deprecated_stages(self.brand, &list));
@@ -366,7 +363,7 @@ impl WarnMutableRev {
 
 /// `re.match(r'^[a-fA-F0-9]+$', rev)`: Python's `$` also matches before a final `\n`.
 fn is_hex_rev(rev: &str) -> bool {
-    let body = rev.strip_suffix('\n').unwrap_or(rev);
+    let body = rev.trim_suffix('\n');
     !body.is_empty() && body.bytes().all(|b| b.is_ascii_hexdigit())
 }
 

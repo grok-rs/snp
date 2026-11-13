@@ -141,7 +141,7 @@ fn bytes_arg(s: &str) -> OsString {
     }
     #[cfg(not(unix))]
     {
-        OsString::from(String::from_utf8_lossy(&out).into_owned())
+        OsString::from(String::from_utf8_lossy_owned(out))
     }
 }
 
@@ -1012,8 +1012,7 @@ fn all_paths(tree: &Value, prog: &str) -> Vec<(Vec<String>, String)> {
                 for s in a
                     .get("subcommands")
                     .and_then(Value::as_array)
-                    .map(Vec::as_slice)
-                    .unwrap_or_default()
+                    .map_or_default(Vec::as_slice)
                 {
                     let (Some(name), Some(suffix)) = (
                         s.get("name").and_then(Value::as_str),

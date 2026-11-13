@@ -88,7 +88,7 @@ mod validate {
                 diag: &sink,
             };
             let src = ConfigSource {
-                path: path.clone(),
+                path,
                 display: ".pre-commit-config.yaml".into(),
                 project_root: dir.path().to_path_buf(),
             };

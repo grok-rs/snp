@@ -104,7 +104,7 @@ fn build_and_run(
     hook_env.apply_to(&mut command);
     let o = command.output().unwrap();
     assert!(o.status.success(), "{o:?}");
-    String::from_utf8_lossy(&o.stdout).into_owned()
+    String::from_utf8_lossy_owned(o.stdout)
 }
 
 /// A hook repository with one console script per language.

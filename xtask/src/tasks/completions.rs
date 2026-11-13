@@ -38,7 +38,7 @@ fn describe(a: &ActionSpec) -> Option<String> {
         snp_argparse::DefaultValue::Int(n) => n.to_string(),
         _ => String::new(),
     };
-    let choices = a.choices.map(|c| c.join(", ")).unwrap_or_default();
+    let choices = a.choices.map_or_default(|c| c.join(", "));
     Some(
         help.replace("%(default)s", &default)
             .replace("%(choices)s", &choices)
@@ -247,8 +247,7 @@ mod tests {
                 let name = a
                     .get_value_names()
                     .and_then(|v| v.first())
-                    .map(ToString::to_string)
-                    .unwrap_or_default();
+                    .map_or_default(ToString::to_string);
                 out.insert((path.to_owned(), format!("pos:{name}")));
                 continue;
             }

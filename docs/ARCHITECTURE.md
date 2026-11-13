@@ -34,7 +34,7 @@
 | FD-1 | Binary `snp`. In-place replacement for pre-commit: same `.pre-commit-config.yaml` / `.pre-commit-hooks.yaml`, CLI subcommands/flags, output layout, exit codes, env vars. Branding follows `argv[0]`: through a `pre-commit` name the user-facing text is byte-identical to pre-commit 4.7.0 (product name included); as `snp` the layout is identical but the product name is `snp`. |
 | FD-2 | Own cache store: `SNP_HOME` > `$XDG_CACHE_HOME/snp` > `~/.cache/snp` (Windows `%USERPROFILE%\.cache\snp`, the platform equivalent of pre-commit's own default, 14 P-65). Never read or write pre-commit's store; no SQLite; hash-keyed directories with marker files written last. |
 | FD-3 | User crates as path deps with version requirements: `cfgv = { path = "../cfgv-rs", version = "0.3" }`, `file-identify = { path = "../file-identify", version = "0.5" }` (branch `snp-support`; the real APIs are bound in §1.5). |
-| FD-4 | `rust-toolchain.toml` channel `1.99.0`; `rust-version = "1.98"`; edition 2024; resolver 3. |
+| FD-4 | `rust-toolchain.toml` channel `1.100.0`; `rust-version = "1.100"`; edition 2024; resolver 3 (ADR-094). |
 | FD-5 | `unsafe_code = "forbid"` in every snp crate; no panics on any input; `panic = "unwind"` + top-level guard (exit 3 + crash log) so the stash guard always restores; SIGINT/SIGTERM/SIGHUP-safe restore; fail closed. |
 | FD-6 | Behave exactly like pre-commit 4.7.0 except where pre-commit crashes, loses user data or has security bugs; every deliberate divergence is in the DIVERGENCES register (`docs/COMPATIBILITY.md` §5). |
 | FD-7 | Maximal performance and memory efficiency: `--version` ≤ 3 ms, no-op run of 10 hooks ≤ 25 ms (Linux; per-OS budgets in §12). |
@@ -107,10 +107,10 @@ CPython ≥ 3.13.14, used for argparse texts) and normalises the documented 3.12
 snp/
 ├─ Cargo.toml              virtual workspace; members = ["crates/*", "xtask"]; resolver = "3";
 │                          [workspace.package] version = "2.0.1" (crates.io `snp` 1.x exists, 11 §A.1), edition = "2024",
-│                          rust-version = "1.98", license = "MIT", authors = ["Serhii Kaliuzhnyi"],
+│                          rust-version = "1.100", license = "MIT", authors = ["Serhii Kaliuzhnyi"],
 │                          repository = "https://github.com/grok-rs/snp"; [workspace.lints]; COMPLETE [workspace.dependencies]
 ├─ Cargo.lock              committed; regenerated mechanically on merge (`cargo update -w`), never hand-merged
-├─ rust-toolchain.toml     channel = "1.99.0", components = ["rustfmt", "clippy", "llvm-tools-preview"], profile = "minimal"
+├─ rust-toolchain.toml     channel = "1.100.0", components = ["rustfmt", "clippy", "llvm-tools-preview"], profile = "minimal"
 ├─ rustfmt.toml clippy.toml deny.toml typos.toml .cargo/config.toml .config/nextest.toml .gitignore LICENSE README.md
 ├─ deps.lock               pinned commits of the sibling user crates (cfgv-rs, file-identify) for CI and releases (ADR-061)
 ├─ .github/workflows/      ci.yml (WP-00), nightly.yml (WP-00 skeleton; jobs call xtask tasks), platform.yml + release.yml (WP-37),
@@ -252,16 +252,15 @@ its tests run with a fake resolver before snp-repo lands. Critical path: pycompa
   `../file-identify`, `version = "0.5"`, `default-features = false`) — the sibling checkouts are pinned by the
   committed `deps.lock` (commit SHAs) that every workflow checks out (ADR-061), `libyaml-safer 0.3.0`, `regex 1.13.1`,
   `regex-syntax 0.8.11`, `fancy-regex 0.19.2`, `unicode-ident 1`, `unicode_names2 =4.0.0` (feature `py-re-names` of
-  snp-pyre, default on), `memchr 2.8.3`, `bstr 1.13.1`, `indexmap 2.14.2`, `foldhash 0.2.0`, `smallvec 1.16.2`,
-  `blake3 1.8.7`, `sha2 0.11.0`, `md-5 0.11.0`, `serde 1.0.229` + `serde_json 1.0.151` (state files and JSON I/O only),
+  snp-pyre, default on), `memchr 2.8.3`, `bstr 1.13.1`, `indexmap 2.14.2`, `blake3 1.8.7`, `sha2 0.11.0`, `md-5 0.11.0`, `serde 1.0.229` + `serde_json 1.0.151` (state files and JSON I/O only),
   `toml 1.1.6` (snp-migrate; tests of snp-pyparsers), `thiserror 2.0.21`, `tracing 0.1.44` + `tracing-subscriber
   0.3.23`, `ureq 3.4.2` (rustls + platform-verifier + gzip), `flate2 1.1.10`, `tar 0.4.46`, `zip 8.6.0`,
   `liblzma 0.4.8` (feature `xz`, Unix node tarballs only), `tempfile 3.27.0`, `same-file 1.0.6`, `globset 0.4.20`,
   `roxmltree 0.21` (dotnet nuspec), `rustix 1.1.5` (unix: `fs process pty termios thread stdio event`), `signal-hook
   0.3` (unix; `SignalsInfo<WithOrigin>`), `ctrlc 3.5` (windows, feature `termination`), `winapi-util 0.1.11` (windows:
   console VT), `process-wrap 10.0.1` (windows only: `std`, `job-object`), `mimalloc` (musl targets of `crates/snp`
-  only, iff ADR-079's measurement adopts it); dev: `insta 1.49`, `proptest 1.11`, `rstest 0.27`, `criterion 0.8.2`,
-  `pretty_assertions 1.4.1`, `dhat 0.3` (bench feature); build-time only (`xtask`): `clap 4.6.7` (default
+  only, iff ADR-079's measurement adopts it); dev: `insta 1.49`, `proptest 1.11`, `criterion 0.8.2`, `dhat 0.3`
+  (bench feature; ADR-094 dropped `foldhash`, `smallvec`, `rstest` and `pretty_assertions`, which no member used); build-time only (`xtask`): `clap 4.6.7` (default
   features off: its `color` feature pulls the banned `anstyle-query`; ADR-081), `clap_complete 4.6.11`,
   `clap_mangen 0.3.3`, `syn 2` (lint-guards), `anyhow 1`.
 * **Banned** (`deny.toml`): `tokio`, `async-std`, `rayon`, `clap` outside `xtask`, `which`, `shlex`, `shell-words`,
@@ -2166,7 +2165,7 @@ pub fn to_upstream(config_bytes: &[u8]) -> Result<Vec<u8>, snp_core::failure::Fa
 
 ```rust
 // crates/snp/src/main.rs — the only `main`; the only place that may call std::process::exit. `ExitCode` cannot carry a
-// code > 255 on stable Rust (Windows `ExitCodeExt::from_raw` is unstable in 1.99.0), so `entry` returns `Exit`.
+// code > 255 on stable Rust (Windows `ExitCodeExt::from_raw` is unstable in 1.100.0), so `entry` returns `Exit`.
 fn main() -> std::process::ExitCode {
     match snp::entry() {                         // every guard and destructor of `entry` has already run
         snp::Exit::Code(c) => std::process::ExitCode::from(c),
@@ -3432,7 +3431,7 @@ restore (§4.3). `dispatch` sequences `install` + `install --install-hooks` and 
   pre-commit version: 4.7.0            (snp brand: "snp version: 2.0.1")
   git --version: git version 2.43.0
   sys.version:
-      snp 2.0.1 (rustc 1.99.0) [x86_64-unknown-linux-gnu]
+      snp 2.0.1 (rustc 1.100.0) [x86_64-unknown-linux-gnu]
   sys.executable: /home/u/.cargo/bin/snp
   os.name: posix
   sys.platform: linux
@@ -3728,7 +3727,7 @@ bytes); `cmd_script_args` (era parsers of 11 §A.5.3, WP-33); `migrate_lefthook`
 
 ### 13.7 CI matrix
 
-Toolchain 1.99.0 (pinned) + MSRV job 1.98.0 (`cargo check --workspace --all-targets --locked`); OS: `ubuntu-24.04`,
+Toolchain 1.100.0 (pinned) + MSRV job 1.100.0 (`cargo check --workspace --all-targets --locked`); OS: `ubuntu-24.04`,
 `ubuntu-24.04-arm`, `macos-15` (arm64), `macos-15-intel`, `windows-2025`, `windows-11-arm`; musl static build smoke;
 git versions per §13.1 L6 via containers; nextest profiles `default` (hermetic), `ci` (retries 2, JUnit), `nightly`
 (all). Coverage (llvm-cov) reported; mutation testing (`cargo mutants`) nightly on snp-stash, snp-proc::xargs,

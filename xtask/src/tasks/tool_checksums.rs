@@ -159,8 +159,7 @@ fn archives(manifest: &str) -> anyhow::Result<Vec<(String, String, String)>> {
         let triples: Vec<&str> = art
             .get("target_triples")
             .and_then(serde_json::Value::as_array)
-            .map(|a| a.iter().filter_map(serde_json::Value::as_str).collect())
-            .unwrap_or_default();
+            .map_or_default(|a| a.iter().filter_map(serde_json::Value::as_str).collect());
         ensure!(
             triples == [target],
             "{name}: target_triples {triples:?} do not match the file name"

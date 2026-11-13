@@ -115,7 +115,7 @@ fn run_ok(cmd: &mut Command, what: &str) -> anyhow::Result<String> {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    Ok(String::from_utf8_lossy_owned(out.stdout))
 }
 
 /// `CPython 3.12.3` → (3, 12, 3).

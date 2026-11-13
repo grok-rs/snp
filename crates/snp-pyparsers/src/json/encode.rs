@@ -76,7 +76,7 @@ impl<'a> Indent<'a> {
 /// Whether Python's `int(s)` accepts `s` (whitespace, sign, Unicode decimal digits, single `_` between digits).
 fn is_int_syntax(s: &str) -> bool {
     let t = s.trim_matches(is_space);
-    let t = t.strip_prefix(['-', '+']).unwrap_or(t);
+    let t = t.trim_prefix(['-', '+']);
     let mut prev_digit = false;
     let mut any = false;
     for c in t.chars() {

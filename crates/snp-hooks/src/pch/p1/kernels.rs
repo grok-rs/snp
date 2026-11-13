@@ -204,7 +204,7 @@ pub fn requirements_fix(content: &[u8], epoch: u16) -> Result<Option<Vec<u8>>, P
         }
     }
     let rest = if reqs.last().is_some_and(|r| r.value.is_none()) {
-        reqs.pop().map(|r| r.comments).unwrap_or_default()
+        reqs.pop().map_or_default(|r| r.comments)
     } else {
         Vec::new()
     };

@@ -217,9 +217,9 @@ fn from_yaml(text: &str) -> Result<LValue, String> {
         },
         |v| match v.as_array() {
             Some(items) => items.iter().collect(),
-            None => v.as_set().map(|s| s.iter().collect()).unwrap_or_default(),
+            None => v.as_set().map_or_default(|s| s.iter().collect()),
         },
-        |v| v.as_map().map(|m| m.iter().collect()).unwrap_or_default(),
+        |v| v.as_map().map_or_default(|m| m.iter().collect()),
     );
     let mut budget = 400_000_usize;
     from_constructed(&v, &ops, 0, &mut budget)

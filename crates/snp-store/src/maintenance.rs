@@ -31,9 +31,7 @@ const SMALL_CAP: u64 = 64 * 1024;
 
 /// The entries of a directory (empty when it cannot be read).
 fn entries(dir: &Path) -> Vec<fs::DirEntry> {
-    fs::read_dir(dir)
-        .map(|rd| rd.filter_map(Result::ok).collect())
-        .unwrap_or_default()
+    fs::read_dir(dir).map_or_default(|rd| rd.filter_map(Result::ok).collect())
 }
 
 /// `(entry file, config realpath, project root)` of every well-formed `configs-v1` entry.

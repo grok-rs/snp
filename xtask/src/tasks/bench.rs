@@ -709,7 +709,7 @@ fn run_ok(cmd: &mut Command, what: &str) -> anyhow::Result<String> {
             tail(&String::from_utf8_lossy(&out.stderr), 40)
         );
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    Ok(String::from_utf8_lossy_owned(out.stdout))
 }
 
 /// The last `n` lines of `s`.
@@ -1655,12 +1655,11 @@ impl SetupState {
         let unavailable = v
             .get("unavailable")
             .and_then(Value::as_object)
-            .map(|m| {
+            .map_or_default(|m| {
                 m.iter()
                     .map(|(k, r)| (k.clone(), r.as_str().unwrap_or_default().to_owned()))
                     .collect()
-            })
-            .unwrap_or_default();
+            });
         Ok(Self { unavailable })
     }
 
@@ -2210,9 +2209,7 @@ fn measure(root: &Path, args: &[String]) -> anyhow::Result<()> {
         platform: platform(),
         variant: build.variant(),
         label: label.clone(),
-        commit: git(&work, root, &["rev-parse", "HEAD"])
-            .map(|s| s.trim().to_owned())
-            .unwrap_or_default(),
+        commit: git(&work, root, &["rev-parse", "HEAD"]).map_or_default(|s| s.trim().to_owned()),
         unix_time: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs()),
@@ -2258,9 +2255,7 @@ fn measure(root: &Path, args: &[String]) -> anyhow::Result<()> {
                         m.median_ms,
                         m.ci95_ms.0,
                         m.ci95_ms.1,
-                        m.rss_mib
-                            .map(|r| format!(", RSS {r:.1} MiB"))
-                            .unwrap_or_default()
+                        m.rss_mib.map_or_default(|r| format!(", RSS {r:.1} MiB"))
                     ));
                     Outcome::Ok(m)
                 }
@@ -3095,12 +3090,11 @@ fn comment(cur: &Record, base: Option<&Record>, checks: &[Check]) -> String {
             Verdict::Fail => "FAIL",
         },
         cur.commit.get(..12).unwrap_or(&cur.commit),
-        base.map(|b| format!(
+        base.map_or_default(|b| format!(
             ", baseline `{}` ({})",
             b.commit.get(..12).unwrap_or(&b.commit),
             b.label
         ))
-        .unwrap_or_default()
     );
     s.push_str(
         "| Scenario | snp p50 ms (95% CI) | baseline | Δ | pre-commit | prek | snp RSS MiB |\n",

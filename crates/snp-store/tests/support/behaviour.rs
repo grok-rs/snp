@@ -68,7 +68,7 @@ fn wait_for(path: &Path, what: &str) {
 
 fn finish(c: Child) -> String {
     let out = c.wait_with_output().unwrap();
-    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stdout = String::from_utf8_lossy_owned(out.stdout);
     assert!(
         out.status.success(),
         "child failed:\n{stdout}\n{}",

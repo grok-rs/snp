@@ -150,7 +150,7 @@ impl Fetch for Canned {
                 "https://static.rust-lang.org/rustup/archive/{RUSTUP}/"
             )) && u.ends_with(".sha256") =>
             {
-                let u = u.strip_suffix(".sha256").unwrap_or(u);
+                let u = u.trim_suffix(".sha256");
                 let mut parts = u.rsplit('/');
                 let file = parts.next().unwrap_or_default();
                 let exe = format!("{}/{file}", parts.next().unwrap_or_default());

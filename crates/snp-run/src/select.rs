@@ -127,16 +127,14 @@ impl Skips {
         let groups = if strict {
             Vec::new()
         } else {
-            env.get("SNP_SKIP_GROUPS")
-                .map(|v| {
-                    v.to_string_lossy()
-                        .split(',')
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
-                        .map(String::from)
-                        .collect()
-                })
-                .unwrap_or_default()
+            env.get("SNP_SKIP_GROUPS").map_or_default(|v| {
+                v.to_string_lossy()
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+                    .collect()
+            })
         };
         Self { ids, groups }
     }

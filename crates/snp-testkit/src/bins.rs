@@ -16,18 +16,19 @@ pub struct Bins {
 }
 
 impl Bins {
-    /// Finds `snp` and `snp-probe` in the target dir of the running test executable: a test binary lives in
-    /// `target/<profile>/deps/`, the workspace binaries in `target/<profile>/` (also under `--target <triple>` and
-    /// a custom `CARGO_TARGET_DIR`, which keep that shape). `None` when either is missing.
+    /// Finds `snp` and `snp-probe` in the target dir of the running test executable. The workspace binaries are in
+    /// `target/<profile>/`; a test binary is in `target/<profile>/deps/` (Cargo before 1.100) or
+    /// `target/<profile>/build/<package>/<hash>/out/` (Cargo 1.100's build-dir layout), also under `--target
+    /// <triple>` and a custom `CARGO_TARGET_DIR`, which keep that shape. `None` when either is missing.
     pub fn locate() -> Option<Self> {
         let exe = std::env::current_exe().ok()?;
         Self::locate_from(exe.parent()?)
     }
 
-    /// [`Bins::locate`] starting from the directory that holds the test executable.
+    /// [`Bins::locate`] starting from the directory that holds the test executable: it and its ancestors up to the
+    /// profile directory of either layout.
     fn locate_from(dir: &Path) -> Option<Self> {
-        let candidates = [Some(dir), dir.parent()];
-        candidates.into_iter().flatten().find_map(|d| {
+        dir.ancestors().take(5).find_map(|d| {
             let snp = d.join(format!("snp{}", std::env::consts::EXE_SUFFIX));
             let probe = d.join(format!("snp-probe{}", std::env::consts::EXE_SUFFIX));
             (snp.is_file() && probe.is_file()).then_some(Self { snp, probe })
@@ -56,5 +57,14 @@ mod tests {
         assert_eq!(bins.snp, d.path().join(format!("snp{suffix}")));
         assert_eq!(bins.probe, d.path().join(format!("snp-probe{suffix}")));
         assert!(Bins::locate_from(d.path()).is_some());
+        // Cargo 1.100: `<profile>/build/<package>/<hash>/out/<test>`.
+        let out = d
+            .path()
+            .join("build")
+            .join("snp")
+            .join("0123abcd")
+            .join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        assert_eq!(Bins::locate_from(&out).unwrap().snp, bins.snp);
     }
 }

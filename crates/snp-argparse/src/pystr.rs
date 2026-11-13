@@ -182,7 +182,7 @@ pub(crate) fn py_int(s: &str) -> Option<i64> {
     let t = s.trim_matches(is_int_space);
     let (neg, digits) = match t.strip_prefix('-') {
         Some(rest) => (true, rest),
-        None => (false, t.strip_prefix('+').unwrap_or(t)),
+        None => (false, t.trim_prefix('+')),
     };
     let mut val: i128 = 0;
     let mut count = 0usize;
@@ -219,7 +219,7 @@ pub(crate) fn is_negative_number(b: &[u8]) -> bool {
     let Some(rest) = s.strip_prefix('-') else {
         return false;
     };
-    let rest = rest.strip_suffix('\n').unwrap_or(rest);
+    let rest = rest.trim_suffix('\n');
     let is_digit = |c: char| decimal_value(c).is_some();
     if !rest.is_empty() && rest.chars().all(is_digit) {
         return true;

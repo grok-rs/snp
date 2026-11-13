@@ -95,8 +95,7 @@ impl<'a> TextIo<'a> {
             Err(_) => {
                 let err = snp_pycompat::codec::decode_utf8(&data)
                     .err()
-                    .map(|e| e.to_string())
-                    .unwrap_or_default();
+                    .map_or_default(|e| e.to_string());
                 return Err(Fail::crash("UnicodeDecodeError", err));
             }
         };

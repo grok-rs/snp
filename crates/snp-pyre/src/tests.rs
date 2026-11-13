@@ -82,7 +82,7 @@ fn categories_equal_python() {
         let python = class_of(&ranges(&v[key]));
         let mine = emitted(category_text(cat, false, false));
         assert_same_on_assigned(key, &mine, &python, &assigned);
-        let mut python_neg = python.clone();
+        let mut python_neg = python;
         python_neg.negate();
         let mine_neg = emitted(category_text(neg, false, false));
         assert_same_on_assigned(key, &mine_neg, &python_neg, &assigned);

@@ -132,7 +132,7 @@ pub(crate) fn has_main(root: &Path) -> bool {
 
 /// The display name of `p` (relative to `root` when inside it, `/` separators).
 pub(crate) fn display(root: &Path, p: &Path) -> String {
-    let rel = p.strip_prefix(root).unwrap_or(p);
+    let rel = p.trim_prefix(root);
     let s = rel.to_string_lossy().into_owned();
     if cfg!(windows) {
         s.replace('\\', "/")
@@ -164,7 +164,7 @@ fn read_config(root: &Path, path: &Path) -> Result<LMap, LoadError> {
         .map_err(|e| LoadError(format!("{shown}: {e}")))?;
     let text = std::str::from_utf8(&bytes)
         .map_err(|e| LoadError(format!("{shown}: the file is not valid UTF-8: {e}")))?;
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let text = text.trim_prefix('\u{feff}');
     value::parse(text, format).map_err(|e| LoadError(format!("{shown}: {e}")))
 }
 
@@ -649,7 +649,7 @@ pub(crate) fn go_glob(
     let dir = match dir {
         "" => ".".to_owned(),
         "/" => "/".to_owned(),
-        d => d.strip_suffix('/').unwrap_or(d).to_owned(),
+        d => d.trim_suffix('/').to_owned(),
     };
     if !has_meta(&dir) {
         return glob_dir(base, &dir, file, Vec::new(), budget);
@@ -862,10 +862,7 @@ pub(crate) fn load(
     if main_path.is_none() && !with_local {
         return Err(LoadError(format!(
             "only the local config {} exists; convert it with --local",
-            local_path
-                .as_deref()
-                .map(|p| display(root, p))
-                .unwrap_or_default()
+            local_path.as_deref().map_or_default(|p| display(root, p))
         )));
     }
     let mut main = LMap::new();
@@ -924,7 +921,7 @@ pub(crate) fn load(
         global,
         hooks,
         files: cx.files,
-        main: main_path.map(|p| display(root, &p)).unwrap_or_default(),
+        main: main_path.map_or_default(|p| display(root, &p)),
         local,
         warnings: cx.warnings,
         remotes,

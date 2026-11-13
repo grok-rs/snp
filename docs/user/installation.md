@@ -115,7 +115,7 @@ cargo binstall snp      # cargo-binstall fetches the release archive instead of 
 snp 2.x is published on crates.io as `snp` together with the internal crates it is built from (`snp-core`,
 `snp-cli`, `snp-run`, ...; they exist only to build `snp` and have no stable API). `--locked` builds with the
 dependency versions the release was tested with. `cargo install` compiles with Cargo's default release profile rather
-than the release archives' (fat LTO, overflow checks), and needs Rust 1.98 or newer; the installers and archives above
+than the release archives' (fat LTO, overflow checks), and needs Rust 1.100 or newer; the installers and archives above
 are the recommended channel when you do not need a source build.
 
 The crate name `snp` previously held the unrelated snp 1.x. If `~/.cargo/bin/snp --version` prints `1.x`, that is the
@@ -134,7 +134,7 @@ cargo build --profile dist --locked -p snp
 ./target/dist/snp --version
 ```
 
-The toolchain is pinned by `rust-toolchain.toml` (Rust 1.99.0; the minimum supported version is 1.98).
+The toolchain is pinned by `rust-toolchain.toml` (Rust 1.100.0, which is also the minimum supported version).
 
 ## Shell completions
 

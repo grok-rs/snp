@@ -139,7 +139,7 @@ fn lock_failure(path: &Path, f: Failure) -> LangError {
         Failure::Exc { exc, .. } => io_err(
             "lock tool directory",
             path,
-            io::Error::other(String::from_utf8_lossy(&exc.text).into_owned()),
+            io::Error::other(String::from_utf8_lossy_owned(exc.text)),
         ),
         other => io_err(
             "lock tool directory",
@@ -621,7 +621,7 @@ pub(crate) fn parse_ini(text: &str) -> Ini {
         optname = if empty { None } else { pos };
     }
     let mut it = raw.into_iter();
-    let defaults = it.next().map(|(_, r)| r.finish()).unwrap_or_default();
+    let defaults = it.next().map_or_default(|(_, r)| r.finish());
     let mut sections: Vec<(String, IniSection)> = Vec::new();
     let mut index: HashMap<String, usize> = HashMap::new();
     for (name, r) in it {

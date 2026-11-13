@@ -381,7 +381,7 @@ fn fetch(url: &str, dest: &Path) -> Result<(), String> {
     if let Some(path) = url.strip_prefix("file://") {
         // file:///C:/x on Windows
         let path = if cfg!(windows) {
-            path.strip_prefix('/').unwrap_or(path)
+            path.trim_prefix('/')
         } else {
             path
         };
@@ -994,7 +994,7 @@ fn changelog_section<'a>(text: &'a str, version: &str) -> Option<&'a str> {
                     || h.split_whitespace().next().unwrap_or_default(),
                     |(t, _)| t,
                 );
-            let title = title.strip_prefix('v').unwrap_or(title);
+            let title = title.trim_prefix('v');
             if title.eq_ignore_ascii_case(version) {
                 start = Some(next);
             }
@@ -1599,7 +1599,7 @@ mod tests {
             while i < lines.len() {
                 let line = lines[i];
                 let t = line.trim_start();
-                let t = t.strip_prefix("- ").unwrap_or(t);
+                let t = t.trim_prefix("- ");
                 i += 1;
                 let Some(value) = t.strip_prefix("run:") else {
                     continue;
@@ -1990,7 +1990,7 @@ mod tests {
                     (
                         o.status.code(),
                         log,
-                        String::from_utf8_lossy(&o.stderr).into_owned(),
+                        String::from_utf8_lossy_owned(o.stderr),
                     )
                 }
             }

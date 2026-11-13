@@ -10,7 +10,7 @@ naming the amending ADR, which is normative where they differ. ADR-056…ADR-080
 ADR-082 the end-to-end integration of the merged packages; ADR-083 the verification of the integrated `main`; ADR-084
 the final multi-lens review; ADR-085 the `interactive` extension key; ADR-086 the first CI run on macOS; ADR-087 the
 `.snp.yaml` config file name; ADR-088 the crates.io and Homebrew release channels; ADR-089 the retarget to pre-commit
-4.7.0; ADR-090 what the scheduled gates can judge; ADR-092 the November 2026 upstream refresh.
+4.7.0; ADR-090 what the scheduled gates can judge; ADR-092 the November 2026 upstream refresh; ADR-094 Rust 1.100.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -80,6 +80,8 @@ ordering (stash safety) obvious; no runtime start-up (B1 ≤ 3 ms); smaller bina
 **Consequences.** Native per-file parallelism inside pre-commit-hooks uses scoped threads on the same pool.
 
 ### ADR-005 — Toolchain pin (C5)
+
+*Status: Accepted; amended by ADR-094 (Rust 1.100.0, MSRV 1.100). The amending ADR is normative where they differ.*
 
 **Decision.** `rust-toolchain.toml` channel `1.99.0` (components rustfmt, clippy, llvm-tools-preview), `rust-version =
 "1.98"`, edition 2024, resolver 3; CI runs an MSRV `cargo check` job on 1.98.0. 10 §0/§7's "1.98.0 channel" is
@@ -1402,6 +1404,46 @@ version (it moves to 4.10.4 when a lefthook release ships it).
 uv that trusts a distrusted intermediate weakens the TLS that D-SEC-08 relies on for PyPI traffic.
 **Consequences.** Developers rerun `cargo xtask oracle install`. A quoted `node = "20"` in `setup.cfg`, `tox.ini` or
 `~/.nodeenvrc` now selects node 20. The first Python install after upgrading downloads uv 0.13.8 into `tools-v1/uv`.
+
+### ADR-094 — Rust 1.100: toolchain and MSRV, the never type and the new std and Cargo features
+
+**Context.** Rust 1.100.0 (2026-11-12) stabilizes the never type (`Infallible` is now an alias of `!`),
+`str`/`[T]`/`Path::trim_prefix` and `trim_suffix`, `mem::DropGuard`, `bool::toggle`, custom allocators, Cargo's own
+lint system (`[lints.cargo]`, with `unused_dependencies`) and dependency cooldowns, and moves test executables to a
+new build-dir layout (`<profile>/build/<package>/<hash>/out/`). 1.99 stabilized `String::from_utf8_lossy_owned` and
+`fs::set_times`. Clippy 1.100 extends `map_unwrap_or` to `map(f).unwrap_or_default()` and `redundant_clone` to loop
+bodies. snp pinned 1.99.0 with MSRV 1.98 (ADR-005), which kept all of this out of reach.
+**Decision.** (1) The toolchain is **1.100.0** and the MSRV is **1.100** (`rust-version`, clippy's `msrv`, the CI
+`msrv` job): the MSRV equals the pin, so snp may use everything 1.100 stabilized; `cargo install snp` needs Rust 1.100.
+(2) Adopted where it states intent better than the old form: `!` for errors that cannot happen (the lenient key
+comparator of the JSON sort and the `pysort` tests, where `let Ok(()) = …` proves the absence of an error path instead
+of an `unwrap`); `trim_prefix`/`trim_suffix` for every `strip_*(p).unwrap_or(receiver)` (54 sites; identical
+semantics: at most one occurrence removed); `DropGuard` for `clean_path_on_failure`'s hand-written guard;
+`bool::toggle`; `String::from_utf8_lossy_owned` where the bytes are owned and dead afterwards (17 sites: valid UTF-8
+is no longer copied); `fs::set_times` for the recovery notice's patch mtime (no open for writing); `map_or_default`
+(80 sites, clippy's suggestion). snp has no other site where `!` changes a type: no `Infallible`, no empty enums, and
+the three diverging helpers already return `!`. (3) `[workspace.lints.cargo]` denies `unused_dependencies`,
+`unused_workspace_dependencies`, `unused_workspace_package_fields`, `missing_lints_inheritance` and
+`redundant_homepage`. Fixing them: `homepage` (equal to `repository`) is gone; `foldhash`, `smallvec`, `rstest` and
+`pretty_assertions` leave `[workspace.dependencies]` (no member used them); snp-net's `snp-os` becomes a Windows-only
+dependency (its one use is the Windows rename retry; cargo-machete could not see that); snp-lang's `flate2` and `tar`
+become dev-dependencies (only its tests build archives). cargo-machete stays: Cargo's lint does not check
+dev-dependencies. (4) Test helpers that find the workspace binaries from the test executable (`snp_testkit::Bins` and
+snp-proc's probe lookup) walk up to the profile directory, so both layouts work. (5) A unit test ties the crash log's
+`rustc` version to `rust-toolchain.toml`. (6) Behaviour changes audited: `ENOTSUP` now maps to
+`ErrorKind::Unsupported`, but snp matches errno values (rustix) and never the kind of an OS error. std's case and
+class tables move to Unicode 18.0; the few parity paths that use them (argparse's `dest.upper()`, textwrap's word
+characters, path, INI and YAML helpers) already differed from CPython's Unicode 15.x only for characters assigned
+after 15.1, and the bump adds 18.0's new characters to that set (the profiles of ARCHITECTURE §0.3 that carry their
+own UCD data, `repr`, East Asian Width and the regex grammar, are unaffected). `str::escape_debug` is not used for
+parity output; the never-type fallback was already `!` under edition 2024. (7) Not adopted: custom allocators (no measured need, and
+implementing `Allocator` needs `unsafe`, FD-5); dependency cooldowns (`registry.global-min-publish-age` would also
+hold back urgent security updates and `cargo publish`'s verification build, so it needs its own decision);
+`Vec::from_fn`, `Box::map`/`Arc::map` (no call site).
+**Rationale.** The owner asked for the current toolchain and its idioms; a pin and an MSRV that trail the release by
+two versions only keep the codebase from using them.
+**Consequences.** Contributors need Rust 1.100 (`rustup` reads `rust-toolchain.toml`). The crash log names rustc
+1.100.0.
 
 ## Appendix A — Open questions of the research documents, resolved
 

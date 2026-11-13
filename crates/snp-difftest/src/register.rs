@@ -283,8 +283,7 @@ pub fn check(root: &Path) -> Result<Report, String> {
         for f in list(dir, ext)? {
             let stem = f
                 .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
+                .map_or_default(|s| s.to_string_lossy().into_owned());
             if stem != "README" && !entries.iter().any(|e| e.id == stem) {
                 report.problems.push(format!(
                     "{}: no register row {stem} in COMPATIBILITY §5",

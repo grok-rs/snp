@@ -50,8 +50,7 @@ pub fn parse_script_args(owner: &Owner, bytes: &[u8]) -> Option<ScriptArgs> {
 
 /// The lines of `b` (`\n`-split, a trailing `\r` dropped), each bounded by the input.
 fn lines(b: &[u8]) -> impl Iterator<Item = &[u8]> {
-    b.split(|&c| c == b'\n')
-        .map(|l| l.strip_suffix(b"\r").unwrap_or(l))
+    b.split(|&c| c == b'\n').map(|l| l.trim_suffix(b"\r"))
 }
 
 fn trim(b: &[u8]) -> &[u8] {

@@ -28,7 +28,7 @@ pub(crate) type Ranges = Vec<Vec<(Op, Triple)>>;
 
 /// `str` without one trailing `\n` (Python's `$` also matches before a final newline).
 fn dollar(s: &str) -> &str {
-    s.strip_suffix('\n').unwrap_or(s)
+    s.trim_suffix('\n')
 }
 
 /// A run of ASCII digits at the start of `s`: `(value, rest)`.
@@ -48,7 +48,7 @@ fn digits(s: &str) -> Option<(u64, &str)> {
 /// `_EXACT_VERSION_RE = ^v?\d+\.\d+\.\d+(\+\S*)?$`.
 pub(crate) fn is_exact(version: &str) -> bool {
     let s = dollar(version);
-    let s = s.strip_prefix('v').unwrap_or(s);
+    let s = s.trim_prefix('v');
     let mut rest = s;
     for i in 0..3 {
         let Some((_, r)) = digits(rest) else {
@@ -121,7 +121,7 @@ fn parse_comparator(token: &str) -> Option<Vec<(Op, Triple)>> {
     .find_map(|(p, op)| s.strip_prefix(p).map(|r| (op, r)))
     .unwrap_or((CmpOp::Eq, s));
     let rest = rest.trim_start_matches(snp_pycompat::chars::is_space);
-    let rest = rest.strip_prefix('v').unwrap_or(rest);
+    let rest = rest.trim_prefix('v');
     let (major, mut rest) = part(rest)?;
     let mut minor = None;
     let mut patch = None;
