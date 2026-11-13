@@ -982,16 +982,14 @@ impl Inner {
     /// rollback's failure (its `CalledProcessError`; the K+ path keeps the patch).
     fn rollback_checkout(&mut self, patch: &Path) -> Result<(), Failure> {
         let paths = self.git().rollback_paths(patch)?;
-        if paths.is_empty() {
-            return Ok(());
+        for call in self.git().checkout_path_calls(&paths) {
+            let args: Vec<&OsStr> = call.args.iter().map(OsString::as_os_str).collect();
+            let out = self.restore_checkout(&args, call.stdin);
+            if out.status != 0 {
+                return Err(self.called_process_error(&args, &out));
+            }
         }
-        let args = snp_git::CHECKOUT_PATHS_ARGS.map(OsStr::new);
-        let out = self.restore_checkout(&args, snp_git::literal_pathspecs(paths.iter()));
-        if out.status == 0 {
-            Ok(())
-        } else {
-            Err(self.called_process_error(&args, &out))
-        }
+        Ok(())
     }
 
     /// Step 10 a–e: re-apply the patch (rollback on conflict); the K+ hint on final failure.

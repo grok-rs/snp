@@ -2397,6 +2397,8 @@ snp keeps pre-commit's algorithm and narrows the two checkouts:
    `git -c submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul`, fed `:(literal)<path>\0` per file
    (no argv limit, no glob or magic; `GIT_*_PATHSPECS` removed from its environment), with
    `_PRE_COMMIT_SKIP_POST_CHECKOUT=1` as before. A `post-checkout` hook still runs (a file checkout, flag 0).
+   git before 2.25 has no `--pathspec-from-file`: there the same `:(literal)` pathspecs follow
+   `git -c submodule.recurse=0 checkout --` as arguments, in chunks of at most 24 KiB.
 2. **Conflict rollback.** The patch's files again (so the patch applies), followed by every other file `git diff
    --name-only` lists after refreshing the stat data — what pre-commit's whole-tree checkout visibly changes: every
    hook fix git can see is discarded exactly as before, the index is untouched, and a change git cannot see stays. A

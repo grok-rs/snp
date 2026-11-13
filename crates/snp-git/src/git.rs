@@ -75,6 +75,20 @@ pub const CHECKOUT_PATHS_ARGS: [&str; 5] = [
     "--pathspec-file-nul",
 ];
 
+/// The argument bytes one chunk of [`Git::checkout_path_calls`]'s fallback may carry (well inside Windows' 32 767-character
+/// command line and every Unix `ARG_MAX`).
+const CHECKOUT_CHUNK_BYTES: usize = 24 * 1024;
+
+/// One git call of the stash's path-limited checkout ([`Git::checkout_path_calls`]): the arguments after `git` and its
+/// stdin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckoutCall {
+    /// The arguments after `git` (the `-c` options included).
+    pub args: Vec<OsString>,
+    /// The bytes fed on stdin (empty for the argument form).
+    pub stdin: Vec<u8>,
+}
+
 /// `:(literal)<path>\0` per path: a `--pathspec-file-nul` list in which no name is a glob or carries magic.
 pub fn literal_pathspecs<'a>(paths: impl IntoIterator<Item = &'a [u8]>) -> Vec<u8> {
     let mut out = Vec::new();
@@ -623,25 +637,68 @@ impl Git {
         skip_post_checkout: bool,
         group: Group,
     ) -> Result<(), Failure> {
-        if paths.is_empty() {
-            return Ok(());
-        }
-        let argv = self.argv(&CHECKOUT_PATHS_ARGS);
-        let stdin = Stdin::Bytes(Arc::from(literal_pathspecs(paths.iter())));
         let env = self.checkout_env(skip_post_checkout);
-        let out = match self.backend.capture(&argv, &env, &self.root, stdin, group) {
-            Ok(c) => Out {
-                status: c.status.0,
-                stdout: c.stdout,
-                stderr: Some(c.stderr),
-            },
-            Err(e) => Out::from_spawn_error(&e),
-        };
-        if out.status == 0 {
-            Ok(())
-        } else {
-            Err(out.called_process_error(&argv))
+        for call in self.checkout_path_calls(paths) {
+            let args: Vec<&OsStr> = call.args.iter().map(OsString::as_os_str).collect();
+            let argv = self.argv(&args);
+            let stdin = Stdin::Bytes(Arc::from(call.stdin));
+            let out = match self.backend.capture(&argv, &env, &self.root, stdin, group) {
+                Ok(c) => Out {
+                    status: c.status.0,
+                    stdout: c.stdout,
+                    stderr: Some(c.stderr),
+                },
+                Err(e) => Out::from_spawn_error(&e),
+            };
+            if out.status != 0 {
+                return Err(out.called_process_error(&argv));
+            }
         }
+        Ok(())
+    }
+
+    /// D-DATA-19: the calls that check out exactly `paths`, every name a `:(literal)` pathspec: one
+    /// [`CHECKOUT_PATHS_ARGS`] call fed the [`literal_pathspecs`] on stdin (git ≥ 2.25), else — git before 2.25 has no
+    /// `--pathspec-from-file` — `git -c submodule.recurse=0 checkout -- :(literal)<path>…` in chunks of at most
+    /// [`CHECKOUT_CHUNK_BYTES`] argument bytes (a name longer than that gets a call of its own). Run them in the
+    /// environment of [`Git::checkout_env`]. No call for an empty list.
+    pub fn checkout_path_calls(&self, paths: &ZList) -> Vec<CheckoutCall> {
+        if paths.is_empty() {
+            return Vec::new();
+        }
+        if self.exe.caps.pathspec_from_file {
+            return vec![CheckoutCall {
+                args: CHECKOUT_PATHS_ARGS.iter().map(|a| os(a)).collect(),
+                stdin: literal_pathspecs(paths.iter()),
+            }];
+        }
+        let head = || -> Vec<OsString> {
+            ["-c", "submodule.recurse=0", "checkout", "--"]
+                .iter()
+                .map(|a| os(a))
+                .collect()
+        };
+        let mut calls = Vec::new();
+        let mut args = head();
+        let mut bytes = 0_usize;
+        for p in paths.iter() {
+            let mut spec = b":(literal)".to_vec();
+            spec.extend_from_slice(p);
+            if bytes > 0 && bytes.saturating_add(spec.len()) > CHECKOUT_CHUNK_BYTES {
+                calls.push(CheckoutCall {
+                    args: std::mem::replace(&mut args, head()),
+                    stdin: Vec::new(),
+                });
+                bytes = 0;
+            }
+            bytes = bytes.saturating_add(spec.len()).saturating_add(1);
+            args.push(os_from_bytes(&spec));
+        }
+        calls.push(CheckoutCall {
+            args,
+            stdin: Vec::new(),
+        });
+        calls
     }
 
     /// D-DATA-19: the paths a stash patch touches, from git's own patch parser: `git apply --numstat -z <patch>`

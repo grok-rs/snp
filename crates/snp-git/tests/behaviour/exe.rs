@@ -53,6 +53,7 @@ fn exe_at(v: Option<GitVersion>) -> GitExe {
             config_env: true,
             init_object_format: true,
             config_hooks: false,
+            pathspec_from_file: true,
         },
     }
 }

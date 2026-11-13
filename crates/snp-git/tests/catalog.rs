@@ -649,6 +649,7 @@ mod rows {
                 config_env: false,
                 init_object_format: false,
                 config_hooks: false,
+                pathspec_from_file: false,
             },
         });
         let e = snp_git::Git::discover(old, &sb.env, &repo, scripted).unwrap_err();
