@@ -16,7 +16,19 @@ verusfmt = { version = "0.7.4", sha256 = { x86_64-unknown-linux-gnu = "bbc5cb02c
 # brought (measured when the entry was added); a whole-root run must verify at least the sum over all kernels.
 # Every mutant, applied to a temporary copy of `file` (first occurrence of `find`), must make verification fail
 # (V3; today `proofs/verus/run.sh --mutant <file> <find> <replace>`).
-# [[kernel]] entries follow (K1 is the first).
+[[kernel]]
+id = "K1-xargs-partition"
+status = "verified"                # verified | pending (§8.3)
+file = "crates/snp-proc/src/xargs/partition.rs"
+mount = "snp_proc_xargs_partition"
+spec = "proofs/verus/spec/xargs_partition.rs"
+callers = ["crates/snp-proc/src/xargs.rs::partition"]
+verified_min = 10
+mutants = [
+    { find = "Some(t) => t <= max_len", replace = "Some(t) => t < max_len" },
+    # F2: the former saturating budget accepts an argument whose length overflows the sum.
+    { find = "match total.checked_add(arg_len) {", replace = "match Some(total.saturating_add(arg_len)) {" },
+]
 
 # [[model]]: Lean models with oracle tests and fingerprinted anchors (K3, K4 add theirs).
 # [[trusted]]: empty in M1 (§10 row 8). From M2: { item = "Memchr: FindByte", kernel = "K5", test = "…" }

@@ -31,6 +31,13 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
 - Built with Rust 1.100.0; the minimum supported Rust version is 1.100 (was 1.98), so `cargo install snp` needs Rust
   1.100 or newer (ADR-094). The crash log's `sys.version` names rustc 1.100.0.
 
+### Fixed
+
+- xargs partitioning no longer accepts an argument whose length overflows the command-length arithmetic: with a
+  budget of `usize::MAX` the saturating sum let such an argument fit, where pre-commit's unbounded integers raise
+  `ArgumentTooLongError`. The greedy loop is now the kernel `partition_lens`, which is proved to satisfy the spec of
+  `xargs.partition` (ADR-095). Real budgets are at most 131072, so no run changes in practice.
+
 ### Security
 
 - The embedded uv is 0.13.8 (was 0.12.23): uv 0.13.5 and later reject certificate chains through the compromised

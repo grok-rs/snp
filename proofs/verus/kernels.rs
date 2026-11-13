@@ -12,3 +12,8 @@
 use vstd::prelude::*;
 
 pub mod spec;
+
+/// K1: xargs partition core (snp-proc).
+#[verus_verify]
+#[path = "../../crates/snp-proc/src/xargs/partition.rs"]
+pub mod snp_proc_xargs_partition;
