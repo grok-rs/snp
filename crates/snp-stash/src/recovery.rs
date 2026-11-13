@@ -58,11 +58,13 @@ impl Unrestored {
             .collect();
         let ita = journal.as_ref().map_or(&[][..], |(_, d)| d.ita.as_slice());
         let ita_file = kept_ita_file(&self.patch, ita);
+        let paths_file = kept_paths_file(&self.patch, paths.as_deref());
         let own_index = journal.as_ref().is_none_or(|(_, d)| uses_own_index(d));
         messages::recovery_notice(&messages::Recovery {
             patch: &self.patch,
             tree: self.tree.as_deref(),
             patch_paths: paths.as_deref(),
+            paths_file: paths_file.as_deref(),
             staged_fixed: &staged,
             own_index,
             ita,
@@ -85,15 +87,45 @@ fn uses_own_index(d: &JournalData) -> bool {
 /// so a notice that names it stays true; next to a patch, gc removes it with the patch (both start with `patch`).
 /// `None` for a short list (spelled out) or when it cannot be written (the notice then spells out the whole list).
 pub(crate) fn kept_ita_file(base: &Path, ita: &[Vec<u8>]) -> Option<PathBuf> {
-    let list: Vec<&[u8]> = ita.iter().map(Vec::as_slice).collect();
-    if ita.is_empty() || messages::short_list(&list) {
+    kept_list_file(base, ".ita", ita)
+}
+
+/// D-DATA-19: the kept list of the patch's files for a hint whose fallback restores them (`git --literal-pathspecs
+/// restore --source=<tree> --worktree --pathspec-file-nul --pathspec-from-file=<patch>.paths`), when they are too many
+/// to spell out: `<patch>.paths`, NUL-separated, the paths the patch does not create, kept like `<base>.ita`. `None`
+/// when `listed` (the capped [`patch_paths`]) is unparsable or short enough to spell out, or when the file cannot be
+/// written; the hint then falls back to the whole worktree (`-- :/`) only for an unparsable patch or an unwritable
+/// store.
+pub(crate) fn kept_paths_file(patch: &Path, listed: Option<&[(Vec<u8>, bool)]>) -> Option<PathBuf> {
+    let listed = listed?;
+    let shown: Vec<&[u8]> = listed
+        .iter()
+        .filter(|(_, new)| !new)
+        .map(|(p, _)| p.as_slice())
+        .collect();
+    if messages::short_list(&shown) {
+        return None;
+    }
+    let existing: Vec<Vec<u8>> = patch_paths_upto(patch, usize::MAX)?
+        .into_iter()
+        .filter(|(_, new)| !new)
+        .map(|(p, _)| p)
+        .collect();
+    kept_list_file(patch, ".paths", &existing)
+}
+
+/// `<base><suffix>`: `list` NUL-separated, written (temp + rename, synced) when missing or different; `None` for an
+/// empty or short list or when it cannot be written.
+fn kept_list_file(base: &Path, suffix: &str, list: &[Vec<u8>]) -> Option<PathBuf> {
+    let refs: Vec<&[u8]> = list.iter().map(Vec::as_slice).collect();
+    if list.is_empty() || messages::short_list(&refs) {
         return None;
     }
     let mut name = base.as_os_str().to_owned();
-    name.push(".ita");
+    name.push(suffix);
     let file = PathBuf::from(name);
     let mut body = Vec::new();
-    for p in ita {
+    for p in list {
         body.extend_from_slice(p);
         body.push(0);
     }
@@ -131,9 +163,14 @@ fn journal_for(patch: &Path) -> Option<(PathBuf, JournalData)> {
 
 /// The paths a `git diff-index --binary` patch touches, from its `diff --git a/<p> b/<p>` headers (C-quoted names
 /// included; no renames: plumbing never detects them), each with whether the patch creates it (`new file mode`: not
-/// in the stash-time tree). Stops after [`messages::LIST_MAX_PATHS`] + 1 paths (the hint then uses the whole-index
-/// form). `None` when the patch is unreadable or a header does not parse.
+/// in the stash-time tree). Stops after [`messages::LIST_MAX_PATHS`] + 1 paths (the hint then names the kept list of
+/// [`kept_paths_file`]). `None` when the patch is unreadable or a header does not parse.
 pub(crate) fn patch_paths(patch: &Path) -> Option<Vec<(Vec<u8>, bool)>> {
+    patch_paths_upto(patch, messages::LIST_MAX_PATHS)
+}
+
+/// [`patch_paths`], stopping after `max` + 1 paths.
+fn patch_paths_upto(patch: &Path, max: usize) -> Option<Vec<(Vec<u8>, bool)>> {
     use std::io::BufRead;
     let f = std::fs::File::open(patch).ok()?;
     let mut r = std::io::BufReader::new(f);
@@ -147,7 +184,7 @@ pub(crate) fn patch_paths(patch: &Path) -> Option<Vec<(Vec<u8>, bool)>> {
             break;
         }
         if let Some(rest) = line.strip_prefix(b"diff --git ") {
-            if out.len() > messages::LIST_MAX_PATHS {
+            if out.len() > max {
                 break;
             }
             let rest = rest.trim_suffix(b"\n");

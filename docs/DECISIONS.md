@@ -11,7 +11,7 @@ ADR-082 the end-to-end integration of the merged packages; ADR-083 the verificat
 the final multi-lens review; ADR-085 the `interactive` extension key; ADR-086 the first CI run on macOS; ADR-087 the
 `.snp.yaml` config file name; ADR-088 the crates.io and Homebrew release channels; ADR-089 the retarget to pre-commit
 4.7.0; ADR-090 what the scheduled gates can judge; ADR-091 measuring every scenario; ADR-092 the November 2026
-upstream refresh; ADR-094 Rust 1.100.
+upstream refresh; ADR-093 the path-limited stash checkout; ADR-094 Rust 1.100.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -178,7 +178,7 @@ the guard is the last field of `RunState`. **Rationale.** FD-5: the stash must b
 
 ### ADR-016 — Stash algorithm and hardening (C16)
 
-*Status: Accepted; amended by ADR-067 (create_new patch + re-verify before checkout, git-dir pointer, lock-based recovery, `git apply --3way` hints, StagingFixed state). The amending ADR is normative where they differ.*
+*Status: Accepted; amended by ADR-067 (create_new patch + re-verify before checkout, git-dir pointer, lock-based recovery, `git apply --3way` hints, StagingFixed state) and ADR-093 (both checkouts limited to the patch's files and, on the rollback, the files `git diff` shows changed: D-DATA-19). The amending ADR is normative where they differ.*
 
 **Context.** 02 §21.10 keeps pre-commit's restore; 06 §7–8 proposed read-tree/verify restore (different git state on
 conflict; false mismatches under `core.autocrlf`, 14 A.4.5). **Decision.** pre-commit's exact algorithm and messages
@@ -1369,8 +1369,6 @@ and the never-slower rule still gate the nightly. A same-runner drift check (bui
 nightly) would restore that gate at the cost of a second `dist` build; it is not part of this decision. A developer's
 own history stays a gate, since `--advisory-history` is opt-in.
 
----
-
 ### ADR-091 — Every scenario is measured; accepted misses are listed
 
 **Context.** `bench.yml` measured only B1: the list was to grow when `snp run` (WP-32) merged, and never did, so B2–B12
@@ -1424,6 +1422,42 @@ version (it moves to 4.10.4 when a lefthook release ships it).
 uv that trusts a distrusted intermediate weakens the TLS that D-SEC-08 relies on for PyPI traffic.
 **Consequences.** Developers rerun `cargo xtask oracle install`. A quoted `node = "20"` in `setup.cfg`, `tox.ini` or
 `~/.nodeenvrc` now selects node 20. The first Python install after upgrading downloads uv 0.13.8 into `tools-v1/uv`.
+
+### ADR-093 — The stash checks out only the patch's files (D-DATA-19)
+
+*Amends ADR-016 (the two checkouts of the algorithm).*
+
+**Context.** ADR-016 keeps pre-commit's stash commands, among them `git -c submodule.recurse=0 checkout -- .` after
+the patch is saved and again as the conflict rollback. prek fixed the data loss that whole-tree checkout causes
+(j178/prek#2912, prek 16564b3), and it reproduces with pre-commit 4.7.0 and snp 2.0.0: a working-tree change that a
+clean filter hides from `git diff` is not in the patch, yet the checkout overwrites the file, because its size differs
+from the index entry. The same happens to an edit in an `--assume-unchanged` file (`diff-index` skips it, `checkout
+-- .` does not). Both need only one ordinary unstaged change elsewhere to trigger the stash. COMPATIBILITY K4(b)
+admits a divergence where pre-commit loses user data.
+**Decision.** (1) Stash: the files to check out are the patch's, read by git's own parser (`git apply --numstat -z
+<patch>`, which changes nothing); the checkout is `git -c submodule.recurse=0 checkout --pathspec-from-file=-
+--pathspec-file-nul` fed `:(literal)<path>\0` per file, in the run environment without the `GIT_*_PATHSPECS` switches,
+with `_PRE_COMMIT_SKIP_POST_CHECKOUT=1` as before. A patch with no listed file is refused before any mutation
+(`ValueError`, cannot happen with a git-made patch). (2) Conflict rollback: the patch's files followed by every other
+file `git diff --name-only -z --no-renames --no-ext-diff --no-color --ignore-submodules --no-relative` lists, each
+once, through the same checkout as a restore command (the tty-stop notice and the K+ path unchanged); a failing listing
+is the rollback's failure. (3) Hints: a fallback whose file list is too long to spell out names a kept
+`<patch>.paths` (NUL-separated, like `<patch>.ita`) instead of `git restore … -- :/`. New register ID **D-DATA-19**.
+**Rationale.** The patch is what the restore re-applies, so its file list is exactly what the stash may rewrite:
+nothing is lost that the patch does not hold, and the restore still finds every file in its pre-image. `git diff`
+after its stat refresh is the visible part of what pre-commit's rollback rewrites, so every hook fix git can see is
+still discarded and the index is untouched. Pathspecs on stdin have no argv limit (git ≥ 2.25 reads them; 2.31 is the
+floor), and literal magic needs no escaping for `*`, `[`, quotes, newlines or non-UTF-8 names. `git checkout` rather
+than `checkout-index` keeps the `post-checkout` hook call pre-commit makes. Narrowing only when hidden changes exist
+would keep the old error text for a failing checkout but needs a second listing and an untested path for the case
+that matters; one path for every run is simpler to prove.
+**Consequences.** Transcripts, patches, index, refs and the stash list are unchanged; only the argv in the
+`CalledProcessError` of a failing stash or rollback checkout differs (X13-STASH-01), and the worktree after a run with
+hidden changes. A file with both a visible and a hidden change still loses the hidden part (git cannot express it in a
+patch), as does a hidden change in a file a hook visibly modifies before a rollback; D-DATA-19 documents both.
+`snp_git::Git::checkout_all` is replaced by `checkout_paths`, `patch_paths`, `changed_paths` and `rollback_paths`.
+
+---
 
 ### ADR-094 — Rust 1.100: toolchain and MSRV, the never type and the new std and Cargo features
 

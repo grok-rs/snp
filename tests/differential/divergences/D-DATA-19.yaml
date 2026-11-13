@@ -1,0 +1,59 @@
+# D-DATA-19 (DATA, owner WP-23): a change `git diff` cannot see survives the stash.
+# Scenario schema: docs/research/10-test-strategy.md §7.4.3 plus `brands` and `expect_divergence` (ARCHITECTURE §13.2).
+# `secret.cfg` has a line a clean filter drops (`grep -v SECRET`), `local.cfg` an edit hidden by `--assume-unchanged`;
+# `foo` has an ordinary unstaged change, so both tools stash. pre-commit's `git checkout -- .` rewrites every
+# stat-dirty file from the index: the two hidden changes are gone after the run (they are not in its patch either).
+# snp checks out only the patch's files (docs/divergences/D-DATA-19.md): both stay. The transcripts are identical.
+name: divergences/D-DATA-19-hidden-changes-survive-the-stash
+expect_divergence: D-DATA-19
+status: active
+since: "4.6.2"
+brands: [compat, snp]
+requires: {git: ">=2.31", net: false, tools: [grep], os: [linux, macos], pty: false}
+repos: {}
+work:
+  files:
+    .gitattributes: "secret.cfg filter=strip\n"
+    secret.cfg: "key=1\n"
+    local.cfg: "default\n"
+    foo: "1\n2\n3\n"
+  exec: []
+  symlinks: {}
+  config: |
+    repos:
+    -   repo: meta
+        hooks:
+        -   id: identity
+  commit: [.pre-commit-config.yaml, .gitattributes, secret.cfg, local.cfg, foo]
+  stage: []
+  unstaged:
+    secret.cfg: "key=1\nSECRET=hunter2\n"
+    local.cfg: "machine-local\n"
+    foo: "1\nTWO\n3\n"
+  git_config: {filter.strip.clean: "grep -v SECRET"}
+  setup:
+    - git: [update-index, --assume-unchanged, local.cfg]
+steps:
+  - tool: [run]
+    env: {}
+    stdin: ""
+    tty: false
+compare:
+  stdout: exact
+  stderr: exact
+  exit: exact
+  tree: true
+  index: true
+  refs: true
+  hooks_dir: ignore
+  config_file: exact
+  store: ignore
+expected:
+  oracle:
+    exit: 0
+    stdout_contains: "Restored changes from "
+    tree: {foo: "1\nTWO\n3\n", secret.cfg: "key=1\n", local.cfg: "default\n"}
+  snp:
+    exit: 0
+    stdout_contains: "Restored changes from "
+    tree: {foo: "1\nTWO\n3\n", secret.cfg: "key=1\nSECRET=hunter2\n", local.cfg: "machine-local\n"}

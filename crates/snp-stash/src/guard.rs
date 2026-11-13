@@ -288,7 +288,8 @@ impl Write for LazyPatch<'_> {
 ///
 /// `staged_files_only.py:35-104` entered in pre-commit's order (`_intent_to_add_cleared` first,
 /// `_unstaged_changes_cleared` second), preceded by the worktree lock and the next-run recovery notice (§4.6), and
-/// with the patch durable and re-verified before `git -c submodule.recurse=0 checkout -- .`. An error after the first
+/// with the patch durable and re-verified before the checkout of the patch's files (D-DATA-19; pre-commit checks out
+/// the whole tree, `git -c submodule.recurse=0 checkout -- .`). An error after the first
 /// mutation runs the restore first (pre-commit's `finally` blocks); a restore failure replaces the error, as an
 /// exception raised in a Python `finally` does.
 pub fn enter(cx: StashCtx) -> Result<StashGuard, Failure> {
@@ -688,12 +689,28 @@ impl Inner {
             self.abandon_patch(&path);
             return Err(Failure::fatal("FatalError", messages::KEPT_CHANGING));
         }
+        // 7. D-DATA-19: the checkout rewrites exactly the files of the patch, so a change `git diff` cannot see (a
+        // clean filter hides it, or the file is `--assume-unchanged`) is never overwritten.
+        let paths = match self.git().patch_paths(&path) {
+            Ok(p) if !p.is_empty() => p,
+            Ok(_) => {
+                self.abandon_patch(&path);
+                return Err(Failure::unexpected(
+                    "ValueError",
+                    messages::no_patch_paths(&path),
+                ));
+            }
+            Err(e) => {
+                self.abandon_patch(&path);
+                return Err(e);
+            }
+        };
         self.printer()
             .log(Level::Warning, messages::UNSTAGED_DETECTED);
         self.printer().log(Level::Info, &messages::stashing(&path));
         // 8. checkout (pre-commit's `try` starts here: a failing checkout still restores).
         self.flags.patch = PatchStep::Due;
-        self.git().checkout_all(true, Group::Isolated)?;
+        self.git().checkout_paths(&paths, true, Group::Isolated)?;
         fault::hit(Point::StashState(5));
         Ok(StashOutcome::Patch(path))
     }
@@ -866,7 +883,21 @@ impl Inner {
         } else {
             self.git().clone()
         };
-        match git.run_raw(args) {
+        let res = git.run_raw(args);
+        self.raw_out(res)
+    }
+
+    /// The rollback's path-limited checkout (D-DATA-19) as a restore command: [`snp_git::CHECKOUT_PATHS_ARGS`] fed
+    /// `pathspecs` in `Git::checkout_env(true)`.
+    fn restore_checkout(&mut self, args: &[&OsStr], pathspecs: Vec<u8>) -> RawOut {
+        let git = self.git().with_env(self.git().checkout_env(true));
+        let res = git.run_raw_input(args, pathspecs);
+        self.raw_out(res)
+    }
+
+    /// [`Inner::restore_cmd`]'s reading of one raw call.
+    fn raw_out(&mut self, res: Result<snp_proc::spawn::Captured, Failure>) -> RawOut {
+        match res {
             Ok(c) => {
                 if c.stopped_by_tty && !self.tty_noted {
                     self.tty_noted = true;
@@ -943,22 +974,22 @@ impl Inner {
         }
     }
 
-    /// The rollback checkout `git -c submodule.recurse=0 checkout -- .` with `_PRE_COMMIT_SKIP_POST_CHECKOUT=1`
-    /// (checked, `staged_files_only.py:95`).
-    fn rollback_checkout(&mut self) -> Result<(), Failure> {
-        let args = [
-            OsStr::new("-c"),
-            OsStr::new("submodule.recurse=0"),
-            OsStr::new("checkout"),
-            OsStr::new("--"),
-            OsStr::new("."),
-        ];
-        let out = self.restore_cmd(&args, true);
-        if out.status == 0 {
-            Ok(())
-        } else {
-            Err(self.called_process_error(&args, &out))
+    /// The rollback checkout (checked, `staged_files_only.py:95`), with `_PRE_COMMIT_SKIP_POST_CHECKOUT=1`.
+    ///
+    /// D-DATA-19: pre-commit checks out the whole tree (`git -c submodule.recurse=0 checkout -- .`); snp checks out
+    /// the patch's files and every file `git diff` shows as changed (`Git::rollback_paths`), so every hook fix git can
+    /// see is discarded as before and the patch applies, while a change git cannot see stays. A failing listing is the
+    /// rollback's failure (its `CalledProcessError`; the K+ path keeps the patch).
+    fn rollback_checkout(&mut self, patch: &Path) -> Result<(), Failure> {
+        let paths = self.git().rollback_paths(patch)?;
+        for call in self.git().checkout_path_calls(&paths) {
+            let args: Vec<&OsStr> = call.args.iter().map(OsString::as_os_str).collect();
+            let out = self.restore_checkout(&args, call.stdin);
+            if out.status != 0 {
+                return Err(self.called_process_error(&args, &out));
+            }
         }
+        Ok(())
     }
 
     /// Step 10 a–e: re-apply the patch (rollback on conflict); the K+ hint on final failure.
@@ -984,7 +1015,7 @@ impl Inner {
             let checkout = if self.flags.patch == PatchStep::RolledBack {
                 Ok(())
             } else {
-                self.rollback_checkout()
+                self.rollback_checkout(patch)
             };
             checkout.and_then(|()| {
                 self.flags.patch = PatchStep::RolledBack;
@@ -1007,12 +1038,15 @@ impl Inner {
                 self.flags.patch = PatchStep::Idle;
                 self.flags.restore_failed = true;
                 self.journal_best_effort(State::Failed);
+                let listed = recovery::patch_paths(patch);
+                let kept = recovery::kept_paths_file(patch, listed.as_deref());
                 Err(with_hint(
                     e,
                     &messages::k_plus_hint(
                         patch,
                         self.tree.as_ref().map(ObjectId::as_str),
-                        recovery::patch_paths(patch).as_deref(),
+                        listed.as_deref(),
+                        kept.as_deref(),
                     ),
                 ))
             }

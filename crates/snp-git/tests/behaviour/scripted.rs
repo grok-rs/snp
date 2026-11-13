@@ -120,13 +120,110 @@ fn every_call_can_fail_and_is_recorded() {
     scripted.on("*apply *", exit(0, b"", b""));
     assert!(git.apply(&patch, true, Group::Isolated).unwrap());
 
+    // D-DATA-19: the patch's paths come from `git apply --numstat -z` (a binary file's counts are `-`; a name may
+    // hold a tab), and the checkout reads them as literal pathspecs from stdin
     scripted.on(
-        "-c submodule.recurse=0 checkout -- .",
-        exit(1, b"", b"error: x\n"),
+        "apply --numstat -z *",
+        exit(0, b"1\t1\tx\0-\t-\tb\tin\0".as_slice(), b""),
+    );
+    let touched = git.patch_paths(&patch).unwrap();
+    assert_eq!(
+        touched.iter().collect::<Vec<_>>(),
+        [b"x".as_slice(), b"b\tin".as_slice()]
+    );
+    scripted.on(
+        "apply --numstat -z *",
+        exit(0, b"1\t1\t\0old\0new\0".as_slice(), b""),
     );
     assert_eq!(
-        exc(&git.checkout_all(true, Group::Isolated).unwrap_err()).0,
+        git.patch_paths(&patch).unwrap().iter().collect::<Vec<_>>(),
+        [b"old".as_slice(), b"new".as_slice()]
+    );
+    scripted.on("apply --numstat -z *", exit(0, b"garbage\0", b""));
+    assert_eq!(exc(&git.patch_paths(&patch).unwrap_err()).0, "ValueError");
+    scripted.on("apply --numstat -z *", exit(128, b"", b"fatal: x\n"));
+    assert_eq!(
+        exc(&git.patch_paths(&patch).unwrap_err()).0,
         "CalledProcessError"
+    );
+    // one call either way (stdin-fed from git 2.25, else the literal pathspecs as arguments)
+    let checkout = git.checkout_path_calls(&touched);
+    assert_eq!(checkout.len(), 1);
+    let checkout_args: Vec<String> = checkout[0]
+        .args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let checkout_call = checkout_args.join(" ");
+    scripted.on(&checkout_call, exit(1, b"", b"error: x\n"));
+    let e = git
+        .checkout_paths(&touched, true, Group::Isolated)
+        .unwrap_err();
+    let shown: Vec<String> = checkout_args
+        .iter()
+        .map(|a| snp_pycompat::repr::repr_str(a))
+        .collect();
+    assert_eq!(
+        exc(&e),
+        (
+            "CalledProcessError".to_owned(),
+            format!(
+                "command: ({}, {})\nreturn code: 1\nstdout: (none)\nstderr:\n    error: x",
+                snp_pycompat::repr::repr_str(&git_exe_path(&scripted)),
+                shown.join(", ")
+            )
+        )
+    );
+    // an empty list runs nothing
+    let before = scripted.calls().len();
+    git.checkout_paths(&snp_git::ZList::default(), true, Group::Isolated)
+        .unwrap();
+    assert_eq!(scripted.calls().len(), before);
+    assert_eq!(
+        snp_git::literal_pathspecs(touched.iter()),
+        b":(literal)x\0:(literal)b\tin\0"
+    );
+    // the pathspec switches never reach the checkout; the post-checkout skip does
+    let env = git
+        .with_env(
+            git.env().patched(
+                &snp_core::env::EnvPatch::default()
+                    .set("GIT_LITERAL_PATHSPECS", "1")
+                    .set("GIT_ICASE_PATHSPECS", "1")
+                    .set("GIT_GLOB_PATHSPECS", "1")
+                    .set("GIT_NOGLOB_PATHSPECS", "1"),
+            ),
+        )
+        .checkout_env(true);
+    for v in [
+        "GIT_LITERAL_PATHSPECS",
+        "GIT_ICASE_PATHSPECS",
+        "GIT_GLOB_PATHSPECS",
+        "GIT_NOGLOB_PATHSPECS",
+    ] {
+        assert_eq!(env.get(v), None, "{v}");
+    }
+    assert_eq!(
+        env.get("_PRE_COMMIT_SKIP_POST_CHECKOUT"),
+        Some(OsStr::new("1"))
+    );
+    assert_eq!(
+        git.checkout_env(false)
+            .get("_PRE_COMMIT_SKIP_POST_CHECKOUT"),
+        None
+    );
+    // the rollback list: the patch's paths first, then every other changed path, each once
+    scripted.on(
+        "apply --numstat -z *",
+        exit(0, b"1\t1\tb\x001\t1\ta\0".as_slice(), b""),
+    );
+    scripted.on("diff --name-only -z *", exit(0, b"c\0a\0d\0", b""));
+    assert_eq!(
+        git.rollback_paths(&patch)
+            .unwrap()
+            .iter()
+            .collect::<Vec<_>>(),
+        [b"b".as_slice(), b"a", b"c", b"d"]
     );
 
     // xargs callers ignore the return code (rm --cached, add -N)
@@ -161,7 +258,7 @@ fn every_call_can_fail_and_is_recorded() {
     let calls: Vec<String> = scripted.calls().iter().map(|c| args(c)).collect();
     for want in [
         "write-tree",
-        "-c submodule.recurse=0 checkout -- .",
+        &checkout_call,
         "rm --cached -- x y",
         "add --intent-to-add -- x y",
         "config --get core.x",
@@ -298,7 +395,10 @@ fn every_user_repo_call_has_pre_commits_exact_argv() {
     git.add_intent_to_add(&ita, Group::Inherit).unwrap();
     let oid = git.write_tree().unwrap();
     git.diff_index_patch(&oid, &mut Vec::new()).unwrap();
-    git.checkout_all(true, Group::Inherit).unwrap();
+    let listed = git.patch_paths(std::path::Path::new("p.patch")).unwrap();
+    assert!(listed.is_empty());
+    git.changed_paths().unwrap();
+    git.checkout_paths(&ita, true, Group::Inherit).unwrap();
     git.apply(std::path::Path::new("p.patch"), false, Group::Inherit)
         .unwrap();
     git.apply(std::path::Path::new("p.patch"), true, Group::Inherit)
@@ -335,6 +435,17 @@ fn every_user_repo_call_has_pre_commits_exact_argv() {
     git.run_raw(&[OsStr::new("ls-files"), OsStr::new("--")])
         .unwrap();
 
+    let changed_paths = if sb.exe().caps.diff_no_relative {
+        "diff --name-only -z --no-renames --no-ext-diff --no-color --ignore-submodules --no-relative"
+    } else {
+        "diff --name-only -z --no-renames --no-ext-diff --no-color --ignore-submodules"
+    };
+    let checkout_call = git.checkout_path_calls(&ita)[0]
+        .args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ");
     let all_files = if sb.exe().caps.ls_files_dedup {
         "ls-files -z --deduplicate"
     } else {
@@ -350,7 +461,9 @@ fn every_user_repo_call_has_pre_commits_exact_argv() {
         &format!(
             "diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff {tree} --"
         ),
-        "-c submodule.recurse=0 checkout -- .",
+        "apply --numstat -z --whitespace=nowarn p.patch",
+        changed_paths,
+        &checkout_call,
         "apply --whitespace=nowarn p.patch",
         "-c core.autocrlf=false apply --whitespace=nowarn p.patch",
         "apply --check --whitespace=nowarn p.patch",

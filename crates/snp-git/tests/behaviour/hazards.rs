@@ -53,12 +53,12 @@ fn stash_cycle(git: &Git, patch: &Path, hook: impl FnOnce()) -> Result<(), Failu
     let result = git.diff_index_patch(&tree, &mut f)?;
     drop(f);
     if let DiffIndex::Patch { .. } = result {
-        git.checkout_all(true, Group::Inherit)?;
+        git.checkout_paths(&git.patch_paths(patch)?, true, Group::Inherit)?;
         hook();
         if !git.apply(patch, false, Group::Inherit)?
             && git.apply(patch, true, Group::Inherit).is_err()
         {
-            git.checkout_all(true, Group::Inherit)?;
+            git.checkout_paths(&git.rollback_paths(patch)?, true, Group::Inherit)?;
             if !git.apply(patch, false, Group::Inherit)? {
                 git.apply(patch, true, Group::Inherit)?;
             }

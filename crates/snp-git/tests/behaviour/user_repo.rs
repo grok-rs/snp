@@ -10,7 +10,7 @@ use snp_git::pch_facts::PchFacts;
 use snp_git::{Git, GitCaps, GitExe, GitVersion};
 use snp_proc::spawn::Group;
 
-use crate::common::{Sandbox, sorted, strs, zl};
+use crate::common::{Sandbox, rep, sorted, strs, zl};
 
 #[test]
 fn preflight_queries() {
@@ -201,6 +201,8 @@ fn dedup_fallback_equals_ls_files_deduplicate() {
             config_env: false,
             init_object_format: true,
             config_hooks: false,
+            pathspec_from_file: true,
+            diff_no_relative: true,
         },
     });
     let (old_git, old_info) = Git::discover(old_exe, &sb.env, &repo, sb.backend()).unwrap();
@@ -444,4 +446,69 @@ fn lfs_files_memo_agrees_with_check_attr() {
     let two = facts.raw(&args).unwrap();
     assert_eq!((one.status.0, &one.stdout), (two.status.0, &two.stdout));
     assert_eq!(one.stdout, b".git\n");
+}
+
+/// D-DATA-19 on git < 2.25 (no `checkout --pathspec-from-file`): the literal pathspecs go on the command line in
+/// chunks; together the chunks rewrite exactly the listed files (glob characters and spaces taken literally), and a
+/// change `git diff` cannot see (an `--assume-unchanged` edit) is left alone.
+#[test]
+fn checkout_paths_without_pathspec_from_file_chunks_literal_arguments() {
+    let sb = Sandbox::new();
+    let repo = sb.init("chunks");
+    // 600 names of ~100 bytes (short enough for Windows' MAX_PATH under a temp dir) need several 24 KiB chunks.
+    let long = rep('n', 96);
+    let mut names: Vec<String> = (0..600).map(|i| format!("{long}{i}")).collect();
+    names.extend(["[ab]".to_owned(), "with space".to_owned()]);
+    if cfg!(unix) {
+        // Not a valid Windows file name.
+        names.push("*".to_owned());
+    }
+    for n in &names {
+        sb.write(&repo, n, b"base\n");
+    }
+    sb.write(&repo, "keep", b"base\n");
+    sb.git(&repo, &["add", "."]);
+    sb.commit(&repo, "base");
+    sb.git(&repo, &["update-index", "--assume-unchanged", "keep"]);
+    for n in &names {
+        sb.write(&repo, n, b"changed\n");
+    }
+    sb.write(&repo, "keep", b"local edit\n");
+    let real = sb.exe();
+    let old_exe = Arc::new(GitExe {
+        argv0: real.argv0.clone(),
+        caps: GitCaps {
+            version: Some(GitVersion {
+                major: 2,
+                minor: 24,
+                patch: 0,
+            }),
+            ls_files_dedup: false,
+            path_format: false,
+            config_env: false,
+            init_object_format: false,
+            config_hooks: false,
+            pathspec_from_file: false,
+            diff_no_relative: false,
+        },
+    });
+    let (git, _) = Git::discover(old_exe, &sb.env, &repo, sb.backend()).unwrap();
+    let paths = git.changed_paths().unwrap();
+    assert_eq!(
+        paths.len(),
+        names.len(),
+        "the assume-unchanged edit is not listed"
+    );
+    let calls = git.checkout_path_calls(&paths);
+    assert!(calls.len() > 1, "{} names need several chunks", names.len());
+    for c in &calls {
+        let first: Vec<&str> = c.args.iter().take(4).map(|a| a.to_str().unwrap()).collect();
+        assert_eq!(first, ["-c", "submodule.recurse=0", "checkout", "--"]);
+        assert_eq!(c.stdin, b"");
+    }
+    git.checkout_paths(&paths, true, Group::Inherit).unwrap();
+    for n in &names {
+        assert_eq!(std::fs::read(repo.join(n)).unwrap(), b"base\n", "{n}");
+    }
+    assert_eq!(std::fs::read(repo.join("keep")).unwrap(), b"local edit\n");
 }

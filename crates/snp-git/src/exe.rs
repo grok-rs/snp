@@ -78,6 +78,10 @@ fn number(b: &[u8]) -> Option<(u16, &[u8])> {
 pub(crate) const FLOOR: GitVersion = GitVersion::new(2, 31, 0);
 /// `git init --object-format=` (02 G.2).
 const OBJECT_FORMAT: GitVersion = GitVersion::new(2, 29, 0);
+/// `checkout --pathspec-from-file` / `--pathspec-file-nul` (git 2.25.0).
+const PATHSPEC_FROM_FILE: GitVersion = GitVersion::new(2, 25, 0);
+/// `diff --no-relative` and `diff.relative` (git 2.28.0).
+const DIFF_NO_RELATIVE: GitVersion = GitVersion::new(2, 28, 0);
 /// Config-based hooks `hook.<name>.{command,event}` (02 G.5).
 const CONFIG_HOOKS: GitVersion = GitVersion::new(2, 54, 0);
 
@@ -100,6 +104,11 @@ pub struct GitCaps {
     pub init_object_format: bool,
     /// Config-based hooks (≥ 2.54).
     pub config_hooks: bool,
+    /// `checkout --pathspec-from-file --pathspec-file-nul` (≥ 2.25; else D-DATA-19's checkout passes the literal
+    /// pathspecs as arguments, in chunks).
+    pub pathspec_from_file: bool,
+    /// `diff --no-relative` (≥ 2.28, with the `diff.relative` setting it overrides; older git needs neither).
+    pub diff_no_relative: bool,
 }
 
 impl GitCaps {
@@ -113,6 +122,8 @@ impl GitCaps {
             config_env: at_least(FLOOR),
             init_object_format: at_least(OBJECT_FORMAT),
             config_hooks: at_least(CONFIG_HOOKS),
+            pathspec_from_file: at_least(PATHSPEC_FROM_FILE),
+            diff_no_relative: at_least(DIFF_NO_RELATIVE),
         }
     }
 }
