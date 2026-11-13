@@ -403,9 +403,10 @@ fn the_long_notice_restores_more_than_64_paths() {
     // D-DATA-19: the fallback names the kept list of the patch's 70 files, never the whole worktree (`-- :/` would
     // overwrite changes git cannot see in files the patch does not touch).
     let kept = format!("{}.paths", p.display());
+    let kept_shown = snp_pycompat::shlex::quote(&kept);
     assert!(
         notice.contains(&format!(
-            " --worktree --pathspec-file-nul --pathspec-from-file={kept}, then run the command again"
+            " --worktree --pathspec-file-nul --pathspec-from-file={kept_shown}, then run the command again"
         )),
         "{notice}"
     );
