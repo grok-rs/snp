@@ -702,9 +702,12 @@ fn lean_audit(root: &Path, dir: &Path, reg: &Registry) -> anyhow::Result<Vec<Str
         }
         for line in out.lines() {
             if let Some(msg) = line.strip_prefix("BAD ") {
-                problems.push(format!(
-                    "L5: {msg} (the oracle executable must run the proved definitions)"
-                ));
+                let p =
+                    format!("L5: {msg} (the oracle executable must run the proved definitions)");
+                // The library's constants are audited again by every driver script.
+                if !problems.contains(&p) {
+                    problems.push(p);
+                }
             } else if let Some(rest) = line.strip_prefix("PIN ")
                 && let Some((t, fp)) = rest.split_once(' ')
             {
