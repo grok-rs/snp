@@ -22,6 +22,11 @@ theorems = ["Demo.t"]
 oracle = "demo-model"
 oracle_test = "crates/demo/tests/oracle.rs"
 anchors = [{ item = "crates/demo/src/lib.rs::split", fingerprint = "0000000000000000" }]
+driver_fingerprint = "1111111111111111"
+oracle_test_fingerprint = "2222222222222222"
+
+[model.statements]
+"Demo.t" = "3333333333333333"
 
 [[trusted]]
 item = "Fast: FindByte"

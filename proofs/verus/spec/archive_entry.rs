@@ -9,8 +9,11 @@
 //! `entry_post` states P1 (the exact `Err` characterisation `refused`), P2 (the spans spell `comps_w(raw)`, in
 //! bounds and strictly increasing) and P3 (every span and every component is `plain`). P4 (validation precedes
 //! stripping) holds because the kernel takes no strip count: its `Err` depends on the whole name, and the shell
-//! strips only an `Ok` result. P5 is `lemma_normpath_append_plain`: appending plain components to a normalised
-//! directory is already normalised, so no accepted name can leave the destination lexically.
+//! strips only an `Ok` result. Containment comes from P1 and P3: an accepted name has no `..` component, no
+//! separator and no NUL. P5 (`lemma_normpath_append_plain`) adds that normalising leaves appended plain components
+//! unchanged; it never reaches the `..` branch of `norm_step`. `lemma_normpath_dotdot` is the one lemma that does:
+//! a `..` after a normalised directory drops its last component, which is why the kernel refuses `..` (two spec
+//! mutants of that branch are registered).
 use vstd::prelude::*;
 
 verus! {
@@ -297,9 +300,10 @@ pub proof fn lemma_norm_from_plain(st: Seq<Seq<u8>>, v: Seq<Seq<u8>>, windows: b
     }
 }
 
-/// P5: `∀D. normpath(D) = D ⇒ normpath(D ++ v) = D ++ v` for plain components `v`. With `D` the destination and
-/// `v` the components of an accepted name (`spans_ok` makes every one plain), the joined path lies lexically below
-/// `D`: no accepted name can leave the destination.
+/// P5: `∀D. normpath(D) = D ⇒ normpath(D ++ v) = D ++ v` for plain components `v`, and `D` is a prefix of the
+/// result. With `D` the destination and `v` the components of an accepted name (`spans_ok` makes every one plain),
+/// normalising leaves the joined path as it is. This does not check how the model treats `..` (plain components
+/// exclude it); containment itself rests on P1/P3.
 pub proof fn lemma_normpath_append_plain(d: Seq<Seq<u8>>, v: Seq<Seq<u8>>, windows: bool)
     requires
         normpath(d) == d,
@@ -311,6 +315,28 @@ pub proof fn lemma_normpath_append_plain(d: Seq<Seq<u8>>, v: Seq<Seq<u8>>, windo
     lemma_norm_from_append(Seq::<Seq<u8>>::empty(), d, v);
     lemma_norm_from_plain(d, v, windows);
     assert((d + v).subrange(0, d.len() as int) =~= d);
+}
+
+/// Why `..` is refused: after a normalised directory `D` whose last component is not `..`, a `..` component drops
+/// that component, so the result is shorter than `D` and no longer lies below it.
+pub proof fn lemma_normpath_dotdot(d: Seq<Seq<u8>>, c: Seq<u8>)
+    requires
+        normpath(d) == d,
+        d.len() > 0,
+        !is_dotdot(d.last()),
+        is_dotdot(c),
+    ensures
+        normpath(d.push(c)) == d.drop_last(),
+        normpath(d.push(c)).len() < d.len(),
+{
+    let one = seq![c];
+    lemma_norm_from_append(Seq::<Seq<u8>>::empty(), d, one);
+    assert(d + one =~= d.push(c));
+    assert(one.drop_last() =~= Seq::<Seq<u8>>::empty());
+    assert(one.last() == c);
+    assert(norm_from(d, Seq::<Seq<u8>>::empty()) == d);
+    assert(norm_from(d, one) == norm_step(norm_from(d, one.drop_last()), one.last()));
+    assert(is_kept(c) && is_dotdot(c));
 }
 
 } // verus!

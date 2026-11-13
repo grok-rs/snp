@@ -12,11 +12,16 @@ fn fixture() -> Tree {
 const KERN: &str = "crates/demo/src/kern.rs";
 const LIB: &str = "crates/demo/src/lib.rs";
 
-/// The fixture with its anchor fingerprint filled in (computed, so editing the fixture's caller stays easy).
+/// The fixture with its anchor, driver and oracle-test fingerprints filled in (computed, so editing the fixture
+/// stays easy).
 fn good() -> Tree {
     let mut t = fixture();
     let fp = fingerprint::of_anchor(&t, "crates/demo/src/lib.rs::split").unwrap();
     edit(&mut t, REGISTRY, "0000000000000000", &fp);
+    let fp = fingerprint::of_file(&t, "proofs/lean/DemoMain.lean").unwrap();
+    edit(&mut t, REGISTRY, "1111111111111111", &fp);
+    let fp = fingerprint::of_file(&t, "crates/demo/tests/oracle.rs").unwrap();
+    edit(&mut t, REGISTRY, "2222222222222222", &fp);
     t
 }
 
@@ -46,11 +51,14 @@ fn the_good_fixture_passes() {
 }
 
 #[test]
-fn the_fixture_ships_a_placeholder_fingerprint_that_g10_rejects() {
+fn the_fixture_ships_placeholder_fingerprints_that_g10_rejects() {
     let p = problems(&fixture());
-    assert_eq!(p.len(), 1, "{p:#?}");
-    assert_eq!(p[0].guard, "G10");
-    assert!(p[0].msg.contains("model link stale"), "{}", p[0].msg);
+    assert_eq!(p.len(), 3, "{p:#?}");
+    assert!(
+        p.iter()
+            .all(|p| p.guard == "G10" && p.msg.contains("model link stale")),
+        "{p:#?}"
+    );
 }
 
 // G1 ------------------------------------------------------------------------------------------------------------
@@ -246,15 +254,20 @@ fn g2_negated_and_other_cfg_predicates() {
             "        let mut i = from;\n",
             "        let mut i = from;\n        let _w = cfg!(windows);\n",
         ),
-        (
-            "            i = i.saturating_add(1);\n",
-            "            i = i.saturating_add(usize::from(matches!(1, 1 if cfg!(unix))));\n",
-        ),
     ] {
         let mut t = good();
         edit(&mut t, KERN, find, replace);
         assert_eq!(fired(&t), ["G2"], "{replace}");
     }
+    // `cfg!` inside another macro: also a macro call (G3).
+    let mut t = good();
+    edit(
+        &mut t,
+        KERN,
+        "            i = i.saturating_add(1);\n",
+        "            i = i.saturating_add(usize::from(matches!(1, 1 if cfg!(unix))));\n",
+    );
+    assert_eq!(fired(&t), ["G2", "G3"]);
 }
 
 // G3 ------------------------------------------------------------------------------------------------------------
@@ -263,7 +276,25 @@ fn g2_negated_and_other_cfg_predicates() {
 fn g3_ghost_cfg_only_on_allowed_uses_and_proof_statements() {
     for (find, replace) in [
         ("fn helper(", "#[cfg(verus_keep_ghost)]\nfn helper("),
-        ("use crate::spec::demo::*;", "use crate::fast::*;"),
+        ("use crate::spec::demo::{", "use crate::fast::{"),
+        // A glob of a spec module shadows the prelude under Verus only.
+        (
+            "use crate::spec::demo::{first_from, lemma_demo, spans_ok};",
+            "use crate::spec::demo::*;",
+        ),
+        // So does a named spec item with a prelude name.
+        (
+            "use crate::spec::demo::{first_from, lemma_demo, spans_ok};",
+            "use crate::spec::demo::{drop, first_from, lemma_demo, spans_ok};",
+        ),
+        (
+            "use crate::spec::demo::{first_from, lemma_demo, spans_ok};",
+            "use crate::spec::demo::{first_from, lemma_demo, spans_ok as core};",
+        ),
+        (
+            "use crate::spec::demo::{first_from, ",
+            "use crate::spec::demo::{self, first_from, ",
+        ),
         ("use vstd::prelude::*;", "use vstd::seq::*;"),
         (
             "        #[cfg(verus_keep_ghost)]\n        proof! {",
@@ -277,6 +308,35 @@ fn g3_ghost_cfg_only_on_allowed_uses_and_proof_statements() {
         let mut t = good();
         edit(&mut t, KERN, find, replace);
         assert_eq!(fired(&t), ["G3"], "{replace}");
+    }
+}
+
+/// Macros: the scope of a macro is the module chain, which the Verus root does not share with production, and a
+/// macro body is not parsed by the guards (review findings: `when!(cfg)`, `include!`, a parent's `matches!`).
+#[test]
+fn g3_kernels_call_and_define_no_macro() {
+    for (find, replace) in [
+        (
+            "use std::ops::Range;\n",
+            "use std::ops::Range;\n\nmacro_rules! when {\n    ($c:ident) => {\n        $c!(not(verus_keep_ghost))\n    };\n}\n",
+        ),
+        (
+            "            i = i.saturating_add(1);\n",
+            "            if when!(cfg) && i == 3 {\n                return None;\n            }\n            i = i.saturating_add(1);\n",
+        ),
+        (
+            "            i = i.saturating_add(1);\n",
+            "            include!(\"../../../../proofs/verus/helpers/step.rs\");\n            i = i.saturating_add(1);\n",
+        ),
+        ("impl Scalar {", "include!(\"items.rs\");\n\nimpl Scalar {"),
+        (
+            "            if hay.get(i) == Some(&needle) {",
+            "            if matches!(hay.get(i), Some(&b) if b == needle) {",
+        ),
+    ] {
+        let mut t = good();
+        edit(&mut t, KERN, find, replace);
+        assert!(fired(&t).contains(&"G3"), "{replace}: {:#?}", problems(&t));
     }
 }
 
@@ -382,6 +442,62 @@ fn g5_cheat_tokens_in_kernels_specs_and_the_root() {
         "pub mod spec;\n\nverus! { pub assume_specification[ std::mem::swap ] ; }",
     );
     assert_eq!(fired(&t), ["G5"]);
+    // A raw identifier hides a cheat from a name comparison; rustc resolves it to the plain name.
+    let mut t = good();
+    edit(
+        &mut t,
+        "proofs/verus/spec/demo.rs",
+        "/// A lemma the kernel calls.",
+        "#[verifier::r#exec_allows_no_decreases_clause]\npub fn drop<T>(_x: T)\n    ensures\n        false,\n{\n    loop {\n    }\n}\n\n/// A lemma the kernel calls.",
+    );
+    let p = problems(&t);
+    for want in [
+        "cheat token `exec_allows_no_decreases_clause`",
+        "raw identifier",
+        "an exec `fn`",
+    ] {
+        assert!(
+            p.iter().any(|p| p.guard == "G5" && p.msg.contains(want)),
+            "{want}: {p:#?}"
+        );
+    }
+    let mut t = good();
+    edit(&mut t, KERN, "let mut i = from;", "let mut r#i = from;");
+    assert_eq!(fired(&t), ["G5"]);
+    // Spec files hold spec/proof items only: no trait, impl or macro definition, no include!, no #[path].
+    for extra in [
+        "pub trait T { fn f(&self); }",
+        "impl Foo { }",
+        "macro_rules! m { () => {} }",
+        "include!(\"other.rs\");",
+        "#[path = \"../../../crates/demo/src/x.rs\"]\nmod x;",
+    ] {
+        let mut t = good();
+        edit(
+            &mut t,
+            "proofs/verus/spec/demo.rs",
+            "/// A lemma the kernel calls.",
+            &format!("{extra}\n\n/// A lemma the kernel calls."),
+        );
+        assert_eq!(fired(&t), ["G5"], "{extra}");
+    }
+    // Every file under proofs/verus/ is scanned, and only the root, specs and trusted items may live there.
+    let mut t = good();
+    t.put(
+        "proofs/verus/helpers/step.rs",
+        "if cfg!(not(verus_keep_ghost)) { admit(); }\n",
+    );
+    let p = problems(&t);
+    assert!(
+        p.iter()
+            .any(|p| p.guard == "G1" && p.file == "proofs/verus/helpers/step.rs"),
+        "{p:#?}"
+    );
+    assert!(
+        p.iter()
+            .any(|p| p.guard == "G5" && p.file == "proofs/verus/helpers/step.rs"),
+        "{p:#?}"
+    );
     // words in comments and strings are not tokens
     let mut t = good();
     edit(
@@ -530,15 +646,122 @@ fn g9_paths_outside_the_file_and_std() {
             "use std::ops::Range;\nuse memchr::memchr;",
         ),
         ("use std::ops::Range;", "use std::ops::Range;\nuse memchr;"),
-        (
-            "                return out;\n",
-            "                let _ = matches!(sep, crate::SEP);\n                return out;\n",
-        ),
     ] {
         let mut t = good();
         edit(&mut t, KERN, find, replace);
         assert_eq!(fired(&t), ["G9"], "{replace}");
     }
+    // A crate path inside a macro (the macro call itself is G3).
+    let mut t = good();
+    edit(
+        &mut t,
+        KERN,
+        "                return out;\n",
+        "                let _ = matches!(sep, crate::SEP);\n                return out;\n",
+    );
+    assert_eq!(fired(&t), ["G3", "G9"]);
+}
+
+#[test]
+fn g9_out_of_line_modules_and_path_attributes() {
+    for (find, replace, guards) in [
+        (
+            "impl Scalar {",
+            "#[cfg_attr(verus_keep_ghost, verus_verify)]\n#[path = \"../../../proofs/verus/helpers/bail.rs\"]\nmod bail;\n\nimpl Scalar {",
+            &["G4", "G9"][..],
+        ),
+        ("impl Scalar {", "mod h;\n\nimpl Scalar {", &["G9"][..]),
+        (
+            "impl Scalar {",
+            "#[path = \"h.rs\"]\nmod h {\n    pub(crate) fn f() {}\n}\n\nimpl Scalar {",
+            &["G9"][..],
+        ),
+        (
+            "impl Scalar {",
+            "#[cfg_attr(verus_keep_ghost, verus_verify)]\nmod h {\n    pub(crate) fn f() {}\n}\n\nimpl Scalar {",
+            &["G4"][..],
+        ),
+        (
+            "impl Scalar {",
+            "extern crate alloc;\n\nimpl Scalar {",
+            &["G9"][..],
+        ),
+    ] {
+        let mut t = good();
+        edit(&mut t, KERN, find, replace);
+        assert_eq!(fired(&t), guards, "{replace}: {:#?}", problems(&t));
+    }
+    // An out-of-line unit-test module is fine (neither verified nor shipped).
+    let mut t = good();
+    edit(
+        &mut t,
+        KERN,
+        "#[cfg(test)]\nmod tests {",
+        "#[cfg(test)]\nmod more_tests;\n\n#[cfg(test)]\nmod tests {",
+    );
+    assert_eq!(problems(&t), Vec::<Problem>::new());
+}
+
+#[test]
+fn g9_the_kernel_crate_has_no_macro_use_or_extern_crate() {
+    for (find, replace) in [
+        ("mod kern;", "#[macro_use]\nmod helpers;\nmod kern;"),
+        ("mod kern;", "extern crate core as std2;\nmod kern;"),
+    ] {
+        let mut t = good();
+        edit(&mut t, LIB, find, replace);
+        let p = problems(&t);
+        assert!(
+            p.iter().any(|p| p.guard == "G9" && p.file == LIB),
+            "{replace}: {p:#?}"
+        );
+    }
+}
+
+#[test]
+fn g1_unregistered_verus_files_and_orphan_specs() {
+    let mut t = good();
+    t.put(
+        "crates/demo/src/looks_verified.rs",
+        "#[cfg_attr(verus_keep_ghost, verus_spec(r => ensures r == 1))]\npub fn one() -> u8 { 1 }\n",
+    );
+    let p = problems(&t);
+    assert!(
+        p.iter()
+            .any(|p| p.guard == "G1" && p.file == "crates/demo/src/looks_verified.rs"),
+        "{p:#?}"
+    );
+    let mut t = good();
+    edit(
+        &mut t,
+        "proofs/verus/spec/mod.rs",
+        "pub mod demo;",
+        "pub mod demo;\npub mod gone;",
+    );
+    t.put("proofs/verus/spec/gone.rs", "verus! {}\n");
+    let p = problems(&t);
+    assert!(
+        p.iter()
+            .any(|p| p.guard == "G1" && p.msg.contains("spec module `gone`")),
+        "{p:#?}"
+    );
+    // A spec mutant names the kernel file or its spec only.
+    let mut t = good();
+    edit(
+        &mut t,
+        REGISTRY,
+        "mutants = [{ find",
+        "mutants = [{ file = \"crates/demo/src/lib.rs\", find",
+    );
+    assert_eq!(fired(&t), ["G1"]);
+    let mut t = good();
+    edit(
+        &mut t,
+        REGISTRY,
+        "mutants = [{ find",
+        "mutants = [{ file = \"proofs/verus/spec/demo.rs\", find",
+    );
+    assert_eq!(problems(&t), Vec::<Problem>::new());
 }
 
 #[test]
@@ -622,6 +845,49 @@ fn g10_stale_and_placeholder_anchors() {
     assert_eq!(problems(&t), Vec::<Problem>::new());
     let mut t = fixture();
     edit(&mut t, REGISTRY, "0000000000000000", "TBD");
+    assert_eq!(fired(&t), ["G10"]);
+}
+
+#[test]
+fn g10_driver_and_oracle_test_are_fingerprinted() {
+    let mut t = good();
+    edit(
+        &mut t,
+        "proofs/lean/DemoMain.lean",
+        "IO.println \"ok\"",
+        "IO.println \"OK\"",
+    );
+    let p = problems(&t);
+    assert!(
+        p.iter()
+            .any(|p| p.guard == "G10" && p.msg.contains("oracle driver")),
+        "{p:#?}"
+    );
+    let mut t = good();
+    edit(
+        &mut t,
+        "crates/demo/tests/oracle.rs",
+        "fn oracle_agrees() {}",
+        "fn oracle_agrees() {\n    return;\n}",
+    );
+    let p = problems(&t);
+    assert!(
+        p.iter()
+            .any(|p| p.guard == "G10" && p.msg.contains("oracle test")),
+        "{p:#?}"
+    );
+    // Comments in the oracle test do not count.
+    let mut t = good();
+    edit(
+        &mut t,
+        "crates/demo/tests/oracle.rs",
+        "fn oracle_agrees() {}",
+        "fn oracle_agrees() {} // nothing to do",
+    );
+    assert_eq!(problems(&t), Vec::<Problem>::new());
+    // Every theorem has a statement pin, and nothing else does.
+    let mut t = good();
+    edit(&mut t, REGISTRY, "\"Demo.t\" = ", "\"Demo.u\" = ");
     assert_eq!(fired(&t), ["G10"]);
 }
 

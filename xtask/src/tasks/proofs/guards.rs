@@ -4,19 +4,19 @@
 //!
 //! | ID | Check |
 //! |---|---|
-//! | G1 | registry, kernel markers and root mounts agree both ways; mounts carry a bare `#[verus_verify]` and a `#[path]` under `crates/`; the root forbids `unsafe_code` |
+//! | G1 | registry, kernel markers and root mounts agree both ways; mounts carry a bare `#[verus_verify]` and a `#[path]` under `crates/`; the root forbids `unsafe_code`; no file outside the registry carries Verus attributes; every spec module belongs to a kernel (or is `lib`); `proofs/verus/` holds only the root, `spec/` and `trusted/` |
 //! | G2 | the only cfg predicates in a kernel file are a bare `verus_keep_ghost`, and `test` on a `mod`; no `cfg!` |
-//! | G3 | `#[cfg(verus_keep_ghost)]` only on `use vstd::prelude::*`, `use crate::spec::…` and `proof!`/`proof_decl!` statements; no `verus!` |
-//! | G4 | `cfg_attr(verus_keep_ghost, X)`: X on the K4 allowlist (`verus_spec`, bare `verus_verify`, `verifier::{external_derive, rlimit, loop_isolation, spinoff_prover}`) |
-//! | G5 | no cheat token (`assume`, `admit`, `assume_specification`, `external_body`, `external`, `exec_allows_no_decreases_clause`) in kernel files, the root or the specs |
+//! | G3 | `#[cfg(verus_keep_ghost)]` only on `use vstd::prelude::*`, named `use crate::spec::…` imports (no glob, no prelude or std name) and `proof!`/`proof_decl!` statements; no other macro call or definition (no `verus!`, `matches!`, `include!`, `macro_rules!`) |
+//! | G4 | `cfg_attr(verus_keep_ghost, X)`: X on the K4 allowlist (`verus_spec`, bare `verus_verify` not on a `mod`, `verifier::{external_derive, rlimit, loop_isolation, spinoff_prover}`) |
+//! | G5 | no cheat token (`assume`, `admit`, `assume_specification`, `external_body`, `external`, `exec_allows_no_decreases_clause`) and no raw identifier in kernel files or any file under `proofs/verus/`; spec files and the root declare no exec `fn`, `trait`, `impl`, `extern`, `unsafe` or macro definition, call no `include!`/`env!`/`cfg!`-like macro, and spec files carry no `#[path]` |
 //! | G6 | no `requires` in the contract of a non-private function (trait method declarations exempt) |
 //! | G7 | `reason = "verus: …"` expectations only on functions of mounted kernel files |
 //! | G8 | every impl of a kernel trait outside kernel files is a `[[trusted]]` entry whose named test exists |
-//! | G9 | exec code in a kernel file names no path rooted in `crate`, `super`, `self::super` or an external crate |
-//! | G10 | every caller exists and calls the kernel; every model file, oracle and anchor exists; every anchor fingerprint matches |
+//! | G9 | exec code in a kernel file names no path rooted in `crate`, `super`, `self::super` or an external crate; no out-of-line `mod`, `#[path]`, `extern crate` or unparsed item; the kernel's crate has no `#[macro_use]` or `extern crate` |
+//! | G10 | every caller exists and calls the kernel; every model file, oracle and anchor exists; every anchor, oracle driver and oracle test fingerprint matches |
 //!
-//! Tokens are compared after syn's lexing, so comments and string contents never trigger a guard; macro bodies
-//! (which syn does not parse) are scanned token by token.
+//! Tokens are compared after syn's lexing and with raw identifiers unrawed (`r#x` is `x`), so comments and string
+//! contents never trigger a guard; macro bodies (which syn does not parse) are scanned token by token.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -24,11 +24,12 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use syn::buffer::{Cursor, TokenBuffer};
+use syn::ext::IdentExt as _;
 use syn::punctuated::Punctuated;
 use syn::visit::{self, Visit};
 
 use super::fingerprint;
-use super::{LEAN_DIR, REGISTRY, ROOT, Registry, SPEC_DIR, Status, Tree};
+use super::{LEAN_DIR, REGISTRY, ROOT, Registry, SPEC_DIR, Status, TRUSTED_DIR, Tree};
 
 /// The marker line of a verified kernel file (rule K1).
 pub(crate) const MARKER: &str = "//! Verified kernel (ADR-095):";
@@ -45,8 +46,8 @@ const CHEATS: [&str; 6] = [
 ];
 /// Path roots exec code may use besides the file's own items (rule K2).
 const STD_ROOTS: [&str; 5] = ["std", "core", "alloc", "self", "Self"];
-/// Names of the std prelude and the primitive types: never an external crate.
-const PRELUDE: [&str; 51] = [
+/// Names of the std prelude and the primitive types: never an external crate, and never imported from a spec.
+const PRELUDE: [&str; 62] = [
     "Option",
     "Some",
     "None",
@@ -97,7 +98,40 @@ const PRELUDE: [&str; 51] = [
     "i16",
     "i32",
     "i64",
+    "i128",
     "isize",
+    "f32",
+    "f64",
+    "Unpin",
+    "Future",
+    "IntoFuture",
+    "drop",
+    "size_of",
+    "size_of_val",
+    "align_of",
+    "align_of_val",
+];
+/// Macros a spec file or the root never calls (G5): they pull in unscanned text or depend on the build.
+const SPEC_BAD_MACROS: [&str; 8] = [
+    "include",
+    "include_str",
+    "include_bytes",
+    "env",
+    "option_env",
+    "cfg",
+    "concat",
+    "module_path",
+];
+/// Identifiers a spec file or the root never contains (G5): no exec code, no new trait or method, no macro
+/// definition.
+const SPEC_FORBIDDEN: [&str; 7] = [
+    "trait",
+    "impl",
+    "extern",
+    "unsafe",
+    "macro_rules",
+    "macro",
+    "union",
 ];
 /// Module mounts of the root that are not kernel files.
 const ROOT_MODULES: [&str; 2] = ["spec", "trusted"];
@@ -147,13 +181,26 @@ pub(crate) fn check(tree: &Tree, reg: &Registry) -> anyhow::Result<Vec<Problem>>
             Err(e) => r.add("G1", &k.file, format!("does not parse: {e}")),
         }
         cheats(&k.file, &src, &mut r);
+        crate_macro_env(tree, &k.file, &mut r)?;
     }
-    if let Some(src) = tree.read(ROOT) {
-        cheats(ROOT, &src, &mut r);
-    }
-    for f in tree.rust_files(SPEC_DIR)? {
-        if let Some(src) = tree.read(&f) {
-            cheats(&f, &src, &mut r);
+    let spec_prefix = format!("{SPEC_DIR}/");
+    let trusted_prefix = format!("{TRUSTED_DIR}/");
+    for f in tree.rust_files("proofs/verus")? {
+        if f.starts_with(&trusted_prefix) {
+            continue; // the one exempt directory (§10 row 8), listed in the registry
+        }
+        let Some(src) = tree.read(&f) else { continue };
+        cheats(&f, &src, &mut r);
+        if f == ROOT {
+            spec_tokens(&f, &src, false, &mut r);
+        } else if f.starts_with(&spec_prefix) {
+            spec_tokens(&f, &src, true, &mut r);
+        } else {
+            r.add(
+                "G1",
+                &f,
+                format!("a file under proofs/verus/ is the root ({ROOT}), a spec ({SPEC_DIR}/) or trusted ({TRUSTED_DIR}/)"),
+            );
         }
     }
     g7(tree, reg, &mut r)?;
@@ -240,6 +287,21 @@ fn g1(tree: &Tree, reg: &Registry, r: &mut Report) -> anyhow::Result<()> {
                 REGISTRY,
                 format!("{}: callers must name at least one production caller", k.id),
             );
+        }
+        for m in &k.mutants {
+            if let Some(f) = &m.file
+                && *f != k.file
+                && *f != k.spec
+            {
+                r.add(
+                    "G1",
+                    REGISTRY,
+                    format!(
+                        "{}: a mutant's file is the kernel file or its spec, not {f}",
+                        k.id
+                    ),
+                );
+            }
         }
         if k.status == Status::Verified && k.mutants.is_empty() {
             r.add(
@@ -363,20 +425,188 @@ fn g1(tree: &Tree, reg: &Registry, r: &mut Report) -> anyhow::Result<()> {
         }
     }
 
-    for f in tree.rust_files("crates")? {
+    for dir in ["crates", "fuzz"] {
+        for f in tree.rust_files(dir)? {
+            let Some(src) = tree.read(&f) else { continue };
+            if reg.kernel_of_file(&f).is_some() {
+                continue;
+            }
+            let first = src.lines().next().unwrap_or_default();
+            let marked = first.starts_with("//! Verified kernel (ADR-095)")
+                || first.starts_with("//! Kernel (ADR-095)");
+            if marked {
+                r.add(
+                    "G1",
+                    &f,
+                    format!("carries a kernel marker but has no [[kernel]] entry in {REGISTRY}"),
+                );
+            }
+            // A de-registered kernel keeps contracts that make it look verified: nothing checks them any more.
+            if VERUS_WORDS.iter().any(|w| src.contains(w))
+                && let Ok(stream) = syn::parse_str(&src)
+            {
+                let buf = TokenBuffer::new2(stream);
+                let mut hit = BTreeSet::new();
+                idents_in(buf.begin(), &mut |i, _| {
+                    if VERUS_WORDS.contains(&i) {
+                        hit.insert(i.to_owned());
+                    }
+                });
+                if let Some(w) = hit.first() {
+                    r.add(
+                        "G1",
+                        &f,
+                        format!("uses `{w}` but has no [[kernel]] entry in {REGISTRY}: nothing verifies it"),
+                    );
+                }
+            }
+        }
+    }
+
+    // Every spec module belongs to a kernel (`lib` holds the shared lemmas).
+    let spec_mod = format!("{SPEC_DIR}/mod.rs");
+    if let Some(file) = tree.read(&spec_mod).and_then(|s| syn::parse_file(&s).ok()) {
+        for item in &file.items {
+            if let syn::Item::Mod(m) = item {
+                let name = id_str(&m.ident);
+                let owned = name == "lib"
+                    || reg.kernels.iter().any(|k| {
+                        Path::new(&k.spec)
+                            .file_stem()
+                            .is_some_and(|s| s.to_string_lossy() == name)
+                    });
+                if !owned {
+                    r.add(
+                        "G1",
+                        &spec_mod,
+                        format!("spec module `{name}` belongs to no [[kernel]] entry (an orphan of a removed kernel?)"),
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Identifiers that only a registered kernel file may carry (G1).
+const VERUS_WORDS: [&str; 3] = ["verus_keep_ghost", "verus_spec", "verus_verify"];
+
+/// G9: the crate of a kernel file has no `#[macro_use]` and no `extern crate` (either could change what a name in
+/// the kernel means in production while the Verus root, a crate of its own, sees std's).
+fn crate_macro_env(tree: &Tree, kernel: &str, r: &mut Report) -> anyhow::Result<()> {
+    let mut parts = kernel.split('/');
+    let (Some("crates"), Some(name)) = (parts.next(), parts.next()) else {
+        return Ok(()); // G1 reports a kernel outside crates/
+    };
+    for f in tree.rust_files(&format!("crates/{name}/src"))? {
         let Some(src) = tree.read(&f) else { continue };
-        let first = src.lines().next().unwrap_or_default();
-        let marked = first.starts_with("//! Verified kernel (ADR-095)")
-            || first.starts_with("//! Kernel (ADR-095)");
-        if marked && reg.kernel_of_file(&f).is_none() {
+        if !src.contains("macro_use") && !src.contains("extern") {
+            continue;
+        }
+        let Ok(stream) = syn::parse_str(&src) else {
+            continue;
+        };
+        let buf = TokenBuffer::new2(stream);
+        let mut prev = String::new();
+        let mut bad = BTreeSet::new();
+        idents_in(buf.begin(), &mut |i, _| {
+            if i == "macro_use" || (prev == "extern" && i == "crate") {
+                bad.insert(if i == "crate" {
+                    "extern crate"
+                } else {
+                    "#[macro_use]"
+                });
+            }
+            i.clone_into(&mut prev);
+        });
+        for b in bad {
             r.add(
-                "G1",
+                "G9",
                 &f,
-                format!("carries a kernel marker but has no [[kernel]] entry in {REGISTRY}"),
+                format!("`{b}` in the crate of kernel file {kernel}: it can change what a name in the kernel resolves to in production only"),
             );
         }
     }
     Ok(())
+}
+
+/// G5 over a spec file (`spec = true`) or the root: spec/proof functions and datatypes only.
+fn spec_tokens(rel: &str, src: &str, spec: bool, r: &mut Report) {
+    let Ok(stream) = syn::parse_str(src) else {
+        return; // `cheats` reports it
+    };
+    let buf = TokenBuffer::new2(stream);
+    let mut found = BTreeSet::new();
+    spec_walk(buf.begin(), spec, &mut found);
+    for msg in found {
+        r.add("G5", rel, msg);
+    }
+}
+
+fn spec_walk(start: Cursor<'_>, spec: bool, found: &mut BTreeSet<String>) {
+    // The previous two tokens (`before`, then `last`): an ident's unrawed name, a punct's char, or "()" for a group.
+    let mut before = String::new();
+    let mut last = String::new();
+    let mut c = start;
+    while !c.eof() {
+        let tok;
+        if let Some((inside, delim, _, next)) = c.any_group() {
+            if spec
+                && last == "#"
+                && format!("{delim:?}") == "Bracket"
+                && first_ident(inside).as_deref() == Some("path")
+            {
+                found.insert(
+                    "`#[path]` in a spec file: spec modules live under proofs/verus/spec/"
+                        .to_owned(),
+                );
+            }
+            spec_walk(inside, spec, found);
+            tok = "()".to_owned();
+            c = next;
+        } else if let Some((ident, next)) = c.ident() {
+            let name = id_str(&ident);
+            if name == "fn" {
+                let mode = |s: &str| s == "spec" || s == "proof";
+                if !(mode(&last) || (last == "()" && before == "spec")) {
+                    found.insert("an exec `fn` (spec files and the root declare spec and proof functions only)".to_owned());
+                }
+            }
+            if SPEC_FORBIDDEN.contains(&name.as_str()) {
+                found.insert(format!("`{name}` (spec files and the root declare spec/proof functions and datatypes only)"));
+            }
+            if let Some((bang, after)) = next.punct()
+                && bang.as_char() == '!'
+                && after.any_group().is_some()
+                && SPEC_BAD_MACROS.contains(&name.as_str())
+            {
+                found.insert(format!(
+                    "macro `{name}!` (spec files and the root include no other text and do not depend on the build)"
+                ));
+            }
+            tok = name;
+            c = next;
+        } else if let Some((p, next)) = c.punct() {
+            tok = p.as_char().to_string();
+            c = next;
+        } else if let Some((_, next)) = c.token_tree() {
+            tok = String::new();
+            c = next;
+        } else {
+            break;
+        }
+        before = std::mem::replace(&mut last, tok);
+    }
+}
+
+/// The first token of a group, when it is an identifier (unrawed).
+fn first_ident(c: Cursor<'_>) -> Option<String> {
+    c.ident().map(|(i, _)| id_str(&i))
+}
+
+/// An identifier as rustc resolves it: `r#x` is `x`.
+fn id_str(i: &syn::Ident) -> String {
+    i.unraw().to_string()
 }
 
 fn root_mounts(file: &syn::File) -> Vec<Mount> {
@@ -384,7 +614,7 @@ fn root_mounts(file: &syn::File) -> Vec<Mount> {
         .iter()
         .filter_map(|item| match item {
             syn::Item::Mod(m) => Some(Mount {
-                name: m.ident.to_string(),
+                name: id_str(&m.ident),
                 path: m.attrs.iter().find_map(path_attr),
                 verus_verify: m
                     .attrs
@@ -503,7 +733,7 @@ impl KernelScan<'_> {
                 Owner::GhostUse | Owner::ProofStmt => {}
                 Owner::OtherUse => self.add(
                     "G3",
-                    "a #[cfg(verus_keep_ghost)] `use` may import only `vstd::prelude::*` or `crate::spec::…`",
+                    "a #[cfg(verus_keep_ghost)] `use` may import only `vstd::prelude::*` or named items of `crate::spec::…` (no glob: a glob import shadows the prelude under Verus only)",
                 ),
                 _ => self.add(
                     "G3",
@@ -575,6 +805,13 @@ impl KernelScan<'_> {
                 self.add("G4", "`verus_verify(...)` with arguments is not allowed (it can mark items external)");
                 return;
             }
+            ("verus_verify", syn::Meta::Path(_)) if owner == Owner::Mod => {
+                self.add(
+                    "G4",
+                    "`verus_verify` on a `mod`: kernel files have no submodule for Verus (rule K2)",
+                );
+                return;
+            }
             ("verifier::external_derive", syn::Meta::Path(_) | syn::Meta::List(_))
             | ("verifier::rlimit" | "verifier::loop_isolation", syn::Meta::List(_))
             | ("verifier::spinoff_prover" | "verus_spec" | "verus_verify", syn::Meta::Path(_)) => {
@@ -587,7 +824,7 @@ impl KernelScan<'_> {
                 .path()
                 .segments
                 .iter()
-                .any(|s| CHEATS.contains(&s.ident.to_string().as_str()));
+                .any(|s| CHEATS.contains(&id_str(&s.ident).as_str()));
             let what = if cheat {
                 " (a cheat: --no-cheating does not reject it)"
             } else {
@@ -611,11 +848,24 @@ impl<'ast> Visit<'ast> for KernelScan<'_> {
         match item {
             syn::Item::Use(u) => {
                 let ghost = u.attrs.iter().any(is_ghost_cfg);
-                let owner = if ghost && allowed_ghost_use(&u.tree) {
+                let imported = if ghost {
+                    allowed_ghost_use(&u.tree)
+                } else {
+                    None
+                };
+                let owner = if imported.is_some() {
                     Owner::GhostUse
                 } else {
                     Owner::OtherUse
                 };
+                for name in imported.unwrap_or_default() {
+                    if PRELUDE.contains(&name.as_str()) || STD_ROOTS.contains(&name.as_str()) {
+                        self.add(
+                            "G3",
+                            format!("a ghost import named `{name}` shadows a std or prelude name under Verus only: rename the spec item"),
+                        );
+                    }
+                }
                 self.classify(&u.attrs, owner);
                 for a in &u.attrs {
                     self.visit_attribute(a);
@@ -641,7 +891,28 @@ impl<'ast> Visit<'ast> for KernelScan<'_> {
                     }
                     return; // unit tests are neither verified nor shipped
                 }
+                if m.content.is_none() {
+                    self.add(
+                        "G9",
+                        format!("out-of-line `mod {};`: no guard scans that file, and it may resolve to a different file under the Verus root (rule K2: kernel files are self-contained)", id_str(&m.ident)),
+                    );
+                }
                 visit::visit_item_mod(self, m);
+            }
+            syn::Item::ExternCrate(e) => {
+                self.add(
+                    "G9",
+                    format!(
+                        "`extern crate {}` in a kernel file (rule K2)",
+                        id_str(&e.ident)
+                    ),
+                );
+            }
+            syn::Item::Verbatim(_) => {
+                self.add(
+                    "G9",
+                    "an item syn cannot parse (e.g. a `macro` 2.0 definition): the guards cannot check it",
+                );
             }
             syn::Item::Fn(f) => {
                 let public = !matches!(f.vis, syn::Visibility::Inherited);
@@ -712,6 +983,11 @@ impl<'ast> Visit<'ast> for KernelScan<'_> {
             self.check_cfg(a, owner);
         } else if path.is_ident("cfg_attr") {
             self.check_cfg_attr(a, owner);
+        } else if path.is_ident("path") {
+            self.add(
+                "G9",
+                "`#[path]` in a kernel file: the module it loads is never scanned (rule K2)",
+            );
         } else if path.is_ident("expect") || path.is_ident("allow") {
             if let syn::Meta::List(l) = &a.meta
                 && has_verus_reason(&TokenBuffer::new2(l.tokens.clone()))
@@ -725,11 +1001,9 @@ impl<'ast> Visit<'ast> for KernelScan<'_> {
                     self.add("G7", "a `reason = \"verus: …\"` expectation belongs on a verified function (rule K7)");
                 }
             }
-        } else if path
-            .segments
-            .first()
-            .is_some_and(|s| s.ident == "verifier" || s.ident.to_string().starts_with("verus"))
-        {
+        } else if path.segments.first().is_some_and(|s| {
+            id_str(&s.ident) == "verifier" || id_str(&s.ident).starts_with("verus")
+        }) {
             self.add(
                 "G4",
                 format!(
@@ -743,17 +1017,22 @@ impl<'ast> Visit<'ast> for KernelScan<'_> {
 
     fn visit_macro(&mut self, i: &'ast syn::Macro) {
         let m = i;
-        let name = m
-            .path
-            .segments
-            .last()
-            .map_or_default(|s| s.ident.to_string());
+        let name = m.path.segments.last().map_or_default(|s| id_str(&s.ident));
         if name == "verus" {
             self.add("G3", "kernel files contain no verus! block: specs and lemmas go into proofs/verus/spec/ (rule K4)");
             return;
         }
         if name == "cfg" {
             self.add("G2", "`cfg!` in a kernel file: platform behaviour is a `windows: bool` parameter (rule K3)");
+        } else {
+            self.add(
+                "G3",
+                format!(
+                    "macro `{name}!` in a kernel file: kernels call and define no macro but the ghost proof!/proof_decl! \
+                     (a macro means what its scope says, which the Verus root does not share with production; \
+                     include! pulls in unscanned code; write `match` for `matches!`)"
+                ),
+            );
         }
         let buf = TokenBuffer::new2(m.tokens.clone());
         let mut found = Vec::new();
@@ -776,8 +1055,8 @@ impl<'ast> Visit<'ast> for KernelScan<'_> {
         let p = i;
         let mut segs = p.segments.iter();
         if let Some(first) = segs.next() {
-            let first = first.ident.to_string();
-            let second = segs.next().map(|s| s.ident.to_string());
+            let first = id_str(&first.ident);
+            let second = segs.next().map(|s| id_str(&s.ident));
             let rooted = p.leading_colon.is_some() || second.is_some();
             if rooted && !self.root_ok(&first, second.as_deref())
                 || (p.leading_colon.is_some()
@@ -810,32 +1089,46 @@ fn use_roots(tree: &syn::UseTree, leading_colon: bool, out: &mut Vec<String>) {
     }
 }
 
-/// `vstd::prelude::*` or `crate::spec::…`.
-fn allowed_ghost_use(tree: &syn::UseTree) -> bool {
+/// `vstd::prelude::*` (no names) or named items of `crate::spec::<module>::…` (the names it introduces); `None`
+/// for any other ghost import, globs of `crate::spec` included.
+fn allowed_ghost_use(tree: &syn::UseTree) -> Option<Vec<String>> {
     let mut segs = Vec::new();
     let mut t = tree;
+    let mut names = Vec::new();
     loop {
         match t {
             syn::UseTree::Path(p) => {
-                segs.push(p.ident.to_string());
+                segs.push(id_str(&p.ident));
                 t = &p.tree;
             }
             syn::UseTree::Glob(_) => {
-                segs.push("*".to_owned());
+                return (segs == ["vstd", "prelude"]).then(Vec::new);
+            }
+            syn::UseTree::Name(_) | syn::UseTree::Rename(_) => {
+                names.push(leaf_name(t)?);
                 break;
             }
-            syn::UseTree::Name(n) => {
-                segs.push(n.ident.to_string());
+            syn::UseTree::Group(g) => {
+                for leaf in &g.items {
+                    names.push(leaf_name(leaf)?);
+                }
                 break;
             }
-            _ => return false,
         }
     }
-    let s: Vec<&str> = segs.iter().map(String::as_str).collect();
-    matches!(
-        s.as_slice(),
-        ["vstd", "prelude", "*"] | ["crate", "spec", _, ..]
-    )
+    (segs.len() >= 3
+        && segs.first().is_some_and(|s| s == "crate")
+        && segs.get(1).is_some_and(|s| s == "spec"))
+    .then_some(names)
+}
+
+/// The name a `use` leaf introduces (`a`, or `b` in `a as b`); `None` for `self`, globs and nested paths.
+fn leaf_name(t: &syn::UseTree) -> Option<String> {
+    match t {
+        syn::UseTree::Name(n) if n.ident != "self" => Some(id_str(&n.ident)),
+        syn::UseTree::Rename(r) if r.ident != "self" => Some(id_str(&r.rename)),
+        _ => None,
+    }
 }
 
 fn is_ghost_cfg(a: &syn::Attribute) -> bool {
@@ -867,7 +1160,7 @@ fn macro_tokens(start: Cursor<'_>, out: &mut Vec<MacroToken>) {
             c = next;
         } else if let Some((ident, next)) = c.ident() {
             if ident == "crate" || ident == "super" {
-                out.push(MacroToken::Root(ident.to_string()));
+                out.push(MacroToken::Root(id_str(&ident)));
             } else if ident == "cfg" && next.punct().is_some_and(|(p, _)| p.as_char() == '!') {
                 out.push(MacroToken::Cfg);
             }
@@ -904,32 +1197,32 @@ impl<'ast> Visit<'ast> for Locals {
             _ => None,
         };
         if let Some(i) = ident {
-            self.names.insert(i.to_string());
-            self.items.insert(i.to_string());
+            self.names.insert(id_str(i));
+            self.items.insert(id_str(i));
         }
         visit::visit_item(self, item);
     }
 
     fn visit_use_name(&mut self, i: &'ast syn::UseName) {
         let n = i;
-        self.names.insert(n.ident.to_string());
+        self.names.insert(id_str(&n.ident));
     }
 
     fn visit_use_rename(&mut self, i: &'ast syn::UseRename) {
         let r = i;
-        self.names.insert(r.rename.to_string());
+        self.names.insert(id_str(&r.rename));
     }
 
     fn visit_type_param(&mut self, i: &'ast syn::TypeParam) {
         let p = i;
-        self.names.insert(p.ident.to_string());
-        self.items.insert(p.ident.to_string());
+        self.names.insert(id_str(&p.ident));
+        self.items.insert(id_str(&p.ident));
         visit::visit_type_param(self, p);
     }
 
     fn visit_const_param(&mut self, i: &'ast syn::ConstParam) {
         let p = i;
-        self.names.insert(p.ident.to_string());
+        self.names.insert(id_str(&p.ident));
         visit::visit_const_param(self, p);
     }
 }
@@ -947,7 +1240,11 @@ fn cheats(rel: &str, src: &str, r: &mut Report) {
     };
     let buf = TokenBuffer::new2(stream);
     let mut found = BTreeSet::new();
-    idents_in(buf.begin(), &mut |i| {
+    let mut raw = BTreeSet::new();
+    idents_in(buf.begin(), &mut |i, was_raw| {
+        if was_raw {
+            raw.insert(i.to_owned());
+        }
         if CHEATS.contains(&i) {
             found.insert(i.to_owned());
         }
@@ -959,17 +1256,27 @@ fn cheats(rel: &str, src: &str, r: &mut Report) {
             format!("cheat token `{c}` (only proofs/verus/trusted/ may weaken a proof, and it is listed in {REGISTRY})"),
         );
     }
+    for i in raw {
+        r.add(
+            "G5",
+            rel,
+            format!("raw identifier `r#{i}`: the guards compare names, so a proof file spells every name plainly"),
+        );
+    }
 }
 
-/// Calls `f` on every identifier of the token stream at `start`, groups included.
-fn idents_in(start: Cursor<'_>, f: &mut dyn FnMut(&str)) {
+/// Calls `f` on every identifier of the token stream at `start`, groups included, unrawed (`r#x` → `x`, with the
+/// flag set).
+fn idents_in(start: Cursor<'_>, f: &mut dyn FnMut(&str, bool)) {
     let mut c = start;
     while !c.eof() {
         if let Some((inside, _, _, next)) = c.any_group() {
             idents_in(inside, f);
             c = next;
         } else if let Some((ident, next)) = c.ident() {
-            f(&ident.to_string());
+            let shown = ident.to_string();
+            let name = id_str(&ident);
+            f(&name, shown != name);
             c = next;
         } else if let Some((_, next)) = c.token_tree() {
             c = next;
@@ -1137,7 +1444,7 @@ struct Traits {
 impl<'ast> Visit<'ast> for Traits {
     fn visit_item_trait(&mut self, i: &'ast syn::ItemTrait) {
         let t = i;
-        self.names.push(t.ident.to_string());
+        self.names.push(id_str(&t.ident));
         visit::visit_item_trait(self, t);
     }
 
@@ -1160,7 +1467,7 @@ impl<'ast> Visit<'ast> for Impls<'_> {
     fn visit_item_impl(&mut self, i: &'ast syn::ItemImpl) {
         if let Some((_, path, _)) = &i.trait_
             && let Some(last) = path.segments.last()
-            && let Some(kernel) = self.traits.get(&last.ident.to_string())
+            && let Some(kernel) = self.traits.get(&id_str(&last.ident))
         {
             let ty = fingerprint::type_name(&i.self_ty);
             self.found
@@ -1240,13 +1547,48 @@ fn g10(tree: &Tree, reg: &Registry, r: &mut Report) {
                 );
             }
         }
-        if !lakefile.contains(&format!("name = \"{}\"", m.oracle)) {
+        match driver_file(&lakefile, &m.oracle) {
+            None => r.add(
+                "G10",
+                REGISTRY,
+                format!(
+                    "model {}: oracle `{}` is not a lean_exe (with a root) of {LEAN_DIR}/lakefile.toml",
+                    m.id, m.oracle
+                ),
+            ),
+            Some(driver) => {
+                // The driver and the oracle test decide what "the oracle agrees" means; neither is proved, so any
+                // edit to them asks for a re-review, like an anchor.
+                for (what, path, pinned, key) in [
+                    ("oracle driver", driver.as_str(), &m.driver_fingerprint, "driver_fingerprint"),
+                    ("oracle test", m.oracle_test.as_str(), &m.oracle_test_fingerprint, "oracle_test_fingerprint"),
+                ] {
+                    match fingerprint::of_file(tree, path) {
+                        Err(e) => r.add("G10", REGISTRY, format!("model {}: {e:#}", m.id)),
+                        Ok(fp) if fp != *pinned => r.add(
+                            "G10",
+                            REGISTRY,
+                            format!(
+                                "model {}: model link stale: {what} {path} changed (fingerprint {fp}, registry {key} {pinned}): re-review that it still runs the proved functions and asserts every answer, then update the fingerprint",
+                                m.id
+                            ),
+                        ),
+                        Ok(_) => {}
+                    }
+                }
+            }
+        }
+        let mut pinned: Vec<&String> = m.statements.keys().collect();
+        let mut listed: Vec<&String> = m.theorems.iter().collect();
+        pinned.sort();
+        listed.sort();
+        if pinned != listed {
             r.add(
                 "G10",
                 REGISTRY,
                 format!(
-                    "model {}: oracle `{}` is not a lean_exe of {LEAN_DIR}/lakefile.toml",
-                    m.id, m.oracle
+                    "model {}: `statements` must pin exactly the `theorems` (L5 compares them after `lake build`)",
+                    m.id
                 ),
             );
         }
@@ -1284,20 +1626,48 @@ fn g10(tree: &Tree, reg: &Registry, r: &mut Report) {
     }
 }
 
+/// The root file (`proofs/lean/<Root>.lean`) of the `[[lean_exe]]` named `oracle` in the text of lakefile.toml.
+pub(crate) fn driver_file(lakefile: &str, oracle: &str) -> Option<String> {
+    lean_exe_roots(lakefile)
+        .into_iter()
+        .find_map(|(name, root)| (name == oracle).then_some(root))
+}
+
+/// (name, root file) of every `[[lean_exe]]` of a lakefile.toml.
+pub(crate) fn lean_exe_roots(lakefile: &str) -> Vec<(String, String)> {
+    let Ok(t) = lakefile.parse::<toml::Table>() else {
+        return Vec::new();
+    };
+    t.get("lean_exe")
+        .and_then(toml::Value::as_array)
+        .map_or_default(|exes| {
+            exes.iter()
+                .filter_map(|e| {
+                    let name = e.get("name")?.as_str()?;
+                    let root = e.get("root")?.as_str()?;
+                    Some((
+                        name.to_owned(),
+                        format!("{LEAN_DIR}/{}.lean", root.replace('.', "/")),
+                    ))
+                })
+                .collect()
+        })
+}
+
 /// Non-private functions of a kernel file (its entry points).
 fn entry_points(file: &syn::File) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for item in &file.items {
         match item {
             syn::Item::Fn(f) if !matches!(f.vis, syn::Visibility::Inherited) => {
-                out.insert(f.sig.ident.to_string());
+                out.insert(id_str(&f.sig.ident));
             }
             syn::Item::Impl(i) => {
                 for ii in &i.items {
                     if let syn::ImplItem::Fn(f) = ii
                         && (i.trait_.is_some() || !matches!(f.vis, syn::Visibility::Inherited))
                     {
-                        out.insert(f.sig.ident.to_string());
+                        out.insert(id_str(&f.sig.ident));
                     }
                 }
             }
@@ -1347,14 +1717,14 @@ impl<'ast> Visit<'ast> for Names {
     fn visit_path(&mut self, i: &'ast syn::Path) {
         let p = i;
         if let Some(s) = p.segments.last() {
-            self.names.insert(s.ident.to_string());
+            self.names.insert(id_str(&s.ident));
         }
         visit::visit_path(self, p);
     }
 
     fn visit_expr_method_call(&mut self, i: &'ast syn::ExprMethodCall) {
         let m = i;
-        self.names.insert(m.method.to_string());
+        self.names.insert(id_str(&m.method));
         visit::visit_expr_method_call(self, m);
     }
 }
@@ -1407,7 +1777,7 @@ fn fns_in(items: &[syn::Item], prefix: &str, out: &mut Vec<(String, bool)>) {
 /// Whether an identifier `word` occurs anywhere in a token stream (`TokenBuffer::new2(meta_list.tokens.clone())`).
 fn has_ident(buf: &TokenBuffer, word: &str) -> bool {
     let mut hit = false;
-    idents_in(buf.begin(), &mut |i| hit |= i == word);
+    idents_in(buf.begin(), &mut |i, _| hit |= i == word);
     hit
 }
 
@@ -1441,7 +1811,7 @@ fn has_verus_reason(buf: &TokenBuffer) -> bool {
 /// `a::b::c`.
 fn path_str(p: &syn::Path) -> String {
     let lead = if p.leading_colon.is_some() { "::" } else { "" };
-    let segs: Vec<String> = p.segments.iter().map(|s| s.ident.to_string()).collect();
+    let segs: Vec<String> = p.segments.iter().map(|s| id_str(&s.ident)).collect();
     format!("{lead}{}", segs.join("::"))
 }
 

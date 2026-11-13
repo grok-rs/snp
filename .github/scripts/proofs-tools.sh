@@ -105,6 +105,9 @@ install() {
         echo "proofs-tools: verusfmt $fmt_version in $bin_dir"
     fi
 
+    # The archives are unpacked: drop them (they would double the CI cache).
+    rm -rf "$dl"
+
     if rustup toolchain list | grep -q "^$rustc-"; then
         echo "proofs-tools: rustup toolchain $rustc already installed"
     else

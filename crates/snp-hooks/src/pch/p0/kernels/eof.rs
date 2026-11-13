@@ -4,7 +4,9 @@
 //! Plain Rust: the contract lives in `verus_keep_ghost` attributes and imports, which only Verus sets. The shipped
 //! native (`end_of_file_fixer::tail_action`) scans the file's tail itself and calls [`end_of_file_run`].
 #[cfg(verus_keep_ghost)]
-use crate::spec::eof::*;
+use crate::spec::eof::{
+    bytes_result, eol, lemma_run_unique, lemma_tail_action_apply, opt_view, run_action, tail_action,
+};
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
@@ -97,13 +99,10 @@ pub fn end_of_file_run(head: &[u8], run: u64, len: u64) -> EofAction {
     // The length of the line ending that is kept: `b'\n'`, `b'\r\n'` or `b'\r'`, the first that `head` starts with.
     let keep: u64 = match head.first() {
         Some(&b'\n') => 1,
-        Some(&b'\r') => {
-            if matches!(head.get(1), Some(&b'\n')) {
-                2
-            } else {
-                1
-            }
-        }
+        Some(&b'\r') => match head.get(1) {
+            Some(&b'\n') => 2,
+            _ => 1,
+        },
         _ => return EofAction::Keep,
     };
     if run == keep {

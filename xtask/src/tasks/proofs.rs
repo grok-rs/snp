@@ -11,7 +11,8 @@
 //! * `mutants`: V3 alone;
 //! * `install`: the pinned Verus release, its rustc and verusfmt (`.github/scripts/proofs-tools.sh install`);
 //! * `status`: the kernel and model tables, the installed tools and stale anchors;
-//! * `fingerprint <file.rs::item>`: the anchor fingerprint of one item (for a `[[model]]` anchor).
+//! * `fingerprint <file.rs::item | file>`: the anchor fingerprint of one item (for a `[[model]]` anchor), or of a whole
+//!   oracle driver or oracle test file (its `driver_fingerprint`/`oracle_test_fingerprint`).
 //!
 //! `proofs/registry.toml` is the single machine-readable source (§3.1); this file parses it. The guards live in
 //! `proofs/guards.rs`, the anchor fingerprint in `proofs/fingerprint.rs`, the tool runs in `proofs/tools.rs`.
@@ -44,7 +45,7 @@ pub(crate) const LEAN_DIR: &str = "proofs/lean";
 pub(crate) const TOOLS_SCRIPT: &str = ".github/scripts/proofs-tools.sh";
 
 const USAGE: &str = "usage: cargo xtask proofs check | verus [--module M] [--json F] | lean | oracles [-k ID] | \
-                     mutants | install | status | fingerprint <file.rs::item>";
+                     mutants | install | status | fingerprint <file.rs::item | file>";
 
 /// Runs the task with the arguments that follow its name.
 pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
@@ -69,7 +70,12 @@ pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
         ("install", []) => tools::install(&root),
         ("status", []) => tools::status(&root),
         ("fingerprint", [item]) => {
-            let fp = fingerprint::of_anchor(&Tree::disk(&root), item)?;
+            let tree = Tree::disk(&root);
+            let fp = if item.contains(".rs::") {
+                fingerprint::of_anchor(&tree, item)?
+            } else {
+                fingerprint::of_file(&tree, item)?
+            };
             workspace::say(&fp);
             Ok(())
         }
@@ -194,7 +200,9 @@ pub(crate) enum Status {
 /// One registered negative check (V3).
 #[derive(Debug, Clone)]
 pub(crate) struct Mutant {
-    /// Text whose first occurrence in the kernel file is replaced.
+    /// The file it mutates: the kernel file (the default) or the kernel's spec file.
+    pub(crate) file: Option<String>,
+    /// Text whose first occurrence in the file is replaced.
     pub(crate) find: String,
     /// The replacement.
     pub(crate) replace: String,
@@ -240,6 +248,12 @@ pub(crate) struct Model {
     /// The home-crate oracle test file.
     pub(crate) oracle_test: String,
     pub(crate) anchors: Vec<Anchor>,
+    /// Fingerprint of the oracle executable's root (`proofs/lean/<root>.lean`): a human-reviewed trust point.
+    pub(crate) driver_fingerprint: String,
+    /// Fingerprint of `oracle_test` (normalised tokens of the whole file): a human-reviewed trust point.
+    pub(crate) oracle_test_fingerprint: String,
+    /// Theorem name → fingerprint of its statement and of the model definitions it mentions (L5).
+    pub(crate) statements: BTreeMap<String, String>,
 }
 
 /// One `[[trusted]]` entry (§10 row 8; empty in M1).
@@ -351,8 +365,12 @@ impl Registry {
                 let m = m
                     .as_table()
                     .with_context(|| format!("{ctx}: a mutant must be {{ find, replace }}"))?;
-                only_keys(m, &["find", "replace"], &format!("{ctx} mutant"))?;
+                only_keys(m, &["file", "find", "replace"], &format!("{ctx} mutant"))?;
                 mutants.push(Mutant {
+                    file: m
+                        .get("file")
+                        .and_then(toml::Value::as_str)
+                        .map(str::to_owned),
                     find: req_str(m, "find", &ctx)?,
                     replace: req_str(m, "replace", &ctx)?,
                 });
@@ -374,7 +392,17 @@ impl Registry {
             let ctx = format!("[[model]] #{}", i.saturating_add(1));
             only_keys(
                 m,
-                &["id", "lean", "theorems", "oracle", "oracle_test", "anchors"],
+                &[
+                    "id",
+                    "lean",
+                    "theorems",
+                    "oracle",
+                    "oracle_test",
+                    "anchors",
+                    "driver_fingerprint",
+                    "oracle_test_fingerprint",
+                    "statements",
+                ],
                 &ctx,
             )?;
             let mut anchors = Vec::new();
@@ -392,7 +420,23 @@ impl Registry {
                     fingerprint: req_str(a, "fingerprint", &ctx)?,
                 });
             }
+            let mut statements = BTreeMap::new();
+            for (name, fp) in m
+                .get("statements")
+                .and_then(toml::Value::as_table)
+                .with_context(|| {
+                    format!("{ctx}: statements must be a table of theorem = fingerprint")
+                })?
+            {
+                let fp = fp
+                    .as_str()
+                    .with_context(|| format!("{ctx}: statements.{name} must be a string"))?;
+                statements.insert(name.clone(), fp.to_owned());
+            }
             models.push(Model {
+                driver_fingerprint: req_str(m, "driver_fingerprint", &ctx)?,
+                oracle_test_fingerprint: req_str(m, "oracle_test_fingerprint", &ctx)?,
+                statements,
                 id: req_str(m, "id", &ctx)?,
                 lean: req_str(m, "lean", &ctx)?,
                 theorems: str_list(m, "theorems", &ctx)?,

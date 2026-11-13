@@ -156,6 +156,7 @@ mod lean_oracle {
             check_quote(&mut model, &s);
             cases += 1;
         });
+        assert_eq!(cases, 37_449);
         report("exhaustive quote", cases, start);
     }
 

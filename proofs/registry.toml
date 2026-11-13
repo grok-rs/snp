@@ -37,7 +37,7 @@ file = "crates/snp-net/src/archive/entry.rs"
 mount = "snp_net_archive_entry"
 spec = "proofs/verus/spec/archive_entry.rs"
 callers = ["crates/snp-net/src/archive/path.rs::entry_path"]
-verified_min = 15
+verified_min = 16
 mutants = [
     # Accepts a `..` component (the ADR-077 escape).
     { find = "return Err(Refusal::DotDot);", replace = "return Ok(true);" },
@@ -47,6 +47,9 @@ mutants = [
     { find = "(windows && b == ", replace = "(false && b == " },
     # Forgets `\x` as a rooted name.
     { find = "if c0 == b'/' || c0 ==", replace = "if c0 == b'/' || false && c0 ==" },
+    # Spec mutants of the `..` branch of `norm_step` (lemma_normpath_dotdot): `..` always pushed, `..` clears all.
+    { file = "proofs/verus/spec/archive_entry.rs", find = "if stack.len() > 0 && !is_dotdot(stack.last()) {", replace = "if false {" },
+    { file = "proofs/verus/spec/archive_entry.rs", find = "            stack.drop_last()\n", replace = "            Seq::<Seq<u8>>::empty()\n" },
 ]
 
 [[kernel]]
@@ -79,12 +82,27 @@ theorems = [
 ]
 oracle = "eof-model"
 oracle_test = "crates/snp-hooks/tests/lean_oracle.rs"
+# The oracle driver (proofs/lean/EofMain.lean) and the oracle test are trust points: any edit asks for a re-review
+# (`cargo xtask proofs fingerprint <file>`, G10).
+driver_fingerprint = "1acfebe5b9966dcd"
+oracle_test_fingerprint = "e4017b3d13ff06bd"
 # fingerprint: `cargo xtask proofs fingerprint <file.rs::item>` (§3.1, G10). `kernelRun` in Eof.lean
-# transliterates `end_of_file_run`, `kernel` the whole-file `end_of_file`.
+# transliterates `end_of_file_run`, `kernel` the whole-file `end_of_file` (with `is_eol`); the oracle test calls
+# `end_of_file_bytes`.
 anchors = [
-    { item = "crates/snp-hooks/src/pch/p0/kernels/eof.rs::end_of_file_run", fingerprint = "a53899d4a4d77d45" },
+    { item = "crates/snp-hooks/src/pch/p0/kernels/eof.rs::end_of_file_run", fingerprint = "450ba6b0d698d9c2" },
     { item = "crates/snp-hooks/src/pch/p0/kernels/eof.rs::end_of_file", fingerprint = "81448e4d8ba287b6" },
+    { item = "crates/snp-hooks/src/pch/p0/kernels/eof.rs::is_eol", fingerprint = "1ec1e575101fc612" },
+    { item = "crates/snp-hooks/src/pch/p0/kernels/eof.rs::end_of_file_bytes", fingerprint = "7a11e1bbaf64dfd4" },
 ]
+# L5 (`cargo xtask proofs lean`): fingerprint of each theorem's statement and of every model definition it reaches
+# (never a proof); a change prints the new value. Lean upgrades change them too: re-review, then refresh.
+[model.statements]
+"SnpModels.Eof.pyFixFile_eq" = "c30752f13fe18854"
+"SnpModels.Eof.kernel_apply" = "37978ca884d2591c"
+"SnpModels.Eof.fix_idem" = "6f65ed378938e8d5"
+"SnpModels.Eof.fix_body" = "5dd9c663de5fbe04"
+"SnpModels.Eof.pyFixFile_twice" = "1536400bcf2c674b"
 
 [[model]]
 id = "K4-shlex-split"
@@ -92,9 +110,21 @@ lean = "proofs/lean/SnpModels/Shlex.lean"
 theorems = ["SnpModels.Shlex.pySplit_eq_split", "SnpModels.Shlex.split_quote", "SnpModels.Shlex.split_join"]
 oracle = "shlex-model"
 oracle_test = "crates/snp-pycompat/tests/lean_oracle.rs"
-# fingerprint: `cargo xtask proofs fingerprint <file.rs::item>` (§3.1, G10).
+driver_fingerprint = "af906ff552d63f5c"
+oracle_test_fingerprint = "a54309f336092389"
+# fingerprint: `cargo xtask proofs fingerprint <file.rs::item>` (§3.1, G10). The helpers `split` and `quote` call
+# (`is_ws`, `St`, `Esc`, `is_safe`, `quote_bytes`) are anchored too: an anchor hashes its own item only.
 anchors = [
     { item = "crates/snp-pycompat/src/shlex.rs::split", fingerprint = "71f6ef5a43be5b96" },
     { item = "crates/snp-pycompat/src/shlex.rs::quote", fingerprint = "00a8f6564f6491e1" },
     { item = "crates/snp-pycompat/src/shlex.rs::join", fingerprint = "8e2d42c5e4ce29b1" },
+    { item = "crates/snp-pycompat/src/shlex.rs::is_ws", fingerprint = "d94f06c56190310a" },
+    { item = "crates/snp-pycompat/src/shlex.rs::St", fingerprint = "f55e6abc0db7e0e7" },
+    { item = "crates/snp-pycompat/src/shlex.rs::Esc", fingerprint = "bd7630144abb5859" },
+    { item = "crates/snp-pycompat/src/shlex.rs::is_safe", fingerprint = "b7ec02e51135e6f3" },
+    { item = "crates/snp-pycompat/src/shlex.rs::quote_bytes", fingerprint = "939a1fcd4c229284" },
 ]
+[model.statements]
+"SnpModels.Shlex.pySplit_eq_split" = "67a279bf3ae4866e"
+"SnpModels.Shlex.split_quote" = "4ab0fa788ac59903"
+"SnpModels.Shlex.split_join" = "c86111f19da7c967"

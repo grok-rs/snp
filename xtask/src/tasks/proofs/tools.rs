@@ -20,8 +20,10 @@ use crate::workspace;
 
 /// Axioms a Lean theorem may depend on (L2).
 const AXIOMS: [&str; 3] = ["propext", "Classical.choice", "Quot.sound"];
-/// Forbidden in Lean sources (L4); `partial` is allowed only in the `*Main.lean` I/O drivers.
-const LEAN_FORBIDDEN: [&str; 8] = [
+/// Forbidden in Lean sources (L4); `partial` is allowed only in the oracle drivers (the `root` of a `[[lean_exe]]`).
+/// Besides the proof cheats, every way to run code at elaboration time or to define syntax is out: a model needs
+/// none, and metaprogramming could attach `implemented_by` without spelling it (L5 checks the result anyway).
+const LEAN_FORBIDDEN: [&str; 25] = [
     "sorry",
     "admit",
     "native_decide",
@@ -30,7 +32,27 @@ const LEAN_FORBIDDEN: [&str; 8] = [
     "partial",
     "axiom",
     "unsafe",
+    "run_cmd",
+    "run_meta",
+    "run_elab",
+    "elab",
+    "elab_rules",
+    "macro",
+    "macro_rules",
+    "syntax",
+    "notation",
+    "infix",
+    "infixl",
+    "infixr",
+    "initialize",
+    "builtin_initialize",
+    "attribute",
+    "#eval",
+    "#exit",
 ];
+/// Substrings forbidden anywhere in Lean code (L4): the compiler's name for the code it runs instead of a
+/// recursive definition, and the option that skips the kernel check.
+const LEAN_FORBIDDEN_PARTS: [&str; 2] = ["_unsafe_rec", "skipKernelTC"];
 
 /// `proofs verus` arguments.
 #[derive(Debug, Default)]
@@ -291,10 +313,12 @@ impl VerusRun {
 impl Tools {
     /// The pinned Verus and verusfmt: the install directory of `proofs-tools.sh`, else `PATH`.
     fn find(root: &Path, reg: &Registry) -> anyhow::Result<Self> {
-        let dir = tools_dir(root)?;
-        let pick = |name: &str| {
-            let p = dir.join(name);
-            if p.is_file() { p } else { PathBuf::from(name) }
+        // `proofs-tools.sh path` fails on a platform it has no pinned release for: use `PATH` there (the version
+        // check below still enforces the pin).
+        let dir = tools_dir(root).ok();
+        let pick = |name: &str| match dir.as_ref().map(|d| d.join(name)) {
+            Some(p) if p.is_file() => p,
+            _ => PathBuf::from(name),
         };
         let tools = Self {
             verus: pick("verus"),
@@ -405,13 +429,14 @@ fn run_mutants(
     for k in &verified {
         for m in &k.mutants {
             n = n.saturating_add(1);
+            let target = m.file.as_deref().unwrap_or(&k.file);
             let src = tree
-                .read(&k.file)
-                .with_context(|| format!("reading {}", k.file))?;
+                .read(target)
+                .with_context(|| format!("reading {target}"))?;
             let Some(mutated) = apply_mutant(&src, &m.find, &m.replace) else {
                 problems.push(format!(
-                    "V3: stale mutant of {}: {:?} does not occur in {} (write a fresh mutant)",
-                    k.id, m.find, k.file
+                    "V3: stale mutant of {}: {:?} does not occur in {target} (write a fresh mutant)",
+                    k.id, m.find
                 ));
                 continue;
             };
@@ -428,10 +453,13 @@ fn run_mutants(
                 std::fs::copy(root.join(&other.file), &dst)
                     .with_context(|| format!("copying {}", other.file))?;
             }
-            std::fs::write(scratch.join(&k.file), mutated)?;
+            std::fs::write(scratch.join(target), mutated)?;
             let run = tools.run_verus(&scratch.join(ROOT), &["--no-cheating"])?;
             let (_, errors) = run.report().as_ref().map_or((0, 0), counts);
-            let label = format!("{} mutant {:?} -> {:?}", k.id, m.find, m.replace);
+            let label = format!(
+                "{} mutant of {target} {:?} -> {:?}",
+                k.id, m.find, m.replace
+            );
             if !run.ok && errors > 0 && errors != u64::MAX {
                 workspace::say(&format!(
                     "proofs mutants: killed ({errors} error(s)): {label}"
@@ -527,7 +555,185 @@ pub(crate) fn lean(root: &Path) -> anyhow::Result<()> {
             )),
         }
     }
+
+    // L5
+    if build.0 {
+        problems.extend(lean_audit(root, &dir, &reg)?);
+    }
     finish("proofs lean", &problems)
+}
+
+/// The Lean prelude of the L5 audit scripts: FNV-1a over a string, and the package-module predicate.
+const AUDIT_PRELUDE: &str = r#"open Lean
+
+def snpFnv (s : String) : UInt64 :=
+  s.toUTF8.foldl (fun h b => (h ^^^ b.toUInt64) * 0x100000001b3) 0xcbf29ce484222325
+
+def snpHex (n : UInt64) : String :=
+  let s := String.ofList (Nat.toDigits 16 n.toNat)
+  "".pushn '0' (16 - s.length) ++ s
+
+def snpPkg (env : Environment) (mods : List Name) (c : Name) : Bool :=
+  match env.getModuleIdxFor? c with
+  | some idx => mods.contains env.header.moduleNames[idx.toNat]!
+  | none => false
+
+/-- Every constant of the package that the statement of `c` reaches: types always, definitions' values, an
+inductive's constructors; never a theorem's proof. -/
+partial def snpClosure (env : Environment) (mods : List Name) (todo : List Name) (seen : NameSet) : NameSet :=
+  match todo with
+  | [] => seen
+  | c :: rest =>
+    if seen.contains c || !snpPkg env mods c then snpClosure env mods rest seen else
+    let seen := seen.insert c
+    match env.find? c with
+    | none => snpClosure env mods rest seen
+    | some ci =>
+      let deps := ci.type.getUsedConstants.toList
+      let deps := match ci with
+        | .defnInfo d => deps ++ d.value.getUsedConstants.toList
+        | .opaqueInfo d => deps ++ d.value.getUsedConstants.toList
+        | .inductInfo i => deps ++ i.ctors
+        | _ => deps
+      snpClosure env mods (deps ++ rest) seen
+
+def snpRender (env : Environment) (c : Name) : String :=
+  match env.find? c with
+  | none => s!"? {c}"
+  | some ci =>
+    let kind := match ci with
+      | .defnInfo _ => "def" | .thmInfo _ => "theorem" | .inductInfo _ => "inductive"
+      | .ctorInfo _ => "ctor" | .recInfo _ => "rec" | .opaqueInfo _ => "opaque"
+      | .axiomInfo _ => "axiom" | .quotInfo _ => "quot"
+    let v := match ci with
+      | .defnInfo d => s!" := {d.value.dbgToString}"
+      | .opaqueInfo d => s!" := {d.value.dbgToString}"
+      | _ => ""
+    s!"{kind} {c} : {ci.type.dbgToString}{v}"
+
+/-- `BAD` lines for compiler attributes that make the executable run other code than the proved definitions. -/
+def snpAttrs (env : Environment) (mods : List Name) : IO Unit := do
+  for (c, ci) in env.constants.map₁.toList do
+    if snpPkg env mods c then
+      if (Compiler.implementedByAttr.getParam? env c).isSome then
+        IO.println s!"BAD {c} carries implemented_by"
+      if isExtern env c then
+        IO.println s!"BAD {c} is extern"
+      let unsafeRec := match c with
+        | .str _ s => s == "_unsafe_rec"
+        | _ => false
+      if (ci.isUnsafe || ci.isPartial) && !unsafeRec then
+        IO.println s!"BAD {c} is unsafe or partial"
+"#;
+
+/// L5 (needs a built package): no constant of the package carries `implemented_by`/`extern` or is `unsafe`/`partial`
+/// (except the compiler's own `_unsafe_rec`), checked on the elaborated environment whatever the source spells; and
+/// every registered theorem's statement, with every model definition it reaches, matches its `statements` pin.
+fn lean_audit(root: &Path, dir: &Path, reg: &Registry) -> anyhow::Result<Vec<String>> {
+    let mut problems = Vec::new();
+    let mut files = Vec::new();
+    lean_files(dir, &mut files)?;
+    let modules: Vec<String> = files
+        .iter()
+        .filter_map(|f| f.strip_prefix(dir).ok())
+        .filter_map(|r| r.to_str())
+        .filter(|r| *r != "Axioms.lean")
+        .map(|r| r.trim_end_matches(".lean").replace(['/', '\\'], "."))
+        .collect();
+    let mods = format!(
+        "[{}]",
+        modules
+            .iter()
+            .map(|m| format!("\"{m}\".toName"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let lakefile = std::fs::read_to_string(dir.join("lakefile.toml")).unwrap_or_default();
+    let drivers: Vec<String> = guards::lean_exe_roots(&lakefile)
+        .into_iter()
+        .filter_map(|(_, f)| {
+            f.strip_prefix(&format!("{LEAN_DIR}/"))
+                .map(|r| r.trim_end_matches(".lean").replace('/', "."))
+        })
+        .collect();
+    let theorems: Vec<&String> = reg.models.iter().flat_map(|m| &m.theorems).collect();
+    let names = theorems
+        .iter()
+        .map(|t| format!("\"{t}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let out_dir = root.join("target/proofs/lean-audit");
+    std::fs::create_dir_all(&out_dir).with_context(|| format!("creating {}", out_dir.display()))?;
+
+    // One script for the library (pins and attributes), one per driver (attributes): drivers cannot be imported
+    // together (each defines `main`).
+    let mut scripts = vec![(
+        "SnpAuditModels.lean".to_owned(),
+        format!(
+            "import Lean\nimport SnpModels\n{AUDIT_PRELUDE}\nrun_cmd do\n  let env ← getEnv\n  let mods := {mods}\n  \
+             snpAttrs env mods\n  for t in ([{names}] : List String) do\n    let n := t.toName\n    \
+             match env.find? n with\n    | some (.thmInfo _) =>\n      \
+             let cs := (snpClosure env mods [n] {{}}).toList.toArray.qsort (fun a b => a.toString < b.toString)\n      \
+             let text := String.intercalate \"\\n\" (cs.toList.map (snpRender env))\n      \
+             IO.println s!\"PIN {{t}} {{snpHex (snpFnv text)}}\"\n    \
+             | _ => IO.println s!\"BAD {{t}} is not a theorem of the package\"\n"
+        ),
+    )];
+    for d in &drivers {
+        scripts.push((
+            format!("SnpAudit_{}.lean", d.replace('.', "_")),
+            format!(
+                "import Lean\nimport {d}\n{AUDIT_PRELUDE}\nrun_cmd do\n  snpAttrs (← getEnv) {mods}\n"
+            ),
+        ));
+    }
+    let mut pins = std::collections::BTreeMap::new();
+    for (name, text) in &scripts {
+        let path = out_dir.join(name);
+        std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;
+        let arg = path.to_string_lossy().into_owned();
+        let (ok, out) = lake(dir, &["env", "lean", &arg])?;
+        if !ok {
+            problems.push(format!(
+                "L5: the audit script {} fails:\n{out}",
+                path.display()
+            ));
+            continue;
+        }
+        for line in out.lines() {
+            if let Some(msg) = line.strip_prefix("BAD ") {
+                problems.push(format!(
+                    "L5: {msg} (the oracle executable must run the proved definitions)"
+                ));
+            } else if let Some(rest) = line.strip_prefix("PIN ")
+                && let Some((t, fp)) = rest.split_once(' ')
+            {
+                pins.insert(t.to_owned(), fp.trim().to_owned());
+            }
+        }
+    }
+    for m in &reg.models {
+        for t in &m.theorems {
+            let Some(now) = pins.get(t) else {
+                if problems.is_empty() {
+                    problems.push(format!("L5: no statement fingerprint for {t}"));
+                }
+                continue;
+            };
+            match m.statements.get(t) {
+                Some(p) if p == now => {}
+                Some(p) => problems.push(format!(
+                    "L5: model {}: statement pin stale: {t} or a model definition it mentions changed (fingerprint {now}, registry {p}): re-review the theorem statement, then update `statements` in {REGISTRY}",
+                    m.id
+                )),
+                None => problems.push(format!(
+                    "L5: model {}: {t} has no `statements` pin (now {now})",
+                    m.id
+                )),
+            }
+        }
+    }
+    Ok(problems)
 }
 
 /// Runs `lake <args>` in `dir`: (success, stdout + stderr).
@@ -614,24 +820,32 @@ fn lean_sources(dir: &Path) -> anyhow::Result<Vec<String>> {
     let mut problems = Vec::new();
     let mut files = Vec::new();
     lean_files(dir, &mut files)?;
+    let lakefile = std::fs::read_to_string(dir.join("lakefile.toml")).unwrap_or_default();
+    let drivers: Vec<String> = guards::lean_exe_roots(&lakefile)
+        .into_iter()
+        .filter_map(|(_, f)| f.strip_prefix(&format!("{LEAN_DIR}/")).map(str::to_owned))
+        .collect();
     for f in &files {
         let text =
             std::fs::read_to_string(f).with_context(|| format!("reading {}", f.display()))?;
-        let name = f
-            .file_name()
-            .map_or_default(|n| n.to_string_lossy().into_owned());
-        let driver = name.ends_with("Main.lean");
+        let rel = workspace::rel(dir, f);
+        let driver = drivers.contains(&rel);
         for word in forbidden_lean_words(&text) {
             if word == "partial" && driver {
                 continue;
             }
             problems.push(format!(
-                "L4: {} uses `{word}` (models carry no sorry/admit/native_decide/implemented_by/extern/axiom/unsafe; partial only in *Main.lean)",
-                workspace::rel(dir, f)
+                "L4: {rel} uses `{word}` (models carry no proof cheat, compiler attribute, metaprogram or syntax extension; partial only in an oracle driver)"
             ));
         }
+        for import in lean_imports(&text) {
+            if import != "SnpModels" && !import.starts_with("SnpModels.") {
+                problems.push(format!(
+                    "L4: {rel} imports `{import}` (the package imports only its own SnpModels modules)"
+                ));
+            }
+        }
     }
-    let lakefile = std::fs::read_to_string(dir.join("lakefile.toml")).unwrap_or_default();
     if lakefile
         .lines()
         .any(|l| l.trim_start().starts_with("[[require]]"))
@@ -672,63 +886,182 @@ fn lean_files(dir: &Path, out: &mut Vec<PathBuf>) -> anyhow::Result<()> {
 pub(crate) fn forbidden_lean_words(src: &str) -> BTreeSet<&'static str> {
     let code = strip_lean_comments(src);
     let mut found = BTreeSet::new();
-    let is_ident = |c: char| c.is_alphanumeric() || matches!(c, '_' | '\'' | '.' | '!' | '?');
+    let is_ident = |c: char| c.is_alphanumeric() || matches!(c, '_' | '\'' | '.' | '!' | '?' | '#');
     for word in code.split(|c: char| !is_ident(c)) {
         let word = word.trim_end_matches(['!', '?']);
         if let Some(w) = LEAN_FORBIDDEN.iter().find(|f| **f == word) {
             found.insert(*w);
         }
+        if let Some(p) = LEAN_FORBIDDEN_PARTS.iter().find(|p| word.contains(**p)) {
+            found.insert(*p);
+        }
     }
     found
 }
 
-/// `src` without `--` line comments, nested `/- … -/` block comments (doc comments included) and string literals.
-fn strip_lean_comments(src: &str) -> String {
-    let mut out = String::new();
-    let mut chars = src.chars().peekable();
-    let mut depth = 0_usize;
-    let mut in_string = false;
-    while let Some(c) = chars.next() {
-        if in_string {
-            if c == '\\' {
-                chars.next();
-            } else if c == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-        if depth > 0 {
-            if c == '/' && chars.peek() == Some(&'-') {
-                chars.next();
-                depth = depth.saturating_add(1);
-            } else if c == '-' && chars.peek() == Some(&'/') {
-                chars.next();
-                depth = depth.saturating_sub(1);
-            }
-            continue;
-        }
-        match (c, chars.peek()) {
-            ('/', Some('-')) => {
-                chars.next();
-                depth = 1;
-                out.push(' ');
-            }
-            ('-', Some('-')) => {
-                for n in chars.by_ref() {
-                    if n == '\n' {
-                        out.push('\n');
-                        break;
-                    }
-                }
-            }
-            ('"', _) => {
-                in_string = true;
-                out.push(' ');
-            }
-            _ => out.push(c),
+/// The modules a Lean file imports (`import A B` lines at the top, comments ignored).
+fn lean_imports(src: &str) -> Vec<String> {
+    let code = strip_lean_comments(src);
+    let mut out = Vec::new();
+    for line in code.lines() {
+        let mut words = line.split_whitespace();
+        if words.next() == Some("import") {
+            out.extend(words.map(str::to_owned));
         }
     }
     out
+}
+
+/// `src` without `--` line comments, nested `/- … -/` block comments (doc comments included) and the contents of
+/// string and char literals (raw strings too); the code inside the `{…}` of an interpolated string (`s!"…{e}…"`) is
+/// kept, and a `«name»` identifier is kept as its bare name (it means the same identifier).
+fn strip_lean_comments(src: &str) -> String {
+    #[derive(Clone, Copy)]
+    enum Frame {
+        /// Code; `braces` counts the `{` opened inside an interpolation.
+        Code { braces: usize },
+        /// A string literal; `interp` when `{` opens code.
+        Str { interp: bool },
+    }
+    let cs: Vec<char> = src.chars().collect();
+    let at = |i: usize| cs.get(i).copied();
+    let ident_char = |c: char| c.is_alphanumeric() || matches!(c, '_' | '\'' | '!' | '?');
+    let mut out = String::new();
+    let mut stack = vec![Frame::Code { braces: 0 }];
+    let mut i = 0_usize;
+    while let Some(c) = at(i) {
+        let top = stack.last().copied().unwrap_or(Frame::Code { braces: 0 });
+        match top {
+            Frame::Str { interp } => {
+                if c == '\\' {
+                    i = i.saturating_add(2);
+                    continue;
+                }
+                if c == '"' {
+                    stack.pop();
+                    out.push(' ');
+                } else if interp && c == '{' {
+                    stack.push(Frame::Code { braces: 0 });
+                    out.push(' ');
+                }
+                i = i.saturating_add(1);
+            }
+            Frame::Code { braces } => {
+                let next = at(i.saturating_add(1));
+                let prev_ident = out.chars().last().is_some_and(ident_char);
+                if c == '-' && next == Some('-') {
+                    while let Some(n) = at(i) {
+                        i = i.saturating_add(1);
+                        if n == '\n' {
+                            out.push('\n');
+                            break;
+                        }
+                    }
+                } else if c == '/' && next == Some('-') {
+                    let mut depth = 0_usize;
+                    while let Some(n) = at(i) {
+                        let after = at(i.saturating_add(1));
+                        if n == '/' && after == Some('-') {
+                            depth = depth.saturating_add(1);
+                            i = i.saturating_add(2);
+                        } else if n == '-' && after == Some('/') {
+                            depth = depth.saturating_sub(1);
+                            i = i.saturating_add(2);
+                            if depth == 0 {
+                                break;
+                            }
+                        } else {
+                            i = i.saturating_add(1);
+                        }
+                    }
+                    out.push(' ');
+                } else if c == '"' {
+                    stack.push(Frame::Str {
+                        interp: out.ends_with('!'),
+                    });
+                    out.push(' ');
+                    i = i.saturating_add(1);
+                } else if c == 'r'
+                    && !prev_ident
+                    && let Some(len) = raw_string_len(&cs, i)
+                {
+                    out.push(' ');
+                    i = i.saturating_add(len);
+                } else if c == '\'' && !prev_ident {
+                    // A char literal: `'x'`, `'"'`, `'\''`, `'\x41'`, `'\u{41}'`; anything else is an apostrophe.
+                    let len = if next == Some('\\') {
+                        (i.saturating_add(3)..i.saturating_add(12).min(cs.len()))
+                            .find(|&j| at(j) == Some('\''))
+                            .map(|j| j.saturating_sub(i).saturating_add(1))
+                    } else if at(i.saturating_add(2)) == Some('\'') {
+                        Some(3)
+                    } else {
+                        None
+                    };
+                    if let Some(len) = len {
+                        out.push(' ');
+                        i = i.saturating_add(len);
+                    } else {
+                        out.push(c);
+                        i = i.saturating_add(1);
+                    }
+                } else if c == '«' {
+                    i = i.saturating_add(1);
+                    while let Some(n) = at(i) {
+                        i = i.saturating_add(1);
+                        if n == '»' {
+                            break;
+                        }
+                        out.push(n);
+                    }
+                } else if c == '{' && stack.len() > 1 {
+                    if let Some(Frame::Code { braces }) = stack.last_mut() {
+                        *braces = braces.saturating_add(1);
+                    }
+                    out.push(c);
+                    i = i.saturating_add(1);
+                } else if c == '}' && stack.len() > 1 {
+                    if braces == 0 {
+                        stack.pop(); // back into the interpolated string
+                        out.push(' ');
+                    } else {
+                        if let Some(Frame::Code { braces }) = stack.last_mut() {
+                            *braces = braces.saturating_sub(1);
+                        }
+                        out.push(c);
+                    }
+                    i = i.saturating_add(1);
+                } else {
+                    out.push(c);
+                    i = i.saturating_add(1);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The length of the raw string literal `r"…"` / `r#"…"#` starting at `cs[i] == 'r'`, if one starts there.
+fn raw_string_len(cs: &[char], i: usize) -> Option<usize> {
+    let mut j = i.saturating_add(1);
+    let mut hashes = 0_usize;
+    while cs.get(j) == Some(&'#') {
+        hashes = hashes.saturating_add(1);
+        j = j.saturating_add(1);
+    }
+    if cs.get(j) != Some(&'"') {
+        return None;
+    }
+    j = j.saturating_add(1);
+    while j < cs.len() {
+        if cs.get(j) == Some(&'"')
+            && (1..=hashes).all(|k| cs.get(j.saturating_add(k)) == Some(&'#'))
+        {
+            return Some(j.saturating_add(hashes).saturating_add(1).saturating_sub(i));
+        }
+        j = j.saturating_add(1);
+    }
+    Some(cs.len().saturating_sub(i))
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -974,6 +1307,54 @@ mod tests {
         assert_eq!(
             found,
             ["axiom", "extern", "native_decide", "partial", "sorry"]
+        );
+    }
+
+    #[test]
+    fn char_literals_raw_strings_and_interpolation_do_not_hide_code() {
+        // Review finding: `'"'` opened a fake string that hid the attribute up to the next `"`.
+        let src = "def quoteChar : Char := '\"'\ndef runFast (b : ByteArray) := b\n\
+                   attribute [implemented_by runFast] run\ndef quoteChar' : Char := '\"'\n";
+        let found: Vec<&str> = forbidden_lean_words(src).into_iter().collect();
+        assert_eq!(found, ["attribute", "implemented_by"]);
+        // Escaped char literals, and identifiers with primes, are handled.
+        let src = "def a := '\\''\ndef b := '\\\\'\ndef c' := 1\ndef d := '\\x22'\n@[extern \"f\"] opaque g : Nat\n";
+        assert_eq!(
+            forbidden_lean_words(src).into_iter().collect::<Vec<_>>(),
+            ["extern"]
+        );
+        // A raw string ends at its own delimiter; a backslash inside does not escape.
+        let src = "def r := r\"a\\\" \ndef x := sorry\ndef s := r#\"sorry \"\" admit\"#\n";
+        assert_eq!(
+            forbidden_lean_words(src).into_iter().collect::<Vec<_>>(),
+            ["sorry"]
+        );
+        // Code inside an interpolation is code; text around it is not.
+        let src = "def s := s!\"sorry {f (by native_decide : 1 = 1)} admit {\"}\" } axiom\"\n";
+        assert_eq!(
+            forbidden_lean_words(src).into_iter().collect::<Vec<_>>(),
+            ["native_decide"]
+        );
+        // «name» is the same identifier.
+        let src = "@[«implemented_by» f] def g := 1\n";
+        assert_eq!(
+            forbidden_lean_words(src).into_iter().collect::<Vec<_>>(),
+            ["implemented_by"]
+        );
+        // Metaprograms, the compiler's recursion helper and evaluation commands.
+        let src = "run_meta pure ()\n#eval 1\nunsafe def f._unsafe_rec := 1\nset_option debug.skipKernelTC true\n";
+        assert_eq!(
+            forbidden_lean_words(src).into_iter().collect::<Vec<_>>(),
+            ["#eval", "_unsafe_rec", "run_meta", "skipKernelTC", "unsafe"]
+        );
+    }
+
+    #[test]
+    fn lean_imports_are_listed() {
+        let src = "-- import Lean\nimport SnpModels.Eof SnpModels.Hex\nimport Lean\n/- import X -/\ndef x := 1\n";
+        assert_eq!(
+            lean_imports(src),
+            ["SnpModels.Eof", "SnpModels.Hex", "Lean"]
         );
     }
 

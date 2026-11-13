@@ -47,6 +47,36 @@ pub(crate) fn of_anchor(tree: &Tree, anchor: &str) -> anyhow::Result<String> {
     of_item(&src, item).with_context(|| format!("anchor {anchor}"))
 }
 
+/// The fingerprint of a whole file of `tree` (an oracle driver or an oracle test, §3.1 G10): a `.rs` file by the
+/// normalised tokens of all its items (formatting, comments and docs do not count), any other file by its text with
+/// line endings and trailing whitespace normalised.
+pub(crate) fn of_file(tree: &Tree, rel: &str) -> anyhow::Result<String> {
+    let src = tree
+        .read(rel)
+        .with_context(|| format!("{rel} does not exist"))?;
+    of_text(rel, &src)
+}
+
+/// [`of_file`] over the text `src` of `rel`.
+pub(crate) fn of_text(rel: &str, src: &str) -> anyhow::Result<String> {
+    let text = if std::path::Path::new(rel)
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("rs"))
+    {
+        let stream = syn::parse_str(src).with_context(|| format!("tokenizing {rel}"))?;
+        let buf = syn::buffer::TokenBuffer::new2(stream);
+        let mut out = Vec::new();
+        render_into(buf.begin(), None, &mut out);
+        out.join(" ")
+    } else {
+        src.lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    Ok(format!("{:016x}", fnv1a64(text.trim_end().as_bytes())))
+}
+
 /// `file.rs::item` → (`file.rs`, `item`).
 pub(crate) fn split_anchor(anchor: &str) -> anyhow::Result<(&str, &str)> {
     match anchor.split_once(".rs::") {
@@ -264,6 +294,26 @@ mod tests {
         assert_eq!(fnv1a64(b""), 0xcbf2_9ce4_8422_2325);
         assert_eq!(fnv1a64(b"a"), 0xaf63_dc4c_8601_ec8c);
         assert_eq!(fnv1a64(b"foobar"), 0x8594_4171_f739_67e8);
+    }
+
+    #[test]
+    fn whole_file_fingerprints() {
+        let a = "// c\nfn t() { assert_eq!(n, 3); }\n";
+        let b = "fn t() {\n    assert_eq!(n, 3); // still three\n}\n";
+        assert_eq!(of_text("x.rs", a).unwrap(), of_text("x.rs", b).unwrap());
+        assert_ne!(
+            of_text("x.rs", a).unwrap(),
+            of_text("x.rs", &a.replace('3', "4")).unwrap()
+        );
+        let lean = "def main : IO Unit := pure ()\n";
+        assert_eq!(
+            of_text("M.lean", lean).unwrap(),
+            of_text("M.lean", &lean.replace('\n', "  \r\n")).unwrap()
+        );
+        assert_ne!(
+            of_text("M.lean", lean).unwrap(),
+            of_text("M.lean", &format!("-- note\n{lean}")).unwrap()
+        );
     }
 
     #[test]

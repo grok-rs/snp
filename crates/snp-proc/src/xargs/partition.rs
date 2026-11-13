@@ -5,9 +5,9 @@
 use std::ops::Range;
 
 #[cfg(verus_keep_ghost)]
-use crate::spec::lib::seq::*;
+use crate::spec::lib::seq::{lemma_sum_range_nonneg, sum_range};
 #[cfg(verus_keep_ghost)]
-use crate::spec::xargs_partition::*;
+use crate::spec::xargs_partition::{in_budget, maximal, oversize, partition_post};
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 

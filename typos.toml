@@ -48,6 +48,8 @@ flate = "flate"
 unparseable = "unparseable"
 # the hax verification toolchain (ADR-095, docs/VERIFICATION.md §14)
 hax = "hax"
+# Lean's `ConstantInfo.thmInfo` in the generated L5 audit script (ADR-095)
+thm = "thm"
 # Upstream texts snp reproduces verbatim: pre-commit-hooks' help typos (`Maxmimum` before v4.1.0, `contstructs`
 # before v4.5.0), its `path_splitted` variable, node's LTS codename `Jod`
 Maxmimum = "Maxmimum"

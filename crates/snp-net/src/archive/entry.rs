@@ -4,7 +4,10 @@
 //! §9.1 (K2). Plain Rust: the contract lives in `verus_keep_ghost` attributes and imports, which only Verus sets.
 
 #[cfg(verus_keep_ghost)]
-use crate::spec::archive_entry::*;
+use crate::spec::archive_entry::{
+    comps_w, done, has_nul, is_dotdot, is_kept, keep, lemma_done_prefix, lemma_keep_push,
+    lemma_split_step, plain, plain_comp, refused, rooted, sep, spans_ok, spans_view, split_w,
+};
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
@@ -35,8 +38,8 @@ fn is_sep(b: u8, windows: bool) -> bool {
         r == rooted(raw@),
 ))]
 #[expect(
-    clippy::manual_is_ascii_check,
-    reason = "verus: vstd has no spec for u8::is_ascii_alphabetic; this match is proved equal to spec ascii_alpha"
+    clippy::match_like_matches_macro,
+    reason = "verus: kernels call no macro (G3) and vstd has no spec for u8::is_ascii_alphabetic; this match is proved equal to spec ascii_alpha"
 )]
 fn is_rooted(raw: &[u8]) -> bool {
     let Some(&c0) = raw.first() else {
@@ -48,7 +51,11 @@ fn is_rooted(raw: &[u8]) -> bool {
     let Some(&c1) = raw.get(1) else {
         return false;
     };
-    c1 == b':' && matches!(c0, b'A'..=b'Z' | b'a'..=b'z')
+    c1 == b':'
+        && match c0 {
+            b'A'..=b'Z' | b'a'..=b'z' => true,
+            _ => false,
+        }
 }
 
 /// The field `raw[start..end]`: `Ok(true)` keeps it, `Ok(false)` drops it (empty or `.`), `Err` refuses `..`.
@@ -60,6 +67,10 @@ fn is_rooted(raw: &[u8]) -> bool {
         r is Err <==> is_dotdot(raw@.subrange(start as int, end as int)),
         r matches Ok(k) ==> k == is_kept(raw@.subrange(start as int, end as int)),
 ))]
+#[expect(
+    clippy::match_like_matches_macro,
+    reason = "verus: kernels call no macro (G3), so `matches!` is spelled as a match"
+)]
 fn classify(raw: &[u8], start: usize, end: usize) -> Result<bool, Refusal> {
     let len = end.saturating_sub(start);
     let Some(&c0) = raw.get(start) else {
@@ -71,7 +82,11 @@ fn classify(raw: &[u8], start: usize, end: usize) -> Result<bool, Refusal> {
     if len == 1 {
         return Ok(c0 != b'.');
     }
-    if len == 2 && c0 == b'.' && matches!(raw.get(start.saturating_add(1)), Some(&b'.')) {
+    let c1_dot = match raw.get(start.saturating_add(1)) {
+        Some(&b'.') => true,
+        _ => false,
+    };
+    if len == 2 && c0 == b'.' && c1_dot {
         return Err(Refusal::DotDot);
     }
     Ok(true)

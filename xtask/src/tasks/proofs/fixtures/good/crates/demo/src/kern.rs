@@ -2,7 +2,7 @@
 use std::ops::Range;
 
 #[cfg(verus_keep_ghost)]
-use crate::spec::demo::*;
+use crate::spec::demo::{first_from, lemma_demo, spans_ok};
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 

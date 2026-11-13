@@ -20,10 +20,12 @@ cargo xtask proofs install                  # pinned Verus, its rustc and verusf
 cargo xtask proofs verus                    # V1-V4: --no-cheating, manifest, verified floor, mutants, verusfmt
 cargo xtask proofs verus --module <mount>   # one mount, without --no-cheating: iteration only
 cargo xtask proofs mutants                  # V3 alone
-cargo xtask proofs lean                     # L1-L4: lake build --wfail, axiom audit, leanchecker, forbidden tokens
+cargo xtask proofs lean                     # L1-L5: lake build --wfail, axiom audit, leanchecker, forbidden tokens,
+                                            #   compiler-attribute audit and theorem statement pins
 cargo xtask proofs oracles [-k <model id>]  # Lean oracle executables + home-crate oracle tests
 cargo xtask proofs status                   # pins, tools, kernels, models, stale anchors
 cargo xtask proofs fingerprint <file.rs::item>   # value for a [[model]] anchor
+cargo xtask proofs fingerprint <file>            # whole-file value for driver_/oracle_test_fingerprint
 ```
 
 ## Install
@@ -69,8 +71,9 @@ SNP_LEAN_ORACLES=$PWD/proofs/lean/.lake/build/bin SNP_REQUIRE_LEAN_ORACLES=1 \
     cargo nextest run -p snp-pycompat --test lean_oracle
 ```
 
-Nightly, `xtask/oracle/py_vs_lean.py` checks the models themselves against the Python they transliterate (CPython
-3.12 `shlex`, pre-commit-hooks v6.0.0 `end_of_file_fixer`); it is the only Python in the proof pipeline:
+`xtask/oracle/py_vs_lean.py` checks the models themselves against the Python they transliterate (CPython 3.12
+`shlex`, pre-commit-hooks v6.0.0 `end_of_file_fixer`); it is the only Python in the proof pipeline. No workflow runs
+it yet (a nightly job is planned, docs/VERIFICATION.md §7 and §9.1 S4), so run it by hand after a model change:
 
 ```sh
 git clone --depth 1 --branch v6.0.0 https://github.com/pre-commit/pre-commit-hooks target/pch-v6.0.0

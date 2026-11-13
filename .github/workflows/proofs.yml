@@ -71,6 +71,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         if: steps.paths.outputs.run == 'true'
         with: { workspaces: snp, key: proofs }
+      - name: Key of the Verus pins
+        id: pins
+        if: steps.paths.outputs.run == 'true'
+        # Only the [verus] table: a kernel, model or mutant edit must not miss the tools cache.
+        run: |
+          echo "key=$(awk '/^\[verus\][[:space:]]*$/ { on = 1; next } /^\[/ { on = 0 } on && /^[a-z]/' proofs/registry.toml | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
       - name: Cache the pinned Verus tools and their rustc
         if: steps.paths.outputs.run == 'true'
         uses: actions/cache@v4
@@ -78,7 +84,7 @@ jobs:
           path: |
             ~/.cache/snp-dev/tools/verus
             ~/.rustup/toolchains/1.99.1-*
-          key: verus-${{ runner.os }}-${{ hashFiles('snp/proofs/registry.toml', 'snp/.github/scripts/proofs-tools.sh') }}
+          key: verus-${{ runner.os }}-${{ steps.pins.outputs.key }}-${{ hashFiles('snp/.github/scripts/proofs-tools.sh') }}
       - if: steps.paths.outputs.run == 'true'
         run: cargo xtask proofs install
       - if: steps.paths.outputs.run == 'true'
@@ -145,7 +151,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         if: steps.paths.outputs.run == 'true'
         with: { tool: cargo-nextest }
-      - name: Lean (L1-L4)
+      - name: Lean (L1-L5)
         if: steps.paths.outputs.run == 'true'
         run: cargo xtask proofs lean
       - name: Oracle tests (SNP_REQUIRE_LEAN_ORACLES=1)
