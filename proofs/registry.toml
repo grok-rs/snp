@@ -32,3 +32,17 @@ mutants = [
 
 # [[model]]: Lean models with oracle tests and fingerprinted anchors (K3, K4 add theirs).
 # [[trusted]]: empty in M1 (§10 row 8). From M2: { item = "Memchr: FindByte", kernel = "K5", test = "…" }
+
+[[model]]
+id = "K4-shlex-split"
+lean = "proofs/lean/SnpModels/Shlex.lean"
+theorems = ["SnpModels.Shlex.pySplit_eq_split", "SnpModels.Shlex.split_quote", "SnpModels.Shlex.split_join"]
+oracle = "shlex-model"
+oracle_test = "crates/snp-pycompat/tests/lean_oracle.rs"
+# fingerprint: "TBD" until `cargo xtask proofs check` defines the normalised-token hash (§3.1); the tooling
+# change that adds it fills these in.
+anchors = [
+    { item = "crates/snp-pycompat/src/shlex.rs::split", fingerprint = "TBD" },
+    { item = "crates/snp-pycompat/src/shlex.rs::quote", fingerprint = "TBD" },
+    { item = "crates/snp-pycompat/src/shlex.rs::join", fingerprint = "TBD" },
+]

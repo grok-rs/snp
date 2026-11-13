@@ -55,6 +55,14 @@ SNP_LEAN_ORACLES=$PWD/proofs/lean/.lake/build/bin SNP_REQUIRE_LEAN_ORACLES=1 \
     cargo nextest run -p snp-pycompat --test lean_oracle
 ```
 
+Nightly, `xtask/oracle/py_vs_lean.py` checks the models themselves against the Python they transliterate (CPython
+3.12 `shlex`, pre-commit-hooks v6.0.0 `end_of_file_fixer`); it is the only Python in the proof pipeline:
+
+```sh
+git clone --depth 1 --branch v6.0.0 https://github.com/pre-commit/pre-commit-hooks target/pch-v6.0.0
+python3 -I xtask/oracle/py_vs_lean.py --bin proofs/lean/.lake/build/bin --pch target/pch-v6.0.0 --expect-python 3.12
+```
+
 ## Add a kernel (§8.4)
 
 1. Fix any known bug first, with its own test and CHANGELOG entry.
