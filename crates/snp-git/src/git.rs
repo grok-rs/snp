@@ -660,7 +660,7 @@ impl Git {
     /// D-DATA-19: the calls that check out exactly `paths`, every name a `:(literal)` pathspec: one
     /// [`CHECKOUT_PATHS_ARGS`] call fed the [`literal_pathspecs`] on stdin (git ≥ 2.25), else — git before 2.25 has no
     /// `--pathspec-from-file` — `git -c submodule.recurse=0 checkout -- :(literal)<path>…` in chunks of at most
-    /// [`CHECKOUT_CHUNK_BYTES`] argument bytes (a name longer than that gets a call of its own). Run them in the
+    /// 24 KiB of arguments (a name longer than that gets a call of its own). Run them in the
     /// environment of [`Git::checkout_env`]. No call for an empty list.
     pub fn checkout_path_calls(&self, paths: &ZList) -> Vec<CheckoutCall> {
         if paths.is_empty() {
