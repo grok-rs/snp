@@ -24,7 +24,7 @@ use crate::{marker, messages};
 
 pub(crate) mod protect;
 
-use protect::{NotUnderstood, PatchKind};
+use protect::{CleanStep, NotUnderstood, PatchKind};
 
 /// Scratch/trash entries and unreferenced tool versions younger than this are kept (a process may still use them).
 const ORPHAN_AGE: Duration = Duration::from_hours(1);
@@ -428,16 +428,18 @@ pub(crate) fn clean(root: &Path) -> Result<Option<PathBuf>, Failure> {
         let name = e.file_name();
         let bytes = name.as_encoded_bytes();
         let path = e.path();
-        if !protect::clean_candidate(is_journal(e), age_secs(&path, now), ORPHAN_AGE_SECS) {
+        let (journal, age) = (is_journal(e), age_secs(&path, now));
+        if !protect::clean_candidate(journal, age, ORPHAN_AGE_SECS) {
             continue;
         }
-        match protection(&patches, &mut cache) {
-            Protection::All(journal) => {
+        let p = protection(&patches, &mut cache);
+        match protect::clean_step(p, bytes, journal, age, ORPHAN_AGE_SECS) {
+            CleanStep::Stop(journal) => {
                 unreadable = Some(journal);
                 break;
             }
-            p if p.covers(bytes) => continue,
-            Protection::Patches(_) => {}
+            CleanStep::Keep => continue,
+            CleanStep::Remove => {}
         }
         snp_os::fs::remove_tree_within(&path, &patches).map_err(|err| io_err(&err, &path))?;
     }
@@ -682,6 +684,23 @@ mod tests {
             !(journal || age.is_none_or(|a| a < ORPHAN_AGE))
         }
 
+        /// The former `clean` loop body after its pre-check: `None` stops, `Some(remove)` otherwise.
+        pub(super) fn clean_action(
+            all: bool,
+            names: &[Vec<u8>],
+            name: &[u8],
+            journal: bool,
+            age: Option<Duration>,
+        ) -> Option<bool> {
+            if !clean_considers(journal, age) {
+                return Some(false);
+            }
+            if all {
+                return None;
+            }
+            Some(!covers(all, names, name))
+        }
+
         pub(super) fn unhex(s: &[u8]) -> Option<Vec<u8>> {
             if !s.len().is_multiple_of(2) {
                 return None;
@@ -809,8 +828,8 @@ mod tests {
         assert!(Protection::All(PathBuf::new()).covers(b""));
     }
 
-    /// K8 G2: `sweep_deletable` and `clean_candidate`, fed whole-second ages, decide what the former `Duration`
-    /// comparisons decided, at and around both thresholds.
+    /// K8 G2: `sweep_deletable`, `clean_candidate` and `clean_step`, fed whole-second ages, decide what the former
+    /// `Duration` comparisons and `clean` loop decided, at and around both thresholds, for every protection shape.
     #[test]
     fn removal_decisions_match_former_code() {
         assert_eq!(PATCH_AGE.subsec_nanos(), 0);
@@ -871,11 +890,31 @@ mod tests {
         }
         for journal in [false, true] {
             for age in ages(ORPHAN_AGE) {
+                let secs = age.map(|a| a.as_secs());
                 assert_eq!(
-                    protect::clean_candidate(journal, age.map(|a| a.as_secs()), ORPHAN_AGE_SECS),
+                    protect::clean_candidate(journal, secs, ORPHAN_AGE_SECS),
                     former::clean_considers(journal, age),
                     "{journal} {age:?}"
                 );
+                for list in &lists {
+                    let (all, names_of) = (list.is_none(), list.as_deref().unwrap_or_default());
+                    for name in names {
+                        let p = list
+                            .clone()
+                            .map_or_else(|| Protection::All(PathBuf::new()), Protection::Patches);
+                        let step =
+                            match protect::clean_step(p, name, journal, secs, ORPHAN_AGE_SECS) {
+                                protect::CleanStep::Stop(_) => None,
+                                protect::CleanStep::Keep => Some(false),
+                                protect::CleanStep::Remove => Some(true),
+                            };
+                        assert_eq!(
+                            step,
+                            former::clean_action(all, names_of, name, journal, age),
+                            "{name:?} {journal} {age:?} {list:?}"
+                        );
+                    }
+                }
             }
         }
     }

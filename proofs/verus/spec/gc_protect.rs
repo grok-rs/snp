@@ -12,14 +12,15 @@
 //!
 //! - G1 `lemma_sibling_iff`, `lemma_other_patch`, `lemma_all_covers`: a patch protects exactly its own name and
 //!   `name ++ "." ++ s`; `patch<s>-<pid>-<n>` is not protected by `patch<s>-<pid>`; `All` protects every name.
-//! - G2 `lemma_sweep_deletable`, `lemma_clean_candidate`: a removable entry is named `patch…` (sweep), old enough
-//!   and not protected.
+//! - G2 `lemma_sweep_deletable`, `lemma_clean_candidate`, `lemma_clean_step`, `lemma_sweep_vs_journals`,
+//!   `lemma_clean_vs_journals`: a removable entry is old enough and not protected, every journal was understood and
+//!   no journal's patch protects it; for sweep it is also a file named `patch…`, for clean not a journal.
 //! - G3 `lemma_fold_monotone`: adding journals (any number, anywhere in the listing order) never unprotects a name.
 //! - G4 `lemma_fold_covers`, `lemma_verdict`, `lemma_unhex_hex`: the fold is `All` exactly when some journal is not
 //!   understood, otherwise it protects exactly the patches the journals name; an unrestored journal without a patch
 //!   is not understood, a restored one protects nothing, and a `{"hex": …}` path decodes to its bytes
 //!   (`unhex(hex(b)) = Some(b)`, either case).
-use crate::snp_store_maintenance_protect::{NotUnderstood, PatchKind, Protection};
+use crate::snp_store_maintenance_protect::{CleanStep, NotUnderstood, PatchKind, Protection};
 use vstd::prelude::*;
 
 verus! {
@@ -155,8 +156,8 @@ pub proof fn lemma_sweep_deletable(
 {
 }
 
-/// G2 (clean): an entry `clean` considers is not a journal and its age is known and at least the threshold; it is
-/// removed only when the journals, re-read, are all understood and none protects it (the shell's `match`).
+/// G2 (clean's pre-check): an entry `clean` considers is not a journal and its age is known and at least the
+/// threshold; `clean_step` (`lemma_clean_step`) then decides on the re-read protection.
 pub proof fn lemma_clean_candidate(journal: bool, age: Option<u64>, min_age: u64)
     requires
         clean_spec(journal, age, min_age),
@@ -164,6 +165,106 @@ pub proof fn lemma_clean_candidate(journal: bool, age: Option<u64>, min_age: u64
         !journal,
         age is Some && age->0 >= min_age,
 {
+}
+
+/// What `clean` does with an entry, as the spec sees it (`CleanStep` without the journal it reports).
+pub enum CleanAct {
+    Keep,
+    Remove,
+    Stop,
+}
+
+/// `clean_step`: an entry `clean_candidate` rejects is kept; otherwise `All` stops, a protected entry is kept and
+/// an unprotected one removed.
+pub open spec fn clean_act(
+    p: Option<Seq<Seq<u8>>>,
+    name: Seq<u8>,
+    journal: bool,
+    age: Option<u64>,
+    min_age: u64,
+) -> CleanAct {
+    if !clean_spec(journal, age, min_age) {
+        CleanAct::Keep
+    } else {
+        match p {
+            None => CleanAct::Stop,
+            Some(names) => if covered(names, name) {
+                CleanAct::Keep
+            } else {
+                CleanAct::Remove
+            },
+        }
+    }
+}
+
+/// A `CleanStep` as the spec sees it.
+pub(crate) open spec fn clean_view<W>(r: CleanStep<W>) -> CleanAct {
+    match r {
+        CleanStep::Keep => CleanAct::Keep,
+        CleanStep::Remove => CleanAct::Remove,
+        CleanStep::Stop(_) => CleanAct::Stop,
+    }
+}
+
+/// G2 (clean): a removed entry is not a journal, its age is known and at least the threshold, the journals (re-read)
+/// were all understood and none protects it; `clean` stops exactly at a candidate under `All`.
+pub proof fn lemma_clean_step(
+    p: Option<Seq<Seq<u8>>>,
+    name: Seq<u8>,
+    journal: bool,
+    age: Option<u64>,
+    min_age: u64,
+)
+    ensures
+        clean_act(p, name, journal, age, min_age) is Remove ==> {
+            &&& !journal
+            &&& age is Some && age->0 >= min_age
+            &&& p is Some && !covered(p->0, name)
+        },
+        clean_act(p, name, journal, age, min_age) is Stop <==> (clean_spec(journal, age, min_age)
+            && p is None),
+{
+}
+
+/// G2 over the journals (sweep): an entry `sweep` removes under the protection of the journals `js` is a file named
+/// `patch…`, old enough, every journal was understood and no journal's patch protects it.
+pub proof fn lemma_sweep_vs_journals(
+    js: Seq<Option<Option<Seq<u8>>>>,
+    name: Seq<u8>,
+    is_dir: bool,
+    age: Option<u64>,
+    min_age: u64,
+)
+    requires
+        sweep_spec(fold(js), name, is_dir, age, min_age),
+    ensures
+        !is_dir,
+        starts_with(name, patch_word()),
+        age is Some && age->0 >= min_age,
+        !some_unknown(js),
+        !some_protects(js, name),
+{
+    lemma_fold_covers(js, name);
+}
+
+/// G2 over the journals (clean): an entry `clean` removes under the protection of the journals `js`, re-read, is
+/// not a journal, old enough, every journal was understood and no journal's patch protects it.
+pub proof fn lemma_clean_vs_journals(
+    js: Seq<Option<Option<Seq<u8>>>>,
+    name: Seq<u8>,
+    journal: bool,
+    age: Option<u64>,
+    min_age: u64,
+)
+    requires
+        clean_act(fold(js), name, journal, age, min_age) is Remove,
+    ensures
+        !journal,
+        age is Some && age->0 >= min_age,
+        !some_unknown(js),
+        !some_protects(js, name),
+{
+    lemma_fold_covers(js, name);
 }
 
 // ---------------------------------------------------------------- G4: what one decoded journal protects

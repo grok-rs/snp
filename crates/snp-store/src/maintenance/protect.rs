@@ -7,14 +7,14 @@
 //! What is decided here: which entry names a patch protects ([`is_patch_or_sibling`], [`Protection::covers`]),
 //! what one decoded stash journal protects ([`journal_verdict`], with the byte-string codec's [`unhex`]), how the
 //! journals of `patches/` fold into one [`Protection`] ([`add_journal`]), and which entries `sweep` and `clean` may
-//! remove ([`sweep_deletable`], [`clean_candidate`]). The shell keeps the I/O: the directory listing, the reads,
-//! the `(len, mtime)` cache, `serde_json`, `Path::file_name` and the removals.
+//! remove ([`sweep_deletable`], [`clean_candidate`], [`clean_step`]). The shell keeps the I/O: the directory
+//! listing, the reads, the `(len, mtime)` cache, `serde_json`, `Path::file_name` and the removals.
 #[cfg(verus_keep_ghost)]
 use crate::spec::gc_protect::{
-    clean_spec, covered, covers_spec, done_word, failed_word, hex_digit_val, lemma_unhex_odd,
-    lemma_unhex_step, opt_cat, patch_word, prot_view, restored_state, restored_word,
-    rolling_back_word, sibling, staging_fixed_word, stashed_word, step, sweep_spec, unhex_spec,
-    unrestored_state, verdict_spec, verdict_view, views,
+    clean_act, clean_spec, clean_view, covered, covers_spec, done_word, failed_word, hex_digit_val,
+    lemma_unhex_odd, lemma_unhex_step, opt_cat, patch_word, prot_view, restored_state,
+    restored_word, rolling_back_word, sibling, staging_fixed_word, stashed_word, step, sweep_spec,
+    unhex_spec, unrestored_state, verdict_spec, verdict_view, views,
 };
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
@@ -173,13 +173,55 @@ pub(crate) fn sweep_deletable<W>(
 }
 
 /// Whether `clean` considers removing an entry of `patches/`: not a journal and at least `min_age` seconds old
-/// (`None`: the age is unknown). `clean` then removes it unless the journals, re-read, protect it (G2).
+/// (`None`: the age is unknown): the cheap pre-check that spares re-reading the journals for every other entry;
+/// [`clean_step`] then decides (G2).
 #[cfg_attr(verus_keep_ghost, verus_spec(r =>
     ensures
         r == clean_spec(journal, age, min_age),
 ))]
 pub(crate) fn clean_candidate(journal: bool, age: Option<u64>, min_age: u64) -> bool {
     !journal && old_enough(age, min_age)
+}
+
+/// What `clean` does with an entry of `patches/` once the journals are re-read.
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(verus_keep_ghost, verifier::external_derive)]
+pub(crate) enum CleanStep<W> {
+    /// Keep the entry and go on with the next one.
+    Keep,
+    /// Remove the entry.
+    Remove,
+    /// A journal is not understood: keep this entry and every later one, and report `W` (fail closed).
+    Stop(W),
+}
+
+/// `clean`'s whole decision for an entry of `patches/`, given the protection `p` re-read just before (G2): an entry
+/// [`clean_candidate`] rejects is kept; otherwise `clean` stops under [`Protection::All`], keeps a protected entry
+/// and removes an unprotected one.
+#[cfg_attr(verus_keep_ghost, verus_spec(r =>
+    ensures
+        clean_view(r) == clean_act(prot_view(p), name@, journal, age, min_age),
+))]
+pub(crate) fn clean_step<W>(
+    p: Protection<W>,
+    name: &[u8],
+    journal: bool,
+    age: Option<u64>,
+    min_age: u64,
+) -> CleanStep<W> {
+    if !clean_candidate(journal, age, min_age) {
+        return CleanStep::Keep;
+    }
+    match p {
+        Protection::All(w) => CleanStep::Stop(w),
+        Protection::Patches(names) => {
+            if covered_by(names.as_slice(), name) {
+                CleanStep::Keep
+            } else {
+                CleanStep::Remove
+            }
+        }
+    }
 }
 
 /// `age >= min_age`, false when the age is unknown.
