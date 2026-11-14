@@ -651,7 +651,8 @@ impl RepoCaseIndex {
 
     /// Whether [`case_conflicts`] over this repository, `files` and `added` reports anything.
     pub fn conflicts(&self, files: &[&[u8]], added: &[&[u8]]) -> bool {
-        let mut relevant: BTreeSet<Vec<u8>> = files.iter().chain(added).map(|r| r.to_vec()).collect();
+        let mut relevant: BTreeSet<Vec<u8>> =
+            files.iter().chain(added).map(|r| r.to_vec()).collect();
         if self.epoch >= 2 {
             let mut extra = Vec::new();
             for n in &relevant {

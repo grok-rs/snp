@@ -302,9 +302,7 @@ mod tests {
         assert!(!a.contains("argv-secret"), "{a}");
         assert_eq!(a, r#"["git", "clone", "https://***@h/r"]"#);
         let files = [OsStr::new("a b.py"), OsStr::new("ftp://x:files-secret@h")];
-        let a = render_args(
-            std::iter::once(OsStr::new("hook")).chain(files.iter().copied()),
-        );
+        let a = render_args(std::iter::once(OsStr::new("hook")).chain(files.iter().copied()));
         assert_eq!(a, r#"["hook", "a b.py", "ftp://***@h"]"#);
     }
 }

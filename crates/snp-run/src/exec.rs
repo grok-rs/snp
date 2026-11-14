@@ -349,7 +349,8 @@ fn run_xargs(
         if tty.is_some() {
             return Ok(interactive_part(&spec, part_files));
         }
-        Ok(match spawn::merged_hook(&spec, part_files, pty, &e.cx.budget) {
+        let merged = spawn::merged_hook(&spec, part_files, pty, &e.cx.budget);
+        Ok(match merged {
             Ok(m) => Part {
                 status: m.status,
                 output: m.output,
