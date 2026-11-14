@@ -27,8 +27,9 @@ Three stderr-only notices of snp's own store, which pre-commit cannot print beca
   before `{n} repo(s) removed.`.
 * **Unreadable stash journal** (D-DATA-04): when a stash journal in `<store>/patches/` cannot be read or understood,
   `Store::sweep` (gc) and `Store::clean` keep every stash patch (fail closed) and report the journal; `gc` and
-  `clean` then print `[WARNING] the stash journal <journal> cannot be read; every stash patch is kept.` on stderr
-  (gc before `{n} repo(s) removed.`, clean before `Cleaned {store}.`).
+  `clean` then print `[WARNING] the stash journal <journal> cannot be read or understood; every stash patch is
+  kept. Remove the journal once no snp run uses it and no patch it may name is needed.` on stderr (gc before
+  `{n} repo(s) removed.`, clean before `Cleaned {store}.`).
 
 Safe: stderr only; stdout and exit codes are unchanged.
 

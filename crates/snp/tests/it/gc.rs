@@ -266,7 +266,8 @@ fn an_unreadable_stash_journal_keeps_every_patch_with_a_warning() {
         .unwrap();
     drop(f);
     let warning = format!(
-        "[WARNING] the stash journal {} cannot be read; every stash patch is kept.\n",
+        "[WARNING] the stash journal {} cannot be read or understood; every stash patch is kept. \
+         Remove the journal once no snp run uses it and no patch it may name is needed.\n",
         journal.display()
     );
     let out = compat(&env, env.root(), &["gc"]);

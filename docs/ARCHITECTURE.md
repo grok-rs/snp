@@ -2949,8 +2949,9 @@ directory` (snp brand) once per process, then waits (cancel observed every 50 ms
   removed (ENOENT-tolerant, X13-CMD-07); then `sweep`: scratch/trash orphans, tools referenced by no `.snp-tools.json`,
   restored patches older than 30 days (journaled-unrestored patches and their `<patch>.*` siblings are **never**
   removed; journals are decoded with the stash's codec and read in full, and one that cannot be read or understood
-  keeps every patch with the stderr line `[WARNING] the stash journal <journal> cannot be read; every stash patch is
-  kept.`, D-DATA-04, D-DIAG-05), `keys-v1` markers of
+  keeps every patch with the stderr line `[WARNING] the stash journal <journal> cannot be read or understood; every
+  stash patch is kept. Remove the journal once no snp run uses it and no patch it may name is needed.`, D-DATA-04,
+  D-DIAG-05), `keys-v1` markers of
   `(db_repo_name, rev)` keys that are neither present nor Tier-A-loadable, snp 1.x leftovers only when the README
   carries the 1.x signature (an snp-only stderr line `Removed snp 1.x cache data from {store}.`, D-DIAG-05).
   Output: `{n} repo(s) removed.` (n counts `(db_repo_name, rev)` keys, like pre-commit's rows).

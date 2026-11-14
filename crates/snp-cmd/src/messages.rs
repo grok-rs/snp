@@ -253,7 +253,8 @@ pub(crate) fn removed_v1(store: &OsStr) -> String {
 /// patch (fail closed).
 pub(crate) fn patches_kept(journal: &OsStr) -> String {
     format!(
-        "[WARNING] the stash journal {} cannot be read; every stash patch is kept.",
+        "[WARNING] the stash journal {} cannot be read or understood; every stash patch is kept. \
+         Remove the journal once no snp run uses it and no patch it may name is needed.",
         journal.to_string_lossy()
     )
 }
@@ -458,7 +459,8 @@ mod tests {
         assert_eq!(cleaned(OsStr::new("/s")), b"Cleaned /s.");
         assert_eq!(
             patches_kept(OsStr::new("/s/patches/run-1-ab.snp-journal")),
-            "[WARNING] the stash journal /s/patches/run-1-ab.snp-journal cannot be read; every stash patch is kept."
+            "[WARNING] the stash journal /s/patches/run-1-ab.snp-journal cannot be read or understood; every stash \
+             patch is kept. Remove the journal once no snp run uses it and no patch it may name is needed."
         );
         assert_eq!(
             repos_not_found(&["dne", "foo"], OsStr::new(".pre-commit-config.yaml")),

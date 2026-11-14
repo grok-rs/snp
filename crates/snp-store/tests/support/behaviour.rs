@@ -829,7 +829,7 @@ fn clean_retires_the_layout_but_keeps_unknown_and_recovery_data() {
     std::fs::write(patches.join("patch3-3"), b"restored, journal left behind").unwrap();
     std::fs::write(
         patches.join("run-2-x.snp-journal"),
-        b"{\"patch\":\"/p/patch2-2\"}",
+        b"{\"state\":\"failed\",\"patch\":\"/p/patch2-2\"}",
     )
     .unwrap();
     std::fs::write(

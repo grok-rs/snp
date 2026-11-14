@@ -7,7 +7,7 @@
 //!
 //! Owner: WP-22.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -97,18 +97,30 @@ fn is_patch_or_sibling(name: &[u8], patch: &[u8]) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with(b"."))
 }
 
+/// The journals [`protection`] already decoded, keyed by path and stamped with `(len, mtime)`: `clean` re-reads the
+/// journals right before each removal, and only a journal whose stamp changed is read and parsed again. A stale entry
+/// is harmless: a journal only ever starts naming a patch its run has just written (younger than both age limits),
+/// and later states only drop protection.
+#[derive(Debug, Default)]
+struct JournalCache(BTreeMap<PathBuf, (Stamp, Option<Vec<u8>>)>);
+
+/// A journal's `(len, mtime)`.
+type Stamp = (u64, SystemTime);
+
 /// What the journals of `patches/` protect: every journal except those whose `state` is `restored` or `done` (the
 /// patch's content is back in the worktree) protects the patch its `patch` field names, decoded with the journal's
 /// byte-string codec (a JSON string, or `{"hex": …}` for a non-UTF-8 path). Fails closed ([`Protection::All`]) when
 /// the directory cannot be listed, a journal cannot be read (a journal deleted meanwhile, by a completed restore, is
-/// skipped), is bigger than [`layout::JOURNAL_CAP`], is not a JSON object with a string `state`, or names its patch
-/// in a form that does not decode. Journals are read in full: a cap must never cut the `patch` field off.
-fn protection(patches: &Path) -> Protection {
-    protection_capped(patches, layout::JOURNAL_CAP)
+/// skipped), is bigger than [`layout::JOURNAL_CAP`], or is not understood (see [`journal_patch`]). Journals are read
+/// in full: a cap must never cut the `patch` field off. An empty journal is not understood either: a non-durable
+/// state (`rolling-back`, `failed`) is written by an unsynced rename, which a power loss can leave empty, so an empty
+/// journal may be one that protected a patch.
+fn protection(patches: &Path, cache: &mut JournalCache) -> Protection {
+    protection_capped(patches, layout::JOURNAL_CAP, cache)
 }
 
 /// [`protection`] with the journal size limit `cap`.
-fn protection_capped(patches: &Path, cap: u64) -> Protection {
+fn protection_capped(patches: &Path, cap: u64, cache: &mut JournalCache) -> Protection {
     let listing = match fs::read_dir(patches) {
         Ok(rd) => rd,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Protection::Patches(Vec::new()),
@@ -123,14 +135,30 @@ fn protection_capped(patches: &Path, cap: u64) -> Protection {
             continue;
         }
         let path = e.path();
+        let stamp = match fs::metadata(&path) {
+            Ok(m) => m.modified().ok().map(|t| (m.len(), t)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(_) => return Protection::All(path),
+        };
+        if let Some(stamp) = stamp
+            && let Some((cached, name)) = cache.0.get(&path)
+            && *cached == stamp
+        {
+            names.extend(name.iter().cloned());
+            continue;
+        }
         let bytes = match snp_os::fs::read_capped(&path, cap.saturating_add(1)) {
             Ok(b) if u64::try_from(b.len()).is_ok_and(|n| n <= cap) => b,
             Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
             Ok(_) | Err(_) => return Protection::All(path),
         };
         match journal_patch(&bytes) {
-            Ok(Some(name)) => names.push(name),
-            Ok(None) => {}
+            Ok(name) => {
+                names.extend(name.iter().cloned());
+                if let Some(stamp) = stamp {
+                    cache.0.insert(path, (stamp, name));
+                }
+            }
             Err(NotUnderstood) => return Protection::All(path),
         }
     }
@@ -149,26 +177,26 @@ fn is_journal(e: &fs::DirEntry) -> bool {
 struct NotUnderstood;
 
 /// The file name of the patch a journal protects: `Ok(None)` when it protects none (state `restored` or `done`, or
-/// no patch journaled yet: `patch` absent or `null`), `Err` when the journal is not understood (not a JSON object
-/// with a string `state`, a `patch` that does not decode or names no file). `serde_json` keeps its default recursion
-/// limit, so hostile nesting is refused, never a stack overflow.
+/// no patch journaled yet: `patch` absent or `null` in a state other than an unrestored one), `Err` when the journal
+/// is not understood (not a JSON object with a string `state`, an unrestored state — `stashed`, `staging-fixed`,
+/// `rolling-back`, `failed`, snp-stash `is_unrestored` — without a patch, a `patch` that does not decode or names no
+/// file). `serde_json` keeps its default recursion limit, so hostile nesting is refused, never a stack overflow.
 fn journal_patch(bytes: &[u8]) -> Result<Option<Vec<u8>>, NotUnderstood> {
     #[derive(serde::Deserialize)]
     struct Journal<'a> {
         #[serde(borrow)]
-        state: Option<std::borrow::Cow<'a, str>>,
+        state: std::borrow::Cow<'a, str>,
         #[serde(default)]
         patch: serde_json::Value,
     }
     let j = serde_json::from_slice::<Journal<'_>>(bytes).map_err(|_| NotUnderstood)?;
-    if j.state
-        .as_deref()
-        .is_some_and(|st| st == "restored" || st == "done")
-    {
-        return Ok(None);
-    }
-    if j.patch.is_null() {
-        return Ok(None);
+    match &*j.state {
+        "restored" | "done" => return Ok(None),
+        "stashed" | "staging-fixed" | "rolling-back" | "failed" if j.patch.is_null() => {
+            return Err(NotUnderstood);
+        }
+        _ if j.patch.is_null() => return Ok(None),
+        _ => {}
     }
     let patch = marker::path_from_json(&j.patch).ok_or(NotUnderstood)?;
     let name = patch.file_name().ok_or(NotUnderstood)?;
@@ -229,7 +257,7 @@ pub(crate) fn sweep(root: &Path, tools_root: &Path, now: SystemTime) -> SweepRep
     // 4. Restored stash patches older than 30 days; journals and the patches of unrestored journals stay forever.
     // A journal that cannot be read keeps every patch (fail closed) and is reported.
     let patches = root.join(layout::PATCHES);
-    match protection(&patches) {
+    match protection(&patches, &mut JournalCache::default()) {
         Protection::All(journal) => report.unreadable_journal = Some(journal),
         protection @ Protection::Patches(_) => {
             for e in &entries(&patches) {
@@ -397,11 +425,12 @@ pub(crate) fn clean(root: &Path) -> Result<Option<PathBuf>, Failure> {
     // Stash recovery data survives: every journal, the patches of unrestored journals and their siblings, and every
     // patch younger than an hour — a run stashing in another worktree creates its patch before it journals it
     // (ARCHITECTURE §4 steps 5–6) and takes the shared store lock only at its first repository use, so a fresh
-    // unjournaled patch may be about to be restored. The journals are re-read right before each removal; one that
-    // cannot be read keeps everything (fail closed).
+    // unjournaled patch may be about to be restored. The journals are re-read right before each removal (only those
+    // that changed are parsed again); one that cannot be read keeps everything (fail closed).
     let patches = root.join(layout::PATCHES);
     let now = SystemTime::now();
     let mut unreadable = None;
+    let mut cache = JournalCache::default();
     for e in &entries(&patches) {
         let name = e.file_name();
         let bytes = name.as_encoded_bytes();
@@ -409,7 +438,7 @@ pub(crate) fn clean(root: &Path) -> Result<Option<PathBuf>, Failure> {
         if is_journal(e) || age(&path, now).is_none_or(|a| a < ORPHAN_AGE) {
             continue;
         }
-        match protection(&patches) {
+        match protection(&patches, &mut cache) {
             Protection::All(journal) => {
                 unreadable = Some(journal);
                 break;
@@ -459,6 +488,7 @@ mod tests {
             Ok(None)
         );
         assert_eq!(journal_patch(br#"{"state":"started"}"#), Ok(None));
+        assert_eq!(journal_patch(br#"{"state":"some-future-state"}"#), Ok(None));
     }
 
     #[test]
@@ -472,7 +502,10 @@ mod tests {
                 br#"{"state":"failed","patch":"/s/patches/patch1700000000-42-1"}"#,
                 b"patch1700000000-42-1",
             ),
-            (br#"{"patch":"/p/patch2-2"}"#, b"patch2-2"),
+            (
+                br#"{"state":"rolling-back","patch":"/p/patch2-2"}"#,
+                b"patch2-2",
+            ),
             (
                 br#"{"state":"some-future-state","patch":"/p/patch3-3"}"#,
                 b"patch3-3",
@@ -518,6 +551,14 @@ mod tests {
             br#"{"state":"failed","patch":{"hex":"zz"}}"#,
             br#"{"state":"failed","patch":"/"}"#,
             br#"{"state":"failed","patch":""}"#,
+            b"{}",
+            br#"{"state":null}"#,
+            br#"{"patch":"/p/patch2-2"}"#,
+            br#"{"state":null,"patch":"/p/patch2-2"}"#,
+            br#"{"v":1,"state":"stashed"}"#,
+            br#"{"v":1,"state":"failed","patch":null}"#,
+            br#"{"state":"staging-fixed"}"#,
+            br#"{"state":"rolling-back","patch":null}"#,
             deep.as_bytes(),
         ] {
             assert_eq!(journal_patch(broken), Err(NotUnderstood), "{broken:?}");
@@ -551,10 +592,11 @@ mod tests {
 
     #[test]
     fn protection_fails_closed() {
+        let fresh = JournalCache::default;
         let d = tempfile::tempdir().unwrap();
         let dir = d.path();
         assert_eq!(
-            protection(&dir.join("missing")),
+            protection(&dir.join("missing"), &mut fresh()),
             Protection::Patches(Vec::new())
         );
         fs::write(dir.join("patch1-1"), b"").unwrap();
@@ -564,23 +606,54 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            protection(dir),
+            protection(dir, &mut fresh()),
             Protection::Patches(vec![b"patch1-1".to_vec()])
         );
         // Over the size limit: not understood, never cut short.
         let len = fs::metadata(dir.join("run-1.snp-journal")).unwrap().len();
         assert_eq!(
-            protection_capped(dir, len),
+            protection_capped(dir, len, &mut fresh()),
             Protection::Patches(vec![b"patch1-1".to_vec()])
         );
         assert_eq!(
-            protection_capped(dir, len - 1),
+            protection_capped(dir, len - 1, &mut fresh()),
             Protection::All(dir.join("run-1.snp-journal"))
         );
+        // An empty journal may be a protecting one a power loss emptied (an unsynced `failed` rename).
+        fs::write(dir.join("run-3.snp-journal"), b"").unwrap();
+        assert_eq!(
+            protection(dir, &mut fresh()),
+            Protection::All(dir.join("run-3.snp-journal"))
+        );
+        fs::remove_file(dir.join("run-3.snp-journal")).unwrap();
         fs::create_dir_all(dir.join("run-2.snp-journal")).unwrap();
         assert_eq!(
-            protection(dir),
+            protection(dir, &mut fresh()),
             Protection::All(dir.join("run-2.snp-journal"))
         );
+    }
+
+    #[test]
+    fn the_cache_rereads_a_changed_journal() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path();
+        let journal = dir.join("run-1.snp-journal");
+        fs::write(&journal, br#"{"state":"started"}"#).unwrap();
+        let mut cache = JournalCache::default();
+        assert_eq!(protection(dir, &mut cache), Protection::Patches(Vec::new()));
+        assert_eq!(cache.0.len(), 1);
+        // A changed length is a changed stamp, whatever the mtime granularity.
+        fs::write(&journal, br#"{"state":"stashed","patch":"/x/patch1-1"}"#).unwrap();
+        assert_eq!(
+            protection(dir, &mut cache),
+            Protection::Patches(vec![b"patch1-1".to_vec()])
+        );
+        // An unchanged journal is served from the cache.
+        assert_eq!(
+            protection(dir, &mut cache),
+            Protection::Patches(vec![b"patch1-1".to_vec()])
+        );
+        fs::write(&journal, b"").unwrap();
+        assert_eq!(protection(dir, &mut cache), Protection::All(journal));
     }
 }

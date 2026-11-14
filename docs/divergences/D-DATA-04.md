@@ -35,12 +35,15 @@ closed:
 * a journal is read in full (up to snp-stash's 64 MiB journal limit; a long intent-to-add list can push `patch` past
   any smaller cap);
 * a journal that cannot be read (other than one deleted meanwhile by a completed restore), is bigger than that limit,
-  is not a JSON object with a string `state`, or names its patch in a form that does not decode keeps **every** patch,
-  and gc says so on stderr: `[WARNING] the stash journal <journal> cannot be read; every stash patch is kept.`
-  (D-DIAG-05). The same holds when `patches/` cannot be listed. An empty or truncated journal left by a crash
-  while the stash was creating it (the stash's recovery ignores such a file) keeps every patch until the user
-  removes it; the warning names it. A journal caught in the instant between its creation and its first write gives
-  the same warning once, harmlessly.
+  is not a JSON object with a string `state`, has an unrestored state (`stashed`, `staging-fixed`, `rolling-back`,
+  `failed`) but no `patch`, or names its patch in a form that does not decode keeps **every** patch, and gc says so
+  on stderr: `[WARNING] the stash journal <journal> cannot be read or understood; every stash patch is kept. Remove
+  the journal once no snp run uses it and no patch it may name is needed.` (D-DIAG-05). The same holds when
+  `patches/` cannot be listed. An empty or truncated journal keeps every patch until the user removes it, as the
+  warning says: it may be left by a crash while the stash was creating it (the stash's recovery ignores such a
+  file), but also by a power loss after an unsynced `rolling-back` or `failed` update, a journal that did protect
+  a patch, so it is never taken to name none. A journal caught in the instant between its creation and its first
+  write gives the same warning once, harmlessly.
 
 `clean` (pre-commit: `rmtree` of the whole store, `commands/clean.py:10-16`) removes snp's own layout and likewise
 keeps recovery data, so a differential `tree` comparison of `clean` differs in these entries, all of them deliberate:

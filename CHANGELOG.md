@@ -50,9 +50,10 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   journal was bigger than 1 MiB (a long intent-to-add list pushes the name past the read cap), or when the journal could
   not be read at all. Journals are now decoded with the stash's own codec and read in full; a journal that cannot be
   read or understood keeps every stash patch and `gc`/`clean` print `[WARNING] the stash journal <journal> cannot be
-  read; every stash patch is kept.` on stderr. The `<patch>.*` files next to an unrestored patch (the `<patch>.now`
-  backup the recovery hint suggests, the kept `.ita` and `.paths` lists) are kept with it. pre-commit never deletes
-  patches; divergences D-DATA-04 and D-DIAG-05 are updated.
+  read or understood; every stash patch is kept. Remove the journal once no snp run uses it and no patch it may name is
+  needed.` on stderr. The `<patch>.*` files next to an unrestored patch (the `<patch>.now` backup the recovery hint
+  suggests, the kept `.ita` and `.paths` lists) are kept with it. pre-commit's `gc` never looks at patches and its
+  `clean` removes the whole store; divergences D-DATA-04 and D-DIAG-05 are updated.
 
 ### Security
 
