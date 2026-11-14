@@ -981,7 +981,7 @@ impl Loader<'_, '_> {
                 );
                 return s.scan_err_here(Some("while scanning a directive"), Some(start), &p);
             }
-            let v = Ver(major, minor);
+            let v = Ver::from_digits(major, minor);
             s.sc.yaml_version = Some(v.clone());
             s.touch(1)?; // Version(major, minor)
             Ok(v)
@@ -1218,8 +1218,7 @@ impl Loader<'_, '_> {
                 while !is_the_end(s.peek(length)?) {
                     length = length.saturating_add(1);
                 }
-                let text = s.prefix(length)?;
-                chunks.extend_from_slice(text.as_bytes());
+                s.prefix_into(length, &mut chunks)?;
                 s.forward(length)?;
                 line_break = s.scan_line_break()?;
                 (breaks, end) = s.scan_block_scalar_breaks(indent)?;
@@ -1466,8 +1465,7 @@ impl Loader<'_, '_> {
                     length = length.saturating_add(1);
                 }
                 if length != 0 {
-                    let t = s.prefix(length)?;
-                    out.extend_from_slice(t.as_bytes());
+                    s.prefix_into(length, out)?;
                     s.forward(length)?;
                 }
                 let ch = s.peek(0)?;
@@ -1561,8 +1559,7 @@ impl Loader<'_, '_> {
         self.frame(|s| {
             let mut chunks = Vec::new();
             loop {
-                let prefix = s.prefix(3)?;
-                if (prefix == "---" || prefix == "...") && is_the_end_space_tab(s.peek(3)?) {
+                if s.prefix_is_doc_marker()? && is_the_end_space_tab(s.peek(3)?) {
                     return s.scan_err_here(
                         Some("while scanning a quoted scalar"),
                         Some(start),
@@ -1646,8 +1643,7 @@ impl Loader<'_, '_> {
                         chunks.extend_from_slice(x.as_bytes());
                     }
                 }
-                let text = s.prefix(length)?;
-                chunks.extend_from_slice(text.as_bytes());
+                s.prefix_into(length, &mut chunks)?;
                 s.forward(length)?;
                 end = s.get_mark()?;
                 spaces = s.scan_plain_spaces(&start)?;
@@ -1692,8 +1688,7 @@ impl Loader<'_, '_> {
             if is_break(ch) {
                 let line_break = s.scan_line_break()?;
                 s.sc.allow_simple_key = true;
-                let prefix = s.prefix(3)?;
-                if (prefix == "---" || prefix == "...") && is_the_end_space_tab(s.peek(3)?) {
+                if s.prefix_is_doc_marker()? && is_the_end_space_tab(s.peek(3)?) {
                     return Ok(None);
                 }
                 let mut breaks = Vec::new();
@@ -1702,9 +1697,7 @@ impl Loader<'_, '_> {
                         s.fwd()?;
                     } else {
                         breaks.push(s.scan_line_break()?);
-                        let prefix = s.prefix(3)?;
-                        if (prefix == "---" || prefix == "...") && is_the_end_space_tab(s.peek(3)?)
-                        {
+                        if s.prefix_is_doc_marker()? && is_the_end_space_tab(s.peek(3)?) {
                             return Ok(None);
                         }
                     }

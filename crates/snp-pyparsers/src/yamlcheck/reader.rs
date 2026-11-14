@@ -67,25 +67,39 @@ impl Loader<'_, '_> {
         })
     }
 
-    /// `Reader.prefix(length)`.
-    pub(super) fn prefix(&mut self, length: usize) -> R<String> {
+    /// `Reader.prefix(length)` (one frame, the same `update`) with the characters handed to `f` in place.
+    fn with_prefix<T>(&mut self, length: usize, f: impl FnOnce(&[char]) -> T) -> R<T> {
         self.frame(|s| {
             if s.r.index.saturating_add(length) >= s.r.buf.len() {
                 s.update(length)?;
             }
             let end = s.r.index.saturating_add(length).min(s.r.buf.len());
-            Ok(s.r
-                .buf
-                .get(s.r.index..end)
-                .unwrap_or_default()
-                .iter()
-                .collect())
+            Ok(f(s.r.buf.get(s.r.index..end).unwrap_or_default()))
         })
     }
 
-    /// `prefix(length) == text` for an ASCII `text`.
+    /// `Reader.prefix(length)`.
+    pub(super) fn prefix(&mut self, length: usize) -> R<String> {
+        self.with_prefix(length, |p| p.iter().collect())
+    }
+
+    /// `out += self.reader.prefix(length)` on the UTF-8 bytes of a scalar.
+    pub(super) fn prefix_into(&mut self, length: usize, out: &mut Vec<u8>) -> R<()> {
+        self.with_prefix(length, |p| {
+            for c in p {
+                out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
+            }
+        })
+    }
+
+    /// `prefix(length) == text` for an ASCII `text`, compared in place.
     pub(super) fn prefix_is(&mut self, text: &str) -> R<bool> {
-        Ok(self.prefix(text.len())? == text)
+        self.with_prefix(text.len(), |p| p.iter().copied().eq(text.chars()))
+    }
+
+    /// `prefix(3) == '---' or prefix(3) == '...'` (one `prefix` call), compared in place.
+    pub(super) fn prefix_is_doc_marker(&mut self) -> R<bool> {
+        self.with_prefix(3, |p| matches!(p, ['-', '-', '-'] | ['.', '.', '.']))
     }
 
     /// `Reader.forward(length)` (`'\r'` never reaches the reader: the text stream translated it).

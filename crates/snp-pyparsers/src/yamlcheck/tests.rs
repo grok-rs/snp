@@ -221,3 +221,47 @@ fn warnings_match_ruamel() {
         assert_eq!(got, want, "{v:?}");
     }
 }
+
+/// `Ver::gt11` and `is` compare like the tuples of ints they model, without allocating; a directive's one-digit
+/// parts are borrowed and still equal the owned spelling.
+#[test]
+fn versions_compare_as_int_tuples() {
+    let parts = ["0", "1", "2", "9", "10", "11", "99", "100"];
+    for major in parts {
+        for minor in parts {
+            let v = Ver::from_digits(major.to_owned(), minor.to_owned());
+            let (a, b): (u32, u32) = (major.parse().unwrap(), minor.parse().unwrap());
+            assert_eq!(v.gt11(), (a, b) > (1, 1), "{major}.{minor}");
+            assert_eq!(v.is11(), (a, b) == (1, 1), "{major}.{minor}");
+            assert_eq!(v.is("1", "2"), (a, b) == (1, 2), "{major}.{minor}");
+            assert_eq!(v.repr(), format!("({a}, {b})"));
+            assert_eq!(
+                v,
+                Ver(Cow::Owned(major.to_owned()), Cow::Owned(minor.to_owned()))
+            );
+            assert_eq!(matches!(v.0, Cow::Borrowed(_)), major.len() == 1);
+        }
+    }
+    assert_eq!(Ver::V12, Ver::from_digits("1".to_owned(), "2".to_owned()));
+}
+
+/// The in-place prefix checks see the same characters as `prefix`, also across the reader's 4096-character
+/// chunks: a document marker straddling a chunk boundary is still found.
+#[test]
+fn doc_markers_across_read_chunks() {
+    for pad in 4085..4100 {
+        let x = rep("x", pad);
+        // a quoted scalar running into `---`: "found unexpected document separator"
+        let sep = format!("a: '{x}\n---\n'\n");
+        let err = run(&sep, Mode::Safe).unwrap_err();
+        assert!(
+            err.contains("found unexpected document separator"),
+            "{pad}: {err}"
+        );
+        // a multi-line plain scalar ended by a document marker
+        assert_eq!(run(&format!("a: {x}\n  y\n...\n"), Mode::Safe), Ok(()));
+        let two = format!("a: {x}\n  y\n---\nb: 1\n");
+        assert_eq!(run(&two, Mode::AllowMultipleDocuments), Ok(()), "{pad}");
+        assert!(run(&two, Mode::Safe).is_err(), "{pad}");
+    }
+}

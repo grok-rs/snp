@@ -35,6 +35,7 @@ mod resolver;
 mod scanner;
 mod textio;
 
+use std::borrow::Cow;
 use std::rc::Rc;
 
 use crate::CheckError;
@@ -276,13 +277,27 @@ pub(super) fn marked(
     Fail::Yaml(lines.join(&b'\n'))
 }
 
-/// A YAML version (`%YAML major.minor`), each part a Python `int` kept as its normalised decimal digits.
+/// A YAML version (`%YAML major.minor`), each part a Python `int` kept as its normalised decimal digits. A
+/// one-digit part is borrowed, so the default version and the copies `processing_version` hands out do not
+/// allocate.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Ver(pub(super) String, pub(super) String);
+pub(super) struct Ver(pub(super) Cow<'static, str>, pub(super) Cow<'static, str>);
 
 impl Ver {
-    pub(super) fn v12() -> Self {
-        Self("1".into(), "2".into())
+    /// `(1, 2)`, the version of a document without a `%YAML` directive.
+    pub(super) const V12: Self = Self(Cow::Borrowed("1"), Cow::Borrowed("2"));
+
+    /// The version of a `%YAML` directive from its normalised parts.
+    pub(super) fn from_digits(major: String, minor: String) -> Self {
+        Self(Self::part(major), Self::part(minor))
+    }
+
+    fn part(digits: String) -> Cow<'static, str> {
+        const ONE_DIGIT: [&str; 10] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+        match ONE_DIGIT.iter().find(|&&d| d == digits) {
+            Some(&d) => Cow::Borrowed(d),
+            None => Cow::Owned(digits),
+        }
     }
 
     pub(super) fn is(&self, major: &str, minor: &str) -> bool {
@@ -293,9 +308,11 @@ impl Ver {
         self.is("1", "1")
     }
 
-    /// `self > (1, 1)` as tuples of ints.
+    /// `self > (1, 1)` as tuples of ints: normalised digits compare as (length, digits).
     pub(super) fn gt11(&self) -> bool {
-        let num = |s: &str| (s.len(), s.to_owned());
+        fn num(s: &str) -> (usize, &str) {
+            (s.len(), s)
+        }
         let (a, b) = (num(&self.0), num(&self.1));
         let one = num("1");
         a > one || a == one && b > one
@@ -552,7 +569,7 @@ impl<'a, 's> Loader<'a, 's> {
             .yaml_version
             .clone()
             .or_else(|| self.st.version.clone())
-            .unwrap_or_else(Ver::v12)
+            .unwrap_or(Ver::V12)
     }
 
     /// `self.loader.resolver` (the `YAML.resolver` property, which recreates the resolver when `YAML.version`
