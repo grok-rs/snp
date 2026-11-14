@@ -904,9 +904,9 @@ mod tests {
                             .map_or_else(|| Protection::All(PathBuf::new()), Protection::Patches);
                         let step =
                             match protect::clean_step(p, name, journal, secs, ORPHAN_AGE_SECS) {
-                                protect::CleanStep::Stop(_) => None,
-                                protect::CleanStep::Keep => Some(false),
-                                protect::CleanStep::Remove => Some(true),
+                                CleanStep::Stop(_) => None,
+                                CleanStep::Keep => Some(false),
+                                CleanStep::Remove => Some(true),
                             };
                         assert_eq!(
                             step,
