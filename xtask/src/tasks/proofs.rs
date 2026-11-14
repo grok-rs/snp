@@ -2,9 +2,12 @@
 //!
 //! Commands:
 //! * `check`: the tool-free guards G1-G10 (syn only, about a second; part of the required `xtask gates` job);
-//! * `verus [--module M] [--json F]`: V1-V4: the root verifies with `--no-cheating`, every function of a kernel file is
-//!   in Verus's JSON report and the verified count reaches the registry's floor, every registered mutant fails, and
-//!   `verusfmt --check` passes on the root and the specs (with `--module`: one mount, no mutants, not a gate);
+//! * `verus [--module M] [--json F] [--smt-option K=V]... [--rlimit N] [--no-mutants]`: V1-V4: the root verifies with
+//!   `--no-cheating`, every function of a kernel file is in Verus's JSON report and the verified count reaches the
+//!   registry's floor, every registered mutant fails, and `verusfmt --check` passes on the root and the specs (part of
+//!   the required `xtask gates` job and of release gate 7, ADR-096). With `--module`: one mount, no mutants, not a
+//!   gate. `--smt-option` and `--rlimit` reach every Verus run and `--no-mutants` skips V3: the nightly Z3 seed sweep
+//!   and half-rlimit report;
 //! * `lean`: L1-L5: `lake build --wfail`, the axiom audit, `leanchecker`, forbidden tokens, the elaborated-package
 //!   audit and theorem statement pins;
 //! * `oracles [-k ID]`: builds the Lean oracle executables and runs the home-crate oracle tests of every model (or of
@@ -45,8 +48,19 @@ pub(crate) const LEAN_DIR: &str = "proofs/lean";
 /// The tool installer.
 pub(crate) const TOOLS_SCRIPT: &str = ".github/scripts/proofs-tools.sh";
 
-const USAGE: &str = "usage: cargo xtask proofs check | verus [--module M] [--json F] | lean | oracles [-k ID] | \
+const USAGE: &str = "usage: cargo xtask proofs check | verus [--module M] [--json F] [--smt-option K=V]... \
+                     [--rlimit N] [--no-mutants] | lean | oracles [-k ID] | \
                      mutants | install | status | fingerprint <file.rs::item | file>";
+
+/// `proofs verus` with the gate's defaults (release gate 7).
+pub(crate) fn verus_gate(root: &Path) -> anyhow::Result<()> {
+    tools::verus(root, &tools::VerusArgs::default())
+}
+
+/// `proofs lean` (release gate 7).
+pub(crate) fn lean_gate(root: &Path) -> anyhow::Result<()> {
+    tools::lean(root)
+}
 
 /// Runs the task with the arguments that follow its name.
 pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
@@ -93,8 +107,8 @@ fn parse_k(rest: &[String]) -> anyhow::Result<Option<&str>> {
     }
 }
 
-/// `proofs check`: G1-G10 over the working tree.
-fn check(root: &Path) -> anyhow::Result<()> {
+/// `proofs check`: G1-G10 over the working tree (also release gate 7).
+pub(crate) fn check(root: &Path) -> anyhow::Result<()> {
     let tree = Tree::disk(root);
     let reg = Registry::load(&tree)?;
     let problems = guards::check(&tree, &reg)?;
@@ -538,6 +552,131 @@ mod tests {
         assert!(reg.kernels.iter().any(|k| k.id == "K1-xargs-partition"));
         let problems = guards::check(&tree, &reg).unwrap();
         assert!(problems.is_empty(), "{problems:#?}");
+    }
+
+    /// The job `key` of a workflow: its key line and every following line up to the next job key (two-space
+    /// indent) or top-level key.
+    fn job(workflow: &str, key: &str) -> String {
+        let head = format!("  {key}:");
+        let mut lines = workflow.lines().skip_while(|l| *l != head);
+        let first = lines.next().unwrap_or_else(|| panic!("no job {key}"));
+        let mut out = format!("{first}\n");
+        for l in lines {
+            let indent = l.len().saturating_sub(l.trim_start().len());
+            if !l.trim().is_empty() && indent <= 2 {
+                break;
+            }
+            out.push_str(l);
+            out.push('\n');
+        }
+        out
+    }
+
+    fn workflow(name: &str) -> String {
+        std::fs::read_to_string(
+            workspace::root()
+                .unwrap()
+                .join(".github/workflows")
+                .join(name),
+        )
+        .unwrap()
+    }
+
+    /// ADR-096: Verus is a step of the required `xtask gates` job, which no path filter skips; the advisory Verus
+    /// job is gone and Lean stays advisory.
+    #[test]
+    fn verus_blocks_in_the_required_xtask_gates_job() {
+        let ci = workflow("ci.yml");
+        let on = ci
+            .get(ci.find("\non:").unwrap()..ci.find("\njobs:").unwrap())
+            .unwrap();
+        assert!(!on.contains("paths"), "{on}");
+        let gates = job(&ci, "xtask");
+        assert!(gates.contains("name: xtask gates"), "{gates}");
+        for step in [
+            "run: cargo xtask proofs check",
+            "run: cargo xtask proofs install",
+            "run: cargo xtask proofs verus",
+            "~/.rustup/toolchains/1.99.1-*",
+        ] {
+            assert!(gates.contains(step), "xtask gates lacks {step:?}");
+        }
+        assert!(!gates.contains("continue-on-error"), "{gates}");
+        let proofs = workflow("proofs.yml");
+        assert!(!proofs.contains("\n  verus:\n"));
+        assert!(job(&proofs, "lean").contains("cargo xtask proofs oracles"));
+    }
+
+    /// Gate 7 runs with the tools wherever release.yml runs the release gates; elsewhere it says it skips them.
+    #[test]
+    fn release_gate_7_has_its_tools() {
+        let release = workflow("release.yml");
+        let gates = job(&release, "gates");
+        let install = gates.find("cargo xtask proofs install").unwrap();
+        let lean = gates.find("leanprover/lean-action@").unwrap();
+        let run = gates.find("cargo xtask release gates --tag").unwrap();
+        assert!(install < run && lean < run, "{gates}");
+        assert!(!gates.contains("--skip-proofs"), "{gates}");
+        for w in ["platform.yml", "ci.yml", "nightly.yml", "proofs.yml"] {
+            for line in workflow(w)
+                .lines()
+                .filter(|l| l.contains("cargo xtask release gates"))
+            {
+                assert!(line.contains("--skip-proofs"), "{w}: {line}");
+            }
+        }
+    }
+
+    /// The nightly model check runs `py_vs_lean` isolated under CPython 3.12 against pre-commit-hooks at the commit
+    /// `gen-pch-data` pins for v6.0.0; the seed sweep covers seeds 1-5 and the half-rlimit report.
+    #[test]
+    fn the_nightly_proof_jobs_use_the_pinned_inputs() {
+        let nightly = workflow("nightly.yml");
+        let models = job(&nightly, "proofs-models");
+        assert!(
+            models.contains("python3 -I xtask/oracle/py_vs_lean.py"),
+            "{models}"
+        );
+        assert!(models.contains("--expect-python 3.12"), "{models}");
+        assert!(models.contains("python-version: \"3.12\""), "{models}");
+        let sha = models
+            .split("ref: ")
+            .nth(1)
+            .and_then(|r| r.split_whitespace().next())
+            .unwrap();
+        let pch = std::fs::read_to_string(
+            workspace::root()
+                .unwrap()
+                .join("xtask/src/tasks/gen_pch_data.rs"),
+        )
+        .unwrap();
+        assert!(pch.contains(&format!("(\"v6.0.0\", \"{sha}\")")), "{sha}");
+        let script = std::fs::read_to_string(
+            workspace::root()
+                .unwrap()
+                .join("xtask/oracle/py_vs_lean.py"),
+        )
+        .unwrap();
+        assert!(script.contains("PCH_VERSION = '6.0.0'"));
+        let sweep = job(&nightly, "proofs-sweep");
+        assert!(sweep.contains("for seed in 1 2 3 4 5; do"), "{sweep}");
+        assert!(
+            sweep.contains("--smt-option \"smt.random_seed=$seed\""),
+            "{sweep}"
+        );
+        assert!(sweep.contains("--rlimit 5"), "{sweep}");
+        // both reach the flags `proofs verus` accepts
+        tools::VerusArgs::parse(
+            &[
+                "--no-mutants",
+                "--smt-option",
+                "smt.random_seed=1",
+                "--rlimit",
+                "5",
+            ]
+            .map(str::to_owned),
+        )
+        .unwrap();
     }
 
     #[test]

@@ -3659,7 +3659,7 @@ tagging tiers, YAML load of the pre-commit-hooks manifest, argparse parse of a h
 | L6 platform | Linux x64/arm64 (gnu + musl smoke), macOS arm64 + x64, Windows x64/arm64 × git 2.18.5 (warn; stash refused, D-DATA-17; `--all-files` fallback, D-CRASH-26 — both `expect_divergence` scenarios), 2.30 (warn; fallback), 2.31, 2.34, 2.39, 2.43, 2.54 (config hooks), latest, Git for Windows latest | PR |
 | L7 performance | §12.3 | nightly + PR comment |
 | L8 fault injection | snp-stash FI matrix, kill-9 crash matrix for store/install/stash, signal matrix, EPIPE, ENOSPC (tmpfs with a size limit), concurrency matrix | every push (posix) |
-| L9 proofs (ADR-095) | `cargo xtask proofs check` (guards G1–G10, tool-free; in `xtask gates`); `proofs verus` (Verus on the mounted kernel files, `--no-cheating`, manifest, mutants) and `proofs lean` + `proofs oracles` (Lean models, axiom audit, home-crate oracle tests) in `proofs.yml`; claims per docs/VERIFICATION.md §0 and §9 | guards every push; Verus and Lean on relevant changes (advisory until the owner makes the Verus step blocking) |
+| L9 proofs (ADR-095, ADR-096) | `cargo xtask proofs check` (guards G1–G10, tool-free) and `proofs verus` (Verus on the mounted kernel files, `--no-cheating`, manifest, mutants) in `xtask gates` and release gate 7; `proofs lean` + `proofs oracles` (Lean models, axiom audit, home-crate oracle tests) in `proofs.yml`; nightly `py_vs_lean` (models vs CPython 3.12 and pre-commit-hooks) and Z3 seed sweep; claims per docs/VERIFICATION.md §0 and §9 | guards and Verus every push (blocking); Lean on relevant changes (advisory); release gate 7 per tag; models vs Python and seed sweep nightly |
 
 Rules: no test mutates the process env or cwd; every spawned process gets the hermetic env (10 §7.3.2); tests run with
 and without `PRE_COMMIT_NO_CONCURRENCY=1`; binaries are referenced by `CARGO_BIN_EXE_*` inside their package and by
@@ -3754,8 +3754,11 @@ git versions per §13.1 L6 via containers; nextest profiles `default` (hermetic)
 snp-argparse, snp-pyre. Every workflow first checks out the user crates as siblings at the `deps.lock` SHAs (ADR-061);
 a scheduled drift job compares those SHAs with the `snp-support` branch heads and opens an issue when they differ.
 `perf-smoke` (release-mode `#[ignore = "perf"]` tests) runs on push. Proofs (ADR-095, docs/VERIFICATION.md §7): the
-required `xtask gates` job runs `cargo xtask proofs check`; `proofs.yml` has the advisory `verus` and `lean` jobs, which
-always start and exit early when no proof-relevant path changed (no `on.paths` filter), with read-only permissions.
+required `xtask gates` job runs `cargo xtask proofs check` and, since ADR-096, `cargo xtask proofs verus` (blocking, on
+every change); release gate 7 re-verifies the tag (Verus and Lean) and requires the release notes to accept any
+proof-pending kernel; `proofs.yml` has the advisory `lean` job, which always starts and exits early when no
+proof-relevant path changed (no `on.paths` filter); nightly.yml runs `py_vs_lean` and the Z3 seed sweep; all with
+read-only permissions.
 
 ### 13.8 Test-catalog IDs (ADR-062)
 

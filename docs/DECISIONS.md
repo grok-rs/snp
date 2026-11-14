@@ -11,7 +11,8 @@ ADR-082 the end-to-end integration of the merged packages; ADR-083 the verificat
 the final multi-lens review; ADR-085 the `interactive` extension key; ADR-086 the first CI run on macOS; ADR-087 the
 `.snp.yaml` config file name; ADR-088 the crates.io and Homebrew release channels; ADR-089 the retarget to pre-commit
 4.7.0; ADR-090 what the scheduled gates can judge; ADR-091 measuring every scenario; ADR-092 the November 2026
-upstream refresh; ADR-093 the path-limited stash checkout; ADR-094 Rust 1.100; ADR-095 machine-checked proofs.
+upstream refresh; ADR-093 the path-limited stash checkout; ADR-094 Rust 1.100; ADR-095 machine-checked proofs;
+ADR-096 the owner's decision to make the Verus proofs blocking.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -1503,6 +1504,8 @@ two versions only keep the codebase from using them.
 
 ### ADR-095 — Machine-checked kernels: Verus proofs on the shipped source, Lean 4 models beside it
 
+*Status: Accepted; amended by ADR-096 (decision (8): `proofs verus` is a blocking step of `xtask gates`, release gate 7 exists and the nightly model check and seed sweep run; decision (10): the release-notes acceptance is a `Proof pending: <kernel id>` line). The amending ADR is normative where they differ.*
+
 **Context.** This ADR amends ADR-066 (a `reason = "verus: …"` expectation on a verified function in a mounted kernel
 file is a proven site) and ARCHITECTURE §1.3, §11.7, §13.1 and §13.7, and clarifies ADR-056: items gated on
 `cfg(verus_keep_ghost)` are not dependencies. Reference: docs/VERIFICATION.md. snp's parity and data-safety guarantees rest on unit, property, fuzz and differential tests, several of
@@ -1601,6 +1604,49 @@ review their kernel files. Until the Verus step is blocking, a kernel edit that 
 the advisory job red; release notes must not claim a kernel proved for a commit whose `proofs verus` run failed (a
 manual check until gate 7 exists). K1's shell builds a length vector before calling the kernel: about 14% slower on
 the `partition_50k` micro-bench (about 11 µs per 50,000 files), output unchanged.
+
+### ADR-096 — Blocking proofs: Verus in `xtask gates`, release gate 7, the nightly model check
+
+**Context.** ADR-095 (8) left the Verus step advisory until the owner's M1-exit decision, with release gate 7 and the
+nightly CPython check planned. M1's kernels have landed (docs/VERIFICATION.md §9.1) and production calls K1–K3, so a
+kernel edit that broke its proof could merge with only the advisory `proofs.yml` job red. On 2026-11-14 the owner
+decided: "code should be proved". Measured on the M1 tree: `cargo xtask proofs verus` (40 items, 10 mutants) takes
+about 46 s; with `--no-mutants` the root run takes 3–6 s under each of Z3 seeds 1–5 and at `--rlimit 5` (half
+Verus's default of 10); `py_vs_lean` agrees on 413,372 shlex and 39,524 end-of-file-fixer cases in about 100 s.
+**Decision.** (1) *Blocking Verus.* The required `xtask gates` job of ci.yml runs `cargo xtask proofs install` and
+`cargo xtask proofs verus` (V1–V4) after `proofs check`, on every push and pull request (no path filter), caching the
+tools directory and `~/.rustup/toolchains/1.99.1-*` under a key of the registry's `[verus]` pins and
+`proofs-tools.sh` (a kernel or mutant edit keeps the cache). No required check is renamed or added, so branch
+protection is unchanged. The advisory `verus` job of proofs.yml is dropped; the `lean` job stays advisory until
+ADR-095 (11) promotes it. (2) *Release gate 7 "proofs".* `cargo xtask release gates` gains `proofs/pending` and
+re-verification of the checked-out (tagged) commit: `proofs/check` (G1–G10), `proofs/verus` (V1–V4) and
+`proofs/lean` (L1–L5), run in process. release.yml installs Verus (`proofs install`) and Lean (lean-action, pinned by
+SHA as in proofs.yml) before the gates, for tags and dry runs alike. `--skip-proofs` skips the three tool runs, never
+the pending check; only platform.yml's documentation job, which has no proof tools, passes it. (3) *Accepting a
+pending kernel.* The escape hatch of ADR-095 (10) is accepted per release by a line `Proof pending: <kernel id>` in
+that version's CHANGELOG section (the GitHub release notes), optionally a list item and followed by any text, e.g.
+`- Proof pending: K2-archive-entry (#123): …`; the marker is case-sensitive, the id is matched whole, and lines in
+fenced code blocks do not count. Gate 7 fails for a pending kernel without such a line and for a line that names a
+verified or unknown kernel. With `--allow-unreleased` the `## [Unreleased]` section counts when the version has no
+section. (4) *Nightly.* nightly.yml gains `proofs-models` (lean-action builds the oracle executables; `python3 -I
+xtask/oracle/py_vs_lean.py --expect-python 3.12 --rounds 10000 --seed $GITHUB_RUN_ID` under CPython 3.12 against
+pre-commit-hooks checked out at the v6.0.0 commit gen-pch-data pins) and `proofs-sweep` (`proofs verus --no-mutants
+--smt-option smt.random_seed=N` for N = 1…5, a failure fails the job; then `--rlimit 5`, a failure is a warning in
+the job summary). `cargo xtask proofs verus` gains `--smt-option K=V` (repeatable) and `--rlimit N`, passed to every
+Verus run of the command, and `--no-mutants`. Like every nightly job they report through the run's status and job
+summary, with read-only permissions.
+**Rationale.** A proof that may silently break is a test that nobody runs: the guarantee the kernel rows of
+docs/VERIFICATION.md §9 state holds for `main` and for every release only if a broken proof stops the merge and the
+tag. 45 s warm is small against the `test` jobs, and folding the step into an existing required job needs no
+branch-protection change. A named line in the release notes keeps the acceptance of an unproved kernel visible to
+users, reviewable in the release PR, and checkable by a tool. Seed and rlimit sweeps catch proofs that pass by solver
+luck before a Verus bump or an unrelated edit exposes them; a half-rlimit failure is a margin, not a defect, so it
+warns.
+**Consequences.** Every pull request needs green Verus proofs; a kernel edit whose proof is not ready takes the
+escape hatch (`status = "pending"`, unmounted, marker line), and the next release must accept it in its notes or
+re-verify it. `xtask gates` takes about 45 s longer warm and about 2 min cold. A release run installs Verus and Lean
+(a few minutes cold). The kill criterion of ADR-095 (11) still applies: past it the Verus step returns to advisory
+by a new ADR. M1 exit criterion 7 (docs/VERIFICATION.md §12) is met.
 
 ## Appendix A — Open questions of the research documents, resolved
 

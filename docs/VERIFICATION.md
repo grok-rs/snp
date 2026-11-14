@@ -1,6 +1,6 @@
 # Formal verification (ADR-095)
 
-*Status (2026-11-13): ADR-095 accepted. M0 (pipeline, guards, CI, docs) is in place; M1's kernels are in: K1–K3 are verified with Verus (40 items with `--no-cheating`) and K3 and K4 have proved Lean models with oracle tests (§9.1); the M1 exit decision on blocking CI is pending (§7). M2 and M3 are planned, not started. Owners: WP-38 "Formal verification" owns `proofs/` and the specs; WP-00 owns the root manifest, xtask (`xtask/src/tasks/proofs.rs`) and CI. Package owners review the kernel files in their crates.*
+*Status (2026-11-14): ADR-095 accepted, amended by ADR-096. M0 (pipeline, guards, CI, docs) is in place; M1 is complete: K1–K3 are verified with Verus (40 items with `--no-cheating`) and K3 and K4 have proved Lean models with oracle tests (§9.1); by the owner's M1-exit decision (ADR-096, 2026-11-14) `proofs verus` blocks every merge (`xtask gates`) and every release (gate 7), and the nightly jobs check the models against CPython and sweep Z3 seeds (§7). M2 and M3 are planned, not started. Owners: WP-38 "Formal verification" owns `proofs/` and the specs; WP-00 owns the root manifest, xtask (`xtask/src/tasks/proofs.rs`) and CI. Package owners review the kernel files in their crates.*
 
 Where this document and the code disagree, the code and `proofs/registry.toml` are what CI checks; fix whichever is wrong in the same PR.
 
@@ -43,7 +43,7 @@ It is the reference for contributors who edit a kernel file and for reviewers of
 ## 1. Architecture at a glance
 
 ```
- CPython / pre-commit-hooks ──(py_vs_lean: by hand today, nightly planned)────► Lean transliteration pyX
+ CPython / pre-commit-hooks ──(py_vs_lean: nightly, proofs-models job)────────► Lean transliteration pyX
                                                                                    │  theorem pyX = X
  shipped kernel (crates/…/kernel file) ═══ the same file ═══► Verus root            │  (model level, proved)
         │                                       │ proves exec == Verus spec          ▼
@@ -306,7 +306,7 @@ proofs/lean/
 - **Environment.** Tests read the oracle directory from `SNP_LEAN_ORACLES` and skip when it is unset. With `SNP_REQUIRE_LEAN_ORACLES=1` (CI) a skip is a failure. The oracle runs as a child process with a cleared environment.
 - **Protocol.** One hex line protocol: a request goes in, `OK <hex>…` (for `eof-model`, `OK <code> :<hex>`) or `ERR <text>` comes out, flushed per line, at about 21–25 µs per round trip.
 - **Oracles run the proved functions.** `shlex-model` also self-checks `pySplit` against `split`, and `eof-model` checks `(kernel f).apply f` against `pyFixFile`; each reports a mismatch. Enforced in part: L5 rejects compiler attributes that would swap in other code, and the driver and the oracle test are fingerprinted (G10), so any edit to them is a visible re-review. That a driver calls the registered model functions, and that a test asserts every answer, is checked by that review, not by a tool.
-- **CPython check (by hand; nightly planned).** `py_vs_lean` (Python, `python3 -I`) compares the models with CPython 3.12 and with pre-commit-hooks at the pinned refs (§9.1 S4; last run 413,372 / 39,524 cases). No workflow runs it yet; the planned job belongs in `nightly.yml` (§7), with its own Lean toolchain, since the existing nightly oracle job has none. Per-PR CI stays free of Python, as §13.3 requires.
+- **CPython check (nightly).** `py_vs_lean` (Python, `python3 -I`) compares the models with CPython 3.12 and with pre-commit-hooks at the pinned refs (§9.1 S4; 413,372 / 39,524 cases, about 100 s). The `proofs-models` job of `nightly.yml` (§7) runs it with its own Lean toolchain (lean-action builds the oracle executables), CPython 3.12 from `actions/setup-python`, pre-commit-hooks checked out at the v6.0.0 commit `gen-pch-data` pins, `--expect-python 3.12 --rounds 10000 --seed $GITHUB_RUN_ID`. Per-PR CI stays free of Python, as §13.3 requires.
 
 ---
 
@@ -318,7 +318,7 @@ proofs/lean/
 | rustc for Verus | 1.99.1, minimal profile, **never** `rustup default` (the `verus` launcher sets `RUSTUP_TOOLCHAIN`) | registry | rustup (about 593 MB unpacked) |
 | verusfmt | 0.7.4 + sha256 (x86_64-unknown-linux-gnu) | registry | same script, into the same directory |
 | Lean | v4.34.1 at import, then the latest stable (v4.35.0 today) in its own PR; never a release candidate | `proofs/lean/lean-toolchain` | elan. Where `release.lean-lang.org` does not resolve (as on the owner's machine), download the GitHub release tarball and run `elan toolchain link`. |
-| lean-action | v1.7.1, pinned by commit SHA `ba3fdfe5c4476c925da13bf11a005ddb47e47aee` | `proofs.yml` | |
+| lean-action | v1.7.1, pinned by commit SHA `ba3fdfe5c4476c925da13bf11a005ddb47e47aee` | `proofs.yml`, `release.yml` (gate 7), `nightly.yml` (`proofs-models`) | |
 | snp toolchain | 1.100.0 (unchanged) | `rust-toolchain.toml` | |
 
 **Bump policy:**
@@ -333,7 +333,7 @@ proofs/lean/
 | Command | Does |
 |---|---|
 | `cargo xtask proofs check` | G1–G10. Tool-free, well under a second. Part of the required `xtask gates` job. |
-| `cargo xtask proofs verus [--module M] [--json F]` | V1–V4, plus the slowest functions from Verus's `--time` report. `--json` keeps the report. With `--module`: one mount without `--no-cheating` (§2.4), its V2 manifest and V4; no floor, no mutants; not a gate. |
+| `cargo xtask proofs verus [--module M] [--json F] [--smt-option K=V]... [--rlimit N] [--no-mutants]` | V1–V4, plus the slowest functions from Verus's `--time` report. `--json` keeps the report. With `--module`: one mount without `--no-cheating` (§2.4), its V2 manifest and V4; no floor, no mutants; not a gate. `--smt-option` (repeatable) and `--rlimit` are passed to every Verus run of the command and `--no-mutants` skips V3: the nightly seed sweep and half-rlimit report (§7). |
 | `cargo xtask proofs lean` | L1–L5 (L4 first: it needs no tool). |
 | `cargo xtask proofs oracles [-k ID]` | Builds the Lean executables, then runs each model's home-crate oracle test (`cargo nextest run`, or `cargo test` without nextest, `--release -p <crate> --test <stem>`) with `SNP_LEAN_ORACLES` set and `SNP_REQUIRE_LEAN_ORACLES=1`. With no `[[model]]` registered it says so and succeeds. |
 | `cargo xtask proofs mutants` | V3 alone (fast negative check). From M3, `--generate` is to add syn-based mutants as a nightly survivor report (planned). |
@@ -351,19 +351,21 @@ The interim `proofs/verus/run.sh` was removed when `cargo xtask proofs` landed; 
 | Phase | Where | Status | Content |
 |---|---|---|---|
 | M0 → (done) | `ci.yml` `xtask gates` (required) | blocking | + `cargo xtask proofs check` |
-| M0–M1 (done) | `proofs.yml` job `verus` | advisory | cache the tools dir and `~/.rustup/toolchains/1.99.1-*` (key: hash of the registry's `[verus]` pins and of `proofs-tools.sh`; the downloaded archives are deleted after unpacking); `cargo xtask proofs install`, `proofs check`, `proofs verus --json` (report uploaded as an artifact) |
+| M0–M1 (done; dropped by ADR-096) | `proofs.yml` job `verus` | advisory | replaced by the `xtask gates` steps below |
 | M0–M2 (done) | `proofs.yml` job `lean` | advisory | lean-action pinned by SHA (`lake-package-directory: snp/proofs/lean`, `build-args: --wfail`, `axiom-audit: false`, `leanchecker: false` (they guess the module name `Snpmodels` from the package name and find no oleans; `proofs lean` runs both on `SnpModels`), `use-mathlib-cache: false`, `test`/`lint: false`); `cargo xtask proofs lean`; `cargo xtask proofs oracles` (every registered model's oracle test, `SNP_REQUIRE_LEAN_ORACLES=1`). This is the only place the oracle tests run with a model: in the required `ci.yml` test job `SNP_LEAN_ORACLES` is unset, so they skip and pass, and a Rust/model divergence turns only this advisory job red. |
-| M1 exit (owner decision; production already calls K1–K3) | `xtask gates` | **blocking** (owner decision pending, recommended) | + `cargo xtask proofs install && cargo xtask proofs verus`; the advisory `verus` job is dropped. No branch-protection change is needed. **Note:** production already calls K1, so until this decision a kernel edit that breaks its proof can merge; only the advisory job turns red. |
-| M1 exit (planned) | `cargo xtask release gates` | blocking for tags | new **gate 7 "proofs"** (not implemented yet): re-verify the tagged commit; no kernel `pending` unless the release notes accept it |
+| M1 exit (done, ADR-096, 2026-11-14) | `ci.yml` `xtask gates` (required) | **blocking** | + `cargo xtask proofs install` and `cargo xtask proofs verus --json` (V1–V4; report uploaded as the `verus-report` artifact). Cache: the tools dir and `~/.rustup/toolchains/1.99.1-*`, key: hash of the registry's `[verus]` pins and of `proofs-tools.sh` (a kernel, model or mutant edit keeps the cache; the downloaded archives are deleted after unpacking). Runs on every push and pull request; no required check was added or renamed, so branch protection is unchanged. |
+| M1 exit (done, ADR-096) | `cargo xtask release gates` (release.yml, tags and dry runs) | **blocking for tags** | **gate 7 "proofs"**: `proofs/pending` (every `status = "pending"` kernel needs a `Proof pending: <kernel id>` line in the version's CHANGELOG section, and every such line must name a pending kernel; §8.3), then `proofs/check`, `proofs/verus` and `proofs/lean` re-verify the checked-out tag. release.yml runs `cargo xtask proofs install` and lean-action (as above) first. `--skip-proofs` skips the three tool runs, never the pending check; only platform.yml's documentation job passes it. |
 | after M2 | `proofs.yml` `lean` | required after 4 green weeks on main, p95 < 5 min, owner approval | |
-| nightly (planned; none of this runs yet) | `nightly.yml` | | `py_vs_lean` against CPython 3.12 and pre-commit-hooks (a new job with its own Lean toolchain); Z3 seed sweep (`--smt-option smt.random_seed=1..5`); half-`--rlimit` fragility report; generated mutants (M3); 10 000-case oracle runs |
+| nightly (done, ADR-096) | `nightly.yml` `proofs-models` | reported (run status) | `py_vs_lean` against CPython 3.12 and pre-commit-hooks v6.0.0 (§4.3) |
+| nightly (done, ADR-096) | `nightly.yml` `proofs-sweep` | reported (run status, job summary) | Z3 seed sweep: `proofs verus --no-mutants --smt-option smt.random_seed=N` for N = 1…5, any failure fails the job; half-rlimit fragility report: `--rlimit 5` (Verus's default is 10; no kernel sets its own), a failure is a warning |
+| nightly (planned) | `nightly.yml` | | generated mutants (M3); 10 000-case oracle runs |
 
 **Rules:**
-- Jobs always start and exit early when no relevant path changed. Do not use `on.paths`: a required check that a path filter skips stays pending forever.
+- Jobs always start. The `proofs.yml` job exits early when no relevant path changed; the `xtask gates` steps run on every change. Do not use `on.paths`: a required check that a path filter skips stays pending forever.
 - Permissions are read-only.
 
 **Runtime (measured unless noted):**
-- **Verus:** M1's 40 items (K1–K3) in about 3–5 s wall for the root run; with the 10 mutants `cargo xtask proofs verus` takes about 40–55 s warm. Tool install takes seconds from cache; cold, the 36 MB zip plus the minimal toolchain take about 40–60 s (estimated). Net cost to `xtask gates`: about 45 s warm, about 2 min cold.
+- **Verus:** M1's 40 items (K1–K3) in about 3–5 s wall for the root run; with the 10 mutants `cargo xtask proofs verus` takes about 40–55 s warm. Tool install takes seconds from cache; cold, the 36 MB zip plus the minimal toolchain take about 40–60 s (estimated). Net cost to `xtask gates`: about 45 s warm, about 2 min cold (measured locally: 46 s for the whole command; each seed of the sweep 3–6 s without mutants).
 - **Lean:** build 3.5 s, leanchecker 1.5 s, the L5 audit scripts about 10 s (each imports `Lean`); toolchain fetch 20–40 s (estimated). The oracle tests themselves take about 10–20 s, dominated by building snp-hooks (rust-cache). Expected Lean job: 3–5 min.
 
 ---
@@ -386,7 +388,7 @@ An urgent fix to a kernel whose proof is not ready may land as follows:
 - its mount is removed;
 - its marker line becomes `//! Kernel (ADR-095), proof pending: #NNN`.
 
-The PR diff shows all of this. Release gate 7 (planned, M1 exit) will fail while any kernel is pending, unless the release notes accept it explicitly; until it exists, the release checklist has to look at `cargo xtask proofs status`.
+The PR diff shows all of this. Release gate 7 (ADR-096) fails while any kernel is pending, unless the release notes accept it explicitly: the version's CHANGELOG section (the GitHub release notes) carries one line per pending kernel, `Proof pending: <kernel id>`, optionally a list item and followed by any text, e.g. `- Proof pending: K2-archive-entry (#123): proof follows in 2.0.3`. The marker is case-sensitive, the id is matched whole, lines in fenced code blocks do not count, and a line that names a verified or unknown kernel fails the gate too.
 
 ### 8.4 Adding a kernel
 1. Fix any known bug in the code first (§11).
@@ -482,7 +484,7 @@ Whole root: 40 items verified, 0 errors, with `--no-cheating`, in about 3–5 s 
 - **Lean (proved, no `sorry`).** `pyFixFile_eq` (the Python transliteration equals F, including the return code), `kernel_apply`, `fix_idem`, `fix_body`, `pyFixFile_twice`.
 - **Bridge.** `crates/snp-hooks/tests/lean_oracle.rs`: `eof-model` against `end_of_file_bytes` on all of `{a, CR, LF}^≤10` (88,573 inputs) plus 20,000 seeded SplitMix64 inputs (seed `0x5eed000300000001`) over a wider alphabet, a quarter ending in line-ending runs of up to 300 bytes. The oracle replies `OK <code> :<hex>` and self-checks `(kernel f).apply f` against `pyFixFile` (`MISMATCH` otherwise). Anchors: `eof.rs::end_of_file_run`, `::end_of_file`, `::is_eol` and `::end_of_file_bytes`. Like every oracle test, it runs only in the advisory `lean` job (§7); in required CI it is skipped and passes.
 - **Not proved.** That `tail_action` computes `(head, run)` correctly from its 4 KiB backward block reads (an I/O shell until K6; covered by the unit tests `tail_scan_matches_kernel` and `long_eol_run_is_linear`). That the Rust code equals the Lean model for all inputs: Verus proves the Rust code equals its own spec `fix`, transcribed to match Lean `fix`, but no tool checks that the two definitions are equal; the link is tested. TOCTOU between the decision and `set_len`/append.
-- **G:** `end_of_file_bytes`/`end_of_file_run` are proved to satisfy spec F (E0–E5); only trailing line endings are ever removed; Lean proves F equals the `fix_file` transliteration (`pyFixFile_eq`). Parity with Python `fix_file` holds at model level, and the Rust code equals the model on the tested domain. **¬G:** a proof that the Verus `fix` equals the Lean `fix` (tested by `lean_oracle.rs`); a proof that the transliteration equals pre-commit-hooks `fix_file` (checked by hand with `py_vs_lean.py`, S4); `tail_action`'s computation of (head, run) and the rest of the I/O shell (block reads until K6; the TOCTOU window before `set_len`).
+- **G:** `end_of_file_bytes`/`end_of_file_run` are proved to satisfy spec F (E0–E5); only trailing line endings are ever removed; Lean proves F equals the `fix_file` transliteration (`pyFixFile_eq`). Parity with Python `fix_file` holds at model level, and the Rust code equals the model on the tested domain. **¬G:** a proof that the Verus `fix` equals the Lean `fix` (tested by `lean_oracle.rs`); a proof that the transliteration equals pre-commit-hooks `fix_file` (checked nightly by `py_vs_lean.py`, S4); `tail_action`'s computation of (head, run) and the rest of the I/O shell (block reads until K6; the TOCTOU window before `set_len`).
 
 **K4: shlex split model.**
 - **Code.** `crates/snp-pycompat/src/shlex.rs:108-195` (`is_ws`, `St`, `Esc`, `split`), plus `quote`/`quote_bytes`/`is_safe` and `join`. Model: `proofs/lean/SnpModels/Shlex.lean`.
@@ -492,9 +494,9 @@ Whole root: 40 items verified, 0 errors, with `--no-cheating`, in about 3–5 s 
   - **S5 (Lean)** `split_join: ∀ts. split (join ts) = .ok ts`, via the helper lemmas `quote_run` and `join_run`. `shlex-model` serves `join` too.
   - **S3 (tested per PR in the advisory `lean` job; skipped, and so passing, in required CI)** `snp_pycompat::shlex::split` agrees with `shlex-model` on all 335,923 strings over `{' ', '\t', '\'', '"', '\\', 'a'}` up to length 7, plus seeded random inputs.
   - **S3 detail.** `crates/snp-pycompat/tests/lean_oracle.rs` (std only; `cargo tree -p snp-pycompat -e normal,dev` stays empty) also runs 20,000 random `split` strings (seed `0x5eed000400000001`, 16 characters incl. CR, LF, `#`, NUL, non-ASCII and an emoji), all 37,449 `quote` inputs up to length 5 (checking `quote_bytes = quote` too) and 5,002 random `join` lists with a Rust-side `split(join(args)) == args` check.
-  - **S4 (run by hand; nightly planned, §7)** `xtask/oracle/py_vs_lean.py` compares the model with CPython 3.12 `shlex` (split exhaustive to length 7, quote to length 5, random split/quote/join; 413,372 cases locally) and the eof model with pre-commit-hooks v6.0.0 `fix_file` (39,524 cases locally).
+  - **S4 (nightly `proofs-models` job, §7)** `xtask/oracle/py_vs_lean.py` compares the model with CPython 3.12 `shlex` (split exhaustive to length 7, quote to length 5, random split/quote/join; 413,372 cases locally) and the eof model with pre-commit-hooks v6.0.0 `fix_file` (39,524 cases locally).
   - The anchors pin `split`, `quote`, `join` and the helpers they call: `is_ws`, `St`, `Esc`, `is_safe`, `quote_bytes`.
-- **G:** argv parity with CPython for every string, at model level; the Rust code equals the model on the tested domain. **¬G:** a proof about the Rust `split`/`quote`/`join` (the Rust–model link is tested, not proved); a proof that the model equals CPython (checked by hand, S4); Python lone surrogates, which cannot reach `&str` (§10 row 14).
+- **G:** argv parity with CPython for every string, at model level; the Rust code equals the model on the tested domain. **¬G:** a proof about the Rust `split`/`quote`/`join` (the Rust–model link is tested, not proved); a proof that the model equals CPython (checked nightly, S4); Python lone surrogates, which cannot reach `&str` (§10 row 14).
 
 **Tooling gaps (M0/M1), stated so nothing above is over-read:**
 - **V2 end to end.** Removing `#[verus_verify]` from the K1 mount still verified `partition_lens`, because it carries `verus_spec`, so V2 had nothing to report. V2's failure path is covered only by the `manifest_gaps` unit test and by G1, which requires `#[verus_verify]` on every mount.
@@ -579,7 +581,7 @@ Whole root: 40 items verified, 0 errors, with `--no-cheating`, in about 3–5 s 
 
 | # | Trusted | Mitigation |
 |---|---|---|
-| 1 | Verus (VIR→SMT encoding, `rust_verify`) and Z3 4.16.0 | sha256-pinned bundle; `--no-cheating`; registered mutants must fail; a seed sweep is planned (§7), not running |
+| 1 | Verus (VIR→SMT encoding, `rust_verify`) and Z3 4.16.0 | sha256-pinned bundle; `--no-cheating`; registered mutants must fail; nightly Z3 seed sweep (seeds 1–5) and half-rlimit report (§7) |
 | 2 | vstd's specs of the std pieces used (slice, `Vec`, `Option`/`Result`, integer ops, `Range`) | small std surface (K6); every test, fuzz target and difftest runs on the shipped build |
 | 3 | rustc 1.99.1 front end vs 1.100.0 codegen; vstd prelude glob visible only under Verus | kernel files stay in the common subset; an ambiguity is a compile error; spec items are imported by name and never under a prelude or std name (G3) |
 | 4 | Ghost-only differences between the verified and the shipped file | G2–G5, G9, V2; kernels have no macros (G3) and load no other file (G9), so their meaning does not depend on the parent module, and every file under `proofs/verus/` is scanned |
@@ -592,7 +594,7 @@ Whole root: 40 items verified, 0 errors, with `--no-cheating`, in about 3–5 s 
 | 11 | Spec ≠ intent (hand transcriptions of Python). The specs are trusted: a spec and code wrong in the same way verify | uniqueness lemmas; independent property lemmas; Lean `pyX = X` theorems with CPython cross-checks; oracle tests; K2's exhaustive comparison with the former check; mutants; `file:line` citations |
 | 12 | Lean kernel and the three standard axioms | `--wfail`, axiom allowlist, `leanchecker` |
 | 13 | Lean compiler and runtime behind the oracle executables; the drivers and oracle tests | oracles are test oracles only; L5 rejects `implemented_by`/`extern`/`unsafe` in the elaborated package; theorem statements are pinned (L5); driver and oracle-test fingerprints (G10) make any edit a visible re-review; that a driver runs the proved functions and a test asserts every answer is checked by review only |
-| 14 | Model ↔ Python | transliteration plus `py_vs_lean`, run by hand (nightly planned, §7). Documented gap: Python `str` admits lone surrogates; Lean `Char` and Rust `char` do not. |
+| 14 | Model ↔ Python | transliteration plus `py_vs_lean`, nightly (`proofs-models`, §7). Documented gap: Python `str` admits lone surrogates; Lean `Char` and Rust `char` do not. |
 | 15 | Model ↔ Rust (no bridge exists) | bounded-exhaustive alphabets that cover every state transition, plus seeded random inputs; anchors |
 | 16 | Model ↔ world (git, POSIX: K9) | named hypotheses, each with a witness test on the git floor (2.31) and the latest git |
 | 17 | Allocation failure, abort, stack overflow | not modelled (ADR-066) |
@@ -641,7 +643,7 @@ M1 exit criteria:
 4. `cargo deny check`, `Cargo.lock`, an empty `cargo tree -p snp-pycompat` and `cargo publish --workspace --dry-run --locked` are all unchanged.
 5. Every kernel has a mutant that fails; a deliberately broken kernel edit fails CI (documented negative test).
 6. Lean: `--wfail`, axiom audit, `leanchecker` and both oracle tests (with `SNP_REQUIRE_LEAN_ORACLES=1`) are green.
-7. The Verus step is blocking in `xtask gates` and in release gate 7 (owner decision).
+7. The Verus step is blocking in `xtask gates` and in release gate 7 (owner decision). **Done** (ADR-096, 2026-11-14).
 8. The §9 G/¬G rows are complete.
 
 **M2: K5–K9, plus F1 and F3 (22–30 days). M3: K10–K13 and generated mutants (18–26 days).**

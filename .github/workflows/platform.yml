@@ -489,4 +489,5 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: snp, key: docs }
       - run: cargo xtask docs --check
-      - run: cargo xtask release gates --skip-registry --allow-unreleased
+      # Gate 7's Verus and Lean runs need the proof tools, which release.yml installs; the pending check still runs.
+      - run: cargo xtask release gates --skip-registry --skip-proofs --allow-unreleased
