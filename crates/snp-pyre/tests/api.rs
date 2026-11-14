@@ -1,12 +1,14 @@
 //! Contract test (ARCHITECTURE §1.3 "Contract tests"): references every public item of §1.4.5 with
-//! explicit types, so signature drift breaks compilation, plus the `Send + Sync` assertions. Stub
-//! functions are only coerced to `fn` pointers (never called), so the test passes on W0 stubs.
+//! explicit types, so signature drift breaks compilation, plus the `Send + Sync` and unwind-safety
+//! assertions. Stub functions are only coerced to `fn` pointers (never called), so the test passes on W0
+//! stubs.
 //!
 //! Owner: WP-13 (created by WP-00).
 
 #[cfg(test)]
 mod api {
     use std::fmt::Display;
+    use std::panic::{RefUnwindSafe, UnwindSafe};
     use std::sync::Arc;
 
     use snp_pyre::{
@@ -14,6 +16,7 @@ mod api {
     };
 
     fn send_sync<T: Send + Sync>() {}
+    fn unwind_safe<T: UnwindSafe + RefUnwindSafe>() {}
     fn display<T: Display>() {}
 
     /// Type-checks `t` against the explicit type argument.
@@ -33,6 +36,14 @@ mod api {
         send_sync::<PyRegex>();
         send_sync::<RegexCache>();
         display::<PyReError>();
+    }
+
+    /// The compiled pattern and the cache stay unwind-safe (the auto traits are public API; ADR-108's
+    /// per-thread cache pool keeps them).
+    #[test]
+    fn unwind_safe_types() {
+        unwind_safe::<PyRegex>();
+        unwind_safe::<RegexCache>();
     }
 
     #[test]
