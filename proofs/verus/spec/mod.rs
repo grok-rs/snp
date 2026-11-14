@@ -6,3 +6,5 @@ pub mod archive_entry;
 pub mod eof;
 pub mod lib;
 pub mod xargs_partition;
+pub mod zlist_split;
+pub mod zsplit;
