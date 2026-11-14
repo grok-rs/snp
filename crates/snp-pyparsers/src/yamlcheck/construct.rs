@@ -8,6 +8,7 @@
 //!
 //! Owner: WP-17.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -22,10 +23,10 @@ use crate::pystr;
 
 pub(super) type NodeId = u32;
 
-/// A node: `tag` is the resolved tag's `trval`.
+/// A node: `tag` is the resolved tag's `trval` (borrowed for the resolver's and the default tags).
 #[derive(Debug, Clone)]
 pub(super) struct Node {
-    pub(super) tag: String,
+    pub(super) tag: Cow<'static, str>,
     pub(super) kind: NodeKind,
     pub(super) start: Mark,
     pub(super) end: Mark,
@@ -214,7 +215,7 @@ impl Default for ConsState {
             generators: Vec::new(),
             deep: false,
             dummy: Node {
-                tag: String::new(),
+                tag: Cow::Borrowed(""),
                 kind: NodeKind::Scalar(Vec::new()),
                 start: m.clone(),
                 end: m,
@@ -660,8 +661,7 @@ impl Loader<'_, '_> {
                         continue;
                     }
                     self.tag_access(node)?;
-                    let tag = self.st.cons.node(node).tag.clone();
-                    let gen_kind = match tag.as_str() {
+                    let gen_kind = match &*self.st.cons.node(node).tag {
                         OMAP => Some(GenKind::Omap),
                         PAIRS => Some(GenKind::Pairs),
                         SET => Some(GenKind::Set),
@@ -670,6 +670,8 @@ impl Loader<'_, '_> {
                         _ => None,
                     };
                     let Some(kind) = gen_kind else {
+                        // a copy only for an explicit tag: the resolver's are borrowed
+                        let tag = self.st.cons.node(node).tag.clone();
                         ret = Some(self.construct_leaf(node, &tag)?);
                         self.depth = saved;
                         stack.pop();
@@ -1522,7 +1524,7 @@ impl Loader<'_, '_> {
                 if is_value {
                     self.touch(2)?; // the tag setter -> Tag.__init__
                     let kn = self.st.cons.node_mut(key_node);
-                    STR.clone_into(&mut kn.tag);
+                    kn.tag = Cow::Borrowed(STR);
                     kn.tag_cache = TagCache::Fresh;
                 }
                 if let Some(f) = stack.last_mut() {

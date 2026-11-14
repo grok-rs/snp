@@ -5,6 +5,8 @@
 //!
 //! Owner: WP-17.
 
+use std::borrow::Cow;
+
 use super::{Fail, Loader, R, Rx, Ver};
 use crate::pystr;
 
@@ -498,7 +500,7 @@ impl Loader<'_, '_> {
     }
 
     /// `VersionedResolver.resolve(ScalarNode, value, implicit)` (the caller pushed its frame).
-    pub(super) fn resolve_scalar(&mut self, value: &[u8], implicit: bool) -> R<String> {
+    pub(super) fn resolve_scalar(&mut self, value: &[u8], implicit: bool) -> R<Cow<'static, str>> {
         if implicit {
             let v = self.versioned_resolver()?;
             let first = pystr::code_points(value).next();
@@ -508,11 +510,11 @@ impl Loader<'_, '_> {
                 self.rx_call(rx)?;
                 if rx_match(rx, value) {
                     self.touch(1)?; // Tag(suffix=tag)
-                    return Ok(tag_of(rx).to_owned());
+                    return Ok(Cow::Borrowed(tag_of(rx)));
                 }
             }
         }
-        Ok(STR.to_owned())
+        Ok(Cow::Borrowed(STR))
     }
 }
 
