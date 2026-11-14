@@ -13,12 +13,9 @@ the final multi-lens review; ADR-085 the `interactive` extension key; ADR-086 th
 4.7.0; ADR-090 what the scheduled gates can judge; ADR-091 measuring every scenario; ADR-092 the November 2026
 upstream refresh; ADR-093 the path-limited stash checkout; ADR-094 Rust 1.100; ADR-095 machine-checked proofs;
 ADR-096 the owner's decision to make the Verus proofs blocking;
-ADR-099 the paired bench gate; ADR-100 the B8 heap budget and counters;
-ADR-098 the tier-1 prefilter;
-ADR-097 the stash re-verification by stat stamps;
-ADR-101 classification CPU and fan-out sizing;
-ADR-102 native-hook facts; ADR-103 borrowed hook argv;
-ADR-104 the step-6 changes of the run pipeline.
+ADR-097 the stash re-verification by stat stamps; ADR-098 the tier-1 prefilter; ADR-099 the paired bench gate; ADR-100
+the B8 heap budget and counters; ADR-101 classification CPU and fan-out sizing; ADR-102 native-hook facts; ADR-103
+borrowed hook argv; ADR-104 the step-6 changes of the run pipeline; ADR-105 the hook script template v2.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -495,7 +492,7 @@ benchmark showing a measurable win on B3/B9; removable without API change. **Rat
 
 ### ADR-048 — Hook script template and fallback chain
 
-*Status: Accepted; amended by ADR-060 (stable `SNP_EXE` selection, M-lines on stderr, prek/snp-1.x adoption registered as D-BRAND-02). The amending ADR is normative where they differ.*
+*Status: Accepted; amended by ADR-060 (stable `SNP_EXE` selection, M-lines on stderr, prek/snp-1.x adoption registered as D-BRAND-02) and ADR-105 (template v2: `HERE` without `dirname`, ID `405bd8559925d194c1d22af6ef66282e`, the v1 ID kept as a compat line). The amending ADRs are normative where they differ.*
 
 **Decision.** ARCHITECTURE §9.7 (11 §A.6 + the kill-switch branch): POSIX `sh`, LF everywhere, three identity lines
 (snp ID `5bb9bd89cf6c92c58fee7677ceaf4fc3`, pre-commit `CURRENT_HASH`, prek ID) so the last installer wins and no
@@ -1670,6 +1667,94 @@ under the advisory job turns the nightly `proofs-models` job red and must be fix
 gates` takes about 45 s longer warm and about 2 min cold. A release run installs Verus and Lean
 (a few minutes cold). The kill criterion of ADR-095 (11) still applies: past it the Verus step returns to advisory
 by a new ADR. M1 exit criterion 7 (docs/VERIFICATION.md §12) is met.
+
+### ADR-097 — Stash re-verification by stat stamps
+
+*Amends ADR-067 (the second `diff-index` digest before the checkout); decides the stat-based re-verification ADR-084
+deferred.*
+
+**Context.** ADR-067 closes the autosave window its fsyncs open with a second full `git diff-index --binary` whose
+blake3 digest must equal the streamed patch's. On the B8 scenario (a 10 MB unstaged change) that second diff is the
+largest single cost of the run: about 268 ms of the local light-tracer timeline, on the critical path, and blake3 is
+32.7% of snp's own CPU. It is the only scenario where snp is slower than pre-commit. ADR-084 deferred a stat-based
+re-verification because it must stamp every path the diff could include (an autosave of a clean file is what the
+second diff catches) and keep git's racy-timestamp protection. `git apply --numstat`, which lists the checkout's
+files (ADR-093), also ran between the verification and the checkout, reopening the window (C4).
+**Decision.** (1) The paths are listed (`git apply --numstat -z --whitespace=nowarn <patch>`, git's own parser,
+still the only authority for the checkout list) right after the patch is durable and again after every rewrite; the
+verification follows and is the last read of the worktree before the checkout. Its outcome wins: a listing error is
+reported only once the patch is verified. (2) `M0` is `max(ctime, mtime)` of the held lock file, read with `fstat`
+right after this run wrote its token, before the first `diff-index` starts, with the wall and monotonic clocks at
+that moment. There is no `M0` for a nested run, on Windows, when the token could not be written, or with
+`SNP_STASH_REVERIFY=diff` (the escape hatch, like `SNP_DIFF_MODE=git`). (3) The verification is a stamp pass when all
+of these hold, else the ADR-067 loop: Linux (macOS falls back until APFS and HFS+ are shown to bump ctime on every
+rename); work tree and git dir on `stat_oracle_safe` filesystems, the work tree on the lock's device; the wall clock
+not before `M0` and within 100 ms of the monotonic clock's progress since `M0` (taken before and after the pass);
+`git diff-index --name-only -z --ignore-submodules <tree> --` succeeds and lists only files of the patch (option
+(a): an autosave of a file outside the patch makes git list it, which falls back, so D-DATA-13's guarantee stands and
+git's racy check covers every tracked file; it costs one spawn, an index stat walk); every path the listing names is
+a regular file or symlink on the lock's device with `max(ctime, mtime) < M0`, strictly, with no margin (a write after
+the lock carries a stamp of at least `M0`, also with coarse or truncated timestamps; a racy margin would disable the
+path whenever the previous restore wrote the file just before the run); every directory between such a path and the
+work-tree root passes the same test (an older inode swapped in by a rename of an ancestor); `$GIT_DIR/config`,
+`config.worktree`, the common config and both `info/attributes` pass it when present. A missing file, `ENOTDIR`, any
+error or any doubt falls back. (4) The fallback compares the second `diff-index` byte for byte, and in total length,
+with the durable patch read back through a new handle, keeping the 3 rewrites and `KEPT_CHANGING`; blake3 leaves the
+stash (the first pass no longer hashes). (5) The stat-stamp path is not modelled on the `DiffOracle` (which decides
+whether a hook changed files, with a racy margin and content hashes); it has its own argument above. Option (b),
+dropping the name-only query and accepting that a rollback (`rollback_paths`) or `stage_fixed` could then lose a
+clean-file autosave made during the window, is rejected.
+**Rationale.** A file whose change stamps are all older than the lock has not changed since before the first
+`diff-index` started, so the durable patch is still what git would print; the kernel bumps ctime on every write,
+truncate, chmod, link change and (on the allowed Linux filesystems) rename, and the user cannot set it. The only
+files the patch does not cover are covered by git itself.
+**Residual risks.** A write through a shared mapping that was already dirty before `M0` reaches the file without a new
+stamp; a single `write(2)` that straddles `M0` can leave a stamp just below `M0` with bytes written after it; an
+untracked `.gitattributes` or a global or system git config created or changed during the window is not stamped (it
+could change the diff's conversion, which the restore then reports as a conflict; nothing is lost); a filesystem that
+does not bump ctime on rename (hence the macOS fallback). Each needs a concurrent writer inside a window of a few
+milliseconds to tens of milliseconds.
+**Consequences.** B8 runs one content `diff-index` and one name-only `diff-index` instead of two content ones (the exec
+count is unchanged), and snp's own CPU drops by the blake3 share. `KEPT_CHANGING`, every message and the git argv of
+every other call are unchanged. ARCHITECTURE S3 and §4.2 step 6, D-DATA-13 and WBS WP-23 state it.
+---
+
+### ADR-098 — The tier-1 exact fallback runs behind the relaxed prefilter
+
+*Amends ADR-003 (01 Addendum §A.6.5, §A.6.11) and the D-SEC-10 rationale.*
+
+**Context.** A tier-1 pattern whose fast text took a cheaper anchor form sends the haystacks that meet a condition
+bit (§A.6.5) to the exact text on `fancy-regex`. For a str `\b`/`\B` that is every non-ASCII haystack, and the
+exact look-around forms make `fancy-regex` run its backtracking VM instead of delegating to `regex`. B12u's
+`\b\w{3,8}\b/\w+\.md$` ran that VM on all 20 000 paths of the run (CPU profile: `fancy_regex::vm::run_with` among
+the top self frames), and a non-matching shape such as `^(.+/)*\bconfig\.yaml$` on `é/` × 24 + `x` spent 2.7-4.7 s
+per path and ended in `MatchError::Backtrack`, aborting the run with a D-SEC-10 error where CPython answers "not
+matched". D-SEC-10 said "tier 1 is linear", which was false for this fallback. Tier 2 already avoids both with the
+mandatory relaxed prefilter of §A.6.11.
+**Decision.** (1) When a tier-1 pattern has an exact text and its condition has the `ascii`, `nonempty` or `span`
+bit, `texts` also lowers `Variant::Relaxed` (no search quirk, which only narrows start positions) and counts its depth
+in `Texts.depth`. A `$`-only (`nl`) condition gets no prefilter: its exact text has no word assertion and serves only
+haystacks that end with `\n`. (2) One `engine::Prefilter` serves both tiers: the existing usefulness rule
+(`relaxed_anchored || !is_match("")`); a build failure or a useless prefilter means *no* prefilter, never an error.
+(3) The tier-1 prefilter is built on the first haystack that needs the exact engine (eagerly, without failing, when
+the exact fallback itself is built eagerly), wrapped in `\A(?:…)\z` on the fullmatch engines, and rejects before
+`re.search`, `re.match`, `re.fullmatch` and `search_bytes` reach `fancy-regex`. (4) Its lazy-DFA cache is capped at
+256 KiB per pattern per thread: with the crate default 2 MiB, B12u's process RSS rises 25.5 → 30.8 MiB locally
+(median of 30 interleaved runs), above the 28.61 MiB hard budget; with 256 KiB it is 27.1 MiB (max 28.0). Tier 2's
+prefilter keeps 2 MiB (ADR-079). (5) The Cond `word` bit with a generated Unicode table (P01 part 3) is rejected: no
+gain on top of the prefilter, +1.9 MiB RSS, and it drifts with UCD versions.
+**Rationale.** Relaxed ⊇ exact is the invariant tier 2 already relies on: every relaxed substitution only adds
+matches, at every span, so it holds for search, for a match at position 0 and inside `\A(?:…)\z`. The verifier's
+differential (513 696 compiled rows byte-identical with and without the prefilter, 2.66 M direct superset checks
+without a violation) and the new property tests (`relaxed_is_a_superset` against the exact text, now including the
+fullmatch form; `tier1_prefilter_keeps_every_answer` across the four match calls) found no difference. Measured on
+the B12u fixture: backtracking-engine runs 20 000 → 1 060 per run; snp's own user CPU −19 % (getrusage, user+sys
+−11 %); execve, clone3 and statx counts unchanged (430 / 1 807 / 38 116).
+**Consequences.** A haystack the prefilter rejects is "not matched", CPython's answer, where it used to be a
+backtracking-limit error or seconds of work; haystacks it admits still get the exact engine, so the backtrack limit
+and the D-SEC-10 error remain for them. D-SEC-10's rationale now reads "the tier-1 exact fallback is prefiltered"; no
+new divergence. The 256 KiB cap re-tunes against CI's B12u RSS once batch C halves the classifier threads (P17).
+
 ### ADR-099 — The bench gate pairs interleaved base and head rounds; the base is built like the head
 
 **Context.** The performance analysis of 2026-11 (P06, P07) measured why same-code pull requests failed the bench
@@ -1756,6 +1841,7 @@ rejected: it races the process's exit and would flap on B8 (9.2 to 10.5 MiB agai
 **Consequences.** B8's permanent soft warning leaves the PR comment; the nightly fails if the patch is ever buffered,
 and so does `perf-smoke` on every push. The PR comment shows count deltas next to the timings. The new ceilings are
 re-baselined from CI records (batch M), with breaches acknowledged through the budget and `[[known_miss]]` mechanism.
+
 ### ADR-101 — Classification CPU and fan-out sizing: one UTF-8 check, core-capped matching, the root dirfd
 
 **Context.** The November 2026 performance analysis (P11, P17, P19) profiled where snp's own CPU goes in the
@@ -1806,92 +1892,6 @@ The table holds one extra descriptor while it lives (one `open` and one `close` 
 tier). The gain shrinks where trusted index modes apply; dirty trees, `--files` and runs where the trust gate fails
 keep it. No ADR is amended: ADR-084(6)'s "at most 8 threads" and ADR-065's pool size are unchanged, only bounded by
 the permits and cores.
-
-### ADR-098 — The tier-1 exact fallback runs behind the relaxed prefilter
-
-*Amends ADR-003 (01 Addendum §A.6.5, §A.6.11) and the D-SEC-10 rationale.*
-
-**Context.** A tier-1 pattern whose fast text took a cheaper anchor form sends the haystacks that meet a condition
-bit (§A.6.5) to the exact text on `fancy-regex`. For a str `\b`/`\B` that is every non-ASCII haystack, and the
-exact look-around forms make `fancy-regex` run its backtracking VM instead of delegating to `regex`. B12u's
-`\b\w{3,8}\b/\w+\.md$` ran that VM on all 20 000 paths of the run (CPU profile: `fancy_regex::vm::run_with` among
-the top self frames), and a non-matching shape such as `^(.+/)*\bconfig\.yaml$` on `é/` × 24 + `x` spent 2.7-4.7 s
-per path and ended in `MatchError::Backtrack`, aborting the run with a D-SEC-10 error where CPython answers "not
-matched". D-SEC-10 said "tier 1 is linear", which was false for this fallback. Tier 2 already avoids both with the
-mandatory relaxed prefilter of §A.6.11.
-**Decision.** (1) When a tier-1 pattern has an exact text and its condition has the `ascii`, `nonempty` or `span`
-bit, `texts` also lowers `Variant::Relaxed` (no search quirk, which only narrows start positions) and counts its depth
-in `Texts.depth`. A `$`-only (`nl`) condition gets no prefilter: its exact text has no word assertion and serves only
-haystacks that end with `\n`. (2) One `engine::Prefilter` serves both tiers: the existing usefulness rule
-(`relaxed_anchored || !is_match("")`); a build failure or a useless prefilter means *no* prefilter, never an error.
-(3) The tier-1 prefilter is built on the first haystack that needs the exact engine (eagerly, without failing, when
-the exact fallback itself is built eagerly), wrapped in `\A(?:…)\z` on the fullmatch engines, and rejects before
-`re.search`, `re.match`, `re.fullmatch` and `search_bytes` reach `fancy-regex`. (4) Its lazy-DFA cache is capped at
-256 KiB per pattern per thread: with the crate default 2 MiB, B12u's process RSS rises 25.5 → 30.8 MiB locally
-(median of 30 interleaved runs), above the 28.61 MiB hard budget; with 256 KiB it is 27.1 MiB (max 28.0). Tier 2's
-prefilter keeps 2 MiB (ADR-079). (5) The Cond `word` bit with a generated Unicode table (P01 part 3) is rejected: no
-gain on top of the prefilter, +1.9 MiB RSS, and it drifts with UCD versions.
-**Rationale.** Relaxed ⊇ exact is the invariant tier 2 already relies on: every relaxed substitution only adds
-matches, at every span, so it holds for search, for a match at position 0 and inside `\A(?:…)\z`. The verifier's
-differential (513 696 compiled rows byte-identical with and without the prefilter, 2.66 M direct superset checks
-without a violation) and the new property tests (`relaxed_is_a_superset` against the exact text, now including the
-fullmatch form; `tier1_prefilter_keeps_every_answer` across the four match calls) found no difference. Measured on
-the B12u fixture: backtracking-engine runs 20 000 → 1 060 per run; snp's own user CPU −19 % (getrusage, user+sys
-−11 %); execve, clone3 and statx counts unchanged (430 / 1 807 / 38 116).
-**Consequences.** A haystack the prefilter rejects is "not matched", CPython's answer, where it used to be a
-backtracking-limit error or seconds of work; haystacks it admits still get the exact engine, so the backtrack limit
-and the D-SEC-10 error remain for them. D-SEC-10's rationale now reads "the tier-1 exact fallback is prefiltered"; no
-new divergence. The 256 KiB cap re-tunes against CI's B12u RSS once batch C halves the classifier threads (P17).
-### ADR-097 — Stash re-verification by stat stamps
-
-*Amends ADR-067 (the second `diff-index` digest before the checkout); decides the stat-based re-verification ADR-084
-deferred.*
-
-**Context.** ADR-067 closes the autosave window its fsyncs open with a second full `git diff-index --binary` whose
-blake3 digest must equal the streamed patch's. On the B8 scenario (a 10 MB unstaged change) that second diff is the
-largest single cost of the run: about 268 ms of the local light-tracer timeline, on the critical path, and blake3 is
-32.7% of snp's own CPU. It is the only scenario where snp is slower than pre-commit. ADR-084 deferred a stat-based
-re-verification because it must stamp every path the diff could include (an autosave of a clean file is what the
-second diff catches) and keep git's racy-timestamp protection. `git apply --numstat`, which lists the checkout's
-files (ADR-093), also ran between the verification and the checkout, reopening the window (C4).
-**Decision.** (1) The paths are listed (`git apply --numstat -z --whitespace=nowarn <patch>`, git's own parser,
-still the only authority for the checkout list) right after the patch is durable and again after every rewrite; the
-verification follows and is the last read of the worktree before the checkout. Its outcome wins: a listing error is
-reported only once the patch is verified. (2) `M0` is `max(ctime, mtime)` of the held lock file, read with `fstat`
-right after this run wrote its token, before the first `diff-index` starts, with the wall and monotonic clocks at
-that moment. There is no `M0` for a nested run, on Windows, when the token could not be written, or with
-`SNP_STASH_REVERIFY=diff` (the escape hatch, like `SNP_DIFF_MODE=git`). (3) The verification is a stamp pass when all
-of these hold, else the ADR-067 loop: Linux (macOS falls back until APFS and HFS+ are shown to bump ctime on every
-rename); work tree and git dir on `stat_oracle_safe` filesystems, the work tree on the lock's device; the wall clock
-not before `M0` and within 100 ms of the monotonic clock's progress since `M0` (taken before and after the pass);
-`git diff-index --name-only -z --ignore-submodules <tree> --` succeeds and lists only files of the patch (option
-(a): an autosave of a file outside the patch makes git list it, which falls back, so D-DATA-13's guarantee stands and
-git's racy check covers every tracked file; it costs one spawn, an index stat walk); every path the listing names is
-a regular file or symlink on the lock's device with `max(ctime, mtime) < M0`, strictly, with no margin (a write after
-the lock carries a stamp of at least `M0`, also with coarse or truncated timestamps; a racy margin would disable the
-path whenever the previous restore wrote the file just before the run); every directory between such a path and the
-work-tree root passes the same test (an older inode swapped in by a rename of an ancestor); `$GIT_DIR/config`,
-`config.worktree`, the common config and both `info/attributes` pass it when present. A missing file, `ENOTDIR`, any
-error or any doubt falls back. (4) The fallback compares the second `diff-index` byte for byte, and in total length,
-with the durable patch read back through a new handle, keeping the 3 rewrites and `KEPT_CHANGING`; blake3 leaves the
-stash (the first pass no longer hashes). (5) The stat-stamp path is not modelled on the `DiffOracle` (which decides
-whether a hook changed files, with a racy margin and content hashes); it has its own argument above. Option (b),
-dropping the name-only query and accepting that a rollback (`rollback_paths`) or `stage_fixed` could then lose a
-clean-file autosave made during the window, is rejected.
-**Rationale.** A file whose change stamps are all older than the lock has not changed since before the first
-`diff-index` started, so the durable patch is still what git would print; the kernel bumps ctime on every write,
-truncate, chmod, link change and (on the allowed Linux filesystems) rename, and the user cannot set it. The only
-files the patch does not cover are covered by git itself.
-**Residual risks.** A write through a shared mapping that was already dirty before `M0` reaches the file without a new
-stamp; a single `write(2)` that straddles `M0` can leave a stamp just below `M0` with bytes written after it; an
-untracked `.gitattributes` or a global or system git config created or changed during the window is not stamped (it
-could change the diff's conversion, which the restore then reports as a conflict; nothing is lost); a filesystem that
-does not bump ctime on rename (hence the macOS fallback). Each needs a concurrent writer inside a window of a few
-milliseconds to tens of milliseconds.
-**Consequences.** B8 runs one content `diff-index` and one name-only `diff-index` instead of two content ones (the exec
-count is unchanged), and snp's own CPU drops by the blake3 share. `KEPT_CHANGING`, every message and the git argv of
-every other call are unchanged. ARCHITECTURE S3 and §4.2 step 6, D-DATA-13 and WBS WP-23 state it.
----
 
 ### ADR-102 — Native-hook facts: `NativeHook::facts`, the PchFacts prefetch, the case-conflict repository index
 
@@ -1981,6 +1981,7 @@ other packages and makes "only hooks take files" a property of the API.
 158,253; snp's own maxrss at 4-CPU affinity 24.2 → 17.7 MiB (getrusage, median of 10). B5: peak 10.2 → 7.3 MB,
 blocks 185,963 → 127,179. The harness's process-tree RSS stays near git's own ~20 MiB floor. Serial work drops by a few ms on B4
 (not gate-visible). `snp_proc::spawn` gains two public functions (catalogued in `crates/snp-proc/tests/api.rs`).
+
 ### ADR-104 — Run pipeline step 6: the architecture text, the warm-path baseline, F and G first, the config beside discovery
 
 *Amends ADR-047, ADR-084(6) and ARCHITECTURE §3.1 rows 3, 6, 10, 15 and 16, §3.7 item 5, the §12.1 spawn model and the
@@ -2048,6 +2049,48 @@ pre-commit does. Warm runs keep the baseline elision. B3 and B9 start 7 git proc
 and G replace A and the after-hook `git diff`). A small tree with one hook spends more instructions in total (F, G
 and the stat pass against A and one `git diff`; +10% on a 100-file fixture), with one spawn fewer on the critical
 path.
+
+### ADR-105 — Hook script template v2: the hook directory without `dirname`
+
+*Amends ADR-048 (the template of ARCHITECTURE §9.7 and 11 §A.6).*
+
+**Context.** Every hook run starts with the installed script's
+`HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"`: a command substitution forks a subshell, which forks and
+execs `dirname`. Under dash that child costs one fork, one execve and 82–127 syscalls (strace), about a tenth of the
+processes of B9 (23). The directory can be had from parameter expansion, which every POSIX shell evaluates in
+process. The `# ID:` line names the template, so a new template needs a new ID, and snp 2.0.x binaries compare the
+whole file against their own ID only (`contains`, `hookscripts.rs`): with the old ID gone they would classify a v2
+script as the Python pre-commit script its compat ID names, then report a false doctor error, drop a custom
+`--config` on `doctor --fix` and print a misleading `run` hint.
+**Decision.** (1) The template's `HERE` block becomes
+`case $0 in */*) HERE=${0%/*} ;; *) HERE=. ;; esac`, `case $HERE in *[!/]*) ;; *) HERE=/ ;; esac` and
+`HERE="$(CDPATH= cd -- "$HERE" && pwd)"`: one subshell, no exec. (2) `SNP_SCRIPT_ID` becomes
+`405bd8559925d194c1d22af6ef66282e` = md5(`snp hook script template v2`); the v1 ID moves into `SNP_PRIOR_IDS` and
+stays in the template as an extra `# snp 2.0 compat ID:` line, after the pre-commit and prek ones, so snp 2.0.x
+still sees its own script, while this and later binaries match the current ID first. (3) A script under the stable
+header `# File generated by snp: https://github.com/grok-rs/snp` with a `# ID: ` line this binary does not know (a
+later template; neither a pre-commit nor the prek ID) and one of pre-commit's compat IDs classifies as
+`Snp { stale: true }`, never `PreCommit`. The header without a pre-commit compat ID decides nothing (K5): pre-commit
+4.7.0's `is_our_script` does not match such a file, so `install` still moves it to `.legacy` and `uninstall` keeps
+it; with the compat ID, `install` and `uninstall` overwrite or remove it as they would a `PreCommit` script. (4) Existing v1 installs are reported by `doctor`
+as "an older snp hook script" (Warn, fixable) and rewritten by `install` and `doctor --fix`, which keep their options.
+(5) Accepted: a `$0` with no `/` but with `\` separators (a user running the script by a Windows path with only
+backslashes) gives `HERE=.`, the working directory; git always builds `<hooks dir>/<name>` with a `/`, also under a
+backslash `core.hooksPath`, so no hook git runs is affected. No `$OSTYPE` branch is added.
+**Rationale.** `${0%/*}` is `dirname` for every `$0` that names a file below a directory: a trailing `/` or `//` left
+by a `core.hooksPath` with trailing slashes is folded by the logical `cd`, as `dirname` folds it; the only results
+that differ are those made of slashes alone, which the second `case` maps to `/`, as GNU and BSD `dirname` do
+(busybox keeps a leading `//`; the directory is the same). The matrix in `install::here_matches_the_dirname_line`
+checks the `pwd` of both lines byte for byte over 18 `$0` shapes plus 4 root shapes, under sh, dash, bash, bash
+--posix, busybox sh and zsh as sh, from two working directories, with `CDPATH` unset and set;
+`hook_dir_matches_v1_under_git` checks the `--hook-dir` git delivers in 13 layouts (`.git/hooks`, a linked worktree, `--separate-git-dir`, relative and
+absolute `core.hooksPath` with `./`, `../`, trailing `/` and `//`, a symlinked directory). Keeping the old ID costs
+one comment line and avoids every misclassification in older binaries; forward classification by the header makes
+the same problem impossible for the next template.
+**Consequences.** Per hook run −1 fork and −1 execve (B9: 23 → 22 processes). The base-vs-head bench gate cannot show
+it, since `bench setup` installs the head's script for both builds; process counts and absolute B9 do. Hook scripts
+written by snp 2.0.0–2.0.1 keep working unchanged; `snp doctor` warns about them until `snp install` rewrites them.
+pre-commit's and prek's `is_our_script` still match the compat IDs, so the last installer still wins.
 
 ## Appendix A — Open questions of the research documents, resolved
 
