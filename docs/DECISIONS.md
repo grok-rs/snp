@@ -15,7 +15,8 @@ upstream refresh; ADR-093 the path-limited stash checkout; ADR-094 Rust 1.100; A
 ADR-096 the owner's decision to make the Verus proofs blocking;
 ADR-099 the paired bench gate; ADR-100 the B8 heap budget and counters;
 ADR-098 the tier-1 prefilter;
-ADR-097 the stash re-verification by stat stamps.
+ADR-097 the stash re-verification by stat stamps;
+ADR-101 classification CPU and fan-out sizing.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -1749,6 +1750,56 @@ rejected: it races the process's exit and would flap on B8 (9.2 to 10.5 MiB agai
 **Consequences.** B8's permanent soft warning leaves the PR comment; the nightly fails if the patch is ever buffered,
 and so does `perf-smoke` on every push. The PR comment shows count deltas next to the timings. The new ceilings are
 re-baselined from CI records (batch M), with breaches acknowledged through the budget and `[[known_miss]]` mechanism.
+### ADR-101 — Classification CPU and fan-out sizing: one UTF-8 check, core-capped matching, the root dirfd
+
+**Context.** The November 2026 performance analysis (P11, P17, P19) profiled where snp's own CPU goes in the
+classifier. `FileTable::match_view` validated each name's UTF-8 on every call, once per hook per file (195 of 3,158
+B12u samples). `JobPool::map_ordered` started min(limit, n) threads even when fewer permits existed, so with
+`SNP_JOBS` below the core count, or a cgroup quota, helpers were created only to wait on the condvar; the classifier
+matched patterns on min(permits, 8) threads, so `SNP_JOBS=32` (B12u) on a 4-CPU runner ran 8 matching threads, each
+with its own lazy-DFA caches, and every later hook of a 13-hook run (B6) started threads for memory-only work. The
+stat and head tiers built a `PathBuf` per file (`root.join(name)` reallocates once) and let the kernel walk the root
+prefix for each of B4's 50,000 `lstat`s. Rejected with reasons in the plan: a `ceil(files/256)` thread cap (serialises
+check-yaml on CI), binary-tree spawning (≤ 3 spawns saved) and a timing probe for the inline decision (thread counts
+become nondeterministic, +25% on large phases).
+**Decision.** (1) *Arena.* The table validates its arena once (`String::from_utf8`, zero-copy) and keeps it as
+`Text(String)` or `Bytes(Vec<u8>)` behind one `as_bytes()` accessor (Windows: `Text` only without `\`). On a `Text`
+arena `match_view` is `arena.get(span)`; a span that does not fall on character boundaries (`--files` arguments are
+joined without a separator, so `$'x\xc3' $'\xa9y.py'` forms a valid "é") takes the existing per-span check and lossy
+cell, never "". (2) *Fan-out.* `map_ordered` runs on ≤ min(limit, n, permits) threads. `pool_size_and_cores` returns
+the pool size plus a core count: the `available_parallelism` value `pool_size` already read, or `xargs::cpu_count()`
+when `-j`/`SNP_JOBS` is explicit, so the cgroup files are read once per run (B3 syscall ceiling).
+`JobPool::with_cores` carries it (`JobPool::new` uses the permit count) and the classifier's partitions run on ≤
+min(permits, `REGEX_THREADS` = 8, cores) threads. (3) *Deterministic inline.* `Classifier::for_hook` over 256 or more
+files runs on the calling thread when both patterns are trivial (`''`, `^$`) and every file they pass either needs no
+tags or has every tier the filter needs memoised; it runs as one partition through the new `JobPool::run_inline`
+(a permit, `Interrupted` once cancelled, a panic → `PanicException`), and the first error in file order still wins.
+Below 256 files the classifier runs inline without a permit, as before. (4) *Root dirfd.* On Linux the table opens
+the root once, lazily, with `O_PATH | O_DIRECTORY | O_CLOEXEC`; the stat tier is `statx(fd, name,
+AT_SYMLINK_NOFOLLOW, TYPE | MODE | UID | GID)` and the head tier `openat(fd, name, O_RDONLY | O_NONBLOCK | O_NOCTTY |
+O_CLOEXEC)` (retried on `EINTR`), errno converted with `io::Error::from_raw_os_error` so the `pyerr` texts are
+unchanged; the empty-name guard stays first. `Meta` is built from `st_mode`, `st_uid` and `st_gid` by a private
+function that mirrors file-identify's `PythonCompat` rule and is pinned to `Meta::from_metadata` by a differential
+test (regular files with each `x` bit, symlink, broken symlink, directory, FIFO, socket, `/dev/null`, root-owned
+files). If the root cannot be opened, or `statx` reports `ENOSYS`/`EPERM` or omits type or mode, the path-based
+`lstat`/`open` decides: a failure to open the root is never "gone" (K5). Other Unix platforms keep the path calls with
+one allocation of the final size (`PathBuf::with_capacity` + `push`, keeping `join`'s absolute-name rule), as does
+`snp_hooks::framework::in_root`; the descriptor is not threaded through `HookCx`; Windows is unchanged.
+**Rationale.** Every change keeps bytes, order, errors and argv: the arena only stops repeating a check; the caps
+remove threads that could not run; the inline path is the same code on one thread with the pool's permit,
+cancellation and panic handling; dirfd-relative names are what pre-commit's relative names in its working directory
+mean, which is also why a root plus name longer than `PATH_MAX` now counts as present, as in pre-commit. Measured on
+the bench fixtures (profiling build, own process, callgrind): B4 272.3 M → 216.7 M instructions (−20%), B12u
+2,293 M → 2,078 M (−9%), B6 250.1 M → 241.1 M (−4%); B4 allocations 313,849 → 213,831 (heaptrack), the same 50,067
+`statx` calls now dirfd-relative; at 4-CPU affinity B12u spawns 79 fewer threads and peaks about 1 MiB lower
+(23.2 → 22.2 MiB, mean of six), B6 36 fewer. Exec lists and output are identical on B3, B4, B5, B6 and B12u.
+**Consequences.** file-identify 0.5.x should expose the stat-to-meta function as `Meta::from_unix_stat(mode, uid,
+gid, policy)` sharing one implementation with `from_metadata`; until that release (and the `deps.lock` bump, which
+needs the bench gate's base-crate fix) snp-files keeps its private mirror and the differential test guards drift.
+The table holds one extra descriptor while it lives (one `open` and one `close` per run that needs the stat or head
+tier). The gain shrinks where trusted index modes apply; dirty trees, `--files` and runs where the trust gate fails
+keep it. No ADR is amended: ADR-084(6)'s "at most 8 threads" and ADR-065's pool size are unchanged, only bounded by
+the permits and cores.
 
 ### ADR-098 — The tier-1 exact fallback runs behind the relaxed prefilter
 

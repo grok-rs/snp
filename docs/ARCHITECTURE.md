@@ -1106,6 +1106,9 @@ pub mod pool {
     /// and invisible in output because partition contents always use pre-commit's `jobs`; then clamped to the fd budget
     /// max(1, (RLIMIT_NOFILE soft − 64) / 8) on Unix. The rlimit itself is never raised (children would inherit it).
     pub fn pool_size(explicit: Option<NonZeroUsize>, target: NonZeroUsize) -> NonZeroUsize;
+    /// ADR-101: `pool_size` plus the core cap of CPU-bound fan-outs (its `available_parallelism` value, else `cpu`).
+    pub fn pool_size_and_cores(explicit: Option<NonZeroUsize>, target: NonZeroUsize, cpu: NonZeroUsize)
+        -> (NonZeroUsize, NonZeroUsize);
     /// The global bound on concurrent child processes / native partitions (S7). Fair FIFO handout.
     /// Re-entrancy (ADR-070): permits are held only by process partitions and native partitions. A thread that already
     /// holds a permit (thread-local flag) runs nested `map_ordered` work inline and sequentially without acquiring
@@ -1114,10 +1117,14 @@ pub mod pool {
     #[derive(Debug)] pub struct JobPool { /* Mutex<usize> + Condvar + CancelToken */ }
     #[derive(Debug)] pub struct Permit<'a>(/* &'a JobPool */);   // releases on drop
     impl JobPool {
-        pub fn new(permits: NonZeroUsize, cancel: CancelToken) -> Arc<Self>;
+        pub fn new(permits: NonZeroUsize, cancel: CancelToken) -> Arc<Self>;  // cores = permits
+        pub fn with_cores(permits: NonZeroUsize, cores: NonZeroUsize, cancel: CancelToken) -> Arc<Self>; // ADR-101
         pub fn permits(&self) -> NonZeroUsize;
+        pub fn cores(&self) -> NonZeroUsize;
+        /// One partition on the calling thread: under a permit, Interrupted once cancelled, panics → PanicException.
+        pub fn run_inline<T, F: FnOnce() -> Result<T, Failure>>(&self, f: F) -> Result<T, Failure>;
         pub fn acquire(&self) -> Option<Permit<'_>>;          // None once cancelled (stop starting work)
-        /// Runs `f(0..n)` on ≤ min(limit, n) scoped threads (`Builder::spawn_scoped`, every handle joined), each call
+        /// Runs `f(0..n)` on ≤ min(limit, n, permits) scoped threads (`Builder::spawn_scoped`, every handle joined), each call
         /// holding a permit; results in index order. n == 1, or a caller that holds a permit, runs inline. A panicking
         /// call becomes Err(Failure::Exc(PanicException …)); a refused thread spawn becomes Err(Failure::from_io).
         pub fn map_ordered<T: Send, F: Fn(usize) -> Result<T, Failure> + Sync>(&self, limit: NonZeroUsize, n: usize, f: F)
@@ -2300,16 +2307,29 @@ parity). `Stage::ALL` source order drives help texts and argparse `choices`; sor
 
 ```
 FileTable
- ├─ arena: Vec<u8>                one allocation: the git -z stdout (or the joined CLI/stdin paths)
+ ├─ arena: Arena                  one allocation: the git -z stdout (or the joined CLI/stdin paths), its UTF-8 validated
+ │                                once (ADR-101): Text(String) when valid (and '\'-free on Windows), else Bytes(Vec<u8>);
+ │                                every reader goes through as_bytes()
  ├─ spans: Box<[(u32,u32)]>       git order (never sorted: diff.orderFile parity, 02 G.0 #8)
  ├─ git_modes: Option<Box<[u32]>> trusted index modes (git-mode fast path), 0 = unknown
+ ├─ root_fd (Linux): OnceLock<Option<OwnedFd>>  O_PATH|O_DIRECTORY|O_CLOEXEC root, opened on first need (ADR-101)
  ├─ tier columns, struct-of-arrays, each allocated on first need (Column<T> = OnceLock<Box<[OnceLock<T>]>>):
  │    name: Column<TagSet>                         tags_from_filename (48 B bitset)
  │    stat: Column<StatTier>                       Ok((FileKind, executable)) | Vanished      (one lstat)
  │    head: Column<Result<TagSet, Box<PyExc>>>     text/binary + shebang tags | Unreadable      (≤ 1 open + read)
- │    view: Column<Box<str>>                       lossy UTF-8, '\'→'/' on Windows (only when not ASCII/'/'-clean)
+ │    view: Column<Box<str>>                       lossy UTF-8, '\'→'/' on Windows (only for spans that are not
+ │                                                 a char-boundary slice of a Text arena and not clean UTF-8)
  └─ hooks receive Vec<FileId(u32)>; never cloned path strings; shuffle permutes u32 ids
 ```
+On a Text arena `match_view` is `arena.get(span)`; a span that splits a character (`--files` arguments are joined
+without a separator: `$'x\xc3' $'\xa9y.py'` forms a valid "é") falls back to the per-span check and the lossy cell.
+On Linux the stat tier is one `statx(root_fd, name, AT_SYMLINK_NOFOLLOW, TYPE|MODE|UID|GID)` and the head tier one
+`openat(root_fd, name, O_RDONLY|O_NONBLOCK|O_NOCTTY|O_CLOEXEC)`: no per-file `PathBuf`, and names resolve relative to
+the root as pre-commit's relative names resolve relative to its working directory (a root plus name over `PATH_MAX` is
+found). Errno values reach the same `pyerr` texts. When the root cannot be opened, or `statx` is unavailable or
+refused (`ENOSYS`/`EPERM`, a result without type and mode), the path-based `lstat`/`open` decides; a failure to open
+the root is never "gone" (K5). Other Unix platforms keep the path-based calls with one allocation of the final size;
+Windows is unchanged.
 `tags(id, n)` combines exactly the tiers `n` requires from their own cells, so a hook needing the head tier never sees
 a partial set cached by an earlier hook that needed only the name tier. A run touching only the name tier costs one
 48-byte cell per file (≈ 5 MB for 100 k files); `Unreadable` boxes its `PyExc`.
@@ -2489,6 +2509,15 @@ startup Env (captured once in main, minus __PYVENV_LAUNCHER__/PYTHONEXECUTABLE)
   permit holder that calls `map_ordered`/`FileTable::prefetch` again (meta hooks classify files) runs that work inline,
   so N = 1 (`PRE_COMMIT_NO_CONCURRENCY`) cannot deadlock (ADR-070; test: check-hooks-apply with
   `PRE_COMMIT_NO_CONCURRENCY=1`).
+* **Fan-out sizing (ADR-101):** `map_ordered` runs on ≤ min(limit, n, permits) threads (helpers beyond the permits
+  could only wait). The pool also carries a core count (`JobPool::with_cores`, from `pool_size_and_cores`: the
+  `available_parallelism` value `pool_size` read, or `py_cpu_count()` when `-j`/`SNP_JOBS` is explicit, so the
+  cgroup files are read once per run); the classifier's pattern matching runs on ≤ min(permits, `REGEX_THREADS` = 8,
+  cores) threads, so `SNP_JOBS=32` on a 4-CPU runner matches on 4 threads with 4 sets of lazy-DFA caches. A
+  `for_hook` whose patterns are both trivial (`''`, `^$`) and whose needed tiers are all memoised (a later hook with
+  the same type filters) is memory-only work: it runs on the calling thread as one partition through
+  `JobPool::run_inline` (a permit, cancellation, panics → `PanicException`). Below 256 files the classifier runs
+  inline as before. No timing decides a thread count, so thread counts are deterministic run to run.
 * Execution uses `std::thread::scope` with `Builder::spawn_scoped` (a refused thread is a `Failure`): the main thread
   owns the guard and the printer ordering; worker threads only spawn, wait on their reader channels and return results. A single-partition hook runs inline on the main thread (no thread hop). A
   panicking worker is joined as `Failure::Exc(PanicException …)`; the main thread still restores the stash.

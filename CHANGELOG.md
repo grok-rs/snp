@@ -41,6 +41,13 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   stash scenario roughly halves. Anything unsure (another filesystem, a file touched during the run, a clock step,
   macOS, Windows) runs the full re-verification as before, which now compares bytes instead of blake3 digests.
   `SNP_STASH_REVERIFY=diff` always runs it.
+- File classification uses less CPU (ADR-101): the file list's UTF-8 is checked once instead of per name and hook;
+  on Linux each file's `lstat` and content probe are relative to one descriptor of the repository root (`statx`,
+  `openat`) instead of a freshly built path (about 100,000 fewer allocations for 50,000 files); the classifier
+  matches patterns on no more threads than CPUs (`SNP_JOBS=32` on a 4-CPU runner uses 4), a hook runs no more
+  helper threads than the pool has permits, and a hook whose files are already classified does it on the calling
+  thread. Output, argv and errors are unchanged. A root plus file name longer than `PATH_MAX` is now found, as
+  pre-commit finds it through its relative path.
 
 - Benchmarks (developer tooling, no runtime change): pull requests and pushes measure the base commit's snp, built
   against its own `deps.lock` crates and toolchain and primed into its own stores, in interleaved ABBA rounds with the
