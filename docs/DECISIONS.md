@@ -2198,11 +2198,12 @@ omaps and pairs. They also check that the owned and copying paths give the same 
 exactly the single-occurrence slots and leaves every other slot as phase 2 built it, that nested shared collections
 leave no more values in the graph than phase 2 built, and that a forged single count is an error.
 `tests/memory_shared.rs` gates the dhat peak heap of the 500-level shared collection.
-**Consequences.** B10 (callgrind, fat-LTO profiling build): `construct` 33.6M → 28.8M instructions, 223,228 → 205,200
+**Consequences.** B10 (callgrind, fat-LTO profiling build): `construct` 33.6M → 28.7M instructions, 223,228 → 205,200
 heap blocks; heap peak 9.64 → 9.47 MB, with 86,031 → 64,979 live blocks at the peak. `gc` on 500 configs (B11) loses
 6,063 blocks. A document with aliases costs at most what it cost before: its shared nodes are copied at each
-occurrence and only its single-occurrence nodes move. Loaded values, errors and their order (the recursive-node and
-limit errors come from phase 2, which is unchanged) are the same.
+occurrence and only its single-occurrence nodes move. `validate-config` of the 500-level spine over 20,000 leaves
+(61 KB) peaks at 18.7 MB RSS, against 18.8 MB before this ADR and 1.1 GB with the rejected cache. Loaded values,
+errors and their order (the recursive-node and limit errors come from phase 2, which is unchanged) are the same.
 
 ### ADR-116 — cfgv and file-identify are workspace crates: snp-cfgv and snp-identify
 
