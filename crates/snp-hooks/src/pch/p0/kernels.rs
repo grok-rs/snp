@@ -4,7 +4,10 @@
 //!
 //! Owner: WP-26.
 
+use std::sync::LazyLock;
+
 use memchr::memchr_iter;
+use memchr::memmem::Finder;
 
 mod eof;
 pub use eof::{EofAction, end_of_file, end_of_file_bytes, end_of_file_run};
@@ -261,8 +264,21 @@ pub const PRIVATE_KEY_PATTERNS: [&[u8]; 10] = [
     b"BEGIN OpenVPN Static key V1",
 ];
 
+/// The text every pattern but `PuTTY-User-Key-File-2` (5, both epochs) and `BEGIN OpenVPN Static key V1` (9, epoch 2)
+/// holds: content without it holds no other pattern (see the test
+/// `private_key_patterns_hold_the_anchor_once_or_are_the_two_exceptions`).
+static ANCHOR: LazyLock<Finder<'static>> = LazyLock::new(|| Finder::new(b"PRIVATE KEY"));
+static PUTTY: LazyLock<Finder<'static>> = LazyLock::new(|| Finder::new(PRIVATE_KEY_PATTERNS[5]));
+static OPENVPN: LazyLock<Finder<'static>> = LazyLock::new(|| Finder::new(PRIVATE_KEY_PATTERNS[9]));
+
 /// `any(line in content for line in BLACKLIST)` for the epoch's pattern set.
+///
+/// Content without `PRIVATE KEY` (nearly every file) is searched for that anchor and the two patterns without it,
+/// with finders built once; content holding the anchor runs the full scan of every pattern.
 pub fn has_private_key(content: &[u8], epoch: u16) -> bool {
+    if ANCHOR.find(content).is_none() {
+        return PUTTY.find(content).is_some() || (epoch >= 2 && OPENVPN.find(content).is_some());
+    }
     let n = if epoch >= 2 { 10 } else { 8 };
     PRIVATE_KEY_PATTERNS
         .iter()
