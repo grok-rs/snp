@@ -3,14 +3,17 @@
 This script IMPORTS and RUNS Python identify, so point it at a copy of the
 identify sources you trust, and run it isolated:
 
-    python3 -I xtask/parity/gen_vectors.py \
+    python3 -I xtask/oracle/gen_identify_vectors.py \
         --identify /path/to/copy/of/identify-2.6.20 \
-        --out tests/data/identify-vectors.json
+        --out crates/snp-identify/tests/data/identify-vectors.json
+
+``cargo xtask identify-vectors`` runs it under the pre-commit 4.7.0 oracle interpreter
+(target/oracle/pc470-py312), whose site-packages hold the hash-locked identify 2.6.20.
 
 `--identify` is the directory that contains the `identify/` package and
 either `setup.cfg` (source checkout) or `identify-*.dist-info/` (unpacked
-wheel, e.g. from `xtask/fetch-identify.sh`), used for the version. The
-output is consumed by `tests/parity.rs`. Everything is deterministic (fixed
+wheel or installed copy, e.g. a venv's site-packages), used for the version.
+The output is consumed by snp-identify's `tests/parity.rs`. Everything is deterministic (fixed
 random seed).
 """
 from __future__ import annotations

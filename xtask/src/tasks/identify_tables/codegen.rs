@@ -5,11 +5,13 @@
 //! probing). The hash functions here must stay byte-for-byte identical to
 //! `src/table.rs`; the library's unit tests verify every generated key is
 //! found through its index.
+//!
+//! Owner: WP-00 (integration lead; ported from file-identify's xtask, ADR-116).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use crate::{BASE_TAGS, PyTable, Tables, all_tags};
+use super::{BASE_TAGS, PyTable, Tables, all_tags};
 
 const EMPTY: u16 = u16::MAX;
 const SEED_CANDIDATES: u64 = 4096;
@@ -43,10 +45,11 @@ fn build_index(keys: &[&str]) -> Result<Index, String> {
     if n >= usize::from(EMPTY) {
         return Err("too many keys for a u16 index".to_owned());
     }
-    let size = (n * 2).next_power_of_two().max(8);
+    // `n < 65535`, so `size <= 2**17` and `bits <= 17`.
+    let size = n.saturating_mul(2).next_power_of_two().max(8);
     let bits = size.trailing_zeros();
-    let shift = 64 - bits;
-    let mask = size - 1;
+    let shift = 64_u32.saturating_sub(bits);
+    let mask = size.saturating_sub(1);
     let min_len = keys.iter().map(|k| k.len()).min().unwrap_or(0);
     let max_len = keys.iter().map(|k| k.len()).max().unwrap_or(0);
     let mut best: Option<(u32, u64, Index)> = None;
@@ -58,14 +61,14 @@ fn build_index(keys: &[&str]) -> Result<Index, String> {
             let mut s = slot(hash(seed, key.as_bytes()), shift);
             let mut probe = 0u32;
             while slots.get(s).is_some_and(|&v| v != EMPTY) {
-                s = (s + 1) & mask;
-                probe += 1;
+                s = s.wrapping_add(1) & mask;
+                probe = probe.saturating_add(1);
             }
             if let Some(v) = slots.get_mut(s) {
                 *v = u16::try_from(i).map_err(|_| "index overflow".to_owned())?;
             }
             max_probe = max_probe.max(probe);
-            total += u64::from(probe);
+            total = total.saturating_add(u64::from(probe));
         }
         let better = best
             .as_ref()
@@ -93,7 +96,7 @@ fn build_index(keys: &[&str]) -> Result<Index, String> {
 }
 
 fn render_index(out: &mut String, idx: &Index, indent: &str) {
-    let _ = writeln!(
+    writeln!(
         out,
         "{indent}StrIndex::new({seed}, {shift}, {max_probe}, ({min_len}, {max_len}), &[",
         seed = idx.seed,
@@ -101,12 +104,15 @@ fn render_index(out: &mut String, idx: &Index, indent: &str) {
         max_probe = idx.max_probe,
         min_len = idx.min_len,
         max_len = idx.max_len
-    );
-    for chunk in idx.slots.chunks(16) {
+    )
+    .unwrap_or_default();
+    #[expect(clippy::disallowed_methods, reason = "a constant non-zero chunk size")]
+    let lines = idx.slots.chunks(16);
+    for chunk in lines {
         let line: Vec<String> = chunk.iter().map(u16::to_string).collect();
-        let _ = writeln!(out, "{indent}    {},", line.join(", "));
+        writeln!(out, "{indent}    {},", line.join(", ")).unwrap_or_default();
     }
-    let _ = write!(out, "{indent}])");
+    write!(out, "{indent}])").unwrap_or_default();
 }
 
 fn rust_str(s: &str) -> String {
@@ -124,12 +130,12 @@ fn render_table(
     let idx = build_index(&keys)?;
     out.push('\n');
     for line in doc.lines() {
-        let _ = writeln!(out, "/// {line}");
+        writeln!(out, "/// {line}").unwrap_or_default();
     }
-    let _ = writeln!(out, "pub static {name}: TagTable = TagTable::new(");
-    let _ = writeln!(out, "    &[");
+    writeln!(out, "pub static {name}: TagTable = TagTable::new(").unwrap_or_default();
+    writeln!(out, "    &[").unwrap_or_default();
     for (key, tags) in table {
-        let mut tag_ids: Vec<usize> = Vec::with_capacity(tags.len());
+        let mut tag_ids: Vec<usize> = Vec::new();
         for t in tags {
             tag_ids.push(
                 *ids.get(t.as_str())
@@ -139,18 +145,19 @@ fn render_table(
         tag_ids.sort_unstable();
         let id_list: Vec<String> = tag_ids.iter().map(usize::to_string).collect();
         let names: Vec<&str> = tags.iter().map(String::as_str).collect();
-        let _ = writeln!(
+        writeln!(
             out,
             "        ({}, TagSet::from_ids(&[{}])), // {}",
             rust_str(key),
             id_list.join(", "),
             names.join(", ")
-        );
+        )
+        .unwrap_or_default();
     }
-    let _ = writeln!(out, "    ],");
+    writeln!(out, "    ],").unwrap_or_default();
     render_index(out, &idx, "    ");
-    let _ = writeln!(out, ",");
-    let _ = writeln!(out, ");");
+    writeln!(out, ",").unwrap_or_default();
+    writeln!(out, ");").unwrap_or_default();
     Ok(())
 }
 
@@ -163,8 +170,7 @@ fn base_tag_doc(tag: &str) -> &'static str {
 }
 
 /// Render the complete `src/generated.rs`.
-#[allow(clippy::too_many_lines)]
-pub fn render(t: &Tables) -> Result<String, String> {
+pub(crate) fn render(t: &Tables) -> Result<String, String> {
     let all = all_tags(t);
     let ids: BTreeMap<&str, usize> = all
         .iter()
@@ -182,49 +188,54 @@ pub fn render(t: &Tables) -> Result<String, String> {
     let v = &t.version;
 
     let mut out = String::new();
-    let _ = writeln!(
+    writeln!(
         out,
-        "// @generated by `cargo xtask gen-identify` from Python identify {v}."
-    );
-    let _ = writeln!(out, "// DO NOT EDIT. Regenerate with:");
-    let _ = writeln!(
+        "// @generated by `cargo xtask identify-tables` from Python identify {v}."
+    )
+    .unwrap_or_default();
+    writeln!(out, "// DO NOT EDIT. Regenerate with:").unwrap_or_default();
+    writeln!(
         out,
-        "//     cargo xtask gen-identify --src <identify-{v}>/identify"
-    );
-    let _ = writeln!(
+        "//     cargo xtask identify-tables   (identify {v} of the pc470-py312 oracle)"
+    )
+    .unwrap_or_default();
+    writeln!(
         out,
         "// identify/extensions.py and identify/interpreters.py are parsed as data"
-    );
-    let _ = writeln!(
+    )
+    .unwrap_or_default();
+    writeln!(
         out,
-        "// (xtask/src/pyliteral.rs); no Python code is executed."
-    );
+        "// (xtask/src/tasks/identify_tables/pyliteral.rs); no Python code is executed."
+    )
+    .unwrap_or_default();
     out.push('\n');
     out.push_str("use crate::table::{StrIndex, TagTable};\n");
     out.push_str("use crate::tags::{Tag, TagSet};\n");
     out.push('\n');
     out.push_str("/// Version of the Python [identify](https://github.com/pre-commit/identify)\n");
     out.push_str("/// release the tables in this crate were generated from.\n");
-    let _ = writeln!(out, "pub const IDENTIFY_VERSION: &str = {};", rust_str(v));
+    writeln!(out, "pub const IDENTIFY_VERSION: &str = {};", rust_str(v)).unwrap_or_default();
     out.push('\n');
     out.push_str("/// Number of tags known to identify (`len(identify.ALL_TAGS)`).\n");
-    let _ = writeln!(out, "pub const TAG_COUNT: usize = {};", all.len());
+    writeln!(out, "pub const TAG_COUNT: usize = {};", all.len()).unwrap_or_default();
     out.push('\n');
     out.push_str("/// Number of `u64` words in a [`TagSet`] bitset.\n");
-    let _ = writeln!(out, "pub(crate) const WORDS: usize = {words};");
+    writeln!(out, "pub(crate) const WORDS: usize = {words};").unwrap_or_default();
     out.push('\n');
     out.push_str("/// Length in bytes of the longest extension key.\n");
-    let _ = writeln!(
+    writeln!(
         out,
         "pub(crate) const MAX_EXTENSION_LEN: usize = {max_ext};"
-    );
+    )
+    .unwrap_or_default();
     out.push('\n');
     out.push_str("/// Every tag known to identify (`identify.ALL_TAGS`), sorted by name.\n");
     out.push_str("///\n");
     out.push_str("/// A tag's position in this array is its [`Tag::id`].\n");
     out.push_str("pub static ALL_TAGS: [&str; TAG_COUNT] = [\n");
     for (i, tag) in all.iter().enumerate() {
-        let _ = writeln!(out, "    {}, // {i}", rust_str(tag));
+        writeln!(out, "    {}, // {i}", rust_str(tag)).unwrap_or_default();
     }
     out.push_str("];\n");
     out.push('\n');
@@ -244,12 +255,13 @@ pub fn render(t: &Tables) -> Result<String, String> {
         if n > 0 {
             out.push('\n');
         }
-        let _ = writeln!(out, "    /// `{tag}`: {}.", base_tag_doc(tag));
-        let _ = writeln!(
+        writeln!(out, "    /// `{tag}`: {}.", base_tag_doc(tag)).unwrap_or_default();
+        writeln!(
             out,
-            "    pub const {}: Tag = Tag::from_id_const({id});",
+            "    pub const {}: Self = Self::from_id_const({id});",
             tag.to_ascii_uppercase().replace('-', "_")
-        );
+        )
+        .unwrap_or_default();
     }
     out.push_str("}\n");
 
@@ -288,7 +300,7 @@ pub fn render(t: &Tables) -> Result<String, String> {
 }
 
 /// Recover the tables from a previously generated file (for drift reports).
-pub fn parse_back(src: &str) -> BTreeMap<String, PyTable> {
+pub(crate) fn parse_back(src: &str) -> BTreeMap<String, PyTable> {
     let mut out: BTreeMap<String, PyTable> = BTreeMap::new();
     let mut current: Option<String> = None;
     for line in src.lines() {

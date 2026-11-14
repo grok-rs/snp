@@ -14,19 +14,23 @@
 //! Anything else is rejected with an error that names the offending line, so
 //! an upstream change that introduces new syntax makes the generator fail
 //! loudly instead of silently producing wrong tables.
+//!
+//! Owner: WP-00 (integration lead; ported from file-identify's xtask, ADR-116).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use crate::workspace;
+
 /// A Python value produced by the evaluator.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Value {
+pub(crate) enum Value {
     /// `'text'`
     Str(String),
     /// `{'a', 'b'}`
     Set(BTreeSet<String>),
     /// `{'k': v, …}` in source order (Python dicts preserve insertion order).
-    Dict(Vec<(String, Value)>),
+    Dict(Vec<(String, Self)>),
 }
 
 impl Value {
@@ -41,21 +45,21 @@ impl Value {
 
 /// An evaluation error with the 1-based source line it refers to.
 #[derive(Debug)]
-pub struct Error {
+pub(crate) struct EvalError {
     line: usize,
     message: String,
 }
 
-impl fmt::Display for Error {
+impl fmt::Display for EvalError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "line {}: {}", self.line, self.message)
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for EvalError {}
 
-fn err<T>(line: usize, message: impl Into<String>) -> Result<T, Error> {
-    Err(Error {
+fn err<T>(line: usize, message: impl Into<String>) -> Result<T, EvalError> {
+    Err(EvalError {
         line,
         message: message.into(),
     })
@@ -75,7 +79,7 @@ struct Token {
     line: usize,
 }
 
-fn tokenize(src: &str) -> Result<Vec<Token>, Error> {
+fn tokenize(src: &str) -> Result<Vec<Token>, EvalError> {
     let mut out = Vec::new();
     let mut chars = src.chars().peekable();
     let mut line = 1usize;
@@ -89,7 +93,7 @@ fn tokenize(src: &str) -> Result<Vec<Token>, Error> {
                         line,
                     });
                 }
-                line += 1;
+                line = line.saturating_add(1);
             }
             ' ' | '\t' | '\r' | '\x0c' => {}
             '#' => {
@@ -99,7 +103,7 @@ fn tokenize(src: &str) -> Result<Vec<Token>, Error> {
             }
             '\\' => return err(line, "explicit line continuations are not supported"),
             '{' | '[' | '(' => {
-                depth += 1;
+                depth = depth.saturating_add(1);
                 out.push(Token {
                     tok: Tok::Punct(c),
                     line,
@@ -120,7 +124,7 @@ fn tokenize(src: &str) -> Result<Vec<Token>, Error> {
                 line,
             }),
             '\'' | '"' => {
-                let s = lex_string(&mut chars, c, false, &mut line)?;
+                let s = lex_string(&mut chars, c, false, line)?;
                 out.push(Token {
                     tok: Tok::Str(s),
                     line,
@@ -150,7 +154,7 @@ fn tokenize(src: &str) -> Result<Vec<Token>, Error> {
                     }
                     chars.next();
                     let raw = name.chars().any(|p| matches!(p, 'r' | 'R'));
-                    let s = lex_string(&mut chars, q, raw, &mut line)?;
+                    let s = lex_string(&mut chars, q, raw, line)?;
                     out.push(Token {
                         tok: Tok::Str(s),
                         line,
@@ -175,41 +179,44 @@ fn tokenize(src: &str) -> Result<Vec<Token>, Error> {
     Ok(out)
 }
 
-#[allow(clippy::many_single_char_names)]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "the escape decoder's locals mirror the Python lexer (c, e, n, v, d, s)"
+)]
 fn lex_string(
     chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
     quote: char,
     raw: bool,
-    line: &mut usize,
-) -> Result<String, Error> {
+    line: usize,
+) -> Result<String, EvalError> {
     let mut s = String::new();
     if chars.peek() == Some(&quote) {
         chars.next();
         if chars.peek() == Some(&quote) {
-            return err(*line, "triple-quoted strings are not supported");
+            return err(line, "triple-quoted strings are not supported");
         }
         return Ok(s);
     }
     loop {
         let Some(c) = chars.next() else {
-            return err(*line, "unterminated string literal");
+            return err(line, "unterminated string literal");
         };
         match c {
             c if c == quote => return Ok(s),
-            '\n' => return err(*line, "newline in string literal"),
+            '\n' => return err(line, "newline in string literal"),
             '\\' if raw => {
                 // Raw strings keep the backslash; it still escapes the quote.
                 s.push('\\');
                 if let Some(n) = chars.next() {
                     if n == '\n' {
-                        return err(*line, "line continuation in string literal");
+                        return err(line, "line continuation in string literal");
                     }
                     s.push(n);
                 }
             }
             '\\' => {
                 let Some(e) = chars.next() else {
-                    return err(*line, "unterminated escape");
+                    return err(line, "unterminated escape");
                 };
                 match e {
                     '\\' => s.push('\\'),
@@ -227,7 +234,8 @@ fn lex_string(
                         for _ in 0..2 {
                             match chars.peek().and_then(|d| d.to_digit(8)) {
                                 Some(d) => {
-                                    v = v * 8 + d;
+                                    // At most three octal digits: v < 512.
+                                    v = v.saturating_mul(8).saturating_add(d);
                                     chars.next();
                                 }
                                 None => break,
@@ -235,7 +243,7 @@ fn lex_string(
                         }
                         match char::from_u32(v) {
                             Some(ch) => s.push(ch),
-                            None => return err(*line, "invalid octal escape"),
+                            None => return err(line, "invalid octal escape"),
                         }
                     }
                     'x' | 'u' | 'U' => {
@@ -247,17 +255,18 @@ fn lex_string(
                         let mut v = 0u32;
                         for _ in 0..n {
                             match chars.next().and_then(|d| d.to_digit(16)) {
-                                Some(d) => v = v * 16 + d,
-                                None => return err(*line, format!("truncated \\{e} escape")),
+                                // At most eight hex digits: fits in u32.
+                                Some(d) => v = v.saturating_mul(16).saturating_add(d),
+                                None => return err(line, format!("truncated \\{e} escape")),
                             }
                         }
                         match char::from_u32(v) {
                             Some(ch) => s.push(ch),
-                            None => return err(*line, format!("invalid \\{e} escape")),
+                            None => return err(line, format!("invalid \\{e} escape")),
                         }
                     }
-                    '\n' => return err(*line, "line continuation in string literal"),
-                    'N' => return err(*line, "\\N{…} escapes are not supported"),
+                    '\n' => return err(line, "line continuation in string literal"),
+                    'N' => return err(line, "\\N{…} escapes are not supported"),
                     other => {
                         // Python keeps unknown escapes verbatim.
                         s.push('\\');
@@ -290,20 +299,20 @@ impl Parser<'_> {
 
     fn bump(&mut self) -> Option<Tok> {
         let t = self.toks.get(self.pos).map(|t| t.tok.clone());
-        self.pos += 1;
+        self.pos = self.pos.saturating_add(1);
         t
     }
 
     fn eat(&mut self, c: char) -> bool {
         if self.peek() == Some(&Tok::Punct(c)) {
-            self.pos += 1;
+            self.pos = self.pos.saturating_add(1);
             true
         } else {
             false
         }
     }
 
-    fn expect(&mut self, c: char) -> Result<(), Error> {
+    fn expect(&mut self, c: char) -> Result<(), EvalError> {
         if self.eat(c) {
             Ok(())
         } else {
@@ -314,7 +323,7 @@ impl Parser<'_> {
         }
     }
 
-    fn expr(&mut self) -> Result<Value, Error> {
+    fn expr(&mut self) -> Result<Value, EvalError> {
         let mut left = self.atom()?;
         while self.eat('|') {
             let line = self.line();
@@ -339,14 +348,14 @@ impl Parser<'_> {
         Ok(left)
     }
 
-    fn atom(&mut self) -> Result<Value, Error> {
+    fn atom(&mut self) -> Result<Value, EvalError> {
         let line = self.line();
         match self.bump() {
             Some(Tok::Str(s)) => {
                 let mut s = s;
                 while let Some(Tok::Str(more)) = self.peek() {
                     s.push_str(more);
-                    self.pos += 1;
+                    self.pos = self.pos.saturating_add(1);
                 }
                 Ok(Value::Str(s))
             }
@@ -393,7 +402,7 @@ impl Parser<'_> {
         }
     }
 
-    fn brace(&mut self, line: usize) -> Result<Value, Error> {
+    fn brace(&mut self, line: usize) -> Result<Value, EvalError> {
         if self.eat('}') {
             return Ok(Value::Dict(Vec::new()));
         }
@@ -414,9 +423,10 @@ impl Parser<'_> {
                 };
                 let v = self.expr()?;
                 if let Some(slot) = items.iter_mut().find(|(ek, _)| *ek == k) {
-                    eprintln!(
-                        "warning: line {kline}: duplicate dict key {k:?}; last value wins (Python semantics)"
-                    );
+                    workspace::say(&format!(
+                        "identify-tables: warning: line {kline}: duplicate dict key {k:?}; last value wins \
+                         (Python semantics)"
+                    ));
                     slot.1 = v;
                 } else {
                     items.push((k, v));
@@ -465,7 +475,7 @@ impl Parser<'_> {
 /// Evaluate a module made only of imports and literal assignments.
 ///
 /// Returns every assigned name with its value.
-pub fn eval_module(src: &str) -> Result<BTreeMap<String, Value>, Error> {
+pub(crate) fn eval_module(src: &str) -> Result<BTreeMap<String, Value>, EvalError> {
     let toks = tokenize(src)?;
     let mut env: BTreeMap<String, Value> = BTreeMap::new();
     let mut start = 0usize;
@@ -474,9 +484,9 @@ pub fn eval_module(src: &str) -> Result<BTreeMap<String, Value>, Error> {
             .iter()
             .skip(start)
             .position(|t| t.tok == Tok::Newline)
-            .map_or(toks.len(), |p| start + p);
+            .map_or(toks.len(), |p| start.saturating_add(p));
         let stmt = toks.get(start..end).unwrap_or_default();
-        start = end + 1;
+        start = end.saturating_add(1);
         let Some(first) = stmt.first() else { continue };
         match (&first.tok, stmt.get(1).map(|t| &t.tok)) {
             (Tok::Name(kw), _) if kw == "from" || kw == "import" => {}

@@ -8,6 +8,7 @@ use std::ffi::{OsStr, OsString};
 mod bench;
 mod catalog_index;
 mod catalog_status;
+mod cfgv_vectors;
 mod check_dag;
 mod check_unsafe;
 mod cli_goldens;
@@ -16,6 +17,8 @@ mod difftest;
 mod divergence_book;
 mod docs;
 mod gen_pch_data;
+mod identify_tables;
+mod identify_vectors;
 mod lint_guards;
 mod oracle;
 mod pch_gates;
@@ -58,6 +61,11 @@ pub(crate) const TASKS: &[Task] = &[
         run: catalog_status::run,
     },
     Task {
+        name: "cfgv-vectors",
+        owner: "WP-00",
+        run: cfgv_vectors::run,
+    },
+    Task {
         name: "check-dag",
         owner: "WP-00",
         run: check_dag::run,
@@ -96,6 +104,16 @@ pub(crate) const TASKS: &[Task] = &[
         name: "gen-pch-data",
         owner: "WP-17",
         run: gen_pch_data::run,
+    },
+    Task {
+        name: "identify-tables",
+        owner: "WP-00",
+        run: identify_tables::run,
+    },
+    Task {
+        name: "identify-vectors",
+        owner: "WP-00",
+        run: identify_vectors::run,
     },
     Task {
         name: "lint-guards",

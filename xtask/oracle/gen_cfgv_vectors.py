@@ -1,8 +1,9 @@
-"""Generate the Python-parity test vectors in ``tests/vectors/``.
+"""Generate snp-cfgv's Python-parity test vectors in ``crates/snp-cfgv/tests/vectors/``.
 
-Usage::
+Run by ``cargo xtask cfgv-vectors`` under the pre-commit 4.7.0 oracle interpreter
+(target/oracle/pc470-py312: CPython 3.12.3 with cfgv 3.5.0) as::
 
-    python3.12 -I scripts/gen_parity_vectors.py CFGV_DIR OUT_DIR
+    python -I xtask/oracle/gen_cfgv_vectors.py CFGV_DIR OUT_DIR
 
 ``CFGV_DIR`` is a directory containing an unmodified copy of Python cfgv's
 ``cfgv.py`` (3.5.0); it is the only non-stdlib module imported. The script
