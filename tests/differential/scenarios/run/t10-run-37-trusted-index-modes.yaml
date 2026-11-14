@@ -1,0 +1,66 @@
+name: run/t10-run-37-trusted-index-modes
+description: >
+  `run --all-files` on the trees where ADR-106's trusted index modes apply, or must not (COMPATIBILITY §6.2): a clean
+  tree with a symlink, a gitlink, an executable and an empty file; a tracked file under an unsearchable directory
+  (`git diff` reports the EACCES on stderr only); assume-unchanged and skip-worktree entries whose files were
+  deleted (the diff stays empty); an intent-to-add entry; a FIFO and a 0644 socket in place of empty tracked files
+  (the diff stays clean, the empty blob is never trusted); an extensionless 0o654 shebang script under a `[python]`
+  filter (the executable bit is never taken from the index); and an unmerged entry. Every hook must get exactly the
+  files pre-commit gives it.
+covers: [T10-RUN-37, T10-RUN-13]
+requires: {os: [linux, macos], not_root: true, tools: [python3]}
+work:
+  files:
+    a.py: "print(1)\n"
+    b.txt: "b\n"
+    run.sh: "#!/bin/sh\necho\n"
+    empty.txt: ""
+    ff.txt: ""
+    so.txt: ""
+    tool: "#!/usr/bin/env python3\nprint(2)\n"
+    sub2/c.py: "print(3)\n"
+    gone-a.py: "print(4)\n"
+    gone-s.py: "print(5)\n"
+    conflict.txt: "base\n"
+  exec: [run.sh]
+  symlinks: {link: b.txt}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: files, name: files, entry: echo, language: system, verbose: true}
+        -   {id: links, name: links, entry: echo, language: system, types: [symlink], verbose: true}
+        -   {id: dirs, name: dirs, entry: echo, language: system, types: [directory], verbose: true}
+        -   {id: py, name: py, entry: echo, language: system, types: [python], verbose: true}
+  commit: [.pre-commit-config.yaml, a.py, b.txt, run.sh, empty.txt, ff.txt, so.txt, tool, sub2/c.py, gone-a.py, gone-s.py, conflict.txt, link]
+  setup:
+    - shell: mkdir sub && git update-index --add --cacheinfo 160000,78981922613b2afb6025042ff6bd878ac1994e85,sub && git commit -q --no-verify -m gitlink
+steps:
+  # a clean tree: the trust gate holds
+  - tool: [run, --all-files]
+  # an unsearchable directory: not a clean diff, and lexists drops the file
+  - shell: 'chmod 000 sub2; "$PRE_COMMIT" run --all-files; rc=$?; chmod 755 sub2; exit $rc'
+  # flagged entries whose files were deleted
+  - shell: git update-index --assume-unchanged gone-a.py && rm gone-a.py && git update-index --skip-worktree gone-s.py && rm gone-s.py
+  - tool: [run, --all-files]
+  - shell: git update-index --no-assume-unchanged gone-a.py && git update-index --no-skip-worktree gone-s.py && git checkout -- gone-a.py gone-s.py
+  # an intent-to-add entry
+  - shell: printf 'print(6)\n' > new.py && git add -N new.py
+  - tool: [run, --all-files]
+  - shell: git rm -q --cached new.py && rm new.py
+  # a FIFO and a 0644 socket in place of empty tracked files
+  - shell: >-
+      rm ff.txt so.txt && mkfifo ff.txt && chmod 644 ff.txt &&
+      python3 -c 'import os, socket; s = socket.socket(socket.AF_UNIX); s.bind("so.txt"); os.chmod("so.txt", 0o644)'
+  - tool: [run, --all-files]
+  - shell: rm ff.txt so.txt && git checkout -- ff.txt so.txt
+  # an extensionless 0o654 shebang script (staged as 100644: no owner x)
+  - shell: chmod 654 tool
+  - tool: [run, --all-files]
+  - shell: chmod 644 tool
+  # an unmerged entry
+  - shell: >-
+      git checkout -q -b other && printf 'other\n' > conflict.txt && git commit -q --no-verify -am other &&
+      git checkout -q - && printf 'mine\n' > conflict.txt && git commit -q --no-verify -am mine &&
+      { git merge -q other >/dev/null 2>&1 || true; }
+  - tool: [run, --all-files]
