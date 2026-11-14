@@ -200,11 +200,12 @@ mod tests {
         drop(std::fs::remove_dir_all(p));
     }
 
-    /// One random worktree or index change; returns its name.
-    fn mutate(rng: &mut Rng, root: &Path, env: &Env, as_root: bool) -> &'static str {
+    /// One random worktree or index change; returns its name. The fsmonitor change also sets the iteration's
+    /// environment, so later changes, the gate and the `lstat` reference all run under it.
+    fn mutate(rng: &mut Rng, root: &Path, env: &mut Env, as_root: bool) -> &'static str {
         let name = TRACKED[rng.below(TRACKED.len())];
         let p = root.join(name);
-        match rng.below(17) {
+        match rng.below(18) {
             0 => {
                 let mode = [0o644, 0o755, 0o654, 0o600, 0o000, 0o711, 0o744][rng.below(7)];
                 drop(std::fs::set_permissions(
@@ -310,6 +311,29 @@ mod tests {
                 std::fs::write(root.join("link"), b"b.txt").unwrap();
                 "core.symlinks=false"
             }
+            16 => {
+                // fsmonitor from the environment (`core.fsmonitor` unset: no configuration query sees it) with a
+                // hook that reports no change: `git diff` skips the `lstat` of fsmonitor-valid entries, so the
+                // removal stays out of the diff
+                let hook = root.join(".git").join("fsmonitor-none");
+                std::fs::write(
+                    &hook,
+                    "#!/bin/sh\nif test \"$1\" = 2; then printf 'last_update_token\\0'; fi\n",
+                )
+                .unwrap();
+                std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+                let patch = ["GIT_TEST_FSMONITOR", "GIT_FSMONITOR_TEST"]
+                    .into_iter()
+                    .fold(snp_core::env::EnvPatch::default(), |patch, k| {
+                        patch.set(k, hook.as_os_str())
+                    });
+                *env = env.patched(&patch);
+                // the first refresh writes the fsmonitor extension, the second marks the entries fsmonitor-valid
+                run(root, env, &["update-index", "-q", "--refresh"]);
+                run(root, env, &["update-index", "-q", "--refresh"]);
+                remove(&p);
+                "fsmonitor"
+            }
             _ => "none",
         }
     }
@@ -347,7 +371,8 @@ mod tests {
     /// and clean `git diff`, git's configuration) sets the trust, existence and every stat-, encoding- and
     /// shebang-tier outcome equal what `lstat` gives (the executable-bit tags excepted: they are never taken from a
     /// mode), over chmod, rm, mkfifo, sockets, an unsearchable directory, symlink swaps, file to directory,
-    /// skip-worktree, assume-unchanged, intent-to-add, `rm --cached`, touch, a leading symlink and untracked files.
+    /// skip-worktree, assume-unchanged, intent-to-add, `rm --cached`, touch, a leading symlink, untracked files,
+    /// `core.symlinks=false` and an fsmonitor turned on from the environment.
     /// The gate must both hold and fail often enough for the test to mean something.
     #[test]
     fn trusted_modes_equal_lstat_whenever_the_gate_passes() {
@@ -385,8 +410,9 @@ mod tests {
             let root: PathBuf = base.join(format!("r{it}"));
             template(&root, &env);
             let mut applied = Vec::new();
+            let mut env = env.clone();
             for _ in 0..rng.below(3) {
-                applied.push(mutate(&mut rng, &root, &env, as_root));
+                applied.push(mutate(&mut rng, &root, &mut env, as_root));
             }
             let exe = Arc::new(GitExe::resolve(&env, &root, None).unwrap());
             let backend = Arc::new(ProcBackend {

@@ -223,6 +223,71 @@ fn equivalence_extensionless_0o654_shebang_file() {
     }
 }
 
+/// An fsmonitor hook that reports no change (protocol 2: a token and no path; protocol 1: no path).
+const FSMONITOR_NONE: &str =
+    "#!/bin/sh\nif test \"$1\" = 2; then printf 'last_update_token\\0'; fi\n";
+
+/// git turns fsmonitor on from the environment when `core.fsmonitor` is unset (`GIT_TEST_FSMONITOR`, named
+/// `GIT_FSMONITOR_TEST` before git 2.20), which the configuration query cannot see. With a hook that reports no
+/// change, `git diff` skips the `lstat` of the fsmonitor-valid entries and stays empty and clean after a deletion;
+/// those entries are tagged `h` (`ls-files -f`) and the gate refuses on the variable, so the deleted file takes its
+/// `lstat` and is dropped, as pre-commit drops it.
+#[test]
+fn equivalence_fsmonitor_from_the_environment_then_deleted() {
+    let mut h = committed(&[("a.py", b"print(1)\n"), ("gone.py", b"print(2)\n")]);
+    let hook = h.base.join("fsmonitor-none");
+    std::fs::write(&hook, FSMONITOR_NONE).unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for k in ["GIT_TEST_FSMONITOR", "GIT_FSMONITOR_TEST"] {
+        h.env_set(k, hook.as_os_str());
+    }
+    // the first refresh writes the fsmonitor extension, the second marks the entries fsmonitor-valid
+    h.git(&["update-index", "-q", "--refresh"]);
+    h.git(&["update-index", "-q", "--refresh"]);
+    std::fs::remove_file(h.path("gone.py")).unwrap();
+    let [files, _, _, py] = lists(&h);
+    assert_eq!(files, v(&[".pre-commit-config.yaml", "a.py"]));
+    assert_eq!(py, v(&["a.py"]));
+}
+
+/// Under `core.symlinks=false` git checks a symlink out as a regular file holding its target and keeps comparing it
+/// as a symlink, so `git diff` stays empty and clean: the gate reads the setting and the entry takes its `lstat` (a
+/// file, as identify sees it). A gate that cannot ask git (the `git config` child fails to spawn: `EAGAIN`, `EMFILE`,
+/// `ENOMEM`) grants nothing either (K5), whatever the configuration says.
+#[test]
+fn equivalence_symlinks_false_and_a_gate_that_cannot_spawn() {
+    for spawn_fails in [false, true] {
+        let mut h = committed(&[("a.py", b"print(1)\n"), ("b.txt", b"b\n")]);
+        std::os::unix::fs::symlink("b.txt", h.path("link")).unwrap();
+        h.git(&["add", "link"]);
+        h.commit("link");
+        h.git(&["config", "core.symlinks", "false"]);
+        std::fs::remove_file(h.path("link")).unwrap();
+        h.write("link", b"b.txt");
+        assert!(h.git(&["diff"]).stdout.is_empty(), "git diff stays empty");
+        let rec = if spawn_fails {
+            Rec::spawn_failing(h.path(".hook-ran"), GATE, 11)
+        } else {
+            Rec::new(h.path(".hook-ran"), None)
+        };
+        let backend: Arc<dyn GitBackend> = Arc::<Rec>::clone(&rec);
+        h.backend = Some(backend);
+        let [files, links, _, py] = lists(&h);
+        assert_eq!(
+            files,
+            v(&[".pre-commit-config.yaml", "a.py", "b.txt", "link"]),
+            "spawn fails: {spawn_fails}"
+        );
+        assert!(links.is_empty(), "spawn fails: {spawn_fails}: {links:?}");
+        assert_eq!(py, v(&["a.py"]));
+        let before = before_hook(&rec.calls());
+        assert!(
+            before.iter().any(|a| a.starts_with(GATE)) && before.iter().any(|a| a == TAGGED),
+            "{before:?}"
+        );
+    }
+}
+
 /// One git call through the run's backend, and whether a hook had run by then.
 #[derive(Debug, Clone)]
 struct Call {
@@ -230,17 +295,28 @@ struct Call {
     after_hook: bool,
 }
 
-/// A Tool-role backend that records every call and can fail calls whose argv starts with `fail`.
+/// A Tool-role backend that records every call and can fail calls whose argv starts with `fail`: with exit 128, or
+/// with a spawn error of errno `spawn_errno` (the child never ran).
 #[derive(Debug)]
 struct Rec {
     inner: ProcBackend,
     marker: PathBuf,
     fail: Option<&'static str>,
+    spawn_errno: Option<i32>,
     calls: Mutex<Vec<Call>>,
 }
 
 impl Rec {
     fn new(marker: PathBuf, fail: Option<&'static str>) -> Arc<Self> {
+        Self::with(marker, fail, None)
+    }
+
+    /// Calls whose argv starts with `fail` fail to spawn with `errno`.
+    fn spawn_failing(marker: PathBuf, fail: &'static str, errno: i32) -> Arc<Self> {
+        Self::with(marker, Some(fail), Some(errno))
+    }
+
+    fn with(marker: PathBuf, fail: Option<&'static str>, spawn_errno: Option<i32>) -> Arc<Self> {
         Arc::new(Self {
             inner: ProcBackend {
                 cancel: CancelToken::new(),
@@ -248,7 +324,15 @@ impl Rec {
             },
             marker,
             fail,
+            spawn_errno,
             calls: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn spawn_error(&self, argv: &[OsString]) -> Option<SpawnError> {
+        self.spawn_errno.map(|errno| SpawnError {
+            program: argv.first().cloned().unwrap_or_default(),
+            io: io::Error::from_raw_os_error(errno),
         })
     }
 
@@ -291,7 +375,10 @@ impl GitBackend for Rec {
         group: Group,
     ) -> Result<Captured, SpawnError> {
         if self.note(argv) {
-            return Ok(Self::failed());
+            return match self.spawn_error(argv) {
+                Some(e) => Err(e),
+                None => Ok(Self::failed()),
+            };
         }
         self.inner.capture(argv, env, cwd, stdin, group)
     }
@@ -304,7 +391,10 @@ impl GitBackend for Rec {
         sink: &mut dyn io::Write,
     ) -> Result<(PyStatus, Vec<u8>), SpawnError> {
         if self.note(argv) {
-            return Ok((PyStatus(128), b"fatal: injected\n".to_vec()));
+            return match self.spawn_error(argv) {
+                Some(e) => Err(e),
+                None => Ok((PyStatus(128), b"fatal: injected\n".to_vec())),
+            };
         }
         self.inner.stream(argv, env, cwd, sink)
     }
@@ -316,7 +406,11 @@ impl GitBackend for Rec {
         cwd: &Path,
         stdin: Stdin,
     ) -> Result<PyStatus, SpawnError> {
-        self.note(argv);
+        if self.note(argv)
+            && let Some(e) = self.spawn_error(argv)
+        {
+            return Err(e);
+        }
         self.inner.inherit(argv, env, cwd, stdin)
     }
 }
