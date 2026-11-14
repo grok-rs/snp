@@ -10,9 +10,11 @@
 //! | Shape | git spawns | hook spawns | total |
 //! |---|---|---|---|
 //! | B1 `--version` | 0 | 0 | **0** |
-//! | B2 `run noop-01` (1 `always_run` hook, nothing staged) | 1 combined `rev-parse` + fan-out A, B, C + the stash's `write-tree` and `diff-index` + 1 `git diff` (no Stat mode below 3 process hooks) | 1 | **≤ 8** |
-//! | B3 `run` (10 such hooks) | 1 combined `rev-parse` + fan-out A, B, C, F, G (E skipped, P17) + `write-tree` + `diff-index` | 10 | **≤ 18** |
+//! | B2 `run noop-01` (1 `always_run` hook, nothing staged) | 1 combined `rev-parse` + F, G (F answers A), B, C + the stash's `write-tree` and `diff-index` (Stat mode from one hook on a small tree, ADR-104); with fewer than 3 CPUs A, B, C + 1 `git diff` | 1 | **≤ 8** |
+//! | B3 `run` (10 such hooks) | 1 combined `rev-parse` + F, G, B, C (E skipped, P17) + `write-tree` + `diff-index`; with fewer than 3 CPUs or a large tree A as well | 10 | **≤ 17** (≤ 18) |
 //! | B4 `run --all-files`, 1 hook with filenames, 2 000 files, `PRE_COMMIT_NO_CONCURRENCY=1` | 7 | exactly 1 (one partition) | **≤ 8** |
+//! | B9 `git commit --allow-empty` through the installed hook (noop10; pinned exactly on Linux) | B3's | 10 | **≤ 17** |
+//! | B12u `run --all-files`, 20 Unicode `files` patterns, 2 000 non-ASCII paths, `SNP_JOBS=32` | ≤ 7 | 20..=640 (≤ 32 partitions per hook) | — |
 //! | B6 13 pre-commit-hooks hooks, Tier A fast path, `--all-files` | 7 + ≤ 4 per-run pre-commit-hooks facts (`diff --staged --diff-filter=A`, `check-attr --stdin`, `ls-files`, `ls-files --stage`) + ≤ 2 slack | 0 (all native, no Python) | **≤ 13** |
 //!
 //! The stash's `write-tree` + `diff-index` are pre-commit's own calls (`_unstaged_changes_cleared`, 02 §7), outside
@@ -166,6 +168,22 @@ const fn windows_diff_spawns(hooks: usize) -> usize {
     if cfg!(windows) { hooks + 1 } else { 0 }
 }
 
+/// Whether the `git` on `PATH` is older than 2.31, the floor of the tested range the spawn budgets are stated for
+/// (bench/README.md "Spawn budgets"): older git takes fallback paths that spawn more git, so the new shape pins skip
+/// there instead of joining `packaging/ci/git-known-failures`.
+fn git_below_budget_range(env: &TestEnv) -> bool {
+    let out = env.git(env.root()).args(["--version"]).output();
+    let text = String::from_utf8_lossy(&out.stdout);
+    let ver: Vec<u32> = text
+        .trim()
+        .trim_start_matches("git version ")
+        .split('.')
+        .take(2)
+        .map(|c| c.parse().unwrap_or(0))
+        .collect();
+    ver.as_slice() < [2, 31].as_slice()
+}
+
 /// The fixed git cost of a warm run: one combined `rev-parse` and at most six overlapped fan-out queries.
 const WARM_RUN_GIT: usize = 1 + 6;
 
@@ -173,7 +191,13 @@ const WARM_RUN_GIT: usize = 1 + 6;
 /// executed: one combined `rev-parse`; fan-out A, B, C, plus F and G when the Stat mode applies (Unix, from three
 /// process hooks on, ARCHITECTURE §3.1 step 14); the stash's `write-tree` + `diff-index` (02 §7); one `git diff` per
 /// executed hook without the Stat mode (and on Windows the baseline as well, ADR-043).
-const fn stash_run_git(process_hooks: usize) -> usize {
+///
+/// On a `small` tree (at most 256 index entries) with three or more CPUs, F and G start first and F answers A, and
+/// the Stat mode applies from one process hook on (ADR-104): B, C, F and G, and no `git diff`.
+fn stash_run_git(process_hooks: usize, small: bool) -> usize {
+    if cfg!(unix) && small && snp_proc::xargs::cpu_count().get() >= 3 && process_hooks >= 1 {
+        return 1 + 4 + 2;
+    }
     let stat = cfg!(unix) && process_hooks >= 3;
     let fan_out = if stat { 5 } else { 3 };
     let diffs = if stat {
@@ -242,10 +266,11 @@ fn b2_one_noop_hook_within_8_spawns() {
     let env = TestEnv::new(bins());
     let repo = noop_repo(&env, "b2", &noop_config(10));
     let (out, log) = run_logged(&env, &repo, &["run", "noop-01"], &[]);
-    assert_bounds("B2", &out, &log, stash_run_git(1) + 1, 1);
+    assert_bounds("B2", &out, &log, stash_run_git(1, true) + 1, 1);
 }
 
-/// B3: ten `always_run` noop hooks, nothing staged: ≤ 18 spawns (8 git + 10 hooks, no `git diff`).
+/// B3: ten `always_run` noop hooks, nothing staged: ≤ 17 spawns (7 git + 10 hooks, no `git diff`; 18 with fewer
+/// than three CPUs).
 #[test]
 #[cfg_attr(
     not(feature = "testing"),
@@ -255,7 +280,7 @@ fn b3_ten_noop_hooks_within_18_spawns() {
     let env = TestEnv::new(bins());
     let repo = noop_repo(&env, "b3", &noop_config(10));
     let (out, log) = run_logged(&env, &repo, &["run"], &[]);
-    assert_bounds("B3", &out, &log, stash_run_git(10) + 10, 10);
+    assert_bounds("B3", &out, &log, stash_run_git(10, true) + 10, 10);
     // the hooks run in their own process groups only when isolation is asked for; `true` inherits
     assert!(
         log.spawns
@@ -284,7 +309,13 @@ fn b3_spawns_do_not_grow_with_tracked_files() {
     }
     let repo = b.stage_all().commit("init").build();
     let (out, log) = run_logged(&env, &repo, &["run"], &[]);
-    assert_bounds("B3 (2k files)", &out, &log, stash_run_git(10) + 10, 10);
+    assert_bounds(
+        "B3 (2k files)",
+        &out,
+        &log,
+        stash_run_git(10, false) + 10,
+        10,
+    );
 }
 
 /// B4 shape: `run --all-files`, one hook with filenames over 2 000 files and one job: exactly one partition, so one
@@ -409,6 +440,129 @@ fn b6_shape_fast_path_within_13_spawns() {
         0,
         "B6 materialised a repository in {}",
         store.display()
+    );
+}
+
+/// B9 shape pin (P15): `git commit --allow-empty` through the installed hook of a `noop` repository with ten hooks.
+/// hook-impl reuses its own discovery (one combined `rev-parse`, ADR-084) and runs the same pipeline as B3, so on
+/// Linux the git count is exactly B3's and every hook spawns once; elsewhere the B3 bounds apply.
+#[test]
+#[cfg_attr(
+    not(feature = "testing"),
+    ignore = "needs a `--features testing` build (spawn log)"
+)]
+fn b9_hook_impl_shape_is_pinned() {
+    let env = TestEnv::new(bins());
+    if git_below_budget_range(&env) {
+        eprintln!("skipped: the B9 pin is stated for git >= 2.31");
+        return;
+    }
+    let repo = noop_repo(&env, "b9", &noop_config(10));
+    let installed = env.snp(&repo).args(["install"]).output();
+    assert_eq!(installed.code, 0, "{installed:?}");
+    let commit = |log: Option<&Path>| {
+        let mut cmd = env
+            .git(&repo)
+            .args(["commit", "-q", "--allow-empty", "-m", "b9"]);
+        if let Some(log) = log {
+            cmd = cmd.env("SNP_TEST_SPAWN_LOG", log);
+        }
+        cmd.output()
+    };
+    let _warm_up = commit(None);
+    let log_path = env.root().join("spawns-b9.log");
+    let out = commit(Some(&log_path));
+    let log = SpawnLog::read(&log_path);
+    let git = stash_run_git(10, true);
+    assert_bounds("B9", &out, &log, git + 10, 10);
+    if cfg!(target_os = "linux") {
+        assert_eq!(log.git(), git, "B9 git spawns\n{}", log.dump());
+        assert_eq!(log.total(), git + 10, "B9 spawns\n{}", log.dump());
+    }
+}
+
+/// Twenty `files` patterns over non-ASCII paths: the B12u configuration's shape (`unicode20`), scaled down.
+const UNICODE_PATTERNS: [&str; 20] = [
+    "^données/",
+    "^日本語/",
+    "^Ελληνικά/",
+    "^кириллица/",
+    "é",
+    "ü",
+    "ß",
+    "ñ",
+    "ç",
+    "ø",
+    "語",
+    "λ",
+    "ж",
+    r"\.txt$",
+    r"\.md$",
+    "(?i)Ä",
+    "^[^/]+/[^/]+$",
+    "[àâäÄ]",
+    "[ёжз]",
+    "[αβγ]",
+];
+
+/// B12u shape pin (P15): `run --all-files` with twenty Unicode `files` patterns over 2 000 non-ASCII paths and
+/// `SNP_JOBS=32`. No stash, so only the warm-run git queries; each hook runs in at most 32 partitions (never once per
+/// file), and only `true` is spawned for the hooks.
+#[test]
+#[cfg_attr(
+    not(feature = "testing"),
+    ignore = "needs a `--features testing` build (spawn log)"
+)]
+fn b12u_shape_is_pinned() {
+    let env = TestEnv::new(bins());
+    if git_below_budget_range(&env) {
+        eprintln!("skipped: the B12u pin is stated for git >= 2.31");
+        return;
+    }
+    let mut config = String::from("repos:\n-   repo: local\n    hooks:\n");
+    for (i, pat) in UNICODE_PATTERNS.iter().enumerate() {
+        write!(
+            config,
+            "    -   id: u{i:02}\n        name: unicode {i:02}\n        entry: 'true'\n        \
+             language: system\n        files: '{pat}'\n"
+        )
+        .unwrap();
+    }
+    let dirs = ["données", "日本語", "Ελληνικά", "кириллица"];
+    let names = [
+        "éte", "über", "straße", "año", "garçon", "søster", "Äpfel", "ёж", "αβγ", "語",
+    ];
+    let mut b = env
+        .git_repo("b12u")
+        .file(".pre-commit-config.yaml", config.as_bytes());
+    for i in 0..2_000_usize {
+        let dir = dirs[i % dirs.len()];
+        let name = names[i % names.len()];
+        let ext = if i % 2 == 0 { "txt" } else { "md" };
+        b = b.file(&format!("{dir}/{name}-{i:04}.{ext}"), b"ligne\n");
+    }
+    let repo = b.stage_all().commit("init").build();
+    let (out, log) = run_logged(&env, &repo, &["run", "--all-files"], &[("SNP_JOBS", "32")]);
+    let max_hooks = UNICODE_PATTERNS.len() * 32;
+    assert_eq!(out.code, 0, "{out:?}");
+    assert!(
+        log.git() <= WARM_RUN_GIT + windows_diff_spawns(UNICODE_PATTERNS.len()),
+        "B12u git spawns\n{}",
+        log.dump()
+    );
+    assert!(
+        (UNICODE_PATTERNS.len()..=max_hooks).contains(&log.hooks()),
+        "B12u: {} hook spawns, expected 20..={max_hooks}\n{}",
+        log.hooks(),
+        log.dump()
+    );
+    assert!(
+        log.spawns
+            .iter()
+            .filter(|s| s.role == "hook")
+            .all(|s| s.exe == "true" || s.exe.eq_ignore_ascii_case("true.exe")),
+        "{}",
+        log.dump()
     );
 }
 

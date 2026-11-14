@@ -255,14 +255,15 @@ struct WorkItem<'j> {
     verdict: mpsc::Receiver<Verdict>,
 }
 
-/// Runs the need list (see the module docs).
+/// Runs the need list (see the module docs). `Ok(true)` when anything needed installing (ADR-078(3)'s warm-path
+/// test: an install, and any download it made, ran in this call).
 pub(crate) fn run(
     inst: &dyn EnvInstaller,
     all: &[Entry],
     printer: &Printer,
     installs: &Limiter,
     cancel: &CancelToken,
-) -> Result<(), Failure> {
+) -> Result<bool, Failure> {
     let mut need: Vec<&Entry> = Vec::new();
     let mut silent: Vec<bool> = Vec::new();
     for e in all {
@@ -277,7 +278,7 @@ pub(crate) fn run(
         }
     }
     if need.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     // Every repository lock, in canonical order, before any worker starts (see the module docs).
     let mut repos: Vec<RepoKey> = need
@@ -346,7 +347,7 @@ pub(crate) fn run(
             let _joined = h.join();
         }
         drop(locks);
-        result
+        result.map(|()| true)
     })
 }
 

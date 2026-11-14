@@ -512,3 +512,92 @@ fn checkout_paths_without_pathspec_from_file_chunks_literal_arguments() {
     }
     assert_eq!(std::fs::read(repo.join("keep")).unwrap(), b"local edit\n");
 }
+
+/// COMPATIBILITY §6.2 equivalence (ADR-104): the unmerged flag of `tracked_with_stages` (one `ls-files -s -z`) equals
+/// `has_unmerged` (`ls-files --unmerged`, pre-commit's `_has_unmerged_paths`) in every index shape a merge can leave.
+#[test]
+fn unmerged_from_ls_files_stage_matches_ls_files_unmerged() {
+    let sb = Sandbox::new();
+    let check = |repo: &std::path::Path, expected: bool, what: &str| {
+        let (git, _) = sb.discover(repo);
+        let (entries, derived) = git.tracked_with_stages().unwrap();
+        assert_eq!(
+            derived,
+            git.has_unmerged().unwrap(),
+            "{what}: derived vs asked"
+        );
+        assert_eq!(derived, expected, "{what}");
+        let modes = git.tracked_with_modes().unwrap();
+        assert_eq!(zl(&entries.paths), zl(&modes.paths), "{what}: same entries");
+        assert_eq!(entries.modes, modes.modes, "{what}: same modes");
+    };
+    // both sides modified (UU)
+    let uu = sb.merge_conflict("uu");
+    check(&uu, true, "both modified");
+    sb.resolve_conflict(&uu);
+    check(&uu, false, "resolved: stage 0 only");
+
+    // deleted by us (DU) and deleted by them (UD), in one merge
+    let du = sb.init("du");
+    sb.write(&du, "ours-deletes", b"base\n");
+    sb.write(&du, "theirs-deletes", b"base\n");
+    sb.git(&du, &["add", "."]);
+    sb.commit(&du, "base");
+    sb.git(&du, &["checkout", "-q", "-b", "other"]);
+    sb.write(&du, "ours-deletes", b"theirs\n");
+    sb.git(&du, &["rm", "-q", "theirs-deletes"]);
+    sb.commit(&du, "other");
+    sb.git(&du, &["checkout", "-q", "-"]);
+    sb.git(&du, &["rm", "-q", "ours-deletes"]);
+    sb.write(&du, "theirs-deletes", b"ours\n");
+    sb.commit(&du, "mine");
+    let _conflicted = sb.git_status(&du, &["merge", "-q", "other"]);
+    check(&du, true, "deleted by us and by them");
+    sb.git(&du, &["rm", "-q", "ours-deletes"]);
+    check(&du, true, "deleted by them only");
+    sb.git(&du, &["add", "theirs-deletes"]);
+    check(&du, false, "both resolved");
+
+    // a gitlink conflict (stages 1–3 of a submodule entry)
+    let gl = sb.init("gitlink");
+    sb.commit(&gl, "base");
+    let oid = sb.git_text(&gl, &["rev-parse", "HEAD"]);
+    let info = format!("160000 {oid} 1\tsub\n160000 {oid} 2\tsub\n160000 {oid} 3\tsub\n");
+    let args = [OsStr::new("update-index"), OsStr::new("--index-info")];
+    let mut child = sb
+        .command(&gl, &args)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), info.as_bytes()).unwrap();
+    assert!(child.wait().unwrap().success());
+    check(&gl, true, "gitlink conflict");
+
+    // an empty index, and no index file at all
+    let empty = sb.init("empty-index");
+    sb.git(&empty, &["read-tree", "--empty"]);
+    check(&empty, false, "empty index");
+    let missing = sb.init("no-index");
+    check(&missing, false, "missing index");
+}
+
+/// The index stamp changes when git rewrites the index, and only then (ADR-104).
+#[cfg(unix)]
+#[test]
+fn index_stamp_follows_index_rewrites() {
+    let sb = Sandbox::new();
+    let repo = sb.init("stamp");
+    let (git, info) = sb.discover(&repo);
+    assert_eq!(git.index_stamp(&info), None, "no index file yet");
+    sb.write(&repo, "a", b"a\n");
+    sb.git(&repo, &["add", "a"]);
+    sb.commit(&repo, "a");
+    let before = git.index_stamp(&info);
+    assert!(before.is_some());
+    assert_eq!(git.index_stamp(&info), before, "a read changes nothing");
+    let _listed = git.tracked_with_stages().unwrap();
+    assert_eq!(git.index_stamp(&info), before, "ls-files does not write");
+    sb.write(&repo, "b", b"b\n");
+    sb.git(&repo, &["add", "b"]);
+    assert_ne!(git.index_stamp(&info), before, "git add rewrote the index");
+}

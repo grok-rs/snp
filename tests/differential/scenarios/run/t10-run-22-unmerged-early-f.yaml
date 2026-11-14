@@ -1,0 +1,36 @@
+name: run/t10-run-22-unmerged-early-f
+description: >
+  The unmerged preflight with snp's speculation active (ADR-104): a small tree and three process hooks, so snp starts
+  `ls-files -s -z` before the config load and derives the unmerged check from it. Both sides modified, deleted by us
+  and deleted by them, resolved one by one; then a corrupt index, where snp falls back to `ls-files --unmerged`.
+covers: [T10-RUN-22, X13-GIT-09]
+work:
+  files: {both.txt: "base\n", ours-deletes.txt: "base\n", theirs-deletes.txt: "base\n"}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: one, name: one, entry: 'true', language: system, always_run: true, pass_filenames: false}
+        -   {id: two, name: two, entry: 'true', language: system, always_run: true, pass_filenames: false}
+        -   {id: three, name: three, entry: 'true', language: system, always_run: true, pass_filenames: false}
+  commit: [.pre-commit-config.yaml, both.txt, ours-deletes.txt, theirs-deletes.txt]
+  setup:
+    - git: [checkout, -q, -b, other]
+    - write: {both.txt: "other\n", ours-deletes.txt: "theirs\n"}
+    - git: [rm, -q, theirs-deletes.txt]
+    - commit: other
+    - git: [checkout, -q, "-"]
+    - write: {both.txt: "mine\n", theirs-deletes.txt: "ours\n"}
+    - git: [rm, -q, ours-deletes.txt]
+    - commit: mine
+    - shell: git merge -q other >/dev/null 2>&1 || true
+steps:
+  - tool: [run]
+  - shell: printf 'resolved\n' > both.txt && git add both.txt
+  - tool: [run]
+  - shell: git rm -q ours-deletes.txt
+  - tool: [run]
+  - shell: git add theirs-deletes.txt
+  - tool: [run]
+  - shell: printf 'DIRC\000\000\000\002\000\000\000\001garbage-garbage-garbage-garbage-garbage-garbage-garbage-garbage' > .git/index
+  - tool: [run]

@@ -20,8 +20,8 @@ mod api {
     use snp_git::pch_facts::{FactSet, PchFacts};
     use snp_git::{
         CloneMode, DiffFingerprint, DiffIndex, Git, GitBackend, GitCaps, GitExe, GitVersion,
-        IndexEntries, MergeState, ObjectId, OwnedRepo, PrePushNs, ProcBackend, RepoInfo, RevInfo,
-        ZList,
+        IndexEntries, IndexStamp, MergeState, ObjectId, OwnedRepo, PrePushNs, ProcBackend,
+        RepoInfo, RevInfo, ZList,
     };
     use snp_proc::spawn::{Captured, Group, PyStatus, Role, SpawnError, Stdin};
 
@@ -59,6 +59,7 @@ mod api {
         send_sync::<MergeState>();
         send_sync::<PrePushNs>();
         send_sync::<IndexEntries>();
+        send_sync::<IndexStamp>();
         send_sync::<Git>();
         send_sync::<OwnedRepo>();
         send_sync::<RevInfo>();
@@ -164,6 +165,8 @@ mod api {
         has::<fn(&Git) -> Result<IndexEntries, Failure>>(Git::tracked_with_modes);
         has::<fn(&Git) -> Result<IndexEntries, Failure>>(Git::staged_with_modes);
         has::<fn(&Git, &RepoInfo) -> Option<u32>>(Git::index_entry_count);
+        has::<fn(&Git) -> Result<(IndexEntries, bool), Failure>>(Git::tracked_with_stages);
+        has::<fn(&Git, &RepoInfo) -> Option<IndexStamp>>(Git::index_stamp);
         has::<fn(&Git, &OsStr, &OsStr) -> Result<ZList, Failure>>(Git::changed_files);
         has::<fn(&Git, &RepoInfo) -> MergeState>(Git::merge_state);
         has::<fn(&Git, &RepoInfo) -> Result<ZList, Failure>>(Git::conflicted_files);

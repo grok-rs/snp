@@ -6,7 +6,8 @@
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use snp_cli::ConfigArg;
 use snp_config::overlay::{self, Overlay};
@@ -17,6 +18,7 @@ use snp_core::output::{CollectWarnings, DiagSink, Level, Printer, WarnSink};
 use snp_git::{Git, RepoInfo};
 use snp_hooks::{Epoch, NativeSource};
 use snp_lang::Host;
+use snp_net::{Checksum, Fetch, NetError};
 use snp_repo::{FastPathPolicy, Preflight, ResolveCtx, StoreTools};
 use snp_store::{Store, StoreGuard};
 
@@ -266,6 +268,8 @@ pub(crate) struct ResolveParts<'a> {
     pub(crate) tools: StoreTools<'a>,
     /// G5.
     pub(crate) preflight: NativePreflight,
+    /// `RunCtx::fetch` behind a request counter, made on the first [`Self::ctx`].
+    fetch: OnceLock<Option<CountingFetch>>,
 }
 
 impl<'a> ResolveParts<'a> {
@@ -276,7 +280,16 @@ impl<'a> ResolveParts<'a> {
             store,
             tools: StoreTools(store),
             preflight: NativePreflight,
+            fetch: OnceLock::new(),
         }
+    }
+
+    /// The network requests (downloads and their manifests) made through the contexts of these parts so far.
+    pub(crate) fn downloads(&self) -> u64 {
+        self.fetch
+            .get()
+            .and_then(Option::as_ref)
+            .map_or(0, |f| f.requests.load(Ordering::Relaxed))
     }
 
     /// The `ResolveCtx` (§1.4.20) for `cfg`.
@@ -294,6 +307,11 @@ impl<'a> ResolveParts<'a> {
         overlay: Option<&'b Overlay>,
         cancel: &'b snp_core::cancel::CancelToken,
     ) -> ResolveCtx<'b> {
+        let fetch = self
+            .fetch
+            .get_or_init(|| cx.fetch.clone().map(CountingFetch::new))
+            .as_ref()
+            .map(|f| -> &dyn Fetch { f });
         ResolveCtx {
             cfg,
             store: self.store,
@@ -310,7 +328,7 @@ impl<'a> ResolveParts<'a> {
                 cwd: &self.root,
                 self_exe: &cx.self_exe,
                 probe: &cx.probe,
-                fetch: cx.fetch.as_deref(),
+                fetch,
                 tools: &self.tools,
                 runner: &*cx.runner,
                 printer,
@@ -324,6 +342,117 @@ impl<'a> ResolveParts<'a> {
             warn,
             brand: cx.brand,
         }
+    }
+}
+
+/// A [`Fetch`] that counts its requests: ADR-078(3)'s warm path ends at the first download (ADR-104).
+#[derive(Debug)]
+struct CountingFetch {
+    inner: Arc<dyn Fetch>,
+    requests: AtomicU64,
+}
+
+impl CountingFetch {
+    fn new(inner: Arc<dyn Fetch>) -> Self {
+        Self {
+            inner,
+            requests: AtomicU64::new(0),
+        }
+    }
+}
+
+impl Fetch for CountingFetch {
+    fn get_text(&self, url: &str, max: u64) -> Result<String, NetError> {
+        self.requests.fetch_add(1, Ordering::Relaxed);
+        self.inner.get_text(url, max)
+    }
+
+    fn get_verified(
+        &self,
+        url: &str,
+        sum: &Checksum,
+        dest_dir: &Path,
+        file_name: &str,
+        cancel: &snp_core::cancel::CancelToken,
+    ) -> Result<PathBuf, NetError> {
+        self.requests.fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .get_verified(url, sum, dest_dir, file_name, cancel)
+    }
+}
+
+/// A computation forked onto a scoped thread, or kept to run at join time when the thread could not start (one helper
+/// for every fork of the run pipeline, ADR-104). Each call site names its own policy: what a thread that never
+/// started does instead ([`Forked::join`] runs the same closure here, [`Forked::join_or_run`] another one) and what a
+/// panic becomes. Join before any `?`, return or print, so the inline fallback runs at the same point.
+pub(crate) enum Forked<'scope, T, F> {
+    /// Running on its own thread.
+    Spawned(std::thread::ScopedJoinHandle<'scope, T>),
+    /// The thread could not start: `F` runs at join time.
+    Inline(F),
+}
+
+/// Starts `f` on a thread of `s`. `f` is `Copy` (it captures only shared borrows), so the copy that stays behind can
+/// run inline when the thread cannot start.
+pub(crate) fn fork<'scope, 'env, T, F>(
+    s: &'scope std::thread::Scope<'scope, 'env>,
+    f: F,
+) -> Forked<'scope, T, F>
+where
+    F: FnOnce() -> T + Send + Copy + 'scope,
+    T: Send + 'scope,
+{
+    fork_with(s, f, |s, f| std::thread::Builder::new().spawn_scoped(s, f))
+}
+
+/// [`fork`] over a given spawner (the tests refuse threads through it).
+fn fork_with<'scope, 'env, T, F, S>(
+    s: &'scope std::thread::Scope<'scope, 'env>,
+    f: F,
+    spawn: S,
+) -> Forked<'scope, T, F>
+where
+    F: FnOnce() -> T + Send + Copy + 'scope,
+    T: Send + 'scope,
+    S: FnOnce(
+        &'scope std::thread::Scope<'scope, 'env>,
+        F,
+    ) -> std::io::Result<std::thread::ScopedJoinHandle<'scope, T>>,
+{
+    match spawn(s, f) {
+        Ok(h) => Forked::Spawned(h),
+        Err(_) => Forked::Inline(f),
+    }
+}
+
+impl<T, F: FnOnce() -> T> Forked<'_, T, F> {
+    /// The thread's value, `on_panic(payload)` when it panicked, or `f()` run here when it never started.
+    pub(crate) fn join(self, on_panic: impl FnOnce(Box<dyn std::any::Any + Send>) -> T) -> T {
+        match self {
+            Self::Spawned(h) => h.join().unwrap_or_else(on_panic),
+            Self::Inline(f) => f(),
+        }
+    }
+
+    /// As [`Self::join`], but a thread that never started runs `inline` instead of `f`.
+    pub(crate) fn join_or_run(
+        self,
+        inline: impl FnOnce() -> T,
+        on_panic: impl FnOnce(Box<dyn std::any::Any + Send>) -> T,
+    ) -> T {
+        match self {
+            Self::Spawned(h) => h.join().unwrap_or_else(on_panic),
+            Self::Inline(_) => inline(),
+        }
+    }
+}
+
+impl<T, F> std::fmt::Debug for Forked<'_, T, F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Spawned(_) => "Forked::Spawned",
+            Self::Inline(_) => "Forked::Inline",
+        })
     }
 }
 
@@ -451,6 +580,49 @@ mod tests {
             rebase_path(OsStr::new("/elsewhere/x"), cwd, root),
             *sep("../elsewhere/x")
         );
+    }
+
+    /// The fork helper's inline path: a thread that cannot start runs the closure (or the given fallback) at join
+    /// time.
+    #[test]
+    fn forked_runs_inline_when_the_thread_cannot_start() {
+        fn refuse<'scope, T, F>(
+            _: &'scope std::thread::Scope<'scope, '_>,
+            _: F,
+        ) -> std::io::Result<std::thread::ScopedJoinHandle<'scope, T>> {
+            Err(std::io::Error::other("refused"))
+        }
+        std::thread::scope(|s| {
+            let x = 41;
+            let plus = move || x + 1;
+            let f = fork_with(s, plus, refuse);
+            assert!(matches!(f, Forked::Inline(_)), "{f:?}");
+            assert_eq!(f.join(|_| 0), 42);
+            let g = fork_with(s, plus, refuse);
+            assert_eq!(g.join_or_run(|| 7, |_| 0), 7);
+        });
+    }
+
+    /// The fork helper's thread path: the value, or the call site's mapping of a panic.
+    #[test]
+    fn forked_maps_a_panic() {
+        std::thread::scope(|s| {
+            let ok = fork(s, || 5);
+            assert!(matches!(ok, Forked::Spawned(_)), "{ok:?}");
+            assert_eq!(ok.join(|_| 0), 5);
+            let boom = fork(s, || -> i32 { std::panic::panic_any("boom") });
+            let mapped = boom.join_or_run(
+                || 0,
+                |p| {
+                    if p.downcast_ref::<&str>() == Some(&"boom") {
+                        -1
+                    } else {
+                        -2
+                    }
+                },
+            );
+            assert_eq!(mapped, -1);
+        });
     }
 
     #[test]

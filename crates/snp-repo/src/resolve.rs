@@ -22,6 +22,7 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use snp_config::overlay::HookPatch;
 use snp_config::{
@@ -250,6 +251,9 @@ pub(crate) struct Resolution<'c, 'a> {
     pub(crate) plans: Vec<Option<RemotePlan>>,
     /// The background clones.
     pub(crate) prefetch: Option<&'c Prefetch>,
+    /// Bumped once per store entry this pass fills (a clone, a `clone --local` or the local template): the
+    /// resolver's [`crate::Resolve::store_work`] counter.
+    work: &'c AtomicU64,
     /// Whether `ensure_created` succeeded.
     created: bool,
     /// The hooks so far.
@@ -265,12 +269,14 @@ impl<'c, 'a> Resolution<'c, 'a> {
         policy: Policy,
         plans: Vec<Option<RemotePlan>>,
         prefetch: Option<&'c Prefetch>,
+        work: &'c AtomicU64,
     ) -> Self {
         Self {
             cx,
             policy,
             plans,
             prefetch,
+            work,
             created: false,
             out: Vec::new(),
             index: 0,
@@ -367,11 +373,13 @@ impl<'c, 'a> Resolution<'c, 'a> {
     ) -> Result<RepoHandle, Failure> {
         self.ensure_store()?;
         let cx = self.cx;
+        let work = self.work;
         let mut ran = false;
         let mut marked = false;
         let r = {
             let mut wrapped = |dest: &Path| -> Result<(), Failure> {
                 ran = true;
+                work.fetch_add(1, Ordering::Relaxed);
                 let new = !initialized(cx, a.marker, a.rev);
                 if new {
                     cx.printer.log(Level::Info, &messages::initializing(a.name));

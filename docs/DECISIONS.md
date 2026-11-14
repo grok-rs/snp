@@ -17,7 +17,8 @@ ADR-099 the paired bench gate; ADR-100 the B8 heap budget and counters;
 ADR-098 the tier-1 prefilter;
 ADR-097 the stash re-verification by stat stamps;
 ADR-101 classification CPU and fan-out sizing;
-ADR-102 native-hook facts; ADR-103 borrowed hook argv.
+ADR-102 native-hook facts; ADR-103 borrowed hook argv;
+ADR-104 the step-6 changes of the run pipeline.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -485,6 +486,8 @@ data-loss or security class).
 
 ### ADR-047 — Speculative config load
 
+*Status: Accepted; amended by ADR-104 (the "load again inside the stash" branch cannot happen: step 7 exits first). The amending ADR is normative where they differ.*
+
 **Decision.** During the read-only git fan-out the main thread reads and validates the config with warnings buffered;
 the result is used iff the "config unstaged" query returned rc 0 (the stash cannot change the file), and the buffered
 warnings are printed at pre-commit's position; otherwise the config is loaded again inside the stash. Adopted behind a
@@ -903,6 +906,8 @@ secrets survives a crash and no spill sweep is needed. (6) `SNP_LOG=trace` envir
 Amends ADR-034, ADR-036 and ADR-044.
 
 ### ADR-078 — DiffOracle soundness, round 2, and baseline timing
+
+*Status: Accepted; ADR-104 records how (3) is implemented (the code tracks clones, installs and downloads; the decision is unchanged).*
 
 **Decision.** (1) Stat mode only on an allow-list of filesystems with kernel-maintained ctime and ns mtime (ext2/3/4,
 xfs, btrfs, tmpfs, zfs, f2fs, bcachefs; apfs, hfs) — every FUSE (sshfs, rclone, virtiofs), 9p, overlay, vfat, exfat,
@@ -1976,6 +1981,73 @@ other packages and makes "only hooks take files" a property of the API.
 158,253; snp's own maxrss at 4-CPU affinity 24.2 → 17.7 MiB (getrusage, median of 10). B5: peak 10.2 → 7.3 MB,
 blocks 185,963 → 127,179. The harness's process-tree RSS stays near git's own ~20 MiB floor. Serial work drops by a few ms on B4
 (not gate-visible). `snp_proc::spawn` gains two public functions (catalogued in `crates/snp-proc/tests/api.rs`).
+### ADR-104 — Run pipeline step 6: the architecture text, the warm-path baseline, F and G first, the config beside discovery
+
+*Amends ADR-047, ADR-084(6) and ARCHITECTURE §3.1 rows 3, 6, 10, 15 and 16, §3.7 item 5, the §12.1 spawn model and the
+§1.4.13 listing; implements ADR-078(3) as written.*
+
+**Context.** The performance review of November 2026 (P25(c)) found the step-6 text out of date with the code. Row 6
+put the ITA query C in the parallel fan-out, but the stash asks it serially (B2's fourth git call). It also listed E
+and the staged-only `diff --staged --raw` there: E is taken at step 14, and that query has test callers only. Row 10
+kept ADR-047's "load again inside the stash" branch, which cannot happen: when B reports an unstaged config, step 7
+exits 1 before the stash. Row 15 called the classifier lazy, but it is built eagerly whenever a hook reads files. Row
+16 said "overlapped", but the baseline is elided or taken lazily. The review also found that ADR-078(3) and the code
+disagreed (C3). ADR-078(3) elides the baseline only when no clone, install or download ran since `diff-index`. The
+code elided it whenever resolution and installation took under 250 ms, so a fast install (a local `system` hook's
+virtual install, a quick `pip` from a warm cache) still had its baseline elided, and an IDE autosave during it was
+blamed on the first hook. Two step-6 costs remained on the critical path of B2, B3 and B9 (P09, P24): query A
+was a spawn of its own although F reads the same index, and the config load waited for `rev-parse`.
+**Decision.** (1) The architecture text describes the code: §3.1 rows 6, 10, 15 and 16, §3.7 item 5 and the §12.1
+spawn model are corrected as listed above. (2) The warm path is tracked in code, as ADR-078(3) says.
+`snp_repo::Resolve` gains `store_work() -> Option<u64>`, a counter of the store entries a resolution filled (a clone,
+an adopted prefetch, a `clone --local` variant, the local template) and of the install passes that installed
+anything. Its default is `None` ("not tracked"), which the pipeline treats as "something happened" (fail closed).
+Every resolution context of a command gets `RunCtx::fetch` behind a request counter, so a download counts wherever it
+happens. The baseline is elided only when both counters are unchanged from before `all_hooks` to after
+`install_envs`. The 250 ms bound stays as a second guard: a long wait, such as a contended store lock, is also a
+window in which an autosave must count as pre-existing. ADR-078 itself is not amended.
+(3) *F and G first on a small tree (P09).* For a stashing run where Stat mode is possible, F and G start at the top of
+step 6, before the config load, when the index has at most 256 entries, there are three or more CPUs, and both the
+worktree and the git directory pass `stat_oracle_safe`. `Git::tracked_with_stages` parses each record's stage
+strictly (one digit, 0–3) over every raw record, and a stage other than 0 answers query A: `git ls-files --unmerged`
+prints exactly those records (a COMPATIBILITY §6.2 equivalence test covers both sides modified, deleted by us,
+deleted by them, a gitlink conflict, a stage-0-only, an empty and a missing index). On any failure of F (spawn,
+exit status, parse, thread), A is asked at the same position, so the error is pre-commit's. Larger indexes keep
+ADR-084(6): F and G after the load, from three process-hook candidates. (4) *One hook.* With F and G from step 6, the
+Stat mode applies from one executed process hook when tracked entries plus their ancestor directories number at most
+256; above that one or two hooks keep Git mode, three or more use Stat mode as before. (5) *Stale F (C2).* F was read
+before the stash waits for the worktree lock, so another run's `git add` meanwhile could hide a hook's edit to the
+added paths from Stat mode (a latent fail-open of K5, present since ADR-084(6) for three or more candidates). The
+index file's stamp (dev, ino, size, mtime ns, ctime ns; `Git::index_stamp`) is taken before F and compared after
+`snp_stash::enter`; any change, or no stamp, drops early F and G, which step 14 asks again. The stash's own index
+rewrites (a checkout of unstaged files, a `write-tree` that refreshes the cache tree) also drop them; switching to
+ADR-097's `StashGuard::lock_contended()` once it lands will keep F in those cases (a marked follow-up in the code).
+(6) The side-query thread at step 14 is not started when it has nothing to ask, and `wants_staged` is decided once.
+(7) *The config beside discovery (P24, stage 1).* `run` (not `hook-impl`, which has discovered already, nor
+try-repo) discovers and loads the config at the invocation cwd on a thread while step 3's `rev-parse` runs:
+`snp_config::discover::discover` is already note-free (the note is `Discovery::note`, printed only by the real
+resolution), and warnings go to their own buffer. The load is kept iff `RepoInfo::root` equals the invocation cwd and
+step 4's resolved config path is byte-equal; otherwise the result and its warnings are dropped and step 6 loads as
+before. A kept config also decides F and G at the top of step 6: from three process-hook candidates always (ADR-084(6)
+took them then too, only after the load), never without one, and with one or two only on a small tree. No speculative
+git child is started (stage 2 of P24 waits for the interleaved bench gate of ADR-099 to show a gain beyond noise).
+(8) *One fork helper (P25(a/b)).* Every thread of the pipeline goes through `common::fork`, which takes a `Copy`
+closure by value and joins with a policy named at the call site: a thread that cannot start runs the same closure (or a
+named fallback) at join time, and a panic becomes what the site says (`PanicException`, `None`, or "ask query A").
+`body()` is split into step functions (`discover`, `Step6`, `Preflight`, `select`, `install_beside_side_queries`,
+`classifier`, `ExecLoop`) that only borrow the stash, so every exit still goes through the single restore of
+`run_pipeline` (ADR-066).
+**Rationale.** The text is what reviewers and later batches read; a stale "C runs in parallel" sends the next
+optimisation after the wrong call. Counting the work is exact where the timer was a guess, and both checks only ever
+choose pre-commit's position for the baseline, so neither can make output differ from pre-commit 4.7.0.
+Starting F and G before the load takes them off the critical path, and deriving A from F saves a spawn there. The
+size gates come from measurements: a 2 000-file, one-hook run spent 32% more instructions with F and G started early
+and Git mode kept, so a larger index waits for the config.
+**Consequences.** A run that installs or clones anything takes one extra `git diff` before its first hook, as
+pre-commit does. Warm runs keep the baseline elision. B3 and B9 start 7 git processes instead of 8; B2 stays at 7 (F
+and G replace A and the after-hook `git diff`). A small tree with one hook spends more instructions in total (F, G
+and the stat pass against A and one `git diff`; +10% on a 100-file fixture), with one spawn fewer on the critical
+path.
 
 ## Appendix A — Open questions of the research documents, resolved
 

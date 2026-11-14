@@ -72,6 +72,8 @@ pub(crate) struct Installs {
     pub(crate) delay: Mutex<Option<Duration>>,
     /// Append to this file during the install (an IDE autosave).
     pub(crate) touch: Mutex<Option<PathBuf>>,
+    /// The `store_work` counter: a call with a delay or a touch counts as an install.
+    pub(crate) work: std::sync::atomic::AtomicU64,
 }
 
 /// The fake `Resolve`.
@@ -236,10 +238,10 @@ impl Resolve for Fake {
         snp_core::sync::lock(&self.installs.calls)
             .push(hooks.iter().map(|h| h.def.id.to_string()).collect());
         let touch = snp_core::sync::lock(&self.installs.touch).clone();
-        if let Some(p) = touch {
+        if let Some(p) = &touch {
             std::fs::OpenOptions::new()
                 .append(true)
-                .open(&p)
+                .open(p)
                 .and_then(|mut f| f.write_all(b"autosave\n"))
                 .map_err(|e| Failure::from_io(&e, None, None))?;
         }
@@ -247,7 +249,16 @@ impl Resolve for Fake {
         if let Some(d) = delay {
             std::thread::sleep(d);
         }
+        if touch.is_some() || delay.is_some() {
+            self.installs
+                .work
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
         Ok(())
+    }
+
+    fn store_work(&self) -> Option<u64> {
+        Some(self.installs.work.load(std::sync::atomic::Ordering::SeqCst))
     }
 
     fn hook_env(&self, _h: &ResolvedHook, cx: &ResolveCtx<'_>) -> Result<Env, Failure> {

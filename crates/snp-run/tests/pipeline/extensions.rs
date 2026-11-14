@@ -557,6 +557,22 @@ fn baseline_after_a_slow_install_counts_preexisting_changes() {
     assert_eq!(o.stdout, line("pass", "Passed"));
 }
 
+/// ADR-078(3), ADR-104: the warm path ends at any install, however fast; the timer alone used to elide the baseline
+/// after a sub-250 ms install and blame its autosave on the hook.
+#[test]
+fn baseline_after_a_fast_install_counts_preexisting_changes() {
+    let h = H::new();
+    h.config(&local(&sys("p", "pass", "'true'", "")));
+    staged(&h, "a.txt", b"a\n");
+    *h.fake.installs.touch.lock().unwrap() = Some(h.path("a.txt"));
+    let o = h.run(args());
+    assert_eq!(
+        o.code, 0,
+        "an autosave during a fast install is not blamed on the hook: {o:?}"
+    );
+    assert_eq!(o.stdout, line("pass", "Passed"));
+}
+
 #[test]
 fn install_hooks_installs_every_hook() {
     let h = H::new();

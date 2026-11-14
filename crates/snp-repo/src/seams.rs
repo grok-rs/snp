@@ -40,6 +40,12 @@ pub trait Resolve: Send + Sync + Debug {
     /// across distinct prefixes (`InstallLimiter`), `[INFO] Installing environment for …` triplets in config order
     /// (incl. virtual ones).
     fn install_envs(&self, hooks: &[&ResolvedHook], cx: &ResolveCtx<'_>) -> Result<(), Failure>;
+    /// A counter of the clones, installs and downloads this resolver made (ADR-078(3), ADR-104): two equal readings
+    /// mean none happened in between. `None` (the default) means "not tracked": a caller that skips work when
+    /// nothing happened must then assume something did (fail closed).
+    fn store_work(&self) -> Option<u64> {
+        None
+    }
     /// The hook's environment; cached per `InstallKey`.
     fn hook_env(&self, h: &ResolvedHook, cx: &ResolveCtx<'_>) -> Result<Env, Failure>;
     /// The language's run plan for the hook.

@@ -74,6 +74,10 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   fresh store: the config was not tracked when the store did not exist yet, so a following gc removed its
   repositories (for example `3 repo(s) removed.` where pre-commit 4.7.0 prints `0 repo(s) removed.`). The config is
   now recorded as soon as the store is created.
+- A file an editor saves while `run` installs a hook environment (or clones a repository, or downloads a tool) is no
+  longer reported as modified by the first hook when the install took under 250 ms: the baseline `git diff` is taken
+  after any clone, install or download, as pre-commit does (ADR-078(3), ADR-104). Before, only the time spent
+  decided it.
 - The stash no longer loses a working-tree change that `git diff` cannot see: a line a clean filter hides (for
   example `filter.<name>.clean = grep -v SECRET`) or an edit in an `--assume-unchanged` file was overwritten whenever
   another file had an unstaged change, because the stash checked out the whole tree (pre-commit 4.7.0 does the same;

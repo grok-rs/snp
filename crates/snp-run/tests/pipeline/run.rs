@@ -1355,12 +1355,16 @@ fn git_spawns(log: &std::path::Path) -> Vec<String> {
 }
 
 /// ARCHITECTURE §12.1 B2/B3 shapes, warm second run: the git spawn count is an upper bound (an O(hooks) `git diff`
-/// or a duplicated query shows up here long before it shows up as a timing regression). The current count is 8 for
-/// B3: `rev-parse`, A `ls-files --unmerged`, B `diff --quiet <cfg>`, the stash's ITA query, `write-tree` and
-/// `diff-index`, F `ls-files -s -z`, G `config --list --show-origin -z`; B2 takes 6 + one `git diff` (no F/G).
+/// or a duplicated query shows up here long before it shows up as a timing regression). With three or more CPUs
+/// (ADR-104) both take 7: `rev-parse`, F `ls-files -s -z` (which also answers A), G `config --list --show-origin
+/// -z`, B `diff --quiet <cfg>`, the stash's ITA query, `write-tree` and `diff-index`, and no `git diff` (the Stat
+/// mode applies from one hook on a small tree). Below three CPUs: A instead of F/G, plus F/G after the load for B3
+/// (8) and one `git diff` for B2 (7).
 #[test]
 fn spawn_bounds_for_the_b2_b3_shapes() {
-    for (n, bound) in [(1_usize, 7_usize), (10, 8)] {
+    let hoist = snp_proc::xargs::cpu_count().get() >= 3;
+    let b3 = if hoist { 7 } else { 8 };
+    for (n, bound) in [(1_usize, 7_usize), (10, b3)] {
         let mut h = H::new();
         let log = logged_git(&mut h);
         let hooks: String = (1..=n)
@@ -1385,7 +1389,7 @@ fn spawn_bounds_for_the_b2_b3_shapes() {
             spawns.len(),
             spawns.join("\n")
         );
-        if n >= 3 {
+        if n >= 3 || hoist {
             assert!(
                 !spawns.iter().any(|s| s.starts_with("diff --no-ext-diff")),
                 "the stat oracle elides the per-hook `git diff`:\n{}",
@@ -1457,4 +1461,223 @@ fn hook_impl_discovers_the_repository_once() {
         .filter(|s| s.starts_with("rev-parse --show-cdup"))
         .count();
     assert_eq!(rev_parses, 1, "{}", spawns.join("\n"));
+}
+
+/// Three `always_run` noop hooks (Stat mode applies from three on).
+fn three_noops() -> String {
+    (1..=3)
+        .map(|i| {
+            sys(
+                &format!("noop-{i}"),
+                &format!("noop {i}"),
+                "'true'",
+                "always_run: true\npass_filenames: false",
+            )
+        })
+        .collect()
+}
+
+/// An unmerged index: both sides modified `f.txt`.
+fn conflicted(h: &H) {
+    h.write("f.txt", b"base\n");
+    h.git(&["add", "f.txt"]);
+    h.git(&["commit", "-qm", "base"]);
+    h.git(&["checkout", "-qb", "other"]);
+    h.write("f.txt", b"other\n");
+    h.git(&["commit", "-qam", "other"]);
+    h.git(&["checkout", "-q", "main"]);
+    h.write("f.txt", b"mine\n");
+    h.git(&["commit", "-qam", "mine"]);
+    let _conflict = h.git_any(&["merge", "-q", "other"]);
+}
+
+/// ADR-104: on a small index F (`ls-files -s -z`) starts before the config load and answers query A, so no
+/// `ls-files --unmerged` runs; the preflight output is the one of the asked query (`SNP_DIFF_MODE=git` turns the
+/// speculation off), for an unmerged index and after it is resolved.
+#[test]
+fn unmerged_preflight_from_early_f_matches_the_asked_query() {
+    for resolved in [false, true] {
+        let run = |mode: Option<&str>| {
+            let mut h = H::new();
+            h.config(&local(&three_noops()));
+            conflicted(&h);
+            if resolved {
+                h.write("f.txt", b"resolved\n");
+                h.git(&["add", "f.txt"]);
+            }
+            if let Some(m) = mode {
+                h.env_set("SNP_DIFF_MODE", m);
+            }
+            let log = logged_git(&mut h);
+            let o = h.run(args());
+            (o, git_spawns(&log))
+        };
+        let (spec, spec_log) = run(None);
+        let (asked, asked_log) = run(Some("git"));
+        assert_eq!(spec.code, i32::from(!resolved), "{spec:?}");
+        assert_eq!(
+            (spec.code, &spec.stdout, &spec.stderr),
+            (asked.code, &asked.stdout, &asked.stderr),
+            "resolved={resolved}"
+        );
+        assert!(
+            !spec_log.iter().any(|s| s == "ls-files --unmerged"),
+            "A is derived from F:\n{}",
+            spec_log.join("\n")
+        );
+        assert!(
+            asked_log.iter().any(|s| s == "ls-files --unmerged"),
+            "{}",
+            asked_log.join("\n")
+        );
+    }
+}
+
+/// ADR-104: when F fails (here an index whose header is sound but whose garbage entry `ls-files -s -z` prints in a
+/// shape the strict parser refuses), the preflight asks `git ls-files --unmerged` at the same position, so the
+/// outcome is the one of pre-commit's own query.
+#[test]
+fn a_failing_early_f_reports_the_unmerged_query_error() {
+    let run = |mode: Option<&str>| {
+        let mut h = H::new();
+        h.config(&local(&three_noops()));
+        // `DIRC`, version 2, one entry, then garbage
+        let mut index = b"DIRC\0\0\0\x02\0\0\0\x01".to_vec();
+        index.extend_from_slice(&[0xab; 64]);
+        std::fs::write(h.path(".git/index"), index).unwrap();
+        if let Some(m) = mode {
+            h.env_set("SNP_DIFF_MODE", m);
+        }
+        let log = logged_git(&mut h);
+        let o = h.run(args());
+        (o, git_spawns(&log))
+    };
+    let (spec, spec_log) = run(None);
+    let (asked, _) = run(Some("git"));
+    assert_ne!(spec.code, 0, "{spec:?}");
+    assert_eq!(
+        (spec.code, &spec.stdout, &spec.stderr),
+        (asked.code, &asked.stdout, &asked.stderr),
+        "{spec:?}"
+    );
+    assert_eq!(
+        format!("{:?}", spec.failure),
+        format!("{:?}", asked.failure)
+    );
+    let position = |s: &str| spec_log.iter().position(|l| l == s);
+    assert!(
+        position("ls-files -s -z").is_some() && position("ls-files --unmerged").is_some(),
+        "F failed, then A was asked:\n{}",
+        spec_log.join("\n")
+    );
+}
+
+/// ADR-104 (C2): F from step 6 is kept only while the index is unchanged; the stash's own checkout rewrites the
+/// index, so F is asked again after it, and a hook's edit is still seen.
+#[test]
+fn early_f_is_asked_again_after_an_index_rewrite() {
+    let mut h = H::new();
+    let hooks = format!(
+        "{}{}",
+        sys(
+            "touch",
+            "touch",
+            "sh -c 'echo more >> t.txt' --",
+            "always_run: true\npass_filenames: false",
+        ),
+        three_noops()
+    );
+    h.config(&local(&hooks));
+    h.write("t.txt", b"t\n");
+    h.git(&["add", "."]);
+    h.git(&["commit", "-qm", "t"]);
+    h.write("t.txt", b"t\nunstaged\n");
+    let log = logged_git(&mut h);
+    let o = h.run(args());
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(
+        o.stdout.contains("- files were modified by this hook"),
+        "{}",
+        o.stdout
+    );
+    let spawns = git_spawns(&log);
+    assert_eq!(
+        spawns.iter().filter(|s| *s == "ls-files -s -z").count(),
+        2,
+        "{}",
+        spawns.join("\n")
+    );
+    assert_eq!(h.read("t.txt"), "t\nunstaged\n", "restored");
+}
+
+/// ADR-104: one process hook uses the Stat mode on a small tree (no after-hook `git diff`) and Git mode on a larger
+/// one, where the stat pass would cost more than the diff.
+#[test]
+fn one_hook_uses_the_stat_mode_only_on_a_small_tree() {
+    for (files, stat) in [(3_usize, true), (300, false)] {
+        let mut h = H::new();
+        h.config(&local(&sys(
+            "noop",
+            "noop",
+            "'true'",
+            "always_run: true\npass_filenames: false",
+        )));
+        for i in 0..files {
+            h.write(&format!("d{}/f{i}.txt", i % 7), b"x\n");
+        }
+        h.git(&["add", "."]);
+        h.git(&["commit", "-qm", "files"]);
+        assert_eq!(h.run(args()).code, 0);
+        let log = logged_git(&mut h);
+        let o = h.run(args());
+        assert_eq!(o.code, 0, "{o:?}");
+        let spawns = git_spawns(&log);
+        let diffs = spawns
+            .iter()
+            .filter(|s| s.starts_with("diff --no-ext-diff"))
+            .count();
+        assert_eq!(
+            diffs,
+            usize::from(!stat),
+            "{files} files:\n{}",
+            spawns.join("\n")
+        );
+    }
+}
+
+/// ADR-104: the config read at the invocation cwd during discovery is used at the root and discarded from a
+/// subdirectory; either way its warning is printed once, at pre-commit's position, and the run is the same.
+#[test]
+fn speculative_config_warns_once_from_the_root_and_from_a_subdirectory() {
+    let run = |sub: bool| {
+        let mut h = H::new();
+        let hooks = format!(
+            "{}{}",
+            sys("warns", "warns", "'true'", "always_run: true\nextra: 1"),
+            three_noops()
+        );
+        h.config(&local(&hooks));
+        h.write("sub/x.txt", b"x\n");
+        h.git(&["add", "sub/x.txt"]);
+        h.commit("sub");
+        if sub {
+            h.cwd = Some(h.path("sub"));
+        }
+        h.run(args())
+    };
+    let (root, sub) = (run(false), run(true));
+    assert_eq!(root.code, 0, "{root:?}");
+    assert_eq!(
+        root.stdout
+            .matches("[WARNING] Unexpected key(s) present")
+            .count(),
+        1,
+        "{}",
+        root.stdout
+    );
+    assert!(root.stdout.starts_with("[WARNING]"), "{}", root.stdout);
+    assert_eq!(
+        (root.code, &root.stdout, &root.stderr),
+        (sub.code, &sub.stdout, &sub.stderr)
+    );
 }
