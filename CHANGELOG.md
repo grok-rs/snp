@@ -74,6 +74,10 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   marks and the emulated recursion limit are unchanged.
 - Hook argv lists are borrowed from the run's file table and appended at spawn time: `run --all-files` on 50,000
   files makes about half as many allocations and its heap peaks about 7 MB lower (ADR-103).
+- Loading a config or manifest does less work: hook and root keys are read without building a key value per lookup,
+  and a hook's extension keys are parsed in one pass over it. `validate-config` of 1,000 local hooks makes about
+  37,000 (16%) fewer allocations and runs about 7% fewer instructions; `gc` over 200 configs about 9% fewer. Output
+  is unchanged.
 - The installed hook script (template v2, ID `405bd8559925d194c1d22af6ef66282e`) finds its directory by parameter
   expansion instead of running `dirname`: one process less per hook run, with the same `--hook-dir` (ADR-105). It
   keeps the old template's ID as a `# snp 2.0 compat ID:` line, so snp 2.0.0–2.0.1 still recognise it. Scripts

@@ -2322,6 +2322,12 @@ Memory shape (100k-file, 50-hook repo target ≤ 30 MB RSS): strings `Arc<str>` 
 `''`/`'^$'` interned through `RegexCache`), stage sets `u16`, tag sets the `file-identify` `Copy` bitset, regexes
 compiled once per distinct `(pattern, Options)` and lazily (engines built on first match).
 
+Conversion (and snp-config's `MapItem`s, on the dict they check) builds no `cfgv::Value` key to read a dict: a literal
+key is found by scanning the dict for the equal `str` key (cfgv's equality never equates a `str` with another type, so
+it is the entry the hashed lookup finds), and the extension keys of a hook or root dict are parsed in one pass. A
+probe for a name read from the input (a `priority` alias in the root `priorities`) stays hashed, so a config costs at
+most a constant times its keys.
+
 ### 2.2 Stage / HookType / Language enums
 
 `HookType` (10, source order), `Stage = Hook(HookType) | Manual` (11), `StageSet(u16)`, `LanguageId` (21, sorted).
