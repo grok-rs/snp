@@ -1446,8 +1446,10 @@ mod tests {
             usize::try_from(self.state % u64::try_from(n).unwrap()).unwrap()
         }
 
-        fn one_of(&mut self, pool: &[String]) -> String {
-            pool[self.pick(pool.len())].clone()
+        /// A random anchor name from the pool `pool` selects.
+        fn one_of(&mut self, pool: fn(&Self) -> &[String]) -> String {
+            let i = self.pick(pool(self).len());
+            pool(self)[i].clone()
         }
 
         fn anchor(&mut self) -> Option<String> {
@@ -1474,7 +1476,7 @@ mod tests {
         fn key(&mut self, eq: bool) {
             match self.pick(4) {
                 0 if !self.scalars.is_empty() => {
-                    let a = self.one_of(&self.scalars.clone());
+                    let a = self.one_of(|g| g.scalars.as_slice());
                     write!(self.out, "*{a} ").unwrap();
                 }
                 1 if eq => self.out.push('='),
@@ -1485,7 +1487,7 @@ mod tests {
         fn node(&mut self, depth: usize) {
             match if depth == 0 { 0 } else { self.pick(7) } {
                 0 | 1 if !self.any.is_empty() && self.pick(2) == 0 => {
-                    let a = self.one_of(&self.any.clone());
+                    let a = self.one_of(|g| g.any.as_slice());
                     write!(self.out, "*{a}").unwrap();
                 }
                 0 | 1 => self.scalar(),
@@ -1541,11 +1543,11 @@ mod tests {
             for i in 0..self.pick(5) {
                 self.out.push_str(if i == 0 { "" } else { ", " });
                 if !self.maps.is_empty() && self.pick(4) == 0 {
-                    let m = self.one_of(&self.maps.clone());
+                    let m = self.one_of(|g| g.maps.as_slice());
                     if self.pick(2) == 0 {
                         write!(self.out, "<<: *{m}").unwrap();
                     } else {
-                        let n = self.one_of(&self.maps.clone());
+                        let n = self.one_of(|g| g.maps.as_slice());
                         write!(self.out, "<<: [*{m}, *{n}]").unwrap();
                     }
                 } else {
