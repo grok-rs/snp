@@ -107,6 +107,13 @@ pub(crate) struct LockStamp {
     /// `max(ctime, mtime)` of the lock file right after the token write, in nanoseconds since the epoch.
     pub(crate) m0_ns: i128,
     /// The lock file's `st_dev`.
+    #[cfg_attr(
+        all(not(unix), test),
+        expect(
+            dead_code,
+            reason = "only the Unix same-device check reads it; non-Unix unit tests build stamps without it"
+        )
+    )]
     pub(crate) dev: u64,
     /// The wall clock right after that `fstat`.
     pub(crate) wall: SystemTime,
