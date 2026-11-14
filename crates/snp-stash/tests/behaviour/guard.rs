@@ -451,6 +451,36 @@ fn snp_stash_reverify_diff_runs_the_content_verification() {
     assert_eq!(sb.read(&repo, "foo"), b"herp\n");
 }
 
+/// ADR-097 under the bench's B8 conditions: back-to-back runs, each stash taken a few milliseconds after the previous
+/// restore recreated the patch's file and so changed its directory. Those writes are older than the next lock's
+/// stamp, so every stash is verified by stamps (no racy margin may push them out); elsewhere every one runs the
+/// content verification.
+#[test]
+fn back_to_back_stashes_are_each_verified_by_stamps() {
+    let sb = Sandbox::new();
+    let repo = sb.init("r");
+    sb.write(&repo, "d/foo", FOO.as_bytes());
+    sb.git(&repo, &["add", "d/foo"]);
+    sb.write(&repo, "d/foo", b"herp\n");
+    let stamps = usize::from(stamps_possible(&repo));
+    for round in 0..3 {
+        let spy = Spy::new();
+        let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+        let (cx, _, _) = sb.ctx_with(git, info);
+        settle();
+        let g = snp_stash::enter(cx).unwrap();
+        assert_eq!(sb.read(&repo, "d/foo"), FOO.as_bytes());
+        assert_eq!(
+            (content_diffs(&spy), count(&spy, "diff-index --name-only")),
+            (2 - stamps, stamps),
+            "round {round}: {:?}",
+            spy.calls()
+        );
+        g.restore().unwrap();
+        assert_eq!(sb.read(&repo, "d/foo"), b"herp\n");
+    }
+}
+
 /// ADR-097: a file of the patch touched after the lock was taken (same bytes: a `touch`, an editor saving unchanged
 /// content) is not trusted by its stamp: the content verification runs, finds the same patch and rewrites nothing.
 #[test]
