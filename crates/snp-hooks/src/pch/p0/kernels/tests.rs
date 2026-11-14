@@ -79,6 +79,52 @@ fn end_of_file_tail_only() {
     );
 }
 
+/// The K6 tail fold, driven as `end_of_file_fixer::tail_action` drives it but with any block size, agrees with the
+/// whole-file kernel on every short file over `{a, CR, LF}` and reads at most `run + size` bytes (K6 T1/T2).
+#[test]
+fn tail_fold_any_block_size() {
+    let scan = |c: &[u8], size: u64| {
+        let len = u64::try_from(c.len()).unwrap();
+        let (mut st, mut from, mut low) = (TailFold::EMPTY, len, len);
+        while let Some((start, n)) = block_before(from, size) {
+            let s = usize::try_from(start).unwrap();
+            assert_eq!(n, usize::try_from(from - start).unwrap());
+            let (next, done) = fold_block(st, &c[s..s + n]);
+            (st, from, low) = (next, start, start);
+            if done {
+                break;
+            }
+        }
+        (end_of_file_run(st.head(), st.run, len), low)
+    };
+    let mut c = Vec::new();
+    for len in 0..=7_u32 {
+        for code in 0..3_u32.checked_pow(len).unwrap() {
+            c.clear();
+            let mut k = code;
+            for _ in 0..len {
+                c.push(b"a\r\n"[usize::try_from(k % 3).unwrap()]);
+                k /= 3;
+            }
+            let want = end_of_file(&c, u64::from(len));
+            let run = c.iter().rev().take_while(|&&b| b != b'a').count();
+            for size in 1..=9_u64 {
+                let (got, low) = scan(&c, size);
+                assert_eq!(got, want, "{c:?} size {size}");
+                let read = c.len() - usize::try_from(low).unwrap();
+                assert!(
+                    read <= run + usize::try_from(size).unwrap(),
+                    "{c:?} size {size}: read {read}"
+                );
+            }
+        }
+    }
+    assert_eq!(block_before(0, 4096), None);
+    assert_eq!(block_before(5, 0), None);
+    assert_eq!(block_before(5, 4096), Some((0, 5)));
+    assert_eq!(block_before(10_000, 4096), Some((10_000 - 4096, 4096)));
+}
+
 #[test]
 fn mixed_line_ending_verified() {
     assert_eq!(

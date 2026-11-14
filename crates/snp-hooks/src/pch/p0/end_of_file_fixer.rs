@@ -72,50 +72,25 @@ fn action(f: &mut File, name: &OsStr) -> Result<EofAction, PyExc> {
     tail_action(f, meta.len()).map_err(err)
 }
 
-/// [`action`] over any seekable reader of `len` bytes.
+/// [`action`] over any seekable reader of `len` bytes: the I/O half of the verified scan (K6,
+/// [`kernels::fold_block`]). The loop is the spec's `scan` (`proofs/verus/spec/eof_tail.rs`): it only reads the
+/// blocks [`kernels::block_before`] names and folds them; the kernels decide everything else.
 fn tail_action<R: Read + Seek>(f: &mut R, len: u64) -> std::io::Result<EofAction> {
-    let is_eol = |b: u8| b == b'\n' || b == b'\r';
     let mut block = vec![0_u8; usize::try_from(BLOCK.min(len)).unwrap_or(0)];
-    // `head`: the first `min(run, 2)` bytes of the trailing run read so far.
-    let mut head = [0_u8; 2];
-    let mut head_len = 0_usize;
-    let mut run = 0_u64;
+    let mut st = kernels::TailFold::EMPTY;
     let mut from = len;
-    while from > 0 {
-        let start = from.saturating_sub(BLOCK);
-        let n = usize::try_from(from.saturating_sub(start)).unwrap_or(0);
+    while let Some((start, n)) = kernels::block_before(from, BLOCK) {
         let buf = block.get_mut(..n).unwrap_or_default();
         f.seek(SeekFrom::Start(start))?;
         f.read_exact(buf)?;
+        let (next, done) = kernels::fold_block(st, buf);
+        st = next;
         from = start;
-        let body = buf.iter().rposition(|&b| !is_eol(b));
-        let run_start = body.map_or(0, |i| i.saturating_add(1));
-        let new = buf.get(run_start..).unwrap_or_default();
-        run = run.saturating_add(u64::try_from(new.len()).unwrap_or(u64::MAX));
-        // The bytes of this block precede the ones already seen: they become the run's first bytes.
-        let mut merged = [0_u8; 2];
-        let mut m = 0_usize;
-        for &b in new
-            .iter()
-            .chain(head.get(..head_len).unwrap_or_default())
-            .take(2)
-        {
-            if let Some(slot) = merged.get_mut(m) {
-                *slot = b;
-                m = m.saturating_add(1);
-            }
-        }
-        head = merged;
-        head_len = m;
-        if body.is_some() {
+        if done {
             break;
         }
     }
-    Ok(kernels::end_of_file_run(
-        head.get(..head_len).unwrap_or_default(),
-        run,
-        len,
-    ))
+    Ok(kernels::end_of_file_run(st.head(), st.run, len))
 }
 
 /// `EISDIR`.
