@@ -2,7 +2,8 @@
 # target of §13.5 (one stub file + one [[bin]] entry); the package owning a target's prefix fills the file
 # (docs/WBS.md "Disjoint ownership"). Nobody else edits this manifest.
 #
-#   cargo +nightly fuzz run <target> -- -max_total_time=60 -rss_limit_mb=512   (CI smoke; 300 s nightly)
+#   ASAN_OPTIONS=quarantine_size_mb=64 cargo +nightly fuzz run <target> -- -max_total_time=60 -rss_limit_mb=512 \
+#       -malloc_limit_mb=512   (CI smoke; 300 s nightly; .github/scripts/fuzz-run.sh explains the 64 MB quarantine)
 
 [package]
 name = "snp-fuzz"

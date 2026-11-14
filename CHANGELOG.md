@@ -59,6 +59,9 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   needed.` on stderr. The `<patch>.*` files next to an unrestored patch (the `<patch>.now` backup the recovery hint
   suggests, the kept `.ita` and `.paths` lists) are kept with it. pre-commit's `gc` never looks at patches and its
   `clean` removes the whole store; divergences D-DATA-04 and D-DIAG-05 are updated.
+- CI fuzzing: the fuzz shards run with a 64 MB AddressSanitizer quarantine (`ASAN_OPTIONS=quarantine_size_mb=64`,
+  default 256 MB) to keep targets well below the 512 MB RSS cap they crept toward; leak detection, use-after-free
+  detection and the §13.5 limits are unchanged.
 
 ### Security
 
