@@ -70,6 +70,10 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   installed by those versions keep working; `snp doctor` reports them as "an older snp hook script" until `snp
   install` (or `snp doctor --fix`) rewrites them. A script with snp's header, an ID this version does not know and
   pre-commit's compat ID is treated as an snp script, never as pre-commit's.
+- Restore-critical git commands (the stash's queries, checkouts and applies) get `GIT_TERMINAL_PROMPT=0` set on the
+  command instead of on a copy of the whole environment: two fewer allocations per environment variable and command
+  (about 220 fewer in a no-op `run`, about 500 in the 10 MB stash scenario, and about 1% fewer instructions in both).
+  The child's environment and the `SNP_LOG=trace` line are unchanged.
 
 - Benchmarks (developer tooling, no runtime change): pull requests and pushes measure the base commit's snp, built
   against its own `deps.lock` crates and toolchain and primed into its own stores, in interleaved ABBA rounds with the

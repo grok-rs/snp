@@ -2436,7 +2436,9 @@ startup Env (captured once in main, minus __PYVENV_LAUNCHER__/PYTHONEXECUTABLE)
   (S6), logged at `SNP_LOG=trace` through an **allow-list** (ADR-077): values are printed only for `PATH`, `PATHEXT`,
   `HOME`, `USERPROFILE`, `TERM`, `LANG`, `LC_*`, `TZ`, `PRE_COMMIT*`, `SNP_*`, `GIT_*` except `GIT_ASKPASS` and
   `GIT_CONFIG_VALUE_*`, and the activation variables snp sets itself; every other variable is logged as
-  `NAME=<redacted, N bytes>`; URL userinfo in argv is scrubbed.
+  `NAME=<redacted, N bytes>`; URL userinfo in argv is scrubbed. A `Role::Critical` command's `GIT_TERMINAL_PROMPT=0`
+  is set on the `Command` after the map (std keeps the first spelling and replaces the value, the variables of
+  `Env::patched`), so no copy of the snapshot is made per command; only the trace line builds that patched view.
 * `platform_max_length` uses the **startup** env size (pre-commit computes it at import, 02 §1 step 2, 04b §5.5).
 
 ---
