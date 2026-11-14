@@ -184,49 +184,88 @@ fn splitlines_keepends(content: &[u8]) -> impl Iterator<Item = &[u8]> {
     })
 }
 
-/// `mixed_line_ending.fix_filename` (`:22-62`) on bytes: `(return value, Some(new bytes) when it rewrites)`.
-///
-/// Counts the first ending each line has in the order CR, CRLF, LF (`line.endswith`); `mixed` = more than one
-/// kind present. `auto` picks the most frequent kind with ties preferring LF > CRLF > CR; an explicit target
-/// rewrites when any other kind is present. A rewrite is `line.rstrip(b'\r\n') + ending` for every line,
-/// including an unterminated last line.
-pub fn mixed_line_ending(content: &[u8], fix: LineFix) -> (bool, Option<Vec<u8>>) {
-    let (mut cr, mut crlf, mut lf) = (0_usize, 0_usize, 0_usize);
+/// The line endings `mixed_line_ending.fix_filename` counts (`:28-34`): per line, the first of CR, CRLF, LF it
+/// ends with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Endings {
+    cr: usize,
+    crlf: usize,
+    lf: usize,
+}
+
+/// What `fix_filename` does with the counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Verdict {
+    /// Return this value and leave the file alone.
+    Keep(bool),
+    /// Rewrite every line to end with this ending, and return `True`.
+    Rewrite(&'static [u8]),
+}
+
+/// `fix_filename`'s counting pass (`:28-34`, `line.endswith` in the order CR, CRLF, LF).
+fn count_endings(content: &[u8]) -> Endings {
+    let mut n = Endings {
+        cr: 0,
+        crlf: 0,
+        lf: 0,
+    };
     for line in splitlines_keepends(content) {
         if line.ends_with(b"\r") {
-            cr = cr.saturating_add(1);
+            n.cr = n.cr.saturating_add(1);
         } else if line.ends_with(b"\r\n") {
-            crlf = crlf.saturating_add(1);
+            n.crlf = n.crlf.saturating_add(1);
         } else if line.ends_with(b"\n") {
-            lf = lf.saturating_add(1);
+            n.lf = n.lf.saturating_add(1);
         }
     }
-    let kinds = [cr, crlf, lf].iter().filter(|&&n| n > 0).count();
-    let mixed = kinds > 1;
-    let ending: &[u8] = match fix {
-        LineFix::No => return (mixed, None),
-        LineFix::Auto if !mixed => return (false, None),
-        LineFix::Auto => {
-            let mut best: (&[u8], usize) = (b"\n", 0);
-            for (e, n) in [(&b"\r"[..], cr), (b"\r\n", crlf), (b"\n", lf)] {
-                if n >= best.1 {
-                    best = (e, n);
-                }
-            }
-            best.0
-        }
-        LineFix::Cr | LineFix::Crlf | LineFix::Lf => {
-            let (target, others): (&[u8], usize) = match fix {
-                LineFix::Cr => (b"\r", crlf.saturating_add(lf)),
-                LineFix::Crlf => (b"\r\n", cr.saturating_add(lf)),
-                _ => (b"\n", cr.saturating_add(crlf)),
-            };
-            if others == 0 {
-                return (false, None);
-            }
-            target
+    n
+}
+
+/// `fix_filename`'s decision (`:36-62`): `mixed` = more than one kind present; `auto` picks the most frequent kind
+/// with ties preferring LF > CRLF > CR; an explicit target rewrites when any other kind is present.
+fn decide(n: Endings, fix: LineFix) -> Verdict {
+    let mixed = [n.cr, n.crlf, n.lf].iter().filter(|&&k| k > 0).count() > 1;
+    let explicit = |target: &'static [u8], others: usize| {
+        if others == 0 {
+            Verdict::Keep(false)
+        } else {
+            Verdict::Rewrite(target)
         }
     };
+    match fix {
+        LineFix::No => Verdict::Keep(mixed),
+        LineFix::Auto if !mixed => Verdict::Keep(false),
+        LineFix::Auto => {
+            let mut best: (&'static [u8], usize) = (b"\n", 0);
+            for (e, k) in [(&b"\r"[..], n.cr), (b"\r\n", n.crlf), (b"\n", n.lf)] {
+                if k >= best.1 {
+                    best = (e, k);
+                }
+            }
+            Verdict::Rewrite(best.0)
+        }
+        LineFix::Cr => explicit(b"\r", n.crlf.saturating_add(n.lf)),
+        LineFix::Crlf => explicit(b"\r\n", n.cr.saturating_add(n.lf)),
+        LineFix::Lf => explicit(b"\n", n.cr.saturating_add(n.crlf)),
+    }
+}
+
+/// [`decide`] for content without a `\r`, without the counting pass: such content counts `cr = crlf = 0` and
+/// `lf` = its number of `\n`, so it is never mixed and only an explicit CR or CRLF target rewrites it, when it
+/// holds a `\n`.
+fn decide_cr_free(content: &[u8], fix: LineFix) -> Verdict {
+    let has_lf = || memchr::memchr(b'\n', content).is_some();
+    match fix {
+        LineFix::Cr if has_lf() => Verdict::Rewrite(b"\r"),
+        LineFix::Crlf if has_lf() => Verdict::Rewrite(b"\r\n"),
+        LineFix::Auto | LineFix::No | LineFix::Cr | LineFix::Crlf | LineFix::Lf => {
+            Verdict::Keep(false)
+        }
+    }
+}
+
+/// `_fix` (`:16-19`): `line.rstrip(b'\r\n') + ending` for every line, including an unterminated last line.
+fn rewrite_endings(content: &[u8], ending: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     for line in splitlines_keepends(content) {
         let end = line
@@ -236,7 +275,22 @@ pub fn mixed_line_ending(content: &[u8], fix: LineFix) -> (bool, Option<Vec<u8>>
         out.extend_from_slice(line.get(..end).unwrap_or_default());
         out.extend_from_slice(ending);
     }
-    (true, Some(out))
+    out
+}
+
+/// `mixed_line_ending.fix_filename` (`:24-62`) on bytes: `(return value, Some(new bytes) when it rewrites)`.
+///
+/// Content without a `\r` (most files) skips the counting pass (`decide_cr_free`).
+pub fn mixed_line_ending(content: &[u8], fix: LineFix) -> (bool, Option<Vec<u8>>) {
+    let verdict = if memchr::memchr(b'\r', content).is_none() {
+        decide_cr_free(content, fix)
+    } else {
+        decide(count_endings(content), fix)
+    };
+    match verdict {
+        Verdict::Keep(ret) => (ret, None),
+        Verdict::Rewrite(ending) => (true, Some(rewrite_endings(content, ending))),
+    }
 }
 
 /// The UTF-8 byte-order mark.

@@ -564,6 +564,21 @@ fn trailing_whitespace_parts_are_the_former_line_and_keeps_is_equality() {
     }
 }
 
+/// The K12 lemma of the CR-free short-circuit: content without a `\r` counts `cr = crlf = 0` and `lf` = its number
+/// of `\n`, so [`decide_cr_free`] is [`decide`] of its counts, for every `--fix` and every string of at most 7 bytes
+/// over `{a, LF, VT, ' '}`.
+#[test]
+fn cr_free_content_counts_only_lf_and_decides_alike() {
+    for c in words(b"a\n\x0b ", 7) {
+        let n = count_endings(&c);
+        let lf = c.split(|&b| b == b'\n').count() - 1;
+        assert_eq!(n, Endings { cr: 0, crlf: 0, lf }, "{c:?}");
+        for fix in FIXES {
+            assert_eq!(decide_cr_free(&c, fix), decide(n, fix), "{c:?} {fix:?}");
+        }
+    }
+}
+
 const FIXES: [LineFix; 5] = [
     LineFix::Auto,
     LineFix::No,
