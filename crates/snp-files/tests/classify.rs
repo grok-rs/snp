@@ -487,4 +487,169 @@ mod classify {
             std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o644)).unwrap();
         }
     }
+
+    /// The tree of the meta-only tests: every kind of entry, the index mode git would record for each (0 = none),
+    /// and the names (with one that does not exist).
+    #[cfg(unix)]
+    fn mixed_tree(root: &Path) -> (Vec<OsString>, Box<[u32]>) {
+        use std::os::unix::fs::PermissionsExt;
+        let files: [(&str, u32, &[u8], u32); 7] = [
+            ("a.py", 0o644, b"x = 1\n", 0o100_644),
+            ("run.sh", 0o755, b"echo\n", 0o100_755),
+            ("tool", 0o755, b"#!/usr/bin/env python3\n", 0o100_755),
+            ("data.unknownext", 0o644, b"\0\x01binary", 0o100_644),
+            ("notes", 0o644, b"plain words\n", 0o100_644),
+            ("r654", 0o654, b"#!/bin/sh\n", 0o100_644),
+            ("secret.unknownext", 0o000, b"x", 0o100_644),
+        ];
+        let mut names = Vec::new();
+        let mut modes = Vec::new();
+        for (name, mode, body, index) in files {
+            std::fs::write(root.join(name), body).unwrap();
+            std::fs::set_permissions(root.join(name), std::fs::Permissions::from_mode(mode))
+                .unwrap();
+            names.push(OsString::from(name));
+            modes.push(index);
+        }
+        std::os::unix::fs::symlink("a.py", root.join("link.py")).unwrap();
+        std::os::unix::fs::symlink("missing", root.join("broken")).unwrap();
+        std::fs::create_dir_all(root.join("pkg.py")).unwrap();
+        let _sock = std::os::unix::net::UnixListener::bind(root.join("sock")).unwrap();
+        for (name, index) in [
+            ("link.py", 0o120_000),
+            ("broken", 0o120_000),
+            ("pkg.py", 0o160_000),
+            ("sock", 0),
+            ("gone.py", 0),
+        ] {
+            names.push(OsString::from(name));
+            modes.push(index);
+        }
+        (names, modes.into_boxed_slice())
+    }
+
+    /// One filter's outcome: the kept names, or the error text.
+    #[cfg(unix)]
+    fn outcome(c: &Classifier, f: &HookFilter, pool: &JobPool) -> Result<Vec<String>, String> {
+        match c.for_hook(f, pool) {
+            Ok(ids) => Ok(views(c, &ids)),
+            Err(snp_core::failure::Failure::Exc { exc, .. }) => {
+                Err(String::from_utf8_lossy(&exc.text).into_owned())
+            }
+            Err(other) => Err(format!("{other:?}")),
+        }
+    }
+
+    /// ADR-110: a hook whose filter references only meta tags (`file`, `executable`, `symlink`, …) keeps the same
+    /// files, and a content hook reports the same unreadable file, whether it runs first, after `text`/`python`
+    /// hooks, or alone, with and without trusted index modes (the meta tier and the stat tier agree, and the meta
+    /// tier never reads content).
+    #[cfg(unix)]
+    #[test]
+    fn meta_only_hooks_agree_in_any_order() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let (names, modes) = mixed_tree(d.path());
+        let unreadable = !rustix::process::geteuid().is_root();
+        let cache = RegexCache::new();
+        let f = |types: &[&str], types_or: &[&str], exclude_types: &[&str]| {
+            HookFilter::compile(
+                "",
+                "^$",
+                tags(types),
+                tags(types_or),
+                tags(exclude_types),
+                None,
+                &cache,
+            )
+            .unwrap()
+        };
+        let filters = [
+            ("file", f(&["file"], &[], &[])),
+            ("executable", f(&["executable"], &[], &[])),
+            ("links-or-dirs", f(&[], &["symlink", "directory"], &[])),
+            ("not-exec", f(&["file"], &[], &["executable"])),
+            ("text", f(&["text"], &[], &[])),
+            ("python", f(&["python"], &[], &[])),
+            ("shell", f(&["shell"], &[], &[])),
+        ];
+        let orders: [&[usize]; 4] = [
+            &[0, 1, 2, 3, 4, 5, 6],
+            &[4, 5, 6, 0, 1, 2, 3],
+            &[5, 0, 4, 2, 6, 3, 1],
+            &[1, 6, 3, 5, 2, 4, 0],
+        ];
+        let pool = pool(2);
+        let table = |trusted: bool| {
+            let mut t = FileTable::from_args(names.clone(), d.path());
+            if trusted {
+                let valid = Arc::new(std::sync::atomic::AtomicBool::new(true));
+                assert!(t.trust_index_modes(modes.clone(), valid, tags(&["file", "python"])));
+            }
+            t
+        };
+        let alone: Vec<Result<Vec<String>, String>> = filters
+            .iter()
+            .map(|(_, flt)| outcome(&classifier(table(false), &cache, &pool), flt, &pool))
+            .collect();
+        assert!(
+            alone[0]
+                .as_ref()
+                .unwrap()
+                .contains(&"secret.unknownext".to_owned())
+        );
+        assert_eq!(alone[4].is_err(), unreadable, "{:?}", alone[4]);
+        assert_eq!(alone[2].as_ref().unwrap(), &["link.py", "broken", "pkg.py"]);
+        for trusted in [false, true] {
+            for order in orders {
+                let c = classifier(table(trusted), &cache, &pool);
+                for &k in order {
+                    let (name, flt) = &filters[k];
+                    assert_eq!(
+                        outcome(&c, flt, &pool),
+                        alone[k],
+                        "{name} in order {order:?}, trusted {trusted}"
+                    );
+                }
+            }
+        }
+        std::fs::set_permissions(
+            d.path().join("secret.unknownext"),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+    }
+
+    /// ADR-110 keeps D-CRASH-08's semantics: a file a meta-only hook identified and a later hook deleted keeps its
+    /// first identification for name tags (no second `lstat`), is dropped by a later hook that needs its content
+    /// (the content tier was not computed), and from then on by every hook, as with the stat tier before.
+    #[cfg(unix)]
+    #[test]
+    fn deletion_after_a_meta_only_hook() {
+        let d = tempfile::tempdir().unwrap();
+        for name in ["a.py", "data.unknownext", "keep.unknownext"] {
+            std::fs::write(d.path().join(name), b"x\n").unwrap();
+        }
+        let names: Vec<OsString> = ["a.py", "data.unknownext", "keep.unknownext"]
+            .iter()
+            .map(OsString::from)
+            .collect();
+        let cache = RegexCache::new();
+        let pool = pool(1);
+        let c = classifier(FileTable::from_args(names, d.path()), &cache, &pool);
+        let file = filter("", "^$", &["file"], None, &cache);
+        assert_eq!(c.for_hook(&file, &pool).unwrap().len(), 3);
+        std::fs::remove_file(d.path().join("a.py")).unwrap();
+        std::fs::remove_file(d.path().join("data.unknownext")).unwrap();
+        let py = c
+            .for_hook(&filter("", "^$", &["python"], None, &cache), &pool)
+            .unwrap();
+        assert_eq!(views(&c, &py), ["a.py"]);
+        let text = c
+            .for_hook(&filter("", "^$", &["text"], None, &cache), &pool)
+            .unwrap();
+        assert_eq!(views(&c, &text), ["a.py", "keep.unknownext"]);
+        let files = c.for_hook(&file, &pool).unwrap();
+        assert_eq!(views(&c, &files), ["a.py", "keep.unknownext"]);
+    }
 }
