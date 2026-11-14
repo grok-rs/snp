@@ -1,6 +1,6 @@
 //! The byte-level cores of the P0 natives, without file system or git access: what fuzz targets and unit tests
-//! drive. Each function documents the upstream source it reproduces; none allocates more than its output and none
-//! panics on any input.
+//! drive. Each function documents the upstream source it reproduces; none allocates more than its output (or, for
+//! trailing-whitespace, the content's length, which bounds it) and none panics on any input.
 //!
 //! Owner: WP-26.
 
@@ -33,60 +33,105 @@ fn rstrip<'a>(line: &'a [u8], chars: Option<&[u8]>) -> &'a [u8] {
     line.get(..end).unwrap_or_default()
 }
 
-/// `trailing_whitespace_fixer._process_line` (`trailing_whitespace_fixer.py:25-41`).
-fn process_line<'a>(line: &'a [u8], md: bool, chars: Option<&[u8]>, out: &mut Vec<u8>) {
-    let (body, eol): (&'a [u8], &[u8]) = if let Some(b) = line.strip_suffix(b"\r\n") {
-        (b, b"\r\n")
-    } else if let Some(b) = line.strip_suffix(b"\n") {
-        (b, b"\n")
+/// What `trailing_whitespace_fixer._process_line` (`trailing_whitespace_fixer.py:25-41`) returns for a line, as
+/// the three pieces it concatenates, borrowed: `kept ++ pad ++ eol`.
+///
+/// `kept` is a prefix of the line's body, `pad` the markdown hard break `"  "` (the body's own last two bytes) or
+/// empty, `eol` the line's own ending; the bytes between `kept` and `pad` are the ones stripped. The result is a
+/// deletion of the line, so it equals the line exactly when it is as long ([`Parts::keeps`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Parts<'a> {
+    kept: &'a [u8],
+    pad: &'static [u8],
+    eol: &'static [u8],
+}
+
+impl Parts<'_> {
+    /// `kept ++ pad ++ eol == line`: a deletion of the line is as long as the line only when nothing was stripped.
+    fn keeps(&self, line: &[u8]) -> bool {
+        self.kept
+            .len()
+            .saturating_add(self.pad.len())
+            .saturating_add(self.eol.len())
+            == line.len()
+    }
+
+    /// Appends `kept ++ pad ++ eol` to `out`.
+    fn write_to(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.kept);
+        out.extend_from_slice(self.pad);
+        out.extend_from_slice(self.eol);
+    }
+}
+
+/// A `readlines()` line split into its body and its ending (`\r\n`, `\n` or none).
+fn split_eol(line: &[u8]) -> (&[u8], &'static [u8]) {
+    if let Some(body) = line.strip_suffix(b"\r\n") {
+        (body, b"\r\n")
+    } else if let Some(body) = line.strip_suffix(b"\n") {
+        (body, b"\n")
     } else {
         (line, b"")
-    };
-    // `not line.isspace()` is true for an empty line (`b''.isspace()` is False).
-    let is_space = !body.is_empty() && body.iter().all(|&b| is_ascii_ws(b));
-    if md && !is_space && body.ends_with(b"  ") {
-        let head = body.get(..body.len().saturating_sub(2)).unwrap_or_default();
-        out.extend_from_slice(rstrip(head, chars));
-        out.extend_from_slice(b"  ");
-    } else {
-        out.extend_from_slice(rstrip(body, chars));
     }
-    out.extend_from_slice(eol);
+}
+
+/// `trailing_whitespace_fixer._process_line` (`trailing_whitespace_fixer.py:25-41`) as borrowed [`Parts`].
+fn process_line<'a>(line: &'a [u8], md: bool, chars: Option<&[u8]>) -> Parts<'a> {
+    let (body, eol) = split_eol(line);
+    // `not line.isspace()`, tested only where it decides: a body ending in two spaces is not empty, so it is
+    // `isspace()` exactly when every byte is ASCII-WS.
+    if md && body.ends_with(b"  ") && !body.iter().all(|&b| is_ascii_ws(b)) {
+        let head = body.get(..body.len().saturating_sub(2)).unwrap_or_default();
+        Parts {
+            kept: rstrip(head, chars),
+            pad: b"  ",
+            eol,
+        }
+    } else {
+        Parts {
+            kept: rstrip(body, chars),
+            pad: b"",
+            eol,
+        }
+    }
+}
+
+/// `readlines()` of a binary file: `(offset, line)` for each line, split after each `\n` (a lone `\r` is not a line
+/// break), the last one possibly unterminated.
+fn readlines(content: &[u8]) -> impl Iterator<Item = (usize, &[u8])> {
+    let mut start = 0_usize;
+    let mut breaks = memchr_iter(b'\n', content);
+    std::iter::from_fn(move || {
+        let end = match breaks.next() {
+            Some(nl) => nl.saturating_add(1),
+            None if start < content.len() => content.len(),
+            None => return None,
+        };
+        let at = start;
+        start = end;
+        Some((at, content.get(at..end).unwrap_or_default()))
+    })
 }
 
 /// `trailing_whitespace_fixer._fix_file` (`:8-22`) on the file's bytes: `Some(new bytes)` when any line changed.
 ///
-/// Lines are `readlines()` of a binary file (split after each `\n`; a lone `\r` is not a line break). Lines are
-/// copied only from the first changed one on.
+/// Nothing is copied or allocated until a line changes. Then the unchanged prefix is copied once and every later
+/// line's `Parts` are written into an output reserved at the content's length, which bounds it (the fix only
+/// deletes bytes; when the reservation fails the output grows as usual).
 pub fn trailing_whitespace(content: &[u8], md: bool, chars: Option<&[u8]>) -> Option<Vec<u8>> {
-    let mut out: Option<Vec<u8>> = None;
-    let mut start = 0_usize;
-    let mut scratch = Vec::new();
-    let mut each = |line: &[u8], line_start: usize, out: &mut Option<Vec<u8>>| {
-        scratch.clear();
-        process_line(line, md, chars, &mut scratch);
-        match out {
-            Some(o) => o.extend_from_slice(&scratch),
-            None if scratch.as_slice() != line => {
-                let mut o = Vec::new();
-                o.extend_from_slice(content.get(..line_start).unwrap_or_default());
-                o.extend_from_slice(&scratch);
-                *out = Some(o);
-            }
-            None => {}
-        }
-    };
-    for nl in memchr_iter(b'\n', content) {
-        let end = nl.saturating_add(1);
-        let line = content.get(start..end).unwrap_or_default();
-        each(line, start, &mut out);
-        start = end;
+    let mut lines = readlines(content);
+    let (at, first) = lines.find_map(|(at, line)| {
+        let parts = process_line(line, md, chars);
+        (!parts.keeps(line)).then_some((at, parts))
+    })?;
+    let mut out = Vec::new();
+    out.try_reserve(content.len()).unwrap_or_default();
+    out.extend_from_slice(content.get(..at).unwrap_or_default());
+    first.write_to(&mut out);
+    for (_, line) in lines {
+        process_line(line, md, chars).write_to(&mut out);
     }
-    if start < content.len() {
-        let line = content.get(start..).unwrap_or_default();
-        each(line, start, &mut out);
-    }
-    out
+    Some(out)
 }
 
 /// `mixed-line-ending --fix` (`mixed_line_ending.py:22`): `auto`, `no`, `cr`, `crlf` or `lf`.

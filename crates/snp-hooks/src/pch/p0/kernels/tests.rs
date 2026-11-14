@@ -531,6 +531,39 @@ fn trailing_whitespace_matches_former_code_on_long_content() {
     }
 }
 
+/// The shapes K12 is to prove (VERIFICATION.md §9.3), on every string of at most 5 bytes over the alphabet above:
+/// `readlines` pieces are non-empty, hold a `\n` only at their end and tile the content; a line's [`Parts`] are the
+/// former `_process_line` result, and `keeps` holds exactly when that result is the line.
+#[test]
+fn trailing_whitespace_parts_are_the_former_line_and_keeps_is_equality() {
+    for c in words(TW_ALPHABET, 5) {
+        let mut tiled = Vec::new();
+        for (at, line) in readlines(&c) {
+            assert_eq!(at, tiled.len(), "{c:?}");
+            assert!(!line.is_empty(), "{c:?}");
+            let inner = line.strip_suffix(b"\n").unwrap_or(line);
+            assert!(!inner.contains(&b'\n'), "{c:?}");
+            tiled.extend_from_slice(line);
+            for md in [false, true] {
+                for chars in TW_CHARS {
+                    let parts = process_line(line, md, chars);
+                    let mut got = Vec::new();
+                    parts.write_to(&mut got);
+                    let mut want = Vec::new();
+                    former::process_line(line, md, chars, &mut want);
+                    assert_eq!(got, want, "{line:?} md {md} chars {chars:?}");
+                    assert_eq!(
+                        parts.keeps(line),
+                        want == line,
+                        "{line:?} md {md} chars {chars:?}"
+                    );
+                }
+            }
+        }
+        assert_eq!(tiled, c);
+    }
+}
+
 const FIXES: [LineFix; 5] = [
     LineFix::Auto,
     LineFix::No,
