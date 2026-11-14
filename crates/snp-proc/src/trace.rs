@@ -123,10 +123,11 @@ pub(crate) fn scrub_urls(s: &str) -> String {
     out
 }
 
-/// argv as a list of escaped strings, URL userinfo scrubbed.
-pub(crate) fn render_argv(argv: &[std::ffi::OsString]) -> String {
+/// argv as a list of escaped strings, URL userinfo scrubbed (a hook's command is followed by its partition files,
+/// ADR-103).
+pub(crate) fn render_args<'a>(argv: impl Iterator<Item = &'a OsStr>) -> String {
     let mut out = String::from("[");
-    for (i, a) in argv.iter().enumerate() {
+    for (i, a) in argv.enumerate() {
         if i > 0 {
             out.push_str(", ");
         }
@@ -153,9 +154,11 @@ pub(crate) fn render_env(env: &Env) -> String {
     out
 }
 
-/// Emits the `snp::spawn` trace event (nothing is rendered unless a subscriber enables TRACE for it).
+/// Emits the `snp::spawn` trace event (nothing is rendered unless a subscriber enables TRACE for it). The logged
+/// argv is `argv` followed by `files` (a hook partition's file arguments; empty for every other spawn).
 pub(crate) fn log_spawn(
     argv: &[std::ffi::OsString],
+    files: &[&OsStr],
     env: &Env,
     cwd: &Path,
     role: Role,
@@ -167,7 +170,11 @@ pub(crate) fn log_spawn(
             role = ?role,
             group = ?group,
             cwd = %scrub_urls(&cwd.to_string_lossy()),
-            argv = %render_argv(argv),
+            argv = %render_args(
+                argv.iter()
+                    .map(std::ffi::OsString::as_os_str)
+                    .chain(files.iter().copied())
+            ),
             env = %render_env(env),
             "spawn"
         );
@@ -287,12 +294,17 @@ mod tests {
         ] {
             assert!(!e.contains(secret), "{e}");
         }
-        let a = render_argv(&[
-            "git".into(),
-            "clone".into(),
-            "https://u:argv-secret@h/r".into(),
-        ]);
+        let a = render_args(
+            ["git", "clone", "https://u:argv-secret@h/r"]
+                .into_iter()
+                .map(OsStr::new),
+        );
         assert!(!a.contains("argv-secret"), "{a}");
         assert_eq!(a, r#"["git", "clone", "https://***@h/r"]"#);
+        let files = [OsStr::new("a b.py"), OsStr::new("ftp://x:files-secret@h")];
+        let a = render_args(
+            std::iter::once(OsStr::new("hook")).chain(files.iter().copied()),
+        );
+        assert_eq!(a, r#"["hook", "a b.py", "ftp://***@h"]"#);
     }
 }
