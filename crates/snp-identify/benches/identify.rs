@@ -4,6 +4,12 @@
 //! Prints the median time per operation over 15 samples. Run by
 //! `cargo test --benches` / `--all-targets` (without `--bench`), every case
 //! is executed once as a smoke test and nothing is timed.
+#![expect(
+    clippy::expect_used,
+    clippy::print_stdout,
+    clippy::indexing_slicing,
+    reason = "a harness-less bench: set-up on fixed inputs fails loudly, results go to stdout, and the median index is in bounds of the 15 samples"
+)]
 
 use std::fs;
 use std::hint::black_box;
