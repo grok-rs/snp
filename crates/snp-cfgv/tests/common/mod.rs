@@ -1,8 +1,6 @@
 //! Decoding of the JSON test vectors produced by
 //! `scripts/gen_parity_vectors.py` (see that script for the encoding).
 
-#![allow(dead_code, unreachable_pub)]
-
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -47,9 +45,14 @@ fn uint(j: &Json) -> u32 {
 }
 
 pub fn hex_bytes(hex: &str) -> Vec<u8> {
-    (0..hex.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("valid hex"))
+    let (pairs, rest) = hex.as_bytes().as_chunks::<2>();
+    assert!(rest.is_empty(), "odd-length hex {hex:?}");
+    pairs
+        .iter()
+        .map(|pair| {
+            let pair = std::str::from_utf8(pair).expect("ASCII hex");
+            u8::from_str_radix(pair, 16).expect("valid hex")
+        })
         .collect()
 }
 
@@ -113,6 +116,7 @@ pub enum RegexVerdict {
 
 /// Builds cfgv schemas from the JSON specs, mirroring the generator's
 /// `Spec` class.
+#[derive(Debug)]
 pub struct SpecBuilder {
     /// Keyed by the `str` pattern, or `b:{hex}` for a `bytes` pattern.
     pub regex_valid: Arc<HashMap<String, RegexVerdict>>,
@@ -131,8 +135,9 @@ impl SpecBuilder {
         let regex_valid = vectors
             .get("regex_valid")
             .and_then(Json::as_object)
-            .map(|m| m.iter().map(|(k, v)| (k.clone(), verdict(v))).collect())
-            .unwrap_or_default();
+            .map_or_else(HashMap::new, |m| {
+                m.iter().map(|(k, v)| (k.clone(), verdict(v))).collect()
+            });
         Self {
             regex_valid: Arc::new(regex_valid),
         }
@@ -176,7 +181,7 @@ impl SpecBuilder {
                     let key = match pattern {
                         RegexPattern::Str(s) => s.to_owned(),
                         RegexPattern::Bytes(b) => b.iter().fold("b:".to_owned(), |mut key, x| {
-                            let _ = write!(key, "{x:02x}");
+                            write!(key, "{x:02x}").unwrap();
                             key
                         }),
                         _ => panic!("unknown pattern kind"),
@@ -320,7 +325,7 @@ pub fn join_str(values: &[Value]) -> String {
 }
 
 /// Collects mismatches and fails with a readable report at the end.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Mismatches {
     items: Vec<String>,
     checked: usize,
@@ -436,8 +441,7 @@ impl MapItem for PcDeprecatedStagesWarning {
         if !legacy.is_empty() {
             let id = dct
                 .get(&Value::from("id"))
-                .map(ToString::to_string)
-                .unwrap_or_default();
+                .map_or_else(String::new, ToString::to_string);
             cx.warn(format!(
                 "hook id `{id}` uses deprecated stage names ({}) which will be removed in a \
                  future version.  run: `pre-commit migrate-config` to automatically fix this.",
@@ -505,8 +509,7 @@ impl MapItem for PcWarnMutableRev {
             if !rev.contains('.') && !hex {
                 let repo = dct
                     .get(&Value::from("repo"))
-                    .map(Value::repr)
-                    .unwrap_or_default();
+                    .map_or_else(String::new, Value::repr);
                 cx.warn(format!(
                     "The {} field of repo {repo} appears to be a mutable reference (moving tag / \
                      branch).  Mutable references are never updated after first install and \
