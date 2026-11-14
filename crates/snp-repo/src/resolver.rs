@@ -3,6 +3,7 @@
 //! Owner: WP-31.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use snp_config::{Config, RepoConfig};
@@ -28,6 +29,8 @@ pub struct StoreResolver {
     envs: Mutex<HashMap<InstallKey, Env>>,
     /// The store's shared lock (taken at the first repository use).
     guard: Mutex<Option<StoreGuard>>,
+    /// Store entries filled and install passes that installed anything ([`Resolve::store_work`]).
+    work: AtomicU64,
 }
 
 impl StoreResolver {
@@ -72,7 +75,7 @@ impl Resolve for StoreResolver {
             .collect();
         let jobs = resolve::prefetch_jobs(cx, &plans);
         if jobs.is_empty() {
-            return Resolution::new(cx, policy, plans, None).run();
+            return Resolution::new(cx, policy, plans, None, &self.work).run();
         }
         let prefetch = Prefetch::new(jobs, cx.store.scratch_dir());
         let workers = prefetch.len().min(cx.net.permits().get());
@@ -89,7 +92,7 @@ impl Resolve for StoreResolver {
                     Err(e) => tracing::debug!("prefetch worker refused: {e}"),
                 }
             }
-            let result = Resolution::new(cx, policy, plans, Some(&prefetch)).run();
+            let result = Resolution::new(cx, policy, plans, Some(&prefetch), &self.work).run();
             prefetch.abandon();
             for h in handles {
                 let _joined = h.join();
@@ -107,13 +110,24 @@ impl Resolve for StoreResolver {
         }
         cx.store.ensure_created(cx.brand, cx.printer)?;
         self.hold_store(cx)?;
-        install::run(
+        let installed = install::run(
             &LangInstaller { cx },
             &entries,
             cx.printer,
             cx.installs,
             cx.cancel,
-        )
+        );
+        // counted before the result is known: a failed install still ran (and may have downloaded)
+        if !matches!(installed, Ok(false)) {
+            self.work.fetch_add(1, Ordering::Relaxed);
+        }
+        installed.map(drop)
+    }
+
+    /// Clones (foreground, adopted prefetch, `clone --local`), local templates and install passes that installed
+    /// anything, counted since this resolver was created.
+    fn store_work(&self) -> Option<u64> {
+        Some(self.work.load(Ordering::Relaxed))
     }
 
     /// `languages[lang].in_env(prefix, version)` as data, cached per `InstallKey`; env-less and native hooks get the

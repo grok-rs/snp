@@ -282,6 +282,7 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         &cx.cancel,
     );
     let t_resolve = cx.clock.now();
+    let work_before = (cx.resolver.store_work(), parts.downloads());
     let all = cx.resolver.all_hooks(&rcx)?;
     // step 12: selection
     let strict = common::ext_mode(&cx.env) == snp_config::ExtMode::Strict;
@@ -381,8 +382,10 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         }
         None
     };
-    // step 16: the baseline digest (ADR-078)
-    let baseline = baseline(cx, st.stash.as_ref(), &git, &run_env, t_resolve);
+    // step 16: the baseline digest (ADR-078); a resolver that does not count its work never looks quiet
+    let quiet =
+        work_before.0.is_some() && (cx.resolver.store_work(), parts.downloads()) == work_before;
+    let baseline = baseline(cx, st.stash.as_ref(), &git, &run_env, t_resolve, quiet);
     let mut oracle = DiffOracle::new(&git, &info, &run_env, baseline, side.tracked, side.origins)?;
     // step 17–18: execution
     let facts = snp_git::pch_facts::PchFacts::new(git.clone());
@@ -599,17 +602,23 @@ fn side_queries(
     })
 }
 
-/// The baseline of ADR-078: known empty after a clean `diff-index` on the warm path; taken lazily (pre-commit's
-/// position, before the first hook) after a slow resolution/install (an IDE autosave during a long install counts
-/// as pre-existing), and always with `SNP_VERIFY_BASELINE=1`.
+/// The baseline of ADR-078(3): known empty after a clean `diff-index` on the warm path, taken lazily (pre-commit's
+/// position, before the first hook) otherwise, and always with `SNP_VERIFY_BASELINE=1`.
+///
+/// The warm path is ADR-078(3)'s "no clone, install or download since `diff-index`": `quiet` says the resolver
+/// counted no clone or install and no network request went out (ADR-104). The 250 ms bound on resolution and
+/// installation stays as a second, fail-closed guard: a long wait (a contended store lock) is also a window in
+/// which an IDE autosave must count as pre-existing.
 fn baseline(
     cx: &RunCtx,
     stash: Option<&StashGuard>,
     git: &Git,
     env: &Env,
     t_resolve: std::time::Instant,
+    quiet: bool,
 ) -> Option<DiffFingerprint> {
-    let warm = cx.clock.now().saturating_duration_since(t_resolve) < Duration::from_millis(250);
+    let warm =
+        quiet && cx.clock.now().saturating_duration_since(t_resolve) < Duration::from_millis(250);
     let clean = stash.is_some_and(|g| g.diff_index_clean() && *g.stashed() == Stashed::Nothing);
     if !(warm && clean) {
         return None;
