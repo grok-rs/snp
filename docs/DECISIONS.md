@@ -2169,30 +2169,40 @@ unanchored values with the merging mapping, and a list may hold one alias twice.
 value-key chains through the composed document, so a scalar must not move at construct time either. The wave-3 plan
 also proposed `Node.tag: Cow<'static, str>` (about 21,000 tag allocations in B10). That changes the type of a public
 field of a published crate.
-**Decision.** (1) `construct` consumes its graph. After phase 2 and before anything moves, `Graph::occurrences`
-counts each node's occurrences in the tree, saturating at 2: its number of paths from the root over the built edges
-as stored, with merged pairs included, duplicate keys already dropped and a repeated item counted at each position.
-A depth-first walk marks a node shared when a second edge reaches it, and then everything below a shared node is
-marked shared too. By induction in topological order, that is exactly "two or more paths". Anchor and alias flags are
-not used, and in-degree alone does not decide. (2) In phase 3 a node that occurs once moves its value
-(`Option::take`) and leaves its slot empty. Reaching that slot a second time is the internal invalid-document error,
-never an empty value. A shared scalar is cloned. A shared collection is built once, kept in its slot as a finished
-value and cloned for its later occurrences. (3) Fail closed: if the counts cannot be allocated, phase 3 copies every
-node as before, leaving the graph untouched. (4) Nothing moves at construct time. `emit::redump` and `compose`
-keep borrowing. No public signature changes: `construct(&Document, …)` builds and drops its own graph. (5) The
+**Decision.** (1) `construct` consumes its graph. After phase 2 and before anything moves, `Graph::occurrences` counts
+each node's occurrences in the tree, saturating at 2: its number of paths from the root over the built edges as
+stored, with merged pairs included, duplicate keys already dropped and a repeated item counted at each position. A
+depth-first walk marks a node shared when a second edge reaches it, and then everything below a shared node is marked
+shared too. By induction in topological order, that is exactly "two or more paths". Anchor and alias flags are not
+used, and in-degree alone does not decide. (2) In phase 3 a node that occurs once moves its value (`Option::take`) and
+leaves its slot empty. Reaching that slot a second time is the internal invalid-document error, never an empty value.
+A shared scalar is cloned and a shared collection is built again at each occurrence, as before; phase 3 keeps no
+finished copy of a shared collection. (3) Fail closed: if the counts cannot be allocated, phase 3 copies every node as
+before, leaving the graph untouched. (4) Nothing moves at construct time. `emit::redump` and `compose` keep borrowing.
+No public signature changes: `construct(&Document, …)` builds and drops its own graph. (5) The
 `Node.tag: Cow<'static, str>` change is **deferred**. It would break the public API of `snp-yaml`, which ADR-088
 publishes at the workspace version, so it needs an owner decision and a major-version plan. Implicit tags stay
 `Box<str>`.
 **Rationale.** A move is safe exactly when its node occurs once, and the path count tells that without depending on
-the traversal order or on the cache of shared collections. The cache saves rebuilding a shared collection, but
-correctness does not rely on it. The counting walk is linear in the edges, under 1M instructions for B10's 21,000
-nodes. Unit tests compare the classes with exact counts from expanding the tree, over the shared-node fixtures and
-400 generated documents with anchors, aliases, merges, sets, omaps and pairs. They also check that the owned and
-copying paths give the same tree, which slots empty, and that a forged single count is an error.
+the traversal order. Phase 3 holds only the graph and the tree, so its work and memory never exceed the copying
+path's, which phase 2 bounds by `max_constructed_nodes` (D-SEC-11). A cache that kept the finished value of every
+shared collection was rejected: everything below a shared collection is shared too, so the cache held the sum of their
+subtree sizes, about depth × tree. `a: &s [[…[x0, …, xm]…]]` 500 levels deep with `b: *s` stays inside every limit,
+and its tree has about 2 × m values; the cache would hold about 500 × m (some 2.5 × 10⁸ near the node limit, about
+20 GB), where pre-commit shares the objects and the copying path holds one tree. Caching only the nodes a second
+edge reaches directly would be bounded by the tree, but it adds up to one more tree of memory for a gain that only
+documents with large aliased collections see, and none of the benchmarks has an alias. The counting walk is linear in
+the edges, under 1M instructions for B10's 21,000 nodes. Unit tests compare the classes with exact counts from
+expanding the tree, over the shared-node fixtures and 400 generated documents with anchors, aliases, merges, sets,
+omaps and pairs. They also check that the owned and copying paths give the same tree, that the owned path empties
+exactly the single-occurrence slots and leaves every other slot as phase 2 built it, that nested shared collections
+leave no more values in the graph than phase 2 built, and that a forged single count is an error.
+`tests/memory_shared.rs` gates the dhat peak heap of the 500-level shared collection.
 **Consequences.** B10 (callgrind, fat-LTO profiling build): `construct` 33.6M → 28.8M instructions, 223,228 → 205,200
-heap blocks; heap peak 9.64 → 9.47 MB, with 86,031 → 64,979 live blocks at the peak. `gc` on 500 configs (B11)
-loses 6,063 blocks. A shared collection holds one extra finished copy until `construct` returns. Loaded values,
-errors and their order (the recursive-node and limit errors come from phase 2, which is unchanged) are the same.
+heap blocks; heap peak 9.64 → 9.47 MB, with 86,031 → 64,979 live blocks at the peak. `gc` on 500 configs (B11) loses
+6,063 blocks. A document with aliases costs at most what it cost before: its shared nodes are copied at each
+occurrence and only its single-occurrence nodes move. Loaded values, errors and their order (the recursive-node and
+limit errors come from phase 2, which is unchanged) are the same.
 
 ### ADR-116 — cfgv and file-identify are workspace crates: snp-cfgv and snp-identify
 

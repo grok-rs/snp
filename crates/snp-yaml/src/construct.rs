@@ -14,7 +14,7 @@
 //! 3. **Materialisation** into a `cfgv::Value` with an explicit stack (no recursion). It consumes the graph
 //!    (ADR-112): after the limits and before anything moves, each node's number of occurrences in the tree is
 //!    counted over the built edges; a node that occurs once moves its value into the tree, and a shared node is
-//!    built once and cloned for its later occurrences.
+//!    copied at each occurrence, so the work and the memory stay linear in the tree.
 //!
 //! Owner: WP-14.
 
@@ -107,8 +107,7 @@ pub fn load(text: &str, lim: &Limits) -> Result<Value, YamlError> {
 /// What phase 1 built for a node (`constructed_objects[node]`).
 #[derive(Debug, Clone)]
 pub(crate) enum Built {
-    /// A scalar constructor's value (always hashable). While [`Graph::materialize`] runs, also the finished value
-    /// of a shared collection.
+    /// A scalar constructor's value (always hashable).
     Scalar(Value),
     /// A collection whose generator is queued (`yield data` happened, the body has not run).
     Pending(Gen),
@@ -1058,9 +1057,10 @@ impl Graph {
     ///
     /// With `occurs` ([`Self::occurrences`]) the graph is consumed: a node that occurs once moves its value into
     /// the tree and leaves its slot empty, so reaching it a second time would be the invalid-document error,
-    /// never a moved-out value; a shared scalar is cloned; a shared collection is built once, kept in its slot
-    /// as a finished value, and cloned for its later occurrences. Without `occurs` every scalar is cloned and
-    /// every occurrence of a collection built again (the copying path; the graph is left as it was).
+    /// never a moved-out value. A shared scalar is cloned and a shared collection is built again at each
+    /// occurrence, as on the copying path: nothing is kept besides the graph and the tree, so the work and the
+    /// memory stay linear in the tree (D-SEC-11). Without `occurs` every scalar is cloned (the copying path; the
+    /// graph is left as it was).
     fn materialize(
         &mut self,
         root: NodeId,
@@ -1069,32 +1069,32 @@ impl Graph {
     ) -> Result<Value, YamlError> {
         enum Task {
             Enter(NodeId),
-            Seq(NodeId, usize),
-            Map(NodeId, usize),
-            Set(NodeId, usize),
-            Pairs(NodeId, usize),
+            Seq(usize),
+            Map(usize),
+            Set(usize),
+            Pairs(usize),
         }
         /// Queues a collection's children before the task that collects them; `false` for a scalar or a
         /// pending generator.
-        fn open(tasks: &mut Vec<Task>, id: NodeId, built: &Built) -> bool {
+        fn open(tasks: &mut Vec<Task>, built: &Built) -> bool {
             match built {
                 Built::Seq(items) => {
-                    tasks.push(Task::Seq(id, items.len()));
+                    tasks.push(Task::Seq(items.len()));
                     tasks.extend(items.iter().rev().map(|c| Task::Enter(*c)));
                 }
                 Built::Set(items) => {
-                    tasks.push(Task::Set(id, items.len()));
+                    tasks.push(Task::Set(items.len()));
                     tasks.extend(items.iter().rev().map(|c| Task::Enter(*c)));
                 }
                 Built::Map(pairs) => {
-                    tasks.push(Task::Map(id, pairs.len()));
+                    tasks.push(Task::Map(pairs.len()));
                     for (k, v) in pairs.iter().rev() {
                         tasks.push(Task::Enter(*v));
                         tasks.push(Task::Enter(*k));
                     }
                 }
                 Built::Pairs(pairs) => {
-                    tasks.push(Task::Pairs(id, pairs.len()));
+                    tasks.push(Task::Pairs(pairs.len()));
                     for (k, v) in pairs.iter().rev() {
                         tasks.push(Task::Enter(*v));
                         tasks.push(Task::Enter(*k));
@@ -1110,7 +1110,7 @@ impl Graph {
         let mut tasks = vec![Task::Enter(root)];
         let mut values: Vec<Value> = Vec::new();
         while let Some(task) = tasks.pop() {
-            let (id, done) = match task {
+            let done = match task {
                 Task::Enter(id) => {
                     let Some(slot) = self.built.get_mut(id.index()) else {
                         return Err(invalid());
@@ -1121,7 +1121,7 @@ impl Graph {
                                 values.push(v);
                                 true
                             }
-                            Some(b) => open(&mut tasks, id, &b),
+                            Some(b) => open(&mut tasks, &b),
                             None => false,
                         }
                     } else {
@@ -1130,7 +1130,7 @@ impl Graph {
                                 values.push(v.clone());
                                 true
                             }
-                            Some(b) => open(&mut tasks, id, b),
+                            Some(b) => open(&mut tasks, b),
                             None => false,
                         }
                     };
@@ -1139,16 +1139,16 @@ impl Graph {
                     }
                     continue;
                 }
-                Task::Seq(id, n) => (id, Value::List(tail(&mut values, n))),
-                Task::Set(id, n) => {
+                Task::Seq(n) => Value::List(tail(&mut values, n)),
+                Task::Set(n) => {
                     let mut set = Set::new();
                     set.try_reserve(n).map_err(|_| limit())?;
                     for k in tail(&mut values, n) {
                         set.insert(k);
                     }
-                    (id, Value::Set(set))
+                    Value::Set(set)
                 }
-                Task::Map(id, n) => {
+                Task::Map(n) => {
                     let flat = tail(&mut values, n.saturating_mul(2));
                     let mut map = Map::new();
                     map.try_reserve(n).map_err(|_| limit())?;
@@ -1158,9 +1158,9 @@ impl Graph {
                         // is replaced (`IndexMap::insert`).
                         map.insert(k, v);
                     }
-                    (id, Value::Map(map))
+                    Value::Map(map)
                 }
-                Task::Pairs(id, n) => {
+                Task::Pairs(n) => {
                     let flat = tail(&mut values, n.saturating_mul(2));
                     let mut list = Vec::new();
                     list.try_reserve_exact(n).map_err(|_| limit())?;
@@ -1168,15 +1168,9 @@ impl Graph {
                     while let (Some(k), Some(v)) = (it.next(), it.next()) {
                         list.push(Value::Tuple(vec![k, v]));
                     }
-                    (id, Value::List(list))
+                    Value::List(list)
                 }
             };
-            if occurs.is_some()
-                && !once(id)
-                && let Some(slot) = self.built.get_mut(id.index())
-            {
-                *slot = Some(Built::Scalar(done.clone()));
-            }
             values.push(done);
         }
         values.pop().ok_or_else(invalid)
@@ -1612,15 +1606,48 @@ mod tests {
         (g, root)
     }
 
-    /// The variant of each slot of a graph (`None` for an empty one).
-    type Kinds = Vec<Option<std::mem::Discriminant<Built>>>;
+    /// The content of each slot of a graph as its `Debug` text (`None` for an empty slot).
+    type Slots = Vec<Option<String>>;
 
-    /// [`Kinds`] of `g`.
-    fn kinds(g: &Graph) -> Kinds {
+    /// [`Slots`] of `g`.
+    fn slots(g: &Graph) -> Slots {
         g.built
             .iter()
-            .map(|slot| slot.as_ref().map(std::mem::discriminant))
+            .map(|slot| slot.as_ref().map(|b| format!("{b:?}")))
             .collect()
+    }
+
+    /// `s` repeated `n` times (`str::repeat` is a disallowed method).
+    fn rep(s: &str, n: usize) -> String {
+        std::iter::repeat_n(s, n).collect()
+    }
+
+    /// The number of `Value` nodes in `v`: a collection counts itself and everything in it.
+    fn value_nodes(v: &Value) -> usize {
+        match v {
+            Value::List(items) | Value::Tuple(items) => {
+                1 + items.iter().map(value_nodes).sum::<usize>()
+            }
+            Value::Map(map) => {
+                1 + map
+                    .iter()
+                    .map(|(k, v)| value_nodes(k) + value_nodes(v))
+                    .sum::<usize>()
+            }
+            Value::Set(set) => 1 + set.iter().map(value_nodes).sum::<usize>(),
+            _ => 1,
+        }
+    }
+
+    /// The `Value` nodes the slots of `g` hold (after phase 2: one per built scalar).
+    fn held(g: &Graph) -> usize {
+        g.built
+            .iter()
+            .map(|slot| match slot {
+                Some(Built::Scalar(v)) => value_nodes(v),
+                _ => 0,
+            })
+            .sum()
     }
 
     /// The exact number of occurrences of every node, by expanding the tree.
@@ -1639,17 +1666,17 @@ mod tests {
     }
 
     /// `text` materialised twice: owned (with its occurrence counts) and copying (which must leave its graph as
-    /// phase 2 built it). Returns the owned graph, the counts, the phase-2 slot variants and both trees.
-    fn both(text: &str) -> (Graph, Vec<u8>, Kinds, Value, Value) {
+    /// phase 2 built it). Returns the owned graph, the counts, the phase-2 slots and both trees.
+    fn both(text: &str) -> (Graph, Vec<u8>, Slots, Value, Value) {
         let (mut owned, root) = graph(text);
         let (mut copied, _) = graph(text);
-        let before = kinds(&copied);
+        let before = slots(&copied);
         let lim = Limits::default();
         let occurs = owned.occurrences(root).expect("counts");
         let a = owned.materialize(root, Some(&occurs), &lim).expect("owned");
         let b = copied.materialize(root, None, &lim).expect("copied");
         assert_eq!(
-            kinds(&copied),
+            slots(&copied),
             before,
             "{text:?}: the copying path changed its graph"
         );
@@ -1698,26 +1725,62 @@ mod tests {
     }
 
     /// The owned materialisation gives the copying one's tree; it empties exactly the slots of nodes that occur
-    /// once, keeps a value in every shared slot and leaves the nodes outside the tree as phase 2 built them.
+    /// once and leaves every other slot, shared or outside the tree, as phase 2 built it: no finished copy of a
+    /// shared collection is kept.
     #[test]
     fn owned_materialisation_moves_only_single_occurrences() {
         for text in corpus() {
             let (owned, occurs, before, a, b) = both(&text);
             assert_eq!(a, b, "{text:?}");
-            for (i, (slot, built)) in owned.built.iter().zip(&before).enumerate() {
+            for (i, (slot, built)) in slots(&owned).iter().zip(&before).enumerate() {
                 match occurs[i] {
                     ONCE => assert!(slot.is_none(), "{text:?}: node {i} moved"),
-                    SHARED => assert!(
-                        matches!(slot, Some(Built::Scalar(_))),
-                        "{text:?}: node {i} kept"
-                    ),
-                    _ => assert_eq!(
-                        (occurs[i], slot.as_ref().map(std::mem::discriminant)),
-                        (ABSENT, *built),
-                        "{text:?}: node {i} untouched"
-                    ),
+                    class => {
+                        assert!(
+                            class == SHARED || class == ABSENT,
+                            "{text:?}: node {i}: {class}"
+                        );
+                        assert_eq!(slot, built, "{text:?}: node {i} untouched");
+                    }
                 }
             }
+        }
+    }
+
+    /// Collections nested below a shared one (D-SEC-11): phase 3 never holds more values in the graph than
+    /// phase 2 built, so its memory stays linear in the loaded value. Keeping a finished copy of every shared
+    /// collection would hold about depth × leaves values for the spine and depth² × width for the chain, far
+    /// more than the tree itself.
+    #[test]
+    fn nested_shared_collections_keep_no_copies() {
+        let leaves: Vec<String> = (0..200).map(|i| format!("x{i}")).collect();
+        // `a: &s [[…[x0, …, x199]…]]` (101 levels) and `b: *s`.
+        let spine = format!(
+            "a: &s {}[{}]{}\nb: *s\n",
+            rep("[", 100),
+            leaves.join(", "),
+            rep("]", 100)
+        );
+        // `b: &b [x0, …, x19]`, `a: &a [[…[[*b], *b]…], *b]` (50 levels) and `c: *a`.
+        let chain = format!(
+            "b: &b [{}]\na: &a {}*b]{}\nc: *a\n",
+            leaves[..20].join(", "),
+            rep("[", 50),
+            rep(", *b]", 49)
+        );
+        for text in [spine, chain] {
+            let (mut g, root) = graph(&text);
+            let built = held(&g);
+            let occurs = g.occurrences(root).expect("counts");
+            let tree = g
+                .materialize(root, Some(&occurs), &Limits::default())
+                .expect("owned");
+            let (after, size) = (held(&g), value_nodes(&tree));
+            assert!(
+                after <= built && built < size,
+                "{:?}…: {after} values held after phase 3, {built} after phase 2, {size} in the tree",
+                text.get(..12)
+            );
         }
     }
 
