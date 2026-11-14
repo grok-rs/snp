@@ -8,3 +8,11 @@ import SnpModels
 #print axioms SnpModels.Shlex.split_quote
 #print axioms SnpModels.Shlex.pySplit_eq_split
 #print axioms SnpModels.Shlex.split_join
+#print axioms SnpModels.Stash.roundtrip
+#print axioms SnpModels.Stash.roundtrip_exact
+#print axioms SnpModels.Stash.residual_loss
+#print axioms SnpModels.Stash.precommit_loses_filter_hidden_change
+#print axioms SnpModels.Stash.precommit_loses_assume_unchanged_edit
+#print axioms SnpModels.Stash.rollback_complete
+#print axioms SnpModels.Stash.no_silent_loss
+#print axioms SnpModels.Stash.index_invariant

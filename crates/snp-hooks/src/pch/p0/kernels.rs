@@ -8,6 +8,8 @@ use memchr::memchr_iter;
 
 mod eof;
 pub use eof::{EofAction, end_of_file, end_of_file_bytes, end_of_file_run};
+mod eof_tail;
+pub(crate) use eof_tail::{TailFold, block_before, fold_block};
 
 /// `bytes.isspace()` / `bytes.strip()` whitespace (ASCII-WS): `b' \t\n\r\x0b\x0c'`.
 const fn is_ascii_ws(b: u8) -> bool {

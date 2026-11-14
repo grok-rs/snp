@@ -184,3 +184,31 @@ fn a_patch_with_trailing_whitespace_stashes_under_apply_whitespace_error() {
     assert!(!out.text().contains("Rolling back"));
     assert_eq!(sb.read(&repo, "foo"), changed.as_bytes());
 }
+
+/// The K9 model's A2 gap (docs/VERIFICATION.md §9.2 K9 ¬G): git applies a text patch by its hunks' context lines,
+/// not by the whole file. A hook edit to a file of the patch, away from the user's hunks, does not block the apply:
+/// `stage_fixed` stages it, no rollback runs, and the file ends with the hook's edit merged with the user's change
+/// (the model's A2 would refuse the apply and roll back).
+#[test]
+fn a_hook_edit_outside_the_users_hunks_merges_without_a_rollback() {
+    let sb = Sandbox::new();
+    let repo = sb.foo_staged("r");
+    let user = FOO.replace('8', "8 user");
+    sb.write(&repo, "foo", user.as_bytes());
+    let (cx, out, _) = sb.ctx(&repo);
+    let mut g = snp_stash::enter(cx).unwrap();
+    assert!(matches!(g.stashed(), Stashed::Patch(_)));
+    assert_eq!(sb.read(&repo, "foo"), FOO.as_bytes());
+    // The "hook": edits line 1 of `foo`; the user's unstaged change is on line 8.
+    let hook = FOO.replace('1', "1 hook");
+    sb.write(&repo, "foo", hook.as_bytes());
+    let foo = snp_core::path::RepoPath::new(b"foo").unwrap();
+    assert!(g.stage_fixed(&[foo]).unwrap());
+    g.restore().unwrap();
+    assert!(!out.text().contains("Rolling back"), "{}", out.text());
+    assert_eq!(
+        sb.read(&repo, "foo"),
+        FOO.replace('1', "1 hook").replace('8', "8 user").as_bytes()
+    );
+    assert_eq!(sb.git(&repo, &["show", ":foo"]), hook.as_bytes());
+}

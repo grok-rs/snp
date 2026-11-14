@@ -499,7 +499,7 @@ fn checkout_paths_without_pathspec_from_file_chunks_literal_arguments() {
         names.len(),
         "the assume-unchanged edit is not listed"
     );
-    let calls = git.checkout_path_calls(&paths);
+    let calls = git.checkout_path_calls(&paths).unwrap();
     assert!(calls.len() > 1, "{} names need several chunks", names.len());
     for c in &calls {
         let first: Vec<&str> = c.args.iter().take(4).map(|a| a.to_str().unwrap()).collect();

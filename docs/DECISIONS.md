@@ -1428,6 +1428,8 @@ uv that trusts a distrusted intermediate weakens the TLS that D-SEC-08 relies on
 
 ### ADR-093 — The stash checks out only the patch's files (D-DATA-19)
 
+*Status: Accepted; amended by ADR-095 (fix F3 with kernel K7: the checkout sink refuses a list holding an empty or NUL-bearing path, `ValueError` before any call, and the rollback drops empty records of the `git diff` listing). The amending ADR is normative where they differ.*
+
 *Amends ADR-016 (the two checkouts of the algorithm).*
 
 **Context.** ADR-016 keeps pre-commit's stash commands, among them `git -c submodule.recurse=0 checkout -- .` after
@@ -1578,9 +1580,12 @@ already, so the decision is due. The Lean job is promoted under (11). A nightly 
 against CPython, run a Z3 seed sweep and report proofs that fail at half the rlimit (planned; the CPython check is run
 by hand until then). (9) *Kernels.* M1 covers the xargs partition core, the archive
 entry-name check, end-of-file-fixer (Verus and Lean) and the shlex split model (Lean); M2 and M3 are as
-docs/VERIFICATION.md lists them. A kernel extraction is behaviour-preserving. A divergence that a proof exposes is
-either fixed toward pre-commit or registered; the first case: xargs at `max_len == usize::MAX` now raises
-`ArgumentTooLongError` (CHANGELOG "Fixed"). Confirmed defects (gc patch protection, D-DATA-04) are fixed in ordinary
+docs/VERIFICATION.md lists them. A kernel extraction is behaviour-preserving, except for the hardening listed here. A
+divergence that a proof exposes is either fixed toward pre-commit or registered; the first case: xargs at
+`max_len == usize::MAX` now raises `ArgumentTooLongError` (CHANGELOG "Fixed"); the second: fix F3 lands with kernel K7
+and amends ADR-093/D-DATA-19. The stash's checkout sink refuses a pathspec list holding an empty or NUL-bearing path
+(`ValueError` before any git call, because an empty `:(literal)` selects the whole tree), and the conflict rollback
+drops empty records of the `git diff` listing (docs/VERIFICATION.md §9.2 K7, §11 F3). Confirmed defects (gc patch protection, D-DATA-04) are fixed in ordinary
 PRs before a proof locks the behaviour in. (10) *Escape hatch.* An urgent change to a kernel whose proof is not ready
 may land with the kernel marked `pending` in the registry; it is then unmounted, and its marker line says so. Release
 gate 7 (planned, M1 exit) will fail while any kernel is pending, unless the release notes accept it. (11) *Promotion and exit.* The Lean job

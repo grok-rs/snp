@@ -20,6 +20,8 @@ use snp_pycompat::codec::decode_utf8;
 use snp_pycompat::precommit::{merge_msg_conflicts, pre_push_lines, pre_push_lines_bytes};
 use snp_pycompat::text::{bytes_strip, splitlines, strip};
 
+mod pathspec;
+
 use crate::run::{self, Out, bare_git_argv, concat, os_from_bytes};
 use crate::types::{BadRecord, is_null_oid, parse_diff_raw, parse_ls_files_stage};
 use crate::zlist::TooLarge;
@@ -89,43 +91,57 @@ pub struct CheckoutCall {
     pub stdin: Vec<u8>,
 }
 
-/// `:(literal)<path>\0` per path: a `--pathspec-file-nul` list in which no name is a glob or carries magic.
+/// `:(literal)<path>\0` per path: a `--pathspec-file-nul` list in which no name is a glob or carries magic (the
+/// verified kernel `pathspec::literal_list`, ADR-095 K7).
 pub fn literal_pathspecs<'a>(paths: impl IntoIterator<Item = &'a [u8]>) -> Vec<u8> {
-    let mut out = Vec::new();
-    for p in paths {
-        out.extend_from_slice(b":(literal)");
-        out.extend_from_slice(p);
-        out.push(0);
-    }
-    out
+    let paths: Vec<&[u8]> = paths.into_iter().collect();
+    pathspec::literal_list(&paths)
 }
 
 /// The paths of `git apply --numstat -z`: records `<added>\t<deleted>\t<path>\0` (`-\t-\t` for a binary file); a
 /// rename or copy record (`<added>\t<deleted>\t\0<old>\0<new>\0`, never produced by a stash patch) contributes both
-/// names.
+/// names. Unverified shell of the kernel `pathspec::numstat_spans` (ADR-095 K7): every path it returns is non-empty
+/// and NUL-free.
 fn parse_numstat_z(out: &[u8]) -> Result<ZList, Failure> {
+    let spans = pathspec::numstat_spans(out).map_err(|(s, e)| {
+        bad_record(
+            "apply --numstat -z",
+            &BadRecord(out.get(s..e).unwrap_or_default().to_vec()),
+        )
+    })?;
     let mut list = ZList::default();
-    let mut records = out.split(|&b| b == 0);
-    while let Some(rec) = records.next() {
-        if rec.is_empty() {
-            continue;
-        }
-        let mut fields = rec.splitn(3, |&b| b == b'\t');
-        let (Some(_), Some(_), Some(path)) = (fields.next(), fields.next(), fields.next()) else {
-            return Err(bad_record("apply --numstat -z", &BadRecord(rec.to_vec())));
-        };
-        if path.is_empty() {
-            for name in [records.next(), records.next()] {
-                match name {
-                    Some(n) if !n.is_empty() => list.push(n).map_err(too_large)?,
-                    _ => return Err(bad_record("apply --numstat -z", &BadRecord(rec.to_vec()))),
-                }
-            }
-        } else {
-            list.push(path).map_err(too_large)?;
-        }
+    for (s, e) in spans {
+        list.push(out.get(s..e).unwrap_or_default())
+            .map_err(too_large)?;
     }
     Ok(list)
+}
+
+/// The production [`pathspec::SeenSet`]: a hash set over the borrowed records, O(n) for any number of paths. A
+/// trusted item of kernel K7 (ADR-095 §2.6, `proofs/registry.toml`), checked against the verified
+/// [`pathspec::Scan`] by the differential test `seen_set_hash_matches_scan`.
+#[derive(Debug, Clone, Copy)]
+struct HashSeen;
+
+impl pathspec::SeenSet for HashSeen {
+    fn first_seen(&self, records: &[&[u8]]) -> Vec<bool> {
+        let mut seen: std::collections::HashSet<&[u8]> =
+            std::collections::HashSet::with_capacity(records.len());
+        records.iter().map(|r| seen.insert(*r)).collect()
+    }
+}
+
+/// Up to this many records the rollback list is deduplicated by the verified [`pathspec::Scan`] (no hashing, no
+/// allocation per record); longer lists use [`HashSeen`].
+const SCAN_MAX: usize = 16;
+
+/// D-DATA-19 (ADR-093 as amended for ADR-095 K7): the checkout sink's refusal of a path that would select more than
+/// itself.
+fn refused_checkout_path(path: &[u8]) -> Failure {
+    Failure::unexpected(
+        "ValueError",
+        messages::refused_checkout_path(&snp_pycompat::repr::repr_fsbytes(path)),
+    )
 }
 
 /// The brand of this process: `basename(argv[0])` (ADR-023, `Brand::detect`), read once.
@@ -638,7 +654,7 @@ impl Git {
         group: Group,
     ) -> Result<(), Failure> {
         let env = self.checkout_env(skip_post_checkout);
-        for call in self.checkout_path_calls(paths) {
+        for call in self.checkout_path_calls(paths)? {
             let args: Vec<&OsStr> = call.args.iter().map(OsString::as_os_str).collect();
             let argv = self.argv(&args);
             let stdin = Stdin::Bytes(Arc::from(call.stdin));
@@ -662,43 +678,46 @@ impl Git {
     /// `--pathspec-from-file` — `git -c submodule.recurse=0 checkout -- :(literal)<path>…` in chunks of at most
     /// 24 KiB of arguments (a name longer than that gets a call of its own). Run them in the
     /// environment of [`Git::checkout_env`]. No call for an empty list.
-    pub fn checkout_path_calls(&self, paths: &ZList) -> Vec<CheckoutCall> {
-        if paths.is_empty() {
-            return Vec::new();
+    ///
+    /// A list holding an empty path (an empty `:(literal)` pathspec selects the whole tree, the checkout D-DATA-19
+    /// removed) or a path with a NUL byte (it would split into two items) is refused (`ValueError`) before any call:
+    /// git-made lists never hold one. Unverified shell of the kernels `pathspec::checkout_refusal`, `literal_list`,
+    /// `literal_chunks` and `literal_spec` (ADR-095 K7).
+    pub fn checkout_path_calls(&self, paths: &ZList) -> Result<Vec<CheckoutCall>, Failure> {
+        let list: Vec<&[u8]> = paths.iter().collect();
+        if let Some(k) = pathspec::checkout_refusal(&list) {
+            return Err(refused_checkout_path(
+                list.get(k).copied().unwrap_or_default(),
+            ));
+        }
+        if list.is_empty() {
+            return Ok(Vec::new());
         }
         if self.exe.caps.pathspec_from_file {
-            return vec![CheckoutCall {
+            return Ok(vec![CheckoutCall {
                 args: CHECKOUT_PATHS_ARGS.iter().map(|a| os(a)).collect(),
-                stdin: literal_pathspecs(paths.iter()),
-            }];
+                stdin: pathspec::literal_list(&list),
+            }]);
         }
-        let head = || -> Vec<OsString> {
-            ["-c", "submodule.recurse=0", "checkout", "--"]
-                .iter()
-                .map(|a| os(a))
-                .collect()
-        };
-        let mut calls = Vec::new();
-        let mut args = head();
-        let mut bytes = 0_usize;
-        for p in paths.iter() {
-            let mut spec = b":(literal)".to_vec();
-            spec.extend_from_slice(p);
-            if bytes > 0 && bytes.saturating_add(spec.len()) > CHECKOUT_CHUNK_BYTES {
-                calls.push(CheckoutCall {
-                    args: std::mem::replace(&mut args, head()),
+        Ok(pathspec::literal_chunks(&list, CHECKOUT_CHUNK_BYTES)
+            .into_iter()
+            .map(|(start, end)| {
+                let mut args: Vec<OsString> = ["-c", "submodule.recurse=0", "checkout", "--"]
+                    .iter()
+                    .map(|a| os(a))
+                    .collect();
+                args.extend(
+                    list.get(start..end)
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|p| os_from_bytes(&pathspec::literal_spec(p))),
+                );
+                CheckoutCall {
+                    args,
                     stdin: Vec::new(),
-                });
-                bytes = 0;
-            }
-            bytes = bytes.saturating_add(spec.len()).saturating_add(1);
-            args.push(os_from_bytes(&spec));
-        }
-        calls.push(CheckoutCall {
-            args,
-            stdin: Vec::new(),
-        });
-        calls
+                }
+            })
+            .collect())
     }
 
     /// D-DATA-19: the paths a stash patch touches, from git's own patch parser: `git apply --numstat -z <patch>`
@@ -740,16 +759,21 @@ impl Git {
 
     /// D-DATA-19: what the stash rollback checks out — the patch's paths (so it applies again) followed by every other
     /// path [`Git::changed_paths`] lists (so every hook fix git can see is discarded, as pre-commit's whole-tree
-    /// checkout discards it), each once.
+    /// checkout discards it), each once; an empty record of the listing (git never prints one) is dropped. Unverified
+    /// shell of the kernel `pathspec::rollback_list` (ADR-095 K7).
     pub fn rollback_paths(&self, patch: &Path) -> Result<ZList, Failure> {
         let touched = self.patch_paths(patch)?;
         let changed = self.changed_paths()?;
-        let mut seen: std::collections::HashSet<&[u8]> = std::collections::HashSet::new();
+        let touched: Vec<&[u8]> = touched.iter().collect();
+        let changed: Vec<&[u8]> = changed.iter().collect();
+        let list = if touched.len().saturating_add(changed.len()) <= SCAN_MAX {
+            pathspec::rollback_list(&pathspec::Scan, &touched, &changed)
+        } else {
+            pathspec::rollback_list(&HashSeen, &touched, &changed)
+        };
         let mut out = ZList::default();
-        for p in touched.iter().chain(changed.iter()) {
-            if seen.insert(p) {
-                out.push(p).map_err(too_large)?;
-            }
+        for p in list {
+            out.push(p).map_err(too_large)?;
         }
         Ok(out)
     }
@@ -1336,6 +1360,248 @@ mod tests {
         assert!(parse_combined(b"\nmaybe\n/r/.git\n/r/.git\n/r/.git/index\n").is_none());
         assert!(parse_combined(b"no newline").is_none());
         assert!(parse_combined(b"").is_none());
+    }
+
+    /// `SplitMix64` (the snp-pycompat `tests/properties.rs` precedent): seeded, std-only.
+    struct Mix(u64);
+
+    impl Mix {
+        fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut z = self.0;
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            z ^ (z >> 31)
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            usize::try_from(self.next() % u64::try_from(n).unwrap()).unwrap()
+        }
+
+        /// A record over `alphabet`, up to `max` bytes.
+        fn record(&mut self, alphabet: &[u8], max: usize) -> Vec<u8> {
+            let len = self.below(max + 1);
+            (0..len)
+                .map(|_| alphabet[self.below(alphabet.len())])
+                .collect()
+        }
+    }
+
+    /// The parser before kernel K7 (`split`/`splitn`), kept as the reference of the differential test.
+    fn former_parse_numstat_z(out: &[u8]) -> Result<Vec<Vec<u8>>, Vec<u8>> {
+        let mut list = Vec::new();
+        let mut records = out.split(|&b| b == 0);
+        while let Some(rec) = records.next() {
+            if rec.is_empty() {
+                continue;
+            }
+            let mut fields = rec.splitn(3, |&b| b == b'\t');
+            let (Some(_), Some(_), Some(path)) = (fields.next(), fields.next(), fields.next())
+            else {
+                return Err(rec.to_vec());
+            };
+            if path.is_empty() {
+                for name in [records.next(), records.next()] {
+                    match name {
+                        Some(n) if !n.is_empty() => list.push(n.to_vec()),
+                        _ => return Err(rec.to_vec()),
+                    }
+                }
+            } else {
+                list.push(path.to_vec());
+            }
+        }
+        Ok(list)
+    }
+
+    fn check_numstat(out: &[u8]) {
+        let new = parse_numstat_z(out);
+        match former_parse_numstat_z(out) {
+            Ok(names) => {
+                let list = new.unwrap_or_else(|e| panic!("{out:?}: {e:?}"));
+                assert_eq!(list.iter().collect::<Vec<_>>(), names, "{out:?}");
+                assert!(
+                    list.iter().all(|p| !p.is_empty() && !p.contains(&0)),
+                    "{out:?}"
+                );
+            }
+            Err(rec) => {
+                let e = new.expect_err("former parser refused");
+                assert_eq!(
+                    exc_text(&e),
+                    exc_text(&bad_record("apply --numstat -z", &BadRecord(rec))),
+                    "{out:?}"
+                );
+            }
+        }
+    }
+
+    fn exc_text(f: &Failure) -> (String, String) {
+        let Failure::Exc { exc, .. } = f else {
+            panic!("{f:?}")
+        };
+        (
+            exc.ty.to_string(),
+            String::from_utf8_lossy(&exc.text).into_owned(),
+        )
+    }
+
+    /// K7 (N1, N2): the verified `numstat_spans` behind `parse_numstat_z` agrees with the former parser on every
+    /// output over `{a, TAB, NUL, LF}` up to 8 bytes (87 381 cases) and on seeded random outputs.
+    #[test]
+    fn numstat_kernel_matches_former_parser() {
+        let alphabet = [b'a', b'\t', 0, b'\n'];
+        let mut buf = Vec::new();
+        for len in 0..=8_u32 {
+            for mut code in 0..4_usize.checked_pow(len).unwrap() {
+                buf.clear();
+                for _ in 0..len {
+                    buf.push(alphabet[code % 4]);
+                    code /= 4;
+                }
+                check_numstat(&buf);
+            }
+        }
+        let mut mix = Mix(0x5eed_0007_0000_0001);
+        for _ in 0..20_000 {
+            let out = mix.record(&[b'1', b'-', b'\t', 0, b'x', b'\n', 0xff], 40);
+            check_numstat(&out);
+        }
+        // git's shape: `<added>\t<deleted>\t<name>\0`, TABs and newlines allowed in names
+        assert_eq!(
+            parse_numstat_z(b"1\t2\ta\tb\0-\t-\tc\nd\0")
+                .unwrap()
+                .iter()
+                .collect::<Vec<_>>(),
+            [&b"a\tb"[..], b"c\nd"]
+        );
+    }
+
+    /// The chunking loop before kernel K7, kept as the reference of the differential test.
+    fn former_chunks(paths: &[&[u8]], budget: usize) -> Vec<Vec<Vec<u8>>> {
+        let mut calls = Vec::new();
+        let mut args = Vec::new();
+        let mut bytes = 0_usize;
+        for p in paths {
+            let mut spec = b":(literal)".to_vec();
+            spec.extend_from_slice(p);
+            if bytes > 0 && bytes.saturating_add(spec.len()) > budget {
+                calls.push(std::mem::take(&mut args));
+                bytes = 0;
+            }
+            bytes = bytes.saturating_add(spec.len()).saturating_add(1);
+            args.push(spec);
+        }
+        if !paths.is_empty() {
+            calls.push(args);
+        }
+        calls
+    }
+
+    /// K7 (N3): `literal_list` equals the former encoder, and `literal_chunks` + `literal_spec` the former chunking
+    /// loop, on seeded random lists and budgets (including names longer than the budget).
+    #[test]
+    fn literal_kernels_match_former_code() {
+        let mut mix = Mix(0x5eed_0007_0000_0002);
+        for _ in 0..5_000 {
+            let n = mix.below(12);
+            let records: Vec<Vec<u8>> = (0..n).map(|_| mix.record(b"ab*[\\\n", 30)).collect();
+            let paths: Vec<&[u8]> = records.iter().map(Vec::as_slice).collect();
+            let mut former = Vec::new();
+            for p in &paths {
+                former.extend_from_slice(b":(literal)");
+                former.extend_from_slice(p);
+                former.push(0);
+            }
+            assert_eq!(literal_pathspecs(paths.iter().copied()), former);
+            let budget = mix.below(80);
+            let chunks: Vec<Vec<Vec<u8>>> = pathspec::literal_chunks(&paths, budget)
+                .into_iter()
+                .map(|(s, e)| {
+                    paths[s..e]
+                        .iter()
+                        .map(|p| pathspec::literal_spec(p))
+                        .collect()
+                })
+                .collect();
+            assert_eq!(chunks, former_chunks(&paths, budget), "{paths:?} {budget}");
+        }
+        assert_eq!(
+            former_chunks(&[b"a"], CHECKOUT_CHUNK_BYTES),
+            [[b":(literal)a".to_vec()]]
+        );
+    }
+
+    /// The trusted [`HashSeen`] (ADR-095 §2.6, `proofs/registry.toml` `[[trusted]]`) agrees with the verified
+    /// [`pathspec::Scan`] on seeded random record lists, so the rollback list is the same whichever one runs.
+    #[test]
+    fn seen_set_hash_matches_scan() {
+        use pathspec::SeenSet;
+        let mut mix = Mix(0x5eed_0007_0000_0003);
+        for _ in 0..20_000 {
+            let n = mix.below(40);
+            let records: Vec<Vec<u8>> = (0..n).map(|_| mix.record(b"ab\0", 3)).collect();
+            let records: Vec<&[u8]> = records.iter().map(Vec::as_slice).collect();
+            let hashed = HashSeen.first_seen(&records);
+            assert_eq!(hashed, pathspec::Scan.first_seen(&records), "{records:?}");
+            assert_eq!(hashed.len(), records.len());
+        }
+        assert_eq!(
+            HashSeen.first_seen(&[b"x", b"y", b"x", b"", b""]),
+            [true, true, false, true, false]
+        );
+    }
+
+    /// K7 (N4): the rollback list is the former first-seen union of the patch's paths and the changed paths, minus
+    /// the empty records the former code let through (F3).
+    #[test]
+    fn rollback_list_is_former_union_without_empty_records() {
+        let mut mix = Mix(0x5eed_0007_0000_0004);
+        for _ in 0..5_000 {
+            let t: Vec<Vec<u8>> = (0..mix.below(25))
+                .map(|_| mix.record(b"ab", 2).into_iter().chain(*b"x").collect())
+                .collect();
+            let c: Vec<Vec<u8>> = (0..mix.below(25)).map(|_| mix.record(b"abx", 2)).collect();
+            let t: Vec<&[u8]> = t.iter().map(Vec::as_slice).collect();
+            let c: Vec<&[u8]> = c.iter().map(Vec::as_slice).collect();
+            let mut seen = std::collections::HashSet::new();
+            let former: Vec<&[u8]> = t
+                .iter()
+                .chain(c.iter().filter(|p| !p.is_empty()))
+                .copied()
+                .filter(|p| seen.insert(*p))
+                .collect();
+            assert_eq!(pathspec::rollback_list(&HashSeen, &t, &c), former);
+            assert_eq!(pathspec::rollback_list(&pathspec::Scan, &t, &c), former);
+        }
+    }
+
+    /// F3 (ADR-095 K7, a D-DATA-19 amendment): the checkout sink refuses an empty path (an empty `:(literal)` is the
+    /// whole tree) and a NUL-bearing one before running anything, with either checkout form.
+    #[test]
+    fn checkout_sink_refuses_empty_and_nul_paths() {
+        use crate::testing::ScriptedBackend;
+        for from_file in [true, false] {
+            let scripted = Arc::new(ScriptedBackend::new());
+            let mut git = scripted_git(Arc::clone(&scripted));
+            let mut caps = crate::GitCaps::for_version(None);
+            caps.pathspec_from_file = from_file;
+            git.exe = Arc::new(GitExe {
+                argv0: vec![os("/usr/bin/git")],
+                caps,
+            });
+            for (bad, shown) in [(&b""[..], "path '':"), (b"a\0b", "path 'a\\x00b':")] {
+                let list = ZList::from_records([&b"ok"[..], bad, b"z"]).unwrap();
+                let (name, text) = exc_text(&git.checkout_path_calls(&list).unwrap_err());
+                assert_eq!(name, "ValueError");
+                assert!(text.contains(shown), "{text}");
+                assert!(git.checkout_paths(&list, true, Group::Isolated).is_err());
+            }
+            assert!(scripted.calls().is_empty(), "nothing ran");
+            let good = ZList::from_records([&b"a b"[..], b"*"]).unwrap();
+            assert_eq!(git.checkout_path_calls(&good).unwrap().len(), 1);
+            assert_eq!(git.checkout_path_calls(&ZList::default()).unwrap().len(), 0);
+        }
     }
 
     #[test]

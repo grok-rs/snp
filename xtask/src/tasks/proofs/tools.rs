@@ -1160,15 +1160,22 @@ pub(crate) fn oracles(root: &Path, only: Option<&str>) -> anyhow::Result<()> {
         .status()
         .is_ok_and(|s| s.success());
     for m in models {
-        if !bin.join(&m.oracle).is_file() && !bin.join(format!("{}.exe", m.oracle)).is_file() {
+        let Some(o) = &m.oracle else {
+            workspace::say(&format!(
+                "proofs oracles: {}: no oracle (a protocol model; its witnesses are ordinary tests)",
+                m.id
+            ));
+            continue;
+        };
+        if !bin.join(&o.exe).is_file() && !bin.join(format!("{}.exe", o.exe)).is_file() {
             bail!(
                 "model {}: oracle {} was not built in {}",
                 m.id,
-                m.oracle,
+                o.exe,
                 bin.display()
             );
         }
-        let (package, test) = test_target(&tree, &m.oracle_test)?;
+        let (package, test) = test_target(&tree, &o.test)?;
         let mut cmd = Command::new("cargo");
         if nextest {
             cmd.args(["nextest", "run"]);
@@ -1185,7 +1192,7 @@ pub(crate) fn oracles(root: &Path, only: Option<&str>) -> anyhow::Result<()> {
         ));
         let status = cmd.status().context("running cargo")?;
         if !status.success() {
-            bail!("model {}: the oracle test {} fails", m.id, m.oracle_test);
+            bail!("model {}: the oracle test {} fails", m.id, o.test);
         }
     }
     workspace::say("proofs oracles: ok");
@@ -1278,7 +1285,9 @@ pub(crate) fn status(root: &Path) -> anyhow::Result<()> {
     for m in &reg.models {
         workspace::say(&format!(
             "\nmodel {} ({}, oracle {}):",
-            m.id, m.lean, m.oracle
+            m.id,
+            m.lean,
+            m.oracle.as_ref().map_or("none", |o| o.exe.as_str())
         ));
         for a in &m.anchors {
             let state = match fingerprint::of_anchor(&tree, &a.item) {

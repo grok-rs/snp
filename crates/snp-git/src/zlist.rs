@@ -4,6 +4,10 @@
 
 use std::fmt;
 
+use split::FindByte;
+
+mod split;
+
 /// NUL-separated byte buffer + spans, git order preserved, never sorted (02 G.0 #8).
 ///
 /// Parsing reproduces `git.zsplit` (`git.py:19-24`): `s.strip('\0')`, then `split('\0')` — leading and trailing NULs
@@ -26,6 +30,18 @@ impl fmt::Debug for ZList {
 /// A git output too large to index with `u32` offsets (4 GiB): never produced by a real repository.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TooLarge;
+
+/// The production [`FindByte`]: `memchr::memchr`. Its contract is a trusted item of `proofs/registry.toml`
+/// (ADR-095 §10 row 8), tested against the verified [`split::Scalar`] by `memchr_matches_scalar`.
+#[derive(Debug, Clone, Copy)]
+struct Memchr;
+
+impl FindByte for Memchr {
+    fn find_byte(&self, needle: u8, hay: &[u8], from: usize) -> Option<usize> {
+        let i = memchr::memchr(needle, hay.get(from..)?)?;
+        from.checked_add(i)
+    }
+}
 
 fn span_of(buf: &[u8], s: u32, e: u32) -> Option<&[u8]> {
     buf.get(usize::try_from(s).ok()?..usize::try_from(e).ok()?)
@@ -71,38 +87,19 @@ impl ZList {
         Self::split(buf, true)
     }
 
+    /// Unverified shell of kernel K5b (ADR-095, docs/VERIFICATION.md §9.2): the spans come from the verified
+    /// [`split::split_spans`] with the memchr finder.
+    #[expect(
+        clippy::disallowed_macros,
+        reason = "debug-only differential check of the trusted `Memchr: FindByte` (ADR-095 §10 row 8)"
+    )]
     fn split(buf: Vec<u8>, dedup: bool) -> Result<Self, TooLarge> {
-        let total = u32::try_from(buf.len()).map_err(|_| TooLarge)?;
-        let mut spans: Vec<(u32, u32)> = Vec::new();
-        // s.strip('\0')
-        let Some(first) = buf.iter().position(|&b| b != 0) else {
-            return Ok(Self {
-                buf,
-                spans: Vec::new(),
-            });
-        };
-        let last = buf
-            .iter()
-            .rposition(|&b| b != 0)
-            .map_or(buf.len(), |i| i.saturating_add(1));
-        let mut start = u32::try_from(first).map_err(|_| TooLarge)?;
-        let end = u32::try_from(last).map_err(|_| TooLarge)?.min(total);
-        let body = buf.get(first..last).unwrap_or_default();
-        let push = |s: u32, e: u32, spans: &mut Vec<(u32, u32)>| {
-            if dedup
-                && let Some(&(ps, pe)) = spans.last()
-                && span_of(&buf, ps, pe) == span_of(&buf, s, e)
-            {
-                return;
-            }
-            spans.push((s, e));
-        };
-        for nul in memchr::memchr_iter(0, body) {
-            let at = u32::try_from(first.saturating_add(nul)).map_err(|_| TooLarge)?;
-            push(start, at, &mut spans);
-            start = at.saturating_add(1);
-        }
-        push(start, end, &mut spans);
+        let spans = split::split_spans(&Memchr, &buf, dedup).ok_or(TooLarge)?;
+        // Every debug build (tests, fuzzing) checks the trusted memchr finder against the verified scalar one.
+        debug_assert_eq!(
+            split::split_spans(&split::Scalar, &buf, dedup).as_ref(),
+            Some(&spans)
+        );
         Ok(Self { buf, spans })
     }
 
@@ -199,6 +196,85 @@ mod tests {
         let (buf, spans) = l.into_parts();
         assert_eq!(buf, b"\0x\0yy\0");
         assert_eq!(spans, vec![(1, 2), (3, 5)]);
+    }
+
+    /// The [[trusted]] `Memchr: FindByte` of `proofs/registry.toml` (ADR-095 §10 row 8): memchr agrees with the
+    /// verified scalar finder on every haystack over `{0, 1, 2}` up to length 8 (every needle, every `from`,
+    /// including past the end) and on seeded random haystacks long enough for memchr's vectorised paths.
+    #[test]
+    fn memchr_matches_scalar() {
+        fn check(hay: &[u8]) {
+            for needle in 0..4u8 {
+                for from in 0..=hay.len() + 2 {
+                    assert_eq!(
+                        Memchr.find_byte(needle, hay, from),
+                        split::Scalar.find_byte(needle, hay, from),
+                        "{hay:?} {needle} {from}"
+                    );
+                }
+            }
+            assert_eq!(Memchr.find_byte(0, hay, usize::MAX), None);
+        }
+        let mut hay = Vec::new();
+        for len in 0..=8u32 {
+            for code in 0..3u32.checked_pow(len).unwrap() {
+                hay.clear();
+                let mut c = code;
+                for _ in 0..len {
+                    hay.push(u8::try_from(c % 3).unwrap());
+                    c /= 3;
+                }
+                check(&hay);
+            }
+        }
+        // SplitMix64 (seed fixed), lengths up to 300 with sparse needles so the hits land past the SIMD prologue.
+        let mut state: u64 = 0x5eed_0005_0000_0001;
+        let mut next = || {
+            state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut z = state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            z ^ (z >> 31)
+        };
+        for _ in 0..2_000 {
+            let len = usize::try_from(next() % 300).unwrap();
+            let hay: Vec<u8> = (0..len)
+                .map(|_| {
+                    if next() % 61 == 0 {
+                        u8::try_from(next() % 4).unwrap()
+                    } else {
+                        7
+                    }
+                })
+                .collect();
+            check(&hay);
+        }
+    }
+
+    /// The verified spans equal `git.zsplit` (pycompat) and its adjacent dedup on every buffer over `{0, a, b}` up
+    /// to length 8.
+    #[test]
+    fn split_matches_pycompat_exhaustively() {
+        let mut buf = Vec::new();
+        for len in 0..=8u32 {
+            for code in 0..3u32.checked_pow(len).unwrap() {
+                buf.clear();
+                let mut c = code;
+                for _ in 0..len {
+                    buf.push([0, b'a', b'b'][usize::try_from(c % 3).unwrap()]);
+                    c /= 3;
+                }
+                let mut want = py(&buf);
+                assert_eq!(z(&buf), want, "{buf:?}");
+                want.dedup();
+                let got: Vec<Vec<u8>> = ZList::from_z_dedup(buf.clone())
+                    .unwrap()
+                    .iter()
+                    .map(<[u8]>::to_vec)
+                    .collect();
+                assert_eq!(got, want, "{buf:?}");
+            }
+        }
     }
 
     #[test]

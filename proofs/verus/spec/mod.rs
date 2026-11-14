@@ -4,5 +4,9 @@
 //! One module per kernel (the registry entry's `spec`); generic lemmas go into `lib`.
 pub mod archive_entry;
 pub mod eof;
+pub mod eof_tail;
 pub mod lib;
+pub mod pathspec;
 pub mod xargs_partition;
+pub mod zlist_split;
+pub mod zsplit;

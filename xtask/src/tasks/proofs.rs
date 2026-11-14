@@ -250,6 +250,19 @@ pub(crate) struct Anchor {
     pub(crate) fingerprint: String,
 }
 
+/// The oracle of a `[[model]]`: a Lean executable and the home-crate test that compares it with the Rust code.
+#[derive(Debug, Clone)]
+pub(crate) struct Oracle {
+    /// The oracle executable (a `lean_exe` of the Lake package).
+    pub(crate) exe: String,
+    /// The home-crate oracle test file.
+    pub(crate) test: String,
+    /// Fingerprint of the oracle executable's root (`proofs/lean/<root>.lean`): a human-reviewed trust point.
+    pub(crate) driver_fingerprint: String,
+    /// Fingerprint of `test` (normalised tokens of the whole file): a human-reviewed trust point.
+    pub(crate) test_fingerprint: String,
+}
+
 /// One `[[model]]` entry.
 #[derive(Debug, Clone)]
 pub(crate) struct Model {
@@ -258,15 +271,13 @@ pub(crate) struct Model {
     pub(crate) lean: String,
     /// Fully qualified theorem names (axiom audit).
     pub(crate) theorems: Vec<String>,
-    /// The oracle executable (a `lean_exe` of the Lake package).
-    pub(crate) oracle: String,
-    /// The home-crate oracle test file.
-    pub(crate) oracle_test: String,
+    /// `oracle`, `oracle_test`, `driver_fingerprint` and `oracle_test_fingerprint`, all four or none. A protocol model
+    /// (K9) has no executable to compare: it names `witnesses` instead.
+    pub(crate) oracle: Option<Oracle>,
+    /// `file.rs::test_fn` of the behaviour tests that exercise the modelled scenarios (named witnesses, not a
+    /// proof link); required when there is no oracle.
+    pub(crate) witnesses: Vec<String>,
     pub(crate) anchors: Vec<Anchor>,
-    /// Fingerprint of the oracle executable's root (`proofs/lean/<root>.lean`): a human-reviewed trust point.
-    pub(crate) driver_fingerprint: String,
-    /// Fingerprint of `oracle_test` (normalised tokens of the whole file): a human-reviewed trust point.
-    pub(crate) oracle_test_fingerprint: String,
     /// Theorem name → fingerprint of its statement and of the model definitions it mentions (L5).
     pub(crate) statements: BTreeMap<String, String>,
 }
@@ -278,8 +289,10 @@ pub(crate) struct Trusted {
     pub(crate) item: String,
     /// The kernel id that declares the trait.
     pub(crate) kernel: String,
-    /// `file.rs::test_fn` of the differential test against the verified reference implementation.
+    /// `file.rs::[mod::]test_fn` of the differential test against the verified reference implementation.
     pub(crate) test: String,
+    /// `cargo xtask proofs fingerprint <test>`: any edit to the test asks for a re-review (G8).
+    pub(crate) test_fingerprint: String,
 }
 
 /// The `[verus]` pins.
@@ -416,10 +429,37 @@ impl Registry {
                     "anchors",
                     "driver_fingerprint",
                     "oracle_test_fingerprint",
+                    "witnesses",
                     "statements",
                 ],
                 &ctx,
             )?;
+            let present = [
+                "oracle",
+                "oracle_test",
+                "driver_fingerprint",
+                "oracle_test_fingerprint",
+            ]
+            .iter()
+            .filter(|k| m.contains_key(**k))
+            .count();
+            let oracle = match present {
+                0 => None,
+                4 => Some(Oracle {
+                    exe: req_str(m, "oracle", &ctx)?,
+                    test: req_str(m, "oracle_test", &ctx)?,
+                    driver_fingerprint: req_str(m, "driver_fingerprint", &ctx)?,
+                    test_fingerprint: req_str(m, "oracle_test_fingerprint", &ctx)?,
+                }),
+                _ => bail!(
+                    "{ctx}: `oracle`, `oracle_test`, `driver_fingerprint` and `oracle_test_fingerprint` go together (all four or none)"
+                ),
+            };
+            let witnesses = if m.contains_key("witnesses") {
+                str_list(m, "witnesses", &ctx)?
+            } else {
+                Vec::new()
+            };
             let mut anchors = Vec::new();
             for a in m
                 .get("anchors")
@@ -449,14 +489,12 @@ impl Registry {
                 statements.insert(name.clone(), fp.to_owned());
             }
             models.push(Model {
-                driver_fingerprint: req_str(m, "driver_fingerprint", &ctx)?,
-                oracle_test_fingerprint: req_str(m, "oracle_test_fingerprint", &ctx)?,
                 statements,
                 id: req_str(m, "id", &ctx)?,
                 lean: req_str(m, "lean", &ctx)?,
                 theorems: str_list(m, "theorems", &ctx)?,
-                oracle: req_str(m, "oracle", &ctx)?,
-                oracle_test: req_str(m, "oracle_test", &ctx)?,
+                oracle,
+                witnesses,
                 anchors,
             });
         }
@@ -464,11 +502,12 @@ impl Registry {
         let mut trusted = Vec::new();
         for (i, e) in tables(&t, "trusted")?.into_iter().enumerate() {
             let ctx = format!("[[trusted]] #{}", i.saturating_add(1));
-            only_keys(e, &["item", "kernel", "test"], &ctx)?;
+            only_keys(e, &["item", "kernel", "test", "test_fingerprint"], &ctx)?;
             trusted.push(Trusted {
                 item: req_str(e, "item", &ctx)?,
                 kernel: req_str(e, "kernel", &ctx)?,
                 test: req_str(e, "test", &ctx)?,
+                test_fingerprint: req_str(e, "test_fingerprint", &ctx)?,
             });
         }
         Ok(Self {
@@ -697,5 +736,34 @@ mod tests {
         assert!(Registry::parse(&bad_status).is_err());
         let bad_sha = base.replace("f3a0119292df", "zz");
         assert!(Registry::parse(&bad_sha).is_err());
+    }
+
+    #[test]
+    fn a_model_has_all_four_oracle_keys_or_none() {
+        let base = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src/tasks/proofs/fixtures/good/proofs/registry.toml"),
+        )
+        .unwrap();
+        let reg = Registry::parse(&base).unwrap();
+        assert!(reg.models[0].oracle.is_some());
+        assert_eq!(reg.models[0].witnesses, Vec::<String>::new());
+        let partial = base.replace("oracle = \"demo-model\"\n", "");
+        let err = format!("{:#}", Registry::parse(&partial).unwrap_err());
+        assert!(err.contains("all four or none"), "{err}");
+        let none = base
+            .replace("oracle = \"demo-model\"\n", "")
+            .replace("oracle_test = \"crates/demo/tests/oracle.rs\"\n", "")
+            .replace("driver_fingerprint = \"1111111111111111\"\n", "")
+            .replace(
+                "oracle_test_fingerprint = \"2222222222222222\"\n",
+                "witnesses = [\"crates/demo/tests/oracle.rs::oracle_agrees\"]\n",
+            );
+        let reg = Registry::parse(&none).unwrap();
+        assert!(reg.models[0].oracle.is_none());
+        assert_eq!(
+            reg.models[0].witnesses,
+            ["crates/demo/tests/oracle.rs::oracle_agrees"]
+        );
     }
 }
