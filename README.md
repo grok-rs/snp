@@ -86,21 +86,14 @@ The design documents are the contract the implementation follows:
 
 ## Building
 
-The workspace depends on two sibling checkouts pinned in [`deps.lock`](deps.lock):
-[`cfgv-rs`](https://github.com/grok-rs/cfgv-rs) and
-[`file-identify`](https://github.com/grok-rs/file-identify) (branch `snp-support`), expected at
-`../cfgv-rs` and `../file-identify`. The toolchain is pinned by `rust-toolchain.toml`.
+A fresh clone builds on its own: every crate is in the workspace, including `crates/snp-cfgv` (Python cfgv) and
+`crates/snp-identify` (Python identify), which snp absorbed from the standalone `cfgv` and `file-identify` crates
+(ADR-116). The toolchain is pinned by `rust-toolchain.toml`.
 
 ```sh
-.github/scripts/deps-lock.sh checkout   # clone the two siblings at the pinned commits (skips existing ones)
 cargo build --workspace
 cargo xtask help                        # list the build-time tasks
 ```
-
-In a linked git worktree (for example an agent's `.claude/worktrees/<name>`), `../cfgv-rs` resolves next to the
-worktree, not next to the main checkout. `.github/scripts/deps-lock.sh link` run inside the worktree symlinks the
-main checkout's siblings there (for `.claude/worktrees/<name>`: `.claude/worktrees/cfgv-rs` and
-`.claude/worktrees/file-identify`).
 
 The gates every change must pass (the `ci` workflow runs them on Linux, macOS and Windows; the `platform` workflow
 adds the full OS × git-version matrix):
@@ -120,15 +113,16 @@ cargo nextest run --workspace --features snp/testing
 ```
 
 The differential tests need the pre-commit 4.7.0 oracles: `cargo xtask oracle install` (requires `uv`) creates
-`target/oracle/pc470-py312` and `target/oracle/pc470-py313`.
+`target/oracle/pc470-py312` and `target/oracle/pc470-py313`. The same oracle regenerates the committed parity data of
+the absorbed crates: `cargo xtask identify-tables` (`--check` to verify), `cargo xtask identify-vectors` and
+`cargo xtask cfgv-vectors`.
 
 ## Releasing
 
 Releases are cut by pushing a tag `vX.Y.Z` that matches the workspace version and has a `## [X.Y.Z]` section in
-[`CHANGELOG.md`](CHANGELOG.md). The `release` workflow first runs `cargo xtask release gates` (ADR-061): `deps.lock`
-pins exactly the user crates, the sibling checkouts are clean at the pinned commits, the snp checkout is clean, and
-cfgv and file-identify are published on crates.io from exactly those commits (`.cargo_vcs_info.json`), and the
-crates.io publish set (`snp` and its internal crates) is pinned to the release version (ADR-088), and the Verus and
+[`CHANGELOG.md`](CHANGELOG.md). The `release` workflow first runs `cargo xtask release gates`: the snp checkout is clean, the
+crates.io publish set (`snp` and its internal crates, `snp-cfgv` and `snp-identify` included) is pinned to the
+release version (ADR-088), and the Verus and
 Lean proofs re-verify the tagged commit, any proof-pending kernel being accepted by a `Proof pending: <kernel id>`
 line in the release's CHANGELOG section (gate 7, ADR-096); `cargo publish --workspace --dry-run` then builds every
 crate to be published. It builds the eight targets with cargo-dist

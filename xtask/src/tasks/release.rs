@@ -1,34 +1,26 @@
-//! `cargo xtask release <gates|notes|version>`: the release gates of ADR-061 and release metadata (WBS WP-37).
+//! `cargo xtask release <gates|notes|version>`: the release gates and release metadata (WBS WP-37, ADR-088).
 //!
 //! ```text
-//! cargo xtask release gates [--tag vX.Y.Z] [--skip-registry] [--skip-proofs] [--allow-dirty] [--allow-unreleased]
-//!                           [--index URL] [--dl URL] [--root DIR] [--lock FILE]
+//! cargo xtask release gates [--tag vX.Y.Z] [--skip-proofs] [--allow-dirty] [--allow-unreleased] [--root DIR]
 //! cargo xtask release notes [VERSION]      # the CHANGELOG.md section of VERSION (default: the workspace version)
 //! cargo xtask release version              # the workspace version
 //! ```
 //!
 //! `gates` checks, and reports every failure before failing:
 //!
-//! 1. **lock**: `deps.lock` parses and pins exactly the workspace's out-of-tree path dependencies (the user crates
-//!    `cfgv` and `file-identify`), each with a 40-hex `rev`, and each `[workspace.dependencies]` requirement
-//!    (`version = "0.3"`) accepts the pinned `version` (caret semantics);
-//! 2. **siblings**: each sibling checkout (`../cfgv-rs`, `../file-identify`) is a git work tree whose `HEAD` is the
-//!    pinned `rev`, has no modified or untracked files, and whose `Cargo.toml` declares the pinned name and version;
+//! 1. and 2. (removed by ADR-116: the `deps.lock` pins and the sibling checkouts of the user crates cfgv and
+//!    file-identify; both crates are workspace members now, `snp-cfgv` and `snp-identify`, checked by gate 6);
 //! 3. **clean checkout**: the snp work tree has no modified or untracked files (`--allow-dirty` skips this for local
 //!    dry runs only);
 //! 4. **version**: `--tag` (the pushed tag) is `v` + the workspace version, exists as a tag whose commit is the
 //!    checked-out `HEAD` (a `workflow_dispatch` run on another ref cannot publish under the tag), and `CHANGELOG.md`
 //!    has a section for that version (`--allow-unreleased` also accepts `## [Unreleased]`, for pull-request dry runs);
-//! 5. **registry** (ADR-061): each user crate is published on crates.io in exactly the pinned version, not yanked,
-//!    the downloaded `.crate` matches the index checksum, and its `.cargo_vcs_info.json` records the pinned commit
-//!    (`git.sha1 == rev`), a clean tree (`dirty` absent or false) and `path_in_vcs == ""`. `--skip-registry` skips
-//!    this check (pull requests before the user crates are published). `--index`/`--dl` replace the sparse index
-//!    (`https://index.crates.io`) and download (`https://static.crates.io/crates`) base URLs; `file://` URLs are read
-//!    from disk (tests, mirrors);
+//! 5. (removed by ADR-116: the crates.io provenance of the user crates, which no longer exist outside the
+//!    workspace);
 //! 6. **crates** (ADR-088): every workspace package published to crates.io (`snp` and its normal dependency
-//!    closure) has the workspace version, requires the other published packages with exactly `=<version>`, depends
-//!    on no `publish = false` package except through version-less dev-dependencies (which `cargo publish` strips),
-//!    and `snp` itself is published;
+//!    closure, `snp-cfgv` and `snp-identify` included) has the workspace version, requires the other published
+//!    packages with exactly `=<version>`, depends on no `publish = false` package except through version-less
+//!    dev-dependencies (which `cargo publish` strips), and `snp` itself is published;
 //! 7. **proofs** (ADR-095, ADR-096): `proofs/pending`: every kernel `proofs/registry.toml` marks `status =
 //!    "pending"` (the escape hatch of docs/VERIFICATION.md §8.3) is accepted by a line `Proof pending: <kernel id>`
 //!    (optionally a list item, `- Proof pending: K2-archive-entry (#123): …`) in the release's CHANGELOG section (the
@@ -37,9 +29,6 @@
 //!    verusfmt) and `proofs/lean` (L1-L5), in process, with the pinned tools on the machine (`cargo xtask proofs
 //!    install`, elan). `--skip-proofs` skips the three tool runs, never the pending check (local dry runs and the
 //!    platform workflow's documentation job, which have no proof tools).
-//!
-//! Downloads use `curl` (`--proto =https`), checksums `sha256sum` or `shasum -a 256`, and `.crate` extraction
-//! `tar`; all three exist on every GitHub-hosted runner.
 //!
 //! Owner: WP-37.
 
@@ -52,13 +41,6 @@ use anyhow::{Context as _, bail};
 
 use super::proofs;
 use crate::workspace;
-
-/// The default sparse index.
-const INDEX: &str = "https://index.crates.io";
-/// The default download base.
-const DL: &str = "https://static.crates.io/crates";
-/// `User-Agent` for crates.io (required by its crawler policy).
-const USER_AGENT: &str = "snp-xtask-release (https://github.com/grok-rs/snp)";
 
 /// Runs the task with the arguments that follow its name.
 pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
@@ -82,7 +64,7 @@ pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
             }
             let failed = report.failures();
             if failed > 0 {
-                bail!("{failed} release gate(s) failed (ADR-061)");
+                bail!("{failed} release gate(s) failed");
             }
             Ok(())
         }
@@ -113,37 +95,13 @@ pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
 // ----- options -------------------------------------------------------------------------------------------------
 
 /// Options of `release gates`.
-#[derive(Debug, Clone)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "one field per command-line switch"
-)]
+#[derive(Debug, Clone, Default)]
 struct GateOpts {
     root: Option<PathBuf>,
-    lock: Option<PathBuf>,
     tag: Option<String>,
-    skip_registry: bool,
     skip_proofs: bool,
     allow_dirty: bool,
     allow_unreleased: bool,
-    index: String,
-    dl: String,
-}
-
-impl Default for GateOpts {
-    fn default() -> Self {
-        Self {
-            root: None,
-            lock: None,
-            tag: None,
-            skip_registry: false,
-            skip_proofs: false,
-            allow_dirty: false,
-            allow_unreleased: false,
-            index: INDEX.to_owned(),
-            dl: DL.to_owned(),
-        }
-    }
 }
 
 impl GateOpts {
@@ -159,10 +117,6 @@ impl GateOpts {
             match a.as_str() {
                 "--tag" => o.tag = Some(value()?),
                 "--root" => o.root = Some(PathBuf::from(value()?)),
-                "--lock" => o.lock = Some(PathBuf::from(value()?)),
-                "--index" => value()?.trim_end_matches('/').clone_into(&mut o.index),
-                "--dl" => value()?.trim_end_matches('/').clone_into(&mut o.dl),
-                "--skip-registry" => o.skip_registry = true,
                 "--skip-proofs" => o.skip_proofs = true,
                 "--allow-dirty" => o.allow_dirty = true,
                 "--allow-unreleased" => o.allow_unreleased = true,
@@ -217,97 +171,7 @@ impl Report {
     }
 }
 
-// ----- deps.lock -----------------------------------------------------------------------------------------------
-
-/// One `[[crate]]` of `deps.lock`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Pin {
-    name: String,
-    version: String,
-    path: String,
-    repository: String,
-    branch: String,
-    rev: String,
-}
-
-fn parse_lock(text: &str) -> Result<Vec<Pin>, String> {
-    let table: toml::Table = text.parse().map_err(|e| format!("deps.lock: {e}"))?;
-    let crates = table
-        .get("crate")
-        .and_then(toml::Value::as_array)
-        .ok_or("deps.lock: no [[crate]] tables")?;
-    let mut out = Vec::new();
-    for c in crates {
-        let field = |k: &str| -> Result<String, String> {
-            c.get(k)
-                .and_then(toml::Value::as_str)
-                .map(str::to_owned)
-                .filter(|v| !v.is_empty())
-                .ok_or_else(|| format!("deps.lock: a [[crate]] lacks `{k}`"))
-        };
-        let pin = Pin {
-            name: field("name")?,
-            version: field("version")?,
-            path: field("path")?,
-            repository: field("repository")?,
-            branch: field("branch")?,
-            rev: field("rev")?,
-        };
-        if pin.rev.len() != 40
-            || !pin
-                .rev
-                .bytes()
-                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-        {
-            return Err(format!(
-                "deps.lock: {}: rev {:?} is not a 40-hex commit",
-                pin.name, pin.rev
-            ));
-        }
-        if parse_version(&pin.version).is_none() {
-            return Err(format!(
-                "deps.lock: {}: version {:?} is not X.Y.Z",
-                pin.name, pin.version
-            ));
-        }
-        out.push(pin);
-    }
-    Ok(out)
-}
-
-/// `X.Y.Z` (no pre-release or build metadata).
-fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
-    let mut it = v.split('.');
-    let a = it.next()?.parse().ok()?;
-    let b = it.next()?.parse().ok()?;
-    let c = it.next()?.parse().ok()?;
-    it.next().is_none().then_some((a, b, c))
-}
-
-/// Cargo's default (caret) requirement `req` (`0.3`, `0.3.1`, `^1`, `1.2.3`) accepts `version`.
-fn caret_matches(req: &str, version: &str) -> bool {
-    let req = req.trim().trim_start_matches('^');
-    let Some(v) = parse_version(version) else {
-        return false;
-    };
-    let parts: Vec<Option<u64>> = req.split('.').map(|p| p.parse().ok()).collect();
-    let (major, minor, patch) = match parts.as_slice() {
-        [Some(a)] => (*a, None, None),
-        [Some(a), Some(b)] => (*a, Some(*b), None),
-        [Some(a), Some(b), Some(c)] => (*a, Some(*b), Some(*c)),
-        _ => return false,
-    };
-    let lower = (major, minor.unwrap_or(0), patch.unwrap_or(0));
-    if v < lower {
-        return false;
-    }
-    match (major, minor, patch) {
-        (0, None, _) => v.0 == 0,
-        (0, Some(0), Some(p)) => v.0 == 0 && v.1 == 0 && v.2 == p,
-        (0, Some(m), _) => v.0 == 0 && v.1 == m,
-        (a, _, _) => v.0 == a,
-    }
-}
+// ----- workspace -----------------------------------------------------------------------------------------------
 
 /// `[workspace.package] version` of the root manifest.
 fn workspace_version(root: &Path) -> anyhow::Result<String> {
@@ -322,39 +186,6 @@ fn workspace_version(root: &Path) -> anyhow::Result<String> {
         .and_then(toml::Value::as_str)
         .map(str::to_owned)
         .context("Cargo.toml has no [workspace.package] version")
-}
-
-/// The out-of-tree path dependencies of `[workspace.dependencies]`: (name, path, version requirement).
-fn user_crate_deps(root: &Path) -> Result<Vec<(String, String, Option<String>)>, String> {
-    let manifest: toml::Table = std::fs::read_to_string(root.join("Cargo.toml"))
-        .map_err(|e| format!("Cargo.toml: {e}"))?
-        .parse()
-        .map_err(|e| format!("Cargo.toml: {e}"))?;
-    let deps = manifest
-        .get("workspace")
-        .and_then(|w| w.get("dependencies"))
-        .and_then(toml::Value::as_table)
-        .ok_or("Cargo.toml has no [workspace.dependencies]")?;
-    let mut out = Vec::new();
-    for (name, spec) in deps {
-        let Some(path) = spec.get("path").and_then(toml::Value::as_str) else {
-            continue;
-        };
-        if path.starts_with("../") || path.starts_with("..\\") {
-            let package = spec
-                .get("package")
-                .and_then(toml::Value::as_str)
-                .unwrap_or(name);
-            out.push((
-                package.to_owned(),
-                path.to_owned(),
-                spec.get("version")
-                    .and_then(toml::Value::as_str)
-                    .map(str::to_owned),
-            ));
-        }
-    }
-    Ok(out)
 }
 
 // ----- subprocess helpers --------------------------------------------------------------------------------------
@@ -392,80 +223,6 @@ fn clean_tree(dir: &Path) -> Result<(), String> {
     }
 }
 
-/// Downloads `url` to `dest` (`file://` URLs are copied from disk).
-fn fetch(url: &str, dest: &Path) -> Result<(), String> {
-    if let Some(path) = url.strip_prefix("file://") {
-        // file:///C:/x on Windows
-        let path = if cfg!(windows) {
-            path.trim_prefix('/')
-        } else {
-            path
-        };
-        return std::fs::copy(path, dest)
-            .map(|_| ())
-            .map_err(|e| format!("{url}: {e}"));
-    }
-    output(
-        Command::new("curl")
-            .args([
-                "--silent",
-                "--show-error",
-                "--fail",
-                "--location",
-                "--proto",
-                "=https",
-                "--tlsv1.2",
-                "--retry",
-                "3",
-                "--user-agent",
-                USER_AGENT,
-                "--output",
-            ])
-            .arg(dest)
-            .arg(url),
-    )
-    .map(|_| ())
-}
-
-/// SHA-256 of `file` (lower-case hex) via `sha256sum` or `shasum -a 256`.
-fn sha256(file: &Path) -> Result<String, String> {
-    let attempts: [(&str, &[&str]); 2] = [("sha256sum", &[]), ("shasum", &["-a", "256"])];
-    let mut errors = Vec::new();
-    for (tool, pre) in attempts {
-        match output(Command::new(tool).args(pre).arg(file)) {
-            Ok(out) => {
-                let digest = out
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or_default()
-                    .to_ascii_lowercase();
-                if digest.len() == 64 {
-                    return Ok(digest);
-                }
-                errors.push(format!("{tool}: unexpected output {out:?}"));
-            }
-            Err(e) => errors.push(e),
-        }
-    }
-    Err(format!("cannot compute SHA-256: {}", errors.join("; ")))
-}
-
-/// The sparse-index path of a crate (`cf/gv/cfgv`, `3/f/foo`, …).
-fn index_path(name: &str) -> String {
-    let n = name.to_ascii_lowercase();
-    match n.len() {
-        0 => n,
-        1 => format!("1/{n}"),
-        2 => format!("2/{n}"),
-        3 => format!("3/{}/{n}", n.get(..1).unwrap_or_default()),
-        _ => format!(
-            "{}/{}/{n}",
-            n.get(..2).unwrap_or_default(),
-            n.get(2..4).unwrap_or_default()
-        ),
-    }
-}
-
 // ----- the gates -----------------------------------------------------------------------------------------------
 
 fn gates(opts: &GateOpts) -> Report {
@@ -477,78 +234,6 @@ fn gates(opts: &GateOpts) -> Report {
             return report;
         }
     };
-    let lock_path = opts.lock.clone().unwrap_or_else(|| root.join("deps.lock"));
-    let pins = match std::fs::read_to_string(&lock_path)
-        .map_err(|e| format!("{}: {e}", lock_path.display()))
-        .and_then(|t| parse_lock(&t))
-    {
-        Ok(p) => {
-            report.pass(
-                "lock",
-                format!(
-                    "{} pinned: {}",
-                    p.len(),
-                    p.iter()
-                        .map(|p| format!("{} {} @ {}", p.name, p.version, p.rev))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-            );
-            p
-        }
-        Err(e) => {
-            report.fail("lock", e);
-            return report;
-        }
-    };
-    let lock_dir = lock_path
-        .parent()
-        .map_or_else(|| root.clone(), Path::to_path_buf);
-
-    // 1. the lock covers exactly the out-of-tree path dependencies, with matching requirements
-    match user_crate_deps(&root) {
-        Ok(deps) => {
-            for (name, path, req) in &deps {
-                let gate = format!("lock/{name}");
-                match pins.iter().find(|p| &p.name == name) {
-                    None => report.fail(&gate, format!("path dependency {path} is not pinned in deps.lock")),
-                    Some(pin) if &pin.path != path => {
-                        report.fail(&gate, format!("Cargo.toml path {path} != deps.lock path {}", pin.path));
-                    }
-                    Some(pin) => match req {
-                        Some(r) if caret_matches(r, &pin.version) => {
-                            report.pass(&gate, format!("requirement {r:?} accepts {}", pin.version));
-                        }
-                        Some(r) => report.fail(
-                            &gate,
-                            format!("requirement {r:?} does not accept the pinned {}", pin.version),
-                        ),
-                        None => report.fail(
-                            &gate,
-                            "no `version` requirement: the published snp crate would not resolve it",
-                        ),
-                    },
-                }
-            }
-            for pin in &pins {
-                if !deps.iter().any(|(n, _, _)| n == &pin.name) {
-                    report.fail(
-                        &format!("lock/{}", pin.name),
-                        "pinned in deps.lock but not a path dependency of the workspace",
-                    );
-                }
-            }
-        }
-        Err(e) => report.fail("lock/workspace", e),
-    }
-
-    // 2. sibling checkouts at the pinned commits, clean, with the pinned version
-    for pin in &pins {
-        let gate = format!("sibling/{}", pin.name);
-        let dir = lock_dir.join(&pin.path);
-        report.record(&gate, check_sibling(&dir, pin));
-    }
-
     // 3. a clean snp checkout
     if opts.allow_dirty {
         report.pass("checkout", "skipped (--allow-dirty)");
@@ -592,24 +277,6 @@ fn gates(opts: &GateOpts) -> Report {
             }
         }
         Err(e) => report.fail("version", e.to_string()),
-    }
-
-    // 5. crates.io: published from exactly the pinned commits
-    if opts.skip_registry {
-        report.pass("registry", "skipped (--skip-registry)");
-    } else {
-        match private_scratch("snp-release-gates") {
-            Err(e) => report.fail("registry", e),
-            Ok(scratch) => {
-                for pin in &pins {
-                    report.record(
-                        &format!("registry/{}", pin.name),
-                        check_published(opts, pin, &scratch),
-                    );
-                }
-                std::fs::remove_dir_all(&scratch).unwrap_or_default();
-            }
-        }
     }
 
     // 6. the crates.io publish set (ADR-088)
@@ -857,7 +524,7 @@ fn check_member(m: &Member<'_>, members: &[Member<'_>], version: &str) -> Result
         ) else {
             continue;
         };
-        // out-of-tree path dependencies (the user crates) are gates 1 and 5
+        // a path outside the workspace is no member (none exists since ADR-116)
         let Some(target) = members.iter().find(|o| o.dir == Path::new(path)) else {
             continue;
         };
@@ -943,152 +610,6 @@ pub(crate) fn private_scratch(prefix: &str) -> Result<PathBuf, String> {
     ))
 }
 
-fn check_sibling(dir: &Path, pin: &Pin) -> Result<String, String> {
-    if !dir.is_dir() {
-        return Err(format!(
-            "{} is missing (run .github/scripts/deps-lock.sh checkout)",
-            dir.display()
-        ));
-    }
-    let head = git(dir, &["rev-parse", "HEAD"])?;
-    if head != pin.rev {
-        return Err(format!("HEAD is {head}, deps.lock pins {}", pin.rev));
-    }
-    clean_tree(dir)?;
-    let manifest: toml::Table = std::fs::read_to_string(dir.join("Cargo.toml"))
-        .map_err(|e| format!("Cargo.toml: {e}"))?
-        .parse()
-        .map_err(|e| format!("Cargo.toml: {e}"))?;
-    let package = manifest.get("package");
-    let name = package
-        .and_then(|p| p.get("name"))
-        .and_then(toml::Value::as_str);
-    let version = package
-        .and_then(|p| p.get("version"))
-        .and_then(toml::Value::as_str);
-    if name != Some(pin.name.as_str()) {
-        return Err(format!("Cargo.toml names {name:?}, deps.lock {}", pin.name));
-    }
-    if version != Some(pin.version.as_str()) {
-        return Err(format!(
-            "Cargo.toml version {version:?}, deps.lock {}",
-            pin.version
-        ));
-    }
-    Ok(format!(
-        "{} at {} (clean, version {})",
-        dir.display(),
-        pin.rev,
-        pin.version
-    ))
-}
-
-/// The registry gate for one pin.
-fn check_published(opts: &GateOpts, pin: &Pin, scratch: &Path) -> Result<String, String> {
-    // the index entry: published, not yanked, checksum
-    let index_file = scratch.join(format!("{}.index", pin.name));
-    let index_url = format!("{}/{}", opts.index, index_path(&pin.name));
-    fetch(&index_url, &index_file)
-        .map_err(|e| format!("{} is not published (index {index_url}: {e})", pin.name))?;
-    let index = std::fs::read_to_string(&index_file).map_err(|e| e.to_string())?;
-    let mut published = Vec::new();
-    let mut entry = None;
-    for line in index.lines().filter(|l| !l.trim().is_empty()) {
-        let v: serde_json::Value =
-            serde_json::from_str(line).map_err(|e| format!("index line: {e}"))?;
-        let vers = v
-            .get("vers")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
-        if vers == pin.version {
-            entry = Some(v);
-        }
-        published.push(vers);
-    }
-    let Some(entry) = entry else {
-        return Err(format!(
-            "{} {} is not published on crates.io (published: {})",
-            pin.name,
-            pin.version,
-            published.join(", ")
-        ));
-    };
-    if entry.get("yanked").and_then(serde_json::Value::as_bool) == Some(true) {
-        return Err(format!("{} {} is yanked", pin.name, pin.version));
-    }
-    let cksum = entry
-        .get("cksum")
-        .and_then(serde_json::Value::as_str)
-        .ok_or("index entry has no cksum")?
-        .to_ascii_lowercase();
-
-    // the .crate: checksum and VCS info
-    let crate_file = scratch.join(format!("{}-{}.crate", pin.name, pin.version));
-    let crate_url = format!(
-        "{}/{}/{}-{}.crate",
-        opts.dl, pin.name, pin.name, pin.version
-    );
-    fetch(&crate_url, &crate_file)?;
-    let digest = sha256(&crate_file)?;
-    if digest != cksum {
-        return Err(format!(
-            "{crate_url}: SHA-256 {digest} != index cksum {cksum}"
-        ));
-    }
-    let member = format!("{}-{}/.cargo_vcs_info.json", pin.name, pin.version);
-    let vcs = output(
-        Command::new("tar")
-            .arg("-xzOf")
-            .arg(&crate_file)
-            .arg(&member),
-    )
-    .map_err(|e| {
-        format!(
-            "{} {} has no {member} (published without git info?): {e}",
-            pin.name, pin.version
-        )
-    })?;
-    check_vcs_info(&vcs, pin)?;
-    Ok(format!(
-        "{} {} published from {} (clean), checksum {}",
-        pin.name, pin.version, pin.rev, digest
-    ))
-}
-
-/// `.cargo_vcs_info.json` records `pin.rev`, a clean tree and the repository root.
-fn check_vcs_info(json: &str, pin: &Pin) -> Result<(), String> {
-    let v: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| format!(".cargo_vcs_info.json: {e}"))?;
-    let sha1 = v
-        .pointer("/git/sha1")
-        .and_then(serde_json::Value::as_str)
-        .ok_or(".cargo_vcs_info.json has no git.sha1")?;
-    if sha1 != pin.rev {
-        return Err(format!(
-            "{} {} was published from {sha1}, deps.lock pins {}",
-            pin.name, pin.version, pin.rev
-        ));
-    }
-    if v.pointer("/git/dirty").and_then(serde_json::Value::as_bool) == Some(true) {
-        return Err(format!(
-            "{} {} was published from a dirty work tree",
-            pin.name, pin.version
-        ));
-    }
-    let path = v
-        .get("path_in_vcs")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    if !path.is_empty() {
-        return Err(format!(
-            "{} {} was published from the sub-directory {path:?} of its repository",
-            pin.name, pin.version
-        ));
-    }
-    Ok(())
-}
-
 /// The fence a line opens or closes (Markdown: up to three spaces, then at least three backticks or tildes): the
 /// fence character and the length of the run.
 fn fence_marker(line: &str) -> Option<(char, usize)> {
@@ -1169,67 +690,6 @@ fn render(report: &Report) -> String {
 mod tests {
     use super::*;
 
-    const REV_A: &str = "6a04a30c3f11b9582570cf4cf0639699efe3dc9f";
-
-    fn pin(name: &str, version: &str, rev: &str) -> Pin {
-        Pin {
-            name: name.into(),
-            version: version.into(),
-            path: format!("../{name}"),
-            repository: format!("https://example.invalid/{name}"),
-            branch: "snp-support".into(),
-            rev: rev.into(),
-        }
-    }
-
-    #[test]
-    fn caret_requirements() {
-        assert!(caret_matches("0.3", "0.3.0"));
-        assert!(caret_matches("0.3", "0.3.7"));
-        assert!(!caret_matches("0.3", "0.4.0"));
-        assert!(!caret_matches("0.3.2", "0.3.1"));
-        assert!(caret_matches("^0.5", "0.5.0"));
-        assert!(caret_matches("1", "1.9.0"));
-        assert!(!caret_matches("1.2", "2.0.0"));
-        assert!(caret_matches("0.0.3", "0.0.3"));
-        assert!(!caret_matches("0.0.3", "0.0.4"));
-        assert!(!caret_matches("0.3", "0.3"));
-        assert!(!caret_matches("*", "0.3.0"));
-    }
-
-    #[test]
-    fn index_paths() {
-        assert_eq!(index_path("a"), "1/a");
-        assert_eq!(index_path("ab"), "2/ab");
-        assert_eq!(index_path("abc"), "3/a/abc");
-        assert_eq!(index_path("cfgv"), "cf/gv/cfgv");
-        assert_eq!(index_path("File-Identify"), "fi/le/file-identify");
-    }
-
-    #[test]
-    fn lock_parsing() {
-        let root = workspace::root().unwrap();
-        let pins = parse_lock(&std::fs::read_to_string(root.join("deps.lock")).unwrap()).unwrap();
-        let names: Vec<&str> = pins.iter().map(|p| p.name.as_str()).collect();
-        assert_eq!(names, ["cfgv", "file-identify"]);
-        assert!(parse_lock("[[crate]]\nname = \"x\"\n").is_err());
-        let bad_rev = "[[crate]]\nname=\"x\"\nversion=\"1.0.0\"\npath=\"../x\"\nrepository=\"r\"\nbranch=\"b\"\nrev=\"abc\"\n";
-        assert!(parse_lock(bad_rev).unwrap_err().contains("40-hex"));
-    }
-
-    #[test]
-    fn the_workspace_requirements_accept_the_pins() {
-        let root = workspace::root().unwrap();
-        let pins = parse_lock(&std::fs::read_to_string(root.join("deps.lock")).unwrap()).unwrap();
-        let deps = user_crate_deps(&root).unwrap();
-        assert_eq!(deps.len(), pins.len());
-        for (name, path, req) in deps {
-            let p = pins.iter().find(|p| p.name == name).unwrap();
-            assert_eq!(p.path, path);
-            assert!(caret_matches(req.as_deref().unwrap(), &p.version), "{name}");
-        }
-    }
-
     /// `cargo metadata` of a three-package workspace: `deps` are (name, kind, req) edges between them.
     fn meta(
         publish: &[(&str, bool, &str)],
@@ -1244,7 +704,7 @@ mod tests {
                     .map(|(_, to, kind, req)| {
                         serde_json::json!({"name": to, "path": format!("/ws/crates/{to}"), "kind": kind, "req": req})
                     })
-                    .chain([serde_json::json!({"name": "cfgv", "path": "/cfgv-rs", "kind": null, "req": "^0.3"})])
+                    .chain([serde_json::json!({"name": "elsewhere", "path": "/elsewhere", "kind": null, "req": "^0.3"})])
                     .collect();
                 serde_json::json!({
                     "name": name,
@@ -1341,29 +801,6 @@ mod tests {
     }
 
     #[test]
-    fn vcs_info_checks() {
-        let p = pin("cfgv", "0.3.0", REV_A);
-        let ok = format!("{{\"git\":{{\"sha1\":\"{REV_A}\"}},\"path_in_vcs\":\"\"}}");
-        assert!(check_vcs_info(&ok, &p).is_ok());
-        let other = "{\"git\":{\"sha1\":\"1324f403ba9b519b466fd27d186ae4e75cfa8d0b\"},\"path_in_vcs\":\"\"}";
-        assert!(
-            check_vcs_info(other, &p)
-                .unwrap_err()
-                .contains("deps.lock pins")
-        );
-        let dirty =
-            format!("{{\"git\":{{\"sha1\":\"{REV_A}\",\"dirty\":true}},\"path_in_vcs\":\"\"}}");
-        assert!(check_vcs_info(&dirty, &p).unwrap_err().contains("dirty"));
-        let sub = format!("{{\"git\":{{\"sha1\":\"{REV_A}\"}},\"path_in_vcs\":\"crates/x\"}}");
-        assert!(
-            check_vcs_info(&sub, &p)
-                .unwrap_err()
-                .contains("sub-directory")
-        );
-        assert!(check_vcs_info("{}", &p).is_err());
-    }
-
-    #[test]
     fn changelog_sections() {
         let text = "# Changelog\n\n## [Unreleased]\n\nnext\n\n## [2.0.0] - 2026-11-01\n\n### Added\n\n- all\n\n## v1.0.1\n\nold\n";
         assert_eq!(
@@ -1455,20 +892,19 @@ mod tests {
 
     #[test]
     fn options() {
-        let o = GateOpts::parse(&[
-            "--tag".into(),
-            "v2.0.0".into(),
-            "--skip-registry".into(),
-            "--skip-proofs".into(),
-            "--index".into(),
-            "file:///x/".into(),
-        ])
-        .unwrap();
+        let o =
+            GateOpts::parse(&["--tag".into(), "v2.0.0".into(), "--skip-proofs".into()]).unwrap();
         assert_eq!(o.tag.as_deref(), Some("v2.0.0"));
-        assert!(o.skip_registry && o.skip_proofs);
+        assert!(o.skip_proofs);
         assert!(!GateOpts::default().skip_proofs);
-        assert_eq!(o.index, "file:///x");
         assert!(GateOpts::parse(&["--bogus".into()]).is_err());
+        // ADR-116 removed the registry gate and its options
+        for gone in ["--skip-registry", "--lock", "--index", "--dl"] {
+            assert!(
+                GateOpts::parse(&[gone.into(), "x".into()]).is_err(),
+                "{gone}"
+            );
+        }
         assert!(GateOpts::parse(&["--tag".into()]).is_err());
     }
 
@@ -1488,18 +924,15 @@ mod tests {
         std::fs::remove_dir_all(&b).unwrap();
     }
 
-    /// A self-contained release layout under a temporary directory: a workspace (git repo) with deps.lock,
-    /// two sibling user crates (git repos) and a `file://` registry (sparse index + `.crate` files).
+    /// A self-contained release layout under a temporary directory: a workspace (git repo) with a tag, a
+    /// changelog and a proofs registry.
     #[cfg(unix)]
     mod e2e {
-        use std::fmt::Write as _;
-
         use super::*;
 
         struct Fixture {
             base: PathBuf,
             root: PathBuf,
-            revs: Vec<(String, String)>,
         }
 
         impl Drop for Fixture {
@@ -1546,72 +979,18 @@ mod tests {
             registry_with(&[("K1-demo", status)])
         }
 
-        /// Publishes `name-version.crate` with the given VCS sha into the file registry.
-        fn publish(base: &Path, name: &str, version: &str, sha1: &str) {
-            let stage = base.join("stage").join(format!("{name}-{version}"));
-            std::fs::create_dir_all(&stage).unwrap();
-            std::fs::write(
-                stage.join(".cargo_vcs_info.json"),
-                format!("{{\n  \"git\": {{\n    \"sha1\": \"{sha1}\"\n  }},\n  \"path_in_vcs\": \"\"\n}}"),
-            )
-            .unwrap();
-            std::fs::write(
-                stage.join("Cargo.toml"),
-                format!("[package]\nname = \"{name}\"\nversion = \"{version}\"\n"),
-            )
-            .unwrap();
-            let dl = base.join("dl").join(name);
-            std::fs::create_dir_all(&dl).unwrap();
-            let crate_file = dl.join(format!("{name}-{version}.crate"));
-            sh(
-                &base.join("stage"),
-                &[
-                    "tar",
-                    "-czf",
-                    crate_file.to_str().unwrap(),
-                    &format!("{name}-{version}"),
-                ],
-            );
-            let digest = sha256(&crate_file).unwrap();
-            let index = base.join("index").join(index_path(name));
-            std::fs::create_dir_all(index.parent().unwrap()).unwrap();
-            let mut lines = std::fs::read_to_string(&index).unwrap_or_default();
-            writeln!(lines, "{{\"name\":\"{name}\",\"vers\":\"{version}\",\"cksum\":\"{digest}\",\"yanked\":false}}").unwrap();
-            std::fs::write(&index, lines).unwrap();
-        }
-
         fn fixture(tag: &str) -> Fixture {
             let base =
                 std::env::temp_dir().join(format!("snp-release-e2e-{}-{tag}", std::process::id()));
             std::fs::remove_dir_all(&base).unwrap_or_default();
-            let cfgv = repo(
-                &base.join("cfgv-rs"),
-                &[(
-                    "Cargo.toml",
-                    "[package]\nname = \"cfgv\"\nversion = \"0.3.0\"\n",
-                )],
-            );
-            let fi = repo(
-                &base.join("file-identify"),
-                &[(
-                    "Cargo.toml",
-                    "[package]\nname = \"file-identify\"\nversion = \"0.5.0\"\n",
-                )],
-            );
-            let lock = format!(
-                "[[crate]]\nname = \"cfgv\"\nversion = \"0.3.0\"\npath = \"../cfgv-rs\"\nrepository = \"r\"\nbranch = \"snp-support\"\nrev = \"{cfgv}\"\n\n\
-                 [[crate]]\nname = \"file-identify\"\nversion = \"0.5.0\"\npath = \"../file-identify\"\nrepository = \"r\"\nbranch = \"snp-support\"\nrev = \"{fi}\"\n"
-            );
-            let manifest = "[workspace]\nmembers = []\n\n[workspace.package]\nversion = \"2.0.0\"\n\n[workspace.dependencies]\n\
-                            cfgv = { path = \"../cfgv-rs\", version = \"0.3\", default-features = false }\n\
-                            file-identify = { path = \"../file-identify\", version = \"0.5\" }\n\
-                            serde = \"1\"\nsnp-core = { path = \"crates/snp-core\", version = \"2.0.0\" }\n";
+            let manifest = "[workspace]\nmembers = []\n\n[workspace.package]\nversion = \"2.0.0\"\n\n\
+                            [workspace.dependencies]\nserde = \"1\"\n\
+                            snp-core = { path = \"crates/snp-core\", version = \"2.0.0\" }\n";
             let root = base.join("snp");
             let tagged = repo(
                 &root,
                 &[
                     ("Cargo.toml", manifest),
-                    ("deps.lock", &lock),
                     (
                         "CHANGELOG.md",
                         "# Changelog\n\n## [2.0.0] - 2026-11-01\n\n- first\n",
@@ -1620,11 +999,7 @@ mod tests {
                 ],
             );
             sh(&root, &["git", "tag", "v2.0.0", &tagged]);
-            Fixture {
-                base,
-                root,
-                revs: vec![("cfgv".into(), cfgv), ("file-identify".into(), fi)],
-            }
+            Fixture { base, root }
         }
 
         fn opts(f: &Fixture) -> GateOpts {
@@ -1633,112 +1008,38 @@ mod tests {
                 tag: Some("v2.0.0".into()),
                 // the fixture has no kernels to verify; the pending check still runs
                 skip_proofs: true,
-                index: format!("file://{}", f.base.join("index").display()),
-                dl: format!("file://{}", f.base.join("dl").display()),
                 ..GateOpts::default()
             }
         }
 
         #[test]
-        fn release_gates_pass_from_a_clean_checkout_with_matching_publications() {
+        fn release_gates_pass_from_a_clean_tagged_checkout() {
             let f = fixture("pass");
-            for (name, rev) in &f.revs {
-                let version = if name == "cfgv" { "0.3.0" } else { "0.5.0" };
-                publish(
-                    &f.base,
-                    name,
-                    "0.0.1",
-                    "0000000000000000000000000000000000000000",
-                );
-                publish(&f.base, name, version, rev);
-            }
             let r = gates(&opts(&f));
             assert_eq!(r.failures(), 0, "{}", render(&r));
+            // ADR-116: no lock, sibling or registry gate is left
+            for gone in ["lock", "sibling", "registry"] {
+                assert!(
+                    !r.lines().iter().any(|l| l.contains(&format!(" {gone}"))),
+                    "{}",
+                    render(&r)
+                );
+            }
         }
 
         #[test]
-        fn release_gates_fail_when_a_published_user_crate_does_not_match_deps_lock() {
-            let f = fixture("mismatch");
-            let (cfgv_name, cfgv_rev) = &f.revs[0];
-            publish(&f.base, cfgv_name, "0.3.0", cfgv_rev);
-            // file-identify 0.5.0 was published from another commit
-            publish(
-                &f.base,
-                "file-identify",
-                "0.5.0",
-                "1111111111111111111111111111111111111111",
-            );
-            let r = gates(&opts(&f));
-            assert_eq!(r.failures(), 1, "{}", render(&r));
-            assert!(r.failed("registry/file-identify"));
-            assert!(render(&r).contains(
-                "was published from 1111111111111111111111111111111111111111, deps.lock pins"
-            ));
-        }
-
-        #[test]
-        fn release_gates_fail_when_a_user_crate_is_not_published() {
-            let f = fixture("unpublished");
-            publish(&f.base, "cfgv", "0.2.0", &f.revs[0].1);
-            let r = gates(&opts(&f));
-            assert!(r.failed("registry/cfgv"), "{}", render(&r));
-            assert!(
-                render(&r).contains("cfgv 0.3.0 is not published on crates.io (published: 0.2.0)")
-            );
-            assert!(r.failed("registry/file-identify"));
-            // --skip-registry: the local gates alone pass
-            let mut o = opts(&f);
-            o.skip_registry = true;
-            assert_eq!(gates(&o).failures(), 0);
-        }
-
-        #[test]
-        fn release_gates_fail_on_a_tampered_crate_or_a_yank() {
-            let f = fixture("tamper");
-            publish(&f.base, "cfgv", "0.3.0", &f.revs[0].1);
-            publish(&f.base, "file-identify", "0.5.0", &f.revs[1].1);
-            // tamper with the cfgv download after indexing
-            let crate_file = f.base.join("dl/cfgv/cfgv-0.3.0.crate");
-            let mut bytes = std::fs::read(&crate_file).unwrap();
-            bytes.push(0);
-            std::fs::write(&crate_file, bytes).unwrap();
-            // yank file-identify 0.5.0
-            let index = f.base.join("index").join(index_path("file-identify"));
-            let text = std::fs::read_to_string(&index)
-                .unwrap()
-                .replace("\"yanked\":false", "\"yanked\":true");
-            std::fs::write(&index, text).unwrap();
-            let r = gates(&opts(&f));
-            assert!(render(&r).contains("!= index cksum"), "{}", render(&r));
-            assert!(render(&r).contains("file-identify 0.5.0 is yanked"));
-        }
-
-        #[test]
-        fn release_gates_fail_on_dirty_trees_wrong_sibling_commits_tags_and_changelog() {
+        fn release_gates_fail_on_dirty_trees_tags_and_changelog() {
             let f = fixture("local");
             let mut o = opts(&f);
-            o.skip_registry = true;
             o.tag = Some("v2.0.1".into());
-            // a dirty snp checkout and an untracked file in a sibling
+            // a dirty snp checkout
             std::fs::write(f.root.join("stray.txt"), "x").unwrap();
-            std::fs::write(f.base.join("cfgv-rs/untracked.rs"), "x").unwrap();
-            // file-identify moved past the pinned commit
-            std::fs::write(f.base.join("file-identify/new.rs"), "x").unwrap();
-            sh(&f.base.join("file-identify"), &["git", "add", "-A"]);
-            sh(
-                &f.base.join("file-identify"),
-                &["git", "commit", "-q", "-m", "next"],
-            );
             let r = gates(&o);
             let text = render(&r);
             assert!(r.failed("checkout"), "{text}");
-            assert!(r.failed("sibling/cfgv"), "{text}");
-            assert!(r.failed("sibling/file-identify"), "{text}");
-            assert!(text.contains("deps.lock pins"), "{text}");
             assert!(r.failed("tag"), "{text}");
             // the right tag name, but HEAD moved past the tagged commit (a workflow_dispatch run on another ref)
             let mut moved = opts(&f);
-            moved.skip_registry = true;
             moved.allow_dirty = true;
             sh(
                 &f.root,
@@ -1771,8 +1072,7 @@ mod tests {
             o.allow_dirty = true;
             o.tag = None;
             let r = gates(&o);
-            assert!(!r.failed("checkout"));
-            assert!(r.failed("sibling/cfgv"));
+            assert!(!r.failed("checkout"), "{}", render(&r));
             // a changelog without the version section
             std::fs::remove_file(f.root.join("stray.txt")).unwrap();
             std::fs::write(
@@ -1790,7 +1090,6 @@ mod tests {
         fn release_gates_require_the_release_notes_to_accept_a_pending_kernel() {
             let f = fixture("pending");
             let mut o = opts(&f);
-            o.skip_registry = true;
             let r = gates(&o);
             assert!(!r.failed("proofs"), "{}", render(&r));
             assert!(
@@ -1822,19 +1121,6 @@ mod tests {
             std::fs::remove_file(f.root.join("proofs/registry.toml")).unwrap();
             let r = gates(&o);
             assert!(r.failed("proofs/pending"), "{}", render(&r));
-        }
-
-        #[test]
-        fn release_gates_require_every_path_dependency_to_be_pinned() {
-            let f = fixture("unpinned");
-            let lock = std::fs::read_to_string(f.root.join("deps.lock")).unwrap();
-            let only_cfgv = lock.split("\n\n").next().unwrap().to_owned() + "\n";
-            std::fs::write(f.root.join("deps.lock"), only_cfgv).unwrap();
-            let mut o = opts(&f);
-            o.skip_registry = true;
-            o.allow_dirty = true;
-            let r = gates(&o);
-            assert!(r.failed("lock/file-identify"), "{}", render(&r));
         }
     }
 

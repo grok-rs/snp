@@ -1,8 +1,9 @@
-//! ADR-061 drift check for cfgv 0.3 (`snp-support`, pinned by `deps.lock`): names every cfgv item of
-//! ARCHITECTURE §1.5 with explicit types and exercises the behaviour snp-config's schemas rely on, so a
-//! breaking change on the branch fails here (the CI drift job) instead of inside a later package.
+//! Contract test of the cfgv API snp-config binds (ARCHITECTURE §1.5): names every cfgv item of §1.5 with
+//! explicit types and exercises the behaviour snp-config's schemas rely on, so a change to crates/snp-cfgv that
+//! breaks one of these bindings fails here, next to its consumer, instead of somewhere inside snp-config's
+//! schemas. (Until ADR-116 this was the ADR-061 drift check of the sibling cfgv-rs checkout pinned by `deps.lock`.)
 //!
-//! Owner: WP-00 (integration lead); changes only with a `deps.lock` bump.
+//! Owner: WP-00 (integration lead); changes together with the §1.5 bindings.
 
 #[cfg(test)]
 mod cfgv_bindings {

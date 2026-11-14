@@ -11,6 +11,15 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
 
 ### Changed
 
+- cfgv and file-identify are part of the workspace (ADR-116): imported with their full history as `crates/snp-cfgv`
+  (Python cfgv 3.5.0: byte-for-byte messages, PyYAML value model, `BigInt` with CPython's 4300-digit limit) and
+  `crates/snp-identify` (Python identify 2.6.20: 323 tags as a `Copy` bitset, `env -S` / nix-shell shebangs, one
+  `lstat` and at most one bounded read per path), published as `snp-cfgv` and `snp-identify` with every snp release.
+  A fresh clone builds without sibling checkouts; `deps.lock`, the drift workflow and the user-crate release gates are
+  gone. Their data are regenerated from the pc470 oracle (`cargo xtask identify-tables`, `identify-vectors`,
+  `cfgv-vectors`), and their fuzz targets run with snp's. No behaviour changes; cfgv's unused `regex` feature and
+  file-identify's command-line tool are not carried over.
+
 - The compat brand is pre-commit 4.7.0: `pre-commit --version` prints `pre-commit 4.7.0`, `minimum_pre_commit_version`
   compares against 4.7.0 (a config requiring `4.7.0` is now accepted), and the `version … is installed` message and
   the crash log's `pre-commit version:` line name 4.7.0. pre-commit 4.7.0 differs from 4.6.2 only in

@@ -1,4 +1,4 @@
-# Platform matrix (WBS WP-37; ARCHITECTURE §13.1 L6, §13.7; 14 §A.5–§A.6; ADR-061, ADR-063). Owned by WP-37.
+# Platform matrix (WBS WP-37; ARCHITECTURE §13.1 L6, §13.7; 14 §A.5–§A.6; ADR-063). Owned by WP-37.
 #
 # * test: the hermetic suite on every OS of the release (Linux x64/arm64, macOS arm64/x64, Windows x64/arm64);
 # * git: the git-dependent crates against pinned git releases built from source (2.18.5, 2.30, 2.31, 2.34, 2.39,
@@ -15,8 +15,7 @@
 # * wheel: the snp-cli wheel builds, installs and runs `snp --version` on Linux, macOS and Windows;
 # * docs: the generated user documentation is current and has no broken links.
 #
-# Layout (as in ci.yml): the repository is checked out at $GITHUB_WORKSPACE/snp and the user crates next to it at the
-# deps.lock commits, so `../cfgv-rs` and `../file-identify` resolve. Every job does that first.
+# Layout (as in ci.yml): the repository is checked out at $GITHUB_WORKSPACE/snp; the workspace is self-contained.
 name: platform
 
 on:
@@ -105,8 +104,6 @@ jobs:
           git config --global init.defaultBranch master
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: snp, key: platform }
@@ -162,8 +159,6 @@ jobs:
           git config --global init.defaultBranch master
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - name: Build dependencies of git
         run: sudo apt-get update -q && sudo apt-get install -q -y libcurl4-openssl-dev libexpat1-dev zlib1g-dev
       - uses: actions/cache@v4
@@ -252,8 +247,6 @@ jobs:
           git config --global init.defaultBranch master
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: snp, key: platform-git }
@@ -277,8 +270,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: sudo apt-get update -q && sudo apt-get install -q -y musl-tools
       - run: rustup toolchain install && rustup target add "${{ matrix.target }}"
       - uses: Swatinem/rust-cache@v2
@@ -311,8 +302,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - uses: actions/setup-python@v5
         id: python
         with: { python-version: "${{ matrix.python }}" }
@@ -416,8 +405,6 @@ jobs:
           git config --global init.defaultBranch master
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: snp, key: platform }
@@ -453,8 +440,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: snp, key: wheel }
@@ -483,11 +468,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: snp, key: docs }
       - run: cargo xtask docs --check
       # Gate 7's Verus and Lean runs need the proof tools, which release.yml installs; the pending check still runs.
-      - run: cargo xtask release gates --skip-registry --skip-proofs --allow-unreleased
+      - run: cargo xtask release gates --skip-proofs --allow-unreleased

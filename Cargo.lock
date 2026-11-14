@@ -234,13 +234,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
-name = "cfgv"
-version = "0.3.0"
-dependencies = [
- "indexmap",
-]
-
-[[package]]
 name = "chacha20"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -550,14 +543,6 @@ name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
-
-[[package]]
-name = "file-identify"
-version = "0.5.0"
-dependencies = [
- "rustix",
- "thiserror",
-]
 
 [[package]]
 name = "filetime"
@@ -1644,7 +1629,6 @@ version = "2.0.1"
 dependencies = [
  "criterion",
  "dhat",
- "file-identify",
  "memchr",
  "mimalloc",
  "snp-argparse",
@@ -1654,6 +1638,7 @@ dependencies = [
  "snp-files",
  "snp-git",
  "snp-hooks",
+ "snp-identify",
  "snp-lang",
  "snp-migrate",
  "snp-net",
@@ -1676,6 +1661,17 @@ dependencies = [
  "serde_json",
  "snp-core",
  "snp-pycompat",
+]
+
+[[package]]
+name = "snp-cfgv"
+version = "2.0.1"
+dependencies = [
+ "indexmap",
+ "proptest",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -1713,14 +1709,14 @@ dependencies = [
 name = "snp-config"
 version = "2.0.1"
 dependencies = [
- "cfgv",
- "file-identify",
  "globset",
  "indexmap",
  "proptest",
  "serde_json",
  "sha2",
+ "snp-cfgv",
  "snp-core",
+ "snp-identify",
  "snp-pycompat",
  "snp-pyre",
  "snp-yaml",
@@ -1753,11 +1749,11 @@ name = "snp-files"
 version = "2.0.1"
 dependencies = [
  "dhat",
- "file-identify",
  "proptest",
  "rustix",
  "serde_json",
  "snp-core",
+ "snp-identify",
  "snp-os",
  "snp-proc",
  "snp-pycompat",
@@ -1785,16 +1781,16 @@ name = "snp-hooks"
 version = "2.0.1"
 dependencies = [
  "bstr",
- "cfgv",
- "file-identify",
  "memchr",
  "serde_json",
  "signal-hook",
  "snp-argparse",
+ "snp-cfgv",
  "snp-cli",
  "snp-core",
  "snp-git",
  "snp-hooks-data",
+ "snp-identify",
  "snp-os",
  "snp-proc",
  "snp-pycompat",
@@ -1808,6 +1804,17 @@ name = "snp-hooks-data"
 version = "2.0.1"
 dependencies = [
  "snp-core",
+]
+
+[[package]]
+name = "snp-identify"
+version = "2.0.1"
+dependencies = [
+ "proptest",
+ "rustix",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -1837,7 +1844,6 @@ dependencies = [
 name = "snp-migrate"
 version = "2.0.1"
 dependencies = [
- "file-identify",
  "globset",
  "indexmap",
  "proptest",
@@ -1846,6 +1852,7 @@ dependencies = [
  "snp-config",
  "snp-core",
  "snp-hooks-data",
+ "snp-identify",
  "snp-pyre",
  "snp-testkit",
  "snp-yaml",
@@ -1900,12 +1907,12 @@ name = "snp-proc"
 version = "2.0.1"
 dependencies = [
  "ctrlc",
- "file-identify",
  "process-wrap",
  "proptest",
  "rustix",
  "signal-hook",
  "snp-core",
+ "snp-identify",
  "snp-os",
  "snp-pycompat",
  "tempfile",
@@ -2034,10 +2041,10 @@ dependencies = [
 name = "snp-yaml"
 version = "2.0.1"
 dependencies = [
- "cfgv",
  "dhat",
  "indexmap",
  "serde_json",
+ "snp-cfgv",
  "snp-core",
  "snp-pycompat",
 ]

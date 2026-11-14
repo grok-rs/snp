@@ -52,10 +52,11 @@ snp-stash = { path = "crates/snp-stash", version = "=2.0.1" }
 snp-store = { path = "crates/snp-store", version = "=2.0.1" }
 snp-testkit = { path = "crates/snp-testkit" }
 snp-yaml = { path = "crates/snp-yaml", version = "=2.0.1" }
-
-# --- the owner's crates: sibling checkouts on branch `snp-support`, pinned by deps.lock (ADR-061) ---
-cfgv = { path = "../cfgv-rs", version = "0.3", default-features = false }
-file-identify = { path = "../file-identify", version = "0.5", default-features = false }
+# ADR-116: the absorbed cfgv and file-identify crates. The keys keep their library names (`cfgv::`,
+# `file_identify::`); the packages carry snp's prefix (`cfgv` and `file-identify` on crates.io stay the owner's
+# standalone crates).
+cfgv = { path = "crates/snp-cfgv", package = "snp-cfgv", version = "=2.0.1" }
+file-identify = { path = "crates/snp-identify", package = "snp-identify", version = "=2.0.1" }
 
 # --- YAML / regex / text ---
 regex = "1.13.1"

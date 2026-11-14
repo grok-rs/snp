@@ -3,11 +3,14 @@
 [files]
 extend-exclude = [
     "Cargo.lock",
-    "deps.lock",
     # Research corpora quote third-party sources, byte strings and generated vectors verbatim.
     "docs/research/**",
     "crates/*/src/generated/**",
     "crates/*/tests/vectors/**",
+    # snp-identify (ADR-116, from file-identify's _typos.toml): tables generated from identify, and the vectors
+    # produced by running it (file names, extensions and shebangs quoted verbatim).
+    "crates/snp-identify/src/generated.rs",
+    "crates/snp-identify/tests/data/**",
     "tests/differential/scenarios/**",
     # Generated from the research documents (titles quote them verbatim).
     "tests/catalog/index.tsv",
@@ -56,6 +59,8 @@ Maxmimum = "Maxmimum"
 contstructs = "contstructs"
 splitted = "splitted"
 Jod = "Jod"
+# Indian Standard Time, a UTC+05:30 offset in snp-cfgv's datetime tests
+ist = "ist"
 # POSIX open(2) flag names as rustix spells them (`OFlags::WRONLY`)
 WRONLY = "WRONLY"
 # Unicode / CPython identifiers in the pycompat oracle scripts
