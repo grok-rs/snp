@@ -1,8 +1,7 @@
-# cargo-dist configuration of the snp release (WBS WP-37; ADR-049, ADR-061; ARCHITECTURE §11.7; 07 §3.17).
+# cargo-dist configuration of the snp release (WBS WP-37; ADR-049, ADR-088, ADR-116; ARCHITECTURE §11.7; 07 §3.17).
 #
-# `.github/workflows/release.yml` is maintained by hand in dist's layout (sibling checkouts of the user crates at the
-# deps.lock commits, the ADR-061 release gates, the snp-cli wheels), hence `allow-dirty = ["ci"]`: never let
-# `dist init`/`dist generate` overwrite it.
+# `.github/workflows/release.yml` is maintained by hand in dist's layout (the release gates, the crates.io publish
+# set, the snp-cli wheels), hence `allow-dirty = ["ci"]`: never let `dist init`/`dist generate` overwrite it.
 #
 # Only the `snp` package is released (`packages`, plus `dist = true` in its manifest); every other binary of the
 # workspace is tooling and stays out of the release: xtask and snp-probe are `publish = false`, which dist skips, and
