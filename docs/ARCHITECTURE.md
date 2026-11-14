@@ -1472,6 +1472,8 @@ impl DiffFingerprint { pub const EMPTY: DiffFingerprint; }
 /// `modes[i]` belongs to `paths.get(i)`; one buffer, no per-path allocation.
 #[derive(Debug, Clone, Default)] pub struct IndexEntries { pub paths: ZList, pub modes: Box<[u32]> }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub struct IndexStamp { /* private: dev, ino, size, mtime, ctime */ }
+/// ADR-106: the all_files list with each path's mode (0 = the empty blob) and whether every record is `H` at stage 0.
+#[derive(Debug, Clone, Default)] pub struct TaggedIndex { pub paths: ZList, pub modes: Box<[u32]>, pub plain: bool }
 
 #[derive(Clone, Debug)] pub struct Git { /* exe: Arc<GitExe>, env: Env, root: Arc<Path>, backend: Arc<dyn GitBackend> */ }  // cheap clone
 impl Git {
@@ -1512,6 +1514,10 @@ impl Git {
     pub fn merge_state(&self, info: &RepoInfo) -> MergeState;                         // stat MERGE_MSG ∧ MERGE_HEAD
     pub fn conflicted_files(&self, info: &RepoInfo) -> Result<ZList, Failure>;        // first-seen order union; MERGE_MSG on bytes
     pub fn diff_fingerprint(&self) -> Result<DiffFingerprint, Failure>;              // streaming blake3, O(1) memory
+    /// ADR-106: + "exit 0 and empty stderr"; `ls-files -s -v -z` folded to the all_files list; the config gate.
+    pub fn diff_fingerprint_clean(&self) -> Result<(DiffFingerprint, bool), Failure>;
+    pub fn all_files_tagged(&self) -> Result<TaggedIndex, Failure>;
+    pub fn trusts_index_modes(&self) -> bool;
     pub fn show_diff(&self, color: bool) -> Result<(), Failure>;                     // inherits stdout
     pub fn hooks_path(&self) -> Result<Option<OsString>, Failure>;
     pub fn config_origins(&self) -> Result<Vec<PathBuf>, Failure>;                   // `config --list --show-origin -z` files
@@ -1866,6 +1872,11 @@ impl FileTable {
     /// matched by path against the table; the caller iterates `snp_git::IndexEntries` without copying paths
     /// (snp-files does not depend on snp-git).
     pub fn set_trusted_modes<'a>(&mut self, entries: impl IntoIterator<Item = (&'a [u8], u32)>);
+    /// ADR-106: a clean --all-files run's modes, aligned with the table; the flag the diff oracle clears; the tags
+    /// the run's filters reference (refused when they include executable/non-executable).
+    pub fn index_trust_possible(referenced: TagSet) -> bool;
+    pub fn trust_index_modes(&mut self, modes: Box<[u32]>, valid: Arc<std::sync::atomic::AtomicBool>,
+                             referenced: TagSet) -> bool;
     pub fn retain_lexists(&mut self);                                           // once, before any hook (02 §10)
     pub fn len(&self) -> usize; pub fn is_empty(&self) -> bool;
     pub fn bytes(&self, id: FileId) -> &[u8];  pub fn os(&self, id: FileId) -> std::borrow::Cow<'_, OsStr>;
@@ -1960,6 +1971,8 @@ pub mod diff_oracle {   // ADR-027
         /// Native fixer reported exact modified paths (09 §6.7 caveat rules evaluated by the caller).
         pub fn after_native(&mut self, modified_tracked: bool, needs_real_diff: bool) -> Result<Change, Failure>;
         pub fn non_empty(&mut self) -> Result<bool, Failure>;          // show-diff gate (last digest)
+        /// ADR-106: cleared at the start of every after_hook/after_native.
+        pub fn guard_index_trust(&mut self, valid: Arc<std::sync::atomic::AtomicBool>);
     }
 }
 ```
@@ -2345,11 +2358,15 @@ FileTable
  │                                once (ADR-101): Text(String) when valid (and '\'-free on Windows), else Bytes(Vec<u8>);
  │                                every reader goes through as_bytes()
  ├─ spans: Box<[(u32,u32)]>       git order (never sorted: diff.orderFile parity, 02 G.0 #8)
- ├─ git_modes: Option<Box<[u32]>> trusted index modes (git-mode fast path), 0 = unknown
+ ├─ git_modes: Option<Box<[u32]>> trusted index modes (`set_trusted_modes`, staged path), 0 = unknown
+ ├─ index: Option<IndexTrust>      ADR-106: index modes of a clean --all-files run (aligned with spans, 0 = untrusted),
+ │                                the Arc<AtomicBool> the diff oracle clears, and whether some filter needs shebang tags
  ├─ root_fd (Linux): OnceLock<Option<OwnedFd>>  O_PATH|O_DIRECTORY|O_CLOEXEC root, opened on first need (ADR-101)
  ├─ tier columns, struct-of-arrays, each allocated on first need (Column<T> = OnceLock<Box<[OnceLock<T>]>>):
  │    name: Column<TagSet>                         tags_from_filename (48 B bitset)
- │    stat: Column<StatTier>                       Ok((FileKind, executable)) | Vanished      (one lstat)
+ │    stat: Column<StatTier>                       Present | Trusted (exec bit unverified) | Vanished  (one lstat
+ │                                                 or none)
+ │    exact_stat, exact_head                       the lstat answer for a query that observes a Trusted cell's exec bit
  │    head: Column<Result<TagSet, Box<PyExc>>>     text/binary + shebang tags | Unreadable      (≤ 1 open + read)
  │    view: Column<Box<str>>                       lossy UTF-8, '\'→'/' on Windows (only for spans that are not
  │                                                 a char-boundary slice of a Text arena and not clean UTF-8)
@@ -2391,7 +2408,25 @@ a partial set cached by an earlier hook that needed only the name tier. A run to
 * **git-mode fast path.** When the file list is the staged list *after* the stash (worktree == index), on Unix, with
   `core.fileMode=true` and `core.symlinks=true`, `Meta::from_git_mode_with(mode, PythonCompat)` gives kind/executable
   with zero syscalls (`ls-files -s -z`, or the staged-only `diff --staged --raw -z` when Stat mode is impossible, ran
-  in the fan-out, §3.1).
+  in the fan-out, §3.1). `set_trusted_modes` has no production caller yet.
+* **Trusted index modes on `--all-files` (ADR-106).** When the list is `git ls-files` (`--all-files`, no stage, ref or
+  `--files` override), on Unix, some selected hook can execute and no selected filter references `executable` or
+  `non-executable`, step 15 runs three read-only git children at once: `ls-files -s -v -z` (replacing
+  `ls-files -z --deduplicate`; streamed, only the paths kept, unmerged runs folded, modes and the tags of every
+  record), pre-commit's `git diff` (`prior_diff`, the oracle's baseline, with whether it exited 0 with an empty
+  stderr) and `git config -z --bool --get-regexp` of `core.fileMode`/`core.symlinks` (true or unset) and
+  `core.fsmonitor`/`core.useBuiltinFSMonitor`/`core.ignoreStat`/`core.sparseCheckout`/`index.sparse` (false or
+  unset). An empty, clean diff over a listing whose records are all `H` at stage 0, with that configuration, has
+  `lstat`ed every entry: the table is built from the listing's paths and takes its mode column as is (100644, 100755,
+  120000; gitlinks, directories and the empty blob, which `git diff` cannot tell from a FIFO or socket of size 0,
+  keep their `lstat`). `lexists` and the stat tier of a trusted entry cost no syscall; the cell is `Trusted`: kind
+  and name tags exact, the executable bit (git's owner bit, not identify's `os.access`) never used — a filter on
+  `executable`/`non-executable`, or the shebang of a file without name tags, takes the `lstat` answer from
+  `exact_stat`/`exact_head`, and a file without name tags gets no trusted cell when a filter of the run needs
+  shebang tags. The diff oracle clears the shared flag at the start of every `after_hook`/`after_native`, so cells
+  built after any hook that may have changed the worktree (also a `git rm`, which keeps the diff empty) take an
+  `lstat`; cells built before stay, as pre-commit's memoised first identification does. A failing listing asks
+  `ls-files -z --deduplicate` at the same position (pre-commit's error); a failing diff leaves the lazy one.
 * **Vanished / unreadable.** A file deleted (by an earlier hook) before its tags were needed → `TagOutcome::Vanished`
   → excluded from this and later hooks (X13-CLS-01, D-CRASH-08). A regular file whose content tier is needed but
   cannot be read → `Unreadable` → run aborts with pre-commit's exit-3 line (fail closed, X13-CLS-02). An unreadable file
@@ -2470,8 +2505,8 @@ startup Env (captured once in main, minus __PYVENV_LAUNCHER__/PYTHONEXECUTABLE)
 | 12 | Select by `hook` id/alias (snp brand: several ids) and stage (+ `--group` extensions); `No hook with id …` → 1 | 02 §8 | stash restored on this early return (single exit) |
 | 13 | `SKIP` (+ `SNP_SKIP_GROUPS`, overlay `skip`, `skip/only` conditions) → `to_install` | 02 §6.2, 15 V-SKIP | `strip_fsbytes` semantics for non-UTF-8 SKIP |
 | 14 | `resolver.install_envs(to_install)` incl. delegated fast-path hooks and virtual install triplets | 03 §8.4, ADR-032 | `check_support` before any FS mutation (04b §5.1) |
-| 15 | `cols` from **all** selected hooks (skipped included); file selection (§3.2); `[INFO] Checking merge-conflict files only.`; global filter; `retain_lexists` — the classifier is built here, eagerly, when some selected hook reads files (`!always_run` ∨ `pass_filenames`) or `--from-ref`/`--to-ref` are set (P17: never otherwise; then only the merge-conflict notice is decided) | 02 §9–10 | — |
-| 16 | Baseline digest (ADR-078): **elided or lazy** (at pre-commit's position). **Warm path** (no clone, install or download in steps 11–14, counted by `Resolve::store_work` and the run's counting fetcher, and steps 11–14 under 250 ms; ADR-104): `DiffFingerprint::EMPTY` when the stash step saw `diff-index` rc 0 and stashed nothing. Otherwise one `git diff` taken lazily after `install_envs`, before the first hook that needs it, pre-commit's position (an IDE autosave during an install must count as pre-existing, not as a hook modification) | 02 §11.2 | `SNP_VERIFY_BASELINE=1` (CI) takes the real diff and asserts equality |
+| 15 | `cols` from **all** selected hooks (skipped included); file selection (§3.2); `[INFO] Checking merge-conflict files only.`; global filter; `retain_lexists` — the classifier is built here, eagerly, when some selected hook reads files (`!always_run` ∨ `pass_filenames`) or `--from-ref`/`--to-ref` are set (P17: never otherwise; then only the merge-conflict notice is decided). A clean `--all-files` run whose filters allow it lists with `ls-files -s -v -z`, takes the before-diff here and trusts the index modes instead of `lstat`ing every file (§2.3, ADR-106) | 02 §9–10 | — |
+| 16 | Baseline digest (ADR-078): **elided or lazy** (at pre-commit's position). **Warm path** (no clone, install or download in steps 11–14, counted by `Resolve::store_work` and the run's counting fetcher, and steps 11–14 under 250 ms; ADR-104): `DiffFingerprint::EMPTY` when the stash step saw `diff-index` rc 0 and stashed nothing. Otherwise one `git diff` taken lazily after `install_envs`, before the first hook that needs it, pre-commit's position (an IDE autosave during an install must count as pre-existing, not as a hook modification); a trust-capable `--all-files` run took it at step 15 (ADR-106) | 02 §11.2 | `SNP_VERIFY_BASELINE=1` (CI) takes the real diff and asserts equality |
 | 17 | Schedule and execute (§3.4–3.7); print in config order (§3.9) | 02 §11 | one JobPool; cancellation stops new work |
 | 18 | `fail_fast` (config ∨ hook ∨ `--fail-fast`): stop after the current failing hook (bucket) | 02 §11.2 | later hooks print nothing |
 | 19 | `--show-diff-on-failure` (inside the stash) | 02 §15 | `git --no-pager diff …` inherits stdout (Printer flushed first) |
@@ -2640,7 +2675,8 @@ O(1) memory) and decides per executed hook with `snp_stash::diff_oracle::DiffOra
    algorithm verbatim. On Windows stable std exposes no ctime/file-id, so no stat oracle is attempted.
 5. **Baseline** (§3.1 step 16): on the warm path (no clone, install or download, tracked in code, ADR-104)
    known-empty after `diff-index` rc 0 in stash mode; otherwise one baseline `git diff`, taken lazily after
-   `install_envs` (pre-commit's position), never overlapped with resolution. Skipped and no-files hooks reuse the previous digest. Never
+   `install_envs` (pre-commit's position), never overlapped with resolution; a trust-capable `--all-files` run takes
+   it at step 15, beside its tagged listing (ADR-106). Skipped and no-files hooks reuse the previous digest. Never
    `git diff --quiet` (CRLF and stat-dirty quirks).
 6. **Parallel buckets** (extension): per-hook stat snapshots of each hook's input set + the bucket digest; a changed
    file is attributed to the single hook whose inputs contain it; otherwise every hook that could have caused it fails
@@ -3842,11 +3878,12 @@ the package owning the prefix fills it): `pycompat_shlex_split`, `pycompat_decod
 `pycompat_ntpath`, `pycompat_rev_line` (WP-11); `argparse_parse` (both specs, WP-12); `pyre_compile_match` (str +
 bytes, WP-13); `yaml_compose_construct`, `yaml_load` (WP-14); `proc_hookcmd_split`, `proc_shebang_resolve` (WP-15);
 `net_archive_extract` (WP-16); `pyparsers_json`, `pyparsers_yamlcheck`, `pyparsers_toml`, `pyparsers_xml` (WP-17);
-`git_z_split`, `git_pre_push`, `git_merge_msg`, `git_hook_script_classify` (WP-18); `config_load_validate`, `config_manifest_load`,
-`config_migrate`, `config_revline` (WP-21); `files_classify`, `store_env_dir_name`, `store_marker_parse` (WP-22);
-`stash_journal_parse` (WP-23); `lang_python_pyvenv_cfg` (WP-24); `lang_docker_mountinfo` (WP-25); `pygrep_match` and
-`pch_p0_<hook>` (WP-26); `pch_p1_<hook>`, `pch_p2_<hook>`, `pch_caveat_<hook>` (WP-27; every native hook on arbitrary
-bytes); `cmd_script_args` (era parsers of 11 §A.5.3, WP-33); `migrate_lefthook` (WP-34).
+`git_z_split`, `git_pre_push`, `git_merge_msg`, `git_hook_script_classify`, `git_ls_files_tagged` (ADR-106) (WP-18);
+`config_load_validate`, `config_manifest_load`, `config_migrate`, `config_revline` (WP-21); `files_classify`,
+`store_env_dir_name`, `store_marker_parse` (WP-22); `stash_journal_parse` (WP-23); `lang_python_pyvenv_cfg` (WP-24);
+`lang_docker_mountinfo` (WP-25); `pygrep_match` and `pch_p0_<hook>` (WP-26); `pch_p1_<hook>`, `pch_p2_<hook>`,
+`pch_caveat_<hook>` (WP-27; every native hook on arbitrary bytes); `cmd_script_args` (era parsers of 11 §A.5.3, WP-33);
+`migrate_lefthook` (WP-34).
 
 ### 13.6 Fault-injection and crash matrices
 

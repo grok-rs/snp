@@ -15,9 +15,9 @@ upstream refresh; ADR-093 the path-limited stash checkout; ADR-094 Rust 1.100; A
 ADR-096 the owner's decision to make the Verus proofs blocking;
 ADR-097 the stash re-verification by stat stamps; ADR-098 the tier-1 prefilter; ADR-099 the paired bench gate; ADR-100
 the B8 heap budget and counters; ADR-101 classification CPU and fan-out sizing; ADR-102 native-hook facts; ADR-103
-borrowed hook argv; ADR-104 the step-6 changes of the run pipeline; ADR-105 the hook script template v2; ADR-108 the
-forward-only engine of the tier-1 prefilter; ADR-112 snp-yaml's owning materialisation; ADR-116 the absorption of cfgv
-and file-identify into the workspace.
+borrowed hook argv; ADR-104 the step-6 changes of the run pipeline; ADR-105 the hook script template v2; ADR-106 trusted
+index modes on clean `--all-files` runs; ADR-108 the forward-only engine of the tier-1 prefilter; ADR-112 snp-yaml's
+owning materialisation; ADR-116 the absorption of cfgv and file-identify into the workspace.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -440,6 +440,8 @@ with `PoisonError::into_inner`. **Rationale.** With `panic = "unwind"` and scope
 holding the printer lock must not silence restore messages or the crash banner. **Consequences.** Panic-injection test.
 
 ### ADR-041 — Tiered lazy tags; unreadable and vanished files
+
+*Status: Accepted; amended by ADR-106 (trusted index modes on clean `--all-files` runs, never the executable bit). The amending ADR is normative where they differ.*
 
 **Decision.** ARCHITECTURE §2.3: name → lstat → ≤ 1 KiB head (+ shebang) tiers driven by each filter's `Needs`; git
 index modes give the stat tier for free after the stash on Unix with `core.fileMode`/`core.symlinks`; vanished files are
@@ -2108,6 +2110,86 @@ it, since `bench setup` installs the head's script for both builds; process coun
 written by snp 2.0.0–2.0.1 keep working unchanged; `snp doctor` warns about them until `snp install` rewrites them.
 pre-commit's and prek's `is_our_script` still match the compat IDs, so the last installer still wins.
 
+### ADR-106 — Trusted index modes on clean `--all-files` runs
+
+*Amends ADR-041 (the git-mode fast path's conditions), research 08 §7.2 ("use lstat for --all-files") and decision
+08-9; ARCHITECTURE §2.3, §3.1 rows 15 and 16 and §3.7 item 5.*
+
+**Context.** The November 2026 performance analysis (P05) found the classifier's `lstat` pass to be most of snp's own
+work in B4 and B5 (`run --all-files`, 50,000 files): 50,081 `statx` calls per run, about 60% of B4's CPU samples.
+ADR-041's git-mode fast path covered only the staged list after the stash, and `FileTable::set_trusted_modes` had no
+production caller (its per-entry binary search costs 17–27 ms of serial CPU on 50,000 entries). pre-commit checks
+`os.path.lexists` for every file and `lstat`s a file again at its first identification, but the `git diff` it takes
+before the first hook (`prior_diff`) has already `lstat`ed every unflagged stage-0 entry: an empty diff proves the
+files exist with their index kinds, except for six holes the verifiers and the implementation found and reproduced
+with git 2.43: (1) an `lstat` error other than "not found" (`EACCES` under an unsearchable directory, `ELOOP`, `EIO`)
+goes to stderr only, git skips the entry and exits 0; (2) assume-unchanged, skip-worktree and fsmonitor-valid entries
+are not `lstat`ed at all; (3) git records the owner `x` bit while identify emulates `os.access` (root needs any `x`
+bit, other users the group or other bit): a 0o654 file is staged as 100644 and is executable for root, and for a
+file without name tags the bit decides whether its shebang is read; (4) a hook that runs `git rm` or `git add`
+changes which files exist while `git diff` stays empty; (5) a FIFO or a socket of size 0 in place of an *empty*
+tracked file, with a regular file's owner bit, leaves `git diff` clean (git compares the two empty contents), while
+identify tags a socket `socket`, not `file`; (6) under `core.symlinks=false` git compares a symlink checked out as a
+regular file as a symlink.
+**Decision.** (1) *Scope.* A `--all-files` run whose file list is `git ls-files` (no no-file stage, commit-msg stage,
+refs or `--files`), on Unix, in which some selected hook is not skipped and no selected hook's filter references
+`executable` or `non-executable` (skipped hooks count: they are classified too). Anything else keeps today's path,
+and so does the staged list (the ADR-078 variant was dropped). (2) *Queries.* At step 15, after `install_envs`
+(ADR-078(3)'s position), three read-only git children run at once: `git ls-files -s -v -z` (snp-only), streamed
+through an incremental parser (S2: every field checked, no indexing) that keeps only the paths, in a buffer of their
+own, folds runs of equal paths as `--deduplicate` does, and records each path's mode (0 for the empty blob) and
+whether every record is tagged `H` at stage 0 (`Git::all_files_tagged`); pre-commit's `git diff --no-ext-diff
+--no-textconv --ignore-submodules`, whose stdout-only fingerprint becomes the oracle's baseline, plus whether git
+exited 0 with an empty stderr (`Git::diff_fingerprint_clean`); and `git config -z --bool --get-regexp` over
+`core.fileMode`, `core.symlinks` (true or unset), `core.fsmonitor`, `core.useBuiltinFSMonitor`, `core.ignoreStat`,
+`core.sparseCheckout` and `index.sparse` (false or unset), resolved by git so `-c`, `GIT_CONFIG_PARAMETERS` and
+`GIT_CONFIG_COUNT` count, and any failure (an fsmonitor hook path is not a boolean) is "no"
+(`Git::trusts_index_modes`). (3) *Gate.* The modes are trusted when the listing is plain, the diff is empty and
+clean, and the configuration passes. The table is built from the listing's own paths, so its mode column is aligned
+by construction (no path comparison, no search); a length mismatch refuses. Only modes 100644, 100755 and 120000 are
+kept: gitlinks, directories and empty blobs keep their `lstat`. (4) *Cells.* A trusted entry exists without a
+syscall and its stat tier is built from its mode and marked (`StatTier::Trusted`): kind and name tags exact, the
+executable bit unverified. A query that can observe the bit (a filter on `executable`/`non-executable`, or the
+shebang of a file without name tags) takes the `lstat` answer from cells of its own; when a filter of the run needs
+shebang tags, a file without name tags gets no trusted cell at all. (5) *Invalidation.* The diff oracle holds the
+trust's flag (`DiffOracle::guard_index_trust`) and clears it at the start of every `after_hook` and `after_native`,
+so every change (a differing diff, a Stat-mode delta, a native fixer's report) clears it before `stage_fixed` can
+rewrite the result, and so does every hook whose effect the diff cannot show. Cells built before stay, as
+pre-commit's memoised first identification does; later cells take an `lstat`. (6) *Fallbacks.* A failing listing is
+followed by `git ls-files -z --deduplicate` at the same position, so its `CalledProcessError` is pre-commit's; a
+failing diff leaves the baseline to the lazy diff before the first hook, as today; a run in which no hook can
+execute takes no diff, as today.
+**Rationale.** In git's `run_diff_files` every stage-0, unflagged, non-gitlink entry is `lstat`ed: a missing file, a
+leading symlink or a file replaced by a directory is a deletion, a type change is shown unless both contents are
+empty (hence the empty blob), and with `core.fileMode`/`core.symlinks` true the mode and kind are compared; every other
+`lstat` error reaches stderr. Intent-to-add and unmerged entries always make the diff non-empty, so they need no
+check; flagged entries are excluded by the tags, fsmonitor and sparse indexes by the configuration. The diff is
+taken before any hook, as `prior_diff` is, and only moves before the classifier's read-only `lexists`; the taken-early
+fingerprint followed by the stat snapshot is the ordering ADR-078 already uses. A randomized test drives the
+production gate over chmod, rm, mkfifo, sockets, an unsearchable directory, symlink swaps, file to directory,
+skip-worktree, assume-unchanged, intent-to-add, `rm --cached`, touch, a leading symlink, untracked files and
+`core.symlinks=false`, and compares every trusted outcome with `lstat`'s; removing any one of the stderr check, the
+plain check, the configuration gate or the empty-blob rule makes it fail.
+**Consequences.** Measured on private copies of the bench fixtures with the profiling build (fat LTO), against
+43d95e9: strace counts of the snp process, callgrind instructions of the snp process, dhat, and the median of nine
+interleaved runs for CPU time (snp's own `getrusage`, all threads, no children; the process tree's task clock) and
+maximum RSS. B4 (50,000 files, one hook): snp's `statx` calls 50,081 → 79; its own CPU 184 → 82 ms (user 41 → 45,
+system 143 → 36); the tree's CPU 646 → 553 ms; maximum RSS 16.7 → 16.9 MiB; heap peak 8.98 → 9.07 MB; instructions
+133.6 M → 141.8 M (+6%: the 4 MB tagged listing costs 18 M to parse where the plain list cost 5 M, and only the lstat
+pass's user-space part, 13 M, goes away; its kernel time is the gain). B5: `statx` 50,075 → 73; own CPU 180 → 68 ms;
+tree 623 → 527 ms; maximum RSS 14.9 → 15.4 MiB; instructions 109.2 M → 117.2 M. B12u: `statx` 38,152 → 18,151 (its
+20,000 listed files trusted); instructions 1,398.7 M → 1,414.2 M (+1.1%). B6 takes today's path
+(check-executables-have-shebangs references `executable`): the same argv and `statx`, instructions 92.9 M → 93.2 M,
+within the spread of repeated base runs. A dirty B4 (one modified file, so no trust) keeps its 50,081 `statx` and
+its own CPU (218 → 219 ms) but its tree spends 671 → 694 ms: git's longer `ls-files -s -v -z` and the `git config`
+query are paid for nothing, beside the diff they overlap. Output, exit status and hook argv are unchanged (B4, B5,
+B6, B12u and the dirty B4 byte-identical; the COMPATIBILITY §6.2 cases in
+`tests/differential/scenarios/run/t10-run-37-trusted-index-modes.yaml` identical to pre-commit 4.7.0). The git argv
+list of a trust-capable run changes: `ls-files -s -v -z` replaces `ls-files -z --deduplicate` and one `git config`
+is added (26 → 27 children in B4), and a run whose hooks all end up with no files takes the one `git diff`
+pre-commit always takes. The per-`lstat` cost on the 4-vCPU CI runner was not measured; the bench gate judges the
+wall gain. Wave-3 F1 (meta-only tier) and S1 (one `lstat` per oracle input) build on this and are not part of it.
+
 ### ADR-108 — The tier-1 prefilter runs on a forward-only `regex-automata` engine
 
 *Amends ADR-098 (4), ADR-079 (1) and ADR-003; a tuning follow-up of the wave-1 prefilter (ADR-098), not a
@@ -2269,7 +2351,6 @@ touches the consumers.
 `cfgv` and `file-identify`, so the release graph keeps its size (§11.7 budget of 120 packages). A fix made in a
 standalone repository reaches snp only as an explicit port (or `git subtree pull --prefix=crates/snp-… <repo> <rev>`,
 then the workspace adaptation), and the reverse holds for fixes made here. ADR-061 is superseded in full.
-
 ## Appendix A — Open questions of the research documents, resolved
 
 Format: question → decision (ADR or divergence). "Parity" = behave as pre-commit 4.6.2.
@@ -2365,6 +2446,11 @@ match-time limit → error. 4 message wording → verbatim. 5 PyYAML error texts
 (D-SEC-09). 7 FIFOs → never block (D-CRASH-09). 8 identify tracking → latest PyPI identify (superseded by ADR-116: the
 oracle's pinned identify). 9 git-mode fast path → yes under ADR-041's conditions. 10 cfgv numeric equality → handled in
 snp-yaml keys. 11 `yaml_serde` feature → unused. 12 UCD for `isprintable` → 15.1.
+`access(2)` (mode/owner/groups; file-identify). 3 regex dialect for `check_regex` → `snp_pyre::cfgv_is_valid`; match-time
+limit → error. 4 message wording → verbatim. 5 PyYAML error texts → ADR-002. 6 shebang cap → 64 KiB (D-SEC-09). 7 FIFOs
+→ never block (D-CRASH-09). 8 identify tracking → latest PyPI identify. 9 git-mode fast path → yes under ADR-041's
+conditions (ADR-106 adds clean `--all-files` runs). 10 cfgv numeric equality → handled in snp-yaml keys. 11
+`yaml_serde` feature → unused. 12 UCD for `isprintable` → 15.1.
 
 **09 builtin hooks.** Q1 default `auto`; caveat hooks after their gate; `check-xml` delegated until its gate passes. Q2
 emulated CPython → 3.13. Q3 crash paths → parse crashes keep exit 1 + stop; environmental crash on read-only unchanged

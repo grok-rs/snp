@@ -275,13 +275,15 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 ### 6.2 Exact optimisations (no observable change; each has an equivalence test)
 
 DiffOracle stat path (allow-listed filesystems only) and baseline elision on the warm path (`SNP_DIFF_MODE=git`,
-`SNP_VERIFY_BASELINE=1` cross-check), tiered lazy tagging and the git-mode fast path, P17 classifier skip, speculative
-config load, regex fast kinds and lazy engine compilation, spawn-free health checks, parallel clones (background
-prefetch whose every failure is discarded and redone in the foreground exactly as pre-commit) and installs with
-ordered transcript replay, local deps-variant clones, git fan-out, cached `git --version` and probe facts (native
-binaries only), persistent rustup and shared toolchain directories, a job pool sized by the cgroup-aware CPU count and
-the fd budget (partition contents always use pre-commit's `jobs`). Message-parity markers (`keys-v1`) make cold and
-warm transcripts identical with the fast path (ADR-032).
+`SNP_VERIFY_BASELINE=1` cross-check), tiered lazy tagging and the git-mode fast path, trusted index modes on clean
+`--all-files` runs (ADR-106: `crates/snp-run/tests/pipeline/trust.rs`, the randomized soundness test in
+`crates/snp-run/src/trust.rs`, `tests/differential/scenarios/run/t10-run-37-trusted-index-modes.yaml`), P17
+classifier skip, speculative config load, regex fast kinds and lazy engine compilation, spawn-free health checks,
+parallel clones (background prefetch whose every failure is discarded and redone in the foreground exactly as
+pre-commit) and installs with ordered transcript replay, local deps-variant clones, git fan-out, cached `git --version`
+and probe facts (native binaries only), persistent rustup and shared toolchain directories, a job pool sized by the
+cgroup-aware CPU count and the fd budget (partition contents always use pre-commit's `jobs`). Message-parity markers
+(`keys-v1`) make cold and warm transcripts identical with the fast path (ADR-032).
 
 ### 6.3 Parity decisions that look like divergences but are not
 
