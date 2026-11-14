@@ -144,7 +144,7 @@ mod api {
         has::<fn(&Store) -> Vec<RepoHandle>>(Store::all_repos);
         has::<fn(&Store, &RepoKey) -> io::Result<()>>(Store::retire_repo);
         has::<fn(&Store, SystemTime) -> SweepReport>(Store::sweep);
-        has::<fn(&Store) -> Result<(), Failure>>(Store::clean);
+        has::<fn(&Store) -> Result<Option<PathBuf>, Failure>>(Store::clean);
         has::<fn(&Store) -> PathBuf>(Store::patches_dir);
         has::<fn(&Store) -> PathBuf>(Store::spill_dir);
         has::<fn(&Store) -> PathBuf>(Store::scratch_dir);
@@ -156,6 +156,7 @@ mod api {
             removed_dirs: 0,
             removed_patches: 0,
             legacy_v1_removed: false,
+            unreadable_journal: None,
         });
         has::<fn() -> SweepReport>(SweepReport::default);
     }

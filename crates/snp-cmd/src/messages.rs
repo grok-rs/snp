@@ -249,6 +249,16 @@ pub(crate) fn removed_v1(store: &OsStr) -> String {
     )
 }
 
+/// gc and clean, stderr (D-DATA-04, D-DIAG-05): a stash journal that cannot be read or understood keeps every stash
+/// patch (fail closed).
+pub(crate) fn patches_kept(journal: &OsStr) -> String {
+    format!(
+        "[WARNING] the stash journal {} cannot be read or understood; every stash patch is kept. \
+         Remove the journal once no snp run uses it and no patch it may name is needed.",
+        journal.to_string_lossy()
+    )
+}
+
 /// `clean.py:14`: `Cleaned {store}.`.
 pub(crate) fn cleaned(store: &OsStr) -> Vec<u8> {
     cat(&[b"Cleaned ", os_bytes(store), b"."])
@@ -447,6 +457,11 @@ mod tests {
         );
         assert_eq!(repos_removed(0), "0 repo(s) removed.");
         assert_eq!(cleaned(OsStr::new("/s")), b"Cleaned /s.");
+        assert_eq!(
+            patches_kept(OsStr::new("/s/patches/run-1-ab.snp-journal")),
+            "[WARNING] the stash journal /s/patches/run-1-ab.snp-journal cannot be read or understood; every stash \
+             patch is kept. Remove the journal once no snp run uses it and no patch it may name is needed."
+        );
         assert_eq!(
             repos_not_found(&["dne", "foo"], OsStr::new(".pre-commit-config.yaml")),
             b"repos (dne, foo) were not found in .pre-commit-config.yaml"

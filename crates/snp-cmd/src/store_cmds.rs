@@ -207,6 +207,10 @@ pub fn gc(cx: &CmdCtx<'_>) -> Result<i32, Failure> {
         cx.printer
             .diag(&messages::removed_v1(cx.store.location().path.as_os_str()));
     }
+    if let Some(journal) = &report.unreadable_journal {
+        cx.printer
+            .diag(&messages::patches_kept(journal.as_os_str()));
+    }
     cx.printer
         .write_line(messages::repos_removed(removed).as_bytes());
     Ok(0)
@@ -217,11 +221,15 @@ pub fn gc(cx: &CmdCtx<'_>) -> Result<i32, Failure> {
 /// `clean.py:10-16`: pre-commit removes its store (re-created by `Store()` before dispatch, so the line always
 /// prints) and the pre-1.0 `~/.pre-commit`. snp retires its own layout under the exclusive lock (recovery data,
 /// `.lock` and foreign files kept, D-DATA-04), never creates the store, never touches `~/.pre-commit` or
-/// pre-commit's store (D-STORE-02), and always prints `Cleaned {store}.` (ADR-030).
+/// pre-commit's store (D-STORE-02), and always prints `Cleaned {store}.` (ADR-030). A stash journal it cannot read
+/// keeps every stash patch, with a stderr warning (D-DATA-04, D-DIAG-05).
 pub fn clean(cx: &CmdCtx<'_>) -> Result<i32, Failure> {
     if cx.store.exists() {
         let _lock = exclusive(cx)?;
-        cx.store.clean()?;
+        if let Some(journal) = cx.store.clean()? {
+            cx.printer
+                .diag(&messages::patches_kept(journal.as_os_str()));
+        }
     }
     cx.printer
         .write_line(&messages::cleaned(cx.store.location().path.as_os_str()));

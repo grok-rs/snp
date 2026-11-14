@@ -1,6 +1,6 @@
 # D-DIAG-05
 
-store notices: the foreign-owner warning (ADR-044), `Removed snp 1.x cache data from {store}.` (gc)
+store notices: the foreign-owner warning (ADR-044), `Removed snp 1.x cache data from {store}.` (gc), the unreadable stash journal warning (gc, clean; D-DATA-04)
 
 * **Class:** DIAG (COMPATIBILITY §5.8)
 * **Owner:** WP-22; the first package of the register row owns this file and
@@ -11,11 +11,11 @@ store notices: the foreign-owner warning (ADR-044), `Removed snp 1.x cache data 
 
 | Diagnostic (stderr only) |
 |---|
-| store notices: the foreign-owner warning (ADR-044), `Removed snp 1.x cache data from {store}.` (gc) |
+| store notices: the foreign-owner warning (ADR-044), `Removed snp 1.x cache data from {store}.` (gc), the unreadable stash journal warning (gc, clean; D-DATA-04) |
 
 ## Rationale
 
-Two stderr-only notices of snp's own store, which pre-commit cannot print because it has no such situations:
+Three stderr-only notices of snp's own store, which pre-commit cannot print because it has no such situations:
 
 * **Foreign owner** (ADR-044): `[WARNING] the snp store <path> is owned by uid <n>, not by the current user` — once
   per process, from `Store::ensure_created`, when the store belongs to another uid and is used anyway (volume-mounted
@@ -25,6 +25,11 @@ Two stderr-only notices of snp's own store, which pre-commit cannot print becaus
   directory is maintained by the SNP (Shell Not Pass) project.`), rewrites the README and reports
   `SweepReport::legacy_v1_removed`; WP-33's `gc` then prints `Removed snp 1.x cache data from {store}.` on stderr
   before `{n} repo(s) removed.`.
+* **Unreadable stash journal** (D-DATA-04): when a stash journal in `<store>/patches/` cannot be read or understood,
+  `Store::sweep` (gc) and `Store::clean` keep every stash patch (fail closed) and report the journal; `gc` and
+  `clean` then print `[WARNING] the stash journal <journal> cannot be read or understood; every stash patch is
+  kept. Remove the journal once no snp run uses it and no patch it may name is needed.` on stderr (gc before
+  `{n} repo(s) removed.`, clean before `Cleaned {store}.`).
 
 Safe: stderr only; stdout and exit codes are unchanged.
 
@@ -39,4 +44,5 @@ Removed snp 1.x cache data from <W>/snpstore.
 ```
 
 Unit coverage: `crates/snp-store/tests/support/behaviour.rs::sweep_removes_other_versions_and_snp1_leftovers`;
+the stash journal warning in `crates/snp/tests/it/gc.rs::an_unreadable_stash_journal_keeps_every_patch_with_a_warning`;
 the foreign-owner text is golden-tested in `crates/snp-store/src/messages.rs`.

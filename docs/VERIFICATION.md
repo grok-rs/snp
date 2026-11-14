@@ -523,11 +523,11 @@ Whole root: 40 items verified, 0 errors, with `--no-cheating`, in about 3–5 s 
   - **N3 (true today)** for NUL-free paths, splitting `literal_pathspecs(L)` on NUL (without its final NUL) gives `map(":(literal)" ++ ·, L)`, and the encoding is injective.
   - **N4 (after the hardening PR)** the checkout sink refuses a list containing an empty or NUL-bearing path (an empty `:(literal)` selects the whole tree, the very loss D-DATA-19 removed). The rollback list is the first-seen dedup of `T ++ (C minus empty records)`.
   - Dedup goes through a `SeenSet` kernel trait (HashSet implementation trusted).
-- **K8 gc patch protection** (Verus; snp-store `maintenance.rs:76-114, 167-182, 296-345`; snp-stash `journal.rs:160-200`).
-  - **G1 (true today)** `mentioned(name, J) ⇔ ∃j∈J, k: j[k..k+|name|] = name ∧ (k+|name| = |j| ∨ j[k+|name|] ∉ [A-Za-z0-9._-])`. This needs `name` to be border-free, and every `patch<digits>-<digits>` name is. The reason is that `memmem::find_iter` reports non-overlapping matches; the trusted `Memmem` contract says so.
-  - **G2 (true today)** deletable ⇒ the name starts with `patch`, its age is at least the threshold, and it is not mentioned.
-  - **G3** adding journals never makes a kept patch deletable.
-  - **G4 (after F1; false today)** an unrestored journal of `dir/n` protects `n` whatever the journal's size and path encoding (UTF-8 string or `{"hex": …}`). The proof uses the lemma `hex(a ++ b) = hex(a) ++ hex(b)`, or decodes journals with the shared codec (preferred).
+- **K8 gc patch protection** (Verus; snp-store `maintenance.rs` `protection`, `journal_patch`, `Protection::covers`, `is_patch_or_sibling`, sweep step 4 and `clean`; snp-store `marker.rs` `path_from_json`, the same byte-string codec as snp-stash `journal.rs` `enc_bytes`/`dec_bytes`). F1 landed: the raw-byte `mentioned` search is gone and these properties are stated over the decoded journals.
+  - **G1** `covers(Patches(P), name) ⇔ ∃p∈P: name = p ∨ name = p ++ "." ++ s` for some `s`, and `covers(All(_), name)` always holds. `patch<s>-<pid>-<n>` is not covered by `patch<s>-<pid>`.
+  - **G2** deletable ⇒ the name starts with `patch`, its age is at least the threshold (30 days for sweep, 1 hour for clean), and it is not covered.
+  - **G3** adding journals never makes a kept patch deletable (monotonic: a new journal adds a name or turns the protection into `All`).
+  - **G4** an unrestored journal whose `patch` is `dir/n` (a JSON string, or `{"hex": …}` of any bytes on Unix) protects `n` and its `n.*` siblings, whatever the journal's size up to snp-stash's 64 MiB journal limit; a bigger, unreadable or malformed journal (empty, no string `state`, or an unrestored state without a `patch`) protects everything. `clean`'s re-read before each removal reuses the decoded result of a journal whose `(len, mtime)` is unchanged; a stale entry is sound because a journal only starts naming its run's fresh patch (younger than both age limits) and later states only drop protection. The proof rests on `unhex(hex(b)) = Some(b)` and on the trusted serde_json decoder.
 - **K9 stash protocol model** (Lean; snp-stash `guard.rs`, snp-git checkout and rollback, ADR-093; **after PR #17**).
   - **Model.** Index `I`, worktree `W : Path → Option Content`, clean and smudge filters `c` and `s`, an assume-unchanged set, `Patch(W)` and `D = dom Patch(W₀)`.
   - **Hypotheses (named, not axioms).** A1 `c∘s = id` on the image of `I`; A2 apply is all-or-nothing; A3 checkout writes exactly the given set; A4 there is no concurrent writer; A5 `numstat(Patch) = D` (linked to K7).
@@ -601,12 +601,12 @@ Whole root: 40 items verified, 0 errors, with `--no-cheating`, in about 3–5 s 
 
 ## 11. Fix-first queue (ordinary PRs with tests and D-entries; proofs lock fixes in and never encode bugs)
 
-- **F1. gc patch protection, D-DATA-04.** Confirmed by reading the code:
+- **F1. gc patch protection, D-DATA-04. Fixed** (CHANGELOG "Fixed"; D-DATA-04, D-DIAG-05): journals are decoded with the stash's byte-string codec and read in full, the `<patch>.*` siblings are protected, and a journal that cannot be read or understood keeps every patch with a stderr warning. What was confirmed by reading the code:
   - an unreadable journal protects nothing (`maintenance.rs:80`, `filter_map(… .ok())`);
   - `read_capped` truncates at the 1 MiB `META_CAP` (`fs.rs:262`, `marker.rs:19`), so a mention past the cap is missed;
   - a non-UTF-8 store path is journaled as `{"hex": …}` (`journal.rs:5,160-175`), so the raw patch name never appears.
 
-  The fix: fail closed on read errors, a full read or protect-all over the cap, and match hex names or decode journals with the shared codec. The owner decides whether `<patch>.*` siblings such as `.now` are protected.
+  The fix: fail closed on read errors, a full read or protect-all over the cap, and decode journals with the shared codec. The owner approved protecting the `<patch>.*` siblings such as `.now`.
 - **F2. xargs checked budget.** Lands with K1 (CHANGELOG "Fixed", regression test at `usize::MAX`).
 - **F3. Checkout sink hardening.** Refuse empty or NUL pathspecs and filter empty records. Lands with K7 as a D-DATA-19 amendment.
 - **Reported by the surveys, not yet confirmed.** Each needs a failing test in its own PR before any proof depends on it:
