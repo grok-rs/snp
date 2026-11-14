@@ -112,11 +112,26 @@ pub(crate) fn run_pipeline(a: &RunArgs, cx: &RunCtx, inv: &Invocation<'_>) -> Re
 )]
 fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Result<i32, Failure> {
     let printer = &*cx.printer;
-    // §3.1 steps 3–4: discovery, then `_adjust_args_and_chdir` as a pure function
-    let (git0, info) = match &inv.discovered {
-        Some((git, info)) => (git.clone(), info.clone()),
-        None => common::discover(cx)?,
-    };
+    // §3.1 steps 3–4: discovery, with the config read speculatively at the invocation cwd meanwhile (ADR-104), then
+    // `_adjust_args_and_chdir` as a pure function
+    let early_buffered = Buffered::default();
+    let (found, preloaded) = std::thread::scope(|s| {
+        let spec = (inv.discovered.is_none() && !inv.fixed_paths).then(|| {
+            std::thread::Builder::new()
+                .spawn_scoped(s, || speculative_config(cx, a, &early_buffered))
+        });
+        let found = match &inv.discovered {
+            Some((git, info)) => Ok((git.clone(), info.clone())),
+            None => common::discover(cx),
+        };
+        // a thread that could not start or panicked leaves the load to step 6
+        let spec = spec
+            .and_then(Result::ok)
+            .and_then(|h| h.join().ok())
+            .flatten();
+        (found, spec)
+    });
+    let (git0, info) = found?;
     let root = info.root.clone();
     let rebase = |f: &OsString| {
         if inv.fixed_paths {
@@ -139,6 +154,11 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     let cli_files: Vec<OsString> = cli_files.iter().map(rebase).collect();
     let commit_msg_filename = a.commit_msg_filename.as_ref().map(rebase);
     let src = common::config_source(&config, &root);
+    // the speculative load stands only when it read the very file the real resolution chose, from the real root
+    let at_root = info.root == cx.invocation_cwd;
+    let preloaded = preloaded
+        .filter(|(path, _)| at_root && *path == config)
+        .map(|(_, loaded)| loaded);
     // step 5: config tracking (main store, best effort) and the next-run recovery notice
     if inv.track_config {
         common::mark_config_used(&cx.store, &src.path, &root);
@@ -160,12 +180,18 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     // step 6: the speculative config load (warnings buffered) beside the read-only preflight git calls, and — for a
     // stashing run on the stat-capable path — the DiffOracle inputs F and G, which the stash does not change (only
     // its intent-to-add clearing changes the index: then F is asked again after it). Started here they are off the
-    // critical path instead of a serial git stage after the stash (B2/B3, ADR-084). On a small tree F and G start
-    // first, before the load, and F also answers query A (ADR-104).
+    // critical path instead of a serial git stage after the stash (B2/B3, ADR-084). F and G start first when they
+    // will be used — the config is already loaded, or the tree is small — and F then also answers query A (ADR-104).
     let buffered = Buffered::default();
     let entries = stat_entries(&git0, &info, &cx.env).filter(|_| stash);
     let speculate = entries.is_some();
-    let hoist = entries.is_some_and(|n| hoist_early(&info, n));
+    let candidates = preloaded.as_ref().map(|loaded| {
+        loaded
+            .as_ref()
+            .map_or(0, |c| process_candidates(c, &a.hooks))
+    });
+    let hoist = entries.is_some_and(|n| hoist_early(&info, n, candidates));
+    let have_config = preloaded.is_some();
     // taken before F starts: compared after the stash, it shows a rewrite of the index while we waited (ADR-104)
     let stamp = if speculate {
         git0.index_stamp(&info)
@@ -179,28 +205,30 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
             std::thread::Builder::new()
                 .spawn_scoped(s, || git0.config_origins().ok().map(Arc::from))
         });
-        let load = std::thread::Builder::new().spawn_scoped(s, || {
-            let loaded = common::load_config_with(cx, &src, &buffered.warn, &buffered.diag);
-            // Without the hoist, only for a config with three or more process-hook candidates: below that the
-            // stat path does not pay for its two spawns (B2's spawn budget). A thread that could not start,
-            // panicked or failed leaves its input to step 14.
-            let early = if speculate
-                && !hoist
-                && loaded
-                    .as_ref()
-                    .is_ok_and(|c| process_candidates(c, &a.hooks) >= 3)
-            {
-                let f = std::thread::Builder::new()
-                    .spawn_scoped(s, || git0.tracked_with_modes().ok().map(Arc::new));
-                let origins = git0.config_origins().ok().map(Arc::from);
-                Early {
-                    tracked: f.ok().and_then(|h| h.join().ok().flatten()),
-                    origins,
-                }
-            } else {
-                Early::default()
-            };
-            (loaded, early)
+        let load = (!have_config).then(|| {
+            std::thread::Builder::new().spawn_scoped(s, || {
+                let loaded = common::load_config_with(cx, &src, &buffered.warn, &buffered.diag);
+                // Without the hoist, only for a config with three or more process-hook candidates: below that the
+                // stat path does not pay for its two spawns (B2's spawn budget). A thread that could not start,
+                // panicked or failed leaves its input to step 14.
+                let early = if speculate
+                    && !hoist
+                    && loaded
+                        .as_ref()
+                        .is_ok_and(|c| process_candidates(c, &a.hooks) >= 3)
+                {
+                    let f = std::thread::Builder::new()
+                        .spawn_scoped(s, || git0.tracked_with_modes().ok().map(Arc::new));
+                    let origins = git0.config_origins().ok().map(Arc::from);
+                    Early {
+                        tracked: f.ok().and_then(|h| h.join().ok().flatten()),
+                        origins,
+                    }
+                } else {
+                    Early::default()
+                };
+                (loaded, early)
+            })
         });
         let unstaged = std::thread::Builder::new()
             .spawn_scoped(s, || stash.then(|| git0.config_is_unstaged(&config)));
@@ -223,11 +251,12 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
             Ok(h) => h.join().unwrap_or_else(|p| Some(Err(panicked(&p)))),
             Err(_) => stash.then(|| git0.config_is_unstaged(&config)),
         };
-        let (loaded, early) = match load {
-            Ok(h) => h
+        let (loaded, early) = match (preloaded, load) {
+            (Some(loaded), _) => (loaded, Early::default()),
+            (None, Some(Ok(h))) => h
                 .join()
                 .unwrap_or_else(|p| (Err(panicked(&p)), Early::default())),
-            Err(_) => (
+            (None, Some(Err(_)) | None) => (
                 common::load_config_with(cx, &src, &buffered.warn, &buffered.diag),
                 Early::default(),
             ),
@@ -308,7 +337,11 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     };
     let git = git0.with_env(run_env.clone());
     // step 10: the config (warnings at pre-commit's position), the overlay
-    buffered.replay(printer);
+    if have_config {
+        early_buffered.replay(printer);
+    } else {
+        buffered.replay(printer);
+    }
     let mut cfg = loaded?;
     let overlay = common::apply_overlay(cx, &mut cfg, &git, a.ext.no_local_config)?;
     if common::uses_store(&cfg) {
@@ -581,18 +614,46 @@ fn stat_entries(git: &Git, info: &RepoInfo, env: &Env) -> Option<u32> {
     git.index_entry_count(info).filter(|n| *n <= 16_384)
 }
 
-/// Whether F and G start at the top of step 6, before the config load (ADR-104): an index of at most
-/// [`SMALL_TREE`] entries `n` (F and G are cheap, and one process hook already uses them), three or more CPUs (the
-/// load, B, F and G overlap), and the worktree and the git directory on filesystems the Stat mode accepts (one statfs
-/// each), so no G is spent on a run whose oracle would refuse the Stat mode anyway. A larger index waits for the
-/// config: F and G only pay from three process hooks on there, and one hook keeps Git mode (measured: a 2 000-file,
-/// one-hook run spent 32% more instructions with both queries started early).
-fn hoist_early(info: &RepoInfo, n: u32) -> bool {
+/// Whether F and G start at the top of step 6, before the config load (ADR-104), given the index entry count `n`
+/// and the config's process-hook `candidates` when the config is already loaded:
+///
+/// * three or more candidates: always (ADR-084(6) takes F and G then anyway, only later);
+/// * none: never (only process hooks use the Stat mode);
+/// * one or two, or not known yet: on an index of at most [`SMALL_TREE`] entries (F and G are cheap there, and one
+///   process hook uses them), with three or more CPUs (the load, B, F and G overlap), and when the worktree and the
+///   git directory are on filesystems the Stat mode accepts (one statfs each), so no G is spent on a run whose
+///   oracle would refuse it. A larger index waits for the config (measured: a 2 000-file, one-hook run spent 32%
+///   more instructions with both queries started early and Git mode kept).
+fn hoist_early(info: &RepoInfo, n: u32, candidates: Option<usize>) -> bool {
     let safe = |p: &std::path::Path| snp_os::fsinfo::stat_oracle_safe(p).unwrap_or(false);
-    usize::try_from(n).is_ok_and(|n| n <= SMALL_TREE)
-        && snp_proc::xargs::cpu_count().get() >= 3
-        && safe(&info.root)
-        && safe(&info.git_dir)
+    match candidates {
+        Some(c) if c >= 3 => true,
+        Some(0) => false,
+        _ => {
+            usize::try_from(n).is_ok_and(|n| n <= SMALL_TREE)
+                && snp_proc::xargs::cpu_count().get() >= 3
+                && safe(&info.root)
+                && safe(&info.git_dir)
+        }
+    }
+}
+
+/// The config as discovery and `_adjust_args_and_chdir` would find it if the repository root were the invocation
+/// cwd, loaded with its warnings buffered (ADR-104). It runs beside step 3's `rev-parse`; the caller accepts it only
+/// when the real root is the cwd and the real config path is byte-equal, and drops it (with its buffered warnings)
+/// otherwise. Discovery is note-free here: the stderr note is printed by the real resolution only.
+fn speculative_config(
+    cx: &RunCtx,
+    a: &RunArgs,
+    buffered: &Buffered,
+) -> Option<(OsString, Result<Config, Failure>)> {
+    let cwd = &cx.invocation_cwd;
+    let d =
+        snp_config::discover::discover(a.config.explicit(), cwd, cwd, cx.brand, &cx.env).ok()?;
+    let config = common::adjust_config(&d.config, cwd, cwd);
+    let src = common::config_source(&config, cwd);
+    let loaded = common::load_config_with(cx, &src, &buffered.warn, &buffered.diag);
+    Some((config, loaded))
 }
 
 /// Tracked entries plus their ancestor directories up to which one or two process hooks use the Stat mode: below it

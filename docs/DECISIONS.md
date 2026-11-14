@@ -1981,10 +1981,10 @@ other packages and makes "only hooks take files" a property of the API.
 158,253; snp's own maxrss at 4-CPU affinity 24.2 → 17.7 MiB (getrusage, median of 10). B5: peak 10.2 → 7.3 MB,
 blocks 185,963 → 127,179. The harness's process-tree RSS stays near git's own ~20 MiB floor. Serial work drops by a few ms on B4
 (not gate-visible). `snp_proc::spawn` gains two public functions (catalogued in `crates/snp-proc/tests/api.rs`).
-### ADR-104 — Run pipeline step 6: the architecture text, the warm-path baseline, F and G first
+### ADR-104 — Run pipeline step 6: the architecture text, the warm-path baseline, F and G first, the config beside discovery
 
-*Amends ADR-047 and ARCHITECTURE §3.1 rows 6, 10, 15 and 16, §3.7 item 5 and the §12.1 spawn model; implements
-ADR-078(3) as written.*
+*Amends ADR-047, ADR-084(6) and ARCHITECTURE §3.1 rows 3, 6, 10, 15 and 16, §3.7 item 5, the §12.1 spawn model and the
+§1.4.13 listing; implements ADR-078(3) as written.*
 
 **Context.** The performance review of November 2026 (P25(c)) found the step-6 text out of date with the code. Row 6
 put the ITA query C in the parallel fan-out, but the stash asks it serially (B2's fourth git call). It also listed E
@@ -1995,7 +1995,8 @@ exits 1 before the stash. Row 15 called the classifier lazy, but it is built eag
 disagreed (C3). ADR-078(3) elides the baseline only when no clone, install or download ran since `diff-index`. The
 code elided it whenever resolution and installation took under 250 ms, so a fast install (a local `system` hook's
 virtual install, a quick `pip` from a warm cache) still had its baseline elided, and an IDE autosave during it was
-blamed on the first hook.
+blamed on the first hook. Two step-6 costs remained on the critical path of B2, B3 and B9 (P09, P24): query A
+was a spawn of its own although F reads the same index, and the config load waited for `rev-parse`.
 **Decision.** (1) The architecture text describes the code: §3.1 rows 6, 10, 15 and 16, §3.7 item 5 and the §12.1
 spawn model are corrected as listed above. (2) The warm path is tracked in code, as ADR-078(3) says.
 `snp_repo::Resolve` gains `store_work() -> Option<u64>`, a counter of the store entries a resolution filled (a clone,
@@ -2022,6 +2023,14 @@ index file's stamp (dev, ino, size, mtime ns, ctime ns; `Git::index_stamp`) is t
 rewrites (a checkout of unstaged files, a `write-tree` that refreshes the cache tree) also drop them; switching to
 ADR-097's `StashGuard::lock_contended()` once it lands will keep F in those cases (a marked follow-up in the code).
 (6) The side-query thread at step 14 is not started when it has nothing to ask, and `wants_staged` is decided once.
+(7) *The config beside discovery (P24, stage 1).* `run` (not `hook-impl`, which has discovered already, nor
+try-repo) discovers and loads the config at the invocation cwd on a thread while step 3's `rev-parse` runs:
+`snp_config::discover::discover` is already note-free (the note is `Discovery::note`, printed only by the real
+resolution), and warnings go to their own buffer. The load is kept iff `RepoInfo::root` equals the invocation cwd and
+step 4's resolved config path is byte-equal; otherwise the result and its warnings are dropped and step 6 loads as
+before. A kept config also decides F and G at the top of step 6: from three process-hook candidates always (ADR-084(6)
+took them then too, only after the load), never without one, and with one or two only on a small tree. No speculative
+git child is started (stage 2 of P24 waits for the interleaved bench gate of ADR-099 to show a gain beyond noise).
 **Rationale.** The text is what reviewers and later batches read; a stale "C runs in parallel" sends the next
 optimisation after the wrong call. Counting the work is exact where the timer was a guess, and both checks only ever
 choose pre-commit's position for the baseline, so neither can make output differ from pre-commit 4.7.0.

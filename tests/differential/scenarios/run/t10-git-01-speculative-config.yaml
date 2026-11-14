@@ -1,0 +1,48 @@
+name: run/t10-git-01-speculative-config
+description: >
+  snp reads the config at the invocation cwd while `rev-parse` runs and keeps that load only when the root is the cwd
+  and the resolved config path is the same (ADR-104). Every place the guess can be wrong must behave as pre-commit:
+  the root, a subdirectory, `-c`, a missing `-c` file, a nested directory whose `.git` is invalid (with a config of
+  its own that warns), `GIT_DIR`/`GIT_WORK_TREE` from the root and from a subdirectory, a linked worktree, and a
+  directory outside any repository. The config warns, so the buffered warning's position is compared too.
+covers: [T10-GIT-01, T10-GIT-02, T10-RUN-19]
+work:
+  files:
+    sub/x.txt: "x\n"
+    alt.yaml: |
+      repos:
+      -   repo: local
+          hooks:
+          -   {id: alt, name: alt, entry: 'true', language: system, always_run: true, pass_filenames: false}
+    nested/.git: "gitdir: does-not-exist\n"
+    nested/.pre-commit-config.yaml: |
+      repos:
+      -   repo: local
+          hooks:
+          -   {id: nested, name: nested, entry: 'true', language: system, always_run: true, unexpected: 1}
+  config: |
+    repos:
+    -   repo: local
+        hooks:
+        -   {id: one, name: one, entry: 'true', language: system, always_run: true, pass_filenames: false, extra: 1}
+        -   {id: two, name: two, entry: 'true', language: system, always_run: true, pass_filenames: false}
+        -   {id: three, name: three, entry: 'true', language: system, always_run: true, pass_filenames: false}
+  commit: [.pre-commit-config.yaml, sub/x.txt, alt.yaml]
+steps:
+  - tool: [run]
+  - tool: [run]
+    cwd: sub
+  - tool: [run, -c, alt.yaml]
+  - tool: [run, -c, ../alt.yaml]
+    cwd: sub
+  - tool: [run, -c, nope.yaml]
+  - tool: [run]
+    cwd: nested
+  - tool: [run]
+    env: {GIT_DIR: "${work}/.git", GIT_WORK_TREE: "${work}"}
+  - tool: [run]
+    cwd: sub
+    env: {GIT_DIR: "${work}/.git", GIT_WORK_TREE: "${work}"}
+  - shell: git worktree add -q ../linked >/dev/null 2>&1 && cd ../linked && "$PRE_COMMIT" run; echo "rc=$?"
+  - shell: cd ../linked/sub && "$PRE_COMMIT" run; echo "rc=$?"
+  - shell: cd "${root}" && "$PRE_COMMIT" run; echo "rc=$?"

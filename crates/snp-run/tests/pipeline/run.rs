@@ -1644,3 +1644,40 @@ fn one_hook_uses_the_stat_mode_only_on_a_small_tree() {
         );
     }
 }
+
+/// ADR-104: the config read at the invocation cwd during discovery is used at the root and discarded from a
+/// subdirectory; either way its warning is printed once, at pre-commit's position, and the run is the same.
+#[test]
+fn speculative_config_warns_once_from_the_root_and_from_a_subdirectory() {
+    let run = |sub: bool| {
+        let mut h = H::new();
+        let hooks = format!(
+            "{}{}",
+            sys("warns", "warns", "'true'", "always_run: true\nextra: 1"),
+            three_noops()
+        );
+        h.config(&local(&hooks));
+        h.write("sub/x.txt", b"x\n");
+        h.git(&["add", "sub/x.txt"]);
+        h.commit("sub");
+        if sub {
+            h.cwd = Some(h.path("sub"));
+        }
+        h.run(args())
+    };
+    let (root, sub) = (run(false), run(true));
+    assert_eq!(root.code, 0, "{root:?}");
+    assert_eq!(
+        root.stdout
+            .matches("[WARNING] Unexpected key(s) present")
+            .count(),
+        1,
+        "{}",
+        root.stdout
+    );
+    assert!(root.stdout.starts_with("[WARNING]"), "{}", root.stdout);
+    assert_eq!(
+        (root.code, &root.stdout, &root.stderr),
+        (sub.code, &sub.stdout, &sub.stderr)
+    );
+}
