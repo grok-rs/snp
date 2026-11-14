@@ -18,6 +18,8 @@ lean/client.rs         std-only line-protocol client that home-crate oracle test
 cargo xtask proofs check                    # guards G1-G10: tool-free, runs in the required `xtask gates` job
 cargo xtask proofs install                  # pinned Verus, its rustc and verusfmt (.github/scripts/proofs-tools.sh)
 cargo xtask proofs verus                    # V1-V4: --no-cheating, manifest, verified floor, mutants, verusfmt
+                                            #   (blocking: required `xtask gates` job and release gate 7, ADR-096)
+cargo xtask proofs verus --no-mutants --smt-option smt.random_seed=3   # nightly seed sweep (also --rlimit 5)
 cargo xtask proofs verus --module <mount>   # one mount, without --no-cheating: iteration only
 cargo xtask proofs mutants                  # V3 alone
 cargo xtask proofs lean                     # L1-L5: lake build --wfail, axiom audit, leanchecker, forbidden tokens,
@@ -72,8 +74,8 @@ SNP_LEAN_ORACLES=$PWD/proofs/lean/.lake/build/bin SNP_REQUIRE_LEAN_ORACLES=1 \
 ```
 
 `xtask/oracle/py_vs_lean.py` checks the models themselves against the Python they transliterate (CPython 3.12
-`shlex`, pre-commit-hooks v6.0.0 `end_of_file_fixer`); it is the only Python in the proof pipeline. No workflow runs
-it yet (a nightly job is planned, docs/VERIFICATION.md §7 and §9.1 S4), so run it by hand after a model change:
+`shlex`, pre-commit-hooks v6.0.0 `end_of_file_fixer`); it is the only Python in the proof pipeline. The nightly
+`proofs-models` job runs it (docs/VERIFICATION.md §7 and §9.1 S4); run it by hand after a model change:
 
 ```sh
 git clone --depth 1 --branch v6.0.0 https://github.com/pre-commit/pre-commit-hooks target/pch-v6.0.0

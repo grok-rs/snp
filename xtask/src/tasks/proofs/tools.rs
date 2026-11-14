@@ -61,7 +61,19 @@ pub(crate) struct VerusArgs {
     module: Option<String>,
     /// `--json F`: keep Verus's JSON report.
     json: Option<PathBuf>,
+    /// `--smt-option K=V` (repeatable): passed to every Verus run (the nightly seed sweep:
+    /// `smt.random_seed=1..5`).
+    smt_options: Vec<String>,
+    /// `--rlimit N`: the default resource limit of every Verus run (Verus's default is 10; the nightly fragility
+    /// report runs at 5).
+    rlimit: Option<String>,
+    /// `--no-mutants`: skip V3 (the nightly sweeps; the gate runs them).
+    no_mutants: bool,
 }
+
+/// The usage line of `proofs verus`.
+const VERUS_USAGE: &str =
+    "proofs verus [--module M] [--json F] [--smt-option K=V]... [--rlimit N] [--no-mutants]";
 
 impl VerusArgs {
     pub(crate) fn parse(args: &[String]) -> anyhow::Result<Self> {
@@ -75,12 +87,43 @@ impl VerusArgs {
                 "--json" => {
                     out.json = Some(PathBuf::from(it.next().context("--json needs a file")?));
                 }
-                other => bail!(
-                    "proofs verus: unknown argument {other} (usage: proofs verus [--module M] [--json F])"
-                ),
+                "--smt-option" => {
+                    let o = it.next().context("--smt-option needs OPTION=VALUE")?;
+                    let well_formed = o.split_once('=').is_some_and(|(k, v)| {
+                        !k.is_empty()
+                            && !v.is_empty()
+                            && k.bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_')
+                    });
+                    if !well_formed {
+                        bail!("--smt-option needs OPTION=VALUE, not {o:?}");
+                    }
+                    out.smt_options.push(o.clone());
+                }
+                "--rlimit" => {
+                    let n = it.next().context("--rlimit needs a number")?;
+                    if !n.parse::<f64>().is_ok_and(|v| v.is_finite() && v > 0.0) {
+                        bail!("--rlimit needs a positive number, not {n:?}");
+                    }
+                    out.rlimit = Some(n.clone());
+                }
+                "--no-mutants" => out.no_mutants = true,
+                other => bail!("proofs verus: unknown argument {other} (usage: {VERUS_USAGE})"),
             }
         }
         Ok(out)
+    }
+
+    /// The extra Verus arguments every run of this command passes (`--smt-option`, `--rlimit`).
+    fn extra(&self) -> Vec<&str> {
+        let mut out = Vec::new();
+        for o in &self.smt_options {
+            out.extend(["--smt-option", o.as_str()]);
+        }
+        if let Some(n) = &self.rlimit {
+            out.extend(["--rlimit", n.as_str()]);
+        }
+        out
     }
 }
 
@@ -103,15 +146,25 @@ pub(crate) fn verus(root: &Path, args: &VerusArgs) -> anyhow::Result<()> {
         bail!("no verified kernel is mounted as `{m}`");
     }
 
+    let extra = args.extra();
+    if !extra.is_empty() {
+        workspace::say(&format!(
+            "proofs verus: every Verus run gets {}",
+            extra.join(" ")
+        ));
+    }
     let started = Instant::now();
     let run = match &args.module {
         Some(m) => {
             workspace::say(&format!(
                 "proofs verus: --module {m} runs without --no-cheating (Verus refuses the combination): an iteration aid, not a gate"
             ));
-            tools.run_verus(&root.join(ROOT), &["--verify-module", m])?
+            tools.run_verus(
+                &root.join(ROOT),
+                &[&["--verify-module", m.as_str()][..], &extra].concat(),
+            )?
         }
-        None => tools.run_verus(&root.join(ROOT), &["--no-cheating"])?,
+        None => tools.run_verus(&root.join(ROOT), &[&["--no-cheating"][..], &extra].concat())?,
     };
     let secs = started.elapsed().as_secs_f64();
     if let Some(path) = &args.json {
@@ -183,8 +236,10 @@ pub(crate) fn verus(root: &Path, args: &VerusArgs) -> anyhow::Result<()> {
     ));
 
     // V3
-    if args.module.is_none() {
-        problems.extend(run_mutants(root, &tree, &reg, &tools)?);
+    if args.no_mutants {
+        workspace::say("proofs verus: V3 (mutants) skipped (--no-mutants)");
+    } else if args.module.is_none() {
+        problems.extend(run_mutants(root, &tree, &reg, &tools, &extra)?);
     }
 
     // V4
@@ -198,7 +253,7 @@ pub(crate) fn mutants(root: &Path) -> anyhow::Result<()> {
     let tree = Tree::disk(root);
     let reg = Registry::load(&tree)?;
     let tools = Tools::find(root, &reg)?;
-    let problems = run_mutants(root, &tree, &reg, &tools)?;
+    let problems = run_mutants(root, &tree, &reg, &tools, &[])?;
     finish("proofs mutants", &problems)
 }
 
@@ -417,6 +472,7 @@ fn run_mutants(
     tree: &Tree,
     reg: &Registry,
     tools: &Tools,
+    extra: &[&str],
 ) -> anyhow::Result<Vec<String>> {
     let mut problems = Vec::new();
     let verified: Vec<&super::Kernel> = reg
@@ -454,7 +510,10 @@ fn run_mutants(
                     .with_context(|| format!("copying {}", other.file))?;
             }
             std::fs::write(scratch.join(target), mutated)?;
-            let run = tools.run_verus(&scratch.join(ROOT), &["--no-cheating"])?;
+            let run = tools.run_verus(
+                &scratch.join(ROOT),
+                &[&["--no-cheating"][..], extra].concat(),
+            )?;
             let (_, errors) = run.report().as_ref().map_or((0, 0), counts);
             let label = format!(
                 "{} mutant of {target} {:?} -> {:?}",
@@ -1379,7 +1438,36 @@ mod tests {
         .unwrap();
         assert_eq!(a.module.as_deref(), Some("m"));
         assert_eq!(a.json, Some(PathBuf::from("o.json")));
+        assert!(a.extra().is_empty() && !a.no_mutants);
         assert!(VerusArgs::parse(&["--module".into()]).is_err());
         assert!(VerusArgs::parse(&["-x".into()]).is_err());
+        let sweep: Vec<String> = [
+            "--smt-option",
+            "smt.random_seed=3",
+            "--rlimit",
+            "5",
+            "--no-mutants",
+        ]
+        .map(str::to_owned)
+        .into();
+        let s = VerusArgs::parse(&sweep).unwrap();
+        assert!(s.no_mutants);
+        assert_eq!(
+            s.extra(),
+            ["--smt-option", "smt.random_seed=3", "--rlimit", "5"]
+        );
+        for bad in [
+            &["--smt-option", "seed"][..],
+            &["--smt-option", "=1"],
+            &["--smt-option", "a b=1"],
+            &["--smt-option"],
+            &["--rlimit", "0"],
+            &["--rlimit", "-1"],
+            &["--rlimit", "inf"],
+            &["--rlimit", "x"],
+        ] {
+            let args: Vec<String> = bad.iter().map(|s| (*s).to_owned()).collect();
+            assert!(VerusArgs::parse(&args).is_err(), "{bad:?}");
+        }
     }
 }

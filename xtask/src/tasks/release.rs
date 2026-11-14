@@ -1,7 +1,7 @@
 //! `cargo xtask release <gates|notes|version>`: the release gates of ADR-061 and release metadata (WBS WP-37).
 //!
 //! ```text
-//! cargo xtask release gates [--tag vX.Y.Z] [--skip-registry] [--allow-dirty] [--allow-unreleased]
+//! cargo xtask release gates [--tag vX.Y.Z] [--skip-registry] [--skip-proofs] [--allow-dirty] [--allow-unreleased]
 //!                           [--index URL] [--dl URL] [--root DIR] [--lock FILE]
 //! cargo xtask release notes [VERSION]      # the CHANGELOG.md section of VERSION (default: the workspace version)
 //! cargo xtask release version              # the workspace version
@@ -28,7 +28,15 @@
 //! 6. **crates** (ADR-088): every workspace package published to crates.io (`snp` and its normal dependency
 //!    closure) has the workspace version, requires the other published packages with exactly `=<version>`, depends
 //!    on no `publish = false` package except through version-less dev-dependencies (which `cargo publish` strips),
-//!    and `snp` itself is published.
+//!    and `snp` itself is published;
+//! 7. **proofs** (ADR-095, ADR-096): `proofs/pending`: every kernel `proofs/registry.toml` marks `status =
+//!    "pending"` (the escape hatch of docs/VERIFICATION.md §8.3) is accepted by a line `Proof pending: <kernel id>`
+//!    (optionally a list item, `- Proof pending: K2-archive-entry (#123): …`) in the release's CHANGELOG section (the
+//!    GitHub release notes), and every such line names a kernel that is pending; then the checked-out commit is
+//!    re-verified: `proofs/check` (G1-G10), `proofs/verus` (V1-V4: `--no-cheating`, manifest, floor, mutants,
+//!    verusfmt) and `proofs/lean` (L1-L5), in process, with the pinned tools on the machine (`cargo xtask proofs
+//!    install`, elan). `--skip-proofs` skips the three tool runs, never the pending check (local dry runs and the
+//!    platform workflow's documentation job, which have no proof tools).
 //!
 //! Downloads use `curl` (`--proto =https`), checksums `sha256sum` or `shasum -a 256`, and `.crate` extraction
 //! `tar`; all three exist on every GitHub-hosted runner.
@@ -42,6 +50,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context as _, bail};
 
+use super::proofs;
 use crate::workspace;
 
 /// The default sparse index.
@@ -105,11 +114,16 @@ pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
 
 /// Options of `release gates`.
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one field per command-line switch"
+)]
 struct GateOpts {
     root: Option<PathBuf>,
     lock: Option<PathBuf>,
     tag: Option<String>,
     skip_registry: bool,
+    skip_proofs: bool,
     allow_dirty: bool,
     allow_unreleased: bool,
     index: String,
@@ -123,6 +137,7 @@ impl Default for GateOpts {
             lock: None,
             tag: None,
             skip_registry: false,
+            skip_proofs: false,
             allow_dirty: false,
             allow_unreleased: false,
             index: INDEX.to_owned(),
@@ -148,6 +163,7 @@ impl GateOpts {
                 "--index" => value()?.trim_end_matches('/').clone_into(&mut o.index),
                 "--dl" => value()?.trim_end_matches('/').clone_into(&mut o.dl),
                 "--skip-registry" => o.skip_registry = true,
+                "--skip-proofs" => o.skip_proofs = true,
                 "--allow-dirty" => o.allow_dirty = true,
                 "--allow-unreleased" => o.allow_unreleased = true,
                 _ => bail!("release gates: unknown argument {a}"),
@@ -605,7 +621,144 @@ fn gates(opts: &GateOpts) -> Report {
         }
         (Err(e), _) | (_, Err(e)) => report.fail("crates", e.to_string()),
     }
+
+    // 7. proofs (ADR-096)
+    proofs_gate(opts, &root, &mut report);
     report
+}
+
+/// A tool run of gate 7.
+type GateRun = fn(&Path) -> anyhow::Result<()>;
+
+/// Gate 7: pending kernels need the release notes' acceptance, and the commit is re-verified with Verus and Lean.
+fn proofs_gate(opts: &GateOpts, root: &Path, report: &mut Report) {
+    let tree = proofs::Tree::disk(root);
+    match proofs::Registry::load(&tree) {
+        Err(e) => report.fail("proofs/pending", format!("{e:#}")),
+        Ok(reg) => {
+            // The release's section (gate 4 reports a missing one); with --allow-unreleased, `## [Unreleased]`.
+            let changelog = std::fs::read_to_string(root.join("CHANGELOG.md")).unwrap_or_default();
+            let notes = workspace_version(root)
+                .ok()
+                .and_then(|v| changelog_section(&changelog, &v))
+                .or_else(|| {
+                    opts.allow_unreleased
+                        .then(|| changelog_section(&changelog, "Unreleased"))
+                        .flatten()
+                })
+                .unwrap_or_default();
+            report.record("proofs/pending", pending_gate(&reg, notes));
+        }
+    }
+    if opts.skip_proofs {
+        report.pass("proofs/tools", "skipped (--skip-proofs)");
+        return;
+    }
+    let runs: [(&str, GateRun, &str); 3] = [
+        ("proofs/check", proofs::check, "G1-G10"),
+        (
+            "proofs/verus",
+            proofs::verus_gate,
+            "V1-V4 (--no-cheating, manifest, floor, mutants, verusfmt)",
+        ),
+        ("proofs/lean", proofs::lean_gate, "L1-L5"),
+    ];
+    for (gate, run, what) in runs {
+        report.record(
+            gate,
+            run(root)
+                .map(|()| format!("{what} pass on {}", root.display()))
+                .map_err(|e| format!("{e:#}")),
+        );
+    }
+}
+
+/// The marker of a release-notes line that accepts a pending kernel (ADR-096).
+const PENDING_MARKER: &str = "Proof pending: ";
+
+/// The kernel ids that `Proof pending: <id>` lines of `notes` accept: one per line, the line optionally a list item
+/// (`-`, `*` or `+`), the id ending at the first character that is not ASCII alphanumeric, `-` or `_`. Lines inside
+/// fenced code blocks do not count.
+fn accepted_pending(notes: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut fence: Option<(char, usize)> = None;
+    for line in notes.lines() {
+        if let Some((c, n)) = fence_marker(line) {
+            match fence {
+                None => fence = Some((c, n)),
+                Some((fc, fnum))
+                    if c == fc && n >= fnum && line.trim().trim_start_matches(c).is_empty() =>
+                {
+                    fence = None;
+                }
+                Some(_) => {}
+            }
+            continue;
+        }
+        if fence.is_some() {
+            continue;
+        }
+        let t = line.trim_start();
+        let t = ["- ", "* ", "+ "]
+            .iter()
+            .find_map(|m| t.strip_prefix(m))
+            .unwrap_or(t);
+        let Some(rest) = t.strip_prefix(PENDING_MARKER) else {
+            continue;
+        };
+        let id = rest
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+            .next()
+            .unwrap_or_default();
+        if !id.is_empty() {
+            out.push(id);
+        }
+    }
+    out
+}
+
+/// `proofs/pending`: every pending kernel is accepted by the release notes, and every acceptance names a pending
+/// kernel (a stale line would tell users a verified kernel is unproved, or name no kernel at all).
+fn pending_gate(reg: &proofs::Registry, notes: &str) -> Result<String, String> {
+    let accepted = accepted_pending(notes);
+    let pending: Vec<&str> = reg
+        .kernels
+        .iter()
+        .filter(|k| k.status == proofs::Status::Pending)
+        .map(|k| k.id.as_str())
+        .collect();
+    let mut problems = Vec::new();
+    for id in &pending {
+        if !accepted.contains(id) {
+            problems.push(format!(
+                "kernel {id} is pending: re-verify it, or accept it with a line `{PENDING_MARKER}{id}` in the release's CHANGELOG section"
+            ));
+        }
+    }
+    for id in &accepted {
+        if !pending.contains(id) {
+            let why = if reg.kernels.iter().any(|k| k.id == *id) {
+                "is verified, not pending"
+            } else {
+                "is no kernel of proofs/registry.toml"
+            };
+            problems.push(format!(
+                "the release notes accept `{id}` as pending, but it {why}"
+            ));
+        }
+    }
+    if !problems.is_empty() {
+        return Err(problems.join("; "));
+    }
+    let verified = reg.kernels.len().saturating_sub(pending.len());
+    Ok(if pending.is_empty() {
+        format!("{verified} kernel(s), none pending")
+    } else {
+        format!(
+            "{verified} verified kernel(s); pending and accepted by the release notes: {}",
+            pending.join(", ")
+        )
+    })
 }
 
 /// The publish set of `cargo metadata --no-deps` (ADR-088): one row per workspace package published to crates.io
@@ -1243,18 +1396,77 @@ mod tests {
         );
     }
 
+    /// A minimal `proofs/registry.toml` with the given kernels (id, status).
+    fn registry_with(kernels: &[(&str, &str)]) -> String {
+        use std::fmt::Write as _;
+        let mut s = "[verus]\nversion = \"0\"\nrustc = \"1.99.1\"\n\
+             sha256 = { x86-linux = \"0000000000000000000000000000000000000000000000000000000000000000\" }\n\
+             verusfmt = { version = \"0.7.4\", sha256 = {} }\n"
+            .to_owned();
+        for (id, status) in kernels {
+            write!(
+                s,
+                "\n[[kernel]]\nid = \"{id}\"\nstatus = \"{status}\"\nfile = \"crates/{id}.rs\"\nmount = \"m\"\n\
+                 spec = \"s.rs\"\ncallers = []\nverified_min = 1\nmutants = []\n"
+            )
+            .unwrap();
+        }
+        s
+    }
+
+    #[test]
+    fn release_notes_accept_pending_kernels_by_name() {
+        let notes = "### Changed\n\n- Proof pending: K2-archive-entry (#123): fixed in 2.0.2\n\
+                     * Proof pending: K5_x, see below\n  + Proof pending: K7\n\
+                     - proof pending: K8 (wrong case)\n- Proof pending:K9 (no space)\n- Proof pending: \n\
+                     ```\n- Proof pending: K10 (an example in a fence)\n```\n\
+                     Proof pending: K11.\n";
+        assert_eq!(
+            accepted_pending(notes),
+            ["K2-archive-entry", "K5_x", "K7", "K11"]
+        );
+        assert_eq!(accepted_pending(""), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn the_pending_gate_needs_an_acceptance_for_exactly_the_pending_kernels() {
+        let reg = |ks: &[(&str, &str)]| proofs::Registry::parse(&registry_with(ks)).unwrap();
+        let all_verified = reg(&[("K1-a", "verified"), ("K2-b", "verified")]);
+        assert_eq!(
+            pending_gate(&all_verified, "- fixed\n").unwrap(),
+            "2 kernel(s), none pending"
+        );
+        // an acceptance of a verified or unknown kernel is stale
+        let e = pending_gate(&all_verified, "- Proof pending: K1-a\n").unwrap_err();
+        assert!(e.contains("`K1-a` as pending, but it is verified"), "{e}");
+        let e = pending_gate(&all_verified, "- Proof pending: K3-c\n").unwrap_err();
+        assert!(e.contains("is no kernel"), "{e}");
+        let one_pending = reg(&[("K1-a", "verified"), ("K2-b", "pending")]);
+        let e = pending_gate(&one_pending, "- fixed\n").unwrap_err();
+        assert!(e.contains("kernel K2-b is pending"), "{e}");
+        assert!(e.contains("`Proof pending: K2-b`"), "{e}");
+        // a prefix of the id is not the id
+        assert!(pending_gate(&one_pending, "- Proof pending: K2\n").is_err());
+        assert_eq!(
+            pending_gate(&one_pending, "- Proof pending: K2-b (#9)\n").unwrap(),
+            "1 verified kernel(s); pending and accepted by the release notes: K2-b"
+        );
+    }
+
     #[test]
     fn options() {
         let o = GateOpts::parse(&[
             "--tag".into(),
             "v2.0.0".into(),
             "--skip-registry".into(),
+            "--skip-proofs".into(),
             "--index".into(),
             "file:///x/".into(),
         ])
         .unwrap();
         assert_eq!(o.tag.as_deref(), Some("v2.0.0"));
-        assert!(o.skip_registry);
+        assert!(o.skip_registry && o.skip_proofs);
+        assert!(!GateOpts::default().skip_proofs);
         assert_eq!(o.index, "file:///x");
         assert!(GateOpts::parse(&["--bogus".into()]).is_err());
         assert!(GateOpts::parse(&["--tag".into()]).is_err());
@@ -1320,11 +1532,18 @@ mod tests {
             std::fs::create_dir_all(dir).unwrap();
             sh(dir, &["git", "init", "-q", "-b", "main"]);
             for (f, body) in files {
-                std::fs::write(dir.join(f), body).unwrap();
+                let path = dir.join(f);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, body).unwrap();
             }
             sh(dir, &["git", "add", "-A"]);
             sh(dir, &["git", "commit", "-q", "-m", "init"]);
             sh(dir, &["git", "rev-parse", "HEAD"])
+        }
+
+        /// A registry with one kernel `K1-demo` of the given status.
+        fn registry(status: &str) -> String {
+            registry_with(&[("K1-demo", status)])
         }
 
         /// Publishes `name-version.crate` with the given VCS sha into the file registry.
@@ -1397,6 +1616,7 @@ mod tests {
                         "CHANGELOG.md",
                         "# Changelog\n\n## [2.0.0] - 2026-11-01\n\n- first\n",
                     ),
+                    ("proofs/registry.toml", &registry("verified")),
                 ],
             );
             sh(&root, &["git", "tag", "v2.0.0", &tagged]);
@@ -1411,6 +1631,8 @@ mod tests {
             GateOpts {
                 root: Some(f.root.clone()),
                 tag: Some("v2.0.0".into()),
+                // the fixture has no kernels to verify; the pending check still runs
+                skip_proofs: true,
                 index: format!("file://{}", f.base.join("index").display()),
                 dl: format!("file://{}", f.base.join("dl").display()),
                 ..GateOpts::default()
@@ -1562,6 +1784,44 @@ mod tests {
             assert!(r.failed("changelog"), "{}", render(&r));
             o.allow_unreleased = true;
             assert!(!gates(&o).failed("changelog"));
+        }
+
+        #[test]
+        fn release_gates_require_the_release_notes_to_accept_a_pending_kernel() {
+            let f = fixture("pending");
+            let mut o = opts(&f);
+            o.skip_registry = true;
+            let r = gates(&o);
+            assert!(!r.failed("proofs"), "{}", render(&r));
+            assert!(
+                render(&r).contains("ok   proofs/tools: skipped (--skip-proofs)"),
+                "{}",
+                render(&r)
+            );
+            o.allow_dirty = true;
+            std::fs::write(f.root.join("proofs/registry.toml"), registry("pending")).unwrap();
+            let r = gates(&o);
+            assert!(r.failed("proofs/pending"), "{}", render(&r));
+            assert!(render(&r).contains("kernel K1-demo is pending"));
+            std::fs::write(
+                f.root.join("CHANGELOG.md"),
+                "# Changelog\n\n## [2.0.0] - 2026-11-01\n\n- first\n- Proof pending: K1-demo (#12): proof follows in 2.0.1\n",
+            )
+            .unwrap();
+            let r = gates(&o);
+            assert!(!r.failed("proofs"), "{}", render(&r));
+            assert!(render(&r).contains("accepted by the release notes: K1-demo"));
+            // the acceptance of another version's section does not count
+            std::fs::write(
+                f.root.join("CHANGELOG.md"),
+                "# Changelog\n\n## [2.0.0] - 2026-11-01\n\n- first\n\n## [1.9.0]\n\n- Proof pending: K1-demo\n",
+            )
+            .unwrap();
+            assert!(gates(&o).failed("proofs/pending"));
+            // a missing registry fails the gate
+            std::fs::remove_file(f.root.join("proofs/registry.toml")).unwrap();
+            let r = gates(&o);
+            assert!(r.failed("proofs/pending"), "{}", render(&r));
         }
 
         #[test]

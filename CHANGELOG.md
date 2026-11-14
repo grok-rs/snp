@@ -2,7 +2,8 @@
 
 All notable changes to snp are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project uses [Semantic Versioning](https://semver.org/). A release tag `vX.Y.Z` requires a `## [X.Y.Z]`
-section (`cargo xtask release gates` checks it, and the GitHub release notes are that section).
+section (`cargo xtask release gates` checks it, and the GitHub release notes are that section). A kernel whose proof
+is pending (docs/VERIFICATION.md §8.3) needs a line `Proof pending: <kernel id>` in that section (gate 7, ADR-096).
 
 ## [Unreleased]
 

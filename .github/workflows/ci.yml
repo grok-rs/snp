@@ -133,8 +133,32 @@ jobs:
       - run: cargo xtask check-unsafe
       - run: cargo xtask lint-guards
       - run: cargo xtask catalog-index --check
-      # ADR-095: the tool-free proof guards G1-G10 (docs/VERIFICATION.md §3.2). Verus and Lean run in proofs.yml.
+      # ADR-095: the tool-free proof guards G1-G10 (docs/VERIFICATION.md §3.2).
       - run: cargo xtask proofs check
+      # ADR-096: the Verus proofs are blocking (docs/VERIFICATION.md §7). The pinned Verus zip, verusfmt and Verus's
+      # rustc 1.99.1 are cached under a key of the registry's [verus] pins and the installer, so that a kernel,
+      # model or mutant edit keeps the cache; a warm run adds about 45 s (verification plus the mutants), a cold one
+      # about 2 min. The job runs on every change (no path filter: it is a required check).
+      - name: Key of the Verus pins
+        id: verus-pins
+        run: |
+          echo "key=$(awk '/^\[verus\][[:space:]]*$/ { on = 1; next } /^\[/ { on = 0 } on && /^[a-z]/' proofs/registry.toml | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - name: Cache the pinned Verus tools and their rustc
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/snp-dev/tools/verus
+            ~/.rustup/toolchains/1.99.1-*
+          key: verus-${{ runner.os }}-${{ steps.verus-pins.outputs.key }}-${{ hashFiles('snp/.github/scripts/proofs-tools.sh') }}
+      - run: cargo xtask proofs install
+      - name: Verus (V1-V4)
+        run: cargo xtask proofs verus --json "$RUNNER_TEMP/verus.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verus-report
+          path: ${{ runner.temp }}/verus.json
+          if-no-files-found: ignore
 
   test:
     name: test (${{ matrix.os }})
