@@ -145,13 +145,21 @@ const EXCEEDS_BITS: u64 = 14_287;
 const DECIMAL_CHUNK: u32 = 1_000_000_000;
 
 /// The low 32 bits of `x`.
-#[allow(clippy::cast_possible_truncation, reason = "truncation is the point")]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::as_conversions,
+    reason = "truncation is the point"
+)]
 const fn low32(x: u64) -> u32 {
     x as u32
 }
 
 /// The low 32 bits of `x`.
-#[allow(clippy::cast_possible_truncation, reason = "truncation is the point")]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::as_conversions,
+    reason = "truncation is the point"
+)]
 const fn low32_u128(x: u128) -> u32 {
     x as u32
 }
@@ -172,8 +180,10 @@ fn trim(limbs: &mut Vec<u32>) {
 fn mul_add_small(limbs: &mut Vec<u32>, mul: u32, add: u32) {
     let mut carry = u64::from(add);
     for limb in limbs.iter_mut() {
-        // At most (2**32 - 1)**2 + 2**32 - 1 < 2**64.
-        let acc = u64::from(*limb) * u64::from(mul) + carry;
+        // At most (2**32 - 1)**2 + 2**32 - 1 < 2**64: never wraps.
+        let acc = u64::from(*limb)
+            .wrapping_mul(u64::from(mul))
+            .wrapping_add(carry);
         *limb = low32(acc);
         carry = acc >> 32;
     }
@@ -188,8 +198,9 @@ fn div_rem_small(limbs: &mut Vec<u32>, div: u32) -> u32 {
     let mut rem = 0u64;
     for limb in limbs.iter_mut().rev() {
         let acc = (rem << 32) | u64::from(*limb);
-        *limb = low32(acc / div);
-        rem = acc % div;
+        // `div >= 1`.
+        *limb = low32(acc.checked_div(div).unwrap_or(0));
+        rem = acc.checked_rem(div).unwrap_or(0);
     }
     trim(limbs);
     low32(rem)
@@ -198,17 +209,20 @@ fn div_rem_small(limbs: &mut Vec<u32>, div: u32) -> u32 {
 /// Packs digits of a power-of-two radix (`bits` bits each) into limbs, in
 /// linear time.
 fn from_binary_digits(digits: &[u8], bits: u32) -> Vec<u32> {
-    let capacity = digits.len().saturating_mul(bits as usize) / 32 + 1;
-    let mut limbs = Vec::with_capacity(capacity);
+    let bits_per_digit = usize::try_from(bits).unwrap_or(usize::MAX);
+    let capacity = (digits.len().saturating_mul(bits_per_digit) / 32).saturating_add(1);
+    let mut limbs = Vec::new();
+    limbs.try_reserve(capacity).unwrap_or_default();
     let mut acc = 0u64;
     let mut acc_bits = 0u32;
     for &b in digits.iter().rev() {
+        // `bits <= 5` (radix <= 32) and `acc_bits < 32` before the shift, so `acc_bits + bits < 64`.
         acc |= u64::from(digit_value(b)) << acc_bits;
-        acc_bits += bits;
+        acc_bits = acc_bits.wrapping_add(bits);
         if acc_bits >= 32 {
             limbs.push(low32(acc));
             acc >>= 32;
-            acc_bits -= 32;
+            acc_bits = acc_bits.wrapping_sub(32);
         }
     }
     if acc_bits > 0 {
@@ -223,12 +237,17 @@ fn from_binary_digits(digits: &[u8], bits: u32) -> Vec<u32> {
 fn from_digits(digits: &[u8], radix: u32) -> Vec<u32> {
     // The largest power of `radix` that fits in a `u32`, and its exponent.
     let mut chunk_pow = radix;
-    let mut chunk_len = 1;
+    let mut chunk_len: usize = 1;
     while let Some(next) = chunk_pow.checked_mul(radix) {
         chunk_pow = next;
-        chunk_len += 1;
+        // At most 32 iterations (`radix >= 2`).
+        chunk_len = chunk_len.saturating_add(1);
     }
     let mut limbs = Vec::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "`chunk_len >= 1`: rchunks panics only on a zero chunk size"
+    )]
     for chunk in digits.rchunks(chunk_len).rev() {
         // Both stay below `radix**chunk_len`, which fits in a `u32`.
         let value = chunk.iter().fold(0u32, |acc, &b| {
@@ -278,9 +297,10 @@ impl BigInt {
     pub fn bit_length(&self) -> u64 {
         match self.magnitude.split_last() {
             None => 0,
-            Some((top, rest)) => (rest.len() as u64)
+            Some((top, rest)) => u64::try_from(rest.len())
+                .unwrap_or(u64::MAX)
                 .saturating_mul(32)
-                .saturating_add(u64::from(32 - top.leading_zeros())),
+                .saturating_add(u64::from(32_u32.saturating_sub(top.leading_zeros()))),
         }
     }
 
@@ -319,7 +339,8 @@ impl BigInt {
         if magnitude == i128::MIN.unsigned_abs() {
             return Some(i128::MIN);
         }
-        i128::try_from(magnitude).ok().map(|m| -m)
+        // `magnitude < 2**127` here, so the negation never overflows.
+        i128::try_from(magnitude).ok().map(i128::wrapping_neg)
     }
 
     /// The integer as a `u128`, if it fits.
@@ -391,17 +412,23 @@ impl BigInt {
             return Err(MaxStrDigitsError);
         }
         let mut limbs = self.magnitude.to_vec();
-        let mut chunks = Vec::with_capacity(limbs.len() * 32 / 29 + 1);
+        let mut chunks = Vec::new();
+        chunks
+            .try_reserve((limbs.len().saturating_mul(32) / 29).saturating_add(1))
+            .unwrap_or_default();
         while !limbs.is_empty() {
             chunks.push(div_rem_small(&mut limbs, DECIMAL_CHUNK));
         }
-        let mut text = String::with_capacity(chunks.len() * 9);
+        let mut text = String::new();
+        text.try_reserve(chunks.len().saturating_mul(9))
+            .unwrap_or_default();
         match chunks.split_last() {
             None => text.push('0'),
             Some((top, rest)) => {
-                let _ = write!(text, "{top}");
+                // Writing to a `String` cannot fail.
+                write!(text, "{top}").unwrap_or_default();
                 for chunk in rest.iter().rev() {
-                    let _ = write!(text, "{chunk:09}");
+                    write!(text, "{chunk:09}").unwrap_or_default();
                 }
             }
         }
@@ -443,21 +470,24 @@ impl BigInt {
 
     /// The hexadecimal digits of the magnitude.
     fn hex_magnitude(&self, upper: bool) -> String {
-        let mut text = String::with_capacity(self.magnitude.len().saturating_mul(8));
+        let mut text = String::new();
+        text.try_reserve(self.magnitude.len().saturating_mul(8))
+            .unwrap_or_default();
+        // Writing to a `String` cannot fail.
         match self.magnitude.split_last() {
             None => text.push('0'),
             Some((top, rest)) => {
-                let _ = if upper {
-                    write!(text, "{top:X}")
+                if upper {
+                    write!(text, "{top:X}").unwrap_or_default();
                 } else {
-                    write!(text, "{top:x}")
-                };
+                    write!(text, "{top:x}").unwrap_or_default();
+                }
                 for limb in rest.iter().rev() {
-                    let _ = if upper {
-                        write!(text, "{limb:08X}")
+                    if upper {
+                        write!(text, "{limb:08X}").unwrap_or_default();
                     } else {
-                        write!(text, "{limb:08x}")
-                    };
+                        write!(text, "{limb:08x}").unwrap_or_default();
+                    }
                 }
             }
         }
@@ -477,11 +507,12 @@ impl BigInt {
             return Some(Self::from(0));
         }
         let mantissa = (bits & ((1 << 52) - 1)) | (1 << 52);
-        let shift = exponent - 1075;
+        // `exponent` is an 11-bit field: no overflow.
+        let shift = exponent.wrapping_sub(1075);
         let magnitude = if let Ok(shift) = u32::try_from(shift) {
             let wide = u128::from(mantissa) << (shift % 32);
-            let mut limbs = vec![0u32; (shift / 32) as usize];
-            limbs.extend((0..3).map(|i| low32_u128(wide >> (32 * i))));
+            let mut limbs = vec![0u32; usize::try_from(shift / 32).unwrap_or(0)];
+            limbs.extend([0_u32, 32, 64].map(|i| low32_u128(wide >> i)));
             limbs
         } else {
             // `f` is integral, so the bits shifted out are zero, and
@@ -569,7 +600,10 @@ impl fmt::UpperHex for BigInt {
 
 impl From<u128> for BigInt {
     fn from(n: u128) -> Self {
-        let magnitude = (0..4).map(|i| low32_u128(n >> (32 * i))).collect();
+        let magnitude = [0_u32, 32, 64, 96]
+            .map(|i| low32_u128(n >> i))
+            .into_iter()
+            .collect();
         Self::from_parts(false, magnitude)
     }
 }
@@ -597,18 +631,22 @@ bigint_from_int!(u128 => u8, u16, u32, u64);
 impl From<isize> for BigInt {
     fn from(n: isize) -> Self {
         // Lossless: `isize` is at most 64 bits wide on supported targets.
-        Self::from(n as i64)
+        Self::from(i64::try_from(n).unwrap_or_default())
     }
 }
 
 impl From<usize> for BigInt {
     fn from(n: usize) -> Self {
         // Lossless: `usize` is at most 64 bits wide on supported targets.
-        Self::from(n as u64)
+        Self::from(u64::try_from(n).unwrap_or_default())
     }
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "test data: `str::repeat` with fixed small counts"
+)]
 mod tests {
     use super::*;
 
@@ -751,8 +789,14 @@ mod tests {
         assert_eq!(BigInt::from(0).bit_length(), 0);
         assert_eq!(BigInt::from(255u8).bit_length(), 8);
         assert_eq!(BigInt::from(-256).bit_length(), 9);
-        assert_eq!(BigInt::from(usize::MAX).to_u128(), Some(usize::MAX as u128));
-        assert_eq!(BigInt::from(isize::MIN).to_i128(), Some(isize::MIN as i128));
+        assert_eq!(
+            BigInt::from(usize::MAX).to_u128(),
+            u128::try_from(usize::MAX).ok()
+        );
+        assert_eq!(
+            BigInt::from(isize::MIN).to_i128(),
+            i128::try_from(isize::MIN).ok()
+        );
     }
 
     #[test]

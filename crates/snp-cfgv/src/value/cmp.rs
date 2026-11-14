@@ -26,17 +26,17 @@ impl Value {
 }
 
 /// `2**63` as an `f64` (exact).
-const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+const TWO_POW_63: f64 = f64::from_bits(0x43E0_0000_0000_0000);
 
 /// The `i64` equal to `f`, if `f` is integral and in range.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::as_conversions,
+    reason = "exact: `f` is integral and within the `i64` range"
+)]
 fn f64_as_i64(f: f64) -> Option<i64> {
-    #[allow(clippy::cast_possible_truncation)]
-    if f.is_finite() && f.fract() == 0.0 && (-TWO_POW_63..TWO_POW_63).contains(&f) {
-        // Exact: `f` is integral and within the `i64` range.
-        Some(f as i64)
-    } else {
-        None
-    }
+    (f.is_finite() && f.fract() == 0.0 && (-TWO_POW_63..TWO_POW_63).contains(&f))
+        .then_some(f as i64)
 }
 
 fn num_eq(a: Num<'_>, b: Num<'_>) -> bool {
@@ -215,8 +215,11 @@ fn cmp_i64_f64(i: i64, f: f64) -> Ordering {
         return Ordering::Greater;
     }
     let trunc = f.trunc();
-    #[allow(clippy::cast_possible_truncation)]
-    // Exact: `trunc` is integral and within the `i64` range.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::as_conversions,
+        reason = "exact: `trunc` is integral and within the `i64` range"
+    )]
     let trunc_i = trunc as i64;
     i.cmp(&trunc_i).then_with(|| {
         if f > trunc {
@@ -431,8 +434,7 @@ mod tests {
 
     fn number() -> impl proptest::strategy::Strategy<Value = Value> {
         use proptest::prelude::*;
-        #[allow(clippy::cast_precision_loss)]
-        let small_float = (-5i64..5).prop_map(|i| Value::Float(i as f64 / 2.0));
+        let small_float = (-5_i32..5).prop_map(|i| Value::Float(f64::from(i) / 2.0));
         prop_oneof![
             any::<bool>().prop_map(Value::Bool),
             any::<i64>().prop_map(Value::Int),

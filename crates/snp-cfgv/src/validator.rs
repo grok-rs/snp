@@ -139,12 +139,12 @@ pub trait MapItem: Send + Sync + fmt::Debug {
 
     /// Applies this item's defaults to an already validated map.
     fn apply_default(&self, dct: &mut Map) {
-        let _ = dct;
+        let _: &mut Map = dct;
     }
 
     /// Removes this item's defaults from an already validated map.
     fn remove_default(&self, dct: &mut Map) {
-        let _ = dct;
+        let _: &mut Map = dct;
     }
 
     /// The key this item validates, for introspection.
@@ -467,6 +467,10 @@ fn remove_if_default(dct: &mut Map, key: &Value, default: &Value) {
     }
 }
 
+#[expect(
+    clippy::same_name_method,
+    reason = "the inherent methods are the MapItem implementation's bodies, callable without the trait in scope"
+)]
 impl Validator {
     /// Validates the map against this item, emitting warnings through `cx`.
     ///

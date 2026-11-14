@@ -68,9 +68,11 @@ fn write_escaped_char<W: Write + ?Sized>(out: &mut W, c: char) -> fmt::Result {
 /// Returns `repr(s)` for a Python `str`. See [`write_repr_str`].
 #[must_use]
 pub fn repr_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len().saturating_add(2));
+    let mut out = String::new();
+    out.try_reserve(s.len().saturating_add(2))
+        .unwrap_or_default();
     // Writing to a `String` cannot fail.
-    let _ = write_repr_str(&mut out, s);
+    write_repr_str(&mut out, s).unwrap_or_default();
     out
 }
 
@@ -111,8 +113,11 @@ pub fn write_repr_bytes<W: Write + ?Sized>(out: &mut W, b: &[u8]) -> fmt::Result
 /// Returns `repr(b)` for a Python `bytes` object. See [`write_repr_bytes`].
 #[must_use]
 pub fn repr_bytes(b: &[u8]) -> String {
-    let mut out = String::with_capacity(b.len().saturating_add(3));
-    let _ = write_repr_bytes(&mut out, b);
+    let mut out = String::new();
+    out.try_reserve(b.len().saturating_add(3))
+        .unwrap_or_default();
+    // Writing to a `String` cannot fail.
+    write_repr_bytes(&mut out, b).unwrap_or_default();
     out
 }
 
@@ -208,7 +213,8 @@ fn shortest_digits(x: f64) -> (String, i32) {
 #[must_use]
 pub fn repr_float(x: f64) -> String {
     let mut out = String::new();
-    let _ = write_repr_float(&mut out, x);
+    // Writing to a `String` cannot fail.
+    write_repr_float(&mut out, x).unwrap_or_default();
     out
 }
 

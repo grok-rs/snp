@@ -122,6 +122,10 @@ impl Date {
     }
 
     /// Days since 0001-01-01 (proleptic Gregorian calendar).
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "year <= 65535, month <= 12, day <= 31: every term is far below i64::MAX"
+    )]
     fn ordinal(self) -> i64 {
         let y = i64::from(self.year) - 1;
         let before_year = y * 365 + y / 4 - y / 100 + y / 400;
@@ -149,7 +153,7 @@ impl fmt::Display for Date {
 }
 
 const fn is_leap(year: u16) -> bool {
-    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+    year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
 }
 
 const fn days_in_month(year: u16, month: u8) -> u8 {
@@ -195,6 +199,10 @@ impl TzOffset {
     ///
     /// Returns [`DateError::OffsetOutOfRange`] unless the offset is strictly
     /// between -24 and +24 hours.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "u32::MAX * 3600 + u32::MAX * 60 < 2**44: no i64 overflow, and the negation is in range"
+    )]
     pub fn from_hours_minutes(negative: bool, hours: u32, minutes: u32) -> Result<Self, DateError> {
         let magnitude = i64::from(hours) * 3600 + i64::from(minutes) * 60;
         Self::from_seconds(if negative { -magnitude } else { magnitude })
@@ -229,6 +237,10 @@ impl TzOffset {
 }
 
 /// `repr(datetime.timedelta(seconds=seconds))`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "div_euclid/rem_euclid by the non-zero constant 86 400 cannot overflow"
+)]
 fn write_timedelta_repr<W: Write + ?Sized>(out: &mut W, seconds: i64) -> fmt::Result {
     let days = seconds.div_euclid(86_400);
     let secs = seconds.rem_euclid(86_400);
@@ -358,6 +370,10 @@ impl DateTime {
     }
 
     /// Microseconds since 0001-01-01T00:00:00 UTC, for aware values.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "ordinal < 2.4e7 days, so the instant stays below 2.1e18 microseconds < i64::MAX"
+    )]
     fn instant(self) -> Option<i64> {
         let tz = self.tz?;
         let seconds = self.date.ordinal() * 86_400

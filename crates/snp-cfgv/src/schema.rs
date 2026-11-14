@@ -29,7 +29,7 @@ pub enum Schema {
     /// `Array(of, allow_empty)`: a list or tuple whose items all match `of`.
     Array {
         /// Schema of every item.
-        of: Arc<Schema>,
+        of: Arc<Self>,
         /// Whether an empty array is valid.
         allow_empty: bool,
     },
@@ -42,7 +42,7 @@ pub enum Schema {
         /// Check applied to every key.
         check_key_fn: CheckFn,
         /// Schema of every value.
-        value_schema: Arc<Schema>,
+        value_schema: Arc<Self>,
     },
 }
 

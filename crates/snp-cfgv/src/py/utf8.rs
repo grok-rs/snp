@@ -184,7 +184,7 @@ mod tests {
     #[test]
     fn accessors() {
         let Err(err) = decode_utf8(b"abc\xe2\x82") else {
-            unreachable!("input is invalid")
+            panic!("input is invalid")
         };
         assert_eq!((err.start(), err.end(), err.first_byte()), (3, 5, 0xe2));
         assert_eq!(err.reason(), Utf8ErrorReason::UnexpectedEndOfData);

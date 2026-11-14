@@ -5,6 +5,10 @@ use std::fmt::{self, Write};
 use super::{MaxStrDigitsError, Value};
 use crate::py;
 
+#[expect(
+    clippy::multiple_inherent_impl,
+    reason = "the repr()/str() formatting methods live apart from the value model in value/mod.rs"
+)]
 impl Value {
     /// Python's `repr()` of the value, byte-identical to CPython 3.12.
     ///
@@ -24,7 +28,7 @@ impl Value {
     pub fn repr(&self) -> String {
         let mut out = String::new();
         // Writing to a `String` cannot fail.
-        let _ = self.write_repr(&mut out);
+        self.write_repr(&mut out).unwrap_or_default();
         out
     }
 

@@ -325,8 +325,8 @@ struct ValueVisitor;
 impl<'de> Visitor<'de> for ValueVisitor {
     type Value = Value;
 
-    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("any value")
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("any value")
     }
 
     fn visit_bool<E: de::Error>(self, v: bool) -> Result<Value, E> {
@@ -389,19 +389,22 @@ impl<'de> Visitor<'de> for ValueVisitor {
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
-        let mut items = Vec::with_capacity(seq.size_hint().unwrap_or(0).min(4096));
+        let mut items = Vec::new();
+        items
+            .try_reserve(seq.size_hint().unwrap_or(0).min(4096))
+            .unwrap_or_default();
         while let Some(item) = seq.next_element()? {
             items.push(item);
         }
         Ok(Value::List(items))
     }
 
-    fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> Result<Value, A::Error> {
-        let mut map = Map::with_capacity(access.size_hint().unwrap_or(0).min(4096));
-        while let Some((k, v)) = access.next_entry::<Value, Value>()? {
-            map.insert(k, v);
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
+        let mut out = Map::with_capacity(map.size_hint().unwrap_or(0).min(4096));
+        while let Some((k, v)) = map.next_entry::<Value, Value>()? {
+            out.insert(k, v);
         }
-        Ok(Value::Map(map))
+        Ok(Value::Map(out))
     }
 }
 

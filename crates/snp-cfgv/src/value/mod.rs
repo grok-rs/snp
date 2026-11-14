@@ -94,9 +94,9 @@ pub enum Value {
     /// A `bytes` object (PyYAML `!!binary`).
     Bytes(Vec<u8>),
     /// A `list`.
-    List(Vec<Value>),
+    List(Vec<Self>),
     /// A `tuple` (PyYAML produces 2-tuples for `!!omap` and `!!pairs`).
-    Tuple(Vec<Value>),
+    Tuple(Vec<Self>),
     /// A `dict`.
     Map(Map),
     /// A `set` (PyYAML `!!set`).
@@ -107,6 +107,10 @@ pub enum Value {
     DateTime(DateTime),
 }
 
+#[expect(
+    clippy::multiple_inherent_impl,
+    reason = "the comparison helpers live in value/cmp.rs and the formatting methods in value/fmt.rs"
+)]
 impl Value {
     /// The Python type name used in error messages (`type(v).__name__`).
     #[must_use]
@@ -424,11 +428,10 @@ impl FromIterator<(Self, Self)> for Value {
 #[macro_export]
 macro_rules! value_map {
     ($($key:expr => $val:expr),* $(,)?) => {{
-        #[allow(unused_mut)]
-        let mut map = $crate::Map::new();
-        $(
-            map.insert($crate::Value::from($key), $crate::Value::from($val));
-        )*
+        // Inserted in order: a repeated key keeps its first position and takes the last value.
+        let map: $crate::Map = ::core::iter::Iterator::collect(::core::iter::IntoIterator::into_iter([
+            $(($crate::Value::from($key), $crate::Value::from($val))),*
+        ]));
         $crate::Value::Map(map)
     }};
 }

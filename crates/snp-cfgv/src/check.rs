@@ -173,9 +173,9 @@ pub enum CheckFn {
     Regex(RegexCheck),
     /// `check_array(inner)`: the value must be a list or tuple whose items
     /// all pass the inner check.
-    Array(Box<CheckFn>),
+    Array(Box<Self>),
     /// `check_and(*fns)`: runs every check in order; the first failure wins.
-    And(Vec<CheckFn>),
+    And(Vec<Self>),
     /// A user-provided check.
     Custom(CustomCheckFn),
 }

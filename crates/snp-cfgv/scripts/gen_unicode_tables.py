@@ -67,7 +67,7 @@ def main() -> int:
         '/// Sorted, disjoint, inclusive code point ranges at or above U+0080',
         '/// for which CPython\'s `str.isprintable()` is `False`.',
         '#[rustfmt::skip]',
-        '#[allow(clippy::unreadable_literal)]',
+        '#[expect(clippy::unreadable_literal, reason = "generated table")]',
         'pub(crate) static NONPRINTABLE: &[(u32, u32)] = &[',
     ]
     for lo, hi in ranges:

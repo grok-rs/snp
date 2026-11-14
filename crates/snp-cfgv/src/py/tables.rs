@@ -7,7 +7,7 @@ pub(crate) const UNICODE_VERSION: &str = "15.0.0";
 /// Sorted, disjoint, inclusive code point ranges at or above U+0080
 /// for which CPython's `str.isprintable()` is `False`.
 #[rustfmt::skip]
-#[allow(clippy::unreadable_literal)]
+#[expect(clippy::unreadable_literal, reason = "generated table")]
 pub(crate) static NONPRINTABLE: &[(u32, u32)] = &[
     (0x0080, 0x00A0),
     (0x00AD, 0x00AD),

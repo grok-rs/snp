@@ -17,7 +17,8 @@ pub fn universal_newlines(s: &str) -> Cow<'_, str> {
     if !s.contains('\r') {
         return Cow::Borrowed(s);
     }
-    let mut out = String::with_capacity(s.len());
+    let mut out = String::new();
+    out.try_reserve(s.len()).unwrap_or_default();
     let mut rest = s;
     while let Some(pos) = rest.find('\r') {
         let (before, after) = rest.split_at(pos);
