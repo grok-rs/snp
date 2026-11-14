@@ -1365,6 +1365,7 @@ mod tests {
         assert!(t.lexists_meta(2).is_none());
     }
 
+    #[cfg(unix)]
     fn table_at(paths: &[&str], root: &str) -> FileTable {
         FileTable::from_args(paths.iter().map(OsString::from).collect(), Path::new(root))
     }
