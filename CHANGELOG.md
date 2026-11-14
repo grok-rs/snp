@@ -68,6 +68,10 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   allocates nothing until a line changes. mixed-line-ending skips its per-line count in a file without a carriage
   return. Output, fixes and exit codes are unchanged. snp's own instruction count (callgrind) falls by 5% on the
   B6 benchmark (13 pre-commit-hooks over 960 files) and by about 8% on a 372-file source tree.
+- check-xml and check-yaml use less CPU: check-xml looks each byte's expat type up in a table instead of computing
+  it, and check-yaml tests ruamel's character sets with `matches!` instead of string searches and no longer
+  allocates for YAML versions, resolved tags, prefix checks and peeked tokens, or hashes node ids. Output, messages,
+  marks and the emulated recursion limit are unchanged.
 - Hook argv lists are borrowed from the run's file table and appended at spawn time: `run --all-files` on 50,000
   files makes about half as many allocations and its heap peaks about 7 MB lower (ADR-103).
 - The installed hook script (template v2, ID `405bd8559925d194c1d22af6ef66282e`) finds its directory by parameter
