@@ -23,7 +23,7 @@ use snp_core::env::{Env, EnvPatch};
 use snp_core::failure::{Failure, PyExc};
 use snp_core::output::Level;
 use snp_core::stage::{HookType, Stage};
-use snp_files::Classifier;
+use snp_files::{Classifier, FileTable};
 use snp_git::{DiffFingerprint, Git, GitVersion, IndexEntries, ProcBackend, RepoInfo};
 use snp_proc::spawn::Role;
 use snp_pyre::Options;
@@ -36,7 +36,7 @@ use crate::common::{self, Buffered, ResolveParts};
 use crate::exec::ExecEnv;
 use crate::files::{self, Selection};
 use crate::select::{Conditions, GroupFilter, Skips};
-use crate::{RunCtx, messages, meta, render, runenv, sched};
+use crate::{RunCtx, messages, meta, render, runenv, sched, trust};
 
 /// How a pipeline was entered.
 #[derive(Debug)]
@@ -283,15 +283,33 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         &early,
         needs_files,
     )?;
-    // step 15: cols, the file table, the classifier
+    // step 15: cols, the file table, the classifier (on a clean `--all-files` run from trusted index modes, with the
+    // before-diff taken here: ADR-106)
     let names: Vec<&str> = picked.hooks.iter().map(|h| &*h.def.name).collect();
     let cols = render::cols(&names);
-    let classifier = classifier(cx, &cfg, &sel, &git, &info, side.staged, needs_files)?;
-    // step 16: the baseline digest (ADR-078); a resolver that does not count its work never looks quiet
+    let fifteen = classifier(
+        cx,
+        &cfg,
+        &sel,
+        &git,
+        &info,
+        side.staged,
+        needs_files,
+        &picked,
+    )?;
+    let classifier = fifteen.classifier;
+    // step 16: the baseline digest (ADR-078, or step 15's before-diff); a resolver that does not count its work never
+    // looks quiet
     let quiet =
         work_before.0.is_some() && (cx.resolver.store_work(), parts.downloads()) == work_before;
-    let baseline = baseline(cx, st.stash.as_ref(), &git, &run_env, t_resolve, quiet);
+    let baseline = match fifteen.baseline {
+        Some(fp) => Some(fp),
+        None => baseline(cx, st.stash.as_ref(), &git, &run_env, t_resolve, quiet),
+    };
     let mut oracle = DiffOracle::new(&git, &info, &run_env, baseline, side.tracked, side.origins)?;
+    if let Some(flag) = fifteen.trust {
+        oracle.guard_index_trust(flag);
+    }
     // steps 17–20
     let lp = ExecLoop {
         cx,
@@ -358,8 +376,23 @@ fn install_beside_side_queries(
     side
 }
 
+/// §3.1 step 15's results.
+#[derive(Debug, Default)]
+struct Fifteen {
+    classifier: Option<Classifier>,
+    /// The before-diff a trust-capable `--all-files` run took here (ADR-106).
+    baseline: Option<DiffFingerprint>,
+    /// The flag of the table's trusted index modes, for the diff oracle to guard (ADR-106).
+    trust: Option<Arc<std::sync::atomic::AtomicBool>>,
+}
+
 /// §3.1 step 15: the file table and the classifier when some hook reads files or refs are given; otherwise only the
-/// merge-conflict notice (P17), printed exactly when pre-commit would.
+/// merge-conflict notice (P17), printed exactly when pre-commit would. A `--all-files` run that can trust index
+/// modes builds its table from `ls-files -s -v -z` and takes its before-diff here (ADR-106).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the run's borrowed state, one argument per piece"
+)]
 fn classifier(
     cx: &RunCtx,
     cfg: &Config,
@@ -368,22 +401,65 @@ fn classifier(
     info: &RepoInfo,
     staged: Option<snp_git::ZList>,
     needs_files: bool,
-) -> Result<Option<Classifier>, Failure> {
+    picked: &Picked<'_>,
+) -> Result<Fifteen, Failure> {
     if needs_files || sel.refs.is_some() {
-        let table = files::table(sel, git, info, &cx.printer, staged)?;
+        let early = index_trust(sel, picked, git);
+        let (table, baseline, trust) = match early {
+            Some(trust::AllFiles {
+                table: Some(table),
+                baseline,
+                trust,
+            }) => (table, baseline, trust),
+            // the tagged listing failed: `ls-files -z --deduplicate` at the same position, its error pre-commit's
+            other => (
+                files::table(sel, git, info, &cx.printer, staged)?,
+                other.and_then(|a| a.baseline),
+                None,
+            ),
+        };
         let include = regex(cx, &cfg.files)?;
         let exclude = regex(cx, &cfg.exclude)?;
-        return Ok(Some(Classifier::new(
-            Arc::new(table),
-            &include,
-            &exclude,
-            &cx.pool,
-        )?));
+        return Ok(Fifteen {
+            classifier: Some(Classifier::new(
+                Arc::new(table),
+                &include,
+                &exclude,
+                &cx.pool,
+            )?),
+            baseline,
+            trust,
+        });
     }
     if files::merge_branch(sel, git, info) {
         cx.printer.log(Level::Info, messages::MERGE_CONFLICT_ONLY);
     }
-    Ok(None)
+    Ok(Fifteen::default())
+}
+
+/// ADR-106: the trust-capable step 15 (`trust::all_files`) for a `--all-files` run in which some selected hook can
+/// execute (otherwise no before-diff is taken at all, as today) and no selected hook's filter references
+/// `executable` or `non-executable` (skipped hooks count: they are classified too, in pre-commit's order). `None`
+/// keeps today's path: `ls-files -z --deduplicate`, the lstat pass, the lazy before-diff.
+#[expect(
+    clippy::redundant_closure_for_method_calls,
+    reason = "the tag-set type cannot be named here: snp-run does not depend on file-identify"
+)]
+fn index_trust(sel: &Selection<'_>, picked: &Picked<'_>, git: &Git) -> Option<trust::AllFiles> {
+    if !trust::all_files_branch(sel) || picked.to_install.is_empty() {
+        return None;
+    }
+    let referenced = picked
+        .hooks
+        .iter()
+        .map(|h| h.def.types.union(h.def.types_or).union(h.def.exclude_types))
+        .reduce(|a, b| a.union(b))?;
+    if !FileTable::index_trust_possible(referenced) {
+        return None;
+    }
+    Some(trust::all_files(git, |table, modes, flag| {
+        table.trust_index_modes(modes, flag, referenced)
+    }))
 }
 
 /// §3.1 step 3: discovery (or the caller's), with the config discovered and loaded at the invocation cwd on a thread

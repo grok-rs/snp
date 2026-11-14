@@ -22,6 +22,7 @@ mod runenv;
 mod sched;
 mod select;
 mod stamp;
+mod trust;
 mod try_repo;
 
 use snp_net as _;
