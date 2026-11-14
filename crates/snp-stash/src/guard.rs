@@ -982,7 +982,7 @@ impl Inner {
     /// rollback's failure (its `CalledProcessError`; the K+ path keeps the patch).
     fn rollback_checkout(&mut self, patch: &Path) -> Result<(), Failure> {
         let paths = self.git().rollback_paths(patch)?;
-        for call in self.git().checkout_path_calls(&paths) {
+        for call in self.git().checkout_path_calls(&paths)? {
             let args: Vec<&OsStr> = call.args.iter().map(OsString::as_os_str).collect();
             let out = self.restore_checkout(&args, call.stdin);
             if out.status != 0 {

@@ -27,3 +27,8 @@ pub mod snp_net_archive_entry;
 #[verus_verify]
 #[path = "../../crates/snp-hooks/src/pch/p0/kernels/eof.rs"]
 pub mod snp_hooks_pch_p0_kernels_eof;
+
+/// K7: D-DATA-19 pathspec lists (snp-git).
+#[verus_verify]
+#[path = "../../crates/snp-git/src/git/pathspec.rs"]
+pub mod snp_git_git_pathspec;

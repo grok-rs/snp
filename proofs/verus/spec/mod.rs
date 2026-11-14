@@ -5,4 +5,5 @@
 pub mod archive_entry;
 pub mod eof;
 pub mod lib;
+pub mod pathspec;
 pub mod xargs_partition;

@@ -2424,6 +2424,17 @@ so its hidden part is lost exactly as in pre-commit (git cannot represent it in 
 file a hook visibly modifies before a conflict rollback. Files with the skip-worktree bit were never touched by either
 tool.
 
+**Amendment (ADR-095 K7, fix F3 of docs/VERIFICATION.md §11).** The checkout sink now refuses a list holding an
+empty path or a path with a NUL byte (`ValueError`, before any git call, in both the stdin and the git < 2.25 argument
+form): an empty `:(literal)` pathspec selects the whole tree, which is the very checkout this divergence removed, and a
+NUL would split one item into two. The rollback list drops an empty record of the `git diff --name-only -z` listing
+instead of passing it on. git never prints such a path, so no run with a git-made patch or listing changes; the
+refusal only turns a should-never-happen whole-tree checkout into an error. The lists themselves are the verified
+kernel `crates/snp-git/src/git/pathspec.rs` (VERIFICATION §9.2 K7): the `--numstat -z` paths are non-empty and
+NUL-free, the `:(literal)` list reads back as exactly one pathspec per path, the argument chunks concatenate to the
+whole list, and the rollback list is the first-seen dedup of the patch's paths followed by the non-empty changed
+paths.
+
 ##### Examples
 
 ```text
@@ -2447,7 +2458,9 @@ SECRET=hunter2
 ```
 
 Proof: `crates/snp-stash/tests/behaviour/hidden.rs` (a clean filter at the stash and through a conflict rollback, an
-`--assume-unchanged` edit, literal names, a 400-file list); the scenario `tests/differential/divergences/D-DATA-19.yaml`.
+`--assume-unchanged` edit, literal names, a 400-file list); the scenario `tests/differential/divergences/D-DATA-19.yaml`;
+for the F3 refusal, `checkout_sink_refuses_empty_and_nul_paths` in `crates/snp-git/src/git.rs` and the empty-record
+case of `every_call_can_fail_and_is_recorded` in `crates/snp-git/tests/behaviour/scripted.rs`.
 
 ## 5.3 SEC — security
 

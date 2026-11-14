@@ -31,6 +31,16 @@ pub(crate) fn diff_failed(brand: Brand, called_process: &[u8]) -> Vec<u8> {
     out
 }
 
+/// D-DATA-19 (ADR-093, amended for ADR-095 K7): the stash's path-limited checkout refuses a path that would select
+/// more than itself — an empty `:(literal)` pathspec is the whole tree, a NUL byte splits an item. git-made lists
+/// never hold one; `repr` is the path as Python's `repr` of bytes.
+pub(crate) fn refused_checkout_path(repr: &str) -> String {
+    format!(
+        "refusing to check out the path {repr}: an empty or NUL-bearing path would select more than one file; \
+         nothing was checked out"
+    )
+}
+
 /// D-DIAG-01 (02 G.4): stderr, once per process, `[WARNING]` coloured like pre-commit's log lines. The text names
 /// snp in both brands (an snp-only diagnostic; COMPATIBILITY §5.8).
 pub(crate) fn old_git_warning(v: GitVersion, printer: &Printer) -> String {

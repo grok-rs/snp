@@ -1427,6 +1427,8 @@ uv that trusts a distrusted intermediate weakens the TLS that D-SEC-08 relies on
 
 ### ADR-093 — The stash checks out only the patch's files (D-DATA-19)
 
+*Status: Accepted; amended by ADR-095 (fix F3 with kernel K7: the checkout sink refuses a list holding an empty or NUL-bearing path, `ValueError` before any call, and the rollback drops empty records of the `git diff` listing). The amending ADR is normative where they differ.*
+
 *Amends ADR-016 (the two checkouts of the algorithm).*
 
 **Context.** ADR-016 keeps pre-commit's stash commands, among them `git -c submodule.recurse=0 checkout -- .` after
