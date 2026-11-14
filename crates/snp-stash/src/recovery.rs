@@ -84,7 +84,8 @@ fn uses_own_index(d: &JournalData) -> bool {
 
 /// The kept list of a long intent-to-add list (ADR-084): `<base>.ita`, NUL-separated (for `git add
 /// --pathspec-file-nul --pathspec-from-file`), written when missing or different. It is never deleted with a journal,
-/// so a notice that names it stays true; next to a patch, gc removes it with the patch (both start with `patch`).
+/// so a notice that names it stays true; next to a patch, gc keeps it while the patch's journal is unrestored and
+/// removes it with the restored patch (a `<patch>.*` sibling, D-DATA-04).
 /// `None` for a short list (spelled out) or when it cannot be written (the notice then spells out the whole list).
 pub(crate) fn kept_ita_file(base: &Path, ita: &[Vec<u8>]) -> Option<PathBuf> {
     kept_list_file(base, ".ita", ita)

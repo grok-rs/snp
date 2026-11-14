@@ -1809,13 +1809,13 @@ impl Store {
     pub fn all_repos(&self) -> Vec<RepoHandle>;
     pub fn retire_repo(&self, key: &RepoKey) -> io::Result<()>;
     pub fn sweep(&self, now: std::time::SystemTime) -> SweepReport;               // scratch/trash orphans, old restored patches, tools no `.snp-tools.json` references
-    pub fn clean(&self) -> Result<(), Failure>;                                   // retire snp's layout (keeps recovery data, .lock, unknown files: D-DATA-04)
+    pub fn clean(&self) -> Result<Option<PathBuf>, Failure>;                      // retire snp's layout (keeps recovery data, .lock, unknown files: D-DATA-04); Some(journal): unreadable, every patch kept
     pub fn patches_dir(&self) -> PathBuf; pub fn spill_dir(&self) -> PathBuf; pub fn scratch_dir(&self) -> PathBuf;
     pub fn crash_log(&self, brand: Brand) -> PathBuf;                             // <store>/pre-commit.log | snp.log
     pub fn tool_dir(&self, tool: &str, version: &str) -> PathBuf; pub fn cache_dir(&self, name: &str) -> PathBuf;
     pub fn relocated_from(&self) -> Option<PathBuf>;                              // store-v1.json path differs → old path
 }
-#[derive(Debug, Default)] pub struct SweepReport { pub removed_dirs: usize, pub removed_patches: usize, pub legacy_v1_removed: bool }
+#[derive(Debug, Default)] pub struct SweepReport { pub removed_dirs: usize, pub removed_patches: usize, pub legacy_v1_removed: bool, pub unreadable_journal: Option<PathBuf> }
 ```
 (gc *marking* — pre-commit's `_mark_used_repos` rules — lives in `snp_cmd::gc`, which owns the config dependency.)
 
@@ -2947,11 +2947,15 @@ directory` (snp brand) once per process, then waits (cancel observed every 50 ms
   `Installed` markers are kept (pre-commit keeps the clone it still uses, so a later run prints nothing new); dead
   configs forgotten (incl. configs that fail C-cfg validation, X13-CFG-14); unused repos retired to `trash/` then
   removed (ENOENT-tolerant, X13-CMD-07); then `sweep`: scratch/trash orphans, tools referenced by no `.snp-tools.json`,
-  restored patches older than 30 days (journaled-unrestored patches are **never** removed), `keys-v1` markers of
+  restored patches older than 30 days (journaled-unrestored patches and their `<patch>.*` siblings are **never**
+  removed; journals are decoded with the stash's codec and read in full, and one that cannot be read or understood
+  keeps every patch with the stderr line `[WARNING] the stash journal <journal> cannot be read; every stash patch is
+  kept.`, D-DATA-04, D-DIAG-05), `keys-v1` markers of
   `(db_repo_name, rev)` keys that are neither present nor Tier-A-loadable, snp 1.x leftovers only when the README
   carries the 1.x signature (an snp-only stderr line `Removed snp 1.x cache data from {store}.`, D-DIAG-05).
   Output: `{n} repo(s) removed.` (n counts `(db_repo_name, rev)` keys, like pre-commit's rows).
-* **clean** (exclusive): retire snp's whole layout — every journal, the patches of unrestored journals, `patch*`
+* **clean** (exclusive): retire snp's whole layout — every journal, the patches of unrestored journals and their
+  siblings (all patches, with the same warning, when a journal cannot be read), `patch*`
   files younger than an hour, `.lock` and files outside snp's layout are kept (D-DATA-04); always prints `Cleaned {store}.` (pre-commit re-creates its store
   before `clean` and always prints, 03 §10; ADR-030). Never touches `~/.pre-commit` or pre-commit's store (D-STORE-02).
 * **Crash log** `<store>/<brand.crash_log_name()>` (ADR-013): pre-commit's skeleton (§10.3). If the store cannot be

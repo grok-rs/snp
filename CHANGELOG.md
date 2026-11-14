@@ -44,6 +44,15 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   budget of `usize::MAX` the saturating sum let such an argument fit, where pre-commit's unbounded integers raise
   `ArgumentTooLongError`. The greedy loop is now the kernel `partition_lens`, which is proved to satisfy a spec transcribed
   from `xargs.partition` (ADR-095). Real budgets are at most 131072, so no run changes in practice.
+- `gc` and `clean` no longer delete a stash patch that an unrestored stash journal still needs for recovery (possibly
+  the only copy of unstaged work after a failed restore). The journal was searched for the patch's raw file name, so
+  the patch was unprotected when the store's path is not valid UTF-8 (the journal stores it as `{"hex": …}`), when the
+  journal was bigger than 1 MiB (a long intent-to-add list pushes the name past the read cap), or when the journal could
+  not be read at all. Journals are now decoded with the stash's own codec and read in full; a journal that cannot be
+  read or understood keeps every stash patch and `gc`/`clean` print `[WARNING] the stash journal <journal> cannot be
+  read; every stash patch is kept.` on stderr. The `<patch>.*` files next to an unrestored patch (the `<patch>.now`
+  backup the recovery hint suggests, the kept `.ita` and `.paths` lists) are kept with it. pre-commit never deletes
+  patches; divergences D-DATA-04 and D-DIAG-05 are updated.
 
 ### Security
 

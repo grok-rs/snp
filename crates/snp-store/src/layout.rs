@@ -42,6 +42,9 @@ pub(crate) const TOOLS_SIDECAR: &str = ".snp-tools.json";
 pub(crate) const INSTALL_STATE: &str = ".snp-install-state.json";
 /// Stash journals in `patches/`.
 pub(crate) const JOURNAL_SUFFIX: &str = ".snp-journal";
+/// The largest stash journal read in full (`snp-stash`'s `journal::READ_CAP`); a bigger one is not understood, so it
+/// protects every patch (D-DATA-04).
+pub(crate) const JOURNAL_CAP: u64 = 64 * 1024 * 1024;
 
 /// The versioned buckets (`<name>-v<N>`): a bucket of another format version is never parsed and is removed by
 /// `sweep` (11 §A.10.3).

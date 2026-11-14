@@ -591,8 +591,9 @@ impl Store {
     /// snp-only maintenance run by gc under the exclusive lock (ARCHITECTURE §5.6): scratch and trash entries older
     /// than an hour; tool versions older than an hour that no environment's `.snp-tools.json` references and whose
     /// tool lock is free (nothing is removed when a sidecar is unreadable); stash patches older than 30 days that no
-    /// unrestored journal mentions (a journal in state `restored`/`done` protects nothing; unrestored patches and
-    /// every journal are kept, D-DATA-04); orphan repository lock files;
+    /// unrestored journal names (a journal in state `restored`/`done` protects nothing; unrestored patches, their
+    /// `<patch>.*` siblings and every journal are kept, and a journal that cannot be read or understood keeps every
+    /// patch and is reported in [`SweepReport::unreadable_journal`], D-DATA-04); orphan repository lock files;
     /// buckets of another format version; snp 1.x leftovers behind the 1.x README signature (D-DIAG-05). Never
     /// fails: what cannot be removed stays.
     pub fn sweep(&self, now: SystemTime) -> SweepReport {
@@ -603,17 +604,18 @@ impl Store {
     ///
     /// pre-commit's `clean` `rmtree`s its store (`commands/clean.py:10-16`). snp removes every entry of its own
     /// layout (snp 1.x leftovers included behind their README signature) and nothing else (D-DATA-04): unknown files
-    /// a user put into `SNP_HOME` survive, every journal, the patches of unrestored journals and every patch younger
-    /// than an hour survive (recovery data and runs stashing right now, ARCHITECTURE §4), and `.lock` stays so that
-    /// processes waiting on it keep excluding each other. A missing store is `Ok` and nothing is created. Never
-    /// touches pre-commit's directories (D-STORE-02).
+    /// a user put into `SNP_HOME` survive, every journal, the patches of unrestored journals with their `<patch>.*`
+    /// siblings and every patch younger than an hour survive (recovery data and runs stashing right now,
+    /// ARCHITECTURE §4), and `.lock` stays so that processes waiting on it keep excluding each other. A journal that
+    /// cannot be read or understood keeps every patch; it is returned (`Ok(Some(journal))`) so the caller can say
+    /// so. A missing store is `Ok(None)` and nothing is created. Never touches pre-commit's directories (D-STORE-02).
     ///
     /// # Errors
     ///
     /// The `OSError` of a removal that failed.
-    pub fn clean(&self) -> Result<(), Failure> {
+    pub fn clean(&self) -> Result<Option<PathBuf>, Failure> {
         if !self.exists() {
-            return Ok(());
+            return Ok(None);
         }
         maintenance::clean(self.root())
     }
@@ -883,6 +885,9 @@ pub struct SweepReport {
     pub removed_patches: usize,
     /// Whether the legacy v1 layout was removed.
     pub legacy_v1_removed: bool,
+    /// A stash journal that could not be read or understood: what it protects is unknown, so no patch was removed
+    /// (fail closed, D-DATA-04).
+    pub unreadable_journal: Option<PathBuf>,
 }
 
 /// The outcome of reading a repository entry.

@@ -881,6 +881,157 @@ fn clean_retires_the_layout_but_keeps_unknown_and_recovery_data() {
     assert!(s2.lookup(&key).is_none());
 }
 
+/// A journal as `snp-stash` writes it (`JournalData::to_bytes`: `ita` before `patch`), `patch` given as JSON.
+fn journal_json(state: &str, ita: &[String], patch: &str) -> String {
+    format!(
+        r#"{{"v":1,"state":"{state}","ita":{},"patch":{patch}}}"#,
+        serde_json::to_string(ita).unwrap()
+    )
+}
+
+/// `patch` as `snp-stash` journals a UTF-8 path: a JSON string.
+fn json_path(p: &Path) -> String {
+    serde_json::to_string(p.to_str().unwrap()).unwrap()
+}
+
+/// F1 (D-DATA-04): a stash journal gc cannot read or parse protects every patch (fail closed), for `sweep` and
+/// `clean` alike; an unreadable journal is a directory here (portable, and root cannot read it either).
+#[test]
+fn sweep_and_clean_keep_every_patch_when_a_journal_is_unreadable() {
+    for broken in ["dir", "garbage"] {
+        let (_g, _root, s) = new_store();
+        let patches = s.patches_dir();
+        let journal = patches.join("run-9-abcd.snp-journal");
+        match broken {
+            "dir" => std::fs::create_dir_all(&journal).unwrap(),
+            _ => std::fs::write(&journal, br#"{"v":1,"state":"stashed","patch":"/s/patc"#).unwrap(),
+        }
+        std::fs::write(patches.join("patch1700000000-9"), b"maybe the only copy").unwrap();
+        let r = s.sweep(SystemTime::now() + Duration::from_hours(31 * 24));
+        assert_eq!(r.removed_patches, 0, "{broken}");
+        assert_eq!(r.unreadable_journal.as_deref(), Some(&*journal), "{broken}");
+        assert!(patches.join("patch1700000000-9").exists(), "{broken}");
+        age_by(&patches.join("patch1700000000-9"), Duration::from_hours(2));
+        assert_eq!(s.clean().unwrap().as_deref(), Some(&*journal), "{broken}");
+        assert!(patches.join("patch1700000000-9").exists(), "{broken}");
+        assert!(journal.exists(), "{broken}");
+    }
+}
+
+/// F1 (D-DATA-04): a journal of any size protects its patch: a long intent-to-add list puts `patch` past 1 MiB.
+#[test]
+fn sweep_protects_the_patch_of_a_journal_over_one_mebibyte() {
+    let (_g, _root, s) = new_store();
+    let patches = s.patches_dir();
+    let ita: Vec<String> = (0..40_000)
+        .map(|i| format!("some/deep/dir/file-{i:08}.txt"))
+        .collect();
+    let body = journal_json(
+        "failed",
+        &ita,
+        &json_path(&patches.join("patch1700000000-8")),
+    );
+    assert!(body.len() > 1024 * 1024);
+    std::fs::write(patches.join("run-8-abcd.snp-journal"), body).unwrap();
+    std::fs::write(patches.join("patch1700000000-8"), b"the only copy").unwrap();
+    std::fs::write(patches.join("patch1700000000-7"), b"restored long ago").unwrap();
+    let r = s.sweep(SystemTime::now() + Duration::from_hours(31 * 24));
+    assert!(patches.join("patch1700000000-8").exists());
+    assert!(!patches.join("patch1700000000-7").exists());
+    assert_eq!((r.removed_patches, r.unreadable_journal), (1, None));
+}
+
+/// F1 (D-DATA-04): a store at a non-UTF-8 path journals its patch as `{"hex": …}` (`snp-stash` `enc_bytes`); gc
+/// decodes it like the stash does.
+#[cfg(unix)]
+#[test]
+fn sweep_and_clean_protect_a_patch_journaled_as_hex() {
+    use std::os::unix::ffi::OsStrExt;
+    let (_g, _root, s) = new_store();
+    let patches = s.patches_dir();
+    let mut named = b"/s/\xffstore/patches/".to_vec();
+    named.extend_from_slice(b"patch1700000000-6");
+    let hex = named.iter().fold(String::new(), |mut h, b| {
+        std::fmt::Write::write_fmt(&mut h, format_args!("{b:02x}")).unwrap();
+        h
+    });
+    std::fs::write(
+        patches.join("run-6-abcd.snp-journal"),
+        journal_json("failed", &[], &format!(r#"{{"hex":"{hex}"}}"#)),
+    )
+    .unwrap();
+    std::fs::write(patches.join("patch1700000000-6"), b"the only copy").unwrap();
+    std::fs::write(patches.join("patch1700000000-5"), b"restored long ago").unwrap();
+    assert!(std::ffi::OsStr::from_bytes(&named).to_str().is_none());
+    let r = s.sweep(SystemTime::now() + Duration::from_hours(31 * 24));
+    assert!(patches.join("patch1700000000-6").exists());
+    assert!(!patches.join("patch1700000000-5").exists());
+    assert_eq!((r.removed_patches, r.unreadable_journal), (1, None));
+    age_by(&patches.join("patch1700000000-6"), Duration::from_hours(2));
+    assert_eq!(s.clean().unwrap(), None);
+    assert!(patches.join("patch1700000000-6").exists());
+}
+
+/// F1 (D-DATA-04): the `<patch>.*` siblings of an unrestored patch (the hint's `<patch>.now` backup, the kept
+/// `.ita` and `.paths` lists) are protected with it; those of a restored patch, and other patches, are not.
+#[test]
+fn sweep_and_clean_protect_the_siblings_of_an_unrestored_patch() {
+    let (_g, _root, s) = new_store();
+    let patches = s.patches_dir();
+    std::fs::write(
+        patches.join("run-4-abcd.snp-journal"),
+        journal_json(
+            "failed",
+            &[],
+            &json_path(&patches.join("patch1700000000-4")),
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        patches.join("run-3-abcd.snp-journal"),
+        journal_json(
+            "restored",
+            &[],
+            &json_path(&patches.join("patch1700000000-3")),
+        ),
+    )
+    .unwrap();
+    let kept = [
+        "patch1700000000-4",
+        "patch1700000000-4.now",
+        "patch1700000000-4.ita",
+        "patch1700000000-4.paths",
+    ];
+    let gone = [
+        "patch1700000000-44",
+        "patch1700000000-4-1",
+        "patch1700000000-3",
+        "patch1700000000-3.now",
+    ];
+    for n in kept.iter().chain(&gone) {
+        std::fs::write(patches.join(n), n.as_bytes()).unwrap();
+    }
+    let r = s.sweep(SystemTime::now() + Duration::from_hours(31 * 24));
+    for n in kept {
+        assert!(patches.join(n).exists(), "{n}");
+    }
+    for n in gone {
+        assert!(!patches.join(n).exists(), "{n}");
+    }
+    assert_eq!(r.removed_patches, gone.len());
+    for n in [&kept[..], &gone[..]].concat() {
+        std::fs::write(patches.join(n), n.as_bytes()).unwrap();
+        age_by(&patches.join(n), Duration::from_hours(2));
+    }
+    assert_eq!(s.clean().unwrap(), None);
+    for n in kept {
+        assert!(patches.join(n).exists(), "clean: {n}");
+    }
+    for n in gone {
+        assert!(!patches.join(n).exists(), "clean: {n}");
+    }
+}
+
 // ----- ephemeral store, markers, configs, relocation -----
 
 /// try-repo's store: repos/keys/configs/patches under its root, tools and caches from the shared store.

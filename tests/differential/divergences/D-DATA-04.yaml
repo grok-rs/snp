@@ -7,3 +7,8 @@ status: unit
 unit_tests:
   - crates/snp-store/tests/support/behaviour.rs::sweep_keeps_unrestored_patches_and_referenced_tools
   - crates/snp-store/tests/support/behaviour.rs::clean_retires_the_layout_but_keeps_unknown_and_recovery_data
+  - crates/snp-store/tests/support/behaviour.rs::sweep_and_clean_keep_every_patch_when_a_journal_is_unreadable
+  - crates/snp-store/tests/support/behaviour.rs::sweep_protects_the_patch_of_a_journal_over_one_mebibyte
+  - crates/snp-store/tests/support/behaviour.rs::sweep_and_clean_protect_a_patch_journaled_as_hex
+  - crates/snp-store/tests/support/behaviour.rs::sweep_and_clean_protect_the_siblings_of_an_unrestored_patch
+  - crates/snp/tests/it/gc.rs::an_unreadable_stash_journal_keeps_every_patch_with_a_warning
