@@ -5,6 +5,7 @@
 pub mod archive_entry;
 pub mod eof;
 pub mod eof_tail;
+pub mod gc_protect;
 pub mod lib;
 pub mod pathspec;
 pub mod xargs_partition;

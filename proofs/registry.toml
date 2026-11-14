@@ -156,6 +156,37 @@ mutants = [
     { file = "proofs/verus/spec/pathspec.rs", find = "} else if xs.last().len() == 0 {", replace = "} else if false {" },
 ]
 
+[[kernel]]
+id = "K8-gc-protection"
+status = "verified"
+file = "crates/snp-store/src/maintenance/protect.rs"
+mount = "snp_store_maintenance_protect"
+spec = "proofs/verus/spec/gc_protect.rs"
+callers = [
+    "crates/snp-store/src/maintenance.rs::sweep",
+    "crates/snp-store/src/maintenance.rs::clean",
+    "crates/snp-store/src/maintenance.rs::protection_capped",
+    "crates/snp-store/src/maintenance.rs::journal_patch",
+    "crates/snp-store/src/marker.rs::path_from_json",
+]
+verified_min = 32
+mutants = [
+    # G1: `<patch>-1` (another run's patch) counts as a sibling.
+    { find = "Some(&c) => c == b'.',", replace = "Some(&c) => c == b'.' || c == b'-'," },
+    # G1: only the first journal's patch protects anything.
+    { find = "        k = k.saturating_add(1);\n    }\n    false", replace = "        k = names.len();\n    }\n    false" },
+    # G2: sweep removes a patch exactly at the threshold minus one second.
+    { find = "Some(a) => a >= min_age,", replace = "Some(a) => a.saturating_add(1) >= min_age," },
+    # G4: an unrestored journal without a patch protects nothing instead of everything (the F1 bug class).
+    { find = "                Err(NotUnderstood)\n            } else {\n                Ok(None)", replace = "                Ok(None)\n            } else {\n                Ok(None)" },
+    # G4: the codec ignores a bad low digit.
+    { find = "(Some(hi), Some(lo)) => {", replace = "(Some(hi), lo) => {\n                let lo = match lo { Some(lo) => lo, None => 0 };" },
+    # G3/G4: a journal not understood keeps the protection a list of patches.
+    { find = "Err(NotUnderstood) => false,", replace = "Err(NotUnderstood) => true," },
+    # Spec mutant: `step` lets a journal not understood through, so the fold lemmas no longer hold.
+    { file = "proofs/verus/spec/gc_protect.rs", find = "            None => None,\n            Some(None) => Some(names),", replace = "            None => Some(names),\n            Some(None) => Some(names)," },
+]
+
 # [[model]]: Lean models with fingerprinted anchors: oracle tests (K3, K4) or, for a protocol model, named witnesses (K9).
 # [[trusted]]: production impls of kernel traits (§2.6, §10 row 8), each with its differential test (G8), pinned by
 # `test_fingerprint` (`cargo xtask proofs fingerprint <test>`): an edit to the test asks for a re-review.
