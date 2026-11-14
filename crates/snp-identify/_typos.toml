@@ -1,3 +1,0 @@
-[files]
-# Generated from upstream identify / produced by running it.
-extend-exclude = ["src/generated.rs", "tests/data/*.json"]

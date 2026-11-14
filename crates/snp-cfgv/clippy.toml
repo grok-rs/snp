@@ -1,6 +1,0 @@
-# The MSRV is taken from `package.rust-version` in Cargo.toml.
-allow-unwrap-in-tests = true
-allow-expect-in-tests = true
-allow-panic-in-tests = true
-allow-indexing-slicing-in-tests = true
-doc-valid-idents = ["CPython", "PyYAML", ".."]
