@@ -2,6 +2,7 @@
 //!
 //! Owner: WP-22.
 
+use std::collections::TryReserveError;
 use std::sync::Arc;
 
 use file_identify::{Meta, Tag, TagSet};
@@ -59,7 +60,10 @@ impl Classifier {
                 Ok(out)
             })?;
         let mut pending = vec![None; t.len()].into_boxed_slice();
+        // Sized once (never `found.into_iter().collect()`: an in-place collect would keep `found`'s larger buffer
+        // for the whole run); a failed reservation only means ordinary growth.
         let mut kept = Vec::new();
+        let _reserved: Result<(), TryReserveError> = kept.try_reserve_exact(found.len());
         for (id, meta) in found {
             if let Some(slot) = t.index(id).and_then(|i| pending.get_mut(i)) {
                 *slot = meta;

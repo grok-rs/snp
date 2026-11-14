@@ -29,7 +29,7 @@
 //! Owner: WP-22.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, TryReserveError};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs::File;
@@ -1060,9 +1060,25 @@ pub(crate) fn par_chunks_on<T: Send>(
         let start = k.saturating_mul(per);
         f(start..start.saturating_add(per).min(n))
     });
-    let mut out = Vec::new();
+    concat_ordered(parts)
+}
+
+/// The partitions' results concatenated in index order (ADR-110): the first error in index order wins, before
+/// anything is reserved; otherwise the first partition's vector is reused and grown once to the total length (a
+/// failed reservation only means ordinary growth).
+fn concat_ordered<T>(parts: Vec<Result<Vec<T>, Failure>>) -> Result<Vec<T>, Failure> {
+    let parts: Vec<Vec<T>> = parts.into_iter().collect::<Result<_, _>>()?;
+    let total = parts
+        .iter()
+        .fold(0_usize, |sum, part| sum.saturating_add(part.len()));
+    let mut parts = parts.into_iter();
+    let Some(mut out) = parts.next() else {
+        return Ok(Vec::new());
+    };
+    let _reserved: Result<(), TryReserveError> =
+        out.try_reserve_exact(total.saturating_sub(out.len()));
     for part in parts {
-        out.extend(part?);
+        out.extend(part);
     }
     Ok(out)
 }
@@ -1872,5 +1888,50 @@ mod tests {
             panic!()
         };
         assert_eq!(tags, file_identify::tags_from_filename("keep2.py"));
+    }
+
+    /// ADR-110: the concatenation reports the first error in index order however the partitions finished, and
+    /// otherwise grows the first partition once to the exact total.
+    #[test]
+    fn concat_ordered_keeps_order_and_reserves_once() {
+        let text = |e: Failure| match e {
+            Failure::Exc { exc, .. } => String::from_utf8_lossy(&exc.text).into_owned(),
+            other => format!("{other:?}"),
+        };
+        let out = concat_ordered(vec![
+            Ok(vec![1, 2]),
+            Ok(vec![]),
+            Ok(vec![3]),
+            Ok(vec![4, 5]),
+        ])
+        .unwrap();
+        assert_eq!(out, [1, 2, 3, 4, 5]);
+        assert_eq!(out.capacity(), 5);
+        assert_eq!(concat_ordered::<u8>(Vec::new()).unwrap(), Vec::<u8>::new());
+        let e = concat_ordered(vec![
+            Ok(vec![1]),
+            Err(Failure::fatal("t", "first")),
+            Ok(vec![2]),
+            Err(Failure::fatal("t", "second")),
+        ])
+        .unwrap_err();
+        assert_eq!(text(e), "first");
+        // a slow early partition that fails still wins over a fast later one
+        let pool = JobPool::new(
+            NonZeroUsize::new(8).unwrap(),
+            snp_core::cancel::CancelToken::new(),
+        );
+        let e = par_chunks_on(&pool, 4_096, REGEX_THREADS, false, |r| {
+            if r.contains(&10) {
+                std::thread::sleep(std::time::Duration::from_millis(30));
+                return Err(Failure::fatal("t", "early"));
+            }
+            if r.contains(&4_000) {
+                return Err(Failure::fatal("t", "late"));
+            }
+            Ok(r.collect::<Vec<usize>>())
+        })
+        .unwrap_err();
+        assert_eq!(text(e), "early");
     }
 }
