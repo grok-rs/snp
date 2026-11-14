@@ -1,5 +1,5 @@
 //! Property tests (01 Addendum §A.8 item 5): `compile` never panics; the relaxed prefilter never rejects a
-//! haystack the exact pattern matches, and the tier-1 one changes no answer (ADR-097); the fast tier-1 text
+//! haystack the exact pattern matches, and the tier-1 one changes no answer (ADR-098); the fast tier-1 text
 //! agrees with the exact text on every haystack that meets no condition bit; the cheap match kinds agree with
 //! the engines.
 
@@ -146,7 +146,7 @@ proptest! {
 
     /// `L(P) ⊆ L(relaxed)` under search semantics, and `\A(?:P)\z` ⊆ `\A(?:relaxed)\z` (§A.6.11): the
     /// prefilter never rejects a real match. The reference is the exact text: tier 2's main text, tier 1's exact
-    /// fallback (ADR-097).
+    /// fallback (ADR-098).
     #[test]
     fn relaxed_is_a_superset(p in pattern(), sel in 0_u8..16, bytes in any::<bool>(), hs in proptest::collection::vec(haystack(), 1..12)) {
         let mode = if bytes { Mode::Bytes } else { Mode::Str };
@@ -180,7 +180,7 @@ proptest! {
         }
     }
 
-    /// The tier-1 exact fallback answers the same with and without its prefilter (ADR-097), on haystacks that
+    /// The tier-1 exact fallback answers the same with and without its prefilter (ADR-098), on haystacks that
     /// meet a condition bit (non-ASCII, empty, or any haystack for match spans): `re.search`, `re.match`,
     /// `re.fullmatch` and `search_bytes`.
     #[test]

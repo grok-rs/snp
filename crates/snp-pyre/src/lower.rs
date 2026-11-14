@@ -4,7 +4,7 @@
 //! * [`Variant::Fast`]: tier-1 (`regex`) text with the cheaper anchor forms of §A.6.5 and the condition bits
 //!   that tell when a haystack needs the exact variant;
 //! * [`Variant::Exact`]: the canonical forms (`$` → `(?=\n?\z)`, look-around `\b`/`\B`) for `fancy-regex`;
-//! * [`Variant::Relaxed`]: the tier-1 prefilter of a tier-2 pattern and of a tier-1 exact fallback (ADR-097)
+//! * [`Variant::Relaxed`]: the tier-1 prefilter of a tier-2 pattern and of a tier-1 exact fallback (ADR-098)
 //!   (look-around → nothing, back-reference → `(?s:.*)`, conditional → alternation, atomic/possessive → plain,
 //!   `$` → `(?m:$)`, str `\b`/`\B` → nothing), whose language is a superset of the pattern's under search
 //!   semantics, at every span.
@@ -30,7 +30,7 @@ pub(crate) enum Variant {
     /// Canonical forms for the backtracking engine.
     Exact,
     /// The tier-1 prefilter of a tier-2 pattern, and of the exact fallback of a tier-1 pattern with a `\b`/`\B`
-    /// or span condition (ADR-097).
+    /// or span condition (ADR-098).
     Relaxed,
 }
 

@@ -4,7 +4,7 @@
 //!   `dfa_size_limit` the crate default 2 MiB (the per-regex per-thread lazy-DFA cache, ADR-079),
 //!   `nest_limit` 2048. A haystack that meets a condition bit of the fast text uses the exact variant, which
 //!   runs on `fancy_regex` behind a relaxed tier-1 [`Prefilter`] when the condition is a word boundary or a
-//!   nullable-loop span (ADR-097): the prefilter is built on the first haystack that needs the exact variant
+//!   nullable-loop span (ADR-098): the prefilter is built on the first haystack that needs the exact variant
 //!   (eagerly with an eager exact fallback) with a 256 KiB lazy-DFA cache.
 //! * Tier 2: `fancy_regex` with `backtrack_limit` 10⁸, delegate limits 64 MiB / 2 MiB, always behind the
 //!   relaxed tier-1 prefilter; bytes patterns run on the Latin-1 lane (each byte `b` becomes `char::from(b)`).
@@ -28,7 +28,7 @@ use crate::messages;
 const SIZE_LIMIT: usize = 64 << 20;
 /// `dfa_size_limit`: the crate default, the lazy-DFA cache capacity per regex per thread (ADR-079).
 const DFA_SIZE_LIMIT: usize = 2 << 20;
-/// `dfa_size_limit` of the tier-1 exact fallback's prefilter (ADR-097): it runs only on the haystacks that meet a
+/// `dfa_size_limit` of the tier-1 exact fallback's prefilter (ADR-098): it runs only on the haystacks that meet a
 /// condition bit, and a full 2 MiB cache per pattern per worker thread would cost B12u ~5 MiB of RSS.
 const PREFILTER_DFA_SIZE_LIMIT: usize = 256 << 10;
 /// `nest_limit` of tier 1 (Python's 484 nested groups lower to well under 2048 levels).
@@ -136,7 +136,7 @@ impl T1 {
     }
 }
 
-/// A relaxed tier-1 prefilter in front of a backtracking engine (§A.6.11, ADR-097): a haystack it rejects
+/// A relaxed tier-1 prefilter in front of a backtracking engine (§A.6.11, ADR-098): a haystack it rejects
 /// has no match, because the relaxed text's language is a superset of the exact text's.
 #[derive(Debug)]
 pub(crate) struct Prefilter(T1);
@@ -299,7 +299,7 @@ pub(crate) struct Texts {
     /// Tier 1: the exact fallback text (when a condition bit is set).
     pub(crate) exact: Option<Box<str>>,
     /// The relaxed prefilter text: tier 2, and tier 1 when the exact fallback serves a word-boundary, `\B` or
-    /// span condition (ADR-097; not for a non-MULTILINE `$` alone).
+    /// span condition (ADR-098; not for a non-MULTILINE `$` alone).
     pub(crate) relaxed: Option<Box<str>>,
     /// Tier 2.
     pub(crate) tier2: bool,
@@ -320,7 +320,7 @@ pub(crate) struct Fallback {
     exact_src: Option<Box<str>>,
     /// Exact fallback engine, built on first need.
     exact: OnceLock<Option<T2>>,
-    /// Relaxed prefilter text (ADR-097).
+    /// Relaxed prefilter text (ADR-098).
     relaxed_src: Option<Box<str>>,
     /// The relaxed text has anchors.
     relaxed_anchored: bool,
@@ -556,7 +556,7 @@ pub(crate) mod probe {
         PREFILTER_OFF.with(Cell::get)
     }
 
-    /// Switches the tier-1 exact fallback's prefilter off (`true`: the pre-ADR-097 behaviour, the reference of
+    /// Switches the tier-1 exact fallback's prefilter off (`true`: the pre-ADR-098 behaviour, the reference of
     /// the parity tests) or back on, for this thread.
     pub(crate) fn set_prefilter_off(off: bool) {
         PREFILTER_OFF.with(|c| c.set(off));

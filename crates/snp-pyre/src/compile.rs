@@ -354,7 +354,7 @@ fn texts(
             fast.cond.span = false;
             exact = None;
         }
-        // ADR-097: the exact fallback of a word-boundary, `\B` or span condition runs behind the relaxed text
+        // ADR-098: the exact fallback of a word-boundary, `\B` or span condition runs behind the relaxed text
         // (without the search quirk, which only narrows the start positions), the same prefilter as tier 2. A
         // `$`-only condition keeps none: its exact text has no word assertion to make the backtracking engine
         // slow, and the haystacks it serves end with `\n`.

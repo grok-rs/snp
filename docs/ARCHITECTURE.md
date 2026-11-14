@@ -2445,12 +2445,15 @@ startup Env (captured once in main, minus __PYVENV_LAUNCHER__/PYTHONEXECUTABLE)
    `regex-syntax` UCD 16; **tier 1** `regex` 1.13 (str) / `regex::bytes` `unicode(false)` (pygrep) for patterns
    without backtracking constructs; **tier 2** `fancy-regex` 0.19.2 (`backtrack_limit(100_000_000)`, Latin-1 lane for
    bytes, never `BytesMode::Ascii`) for look-around/backrefs/conditionals/atomic/possessive, always behind the
-   **mandatory relaxed tier-1 prefilter** (§A.6.11).
+   **mandatory relaxed tier-1 prefilter** (§A.6.11). The same prefilter (built on first need, 256 KiB lazy-DFA cache)
+   guards the tier-1 exact fallback of a `\b`/`\B` or match-span condition (ADR-098).
 3. **Anchors** (§A.6.5): non-MULTILINE `$` is canonically `(?=\n?\z)`; the fast tier-1 form `\z` is used only when the
    haystack does not end with `\n` (`Path`), `(?m:$)` for pygrep by-line (`Line`); `\Z`→`\z`; Unicode `\b`/`\B` use
    the exact look-around forms with `W=[\p{L}\p{N}_]`, with the tier-1 `\b`/`\B` fast form only for ASCII (and, for
    `\B`, non-empty) haystacks. The per-match dispatch is
    `use_exact = (cond.nl && h.ends_with('\n')) || (cond.ascii && !h.is_ascii()) || (cond.nonempty && h.is_empty())`.
+   When `cond.ascii`, `cond.nonempty` or `cond.span` is set, the exact fallback runs only on haystacks its relaxed
+   prefilter admits (ADR-098); a rejected haystack is "not matched", as in CPython. A `cond.nl`-only pattern has none.
 4. **Fast kinds** (S13, never touch an engine): `''` → always true; `'^$'` → `h.is_empty() || h == "\n"` (the Python
    truth, §A.6.5); literal prefix (`^lit`), suffix (`lit$` → `h.ends_with(lit) || h.ends_with(lit + "\n")`;
    `lit\Z` → `ends_with(lit)`), and contains (`memchr::memmem`) when the AST is a plain literal under no flags.

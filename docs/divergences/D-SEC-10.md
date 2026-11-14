@@ -1,7 +1,7 @@
 # D-SEC-10
 
-Catastrophic regular expressions cannot hang snp: tier 1 is linear, tier 2 stops after 10⁸ backtracking steps with
-an error.
+Catastrophic regular expressions cannot hang snp: tier 1 is linear and its exact fallback is prefiltered, tier 2
+stops after 10⁸ backtracking steps with an error.
 
 * **Class:** SEC (COMPATIBILITY §5.3)
 * **Owner:** WP-13 (`snp_pyre::PyRegex`, `MatchError::Backtrack`); the run-time message is printed by the file
@@ -25,6 +25,9 @@ a hostile file name meeting an innocent-looking pattern) makes `pre-commit run` 
 
 snp lowers every pattern it can to the `regex` crate (tier 1, 01 Addendum §A.6.9), which guarantees linear-time
 matching: D8 patterns give CPython's answer without the exponential blow-up — no visible difference except time.
+The tier-1 exact fallback is prefiltered (ADR-098): a str `\b`/`\B` sends non-ASCII haystacks to `fancy-regex`,
+but only after the same relaxed linear prefilter as tier 2 admits them, so a haystack it rejects is "not matched"
+in milliseconds, CPython's answer (`^(.+/)*\bconfig\.yaml$` on `é/é/…/x`), instead of a backtracking-limit error.
 Patterns that need backtracking (look-around, back-references, conditionals, atomic groups, possessive repeats)
 run on `fancy-regex` (tier 2) behind a mandatory linear prefilter (§A.6.11) and with `backtrack_limit` = 10⁸
 (≈ 2.5 s on one core). Exceeding it is `MatchError::Backtrack`; for `files`/`exclude` it aborts the run with the

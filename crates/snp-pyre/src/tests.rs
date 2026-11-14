@@ -214,7 +214,7 @@ mod names {
     }
 }
 
-/// ADR-097: the tier-1 exact fallback of a word-boundary pattern runs the backtracking engine only on the
+/// ADR-098: the tier-1 exact fallback of a word-boundary pattern runs the backtracking engine only on the
 /// non-ASCII haystacks its relaxed prefilter admits (B12u's `u05` ran it on all 20 000 paths before), with every
 /// answer unchanged.
 #[test]

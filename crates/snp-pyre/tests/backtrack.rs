@@ -1,5 +1,5 @@
 //! D-SEC-10 / 01 Addendum §A.6.13 D7, D8: the relaxed prefilter answers before the backtracking engine runs
-//! (tier 2, and the tier-1 exact fallback, ADR-097), and shapes that are exponential in CPython stay linear in
+//! (tier 2, and the tier-1 exact fallback, ADR-098), and shapes that are exponential in CPython stay linear in
 //! tier 1. (The 10⁸-step backtrack limit itself is
 //! exercised by `tests/perf.rs::perf_catastrophic_tier2_pattern_hits_the_backtrack_limit`: unoptimised builds
 //! need ~20 s to take 10⁸ steps.)
@@ -64,7 +64,7 @@ mod backtrack {
 
     #[test]
     fn the_tier1_exact_fallback_is_prefiltered() {
-        // ADR-097: a str `\b` sends non-ASCII haystacks to the backtracking exact fallback, where these shapes
+        // ADR-098: a str `\b` sends non-ASCII haystacks to the backtracking exact fallback, where these shapes
         // took 2.7-4.7 s per haystack and ended in `MatchError::Backtrack`. The relaxed prefilter rejects them
         // first: no match, CPython's answer.
         let cases = [

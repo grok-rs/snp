@@ -82,6 +82,11 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
 - CI fuzzing: the fuzz shards run with a 64 MB AddressSanitizer quarantine (`ASAN_OPTIONS=quarantine_size_mb=64`,
   default 256 MB) to keep targets well below the 512 MB RSS cap they crept toward; leak detection, use-after-free
   detection and the §13.5 limits are unchanged.
+- A `files`/`exclude` pattern with `\b` or `\B` no longer runs the backtracking engine on every non-ASCII path: the
+  relaxed linear prefilter now guards tier 1's exact fallback too, so a path it rejects is "not matched" in
+  milliseconds (as in pre-commit) instead of taking seconds or aborting the run with a backtracking-limit error
+  (for example `^(.+/)*\bconfig\.yaml$` on a deep non-ASCII path). On the B12u benchmark the backtracking engine runs
+  1 060 times instead of 20 000, and snp's own user CPU falls by about 19 % (ADR-098).
 
 ### Security
 
