@@ -1942,8 +1942,11 @@ a consumer that ends up with no files (`files`/`types` filters) still has its fa
 child more than before for that run; output and exit status are unchanged. A panic inside the prefetch goes through
 the panic hook like any snp thread (ADR-066: a bug, exit 3); the join result itself is not inspected. Tests: a
 differential test and the case-conflict fuzz target assert the indexed decision equals the kernel's for epochs 1–3 on
-both platforms, ScriptedBackend call-log tests check `facts()` ⊆ the calls each consumer makes, and the snp-run and
-snp-hooks suites pass with `SNP_JOBS=1` and `SNP_JOBS=2` (a single pool permit cannot deadlock the prefetch).
+both platforms, ScriptedBackend call-log tests check `facts()` ⊆ the calls each consumer makes, the snp-run pipeline
+tests (`prefetch.rs`) check through a recording, delaying git backend that no snp git runs while a `language: system`
+hook runs, sequential or in a mixed priority bucket, with 1 and 4 permits (dropping either join fails them), and that a
+single-partition `check-added-large-files` commit spawns the same `GIT_TRACE` git argv list as 7692989, and the snp-run
+and snp-hooks suites pass with `SNP_JOBS=1` and `SNP_JOBS=2` (a single pool permit cannot deadlock the prefetch).
 
 ---
 

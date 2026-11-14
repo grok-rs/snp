@@ -16,6 +16,8 @@ mod hook_impl;
 #[cfg(test)]
 mod meta;
 #[cfg(test)]
+mod prefetch;
+#[cfg(test)]
 mod run;
 #[cfg(test)]
 mod try_repo;
