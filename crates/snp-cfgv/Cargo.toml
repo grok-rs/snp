@@ -1,52 +1,38 @@
 [package]
-name = "cfgv"
-version = "0.3.0"
-edition = "2024"
-rust-version = "1.85"
-description = "Validate configuration and produce human readable error messages; a byte-for-byte compatible port of Python cfgv"
-license = "MIT"
-repository = "https://github.com/grok-rs/cfgv-rs"
-documentation = "https://docs.rs/cfgv"
+name = "snp-cfgv"
+description = "Python cfgv 3.5.0 for snp: validate configuration with byte-for-byte compatible error messages"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 readme = "README.md"
 keywords = ["configuration", "validation", "schema", "cfgv", "pre-commit"]
 categories = ["config", "development-tools"]
+# ADR-088/ADR-116: published to crates.io with snp's =X.Y.Z release train; the package carries the sources, the
+# README (compiled as doctests) and the license only (tests, vectors and fuzz targets stay in the repository).
+include = ["/src/", "/README.md", "/LICENSE"]
+
+# ADR-116: absorbed from the standalone `cfgv` crate (cfgv-rs 0.3.0). The library keeps the name `cfgv`, so its
+# users write `cfgv::` (the workspace dependency key is `cfgv`, `package = "snp-cfgv"`).
+[lib]
+name = "cfgv"
 
 [dependencies]
-indexmap = "2.2"
-regex = { version = "1.10", optional = true }
-serde = { version = "1.0.200", optional = true }
+indexmap.workspace = true
+serde = { workspace = true, optional = true }
 
 [dev-dependencies]
-proptest = "1.5"
-serde = { version = "1.0.200", features = ["derive"] }
-serde_json = "1"
-tempfile = "3"
+proptest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
 
 [features]
-default = ["regex"]
-## `CheckFn::check_regex()` backed by the `regex` crate.
-regex = ["dep:regex"]
+default = []
 ## `Serialize`/`Deserialize` for `Value` and a `Deserializer` for `&Value`.
 serde = ["dep:serde"]
 
-[package.metadata.docs.rs]
-all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
-
-[lints.rust]
-unsafe_code = "forbid"
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)"] }
-missing_docs = "warn"
-unreachable_pub = "warn"
-
-[lints.clippy]
-unwrap_used = "deny"
-expect_used = "deny"
-panic = "deny"
-indexing_slicing = "deny"
-string_slice = "deny"
-todo = "deny"
-unimplemented = "deny"
-dbg_macro = "deny"
-print_stdout = "deny"
-print_stderr = "deny"
+[lints]
+workspace = true

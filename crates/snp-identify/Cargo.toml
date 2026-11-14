@@ -1,51 +1,39 @@
 [package]
-name = "file-identify"
-version = "0.5.0"
-edition = "2024"
-rust-version = "1.85"
-authors = ["Serhii Kaliuzhnyi <https://github.com/grok-rs>"]
-description = "File type identification (tags from names, extensions, shebangs and content) - a faithful Rust port of Python identify, as used by pre-commit"
-documentation = "https://docs.rs/file-identify"
+name = "snp-identify"
+description = "Python identify 2.6.20 for snp: file type tags from names, extensions, shebangs and content"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 readme = "README.md"
-repository = "https://github.com/grok-rs/file-identify"
-license = "MIT"
-keywords = ["file", "identification", "detection", "filetype", "pre-commit"]
-categories = ["filesystem", "command-line-utilities"]
-exclude = ["tests/fixtures/**/*", "xtask/", "fuzz/", ".github/", ".cargo/", ".pre-commit-config.yaml", "renovate.json", "deny.toml"]
+keywords = ["file", "identification", "filetype", "identify", "pre-commit"]
+categories = ["filesystem", "development-tools"]
+# ADR-088/ADR-116: published to crates.io with snp's =X.Y.Z release train; the package carries the sources, the
+# README (compiled as doctests) and the license only (tests, vectors, benches and fuzz targets stay in the
+# repository).
+include = ["/src/", "/README.md", "/LICENSE"]
 
-[[bin]]
-name = "file-identify"
-path = "src/bin/main.rs"
-required-features = ["cli"]
+# ADR-116: absorbed from the standalone `file-identify` crate (0.5.0). The library keeps the name `file_identify`,
+# so its users write `file_identify::` (the workspace dependency key is `file-identify`, `package = "snp-identify"`).
+[lib]
+name = "file_identify"
 
 [[bench]]
 name = "identify"
 harness = false
 
-[features]
-default = []
-## The `file-identify` command-line tool.
-cli = ["dep:clap"]
-
 [dependencies]
-clap = { version = "4.5", features = ["derive"], optional = true }
-thiserror = "2.0.12"
+thiserror.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.0.7", default-features = false, features = ["std", "process", "fs"] }
+rustix.workspace = true
 
 [dev-dependencies]
-proptest = { version = "1.6", default-features = false, features = ["std"] }
-serde_json = "1.0"
-tempfile = "3.10"
+proptest.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
 
-[lints.rust]
-unsafe_code = "forbid"
-
-[workspace]
-members = ["xtask"]
-# cargo-fuzz targets: a separate workspace, built with `cargo fuzz`.
-exclude = ["fuzz"]
-
-[workspace.lints.rust]
-unsafe_code = "forbid"
+[lints]
+workspace = true
