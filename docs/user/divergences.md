@@ -2065,10 +2065,14 @@ snp adds, with no change to any byte pre-commit prints on a working path (ARCHIT
   `SNP_STASH_LOCK_TIMEOUT` (60 s) with one stderr notice (D-DIAG-04), then fails with a `FatalError`; a nested run (a
   hook running snp) is exempt only when its `_SNP_STASH_LOCK` (D-EXT-04) equals the token in the lock file **and** the
   lock is really held — a stale token exempts nobody;
-* the patch is created `create_new` 0600 (two runs with the same second and pid get `-1`, `-2` …), `fsync`ed, and
-  re-verified by a second `diff-index` digest right before the checkout (an autosave is caught: the patch is
-  rewritten, at most 3 times, else `FatalError: snp: unstaged files kept changing while stashing; nothing was
-  modified`);
+* the patch is created `create_new` 0600 (two runs with the same second and pid get `-1`, `-2` …), `fsync`ed, its
+  files listed (`git apply --numstat`), and only then re-verified, right before the checkout (an autosave is caught:
+  the patch is rewritten, at most 3 times, else `FatalError: snp: unstaged files kept changing while stashing;
+  nothing was modified`). The re-verification is a second `diff-index` compared byte for byte with the patch, or,
+  where stat stamps can prove that nothing changed since the run took the lock (ADR-097: Linux, allow-listed
+  filesystems, every file of the patch and its directories older than the lock, `git diff-index --name-only` listing
+  no file outside the patch, so an autosave of any other tracked file is still caught and stashed), no second
+  content diff at all; `SNP_STASH_REVERIFY=diff` always runs the second `diff-index`;
 * a journal `<store>/patches/run-<pid>-<rand>.snp-journal` and a pointer `<git_dir>/snp-stash.journal`, written before
   every mutation (fsynced for the data-protecting states), deleted when the run is done;
 * the next run in the worktree (any store: the pointer is in the git dir) prints, on stderr, for every orphaned
@@ -2119,7 +2123,7 @@ snp: this notice repeats until those changes are back in the worktree; to dismis
 snp: the unstaged changes saved in /s/patches/patch1791403656-1781218 are back in the worktree; the recovery notice of that interrupted run is retired
 ```
 
-Proof: `crates/snp-stash/tests/behaviour/{guard,recovery}.rs` (lock, nested token, stale token, autosave, patch
+Proof: `crates/snp-stash/tests/behaviour/{guard,recovery}.rs` (lock, nested token, stale token, autosave, the stat-stamp re-verification and its fallbacks, patch
 names, pointer with another store), `tests/driver.rs::kill_9_at_every_transition_…` (the next run prints exactly
 `Unrestored::hint`, and the hinted commands restore the work); the scenario
 `tests/differential/divergences/D-DATA-13.yaml`; the dismissal paths:

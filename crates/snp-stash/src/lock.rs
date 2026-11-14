@@ -14,7 +14,7 @@ use std::hash::{BuildHasher, Hash, Hasher};
 use std::io::{self, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 
 use snp_core::cancel::{CancelReason, CancelToken};
 use snp_core::failure::Failure;
@@ -44,7 +44,7 @@ pub(crate) fn random_hex(n: usize) -> String {
         let mut h = std::collections::hash_map::RandomState::new().build_hasher();
         COUNTER.fetch_add(1, Ordering::Relaxed).hash(&mut h);
         std::process::id().hash(&mut h);
-        std::time::SystemTime::now()
+        SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos())
             .hash(&mut h);
@@ -93,22 +93,90 @@ pub(crate) fn timeout_from(v: Option<&OsStr>) -> Duration {
         .unwrap_or(DEFAULT_TIMEOUT)
 }
 
+/// When this run took the worktree, by the clock of the filesystem that holds the lock (ADR-097): the stash's
+/// stat-stamp re-verification accepts a file only when its `max(ctime, mtime)` is strictly older than `m0_ns`.
+#[cfg_attr(
+    all(not(unix), not(test)),
+    expect(
+        dead_code,
+        reason = "stamps are taken on Unix only (ADR-097); the unit tests build one"
+    )
+)]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LockStamp {
+    /// `max(ctime, mtime)` of the lock file right after the token write, in nanoseconds since the epoch.
+    pub(crate) m0_ns: i128,
+    /// The lock file's `st_dev`.
+    #[cfg_attr(
+        all(not(unix), test),
+        expect(
+            dead_code,
+            reason = "only the Unix same-device check reads it; non-Unix unit tests build stamps without it"
+        )
+    )]
+    pub(crate) dev: u64,
+    /// The wall clock right after that `fstat`.
+    pub(crate) wall: SystemTime,
+    /// The monotonic clock right after that `fstat`.
+    pub(crate) mono: Instant,
+}
+
+/// `max(ctime, mtime)` of `md` in nanoseconds since the epoch (saturating).
+#[cfg(unix)]
+pub(crate) fn changed_ns(md: &std::fs::Metadata) -> i128 {
+    use std::os::unix::fs::MetadataExt;
+    let ns = |s: i64, n: i64| {
+        i128::from(s)
+            .saturating_mul(1_000_000_000)
+            .saturating_add(i128::from(n))
+    };
+    ns(md.ctime(), md.ctime_nsec()).max(ns(md.mtime(), md.mtime_nsec()))
+}
+
+/// The stamp of the held lock file (an `fstat` of its descriptor), taken after the token write changed it.
+#[cfg(unix)]
+fn stamp_of(lock: &FileLock) -> Option<LockStamp> {
+    use std::os::unix::fs::MetadataExt;
+    let md = lock.file().metadata().ok()?;
+    Some(LockStamp {
+        m0_ns: changed_ns(&md),
+        dev: md.dev(),
+        wall: SystemTime::now(),
+        mono: Instant::now(),
+    })
+}
+
+/// Windows writes the token into a sibling file and has no ctime: no stamp (ADR-097).
+#[cfg(not(unix))]
+fn stamp_of(_lock: &FileLock) -> Option<LockStamp> {
+    None
+}
+
 /// A held worktree lock; releasing truncates the token.
 #[derive(Debug)]
 pub(crate) struct WorktreeLock {
     lock: Option<FileLock>,
     path: PathBuf,
     token: String,
+    stamp: Option<LockStamp>,
+    /// The lock was taken on the wait path (another run held it when this one first tried).
+    contended: bool,
 }
 
 impl WorktreeLock {
-    /// Writes a fresh token into the held lock (best effort: a failure only disables the nested-run exemption).
-    fn publish(lock: FileLock, path: PathBuf) -> Self {
+    /// Writes a fresh token into the held lock (best effort: a failure only disables the nested-run exemption and
+    /// the stamp).
+    fn publish(lock: FileLock, path: PathBuf, contended: bool) -> Self {
         let token = random_hex(16);
         let written = if cfg!(windows) {
             std::fs::write(token_path(&path), token.as_bytes())
         } else {
             write_token(&lock, token.as_bytes())
+        };
+        let stamp = if written.is_ok() {
+            stamp_of(&lock)
+        } else {
+            None
         };
         Self {
             lock: Some(lock),
@@ -118,12 +186,25 @@ impl WorktreeLock {
             } else {
                 String::new()
             },
+            stamp,
+            contended,
         }
     }
 
     /// The token (empty when it could not be written).
     pub(crate) fn token(&self) -> &str {
         &self.token
+    }
+
+    /// Whether the lock was taken on the wait path: another run held the worktree when this one first tried, so
+    /// anything read before the lock was taken may be stale.
+    pub(crate) fn contended(&self) -> bool {
+        self.contended
+    }
+
+    /// The stamp taken when the token was written (`None` on Windows or when the token could not be written).
+    pub(crate) fn stamp(&self) -> Option<LockStamp> {
+        self.stamp
     }
 
     /// Truncates the token and releases the lock.
@@ -180,7 +261,7 @@ pub(crate) fn acquire(
     let path = lock_path(git_dir);
     let io_err = |e: &io::Error| Failure::from_io(e, Some(path.as_os_str()), None);
     if let Some(lock) = FileLock::try_acquire(&path, LockMode::Exclusive).map_err(|e| io_err(&e))? {
-        return Ok(Acquired::Held(WorktreeLock::publish(lock, path)));
+        return Ok(Acquired::Held(WorktreeLock::publish(lock, path, false)));
     }
     // Held by someone: a nested run of the holder is exempt (token equal AND lock really held — it is, we just
     // failed to take it).
@@ -198,7 +279,7 @@ pub(crate) fn acquire(
         cancel,
         Some(timeout),
     ) {
-        Ok(lock) => Ok(Acquired::Held(WorktreeLock::publish(lock, path))),
+        Ok(lock) => Ok(Acquired::Held(WorktreeLock::publish(lock, path, true))),
         Err(e) if e.kind() == io::ErrorKind::TimedOut => Err(Failure::fatal(
             "FatalError",
             messages::lock_timeout(timeout, &path),

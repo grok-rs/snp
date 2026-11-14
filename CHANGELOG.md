@@ -35,6 +35,12 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   lookup, the markers of used repositories kept without being read, orphan repository locks decided from one listing,
   and the tool sweep reads no environment sidecar when no tool version is old enough. Output and the removal set are
   unchanged.
+- Faster stash of large unstaged changes on Linux: when the stat stamps of the patch's files prove they did not change
+  since the run took the worktree lock, and `git diff-index --name-only` shows no other changed file, the stash no
+  longer runs a second full `git diff-index --binary` to re-verify the patch (ADR-097). snp's own CPU in the 10 MB
+  stash scenario roughly halves. Anything unsure (another filesystem, a file touched during the run, a clock step,
+  macOS, Windows) runs the full re-verification as before, which now compares bytes instead of blake3 digests.
+  `SNP_STASH_REVERIFY=diff` always runs it.
 
 - Benchmarks (developer tooling, no runtime change): pull requests and pushes measure the base commit's snp, built
   against its own `deps.lock` crates and toolchain and primed into its own stores, in interleaved ABBA rounds with the
@@ -87,6 +93,9 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   milliseconds (as in pre-commit) instead of taking seconds or aborting the run with a backtracking-limit error
   (for example `^(.+/)*\bconfig\.yaml$` on a deep non-ASCII path). On the B12u benchmark the backtracking engine runs
   1 060 times instead of 20 000, and snp's own user CPU falls by about 19 % (ADR-098).
+- The stash lists its patch's files (`git apply --numstat`) before the re-verification instead of after it, so an
+  editor autosave that lands while the list is taken is caught and stashed instead of overwritten by the checkout
+  (the window was about 48 ms for a 10 MB patch). A listing error is still reported only once the patch is verified.
 
 ### Security
 

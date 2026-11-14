@@ -22,6 +22,31 @@ fn patch_of(g: &StashGuard) -> std::path::PathBuf {
     }
 }
 
+/// ADR-097: where the stat-stamp re-verification can apply (Linux, an allow-listed filesystem).
+fn stamps_possible(repo: &Path) -> bool {
+    cfg!(any(target_os = "linux", target_os = "android"))
+        && snp_os::fsinfo::stat_oracle_safe(repo).unwrap_or(false)
+}
+
+/// Lets the filesystem's (coarse) clock move past every write made so far, so a file written before the run is
+/// strictly older than the lock's stamp (ADR-097: an equal stamp falls back, which a test of the stamp pass must
+/// rule out).
+fn settle() {
+    std::thread::sleep(Duration::from_millis(30));
+}
+
+/// The content diff-index calls (the stash's own and the re-verification), not the name-only one.
+fn content_diffs(spy: &Spy) -> usize {
+    spy.calls()
+        .iter()
+        .filter(|c| c.starts_with("diff-index") && c.contains("--binary"))
+        .count()
+}
+
+fn count(spy: &Spy, prefix: &str) -> usize {
+    spy.calls().iter().filter(|c| c.starts_with(prefix)).count()
+}
+
 #[test]
 fn concurrent_second_run_waits_once_then_times_out() {
     let sb = Sandbox::new();
@@ -74,6 +99,51 @@ fn second_run_proceeds_when_the_first_releases() {
         err2.text(),
         "snp: waiting for another snp run in this worktree\u{2026}\n"
     );
+    assert_eq!(sb.read(&repo, "foo"), b"herp\n");
+}
+
+/// `lock_contended` (for the run's stale-read check): true only for the run that waited for the lock, false for the
+/// holder, a nested run and an uncontended run.
+#[test]
+fn lock_contended_is_true_only_after_a_wait() {
+    let sb = Arc::new(Sandbox::new());
+    let repo = sb.foo_staged("r");
+    sb.write(&repo, "foo", b"herp\n");
+    let (cx, _, _) = sb.ctx(&repo);
+    let first = snp_stash::enter(cx).unwrap();
+    assert!(!first.lock_contended());
+    // A nested run never waits.
+    let (k, token) = first.child_env_token().unwrap();
+    let (git, info) = sb.discover(&repo);
+    let git = git.with_env(git.env().patched(&EnvPatch::default().set(k, token)));
+    let (mut cx, _, _) = sb.ctx_with(git, info);
+    cx.lock_timeout = Duration::ZERO;
+    let nested = snp_stash::enter(cx).unwrap();
+    assert!(!nested.lock_contended());
+    nested.restore().unwrap();
+    // A second run waits for the first.
+    let (cx2, _, err2) = sb.ctx(&repo);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let t = std::thread::Builder::new()
+        .spawn(move || {
+            let g = snp_stash::enter(cx2).unwrap();
+            tx.send(g.lock_contended()).unwrap();
+            g.restore().unwrap();
+        })
+        .unwrap();
+    let waited = std::time::Instant::now();
+    while !err2.text().starts_with("snp: waiting") {
+        assert!(waited.elapsed() < Duration::from_secs(10), "no wait notice");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    first.restore().unwrap();
+    assert!(rx.recv().unwrap());
+    t.join().unwrap();
+    // Uncontended again.
+    let (cx, _, _) = sb.ctx(&repo);
+    let g = snp_stash::enter(cx).unwrap();
+    assert!(!g.lock_contended());
+    g.restore().unwrap();
     assert_eq!(sb.read(&repo, "foo"), b"herp\n");
 }
 
@@ -199,6 +269,7 @@ fn journal_and_pointer_are_durable_before_the_checkout() {
     let (cx, _, _) = sb.ctx_with(git, info);
     let original = sb.unstaged_diff(&repo);
     let tree = sb.git_text(&repo, &["write-tree"]);
+    settle();
     let g = snp_stash::enter(cx).unwrap();
     let (ps, js, jt, patch, in_store) = seen.lock().unwrap().take().unwrap();
     assert_eq!(
@@ -211,8 +282,10 @@ fn journal_and_pointer_are_durable_before_the_checkout() {
     );
     assert_eq!(patch, original);
     assert!(in_store);
-    // The command sequence is pre-commit's (02 §7) plus the re-verification diff-index and, D-DATA-19, the
-    // patch's paths for a checkout limited to them.
+    // The command sequence is pre-commit's (02 §7) plus, D-DATA-19, the patch's paths for a checkout limited to them
+    // and then the re-verification: the verification is the last read of the worktree before the checkout. ADR-097:
+    // where stat stamps can prove nothing changed since the lock was taken, the re-verification is the name-only
+    // diff-index (no file outside the patch changed) plus a stamp pass; elsewhere the second content diff-index.
     let calls = spy.calls();
     let p = patch_of(&g);
     let tree_arg = sb.git_text(&repo, &["write-tree"]);
@@ -221,6 +294,13 @@ fn journal_and_pointer_are_durable_before_the_checkout() {
         "-c submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul".to_owned()
     } else {
         "-c submodule.recurse=0 checkout -- :(literal)foo".to_owned()
+    };
+    let verification = if stamps_possible(&repo) {
+        format!("diff-index --name-only -z --ignore-submodules {tree_arg} --")
+    } else {
+        format!(
+            "diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff {tree_arg} --"
+        )
     };
     assert_eq!(
         calls,
@@ -231,10 +311,8 @@ fn journal_and_pointer_are_durable_before_the_checkout() {
             format!(
                 "diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff {tree_arg} --"
             ),
-            format!(
-                "diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff {tree_arg} --"
-            ),
             format!("apply --numstat -z --whitespace=nowarn {}", p.display()),
+            verification,
             checkout,
         ]
     );
@@ -260,29 +338,290 @@ fn autosave_between_diff_index_and_checkout_is_caught() {
     sb.write(&repo, "foo", b"herp\n");
     let spy = Spy::new();
     {
+        // After the patch is durable, while its paths are listed: the latest point before the verification.
         let repo = repo.clone();
         spy.before(
-            &["diff-index"],
-            Some(2),
+            &["apply", "--numstat"],
+            Some(1),
             Box::new(move |_| std::fs::write(repo.join("foo"), b"herp\nautosaved\n").unwrap()),
         );
     }
     let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
     let (cx, _, _) = sb.ctx_with(git, info);
+    settle();
     let g = snp_stash::enter(cx).unwrap();
     let p = patch_of(&g);
     assert_eq!(sb.read(&repo, "foo"), FOO.as_bytes());
-    // The patch was rewritten with the autosave and verified again.
+    // The patch was rewritten with the autosave, listed again and verified again: the autosave is newer than the
+    // lock, so the stamp pass falls back to the content diff-index (ADR-097).
     assert_eq!(
+        (content_diffs(&spy), count(&spy, "apply --numstat")),
+        (4, 2),
+        "{:?}",
         spy.calls()
-            .iter()
-            .filter(|c| c.starts_with("diff-index"))
-            .count(),
-        4
     );
     assert!(String::from_utf8_lossy(&std::fs::read(&p).unwrap()).contains("+autosaved"));
     g.restore().unwrap();
     assert_eq!(sb.read(&repo, "foo"), b"herp\nautosaved\n");
+}
+
+/// git refuses to list the patch (`git apply --numstat` exits 128): the run fails before the checkout, the worktree
+/// is untouched and no stash line is printed; patch and journal are gone.
+#[test]
+fn a_failing_patch_listing_leaves_the_worktree_untouched() {
+    let sb = Sandbox::new();
+    let repo = sb.foo_staged("r");
+    sb.write(&repo, "foo", b"herp\n");
+    let spy = Spy::new();
+    spy.on(
+        &["apply", "--numstat"],
+        None,
+        Reply::Exit(128, Vec::new(), b"error: patch too large\n".to_vec()),
+    );
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+    let (cx, out, _) = sb.ctx_with(git, info);
+    let e = snp_stash::enter(cx).unwrap_err();
+    let (ty, text, _) = exc(&e);
+    assert_eq!((ty.as_str(), e.exit_code()), ("CalledProcessError", 3));
+    assert!(text.contains("return code: 128"), "{text}");
+    assert_eq!(out.text(), "");
+    assert!(!spy.calls().iter().any(|c| c.contains("checkout")));
+    assert_eq!(sb.read(&repo, "foo"), b"herp\n");
+    assert!(sb.patch_files().is_empty(), "{:?}", sb.patch_files());
+    assert!(!repo.join(".git/snp-stash.journal").exists());
+}
+
+/// The verification outcome wins over a listing error: the changes vanished while the paths were listed, so there
+/// is nothing to stash and the listing's failure does not matter.
+#[test]
+fn vanished_changes_win_over_a_failing_patch_listing() {
+    let sb = Sandbox::new();
+    let repo = sb.foo_staged("r");
+    sb.write(&repo, "foo", b"herp\n");
+    let spy = Spy::new();
+    {
+        let repo = repo.clone();
+        spy.before(
+            &["apply", "--numstat"],
+            Some(1),
+            Box::new(move |_| std::fs::write(repo.join("foo"), FOO).unwrap()),
+        );
+    }
+    spy.on(
+        &["apply", "--numstat"],
+        None,
+        Reply::Exit(128, Vec::new(), Vec::new()),
+    );
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+    let (cx, out, _) = sb.ctx_with(git, info);
+    let g = snp_stash::enter(cx).unwrap();
+    // (Whether `diff_index_clean()` is true depends on the stat data of the rewritten file: a stat-dirty entry makes
+    // `diff-index --exit-code` exit 1 with an empty patch, the CRLF-quirk path. Either way nothing is stashed.)
+    assert_eq!(g.stashed(), &Stashed::Nothing);
+    g.restore().unwrap();
+    assert_eq!(out.text(), "");
+    assert!(sb.patch_files().is_empty(), "{:?}", sb.patch_files());
+    assert!(!repo.join(".git/snp-stash.journal").exists());
+}
+
+/// ADR-097: `SNP_STASH_REVERIFY=diff` always runs the second content diff-index (no name-only query, no stamps).
+#[test]
+fn snp_stash_reverify_diff_runs_the_content_verification() {
+    let sb = Sandbox::new();
+    let repo = sb.foo_staged("r");
+    sb.write(&repo, "foo", b"herp\n");
+    let spy = Spy::new();
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+    let git = git.with_env(
+        git.env()
+            .patched(&EnvPatch::default().set("SNP_STASH_REVERIFY", "diff")),
+    );
+    let (cx, out, _) = sb.ctx_with(git, info);
+    settle();
+    let g = snp_stash::enter(cx).unwrap();
+    assert_eq!(sb.read(&repo, "foo"), FOO.as_bytes());
+    assert_eq!(
+        (content_diffs(&spy), count(&spy, "diff-index --name-only")),
+        (2, 0),
+        "{:?}",
+        spy.calls()
+    );
+    g.restore().unwrap();
+    assert!(out.text().contains("[INFO] Restored changes from "));
+    assert_eq!(sb.read(&repo, "foo"), b"herp\n");
+}
+
+/// ADR-097: a file of the patch touched after the lock was taken (same bytes: a `touch`, an editor saving unchanged
+/// content) is not trusted by its stamp: the content verification runs, finds the same patch and rewrites nothing.
+#[test]
+fn a_patch_file_touched_after_the_lock_runs_the_content_verification() {
+    let sb = Sandbox::new();
+    let repo = sb.foo_staged("r");
+    sb.write(&repo, "foo", b"herp\n");
+    let spy = Spy::new();
+    {
+        let repo = repo.clone();
+        spy.before(
+            &["apply", "--numstat"],
+            Some(1),
+            Box::new(move |_| std::fs::write(repo.join("foo"), b"herp\n").unwrap()),
+        );
+    }
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+    let (cx, _, _) = sb.ctx_with(git, info);
+    settle();
+    let g = snp_stash::enter(cx).unwrap();
+    assert_eq!(
+        (content_diffs(&spy), count(&spy, "apply --numstat")),
+        (2, 1),
+        "{:?}",
+        spy.calls()
+    );
+    g.restore().unwrap();
+    assert_eq!(sb.read(&repo, "foo"), b"herp\n");
+}
+
+/// ADR-097 option (a): an autosave of a file the patch does not touch is caught by the name-only diff-index, so the
+/// content verification runs and stashes it (D-DATA-13's guarantee): the checkout leaves it to the patch, the restore
+/// brings it back, and neither a rollback nor `stage_fixed` can lose it.
+#[test]
+fn an_autosaved_clean_file_is_caught_and_stashed() {
+    let sb = Sandbox::new();
+    let repo = sb.init("r");
+    sb.write(&repo, "foo", FOO.as_bytes());
+    sb.write(&repo, "bar", b"bar\n");
+    sb.git(&repo, &["add", "foo", "bar"]);
+    sb.write(&repo, "foo", b"herp\n");
+    let spy = Spy::new();
+    {
+        let repo = repo.clone();
+        spy.before(
+            &["apply", "--numstat"],
+            Some(1),
+            Box::new(move |_| std::fs::write(repo.join("bar"), b"bar\nautosaved\n").unwrap()),
+        );
+    }
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+    let (cx, _, _) = sb.ctx_with(git, info);
+    settle();
+    let g = snp_stash::enter(cx).unwrap();
+    let p = patch_of(&g);
+    let names_only = usize::from(stamps_possible(&repo));
+    assert_eq!(
+        (
+            count(&spy, "diff-index --name-only"),
+            content_diffs(&spy),
+            count(&spy, "apply --numstat")
+        ),
+        (names_only, 4, 2),
+        "{:?}",
+        spy.calls()
+    );
+    assert!(String::from_utf8_lossy(&std::fs::read(&p).unwrap()).contains("+autosaved"));
+    assert_eq!(
+        (sb.read(&repo, "foo"), sb.read(&repo, "bar")),
+        (FOO.as_bytes().to_vec(), b"bar\n".to_vec())
+    );
+    g.restore().unwrap();
+    assert_eq!(
+        (sb.read(&repo, "foo"), sb.read(&repo, "bar")),
+        (b"herp\n".to_vec(), b"bar\nautosaved\n".to_vec())
+    );
+}
+
+/// ADR-097: a git dir on another filesystem than the work tree (here tmpfs) gives stamps from another clock and
+/// device: no name-only query, the content verification runs.
+#[test]
+fn a_git_dir_on_another_device_runs_the_content_verification() {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let shm = Path::new("/dev/shm");
+        if !shm.is_dir() {
+            return;
+        }
+        let Ok(gitdirs) = tempfile::tempdir_in(shm) else {
+            return;
+        };
+        let sb = Sandbox::new();
+        let repo = sb.path("r");
+        std::fs::create_dir_all(&repo).unwrap();
+        if std::fs::metadata(&repo).unwrap().dev()
+            == std::fs::metadata(gitdirs.path()).unwrap().dev()
+        {
+            return;
+        }
+        let git_dir = gitdirs.path().join("r.git");
+        sb.git(
+            &repo,
+            &[
+                OsStr::new("init"),
+                OsStr::new("-q"),
+                OsStr::new("--separate-git-dir"),
+                git_dir.as_os_str(),
+                OsStr::new("."),
+            ],
+        );
+        sb.write(&repo, "foo", FOO.as_bytes());
+        sb.git(&repo, &["add", "foo"]);
+        sb.write(&repo, "foo", b"herp\n");
+        let spy = Spy::new();
+        let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+        assert_eq!(
+            info.git_dir,
+            snp_pycompat::ospath::realpath(git_dir.as_os_str(), &repo).unwrap()
+        );
+        let (cx, _, _) = sb.ctx_with(git, info);
+        settle();
+        let g = snp_stash::enter(cx).unwrap();
+        assert_eq!(
+            (content_diffs(&spy), count(&spy, "diff-index --name-only")),
+            (2, 0),
+            "{:?}",
+            spy.calls()
+        );
+        assert_eq!(sb.read(&repo, "foo"), FOO.as_bytes());
+        g.restore().unwrap();
+        assert_eq!(sb.read(&repo, "foo"), b"herp\n");
+    }
+}
+
+/// ADR-097 with D-DATA-19's rollback: a stash verified by stamps, a hook fix that conflicts with the patch and one in
+/// a file outside the patch. The rollback checks out the patch's files and every file `git diff` shows changed, so
+/// both fixes are discarded and the unstaged work comes back.
+#[test]
+fn a_rollback_after_a_stamp_verified_stash_discards_fixes_outside_the_patch() {
+    let sb = Sandbox::new();
+    let repo = sb.init("r");
+    sb.write(&repo, "foo", FOO.as_bytes());
+    sb.write(&repo, "bar", b"bar\n");
+    sb.git(&repo, &["add", "foo", "bar"]);
+    sb.write(&repo, "foo", FOO.replace('1', "a").as_bytes());
+    let spy = Spy::new();
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+    let (cx, out, _) = sb.ctx_with(git, info);
+    settle();
+    let g = snp_stash::enter(cx).unwrap();
+    let expected_content_diffs = if stamps_possible(&repo) { 1 } else { 2 };
+    assert_eq!(
+        content_diffs(&spy),
+        expected_content_diffs,
+        "{:?}",
+        spy.calls()
+    );
+    // The hook: a fix on the patch's line, and one in a file the patch does not touch.
+    sb.write(&repo, "foo", FOO.replace('1', "b").as_bytes());
+    sb.write(&repo, "bar", b"bar fixed\n");
+    g.restore().unwrap();
+    assert!(
+        out.text().contains("Rolling back fixes..."),
+        "{}",
+        out.text()
+    );
+    assert_eq!(
+        (sb.read(&repo, "foo"), sb.read(&repo, "bar")),
+        (FOO.replace('1', "a").into_bytes(), b"bar\n".to_vec())
+    );
 }
 
 #[test]
@@ -320,14 +659,9 @@ fn files_that_keep_changing_abort_before_any_mutation() {
             1
         )
     );
-    // 1 streamed + (verify + rewrite) × 3 + the last verify.
-    assert_eq!(
-        spy.calls()
-            .iter()
-            .filter(|c| c.starts_with("diff-index"))
-            .count(),
-        8
-    );
+    // 1 streamed + (verify + rewrite) × 3 + the last verify (the stamp pass falls back: every write is newer than
+    // the lock).
+    assert_eq!(content_diffs(&spy), 8, "{:?}", spy.calls());
     assert!(!spy.calls().iter().any(|c| c.contains("checkout")));
     assert_eq!(
         out.text(),
@@ -646,6 +980,81 @@ fn ita_only_with_an_unwritable_store_writes_the_pointer_and_notes_it() {
             "snp: could not write the stash journal in {} ([Errno 13] Permission denied",
             sb.patches().display()
         )));
+        assert_eq!(sb.status_of(&repo, "n"), "A");
+        assert!(!repo.join(".git/snp-stash.journal").exists());
+    }
+}
+
+/// The pointer-only case: intent-to-add files are cleared while the store cannot take the journal, and the store is
+/// writable again when the patch is created. The run stashes with the git-dir pointer alone (the patch's directory
+/// entry is synced by the stash itself, as no store journal did it), and restores everything.
+#[test]
+fn a_patch_stashed_with_only_the_pointer_journal_is_restored() {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if rustix::process::geteuid().is_root() {
+            return;
+        }
+        let sb = Sandbox::new();
+        // git < 2.19 does not report intent-to-add files (D-DATA-17): no journal before the patch there.
+        let floor = snp_git::GitVersion {
+            major: 2,
+            minor: 19,
+            patch: 0,
+        };
+        if sb.exe().caps.version.is_some_and(|v| v < floor) {
+            return;
+        }
+        let repo = sb.foo_staged("r");
+        sb.write(&repo, "n", b"x\n");
+        sb.git(&repo, &["add", "--intent-to-add", "n"]);
+        sb.write(&repo, "foo", b"herp\n");
+        std::fs::create_dir_all(sb.patches()).unwrap();
+        std::fs::set_permissions(sb.patches(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        let spy = Spy::new();
+        {
+            let patches = sb.patches();
+            spy.before(
+                &["rm", "--cached"],
+                Some(1),
+                Box::new(move |_| {
+                    std::fs::set_permissions(&patches, std::fs::Permissions::from_mode(0o700))
+                        .unwrap();
+                }),
+            );
+        }
+        let seen = Arc::new(Mutex::new(None));
+        {
+            let seen = Arc::clone(&seen);
+            let repo = repo.clone();
+            spy.before(
+                &["-c", "submodule.recurse=0", "checkout"],
+                Some(1),
+                Box::new(move |_| *seen.lock().unwrap() = Some(pointer(&repo))),
+            );
+        }
+        let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+        let (cx, out, err) = sb.ctx_with(git, info);
+        let g = snp_stash::enter(cx).unwrap();
+        let p = patch_of(&g);
+        let ptr = seen.lock().unwrap().take().unwrap();
+        assert_eq!(
+            (
+                ptr["state"].as_str(),
+                ptr["journal"].is_null(),
+                ptr["patch"].as_str()
+            ),
+            (Some("stashed"), true, Some(&*p.to_string_lossy()))
+        );
+        assert_eq!(sb.read(&repo, "foo"), FOO.as_bytes());
+        g.restore().unwrap();
+        assert!(
+            err.text()
+                .starts_with("snp: could not write the stash journal in ")
+        );
+        assert!(out.text().contains("[INFO] Restored changes from "));
+        assert_eq!(sb.read(&repo, "foo"), b"herp\n");
         assert_eq!(sb.status_of(&repo, "n"), "A");
         assert!(!repo.join(".git/snp-stash.journal").exists());
     }

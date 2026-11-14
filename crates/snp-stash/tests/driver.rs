@@ -255,7 +255,14 @@ mod process {
 
     #[test]
     fn sigterm_at_each_transition_restores_the_pre_run_state() {
-        for at in ["write-tree", "diff-index", "checkout", "apply", "add"] {
+        for at in [
+            "write-tree",
+            "diff-index",
+            "apply-numstat",
+            "checkout",
+            "apply",
+            "add",
+        ] {
             let sb = Sandbox::new();
             let repo = scenario(&sb);
             let index = sb.index(&repo);

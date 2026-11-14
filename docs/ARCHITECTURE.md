@@ -49,7 +49,7 @@ Each invariant has an owner, a mechanism and a test family; weakening one needs 
 |---|---|---|---|
 | S1 | No `unsafe` in snp code | `unsafe_code = "forbid"` workspace lint; platform needs via safe APIs of `rustix`, `signal-hook`, `ctrlc`, `winapi-util`, `process-wrap`, std `CommandExt` | `xtask check-unsafe`, CI |
 | S2 | No panic reachable from input | clippy `unwrap_used/expect_used/panic/indexing_slicing/string_slice/todo/unimplemented/unreachable/arithmetic_side_effects/unchecked_time_subtraction = deny`, `disallowed-macros` (`assert*!`) and `disallowed-methods` (panicking std APIs, thread spawns, §1.3) outside tests; thread creation through `Builder::spawn_scoped` (an OS refusal is a `Failure`, not a panic); duration env vars parsed with `Duration::try_from_secs_f64` and an upper bound; bounded recursion (§11.4); `overflow-checks` only as a backstop (ADR-066) | fuzz targets (256 KiB stacks, 512 MB RSS) |
-| S3 | The user's unstaged work survives any single failure | durable patch re-verified immediately before the stash checkout, journal + pointer file in the git dir, worktree lock, restore on every exit path, restore-critical git commands in their own process group and never signalled (`Role::Critical`), descendants of cancelled hooks killed before the restore (Linux subreaper, Windows job; macOS residual risk documented in D-DATA-02), next-run recovery notice (snp-stash, §4) | fault-injection FI-01…FI-30, kill-9, signal, disk-full matrices (§13.6) |
+| S3 | The user's unstaged work survives any single failure | durable patch re-verified immediately before the stash checkout (stat stamps against the lock where they prove nothing changed, else a second `diff-index`; ADR-097), journal + pointer file in the git dir, worktree lock, restore on every exit path, restore-critical git commands in their own process group and never signalled (`Role::Critical`), descendants of cancelled hooks killed before the restore (Linux subreaper, Windows job; macOS residual risk documented in D-DATA-02), next-run recovery notice (snp-stash, §4) | fault-injection FI-01…FI-30, kill-9, signal, disk-full matrices (§13.6) |
 | S4 | Fail closed | no error path exits 0 unless every selected hook ran and passed; EPIPE → 120; malformed pre-push → 3; missing binary in hook script → 1 | `fail_closed_*` property tests over injected faults |
 | S5 | Parity by default, divergence by register | every difference from 4.7.0 has an ID in COMPATIBILITY §5 and a differential scenario asserting it still diverges | difftest fails on unlisted diffs *and* on listed diffs that no longer reproduce |
 | S6 | No process-global mutable state | immutable `Env` snapshot threaded explicitly; never `set_var`/`remove_var`/`set_current_dir` (clippy `disallowed-methods`) | lint; tests run in parallel |
@@ -1895,6 +1895,7 @@ impl StashGuard {
     pub fn stashed(&self) -> &Stashed;
     pub fn diff_index_clean(&self) -> bool;                              // diff-index rc 0 ⇒ baseline digest known empty
     pub fn child_env_token(&self) -> Option<(&'static str, OsString)>;   // ("_SNP_STASH_LOCK", token) for nested runs
+    pub fn lock_contended(&self) -> bool;                                // the lock was taken on the wait path: earlier reads may be stale
     /// `stage_fixed` (§8.3): apply --check; journal `staging-fixed {paths}` durably; `git --literal-pathspecs add -- <paths>`;
     /// Ok(false) = would not apply (nothing staged).
     pub fn stage_fixed(&mut self, paths: &[RepoPath]) -> Result<bool, Failure>;
@@ -2703,22 +2704,42 @@ notice).
 5. **Diff.** `git diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff <tree> --` with
    `GIT_DIFF_OPTS` removed (hazard (a), D-DATA-11). stdout is **streamed** (never held in memory) directly into the
    final name `patches/patch<unix_secs>-<pid>` created with `create_new` 0600 (EEXIST → `-<n>` suffix: two runs with
-   the same second and pid — possible across PID namespaces sharing a store — never overwrite each other), hashing it
-   with blake3 on the way; stderr captured.
+   the same second and pid — possible across PID namespaces sharing a store — never overwrite each other); stderr
+   captured. Nothing is hashed (ADR-097: the re-verification compares bytes or stamps).
    * rc 0, or rc 1 with `bytes.strip()`-empty output → delete the file, no stash (`diff_index_clean()` is true
      only for rc 0).
    * other rc → FatalError `{prog} failed to diff -- perhaps due to permissions?\n\n<CalledProcessError format A>`.
 6. **Make the patch durable.** `sync_all` the patch, write the journal (`{state:"stashed", tree, patch}`, `create_new`)
-   and the pointer, `sync_all` them, fsync the directory **once**. Then **re-verify**: run `diff-index` again into a
-   blake3 hasher (no file); a different digest (an editor autosave landed during the fsyncs) rewrites the patch and
-   re-verifies, at most 3 times, else FatalError `snp: unstaged files kept changing while stashing; nothing was
-   modified` (exit 1). The capture→checkout window is then as short as pre-commit's. Print `[WARNING] Unstaged files
-   detected.` / `[INFO] Stashing unstaged files to <abs path>.`. A full disk or EIO here aborts **before any worktree
-   mutation**.
+   and the pointer, `sync_all` them. The directory of the patch is synced once: by the creation or replacement of the
+   store journal (both sync `patches/` after the patch was created), or, when there is no store journal (intent-to-add
+   files were cleared with an unwritable store and the patch could be created later), by an explicit fsync of
+   `patches/`. Then **list the patch's paths** (step 8's `git apply --numstat -z --whitespace=nowarn <patch>`) and
+   only then **re-verify** (ADR-097):
+   * **Stat stamps**, when they can prove that nothing the patch could include changed since the lock was taken.
+     `M0` = `max(ctime, mtime)` of the lock file `fstat`ed right after the token write (step 1), before the first
+     `diff-index`; none for a nested run, on Windows, when the token write failed, or with `SNP_STASH_REVERIFY=diff`.
+     Required: Linux (macOS falls back until APFS/HFS+ are checked to bump ctime on rename); work tree and git dir
+     `stat_oracle_safe`, the work tree on the lock's `st_dev`; the wall clock not before `M0` and within 100 ms of the
+     monotonic clock's progress since `M0` (checked before and after the pass); `git diff-index --name-only -z
+     --ignore-submodules <tree> --` succeeds and lists only files of the patch (an autosave of any other tracked file
+     falls back, with git's racy check); every listed path a regular file or symlink on the lock's device with
+     `max(ctime, mtime) < M0` (strict, no margin), every directory between it and the root too, and `$GIT_DIR/config`,
+     `config.worktree`, the common config and both `info/attributes` when present. Anything missing, any error, any
+     doubt → the fallback.
+   * **Fallback** (ADR-067): run `diff-index` again and compare its output byte for byte, and in length, with the
+     durable patch read back through a new handle; a difference (an editor autosave landed during the fsyncs)
+     rewrites the patch, lists its paths again and re-verifies, at most 3 times, else FatalError `snp: unstaged
+     files kept changing while stashing; nothing was modified` (exit 1).
+
+   The verification is the last read of the worktree before the checkout, and its outcome wins: a listing error is
+   reported only once the patch is verified (vanished changes and the FatalError print no stash line). The
+   capture→checkout window is then as short as pre-commit's. Print `[WARNING] Unstaged files detected.` / `[INFO]
+   Stashing unstaged files to <abs path>.`. A full disk or EIO here aborts **before any worktree mutation**.
 7. (No process-wide restore registry, ADR-066: the explicit `restore()` on the main thread, the panic-path
    `RunState::drop` and token cancellation cover every exit path; the panic hook and the signal thread never restore.)
 8. **Checkout of the patch's files** (D-DATA-19, ADR-093; pre-commit: `git -c submodule.recurse=0 checkout -- .`):
-   `git apply --numstat -z <patch>` lists them (no file listed: `ValueError` before any mutation), then `git -c
+   `git apply --numstat -z <patch>`, run in step 6 before the re-verification, lists them (no file listed:
+   `ValueError` before any mutation), then `git -c
    submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul` reads them as `:(literal)` pathspecs
    from stdin, with `_PRE_COMMIT_SKIP_POST_CHECKOUT=1` and without `GIT_*_PATHSPECS`, `Role::Critical` (checked). A
    change git cannot see (a clean filter, `--assume-unchanged`) is never overwritten. A failure here still goes

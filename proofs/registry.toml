@@ -244,8 +244,10 @@ witnesses = [
     "crates/snp-stash/tests/behaviour/hidden.rs::a_hook_edit_outside_the_users_hunks_merges_without_a_rollback",
 ]
 anchors = [
-    { item = "crates/snp-stash/src/guard.rs::enter", fingerprint = "3056f468d1771bce" },
-    { item = "crates/snp-stash/src/guard.rs::Inner::stash", fingerprint = "d4804a53d328af23" },
+    { item = "crates/snp-stash/src/guard.rs::enter", fingerprint = "ba145a563bcd3a53" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::stash", fingerprint = "12636d4bb2b6118d" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::first_pass", fingerprint = "100a5369eaa31173" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::secure", fingerprint = "d811231686b3c2b3" },
     { item = "crates/snp-stash/src/guard.rs::Inner::stage_fixed", fingerprint = "cec3d73a66bef646" },
     { item = "crates/snp-stash/src/guard.rs::Inner::git_apply", fingerprint = "8cbc686e7d1df3e6" },
     { item = "crates/snp-stash/src/guard.rs::Inner::rollback_checkout", fingerprint = "98a0585191f9197c" },
