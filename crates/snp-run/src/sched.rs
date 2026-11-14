@@ -7,8 +7,9 @@
 //!
 //! Owner: WP-32.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::OsString;
+use std::ffi::OsStr;
 use std::path::Path;
 use std::time::Instant;
 
@@ -17,6 +18,7 @@ use snp_core::failure::Failure;
 use snp_core::lang::LanguageId;
 use snp_core::output::Printer;
 use snp_core::path::RepoPath;
+use snp_files::FileId;
 use snp_files::{Classifier, HookFilter};
 use snp_git::Git;
 use snp_proc::tty::Terminal;
@@ -104,10 +106,12 @@ impl Done {
 struct Job<'h> {
     pos: usize,
     hook: &'h ResolvedHook,
-    /// The files passed (`()` when `pass_filenames: false`), relative to the hook's cwd.
-    argv_files: Vec<OsString>,
-    /// The hook's input files (root-relative): `stage_fixed` and bucket attribution.
-    inputs: Vec<RepoPath>,
+    /// The files passed (`()` when `pass_filenames: false`), relative to the hook's cwd: borrowed from the run's
+    /// file table (an owned name only where the table's view is not the argv bytes; ADR-103).
+    argv_files: Vec<Cow<'h, OsStr>>,
+    /// The hook's input files; their root-relative [`RepoPath`]s ([`input_paths`]) are built only where they are
+    /// consumed (`stage_fixed` stamps, bucket attribution).
+    ids: Vec<FileId>,
 }
 
 /// The effective `priority` (implicit = flattened index).
@@ -299,7 +303,7 @@ impl Out<'_> {
             });
         if let Err(e) = r {
             let text =
-                snp_core::failure::pyerr::os_error_text(&e, Some(std::ffi::OsStr::new(name)), None);
+                snp_core::failure::pyerr::os_error_text(&e, Some(OsStr::new(name)), None);
             self.printer.log(
                 snp_core::output::Level::Warning,
                 &messages::log_file_failed(name, &text),
@@ -345,7 +349,7 @@ pub(crate) fn run_hooks(l: &Loop<'_>, oracle: &mut DiffOracle) -> Result<LoopRes
             let Some(h) = l.hooks.get(pos).copied() else {
                 continue;
             };
-            let (argv_files, inputs) = filenames(l, h)?;
+            let (argv_files, ids) = filenames(l, h)?;
             if l.skipped.get(pos).copied().unwrap_or(false) {
                 out.done.insert(pos, Done::skipped(Status::Skipped));
             } else if argv_files.is_empty() && !h.def.always_run {
@@ -359,7 +363,7 @@ pub(crate) fn run_hooks(l: &Loop<'_>, oracle: &mut DiffOracle) -> Result<LoopRes
                     } else {
                         Vec::new()
                     },
-                    inputs,
+                    ids,
                 });
             }
         }
@@ -426,8 +430,12 @@ fn secs(e: &ExecEnv<'_>, t: Instant) -> f64 {
 }
 
 /// `classifier.filenames_for_hook(hook)` for every hook (skipped ones too: the tag cache fills in pre-commit's order)
-/// unless the hook never consults files; `(argv files relative to the hook cwd, root-relative inputs)`.
-fn filenames(l: &Loop<'_>, h: &ResolvedHook) -> Result<(Vec<OsString>, Vec<RepoPath>), Failure> {
+/// unless the hook never consults files; `(argv files relative to the hook cwd, the files' ids)`. The argv names are
+/// borrowed from the classifier's file table (ADR-103).
+fn filenames<'a>(
+    l: &Loop<'a>,
+    h: &ResolvedHook,
+) -> Result<(Vec<Cow<'a, OsStr>>, Vec<FileId>), Failure> {
     let Some(c) = l.classifier else {
         return Ok((Vec::new(), Vec::new()));
     };
@@ -445,22 +453,49 @@ fn filenames(l: &Loop<'_>, h: &ResolvedHook) -> Result<(Vec<OsString>, Vec<RepoP
     )
     .map_err(|err| Failure::unexpected("re.error", err.to_string()))?;
     let ids = c.for_hook(&f, &l.e.cx.pool)?;
-    let mut argv = Vec::new();
-    let mut inputs = Vec::new();
-    for id in ids {
-        match &h.def.ext.root {
-            Some(prefix) => {
-                if let Some(rel) = c.table.relative_to(id, prefix) {
-                    argv.push(crate::files::os_from_bytes(&rel));
-                }
-            }
-            None => argv.push(c.table.os(id).into_owned()),
-        }
-        if let Some(p) = RepoPath::new(c.table.bytes(id)) {
-            inputs.push(p);
+    let table = &c.table;
+    let argv = match &h.def.ext.root {
+        Some(prefix) => ids
+            .iter()
+            .filter_map(|&id| table.relative_to(id, prefix).map(os_cow))
+            .collect(),
+        None => ids.iter().map(|&id| table.os(id)).collect(),
+    };
+    Ok((argv, ids))
+}
+
+/// Table bytes as an argv name: borrowed when the bytes are the name (Unix always; elsewhere valid UTF-8), else the
+/// owned conversion of [`crate::files::os_from_bytes`].
+fn os_cow(b: Cow<'_, [u8]>) -> Cow<'_, OsStr> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
+        match b {
+            Cow::Borrowed(b) => Cow::Borrowed(OsStr::from_bytes(b)),
+            Cow::Owned(v) => Cow::Owned(std::ffi::OsString::from_vec(v)),
         }
     }
-    Ok((argv, inputs))
+    #[cfg(not(unix))]
+    {
+        match b {
+            Cow::Borrowed(b) => match std::str::from_utf8(b) {
+                Ok(s) => Cow::Borrowed(OsStr::new(s)),
+                Err(_) => Cow::Owned(crate::files::os_from_bytes(b)),
+            },
+            Cow::Owned(v) => Cow::Owned(crate::files::os_from_bytes(&v)),
+        }
+    }
+}
+
+/// The root-relative paths of a job's input files (`RepoPath::new` of each table name; the invalid ones dropped, so
+/// an empty list still means "no valid input path").
+fn input_paths(l: &Loop<'_>, ids: &[FileId]) -> Vec<RepoPath> {
+    let Some(c) = l.classifier else {
+        return Vec::new();
+    };
+    ids.iter()
+        .filter_map(|&id| RepoPath::new(c.table.bytes(id)))
+        .collect()
 }
 
 /// Whether modifications fail this hook (`fail_on_changes`).
@@ -548,12 +583,12 @@ impl Fixes {
 /// `git diff --name-only -z` (worktree vs index) as root-relative paths: the tracked files currently dirty.
 fn dirty(git: &Git) -> Result<BTreeSet<RepoPath>, Failure> {
     let args = [
-        std::ffi::OsStr::new("diff"),
-        std::ffi::OsStr::new("--name-only"),
-        std::ffi::OsStr::new("-z"),
-        std::ffi::OsStr::new("--no-ext-diff"),
-        std::ffi::OsStr::new("--no-textconv"),
-        std::ffi::OsStr::new("--ignore-submodules"),
+        OsStr::new("diff"),
+        OsStr::new("--name-only"),
+        OsStr::new("-z"),
+        OsStr::new("--no-ext-diff"),
+        OsStr::new("--no-textconv"),
+        OsStr::new("--ignore-submodules"),
     ];
     let c = git.run_raw(&args)?;
     Ok(c.stdout
@@ -619,7 +654,13 @@ fn run_one(
     let root = e.git.root();
     let h = job.hook;
     let sf = stage_fixed(l, h);
-    let inputs: BTreeSet<&RepoPath> = job.inputs.iter().collect();
+    // the input paths and their set exist only for an active `stage_fixed`
+    let input_list = if sf.is_some() {
+        input_paths(l, &job.ids)
+    } else {
+        Vec::new()
+    };
+    let inputs: BTreeSet<&RepoPath> = input_list.iter().collect();
     let dirty_before = if sf.is_some() {
         dirty(e.git)?
     } else {
@@ -628,7 +669,7 @@ fn run_one(
     // M: the hook's inputs; O also counts files an earlier hook already dirtied (stamped: usually few)
     let (input_stamps, other_stamps) = if sf.is_some() {
         (
-            stamp::stamps(root, &job.inputs),
+            stamp::stamps(root, &input_list),
             stamp::stamps(root, dirty_before.iter().filter(|p| !inputs.contains(p))),
         )
     } else {
@@ -749,9 +790,11 @@ fn run_bucket(
     let e = l.e;
     let root = e.git.root();
     let dirty_before = dirty(e.git)?;
-    let watched: BTreeSet<RepoPath> = jobs
+    let inputs: Vec<Vec<RepoPath>> = jobs.iter().map(|j| input_paths(l, &j.ids)).collect();
+    let watched: BTreeSet<RepoPath> = inputs
         .iter()
-        .flat_map(|j| j.inputs.iter().cloned())
+        .flatten()
+        .cloned()
         .chain(dirty_before.iter().cloned())
         .collect();
     let before = stamp::stamps(root, &watched);
@@ -769,7 +812,7 @@ fn run_bucket(
         let dirty_after = dirty(e.git)?;
         let mut changed: BTreeSet<RepoPath> = stamp::changed(root, &before).into_iter().collect();
         changed.extend(dirty_after.difference(&dirty_before).cloned());
-        attribute(&rans, &jobs, &changed, is_writer)
+        attribute(&rans, &jobs, &inputs, &changed, is_writer)
     } else {
         BTreeSet::new()
     };
@@ -873,9 +916,11 @@ fn run_concurrently(lp: &Loop<'_>, jobs: &[Job<'_>]) -> Result<Vec<BucketRun>, F
 /// file list (`pass_filenames: false`, or no inputs) could have written any path. Otherwise every writer fails
 /// (conservative, fail closed). A writer can still write outside its inputs undetected by this rule; the run's exit
 /// status is never affected (some hook always fails), only which one is named.
+/// `inputs` holds each job's [`input_paths`].
 fn attribute(
     rans: &[BucketRun],
     jobs: &[Job<'_>],
+    inputs: &[Vec<RepoPath>],
     changed: &BTreeSet<RepoPath>,
     is_writer: impl Fn(&Ran, &Job<'_>) -> bool,
 ) -> BTreeSet<usize> {
@@ -885,8 +930,9 @@ fn attribute(
         .enumerate()
         .filter(|(_, ((r, _), j))| is_writer(r, j))
         .map(|(i, (_, j))| {
-            let unconstrained = !j.hook.def.pass_filenames || j.inputs.is_empty();
-            (i, (!unconstrained).then(|| j.inputs.iter().collect()))
+            let mine: &[RepoPath] = inputs.get(i).map_or(&[], Vec::as_slice);
+            let unconstrained = !j.hook.def.pass_filenames || mine.is_empty();
+            (i, (!unconstrained).then(|| mine.iter().collect()))
         })
         .collect();
     let all: BTreeSet<usize> = writers.iter().map(|(i, _)| *i).collect();
