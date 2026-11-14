@@ -919,6 +919,52 @@ fn g10_model_files_and_oracles() {
     );
 }
 
+/// A protocol model (K9) has no oracle: it names the behaviour tests that witness its scenarios, and each must exist.
+#[test]
+fn g10_a_model_without_an_oracle_names_existing_witnesses() {
+    let witnessed = |w: &str| {
+        let mut t = good();
+        let reg = t.read(REGISTRY).unwrap();
+        let mut out = String::new();
+        for line in reg.lines() {
+            if [
+                "oracle =",
+                "oracle_test =",
+                "driver_fingerprint =",
+                "oracle_test_fingerprint =",
+            ]
+            .iter()
+            .any(|k| line.starts_with(k))
+            {
+                continue;
+            }
+            out.push_str(line);
+            out.push('\n');
+            if line.starts_with("theorems =") && !w.is_empty() {
+                out.push_str("witnesses = [\"");
+                out.push_str(w);
+                out.push_str("\"]\n");
+            }
+        }
+        t.put(REGISTRY, &out);
+        t
+    };
+    assert_eq!(
+        problems(&witnessed("crates/demo/tests/oracle.rs::oracle_agrees")),
+        Vec::<Problem>::new()
+    );
+    let p = problems(&witnessed("crates/demo/tests/oracle.rs::no_such_test"));
+    assert!(
+        p.len() == 1 && p[0].guard == "G10" && p[0].msg.contains("witness"),
+        "{p:#?}"
+    );
+    let p = problems(&witnessed(""));
+    assert!(
+        p.len() == 1 && p[0].guard == "G10" && p[0].msg.contains("witnesses"),
+        "{p:#?}"
+    );
+}
+
 // The V2 manifest -----------------------------------------------------------------------------------------------
 
 #[test]

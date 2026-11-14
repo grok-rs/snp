@@ -13,7 +13,7 @@
 //! | G7 | `reason = "verus: …"` expectations only on functions of mounted kernel files |
 //! | G8 | every impl of a kernel trait outside kernel files is a `[[trusted]]` entry whose named test exists |
 //! | G9 | exec code in a kernel file names no path rooted in `crate`, `super`, `self::super` or an external crate; no out-of-line `mod`, `#[path]`, `extern crate` or unparsed item; the kernel's crate has no `#[macro_use]` or `extern crate` |
-//! | G10 | every caller exists and calls the kernel; every model file, oracle and anchor exists; every anchor, oracle driver and oracle test fingerprint matches |
+//! | G10 | every caller exists and calls the kernel; every model file, oracle (or, without one, named witness test) and anchor exists; every anchor, oracle driver and oracle test fingerprint matches |
 //!
 //! Tokens are compared after syn's lexing and with raw identifiers unrawed (`r#x` is `x`), so comments and string
 //! contents never trigger a guard; macro bodies (which syn does not parse) are scanned token by token.
@@ -1538,44 +1538,41 @@ fn g10(tree: &Tree, reg: &Registry, r: &mut Report) {
         .read(&format!("{LEAN_DIR}/lakefile.toml"))
         .unwrap_or_default();
     for m in &reg.models {
-        for (what, path) in [("lean", &m.lean), ("oracle_test", &m.oracle_test)] {
-            if !tree.is_file(path) {
-                r.add(
-                    "G10",
-                    REGISTRY,
-                    format!("model {}: {what} file {path} does not exist", m.id),
-                );
-            }
+        if !tree.is_file(&m.lean) {
+            r.add(
+                "G10",
+                REGISTRY,
+                format!("model {}: lean file {} does not exist", m.id, m.lean),
+            );
         }
-        match driver_file(&lakefile, &m.oracle) {
-            None => r.add(
+        if let Some(o) = &m.oracle {
+            g10_oracle(tree, &lakefile, &m.id, o, r);
+        } else if m.witnesses.is_empty() {
+            r.add(
                 "G10",
                 REGISTRY,
                 format!(
-                    "model {}: oracle `{}` is not a lean_exe (with a root) of {LEAN_DIR}/lakefile.toml",
-                    m.id, m.oracle
+                    "model {}: a model without an oracle names the behaviour tests that witness its scenarios (`witnesses`)",
+                    m.id
                 ),
-            ),
-            Some(driver) => {
-                // The driver and the oracle test decide what "the oracle agrees" means; neither is proved, so any
-                // edit to them asks for a re-review, like an anchor.
-                for (what, path, pinned, key) in [
-                    ("oracle driver", driver.as_str(), &m.driver_fingerprint, "driver_fingerprint"),
-                    ("oracle test", m.oracle_test.as_str(), &m.oracle_test_fingerprint, "oracle_test_fingerprint"),
-                ] {
-                    match fingerprint::of_file(tree, path) {
-                        Err(e) => r.add("G10", REGISTRY, format!("model {}: {e:#}", m.id)),
-                        Ok(fp) if fp != *pinned => r.add(
+            );
+        }
+        for w in &m.witnesses {
+            match fingerprint::split_anchor(w) {
+                Ok((file, test)) => {
+                    let exists = tree
+                        .read(file)
+                        .and_then(|s| syn::parse_file(&s).ok())
+                        .is_some_and(|f| !fns_named(&f, test).is_empty());
+                    if !exists {
+                        r.add(
                             "G10",
                             REGISTRY,
-                            format!(
-                                "model {}: model link stale: {what} {path} changed (fingerprint {fp}, registry {key} {pinned}): re-review that it still runs the proved functions and asserts every answer, then update the fingerprint",
-                                m.id
-                            ),
-                        ),
-                        Ok(_) => {}
+                            format!("model {}: witness {w} does not exist", m.id),
+                        );
                     }
                 }
+                Err(e) => r.add("G10", REGISTRY, format!("model {}: witness {e:#}", m.id)),
             }
         }
         let mut pinned: Vec<&String> = m.statements.keys().collect();
@@ -1621,6 +1618,48 @@ fn g10(tree: &Tree, reg: &Registry, r: &mut Report) {
                     ),
                 ),
                 Ok(_) => {}
+            }
+        }
+    }
+}
+
+/// G10 for a model's oracle: the test file exists, the executable is a `lean_exe` of the package, and the driver and
+/// the test match their fingerprints.
+fn g10_oracle(tree: &Tree, lakefile: &str, id: &str, o: &super::Oracle, r: &mut Report) {
+    if !tree.is_file(&o.test) {
+        r.add(
+            "G10",
+            REGISTRY,
+            format!("model {id}: oracle_test file {} does not exist", o.test),
+        );
+    }
+    match driver_file(lakefile, &o.exe) {
+        None => r.add(
+            "G10",
+            REGISTRY,
+            format!(
+                "model {id}: oracle `{}` is not a lean_exe (with a root) of {LEAN_DIR}/lakefile.toml",
+                o.exe
+            ),
+        ),
+        Some(driver) => {
+            // The driver and the oracle test decide what "the oracle agrees" means; neither is proved, so any
+            // edit to them asks for a re-review, like an anchor.
+            for (what, path, pinned, key) in [
+                ("oracle driver", driver.as_str(), &o.driver_fingerprint, "driver_fingerprint"),
+                ("oracle test", o.test.as_str(), &o.test_fingerprint, "oracle_test_fingerprint"),
+            ] {
+                match fingerprint::of_file(tree, path) {
+                    Err(e) => r.add("G10", REGISTRY, format!("model {id}: {e:#}")),
+                    Ok(fp) if fp != *pinned => r.add(
+                        "G10",
+                        REGISTRY,
+                        format!(
+                            "model {id}: model link stale: {what} {path} changed (fingerprint {fp}, registry {key} {pinned}): re-review that it still runs the proved functions and asserts every answer, then update the fingerprint"
+                        ),
+                    ),
+                    Ok(_) => {}
+                }
             }
         }
     }

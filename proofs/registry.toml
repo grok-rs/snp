@@ -67,7 +67,7 @@ mutants = [
     { find = "Some(&b) if is_eol(b) => start = i,", replace = "Some(&b) if b == 10 => start = i," },
 ]
 
-# [[model]]: Lean models with oracle tests and fingerprinted anchors (K3, K4).
+# [[model]]: Lean models with fingerprinted anchors: oracle tests (K3, K4) or, for a protocol model, named witnesses (K9).
 # [[trusted]]: empty in M1 (§10 row 8). From M2: { item = "Memchr: FindByte", kernel = "K5", test = "…" }
 
 [[model]]
@@ -128,3 +128,49 @@ anchors = [
 "SnpModels.Shlex.pySplit_eq_split" = "67a279bf3ae4866e"
 "SnpModels.Shlex.split_quote" = "4ab0fa788ac59903"
 "SnpModels.Shlex.split_join" = "c86111f19da7c967"
+
+# K9: a protocol model (Lean only, docs/VERIFICATION.md §9.2). No oracle: nothing executable is compared; the
+# behaviour tests below exercise the modelled scenarios against real git (named witnesses, not a proof link). The
+# anchors pin the guard.rs steps and the snp-git calls the model describes; A1-A5 are fields of `Hyps`, not axioms.
+[[model]]
+id = "K9-stash-protocol"
+lean = "proofs/lean/SnpModels/Stash/Protocol.lean"
+theorems = [
+    "SnpModels.Stash.roundtrip",
+    "SnpModels.Stash.roundtrip_exact",
+    "SnpModels.Stash.residual_loss",
+    "SnpModels.Stash.precommit_loses_filter_hidden_change",
+    "SnpModels.Stash.precommit_loses_assume_unchanged_edit",
+    "SnpModels.Stash.rollback_complete",
+    "SnpModels.Stash.no_silent_loss",
+    "SnpModels.Stash.index_invariant",
+]
+witnesses = [
+    "crates/snp-stash/tests/behaviour/hidden.rs::a_change_a_clean_filter_hides_survives_the_stash",
+    "crates/snp-stash/tests/behaviour/hidden.rs::the_conflict_rollback_keeps_a_hidden_change_and_discards_every_visible_fix",
+    "crates/snp-stash/tests/behaviour/hidden.rs::an_assume_unchanged_edit_survives_the_stash",
+    "crates/snp-stash/tests/behaviour/hidden.rs::names_are_literal_pathspecs",
+]
+anchors = [
+    { item = "crates/snp-stash/src/guard.rs::enter", fingerprint = "3056f468d1771bce" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::stash", fingerprint = "d4804a53d328af23" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::stage_fixed", fingerprint = "cec3d73a66bef646" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::git_apply", fingerprint = "8cbc686e7d1df3e6" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::rollback_checkout", fingerprint = "f8efa048d39e5e99" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::restore_patch", fingerprint = "589050b70214ca80" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::finish", fingerprint = "ad4d9af3d498fa53" },
+    { item = "crates/snp-git/src/git.rs::Git::patch_paths", fingerprint = "189c9aee406d8b09" },
+    { item = "crates/snp-git/src/git.rs::Git::changed_paths", fingerprint = "b61db27db0cb3a63" },
+    { item = "crates/snp-git/src/git.rs::Git::rollback_paths", fingerprint = "68e261952a4a8281" },
+    { item = "crates/snp-git/src/git.rs::Git::checkout_paths", fingerprint = "d187d5caa7744a77" },
+    { item = "crates/snp-git/src/git.rs::Git::checkout_path_calls", fingerprint = "85e4464719d5a398" },
+]
+[model.statements]
+"SnpModels.Stash.roundtrip" = "85cff6b6ce4218dc"
+"SnpModels.Stash.roundtrip_exact" = "ea1d73c26c8fffbb"
+"SnpModels.Stash.residual_loss" = "bb275b5d7e4e9969"
+"SnpModels.Stash.precommit_loses_filter_hidden_change" = "fa0e11736d6d35a8"
+"SnpModels.Stash.precommit_loses_assume_unchanged_edit" = "c296dcc16bfb4ce6"
+"SnpModels.Stash.rollback_complete" = "956df0f2647cbbc1"
+"SnpModels.Stash.no_silent_loss" = "6bdf668f701a98f7"
+"SnpModels.Stash.index_invariant" = "e0b8ab6a659b7c3b"
