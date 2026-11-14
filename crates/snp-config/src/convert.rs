@@ -36,8 +36,16 @@ pub(crate) fn arc(s: &str) -> Arc<str> {
         .map_or_else(|| Arc::from(s), Arc::clone)
 }
 
+/// `m[k]` for a `str` key, found without building a `Value` key (no allocation, no hash). cfgv's `Value` equality
+/// never equates a `str` with another type and a dict holds each `str` key once, so the first string key equal to
+/// `k` is the entry `m.get(&Value::from(k))` finds; a non-string key never matches.
+///
+/// A probe costs one pass over the dict. Callers probe a dict only for a fixed set of literal keys (never for a name
+/// read from the input; such a probe stays hashed) and parse the extension keys in one pass, so a config costs at
+/// most a constant times its keys.
 pub(crate) fn get<'a>(m: &'a Map, k: &str) -> Option<&'a Value> {
-    m.get(&Value::from(k))
+    m.iter()
+        .find_map(|(key, v)| (key.as_str() == Some(k)).then_some(v))
 }
 
 pub(crate) fn get_str<'a>(m: &'a Map, k: &str) -> Option<&'a str> {
@@ -241,9 +249,9 @@ pub(crate) fn config(source: ConfigSource, raw: Value, ext_mode: ExtMode) -> Con
             },
         );
     let mut default_language_version = IndexMap::new();
+    let configured = get(m, "default_language_version").and_then(Value::as_map);
     for lang in LanguageId::ALL {
-        let v = get(m, "default_language_version")
-            .and_then(Value::as_map)
+        let v = configured
             .and_then(|d| get_str(d, lang.as_str()))
             .unwrap_or(DEFAULT);
         default_language_version.insert(lang, arc(v));
