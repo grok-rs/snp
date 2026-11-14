@@ -8,6 +8,9 @@
 //! `.gitattributes` of every directory holding a tracked path — existence counts), with racy entries (mtime or ctime
 //! within 2 s of the snapshot, git's own racy rule) content-hashed. Any difference runs the real `git diff`.
 //!
+//! On a clean `--all-files` run the oracle also guards the trusted index modes of the file table (ADR-106): it
+//! clears their flag after every hook that may have changed the worktree, whatever the diff says.
+//!
 //! Owner: WP-23.
 
 mod gitconfig;
@@ -15,6 +18,7 @@ mod gitconfig;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
 use snp_core::env::Env;
@@ -48,6 +52,9 @@ pub struct DiffOracle {
     /// The fingerprint after the last executed hook; `None` = stale (refreshed lazily by the next comparison).
     last: Option<DiffFingerprint>,
     stat: Option<Box<StatState>>,
+    /// The flag of the file table's trusted index modes (ADR-106), cleared after every hook that may have changed
+    /// the worktree.
+    trust: Option<Arc<AtomicBool>>,
 }
 
 /// Whether a hook changed the diff.
@@ -585,6 +592,7 @@ impl DiffOracle {
             },
             last: baseline,
             stat: stat.map(Box::new),
+            trust: None,
         };
         if oracle.last.is_some()
             && let Some(s) = oracle.stat.as_deref_mut()
@@ -619,6 +627,23 @@ impl DiffOracle {
         self.mode
     }
 
+    /// Guards the flag of the file table's trusted index modes (ADR-106): from now on every [`Self::after_hook`] and
+    /// [`Self::after_native`] clears it before it decides anything. That covers every kind of change (a real `git
+    /// diff` that differs, a Stat-mode delta, a native fixer's report) before `stage_fixed` may rewrite the result
+    /// to `Unchanged`, and every hook whose effect the diff cannot show: one that runs `git rm` or `git add` leaves
+    /// `git diff` empty while files appear or disappear (D-CRASH-08 promises deletions are seen). Hooks that never
+    /// reach the oracle (`reads_only` natives, meta hooks) cannot change the worktree.
+    pub fn guard_index_trust(&mut self, valid: Arc<AtomicBool>) {
+        self.trust = Some(valid);
+    }
+
+    /// Clears the trusted index modes' flag (ADR-106).
+    fn invalidate_trust(&self) {
+        if let Some(t) = &self.trust {
+            t.store(false, Ordering::Release);
+        }
+    }
+
     /// Falls back to Git mode for the rest of the run.
     fn fall_back_to_git_mode(&mut self) {
         self.mode = DiffMode::Git;
@@ -643,6 +668,7 @@ impl DiffOracle {
 
     /// After it: `Unchanged` without spawning when provably identical, else one real `git diff` and digest compare.
     pub fn after_hook(&mut self) -> Result<Change, Failure> {
+        self.invalidate_trust();
         if let Some(s) = self.stat.as_deref_mut() {
             let (delta, stats, taken) = s.compare();
             if !delta.any && self.last.is_some() {
@@ -722,6 +748,7 @@ impl DiffOracle {
         modified_tracked: bool,
         needs_real_diff: bool,
     ) -> Result<Change, Failure> {
+        self.invalidate_trust();
         if needs_real_diff {
             if let Some(s) = self.stat.as_deref_mut() {
                 s.take_snapshot();
