@@ -39,8 +39,11 @@ fn file_stamp(p: &Path) -> FileStamp {
     Some((md.len(), mtime, ino))
 }
 
+/// What a cached fact depends on: the index and `HEAD` stamps, plus the repository config stamps for the facts whose
+/// output follows `core.quotePath` / `diff.renames` (empty for the others).
+type Stamp = ([FileStamp; 2], Vec<FileStamp>);
 /// One cached fact and the stamp it was computed under.
-type Slot<T> = Mutex<Option<([FileStamp; 2], T)>>;
+type Slot<T> = Mutex<Option<(Stamp, T)>>;
 /// `(mode, path)` of every index entry.
 type Modes = Arc<[(u32, Vec<u8>)]>;
 
@@ -82,6 +85,41 @@ impl std::fmt::Debug for Derived {
             .field("tag", &self.key.1)
             .field("built", &self.cell.get().is_some())
             .finish()
+    }
+}
+
+/// A set of the per-run facts a native hook asks for, for [`PchFacts::prefetch`] (ADR-102).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FactSet(u8);
+
+impl FactSet {
+    /// No fact.
+    pub const NONE: Self = Self(0);
+    /// [`PchFacts::tracked_files`].
+    pub const TRACKED: Self = Self(1);
+    /// [`PchFacts::added_files`].
+    pub const ADDED: Self = Self(1 << 1);
+    /// `rev-parse --git-dir` through [`PchFacts::raw`].
+    pub const GIT_DIR: Self = Self(1 << 2);
+    /// `config core.fileMode` through [`PchFacts::raw`].
+    pub const FILE_MODE: Self = Self(1 << 3);
+    /// [`PchFacts::current_branch`].
+    pub const BRANCH: Self = Self(1 << 4);
+
+    /// Both sets.
+    #[must_use]
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    /// Every fact of `other` is in `self`.
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    /// No fact.
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
     }
 }
 
@@ -269,13 +307,23 @@ impl PchFacts {
         [file_stamp(&self.index_file), file_stamp(&self.head_file)]
     }
 
+    /// The value of `slot` when its stamp is current, else `compute()` (stored only on success). With `config`, the
+    /// stamp includes the repository config files ([`PchFacts::config_stamps`]).
     fn cached<T: Clone>(
         &self,
         slot: &Slot<T>,
+        config: bool,
         compute: impl FnOnce() -> Result<T, Failure>,
     ) -> Result<T, Failure> {
         let mut guard = snp_core::sync::lock(slot);
-        let stamp = self.stamp();
+        let stamp = (
+            self.stamp(),
+            if config {
+                self.config_stamps()
+            } else {
+                Vec::new()
+            },
+        );
         if let Some((s, v)) = guard.as_ref()
             && *s == stamp
         {
@@ -326,18 +374,20 @@ impl PchFacts {
     }
 
     /// `diff --staged --name-only --diff-filter=A` (`util.added_files`): C-quoted paths, rename detection per
-    /// `diff.renames`, split with `str.splitlines()` (09 §3).
+    /// `diff.renames`, split with `str.splitlines()` (09 §3). Cached while the index, `HEAD` and the repository
+    /// config files (`core.quotePath`, `diff.renames`) keep their stamps.
     pub fn added_files(&self) -> Result<Arc<[Vec<u8>]>, Failure> {
-        self.cached(&self.added, || {
+        self.cached(&self.added, true, || {
             let out =
                 self.cmd_output_checked(&["diff", "--staged", "--name-only", "--diff-filter=A"])?;
             Ok(Self::lines(&out))
         })
     }
 
-    /// `ls-files` (quoted, non `-z`): `check_case_conflict`'s `git ls-files` (09 §4.E).
+    /// `ls-files` (quoted, non `-z`): `check_case_conflict`'s `git ls-files` (09 §4.E). Cached while the index,
+    /// `HEAD` and the repository config files (`core.quotePath`) keep their stamps.
     pub fn tracked_files(&self) -> Result<Arc<[Vec<u8>]>, Failure> {
-        self.cached(&self.tracked, || {
+        self.cached(&self.tracked, true, || {
             let out = self.cmd_output_checked(&["ls-files"])?;
             Ok(Self::lines(&out))
         })
@@ -376,11 +426,40 @@ impl PchFacts {
         Arc::clone(any).downcast::<T>().ok()
     }
 
+    /// Computes the facts of `set` ahead of the hooks that will ask for them (ADR-102), one git child at a time, in
+    /// the order tracked, added, branch, git dir, file mode; `stop` is checked before each. Each fact goes through
+    /// its own accessor, so it is cached exactly as a hook's call would cache it (failures never are) and a later
+    /// call answers from the cache or recomputes under the usual stamps. Results and errors are dropped here: a hook
+    /// that asks again sees exactly what its own call would have produced.
+    pub fn prefetch(&self, set: FactSet, stop: &dyn Fn() -> bool) {
+        /// One fetch, its result dropped.
+        type Fetch = fn(&PchFacts);
+        let steps: [(FactSet, Fetch); 5] = [
+            (FactSet::TRACKED, |f| drop(f.tracked_files())),
+            (FactSet::ADDED, |f| drop(f.added_files())),
+            (FactSet::BRANCH, |f| drop(f.current_branch())),
+            (FactSet::GIT_DIR, |f| {
+                drop(f.raw(&[OsStr::new("rev-parse"), OsStr::new("--git-dir")]));
+            }),
+            (FactSet::FILE_MODE, |f| {
+                drop(f.raw(&[OsStr::new("config"), OsStr::new("core.fileMode")]));
+            }),
+        ];
+        for (fact, fetch) in steps {
+            if set.contains(fact) {
+                if stop() {
+                    return;
+                }
+                fetch(self);
+            }
+        }
+    }
+
     /// `ls-files --stage` of the whole index as `(mode, path)` (`git ls-files -z --stage`, the record format of the
     /// per-partition `ls-files -z --stage -- <paths>` calls; unmerged paths appear once per stage).
     #[expect(clippy::type_complexity, reason = "frozen §1.4.13 signature")]
     pub fn index_modes(&self) -> Result<Arc<[(u32, Vec<u8>)]>, Failure> {
-        self.cached(&self.modes, || {
+        self.cached(&self.modes, false, || {
             let out = self.cmd_output_checked(&["ls-files", "-z", "--stage"])?;
             let entries = parse_ls_files_stage(out.into_bytes()).map_err(|r| {
                 Failure::unexpected(
@@ -482,7 +561,7 @@ impl PchFacts {
     /// `symbolic-ref HEAD` (`no_commit_to_branch.is_on_branch`): `None` on a non-zero exit (detached HEAD); else the
     /// branch `'/'.join(ref.strip().split('/')[2:])` (`refs/heads/feature/x` → `feature/x`).
     pub fn current_branch(&self) -> Result<Option<String>, Failure> {
-        self.cached(&self.branch, || {
+        self.cached(&self.branch, false, || {
             let (rc, out) = self.cmd_output(&["symbolic-ref", "HEAD"])?;
             if rc != 0 {
                 return Ok(None);
