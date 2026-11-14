@@ -5,7 +5,7 @@
 
 use snp_pycompat::repr::repr_str;
 
-use super::scanner::{DirValue, TokData, TokId, Token};
+use super::scanner::{DirValue, TokData, TokHead, TokId, Token};
 use super::{Fail, Loader, Mark, R, Ver, marked};
 
 /// `Parser.DEFAULT_TAGS`.
@@ -67,6 +67,13 @@ pub(super) struct Event {
     pub(super) tag: Option<String>,
     pub(super) implicit: (bool, bool),
     pub(super) value: Vec<u8>,
+}
+
+/// What the composer reads of a peeked event: its anchor and start mark (the event stays current, uncopied).
+#[derive(Debug)]
+pub(super) struct EventHead {
+    pub(super) anchor: Option<String>,
+    pub(super) start: Mark,
 }
 
 impl Event {
@@ -163,7 +170,7 @@ impl Loader<'_, '_> {
         self.check_token(choices)
     }
 
-    fn pk(&mut self) -> R<Token> {
+    fn pk(&mut self) -> R<TokHead> {
         self.touch(2)?;
         self.peek_token()?.ok_or_else(|| {
             Fail::crash(
@@ -235,8 +242,8 @@ impl Loader<'_, '_> {
         })
     }
 
-    /// `Parser.peek_event()`.
-    pub(super) fn peek_event(&mut self) -> R<Option<Event>> {
+    /// `Parser.peek_event()`: the anchor and start mark of the current event.
+    pub(super) fn peek_event(&mut self) -> R<Option<EventHead>> {
         self.frame(|s| {
             if s.p.current.is_none()
                 && let Some(st) = s.p.state
@@ -244,7 +251,10 @@ impl Loader<'_, '_> {
                 let ev = s.run_state(st)?;
                 s.p.current = Some(ev);
             }
-            Ok(s.p.current.clone())
+            Ok(s.p.current.as_ref().map(|e| EventHead {
+                anchor: e.anchor.clone(),
+                start: e.start.clone(),
+            }))
         })
     }
 

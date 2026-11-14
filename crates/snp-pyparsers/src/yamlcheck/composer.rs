@@ -9,7 +9,7 @@ use std::borrow::Cow;
 use snp_pycompat::repr::repr_str;
 
 use super::construct::{Node, NodeId, NodeKind, TagCache};
-use super::parser::{EvId, Event};
+use super::parser::{EvId, Event, EventHead};
 use super::{Fail, Loader, R, YamlWarning, marked};
 
 /// A collection under construction on the explicit stack.
@@ -46,7 +46,7 @@ impl Loader<'_, '_> {
         })
     }
 
-    fn c_peek(&mut self) -> R<Event> {
+    fn c_peek(&mut self) -> R<EventHead> {
         self.touch(2)?;
         self.peek_event()?.ok_or_else(|| {
             Fail::crash(

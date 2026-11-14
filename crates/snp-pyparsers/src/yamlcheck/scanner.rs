@@ -165,6 +165,14 @@ pub(super) struct Token {
     pub(super) comment: bool,
 }
 
+/// What the parser reads of a peeked token: its class and marks (the payload stays queued, uncopied).
+#[derive(Debug)]
+pub(super) struct TokHead {
+    pub(super) id: TokId,
+    pub(super) start: Mark,
+    pub(super) end: Mark,
+}
+
 impl Token {
     fn new(id: TokId, start: Mark, end: Mark) -> Self {
         Self {
@@ -308,13 +316,17 @@ impl Loader<'_, '_> {
         })
     }
 
-    /// `peek_token()`.
-    pub(super) fn peek_token(&mut self) -> R<Option<Token>> {
+    /// `peek_token()`: the class and marks of the next token.
+    pub(super) fn peek_token(&mut self) -> R<Option<TokHead>> {
         self.frame(|s| {
             while s.need_more_tokens()? {
                 s.fetch_more_tokens()?;
             }
-            Ok(s.sc.tokens.front().cloned())
+            Ok(s.sc.tokens.front().map(|t| TokHead {
+                id: t.id,
+                start: t.start.clone(),
+                end: t.end.clone(),
+            }))
         })
     }
 
