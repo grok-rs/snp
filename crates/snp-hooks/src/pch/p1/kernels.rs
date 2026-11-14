@@ -5,7 +5,7 @@
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use memchr::memchr_iter;
 use memchr::memmem;
@@ -593,6 +593,108 @@ pub fn case_conflicts(
     names
 }
 
+/// The repository side of [`case_conflicts`] for one `git ls-files` answer, built once per run and shared by every
+/// partition (ADR-102): `R` = the distinct repository names plus (epoch ≥ 2) their parents, and, per lowered name,
+/// how many names of `R` lower to it.
+///
+/// A partition's relevant set `V` (its files, the staged-added names, their parents) conflicts exactly when some
+/// lowered name `l` of `V` is shared by two names of `V`, or lowers a name of `R` outside `V` — that is, when
+/// `lower_counts[l]` exceeds the number of names of `V ∩ R` lowering to `l`. Only then is [`case_conflicts`] run (to
+/// produce the report), so the result is the kernel's by construction.
+#[derive(Debug)]
+pub struct RepoCaseIndex {
+    epoch: u16,
+    windows: bool,
+    /// `R`.
+    names: HashSet<Box<[u8]>>,
+    /// `py_lower(r)` → the number of names `r` of `R` with that lowercase.
+    lower_counts: HashMap<Box<[u8]>, usize>,
+}
+
+impl RepoCaseIndex {
+    /// The index of `repo` at `epoch` / `windows`; `None` where the per-partition kernel is kept (epoch 2 on
+    /// Windows, whose `ntpath.dirname` parents are not prefixes of the name).
+    pub fn new<T: AsRef<[u8]>>(repo: &[T], epoch: u16, windows: bool) -> Option<Self> {
+        if epoch == 2 && windows {
+            return None;
+        }
+        let mut names: HashSet<Box<[u8]>> = HashSet::with_capacity(repo.len());
+        let mut lower_counts: HashMap<Box<[u8]>, usize> = HashMap::with_capacity(repo.len());
+        let mut add = |n: &[u8]| {
+            if !names.contains(n) {
+                let c = lower_counts
+                    .entry(Box::from(py_lower_cow(n).as_ref()))
+                    .or_insert(0);
+                *c = c.saturating_add(1);
+                names.insert(Box::from(n));
+            }
+        };
+        for r in repo {
+            let r = r.as_ref();
+            add(r);
+            // a name's parents depend on the name alone: the set is the kernel's `with_parents`
+            if epoch >= 2 {
+                let mut extra = Vec::new();
+                parents(r, epoch, windows, &mut extra);
+                for p in &extra {
+                    add(p);
+                }
+            }
+        }
+        Some(Self {
+            epoch,
+            windows,
+            names,
+            lower_counts,
+        })
+    }
+
+    /// Whether [`case_conflicts`] over this repository, `files` and `added` reports anything.
+    pub fn conflicts(&self, files: &[&[u8]], added: &[&[u8]]) -> bool {
+        let mut relevant: BTreeSet<Vec<u8>> = files.iter().chain(added).map(|r| r.to_vec()).collect();
+        if self.epoch >= 2 {
+            let mut extra = Vec::new();
+            for n in &relevant {
+                parents(n, self.epoch, self.windows, &mut extra);
+            }
+            relevant.extend(extra);
+        }
+        // lowered name → (names of V, names of V ∩ R)
+        let mut counts: HashMap<Cow<'_, [u8]>, (usize, usize)> = HashMap::new();
+        for v in &relevant {
+            let e = counts.entry(py_lower_cow(v)).or_insert((0, 0));
+            e.0 = e.0.saturating_add(1);
+            if self.names.contains(v.as_slice()) {
+                e.1 = e.1.saturating_add(1);
+            }
+        }
+        counts.iter().any(|(l, &(n, in_repo))| {
+            n > 1 || self.lower_counts.get(l.as_ref()).copied().unwrap_or(0) > in_repo
+        })
+    }
+}
+
+/// [`case_conflicts`] with the repository side taken from `index` when there is one for this epoch: the kernel runs
+/// only for a partition that conflicts.
+pub fn case_conflicts_indexed<T: AsRef<[u8]>>(
+    index: Option<&RepoCaseIndex>,
+    repo: &[T],
+    files: &[&[u8]],
+    added: &[&[u8]],
+    epoch: u16,
+    windows: bool,
+) -> Vec<Vec<u8>> {
+    match index {
+        Some(ix) if ix.epoch == epoch && ix.windows == windows && !ix.conflicts(files, added) => {
+            Vec::new()
+        }
+        _ => {
+            let repo: Vec<&[u8]> = repo.iter().map(AsRef::as_ref).collect();
+            case_conflicts(&repo, files, added, epoch, windows)
+        }
+    }
+}
+
 /// check-shebang-scripts-are-executable's message (`_message`, stderr) at `epoch` (1 = v4.0.0…v4.2.0, 2 =
 /// v4.3.0…v5.0.0: `git add --chmod=+x` line, 3 = v6.0.0: typo `If it not` fixed). The text ends with the
 /// message's own `\n` plus `print`'s.
@@ -886,6 +988,118 @@ zope==1\n# trailing\n"
         assert!(matches!(py_lower_cow(b"src/lib.rs"), Cow::Borrowed(_)));
         assert!(matches!(py_lower_cow(b"README"), Cow::Owned(_)));
         assert_eq!(py_lower(b"A\xffB"), py_lower_slow(b"A\xffB"));
+    }
+
+    /// A small deterministic generator (xorshift64*).
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            usize::try_from(self.next() % u64::try_from(n).unwrap()).unwrap()
+        }
+    }
+
+    /// Names built from case-tricky pieces (ß/ẞ/SS, the three sigmas, dotted I, the Kelvin sign, U+0345,
+    /// undecodable bytes) and odd separators, so the generated lists collide often.
+    fn tricky_name(rng: &mut Rng) -> Vec<u8> {
+        const PIECES: [&[u8]; 22] = [
+            b"a",
+            b"A",
+            b"ss",
+            b"SS",
+            "\u{df}".as_bytes(),
+            "\u{1e9e}".as_bytes(),
+            "\u{3a3}".as_bytes(),
+            "\u{3c3}".as_bytes(),
+            "\u{3c2}".as_bytes(),
+            "A\u{3a3}".as_bytes(),
+            "\u{130}".as_bytes(),
+            "i\u{307}".as_bytes(),
+            b"k",
+            b"K",
+            "\u{212a}".as_bytes(),
+            "\u{345}".as_bytes(),
+            "\u{3b9}".as_bytes(),
+            b"\xff",
+            b"\xc3",
+            b"Dir",
+            b"dir",
+            b"x.TXT",
+        ];
+        const SEPS: [&[u8]; 4] = [b"/", b"//", b"\\", b""];
+        let mut out = Vec::new();
+        if rng.below(8) == 0 {
+            out.push(b'/');
+        }
+        for i in 0..=rng.below(3) {
+            if i > 0 {
+                out.extend_from_slice(SEPS[rng.below(SEPS.len())]);
+            }
+            out.extend_from_slice(PIECES[rng.below(PIECES.len())]);
+        }
+        if rng.below(10) == 0 {
+            out.push(b'/');
+        }
+        out
+    }
+
+    fn tricky_list(rng: &mut Rng, max: usize) -> Vec<Vec<u8>> {
+        (0..rng.below(max)).map(|_| tricky_name(rng)).collect()
+    }
+
+    /// The indexed decision is the kernel's (`!case_conflicts(..).is_empty()`) for every epoch and platform, and
+    /// the indexed report is the kernel's report.
+    #[test]
+    fn case_index_decision_matches_the_kernel() {
+        let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+        let mut conflicting = 0_usize;
+        for _ in 0..4000 {
+            let repo = tricky_list(&mut rng, 7);
+            let files = tricky_list(&mut rng, 4);
+            let mut added = tricky_list(&mut rng, 3);
+            if rng.below(4) == 0
+                && let Some(r) = repo.first()
+            {
+                added.push(r.clone());
+            }
+            let r: Vec<&[u8]> = repo.iter().map(Vec::as_slice).collect();
+            let f: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+            let a: Vec<&[u8]> = added.iter().map(Vec::as_slice).collect();
+            for epoch in 1..=3 {
+                for windows in [false, true] {
+                    let want = case_conflicts(&r, &f, &a, epoch, windows);
+                    let ix = RepoCaseIndex::new(&repo, epoch, windows);
+                    assert_eq!(ix.is_none(), epoch == 2 && windows);
+                    if let Some(ix) = &ix {
+                        assert_eq!(
+                            ix.conflicts(&f, &a),
+                            !want.is_empty(),
+                            "epoch {epoch} windows {windows}: {repo:?} {files:?} {added:?}"
+                        );
+                    }
+                    assert_eq!(
+                        case_conflicts_indexed(ix.as_ref(), &repo, &f, &a, epoch, windows),
+                        want
+                    );
+                    conflicting = conflicting.saturating_add(usize::from(!want.is_empty()));
+                }
+            }
+        }
+        // both outcomes are exercised
+        assert!(conflicting > 1000 && conflicting < 20_000, "{conflicting}");
+        // an index taken at another epoch is never used
+        let ix = RepoCaseIndex::new(&[b"A".to_vec()], 1, false);
+        assert_eq!(
+            case_conflicts_indexed(ix.as_ref(), &[b"A".to_vec()], &[b"a"], &[], 3, false),
+            vec![b"A".to_vec(), b"a".to_vec()]
+        );
     }
 
     #[test]

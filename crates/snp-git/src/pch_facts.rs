@@ -7,9 +7,10 @@
 //!
 //! Owner: WP-18.
 
+use std::any::{Any, TypeId};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
 use snp_core::failure::{Failure, pyerr};
@@ -60,6 +61,28 @@ pub struct PchFacts {
     /// The answer of `config core.fileMode` with the stamps of the repository's config files
     /// (`check_executables_have_shebangs` asks once per partition; B6 spawned it 20 times for one hook).
     file_mode: Mutex<Option<(Vec<FileStamp>, GitDirAnswer)>>,
+    /// Values derived from the current [`PchFacts::tracked_files`] answer ([`PchFacts::tracked_derived`]).
+    derived: Mutex<Vec<Derived>>,
+}
+
+/// A value built once per `tracked_files()` answer: keyed by that answer's identity (the strong `Arc` held here, so
+/// its address cannot be reused while the entry lives), the value's type and the caller's tag. The cell is cloned out
+/// of the list before it is filled, so a build never runs under any lock of [`PchFacts`] and concurrent partitions
+/// wait for the one build ([`OnceLock::get_or_init`]).
+struct Derived {
+    tracked: Arc<[Vec<u8>]>,
+    key: (TypeId, u32),
+    cell: Arc<OnceLock<Arc<dyn Any + Send + Sync>>>,
+}
+
+impl std::fmt::Debug for Derived {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Derived")
+            .field("tracked", &self.tracked.len())
+            .field("tag", &self.key.1)
+            .field("built", &self.cell.get().is_some())
+            .finish()
+    }
 }
 
 /// A captured answer: `(exit status, stdout, stderr)`.
@@ -154,6 +177,7 @@ impl PchFacts {
             lfs: Mutex::new(LfsState::Fresh),
             git_dir: Mutex::new(None),
             file_mode: Mutex::new(None),
+            derived: Mutex::new(Vec::new()),
         }
     }
 
@@ -317,6 +341,39 @@ impl PchFacts {
             let out = self.cmd_output_checked(&["ls-files"])?;
             Ok(Self::lines(&out))
         })
+    }
+
+    /// A value of type `T` derived from `tracked` (an answer of [`PchFacts::tracked_files`]) by `build`, built once
+    /// per answer and `tag` and shared by every caller (check-case-conflict's repository index, ADR-102). Entries of
+    /// an older answer are dropped when a new answer is first asked for. `None` only if an entry of another type
+    /// shares the key (never: the type is part of it); the caller then computes without the memo.
+    pub fn tracked_derived<T: Any + Send + Sync>(
+        &self,
+        tracked: &Arc<[Vec<u8>]>,
+        tag: u32,
+        build: impl FnOnce(&[Vec<u8>]) -> T,
+    ) -> Option<Arc<T>> {
+        let key = (TypeId::of::<T>(), tag);
+        let cell = {
+            let mut list = snp_core::sync::lock(&self.derived);
+            list.retain(|d| Arc::ptr_eq(&d.tracked, tracked));
+            if let Some(d) = list.iter().find(|d| d.key == key) {
+                Arc::clone(&d.cell)
+            } else {
+                let cell = Arc::new(OnceLock::new());
+                list.push(Derived {
+                    tracked: Arc::clone(tracked),
+                    key,
+                    cell: Arc::clone(&cell),
+                });
+                cell
+            }
+        };
+        let any = cell.get_or_init(|| {
+            let built: Arc<dyn Any + Send + Sync> = Arc::new(build(tracked));
+            built
+        });
+        Arc::clone(any).downcast::<T>().ok()
     }
 
     /// `ls-files --stage` of the whole index as `(mode, path)` (`git ls-files -z --stage`, the record format of the

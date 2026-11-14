@@ -1,6 +1,7 @@
 //! Fuzz target `pch_p1_check_case_conflict`: the native `check-case-conflict` core on arbitrary `git ls-files` / file name / staged-added
 //! lists (NUL-separated groups of newline-separated names).
 //! The input also drives the native's `run` in a reused sandbox work tree (`run_native`).
+//! The repository index of ADR-102 must decide exactly as the kernel.
 //! Invariants (ARCHITECTURE §13.5): no panic, no hang > 5 s, ≤ 512 MB RSS, 256 KiB thread stacks.
 //!
 //! Owner: WP-27.
@@ -9,7 +10,9 @@
 use std::ffi::OsStr;
 
 use libfuzzer_sys::fuzz_target;
-use snp_hooks::pch::p1::kernels::{case_conflicts, py_lower, py_str_cmp};
+use snp_hooks::pch::p1::kernels::{
+    RepoCaseIndex, case_conflicts, case_conflicts_indexed, py_lower, py_str_cmp,
+};
 
 /// The console script's argparse over up to eight NUL-separated argv items taken from `data`.
 fn parse(group: &str, script: &str, epoch: u16, data: &[u8]) {
@@ -159,6 +162,15 @@ fuzz_target!(|data: &[u8]| {
         for windows in [false, true] {
             let names = case_conflicts(&repo, &files, &added, epoch, windows);
             assert!(names.windows(2).all(|w| py_str_cmp(&w[0], &w[1]).is_le()));
+            // the per-run repository index (ADR-102) decides exactly as the kernel and reports the same names
+            let index = RepoCaseIndex::new(&repo, epoch, windows);
+            if let Some(ix) = &index {
+                assert_eq!(ix.conflicts(&files, &added), !names.is_empty());
+            }
+            assert_eq!(
+                case_conflicts_indexed(index.as_ref(), &repo, &files, &added, epoch, windows),
+                names
+            );
         }
     }
     drop(py_lower(data));
