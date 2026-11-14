@@ -489,12 +489,22 @@ fn run_mutants(
             let src = tree
                 .read(target)
                 .with_context(|| format!("reading {target}"))?;
-            let Some(mutated) = apply_mutant(&src, &m.find, &m.replace) else {
-                problems.push(format!(
-                    "V3: stale mutant of {}: {:?} does not occur in {target} (write a fresh mutant)",
-                    k.id, m.find
-                ));
-                continue;
+            let mutated = match apply_mutant(&src, &m.find, &m.replace) {
+                Ok(mutated) => mutated,
+                Err(0) => {
+                    problems.push(format!(
+                        "V3: stale mutant of {}: {:?} does not occur in {target} (write a fresh mutant)",
+                        k.id, m.find
+                    ));
+                    continue;
+                }
+                Err(n) => {
+                    problems.push(format!(
+                        "V3: ambiguous mutant of {}: {:?} occurs {n} times in {target} (extend `find` until it is unique)",
+                        k.id, m.find
+                    ));
+                    continue;
+                }
             };
             if scratch.exists() {
                 std::fs::remove_dir_all(&scratch)
@@ -543,12 +553,18 @@ fn run_mutants(
     Ok(problems)
 }
 
-/// `src` with the first occurrence of `find` replaced, or `None` when it does not occur.
-pub(crate) fn apply_mutant(src: &str, find: &str, replace: &str) -> Option<String> {
-    if find.is_empty() || !src.contains(find) {
-        return None;
+/// `src` with the single occurrence of `find` replaced; `Err(n)` when `find` occurs `n != 1` times (an empty
+/// `find` counts as absent). A `find` that occurs twice could mutate a contract instead of the code it means to.
+pub(crate) fn apply_mutant(src: &str, find: &str, replace: &str) -> Result<String, usize> {
+    let n = if find.is_empty() {
+        0
+    } else {
+        src.matches(find).count()
+    };
+    if n != 1 {
+        return Err(n);
     }
-    Some(src.replacen(find, replace, 1))
+    Ok(src.replacen(find, replace, 1))
 }
 
 fn copy_tree(src: &Path, dst: &Path) -> anyhow::Result<()> {
@@ -1311,13 +1327,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mutants_replace_the_first_occurrence_only() {
+    fn mutants_replace_a_unique_occurrence_only() {
         assert_eq!(
-            apply_mutant("a <= b; a <= b", "<=", "<").unwrap(),
-            "a < b; a <= b"
+            apply_mutant("a <= b; c", "<=", "<"),
+            Ok("a < b; c".to_owned())
         );
-        assert_eq!(apply_mutant("x", "y", "z"), None);
-        assert_eq!(apply_mutant("x", "", "z"), None);
+        assert_eq!(apply_mutant("a <= b; a <= b", "<=", "<"), Err(2));
+        assert_eq!(apply_mutant("x", "y", "z"), Err(0));
+        assert_eq!(apply_mutant("x", "", "z"), Err(0));
     }
 
     #[test]

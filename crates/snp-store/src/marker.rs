@@ -14,6 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{Map, Value, json};
 
 use crate::keys::{RepoId, RepoKind, RepoMeta, ToolRef, hex};
+use crate::maintenance::protect::unhex;
 
 /// Upper bound of every store metadata file snp reads (1 MiB; real files are a few hundred bytes).
 pub(crate) const META_CAP: u64 = 1024 * 1024;
@@ -69,27 +70,6 @@ pub(crate) fn path_bytes(p: &Path) -> Vec<u8> {
     {
         p.to_string_lossy().into_owned().into_bytes()
     }
-}
-
-/// Decodes lower-case or upper-case hex.
-fn unhex(s: &[u8]) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) {
-        return None;
-    }
-    let digit = |b: u8| -> Option<u8> {
-        match b {
-            b'0'..=b'9' => Some(b.wrapping_sub(b'0')),
-            b'a'..=b'f' => Some(b.wrapping_sub(b'a').wrapping_add(10)),
-            b'A'..=b'F' => Some(b.wrapping_sub(b'A').wrapping_add(10)),
-            _ => None,
-        }
-    };
-    let mut out = Vec::new();
-    let mut it = s.iter();
-    while let (Some(&h), Some(&l)) = (it.next(), it.next()) {
-        out.push((digit(h)? << 4) | digit(l)?);
-    }
-    Some(out)
 }
 
 /// Seconds since the epoch (0 when the clock is before it).

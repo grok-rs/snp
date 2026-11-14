@@ -47,3 +47,8 @@ pub mod snp_hooks_pch_p0_kernels_eof_tail;
 #[verus_verify]
 #[path = "../../crates/snp-git/src/git/pathspec.rs"]
 pub mod snp_git_git_pathspec;
+
+/// K8: gc patch protection (snp-store).
+#[verus_verify]
+#[path = "../../crates/snp-store/src/maintenance/protect.rs"]
+pub mod snp_store_maintenance_protect;
