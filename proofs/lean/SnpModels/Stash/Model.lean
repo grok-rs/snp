@@ -18,10 +18,19 @@ not assume-unchanged and `c (W p) ≠ I p`. The stat cache is not modelled: cont
 
 Git's operations are fields of `Git` (oracles), and what the theorems need of them are the named hypotheses of
 `Hyps` (never `axiom` declarations): A1 `c ∘ s = id` on the index's blobs, A2 `git apply` is all-or-nothing and
-`apply --check` is its dry run, A3 `git checkout` writes exactly the given set from the index, A4 no other writer
+succeeds only when what git sees of every file of the patch is that file's whole pre-image, and `apply --check` is
+its dry run, A3 `git checkout` writes exactly the given set from the index, A4 no other writer
 changes the worktree between the protocol's steps (`interfere` is the identity), A5 `git apply --numstat` lists
 exactly the patch's files. `Complete` (A2c: an apply whose pre-images all match succeeds) is kept apart because the
-loss characterisation (T2), the failure theorem (T5) and the index theorem (T6) do not need it.
+loss characterisation (T2), the failure theorem (T5, apart from its recovery clause) and the index theorem (T6) do not
+need it.
+
+A2 is stronger than git: a pre-image here is the whole clean file, while `git apply` checks a text patch only by its
+hunks' context lines. A hook edit to a file of the patch away from the user's hunks still applies, and git merges it
+with the user's change (no rollback); in the model the same edit makes the apply refuse and the run roll back. So the
+model does not describe that case: T2's "nothing more" and the `stage_fixed`/rollback split hold for git only when
+hooks leave what git sees of every file of the patch unchanged or change it where the user's hunks overlap
+(docs/VERIFICATION.md §9.2 K9 ¬G; witness `a_hook_edit_outside_the_users_hunks_merges_without_a_rollback`).
 
 What is not modelled: the lock, the journal and its durability, crashes and the `Drop` fallback, the re-verification
 loop (A4 makes its first digest match), the two `git apply` attempts (one oracle call: `core.autocrlf` is not
@@ -83,7 +92,9 @@ def visible (a : Attrs P C) (T : Tree P C) (W : Work P C) (p : P) : Bool :=
   | none => false
   | some x => !a.assumeUnchanged p && decide (seen a W p ≠ some x)
 
-/-- One file of a patch: the pre-image blob and the post-image (clean content, `none` = deletion). -/
+/-- One file of a patch: the pre-image blob and the post-image (clean content, `none` = deletion). The pre-image is
+the whole clean file, which is stronger than git: `git apply` matches a text patch by its hunks' context lines, so
+an edit outside the hunks still applies and is merged (see the module header). -/
 structure Hunk (C : Type) where
   pre : C
   post : Option C
@@ -144,7 +155,9 @@ structure Hyps (g : Git P C) (I0 : Index P C) : Prop where
   /-- A1: `c ∘ s = id` on the image of the index. -/
   a1 : A1 g.attrs I0
   /-- A2: `git apply` is all-or-nothing: it succeeds only when every pre-image matches, and then writes the whole
-  patch; a refusal changes nothing (the caller keeps its worktree). -/
+  patch; a refusal changes nothing (the caller keeps its worktree). A pre-image is the whole clean file, so this is
+  false for git when a hook edits a file of the patch outside the user's hunks: git applies and merges (module
+  header, docs/VERIFICATION.md §9.2 K9 ¬G). -/
   a2 : ∀ Q W W', g.apply Q W = some W' → Matches g.attrs Q W ∧ W' = patched g.attrs Q W
   /-- A2 (dry run): `git apply --check` says whether `git apply` would succeed on the same worktree. -/
   a2check : ∀ Q W, g.check Q W = (g.apply Q W).isSome

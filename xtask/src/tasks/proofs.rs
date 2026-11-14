@@ -275,8 +275,10 @@ pub(crate) struct Trusted {
     pub(crate) item: String,
     /// The kernel id that declares the trait.
     pub(crate) kernel: String,
-    /// `file.rs::test_fn` of the differential test against the verified reference implementation.
+    /// `file.rs::[mod::]test_fn` of the differential test against the verified reference implementation.
     pub(crate) test: String,
+    /// `cargo xtask proofs fingerprint <test>`: any edit to the test asks for a re-review (G8).
+    pub(crate) test_fingerprint: String,
 }
 
 /// The `[verus]` pins.
@@ -486,11 +488,12 @@ impl Registry {
         let mut trusted = Vec::new();
         for (i, e) in tables(&t, "trusted")?.into_iter().enumerate() {
             let ctx = format!("[[trusted]] #{}", i.saturating_add(1));
-            only_keys(e, &["item", "kernel", "test"], &ctx)?;
+            only_keys(e, &["item", "kernel", "test", "test_fingerprint"], &ctx)?;
             trusted.push(Trusted {
                 item: req_str(e, "item", &ctx)?,
                 kernel: req_str(e, "kernel", &ctx)?,
                 test: req_str(e, "test", &ctx)?,
+                test_fingerprint: req_str(e, "test_fingerprint", &ctx)?,
             });
         }
         Ok(Self {

@@ -11,12 +11,13 @@
 //! | G5 | no cheat token (`assume`, `admit`, `assume_specification`, `external_body`, `external`, `exec_allows_no_decreases_clause`) and no raw identifier in kernel files or any file under `proofs/verus/`; spec files and the root declare no exec `fn`, `trait`, `impl`, `extern`, `unsafe` or macro definition, call no `include!`/`env!`/`cfg!`-like macro, and spec files carry no `#[path]` |
 //! | G6 | no `requires` in the contract of a non-private function (trait method declarations exempt) |
 //! | G7 | `reason = "verus: …"` expectations only on functions of mounted kernel files |
-//! | G8 | every impl of a kernel trait outside kernel files is a `[[trusted]]` entry whose named test exists |
+//! | G8 | every impl of a kernel trait outside kernel files is a `[[trusted]]` entry whose named test is a `#[test]` naming the trusted type and matching `test_fingerprint`; no alias or re-export of a kernel trait, and no macro outside kernel files naming one |
 //! | G9 | exec code in a kernel file names no path rooted in `crate`, `super`, `self::super` or an external crate; no out-of-line `mod`, `#[path]`, `extern crate` or unparsed item; the kernel's crate has no `#[macro_use]` or `extern crate` |
 //! | G10 | every caller exists and calls the kernel; every model file, oracle (or, without one, named witness test) and anchor exists; every anchor, oracle driver and oracle test fingerprint matches |
 //!
 //! Tokens are compared after syn's lexing and with raw identifiers unrawed (`r#x` is `x`), so comments and string
-//! contents never trigger a guard; macro bodies (which syn does not parse) are scanned token by token.
+//! contents never trigger a guard; macro bodies (which syn does not parse) are scanned token by token (kernel files for
+//! G3/G9, every scanned file's macros for kernel-trait names in G8).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -1353,14 +1354,24 @@ fn g8(tree: &Tree, reg: &Registry, r: &mut Report) -> anyhow::Result<()> {
         }
     }
     let kernel_files: BTreeSet<&str> = reg.kernels.iter().map(|k| k.file.as_str()).collect();
+    // `crates/<name>/` of every kernel: each of their files is parsed, whatever text it holds.
+    let kernel_crates: BTreeSet<String> = reg
+        .kernels
+        .iter()
+        .filter_map(|k| {
+            let mut parts = k.file.splitn(3, '/');
+            Some(format!("{}/{}/", parts.next()?, parts.next()?))
+        })
+        .collect();
     let mut found: BTreeSet<String> = BTreeSet::new();
     if !traits.is_empty() {
         for f in tree.rust_files("crates")? {
-            if kernel_files.contains(f.as_str()) {
-                continue;
-            }
             let Some(src) = tree.read(&f) else { continue };
-            if !traits.keys().any(|t| src.contains(t.as_str())) {
+            // A file outside the kernels' crates reaches a kernel trait only by its name: an alias or a re-export
+            // is itself a finding in the file that declares it, which names the trait.
+            if !kernel_crates.iter().any(|c| f.starts_with(c.as_str()))
+                && !traits.keys().any(|t| src.contains(t.as_str()))
+            {
                 continue;
             }
             let Ok(file) = syn::parse_file(&src) else {
@@ -1368,9 +1379,14 @@ fn g8(tree: &Tree, reg: &Registry, r: &mut Report) -> anyhow::Result<()> {
             };
             let mut v = Impls {
                 traits: &traits,
+                kernel_file: kernel_files.contains(f.as_str()),
                 found: Vec::new(),
+                bad: Vec::new(),
             };
             v.visit_file(&file);
+            for msg in v.bad {
+                r.add("G8", &f, msg);
+            }
             for (item, kernel) in v.found {
                 let entry = reg.trusted.iter().find(|t| norm_item(&t.item) == item);
                 match entry {
@@ -1408,24 +1424,103 @@ fn g8(tree: &Tree, reg: &Registry, r: &mut Report) -> anyhow::Result<()> {
                 ),
             );
         }
-        match fingerprint::split_anchor(&t.test) {
-            Ok((file, test)) => {
-                let exists = tree
-                    .read(file)
-                    .and_then(|s| syn::parse_file(&s).ok())
-                    .is_some_and(|f| !fns_named(&f, test).is_empty());
-                if !exists {
-                    r.add(
-                        "G8",
-                        REGISTRY,
-                        format!("[[trusted]] {}: test {} does not exist", t.item, t.test),
-                    );
-                }
-            }
-            Err(e) => r.add("G8", REGISTRY, format!("[[trusted]] {}: {e:#}", t.item)),
-        }
+        trusted_test(tree, t, r);
     }
     Ok(())
+}
+
+/// G8 for the differential test of a `[[trusted]]` entry: a `#[test]` fn at its module path whose body names the
+/// trusted type, and whose fingerprint matches `test_fingerprint`. The test is the whole control of the trusted
+/// contract (§10 row 8), so any edit to it asks for a re-review, like an oracle test (G10).
+fn trusted_test(tree: &Tree, t: &super::Trusted, r: &mut Report) {
+    let (file, path) = match fingerprint::split_anchor(&t.test) {
+        Ok(v) => v,
+        Err(e) => {
+            r.add("G8", REGISTRY, format!("[[trusted]] {}: {e:#}", t.item));
+            return;
+        }
+    };
+    let parsed = tree.read(file).and_then(|s| syn::parse_file(&s).ok());
+    let Some(func) = parsed.as_ref().and_then(|f| fn_at_path(&f.items, path)) else {
+        r.add(
+            "G8",
+            REGISTRY,
+            format!(
+                "[[trusted]] {}: test {} does not exist (a fn at that module path, `file.rs::tests::name` for one in `mod tests`)",
+                t.item, t.test
+            ),
+        );
+        return;
+    };
+    if !func.attrs.iter().any(|a| a.path().is_ident("test")) {
+        r.add(
+            "G8",
+            REGISTRY,
+            format!("[[trusted]] {}: {} is not a #[test]", t.item, t.test),
+        );
+    }
+    let item = norm_item(&t.item);
+    let ty = item.split_once(':').map_or(item.as_str(), |(ty, _)| ty);
+    let mut names = TestNames::default();
+    names.visit_item_fn(func);
+    if !names.names.contains(ty) {
+        r.add(
+            "G8",
+            REGISTRY,
+            format!(
+                "[[trusted]] {}: test {} never names `{ty}`: it must compare the trusted impl with the verified reference",
+                t.item, t.test
+            ),
+        );
+    }
+    match fingerprint::of_anchor(tree, &t.test) {
+        Err(e) => r.add("G8", REGISTRY, format!("[[trusted]] {}: {e:#}", t.item)),
+        Ok(fp) if fp != t.test_fingerprint => r.add(
+            "G8",
+            REGISTRY,
+            format!(
+                "[[trusted]] {}: differential test stale: {} changed (fingerprint {fp}, registry test_fingerprint {}): re-review that it still compares the trusted impl with the verified reference on enough inputs, then update the fingerprint",
+                t.item, t.test, t.test_fingerprint
+            ),
+        ),
+        Ok(_) => {}
+    }
+}
+
+/// The free fn at `path` (`name` or `mod::…::name`, inline modules only) among `items`.
+fn fn_at_path<'f>(items: &'f [syn::Item], path: &str) -> Option<&'f syn::ItemFn> {
+    let (head, rest) = match path.split_once("::") {
+        Some((h, r)) => (h, Some(r)),
+        None => (path, None),
+    };
+    items.iter().find_map(|i| match (i, rest) {
+        (syn::Item::Fn(f), None) if f.sig.ident == head => Some(f),
+        (syn::Item::Mod(m), Some(rest)) if m.ident == head => m
+            .content
+            .as_ref()
+            .and_then(|(_, items)| fn_at_path(items, rest)),
+        _ => None,
+    })
+}
+
+/// Every identifier of a test: path segments, method names and the tokens of its macro calls (`assert_eq!`).
+#[derive(Debug, Default)]
+struct TestNames {
+    names: BTreeSet<String>,
+}
+
+impl<'ast> Visit<'ast> for TestNames {
+    fn visit_ident(&mut self, i: &'ast syn::Ident) {
+        self.names.insert(id_str(i));
+    }
+
+    fn visit_macro(&mut self, i: &'ast syn::Macro) {
+        let buf = TokenBuffer::new2(i.tokens.clone());
+        idents_in(buf.begin(), &mut |name, _| {
+            self.names.insert(name.to_owned());
+        });
+        visit::visit_macro(self, i);
+    }
 }
 
 /// `Type : Trait` → `Type: Trait`.
@@ -1459,13 +1554,80 @@ impl<'ast> Visit<'ast> for Traits {
 #[derive(Debug)]
 struct Impls<'t> {
     traits: &'t BTreeMap<String, String>,
+    /// A kernel file: its impls are the verified ones and G3 bounds its macros; only its `use` items are checked.
+    kernel_file: bool,
     /// (`Type: Trait`, kernel id)
     found: Vec<(String, String)>,
+    /// Aliases, re-exports and macros that would hide an impl from the check of `visit_item_impl`.
+    bad: Vec<String>,
+}
+
+impl Impls<'_> {
+    /// `use` leaves naming a kernel trait: renamed (other than a private `as _`) or re-exported (`vis` not
+    /// inherited).
+    fn use_tree(&mut self, t: &syn::UseTree, reexport: bool) {
+        match t {
+            syn::UseTree::Path(p) => self.use_tree(&p.tree, reexport),
+            syn::UseTree::Group(g) => {
+                for t in &g.items {
+                    self.use_tree(t, reexport);
+                }
+            }
+            syn::UseTree::Name(n) => {
+                let name = id_str(&n.ident);
+                if reexport && let Some(kernel) = self.traits.get(&name) {
+                    self.bad.push(format!(
+                        "`{name}` (a trait of kernel {kernel}) is re-exported: a kernel trait is named only by its own path, so G8 sees every impl"
+                    ));
+                }
+            }
+            syn::UseTree::Rename(rn) => {
+                let name = id_str(&rn.ident);
+                if let Some(kernel) = self.traits.get(&name)
+                    && (rn.rename != "_" || reexport)
+                {
+                    self.bad.push(format!(
+                        "`{name}` (a trait of kernel {kernel}) is imported as `{}`: an alias hides impls from G8; use the trait's own name",
+                        rn.rename
+                    ));
+                }
+            }
+            syn::UseTree::Glob(_) => {}
+        }
+    }
 }
 
 impl<'ast> Visit<'ast> for Impls<'_> {
+    fn visit_item_use(&mut self, i: &'ast syn::ItemUse) {
+        let reexport = !matches!(i.vis, syn::Visibility::Inherited);
+        self.use_tree(&i.tree, reexport);
+    }
+
+    /// syn parses neither macro bodies nor macro arguments, so an impl a macro generates is invisible to
+    /// `visit_item_impl`: a macro definition or call whose tokens name a kernel trait is a finding.
+    fn visit_macro(&mut self, i: &'ast syn::Macro) {
+        if self.kernel_file {
+            return;
+        }
+        let buf = TokenBuffer::new2(i.tokens.clone());
+        let mut hit: Option<String> = None;
+        idents_in(buf.begin(), &mut |name, _| {
+            if hit.is_none() && self.traits.contains_key(name) {
+                hit = Some(name.to_owned());
+            }
+        });
+        if let Some(name) = hit {
+            let kernel = self.traits.get(&name).map_or("", String::as_str);
+            self.bad.push(format!(
+                "macro `{}!` names `{name}` (a trait of kernel {kernel}): G8 cannot see an impl a macro generates; write the code without the macro",
+                path_str(&i.path)
+            ));
+        }
+    }
+
     fn visit_item_impl(&mut self, i: &'ast syn::ItemImpl) {
-        if let Some((_, path, _)) = &i.trait_
+        if !self.kernel_file
+            && let Some((_, path, _)) = &i.trait_
             && let Some(last) = path.segments.last()
             && let Some(kernel) = self.traits.get(&id_str(&last.ident))
         {

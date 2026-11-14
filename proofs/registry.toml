@@ -157,7 +157,8 @@ mutants = [
 ]
 
 # [[model]]: Lean models with fingerprinted anchors: oracle tests (K3, K4) or, for a protocol model, named witnesses (K9).
-# [[trusted]]: production impls of kernel traits (§2.6, §10 row 8), each with its differential test (G8).
+# [[trusted]]: production impls of kernel traits (§2.6, §10 row 8), each with its differential test (G8), pinned by
+# `test_fingerprint` (`cargo xtask proofs fingerprint <test>`): an edit to the test asks for a re-review.
 
 [[model]]
 id = "K3-end-of-file-fixer"
@@ -239,6 +240,8 @@ witnesses = [
     "crates/snp-stash/tests/behaviour/hidden.rs::the_conflict_rollback_keeps_a_hidden_change_and_discards_every_visible_fix",
     "crates/snp-stash/tests/behaviour/hidden.rs::an_assume_unchanged_edit_survives_the_stash",
     "crates/snp-stash/tests/behaviour/hidden.rs::names_are_literal_pathspecs",
+    # Pins where the model is stronger than git (A2 is whole-file, git applies by hunk context): a ¬G witness.
+    "crates/snp-stash/tests/behaviour/hidden.rs::a_hook_edit_outside_the_users_hunks_merges_without_a_rollback",
 ]
 anchors = [
     { item = "crates/snp-stash/src/guard.rs::enter", fingerprint = "3056f468d1771bce" },
@@ -270,11 +273,13 @@ anchors = [
 [[trusted]]
 item = "Memchr: FindByte"
 kernel = "K5b-zlist-split"
-test = "crates/snp-git/src/zlist.rs::memchr_matches_scalar"
+test = "crates/snp-git/src/zlist.rs::tests::memchr_matches_scalar"
+test_fingerprint = "94517dd6cae3b363"
 
 # std `HashSet` insert: `first_seen` marks exactly the first occurrence of each record, the contract of `SeenSet`
 # (K7). Used above `SCAN_MAX` paths; tested against the verified `Scan` on seeded lists.
 [[trusted]]
 item = "HashSeen: SeenSet"
 kernel = "K7-pathspec-lists"
-test = "crates/snp-git/src/git.rs::seen_set_hash_matches_scan"
+test = "crates/snp-git/src/git.rs::tests::seen_set_hash_matches_scan"
+test_fingerprint = "5801f710e92156fe"

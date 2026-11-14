@@ -22,8 +22,13 @@ fn good() -> Tree {
     edit(&mut t, REGISTRY, "1111111111111111", &fp);
     let fp = fingerprint::of_file(&t, "crates/demo/tests/oracle.rs").unwrap();
     edit(&mut t, REGISTRY, "2222222222222222", &fp);
+    let fp = fingerprint::of_anchor(&t, TRUSTED_TEST).unwrap();
+    edit(&mut t, REGISTRY, "4444444444444444", &fp);
     t
 }
+
+const TRUSTED_TEST: &str = "crates/demo/tests/oracle.rs::fast_matches_scalar";
+const FAST: &str = "crates/demo/src/fast.rs";
 
 fn edit(t: &mut Tree, rel: &str, find: &str, replace: &str) {
     let s = t.read(rel).unwrap();
@@ -53,10 +58,11 @@ fn the_good_fixture_passes() {
 #[test]
 fn the_fixture_ships_placeholder_fingerprints_that_g10_rejects() {
     let p = problems(&fixture());
-    assert_eq!(p.len(), 3, "{p:#?}");
+    assert_eq!(p.len(), 4, "{p:#?}");
     assert!(
         p.iter()
-            .all(|p| p.guard == "G10" && p.msg.contains("model link stale")),
+            .all(|p| (p.guard == "G10" && p.msg.contains("model link stale"))
+                || (p.guard == "G8" && p.msg.contains("differential test stale"))),
         "{p:#?}"
     );
 }
@@ -608,6 +614,166 @@ fn g8_trusted_impls_of_kernel_traits() {
     );
 }
 
+#[test]
+fn g8_aliases_and_reexports_of_kernel_traits() {
+    // A renamed import: `impl Fb for X` would not name the trait.
+    let mut t = good();
+    edit(
+        &mut t,
+        FAST,
+        "pub(crate) struct Fast;",
+        "pub(crate) struct Fast;\nuse crate::kern::FindByte as Fb;",
+    );
+    let p = problems(&t);
+    assert!(
+        p.iter()
+            .any(|p| p.guard == "G8" && p.file == FAST && p.msg.contains("imported as `Fb`")),
+        "{p:#?}"
+    );
+    // A re-export used, under its alias, from a file that never names the trait.
+    let mut t = good();
+    edit(
+        &mut t,
+        LIB,
+        "mod kern;",
+        "mod kern;\nmod evil;\npub(crate) use kern::FindByte as Finder;",
+    );
+    t.put(
+        "crates/demo/src/evil.rs",
+        "pub(crate) struct Evil;\nimpl crate::Finder for Evil {\n    fn find_byte(&self, _: u8, _: &[u8], _: usize) -> Option<usize> { None }\n}\n",
+    );
+    let p = problems(&t);
+    assert!(
+        p.iter()
+            .any(|p| p.guard == "G8" && p.file == LIB && p.msg.contains("imported as `Finder`")),
+        "{p:#?}"
+    );
+    // A plain re-export, and a private `as _` (a method import, which cannot name the trait in an impl) is fine.
+    let mut t = good();
+    edit(
+        &mut t,
+        LIB,
+        "mod kern;",
+        "mod kern;\npub(crate) use kern::{FindByte};",
+    );
+    let p = problems(&t);
+    assert!(
+        p.iter()
+            .any(|p| p.guard == "G8" && p.file == LIB && p.msg.contains("re-exported")),
+        "{p:#?}"
+    );
+    let mut t = good();
+    edit(
+        &mut t,
+        LIB,
+        "mod kern;",
+        "mod kern;\n#[expect(unused_imports)]\nuse kern::FindByte as _;",
+    );
+    assert_eq!(problems(&t), Vec::<Problem>::new());
+}
+
+#[test]
+fn g8_macro_generated_impls_of_kernel_traits() {
+    // The impl inside a `macro_rules!` body.
+    let mut t = good();
+    edit(
+        &mut t,
+        FAST,
+        "pub(crate) struct Fast;",
+        "pub(crate) struct Fast;\nmacro_rules! evil { ($t:ident) => { impl crate::kern::FindByte for $t { fn find_byte(&self, _: u8, _: &[u8], _: usize) -> Option<usize> { None } } } }\npub(crate) struct Evil;\nevil!(Evil);",
+    );
+    let p = problems(&t);
+    assert!(
+        p.iter().any(|p| p.guard == "G8"
+            && p.file == FAST
+            && p.msg.contains("macro `macro_rules!` names `FindByte`")),
+        "{p:#?}"
+    );
+    // The trait passed to a macro as an argument.
+    let mut t = good();
+    edit(
+        &mut t,
+        FAST,
+        "pub(crate) struct Fast;",
+        "pub(crate) struct Fast;\npub(crate) struct Evil;\nmake_impl!(crate::kern::FindByte, Evil);",
+    );
+    let p = problems(&t);
+    assert!(
+        p.iter()
+            .any(|p| p.guard == "G8" && p.msg.contains("macro `make_impl!` names `FindByte`")),
+        "{p:#?}"
+    );
+    // A file of the kernel's crate that never names the trait is still parsed (here: a plain impl by path through
+    // a glob re-export, which names the trait in its last segment).
+    let mut t = good();
+    t.put(
+        "crates/demo/src/other.rs",
+        "pub(crate) struct Other;\nimpl crate::kern::FindByte for Other {\n    fn find_byte(&self, _: u8, _: &[u8], _: usize) -> Option<usize> { None }\n}\n",
+    );
+    let p = problems(&t);
+    assert!(
+        p.iter().any(|p| p.guard == "G8"
+            && p.file == "crates/demo/src/other.rs"
+            && p.msg.contains("`impl Other: FindByte`")),
+        "{p:#?}"
+    );
+}
+
+#[test]
+fn g8_trusted_differential_test_is_pinned() {
+    // Any edit to the test is stale until re-reviewed.
+    let mut t = good();
+    edit(
+        &mut t,
+        "crates/demo/tests/oracle.rs",
+        "b\"ba\", 0), Scalar",
+        "b\"ab\", 0), Scalar",
+    );
+    let p = problems(&t);
+    assert!(
+        p.iter()
+            .any(|p| p.guard == "G8" && p.msg.contains("differential test stale")),
+        "{p:#?}"
+    );
+    // Not a #[test].
+    let mut t = good();
+    edit(
+        &mut t,
+        "crates/demo/tests/oracle.rs",
+        "#[test]\nfn fast_matches_scalar",
+        "fn fast_matches_scalar",
+    );
+    let p = problems(&t);
+    assert!(
+        p.iter().any(|p| p.msg.contains("is not a #[test]")),
+        "{p:#?}"
+    );
+    // A test that never runs the trusted impl.
+    let mut t = good();
+    edit(
+        &mut t,
+        "crates/demo/tests/oracle.rs",
+        "Fast.find_byte",
+        "Scalar.find_byte",
+    );
+    let p = problems(&t);
+    assert!(
+        p.iter().any(|p| p.msg.contains("never names `Fast`")),
+        "{p:#?}"
+    );
+    // The pin is required.
+    let mut t = good();
+    let reg = t.read(REGISTRY).unwrap();
+    let line = reg
+        .lines()
+        .find(|l| l.starts_with("test_fingerprint"))
+        .unwrap()
+        .to_owned();
+    edit(&mut t, REGISTRY, &format!("{line}\n"), "");
+    let err = Registry::load(&t).unwrap_err();
+    assert!(format!("{err:#}").contains("test_fingerprint"), "{err:#}");
+}
+
 // G9 ------------------------------------------------------------------------------------------------------------
 
 #[test]
@@ -843,9 +1009,10 @@ fn g10_stale_and_placeholder_anchors() {
         "    kern::spans(\n        &fast::Fast,\n        b'\\n',\n        hay,\n    )\n",
     );
     assert_eq!(problems(&t), Vec::<Problem>::new());
+    // (The raw fixture also ships a placeholder `test_fingerprint`, which G8 rejects.)
     let mut t = fixture();
     edit(&mut t, REGISTRY, "0000000000000000", "TBD");
-    assert_eq!(fired(&t), ["G10"]);
+    assert_eq!(fired(&t), ["G10", "G8"]);
 }
 
 #[test]

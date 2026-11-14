@@ -324,7 +324,11 @@ theorem roundtrip_exact {g : Git P C} {I0 : Index P C} (h : Hyps g I0) (hc : Com
    pre-commit keeps it).
 
 No other path is ever changed: in particular an assume-unchanged file, an untracked file and a file whose only
-change is hidden keep the user's content unless a hook edits them. Needs neither A1 nor A2c. -/
+change is hidden keep the user's content unless a hook edits them. The statement takes `Hyps` (A1–A5); the proof
+uses neither A1 nor A2c (A1 is carried in `Hyps` but unused). Under A2 (whole-file pre-images, stronger than git's
+hunk-context apply) a hook edit to a file of the patch always forces the rollback; with git such an edit away from
+the user's hunks is merged instead, a fourth way a file of the patch can differ that this theorem does not cover
+(module header of `Model.lean`). -/
 theorem residual_loss {g : Git P C} {I0 : Index P C} (h : Hyps g I0) (W0 : Work P C)
     (hooks : Work P C → Work P C) (fixes : PSet P) (hok : (run g I0 W0 hooks fixes).status = .ok) (p : P) :
     (run g I0 W0 hooks fixes).work p ≠ W0 p ↔
@@ -452,7 +456,7 @@ theorem rollback_complete {g : Git P C} {I0 : Index P C} (h : Hyps g I0) (hc : C
 
 /-- **T5.** A run whose final apply fails reports it (`failed`, never `ok`), has run the rollback, leaves the
 rollback's worktree, keeps the patch and the stash-time tree, the kept patch holds what git saw of every changed
-file, and (A2c) the recovery the K+ hint prints restores every file of the patch to its round trip, as T1 does. -/
+file, and (A1, A2c) the recovery the K+ hint prints restores every file of the patch to its round trip, as T1 does. -/
 theorem no_silent_loss {g : Git P C} {I0 : Index P C} (h : Hyps g I0) (W0 : Work P C)
     (hooks : Work P C → Work P C) (fixes : PSet P) (hf : (run g I0 W0 hooks fixes).status = .failed) :
     (run g I0 W0 hooks fixes).kept = some (stashPatch g I0 W0, stashTree I0) ∧
