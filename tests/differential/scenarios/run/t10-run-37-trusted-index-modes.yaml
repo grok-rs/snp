@@ -5,8 +5,11 @@ description: >
   (`git diff` reports the EACCES on stderr only); assume-unchanged and skip-worktree entries whose files were
   deleted (the diff stays empty); an intent-to-add entry; a FIFO and a 0644 socket in place of empty tracked files
   (the diff stays clean, the empty blob is never trusted); an extensionless 0o654 shebang script under a `[python]`
-  filter (the executable bit is never taken from the index); and an unmerged entry. Every hook must get exactly the
-  files pre-commit gives it.
+  filter (the executable bit is never taken from the index); a symlink checked out as a regular file under
+  `core.symlinks=false` (the diff stays empty); a deleted file under an fsmonitor turned on from the environment
+  (`GIT_TEST_FSMONITOR`, `GIT_FSMONITOR_TEST` before git 2.20; `core.fsmonitor` unset) whose hook reports no change
+  (the diff skips the fsmonitor-valid entry); and an unmerged entry. Every hook must get exactly the files
+  pre-commit gives it.
 covers: [T10-RUN-37, T10-RUN-13]
 requires: {os: [linux, macos], not_root: true, tools: [python3]}
 work:
@@ -58,6 +61,21 @@ steps:
   - shell: chmod 654 tool
   - tool: [run, --all-files]
   - shell: chmod 644 tool
+  # core.symlinks=false: the symlink checked out as a regular file holding its target
+  - shell: git config core.symlinks false && rm link && printf b.txt > link
+  - tool: [run, --all-files]
+  - shell: rm link && git config --unset core.symlinks && git checkout -- link
+  # fsmonitor from the environment (the global core.fsmonitor=false removed) with a hook that reports no change: two
+  # refreshes make every entry fsmonitor-valid, then a tracked file is deleted
+  - shell: >-
+      git config --global --unset core.fsmonitor;
+      printf '%s\n' '#!/bin/sh' 'test "$1" = 2 && printf "last_update_token\0"' 'exit 0' > .git/fsm-none &&
+      chmod 755 .git/fsm-none &&
+      export GIT_TEST_FSMONITOR="$PWD/.git/fsm-none" GIT_FSMONITOR_TEST="$PWD/.git/fsm-none" &&
+      git update-index -q --refresh; git update-index -q --refresh; rm gone-a.py &&
+      "$PRE_COMMIT" run --all-files; rc=$?;
+      unset GIT_TEST_FSMONITOR GIT_FSMONITOR_TEST; git checkout -- gone-a.py; git config --global core.fsmonitor false;
+      exit $rc
   # an unmerged entry
   - shell: >-
       git checkout -q -b other && printf 'other\n' > conflict.txt && git commit -q --no-verify -am other &&
