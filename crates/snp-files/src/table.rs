@@ -1058,9 +1058,10 @@ impl FileTable {
         }
     }
 
-    /// Records the `lexists` metas of a fresh `Classifier::new` (index-aligned with the table).
-    pub(crate) fn set_pending(&self, metas: Box<[Option<Meta>]>) {
-        *snp_core::sync::lock(&self.pending) = Some(metas);
+    /// Records the `lexists` metas of a fresh `Classifier::new` (index-aligned with the table), replacing older ones;
+    /// `None` when no kept file has one (every kept file was trusted, ADR-106).
+    pub(crate) fn set_pending(&self, metas: Option<Box<[Option<Meta>]>>) {
+        *snp_core::sync::lock(&self.pending) = metas;
     }
 
     /// Takes the pending `lexists` metas (once: the first hook after `Classifier::new` adopts them).
@@ -2486,6 +2487,40 @@ mod tests {
         u.adopt(FileId(0), &pending, Query::full(stat_needs()));
         assert!(u.meta.0.get().is_none());
         assert!(matches!(u.stat.peek(0), Some(StatTier::Present(_))));
+    }
+
+    /// `Classifier::new` leaves no pending column when every kept file was trusted (nothing to adopt), and replaces
+    /// an older column either way.
+    #[cfg(unix)]
+    #[test]
+    fn no_pending_column_when_every_kept_file_is_trusted() {
+        let cache = snp_pyre::RegexCache::new();
+        let pool = JobPool::new(NonZeroUsize::MIN, snp_core::cancel::CancelToken::new());
+        let trusted = |modes: Box<[u32]>| {
+            let mut t = table(&["a.py", "b.py"]);
+            assert!(t.trust_index_modes(modes, Arc::new(AtomicBool::new(true)), TagSet::EMPTY));
+            Arc::new(t)
+        };
+        let all = trusted(Box::new([0o100_644, 0o100_644]));
+        all.set_pending(Some(Box::new([Some(Meta::regular(false)), None])));
+        let c = classifier_of(&all, &cache, &pool);
+        assert_eq!(c.kept.len(), 2);
+        assert!(
+            all.take_pending().is_none(),
+            "the older column is dropped too"
+        );
+        // `b.py` has no mode and does not exist under the nonexistent root: still nothing to adopt
+        let one = trusted(Box::new([0o100_644, 0]));
+        let c = classifier_of(&one, &cache, &pool);
+        assert_eq!(c.kept, [FileId(0)]);
+        assert!(one.take_pending().is_none());
+        // an `lstat`ed file leaves its meta to adopt
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("x.py"), b"x").unwrap();
+        let t = Arc::new(FileTable::from_args(vec!["x.py".into()], d.path()));
+        let c = classifier_of(&t, &cache, &pool);
+        assert_eq!(c.kept, [FileId(0)]);
+        assert!(matches!(t.take_pending().as_deref(), Some([Some(_)])));
     }
 
     /// The meta tier's cell stays small: 8 bytes against the stat tier's 64 (Linux's futex `Once`).

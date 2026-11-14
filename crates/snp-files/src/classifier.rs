@@ -60,18 +60,23 @@ impl Classifier {
                 }
                 Ok(out)
             })?;
-        let mut pending = vec![None; t.len()].into_boxed_slice();
+        // Only `lstat`ed files have a meta to adopt: when every kept file was trusted (ADR-106) there is no pending
+        // column at all, and the first hook adopts nothing (an older column is still dropped).
+        let pending = found.iter().any(|(_, meta)| meta.is_some()).then(|| {
+            let mut pending = vec![None; t.len()].into_boxed_slice();
+            for &(id, meta) in &found {
+                if let Some(slot) = t.index(id).and_then(|i| pending.get_mut(i)) {
+                    *slot = meta;
+                }
+            }
+            pending
+        });
+        t.set_pending(pending);
         // Sized once (never `found.into_iter().collect()`: an in-place collect would keep `found`'s larger buffer
         // for the whole run); a failed reservation only means ordinary growth.
         let mut kept = Vec::new();
         let _reserved: Result<(), TryReserveError> = kept.try_reserve_exact(found.len());
-        for (id, meta) in found {
-            if let Some(slot) = t.index(id).and_then(|i| pending.get_mut(i)) {
-                *slot = meta;
-            }
-            kept.push(id);
-        }
-        t.set_pending(pending);
+        kept.extend(found.iter().map(|&(id, _)| id));
         Ok(Self { table, kept })
     }
 
