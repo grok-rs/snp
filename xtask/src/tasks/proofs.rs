@@ -679,7 +679,8 @@ mod tests {
         assert!(models.contains("--expect-python 3.12"), "{models}");
         // the L1-L5 audits gate 7 blocks on run nightly too, not first at tag time
         assert!(models.contains("run: cargo xtask proofs lean"), "{models}");
-        assert!(models.contains("deps-lock.sh checkout"), "{models}");
+        // ADR-116: the workspace is self-contained, no sibling checkout step
+        assert!(!models.contains("deps-lock.sh"), "{models}");
         assert!(models.contains("python-version: \"3.12\""), "{models}");
         let sha = models
             .split("ref: ")
