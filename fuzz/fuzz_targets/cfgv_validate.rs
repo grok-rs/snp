@@ -1,6 +1,8 @@
 //! Arbitrary `Value`s against a pre-commit-like schema: validation,
 //! defaults, formatting, typed conversion and the `Eq`/`Hash` contract must
 //! never panic or disagree.
+//! Regexes are checked with `snp_pyre::cfgv_is_valid`, as snp-config does (ADR-116 dropped the `regex`-crate
+//! backed `check_regex()`).
 #![no_main]
 
 use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
@@ -132,10 +134,10 @@ static SCHEMA: LazyLock<Schema> = LazyLock::new(|| {
             Validator::optional("name", CheckFn::check_string(), "x"),
             Validator::optional(
                 "files",
-                CheckFn::check_and([CheckFn::check_string(), CheckFn::check_regex()]),
+                CheckFn::check_and([CheckFn::check_string(), CheckFn::check_regex_with(snp_pyre::cfgv_is_valid)]),
                 "",
             ),
-            Validator::optional("exclude", CheckFn::check_regex(), "^$"),
+            Validator::optional("exclude", CheckFn::check_regex_with(snp_pyre::cfgv_is_valid), "^$"),
             Validator::optional(
                 "stages",
                 CheckFn::check_array(CheckFn::check_one_of(["pre-commit", "pre-push", "manual"])),

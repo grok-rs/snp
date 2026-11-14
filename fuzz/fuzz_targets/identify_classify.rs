@@ -3,7 +3,7 @@
 //! exactly one encoding tag; `is_text` agrees with `is_text_bytes`.
 #![no_main]
 
-mod common;
+mod identify_common;
 
 use file_identify::{
     Classification, FileInfo, FileKind, Meta, Tag, classify, is_text, is_text_bytes, tags_from_info,
@@ -11,9 +11,9 @@ use file_identify::{
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let (kind_byte, rest) = common::control(data);
-    let (control, rest) = common::control(rest);
-    let (name_len, rest) = common::control(rest);
+    let (kind_byte, rest) = identify_common::control(data);
+    let (control, rest) = identify_common::control(rest);
+    let (name_len, rest) = identify_common::control(rest);
     let (name, content) = rest.split_at(usize::from(name_len).min(rest.len()));
     let kind = match kind_byte % 5 {
         0 => FileKind::Directory,
@@ -30,7 +30,7 @@ fuzz_target!(|data: &[u8]| {
             assert_eq!(kind, FileKind::Regular);
             let tags = pending.finish_bytes(content);
             let streamed = pending
-                .finish(common::Chunked::new(content, control))
+                .finish(identify_common::Chunked::new(content, control))
                 .expect("in-memory read");
             assert_eq!(streamed, tags);
             assert!(tags.is_superset(&pending.tags()));
@@ -60,6 +60,6 @@ fuzz_target!(|data: &[u8]| {
         assert_eq!(tags_from_info(&info), tags);
     }
 
-    let text = is_text(common::Chunked::new(content, control)).expect("in-memory read");
+    let text = is_text(identify_common::Chunked::new(content, control)).expect("in-memory read");
     assert_eq!(text, is_text_bytes(content));
 });

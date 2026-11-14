@@ -21,6 +21,12 @@ unsafe_code = "forbid"
 
 [dependencies]
 libfuzzer-sys = "0.4.13"
+# ADR-116: the absorbed crates under their library names (`cfgv::`, `file_identify::`), as in the workspace.
+cfgv = { path = "../crates/snp-cfgv", package = "snp-cfgv", features = ["serde"] }
+file-identify = { path = "../crates/snp-identify", package = "snp-identify" }
+# `cfgv_validate` builds arbitrary values and deserializes them into a typed config.
+arbitrary = "1.4"
+serde = { version = "1.0.229", features = ["derive"] }
 snp-argparse = { path = "../crates/snp-argparse" }
 snp-cli = { path = "../crates/snp-cli" }
 snp-cmd = { path = "../crates/snp-cmd" }
@@ -57,6 +63,27 @@ debug = 1
 [[bin]]
 name = "argparse_parse"
 path = "fuzz_targets/argparse_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cfgv_bigint"
+path = "fuzz_targets/cfgv_bigint.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cfgv_py_text"
+path = "fuzz_targets/cfgv_py_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cfgv_validate"
+path = "fuzz_targets/cfgv_validate.rs"
 test = false
 doc = false
 bench = false
@@ -127,6 +154,34 @@ bench = false
 [[bin]]
 name = "git_z_split"
 path = "fuzz_targets/git_z_split.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "identify_classify"
+path = "fuzz_targets/identify_classify.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "identify_filename"
+path = "fuzz_targets/identify_filename.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "identify_shebang"
+path = "fuzz_targets/identify_shebang.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "identify_shlex"
+path = "fuzz_targets/identify_shlex.rs"
 test = false
 doc = false
 bench = false
