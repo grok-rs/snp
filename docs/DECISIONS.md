@@ -2142,9 +2142,13 @@ generators move into xtask and read the pc470 oracle (CPython 3.12.3 with the ha
 3.5.0 of `requirements-pc470.txt`): `cargo xtask identify-tables [--check]` (file-identify's own Rust table generator),
 `cargo xtask identify-vectors` and `cargo xtask cfgv-vectors` (the Python generators); regenerating reproduces the
 committed data byte for byte (only the generated files' headers name the new commands). file-identify's PyPI wheel
-download script is dropped (the oracle provides identify). The seven fuzz targets join `fuzz/` as `cfgv_*` and
-`identify_*`; file-identify's harness-less bench stays in its crate; the ADR-061 drift tests stay as consumer-side
-contract tests (`cfgv_contract.rs`, `identify_contract.rs`). (5) **DAG.** `check-dag` tracks both as workspace leaves
+download script is dropped (the oracle provides identify), and so is its weekly `identify-sync` workflow, which
+regenerated the tables from the latest PyPI identify and opened a PR: the tables now track the identify the pc470
+oracle pins (2.6.20, pre-commit 4.7.0's pin) and change only together with an oracle bump, regenerated with
+`cargo xtask identify-tables`, `identify-vectors` and `cfgv-vectors` (this replaces the resolutions of Appendix A,
+01 Q13 and 08 Q8). The seven fuzz targets join `fuzz/` as `cfgv_*` and `identify_*`; file-identify's harness-less bench
+stays in its crate; the ADR-061 drift tests stay as consumer-side contract tests (`cfgv_contract.rs`,
+`identify_contract.rs`). (5) **DAG.** `check-dag` tracks both as workspace leaves
 without the implicit snp-core edge; the consumers are unchanged (snp-yaml, snp-config, snp-hooks → snp-cfgv;
 snp-proc, snp-files, snp-config, snp-hooks, snp-migrate → snp-identify). (6) **CI and releases.** `deps.lock`,
 `deps-lock.sh`, every checkout step, the drift workflow and release gates 1, 2 and 5 (with `--lock`,
@@ -2175,7 +2179,8 @@ fallback → no. Q7 regex dialect → CPython 3.12, `\z` rejected (ADR-003). Q8 
 migrate-config EOL/encoding/alias/block-scalar → fixed (D-DATA-09/14/15). Q10 unknown hook keys at validate time →
 parity; snp brand `validate-config --strict`. Q11 rich YAML diagnostics → v1.1, stderr only. Q12 exotic YAML values →
 exact via cfgv `Value::{Set, Tuple, Date, DateTime, BigInt, Bytes}`. Q13 identify drift → file-identify tables track
-PyPI identify (2.6.20 now), weekly sync job.
+PyPI identify (2.6.20 now), weekly sync job (superseded by ADR-116: tables follow the oracle's pinned identify; no
+sync job).
 
 **01 Addendum (§A.10).** Q1 opt-in `SNP_PY_RE=3.14` (`\z` acceptance) → no in v1; the grammar stays CPython 3.12 until
 pre-commit's oldest supported Python is ≥ 3.14, then a superseding ADR. Q2 crash-to-validation-error → validation
@@ -2253,11 +2258,11 @@ flavour → none (ADR-004). 12 bootstrap scope → ADR-034. 13 EAW version → U
 (FD-3), pinned by `deps.lock` (ADR-061). 15 mimalloc on musl → decided by WP-36's measurement (ADR-079).
 
 **08 user crates.** 1 Windows exec semantics → `ExecPolicy::PythonCompat`. 2 Unix `X_OK` → `PythonCompat` emulation of
-`access(2)` (mode/owner/groups; file-identify). 3 regex dialect for `check_regex` → `snp_pyre::cfgv_is_valid`; match-time
-limit → error. 4 message wording → verbatim. 5 PyYAML error texts → ADR-002. 6 shebang cap → 64 KiB (D-SEC-09). 7 FIFOs
-→ never block (D-CRASH-09). 8 identify tracking → latest PyPI identify. 9 git-mode fast path → yes under ADR-041's
-conditions. 10 cfgv numeric equality → handled in snp-yaml keys. 11 `yaml_serde` feature → unused. 12 UCD for
-`isprintable` → 15.1.
+`access(2)` (mode/owner/groups; file-identify). 3 regex dialect for `check_regex` → `snp_pyre::cfgv_is_valid`;
+match-time limit → error. 4 message wording → verbatim. 5 PyYAML error texts → ADR-002. 6 shebang cap → 64 KiB
+(D-SEC-09). 7 FIFOs → never block (D-CRASH-09). 8 identify tracking → latest PyPI identify (superseded by ADR-116: the
+oracle's pinned identify). 9 git-mode fast path → yes under ADR-041's conditions. 10 cfgv numeric equality → handled in
+snp-yaml keys. 11 `yaml_serde` feature → unused. 12 UCD for `isprintable` → 15.1.
 
 **09 builtin hooks.** Q1 default `auto`; caveat hooks after their gate; `check-xml` delegated until its gate passes. Q2
 emulated CPython → 3.13. Q3 crash paths → parse crashes keep exit 1 + stop; environmental crash on read-only unchanged
