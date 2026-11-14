@@ -86,6 +86,8 @@ impl Loader<'_, '_> {
     /// `out += self.reader.prefix(length)` on the UTF-8 bytes of a scalar.
     pub(super) fn prefix_into(&mut self, length: usize, out: &mut Vec<u8>) -> R<()> {
         self.with_prefix(length, |p| {
+            // at least one byte per character; a failed reservation leaves it to normal growth
+            out.try_reserve(p.len()).unwrap_or_default();
             for c in p {
                 out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
             }
