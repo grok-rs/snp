@@ -85,29 +85,7 @@
 //! ([`tags_from_path`], [`tags_from_metadata`]) instead.
 
 #![forbid(unsafe_code)]
-#![warn(missing_docs, clippy::pedantic)]
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic,
-        clippy::indexing_slicing,
-        clippy::unreachable,
-        clippy::todo,
-        clippy::unimplemented,
-        clippy::string_slice
-    )
-)]
-#![cfg_attr(
-    test,
-    allow(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic,
-        clippy::indexing_slicing
-    )
-)]
+#![warn(missing_docs)]
 
 mod classify;
 mod error;

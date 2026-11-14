@@ -27,8 +27,9 @@ const fn is_text_byte(b: u8) -> bool {
 pub fn is_text_bytes(content: &[u8]) -> bool {
     let head = content.get(..TEXT_PROBE_LEN).unwrap_or(content);
     // Branch-free inner loop so the compiler can vectorize it.
-    head.chunks(64)
-        .all(|chunk| chunk.iter().fold(true, |ok, &b| ok & is_text_byte(b)))
+    #[expect(clippy::disallowed_methods, reason = "a constant non-zero chunk size")]
+    let mut chunks = head.chunks(64);
+    chunks.all(|chunk| chunk.iter().fold(true, |ok, &b| ok & is_text_byte(b)))
 }
 
 /// Read up to [`TEXT_PROBE_LEN`] bytes from `reader` and report whether they
@@ -64,7 +65,8 @@ pub(crate) fn read_full<R: Read + ?Sized>(reader: &mut R, buf: &mut [u8]) -> io:
         }
         match reader.read(rest) {
             Ok(0) => break,
-            Ok(n) => filled += n.min(rest.len()),
+            // Bounded by `buf.len()`.
+            Ok(n) => filled = filled.saturating_add(n.min(rest.len())),
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
             Err(e) => return Err(e),
         }

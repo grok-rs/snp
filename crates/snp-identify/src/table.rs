@@ -80,7 +80,7 @@ impl StrIndex {
             if key_at(idx)?.as_bytes() == key {
                 return Some(idx);
             }
-            s = (s + 1) & mask;
+            s = s.wrapping_add(1) & mask;
         }
         None
     }

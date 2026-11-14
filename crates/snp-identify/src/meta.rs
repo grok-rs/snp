@@ -35,6 +35,10 @@ impl FileKind {
     /// links. The reparse tag that would tell them apart is not available
     /// from the standard library without `unsafe` code.
     #[must_use]
+    #[expect(
+        clippy::filetype_is_file,
+        reason = "identify's `file` is `stat.S_ISREG`: exactly the regular files, checked after the other kinds"
+    )]
     pub fn from_file_type(file_type: fs::FileType) -> Self {
         if file_type.is_dir() {
             Self::Directory
@@ -117,14 +121,15 @@ mod imp {
         *GID.get_or_init(|| rustix::process::getgid().as_raw()) == gid
             || GROUPS
                 .get_or_init(|| {
-                    rustix::process::getgroups()
-                        .map(|groups| {
+                    rustix::process::getgroups().map_or_else(
+                        |_| Box::default(),
+                        |groups| {
                             groups
                                 .into_iter()
                                 .map(rustix::process::Gid::as_raw)
                                 .collect()
-                        })
-                        .unwrap_or_default()
+                        },
+                    )
                 })
                 .contains(&gid)
     }
@@ -330,6 +335,10 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "a test: `?` propagates the I/O set-up errors"
+    )]
     fn unix_exec_policies() -> std::io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir()?;

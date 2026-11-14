@@ -420,28 +420,28 @@ pub(crate) static TAG_INDEX: StrIndex =
 
 impl Tag {
     /// `binary`: encoding tag (`identify.ENCODING_TAGS`).
-    pub const BINARY: Tag = Tag::from_id_const(21);
+    pub const BINARY: Self = Self::from_id_const(21);
 
     /// `directory`: file type tag (`identify.TYPE_TAGS`).
-    pub const DIRECTORY: Tag = Tag::from_id_const(58);
+    pub const DIRECTORY: Self = Self::from_id_const(58);
 
     /// `executable`: file mode tag (`identify.MODE_TAGS`).
-    pub const EXECUTABLE: Tag = Tag::from_id_const(74);
+    pub const EXECUTABLE: Self = Self::from_id_const(74);
 
     /// `file`: file type tag (`identify.TYPE_TAGS`).
-    pub const FILE: Tag = Tag::from_id_const(78);
+    pub const FILE: Self = Self::from_id_const(78);
 
     /// `non-executable`: file mode tag (`identify.MODE_TAGS`).
-    pub const NON_EXECUTABLE: Tag = Tag::from_id_const(178);
+    pub const NON_EXECUTABLE: Self = Self::from_id_const(178);
 
     /// `socket`: file type tag (`identify.TYPE_TAGS`).
-    pub const SOCKET: Tag = Tag::from_id_const(244);
+    pub const SOCKET: Self = Self::from_id_const(244);
 
     /// `symlink`: file type tag (`identify.TYPE_TAGS`).
-    pub const SYMLINK: Tag = Tag::from_id_const(254);
+    pub const SYMLINK: Self = Self::from_id_const(254);
 
     /// `text`: encoding tag (`identify.ENCODING_TAGS`).
-    pub const TEXT: Tag = Tag::from_id_const(261);
+    pub const TEXT: Self = Self::from_id_const(261);
 }
 
 /// `identify.extensions.EXTENSIONS`: lower-cased file extension (without the

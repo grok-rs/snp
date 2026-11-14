@@ -207,7 +207,7 @@ fn read_line_limited<R: BufRead + ?Sized>(
         let window = available.get(..room).unwrap_or(available);
         if let Some(i) = window.iter().position(|&b| b == b'\n') {
             out.extend_from_slice(window.get(..=i).unwrap_or(window));
-            reader.consume(i + 1);
+            reader.consume(i.saturating_add(1));
             return Ok(true);
         }
         let n = window.len();
@@ -235,8 +235,10 @@ fn with_line<R: BufRead + ?Sized, T>(
     let window = available.get(..limit).unwrap_or(available);
     if let Some(i) = window.iter().position(|&b| b == b'\n') {
         let out = f(window.get(..=i).unwrap_or(window));
-        reader.consume(i + 1);
-        return Ok(Some((out, i + 1)));
+        // `i < window.len()`: no overflow.
+        let used = i.saturating_add(1);
+        reader.consume(used);
+        return Ok(Some((out, used)));
     }
     let mut line = Vec::new();
     if !read_line_limited(reader, &mut line, limit)? {
@@ -272,10 +274,10 @@ impl<'a, R: Read> Source<'a, R> {
 }
 
 impl<R: Read> Read for Source<'_, R> {
-    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let available = self.fill_buf()?;
-        let n = available.len().min(out.len());
-        for (o, a) in out.iter_mut().zip(available) {
+        let n = available.len().min(buf.len());
+        for (o, a) in buf.iter_mut().zip(available) {
             *o = *a;
         }
         self.consume(n);
@@ -312,11 +314,11 @@ impl<R: Read> BufRead for Source<'_, R> {
         Ok(self.buf.get(self.pos..).unwrap_or_default())
     }
 
-    fn consume(&mut self, amt: usize) {
+    fn consume(&mut self, amount: usize) {
         if self.head.is_empty() {
-            self.pos = self.pos.saturating_add(amt).min(self.buf.len());
+            self.pos = self.pos.saturating_add(amount).min(self.buf.len());
         } else {
-            self.head = self.head.get(amt..).unwrap_or_default();
+            self.head = self.head.get(amount..).unwrap_or_default();
         }
     }
 }
@@ -329,7 +331,8 @@ pub(crate) fn parse_shebang_buf<R: BufRead + ?Sized>(reader: &mut R) -> io::Resu
     if read_full(reader, &mut magic)? != 2 || magic != *b"#!" {
         return Ok(Vec::new());
     }
-    budget -= magic.len();
+    // MAX_SHEBANG_BYTES >= 2.
+    budget = budget.saturating_sub(magic.len());
     let Some((tokens, used)) = with_line(reader, budget, tokenize_line)? else {
         return Ok(Vec::new());
     };
@@ -339,9 +342,17 @@ pub(crate) fn parse_shebang_buf<R: BufRead + ?Sized>(reader: &mut R) -> io::Resu
     };
     match cmd.as_slice() {
         [env, flag, ..] if env == "/usr/bin/env" && flag == "-S" => {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the slice pattern proves len >= 2"
+            )]
             cmd.drain(..2);
         }
         [env, ..] if env == "/usr/bin/env" => {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the slice pattern proves len >= 1"
+            )]
             cmd.remove(0);
         }
         _ => {}
@@ -367,7 +378,8 @@ fn parse_nix_shebang<R: BufRead + ?Sized>(
         if read_full(reader, &mut magic)? != 2 || magic != *b"#!" {
             return Ok(cmd);
         }
-        budget -= 2;
+        // `budget >= 2` (checked above).
+        budget = budget.saturating_sub(2);
         let Some((tokens, used)) = with_line(reader, budget, tokenize_line)? else {
             return Ok(cmd);
         };
@@ -375,11 +387,13 @@ fn parse_nix_shebang<R: BufRead + ?Sized>(
         let Some(tokens) = tokens else {
             return Ok(cmd);
         };
-        for pair in tokens.windows(2) {
-            if let [flag, arg] = pair {
-                if flag == "-i" {
-                    cmd = vec![arg.clone()];
-                }
+        #[expect(clippy::disallowed_methods, reason = "a constant non-zero window size")]
+        let pairs = tokens.windows(2);
+        for pair in pairs {
+            if let [flag, arg] = pair
+                && flag == "-i"
+            {
+                cmd = vec![arg.clone()];
             }
         }
     }

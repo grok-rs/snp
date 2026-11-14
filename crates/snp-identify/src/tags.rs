@@ -104,6 +104,10 @@ pub fn is_encoding_tag(tag: &str) -> bool {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Tag(u16);
 
+#[expect(
+    clippy::multiple_inherent_impl,
+    reason = "the named tag constants are generated into generated.rs"
+)]
 impl Tag {
     /// Construct from a generated id. Only used by `generated.rs`, whose ids
     /// are `< TAG_COUNT` by construction.
@@ -133,6 +137,10 @@ impl Tag {
 
     /// The tag's position in [`ALL_TAGS`] (`0..TAG_COUNT`).
     #[must_use]
+    #[expect(
+        clippy::as_conversions,
+        reason = "u16 -> usize is lossless (From is not const)"
+    )]
     pub const fn id(self) -> usize {
         self.0 as usize
     }
@@ -168,6 +176,10 @@ impl Tag {
     }
 
     /// Word index and bit mask of this tag inside a [`TagSet`].
+    #[expect(
+        clippy::as_conversions,
+        reason = "u16 -> usize is lossless (From is not const)"
+    )]
     const fn bit(self) -> (usize, u64) {
         ((self.0 / 64) as usize, 1u64 << (self.0 % 64))
     }
@@ -334,7 +346,13 @@ pub struct TagSet {
 // All indexing below is `words[i]` with `i < WORDS`, guarded by the loop
 // condition or an explicit check, so it cannot panic. Const fns cannot use
 // iterators, hence the manual loops.
-#[allow(clippy::indexing_slicing)]
+#[expect(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    reason = "const fn loops: every index is `i < WORDS` (loop condition or explicit check), every counter \
+              and shift is bounded by WORDS * 64 and TAG_COUNT, and u16/u32 -> usize casts are lossless"
+)]
 impl TagSet {
     /// The empty set.
     pub const EMPTY: Self = Self { words: [0; WORDS] };
@@ -781,9 +799,9 @@ set_op!(
 set_op!(Sub, sub, SubAssign, sub_assign, difference);
 
 impl Not for TagSet {
-    type Output = TagSet;
+    type Output = Self;
 
-    fn not(self) -> TagSet {
+    fn not(self) -> Self {
         self.complement()
     }
 }
@@ -801,7 +819,9 @@ pub struct Iter {
 
 impl Iter {
     fn tag(word: usize, bit: u32) -> Option<Tag> {
-        let id = word.checked_mul(64)?.checked_add(bit as usize)?;
+        let id = word
+            .checked_mul(64)?
+            .checked_add(usize::try_from(bit).ok()?)?;
         Tag::from_id(id)
     }
 }
@@ -814,10 +834,12 @@ impl Iterator for Iter {
             let w = self.words.get_mut(self.front)?;
             if *w != 0 {
                 let bit = w.trailing_zeros();
-                *w &= *w - 1;
+                // `*w != 0`: clears the lowest set bit.
+                *w &= w.wrapping_sub(1);
                 return Self::tag(self.front, bit);
             }
-            self.front += 1;
+            // `front < back <= WORDS`.
+            self.front = self.front.saturating_add(1);
         }
         None
     }
@@ -828,7 +850,7 @@ impl Iterator for Iter {
             .get(self.front..self.back)
             .unwrap_or_default()
             .iter()
-            .map(|w| w.count_ones() as usize)
+            .map(|w| usize::try_from(w.count_ones()).unwrap_or(0))
             .sum();
         (n, Some(n))
     }
@@ -837,10 +859,12 @@ impl Iterator for Iter {
 impl DoubleEndedIterator for Iter {
     fn next_back(&mut self) -> Option<Tag> {
         while self.back > self.front {
-            let idx = self.back - 1;
+            // `back > front >= 0`.
+            let idx = self.back.saturating_sub(1);
             let w = self.words.get_mut(idx)?;
             if *w != 0 {
-                let bit = 63 - w.leading_zeros();
+                // `*w != 0`: `leading_zeros() <= 63`.
+                let bit = 63_u32.saturating_sub(w.leading_zeros());
                 *w &= !(1u64 << bit);
                 return Self::tag(idx, bit);
             }
@@ -859,6 +883,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[expect(clippy::disallowed_methods, reason = "a constant non-zero window size")]
     fn all_tags_sorted_unique_and_indexed() {
         assert_eq!(ALL_TAGS.len(), TAG_COUNT);
         assert!(ALL_TAGS.windows(2).all(|w| w[0] < w[1]));
@@ -960,7 +985,7 @@ mod tests {
         fn assert_traits<T: Send + Sync + Copy + 'static>() {}
         assert_traits::<Tag>();
         assert_traits::<TagSet>();
-        assert_eq!(core::mem::size_of::<Tag>(), 2);
-        assert_eq!(core::mem::size_of::<TagSet>(), WORDS * 8);
+        assert_eq!(size_of::<Tag>(), 2);
+        assert_eq!(size_of::<TagSet>(), WORDS * 8);
     }
 }

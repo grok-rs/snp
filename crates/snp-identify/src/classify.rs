@@ -678,6 +678,10 @@ mod tests {
     }
 
     impl Read for Scripted {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "test double: `n` is at most both lengths"
+        )]
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
             self.reads += 1;
             if self.data.is_empty() {

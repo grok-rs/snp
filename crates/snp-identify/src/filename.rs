@@ -87,7 +87,7 @@ pub(crate) fn basename(path: &[u8]) -> &[u8] {
 /// `posixpath.basename`: everything after the last `/`.
 pub(crate) fn posix_basename(path: &[u8]) -> &[u8] {
     match path.iter().rposition(|&b| b == b'/') {
-        Some(i) => path.get(i + 1..).unwrap_or_default(),
+        Some(i) => path.get(i.saturating_add(1)..).unwrap_or_default(),
         None => path,
     }
 }
@@ -101,7 +101,7 @@ const fn is_nt_sep(b: u8) -> bool {
 pub(crate) fn nt_basename(path: &[u8]) -> &[u8] {
     let rest = nt_after_root(path);
     match rest.iter().rposition(|&b| is_nt_sep(b)) {
-        Some(i) => rest.get(i + 1..).unwrap_or_default(),
+        Some(i) => rest.get(i.saturating_add(1)..).unwrap_or_default(),
         None => rest,
     }
 }
@@ -162,15 +162,15 @@ fn nt_after_root(p: &[u8]) -> &[u8] {
             let find_sep = |from: usize| {
                 p.get(from..)
                     .and_then(|tail| tail.iter().position(|&b| is_nt_sep(b)))
-                    .map(|i| i + from)
+                    .map(|i| i.saturating_add(from))
             };
             let Some(index) = find_sep(start) else {
                 return b"";
             };
-            let Some(index2) = find_sep(index + 1) else {
+            let Some(index2) = find_sep(index.saturating_add(1)) else {
                 return b"";
             };
-            p.get(index2 + 1..).unwrap_or_default()
+            p.get(index2.saturating_add(1)..).unwrap_or_default()
         } else {
             // Relative path with root, e.g. \Windows
             p.get(1..).unwrap_or_default()
@@ -182,12 +182,16 @@ fn nt_after_root(p: &[u8]) -> &[u8] {
         if p.get(colon) != Some(&b':') {
             // Relative path, e.g. Windows
             p
-        } else if p.get(colon + 1).copied().is_some_and(is_nt_sep) {
+        } else if p
+            .get(colon.saturating_add(1))
+            .copied()
+            .is_some_and(is_nt_sep)
+        {
             // Absolute drive-letter path, e.g. X:\Windows
-            p.get(colon + 2..).unwrap_or_default()
+            p.get(colon.saturating_add(2)..).unwrap_or_default()
         } else {
             // Relative path with drive, e.g. X:Windows
-            p.get(colon + 1..).unwrap_or_default()
+            p.get(colon.saturating_add(1)..).unwrap_or_default()
         }
     }
 }
