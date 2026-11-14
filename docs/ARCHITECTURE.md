@@ -1809,13 +1809,13 @@ impl Store {
     pub fn all_repos(&self) -> Vec<RepoHandle>;
     pub fn retire_repo(&self, key: &RepoKey) -> io::Result<()>;
     pub fn sweep(&self, now: std::time::SystemTime) -> SweepReport;               // scratch/trash orphans, old restored patches, tools no `.snp-tools.json` references
-    pub fn clean(&self) -> Result<(), Failure>;                                   // retire snp's layout (keeps recovery data, .lock, unknown files: D-DATA-04)
+    pub fn clean(&self) -> Result<Option<PathBuf>, Failure>;                      // retire snp's layout (keeps recovery data, .lock, unknown files: D-DATA-04); Some(journal): unreadable, every patch kept
     pub fn patches_dir(&self) -> PathBuf; pub fn spill_dir(&self) -> PathBuf; pub fn scratch_dir(&self) -> PathBuf;
     pub fn crash_log(&self, brand: Brand) -> PathBuf;                             // <store>/pre-commit.log | snp.log
     pub fn tool_dir(&self, tool: &str, version: &str) -> PathBuf; pub fn cache_dir(&self, name: &str) -> PathBuf;
     pub fn relocated_from(&self) -> Option<PathBuf>;                              // store-v1.json path differs → old path
 }
-#[derive(Debug, Default)] pub struct SweepReport { pub removed_dirs: usize, pub removed_patches: usize, pub legacy_v1_removed: bool }
+#[derive(Debug, Default)] pub struct SweepReport { pub removed_dirs: usize, pub removed_patches: usize, pub legacy_v1_removed: bool, pub unreadable_journal: Option<PathBuf> }
 ```
 (gc *marking* — pre-commit's `_mark_used_repos` rules — lives in `snp_cmd::gc`, which owns the config dependency.)
 
@@ -2947,11 +2947,16 @@ directory` (snp brand) once per process, then waits (cancel observed every 50 ms
   `Installed` markers are kept (pre-commit keeps the clone it still uses, so a later run prints nothing new); dead
   configs forgotten (incl. configs that fail C-cfg validation, X13-CFG-14); unused repos retired to `trash/` then
   removed (ENOENT-tolerant, X13-CMD-07); then `sweep`: scratch/trash orphans, tools referenced by no `.snp-tools.json`,
-  restored patches older than 30 days (journaled-unrestored patches are **never** removed), `keys-v1` markers of
+  restored patches older than 30 days (journaled-unrestored patches and their `<patch>.*` siblings are **never**
+  removed; journals are decoded with the stash's codec and read in full, and one that cannot be read or understood
+  keeps every patch with the stderr line `[WARNING] the stash journal <journal> cannot be read or understood; every
+  stash patch is kept. Remove the journal once no snp run uses it and no patch it may name is needed.`, D-DATA-04,
+  D-DIAG-05), `keys-v1` markers of
   `(db_repo_name, rev)` keys that are neither present nor Tier-A-loadable, snp 1.x leftovers only when the README
   carries the 1.x signature (an snp-only stderr line `Removed snp 1.x cache data from {store}.`, D-DIAG-05).
   Output: `{n} repo(s) removed.` (n counts `(db_repo_name, rev)` keys, like pre-commit's rows).
-* **clean** (exclusive): retire snp's whole layout — every journal, the patches of unrestored journals, `patch*`
+* **clean** (exclusive): retire snp's whole layout — every journal, the patches of unrestored journals and their
+  siblings (all patches, with the same warning, when a journal cannot be read), `patch*`
   files younger than an hour, `.lock` and files outside snp's layout are kept (D-DATA-04); always prints `Cleaned {store}.` (pre-commit re-creates its store
   before `clean` and always prints, 03 §10; ADR-030). Never touches `~/.pre-commit` or pre-commit's store (D-STORE-02).
 * **Crash log** `<store>/<brand.crash_log_name()>` (ADR-013): pre-commit's skeleton (§10.3). If the store cannot be
@@ -3659,7 +3664,7 @@ tagging tiers, YAML load of the pre-commit-hooks manifest, argparse parse of a h
 | L6 platform | Linux x64/arm64 (gnu + musl smoke), macOS arm64 + x64, Windows x64/arm64 × git 2.18.5 (warn; stash refused, D-DATA-17; `--all-files` fallback, D-CRASH-26 — both `expect_divergence` scenarios), 2.30 (warn; fallback), 2.31, 2.34, 2.39, 2.43, 2.54 (config hooks), latest, Git for Windows latest | PR |
 | L7 performance | §12.3 | nightly + PR comment |
 | L8 fault injection | snp-stash FI matrix, kill-9 crash matrix for store/install/stash, signal matrix, EPIPE, ENOSPC (tmpfs with a size limit), concurrency matrix | every push (posix) |
-| L9 proofs (ADR-095) | `cargo xtask proofs check` (guards G1–G10, tool-free; in `xtask gates`); `proofs verus` (Verus on the mounted kernel files, `--no-cheating`, manifest, mutants) and `proofs lean` + `proofs oracles` (Lean models, axiom audit, home-crate oracle tests) in `proofs.yml`; claims per docs/VERIFICATION.md §0 and §9 | guards every push; Verus and Lean on relevant changes (advisory until the owner makes the Verus step blocking) |
+| L9 proofs (ADR-095, ADR-096) | `cargo xtask proofs check` (guards G1–G10, tool-free) and `proofs verus` (Verus on the mounted kernel files, `--no-cheating`, manifest, mutants) in `xtask gates` and release gate 7; `proofs lean` + `proofs oracles` (Lean models, axiom audit, home-crate oracle tests) in `proofs.yml`; nightly `py_vs_lean` (models vs CPython 3.12 and pre-commit-hooks) and Z3 seed sweep; claims per docs/VERIFICATION.md §0 and §9 | guards and Verus every push (blocking); Lean on relevant changes (advisory); release gate 7 per tag; models vs Python and seed sweep nightly |
 
 Rules: no test mutates the process env or cwd; every spawned process gets the hermetic env (10 §7.3.2); tests run with
 and without `PRE_COMMIT_NO_CONCURRENCY=1`; binaries are referenced by `CARGO_BIN_EXE_*` inside their package and by
@@ -3754,8 +3759,11 @@ git versions per §13.1 L6 via containers; nextest profiles `default` (hermetic)
 snp-argparse, snp-pyre. Every workflow first checks out the user crates as siblings at the `deps.lock` SHAs (ADR-061);
 a scheduled drift job compares those SHAs with the `snp-support` branch heads and opens an issue when they differ.
 `perf-smoke` (release-mode `#[ignore = "perf"]` tests) runs on push. Proofs (ADR-095, docs/VERIFICATION.md §7): the
-required `xtask gates` job runs `cargo xtask proofs check`; `proofs.yml` has the advisory `verus` and `lean` jobs, which
-always start and exit early when no proof-relevant path changed (no `on.paths` filter), with read-only permissions.
+required `xtask gates` job runs `cargo xtask proofs check` and, since ADR-096, `cargo xtask proofs verus` (blocking, on
+every change); release gate 7 re-verifies the tag (Verus and Lean) and requires the release notes to accept any
+proof-pending kernel; `proofs.yml` has the advisory `lean` job, which always starts and exits early when no
+proof-relevant path changed (no `on.paths` filter); nightly.yml runs `py_vs_lean` and the Z3 seed sweep; all with
+read-only permissions.
 
 ### 13.8 Test-catalog IDs (ADR-062)
 

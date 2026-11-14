@@ -125,8 +125,10 @@ Releases are cut by pushing a tag `vX.Y.Z` that matches the workspace version an
 [`CHANGELOG.md`](CHANGELOG.md). The `release` workflow first runs `cargo xtask release gates` (ADR-061): `deps.lock`
 pins exactly the user crates, the sibling checkouts are clean at the pinned commits, the snp checkout is clean, and
 cfgv and file-identify are published on crates.io from exactly those commits (`.cargo_vcs_info.json`), and the
-crates.io publish set (`snp` and its internal crates) is pinned to the release version (ADR-088); `cargo publish
---workspace --dry-run` then builds every crate to be published. It builds the eight targets with cargo-dist
+crates.io publish set (`snp` and its internal crates) is pinned to the release version (ADR-088), and the Verus and
+Lean proofs re-verify the tagged commit, any proof-pending kernel being accepted by a `Proof pending: <kernel id>`
+line in the release's CHANGELOG section (gate 7, ADR-096); `cargo publish --workspace --dry-run` then builds every
+crate to be published. It builds the eight targets with cargo-dist
 (auditable binaries, CycloneDX SBOMs, SHA-256 checksums, GitHub attestations, the Homebrew formula), the `snp-cli`
 wheels with maturin, publishes the wheels to PyPI and the GitHub release, and then publishes the crates to crates.io
 (`CARGO_REGISTRY_TOKEN`) and the formula to [grok-rs/homebrew-tap](https://github.com/grok-rs/homebrew-tap)

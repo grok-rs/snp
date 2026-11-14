@@ -8,7 +8,10 @@
 # * catalog-status: WP-35's catalog report (the scheduled performance gates are bench.yml's, owned by WP-36; this
 #   workflow does not duplicate them);
 # * mutants: cargo-mutants on snp-stash, snp-proc (xargs), snp-argparse and snp-pyre;
-# * coverage: llvm-cov over the hermetic suite, published as an artifact.
+# * coverage: llvm-cov over the hermetic suite, published as an artifact;
+# * proofs-models: the Lean audits (`proofs lean`) and the models against CPython 3.12 and pre-commit-hooks v6.0.0
+#   (py_vs_lean, ADR-096);
+# * proofs-sweep: the Verus proofs under Z3 seeds 1-5 (a failure fails the job) and at half the rlimit (reported).
 #
 # Jobs that drive an xtask task owned by another package run once that task is implemented: the `tasks` job reports
 # whether each task is still its W0 stub (a `todo!()` body), and the job is skipped (with a notice) until it is not.
@@ -347,3 +350,92 @@ jobs:
         with:
           name: coverage-lcov
           path: snp/lcov.info
+
+  proofs-models:
+    # ADR-096 (docs/VERIFICATION.md §4.3, §7; TCB row 14): the Lean reference models against the Python they
+    # transliterate, `shlex-model` against CPython 3.12's shlex and `eof-model` against pre-commit-hooks v6.0.0's
+    # end_of_file_fixer (the commit gen-pch-data pins for the tag; py_vs_lean also checks its setup.cfg version).
+    # Exhaustive small inputs plus 10 000 seeded random cases per model, seeded by the run id (a mismatch prints its
+    # seed). Per-PR CI stays free of Python (§13.3). The job also runs the audits of `cargo xtask proofs lean` (L1-L5),
+    # which gate 7 makes blocking at tag time while the per-PR `lean` job of proofs.yml is advisory: a Lean regression
+    # that merged under the advisory job turns this job red the next night, not the next tag.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - uses: actions/checkout@v4
+        with:
+          repository: pre-commit/pre-commit-hooks
+          ref: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # v6.0.0
+          path: pch-v6.0.0
+          persist-credentials: false
+      # leanprover/lean-action v1.7.1 (as in proofs.yml): elan, the toolchain of proofs/lean/lean-toolchain and
+      # `lake build --wfail`, whose default targets include the oracle executables.
+      - uses: leanprover/lean-action@ba3fdfe5c4476c925da13bf11a005ddb47e47aee # v1.7.1
+        with:
+          lake-package-directory: snp/proofs/lean
+          build-args: --wfail
+          test: false
+          lint: false
+          axiom-audit: false
+          leanchecker: false
+          use-mathlib-cache: false
+      - name: Lean audits (L1-L5)
+        run: cargo xtask proofs lean
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: py_vs_lean
+        run: >-
+          python3 -I xtask/oracle/py_vs_lean.py --bin proofs/lean/.lake/build/bin --pch ../pch-v6.0.0
+          --expect-python 3.12 --rounds 10000 --seed "$GITHUB_RUN_ID" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  proofs-sweep:
+    # ADR-096 (docs/VERIFICATION.md §7, §13 risk 3): SMT brittleness. The whole root (`--no-cheating`, manifest,
+    # floor, verusfmt; the mutants run in the required `xtask gates` job) is verified once per Z3 seed 1-5: a seed
+    # that fails is a proof that passes in CI by luck, and fails the job. Then once at half Verus's default rlimit
+    # (5 instead of 10): a failure there is reported as a warning (fragility margin), not a failure.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
+      - run: cargo xtask proofs install
+      - name: Z3 seed sweep
+        run: |
+          echo "### Verus under Z3 seeds 1-5" >> "$GITHUB_STEP_SUMMARY"
+          failed=""
+          for seed in 1 2 3 4 5; do
+            if cargo xtask proofs verus --no-mutants --smt-option "smt.random_seed=$seed" 2>&1 | tee "$RUNNER_TEMP/seed-$seed.log"; then
+              echo "- seed $seed: ok ($(grep -m1 'proofs verus: .* verified' "$RUNNER_TEMP/seed-$seed.log" || true))" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "- seed $seed: **FAILED** (see the step log)" >> "$GITHUB_STEP_SUMMARY"
+              failed="$failed $seed"
+            fi
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::Verus fails under Z3 seed(s)$failed: a proof depends on the solver's luck"
+            exit 1
+          fi
+      - name: Half-rlimit fragility report
+        if: ${{ !cancelled() }}
+        run: |
+          echo "### Verus at half the default rlimit (--rlimit 5)" >> "$GITHUB_STEP_SUMMARY"
+          if cargo xtask proofs verus --no-mutants --rlimit 5 2>&1 | tee "$RUNNER_TEMP/half-rlimit.log"; then
+            echo "- ok: every proof has at least a 2x resource margin" >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "- **fragile**: some proof needs more than half the default rlimit"
+              echo
+              echo '```'
+              grep -E 'error|rlimit|proofs verus' "$RUNNER_TEMP/half-rlimit.log" | head -n 50
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Verus fails at half the default rlimit: see the job summary"
+          fi

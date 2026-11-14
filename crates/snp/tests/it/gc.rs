@@ -247,3 +247,35 @@ fn relative_local_repo_resolves_against_the_project_root() {
     assert_eq!(gc(&env, &elsewhere), "0 repo(s) removed.\n");
     assert_eq!(st.all_repos().len(), 1);
 }
+
+/// D-DATA-04, D-DIAG-05: a stash journal that cannot be read keeps every stash patch, and gc and clean say so on
+/// stderr (stdout and the exit code are unchanged).
+#[test]
+fn an_unreadable_stash_journal_keeps_every_patch_with_a_warning() {
+    let env = tenv();
+    let st = open_store(&env);
+    let patches = st.patches_dir();
+    let journal = patches.join("run-9-abcd.snp-journal");
+    std::fs::create_dir_all(&journal).unwrap();
+    std::fs::write(patches.join("patch1700000000-9"), b"maybe the only copy").unwrap();
+    let f = std::fs::File::options()
+        .write(true)
+        .open(patches.join("patch1700000000-9"))
+        .unwrap();
+    f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_hours(2))
+        .unwrap();
+    drop(f);
+    let warning = format!(
+        "[WARNING] the stash journal {} cannot be read or understood; every stash patch is kept. \
+         Remove the journal once no snp run uses it and no patch it may name is needed.\n",
+        journal.display()
+    );
+    let out = compat(&env, env.root(), &["gc"]);
+    assert_code(&out, 0);
+    assert_eq!(text(&out.stdout), "0 repo(s) removed.\n");
+    assert_eq!(text(&out.stderr), warning);
+    let out = compat(&env, env.root(), &["clean"]);
+    assert_code(&out, 0);
+    assert_eq!(text(&out.stderr), warning);
+    assert!(patches.join("patch1700000000-9").exists());
+}

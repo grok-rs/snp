@@ -249,7 +249,7 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 | D-DIAG-02 | `install`/`uninstall`/`init-templatedir`/`doctor --fix` notes when replacing other managers' scripts: M1 `Replaced hook script from {owner} at {hook_path}` [+ ` (Python: {INSTALL_PYTHON})`], M1b, M2 `Removed {legacy_path}: it is a hook script from {owner}, not a user hook`, M3 ``Note: {hook_path} still runs {owner}; run `{prog} install -t {T}` to switch it to snp``, M12 (11 §A.5.4) — both brands | 33 |
 | D-DIAG-03 | `run` hint, only when stderr is a TTY, `SNP_NO_HINTS` unset/empty and `core.hooksPath` unset: ``hint: {hook_path} runs {owner}, not snp; run `{prog} install` to switch`` (11 §A.14) | 32 |
 | D-DIAG-04 | stash notices: the next-run recovery notice (§4.6), `snp: waiting for another snp run in this worktree…`, `snp: restoring stashed changes, please wait`, `snp: git needed the terminal during the restore and was stopped` | 23 |
-| D-DIAG-05 | store notices: the foreign-owner warning (ADR-044), `Removed snp 1.x cache data from {store}.` (gc) | 22 |
+| D-DIAG-05 | store notices: the foreign-owner warning (ADR-044), `Removed snp 1.x cache data from {store}.` (gc), the unreadable stash journal warning (gc, clean; D-DATA-04) | 22 |
 | D-DIAG-06 | snp brand, `-c` not given and no config file in the repository: `snp: no .snp.yaml or .pre-commit-config.yaml file was found in the repository root` before the unchanged error of the commands that need a config (`run`, `install-hooks`, `list`, `autoupdate`, `migrate-config`, `config dump`, `migrate builtin\|upstream`, `hook-impl` without `--config`; once per process; ADR-087) | 32, 33 |
 
 ### 5.9 TIERB — Python-internal bytes

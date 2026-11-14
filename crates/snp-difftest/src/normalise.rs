@@ -887,6 +887,7 @@ pub const DIAG_LINES: &[(&str, &str)] = &[
     ("D-DIAG-04", "[WARNING] snp: a previous run"),
     ("D-DIAG-05", "[WARNING] snp store "),
     ("D-DIAG-05", "Removed snp 1.x cache data from "),
+    ("D-DIAG-05", "[WARNING] the stash journal "),
     (
         "D-DIAG-06",
         "snp: no .snp.yaml or .pre-commit-config.yaml file was found",

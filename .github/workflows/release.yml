@@ -8,8 +8,10 @@
 # * `gates` runs first: `cargo xtask release gates` (deps.lock pins exactly the user crates; the siblings are clean at
 #   the pinned commits; the snp checkout is clean; the tag is `v` + the workspace version with a CHANGELOG section;
 #   cfgv and file-identify are published on crates.io from exactly the pinned commits, `.cargo_vcs_info.json`; the
-#   crates.io publish set is pinned and self-contained, ADR-088), then `cargo publish --workspace --dry-run` packages
-#   and builds every published crate against the registry. A mismatch stops the release before anything is built;
+#   crates.io publish set is pinned and self-contained, ADR-088; gate 7: no kernel is proof-pending unless the
+#   CHANGELOG section accepts it, and Verus and Lean re-verify the commit, ADR-096), then `cargo publish --workspace
+#   --dry-run` packages and builds every published crate against the registry. A mismatch stops the release before
+#   anything is built;
 # * `dist` builds the eight targets with cargo-auditable, a CycloneDX SBOM per package and SHA-256 checksums, plus the
 #   shell and PowerShell installers and the Homebrew formula `snp.rb` (no bin-aliases);
 # * `wheels` builds the snp-cli wheels with maturin (bindings = "bin") and smoke-tests them;
@@ -131,6 +133,20 @@ jobs:
       - name: User crates at the deps.lock commits
         run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
+      # Gate 7 (ADR-096) re-verifies the commit with the pinned Verus (zip, verusfmt and rustc 1.99.1, sha256-checked
+      # by proofs-tools.sh; no cache here, a release starts from the pins) and Lean (elan and the toolchain of
+      # proofs/lean/lean-toolchain through lean-action, as in proofs.yml; its own audit steps stay off, the gate runs
+      # `proofs lean`).
+      - run: cargo xtask proofs install
+      - uses: leanprover/lean-action@ba3fdfe5c4476c925da13bf11a005ddb47e47aee # v1.7.1
+        with:
+          lake-package-directory: snp/proofs/lean
+          build-args: --wfail
+          test: false
+          lint: false
+          axiom-audit: false
+          leanchecker: false
+          use-mathlib-cache: false
       - name: cargo xtask release gates
         env:
           TAG: ${{ steps.tag.outputs.tag }}
