@@ -3,10 +3,15 @@
 # * micro:  criterion micro-benches (`cargo bench -p snp`) + `cargo xtask bench gate --micro` (the exact W1/W2
 #           thresholds; the perf-smoke tests of ci.yml only catch a 3x regression).
 # * e2e:    hyperfine scenarios B1-B12 of snp (dist) vs pre-commit 4.7.0 (pc470-py312) and prek 0.5.10 on the Linux
-#           reference runner. Pull requests and pushes to main compare against the base commit built on the same
-#           runner (pull requests get a PR comment). The nightly has no base commit: it reports the JSON-lines history
-#           without gating on it (`--advisory-history`, ADR-090). All but pull requests append to the history. The
-#           nightly also enforces the syscall ceiling (`strace -f -c`, B1 <= 64) and the B3 allocation budget (dhat).
+#           reference runner. Pull requests and pushes to main also build the base commit (the PR base, or the commit
+#           before the push) at base/snp, against its own deps.lock crates (base/cfgv-rs, base/file-identify) and its
+#           own toolchain, with its own stores; `bench run --base-snp` measures the two binaries in interleaved ABBA
+#           rounds per scenario, pre-commit and prek right after, and the gate pairs the rounds (ADR-099). Every event
+#           counts clones, statx, newfstatat, opens, dirents and execs with strace (`--counts`); with a base, clones,
+#           statx and newfstatat are gated against it and the exec argv diff is in the comment (ADR-100). Pull
+#           requests get a PR comment. The JSON-lines history is reported, never gated (`--advisory-history`,
+#           ADR-090); all but pull requests append to it. The nightly also enforces the syscall ceilings
+#           (`strace -f -c`, B1 <= 64), the B3 allocation budget and B8's heap peak (dhat, ADR-100).
 # * musl:   B3/B4/B6/B12 of the musl artifact with the system allocator and with mimalloc (ADR-079); the adopted
 #           allocator (bench/budgets.toml [musl]) is held to the never-slower-than-prek rule.
 #
@@ -98,7 +103,6 @@ jobs:
         with: { workspaces: snp, key: bench-e2e }
       - uses: astral-sh/setup-uv@v6
       - name: strace
-        if: github.event_name == 'schedule'
         working-directory: .
         run: sudo apt-get update -q && sudo apt-get install -yq strace
       - run: cargo xtask oracle install
@@ -114,34 +118,50 @@ jobs:
       - name: Fresh bench work state
         run: find target/bench -mindepth 1 -maxdepth 1 ! -name base-target -exec rm -rf {} + 2>/dev/null || true
       - run: cargo xtask bench setup --scenarios "$BENCH_SCENARIOS"
-      # Pull requests and pushes: the base commit's snp (the PR base, or the commit before the push), built and
-      # measured on this runner, is the baseline. A baseline from the history comes from another VM, and runner
-      # variance alone exceeds the 5 % regression threshold on millisecond scenarios (B1: +57 % for an identical
-      # binary), which is why the nightly run reports its history baseline and drift check without gating on them.
+      # Pull requests and pushes: the base commit's snp (the PR base, or the commit before the push), built on this
+      # runner like the head (ADR-099): checked out at base/snp, its own deps.lock crates next to it (base/cfgv-rs,
+      # base/file-identify, so its `../cfgv-rs` paths resolve to them), its own rust-toolchain.toml and .cargo, and
+      # `--locked`. A baseline from the history comes from another VM, and runner variance alone exceeds the 5 %
+      # regression threshold on millisecond scenarios (B1: +57 % for an identical binary), which is why the history
+      # is only reported.
       - name: Base commit
         if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000')
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.base.sha || github.event.before }}
-          path: snp-base
-      - name: Measure the base commit
+          path: base/snp
+      - name: Build the base commit
         if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000')
         run: |
-          cargo build --manifest-path ../snp-base/Cargo.toml --profile dist --locked -p snp --bin snp \
-            --target-dir target/bench/base-target
-          cargo xtask bench run --scenarios "$BENCH_SCENARIOS" --tools snp \
-            --snp target/bench/base-target/dist/snp --label base
+          .github/scripts/deps-lock.sh checkout ../base/snp/deps.lock
+          if ! cmp -s deps.lock ../base/snp/deps.lock; then
+            echo "The base builds against other user-crate revisions:"
+            diff deps.lock ../base/snp/deps.lock || true
+          fi
+          if ! cmp -s rust-toolchain.toml ../base/snp/rust-toolchain.toml; then
+            echo "The base builds with another toolchain:"
+            diff rust-toolchain.toml ../base/snp/rust-toolchain.toml || true
+          fi
+          target="$GITHUB_WORKSPACE/snp/target/bench/base-target"
+          (cd ../base/snp && rustup toolchain install && \
+            cargo build --profile dist --locked -p snp --bin snp --target-dir "$target")
+          echo "BASE_SNP=$target/dist/snp" >> "$GITHUB_ENV"
+      - name: Setup
+        run: |
+          base=()
+          if [ -n "${BASE_SNP:-}" ]; then base=(--base-snp "$BASE_SNP"); fi
+          cargo xtask bench setup --scenarios "$BENCH_SCENARIOS" "${base[@]}"
       - name: Measure
         run: |
-          extra=()
-          if [ "${{ github.event_name }}" = schedule ]; then extra=(--syscalls --dhat); fi
+          extra=(--counts)
+          if [ "${{ github.event_name }}" = schedule ]; then extra+=(--syscalls --dhat); fi
+          if [ -n "${BASE_SNP:-}" ]; then extra+=(--base-snp "$BASE_SNP"); fi
           cargo xtask bench run --scenarios "$BENCH_SCENARIOS" --label current "${extra[@]}"
+      # With a base, the record's paired rounds and counters gate; the history (other VMs) is advisory either way.
       - name: Gate
         run: |
           if [ "${{ github.event_name }}" = pull_request ]; then
-            cargo xtask bench gate --baseline target/bench/results/base.json --comment target/bench/comment.md
-          elif [ -f target/bench/results/base.json ]; then
-            cargo xtask bench gate --baseline target/bench/results/base.json --comment target/bench/comment.md --record
+            cargo xtask bench gate --advisory-history --comment target/bench/comment.md
           else
             cargo xtask bench gate --advisory-history --comment target/bench/comment.md --record
           fi

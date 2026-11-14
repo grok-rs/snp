@@ -1,15 +1,20 @@
 # Performance and memory budgets enforced by `cargo xtask bench gate` (ARCHITECTURE §12.1, §12.3; ADR-043, ADR-071,
-# ADR-079). Owned by WP-36. Every number here is normative: changing one is a reviewed change of a budget.
+# ADR-079, ADR-099, ADR-100). Owned by WP-36. Every number here is normative: changing one is a reviewed change of a
+# budget.
 #
-# Units: times in milliseconds (the hyperfine median of `-N -w 5 -r 50`), memory in MiB (RSS: the median of 10
-# `/usr/bin/time` runs; allocations: dhat's total bytes allocated), syscalls as counted by `strace -f -c`.
+# Units: times in milliseconds (the hyperfine median of `-N -w 5 -r 50`; with a paired base, the pooled runs of the
+# interleaved rounds), memory in MiB (RSS: the median of 10 `/usr/bin/time` runs, the peak RSS of the largest process
+# of the tree, so it can only overstate snp's own; allocations: dhat's total bytes allocated; heap peak: dhat's bytes
+# live at the global maximum), blocks as dhat's total blocks allocated, syscalls as counted by `strace -f -c`.
 # ARCHITECTURE §12.1 states the memory budgets in MB (10^6 bytes); they are written here as the MiB value of exactly
 # that many MB, rounded down (30 MB = 28.61 MiB, 25 MB = 23.84 MiB, 2 MB = 1.907 MiB), so no limit is looser than
 # the specification.
 
 [gate]
-# A median regression above this percentage fails the gate when the 95 % confidence intervals of the two medians do
-# not overlap (distribution-free order-statistic intervals).
+# A regression above this percentage fails the gate. Against the base commit measured in the same interleaved rounds
+# (pull requests and pushes, ADR-099): when the median per-round ratio exceeds it and the 95 % interval of that median
+# lies above 1. Against a separate record (the history, an explicit `--baseline`): when the 95 % confidence intervals
+# of the two medians do not overlap (distribution-free order-statistic intervals).
 regression_pct = 5.0
 # ... and by at least this many milliseconds. Two measurements on one runner differ by up to 0.045 ms however good the
 # binary (22 CI runs, 2026-11; that +5.8 % at B1's 0.8 ms failed a version bump), so a percentage alone has no margin on
@@ -24,7 +29,8 @@ never_slower_than = ["pre-commit", "prek"]
 adopted = "system"
 
 # ---------------------------------------------------------------------------------------------------------------
-# Budgets. `metric`: median_ms | rss_mib | syscalls | alloc_mib. Without `vs_*` the limit is `max`; with
+# Budgets. `metric`: median_ms | rss_mib | syscalls | alloc_mib | alloc_blocks | heap_peak_mib (the last three only
+# when the run measured them, `--dhat`). Without `vs_*` the limit is `max`; with
 # `vs_tool = T` it is `max ×` T's value of the same metric on the same scenario; with `vs_scenario = S` it is
 # `max ×` snp's value on S; `plus` is added to a relative limit. `hard = true` fails the gate, otherwise the breach is
 # reported (and shown in the PR comment) without failing. `os` is linux | macos | windows.
@@ -80,15 +86,6 @@ os = "linux"
 scenario = "B7"
 metric = "median_ms"
 max = 1000.0
-hard = false
-
-[[budget]]
-os = "linux"
-scenario = "B8"
-metric = "rss_mib"
-vs_scenario = "B3"
-max = 1.0
-plus = 1.907 # the streamed patch: B3's RSS + <= 2 MB
 hard = false
 
 [[budget]]
@@ -161,6 +158,64 @@ scenario = "B3"
 metric = "alloc_mib"
 max = 1.907 # 2 MB
 hard = true
+
+# B8 (ADR-100): the streamed patch keeps snp's own heap peak (dhat's bytes live at the global maximum) within B3's + 2
+# MB; a buffered 21 MB patch would add 20+ MiB. Measured 0.48 MiB against B3's 0.24 MiB (limit 2.15 MiB). The tree
+# RSS of `/usr/bin/time` is no budget here: it is git's (the diff of the 10 MB file), the largest process of the tree.
+[[budget]]
+os = "linux"
+scenario = "B8"
+metric = "heap_peak_mib"
+vs_scenario = "B3"
+max = 1.0
+plus = 1.907 # B3's heap peak + <= 2 MB
+hard = true
+
+# Nightly allocation ceilings (ADR-100, the B3 convention of ADR-083: the measured value + ~10 %): bytes for the
+# single-threaded scenarios, blocks (dhat's tbk, 0.2 % spread run to run) for the multi-threaded ones, whose bytes vary
+# (B12u: 6.4 %). Measured on a 22-CPU Linux machine (dist-equivalent release build, git 2.43, 2026-11); soft until the
+# nightly records of the reference runner confirm them (the thread count follows the CPUs on B4/B6).
+[[budget]]
+os = "linux"
+scenario = "B2"
+metric = "alloc_mib"
+max = 0.92 # 0.83 MiB measured
+hard = false
+
+[[budget]]
+os = "linux"
+scenario = "B10"
+metric = "alloc_mib"
+max = 34.7 # 31.5 MiB measured
+hard = false
+
+[[budget]]
+os = "linux"
+scenario = "B4"
+metric = "alloc_blocks"
+max = 345000.0 # 313,381 measured
+hard = false
+
+[[budget]]
+os = "linux"
+scenario = "B6"
+metric = "alloc_blocks"
+max = 308000.0 # 279,249 measured
+hard = false
+
+[[budget]]
+os = "linux"
+scenario = "B8"
+metric = "alloc_blocks"
+max = 18100.0 # 16,439 measured
+hard = false
+
+[[budget]]
+os = "linux"
+scenario = "B12u"
+metric = "alloc_blocks"
+max = 562000.0 # 510,848 measured
+hard = false
 
 # --- macOS arm64 (soft) --------------------------------------------------------------------------------------
 [[budget]]
@@ -282,7 +337,7 @@ reason = "the patch is computed twice to re-verify it before the checkout (ADR-0
 [[known_miss]]
 scenario = "B11"
 check = "p50 <= prek"
-reason = "may not be like for like: prek reports nothing to clean, snp walks 500 repos and 200 configs"
+reason = "prek's gc hashes repo keys from the configs and never loads manifests; pre-commit and snp parse every used manifest"
 
 [[known_miss]]
 scenario = "B4"

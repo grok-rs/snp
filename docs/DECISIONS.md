@@ -12,7 +12,8 @@ the final multi-lens review; ADR-085 the `interactive` extension key; ADR-086 th
 `.snp.yaml` config file name; ADR-088 the crates.io and Homebrew release channels; ADR-089 the retarget to pre-commit
 4.7.0; ADR-090 what the scheduled gates can judge; ADR-091 measuring every scenario; ADR-092 the November 2026
 upstream refresh; ADR-093 the path-limited stash checkout; ADR-094 Rust 1.100; ADR-095 machine-checked proofs;
-ADR-096 the owner's decision to make the Verus proofs blocking.
+ADR-096 the owner's decision to make the Verus proofs blocking;
+ADR-099 the paired bench gate; ADR-100 the B8 heap budget and counters.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -452,7 +453,7 @@ project_root`, `Vec<Project>` planning (length 1), `project_prefix` filters, per
 
 ### ADR-043 — Performance budgets per OS
 
-*Status: Accepted; amended by ADR-086 (`reference_only` micro thresholds) ADR-090 (the regression rule's absolute floor; history from other runner VMs is reported, not gated) and ADR-091 (`[[known_miss]]`). The amending ADR is normative where they differ.*
+*Status: Accepted; amended by ADR-086 (`reference_only` micro thresholds) ADR-090 (the regression rule's absolute floor; history from other runner VMs is reported, not gated), ADR-091 (`[[known_miss]]`), ADR-099 (the paired regression rule on interleaved base and head rounds) and ADR-100 (B8 budgeted by heap peak, not tree RSS; counter gates). The amending ADR is normative where they differ.*
 
 **Decision.** ARCHITECTURE §12.1. Linux hard gates: B1 ≤ 3 ms, B2 ≤ 10 ms, B3 ≤ 25 ms, B12 ≤ 30 MB. macOS soft
 budgets (B1 ≤ 5 ms, B3 ≤ 40 ms). Windows soft ratios to pre-commit (B1 ≤ 15 ms, B3 ≤ 0.5×) because every per-hook `git
@@ -1335,6 +1336,8 @@ wrong release: `cargo xtask oracle install` verifies `pre-commit --version` in t
 
 ### ADR-090 — What the scheduled gates can judge
 
+*Status: Accepted; amended by ADR-099 (pull requests and pushes gate on the paired rounds of the base measured in the same window; `--advisory-history` on every CI event). The amending ADR is normative where they differ.*
+
 **Context.** The scheduled workflows stayed red on a `main` that had not changed since 2026-11-02, for reasons that
 were not defects of snp. (a) The generated difftest failed every night, 8 runs of 2,000 cases on 56c58a4: 1,603
 failures out of 16,000, in four classes and nothing else. pygrep's `open()` traceback (about 1,060), unregistered; the
@@ -1373,6 +1376,8 @@ nightly) would restore that gate at the cost of a second `dist` build; it is not
 own history stays a gate, since `--advisory-history` is opt-in.
 
 ### ADR-091 — Every scenario is measured; accepted misses are listed
+
+*Status: Accepted; amended by ADR-099 (the regression check is the paired rule; B11 compares equal work, its known miss reworded). The amending ADR is normative where they differ.*
 
 **Context.** `bench.yml` measured only B1: the list was to grow when `snp run` (WP-32) merged, and never did, so B2–B12
 and their budgets were unchecked on a released product. Measuring them on CI shows real misses (`bench/budgets.toml`).
@@ -1656,6 +1661,92 @@ under the advisory job turns the nightly `proofs-models` job red and must be fix
 gates` takes about 45 s longer warm and about 2 min cold. A release run installs Verus and Lean
 (a few minutes cold). The kill criterion of ADR-095 (11) still applies: past it the Verus step returns to advisory
 by a new ADR. M1 exit criterion 7 (docs/VERIFICATION.md §12) is met.
+### ADR-099 — The bench gate pairs interleaved base and head rounds; the base is built like the head
+
+**Context.** The performance analysis of 2026-11 (P06, P07) measured why same-code pull requests failed the bench
+gate. `bench.yml` measured the base commit's snp on every scenario, then the head's: the two windows of one scenario
+were about a minute apart, and each window's 95 % interval only covered the scatter inside it. Same-binary repeats
+on one machine moved by 6.6 % with disjoint intervals; a simulation of the rule over the CI records gave about 6.7 %
+false fails per scenario, about one red job in two over 12 scenarios. Interleaving base and head in rounds removed them
+(0 of 22 simulated) while +10 % stayed detected in every case. The base was also built with the head's user crates (the
+base's `../cfgv-rs` resolved to the head's checkout), so a `deps.lock` bump (a slower cfgv commit) showed no delta at
+all. Separately, B8 left one stash patch per run in each store (about 2.8 GB per job across the three tools), and
+prek's B11 store tracked no config (its `install-hooks` installs without tracking; `run --config` tracks), so B11
+compared unequal work.
+**Decision.** (1) The base commit is checked out at `base/snp`; the head's `deps-lock.sh checkout` with the base's
+lock puts its crates at `base/cfgv-rs` and `base/file-identify`; it is built from `base/snp` (its own
+`rust-toolchain.toml` and `.cargo`, `--locked`) into the head's `target/bench/base-target`, and the job prints both
+locks and toolchains when they differ. (2) `bench setup --base-snp` primes the base binary with its own warm, cold
+and gc stores and its own B9 fixture. `bench run --base-snp` measures it with snp in deterministic ABBA rounds per
+scenario: 10 rounds of 5 runs for the 50-run scenarios, 10 × 2 for the 20-run ones, 5 × 1 for B7, one warm-up per
+binary in its first block, `SNP_BIN`, the own-repository check and `GIT_CEILING_DIRECTORIES` on every block, no RSS
+runs for the base. pre-commit and prek follow in the same scenario window, and snp's budgets and the never-slower rule
+use its pooled runs from it. (3) The regression rule is paired (a method amendment of ADR-043, ADR-090 and ADR-091;
+the null stays "no regression above 5 %"): with `d_r = ln(head_r / base_r)` per round (each the median of its block),
+`no paired regression > 5%` fails when `exp(median d) > 1.05`, the effect `base × (exp(median d) − 1)` exceeds
+`regression_min_ms`, and `exp` of the lower end of the 95 % interval of the median of `d` (the existing
+`median_ci95`) is above 1. The point estimate alone above 5 % warns. A base that fails a scenario (a fail-closed
+stash on the shared B8 fixture, for instance) is "not measured", a warning, and the head's checks still run. When the
+record carries a paired base, every comparison with another record (an explicit `--baseline`, the history, the
+drift check) is advisory; the old unpaired rule stays for those. CI passes `--advisory-history` on every event.
+(4) Run records become schema 2: per-round block medians (`rounds_ms`), the counters and heap peak of ADR-100, the
+runner's CPU count and git version; schema 1 records are still read, so a mixed history stays usable. (5) B8: before
+every run hyperfine's `--prepare` deletes exactly the previous run's patch (snp `<store>/patches/patch[0-9]*-[0-9]*`,
+pre-commit `<store>/patch[0-9]*-[0-9]*`, prek `<store>/patches/[0-9]*-[0-9]*.patch`, `find -maxdepth 1 -type f`), and
+the harness deletes the same names before each RSS run, after the scenario and at the start of `run`; it refuses when
+a `run-*.snp-journal` or a fixture's `.git/snp-stash*.journal` exists (an interrupted run), and asserts that the
+directory `find` starts from exists. (6) B11: prek is primed with `prek run --config <absolute config>` per config;
+`setup` asserts that every store holds 500 repositories after the warm-up `gc` and that snp and prek track 200
+configs. snp's half warns until the fresh-store tracking fix (C1) is in both binaries. B11's known miss is reworded:
+prek's `gc` hashes repository keys from the configs and never loads manifests, while pre-commit and snp parse every
+used manifest. (7) `ensure_mirror` removes a mirror directory without `HEAD` (an interrupted clone) and clones again.
+**Rationale.** Pairing cancels the runner drift that both binaries see in the same minute, which is what made the
+unpaired rule fail on unchanged code; a stricter minimum-effect rule (`CI_lo > 1.05`) was rejected because it detects
++10 % only 3 times in 10, and 7 scenarios rely on this check as their only hard gate. A base built with the head's
+crates measures nothing a crate bump changes. The patches are deleted by exact name because a store also holds the
+journals and pointers that recover a user's work; refusing on an interrupted run keeps the harness from hiding one.
+**Consequences.** CI time stays about the same (the same number of runs per binary, in blocks; the base's priming adds
+its own stores). A local comparison of two builds is `bench setup` and `bench run` with `--snp A --base-snp B`.
+Validation before relying on it: an A/A run on CI (the same binary as base and head, 5 runs × 12 scenarios) must show
+no false failure. snp's B11 numbers rise once C1 is fixed (200 configs, 500 repositories); `known_miss` updates wait
+for CI evidence (batch M).
+
+### ADR-100 — B8's memory budget is snp's heap peak; RSS names its process; deterministic counters
+
+**Context.** `/usr/bin/time` reports the peak RSS of the largest process the tool waited for, not a sum and not snp's
+own. On B8 that process is git computing the diff of the 10 MB file, so the soft budget "B3's RSS + 2 MB" could never
+pass and said nothing about the streamed patch (ARCHITECTURE §12.1, T6); ADR-084 deferred the fix. dhat's heap peak
+(the bytes live at the global maximum) measures what snp itself holds: 0.48 MiB on B8 against 0.24 MiB on B3, while a
+buffered 21.4 MB patch would show 20+ MiB. Timing alone also hides changes that cost little on a fast runner but are
+real work: an extra thread per spawn, a lost `statx` cache, a dropped or added git call. strace counts do not depend on
+the runner's load: the same binary counts the same, 0.00 % spread on clones, `statx`, `newfstatat` and `getdents64`.
+**Decision.** (1) New metrics `heap_peak_mib` (the saturating sum of `gb` over dhat's program points; a profile without
+`gb` fails the metric) and `alloc_blocks` (the sum of `tbk`). The nightly `--dhat` run profiles B2, B3, B4, B6, B8, B10
+and B12u with one dhat build and removes each `dhat-heap.json`. (2) B8's budget is `heap_peak_mib ≤ 1.0 × B3 + 1.907`
+(2 MB), **hard**, nightly; the B8 tree-RSS budget is removed, and its number stays in the record as information for all
+three tools. The RSS column and the README name it "peak RSS of the largest process of the tree"; the JSON key
+`rss_mib` keeps its name. B4, B6 and B12u keep their hard RSS budgets: tree RSS can only overstate snp, so they fail
+closed. (3) Absolute nightly allocation ceilings at the measured value + ~10 % (the B3 convention, ADR-083): bytes on
+the single-threaded B2 and B10, blocks on the multi-threaded B4, B6, B8 and B12u (bytes vary by 6.4 % on B12u). They
+are soft until the reference runner's nightly records confirm them, since they were measured on a 22-CPU machine and
+the thread count follows the CPUs. (4) `--counts`: after the timing runs, one `strace -f --seccomp-bpf -c` pass per
+binary and scenario (B7 replaying the cold store's removal, B8 the patch cleanup) counts clones (`clone` + `clone3` +
+`fork` + `vfork`, the whole tree), `statx`, `newfstatat`, `openat`, `getdents64` and `execve`, and one `strace -f -e
+trace=execve` pass gives the exec argv list. CI installs strace and passes `--counts` on every event. (5) With a paired
+base (ADR-099), clones fail above the base's by more than 10 % and at least 5, `statx` and `newfstatat` separately by
+more than 2 % and at least 50; opens, dirents and execs are reported only, execs with the multiset difference of the
+normalized argv lines (`+` only in the head, `-` only in the base) in the PR comment. Counters are never gated
+against the history (runner images change git and glibc); a run that asked for them and has no head counters fails.
+The spawn shapes stay gated in `crates/snp/tests/it/budgets.rs`. (6) A per-push guard,
+`crates/snp-stash/tests/perf_patch_stream.rs` (`#[ignore]`, `perf_` prefix, Linux, run by the `perf-smoke` job):
+stashing and restoring a 24 MB patch may grow the process's `VmHWM` by at most 8 MiB.
+**Rationale.** A budget that measures another process cannot fail for the right reason; the heap peak is the
+quantity the streamed patch bounds. Block counts are stable where bytes are not. Counters compare base and head on
+the same runner, the only comparison that excludes the runner image. Polling snp's own `VmHWM` (`rss_self`) was
+rejected: it races the process's exit and would flap on B8 (9.2 to 10.5 MiB against about 10.1).
+**Consequences.** B8's permanent soft warning leaves the PR comment; the nightly fails if the patch is ever buffered,
+and so does `perf-smoke` on every push. The PR comment shows count deltas next to the timings. The new ceilings are
+re-baselined from CI records (batch M), with breaches acknowledged through the budget and `[[known_miss]]` mechanism.
 
 ## Appendix A — Open questions of the research documents, resolved
 
