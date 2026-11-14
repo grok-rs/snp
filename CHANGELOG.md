@@ -11,8 +11,8 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
 
 ### Added
 
-- Windows: `snp.exe` has an icon, a pixel-art close-up of the wizard's glowing `>_` staff at small sizes and the
-  wizard on his bridge from 48 px up, so Explorer, the Properties dialog and Task Manager show snp instead of the
+- Windows: `snp.exe` has an icon, the grok-rs crab emblem with a glowing `>_` badge on the crab's shell (the shell
+  and its badge alone at small sizes), so Explorer, the Properties dialog and Task Manager show snp instead of the
   generic executable icon. A std-only build script embeds it for the MSVC targets; other targets build as before
   (ADR-130).
 

@@ -2103,12 +2103,14 @@ Windows Terminal tab show the generic executable icon for it, whichever channel 
 and `RT_ICON`), which the linker embeds. The usual crates (`winresource`, `embed-resource`) run the Windows SDK's
 `rc.exe` or `windres` from a build script and add a dependency, and §11.7 rules out build scripts in snp crates: no
 code runs at build time that a review of `src/` does not see.
-**Decision.** (1) The icon is pixel art drawn from the README banner's sprites and palette by
-`docs/assets/src/pixel_icon.py` into `crates/snp/assets/snp.ico`: at 16–40 px a close-up of the wizard's glowing
-`>_` staff orb, at 48 px and up the wizard holding it up on his bridge at night; 128 and 256 px are the 64 px artwork
-scaled ×2 and ×4 (nearest neighbour), 32-bit BMP images up to 64 px and PNG above, the layout of Windows' own icons.
-`docs/assets/icon.png` is the 256 px image. (2) `crates/snp/build.rs` is the one build script of the snp crates. For
-`*-windows-msvc` targets it compiles the `.ico` into a resource file, `OUT_DIR/snp.res`, with the std-only
+**Decision.** (1) The icon is the snp edition of the owner's grok-rs crab emblem (`docs/assets/src/grok-rs-emblem.png`,
+the crab on a gear wrapped in octopus tentacles, from grok-rs.github.io), as the emblem's red variant swaps its
+badge: the badge on the crab's shell becomes a glowing gold `>_` prompt, the staff light of the README banner (*You
+Shell Not Pass*: the crab's shell is the shell). `docs/assets/src/snp_icon.py` (Pillow and numpy) renders it into
+`crates/snp/assets/snp.ico`: the whole emblem at 64, 128 and 256 px, and at 16–48 px, where the emblem turns to mush,
+a glyph of the shell and its badge (with tentacle tips from 20 px); 32-bit BMP images up to 64 px and PNG above, the
+layout of Windows' own icons. `docs/assets/icon.png` is the 256 px image. (2) `crates/snp/build.rs` is the one
+build script of the snp crates. For `*-windows-msvc` targets it compiles the `.ico` into a resource file, `OUT_DIR/snp.res`, with the std-only
 `build/winres.rs` (the empty marker entry, one `RT_ICON` per image with ids 1..=n and the image bytes unchanged, one
 `RT_GROUP_ICON` with id 1, language 0x0409), and passes it to the link of the `snp` binary with
 `cargo::rustc-link-arg-bins`: `link.exe` and `lld-link` take `.res` files as input. For every other target it only
@@ -2120,14 +2122,14 @@ finds every image of the icon in the `.rsrc` section of the built `snp.exe`.
 **Rationale.** Writing the `.res` format directly takes about a hundred lines and no tool, so the exception to §11.7
 is as small as a build script can be and keeps the rule's purpose: the script is a pure function of a committed
 file, with no build-time dependency and no hidden behaviour. The GNU Windows targets are not release targets (GNU ld
-needs `windres` for resources); they build as before, without an icon. Pixel art drawn at one pixel per pixel for
-each size stays crisp where a downscaled illustration blurs, and the large sizes keep the banner's 4× pixel scale.
+needs `windres` for resources); they build as before, without an icon. The emblem ties snp to the owner's other
+projects; the glyph keeps the badge readable in list and details views.
 Checked before merge: the resource file decompiles with `windres`; `lld-link` embeds it (a `no_std` MSVC executable
 lists 9 `RT_ICON` and 1 `RT_GROUP_ICON` resources under `llvm-readobj --coff-resources`); under Wine,
 `ExtractIconEx` finds one icon group and `PrivateExtractIcons` returns exact 16, 24, 32, 48 and 256 px images.
 **Consequences.** Windows shows snp's icon for `snp.exe`, and for a `pre-commit` alias made by copying or linking it.
-The Windows executable grows by the icon, about 49 KB. Other targets link as before; the build script costs
-milliseconds. A new icon is a regenerated `.ico` (`python3 docs/assets/src/pixel_icon.py`, which needs Pillow and
+The Windows executable grows by the icon, about 180 KB. Other targets link as before; the build script costs
+milliseconds. A new icon is a regenerated `.ico` (`python3 docs/assets/src/snp_icon.py`, which needs Pillow and
 numpy like the banner), never a hand edit.
 
 ## Appendix A — Open questions of the research documents, resolved

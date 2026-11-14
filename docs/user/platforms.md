@@ -56,8 +56,8 @@ Differences from pre-commit on Windows (each one has its entry in the [DIVERGENC
 Exit codes of crashed Windows processes are reported as unsigned values (`- exit code: 3221225477`), as pre-commit
 does.
 
-`snp.exe` carries snp's icon (the wizard, or his glowing `>_` staff at small sizes), which Explorer, the Properties
-dialog and Task Manager show for it and for a `pre-commit` alias copied or linked from it.
+`snp.exe` carries snp's icon (a crab with a glowing `>_` badge on its shell), which Explorer, the Properties dialog
+and Task Manager show for it and for a `pre-commit` alias copied or linked from it.
 
 ## macOS
 

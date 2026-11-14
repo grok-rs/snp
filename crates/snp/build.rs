@@ -1,6 +1,6 @@
 //! Embeds snp's application icon in the Windows executable (ADR-130).
 //!
-//! For `*-windows-msvc` targets this compiles `assets/snp.ico` (drawn by `docs/assets/src/pixel_icon.py`) into a
+//! For `*-windows-msvc` targets this compiles `assets/snp.ico` (rendered by `docs/assets/src/snp_icon.py`) into a
 //! resource file in `OUT_DIR` and passes it to the linker of the `snp` binary; every other target builds exactly as
 //! before. No resource compiler and no dependency: see `build/winres.rs`.
 
