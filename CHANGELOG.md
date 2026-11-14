@@ -95,6 +95,12 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   55 % fewer instructions (callgrind 1,423 M → 647 M) and its heap peaks about 2 MB lower; the other scenarios are
   unchanged. `regex-automata` 0.4.18, already built as part of `regex`, is now a direct dependency of snp-pyre
   (ADR-108).
+- Loading YAML (every config and manifest load, `validate-config`, `gc`) uses less CPU and fewer allocations. The
+  reader checks each 16 KiB chunk once and reads the current character without a function call. The constructor
+  sizes its tables up front. The loaded value takes the parsed values of nodes that occur once instead of copying
+  them, and builds a shared node once (ADR-112). `validate-config` on 1,000 hooks runs about 12% fewer instructions
+  with about 29,000 fewer heap allocations; `gc` on 500 configs runs about 5% fewer. Loaded values, errors and
+  their order are unchanged.
 
 - Benchmarks (developer tooling, no runtime change): pull requests and pushes measure the base commit's snp, built
   against its own `deps.lock` crates and toolchain and primed into its own stores, in interleaved ABBA rounds with the
