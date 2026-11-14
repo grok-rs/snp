@@ -1,0 +1,11 @@
+# Tests that fail on git 2.54.0 because of a git behaviour later releases dropped (measured with
+# packaging/ci/git-tests.sh 2.54.0 and a local build of 2.54.0; 2.56.0 does not do it).
+# platform.yml runs every other test blocking, and these alone non-blocking, warning about any that pass.
+# git 2.54.0's `git write-tree` rewrites the index file even when no entry changed. The stash runs `write-tree` after
+# the step-6 fan-out, so ADR-104's rule that any index change drops the early F and G (fail closed) always fires:
+# one or two more git spawns per stashing run (the after-hook `git diff`, or F and G asked again at step 14) than
+# the spawn budgets (bench/README.md "Spawn budgets") state. Output is unchanged; only the spawn count differs.
+package(snp) & binary(it) & test(=budgets::b2_one_noop_hook_within_8_spawns)
+package(snp) & binary(it) & test(=budgets::b3_spawns_do_not_grow_with_tracked_files)
+package(snp) & binary(it) & test(=budgets::b3_ten_noop_hooks_within_18_spawns)
+package(snp) & binary(it) & test(=budgets::b9_hook_impl_shape_is_pinned)
