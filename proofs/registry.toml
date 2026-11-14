@@ -245,14 +245,14 @@ anchors = [
     { item = "crates/snp-stash/src/guard.rs::Inner::stash", fingerprint = "d4804a53d328af23" },
     { item = "crates/snp-stash/src/guard.rs::Inner::stage_fixed", fingerprint = "cec3d73a66bef646" },
     { item = "crates/snp-stash/src/guard.rs::Inner::git_apply", fingerprint = "8cbc686e7d1df3e6" },
-    { item = "crates/snp-stash/src/guard.rs::Inner::rollback_checkout", fingerprint = "f8efa048d39e5e99" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::rollback_checkout", fingerprint = "98a0585191f9197c" },
     { item = "crates/snp-stash/src/guard.rs::Inner::restore_patch", fingerprint = "589050b70214ca80" },
     { item = "crates/snp-stash/src/guard.rs::Inner::finish", fingerprint = "ad4d9af3d498fa53" },
     { item = "crates/snp-git/src/git.rs::Git::patch_paths", fingerprint = "189c9aee406d8b09" },
     { item = "crates/snp-git/src/git.rs::Git::changed_paths", fingerprint = "b61db27db0cb3a63" },
-    { item = "crates/snp-git/src/git.rs::Git::rollback_paths", fingerprint = "68e261952a4a8281" },
-    { item = "crates/snp-git/src/git.rs::Git::checkout_paths", fingerprint = "d187d5caa7744a77" },
-    { item = "crates/snp-git/src/git.rs::Git::checkout_path_calls", fingerprint = "85e4464719d5a398" },
+    { item = "crates/snp-git/src/git.rs::Git::rollback_paths", fingerprint = "f2867ad6eff4b050" },
+    { item = "crates/snp-git/src/git.rs::Git::checkout_paths", fingerprint = "17552402218417da" },
+    { item = "crates/snp-git/src/git.rs::Git::checkout_path_calls", fingerprint = "8c4a98e34ace7787" },
 ]
 [model.statements]
 "SnpModels.Stash.roundtrip" = "85cff6b6ce4218dc"

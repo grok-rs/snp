@@ -1,6 +1,6 @@
 # Formal verification (ADR-095)
 
-*Status (2026-11-13): ADR-095 accepted. M0 (pipeline, guards, CI, docs) is in place; M1's kernels are in: K1–K3 are verified with Verus (40 items with `--no-cheating`) and K3 and K4 have proved Lean models with oracle tests (§9.1); the M1 exit decision on blocking CI is pending (§7). M2 and M3 are planned, not started. Owners: WP-38 "Formal verification" owns `proofs/` and the specs; WP-00 owns the root manifest, xtask (`xtask/src/tasks/proofs.rs`) and CI. Package owners review the kernel files in their crates.*
+*Status (2026-11-14): ADR-095 accepted. M0 (pipeline, guards, CI, docs) is in place. M1's kernels are in: K1–K3 are verified with Verus and K3 and K4 have proved Lean models with oracle tests (§9.1); the M1 exit decision on blocking CI is pending (§7). M2 is in apart from K8: K5 (as K5a and K5b), K6 and K7 are verified with Verus, with the first two kernel traits and their `[[trusted]]` production impls, and K9 is a proved Lean protocol model (§9.2); the whole root is 134 items with `--no-cheating`. K8 waits for the gc fix (F1) to merge. M3 is planned, not started. Owners: WP-38 "Formal verification" owns `proofs/` and the specs; WP-00 owns the root manifest, xtask (`xtask/src/tasks/proofs.rs`) and CI. Package owners review the kernel files in their crates.*
 
 Where this document and the code disagree, the code and `proofs/registry.toml` are what CI checks; fix whichever is wrong in the same PR.
 
@@ -177,7 +177,7 @@ A kernel that needs memchr, memmem or a hash set is generic over a trait whose m
 
 - **Cost.** Monomorphisation makes this zero-cost, so the SIMD speed is kept.
 - **Trust.** The production implementation is a trusted assumption. It is listed in `registry.toml` `[[trusted]]` together with a differential test against the reference implementation (G8).
-- **Status.** Prototyped: a `FindByte` trait with a verified `Scalar` implementation verifies in attribute mode.
+- **Status.** In production since M2: `FindByte` (K5b, verified `Scalar`, trusted `Memchr`) and `SeenSet` (K7, verified `Scan`, trusted `HashSeen`).
 - **Contract precision.** A contract must state the primitive's real semantics. For example, `memmem::find_iter` reports *non-overlapping* matches (memchr 2.8.3 docs).
 
 ---
@@ -228,10 +228,10 @@ anchors = [
 "SnpModels.Shlex.pySplit_eq_split" = "67a279bf3ae4866e"
 # … one line per entry of `theorems`
 
-[[trusted]]                                 # empty in M1; from M2:
+[[trusted]]                                 # empty in M1; two entries since M2
 item = "Memchr: FindByte"                   # `Type: Trait`
-kernel = "K5-zsplit"
-test = "crates/snp-git/tests/find_byte.rs::memchr_matches_scalar"
+kernel = "K5b-zlist-split"
+test = "crates/snp-git/src/zlist.rs::memchr_matches_scalar"
 ```
 
 **Field rules** (`cargo xtask proofs check` rejects unknown keys, so a typo cannot drop a check):
@@ -417,7 +417,7 @@ The properties below were checked against the current code. Where a property hol
 | K3 | **verified** (Verus) and **proved model** (Lean): 14 items, 2 mutants killed, called by `end_of_file_fixer.rs::tail_action`; Lean model with 5 theorems, 4 fingerprinted anchors and the `eof-model` oracle test in snp-hooks |
 | K4 | **proved model** (Lean only, by design): 3 theorems, `shlex-model` oracle test in snp-pycompat, 8 fingerprinted anchors |
 
-Whole root: 40 items verified, 0 errors, with `--no-cheating`, in about 3–5 s (the sum of the three floors, 10 + 16 + 14); 10 registered mutants, each failing verification (not compilation). Lean: `lake build --wfail`, the axiom audit (only `propext`, `Classical.choice`, `Quot.sound`), `leanchecker` and the L5 audit (no compiler attribute, every statement pin fresh) pass; both oracle tests pass with `SNP_REQUIRE_LEAN_ORACLES=1`.
+Whole root at M1: 40 items verified, 0 errors, with `--no-cheating`, in about 3–5 s (the sum of the three floors, 10 + 16 + 14); 10 registered mutants, each failing verification (not compilation). Lean: `lake build --wfail`, the axiom audit (only `propext`, `Classical.choice`, `Quot.sound`), `leanchecker` and the L5 audit (no compiler attribute, every statement pin fresh) pass; both oracle tests pass with `SNP_REQUIRE_LEAN_ORACLES=1`.
 
 
 | ID | Kernel | Tool | Crate | Exercises | Production change |
@@ -501,13 +501,24 @@ Whole root: 40 items verified, 0 errors, with `--no-cheating`, in about 3–5 s 
 **Tooling gaps (M0/M1), stated so nothing above is over-read:**
 - **V2 end to end.** Removing `#[verus_verify]` from the K1 mount still verified `partition_lens`, because it carries `verus_spec`, so V2 had nothing to report. V2's failure path is covered only by the `manifest_gaps` unit test and by G1, which requires `#[verus_verify]` on every mount.
 - **G9 is syntactic.** It allows multi-segment paths rooted in `std`/`core`/`alloc`/`self`/`Self`, prelude or primitive names, or names the file declares. A local item shadowing an external crate name, or a glob re-export from std, is not modelled; the real backstop is that a non-std path does not resolve under the harness crate root.
-- **G8 matches impls by last path segment** (`Type: Trait`), so same-named traits or types in different modules would be conflated. No kernel trait exists yet; it is tested on fixtures only.
+- **G8 matches impls by last path segment** (`Type: Trait`), so same-named traits or types in different modules would be conflated. The two impls registered in M2 (`Memchr: FindByte`, `HashSeen: SeenSet`) have unique names in the workspace, so nothing is conflated today; the risk is tested on fixtures only.
 - **CI not yet exercised.** `proofs.yml` passed actionlint and its path filter was tested locally, and first ran on GitHub in PR #18, where lean-action's own `axiom-audit`/`leanchecker` steps failed on the module name and were turned off in favour of `cargo xtask proofs lean`. `cargo xtask proofs oracles` has run end to end locally with both models.
 - **Installer platforms.** Only the x86-linux Verus zip and the x86_64-unknown-linux-gnu verusfmt are sha256-pinned; `proofs-tools.sh install` supports only x86-linux and macOS and fails with "no pinned sha256" until hashes are added. Elsewhere (Linux arm64, Windows) put the pinned `verus` on `PATH`: `cargo xtask proofs verus` falls back to it and still checks the version.
 - **Spec mutants.** A mutant may name the kernel's spec (`file = …`); K2 registers two (P5b). The other spec mutants of K3 were run by hand and are not registered.
 - **Driver and test bodies.** Fingerprints make every edit to an oracle driver or oracle test visible, but whether a driver calls the registered model functions, and whether a test asserts every answer, is still reviewed by a person.
 
-### 9.2 M2 (planned, not started)
+### 9.2 M2: K5–K9
+
+| ID | Status (2026-11-14) |
+|---|---|
+| K5 | **verified** as two kernels: K5a-zsplit (snp-pycompat, 19 items, 4 mutants killed) and K5b-zlist-split (snp-git, 12 items, 4 mutants killed); first kernel trait `FindByte`, trusted `Memchr` |
+| K6 | **verified**: 9 items, 5 mutants killed (1 of the spec), called by `end_of_file_fixer.rs::tail_action`; closes K3's E2 gap for the computation |
+| K7 | **verified**: 54 items, 7 mutants killed (1 of the spec), 4 callers in `git.rs`; kernel trait `SeenSet`, trusted `HashSeen`; lands fix F3 (ADR-093 amended by ADR-095, D-DATA-19 amendment) |
+| K8 | **deferred**: waits for the gc patch protection fix (F1, D-DATA-04) to merge, since G4 is false before it and the kernel's code is what that fix rewrites |
+| K9 | **proved model** (Lean only, by design): 8 theorems with statement pins, 12 fingerprinted anchors, 4 named witness tests; no oracle |
+
+Whole root after M2: 134 items verified, 0 errors, with `--no-cheating`, in about 6 s (40 from M1, plus 19 + 12 + 9 + 54); 30 registered mutants, each failing verification. Lean: `lake build --wfail`, the axiom audit, `leanchecker` and L5 pass with the K9 model added; both oracle tests pass with `SNP_REQUIRE_LEAN_ORACLES=1` (K9 has none). Two `[[trusted]]` items (§10 row 8). The per-kernel entries below keep the design text and add the status, evidence and G/¬G rows.
+
 
 - **K5 zsplit / ZList::split** (Verus; snp-pycompat `precommit.rs:13-46`, snp-git `zlist.rs:64-112`).
   - `strip0` strips leading and trailing NULs. `zsplit_spec(b) = []` if `strip0(b) = ε`, else `split_nul(strip0(b))`.
@@ -528,7 +539,7 @@ Whole root: 40 items verified, 0 errors, with `--no-cheating`, in about 3–5 s 
   - **T1** `lemma_scan`: for every `s` with `|s| ≤ u64::MAX` and every block size `1 ≤ B ≤ usize::MAX`, `scan(s, B, |s|, (0, ε))` ends with `(run(s), run_head(s))`, the inputs K3's E2 (`lemma_run_action_apply`) takes, so `apply(s, run_action(head, run, |s|)) = fix(s)`. The run never saturates. This closes K3's E2 gap for the computation; the reads themselves stay in the shell.
   - **T2** `lemma_scan`: reads stop at the first block (from the end) that holds a non-CR/LF byte: the lowest offset read `low` satisfies `low ≤ |s| − run(s) − 1 < low + B`, and `low = 0` when `s` is all line endings. So at most `run(s) + B` bytes are read (the linear-time claim).
   - **Performance.** No allocation per block or byte (one buffer of `min(4096, len)` bytes, as before; the state is three words). The block's trailing run is an index loop instead of `rposition`. A local A/B on 64 MiB of `\n` and of `\r\n` (release, `Cursor`) showed no regression (old 59–113 ms, new 60–86 ms, noisy); `long_eol_run_is_linear` passes.
-  - **Evidence.** 9 items (whole root 49 with `--no-cheating`). Mutants: the run stops at the first `\r`; a one-byte block keeps the old head; `done` after every block; overlapping blocks; and the spec mutant "old head before the block's run" (fails T1). The unit test `kernels::tests::tail_fold_any_block_size` drives the kernel as the shell does for block sizes 1–9 on all of `{a, CR, LF}^≤7` against `end_of_file` and checks the T2 read bound.
+  - **Evidence.** 9 items (whole root 134 after M2 with `--no-cheating`). Mutants: the run stops at the first `\r`; a one-byte block keeps the old head; `done` after every block; overlapping blocks; and the spec mutant "old head before the block's run" (fails T1). The unit test `kernels::tests::tail_fold_any_block_size` drives the kernel as the shell does for block sizes 1–9 on all of `{a, CR, LF}^≤7` against `end_of_file` and checks the T2 read bound.
   - **G:** for every file and every block size `B ≥ 1`, the state the shell hands to `end_of_file_run` is `(run(s), run_head(s))`, so the decision is `fix(s)`'s (with K3's E2), and no block before the one holding the last non-CR/LF byte is read. **¬G:** that `seek` + `read_exact` return `s[start..start+n]` (the I/O, and a file changed concurrently: TOCTOU); that the shell's ~10-line loop is `scan` (reviewed and tested by `tail_scan_matches_kernel` and `tail_fold_any_block_size`, not proved: proving it needs a kernel trait for the reader, §2.6); the buffer lookup `block.get_mut(..n)`, whose fallback to an empty slice is unreachable because `n ≤ min(BLOCK, len)`.
 - **K7 D-DATA-19 pathspec lists** (Verus; snp-git `git.rs:79-87, 92-117, 124-135, 620, 682`; **after PR #17 merges**).
   - **N1 (true today)** `parse_numstat_z(concat(aᵢ TAB dᵢ TAB nameᵢ NUL)) = Ok([nameᵢ])` for tab-free `aᵢ`, `dᵢ` and non-empty NUL-free names. Tabs and newlines are allowed in names.
@@ -536,12 +547,13 @@ Whole root: 40 items verified, 0 errors, with `--no-cheating`, in about 3–5 s 
   - **N3 (true today)** for NUL-free paths, splitting `literal_pathspecs(L)` on NUL (without its final NUL) gives `map(":(literal)" ++ ·, L)`, and the encoding is injective.
   - **N4 (after the hardening PR)** the checkout sink refuses a list containing an empty or NUL-bearing path (an empty `:(literal)` selects the whole tree, the very loss D-DATA-19 removed). The rollback list is the first-seen dedup of `T ++ (C minus empty records)`.
   - Dedup goes through a `SeenSet` kernel trait (HashSet implementation trusted).
-  - **Status: verified** (branch `fv2/k7-pathspec`). Kernel `crates/snp-git/src/git/pathspec.rs`, spec `proofs/verus/spec/pathspec.rs`; 54 items in the whole root with `--no-cheating`; 7 mutants killed (6 of the code, 1 of the spec's `drop_empty`). The code changed after the design (PR #17 and the git < 2.25 fallback): the kernels cover `parse_numstat_z` (`numstat_spans`), `literal_pathspecs` and the stdin form (`literal_list`), the chunked argument form of `checkout_path_calls` (`literal_chunks`, `literal_spec`), the F3 sink check (`checkout_refusal`) and `rollback_paths` (`rollback_list` over `SeenSet`).
+  - **Status: verified** (2026-11-14). Kernel `crates/snp-git/src/git/pathspec.rs`, spec `proofs/verus/spec/pathspec.rs`; 54 items in the whole root with `--no-cheating`; 7 mutants killed (6 of the code, 1 of the spec's `drop_empty`). The code changed after the design (PR #17 and the git < 2.25 fallback): the kernels cover `parse_numstat_z` (`numstat_spans`), `literal_pathspecs` and the stdin form (`literal_list`), the chunked argument form of `checkout_path_calls` (`literal_chunks`, `literal_spec`), the F3 sink check (`checkout_refusal`) and `rollback_paths` (`rollback_list` over `SeenSet`).
   - **Proved.** N1 `lemma_numstat_complete` (every list of `(a, d, name)` records with TAB/NUL-free counts and non-empty NUL-free names parses to exactly the names, in order). N2 `numstat_spans` returns exactly the spec `parse_from(out, 0)` for every input (a transcription of the former `split`/`splitn` parser, rename branch included) with `lemma_numstat_wf` (each span non-empty, NUL-free, in bounds) and `lemma_numstat_short_record` (a record with fewer than two TABs is `Err` naming it); no panic and no overflow are the kernel's own obligations. N3 `literal_list` = `lit_list`, `lemma_lit_list_items` (git's NUL-item reader sees exactly `map(":(literal)" ++ ·, L)` for NUL-free paths), `lemma_lit_list_injective`; `literal_chunks` satisfies `chunks_ok` (the chunks tile the list in order, a chunk of two or more paths is within the 24 KiB budget, every chunk but the last is maximal) and `lemma_chunks_concat` (the chunks concatenate to the whole list). N4 (after F3) `checkout_refusal` returns the first path that is empty or holds a NUL, `None` only when every path is `ok_path`; `rollback_list` = `dedup(T ++ drop_empty(C))`, with `lemma_dedup_props` (each path of the input exactly once, no other) and `lemma_drop_empty`.
   - **Trusted.** `HashSeen: SeenSet` (a `HashSet` over the records), `[[trusted]]` with the differential test `seen_set_hash_matches_scan` against the verified `Scan`; the shell uses `Scan` for lists of at most 16 paths and `HashSeen` above.
   - **Tests.** `numstat_kernel_matches_former_parser` (every output over `{a, TAB, NUL, LF}` up to 8 bytes plus 20,000 seeded ones, against the former parser, error records included), `literal_kernels_match_former_code` (former encoder and chunking loop), `rollback_list_is_former_union_without_empty_records`, `checkout_sink_refuses_empty_and_nul_paths`, and the empty-record case of `tests/behaviour/scripted.rs`.
   - **G:** the paths the stash checks out are exactly the non-empty, NUL-free names of git's `--numstat -z` records (N1, N2); each reaches git as one `:(literal)` pathspec, with no item lost, split, merged or reordered in either checkout form (N3); no list holding an empty or NUL-bearing path reaches git, and the rollback list holds each patch path and non-empty changed path exactly once (N4). **¬G:** that git prints `--numstat -z` in the modelled shape (`apply.c`, read by hand) and that its pathspec reader is `nul_items` (the spec is trusted, §10 row 11); completeness for rename/copy records (parsed by the spec's rename branch, but no N1-style lemma: a stash patch never has one); the shell glue (`ZList` pushes and their `TooLarge`, `OsStr` conversion of the arguments, error mapping, the call order in `Git::checkout_paths` and `rollback_checkout`); `HashSeen` itself (tested, trusted); whether 24 KiB keeps an argv under the OS limit; K9's model of what checkout does with the list.
 - **K8 gc patch protection** (Verus; snp-store `maintenance.rs:76-114, 167-182, 296-345`; snp-stash `journal.rs:160-200`).
+  - **Status: deferred** (2026-11-14). It starts once the F1 fix PR (fail closed on unreadable journals, no truncation at `META_CAP`, hex-encoded names) has merged: the kernel would be extracted from the code that PR changes, and G4 holds only after it. Nothing of K8 is registered, so nothing about gc is claimed.
   - **G1 (true today)** `mentioned(name, J) ⇔ ∃j∈J, k: j[k..k+|name|] = name ∧ (k+|name| = |j| ∨ j[k+|name|] ∉ [A-Za-z0-9._-])`. This needs `name` to be border-free, and every `patch<digits>-<digits>` name is. The reason is that `memmem::find_iter` reports non-overlapping matches; the trusted `Memmem` contract says so.
   - **G2 (true today)** deletable ⇒ the name starts with `patch`, its age is at least the threshold, and it is not mentioned.
   - **G3** adding journals never makes a kept patch deletable.
@@ -558,6 +570,7 @@ Whole root: 40 items verified, 0 errors, with `--no-cheating`, in about 3–5 s 
     - T6: the index is invariant apart from stage_fixed.
   - **Link.** Fingerprinted anchors on the `guard.rs` steps, with the `tests/behaviour/hidden.rs` scenarios as named witnesses. **It proves nothing about the binary by itself.**
   - **Status: proved model** (Lean only, core library, no oracle). `proofs/lean/SnpModels/Stash/`: `Model.lean` (state, git oracles as fields of `Git`, A1–A5 as fields of `Hyps`, A2c `Complete` kept apart, snp's `run` and pre-commit's `pcRun`), `Protocol.lean` (T1, T2, T4–T6), `Counterexample.lean` (T3). Registered as `[[model]] K9-stash-protocol`: 8 theorems with statement pins, 12 anchors (`enter`, `Inner::{stash, stage_fixed, git_apply, rollback_checkout, restore_patch, finish}`, `Git::{patch_paths, changed_paths, rollback_paths, checkout_paths, checkout_path_calls}`), 4 witnesses in `hidden.rs`. Theorems: `roundtrip` and `roundtrip_exact` (T1; A1–A5 + A2c), `residual_loss` (T2; A2–A5), `precommit_loses_filter_hidden_change` and `precommit_loses_assume_unchanged_edit` (T3, on a git satisfying A1–A5 and A2c), `rollback_complete` (T4; A1–A5 + A2c), `no_silent_loss` (T5; A2–A5, the recovery clause with A2c), `index_invariant` (T6; no hypothesis).
+  - **Re-review after K7 (2026-11-14).** K7's F3 changed four anchored items (`Inner::rollback_checkout`, `Git::{rollback_paths, checkout_paths, checkout_path_calls}`). The model was re-read against them and still holds: `rollback_paths` still lists the patch's files and every file `git diff` shows (`rollbackSet`), now deduplicated by the K7 kernel and without empty records, which name no path; the new refusal of an empty or NUL-bearing path returns an error before any git call, which is a failing checkout, already outside the model. The fingerprints were refreshed with `cargo xtask proofs fingerprint`.
   - **G:** at model level, under A1–A5 (A2c where stated): without hooks every file outside D is untouched and every file of D is its clean∘smudge round trip, so the worktree comes back exactly when no file of D also has a hidden change (T1); after a successful run a path differs from the user's iff it is in D with a hidden change, or (rollback ran) a hook visibly changed it outside D and it has a hidden change, or it is a hook's own kept edit, which is ADR-093's consequences paragraph and nothing more (T2); with the same git pre-commit's whole-tree checkout loses a filter-hidden change and an assume-unchanged edit that snp keeps (T3); the rollback leaves nothing visible, keeps every path outside its list, agrees with `checkout -- .` on what git sees of every not-assume-unchanged path and makes the patch apply (T4); a failing final apply is reported, keeps the patch (holding what git saw of every file of D) and the stash-time tree, and the K+ recovery restores what T1 restores (T5); the index ends as it started apart from paths `stage_fixed` staged, all among the requested ones (T6). **¬G:** any link between the model and `guard.rs` beyond review of the anchors (the witnesses are tests, not proofs); the hypotheses themselves (A1 fails for a lossy smudge, A2c for a patch git rejects despite matching pre-images, A4 for a concurrent editor); the stat cache (content decides in the model), `core.autocrlf` and the second `git apply` attempt, the lock, the journal and its durability, crashes and the `Drop` fallback, the re-verification loop, a failing checkout or listing, the old-git refusal and the read-only store; submodules and symlinks; A5 is K7's N1 at the parser level only, not git's numstat output.
 
 ### 9.3 M3 (planned, not started)
@@ -606,7 +619,7 @@ Whole root: 40 items verified, 0 errors, with `--no-cheating`, in about 3–5 s 
 | 5 | Mounts are the production files; nothing is silently skipped | G1, mount-level `#[verus_verify]`, V2 manifest |
 | 6 | Preconditions at unverified call sites | none allowed (G6) |
 | 7 | `assume_specification`/`external_body` | none in kernel files (G4, G5, root `forbid(unsafe_code)`); none at all in M1; later only in `proofs/verus/trusted/`, listed |
-| 8 | Production impls of kernel traits (memchr, memmem, HashSet; from M2) | `[[trusted]]` + G8 + differential test against the verified reference implementation |
+| 8 | Production impls of kernel traits. Since M2: `Memchr: FindByte` (K5b, `memchr::memchr` on `hay[from..]`) and `HashSeen: SeenSet` (K7, `std` `HashSet`, used above 16 paths); memmem planned with K8 | `[[trusted]]` + G8 + differential test against the verified reference implementation: `zlist.rs::memchr_matches_scalar` (exhaustive over `{0,1,2}^≤8` plus 2,000 seeded haystacks, and a `debug_assert_eq!` against `Scalar` in every debug build of `ZList::split`) and `git.rs::seen_set_hash_matches_scan` (20,000 seeded lists) |
 | 9 | Compiler-derived impls (`external_derive`) | verified code does not use them (`match`, never `==`) |
 | 10 | Shells: I/O, `OsStr` and `Path` conversion, error mapping, iterator glue | a few lines each, monotone where security-relevant, existing tests, fuzz and difftest; doc comment "unverified shell of kernel X" |
 | 11 | Spec ≠ intent (hand transcriptions of Python). The specs are trusted: a spec and code wrong in the same way verify | uniqueness lemmas; independent property lemmas; Lean `pyX = X` theorems with CPython cross-checks; oracle tests; K2's exhaustive comparison with the former check; mutants; `file:line` citations |
@@ -664,7 +677,9 @@ M1 exit criteria:
 7. The Verus step is blocking in `xtask gates` and in release gate 7 (owner decision).
 8. The §9 G/¬G rows are complete.
 
-**M2: K5–K9, plus F1 and F3 (22–30 days). M3: K10–K13 and generated mutants (18–26 days).**
+**M2: K5–K9, plus F1 and F3 (22–30 days).** Status (2026-11-14): done apart from K8. K5 (K5a, K5b), K6 and K7 are verified, K9 is a proved protocol model, F3 landed with K7 (§9.2). K8 is deferred until the F1 gc fix PR merges; F1 itself is that PR, not part of this milestone's proofs. The registry gained `[[trusted]]` entries and protocol models with named witnesses instead of an oracle (§3.1).
+
+**M3: K10–K13 and generated mutants (18–26 days).**
 
 **Total:** about 58–80 engineer-days. **Upkeep:** 0.5–2 days per Verus bump, about 0.5 day per Lean bump, and 1–2 days a month of triage.
 
