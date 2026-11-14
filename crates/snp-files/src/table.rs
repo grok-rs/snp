@@ -8,7 +8,8 @@
 //! * **name** — `tags_from_filename` (no I/O), interned: two bytes per file;
 //! * **meta** — one `lstat` (or a trusted git index mode) kept as its kind and executable bit alone, for filters that
 //!   reference only `file`/`directory`/`symlink`/`socket`/`executable`/`non-executable` (ADR-110): no name tags,
-//!   eight bytes per file; a later stat tier of the file is built from it, never from a second `lstat`;
+//!   eight bytes per file; a later stat tier of the file is built from it, never from a second `lstat` (not used when
+//!   trusted index modes serve a run with shebang filters, whose stat tier must classify the name first);
 //! * **stat** — one `lstat` (or a trusted git index mode, zero syscalls), stored as file-identify's
 //!   `Classification` (kind + mode + name tags, and whether content is needed);
 //! * **head** — at most one non-blocking `open` + a 1 KiB read (+ a long shebang line): `text`/`binary` and the
@@ -108,7 +109,8 @@ pub(crate) struct Query {
     /// mode (ADR-106).
     pub(crate) exec: bool,
     /// Every referenced tag is in [`META_TAGS`] and no content tier is needed: the `lstat` meta alone decides the
-    /// filter (ADR-110), so the stat tier (name tags) is not built.
+    /// filter (ADR-110), so the stat tier (name tags) is not built. [`FileTable::query`] clears it in a run whose
+    /// trusted index modes serve a filter that needs shebang tags (ADR-106 decision (4)).
     pub(crate) meta_only: bool,
 }
 
@@ -674,11 +676,26 @@ impl FileTable {
         self.tags_for(id, Query::full(n))
     }
 
+    /// The query of filter `f` on this table: [`HookFilter::query`](crate::HookFilter), kept off the meta tier
+    /// (ADR-110) when trusted index modes serve a run with a filter that needs shebang tags (ADR-106 decision (4)).
+    /// There a file whose name gives no tags gets no trusted cell, and only classifying the name tells which files
+    /// those are, so a meta-only filter takes the stat tier as it would without ADR-110: such a file takes its
+    /// `lstat` at its first identification, never after a later hook changed it. The trust is fixed before the
+    /// classifier shares the table, so one decision per hook holds for every file.
+    pub(crate) fn query(&self, f: &crate::HookFilter) -> Query {
+        let q = f.query();
+        let shebang_trust = self.index.as_ref().is_some_and(|t| t.shebang);
+        Query {
+            meta_only: q.meta_only && !shebang_trust,
+            ..q
+        }
+    }
+
     /// [`Self::tags`] for a filter's query. When the filter references `executable` or `non-executable` the
     /// executable bit is never taken from a trusted index mode (ADR-106); neither is it for a query that needs shebang
     /// tags of a file without name tags (the bit decides whether identify reads the shebang). A meta-only query
-    /// (ADR-110) of a file without a stat tier is answered from the meta tier: its meta tags, which decide its filter
-    /// exactly as full identification would, since the filter references no other tag.
+    /// (ADR-110, from [`Self::query`]) of a file without a stat tier is answered from the meta tier: its meta tags,
+    /// which decide its filter exactly as full identification would, since the filter references no other tag.
     pub(crate) fn tags_for(&self, id: FileId, q: Query) -> TagOutcome<'_> {
         let Some(i) = self.index(id) else {
             return TagOutcome::Vanished;
@@ -1035,6 +1052,9 @@ impl FileTable {
     fn stat_from_meta(&self, i: usize) -> Option<StatTier> {
         Some(match self.meta.peek(i)? {
             MetaTier::Present(meta) => StatTier::Present(self.classify(i, *meta)),
+            // `trusted_class` refuses only in a run with shebang filters, whose queries never take the meta tier
+            // (`Self::query`), so the `lstat` is unreachable; kept so that a broken invariant costs a late `lstat`,
+            // never a trusted cell ADR-106 decision (4) forbids.
             MetaTier::Trusted(meta) => self
                 .trusted_class(i, *meta)
                 .unwrap_or_else(|| self.lstat_tier(i)),
@@ -1043,7 +1063,8 @@ impl FileTable {
     }
 
     /// The memoised meta tier of entry `i` (ADR-110): the trusted index mode while the trust holds and `trust` allows
-    /// it (the query does not observe the executable bit), else one `lstat`.
+    /// it (the query does not observe the executable bit), else one `lstat`. Never built in a run whose trusted
+    /// modes serve a filter that needs shebang tags ([`Self::query`]).
     fn meta_tier(&self, i: usize, trust: bool) -> MetaTier {
         let n = self.len();
         let compute = || match trust.then(|| self.index_meta(i)).flatten() {
@@ -2451,6 +2472,60 @@ mod tests {
         let valid = Arc::new(AtomicBool::new(false));
         assert!(u.trust_index_modes(Box::new([0o100_644]), valid, tags_of(&["file"])));
         assert!(matches!(u.tags_for(FileId(0), file), TagOutcome::Vanished));
+    }
+
+    /// ADR-110 under ADR-106 decision (4): when trusted index modes serve a run with a filter that needs shebang
+    /// tags, a meta-only filter's query on that table is not meta-only, so it takes the stat tier exactly as without
+    /// ADR-110: the trusted mode for a file whose name gives tags (zero syscalls: the root does not exist), the `lstat`
+    /// for one whose name gives none (gone here) at that first identification, `tiers_ready` and adoption on the stat
+    /// tier, and no meta column. The same filter on a table without shebang filters stays meta-only.
+    #[cfg(unix)]
+    #[test]
+    fn shebang_runs_keep_meta_only_filters_on_the_stat_tier() {
+        let cache = snp_pyre::RegexCache::new();
+        let file_filter = types_filter(&["file"], &cache);
+        let mut t = table(&["a.py", "tool", "link", "x"]);
+        let modes: Box<[u32]> = Box::new([0o100_644, 0o100_755, 0o120_000, 0]);
+        let valid = Arc::new(AtomicBool::new(true));
+        assert!(t.trust_index_modes(modes, valid, tags_of(&["file", "python"])));
+        let q = t.query(&file_filter);
+        assert_eq!(
+            q,
+            Query {
+                meta_only: false,
+                ..file_filter.query()
+            }
+        );
+        assert!(file_filter.query().meta_only);
+        assert!(!t.tiers_ready(FileId(0), q));
+        assert!(matches!(t.tags_for(FileId(0), q), TagOutcome::Tags(x) if x.contains("python")));
+        assert!(matches!(t.stat.peek(0), Some(StatTier::Trusted(_))));
+        assert!(t.tiers_ready(FileId(0), q));
+        assert!(matches!(t.tags_for(FileId(1), q), TagOutcome::Vanished));
+        assert!(matches!(t.stat.peek(1), Some(StatTier::Vanished)));
+        assert!(
+            matches!(t.tags_for(FileId(2), q), TagOutcome::Tags(x) if x == tags_of(&["symlink"]))
+        );
+        let pending: Box<[Option<Meta>]> = Box::new([None, None, None, Some(Meta::regular(true))]);
+        t.adopt(FileId(3), &pending, q);
+        assert!(matches!(t.stat.peek(3), Some(StatTier::Present(_))));
+        assert!(
+            t.meta.0.get().is_none(),
+            "a shebang run built the meta tier"
+        );
+        // without a shebang filter (`text` needs the content, not the shebang) the query stays meta-only
+        let mut u = table(&["tool"]);
+        let valid = Arc::new(AtomicBool::new(true));
+        assert!(u.trust_index_modes(Box::new([0o100_755]), valid, tags_of(&["file", "text"])));
+        let q = u.query(&file_filter);
+        assert_eq!(q, file_filter.query());
+        assert!(
+            matches!(u.tags_for(FileId(0), q), TagOutcome::Tags(x) if x == tags_of(&["file", "executable"]))
+        );
+        assert!(matches!(u.meta.peek(0), Some(MetaTier::Trusted(_))));
+        assert!(u.stat.0.get().is_none());
+        // untrusted: meta-only
+        assert_eq!(table(&["tool"]).query(&file_filter), file_filter.query());
     }
 
     /// The meta tier follows `retain_lexists` and a pending `lexists` meta is adopted into it (never into the stat

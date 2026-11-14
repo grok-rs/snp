@@ -28,10 +28,10 @@ impl Classifier {
     /// `Classifier.from_config` + `__init__` (`run.py:73-74, 112-126`): keep a file when `include.search(path)` and
     /// not `exclude.search(path)` (on the matching view), then when `os.path.lexists(path)`. Order and duplicates are
     /// kept. Large tables are split into ordered partitions on the pool. The `lstat`s become the stat tier of the
-    /// files the first hook classifies, or their meta tier when that hook's filter references only meta tags
-    /// (ADR-110; pre-commit's first `tags_from_path` of those files happens right after). A file with a trusted index
-    /// mode (ADR-106) exists without a syscall; its meta or stat tier is built from the mode when a hook first needs
-    /// it.
+    /// files the first hook classifies, or their meta tier when that hook's query is meta-only (ADR-110,
+    /// `FileTable::query`; pre-commit's first `tags_from_path` of those files happens right after). A file with a
+    /// trusted index mode (ADR-106) exists without a syscall; its meta or stat tier is built from the mode when a hook
+    /// first needs it.
     ///
     /// # Errors
     ///
@@ -98,7 +98,7 @@ impl Classifier {
     pub fn for_hook(&self, f: &HookFilter, pool: &JobPool) -> Result<Vec<FileId>, Failure> {
         // The first hook after `Classifier::new` adopts its fresh `lstat`s (a hook that needs no tags discards them).
         let pending = self.table.take_pending();
-        let q = f.query();
+        let q = self.table.query(f);
         let adopt = pending.as_deref().filter(|_| q.needs.any());
         let table: &FileTable = &self.table;
         let kept = &self.kept;
@@ -134,7 +134,7 @@ impl Classifier {
     /// As [`Classifier::for_hook`] (an unreadable file whose content the types need).
     pub fn by_types(&self, ids: &[FileId], f: &HookFilter) -> Result<Vec<FileId>, Failure> {
         let pending = self.table.take_pending();
-        let q = f.query();
+        let q = self.table.query(f);
         let adopt = pending.as_deref().filter(|_| q.needs.any());
         let mut out = Vec::new();
         for &id in ids {

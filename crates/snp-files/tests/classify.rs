@@ -652,4 +652,109 @@ mod classify {
         let files = c.for_hook(&file, &pool).unwrap();
         assert_eq!(views(&c, &files), ["a.py", "keep.unknownext"]);
     }
+
+    /// One case of [`trusted_meta_only_first_hook_keeps_the_first_observation`]: the name, its content, its mode on
+    /// disk and in the index, the mode hook 1 leaves (`None`: hook 1 deletes it), hook 2's `types` and
+    /// `exclude_types`, and how many files hook 2 keeps under pre-commit 4.7.0.
+    #[cfg(unix)]
+    type FirstObservation = (
+        &'static str,
+        &'static [u8],
+        u32,
+        Option<u32>,
+        &'static [&'static str],
+        &'static [&'static str],
+        usize,
+    );
+
+    /// ADR-110 under ADR-106 decision (4): when a filter of the run needs shebang tags, a file whose name gives no
+    /// tags gets no trusted cell, also when a meta-only hook identifies it first. It takes its `lstat` there and then,
+    /// since its executable bit decides whether identify reads its shebang. A first hook that flips that bit or
+    /// deletes the file (the diff oracle then clears the trust) changes nothing a later hook sees, as pre-commit
+    /// memoises the full tags of the first identification: trusted and untrusted runs agree, and a meta-only first
+    /// hook agrees with a `text` one.
+    #[cfg(unix)]
+    #[test]
+    fn trusted_meta_only_first_hook_keeps_the_first_observation() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        const PY: &[u8] = b"#!/usr/bin/env python3\nprint(1)\n";
+        let cases: [FirstObservation; 4] = [
+            // memo {file, non-executable, text}: chmod +x does not make it python
+            ("tool", PY, 0o644, Some(0o755), &["python"], &[], 0),
+            // memo {file, executable, python, text}: chmod -x does not stop it being python
+            ("tool", PY, 0o755, Some(0o644), &["python"], &[], 1),
+            ("tool", PY, 0o755, Some(0o644), &["file"], &["python"], 0),
+            // memo {file, non-executable, text}: deleted, it is still a file that is not python
+            (
+                "notes",
+                b"plain words\n",
+                0o644,
+                None,
+                &["file"],
+                &["python"],
+                1,
+            ),
+        ];
+        let cache = RegexCache::new();
+        let pool = pool(1);
+        let types_filter = |types: &[&str], exclude_types: &[&str]| {
+            HookFilter::compile(
+                "",
+                "^$",
+                tags(types),
+                TagSet::EMPTY,
+                tags(exclude_types),
+                None,
+                &cache,
+            )
+            .unwrap()
+        };
+        let mut wrong = Vec::new();
+        for (name, body, mode, after, types, exclude_types, want) in cases {
+            for first in [&["file"][..], &["text"]] {
+                for trusted in [false, true] {
+                    let then = after.map_or_else(|| "deleted".to_owned(), |to| format!("{to:o}"));
+                    let case = format!(
+                        "{name} {mode:o} -> {then}, first {first:?}, then {types:?} minus \
+                         {exclude_types:?}, trusted {trusted}"
+                    );
+                    let dir = tempfile::tempdir().unwrap();
+                    let path = dir.path().join(name);
+                    std::fs::write(&path, body).unwrap();
+                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+                    let mut table = FileTable::from_args(vec![OsString::from(name)], dir.path());
+                    let valid = Arc::new(AtomicBool::new(true));
+                    if trusted {
+                        let modes: Box<[u32]> = Box::new([0o100_000 | mode]);
+                        let referenced = tags(&["file", "text", "python"]);
+                        assert!(table.trust_index_modes(modes, Arc::clone(&valid), referenced));
+                    }
+                    let cls = classifier(table, &cache, &pool);
+                    assert_eq!(
+                        cls.for_hook(&types_filter(first, &[]), &pool)
+                            .unwrap()
+                            .len(),
+                        1,
+                        "{case}"
+                    );
+                    // hook 1 changes the worktree, then the diff oracle clears the trust
+                    match after {
+                        Some(to) => {
+                            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(to))
+                                .unwrap();
+                        }
+                        None => std::fs::remove_file(&path).unwrap(),
+                    }
+                    valid.store(false, Ordering::Release);
+                    let hook2 = types_filter(types, exclude_types);
+                    let kept = cls.for_hook(&hook2, &pool).unwrap().len();
+                    if kept != want {
+                        wrong.push(format!("{case}: kept {kept}, pre-commit keeps {want}"));
+                    }
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
 }
