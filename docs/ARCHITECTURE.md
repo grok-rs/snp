@@ -1514,7 +1514,7 @@ impl Git {
     pub fn merge_state(&self, info: &RepoInfo) -> MergeState;                         // stat MERGE_MSG ∧ MERGE_HEAD
     pub fn conflicted_files(&self, info: &RepoInfo) -> Result<ZList, Failure>;        // first-seen order union; MERGE_MSG on bytes
     pub fn diff_fingerprint(&self) -> Result<DiffFingerprint, Failure>;              // streaming blake3, O(1) memory
-    /// ADR-106: + "exit 0 and empty stderr"; `ls-files -s -v -z` folded to the all_files list; the config gate.
+    /// ADR-106: + "exit 0 and empty stderr"; `ls-files -s -v -f -z` folded to the all_files list; the config gate.
     pub fn diff_fingerprint_clean(&self) -> Result<(DiffFingerprint, bool), Failure>;
     pub fn all_files_tagged(&self) -> Result<TaggedIndex, Failure>;
     pub fn trusts_index_modes(&self) -> bool;
@@ -2411,13 +2411,16 @@ a partial set cached by an earlier hook that needed only the name tier. A run to
   in the fan-out, §3.1). `set_trusted_modes` has no production caller yet.
 * **Trusted index modes on `--all-files` (ADR-106).** When the list is `git ls-files` (`--all-files`, no stage, ref or
   `--files` override), on Unix, some selected hook can execute and no selected filter references `executable` or
-  `non-executable`, step 15 runs three read-only git children at once: `ls-files -s -v -z` (replacing
+  `non-executable`, step 15 runs three read-only git children at once: `ls-files -s -v -f -z` (replacing
   `ls-files -z --deduplicate`; streamed, only the paths kept, unmerged runs folded, modes and the tags of every
-  record), pre-commit's `git diff` (`prior_diff`, the oracle's baseline, with whether it exited 0 with an empty
-  stderr) and `git config -z --bool --get-regexp` of `core.fileMode`/`core.symlinks` (true or unset) and
+  record, assume-unchanged and fsmonitor-valid entries in lowercase however fsmonitor was turned on), pre-commit's
+  `git diff` (`prior_diff`, the oracle's baseline, with whether it exited 0 with an empty stderr) and `git config -z
+  --bool --get-regexp` of `core.fileMode`/`core.symlinks` (true or unset) and
   `core.fsmonitor`/`core.useBuiltinFSMonitor`/`core.ignoreStat`/`core.sparseCheckout`/`index.sparse` (false or
-  unset). An empty, clean diff over a listing whose records are all `H` at stage 0, with that configuration, has
-  `lstat`ed every entry: the table is built from the listing's paths and takes its mode column as is (100644, 100755,
+  unset); only a child that ran and answered counts (a spawn failure is "no"), and a non-empty `GIT_TEST_FSMONITOR`
+  or `GIT_FSMONITOR_TEST` (git's fsmonitor hook when `core.fsmonitor` is unset) refuses without a spawn. An empty,
+  clean diff over a listing whose records are all `H` at stage 0, with that configuration, has `lstat`ed every
+  entry: the table is built from the listing's paths and takes its mode column as is (100644, 100755,
   120000; gitlinks, directories and the empty blob, which `git diff` cannot tell from a FIFO or socket of size 0,
   keep their `lstat`). `lexists` and the stat tier of a trusted entry cost no syscall; the cell is `Trusted`: kind
   and name tags exact, the executable bit (git's owner bit, not identify's `os.access`) never used — a filter on
@@ -2505,7 +2508,7 @@ startup Env (captured once in main, minus __PYVENV_LAUNCHER__/PYTHONEXECUTABLE)
 | 12 | Select by `hook` id/alias (snp brand: several ids) and stage (+ `--group` extensions); `No hook with id …` → 1 | 02 §8 | stash restored on this early return (single exit) |
 | 13 | `SKIP` (+ `SNP_SKIP_GROUPS`, overlay `skip`, `skip/only` conditions) → `to_install` | 02 §6.2, 15 V-SKIP | `strip_fsbytes` semantics for non-UTF-8 SKIP |
 | 14 | `resolver.install_envs(to_install)` incl. delegated fast-path hooks and virtual install triplets | 03 §8.4, ADR-032 | `check_support` before any FS mutation (04b §5.1) |
-| 15 | `cols` from **all** selected hooks (skipped included); file selection (§3.2); `[INFO] Checking merge-conflict files only.`; global filter; `retain_lexists` — the classifier is built here, eagerly, when some selected hook reads files (`!always_run` ∨ `pass_filenames`) or `--from-ref`/`--to-ref` are set (P17: never otherwise; then only the merge-conflict notice is decided). A clean `--all-files` run whose filters allow it lists with `ls-files -s -v -z`, takes the before-diff here and trusts the index modes instead of `lstat`ing every file (§2.3, ADR-106) | 02 §9–10 | — |
+| 15 | `cols` from **all** selected hooks (skipped included); file selection (§3.2); `[INFO] Checking merge-conflict files only.`; global filter; `retain_lexists` — the classifier is built here, eagerly, when some selected hook reads files (`!always_run` ∨ `pass_filenames`) or `--from-ref`/`--to-ref` are set (P17: never otherwise; then only the merge-conflict notice is decided). A clean `--all-files` run whose filters allow it lists with `ls-files -s -v -f -z`, takes the before-diff here and trusts the index modes instead of `lstat`ing every file (§2.3, ADR-106) | 02 §9–10 | — |
 | 16 | Baseline digest (ADR-078): **elided or lazy** (at pre-commit's position). **Warm path** (no clone, install or download in steps 11–14, counted by `Resolve::store_work` and the run's counting fetcher, and steps 11–14 under 250 ms; ADR-104): `DiffFingerprint::EMPTY` when the stash step saw `diff-index` rc 0 and stashed nothing. Otherwise one `git diff` taken lazily after `install_envs`, before the first hook that needs it, pre-commit's position (an IDE autosave during an install must count as pre-existing, not as a hook modification); a trust-capable `--all-files` run took it at step 15 (ADR-106) | 02 §11.2 | `SNP_VERIFY_BASELINE=1` (CI) takes the real diff and asserts equality |
 | 17 | Schedule and execute (§3.4–3.7); print in config order (§3.9) | 02 §11 | one JobPool; cancellation stops new work |
 | 18 | `fail_fast` (config ∨ hook ∨ `--fail-fast`): stop after the current failing hook (bucket) | 02 §11.2 | later hooks print nothing |

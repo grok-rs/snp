@@ -2124,52 +2124,60 @@ before the first hook (`prior_diff`) has already `lstat`ed every unflagged stage
 files exist with their index kinds, except for six holes the verifiers and the implementation found and reproduced
 with git 2.43: (1) an `lstat` error other than "not found" (`EACCES` under an unsearchable directory, `ELOOP`, `EIO`)
 goes to stderr only, git skips the entry and exits 0; (2) assume-unchanged, skip-worktree and fsmonitor-valid entries
-are not `lstat`ed at all; (3) git records the owner `x` bit while identify emulates `os.access` (root needs any `x`
-bit, other users the group or other bit): a 0o654 file is staged as 100644 and is executable for root, and for a
-file without name tags the bit decides whether its shebang is read; (4) a hook that runs `git rm` or `git add`
-changes which files exist while `git diff` stays empty; (5) a FIFO or a socket of size 0 in place of an *empty*
-tracked file, with a regular file's owner bit, leaves `git diff` clean (git compares the two empty contents), while
-identify tags a socket `socket`, not `file`; (6) under `core.symlinks=false` git compares a symlink checked out as a
-regular file as a symlink.
+are not `lstat`ed at all, and fsmonitor can be on without any configuration key (git reads the hook from
+`GIT_TEST_FSMONITOR`, `GIT_FSMONITOR_TEST` before git 2.20, when `core.fsmonitor` is unset) while `ls-files -v`
+lowercases only assume-unchanged entries (fsmonitor-valid ones need `-f`); (3) git records the owner `x` bit while
+identify emulates `os.access` (root needs any `x` bit, other users the group or other bit): a 0o654 file is staged as
+100644 and is executable for root, and for a file without name tags the bit decides whether its shebang is read; (4) a
+hook that runs `git rm` or `git add` changes which files exist while `git diff` stays empty; (5) a FIFO or a socket of
+size 0 in place of an *empty* tracked file, with a regular file's owner bit, leaves `git diff` clean (git compares the
+two empty contents), while identify tags a socket `socket`, not `file`; (6) under `core.symlinks=false` git compares a
+symlink checked out as a regular file as a symlink.
 **Decision.** (1) *Scope.* A `--all-files` run whose file list is `git ls-files` (no no-file stage, commit-msg stage,
 refs or `--files`), on Unix, in which some selected hook is not skipped and no selected hook's filter references
 `executable` or `non-executable` (skipped hooks count: they are classified too). Anything else keeps today's path,
 and so does the staged list (the ADR-078 variant was dropped). (2) *Queries.* At step 15, after `install_envs`
-(ADR-078(3)'s position), three read-only git children run at once: `git ls-files -s -v -z` (snp-only), streamed
-through an incremental parser (S2: every field checked, no indexing) that keeps only the paths, in a buffer of their
-own, folds runs of equal paths as `--deduplicate` does, and records each path's mode (0 for the empty blob) and
-whether every record is tagged `H` at stage 0 (`Git::all_files_tagged`); pre-commit's `git diff --no-ext-diff
---no-textconv --ignore-submodules`, whose stdout-only fingerprint becomes the oracle's baseline, plus whether git
-exited 0 with an empty stderr (`Git::diff_fingerprint_clean`); and `git config -z --bool --get-regexp` over
-`core.fileMode`, `core.symlinks` (true or unset), `core.fsmonitor`, `core.useBuiltinFSMonitor`, `core.ignoreStat`,
+(ADR-078(3)'s position), three read-only git children run at once: `git ls-files -s -v -f -z` (snp-only; `-v` and
+`-f`, both older than git 2.18, lowercase the tags of assume-unchanged and fsmonitor-valid entries), streamed through
+an incremental parser (S2: every field checked, no indexing) that keeps only the paths, in a buffer of their own,
+folds runs of equal paths as `--deduplicate` does, and records each path's mode (0 for the empty blob) and whether
+every record is tagged `H` at stage 0 (`Git::all_files_tagged`); pre-commit's `git diff --no-ext-diff --no-textconv
+--ignore-submodules`, whose stdout-only fingerprint becomes the oracle's baseline, plus whether git exited 0 with an
+empty stderr (`Git::diff_fingerprint_clean`); and `git config -z --bool --get-regexp` over `core.fileMode`,
+`core.symlinks` (true or unset), `core.fsmonitor`, `core.useBuiltinFSMonitor`, `core.ignoreStat`,
 `core.sparseCheckout` and `index.sparse` (false or unset), resolved by git so `-c`, `GIT_CONFIG_PARAMETERS` and
-`GIT_CONFIG_COUNT` count, and any failure (an fsmonitor hook path is not a boolean) is "no"
-(`Git::trusts_index_modes`). (3) *Gate.* The modes are trusted when the listing is plain, the diff is empty and
-clean, and the configuration passes. The table is built from the listing's own paths, so its mode column is aligned
-by construction (no path comparison, no search); a length mismatch refuses. Only modes 100644, 100755 and 120000 are
-kept: gitlinks, directories and empty blobs keep their `lstat`. (4) *Cells.* A trusted entry exists without a
-syscall and its stat tier is built from its mode and marked (`StatTier::Trusted`): kind and name tags exact, the
-executable bit unverified. A query that can observe the bit (a filter on `executable`/`non-executable`, or the
-shebang of a file without name tags) takes the `lstat` answer from cells of its own; when a filter of the run needs
-shebang tags, a file without name tags gets no trusted cell at all. (5) *Invalidation.* The diff oracle holds the
-trust's flag (`DiffOracle::guard_index_trust`) and clears it at the start of every `after_hook` and `after_native`,
-so every change (a differing diff, a Stat-mode delta, a native fixer's report) clears it before `stage_fixed` can
-rewrite the result, and so does every hook whose effect the diff cannot show. Cells built before stay, as
-pre-commit's memoised first identification does; later cells take an `lstat`. (6) *Fallbacks.* A failing listing is
-followed by `git ls-files -z --deduplicate` at the same position, so its `CalledProcessError` is pre-commit's; a
-failing diff leaves the baseline to the lazy diff before the first hook, as today; a run in which no hook can
-execute takes no diff, as today.
+`GIT_CONFIG_COUNT` count; only an answer from a child that ran counts, so a spawn failure (never read as
+`_oserror_to_output`'s status 1, "no key set") or any other failure (an fsmonitor hook path is not a boolean) is "no",
+and so is a non-empty `GIT_TEST_FSMONITOR` or `GIT_FSMONITOR_TEST` in the run's environment, checked before any spawn
+(`Git::trusts_index_modes`). (3) *Gate.* The modes are trusted when the listing is plain, the diff is empty and clean,
+and the configuration passes. The table is built from the listing's own paths, so its mode column is aligned by
+construction (no path comparison, no search); a length mismatch refuses. Only modes 100644, 100755 and 120000 are
+kept: gitlinks, directories and empty blobs keep their `lstat`. (4) *Cells.* A trusted entry exists without a syscall
+and its stat tier is built from its mode and marked (`StatTier::Trusted`): kind and name tags exact, the executable
+bit unverified. A query that can observe the bit (a filter on `executable`/`non-executable`, or the shebang of a file
+without name tags) takes the `lstat` answer from cells of its own; when a filter of the run needs shebang tags, a file
+without name tags gets no trusted cell at all. (5) *Invalidation.* The diff oracle holds the trust's flag
+(`DiffOracle::guard_index_trust`) and clears it at the start of every `after_hook` and `after_native`, so every change
+(a differing diff, a Stat-mode delta, a native fixer's report) clears it before `stage_fixed` can rewrite the result,
+and so does every hook whose effect the diff cannot show. Cells built before stay, as pre-commit's memoised first
+identification does; later cells take an `lstat`. (6) *Fallbacks.* A failing listing is followed by `git ls-files -z
+--deduplicate` at the same position, so its `CalledProcessError` is pre-commit's; a failing diff leaves the baseline
+to the lazy diff before the first hook, as today; a run in which no hook can execute takes no diff, as today.
 **Rationale.** In git's `run_diff_files` every stage-0, unflagged, non-gitlink entry is `lstat`ed: a missing file, a
 leading symlink or a file replaced by a directory is a deletion, a type change is shown unless both contents are
 empty (hence the empty blob), and with `core.fileMode`/`core.symlinks` true the mode and kind are compared; every other
 `lstat` error reaches stderr. Intent-to-add and unmerged entries always make the diff non-empty, so they need no
-check; flagged entries are excluded by the tags, fsmonitor and sparse indexes by the configuration. The diff is
+check; flagged entries are excluded by the tags, fsmonitor-valid ones included however fsmonitor was turned on,
+and fsmonitor and sparse indexes also by the configuration and the fsmonitor variables. The diff is
 taken before any hook, as `prior_diff` is, and only moves before the classifier's read-only `lexists`; the taken-early
 fingerprint followed by the stat snapshot is the ordering ADR-078 already uses. A randomized test drives the
 production gate over chmod, rm, mkfifo, sockets, an unsearchable directory, symlink swaps, file to directory,
-skip-worktree, assume-unchanged, intent-to-add, `rm --cached`, touch, a leading symlink, untracked files and
-`core.symlinks=false`, and compares every trusted outcome with `lstat`'s; removing any one of the stderr check, the
-plain check, the configuration gate or the empty-blob rule makes it fail.
+skip-worktree, assume-unchanged, intent-to-add, `rm --cached`, touch, a leading symlink, untracked files,
+`core.symlinks=false` and an fsmonitor turned on from the environment with a hook that reports no change, and
+compares every trusted outcome with `lstat`'s; removing any one of the stderr check, the plain check, the
+configuration gate or the empty-blob rule makes it fail. Its fsmonitor case passes while either the `-f` tags or the
+variable check holds, so each has a test of its own (`fsmonitor_valid_entries_are_flagged` in snp-git's behaviour
+tests, `trusts_index_modes_fails_closed_without_an_answer` beside the gate, which also injects spawn failures).
 **Consequences.** Measured on private copies of the bench fixtures with the profiling build (fat LTO), against
 43d95e9: strace counts of the snp process, callgrind instructions of the snp process, dhat, and the median of nine
 interleaved runs for CPU time (snp's own `getrusage`, all threads, no children; the process tree's task clock) and
@@ -2181,14 +2189,16 @@ tree 623 → 527 ms; maximum RSS 14.9 → 15.4 MiB; instructions 109.2 M → 117
 20,000 listed files trusted); instructions 1,398.7 M → 1,414.2 M (+1.1%). B6 takes today's path
 (check-executables-have-shebangs references `executable`): the same argv and `statx`, instructions 92.9 M → 93.2 M,
 within the spread of repeated base runs. A dirty B4 (one modified file, so no trust) keeps its 50,081 `statx` and
-its own CPU (218 → 219 ms) but its tree spends 671 → 694 ms: git's longer `ls-files -s -v -z` and the `git config`
+its own CPU (218 → 219 ms) but its tree spends 671 → 694 ms: git's longer `ls-files -s -v -f -z` and the `git config`
 query are paid for nothing, beside the diff they overlap. Output, exit status and hook argv are unchanged (B4, B5,
 B6, B12u and the dirty B4 byte-identical; the COMPATIBILITY §6.2 cases in
 `tests/differential/scenarios/run/t10-run-37-trusted-index-modes.yaml` identical to pre-commit 4.7.0). The git argv
-list of a trust-capable run changes: `ls-files -s -v -z` replaces `ls-files -z --deduplicate` and one `git config`
-is added (26 → 27 children in B4), and a run whose hooks all end up with no files takes the one `git diff`
-pre-commit always takes. The per-`lstat` cost on the 4-vCPU CI runner was not measured; the bench gate judges the
-wall gain. Wave-3 F1 (meta-only tier) and S1 (one `lstat` per oracle input) build on this and are not part of it.
+list of a trust-capable run changes: `ls-files -s -v -f -z` replaces `ls-files -z --deduplicate` and one `git config`
+is added (26 → 27 children in B4), and a run whose hooks all end up with no files takes the one `git diff` pre-commit
+always takes. `-f` came after these measurements and costs nothing measurable: without fsmonitor the listing is
+byte-identical (B4's fixture: the same 4,122,657 bytes) and `git ls-files` runs 35.52 M instructions either way
+(callgrind). The per-`lstat` cost on the 4-vCPU CI runner was not measured; the bench gate judges the wall gain.
+Wave-3 F1 (meta-only tier) and S1 (one `lstat` per oracle input) build on this and are not part of it.
 
 ### ADR-108 — The tier-1 prefilter runs on a forward-only `regex-automata` engine
 

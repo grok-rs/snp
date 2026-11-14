@@ -101,16 +101,17 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   them (ADR-112). `validate-config` on 1,000 hooks runs about 12% fewer instructions with about 29,000 fewer heap
   allocations; `gc` on 500 configs runs about 5% fewer. Loaded values, errors and their order are unchanged.
 - `run --all-files` on a clean worktree no longer `lstat`s every file (ADR-106). When `git diff` is empty and clean
-  (exit 0, nothing on stderr), no index entry is assume-unchanged, skip-worktree or unmerged, and git's configuration
-  lets it compare file kinds (`core.fileMode` and `core.symlinks` not false; no fsmonitor, `core.ignoreStat` or sparse
-  checkout), the file kinds come from the index: `git ls-files -s -v -z` replaces `git ls-files -z --deduplicate`, one
-  `git config` query is added, and the before-diff is taken before the files are classified. On 50,000 files snp's own
-  `statx` calls drop from about 50,000 to under 100 and its own CPU time from about 180 ms to 70–80 ms. The executable
-  bit is never taken from the index: a run with a filter on `executable` or `non-executable` keeps the `lstat` pass,
-  as do empty files, gitlinks, a file without name tags when a filter needs shebang tags, and every file first
-  classified after a hook that may have changed the worktree. A tree with changes keeps the `lstat` pass and pays for
-  the longer listing and the `git config` query in git (about 3% more CPU in the process tree on 50,000 files).
-  Output, exit status and hook argv are unchanged.
+  (exit 0, nothing on stderr), no index entry is assume-unchanged, skip-worktree, fsmonitor-valid or unmerged, and
+  git's configuration lets it compare file kinds (`core.fileMode` and `core.symlinks` not false; no fsmonitor,
+  `core.ignoreStat` or sparse checkout, and no `GIT_TEST_FSMONITOR`), the file kinds come from the index:
+  `git ls-files -s -v -f -z` replaces `git ls-files -z --deduplicate`, one `git config` query is added, and the
+  before-diff is taken before the files are classified. On 50,000 files snp's own `statx` calls drop from about
+  50,000 to under 100 and its own CPU time from about 180 ms to 70–80 ms. The executable bit is never taken from the
+  index: a run with a filter on `executable` or `non-executable` keeps the `lstat` pass, as do empty files, gitlinks,
+  a file without name tags when a filter needs shebang tags, and every file first classified after a hook that may
+  have changed the worktree. A tree with changes keeps the `lstat` pass and pays for the longer listing and the
+  `git config` query in git (about 3% more CPU in the process tree on 50,000 files). Output, exit status and hook
+  argv are unchanged.
 
 - Benchmarks (developer tooling, no runtime change): pull requests and pushes measure the base commit's snp, built
   against its own `deps.lock` crates and toolchain and primed into its own stores, in interleaved ABBA rounds with the
