@@ -27,3 +27,8 @@ pub mod snp_net_archive_entry;
 #[verus_verify]
 #[path = "../../crates/snp-hooks/src/pch/p0/kernels/eof.rs"]
 pub mod snp_hooks_pch_p0_kernels_eof;
+
+/// K6: end-of-file-fixer tail scan (snp-hooks).
+#[verus_verify]
+#[path = "../../crates/snp-hooks/src/pch/p0/kernels/eof_tail.rs"]
+pub mod snp_hooks_pch_p0_kernels_eof_tail;

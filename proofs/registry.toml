@@ -67,6 +67,27 @@ mutants = [
     { find = "Some(&b) if is_eol(b) => start = i,", replace = "Some(&b) if b == 10 => start = i," },
 ]
 
+[[kernel]]
+id = "K6-eof-tail-fold"
+status = "verified"
+file = "crates/snp-hooks/src/pch/p0/kernels/eof_tail.rs"
+mount = "snp_hooks_pch_p0_kernels_eof_tail"
+spec = "proofs/verus/spec/eof_tail.rs"
+callers = ["crates/snp-hooks/src/pch/p0/end_of_file_fixer.rs::tail_action"]
+verified_min = 9
+mutants = [
+    # The block's run stops at the first `\r`, so a block ending in `\n\r` folds a run of one.
+    { find = "Some(&b) if is_eol(b) => start = i,", replace = "Some(&b) if b == 10 => start = i," },
+    # The old head is kept when the block adds one byte (the new byte is not prepended).
+    { find = "([b0, st.head[0]], 2)", replace = "(st.head, old_len)" },
+    # `done` after any block: the scan stops before the run is complete.
+    { find = "        start > 0,\n    )", replace = "        true,\n    )" },
+    # Blocks overlap by one byte (start one too low).
+    { find = "let start = from.saturating_sub(size);", replace = "let start = from.saturating_sub(size).saturating_sub(1);" },
+    # Spec mutant: the fold appends the old head before the block's run.
+    { file = "proofs/verus/spec/eof_tail.rs", find = "take2(tail_run(b) + h)", replace = "take2(h + tail_run(b))" },
+]
+
 # [[model]]: Lean models with oracle tests and fingerprinted anchors (K3, K4).
 # [[trusted]]: empty in M1 (§10 row 8). From M2: { item = "Memchr: FindByte", kernel = "K5", test = "…" }
 
