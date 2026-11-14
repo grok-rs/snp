@@ -155,7 +155,8 @@ fn windows_exit_codes_are_unsigned() {
     assert_eq!(m.status, PyStatus(3_221_225_477));
 }
 
-/// `JobPool` never exceeds its permits under a 200-task stress test (with real children).
+/// `JobPool` never exceeds its permits under a 200-task stress test (with real children), with two `map_ordered`
+/// calls running at once (one call alone creates no more threads than permits, ADR-101).
 #[test]
 fn job_pool_never_exceeds_its_permits() {
     let d = tempfile::tempdir().unwrap();
@@ -164,18 +165,27 @@ fn job_pool_never_exceeds_its_permits() {
     let running = AtomicUsize::new(0);
     let peak = AtomicUsize::new(0);
     let argv = probe_argv(&["count", "x"]);
-    let out = pool.map_ordered(nz(32), 200, |i| {
-        let now = running.fetch_add(1, Ordering::SeqCst) + 1;
-        peak.fetch_max(now, Ordering::SeqCst);
-        let r = if i % 5 == 0 {
-            let m = spawn::merged(&hook(&argv, &env, d.path(), &cancel), false, &budget()).unwrap();
-            bytes(&m.output)
-        } else {
-            std::thread::sleep(Duration::from_millis(1));
-            b"1\n".to_vec()
-        };
-        running.fetch_sub(1, Ordering::SeqCst);
-        Ok(r)
+    let call = || {
+        pool.map_ordered(nz(32), 100, |i| {
+            let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+            peak.fetch_max(now, Ordering::SeqCst);
+            let r = if i % 5 == 0 {
+                let m =
+                    spawn::merged(&hook(&argv, &env, d.path(), &cancel), false, &budget()).unwrap();
+                bytes(&m.output)
+            } else {
+                std::thread::sleep(Duration::from_millis(1));
+                b"1\n".to_vec()
+            };
+            running.fetch_sub(1, Ordering::SeqCst);
+            Ok(r)
+        })
+    };
+    let out = std::thread::scope(|s| {
+        let other = std::thread::Builder::new().spawn_scoped(s, call).unwrap();
+        let mut out = call();
+        out.extend(other.join().unwrap());
+        out
     });
     assert_eq!(out.len(), 200);
     assert!(out.into_iter().all(|r| r.unwrap() == b"1\n"));

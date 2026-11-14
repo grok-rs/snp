@@ -258,7 +258,9 @@ fn run_ctx(s: &Session, explicit_jobs: Option<NonZeroUsize>) -> Result<RunCtx, F
     git_exe.version_gate(&s.printer, &s.env)?;
     let cpu = snp_proc::xargs::cpu_count();
     let target = snp_proc::xargs::target_concurrency(&s.env, false, cpu);
-    let permits = snp_proc::pool::pool_size(explicit_jobs.or_else(|| env_jobs(s)), target);
+    // ADR-101: the cores come from the same `available_parallelism` read (or `cpu` when explicit).
+    let (permits, cores) =
+        snp_proc::pool::pool_size_and_cores(explicit_jobs.or_else(|| env_jobs(s)), target, cpu);
     let installs = if cgroup_memory_limit().is_some_and(|m| m < SMALL_MEMORY) {
         NonZeroUsize::MIN
     } else {
@@ -281,7 +283,7 @@ fn run_ctx(s: &Session, explicit_jobs: Option<NonZeroUsize>) -> Result<RunCtx, F
         resolver: Arc::new(snp_repo::StoreResolver::default()),
         cancel: s.cancel.clone(),
         signals: s.signals.get().cloned(),
-        pool: JobPool::new(permits, s.cancel.clone()),
+        pool: JobPool::with_cores(permits, cores, s.cancel.clone()),
         net: Limiter::new(NET_PERMITS),
         installs: Limiter::new(installs),
         probe: Arc::new(ToolProbe::new(persist)),

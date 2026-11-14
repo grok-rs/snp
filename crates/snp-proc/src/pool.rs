@@ -22,10 +22,34 @@ const POLL: Duration = Duration::from_millis(50);
 /// pre-commit runs `min(partitions, target_concurrency())` threads per hook (`xargs.py:166-170`); snp bounds all
 /// concurrent children of the run with one pool of this size.
 pub fn pool_size(explicit: Option<NonZeroUsize>, target: NonZeroUsize) -> NonZeroUsize {
-    let n = explicit.unwrap_or_else(|| {
-        std::thread::available_parallelism().map_or(target, |avail| target.min(avail))
-    });
-    n.min(fd_budget())
+    sized(explicit, target).0
+}
+
+/// [`pool_size`] plus the core count the pool's CPU-bound fan-outs are capped at (ADR-101): the
+/// `available_parallelism()` value `pool_size` computes (cgroup-aware) when no explicit value is given, else `cpu`
+/// (`xargs::cpu_count()`, which the caller already has), so no extra cgroup read happens either way.
+pub fn pool_size_and_cores(
+    explicit: Option<NonZeroUsize>,
+    target: NonZeroUsize,
+    cpu: NonZeroUsize,
+) -> (NonZeroUsize, NonZeroUsize) {
+    let (permits, avail) = sized(explicit, target);
+    (permits, avail.unwrap_or(cpu))
+}
+
+/// The pool size and the `available_parallelism()` value it was computed from (`None` when explicit or unknown).
+fn sized(
+    explicit: Option<NonZeroUsize>,
+    target: NonZeroUsize,
+) -> (NonZeroUsize, Option<NonZeroUsize>) {
+    if let Some(n) = explicit {
+        return (n.min(fd_budget()), None);
+    }
+    let avail = std::thread::available_parallelism().ok();
+    (
+        avail.map_or(target, |a| target.min(a)).min(fd_budget()),
+        avail,
+    )
 }
 
 /// max(1, (`RLIMIT_NOFILE` soft − 64) / 8): each partition holds ~8 fds (pipe or pty pair, spill file, reader and
@@ -88,6 +112,8 @@ pub struct JobPool {
     cv: Condvar,
     cancel: CancelToken,
     permits: NonZeroUsize,
+    /// The cores CPU-bound fan-outs are capped at (ADR-101; `permits` when not given).
+    cores: NonZeroUsize,
 }
 
 /// One permit of a [`JobPool`]; releases on drop.
@@ -119,6 +145,16 @@ impl Drop for Permit<'_> {
 impl JobPool {
     /// A pool with `permits` permits, refusing new work once `cancel` is cancelled.
     pub fn new(permits: NonZeroUsize, cancel: CancelToken) -> Arc<Self> {
+        Self::with_cores(permits, permits, cancel)
+    }
+
+    /// A pool with `permits` permits whose CPU-bound fan-outs use at most `cores` threads (ADR-101); `cores` is the
+    /// value [`pool_size_and_cores`] returned, so the cgroup files are read once per run.
+    pub fn with_cores(
+        permits: NonZeroUsize,
+        cores: NonZeroUsize,
+        cancel: CancelToken,
+    ) -> Arc<Self> {
         Arc::new(Self {
             state: Mutex::new(PoolState {
                 available: permits.get(),
@@ -128,12 +164,37 @@ impl JobPool {
             cv: Condvar::new(),
             cancel,
             permits,
+            cores,
         })
     }
 
     /// The number of permits.
     pub fn permits(&self) -> NonZeroUsize {
         self.permits
+    }
+
+    /// The core count CPU-bound fan-outs are capped at (ADR-101); the permit count for a pool built by
+    /// [`JobPool::new`].
+    pub fn cores(&self) -> NonZeroUsize {
+        self.cores
+    }
+
+    /// Runs `f` on the calling thread as one partition (ADR-101): under a permit (a holder runs it at once under its
+    /// nested permit), `Err(Failure::Interrupted)` once cancelled, a panic turned into `PanicException`: what
+    /// [`JobPool::map_ordered`] does for each of its indices, without a thread.
+    ///
+    /// # Errors
+    ///
+    /// `f`'s error, `Failure::Interrupted` when the permit is refused, or the `PanicException` of a panic in `f`.
+    pub fn run_inline<T, F: FnOnce() -> Result<T, Failure>>(&self, f: F) -> Result<T, Failure> {
+        match self.acquire() {
+            Some(permit) => {
+                let r = call_once(f);
+                drop(permit);
+                r
+            }
+            None => Err(Failure::Interrupted(self.reason())),
+        }
     }
 
     /// None once cancelled (stop starting work).
@@ -186,7 +247,7 @@ impl JobPool {
         }
     }
 
-    /// Runs `f(0..n)` on ≤ min(limit, n) threads — the calling thread plus scoped helpers (`Builder::spawn_scoped`,
+    /// Runs `f(0..n)` on ≤ min(limit, n, permits) threads — the calling thread plus scoped helpers (`Builder::spawn_scoped`,
     /// every handle joined) — each call holding a permit; results in index order. n == 1, a limit of 1, or a caller
     /// that holds a permit, runs inline (no thread at all). A panicking call becomes `Err(Failure::Exc(PanicException
     /// …))`.
@@ -194,7 +255,8 @@ impl JobPool {
     /// `xargs.py:166-184` (`ThreadPoolExecutor(threads).map` keeps results in partition order). Indices are handed
     /// out in order; an index whose permit is refused (cancellation) yields `Err(Failure::Interrupted(reason))`.
     /// A helper thread the OS refuses just leaves fewer workers: the calling thread always works too, so every index
-    /// runs (a thread per call was ~500 clone/mmap/munmap rounds for 13 hooks, B6).
+    /// runs (a thread per call was ~500 clone/mmap/munmap rounds for 13 hooks, B6). Threads beyond the permit count
+    /// could never run at once, so they are not created (ADR-101: `SNP_JOBS` below the core count, cgroup quotas).
     pub fn map_ordered<T: Send, F: Fn(usize) -> Result<T, Failure> + Sync>(
         &self,
         limit: NonZeroUsize,
@@ -207,7 +269,7 @@ impl JobPool {
         if Self::holds_permit() {
             return (0..n).map(|i| call(&f, i)).collect();
         }
-        let threads = limit.get().min(n);
+        let threads = limit.get().min(n).min(self.permits.get());
         if threads == 1 {
             return (0..n).map(|i| self.run_one(&f, i)).collect();
         }
@@ -283,7 +345,12 @@ impl JobPool {
 
 /// `f(i)` with a panic turned into `PanicException` (exit 3, ADR-066).
 fn call<T, F: Fn(usize) -> Result<T, Failure>>(f: &F, i: usize) -> Result<T, Failure> {
-    match std::panic::catch_unwind(AssertUnwindSafe(|| f(i))) {
+    call_once(|| f(i))
+}
+
+/// `f()` with a panic turned into `PanicException` (exit 3, ADR-066).
+fn call_once<T, F: FnOnce() -> Result<T, Failure>>(f: F) -> Result<T, Failure> {
+    match std::panic::catch_unwind(AssertUnwindSafe(f)) {
         Ok(r) => r,
         Err(payload) => {
             let msg = payload
@@ -507,18 +574,28 @@ mod tests {
 
     #[test]
     fn map_ordered_orders_results_and_bounds_concurrency() {
+        // Two concurrent calls (each would run up to 3 threads), so the permits, not the thread count, bound them.
         let pool = JobPool::new(nz(3), CancelToken::new());
         let running = AtomicUsize::new(0);
         let peak = AtomicUsize::new(0);
-        let out = pool.map_ordered(nz(8), 40, |i| {
-            let now = running.fetch_add(1, Ordering::SeqCst) + 1;
-            peak.fetch_max(now, Ordering::SeqCst);
-            std::thread::sleep(Duration::from_millis(u64::try_from(i % 3).unwrap() * 3));
-            running.fetch_sub(1, Ordering::SeqCst);
-            Ok(i * 2)
+        let call = || {
+            pool.map_ordered(nz(8), 40, |i| {
+                let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(now, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(u64::try_from(i % 3).unwrap() * 3));
+                running.fetch_sub(1, Ordering::SeqCst);
+                Ok(i * 2)
+            })
+        };
+        let both: [_; 2] = std::thread::scope(|s| {
+            let other = std::thread::Builder::new().spawn_scoped(s, call).unwrap();
+            let mine = call();
+            [mine, other.join().unwrap()]
         });
-        let got: Vec<usize> = out.into_iter().map(Result::unwrap).collect();
-        assert_eq!(got, (0..40).map(|i| i * 2).collect::<Vec<_>>());
+        for out in both {
+            let got: Vec<usize> = out.into_iter().map(Result::unwrap).collect();
+            assert_eq!(got, (0..40).map(|i| i * 2).collect::<Vec<_>>());
+        }
         assert!(peak.load(Ordering::SeqCst) <= 3);
         assert!(pool.map_ordered(nz(2), 0, |_| Ok(())).is_empty());
     }
@@ -543,6 +620,71 @@ mod tests {
         distinct.dedup();
         assert!(distinct.len() <= 3, "{distinct:?}");
         assert!(ids.contains(&me));
+    }
+
+    /// ADR-101: a limit above the permit count creates no thread that could only wait (4 permits, limit 32: the
+    /// calling thread plus at most 3 helpers).
+    #[test]
+    fn map_ordered_spawns_no_more_threads_than_permits() {
+        let pool = JobPool::new(nz(4), CancelToken::new());
+        let ids: Vec<_> = pool
+            .map_ordered(nz(32), 200, |_| {
+                std::thread::sleep(Duration::from_micros(500));
+                Ok(std::thread::current().id())
+            })
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+        let mut distinct = ids;
+        distinct.sort_by_key(|id| format!("{id:?}"));
+        distinct.dedup();
+        assert!(distinct.len() <= 4, "{} threads", distinct.len());
+    }
+
+    /// `run_inline` runs on the calling thread under a permit, turns a panic into `PanicException` and refuses work
+    /// once cancelled.
+    #[test]
+    fn run_inline_holds_a_permit_and_catches_panics() {
+        let pool = JobPool::new(nz(1), CancelToken::new());
+        let me = std::thread::current().id();
+        let got = pool.run_inline(|| {
+            assert!(JobPool::holds_permit());
+            assert_eq!(sync::lock(&pool.state).available, 0);
+            Ok(std::thread::current().id())
+        });
+        assert_eq!(got.unwrap(), me);
+        assert!(!JobPool::holds_permit());
+        match pool.run_inline(|| -> Result<(), Failure> { panic!("boom") }) {
+            Err(Failure::Exc { exc, .. }) => assert_eq!(exc.ty, "PanicException"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sync::lock(&pool.state).available, 1);
+        let cancel = CancelToken::new();
+        cancel.cancel(CancelReason::Terminate);
+        let cancelled = JobPool::new(nz(1), cancel);
+        assert!(matches!(
+            cancelled.run_inline(|| Ok(())),
+            Err(Failure::Interrupted(CancelReason::Terminate))
+        ));
+    }
+
+    #[test]
+    fn pool_size_and_cores_reads_parallelism_once() {
+        let avail = std::thread::available_parallelism().unwrap();
+        let budget = fd_budget();
+        // Explicit: the caller's cpu count is the core cap.
+        assert_eq!(
+            pool_size_and_cores(Some(nz(32)), nz(4), nz(6)),
+            (nz(32).min(budget), nz(6))
+        );
+        // Otherwise the available_parallelism value pool_size used.
+        assert_eq!(
+            pool_size_and_cores(None, nz(100_000), nz(6)),
+            (avail.min(budget), avail)
+        );
+        let p = JobPool::with_cores(nz(32), nz(4), CancelToken::new());
+        assert_eq!((p.permits(), p.cores()), (nz(32), nz(4)));
+        assert_eq!(JobPool::new(nz(3), CancelToken::new()).cores(), nz(3));
     }
 
     #[test]

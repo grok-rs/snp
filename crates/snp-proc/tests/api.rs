@@ -136,6 +136,15 @@ mod api {
             ) -> Vec<Result<u8, Failure>>,
         >(JobPool::map_ordered::<u8, fn(usize) -> Result<u8, Failure>>);
         has::<fn() -> bool>(JobPool::holds_permit);
+        // ADR-101.
+        has::<fn(Option<NonZeroUsize>, NonZeroUsize, NonZeroUsize) -> (NonZeroUsize, NonZeroUsize)>(
+            pool::pool_size_and_cores,
+        );
+        has::<fn(NonZeroUsize, NonZeroUsize, CancelToken) -> Arc<JobPool>>(JobPool::with_cores);
+        has::<fn(&JobPool) -> NonZeroUsize>(JobPool::cores);
+        has::<fn(&JobPool, fn() -> Result<u8, Failure>) -> Result<u8, Failure>>(
+            JobPool::run_inline::<u8, fn() -> Result<u8, Failure>>,
+        );
         has::<fn(NonZeroUsize) -> Arc<Limiter>>(Limiter::new);
         has::<fn(&Limiter) -> NonZeroUsize>(Limiter::permits);
         has::<for<'a> fn(&'a Limiter, &CancelToken) -> Option<LimiterPermit<'a>>>(Limiter::acquire);
