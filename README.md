@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="docs/assets/logo.gif" alt="snp — You Shell Not Pass: a pixel-art wizard raises a glowing shell-prompt staff; failing lints, alerts and bugs break on his shield while a healthy green server stays safe behind him" width="928">
+  <picture>
+    <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/logo.png">
+    <img src="docs/assets/logo.gif" alt="snp — You Shell Not Pass: pixel art of a wizard guarding the bridge between a developer's terminal and main. Each git commit flies to him while the fmt, lint and test hooks run: badly formatted code is re-indented on the spot and passes; a commit with a lint error and a failing test is blocked with a slam of his staff and thrown back to the terminal; the fixed commit lands on main and the branch stays green." width="960">
+  </picture>
 </p>
 
 # snp — You Shell Not Pass
