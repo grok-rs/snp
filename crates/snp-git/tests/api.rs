@@ -21,7 +21,7 @@ mod api {
     use snp_git::{
         CloneMode, DiffFingerprint, DiffIndex, Git, GitBackend, GitCaps, GitExe, GitVersion,
         IndexEntries, IndexStamp, MergeState, ObjectId, OwnedRepo, PrePushNs, ProcBackend,
-        RepoInfo, RevInfo, ZList,
+        RepoInfo, RevInfo, TaggedIndex, ZList,
     };
     use snp_proc::spawn::{Captured, Group, PyStatus, Role, SpawnError, Stdin};
 
@@ -60,6 +60,7 @@ mod api {
         send_sync::<PrePushNs>();
         send_sync::<IndexEntries>();
         send_sync::<IndexStamp>();
+        send_sync::<TaggedIndex>();
         send_sync::<Git>();
         send_sync::<OwnedRepo>();
         send_sync::<RevInfo>();
@@ -131,6 +132,12 @@ mod api {
             paths: ZList::default(),
             modes: Box::new([0o100_644]),
         });
+        // ADR-106
+        has::<TaggedIndex>(TaggedIndex {
+            paths: ZList::default(),
+            modes: Box::new([0o100_644]),
+            plain: true,
+        });
     }
 
     #[test]
@@ -171,6 +178,10 @@ mod api {
         has::<fn(&Git, &RepoInfo) -> MergeState>(Git::merge_state);
         has::<fn(&Git, &RepoInfo) -> Result<ZList, Failure>>(Git::conflicted_files);
         has::<fn(&Git) -> Result<DiffFingerprint, Failure>>(Git::diff_fingerprint);
+        // ADR-106
+        has::<fn(&Git) -> Result<TaggedIndex, Failure>>(Git::all_files_tagged);
+        has::<fn(&Git) -> Result<(DiffFingerprint, bool), Failure>>(Git::diff_fingerprint_clean);
+        has::<fn(&Git) -> bool>(Git::trusts_index_modes);
         has::<fn(&Git, bool) -> Result<(), Failure>>(Git::show_diff);
         has::<fn(&Git) -> Result<Option<OsString>, Failure>>(Git::hooks_path);
         has::<fn(&Git) -> Result<Vec<PathBuf>, Failure>>(Git::config_origins);

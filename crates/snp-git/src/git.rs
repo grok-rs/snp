@@ -24,12 +24,13 @@ mod pathspec;
 
 use crate::run::{self, Out, bare_git_argv, concat, os_from_bytes};
 use crate::types::{
-    BadRecord, IndexStamp, is_null_oid, parse_diff_raw, parse_ls_files_stage, parse_ls_files_stages,
+    BadRecord, IndexStamp, TaggedParser, is_null_oid, parse_diff_raw, parse_ls_files_stage,
+    parse_ls_files_stages,
 };
 use crate::zlist::TooLarge;
 use crate::{
     DiffFingerprint, DiffIndex, GitBackend, GitExe, IndexEntries, MergeState, ObjectId, PrePushNs,
-    RepoInfo, ZList, messages,
+    RepoInfo, TaggedIndex, ZList, messages,
 };
 
 /// A handle on the user repository; cheap clone (`Arc`s inside).
@@ -220,6 +221,48 @@ fn stream_failure(e: &SpawnError, sink_failed: bool) -> Failure {
     } else {
         Failure::from_io(&e.io, Some(e.program.as_os_str()), None)
     }
+}
+
+/// [`Git::trusts_index_modes`]'s decision over `git config -z --bool --get-regexp` records (`<key>\n<true|false>`,
+/// in config order, so the last value of a key is the effective one): `core.filemode` and `core.symlinks` must not
+/// end `false`, every other key must not end `true`. A record of any other shape decides nothing but `false`.
+fn trust_config<'a>(records: impl Iterator<Item = &'a [u8]>) -> bool {
+    let mut file_mode = true;
+    let mut symlinks = true;
+    let mut off = true;
+    let mut ok = true;
+    let mut seen: Vec<(&[u8], bool)> = Vec::new();
+    for r in records {
+        let Some(nl) = memchr::memchr(b'\n', r) else {
+            return false;
+        };
+        let (key, value) = (
+            r.get(..nl).unwrap_or_default(),
+            r.get(nl.saturating_add(1)..).unwrap_or_default(),
+        );
+        let value = match value {
+            b"true" => true,
+            b"false" => false,
+            _ => return false,
+        };
+        match seen.iter_mut().find(|(k, _)| *k == key) {
+            Some(slot) => slot.1 = value,
+            None => seen.push((key, value)),
+        }
+    }
+    for (key, value) in seen {
+        match key {
+            b"core.filemode" => file_mode = value,
+            b"core.symlinks" => symlinks = value,
+            b"core.fsmonitor"
+            | b"core.usebuiltinfsmonitor"
+            | b"core.ignorestat"
+            | b"core.sparsecheckout"
+            | b"index.sparse" => off &= !value,
+            _ => ok = false,
+        }
+    }
+    ok && file_mode && symlinks && off
 }
 
 /// The pre-push stdin records of `hook_impl._pre_push_ns`, lazily: valid UTF-8 → `str.splitlines()` +
@@ -856,6 +899,58 @@ impl Git {
         }
     }
 
+    /// `git ls-files -s -v -z` (snp-only, ADR-106), streamed through an incremental parser: the [`Self::all_files`]
+    /// list (runs of equal paths folded, as `--deduplicate` does) with each path's index mode, and whether every
+    /// entry is cached, unflagged (no assume-unchanged, skip-worktree or fsmonitor-valid bit) and at stage 0. Only
+    /// the paths are kept, in a buffer of their own: the listing itself is never held. Any failure (spawn, exit
+    /// status, a record of an unknown shape) is the caller's cue to ask [`Self::all_files`] at the same position,
+    /// whose error is pre-commit's.
+    pub fn all_files_tagged(&self) -> Result<TaggedIndex, Failure> {
+        let argv = self.argv(&["ls-files", "-s", "-v", "-z"]);
+        let mut parser = TaggedParser::default();
+        let (status, stderr) = self
+            .backend
+            .stream(&argv, &self.env, &self.root, &mut parser)
+            .map_err(|e| stream_failure(&e, false))?;
+        if status.0 != 0 {
+            let out = Out {
+                status: status.0,
+                stdout: Vec::new(),
+                stderr: Some(stderr),
+            };
+            return Err(out.called_process_error(&argv));
+        }
+        parser
+            .finish()
+            .map_err(|r| bad_record("ls-files -s -v -z", &r))
+    }
+
+    /// Whether the effective configuration lets a clean `git diff` stand for an `lstat` of every unflagged index
+    /// entry (ADR-106), as git itself resolves it (so `-c`, `GIT_CONFIG_PARAMETERS` and `GIT_CONFIG_COUNT` count):
+    /// `core.fileMode` and `core.symlinks` true or unset (git's default), and `core.fsmonitor`,
+    /// `core.useBuiltinFSMonitor`, `core.ignoreStat`, `core.sparseCheckout` and `index.sparse` false or unset. One
+    /// `git config -z --bool --get-regexp`; a value git cannot read as a boolean (an fsmonitor hook path) makes git
+    /// fail, and any failure is `false` (fail closed).
+    pub fn trusts_index_modes(&self) -> bool {
+        const KEYS: &str = "^(core\\.(filemode|symlinks|fsmonitor|usebuiltinfsmonitor|ignorestat|sparsecheckout)|index\\.sparse)$";
+        let argv = self.argv(&["config", "-z", "--bool", "--get-regexp", KEYS]);
+        let out = run::capture(
+            self.backend.as_ref(),
+            &argv,
+            &self.env,
+            &self.root,
+            Group::Inherit,
+        );
+        let Ok(records) = (match out.status {
+            0 => ZList::from_z(out.stdout),
+            1 => Ok(ZList::default()),
+            _ => return false,
+        }) else {
+            return false;
+        };
+        trust_config(records.iter())
+    }
+
     /// `git ls-files -s -z` (checked): every index entry with its mode, unmerged stages included (ADR-079).
     pub fn tracked_with_modes(&self) -> Result<IndexEntries, Failure> {
         let out = self.checked(&["ls-files", "-s", "-z"])?;
@@ -976,6 +1071,14 @@ impl Git {
     /// stderr discarded), hashed with blake3 while streaming (O(1) memory). A spawn failure hashes the text pre-commit
     /// would compare (`_oserror_to_output`).
     pub fn diff_fingerprint(&self) -> Result<DiffFingerprint, Failure> {
+        self.diff_fingerprint_clean().map(|(fp, _)| fp)
+    }
+
+    /// [`Self::diff_fingerprint`] plus whether the run was clean: git started, exited 0 and wrote nothing to stderr
+    /// (ADR-106). The fingerprint stays the stdout-only one pre-commit compares; the flag is what lets an empty diff
+    /// stand for an `lstat` of every entry: `git diff` reports an `lstat` error other than "not found" (`EACCES` under
+    /// an unsearchable directory, `ELOOP`, `EIO`) on stderr only, skips the entry and still exits 0.
+    pub fn diff_fingerprint_clean(&self) -> Result<(DiffFingerprint, bool), Failure> {
         let mut hasher = blake3::Hasher::new();
         let mut counting = Counting {
             inner: &mut hasher,
@@ -989,23 +1092,27 @@ impl Git {
             "--no-textconv",
             "--ignore-submodules",
         ]);
-        match self
+        let clean = match self
             .backend
             .stream(&argv, &self.env, &self.root, &mut counting)
         {
-            Ok(_) => {}
+            Ok((status, stderr)) => status.0 == 0 && stderr.is_empty(),
             Err(e) if counting.error.is_some() => return Err(stream_failure(&e, true)),
             Err(e) => {
                 let text = Out::from_spawn_error(&e).stdout;
                 io::Write::write_all(&mut counting, &text)
                     .map_err(|e| Failure::from_io(&e, None, None))?;
+                false
             }
-        }
+        };
         let non_empty = counting.written > 0;
-        Ok(DiffFingerprint {
-            digest: *hasher.finalize().as_bytes(),
-            non_empty,
-        })
+        Ok((
+            DiffFingerprint {
+                digest: *hasher.finalize().as_bytes(),
+                non_empty,
+            },
+            clean,
+        ))
     }
 
     /// `--show-diff-on-failure` (`run.py:317-320`): `subprocess.call(('git', '--no-pager', 'diff', '--no-ext-diff',
@@ -1298,6 +1405,36 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// ADR-106: the last value of each key decides; file mode and symlinks default to true, the rest to false; an
+    /// unknown key or value shape decides `false`.
+    #[test]
+    fn trust_config_reads_the_effective_booleans() {
+        let t = |recs: &[&[u8]]| trust_config(recs.iter().copied());
+        assert!(t(&[]));
+        assert!(t(&[b"core.filemode\ntrue", b"core.symlinks\ntrue"]));
+        assert!(t(&[b"core.fsmonitor\nfalse", b"index.sparse\nfalse"]));
+        assert!(!t(&[b"core.filemode\nfalse"]));
+        assert!(!t(&[b"core.symlinks\nfalse"]));
+        assert!(t(&[b"core.filemode\nfalse", b"core.filemode\ntrue"]));
+        assert!(!t(&[b"core.filemode\ntrue", b"core.filemode\nfalse"]));
+        for key in [
+            "core.fsmonitor",
+            "core.usebuiltinfsmonitor",
+            "core.ignorestat",
+            "core.sparsecheckout",
+            "index.sparse",
+        ] {
+            assert!(!t(&[format!("{key}\ntrue").as_bytes()]), "{key}");
+            assert!(t(&[
+                format!("{key}\ntrue").as_bytes(),
+                format!("{key}\nfalse").as_bytes()
+            ]));
+        }
+        assert!(!t(&[b"core.other\nfalse"]));
+        assert!(!t(&[b"core.filemode\nyes"]));
+        assert!(!t(&[b"core.filemode"]));
     }
 
     fn scripted_git(scripted: Arc<crate::testing::ScriptedBackend>) -> Git {
