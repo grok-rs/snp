@@ -56,6 +56,9 @@ Differences from pre-commit on Windows (each one has its entry in the [DIVERGENC
 Exit codes of crashed Windows processes are reported as unsigned values (`- exit code: 3221225477`), as pre-commit
 does.
 
+`snp.exe` carries snp's icon (the wizard, or his glowing `>_` staff at small sizes), which Explorer, the Properties
+dialog and Task Manager show for it and for a `pre-commit` alias copied or linked from it.
+
 ## macOS
 
 * GUI git clients start hooks with launchd's minimal `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`). snp's hook script embeds

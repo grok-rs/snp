@@ -76,4 +76,6 @@ mod uninstall; // WP-33
 #[cfg(test)]
 mod validate; // WP-33
 #[cfg(test)]
+mod windows_icon; // WP-37 (ADR-130)
+#[cfg(test)]
 mod xargs; // WP-32

@@ -9,6 +9,13 @@ is pending (docs/VERIFICATION.md §8.3) needs a line `Proof pending: <kernel id>
 
 Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
 
+### Added
+
+- Windows: `snp.exe` has an icon, a pixel-art close-up of the wizard's glowing `>_` staff at small sizes and the
+  wizard on his bridge from 48 px up, so Explorer, the Properties dialog and Task Manager show snp instead of the
+  generic executable icon. A std-only build script embeds it for the MSVC targets; other targets build as before
+  (ADR-130).
+
 ### Changed
 
 - The compat brand is pre-commit 4.7.0: `pre-commit --version` prints `pre-commit 4.7.0`, `minimum_pre_commit_version`

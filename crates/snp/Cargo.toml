@@ -11,8 +11,8 @@ readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 # ADR-088: published to crates.io; the package carries the sources only (tests, vectors and benches stay in
-# the repository).
-include = ["/src/"]
+# the repository), plus the build script and the icon it embeds in the Windows executable (ADR-130).
+include = ["/src/", "/build.rs", "/build/", "/assets/snp.ico"]
 default-run = "snp"
 
 # cargo-dist releases snp, the one released package, explicitly (it skips `publish = false` packages, and snp was one

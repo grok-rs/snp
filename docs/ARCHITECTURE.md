@@ -3675,8 +3675,9 @@ divergent only above 64 logical CPUs, D-PLAT-10; junction detection: not possibl
 
 `cargo-deny` (advisories with `yanked = deny`, bans §1.3, license allow-list, sources = crates.io + the two path
 crates), `cargo audit` nightly, committed `Cargo.lock` + `--locked` everywhere, minimum versions `rustls ≥ 0.23.45`,
-`tar ≥ 0.4.46`, no build scripts in snp crates, `cargo auditable` release builds, SBOM (cargo-cyclonedx), GitHub
-artifact attestations, checksums for every release asset, dependency budget ≤ 120 packages in the release graph.
+`tar ≥ 0.4.46`, no build scripts in snp crates except the std-only icon script of `snp` (ADR-130), `cargo auditable`
+release builds, SBOM (cargo-cyclonedx), GitHub artifact attestations, checksums for every release asset, dependency
+budget ≤ 120 packages in the release graph.
 `libyaml-safer` (single maintainer) is wrapped by `snp-yaml`'s event adapter, fuzzed, and fork-ready via
 `[patch.crates-io]`. **CI tool supply chain (ADR-095):** the proof tools never enter a build, a lockfile or the release
 graph. The Verus release zip and verusfmt are pinned by version and per-platform sha256 in `proofs/registry.toml` and

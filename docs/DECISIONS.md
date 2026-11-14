@@ -15,7 +15,8 @@ upstream refresh; ADR-093 the path-limited stash checkout; ADR-094 Rust 1.100; A
 ADR-096 the owner's decision to make the Verus proofs blocking;
 ADR-097 the stash re-verification by stat stamps; ADR-098 the tier-1 prefilter; ADR-099 the paired bench gate; ADR-100
 the B8 heap budget and counters; ADR-101 classification CPU and fan-out sizing; ADR-102 native-hook facts; ADR-103
-borrowed hook argv; ADR-104 the step-6 changes of the run pipeline; ADR-105 the hook script template v2.
+borrowed hook argv; ADR-104 the step-6 changes of the run pipeline; ADR-105 the hook script template v2;
+ADR-130 the Windows executable icon.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -2091,6 +2092,43 @@ the same problem impossible for the next template.
 it, since `bench setup` installs the head's script for both builds; process counts and absolute B9 do. Hook scripts
 written by snp 2.0.0–2.0.1 keep working unchanged; `snp doctor` warns about them until `snp install` rewrites them.
 pre-commit's and prek's `is_our_script` still match the compat IDs, so the last installer still wins.
+
+### ADR-130 — The Windows executable carries snp's icon; one std-only build script in `snp`
+
+*Amends ARCHITECTURE §11.7 ("no build scripts in snp crates").*
+
+**Context.** `snp.exe` has no icon resource, so Windows Explorer, the Properties dialog, Task Manager and the
+Windows Terminal tab show the generic executable icon for it, whichever channel installed it (release archives,
+`cargo install snp`, the `snp-cli` wheels). Windows reads an executable's icon from its resources (`RT_GROUP_ICON`
+and `RT_ICON`), which the linker embeds. The usual crates (`winresource`, `embed-resource`) run the Windows SDK's
+`rc.exe` or `windres` from a build script and add a dependency, and §11.7 rules out build scripts in snp crates: no
+code runs at build time that a review of `src/` does not see.
+**Decision.** (1) The icon is pixel art drawn from the README banner's sprites and palette by
+`docs/assets/src/pixel_icon.py` into `crates/snp/assets/snp.ico`: at 16–40 px a close-up of the wizard's glowing
+`>_` staff orb, at 48 px and up the wizard holding it up on his bridge at night; 128 and 256 px are the 64 px artwork
+scaled ×2 and ×4 (nearest neighbour), 32-bit BMP images up to 64 px and PNG above, the layout of Windows' own icons.
+`docs/assets/icon.png` is the 256 px image. (2) `crates/snp/build.rs` is the one build script of the snp crates. For
+`*-windows-msvc` targets it compiles the `.ico` into a resource file, `OUT_DIR/snp.res`, with the std-only
+`build/winres.rs` (the empty marker entry, one `RT_ICON` per image with ids 1..=n and the image bytes unchanged, one
+`RT_GROUP_ICON` with id 1, language 0x0409), and passes it to the link of the `snp` binary with
+`cargo::rustc-link-arg-bins`: `link.exe` and `lld-link` take `.res` files as input. For every other target it only
+prints its `rerun-if-changed` lines. It uses std only, spawns no process, uses no network, reads only
+`assets/snp.ico` and writes only `OUT_DIR`. (3) The crates.io package of `snp` (ADR-088) also includes `build.rs`,
+`build/` and `assets/snp.ico`. (4) `tests/it/windows_icon.rs` parses the resource file back on every platform (the
+marker, every image unchanged, the group directory naming ids 1..=n, errors for malformed input) and, on Windows,
+finds every image of the icon in the `.rsrc` section of the built `snp.exe`.
+**Rationale.** Writing the `.res` format directly takes about a hundred lines and no tool, so the exception to §11.7
+is as small as a build script can be and keeps the rule's purpose: the script is a pure function of a committed
+file, with no build-time dependency and no hidden behaviour. The GNU Windows targets are not release targets (GNU ld
+needs `windres` for resources); they build as before, without an icon. Pixel art drawn at one pixel per pixel for
+each size stays crisp where a downscaled illustration blurs, and the large sizes keep the banner's 4× pixel scale.
+Checked before merge: the resource file decompiles with `windres`; `lld-link` embeds it (a `no_std` MSVC executable
+lists 9 `RT_ICON` and 1 `RT_GROUP_ICON` resources under `llvm-readobj --coff-resources`); under Wine,
+`ExtractIconEx` finds one icon group and `PrivateExtractIcons` returns exact 16, 24, 32, 48 and 256 px images.
+**Consequences.** Windows shows snp's icon for `snp.exe`, and for a `pre-commit` alias made by copying or linking it.
+The Windows executable grows by the icon, about 49 KB. Other targets link as before; the build script costs
+milliseconds. A new icon is a regenerated `.ico` (`python3 docs/assets/src/pixel_icon.py`, which needs Pillow and
+numpy like the banner), never a hand edit.
 
 ## Appendix A — Open questions of the research documents, resolved
 
