@@ -9,7 +9,7 @@
 //! Owner: WP-17.
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::TryReserveError;
 use std::rc::Rc;
 
 use super::int::{BigInt, py_float, py_int};
@@ -188,13 +188,83 @@ enum Step {
     Done(u32),
 }
 
+/// A map keyed by node id, stored by index (`constructed_objects` / `recursive_objects` of the arena's nodes).
+/// An id the arena does not hold (`NodeId::MAX` saturation, the dummy node) reads as absent and is never stored;
+/// `live` counts the stored ids, so emptiness is exact.
+#[derive(Debug)]
+struct NodeMap<T> {
+    slots: Vec<Option<T>>,
+    live: usize,
+}
+
+impl<T> Default for NodeMap<T> {
+    fn default() -> Self {
+        Self {
+            slots: Vec::new(),
+            live: 0,
+        }
+    }
+}
+
+impl<T: Copy> NodeMap<T> {
+    fn get(&self, id: NodeId) -> Option<T> {
+        self.slots.get(usize::try_from(id).ok()?).copied().flatten()
+    }
+
+    fn contains(&self, id: NodeId) -> bool {
+        self.get(id).is_some()
+    }
+
+    const fn is_empty(&self) -> bool {
+        self.live == 0
+    }
+
+    /// Stores `v` for node `id` of an arena of `arena` nodes, growing the table to the arena's length.
+    fn insert(&mut self, id: NodeId, v: T, arena: usize) -> Result<(), TryReserveError> {
+        let Some(i) = usize::try_from(id).ok().filter(|&i| i < arena) else {
+            return Ok(());
+        };
+        if i >= self.slots.len() {
+            self.slots
+                .try_reserve(arena.saturating_sub(self.slots.len()))?;
+            self.slots.resize(arena, None);
+        }
+        if let Some(slot) = self.slots.get_mut(i) {
+            if slot.is_none() {
+                self.live = self.live.saturating_add(1);
+            }
+            *slot = Some(v);
+        }
+        Ok(())
+    }
+
+    fn remove(&mut self, id: NodeId) {
+        let slot = usize::try_from(id).ok().and_then(|i| self.slots.get_mut(i));
+        if let Some(slot) = slot
+            && slot.take().is_some()
+        {
+            self.live = self.live.saturating_sub(1);
+        }
+    }
+
+    fn clear(&mut self) {
+        self.slots.clear();
+        self.live = 0;
+    }
+}
+
+/// `MemoryError` for a table that could not grow.
+fn memory_error(_: TryReserveError) -> Fail {
+    Fail::crash("MemoryError", "")
+}
+
 /// The constructor's state, which survives a failed document (and file).
 #[derive(Debug)]
 pub(super) struct ConsState {
     nodes: Vec<Node>,
     objs: Objs,
-    constructed: HashMap<NodeId, ObjId>,
-    recursive: HashSet<NodeId>,
+    constructed: NodeMap<ObjId>,
+    recursive: NodeMap<()>,
     generators: Vec<Gen>,
     deep: bool,
     dummy: Node,
@@ -210,8 +280,8 @@ impl Default for ConsState {
         Self {
             nodes: Vec::new(),
             objs: Objs::default(),
-            constructed: HashMap::new(),
-            recursive: HashSet::new(),
+            constructed: NodeMap::default(),
+            recursive: NodeMap::default(),
             generators: Vec::new(),
             deep: false,
             dummy: Node {
@@ -617,8 +687,11 @@ impl Loader<'_, '_> {
                     if *started {
                         // construct_non_recursive_object returned `ret`
                         let data = ret.unwrap_or(0);
-                        self.st.cons.constructed.insert(node, data);
-                        self.st.cons.recursive.remove(&node);
+                        let cons = &mut self.st.cons;
+                        cons.constructed
+                            .insert(node, data, cons.nodes.len())
+                            .map_err(memory_error)?;
+                        cons.recursive.remove(node);
                         if deep {
                             self.st.cons.deep = *old_deep;
                         }
@@ -626,7 +699,7 @@ impl Loader<'_, '_> {
                         stack.pop();
                         continue;
                     }
-                    if let Some(&o) = self.st.cons.constructed.get(&node) {
+                    if let Some(o) = self.st.cons.constructed.get(node) {
                         ret = Some(o);
                         self.depth = saved;
                         stack.pop();
@@ -636,13 +709,16 @@ impl Loader<'_, '_> {
                     if deep {
                         self.st.cons.deep = true;
                     }
-                    if self.st.cons.recursive.contains(&node) {
+                    if self.st.cons.recursive.contains(node) {
                         ret = Some(self.new_obj(Obj::None));
                         self.depth = saved;
                         stack.pop();
                         continue;
                     }
-                    self.st.cons.recursive.insert(node);
+                    let cons = &mut self.st.cons;
+                    cons.recursive
+                        .insert(node, (), cons.nodes.len())
+                        .map_err(memory_error)?;
                     *started = true;
                     let cnro = self.push_frame()?;
                     stack.push(Act::Cnro {
@@ -1574,5 +1650,57 @@ mod tests {
                 "'ascii' codec can't encode character '\\xe9' in position 0: ordinal not in range(128)"
             )
         );
+    }
+
+    /// The dense `constructed_objects` / `recursive_objects` behave as the hash map and set they replace: insert
+    /// overwrites, emptiness is exact through removes and clears, and an id outside the arena is never stored.
+    #[test]
+    fn node_maps_match_a_hash_map() {
+        use std::collections::HashMap;
+        let mut m: NodeMap<ObjId> = NodeMap::default();
+        let mut reference: HashMap<NodeId, ObjId> = HashMap::new();
+        let mut arena = 0usize;
+        // a deterministic mix of inserts, overwrites and removes while the arena grows
+        let mut x = 0x2545_f491_u32;
+        for step in 0..5_000u32 {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            if step.is_multiple_of(7) {
+                arena += 3;
+            }
+            let id = x % u32::try_from(arena + 2).unwrap();
+            if x.is_multiple_of(3) {
+                m.remove(id);
+                reference.remove(&id);
+            } else {
+                m.insert(id, step, arena).unwrap();
+                if usize::try_from(id).unwrap() < arena {
+                    reference.insert(id, step);
+                }
+            }
+            assert_eq!(m.get(id), reference.get(&id).copied(), "step {step}");
+            assert_eq!(m.is_empty(), reference.is_empty(), "step {step}");
+        }
+        for id in 0..u32::try_from(arena + 5).unwrap() {
+            assert_eq!(m.get(id), reference.get(&id).copied(), "{id}");
+        }
+        assert_eq!(m.get(NodeId::MAX), None);
+        m.insert(NodeId::MAX, 1, arena).unwrap();
+        assert_eq!(m.get(NodeId::MAX), None, "an id past the arena is absent");
+        m.clear();
+        assert!(m.is_empty());
+        assert_eq!(m.get(0), None);
+        // emptiness through removes alone (the `gc` condition)
+        let mut r: NodeMap<()> = NodeMap::default();
+        r.insert(4, (), 10).unwrap();
+        r.insert(4, (), 10).unwrap();
+        r.insert(2, (), 10).unwrap();
+        assert!(r.contains(4) && r.contains(2) && !r.contains(3));
+        r.remove(4);
+        r.remove(3);
+        assert!(!r.is_empty());
+        r.remove(2);
+        assert!(r.is_empty());
     }
 }
