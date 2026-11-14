@@ -126,6 +126,36 @@ mutants = [
     { file = "proofs/verus/spec/eof_tail.rs", find = "take2(tail_run(b) + h)", replace = "take2(h + tail_run(b))" },
 ]
 
+[[kernel]]
+id = "K7-pathspec-lists"
+status = "verified"
+file = "crates/snp-git/src/git/pathspec.rs"
+mount = "snp_git_git_pathspec"
+spec = "proofs/verus/spec/pathspec.rs"
+callers = [
+    "crates/snp-git/src/git.rs::parse_numstat_z",
+    "crates/snp-git/src/git.rs::literal_pathspecs",
+    "crates/snp-git/src/git.rs::checkout_path_calls",
+    "crates/snp-git/src/git.rs::rollback_paths",
+]
+verified_min = 54
+mutants = [
+    # F3: the sink lets an empty path through (an empty `:(literal)` checks out the whole tree).
+    { find = "if p.is_empty() || has_nul(p) {", replace = "if has_nul(p) {" },
+    # F3: an empty record of the changed-path listing reaches the rollback list.
+    { find = "if !p.is_empty() {", replace = "if true {" },
+    # N2: an empty path after the second TAB is returned instead of starting a rename record.
+    { find = "if start < k {", replace = "if start <= k {" },
+    # N1: the path starts after the first TAB, so the deleted count leaks into the name.
+    { find = "find_tab(out, t1.saturating_add(1), k)", replace = "find_tab(out, t1, k)" },
+    # N3: a chunk is closed one byte early (no longer greedy).
+    { find = "Some(u) => u > budget,", replace = "Some(u) => u >= budget," },
+    # The verified SeenSet reports a repeated record as fresh.
+    { find = "mask.push(!seen_before);", replace = "mask.push(true);" },
+    # Spec mutant: `drop_empty` keeps empty records, so the rollback contract no longer matches the code.
+    { file = "proofs/verus/spec/pathspec.rs", find = "} else if xs.last().len() == 0 {", replace = "} else if false {" },
+]
+
 # [[model]]: Lean models with oracle tests and fingerprinted anchors (K3, K4).
 # [[trusted]]: production impls of kernel traits (§2.6, §10 row 8), each with its differential test (G8).
 
@@ -195,3 +225,8 @@ anchors = [
 item = "Memchr: FindByte"
 kernel = "K5b-zlist-split"
 test = "crates/snp-git/src/zlist.rs::memchr_matches_scalar"
+
+[[trusted]]
+item = "HashSeen: SeenSet"
+kernel = "K7-pathspec-lists"
+test = "crates/snp-git/src/git.rs::seen_set_hash_matches_scan"

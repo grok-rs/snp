@@ -147,7 +147,7 @@ fn every_call_can_fail_and_is_recorded() {
         "CalledProcessError"
     );
     // one call either way (stdin-fed from git 2.25, else the literal pathspecs as arguments)
-    let checkout = git.checkout_path_calls(&touched);
+    let checkout = git.checkout_path_calls(&touched).unwrap();
     assert_eq!(checkout.len(), 1);
     let checkout_args: Vec<String> = checkout[0]
         .args
@@ -224,6 +224,21 @@ fn every_call_can_fail_and_is_recorded() {
             .iter()
             .collect::<Vec<_>>(),
         [b"b".as_slice(), b"a", b"c", b"d"]
+    );
+    // F3 (ADR-095 K7): an empty record of the listing never reaches the checkout (an empty `:(literal)` pathspec
+    // would select the whole tree)
+    scripted.on("diff --name-only -z *", exit(0, b"c\0\0a\0\0\0d\0", b""));
+    let rollback = git.rollback_paths(&patch).unwrap();
+    assert_eq!(
+        rollback.iter().collect::<Vec<_>>(),
+        [b"b".as_slice(), b"a", b"c", b"d"]
+    );
+    let before = scripted.calls().len();
+    git.checkout_path_calls(&rollback).unwrap();
+    assert_eq!(
+        scripted.calls().len(),
+        before,
+        "building the calls runs nothing"
     );
 
     // xargs callers ignore the return code (rm --cached, add -N)
@@ -440,7 +455,7 @@ fn every_user_repo_call_has_pre_commits_exact_argv() {
     } else {
         "diff --name-only -z --no-renames --no-ext-diff --no-color --ignore-submodules"
     };
-    let checkout_call = git.checkout_path_calls(&ita)[0]
+    let checkout_call = git.checkout_path_calls(&ita).unwrap()[0]
         .args
         .iter()
         .map(|a| a.to_string_lossy().into_owned())

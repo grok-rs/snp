@@ -42,3 +42,8 @@ pub mod snp_git_zlist_split;
 #[verus_verify]
 #[path = "../../crates/snp-hooks/src/pch/p0/kernels/eof_tail.rs"]
 pub mod snp_hooks_pch_p0_kernels_eof_tail;
+
+/// K7: D-DATA-19 pathspec lists (snp-git).
+#[verus_verify]
+#[path = "../../crates/snp-git/src/git/pathspec.rs"]
+pub mod snp_git_git_pathspec;
