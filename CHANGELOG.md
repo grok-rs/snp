@@ -88,6 +88,13 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   command instead of on a copy of the whole environment: two fewer allocations per environment variable and command
   (about 220 fewer in a no-op `run`, about 500 in the 10 MB stash scenario, and about 1% fewer instructions in both).
   The child's environment and the `SNP_LOG=trace` line are unchanged.
+- Wave-1 tuning follow-up to the tier-1 prefilter (ADR-098; no output change): the relaxed prefilter in front of the
+  exact fallback of a `\b`/`\B` pattern now runs on a forward-only `regex-automata` lazy DFA within the same
+  256 KiB cache. `regex`'s engine also needs a reverse DFA there, and when the pair did not fit (as for
+  `\b\w{3,8}\b/\w+\.md$`) it ran the bounded backtracker on every non-ASCII path. On the B12u benchmark snp executes
+  55 % fewer instructions (callgrind 1,423 M → 647 M) and its heap peaks about 2 MB lower; the other scenarios are
+  unchanged. `regex-automata` 0.4.18, already built as part of `regex`, is now a direct dependency of snp-pyre
+  (ADR-108).
 
 - Benchmarks (developer tooling, no runtime change): pull requests and pushes measure the base commit's snp, built
   against its own `deps.lock` crates and toolchain and primed into its own stores, in interleaved ABBA rounds with the
