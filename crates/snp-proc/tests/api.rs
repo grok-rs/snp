@@ -119,6 +119,13 @@ mod api {
             spawn::stream,
         );
         has::<fn(&Spec<'_>) -> Result<PyStatus, SpawnError>>(spawn::inherit);
+        // ADR-103: the hook-only entry points that append borrowed partition files
+        has::<fn(&Spec<'_>, &[&OsStr], bool, &OutputBudget) -> Result<Merged, SpawnError>>(
+            spawn::merged_hook,
+        );
+        has::<fn(&Spec<'_>, &[&OsStr]) -> Result<spawn::Interactive, SpawnError>>(
+            spawn::interactive_hook,
+        );
     }
 
     #[test]

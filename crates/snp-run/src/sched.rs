@@ -11,9 +11,12 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::{Scope, ScopedJoinHandle};
 use std::time::Instant;
 
 use snp_config::ext::{FailOnChanges, OutputMode, Priority, RootExt, StageFixed};
+use snp_core::cancel::CancelToken;
 use snp_core::failure::Failure;
 use snp_core::lang::LanguageId;
 use snp_core::output::Printer;
@@ -21,6 +24,8 @@ use snp_core::path::RepoPath;
 use snp_files::FileId;
 use snp_files::{Classifier, HookFilter};
 use snp_git::Git;
+use snp_git::pch_facts::{FactSet, PchFacts};
+use snp_proc::pool::JobPool;
 use snp_proc::tty::Terminal;
 use snp_repo::{ExecKind, ResolvedHook};
 use snp_stash::diff_oracle::{Change, DiffOracle};
@@ -302,8 +307,7 @@ impl Out<'_> {
                 f.write_all(b"\n")
             });
         if let Err(e) = r {
-            let text =
-                snp_core::failure::pyerr::os_error_text(&e, Some(OsStr::new(name)), None);
+            let text = snp_core::failure::pyerr::os_error_text(&e, Some(OsStr::new(name)), None);
             self.printer.log(
                 snp_core::output::Level::Warning,
                 &messages::log_file_failed(name, &text),
@@ -338,57 +342,15 @@ pub(crate) fn run_hooks(l: &Loop<'_>, oracle: &mut DiffOracle) -> Result<LoopRes
     };
     let mut res = LoopResult::default();
     let mut fixes = Fixes::default();
-    let mut stop = false;
-    for bucket in buckets(l.hooks, l.root_ext) {
-        if stop {
-            break;
-        }
-        check_cancel(e)?;
-        let mut jobs = Vec::new();
-        for &pos in &bucket {
-            let Some(h) = l.hooks.get(pos).copied() else {
-                continue;
-            };
-            let (argv_files, ids) = filenames(l, h)?;
-            if l.skipped.get(pos).copied().unwrap_or(false) {
-                out.done.insert(pos, Done::skipped(Status::Skipped));
-            } else if argv_files.is_empty() && !h.def.always_run {
-                out.done.insert(pos, Done::skipped(Status::NoFiles));
-            } else {
-                jobs.push(Job {
-                    pos,
-                    hook: h,
-                    argv_files: if h.def.pass_filenames {
-                        argv_files
-                    } else {
-                        Vec::new()
-                    },
-                    ids,
-                });
-            }
-        }
-        // statuses that need no run print at once when they are next in line
-        out.flush(l.hooks);
-        for group in groups(l, jobs) {
-            let finished = if group.len() == 1 {
-                run_sequential(l, &mut out, oracle, &mut fixes, group)?
-            } else {
-                run_bucket(l, oracle, &mut fixes, group)?
-            };
-            for (pos, d) in finished {
-                let h = l.hooks.get(pos);
-                if d.failed {
-                    res.retval = 1;
-                    if l.fail_fast || h.is_some_and(|h| h.def.fail_fast) {
-                        // the bucket is the unit (§3.1 step 18): its remaining members still run
-                        stop = true;
-                    }
-                }
-                out.done.insert(pos, d);
-            }
-            out.flush(l.hooks);
-        }
-    }
+    let all = buckets(l.hooks, l.root_ext);
+    let halt = AtomicBool::new(false);
+    std::thread::scope(|s| {
+        let mut pf = Prefetch::new(l, s, &all, &halt);
+        let r = run_buckets(l, oracle, &mut out, &mut fixes, &mut res, &mut pf, &all);
+        // always before show-diff, `stage_fixed` and the restore (the caller's), and before an error leaves
+        pf.join();
+        r
+    })?;
     out.drain(l.hooks);
     if l.mode == OutputMode::Summary {
         let wall = secs(e, started_at);
@@ -414,6 +376,75 @@ pub(crate) fn run_hooks(l: &Loop<'_>, oracle: &mut DiffOracle) -> Result<LoopRes
     res.to_stage = to_stage;
     check_cancel(e)?;
     Ok(res)
+}
+
+/// The bucket loop of [`run_hooks`].
+fn run_buckets<'s>(
+    l: &'s Loop<'s>,
+    oracle: &mut DiffOracle,
+    out: &mut Out<'_>,
+    fixes: &mut Fixes,
+    res: &mut LoopResult,
+    pf: &mut Prefetch<'s, '_>,
+    all: &[Vec<usize>],
+) -> Result<(), Failure> {
+    let e = l.e;
+    let mut stop = false;
+    for bucket in all {
+        if stop {
+            break;
+        }
+        check_cancel(e)?;
+        let mut jobs = Vec::new();
+        for &pos in bucket {
+            let Some(h) = l.hooks.get(pos).copied() else {
+                continue;
+            };
+            let (argv_files, ids) = filenames(l, h)?;
+            if l.skipped.get(pos).copied().unwrap_or(false) {
+                out.done.insert(pos, Done::skipped(Status::Skipped));
+            } else if argv_files.is_empty() && !h.def.always_run {
+                out.done.insert(pos, Done::skipped(Status::NoFiles));
+            } else {
+                jobs.push(Job {
+                    pos,
+                    hook: h,
+                    argv_files: if h.def.pass_filenames {
+                        argv_files
+                    } else {
+                        Vec::new()
+                    },
+                    ids,
+                });
+            }
+        }
+        // statuses that need no run print at once when they are next in line
+        out.flush(l.hooks);
+        for group in groups(l, jobs) {
+            let finished = if group.len() == 1 {
+                run_sequential(l, out, oracle, fixes, pf, group)?
+            } else {
+                // no snp git runs beside a user process hook (§3.4)
+                if !group.iter().all(|j| in_process(j.hook)) {
+                    pf.join();
+                }
+                run_bucket(l, oracle, fixes, group)?
+            };
+            for (pos, d) in finished {
+                let h = l.hooks.get(pos);
+                if d.failed {
+                    res.retval = 1;
+                    if l.fail_fast || h.is_some_and(|h| h.def.fail_fast) {
+                        // the bucket is the unit (§3.1 step 18): its remaining members still run
+                        stop = true;
+                    }
+                }
+                out.done.insert(pos, d);
+            }
+            out.flush(l.hooks);
+        }
+    }
+    Ok(())
 }
 
 fn check_cancel(e: &ExecEnv<'_>) -> Result<(), Failure> {
@@ -496,6 +527,131 @@ fn input_paths(l: &Loop<'_>, ids: &[FileId]) -> Vec<RepoPath> {
     ids.iter()
         .filter_map(|&id| RepoPath::new(c.table.bytes(id)))
         .collect()
+}
+
+/// Whether a hook runs inside snp (native, meta, `pygrep`, `fail`): it starts no user process.
+fn in_process(h: &ResolvedHook) -> bool {
+    match h.exec {
+        ExecKind::Native { .. } | ExecKind::Meta(_) => true,
+        _ => matches!(h.def.language, LanguageId::Pygrep | LanguageId::Fail),
+    }
+}
+
+/// The per-run git facts a hook's native implementation asks for (`NativeHook::facts`; none for other hooks).
+fn hook_facts(h: &ResolvedHook) -> FactSet {
+    match &h.exec {
+        ExecKind::Native { source, id, epoch } => {
+            snp_hooks::native(*source, id).map_or(FactSet::NONE, |n| n.facts(&h.def.args, *epoch))
+        }
+        _ => FactSet::NONE,
+    }
+}
+
+/// The pre-commit-hooks fact prefetch (ADR-102): at the first executed hook of an unbroken run of in-process hooks
+/// (in execution order) that holds a consumer, one scoped thread computes the [`PchFacts`] the run's selected,
+/// unskipped natives will ask for, while the hooks before them run. It holds one pool permit (taken before any
+/// fact slot: lock order permit, then slot), runs one git child at a time with the facts' own role, checks the
+/// cancel token and a stop flag between fetches, and drops every result and error (the hooks ask again and are
+/// answered from the cache, or compute exactly as without it). It is joined before a user process hook starts
+/// (§3.4 stays strictly sequential) and at the end of the loop.
+struct Prefetch<'s, 'scope> {
+    scope: &'scope Scope<'scope, 's>,
+    facts: &'s PchFacts,
+    pool: &'s JobPool,
+    cancel: &'s CancelToken,
+    halt: &'s AtomicBool,
+    /// Hook positions in execution order.
+    order: Vec<usize>,
+    /// Execution indices below this one belong to runs already looked at.
+    covered: usize,
+    running: Option<ScopedJoinHandle<'scope, ()>>,
+}
+
+impl<'s, 'scope> Prefetch<'s, 'scope> {
+    fn new(
+        l: &'s Loop<'s>,
+        scope: &'scope Scope<'scope, 's>,
+        buckets: &[Vec<usize>],
+        halt: &'s AtomicBool,
+    ) -> Self {
+        Self {
+            scope,
+            facts: l.e.facts,
+            pool: &l.e.cx.pool,
+            cancel: &l.e.cx.cancel,
+            halt,
+            order: buckets.iter().flatten().copied().collect(),
+            covered: 0,
+            running: None,
+        }
+    }
+
+    /// Before the in-process hook at `pos` runs: starts the prefetch for the run it begins, unless that run was
+    /// already looked at. The diff oracle's baseline is taken first, so no fact git overlaps it.
+    fn start(&mut self, l: &Loop<'_>, oracle: &mut DiffOracle, pos: usize) -> Result<(), Failure> {
+        let Some(first) = self
+            .order
+            .iter()
+            .skip(self.covered)
+            .position(|&p| p == pos)
+            .and_then(|i| i.checked_add(self.covered))
+        else {
+            return Ok(());
+        };
+        let mut set = FactSet::NONE;
+        let mut end = first;
+        for &p in self.order.iter().skip(first) {
+            let Some(h) = l.hooks.get(p).copied() else {
+                break;
+            };
+            if !in_process(h) {
+                break;
+            }
+            if !l.skipped.get(p).copied().unwrap_or(false) {
+                set = set.union(hook_facts(h));
+            }
+            end = end.saturating_add(1);
+        }
+        self.covered = end;
+        if set.is_empty() {
+            return Ok(());
+        }
+        self.join();
+        oracle.before_hook()?;
+        let (facts, pool, cancel, halt) = (self.facts, self.pool, self.cancel, self.halt);
+        let spawned = std::thread::Builder::new()
+            .name("snp-prefetch".to_owned())
+            .spawn_scoped(self.scope, move || {
+                let Some(_permit) = pool.acquire() else {
+                    return;
+                };
+                facts.prefetch(set, &|| {
+                    halt.load(Ordering::Relaxed) || cancel.is_cancelled()
+                });
+            });
+        // a thread the OS refuses only means no prefetch
+        self.running = spawned.ok();
+        Ok(())
+    }
+
+    /// Stops the prefetch after its current git child and waits for it.
+    fn join(&mut self) {
+        if let Some(h) = self.running.take() {
+            self.halt.store(true, Ordering::Relaxed);
+            // nothing of the prefetch is reported: a panic already went through the panic hook (ADR-066)
+            let _joined = h.join();
+            self.halt.store(false, Ordering::Relaxed);
+        }
+    }
+}
+
+impl std::fmt::Debug for Prefetch<'_, '_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Prefetch")
+            .field("covered", &self.covered)
+            .field("running", &self.running.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 /// Whether modifications fail this hook (`fail_on_changes`).
@@ -603,6 +759,7 @@ fn run_sequential(
     out: &mut Out<'_>,
     oracle: &mut DiffOracle,
     fixes: &mut Fixes,
+    pf: &mut Prefetch<'_, '_>,
     jobs: Vec<Job<'_>>,
 ) -> Result<Vec<(usize, Done)>, Failure> {
     let mut finished = Vec::new();
@@ -612,6 +769,11 @@ fn run_sequential(
             out.begin_interactive(l.hooks, job.pos, &job.hook.def.name);
         } else if out.can_start(job.pos) {
             out.start(job.pos, &job.hook.def.name);
+        }
+        if in_process(job.hook) {
+            pf.start(l, oracle, job.pos)?;
+        } else {
+            pf.join();
         }
         let d = run_one(l, oracle, fixes, &job, tty.as_ref())?;
         // a killed interactive hook (timeout, signal) was cut off mid-prompt: its status line starts a new line
@@ -858,7 +1020,7 @@ fn run_concurrently(lp: &Loop<'_>, jobs: &[Job<'_>]) -> Result<Vec<BucketRun>, F
                 std::thread::Builder::new().spawn_scoped(s, move || {
                     let mut mine = Vec::new();
                     loop {
-                        let idx = cursor.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let idx = cursor.fetch_add(1, Ordering::Relaxed);
                         let Some(job) = jobs.get(idx) else {
                             break;
                         };
