@@ -282,6 +282,50 @@ mod classify {
         assert!(views(&c, &exe).contains(&"run".to_owned()));
     }
 
+    /// ADR-106: with trusted index modes the classifier keeps and identifies files without a syscall (none of them
+    /// exists on disk), a filter on `executable` takes the `lstat` answer instead (gone here), and once the flag is
+    /// cleared (the diff oracle after a hook) a file no hook identified yet takes its `lstat` too.
+    #[cfg(unix)]
+    #[test]
+    fn index_trust_classifies_without_syscalls_until_cleared() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let names: Vec<OsString> = ["a.py", "b.py", "run.sh", "gone.py"]
+            .iter()
+            .map(OsString::from)
+            .collect();
+        let mut table = FileTable::from_args(names, Path::new("/definitely/not/here"));
+        let valid = Arc::new(AtomicBool::new(true));
+        let modes: Box<[u32]> = Box::new([0o100_644, 0o100_644, 0o100_755, 0]);
+        assert!(table.trust_index_modes(modes, Arc::clone(&valid), tags(&["file", "python"])));
+        let cache = RegexCache::new();
+        let pool = pool(2);
+        let c = classifier(table, &cache, &pool);
+        assert_eq!(
+            views(&c, &c.kept),
+            ["a.py", "b.py", "run.sh"],
+            "gone.py has no mode"
+        );
+        let py = c
+            .for_hook(&filter(r"^a\.py$", "^$", &["python"], None, &cache), &pool)
+            .unwrap();
+        assert_eq!(views(&c, &py), ["a.py"]);
+        let files = c
+            .for_hook(&filter(r"\.sh$", "^$", &["file"], None, &cache), &pool)
+            .unwrap();
+        assert_eq!(views(&c, &files), ["run.sh"]);
+        // the executable bit is never the index's: a filter on it takes the lstat answer
+        let exe = c
+            .for_hook(&filter("", "^$", &["executable"], None, &cache), &pool)
+            .unwrap();
+        assert!(exe.is_empty(), "{:?}", views(&c, &exe));
+        // after the flag is cleared, b.py (never identified) takes its lstat; a.py keeps its memoised tags
+        valid.store(false, Ordering::Release);
+        let files = c
+            .for_hook(&filter("", "^$", &["file"], None, &cache), &pool)
+            .unwrap();
+        assert_eq!(views(&c, &files), ["a.py", "run.sh"]);
+    }
+
     /// `prefetch` inside a permit holder runs inline: a single-permit pool cannot deadlock (ADR-070).
     #[test]
     fn prefetch_is_reentrant_under_a_held_permit() {

@@ -19,6 +19,13 @@
 //! `openat`), as pre-commit's relative names are relative to its working directory; the path-based calls remain
 //! the fallback whenever that descriptor or `statx` is unavailable.
 //!
+//! A clean `--all-files` run can trust the index modes instead (ADR-106): the pipeline proves with an empty, clean
+//! `git diff` that every unflagged entry exists with its index kind, hands the modes over with a flag the diff
+//! oracle clears after every hook that may have changed the worktree, and the stat tier of a trusted entry is then
+//! built from its mode with zero syscalls. Such a cell is marked: its kind is exact, its executable bit is not (git
+//! records the owner bit; identify emulates `os.access`), so a query whose answer depends on that bit takes an
+//! `lstat` instead.
+//!
 //! Owner: WP-22.
 
 use std::borrow::Cow;
@@ -30,10 +37,10 @@ use std::io::{self, Read};
 use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
-use file_identify::{Classification, ExecPolicy, FileKind, Meta, Pending, TagSet};
+use file_identify::{Classification, ExecPolicy, FileKind, Meta, Pending, Tag, TagSet};
 use snp_core::failure::{Failure, PyExc, pyerr};
 use snp_core::path::RepoPath;
 use snp_os as _;
@@ -81,10 +88,48 @@ impl Needs {
 /// The stat tier of one file.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum StatTier {
-    /// `lstat` (or the trusted git mode) succeeded: kind + mode + name tags, and what content is still needed.
+    /// `lstat` (or the trusted git mode of [`FileTable::set_trusted_modes`]) succeeded: kind + mode + name tags, and
+    /// what content is still needed.
     Present(Classification),
+    /// Built from a trusted index mode (ADR-106): the kind and the name tags are exact, the executable bit is not
+    /// verified (the index records the owner bit, identify emulates `os.access`). Only queries that cannot observe
+    /// that bit use it; any other takes the exact tier ([`FileTable::exact_tags`]).
+    Trusted(Classification),
     /// `lstat` failed (every `OSError` counts, as in identify: X13-CLS-01/04).
     Vanished,
+}
+
+/// The trusted index modes of a clean `--all-files` run (ADR-106).
+#[derive(Debug)]
+struct IndexTrust {
+    /// Per entry: the mode a clean `git diff` vouches for (`100644`, `100755`, `120000`), 0 = none.
+    modes: Box<[u32]>,
+    /// True while the modes describe the worktree; the diff oracle clears it after every hook that may have
+    /// changed the worktree. Cells already built stay (pre-commit memoises the first identification).
+    valid: Arc<AtomicBool>,
+    /// Some filter of the run needs shebang tags: a file without name tags gets no trusted cell, since its
+    /// executable bit decides whether identify reads its shebang.
+    shebang: bool,
+}
+
+/// The tags whose presence depends on the executable bit alone.
+const EXEC_TAGS: TagSet = TagSet::from_tag(Tag::EXECUTABLE).with(Tag::NON_EXECUTABLE);
+
+/// The tags a regular file's classification holds besides its name tags.
+const KIND_TAGS: TagSet = EXEC_TAGS.with(Tag::FILE);
+
+/// Whether a regular file's classification carries no name tags (`file_identify::classify`: a regular file's tags
+/// are `file`, its mode tag and its name tags, and only name tags give `text`/`binary` before the content is read,
+/// so an empty name-tag set always leaves content to read). Then its executable bit decides whether the shebang is
+/// read.
+fn no_name_tags(class: &Classification) -> bool {
+    matches!(class, Classification::NeedsContent(p) if p.tags().difference(KIND_TAGS).is_empty())
+}
+
+/// Whether a query for `n` (from a filter that references `executable`/`non-executable` when `exec_tags`) can
+/// observe the executable bit of `class`: through those tags, or through the shebang of a file without name tags.
+fn observes_exec(class: &Classification, n: Needs, exec_tags: bool) -> bool {
+    exec_tags || (n.shebang && no_name_tags(class))
 }
 
 /// The head tier of one file.
@@ -193,6 +238,13 @@ pub struct FileTable {
     view: Column<Box<str>>,
     /// `lexists` results of the newest `Classifier::new`, adopted as the stat tier of the first hook's candidates.
     pending: Mutex<Option<Box<[Option<Meta>]>>>,
+    /// Trusted index modes of a clean `--all-files` run (ADR-106).
+    index: Option<IndexTrust>,
+    /// The exact stat tier of an entry whose `stat` cell is [`StatTier::Trusted`], for a query that observes the
+    /// executable bit (allocated only then, which a run that declared its filters to the trust never does).
+    exact_stat: Column<StatTier>,
+    /// The head tier computed from [`Self::exact_stat`].
+    exact_head: Column<Head>,
     /// The root as an `O_PATH` descriptor, opened on first need; `None` when it cannot be opened (ADR-101).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     root_fd: OnceLock<Option<rustix::fd::OwnedFd>>,
@@ -205,6 +257,7 @@ impl fmt::Debug for FileTable {
             .field("arena_bytes", &self.arena.as_bytes().len())
             .field("root", &self.root)
             .field("git_modes", &self.git_modes.is_some())
+            .field("index_trust", &self.index.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -269,6 +322,9 @@ impl FileTable {
             head: Column::new(),
             view: Column::new(),
             pending: Mutex::new(None),
+            index: None,
+            exact_stat: Column::new(),
+            exact_head: Column::new(),
             #[cfg(any(target_os = "linux", target_os = "android"))]
             root_fd: OnceLock::new(),
         }
@@ -309,6 +365,47 @@ impl FileTable {
         self.git_modes = Some(modes);
     }
 
+    /// Whether hooks whose filters reference `referenced` (the union of every selected hook's `types`, `types_or`
+    /// and `exclude_types`) can classify from trusted index modes (ADR-106): on Unix, and only when none of them
+    /// references `executable` or `non-executable` (the executable bit is never taken from an index mode).
+    pub fn index_trust_possible(referenced: TagSet) -> bool {
+        cfg!(unix) && !referenced.intersects(&EXEC_TAGS)
+    }
+
+    /// Trusted index modes for a clean `--all-files` run (ADR-106).
+    ///
+    /// `modes[i]` is entry `i`'s index mode from the same listing the table was built from
+    /// (`snp_git::Git::all_files_tagged`, whose paths are the table's), so no path comparison is needed; a length
+    /// mismatch (a span `from_zbuf` dropped) refuses the trust. The caller has proved that `git diff` was empty and
+    /// clean, that no entry is flagged or unmerged, and that the configuration lets git compare kinds (Unix,
+    /// `core.fileMode`, `core.symlinks`, no fsmonitor, no sparse index); `valid` is cleared by the diff oracle after
+    /// every hook that may have changed the worktree, and from then on every new cell takes an `lstat`.
+    /// `referenced` is the union of the tags every filter of the run references ([`Self::index_trust_possible`]
+    /// must hold for it). Only modes naming a regular file or a symlink are kept: a gitlink, a directory or the
+    /// empty blob (mode 0 from `all_files_tagged`) keeps its `lstat`. Returns whether the trust was set.
+    pub fn trust_index_modes(
+        &mut self,
+        modes: Box<[u32]>,
+        valid: Arc<AtomicBool>,
+        referenced: TagSet,
+    ) -> bool {
+        if !Self::index_trust_possible(referenced) || modes.len() != self.len() {
+            return false;
+        }
+        let mut modes = modes;
+        for m in &mut modes {
+            if !matches!(*m, 0o100_644 | 0o100_755 | 0o120_000) {
+                *m = 0;
+            }
+        }
+        self.index = Some(IndexTrust {
+            modes,
+            valid,
+            shebang: crate::filter::needs_for(referenced).shebang,
+        });
+        true
+    }
+
     /// Once, before any hook (02 §10).
     ///
     /// `Classifier.__init__`'s `[f for f in filenames if os.path.lexists(f)]` (`run.py:73-74`): drops every file
@@ -316,7 +413,9 @@ impl FileTable {
     /// git mode need no syscall. Order and duplicates are kept.
     pub fn retain_lexists(&mut self) {
         let n = self.len();
-        let keep: Vec<bool> = parallel_flags(n, |i| self.lexists_meta(i).is_some());
+        let keep: Vec<bool> = parallel_flags(n, |i| {
+            self.index_exists(i) || self.lexists_meta(i).is_some()
+        });
         if keep.iter().all(|&k| k) {
             return;
         }
@@ -345,9 +444,19 @@ impl FileTable {
                 .filter_map(|(c, &k)| k.then_some(c))
                 .collect();
         }
+        if let Some(t) = self.index.as_mut() {
+            t.modes = t
+                .modes
+                .iter()
+                .zip(&keep)
+                .filter_map(|(m, &k)| k.then_some(*m))
+                .collect();
+        }
         self.stat.retain(&keep);
         self.head.retain(&keep);
         self.view.retain(&keep);
+        self.exact_stat.retain(&keep);
+        self.exact_head.retain(&keep);
         if let Ok(p) = self.pending.get_mut() {
             *p = None;
         }
@@ -469,7 +578,17 @@ impl FileTable {
     /// `Vanished` here and in every later call (X13-CLS-01, D-CRASH-08); an unreadable file is `Unreadable` only for
     /// an `n` that needs its content (X13-CLS-02, D-CRASH-18). FIFOs and devices are read non-blocking (X13-CLS-03,
     /// D-CRASH-09).
+    ///
+    /// With trusted index modes (ADR-106) the `executable`/`non-executable` tags of a trusted file come from its index
+    /// mode; the classifier, whose filters may reference them, takes those tags from an `lstat` instead.
     pub fn tags(&self, id: FileId, n: Needs) -> TagOutcome<'_> {
+        self.tags_for(id, n, false)
+    }
+
+    /// [`Self::tags`] for a filter that references `executable` or `non-executable` when `exec_tags` is set: the
+    /// executable bit is then never taken from a trusted index mode (ADR-106). Neither is it for a query that needs
+    /// shebang tags of a file without name tags (the bit decides whether identify reads the shebang).
+    pub(crate) fn tags_for(&self, id: FileId, n: Needs, exec_tags: bool) -> TagOutcome<'_> {
         let Some(i) = self.index(id) else {
             return TagOutcome::Vanished;
         };
@@ -479,15 +598,37 @@ impl FileTable {
         if !n.any() {
             return TagOutcome::Tags(self.name_tags(i));
         }
-        match self.stat_tier(i) {
-            StatTier::Vanished => TagOutcome::Vanished,
-            StatTier::Present(Classification::Done(tags)) => TagOutcome::Tags(tags),
-            StatTier::Present(Classification::NeedsContent(p)) => {
+        let class = match self.stat_tier(i, !exec_tags) {
+            StatTier::Vanished => return TagOutcome::Vanished,
+            StatTier::Trusted(c) if observes_exec(&c, n, exec_tags) => {
+                return self.exact_tags(i, n);
+            }
+            StatTier::Present(c) | StatTier::Trusted(c) => c,
+        };
+        self.outcome(i, class, n, &self.head)
+    }
+
+    /// The outcome of a classification for `n`: its tags, or the head tier memoised in `heads` when `n` asks for a
+    /// category the stat tier left open.
+    fn outcome<'t>(
+        &'t self,
+        i: usize,
+        class: Classification,
+        n: Needs,
+        heads: &'t Column<Head>,
+    ) -> TagOutcome<'t> {
+        match class {
+            Classification::Done(tags) => TagOutcome::Tags(tags),
+            Classification::NeedsContent(p) => {
                 let need = (n.encoding && p.needs_encoding()) || (n.shebang && p.needs_shebang());
                 if !need {
                     return TagOutcome::Tags(p.tags());
                 }
-                match self.head_tier(i, p) {
+                let len = self.len();
+                match heads
+                    .cell(len, i)
+                    .map(|c| c.get_or_init(|| self.read_head(i, p)))
+                {
                     Some(Head::Tags(t)) => TagOutcome::Tags(*t),
                     Some(Head::Unreadable(e)) => TagOutcome::Unreadable(e),
                     Some(Head::Vanished) | None => TagOutcome::Vanished,
@@ -496,10 +637,31 @@ impl FileTable {
         }
     }
 
+    /// The outcome from an `lstat` of entry `i`, for a query that observes the executable bit of a trusted entry
+    /// (ADR-106): its own memoised stat and head cells, so the trusted cells stay as they are for every other query.
+    /// A run that declared its filters to [`Self::trust_index_modes`] never gets here.
+    fn exact_tags(&self, i: usize, n: Needs) -> TagOutcome<'_> {
+        let len = self.len();
+        let compute = || match self.lexists_meta(i) {
+            Some(meta) => StatTier::Present(self.classify(i, meta)),
+            None => StatTier::Vanished,
+        };
+        match self
+            .exact_stat
+            .cell(len, i)
+            .map(|c| *c.get_or_init(compute))
+        {
+            Some(StatTier::Present(class) | StatTier::Trusted(class)) => {
+                self.outcome(i, class, n, &self.exact_head)
+            }
+            Some(StatTier::Vanished) | None => TagOutcome::Vanished,
+        }
+    }
+
     /// Whether `tags(id, n)` is answered from memoised cells alone (no `lstat`, `open` or name-tier computation):
     /// the file is known to be gone, or every tier `n` needs for it is computed (ADR-101). A pending `lexists` meta
     /// does not count: adopting it still classifies the name.
-    pub(crate) fn tiers_ready(&self, id: FileId, n: Needs) -> bool {
+    pub(crate) fn tiers_ready(&self, id: FileId, n: Needs, exec_tags: bool) -> bool {
         let Some(i) = self.index(id) else {
             return true;
         };
@@ -515,8 +677,16 @@ impl FileTable {
         }
         match self.stat.peek(i) {
             None => false,
-            Some(StatTier::Vanished | StatTier::Present(Classification::Done(_))) => true,
-            Some(StatTier::Present(Classification::NeedsContent(p))) => {
+            Some(StatTier::Trusted(c)) if observes_exec(c, n, exec_tags) => false,
+            Some(
+                StatTier::Vanished
+                | StatTier::Present(Classification::Done(_))
+                | StatTier::Trusted(Classification::Done(_)),
+            ) => true,
+            Some(
+                StatTier::Present(Classification::NeedsContent(p))
+                | StatTier::Trusted(Classification::NeedsContent(p)),
+            ) => {
                 let need = (n.encoding && p.needs_encoding()) || (n.shebang && p.needs_shebang());
                 !need || self.head.peek(i).is_some()
             }
@@ -647,6 +817,32 @@ impl FileTable {
         Meta::from_git_mode_with(mode, ExecPolicy::PythonCompat)
     }
 
+    /// The trusted index mode of entry `i` while the trust holds (ADR-106), as a meta whose executable bit is the
+    /// index's owner bit; `None` without trust, after the diff oracle cleared it, or for an untrusted entry.
+    fn index_meta(&self, i: usize) -> Option<Meta> {
+        let t = self.index.as_ref()?;
+        if !t.valid.load(Ordering::Acquire) || self.bytes_at(i).is_empty() {
+            return None;
+        }
+        let mode = *t.modes.get(i).filter(|&&m| m != 0)?;
+        Meta::from_git_mode_with(mode, ExecPolicy::PythonCompat)
+    }
+
+    /// `os.path.lexists` answered by a trusted index mode (ADR-106): a clean, empty `git diff` saw the entry with
+    /// its index kind, and no hook has run since. No syscall.
+    pub(crate) fn index_exists(&self, i: usize) -> bool {
+        self.index_meta(i).is_some()
+    }
+
+    /// The trusted stat tier of entry `i` (ADR-106), unless a filter of the run needs the shebang of a file whose
+    /// name gives no tags: its executable bit decides whether the shebang is read, so it keeps its `lstat`.
+    fn trusted_tier(&self, i: usize) -> Option<StatTier> {
+        let meta = self.index_meta(i)?;
+        let class = self.classify(i, meta);
+        let shebang = self.index.as_ref().is_some_and(|t| t.shebang);
+        (!(shebang && no_name_tags(&class))).then_some(StatTier::Trusted(class))
+    }
+
     /// `os.path.lexists` with the `lstat` meta: the trusted mode, else one `lstat`. An empty name does not exist
     /// (`os.lstat('')` raises `FileNotFoundError`; `root.join("")` would be the root directory itself).
     pub(crate) fn lexists_meta(&self, i: usize) -> Option<Meta> {
@@ -676,12 +872,18 @@ impl FileTable {
         file_identify::classify(meta, self.bytes_at(i))
     }
 
-    /// The memoised stat tier of entry `i`.
-    fn stat_tier(&self, i: usize) -> StatTier {
+    /// The memoised stat tier of entry `i`: the trusted index mode while the trust holds (ADR-106) and `trust` allows
+    /// it (the first query is not one that observes the executable bit), else one `lstat`.
+    fn stat_tier(&self, i: usize, trust: bool) -> StatTier {
         let n = self.len();
-        let compute = || match self.lexists_meta(i) {
-            Some(meta) => StatTier::Present(self.classify(i, meta)),
-            None => StatTier::Vanished,
+        let compute = || {
+            trust
+                .then(|| self.trusted_tier(i))
+                .flatten()
+                .unwrap_or_else(|| match self.lexists_meta(i) {
+                    Some(meta) => StatTier::Present(self.classify(i, meta)),
+                    None => StatTier::Vanished,
+                })
         };
         match self.stat.cell(n, i) {
             Some(c) => *c.get_or_init(compute),
@@ -716,13 +918,6 @@ impl FileTable {
         {
             let _set: Result<(), StatTier> = c.set(StatTier::Present(self.classify(i, *meta)));
         }
-    }
-
-    /// The memoised head tier of entry `i`.
-    fn head_tier(&self, i: usize, pending: Pending) -> Option<&Head> {
-        let n = self.len();
-        let cell = self.head.cell(n, i)?;
-        Some(cell.get_or_init(|| self.read_head(i, pending)))
     }
 
     /// One non-blocking `open` + bounded read through `Pending::finish`.
@@ -1475,6 +1670,178 @@ mod tests {
         assert!(
             matches!(t.tags(FileId(0), n), TagOutcome::Tags(tags) if tags.contains("python") && tags.contains("text"))
         );
+    }
+
+    fn tags_of(names: &[&str]) -> TagSet {
+        TagSet::from_names(names).unwrap()
+    }
+
+    #[cfg(unix)]
+    fn stat_only() -> Needs {
+        Needs {
+            stat: true,
+            ..Needs::default()
+        }
+    }
+
+    /// ADR-106: trusted index modes answer existence and the stat tier with zero syscalls (the root does not even
+    /// exist) while the flag holds; gitlinks, directories and the empty blob (mode 0) keep their `lstat`; once the
+    /// diff oracle clears the flag every new cell takes an `lstat`, and the cells already built stay.
+    #[cfg(unix)]
+    #[test]
+    fn index_trust_needs_no_syscalls_until_cleared() {
+        let mut t = table(&["a.py", "x.sh", "link", "sub", "empty", "dir", "b.py", ""]);
+        let valid = Arc::new(AtomicBool::new(true));
+        let modes: Box<[u32]> = Box::new([
+            0o100_644, 0o100_755, 0o120_000, 0o160_000, 0, 0o040_000, 0o100_644, 0o100_644,
+        ]);
+        assert!(t.trust_index_modes(modes, Arc::clone(&valid), tags_of(&["file"])));
+        let exists: Vec<bool> = (0..8).map(|i| t.index_exists(i)).collect();
+        assert_eq!(
+            exists,
+            [true, true, true, false, false, false, true, false],
+            "an empty name never exists"
+        );
+        let TagOutcome::Tags(tags) = t.tags(FileId(0), stat_only()) else {
+            panic!("a trusted file needs no lstat")
+        };
+        assert_eq!(tags, tags_of(&["file", "non-executable", "python", "text"]));
+        let TagOutcome::Tags(tags) = t.tags(FileId(2), stat_only()) else {
+            panic!()
+        };
+        assert_eq!(tags, tags_of(&["symlink"]));
+        assert!(matches!(t.stat.peek(0), Some(StatTier::Trusted(_))));
+        // gitlinks and the rest take an lstat: gone under the nonexistent root
+        assert!(matches!(
+            t.tags(FileId(3), stat_only()),
+            TagOutcome::Vanished
+        ));
+        assert!(matches!(
+            t.tags(FileId(4), stat_only()),
+            TagOutcome::Vanished
+        ));
+        // the diff oracle clears the flag: a new cell takes an lstat, a built one stays
+        valid.store(false, Ordering::Release);
+        assert!(!t.index_exists(6));
+        assert!(matches!(
+            t.tags(FileId(6), stat_only()),
+            TagOutcome::Vanished
+        ));
+        assert!(matches!(
+            t.tags(FileId(0), stat_only()),
+            TagOutcome::Tags(_)
+        ));
+        // retain_lexists compacts the trusted modes with the spans
+        let mut t = table(&["keep.py", "gone.py", "keep2.py"]);
+        let modes: Box<[u32]> = Box::new([0o100_644, 0, 0o100_644]);
+        assert!(t.trust_index_modes(modes, Arc::new(AtomicBool::new(true)), TagSet::EMPTY));
+        t.retain_lexists();
+        assert_eq!(t.len(), 2);
+        assert_eq!(t.bytes(FileId(1)), b"keep2.py");
+        assert!(t.index_exists(1));
+    }
+
+    /// The trust is refused for filters that reference the executable bit, for a mode column of the wrong length,
+    /// and off Unix.
+    #[test]
+    fn index_trust_is_refused_when_it_cannot_be_exact() {
+        let valid = Arc::new(AtomicBool::new(true));
+        let mut t = table(&["a.py", "b.py"]);
+        for exec in ["executable", "non-executable"] {
+            assert!(!FileTable::index_trust_possible(tags_of(&["file", exec])));
+            assert!(!t.trust_index_modes(
+                Box::new([0o100_644, 0o100_644]),
+                Arc::clone(&valid),
+                tags_of(&[exec])
+            ));
+        }
+        assert!(!t.trust_index_modes(Box::new([0o100_644]), Arc::clone(&valid), TagSet::EMPTY));
+        assert!(t.index.is_none());
+        assert_eq!(
+            t.trust_index_modes(Box::new([0o100_644, 0o100_644]), valid, TagSet::EMPTY),
+            cfg!(unix)
+        );
+    }
+
+    /// ADR-106: the executable bit never comes from an index mode. A filter that references `executable` or
+    /// `non-executable` gets the `lstat` answer for a trusted file (`exact_tags`), and a file without name tags gets
+    /// no trusted cell when a filter of the run needs shebang tags, so its shebang follows identify's `os.access`
+    /// (any `x` bit for root, the owner bit for the owner). The index here claims 100755 for a 0o654 file.
+    #[cfg(unix)]
+    #[test]
+    fn index_trust_never_supplies_the_executable_bit() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        for name in ["tool", "t.py"] {
+            std::fs::write(d.path().join(name), b"#!/usr/bin/env python3\nprint(1)\n").unwrap();
+            std::fs::set_permissions(d.path().join(name), std::fs::Permissions::from_mode(0o654))
+                .unwrap();
+        }
+        let names = ["tool", "t.py"];
+        let fresh = || FileTable::from_args(names.iter().map(OsString::from).collect(), d.path());
+        let all = Needs {
+            stat: true,
+            encoding: true,
+            shebang: true,
+        };
+        let truth = fresh();
+        let want = |id: u32, n: Needs| match truth.tags(FileId(id), n) {
+            TagOutcome::Tags(t) => t,
+            _ => panic!("readable"),
+        };
+        let lied: Box<[u32]> = Box::new([0o100_755, 0o100_755]);
+        // a run with shebang filters: `tool` (no name tags) keeps its lstat; `t.py` is trusted
+        let mut t = fresh();
+        assert!(t.trust_index_modes(
+            lied.clone(),
+            Arc::new(AtomicBool::new(true)),
+            tags_of(&["python"])
+        ));
+        assert!(matches!(t.tags(FileId(0), all), TagOutcome::Tags(x) if x == want(0, all)));
+        assert!(matches!(t.stat.peek(0), Some(StatTier::Present(_))));
+        assert!(matches!(t.stat_tier(1, true), StatTier::Trusted(_)));
+        // a filter on `executable`: the lstat answer, not the index's owner bit
+        assert!(
+            matches!(t.tags_for(FileId(1), stat_only(), true), TagOutcome::Tags(x) if x == want(1, stat_only()))
+        );
+        // a run declared without shebang filters that asks for a shebang anyway: still the lstat answer
+        let mut t = fresh();
+        assert!(t.trust_index_modes(lied, Arc::new(AtomicBool::new(true)), tags_of(&["file"])));
+        assert!(matches!(t.stat_tier(0, true), StatTier::Trusted(_)));
+        assert!(!t.tiers_ready(FileId(0), all, false));
+        assert!(matches!(t.tags(FileId(0), all), TagOutcome::Tags(x) if x == want(0, all)));
+        assert!(
+            t.exact_stat.0.get().is_some(),
+            "answered from the exact cells"
+        );
+    }
+
+    /// `no_name_tags` reads exactly `tags_from_filename(name).is_empty()` off a regular file's classification.
+    #[test]
+    fn no_name_tags_matches_tags_from_filename() {
+        for name in [
+            "tool",
+            "a.py",
+            "Makefile",
+            "x.unknownext",
+            "README",
+            "LICENSE",
+            "a.svg",
+            "a.plist",
+            ".bashrc",
+            "dir/file",
+            "a.tar.gz",
+            "a.PY",
+        ] {
+            for exec in [false, true] {
+                let class = file_identify::classify(Meta::new(FileKind::Regular, exec), name);
+                assert_eq!(
+                    no_name_tags(&class),
+                    file_identify::tags_from_filename(name).is_empty(),
+                    "{name} exec={exec}"
+                );
+            }
+        }
     }
 
     #[test]

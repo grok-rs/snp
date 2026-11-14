@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use file_identify::Meta;
+use file_identify::{Meta, Tag, TagSet};
 use snp_core::failure::{ExcKind, Failure};
 use snp_proc::pool::JobPool;
 use snp_pyre::{MatchError, MatchKind, PyRegex};
@@ -27,7 +27,9 @@ impl Classifier {
     /// `Classifier.from_config` + `__init__` (`run.py:73-74, 112-126`): keep a file when `include.search(path)` and
     /// not `exclude.search(path)` (on the matching view), then when `os.path.lexists(path)`. Order and duplicates are
     /// kept. Large tables are split into ordered partitions on the pool. The `lstat`s become the stat tier of the
-    /// files the first hook classifies (pre-commit's first `tags_from_path` of those files happens right after).
+    /// files the first hook classifies (pre-commit's first `tags_from_path` of those files happens right after). A
+    /// file with a trusted index mode (ADR-106) exists without a syscall; its stat tier is built from the mode when a
+    /// hook first needs it.
     ///
     /// # Errors
     ///
@@ -40,15 +42,18 @@ impl Classifier {
         pool: &JobPool,
     ) -> Result<Self, Failure> {
         let t: &FileTable = &table;
-        let found: Vec<(FileId, Meta)> =
+        let found: Vec<(FileId, Option<Meta>)> =
             par_chunks_on(pool, t.len(), REGEX_THREADS, false, |range| {
                 let mut out = Vec::new();
                 for raw in range {
                     let id = FileId(u32::try_from(raw).unwrap_or(u32::MAX));
-                    if passes(t, id, include, exclude)?
-                        && let Some(meta) = t.lexists_meta(raw)
-                    {
-                        out.push((id, meta));
+                    if !passes(t, id, include, exclude)? {
+                        continue;
+                    }
+                    if t.index_exists(raw) {
+                        out.push((id, None));
+                    } else if let Some(meta) = t.lexists_meta(raw) {
+                        out.push((id, Some(meta)));
                     }
                 }
                 Ok(out)
@@ -57,7 +62,7 @@ impl Classifier {
         let mut kept = Vec::new();
         for (id, meta) in found {
             if let Some(slot) = t.index(id).and_then(|i| pending.get_mut(i)) {
-                *slot = Some(meta);
+                *slot = meta;
             }
             kept.push(id);
         }
@@ -86,7 +91,8 @@ impl Classifier {
         let adopt = pending.as_deref().filter(|_| f.needs.any());
         let table: &FileTable = &self.table;
         let kept = &self.kept;
-        let cheap = kept.len() >= PARALLEL_MIN && memoized(table, kept, f);
+        let exec = exec_tags(f);
+        let cheap = kept.len() >= PARALLEL_MIN && memoized(table, kept, f, exec);
         par_chunks_on(pool, kept.len(), REGEX_THREADS, cheap, |range| {
             let mut out = Vec::new();
             for &id in kept.get(range).unwrap_or_default() {
@@ -100,7 +106,7 @@ impl Classifier {
                 if let Some(p) = adopt {
                     table.adopt(id, p);
                 }
-                if keep(table, id, f)? {
+                if keep(table, id, f, exec)? {
                     out.push(id);
                 }
             }
@@ -119,12 +125,13 @@ impl Classifier {
     pub fn by_types(&self, ids: &[FileId], f: &HookFilter) -> Result<Vec<FileId>, Failure> {
         let pending = self.table.take_pending();
         let adopt = pending.as_deref().filter(|_| f.needs.any());
+        let exec = exec_tags(f);
         let mut out = Vec::new();
         for &id in ids {
             if let Some(p) = adopt {
                 self.table.adopt(id, p);
             }
-            if keep(&self.table, id, f)? {
+            if keep(&self.table, id, f, exec)? {
                 out.push(id);
             }
         }
@@ -135,7 +142,7 @@ impl Classifier {
 /// Whether `for_hook(f)` over `kept` is memory-only work (ADR-101): both patterns are trivial (no regex call) and
 /// every file they and the prefix pass either needs no tags or has every tier `f.needs` already memoised (a later
 /// hook with the same type filters). Then the classification runs on the calling thread instead of the pool.
-fn memoized(table: &FileTable, kept: &[FileId], f: &HookFilter) -> bool {
+fn memoized(table: &FileTable, kept: &[FileId], f: &HookFilter, exec: bool) -> bool {
     let trivial = |re: &PyRegex| matches!(re.kind(), MatchKind::All | MatchKind::EmptyOrNewline);
     if !trivial(&f.files) || !trivial(&f.exclude) {
         return false;
@@ -152,10 +159,20 @@ fn memoized(table: &FileTable, kept: &[FileId], f: &HookFilter) -> bool {
         }
         match passes(table, id, &f.files, &f.exclude) {
             Ok(false) => true,
-            Ok(true) => table.tiers_ready(id, f.needs),
+            Ok(true) => table.tiers_ready(id, f.needs, exec),
             Err(_) => false,
         }
     })
+}
+
+/// Whether `f` references `executable` or `non-executable`: its outcome then depends on the executable bit, which
+/// is never taken from a trusted index mode (ADR-106).
+fn exec_tags(f: &HookFilter) -> bool {
+    let exec = TagSet::from_tag(Tag::EXECUTABLE).with(Tag::NON_EXECUTABLE);
+    f.types
+        .union(f.types_or)
+        .union(f.exclude_types)
+        .intersects(&exec)
 }
 
 /// `types: []` with the default `types_or`/`exclude_types`: every tag set matches.
@@ -164,13 +181,13 @@ fn no_type_filter(f: &HookFilter) -> bool {
 }
 
 /// The type filter for one file: `Ok(false)` drops it (no match, or gone), `Err` fails the run (unreadable).
-fn keep(table: &FileTable, id: FileId, f: &HookFilter) -> Result<bool, Failure> {
+fn keep(table: &FileTable, id: FileId, f: &HookFilter, exec: bool) -> Result<bool, Failure> {
     // No type filter at all (`types: []`, the default `types_or`/`exclude_types`): every tag set matches, so only a
     // file already known to be gone is dropped; no tag needs computing.
     if no_type_filter(f) {
         return Ok(!table.known_vanished(id));
     }
-    match table.tags(id, f.needs) {
+    match table.tags_for(id, f.needs, exec) {
         TagOutcome::Tags(tags) => Ok(tags.matches_types(&f.types, &f.types_or, &f.exclude_types)),
         TagOutcome::Vanished => Ok(false),
         TagOutcome::Unreadable(exc) => Err(Failure::Exc {

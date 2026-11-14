@@ -10,6 +10,7 @@ mod api {
     use std::ffi::{OsStr, OsString};
     use std::path::Path;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
 
     use file_identify::TagSet;
     use snp_core::failure::{Failure, PyExc};
@@ -83,6 +84,11 @@ mod api {
         has::<fn(Vec<u8>, Vec<(u32, u32)>, &Path) -> FileTable>(FileTable::from_zbuf);
         has::<fn(Vec<OsString>, &Path) -> FileTable>(FileTable::from_args);
         has::<fn(&mut FileTable, Vec<(&[u8], u32)>)>(trusted_modes);
+        // ADR-106
+        has::<fn(TagSet) -> bool>(FileTable::index_trust_possible);
+        has::<fn(&mut FileTable, Box<[u32]>, Arc<AtomicBool>, TagSet) -> bool>(
+            FileTable::trust_index_modes,
+        );
         has::<fn(&mut FileTable)>(FileTable::retain_lexists);
         has::<fn(&FileTable) -> usize>(FileTable::len);
         has::<fn(&FileTable) -> bool>(FileTable::is_empty);
