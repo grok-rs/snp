@@ -1,5 +1,5 @@
-//! `hookscripts::classify` on every era fixture of pre-commit's template plus prek, lefthook, snp 1.x, snp current,
-//! a dangling symlink and a directory; at most 1 MiB is read (11 §A.5.1).
+//! `hookscripts::classify` on every era fixture of pre-commit's template plus prek, lefthook, snp 1.x, snp current
+//! and prior, a dangling symlink and a directory; at most 1 MiB is read (11 §A.5.1).
 
 use std::path::{Path, PathBuf};
 
@@ -42,6 +42,10 @@ fn classify_every_fixture() {
         ("lefthook", Owner::Lefthook),
         ("snp-v1", Owner::SnpV1),
         ("snp-current", Owner::Snp { stale: false }),
+        (
+            "snp-prior-5bb9bd89cf6c92c58fee7677ceaf4fc3",
+            Owner::Snp { stale: true },
+        ),
     ] {
         assert_eq!(classify(&fixture(name)).unwrap(), want, "{name}");
     }
