@@ -3,6 +3,7 @@
 //!
 //! Owner: WP-27.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -411,6 +412,25 @@ pub fn pretty_json_crash_position(
 /// rule (`handle_capital_sigma`) included; undecodable bytes (lone surrogates in Python, neither cased nor
 /// case-ignorable, so they end a sigma context scan exactly as a chunk boundary does) stay as they are.
 pub fn py_lower(s: &[u8]) -> Vec<u8> {
+    py_lower_cow(s).into_owned()
+}
+
+/// [`py_lower`] without a copy when the name is already lowercase ASCII. Pure ASCII takes the fast path: Python's
+/// `str.lower()` maps exactly `A`-`Z` there (no ASCII letter has another mapping, no capital sigma or dotted I), which
+/// is `to_ascii_lowercase`.
+fn py_lower_cow(s: &[u8]) -> Cow<'_, [u8]> {
+    if s.is_ascii() {
+        return if s.iter().any(u8::is_ascii_uppercase) {
+            Cow::Owned(s.to_ascii_lowercase())
+        } else {
+            Cow::Borrowed(s)
+        };
+    }
+    Cow::Owned(py_lower_slow(s))
+}
+
+/// [`py_lower`] by the full CPython rules (any input).
+fn py_lower_slow(s: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut buf = [0_u8; 4];
     for chunk in s.utf8_chunks() {
@@ -852,6 +872,20 @@ zope==1\n# trailing\n"
         assert_eq!(case_conflicts(&repo, &[b"other"], &[], 3, false).len(), 0);
         assert_eq!(py_lower("ÄΣ".as_bytes()), "äς".as_bytes());
         assert_eq!(py_str_cmp(b"\xff", "\u{e000}".as_bytes()), Ordering::Less);
+    }
+
+    #[test]
+    fn py_lower_ascii_fast_path_matches_the_full_rules() {
+        let all: Vec<u8> = (0_u8..0x80).collect();
+        assert_eq!(py_lower(&all), py_lower_slow(&all));
+        for b in 0_u8..0x80 {
+            assert_eq!(py_lower(&[b]), py_lower_slow(&[b]), "byte {b:#04x}");
+            let ctx = [b'A', b, b'z', b'Z'];
+            assert_eq!(py_lower(&ctx), py_lower_slow(&ctx), "byte {b:#04x}");
+        }
+        assert!(matches!(py_lower_cow(b"src/lib.rs"), Cow::Borrowed(_)));
+        assert!(matches!(py_lower_cow(b"README"), Cow::Owned(_)));
+        assert_eq!(py_lower(b"A\xffB"), py_lower_slow(b"A\xffB"));
     }
 
     #[test]
