@@ -899,14 +899,15 @@ impl Git {
         }
     }
 
-    /// `git ls-files -s -v -z` (snp-only, ADR-106), streamed through an incremental parser: the [`Self::all_files`]
-    /// list (runs of equal paths folded, as `--deduplicate` does) with each path's index mode, and whether every
-    /// entry is cached, unflagged (no assume-unchanged, skip-worktree or fsmonitor-valid bit) and at stage 0. Only
-    /// the paths are kept, in a buffer of their own: the listing itself is never held. Any failure (spawn, exit
-    /// status, a record of an unknown shape) is the caller's cue to ask [`Self::all_files`] at the same position,
-    /// whose error is pre-commit's.
+    /// `git ls-files -s -v -f -z` (snp-only, ADR-106), streamed through an incremental parser: the
+    /// [`Self::all_files`] list (runs of equal paths folded, as `--deduplicate` does) with each path's index mode, and
+    /// whether every entry is cached, unflagged and at stage 0. `-v` lowercases the tag of an assume-unchanged entry
+    /// and `-f` (git ≥ 2.16) that of an fsmonitor-valid one, however fsmonitor was turned on; skip-worktree entries
+    /// are tagged `S`. Only the paths are kept, in a buffer of their own: the listing itself is never held. Any
+    /// failure (spawn, exit status, a record of an unknown shape) is the caller's cue to ask [`Self::all_files`] at
+    /// the same position, whose error is pre-commit's.
     pub fn all_files_tagged(&self) -> Result<TaggedIndex, Failure> {
-        let argv = self.argv(&["ls-files", "-s", "-v", "-z"]);
+        let argv = self.argv(&["ls-files", "-s", "-v", "-f", "-z"]);
         let mut parser = TaggedParser::default();
         let (status, stderr) = self
             .backend
@@ -922,7 +923,7 @@ impl Git {
         }
         parser
             .finish()
-            .map_err(|r| bad_record("ls-files -s -v -z", &r))
+            .map_err(|r| bad_record("ls-files -s -v -f -z", &r))
     }
 
     /// Whether the effective configuration lets a clean `git diff` stand for an `lstat` of every unflagged index
@@ -931,9 +932,17 @@ impl Git {
     /// `core.useBuiltinFSMonitor`, `core.ignoreStat`, `core.sparseCheckout` and `index.sparse` false or unset. One
     /// `git config -z --bool --get-regexp`; a value git cannot read as a boolean (an fsmonitor hook path) makes git
     /// fail. Only a child that ran and answered can grant the trust (fail closed): a spawn failure, a status other
-    /// than 0 or 1 (no key matched), an exit 1 that printed something or a malformed record is `false`.
+    /// than 0 or 1 (no key matched), an exit 1 that printed something or a malformed record is `false`. So is a
+    /// non-empty `GIT_TEST_FSMONITOR` (`GIT_FSMONITOR_TEST` before git 2.20) in the environment, the hook git runs
+    /// when `core.fsmonitor` is unset, which no configuration query shows (checked before any spawn).
     pub fn trusts_index_modes(&self) -> bool {
         const KEYS: &str = "^(core\\.(filemode|symlinks|fsmonitor|usebuiltinfsmonitor|ignorestat|sparsecheckout)|index\\.sparse)$";
+        if ["GIT_TEST_FSMONITOR", "GIT_FSMONITOR_TEST"]
+            .into_iter()
+            .any(|k| self.env.get_nonempty(k).is_some())
+        {
+            return false;
+        }
         let argv = self.argv(&["config", "-z", "--bool", "--get-regexp", KEYS]);
         // not `run::capture`: its spawn failure is `_oserror_to_output`'s status 1, which reads as "no key set"
         let Ok(out) =
@@ -1438,7 +1447,8 @@ mod tests {
 
     /// ADR-106 (K5): only a `git config` that ran and answered grants the trust. A spawn failure is no answer (not
     /// `_oserror_to_output`'s status 1, which would read as "no key set"), nor is an exit 1 that printed records,
-    /// another status or a malformed record.
+    /// another status or a malformed record; a non-empty `GIT_TEST_FSMONITOR` or `GIT_FSMONITOR_TEST` (git's
+    /// fsmonitor hook when `core.fsmonitor` is unset) refuses before any spawn.
     #[test]
     fn trusts_index_modes_fails_closed_without_an_answer() {
         use crate::testing::{Response, ScriptedBackend};
@@ -1469,6 +1479,21 @@ mod tests {
         ] {
             scripted.on("config *", response);
             assert!(!git.trusts_index_modes(), "{what}");
+        }
+        scripted.on("config *", exit(1, b""));
+        for name in ["GIT_TEST_FSMONITOR", "GIT_FSMONITOR_TEST"] {
+            let calls = scripted.calls().len();
+            let with = |value: &str| {
+                git.with_env(Env::from_pairs([(name, value)]))
+                    .trusts_index_modes()
+            };
+            assert!(with(""), "{name} empty: git reads it as unset");
+            assert!(!with("/path/to/hook"), "{name}");
+            assert_eq!(
+                scripted.calls().len(),
+                calls.saturating_add(1),
+                "{name}: a hook refuses without asking git"
+            );
         }
     }
 

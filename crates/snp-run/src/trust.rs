@@ -1,8 +1,8 @@
 //! Step 15 of a `--all-files` run whose filters allow it: trusted index modes instead of an `lstat` per file
 //! (ARCHITECTURE §2.3, ADR-106, amending ADR-041).
 //!
-//! Three read-only git queries run at once: `git ls-files -s -v -z` (the `all_files` list with each entry's mode and
-//! flags), pre-commit's `prior_diff` (`git diff`, taken here instead of lazily before the first hook) and the
+//! Three read-only git queries run at once: `git ls-files -s -v -f -z` (the `all_files` list with each entry's mode
+//! and flags), pre-commit's `prior_diff` (`git diff`, taken here instead of lazily before the first hook) and the
 //! configuration gate, resolved by git. When the diff is empty and clean (exit 0, nothing on stderr), no entry is
 //! flagged or unmerged, and the configuration lets git compare kinds, `git diff` has `lstat`ed every unflagged entry
 //! and found it with its index kind: the file table answers `os.path.lexists` and the stat tier from the modes

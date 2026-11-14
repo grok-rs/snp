@@ -388,7 +388,7 @@ struct Fifteen {
 
 /// §3.1 step 15: the file table and the classifier when some hook reads files or refs are given; otherwise only the
 /// merge-conflict notice (P17), printed exactly when pre-commit would. A `--all-files` run that can trust index
-/// modes builds its table from `ls-files -s -v -z` and takes its before-diff here (ADR-106).
+/// modes builds its table from `ls-files -s -v -f -z` and takes its before-diff here (ADR-106).
 #[expect(
     clippy::too_many_arguments,
     reason = "the run's borrowed state, one argument per piece"

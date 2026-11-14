@@ -321,7 +321,7 @@ impl GitBackend for Rec {
     }
 }
 
-const TAGGED: &str = "ls-files -s -v -z";
+const TAGGED: &str = "ls-files -s -v -f -z";
 const DEDUP: &str = "ls-files -z --deduplicate";
 const DIFF: &str = "diff --no-ext-diff --no-textconv --ignore-submodules";
 const GATE: &str = "config -z --bool --get-regexp";

@@ -1,4 +1,4 @@
-//! Fuzz target `git_ls_files_tagged`: the incremental parser of `git ls-files -s -v -z` (ADR-106).
+//! Fuzz target `git_ls_files_tagged`: the incremental parser of `git ls-files -s -v -f -z` (ADR-106).
 //! Invariants (ARCHITECTURE §13.5): no panic, no hang > 5 s, ≤ 512 MB RSS, 256 KiB thread stacks.
 //!
 //! The first input byte is the chunk size git's stdout arrives in (0: one write), the rest is that stdout, served by

@@ -130,7 +130,7 @@ pub struct IndexEntries {
     pub modes: Box<[u32]>,
 }
 
-/// `git ls-files -s -v -z` folded into the list [`crate::Git::all_files`] prints, with each path's index mode and
+/// `git ls-files -s -v -f -z` folded into the list [`crate::Git::all_files`] prints, with each path's index mode and
 /// whether every entry is a plain cached one (ADR-106): what a clean `git diff` lets a `--all-files` run trust
 /// instead of an `lstat` per file.
 #[derive(Debug, Clone, Default)]
@@ -142,8 +142,8 @@ pub struct TaggedIndex {
     /// cannot tell an empty file from a FIFO or a socket of size 0 (it compares their empty content), so an empty
     /// entry proves nothing about the file's kind.
     pub modes: Box<[u32]>,
-    /// Every record is tagged `H` (cached: neither assume-unchanged, skip-worktree, fsmonitor-valid nor unmerged)
-    /// and has stage 0.
+    /// Every record is tagged `H` (cached: neither assume-unchanged (`h` under `-v`), fsmonitor-valid (`h` under
+    /// `-f`), skip-worktree (`S`) nor unmerged) and has stage 0.
     pub plain: bool,
 }
 
@@ -153,7 +153,7 @@ const EMPTY_BLOBS: [&[u8]; 2] = [
     b"473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813",
 ];
 
-/// The incremental parser behind [`TaggedIndex`]: `git ls-files -s -v -z` streams through it (`io::Write`), so the
+/// The incremental parser behind [`TaggedIndex`]: `git ls-files -s -v -f -z` streams through it (`io::Write`), so the
 /// listing (about 80 bytes per entry) never sits in memory; only the paths are kept, NUL-separated as git printed
 /// them. Records are `<tag> SP <mode> SP <object> SP <stage> TAB <path> NUL`, parsed by position with `memchr` (S2:
 /// no indexing, no unchecked arithmetic): a letter, an octal mode, an object of 40 or 64 bytes without a space or a

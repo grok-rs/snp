@@ -305,6 +305,50 @@ fn all_files_tagged_equals_ls_files_deduplicate() {
     check(&repo, false);
 }
 
+/// ADR-106: git turns fsmonitor on from the environment when `core.fsmonitor` is unset (`GIT_TEST_FSMONITOR`, named
+/// `GIT_FSMONITOR_TEST` before git 2.20), which no configuration query can see, and `git diff` then skips the
+/// `lstat` of every fsmonitor-valid entry: with a hook that reports no change, a deleted file stays out of the diff.
+/// `-f` lists those entries in lowercase, so the listing is not plain, and the gate refuses on the variable itself.
+#[cfg(unix)]
+#[test]
+fn fsmonitor_valid_entries_are_flagged() {
+    use std::os::unix::fs::PermissionsExt;
+    let sb = Sandbox::new();
+    let repo = sb.init("repo");
+    sb.write(&repo, "f.txt", b"f\n");
+    sb.write(&repo, "g.txt", b"g\n");
+    sb.git(&repo, &["add", "."]);
+    sb.commit(&repo, "init");
+    // protocol 2 (git ≥ 2.26): a token and no path; protocol 1: no path
+    let hook = sb.path("fsmonitor-none");
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\nif test \"$1\" = 2; then printf 'last_update_token\\0'; fi\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let hook = hook.to_str().unwrap();
+    let vars = [("GIT_TEST_FSMONITOR", hook), ("GIT_FSMONITOR_TEST", hook)];
+    // the first refresh writes the fsmonitor extension, the second marks the entries fsmonitor-valid
+    for _ in 0..2 {
+        sb.git_with(&repo, &["update-index", "-q", "--refresh"], &vars);
+    }
+    std::fs::remove_file(repo.join("f.txt")).unwrap();
+    let (git, _) = sb.discover(&repo);
+    let patch = vars
+        .iter()
+        .fold(EnvPatch::default(), |p, &(k, v)| p.set(k, v));
+    let fsm = git.with_env(sb.env.patched(&patch));
+    let tagged = fsm.all_files_tagged().unwrap();
+    assert_eq!(zl(&tagged.paths), strs(&["f.txt", "g.txt"]));
+    assert!(!tagged.plain, "fsmonitor-valid entries are tagged `h`");
+    assert!(!fsm.trusts_index_modes());
+    // the same index without fsmonitor: every entry `H`, and `git diff` sees the deletion
+    assert!(git.all_files_tagged().unwrap().plain);
+    assert!(git.trusts_index_modes());
+    assert!(git.diff_fingerprint_clean().unwrap().0.non_empty);
+}
+
 /// ADR-106: `diff_fingerprint_clean` keeps the stdout-only fingerprint and reports whether git exited 0 with an empty
 /// stderr. `git diff` reports an unsearchable directory on stderr only and exits 0: not clean.
 #[cfg(unix)]
