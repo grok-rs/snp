@@ -40,5 +40,9 @@ $ git push                   # pre-push.legacy = git-lfs's hook
 # snp: --hook-dir is repaired, the legacy hook runs, then snp's pre-push hooks
 ```
 
+snp's own hook script never produces the doubled value: both its templates clear `CDPATH` for the `cd`
+(`CDPATH= cd -- …`), and template v2 (ADR-105) takes the directory from `${0%/*}` rather than `dirname`, with the
+same result. The repair is for scripts written by pre-commit or prek that still run `hook-impl`.
+
 Proof: `crates/snp-run/tests/pipeline/hook_impl.rs::d_data_07_cdpath_doubled_hook_dir` and the unit test
 `snp_run::hook_impl::tests::d_data_07_cdpath_repair`; the scenario `tests/differential/divergences/D-DATA-07.yaml`.

@@ -55,6 +55,12 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   names without the Unicode tables (ADR-102).
 - Hook argv lists are borrowed from the run's file table and appended at spawn time: `run --all-files` on 50,000
   files makes about half as many allocations and its heap peaks about 7 MB lower (ADR-103).
+- The installed hook script (template v2, ID `405bd8559925d194c1d22af6ef66282e`) finds its directory by parameter
+  expansion instead of running `dirname`: one process less per hook run, with the same `--hook-dir` (ADR-105). It
+  keeps the old template's ID as a `# snp 2.0 compat ID:` line, so snp 2.0.0–2.0.1 still recognise it. Scripts
+  installed by those versions keep working; `snp doctor` reports them as "an older snp hook script" until `snp
+  install` (or `snp doctor --fix`) rewrites them. A script with snp's header and an ID this version does not know is
+  treated as an snp script, never as pre-commit's.
 
 - Benchmarks (developer tooling, no runtime change): pull requests and pushes measure the base commit's snp, built
   against its own `deps.lock` crates and toolchain and primed into its own stores, in interleaved ABBA rounds with the
