@@ -542,8 +542,8 @@ mod classify {
 
     /// ADR-110: a hook whose filter references only meta tags (`file`, `executable`, `symlink`, …) keeps the same
     /// files, and a content hook reports the same unreadable file, whether it runs first, after `text`/`python`
-    /// hooks, or alone, with and without trusted index modes (the meta tier and the stat tier agree, and the meta
-    /// tier never reads content).
+    /// hooks, or alone, without trusted index modes and with them, declared with and without a shebang filter (the
+    /// meta tier and the stat tier agree, and the meta tier never reads content).
     #[cfg(unix)]
     #[test]
     fn meta_only_hooks_agree_in_any_order() {
@@ -580,17 +580,19 @@ mod classify {
             &[1, 6, 3, 5, 2, 4, 0],
         ];
         let pool = pool(2);
-        let table = |trusted: bool| {
+        // The declared tags of a trusted run: with a shebang filter (meta-only filters then take the stat tier,
+        // ADR-106 decision (4)) and without one (they take the meta tier from the index modes).
+        let table = |trust: Option<&[&str]>| {
             let mut t = FileTable::from_args(names.clone(), d.path());
-            if trusted {
+            if let Some(declared) = trust {
                 let valid = Arc::new(std::sync::atomic::AtomicBool::new(true));
-                assert!(t.trust_index_modes(modes.clone(), valid, tags(&["file", "python"])));
+                assert!(t.trust_index_modes(modes.clone(), valid, tags(declared)));
             }
             t
         };
         let alone: Vec<Result<Vec<String>, String>> = filters
             .iter()
-            .map(|(_, flt)| outcome(&classifier(table(false), &cache, &pool), flt, &pool))
+            .map(|(_, flt)| outcome(&classifier(table(None), &cache, &pool), flt, &pool))
             .collect();
         assert!(
             alone[0]
@@ -600,15 +602,20 @@ mod classify {
         );
         assert_eq!(alone[4].is_err(), unreadable, "{:?}", alone[4]);
         assert_eq!(alone[2].as_ref().unwrap(), &["link.py", "broken", "pkg.py"]);
-        for trusted in [false, true] {
+        let trusts: [Option<&[&str]>; 3] = [
+            None,
+            Some(&["file", "python"]),
+            Some(&["file", "symlink", "directory", "text"]),
+        ];
+        for trust in trusts {
             for order in orders {
-                let c = classifier(table(trusted), &cache, &pool);
+                let c = classifier(table(trust), &cache, &pool);
                 for &k in order {
                     let (name, flt) = &filters[k];
                     assert_eq!(
                         outcome(&c, flt, &pool),
                         alone[k],
-                        "{name} in order {order:?}, trusted {trusted}"
+                        "{name} in order {order:?}, trust {trust:?}"
                     );
                 }
             }
