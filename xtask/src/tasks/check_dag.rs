@@ -2,9 +2,9 @@
 //!
 //! Rules (§1.2, ADR-071 item 7, ADR-081):
 //! * the workspace members are exactly the nodes of [`DAG`];
-//! * a crate's normal dependencies on workspace crates and on the user crates (`cfgv`, `file-identify`) are exactly
-//!   its listed edges, plus `snp-core` for every crate (`xtask` included) except `snp-pycompat`, `snp-probe` and
-//!   `snp-core` itself;
+//! * a crate's normal dependencies on workspace crates are exactly its listed edges, plus `snp-core` for every crate
+//!   (`xtask` included) except the leaves `snp-pycompat`, `snp-cfgv`, `snp-identify`, `snp-probe` and `snp-core`
+//!   itself (the absorbed `snp-cfgv` and `snp-identify`, ADR-116, depend on no workspace crate);
 //! * build dependencies are a subset of the normal edges;
 //! * a crate may dev-depend on any of its ancestors, and on `snp-testkit` unless it is `snp-testkit` or one of its
 //!   ancestors (no dev-cycles); `snp` may dev-depend on every crate;
@@ -22,13 +22,16 @@ use crate::workspace;
 /// The edge list of ARCHITECTURE §1.2 (without the implicit `snp-core` edge).
 const DAG: &[(&str, &[&str])] = &[
     ("snp-pycompat", &[]),
+    // ADR-116: the absorbed cfgv and file-identify (library names `cfgv`, `file_identify`) are leaves.
+    ("snp-cfgv", &[]),
+    ("snp-identify", &[]),
     ("snp-core", &["snp-pycompat"]),
     ("snp-argparse", &["snp-pycompat"]),
     ("snp-cli", &["snp-argparse"]),
     ("snp-pyre", &["snp-pycompat"]),
-    ("snp-yaml", &["snp-pycompat", "cfgv"]),
+    ("snp-yaml", &["snp-pycompat", "snp-cfgv"]),
     ("snp-os", &["snp-pycompat"]),
-    ("snp-proc", &["snp-pycompat", "snp-os", "file-identify"]),
+    ("snp-proc", &["snp-pycompat", "snp-os", "snp-identify"]),
     ("snp-net", &["snp-os"]),
     (
         "snp-lang",
@@ -45,8 +48,8 @@ const DAG: &[(&str, &[&str])] = &[
             "snp-pycompat",
             "snp-yaml",
             "snp-pyre",
-            "cfgv",
-            "file-identify",
+            "snp-cfgv",
+            "snp-identify",
         ],
     ),
     ("snp-store", &["snp-pycompat", "snp-os"]),
@@ -57,7 +60,7 @@ const DAG: &[(&str, &[&str])] = &[
             "snp-pyre",
             "snp-os",
             "snp-proc",
-            "file-identify",
+            "snp-identify",
         ],
     ),
     (
@@ -76,8 +79,8 @@ const DAG: &[(&str, &[&str])] = &[
             "snp-git",
             "snp-pyparsers",
             "snp-hooks-data",
-            "file-identify",
-            "cfgv",
+            "snp-identify",
+            "snp-cfgv",
         ],
     ),
     (
@@ -138,7 +141,7 @@ const DAG: &[(&str, &[&str])] = &[
             "snp-yaml",
             "snp-pyre",
             "snp-hooks-data",
-            "file-identify",
+            "snp-identify",
         ],
     ),
     (
@@ -163,10 +166,14 @@ const DAG: &[(&str, &[&str])] = &[
     ("xtask", &["snp-cli", "snp-hooks", "snp-argparse"]),
 ];
 
-/// The sibling user crates: tracked as DAG leaves, not workspace members.
-const USER_CRATES: [&str; 2] = ["cfgv", "file-identify"];
 /// Crates without the implicit `snp-core` edge.
-const NO_CORE: [&str; 3] = ["snp-pycompat", "snp-probe", "snp-core"];
+const NO_CORE: [&str; 5] = [
+    "snp-pycompat",
+    "snp-cfgv",
+    "snp-identify",
+    "snp-probe",
+    "snp-core",
+];
 /// Crates nothing may depend on.
 const NEVER_DEPENDED_ON: [&str; 2] = ["snp", "snp-difftest"];
 
@@ -178,7 +185,7 @@ pub(crate) struct Deps {
     pub(crate) dev: BTreeSet<String>,
 }
 
-/// Workspace members → their dependencies on tracked crates (members and user crates).
+/// Workspace members → their dependencies on other workspace members.
 pub(crate) type Graph = BTreeMap<String, Deps>;
 
 /// The allowed normal edges of every node (incl. the implicit `snp-core` edge).
@@ -310,7 +317,7 @@ pub(crate) fn graph_from_metadata(meta: &serde_json::Value) -> anyhow::Result<Gr
             let Some(dep) = d.get("name").and_then(serde_json::Value::as_str) else {
                 continue;
             };
-            if !members.contains(dep) && !USER_CRATES.contains(&dep) {
+            if !members.contains(dep) {
                 continue; // a third-party crate: not part of the DAG
             }
             let set = match d.get("kind").and_then(serde_json::Value::as_str) {
@@ -424,6 +431,27 @@ mod tests {
                 .iter()
                 .any(|m| m.contains("nothing may depend on snp"))
         );
+    }
+
+    #[test]
+    fn the_absorbed_crates_stay_leaves() {
+        // ADR-116: snp-cfgv and snp-identify depend on no workspace crate, not even snp-core.
+        for leaf in ["snp-cfgv", "snp-identify"] {
+            for dep in ["snp-core", "snp-pycompat"] {
+                let mut g = clean();
+                plant(&mut g, leaf, "normal", dep);
+                let v = check(&g);
+                assert_eq!(v.len(), 1, "{v:?}");
+                assert!(v[0].contains(&format!("forbidden edge `{leaf}` -> `{dep}`")));
+            }
+        }
+        // A crate that lost its edge to an absorbed crate is reported.
+        let mut g = clean();
+        g.get_mut("snp-files")
+            .unwrap()
+            .normal
+            .remove("snp-identify");
+        assert!(check(&g)[0].contains("missing edge `snp-files` -> `snp-identify`"));
     }
 
     #[test]
