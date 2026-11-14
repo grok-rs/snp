@@ -1002,7 +1002,7 @@ mod integration {
             CheckFn::check_int(),
             Schema::array(Schema::map(
                 "Object",
-                Some(Value::from("nane")),
+                Some(Value::from("nane")), // spellchecker:disable-line (the id key is absent on purpose)
                 vec![Validator::required("name", CheckFn::check_string())],
             )),
         )
