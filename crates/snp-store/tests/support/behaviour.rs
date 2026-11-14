@@ -1406,3 +1406,160 @@ fn foreign_store_as_root_is_refused_unless_allowed() {
         String::from_utf8_lossy(&out.stdout)
     );
 }
+
+// ----- config tracking on a fresh store, gc fast paths (C1, P20) -----
+
+/// C1: pre-commit creates its store before `mark_config_used`, so a fresh-store `install-hooks --config c` tracks
+/// `c` and a later gc keeps its repositories. snp's lazy store keeps the pair until `ensure_created` and records it
+/// then; a store that is never created stays absent, and a config that does not exist is never recorded.
+#[test]
+fn configs_marked_before_the_store_exists_are_tracked_on_creation() {
+    let d = tempfile::tempdir().unwrap();
+    let base = snp_os::realpath::realpath_nonstrict(d.path(), Path::new("/")).unwrap();
+    let proj = base.join("proj");
+    std::fs::create_dir_all(&proj).unwrap();
+    let cfg = proj.join("c.yaml");
+    std::fs::write(&cfg, b"repos: []\n").unwrap();
+    let want = vec![snp_store::TrackedConfig {
+        path: cfg.clone(),
+        project_root: proj.clone(),
+    }];
+
+    let s = store_at(&base.join("store"));
+    s.mark_config_used(&cfg, &proj);
+    s.mark_config_used(&cfg, &proj);
+    s.mark_config_used(&proj.join("missing.yaml"), &proj);
+    assert!(!s.exists(), "tracking never creates the store");
+    assert_eq!(s.tracked_configs(), Vec::new());
+    s.ensure_created(Brand::Snp, &CollectWarnings::new())
+        .unwrap();
+    assert_eq!(s.tracked_configs(), want);
+    let entries = std::fs::read_dir(base.join("store/configs-v1"))
+        .unwrap()
+        .count();
+    assert_eq!(entries, 1, "recorded once");
+
+    // A config deleted before the store is created is not recorded (re-checked at the flush).
+    let gone = proj.join("gone.yaml");
+    std::fs::write(&gone, b"repos: []\n").unwrap();
+    let late = store_at(&base.join("late"));
+    late.mark_config_used(&gone, &proj);
+    std::fs::remove_file(&gone).unwrap();
+    late.ensure_created(Brand::Snp, &CollectWarnings::new())
+        .unwrap();
+    assert_eq!(late.tracked_configs(), Vec::new());
+
+    // A process that never creates the store leaves nothing behind.
+    let never = store_at(&base.join("never"));
+    never.mark_config_used(&cfg, &proj);
+    drop(never);
+    assert!(!base.join("never").exists());
+}
+
+/// C1 for try-repo: the user's config is marked on the main store, which try-repo's ephemeral store creates through
+/// its own copy of the main store's handle; the pending config is recorded in the main store only.
+#[test]
+fn ephemeral_store_records_the_main_stores_pending_configs() {
+    let d = tempfile::tempdir().unwrap();
+    let base = snp_os::realpath::realpath_nonstrict(d.path(), Path::new("/")).unwrap();
+    let cfg = base.join(".pre-commit-config.yaml");
+    std::fs::write(&cfg, b"repos: []\n").unwrap();
+    let main = store_at(&base.join("main"));
+    main.mark_config_used(&cfg, &base);
+    let e = Store::ephemeral(&base.join("eph"), Some(&main));
+    e.ensure_created(Brand::Snp, &CollectWarnings::new())
+        .unwrap();
+    let tracked = store_at(&base.join("main")).tracked_configs();
+    assert_eq!(tracked.len(), 1);
+    assert_eq!(tracked.first().unwrap().path, cfg);
+    assert_eq!(
+        e.tracked_configs(),
+        Vec::new(),
+        "never tracked in the throwaway store"
+    );
+}
+
+/// `retain_markers_keeping`: the named markers stay without being read; every other file is decided by `keep`
+/// (undecodable files go), as `retain_markers` does.
+#[test]
+fn retain_markers_keeping_skips_the_kept_names() {
+    let (_g, root, s) = new_store();
+    let kept = MarkerKey::Initialized {
+        db_repo_name: Arc::from("https://x/kept"),
+        rev: Arc::from("v1"),
+    };
+    let dropped = MarkerKey::Initialized {
+        db_repo_name: Arc::from("https://x/dropped"),
+        rev: Arc::from("v1"),
+    };
+    let inst = MarkerKey::Installed {
+        install_key: [7; 16],
+    };
+    for k in [&kept, &dropped, &inst] {
+        s.set_marker(k);
+    }
+    std::fs::write(root.join("keys-v1/not-a-marker"), b"junk").unwrap();
+    let mut seen = Vec::new();
+    let removed = s.retain_markers_keeping(std::slice::from_ref(&kept), &mut |k| {
+        seen.push(format!("{k:?}"));
+        matches!(k, MarkerKey::Installed { .. })
+    });
+    assert_eq!(removed, 2, "dropped + junk");
+    assert_eq!(seen.len(), 2, "kept is never read: {seen:?}");
+    assert!(s.marker_exists(&kept) && s.marker_exists(&inst) && !s.marker_exists(&dropped));
+    assert!(!root.join("keys-v1/not-a-marker").exists());
+}
+
+/// sweep's tool step reads no sidecar when no tool version is old enough (so even a malformed sidecar removes
+/// nothing then), still removes empty tool directories, and walks the repository entries by name: a repository
+/// lock file is skipped, a symlinked repository's environments still protect their tools.
+#[cfg(unix)]
+#[test]
+fn sweep_tools_fast_paths_keep_the_removal_set() {
+    let (g, root, s) = new_store();
+    std::fs::create_dir_all(s.tool_dir("go", "1.21.0")).unwrap();
+    std::fs::create_dir_all(root.join("tools-v1/empty")).unwrap();
+    let h = handle(&s);
+    let env_dir = s.env_dir(&h, LanguageId::Node, "22.11.0");
+    std::fs::create_dir_all(&env_dir).unwrap();
+    std::fs::write(env_dir.join(".snp-tools.json"), b"{garbage").unwrap();
+    let now = SystemTime::now();
+    assert_eq!(s.sweep(now).removed_dirs, 0);
+    assert!(s.tool_dir("go", "1.21.0").exists());
+    assert!(
+        !root.join("tools-v1/empty").exists(),
+        "empty tool dir removed"
+    );
+    // Old enough now: the malformed sidecar protects everything.
+    assert_eq!(s.sweep(now + Duration::from_hours(2)).removed_dirs, 0);
+    assert!(s.tool_dir("go", "1.21.0").exists());
+    std::fs::remove_dir_all(&env_dir).unwrap();
+
+    // A symlinked repository entry whose environment references node: node stays, go goes.
+    std::fs::create_dir_all(s.tool_dir("node", "22.11.0")).unwrap();
+    let elsewhere = g.path().join("elsewhere");
+    let env = elsewhere.join("envs/node-22.11.0");
+    std::fs::create_dir_all(&env).unwrap();
+    Store::commit_install_marker(
+        &env,
+        b"{}",
+        &[ToolRef {
+            tool: Arc::from("node"),
+            version: Arc::from("22.11.0"),
+        }],
+    )
+    .unwrap();
+    let (key, _) = remote(URL, "linked", &[]);
+    let repos = root.join("repos-v1");
+    std::os::unix::fs::symlink(&elsewhere, repos.join(key.hex())).unwrap();
+    let lock = repos.join(format!("{}.lock", key.hex()));
+    std::fs::write(&lock, b"").unwrap();
+    let r = s.sweep(now + Duration::from_hours(2));
+    assert_eq!(r.removed_dirs, 1, "only go");
+    assert!(!s.tool_dir("go", "1.21.0").exists());
+    assert!(s.tool_dir("node", "22.11.0").exists());
+    assert!(
+        lock.exists(),
+        "the lock of a present (symlinked) repository is not an orphan"
+    );
+}

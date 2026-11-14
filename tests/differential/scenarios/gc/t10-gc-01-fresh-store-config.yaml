@@ -1,0 +1,37 @@
+name: gc/t10-gc-01-fresh-store-config
+description: >-
+  A fresh store: `install-hooks --config c.yaml` creates the store and clones two repositories, so its config must
+  be tracked although the store did not exist when the config was marked used (pre-commit creates its store before
+  `mark_config_used`); gc then removes nothing. Then the config goes away and gc removes both.
+covers: [T10-GC-01, T10-STO-11]
+repos:
+  hooks:
+    fixture: script_hooks_repo
+    tags: [v1]
+  other:
+    fixture: script_hooks_repo
+    tags: [v1]
+work:
+  config: |
+    repos:
+    -   repo: meta
+        hooks: [{id: identity}]
+  files:
+    c.yaml: |
+      repos:
+      -   repo: ${repo:hooks}
+          rev: v1
+          hooks: [{id: bash_hook}]
+      -   repo: ${repo:other}
+          rev: v1
+          hooks: [{id: bash_hook}]
+steps:
+  # the harness creates both store directories empty; a fresh store has none
+  - shell: rm -rf "${store}" "${snp_store}"
+  - tool: [install-hooks, --config, c.yaml]
+  - tool: [gc]
+  - tool: [gc]
+  - shell: rm c.yaml
+  - tool: [gc]
+compare:
+  store: true
