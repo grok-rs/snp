@@ -886,7 +886,155 @@ pub fn parse_go_duration(s: &str) -> Result<Duration, String> {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
+
+    /// The hashed probe the parsers used before their single pass.
+    fn probe<'a>(m: &'a Map, k: &str) -> Option<&'a Value> {
+        m.get(&Value::from(k))
+    }
+
+    /// Reference model of [`parse_hook_ext`]: one hashed probe per `HOOK_EXT_KEYS` entry, in that order.
+    fn parse_hook_ext_by_probes(m: &Map) -> HookExt {
+        let mut ext = HookExt::default();
+        for key in HOOK_EXT_KEYS {
+            if let Some(v) = probe(m, key) {
+                apply_hook_key(&mut ext, key, v);
+            }
+        }
+        ext
+    }
+
+    /// Reference model of [`parse_root_ext`]: one hashed probe per root extension key, in `ROOT_EXT_KEYS` order.
+    fn parse_root_ext_by_probes(m: &Map) -> RootExt {
+        let mut ext = RootExt::default();
+        if let Some(v) = probe(m, "minimum_snp_version").and_then(Value::as_str) {
+            ext.minimum_snp_version = Some(arc(v));
+        }
+        if let Some(p) = probe(m, "priorities").and_then(Value::as_map) {
+            for (k, v) in p {
+                if let (Some(k), Some(v)) =
+                    (k.as_str(), v.as_int().and_then(|i| u32::try_from(i).ok()))
+                {
+                    ext.priorities.insert(arc(k), v);
+                }
+            }
+        }
+        if let Some(f) = probe(m, "fail_on_changes").and_then(parse_fail_on_changes) {
+            ext.fail_on_changes = f;
+        }
+        if let Some(v) = probe(m, "skip") {
+            ext.skip = parse_conditions(v);
+        }
+        if let Some(v) = probe(m, "only") {
+            ext.only = parse_conditions(v);
+        }
+        if let Some(b) = probe(m, "allow_disable").and_then(Value::as_bool) {
+            ext.allow_disable = b;
+        }
+        ext.fast_path = match probe(m, "fast_path").and_then(Value::as_str) {
+            Some("off") => FastPath::Off,
+            Some("exact") => FastPath::Exact,
+            _ => FastPath::Auto,
+        };
+        if let Some(ids) = probe(m, "fast_path_exclude").and_then(Value::as_array) {
+            ext.fast_path_exclude = ids.iter().filter_map(Value::as_str).map(arc).collect();
+        }
+        if let Some(b) = probe(m, "fast_path_coalesce").and_then(Value::as_bool) {
+            ext.fast_path_coalesce = b;
+        }
+        ext.output = match probe(m, "output").and_then(Value::as_str) {
+            Some("summary") => OutputMode::Summary,
+            Some("quiet") => OutputMode::Quiet,
+            _ => OutputMode::Default,
+        };
+        ext
+    }
+
+    /// Values for any key: the valid spellings of every extension key and values of the wrong type or range (the
+    /// parsers never fail and must ignore what they cannot use exactly as before).
+    fn values() -> Vec<Value> {
+        let list = |items: Vec<Value>| Value::List(items);
+        vec![
+            Value::Null,
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Int(3),
+            Value::Int(-1),
+            Value::Int(1 << 40),
+            Value::Float(2.5),
+            Value::from(""),
+            Value::from("early"),
+            Value::from("1.2"),
+            Value::from("trust"),
+            Value::from("verify"),
+            Value::from("ci"),
+            Value::from("non-ci"),
+            Value::from("never"),
+            Value::from("always"),
+            Value::from("merge"),
+            Value::from("1m30s"),
+            Value::from("./sub//dir/"),
+            Value::from("/abs"),
+            Value::from("off"),
+            Value::from("exact"),
+            Value::from("summary"),
+            Value::from("quiet"),
+            list(vec![Value::from("g1"), Value::Int(2), Value::from("g2")]),
+            list(vec![
+                Value::from("rebase"),
+                cfgv::value_map! {"ref" => "main", "ci" => true},
+            ]),
+            cfgv::value_map! {"env" => "CI"},
+            cfgv::value_map! {"A" => "1", "B" => "x"},
+            cfgv::value_map! {"early" => 1, "late" => 9, "bad" => -1},
+            Value::Tuple(vec![Value::from("bisect")]),
+        ]
+    }
+
+    /// Keys of a dict under test: every extension key (hook and root), pre-commit keys, unknown keys and non-string
+    /// keys that spell an extension key.
+    fn keys() -> Vec<Value> {
+        let mut keys: Vec<Value> = HOOK_EXT_KEYS
+            .iter()
+            .chain(&ROOT_EXT_KEYS)
+            .chain(&crate::schema::HOOK_KEYS)
+            .chain(&["repos", "zzz", ""])
+            .map(|k| Value::from(*k))
+            .collect();
+        keys.push(Value::Bytes(b"env".to_vec()));
+        keys.push(Value::Tuple(vec![Value::from("skip")]));
+        keys.push(Value::Int(1));
+        keys.push(Value::Null);
+        keys
+    }
+
+    fn dict() -> impl Strategy<Value = Map> {
+        let entry = (prop::sample::select(keys()), prop::sample::select(values()));
+        prop::collection::vec(entry, 0..40)
+            .prop_shuffle()
+            .prop_map(|entries| entries.into_iter().collect())
+    }
+
+    proptest! {
+        /// The single pass parses exactly what the ordered hashed probes parsed, for any key order and mix.
+        #[test]
+        fn parse_hook_ext_matches_the_ordered_probes(m in dict()) {
+            prop_assert_eq!(
+                format!("{:?}", parse_hook_ext(&m)),
+                format!("{:?}", parse_hook_ext_by_probes(&m))
+            );
+        }
+
+        #[test]
+        fn parse_root_ext_matches_the_ordered_probes(m in dict()) {
+            prop_assert_eq!(
+                format!("{:?}", parse_root_ext(&m)),
+                format!("{:?}", parse_root_ext_by_probes(&m))
+            );
+        }
+    }
 
     #[test]
     fn go_durations() {
