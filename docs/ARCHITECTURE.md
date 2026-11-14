@@ -1863,7 +1863,7 @@ use file_identify::TagSet;
 /// What a filter needs beyond the name tier (§2.3): stat (type/mode tags), encoding (text/binary), shebang tags.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)] pub struct Needs { pub stat: bool, pub encoding: bool, pub shebang: bool }
 /// One byte arena + spans; tier columns allocated on first need (§2.3, ADR-079).
-#[derive(Debug)] pub struct FileTable { /* arena, spans, git_modes, name/stat/head/view columns */ }
+#[derive(Debug)] pub struct FileTable { /* arena, spans, git_modes, name/meta/stat/head/view columns */ }
 impl FileTable {
     /// From git -z output (git order kept); Windows: '\' → '/' in the matching view (02 §10).
     pub fn from_zbuf(buf: Vec<u8>, spans: Vec<(u32, u32)>, root: &Path) -> FileTable;
@@ -2364,8 +2364,10 @@ FileTable
  ├─ root_fd (Linux): OnceLock<Option<OwnedFd>>  O_PATH|O_DIRECTORY|O_CLOEXEC root, opened on first need (ADR-101)
  ├─ tier columns, struct-of-arrays, each allocated on first need (Column<T> = OnceLock<Box<[OnceLock<T>]>>):
  │    name: Column<TagSet>                         tags_from_filename (48 B bitset)
+ │    meta: Column<MetaTier>                       ADR-110: Present(Meta) | Trusted(Meta) | Vanished (8 B: one lstat
+ │                                                 or none), for filters that reference only meta tags
  │    stat: Column<StatTier>                       Present | Trusted (exec bit unverified) | Vanished  (one lstat
- │                                                 or none)
+ │                                                 or none; built from the meta cell when there is one)
  │    exact_stat, exact_head                       the lstat answer for a query that observes a Trusted cell's exec bit
  │    head: Column<Result<TagSet, Box<PyExc>>>     text/binary + shebang tags | Unreadable      (≤ 1 open + read)
  │    view: Column<Box<str>>                       lossy UTF-8, '\'→'/' on Windows (only for spans that are not
@@ -2402,6 +2404,20 @@ a partial set cached by an earlier hook that needed only the name tier. A run to
      non-regular files (X13-CLS-03).
   The filter outcome depends only on membership of referenced tags, so evaluating with a partial set whose pending
   categories are irrelevant is exact (S13; property test against full identification).
+  **Meta tier (ADR-110).** A filter whose referenced tags are all *meta tags* (`file`, `directory`, `symlink`,
+  `socket`, `executable`, `non-executable`) and that needs no content tier (`types: [file]`, the default, among them)
+  is answered from the `lstat` meta alone: `meta_tags(m)` is `{directory}`, `{symlink}`, `{socket}` or `{file,
+  executable|non-executable}` (FIFOs and devices as regular files), which equals full identification's tags ∩ meta
+  tags for every name, shebang and content (no name, interpreter or encoding tag is a meta tag; property test
+  against `classify`, and a test over identify's name and interpreter tables), so the filter's outcome is the same.
+  No name tags are computed and the cell is 8 bytes instead of the stat tier's 64. Classification decides it per
+  hook (a crate-private refinement of `Needs`, which stays a published struct with three public fields; the public
+  `tags` keeps asking for full identification). A file that already has a stat tier answers from it; a file that
+  has a meta cell gets its stat tier built from that same observation, never a second `lstat` (so D-CRASH-08's
+  memo semantics are unchanged), and a meta taken from a trusted index mode stays `Trusted`. The classifier's
+  pending `lexists` metas are adopted into the meta tier for a meta-only first hook, into the stat tier otherwise;
+  when every kept file was trusted there is no pending column at all. A kind file-identify adds later is
+  classified in full (fail closed).
   A filter referencing only name-derived tags (`python`, `yaml`, …) still needs the stat tier: identify tags a
   symlink, directory or socket with its type tag alone (`link.py` is not `python`), so the name tier alone answers
   only filters that reference no tag at all.

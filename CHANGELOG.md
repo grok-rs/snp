@@ -112,6 +112,11 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   have changed the worktree. A tree with changes keeps the `lstat` pass and pays for the longer listing and the
   `git config` query in git (about 3% more CPU in the process tree on 50,000 files). Output, exit status and hook
   argv are unchanged.
+- Hooks whose filters name only file kinds (`types: [file]`, the default, and `directory`, `symlink`, `socket`,
+  `executable`, `non-executable`) are classified from each file's kind and executable bit alone, without computing
+  name tags (ADR-110). `run --all-files` on 50,000 files with the default filter runs about 27% fewer instructions
+  in snp and its heap peaks about 3 MB lower. A file's later name-tag or content classification reuses that first
+  observation, as before. Output, argv and errors are unchanged.
 
 - Benchmarks (developer tooling, no runtime change): pull requests and pushes measure the base commit's snp, built
   against its own `deps.lock` crates and toolchain and primed into its own stores, in interleaved ABBA rounds with the

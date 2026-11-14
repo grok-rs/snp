@@ -16,8 +16,9 @@ ADR-096 the owner's decision to make the Verus proofs blocking;
 ADR-097 the stash re-verification by stat stamps; ADR-098 the tier-1 prefilter; ADR-099 the paired bench gate; ADR-100
 the B8 heap budget and counters; ADR-101 classification CPU and fan-out sizing; ADR-102 native-hook facts; ADR-103
 borrowed hook argv; ADR-104 the step-6 changes of the run pipeline; ADR-105 the hook script template v2; ADR-106 trusted
-index modes on clean `--all-files` runs; ADR-108 the forward-only engine of the tier-1 prefilter; ADR-112 snp-yaml's
-owning materialisation; ADR-116 the absorption of cfgv and file-identify into the workspace.
+index modes on clean `--all-files` runs; ADR-108 the forward-only engine of the tier-1 prefilter; ADR-110 the meta-only
+classification tier; ADR-112 snp-yaml's owning materialisation; ADR-116 the absorption of cfgv and file-identify into
+the workspace.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -441,7 +442,7 @@ holding the printer lock must not silence restore messages or the crash banner. 
 
 ### ADR-041 — Tiered lazy tags; unreadable and vanished files
 
-*Status: Accepted; amended by ADR-106 (trusted index modes on clean `--all-files` runs, never the executable bit). The amending ADR is normative where they differ.*
+*Status: Accepted; amended by ADR-106 (trusted index modes on clean `--all-files` runs, never the executable bit) and ADR-110 (a meta tier for filters that reference only `file`/`directory`/`symlink`/`socket`/`executable`/`non-executable`). The amending ADRs are normative where they differ.*
 
 **Decision.** ARCHITECTURE §2.3: name → lstat → ≤ 1 KiB head (+ shebang) tiers driven by each filter's `Needs`; git
 index modes give the stat tier for free after the stash on Unix with `core.fileMode`/`core.symlinks`; vanished files are
@@ -1862,6 +1863,8 @@ re-baselined from CI records (batch M), with breaches acknowledged through the b
 
 ### ADR-101 — Classification CPU and fan-out sizing: one UTF-8 check, core-capped matching, the root dirfd
 
+*Status: Accepted; amended by ADR-110 (decision (3): for a filter that references only meta tags, "memoised" means its meta tier). The amending ADR is normative where they differ.*
+
 **Context.** The November 2026 performance analysis (P11, P17, P19) profiled where snp's own CPU goes in the
 classifier. `FileTable::match_view` validated each name's UTF-8 on every call, once per hook per file (195 of 3,158
 B12u samples). `JobPool::map_ordered` started min(limit, n) threads even when fewer permits existed, so with
@@ -2246,6 +2249,65 @@ peak 11.14 → 8.95 MB; DHAT 295 979 → 288 830 blocks; the largest process's R
 26.79, 30 interleaved runs); output byte-identical to pre-commit 4.7.0. B4–B11 move by at most ±0.05 % and B3 by
 −0.12 % (mean of five alternating runs; its run-to-run spread is ±0.13 %); B1 is −0.25 % from the binary's layout
 alone (glibc's `/proc/self/maps` parse and 46 more relocations; no snp function differs). A pattern whose forward DFA still does not fit the cap costs what it did before; tier 2 is unchanged.
+
+### ADR-110 — Meta-only classification tier
+
+*Amends ADR-041 (a meta tier between the name and stat tiers) and ADR-101 decision (3) (for a meta-only filter,
+"memoised" means its meta tier); ARCHITECTURE §2.3.*
+
+**Context.** The wave-3 performance analysis (Q02, Q22) found that once ADR-106 removed B4's `lstat` pass, building
+the stat tier was most of what remained of classification: `FileTable::classify` took 37.9 M of B4's 144.6 M
+instructions, 29.5 M of them in file-identify's `tags_from_basename`, plus 64 bytes per file (3.2 MB for 50,000 files),
+all for the default `types: [file]`, whose outcome depends on the file kind alone. identify takes the six *meta tags*
+(`file`, `directory`, `symlink`, `socket`, `executable`, `non-executable`) from the `lstat` result only: a directory,
+symlink or socket gets that single tag, any other kind `file` plus its executable tag, and no name, interpreter or
+encoding tag is one of them. The same analysis found the classifier concatenating its partitions into a vector
+regrown from empty and growing `kept` by doubling.
+**Decision.** (1) *Meta tier.* A filter is meta-only when every tag it references is a meta tag and it needs no
+content tier. The classifier answers it from a lazily allocated column of `MetaTier` cells (`Present(Meta)`,
+`Trusted(Meta)` from an ADR-106 index mode, `Vanished`; 8 bytes on Linux) with `meta_tags(m)`; FIFOs and devices
+count as regular files, as in `FileTable::classify`; a kind file-identify adds later has no meta tags and the stat
+tier decides (fail closed). (2) *One observation.* A file that has a stat tier answers a meta-only query from it; the
+stat tier of a file with a meta cell is built from that meta, never from a second `lstat`, and a trusted meta stays
+`Trusted`; a meta-only query that observes the executable bit of a trusted meta takes the `lstat` answer from the
+exact cells (ADR-106 decision (4)). `known_vanished` reads the meta cell until a stat tier exists, `tiers_ready`
+counts the meta cell for a meta-only query, `retain_lexists` compacts the column. (3) *Adoption.* The first hook
+after `Classifier::new` adopts the pending `lexists` metas into the meta tier when its filter is meta-only and into the
+stat tier otherwise, never over a computed cell; when every kept file was trusted there is no pending column at
+all. (4) *API.* `Needs`, a published struct with three public fields, is unchanged (a field would break every struct
+literal of it): the refinement is a crate-private `Query` (the tiers, ADR-106's executable-bit rule and the
+meta-only rule) built by `HookFilter::query`, and the public `FileTable::tags` keeps asking for full identification.
+(5) *Reservations.* `Classifier::new` reserves `kept` once with `try_reserve_exact` (never an in-place collect, which
+would keep the larger `(FileId, Option<Meta>)` buffer for the run); `par_chunks_on` returns the first error in index
+order before reserving anything, otherwise reuses the first partition and reserves the rest once; a failed
+reservation means ordinary growth. `for_hook` reserves nothing per partition (that would over-reserve for selective
+hooks).
+**Rationale.** Exact by construction: the filter references only meta tags, and `meta_tags(m)` is full
+identification's tags restricted to the meta tags for every name, shebang and content. Tests pin it: a property test
+over every kind, both executable bits, arbitrary names and contents, through file-identify's `classify` and snp's
+mapping; no entry of identify's `NAMES`, `EXTENSIONS`, `EXTENSIONS_NEED_BINARY_CHECK` or `INTERPRETERS` tables holds a
+meta tag; a filesystem differential over every kind of entry (a meta-only query never reads content, so it is never
+`Unreadable`, and it is `Vanished` exactly where the stat tier is); and classifier runs in which meta-only and content
+hooks give the same files and errors alone, first or last, with and without trusted modes. D-CRASH-08's semantics
+are unchanged: a later stat tier is the first observation, so a file deleted after a meta-only hook keeps its name
+tags and is dropped by the first hook that needs its content, as with the stat tier before. A stat tier that ignores
+the meta cell, and a wrong meta tag, each fail several of these tests.
+**Consequences.** Measured on private copies of the bench fixtures with the profiling build (fat LTO) against the
+ADR-106 tree, callgrind instructions and dhat of the snp process. The classifier's thread count follows
+`available_parallelism`, which reads a cgroup CPU quota the local governor changes during a run, so each pair ran
+with `SNP_JOBS=4` under `taskset -c 0-3` (and `SNP_JOBS=1` where stated). B4 (50,000 files, `types: [file]`): 144.6 M
+→ 105.0 M instructions (−27%; one job 142.9 M → 103.8 M), `FileTable::classify` and `tags_from_basename` gone (the
+meta tier costs 6.6 M), heap peak 9.01 → 5.76 MB, allocated bytes 29.1 → 24.9 MB. B12u (20 meta-only hooks): 1,359.5 M
+→ 1,324.8 M (−2.5%), heap peak 8.30 → 6.98 MB. B5 (one content hook): 117.7 M → 116.6 M (means of three runs, −1%;
+a trusted run no longer adopts per file). B6 (13 pre-commit-hooks): +0.17% (one job 83.57 M → 83.70 M), heap peak
+unchanged. A config whose meta-only hook runs before a hook that needs name tags pays for both columns: 50,000 files
+with `[file]` then `[text]` cost 0.33% more instructions and 0.34 MB more heap peak, `[text]` then `[file]` 0.45% more
+and 0.06 MB less (one job). Allocation counts hardly move (B4 56,866 → 56,833 blocks, B12u −139): most of the
+expected saving was the per-partition growth that only the rejected per-chunk reservation removes. Output, exit
+status, hook argv and the snp process's `statx`, `openat` and `read` counts are identical on B4, B5, B6 and B12u
+(B12u's output also matches pre-commit 4.7.0's). Two other layouts (the meta-only answer out of line; the per-file
+loop monomorphised per query kind) measured worse in every scenario. Not done: the plan's public `Needs.meta_only`
+field (a breaking change of a published crate) and the per-chunk reservation in `for_hook` (rejected).
 
 ### ADR-112 — snp-yaml materialises by moving what occurs once; the `Node.tag` type change is deferred
 
