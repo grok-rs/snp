@@ -1,5 +1,8 @@
 # Changelog
 
+Frozen history of the standalone cfgv-rs crate up to its import into snp at `6a04a30` (ADR-116). Later changes to
+`crates/snp-cfgv` are recorded in snp's `CHANGELOG.md`.
+
 All notable changes to this project are documented in this file. The format
 is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/).

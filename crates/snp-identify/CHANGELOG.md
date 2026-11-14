@@ -1,5 +1,8 @@
 # Changelog
 
+Frozen history of the standalone file-identify crate up to its import into snp at `1324f40` (ADR-116). Later
+changes to `crates/snp-identify` are recorded in snp's `CHANGELOG.md`.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
