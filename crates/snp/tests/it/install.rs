@@ -1066,7 +1066,7 @@ fn hook_dir_matches_v1_under_git() {
     let (code, _, err) = git(
         &env,
         &r,
-        &["worktree", "add", "-q", root.join("wt").to_str().unwrap()],
+        &["worktree", "add", root.join("wt").to_str().unwrap()],
     );
     assert_eq!(code, 0, "{err}");
     let sep = root.join("sep");
