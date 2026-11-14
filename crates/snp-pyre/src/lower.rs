@@ -4,9 +4,10 @@
 //! * [`Variant::Fast`]: tier-1 (`regex`) text with the cheaper anchor forms of §A.6.5 and the condition bits
 //!   that tell when a haystack needs the exact variant;
 //! * [`Variant::Exact`]: the canonical forms (`$` → `(?=\n?\z)`, look-around `\b`/`\B`) for `fancy-regex`;
-//! * [`Variant::Relaxed`]: the tier-1 prefilter of a tier-2 pattern (look-around → nothing, back-reference →
-//!   `(?s:.*)`, conditional → alternation, atomic/possessive → plain, `$` → `(?m:$)`), whose language is a
-//!   superset of the pattern's under search semantics.
+//! * [`Variant::Relaxed`]: the tier-1 prefilter of a tier-2 pattern and of a tier-1 exact fallback (ADR-098)
+//!   (look-around → nothing, back-reference → `(?s:.*)`, conditional → alternation, atomic/possessive → plain,
+//!   `$` → `(?m:$)`, str `\b`/`\B` → nothing), whose language is a superset of the pattern's under search
+//!   semantics, at every span.
 //!
 //! Every literal except `[0-9A-Za-z]` is hex-escaped (str `\x{H}`, bytes `\xHH`); no inline flag is emitted
 //! except `(?s:.)`, `(?m:^)`, `(?m:$)` and `(?i:\N)`; capturing groups keep Python's numbering. The walk is
@@ -28,7 +29,8 @@ pub(crate) enum Variant {
     Fast,
     /// Canonical forms for the backtracking engine.
     Exact,
-    /// The tier-1 prefilter of a tier-2 pattern.
+    /// The tier-1 prefilter of a tier-2 pattern, and of the exact fallback of a tier-1 pattern with a `\b`/`\B`
+    /// or span condition (ADR-098).
     Relaxed,
 }
 

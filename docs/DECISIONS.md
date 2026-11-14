@@ -13,7 +13,8 @@ the final multi-lens review; ADR-085 the `interactive` extension key; ADR-086 th
 4.7.0; ADR-090 what the scheduled gates can judge; ADR-091 measuring every scenario; ADR-092 the November 2026
 upstream refresh; ADR-093 the path-limited stash checkout; ADR-094 Rust 1.100; ADR-095 machine-checked proofs;
 ADR-096 the owner's decision to make the Verus proofs blocking;
-ADR-099 the paired bench gate; ADR-100 the B8 heap budget and counters.
+ADR-099 the paired bench gate; ADR-100 the B8 heap budget and counters;
+ADR-098 the tier-1 prefilter.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -53,7 +54,7 @@ serde_yaml-family crates are banned; the composer is an arena (aliases share nod
 
 ### ADR-003 — Regular expressions: the 01 Addendum, verbatim (C3)
 
-*Status: Accepted; amended by ADR-079 (tier-1/2 lazy-DFA cache = the crate default 2 MiB; `size_limit` 64 MiB unchanged). The amending ADR is normative where they differ.*
+*Status: Accepted; amended by ADR-079 (tier-1/2 lazy-DFA cache = the crate default 2 MiB; `size_limit` 64 MiB unchanged) and ADR-098 (the tier-1 exact fallback runs behind the relaxed prefilter). The amending ADRs are normative where they differ.*
 
 **Context.** 01 §13/§18.1 and 04a §12.3 proposed two tiers, 07 D4 picked fancy-regex alone, 10 Q6 deferred; all three
 proposals then contradicted the normative 01 Addendum (corpus of 4,858 real patterns) on constants and grammar.
@@ -1747,6 +1748,42 @@ rejected: it races the process's exit and would flap on B8 (9.2 to 10.5 MiB agai
 **Consequences.** B8's permanent soft warning leaves the PR comment; the nightly fails if the patch is ever buffered,
 and so does `perf-smoke` on every push. The PR comment shows count deltas next to the timings. The new ceilings are
 re-baselined from CI records (batch M), with breaches acknowledged through the budget and `[[known_miss]]` mechanism.
+
+### ADR-098 — The tier-1 exact fallback runs behind the relaxed prefilter
+
+*Amends ADR-003 (01 Addendum §A.6.5, §A.6.11) and the D-SEC-10 rationale.*
+
+**Context.** A tier-1 pattern whose fast text took a cheaper anchor form sends the haystacks that meet a condition
+bit (§A.6.5) to the exact text on `fancy-regex`. For a str `\b`/`\B` that is every non-ASCII haystack, and the
+exact look-around forms make `fancy-regex` run its backtracking VM instead of delegating to `regex`. B12u's
+`\b\w{3,8}\b/\w+\.md$` ran that VM on all 20 000 paths of the run (CPU profile: `fancy_regex::vm::run_with` among
+the top self frames), and a non-matching shape such as `^(.+/)*\bconfig\.yaml$` on `é/` × 24 + `x` spent 2.7-4.7 s
+per path and ended in `MatchError::Backtrack`, aborting the run with a D-SEC-10 error where CPython answers "not
+matched". D-SEC-10 said "tier 1 is linear", which was false for this fallback. Tier 2 already avoids both with the
+mandatory relaxed prefilter of §A.6.11.
+**Decision.** (1) When a tier-1 pattern has an exact text and its condition has the `ascii`, `nonempty` or `span`
+bit, `texts` also lowers `Variant::Relaxed` (no search quirk, which only narrows start positions) and counts its depth
+in `Texts.depth`. A `$`-only (`nl`) condition gets no prefilter: its exact text has no word assertion and serves only
+haystacks that end with `\n`. (2) One `engine::Prefilter` serves both tiers: the existing usefulness rule
+(`relaxed_anchored || !is_match("")`); a build failure or a useless prefilter means *no* prefilter, never an error.
+(3) The tier-1 prefilter is built on the first haystack that needs the exact engine (eagerly, without failing, when
+the exact fallback itself is built eagerly), wrapped in `\A(?:…)\z` on the fullmatch engines, and rejects before
+`re.search`, `re.match`, `re.fullmatch` and `search_bytes` reach `fancy-regex`. (4) Its lazy-DFA cache is capped at
+256 KiB per pattern per thread: with the crate default 2 MiB, B12u's process RSS rises 25.5 → 30.8 MiB locally
+(median of 30 interleaved runs), above the 28.61 MiB hard budget; with 256 KiB it is 27.1 MiB (max 28.0). Tier 2's
+prefilter keeps 2 MiB (ADR-079). (5) The Cond `word` bit with a generated Unicode table (P01 part 3) is rejected: no
+gain on top of the prefilter, +1.9 MiB RSS, and it drifts with UCD versions.
+**Rationale.** Relaxed ⊇ exact is the invariant tier 2 already relies on: every relaxed substitution only adds
+matches, at every span, so it holds for search, for a match at position 0 and inside `\A(?:…)\z`. The verifier's
+differential (513 696 compiled rows byte-identical with and without the prefilter, 2.66 M direct superset checks
+without a violation) and the new property tests (`relaxed_is_a_superset` against the exact text, now including the
+fullmatch form; `tier1_prefilter_keeps_every_answer` across the four match calls) found no difference. Measured on
+the B12u fixture: backtracking-engine runs 20 000 → 1 060 per run; snp's own user CPU −19 % (getrusage, user+sys
+−11 %); execve, clone3 and statx counts unchanged (430 / 1 807 / 38 116).
+**Consequences.** A haystack the prefilter rejects is "not matched", CPython's answer, where it used to be a
+backtracking-limit error or seconds of work; haystacks it admits still get the exact engine, so the backtrack limit
+and the D-SEC-10 error remain for them. D-SEC-10's rationale now reads "the tier-1 exact fallback is prefiltered"; no
+new divergence. The 256 KiB cap re-tunes against CI's B12u RSS once batch C halves the classifier threads (P17).
 
 ## Appendix A — Open questions of the research documents, resolved
 

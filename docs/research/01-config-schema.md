@@ -1999,6 +1999,7 @@ The emitted text is valid for regex 1.13 **and** fancy-regex 0.19 unless it is m
 **Consequences.**
 - *Config patterns* (`Path`) compile a **fast** tier-1 regex with `$`→`\z` (and `\b`→`\b`), plus an **exact** fancy regex that is **built lazily**.
 - At match time: `use_exact = (cond.nl && h.ends_with('\n')) || (cond.ascii && !h.is_ascii()) || (cond.nonempty && h.is_empty())`.
+- *Note (snp ADR-098):* the exact fallback of a `\b`/`\B` (or match-span) condition runs behind the §A.6.11 relaxed prefilter too.
 - In the corpus, 2,891 tier-1 patterns carry `cond.nl` and 7 carry `cond.ascii`. **No real path ended with `\n`**, so the exact variants were never built in the throughput runs.
 - *pygrep by-line* (`Line`) uses form (b). It is exact, needs no dispatch, and matches 04a's probe of `foo$`.
 - *pygrep `--multiline`* has M on globally. A non-M `$` arises only from `(?-m:…$)` and follows the config rule, since the haystack is a whole file.
@@ -2075,6 +2076,8 @@ At match time: `if let Some(r) = relaxed { if !r.is_match(h) { return Ok(false) 
 Skip the prefilter only if `relaxed` matches the empty string at every position (it has no anchors or look-arounds left, and `relaxed.is_match("")` is true). Example: `(?!foo)` relaxes to the empty string.
 
 Gains: 6.3× on the corpus' 42 T2 config patterns; 40× and 1,200× on pygrep look-around patterns (§A.2.4).
+
+*Note (snp ADR-098):* snp also puts this prefilter (the fullmatch engines wrap it in `\A(?:…)\z`) in front of the tier-1 exact fallback of a `\b`/`\B` or match-span condition, built lazily with a 256 KiB lazy-DFA cache.
 
 #### A.6.12 Matching API, caching and fast paths
 

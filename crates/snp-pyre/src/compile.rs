@@ -354,18 +354,31 @@ fn texts(
             fast.cond.span = false;
             exact = None;
         }
-        let depth = exact
-            .as_ref()
-            .map_or(fast.depth, |e| e.depth.max(fast.depth));
+        // ADR-098: the exact fallback of a word-boundary, `\B` or span condition runs behind the relaxed text
+        // (without the search quirk, which only narrows the start positions), the same prefilter as tier 2. A
+        // `$`-only condition keeps none: its exact text has no word assertion to make the backtracking engine
+        // slow, and the haystacks it serves end with `\n`.
+        let c = fast.cond;
+        let relaxed = (exact.is_some() && (c.ascii || c.nonempty || c.span))
+            .then(|| lower::lower(ast, Variant::Relaxed, opts.haystack));
+        let depth = [
+            Some(fast.depth),
+            exact.as_ref().map(|e| e.depth),
+            relaxed.as_ref().map(|r| r.depth),
+        ]
+        .into_iter()
+        .flatten()
+        .max()
+        .unwrap_or(fast.depth);
         Texts {
             main: fast.text.into_boxed_str(),
             exact: exact.map(|e| e.text.into_boxed_str()),
-            relaxed: None,
+            relaxed_anchored: relaxed.as_ref().is_some_and(|r| r.anchored),
+            relaxed: relaxed.map(|r| r.text.into_boxed_str()),
             tier2,
             cond: fast.cond,
             depth,
             bytes,
-            relaxed_anchored: false,
         }
     };
     if tier2 && texts.depth >= crate::engine::FANCY_MAX_DEPTH {

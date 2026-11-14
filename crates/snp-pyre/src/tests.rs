@@ -213,3 +213,39 @@ mod names {
         assert!(bad.is_empty(), "{}", bad.join("\n"));
     }
 }
+
+/// ADR-098: the tier-1 exact fallback of a word-boundary pattern runs the backtracking engine only on the
+/// non-ASCII haystacks its relaxed prefilter admits (B12u's `u05` ran it on all 20 000 paths before), with every
+/// answer unchanged.
+#[test]
+fn tier1_prefilter_skips_the_backtracking_engine() {
+    use crate::engine::probe;
+    use crate::{MatchKind, Options, PyRegex};
+
+    const EXTS: [&str; 20] = [
+        "py", "md", "txt", "rs", "json", "yaml", "toml", "js", "ts", "css", "html", "c", "h", "go",
+        "java", "rb", "sh", "ini", "cfg", "lock",
+    ];
+    let paths: Vec<String> = (0..2_000_usize)
+        .map(|i| format!("café/über/données_{i}.{}", EXTS[i % EXTS.len()]))
+        .collect();
+    let re = PyRegex::compile(r"\b\w{3,8}\b/\w+\.md$", Options::CONFIG).unwrap();
+    assert_eq!(re.kind(), MatchKind::Tier1);
+    let answers = || -> Vec<bool> { paths.iter().map(|p| re.search(p).unwrap()).collect() };
+
+    probe::set_prefilter_off(true);
+    let before = probe::exact_runs();
+    let reference = answers();
+    let without = probe::exact_runs() - before;
+    probe::set_prefilter_off(false);
+
+    let before = probe::exact_runs();
+    let got = answers();
+    let with = probe::exact_runs() - before;
+
+    assert_eq!(got, reference);
+    assert_eq!(reference.iter().filter(|&&m| m).count(), 100);
+    assert_eq!(without, 2_000);
+    // Only the `.md` paths reach the backtracking engine.
+    assert_eq!(with, 100);
+}
