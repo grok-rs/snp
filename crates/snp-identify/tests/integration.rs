@@ -202,4 +202,15 @@ mod integration {
         check::<file_identify::ShlexError>();
         check::<file_identify::FileInfo<'static>>();
     }
+
+    /// identify parity (found by the `identify_classify` fuzz target, ADR-116): a NAMES part and the extension may
+    /// disagree on the encoding, and identify then returns both (`tags_from_filename('NOTICE.woff')` is
+    /// `{'binary', 'plain-text', 'text', 'woff'}` with identify 2.6.20).
+    #[test]
+    fn a_name_part_and_the_extension_may_give_both_encoding_tags() {
+        assert_eq!(
+            file_identify::tags_from_filename("NOTICE.woff").to_string(),
+            "binary, plain-text, text, woff"
+        );
+    }
 }

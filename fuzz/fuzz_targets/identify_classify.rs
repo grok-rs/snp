@@ -1,6 +1,8 @@
 //! `classify` + `Pending`: no panic; finishing from bytes and from a reader
 //! (split into arbitrary reads, with interruptions) agree; every file gets
-//! exactly one encoding tag; `is_text` agrees with `is_text_bytes`.
+//! an encoding tag (usually exactly one: identify itself returns both `text` and
+//! `binary` when a name part and the extension disagree, e.g.
+//! `tags_from_filename('NOTICE.woff')`); `is_text` agrees with `is_text_bytes`.
 #![no_main]
 
 mod identify_common;
@@ -47,7 +49,8 @@ fuzz_target!(|data: &[u8]| {
                 tags.contains(Tag::EXECUTABLE),
                 tags.contains(Tag::NON_EXECUTABLE)
             );
-            assert_ne!(tags.contains(Tag::TEXT), tags.contains(Tag::BINARY));
+            // identify parity: `NOTICE` (a NAMES part, text) + `.woff` (binary) carries both.
+            assert!(tags.contains(Tag::TEXT) || tags.contains(Tag::BINARY));
         }
     }
     if let Ok(filename) = std::str::from_utf8(name) {
