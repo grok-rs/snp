@@ -5,12 +5,12 @@
 use std::collections::TryReserveError;
 use std::sync::Arc;
 
-use file_identify::{Meta, Tag, TagSet};
+use file_identify::Meta;
 use snp_core::failure::{ExcKind, Failure};
 use snp_proc::pool::JobPool;
 use snp_pyre::{MatchError, MatchKind, PyRegex};
 
-use crate::table::{PARALLEL_MIN, REGEX_THREADS, par_chunks_on};
+use crate::table::{PARALLEL_MIN, Query, REGEX_THREADS, par_chunks_on};
 use crate::{FileId, FileTable, HookFilter, TagOutcome, messages};
 
 /// `Classifier.from_config`: top-level include/exclude (`re.search` on the `/`-path), then lexists.
@@ -28,9 +28,10 @@ impl Classifier {
     /// `Classifier.from_config` + `__init__` (`run.py:73-74, 112-126`): keep a file when `include.search(path)` and
     /// not `exclude.search(path)` (on the matching view), then when `os.path.lexists(path)`. Order and duplicates are
     /// kept. Large tables are split into ordered partitions on the pool. The `lstat`s become the stat tier of the
-    /// files the first hook classifies (pre-commit's first `tags_from_path` of those files happens right after). A
-    /// file with a trusted index mode (ADR-106) exists without a syscall; its stat tier is built from the mode when a
-    /// hook first needs it.
+    /// files the first hook classifies, or their meta tier when that hook's filter references only meta tags
+    /// (ADR-110; pre-commit's first `tags_from_path` of those files happens right after). A file with a trusted index
+    /// mode (ADR-106) exists without a syscall; its meta or stat tier is built from the mode when a hook first needs
+    /// it.
     ///
     /// # Errors
     ///
@@ -92,11 +93,11 @@ impl Classifier {
     pub fn for_hook(&self, f: &HookFilter, pool: &JobPool) -> Result<Vec<FileId>, Failure> {
         // The first hook after `Classifier::new` adopts its fresh `lstat`s (a hook that needs no tags discards them).
         let pending = self.table.take_pending();
-        let adopt = pending.as_deref().filter(|_| f.needs.any());
+        let q = f.query();
+        let adopt = pending.as_deref().filter(|_| q.needs.any());
         let table: &FileTable = &self.table;
         let kept = &self.kept;
-        let exec = exec_tags(f);
-        let cheap = kept.len() >= PARALLEL_MIN && memoized(table, kept, f, exec);
+        let cheap = kept.len() >= PARALLEL_MIN && memoized(table, kept, f, q);
         par_chunks_on(pool, kept.len(), REGEX_THREADS, cheap, |range| {
             let mut out = Vec::new();
             for &id in kept.get(range).unwrap_or_default() {
@@ -108,9 +109,9 @@ impl Classifier {
                     continue;
                 }
                 if let Some(p) = adopt {
-                    table.adopt(id, p);
+                    table.adopt(id, p, q);
                 }
-                if keep(table, id, f, exec)? {
+                if keep(table, id, f, q)? {
                     out.push(id);
                 }
             }
@@ -128,14 +129,14 @@ impl Classifier {
     /// As [`Classifier::for_hook`] (an unreadable file whose content the types need).
     pub fn by_types(&self, ids: &[FileId], f: &HookFilter) -> Result<Vec<FileId>, Failure> {
         let pending = self.table.take_pending();
-        let adopt = pending.as_deref().filter(|_| f.needs.any());
-        let exec = exec_tags(f);
+        let q = f.query();
+        let adopt = pending.as_deref().filter(|_| q.needs.any());
         let mut out = Vec::new();
         for &id in ids {
             if let Some(p) = adopt {
-                self.table.adopt(id, p);
+                self.table.adopt(id, p, q);
             }
-            if keep(&self.table, id, f, exec)? {
+            if keep(&self.table, id, f, q)? {
                 out.push(id);
             }
         }
@@ -144,9 +145,10 @@ impl Classifier {
 }
 
 /// Whether `for_hook(f)` over `kept` is memory-only work (ADR-101): both patterns are trivial (no regex call) and
-/// every file they and the prefix pass either needs no tags or has every tier `f.needs` already memoised (a later
-/// hook with the same type filters). Then the classification runs on the calling thread instead of the pool.
-fn memoized(table: &FileTable, kept: &[FileId], f: &HookFilter, exec: bool) -> bool {
+/// every file they and the prefix pass either needs no tags or has every tier `q` needs already memoised (a later
+/// hook with the same type filters, or any later meta-only hook, ADR-110). Then the classification runs on the
+/// calling thread instead of the pool.
+fn memoized(table: &FileTable, kept: &[FileId], f: &HookFilter, q: Query) -> bool {
     let trivial = |re: &PyRegex| matches!(re.kind(), MatchKind::All | MatchKind::EmptyOrNewline);
     if !trivial(&f.files) || !trivial(&f.exclude) {
         return false;
@@ -163,20 +165,10 @@ fn memoized(table: &FileTable, kept: &[FileId], f: &HookFilter, exec: bool) -> b
         }
         match passes(table, id, &f.files, &f.exclude) {
             Ok(false) => true,
-            Ok(true) => table.tiers_ready(id, f.needs, exec),
+            Ok(true) => table.tiers_ready(id, q),
             Err(_) => false,
         }
     })
-}
-
-/// Whether `f` references `executable` or `non-executable`: its outcome then depends on the executable bit, which
-/// is never taken from a trusted index mode (ADR-106).
-fn exec_tags(f: &HookFilter) -> bool {
-    let exec = TagSet::from_tag(Tag::EXECUTABLE).with(Tag::NON_EXECUTABLE);
-    f.types
-        .union(f.types_or)
-        .union(f.exclude_types)
-        .intersects(&exec)
 }
 
 /// `types: []` with the default `types_or`/`exclude_types`: every tag set matches.
@@ -185,13 +177,13 @@ fn no_type_filter(f: &HookFilter) -> bool {
 }
 
 /// The type filter for one file: `Ok(false)` drops it (no match, or gone), `Err` fails the run (unreadable).
-fn keep(table: &FileTable, id: FileId, f: &HookFilter, exec: bool) -> Result<bool, Failure> {
+fn keep(table: &FileTable, id: FileId, f: &HookFilter, q: Query) -> Result<bool, Failure> {
     // No type filter at all (`types: []`, the default `types_or`/`exclude_types`): every tag set matches, so only a
     // file already known to be gone is dropped; no tag needs computing.
     if no_type_filter(f) {
         return Ok(!table.known_vanished(id));
     }
-    match table.tags_for(id, f.needs, exec) {
+    match table.tags_for(id, q) {
         TagOutcome::Tags(tags) => Ok(tags.matches_types(&f.types, &f.types_or, &f.exclude_types)),
         TagOutcome::Vanished => Ok(false),
         TagOutcome::Unreadable(exc) => Err(Failure::Exc {

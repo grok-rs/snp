@@ -6,6 +6,9 @@
 //! first needs it (ADR-041):
 //!
 //! * **name** — `tags_from_filename` (no I/O), interned: two bytes per file;
+//! * **meta** — one `lstat` (or a trusted git index mode) kept as its kind and executable bit alone, for filters that
+//!   reference only `file`/`directory`/`symlink`/`socket`/`executable`/`non-executable` (ADR-110): no name tags,
+//!   eight bytes per file; a later stat tier of the file is built from it, never from a second `lstat`;
 //! * **stat** — one `lstat` (or a trusted git index mode, zero syscalls), stored as file-identify's
 //!   `Classification` (kind + mode + name tags, and whether content is needed);
 //! * **head** — at most one non-blocking `open` + a 1 KiB read (+ a long shebang line): `text`/`binary` and the
@@ -85,6 +88,84 @@ impl Needs {
     }
 }
 
+/// The tags identify takes from the `lstat` result alone (kind and executable bit), never from a name, a shebang or
+/// the content (ADR-110).
+pub(crate) const META_TAGS: TagSet = TagSet::from_tag(Tag::FILE)
+    .with(Tag::DIRECTORY)
+    .with(Tag::SYMLINK)
+    .with(Tag::SOCKET)
+    .with(Tag::EXECUTABLE)
+    .with(Tag::NON_EXECUTABLE);
+
+/// A filter's identification query: its [`Needs`] plus what the tags it references allow (ADR-106, ADR-110). Kept
+/// crate-private because `Needs` is a published struct with public fields: a field there would break every struct
+/// literal of it, while the public [`FileTable::tags`] keeps asking for full identification.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Query {
+    /// The tiers.
+    pub(crate) needs: Needs,
+    /// The filter references `executable` or `non-executable`: the executable bit is never taken from a trusted index
+    /// mode (ADR-106).
+    pub(crate) exec: bool,
+    /// Every referenced tag is in [`META_TAGS`] and no content tier is needed: the `lstat` meta alone decides the
+    /// filter (ADR-110), so the stat tier (name tags) is not built.
+    pub(crate) meta_only: bool,
+}
+
+impl Query {
+    /// The query of a filter that needs `needs` and references `referenced` (`types ∪ types_or ∪ exclude_types`).
+    pub(crate) const fn new(needs: Needs, referenced: TagSet) -> Self {
+        Self {
+            needs,
+            exec: referenced.intersects(&EXEC_TAGS),
+            meta_only: needs.stat
+                && !needs.encoding
+                && !needs.shebang
+                && referenced.is_subset(&META_TAGS),
+        }
+    }
+
+    /// Full identification of the tiers `needs` (the public [`FileTable::tags`]).
+    pub(crate) const fn full(needs: Needs) -> Self {
+        Self {
+            needs,
+            exec: false,
+            meta_only: false,
+        }
+    }
+}
+
+/// identify's meta tags of an entry with meta `m`: `classify(m, name).tags() ∩ META_TAGS` for every name, with snp's
+/// mapping of `Other` (FIFOs, devices) to a regular file (ADR-110). `None` for a kind this version does not know: the
+/// caller then classifies in full (fail closed).
+pub(crate) const fn meta_tags(m: Meta) -> Option<TagSet> {
+    match m.kind() {
+        FileKind::Directory => Some(TagSet::from_tag(Tag::DIRECTORY)),
+        FileKind::Symlink => Some(TagSet::from_tag(Tag::SYMLINK)),
+        FileKind::Socket => Some(TagSet::from_tag(Tag::SOCKET)),
+        FileKind::Regular | FileKind::Other => {
+            Some(TagSet::from_tag(Tag::FILE).with(if m.is_executable() {
+                Tag::EXECUTABLE
+            } else {
+                Tag::NON_EXECUTABLE
+            }))
+        }
+        _ => None,
+    }
+}
+
+/// The meta tier of one file (ADR-110): the `lstat` result alone, for queries whose filters reference only meta tags.
+/// The stat tier of a file with a meta cell is built from it, never from a second `lstat`.
+#[derive(Clone, Copy, Debug)]
+enum MetaTier {
+    /// `lstat` (or an adopted `lexists` meta) succeeded: kind and executable bit.
+    Present(Meta),
+    /// From a trusted index mode (ADR-106): the kind is exact, the executable bit is not.
+    Trusted(Meta),
+    /// `lstat` failed.
+    Vanished,
+}
+
 /// The stat tier of one file.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum StatTier {
@@ -127,11 +208,11 @@ fn no_name_tags(class: &Classification) -> bool {
     matches!(class, Classification::NeedsContent(p) if p.tags().difference(KIND_TAGS).is_empty())
 }
 
-/// Whether a query for `n` (from a filter that references `executable`/`non-executable` when `exec_tags`) can
-/// observe the executable bit of `class`: through those tags, or through the shebang of a file without name tags.
+/// Whether query `q` can observe the executable bit of `class`: through the `executable`/`non-executable` tags its
+/// filter references, or through the shebang of a file without name tags.
 #[inline]
-fn observes_exec(class: &Classification, n: Needs, exec_tags: bool) -> bool {
-    exec_tags || (n.shebang && no_name_tags(class))
+fn observes_exec(class: &Classification, q: Query) -> bool {
+    q.exec || (q.needs.shebang && no_name_tags(class))
 }
 
 /// The head tier of one file.
@@ -232,6 +313,8 @@ pub struct FileTable {
     name: OnceLock<Box<[AtomicU16]>>,
     /// The name tier's interner.
     interner: Mutex<Interner>,
+    /// Meta tier (ADR-110): the `lstat` meta of files first queried by filters that reference only meta tags.
+    meta: Column<MetaTier>,
     /// Stat tier.
     stat: Column<StatTier>,
     /// Head tier.
@@ -320,6 +403,7 @@ impl FileTable {
             git_modes: None,
             name: OnceLock::new(),
             interner: Mutex::new(Interner::default()),
+            meta: Column::new(),
             stat: Column::new(),
             head: Column::new(),
             view: Column::new(),
@@ -454,6 +538,7 @@ impl FileTable {
                 .filter_map(|(m, &k)| k.then_some(*m))
                 .collect();
         }
+        self.meta.retain(&keep);
         self.stat.retain(&keep);
         self.head.retain(&keep);
         self.view.retain(&keep);
@@ -582,32 +667,55 @@ impl FileTable {
     /// D-CRASH-09).
     ///
     /// With trusted index modes (ADR-106) the `executable`/`non-executable` tags of a trusted file come from its index
-    /// mode; the classifier, whose filters may reference them, takes those tags from an `lstat` instead.
+    /// mode; the classifier, whose filters may reference them, takes those tags from an `lstat` instead. When a
+    /// classifier filter that references only meta tags identified the file first (ADR-110), its stat tier is built
+    /// from that observation rather than a second `lstat`.
     pub fn tags(&self, id: FileId, n: Needs) -> TagOutcome<'_> {
-        self.tags_for(id, n, false)
+        self.tags_for(id, Query::full(n))
     }
 
-    /// [`Self::tags`] for a filter that references `executable` or `non-executable` when `exec_tags` is set: the
-    /// executable bit is then never taken from a trusted index mode (ADR-106). Neither is it for a query that needs
-    /// shebang tags of a file without name tags (the bit decides whether identify reads the shebang).
-    pub(crate) fn tags_for(&self, id: FileId, n: Needs, exec_tags: bool) -> TagOutcome<'_> {
+    /// [`Self::tags`] for a filter's query. When the filter references `executable` or `non-executable` the
+    /// executable bit is never taken from a trusted index mode (ADR-106); neither is it for a query that needs shebang
+    /// tags of a file without name tags (the bit decides whether identify reads the shebang). A meta-only query
+    /// (ADR-110) of a file without a stat tier is answered from the meta tier: its meta tags, which decide its filter
+    /// exactly as full identification would, since the filter references no other tag.
+    pub(crate) fn tags_for(&self, id: FileId, q: Query) -> TagOutcome<'_> {
         let Some(i) = self.index(id) else {
             return TagOutcome::Vanished;
         };
         if self.known_vanished(id) {
             return TagOutcome::Vanished;
         }
+        let n = q.needs;
         if !n.any() {
             return TagOutcome::Tags(self.name_tags(i));
         }
-        let class = match self.stat_tier(i, !exec_tags) {
+        if q.meta_only
+            && self.stat.peek(i).is_none()
+            && let Some(outcome) = self.meta_outcome(i, q)
+        {
+            return outcome;
+        }
+        let class = match self.stat_tier(i, !q.exec) {
             StatTier::Vanished => return TagOutcome::Vanished,
-            StatTier::Trusted(c) if observes_exec(&c, n, exec_tags) => {
+            StatTier::Trusted(c) if observes_exec(&c, q) => {
                 return self.exact_tags(i, n);
             }
             StatTier::Present(c) | StatTier::Trusted(c) => c,
         };
         self.outcome(i, class, n, &self.head)
+    }
+
+    /// The answer of the meta tier to meta-only query `q` for entry `i` (ADR-110): its meta tags, `Vanished`, or the
+    /// `lstat` answer when `q` observes the executable bit of a meta taken from the index (ADR-106). `None` for a kind
+    /// this version cannot tag from the meta: the caller builds the stat tier from the same meta (fail closed).
+    #[inline]
+    fn meta_outcome(&self, i: usize, q: Query) -> Option<TagOutcome<'_>> {
+        match self.meta_tier(i, !q.exec) {
+            MetaTier::Vanished => Some(TagOutcome::Vanished),
+            MetaTier::Trusted(_) if q.exec => Some(self.exact_tags(i, q.needs)),
+            MetaTier::Present(m) | MetaTier::Trusted(m) => meta_tags(m).map(TagOutcome::Tags),
+        }
     }
 
     /// The outcome of a classification for `n`: its tags, or the head tier memoised in `heads` when `n` asks for a
@@ -645,10 +753,7 @@ impl FileTable {
     /// A run that declared its filters to [`Self::trust_index_modes`] never gets here.
     fn exact_tags(&self, i: usize, n: Needs) -> TagOutcome<'_> {
         let len = self.len();
-        let compute = || match self.lexists_meta(i) {
-            Some(meta) => StatTier::Present(self.classify(i, meta)),
-            None => StatTier::Vanished,
-        };
+        let compute = || self.lstat_tier(i);
         match self
             .exact_stat
             .cell(len, i)
@@ -661,16 +766,17 @@ impl FileTable {
         }
     }
 
-    /// Whether `tags(id, n)` is answered from memoised cells alone (no `lstat`, `open` or name-tier computation):
-    /// the file is known to be gone, or every tier `n` needs for it is computed (ADR-101). A pending `lexists` meta
-    /// does not count: adopting it still classifies the name.
-    pub(crate) fn tiers_ready(&self, id: FileId, n: Needs, exec_tags: bool) -> bool {
+    /// Whether `tags_for(id, q)` is answered from memoised cells alone (no `lstat`, `open` or name-tier
+    /// computation): the file is known to be gone, or every tier `q` needs for it is computed (ADR-101; the meta tier
+    /// for a meta-only query, ADR-110). A pending `lexists` meta does not count: adopting it still writes a cell.
+    pub(crate) fn tiers_ready(&self, id: FileId, q: Query) -> bool {
         let Some(i) = self.index(id) else {
             return true;
         };
         if self.known_vanished(id) {
             return true;
         }
+        let n = q.needs;
         if !n.any() {
             return self
                 .name
@@ -678,9 +784,17 @@ impl FileTable {
                 .and_then(|ids| ids.get(i))
                 .is_some_and(|c| c.load(Ordering::Acquire) != 0);
         }
+        if q.meta_only && self.stat.peek(i).is_none() {
+            return match self.meta.peek(i) {
+                None => false,
+                Some(MetaTier::Vanished) => true,
+                Some(MetaTier::Trusted(_)) if q.exec => false,
+                Some(MetaTier::Present(m) | MetaTier::Trusted(m)) => meta_tags(*m).is_some(),
+            };
+        }
         match self.stat.peek(i) {
             None => false,
-            Some(StatTier::Trusted(c)) if observes_exec(c, n, exec_tags) => false,
+            Some(StatTier::Trusted(c)) if observes_exec(c, q) => false,
             Some(
                 StatTier::Vanished
                 | StatTier::Present(Classification::Done(_))
@@ -696,13 +810,19 @@ impl FileTable {
         }
     }
 
-    /// Whether entry `id` is already known to be gone (a computed stat or head tier said so); no I/O.
+    /// Whether entry `id` is already known to be gone (a computed stat or head tier said so, or, before any stat tier,
+    /// the meta tier); no I/O. A stat tier, once computed, decides: it is built from the meta tier when there is one.
     pub(crate) fn known_vanished(&self, id: FileId) -> bool {
         let Some(i) = self.index(id) else {
             return true;
         };
-        matches!(self.head.peek(i), Some(Head::Vanished))
-            || matches!(self.stat.peek(i), Some(StatTier::Vanished))
+        match self.stat.peek(i) {
+            Some(StatTier::Vanished) => true,
+            Some(StatTier::Present(_) | StatTier::Trusted(_)) => {
+                matches!(self.head.peek(i), Some(Head::Vanished))
+            }
+            None => matches!(self.meta.peek(i), Some(MetaTier::Vanished)),
+        }
     }
 
     /// Fills the required tiers on the pool (runs inline when the caller holds a permit, §1.4.8).
@@ -840,10 +960,22 @@ impl FileTable {
     /// The trusted stat tier of entry `i` (ADR-106), unless a filter of the run needs the shebang of a file whose
     /// name gives no tags: its executable bit decides whether the shebang is read, so it keeps its `lstat`.
     fn trusted_tier(&self, i: usize) -> Option<StatTier> {
-        let meta = self.index_meta(i)?;
+        self.trusted_class(i, self.index_meta(i)?)
+    }
+
+    /// [`Self::trusted_tier`] from the trusted `meta` of entry `i` (a meta tier taken from the index, ADR-110).
+    fn trusted_class(&self, i: usize, meta: Meta) -> Option<StatTier> {
         let class = self.classify(i, meta);
         let shebang = self.index.as_ref().is_some_and(|t| t.shebang);
         (!(shebang && no_name_tags(&class))).then_some(StatTier::Trusted(class))
+    }
+
+    /// The stat tier from one `lstat` of entry `i`.
+    fn lstat_tier(&self, i: usize) -> StatTier {
+        match self.lexists_meta(i) {
+            Some(meta) => StatTier::Present(self.classify(i, meta)),
+            None => StatTier::Vanished,
+        }
     }
 
     /// `os.path.lexists` with the `lstat` meta: the trusted mode, else one `lstat`. An empty name does not exist
@@ -875,22 +1007,54 @@ impl FileTable {
         file_identify::classify(meta, self.bytes_at(i))
     }
 
-    /// The memoised stat tier of entry `i`: the trusted index mode while the trust holds (ADR-106) and `trust` allows
-    /// it (the first query is not one that observes the executable bit), else one `lstat`.
+    /// The memoised stat tier of entry `i`. Built from the meta tier when a meta-only query computed one first
+    /// (ADR-110: the same observation, never a second `lstat`; a meta taken from a trusted index mode stays trusted,
+    /// as a stat tier built at that moment would have); else the trusted index mode while the trust holds (ADR-106)
+    /// and `trust` allows it (the first query is not one that observes the executable bit); else one `lstat`.
     fn stat_tier(&self, i: usize, trust: bool) -> StatTier {
         let n = self.len();
         let compute = || {
+            if self.meta.0.get().is_some()
+                && let Some(tier) = self.stat_from_meta(i)
+            {
+                return tier;
+            }
             trust
                 .then(|| self.trusted_tier(i))
                 .flatten()
-                .unwrap_or_else(|| match self.lexists_meta(i) {
-                    Some(meta) => StatTier::Present(self.classify(i, meta)),
-                    None => StatTier::Vanished,
-                })
+                .unwrap_or_else(|| self.lstat_tier(i))
         };
         match self.stat.cell(n, i) {
             Some(c) => *c.get_or_init(compute),
             None => StatTier::Vanished,
+        }
+    }
+
+    /// The stat tier of entry `i` built from its meta tier, if it has one (ADR-110).
+    #[inline(never)]
+    fn stat_from_meta(&self, i: usize) -> Option<StatTier> {
+        Some(match self.meta.peek(i)? {
+            MetaTier::Present(meta) => StatTier::Present(self.classify(i, *meta)),
+            MetaTier::Trusted(meta) => self
+                .trusted_class(i, *meta)
+                .unwrap_or_else(|| self.lstat_tier(i)),
+            MetaTier::Vanished => StatTier::Vanished,
+        })
+    }
+
+    /// The memoised meta tier of entry `i` (ADR-110): the trusted index mode while the trust holds and `trust` allows
+    /// it (the query does not observe the executable bit), else one `lstat`.
+    fn meta_tier(&self, i: usize, trust: bool) -> MetaTier {
+        let n = self.len();
+        let compute = || match trust.then(|| self.index_meta(i)).flatten() {
+            Some(meta) => MetaTier::Trusted(meta),
+            None => self
+                .lexists_meta(i)
+                .map_or(MetaTier::Vanished, MetaTier::Present),
+        };
+        match self.meta.cell(n, i) {
+            Some(c) => *c.get_or_init(compute),
+            None => MetaTier::Vanished,
         }
     }
 
@@ -909,17 +1073,32 @@ impl FileTable {
         snp_core::sync::lock(&self.pending).take()
     }
 
-    /// Sets the stat tier of `id` from its pending `lexists` meta, when it has one and the tier is not computed.
-    pub(crate) fn adopt(&self, id: FileId, pending: &[Option<Meta>]) {
+    /// Records the pending `lexists` meta of `id` as the first identification `q` needs, when it has one and neither
+    /// the meta nor the stat tier is computed: the meta tier for a meta-only query (ADR-110), else the stat tier.
+    #[inline]
+    pub(crate) fn adopt(&self, id: FileId, pending: &[Option<Meta>], q: Query) {
         let Some(i) = self.index(id) else { return };
         let Some(Some(meta)) = pending.get(i) else {
             return;
         };
-        let n = self.len();
-        if let Some(c) = self.stat.cell(n, i)
+        if q.meta_only {
+            self.adopt_meta(i, *meta);
+        } else if let Some(c) = self.stat.cell(self.len(), i)
             && c.get().is_none()
+            && self.meta.peek(i).is_none()
         {
             let _set: Result<(), StatTier> = c.set(StatTier::Present(self.classify(i, *meta)));
+        }
+    }
+
+    /// [`Self::adopt`] for a meta-only query: the meta tier of entry `i`, unless its stat tier is computed (out of
+    /// line, so the stat-tier branch stays as small as it was).
+    #[inline(never)]
+    fn adopt_meta(&self, i: usize, meta: Meta) {
+        if self.stat.peek(i).is_none()
+            && let Some(c) = self.meta.cell(self.len(), i)
+        {
+            let _set: Result<(), MetaTier> = c.set(MetaTier::Present(meta));
         }
     }
 
@@ -1695,6 +1874,16 @@ mod tests {
         TagSet::from_names(names).unwrap()
     }
 
+    /// The query of a filter that references `executable` and needs `needs` (not meta-only).
+    #[cfg(unix)]
+    fn exec_query(needs: Needs) -> Query {
+        Query {
+            needs,
+            exec: true,
+            meta_only: false,
+        }
+    }
+
     #[cfg(unix)]
     fn stat_only() -> Needs {
         Needs {
@@ -1821,13 +2010,13 @@ mod tests {
         assert!(matches!(t.stat_tier(1, true), StatTier::Trusted(_)));
         // a filter on `executable`: the lstat answer, not the index's owner bit
         assert!(
-            matches!(t.tags_for(FileId(1), stat_only(), true), TagOutcome::Tags(x) if x == want(1, stat_only()))
+            matches!(t.tags_for(FileId(1), exec_query(stat_only())), TagOutcome::Tags(x) if x == want(1, stat_only()))
         );
         // a run declared without shebang filters that asks for a shebang anyway: still the lstat answer
         let mut t = fresh();
         assert!(t.trust_index_modes(lied, Arc::new(AtomicBool::new(true)), tags_of(&["file"])));
         assert!(matches!(t.stat_tier(0, true), StatTier::Trusted(_)));
-        assert!(!t.tiers_ready(FileId(0), all, false));
+        assert!(!t.tiers_ready(FileId(0), Query::full(all)));
         assert!(matches!(t.tags(FileId(0), all), TagOutcome::Tags(x) if x == want(0, all)));
         assert!(
             t.exact_stat.0.get().is_some(),
@@ -1888,6 +2077,423 @@ mod tests {
             panic!()
         };
         assert_eq!(tags, file_identify::tags_from_filename("keep2.py"));
+    }
+
+    /// The filter of `types` (no pattern, no prefix).
+    #[cfg(unix)]
+    fn types_filter(types: &[&str], cache: &snp_pyre::RegexCache) -> crate::HookFilter {
+        crate::HookFilter::compile(
+            "",
+            "^$",
+            tags_of(types),
+            TagSet::EMPTY,
+            TagSet::EMPTY,
+            None,
+            cache,
+        )
+        .unwrap()
+    }
+
+    /// A classifier over `table` with the default top-level patterns.
+    #[cfg(unix)]
+    fn classifier_of(
+        table: &Arc<FileTable>,
+        cache: &snp_pyre::RegexCache,
+        pool: &JobPool,
+    ) -> crate::Classifier {
+        let all = cache.get("", snp_pyre::Options::CONFIG).unwrap();
+        let none = cache.get("^$", snp_pyre::Options::CONFIG).unwrap();
+        crate::Classifier::new(Arc::clone(table), &all, &none, pool).unwrap()
+    }
+
+    /// ADR-110: filters that reference only meta tags never build the stat tier (no name tags, no 64-byte cells),
+    /// adopted `lexists` metas included; a later filter that needs name tags builds it from the memoised meta, never
+    /// a second `lstat` (a file deleted in between keeps its first identification, as pre-commit's memo does).
+    #[cfg(unix)]
+    #[test]
+    fn meta_only_filters_never_build_the_stat_tier() {
+        let d = tempfile::tempdir().unwrap();
+        for name in ["a.py", "b.unknownext", "c.sh"] {
+            std::fs::write(d.path().join(name), b"x\n").unwrap();
+        }
+        std::os::unix::fs::symlink("a.py", d.path().join("link.py")).unwrap();
+        std::fs::create_dir_all(d.path().join("dir.py")).unwrap();
+        let names = [
+            "a.py",
+            "b.unknownext",
+            "c.sh",
+            "link.py",
+            "dir.py",
+            "gone.py",
+        ];
+        let table = Arc::new(FileTable::from_args(
+            names.iter().map(OsString::from).collect(),
+            d.path(),
+        ));
+        let cache = snp_pyre::RegexCache::new();
+        let pool = JobPool::new(
+            NonZeroUsize::new(2).unwrap(),
+            snp_core::cancel::CancelToken::new(),
+        );
+        let c = classifier_of(&table, &cache, &pool);
+        assert_eq!(c.kept.len(), 5, "gone.py does not exist");
+        let files = c.for_hook(&types_filter(&["file"], &cache), &pool).unwrap();
+        assert_eq!(files, [FileId(0), FileId(1), FileId(2)]);
+        let links = c
+            .for_hook(&types_filter(&["symlink", "directory"], &cache), &pool)
+            .unwrap();
+        assert!(links.is_empty(), "types is an intersection: {links:?}");
+        let not_links = c
+            .for_hook(
+                &crate::HookFilter::compile(
+                    "",
+                    "^$",
+                    TagSet::EMPTY,
+                    tags_of(&["symlink", "directory"]),
+                    tags_of(&["executable"]),
+                    None,
+                    &cache,
+                )
+                .unwrap(),
+                &pool,
+            )
+            .unwrap();
+        assert_eq!(not_links, [FileId(3), FileId(4)]);
+        assert!(
+            table.stat.0.get().is_none(),
+            "a meta-only filter built the stat tier"
+        );
+        // A name-tag filter after a deletion: the stat tier comes from the memoised meta, not a fresh lstat.
+        std::fs::remove_file(d.path().join("a.py")).unwrap();
+        let py = c
+            .for_hook(&types_filter(&["python"], &cache), &pool)
+            .unwrap();
+        assert_eq!(py, [FileId(0)], "link.py and dir.py are not python");
+        assert!(table.stat.0.get().is_some());
+    }
+
+    /// Every kind file-identify knows today (`FileKind` is `#[non_exhaustive]`).
+    const KINDS: [FileKind; 5] = [
+        FileKind::Regular,
+        FileKind::Directory,
+        FileKind::Symlink,
+        FileKind::Socket,
+        FileKind::Other,
+    ];
+
+    /// The tags of a classification once its content is known (`content` stands for the file's head).
+    fn completed(class: Classification, content: &[u8]) -> TagSet {
+        match class {
+            Classification::Done(t) => t,
+            Classification::NeedsContent(p) => p.finish_bytes(content),
+        }
+    }
+
+    proptest::proptest! {
+        /// ADR-110: `meta_tags(m) == classify(m, name).tags() ∩ META_TAGS` for every kind, both executable bits, any
+        /// name and any content, through file-identify's `classify` and through snp's (FIFOs and devices as regular
+        /// files): no name, shebang or content tag is a meta tag.
+        #[test]
+        fn meta_tags_are_the_meta_part_of_full_identification(
+            name in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..24),
+            content in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..64),
+            shebang in proptest::prelude::any::<bool>(),
+        ) {
+            let content = if shebang {
+                [b"#!/usr/bin/env python3\n".as_slice(), &content].concat()
+            } else {
+                content
+            };
+            let t = FileTable::from_zbuf(name.clone(), vec![(0, u32::try_from(name.len()).unwrap())], Path::new("/r"));
+            for kind in KINDS {
+                for exec in [false, true] {
+                    let m = Meta::new(kind, exec);
+                    let want = meta_tags(m).unwrap();
+                    for class in [file_identify::classify(m, &name), t.classify(0, m)] {
+                        let initial = match class {
+                            Classification::Done(t) => t,
+                            Classification::NeedsContent(p) => p.tags(),
+                        };
+                        proptest::prop_assert_eq!(initial.intersection(META_TAGS), want);
+                        proptest::prop_assert_eq!(completed(class, &content).intersection(META_TAGS), want);
+                    }
+                }
+            }
+        }
+    }
+
+    /// ADR-110: no name (`NAMES`, `EXTENSIONS`, `EXTENSIONS_NEED_BINARY_CHECK`) and no interpreter of identify's tables
+    /// yields a meta tag, so `tags_from_filename` and the shebang tier never do.
+    #[test]
+    fn name_and_interpreter_tables_hold_no_meta_tag() {
+        use file_identify::extensions::{EXTENSIONS, EXTENSIONS_NEED_BINARY_CHECK, NAMES};
+        use file_identify::interpreters::INTERPRETERS;
+        for (table, entries) in [
+            ("NAMES", NAMES.iter().collect::<Vec<_>>()),
+            ("EXTENSIONS", EXTENSIONS.iter().collect()),
+            (
+                "EXTENSIONS_NEED_BINARY_CHECK",
+                EXTENSIONS_NEED_BINARY_CHECK.iter().collect(),
+            ),
+            ("INTERPRETERS", INTERPRETERS.iter().collect()),
+        ] {
+            assert!(!entries.is_empty(), "{table}");
+            for (key, tags) in entries {
+                assert!(!tags.intersects(&META_TAGS), "{table}[{key:?}] = {tags}");
+            }
+        }
+        assert!(!crate::filter::needs_for(META_TAGS).shebang);
+        assert_eq!(META_TAGS.len(), 6);
+    }
+
+    /// The query of a filter: meta-only exactly when every referenced tag is a meta tag and no content tier is
+    /// needed; `exec` exactly when it references `executable` or `non-executable`.
+    #[test]
+    fn query_from_referenced_tags() {
+        let q = |names: &[&str]| {
+            let referenced = tags_of(names);
+            Query::new(crate::filter::needs_for(referenced), referenced)
+        };
+        for (names, meta_only, exec) in [
+            (&["file"][..], true, false),
+            (&["symlink"], true, false),
+            (&["directory", "socket"], true, false),
+            (&["executable"], true, true),
+            (&["file", "non-executable"], true, true),
+            (&["file", "python"], false, false),
+            (&["text"], false, false),
+            (&["binary", "executable"], false, true),
+            (&["yaml"], false, false),
+            (&[], false, false),
+        ] {
+            let got = q(names);
+            assert_eq!(
+                (got.meta_only, got.exec),
+                (meta_only, exec),
+                "{names:?}: {got:?}"
+            );
+        }
+        assert!(!Query::full(stat_needs()).meta_only);
+        assert!(!Query::full(stat_needs()).exec);
+        // a hand-built `Needs` that asks for content is never meta-only
+        let content = Needs {
+            stat: true,
+            encoding: true,
+            shebang: false,
+        };
+        assert!(!Query::new(content, tags_of(&["file"])).meta_only);
+    }
+
+    /// `Needs { stat }` alone.
+    fn stat_needs() -> Needs {
+        Needs {
+            stat: true,
+            ..Needs::default()
+        }
+    }
+
+    /// The meta-only query of a filter that references `names`.
+    #[cfg(unix)]
+    fn meta_query(names: &[&str]) -> Query {
+        let q = Query::new(stat_needs(), tags_of(names));
+        assert!(q.meta_only, "{names:?}");
+        q
+    }
+
+    /// ADR-110 differential on a real tree: for every kind of entry (regular files with and without name tags and
+    /// executable bits, a shebang script, links, a broken link, a directory, a FIFO, a socket, an unreadable file and
+    /// a missing name) a meta-only query gives the meta part of full identification, `Vanished` exactly where it
+    /// does, and never `Unreadable` (the content is never read); the meta tier never builds the stat tier.
+    #[cfg(unix)]
+    #[test]
+    fn meta_only_queries_agree_with_full_identification() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path();
+        for (name, mode, body) in [
+            ("a.py", 0o644, &b"x\n"[..]),
+            ("run.sh", 0o755, b"echo\n"),
+            ("tool", 0o755, b"#!/usr/bin/env python3\n"),
+            ("data.unknownext", 0o644, b"\0\x01"),
+            ("secret.unknownext", 0o000, b"x"),
+            ("r654", 0o654, b"x"),
+        ] {
+            std::fs::write(root.join(name), body).unwrap();
+            std::fs::set_permissions(root.join(name), std::fs::Permissions::from_mode(mode))
+                .unwrap();
+        }
+        std::os::unix::fs::symlink("a.py", root.join("link.py")).unwrap();
+        std::os::unix::fs::symlink("missing", root.join("broken")).unwrap();
+        std::fs::create_dir_all(root.join("dir")).unwrap();
+        let fd = rustix::fs::open(
+            root,
+            rustix::fs::OFlags::PATH | rustix::fs::OFlags::DIRECTORY,
+            rustix::fs::Mode::empty(),
+        )
+        .unwrap();
+        rustix::fs::mknodat(
+            &fd,
+            "fifo",
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::from_raw_mode(0o644),
+            0,
+        )
+        .unwrap();
+        let _sock = std::os::unix::net::UnixListener::bind(root.join("sock")).unwrap();
+        let names = [
+            "a.py",
+            "run.sh",
+            "tool",
+            "data.unknownext",
+            "secret.unknownext",
+            "r654",
+            "link.py",
+            "broken",
+            "dir",
+            "fifo",
+            "sock",
+            "gone",
+            "",
+            "/dev/null",
+        ];
+        let fresh = || FileTable::from_args(names.iter().map(OsString::from).collect(), root);
+        let full_needs = Needs {
+            stat: true,
+            encoding: true,
+            shebang: true,
+        };
+        let truth = fresh();
+        for filter in [
+            &["file"][..],
+            &["executable"],
+            &["non-executable", "file"],
+            &["symlink"],
+            &["directory"],
+            &["socket"],
+        ] {
+            let q = meta_query(filter);
+            let t = fresh();
+            for (i, name) in names.iter().enumerate() {
+                let id = FileId(u32::try_from(i).unwrap());
+                let got = t.tags_for(id, q);
+                // The stat tier alone decides existence: full identification may also fail at the content.
+                match (got, truth.tags(id, stat_needs())) {
+                    (TagOutcome::Tags(m), TagOutcome::Tags(full)) => {
+                        assert_eq!(m, full.intersection(META_TAGS), "{name} {filter:?}");
+                    }
+                    (TagOutcome::Vanished, TagOutcome::Vanished) => {}
+                    (got, want) => panic!("{name} {filter:?}: {got:?} vs {want:?}"),
+                }
+                if let TagOutcome::Tags(full) = truth.tags(id, full_needs) {
+                    let TagOutcome::Tags(m) = got else {
+                        panic!("{name}")
+                    };
+                    assert_eq!(m, full.intersection(META_TAGS), "{name} {filter:?}");
+                }
+                assert!(t.tiers_ready(id, q), "{name}: memoised");
+            }
+            assert!(t.stat.0.get().is_none(), "{filter:?} built the stat tier");
+            assert!(!t.tiers_ready(FileId(0), Query::full(stat_needs())));
+        }
+        std::fs::set_permissions(
+            root.join("secret.unknownext"),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+    }
+
+    /// ADR-110 with trusted index modes (ADR-106): a meta-only query that cannot observe the executable bit takes the
+    /// kind from the mode with zero syscalls (the root does not exist); one that references `executable` takes the
+    /// `lstat` answer (gone here), and so does a later one after the meta tier was taken from the index; the stat tier
+    /// a later name-tag query builds from a trusted meta stays trusted, also after the flag was cleared.
+    #[cfg(unix)]
+    #[test]
+    fn meta_tier_under_index_trust() {
+        let mut t = table(&["a.py", "run.sh", "link", "subm", "tool"]);
+        let valid = Arc::new(AtomicBool::new(true));
+        let modes: Box<[u32]> = Box::new([0o100_644, 0o100_755, 0o120_000, 0o160_000, 0o100_755]);
+        assert!(t.trust_index_modes(modes, Arc::clone(&valid), tags_of(&["file", "symlink"])));
+        let file = meta_query(&["file"]);
+        let expect = |id: u32, names: &[&str]| {
+            assert!(
+                matches!(t.tags_for(FileId(id), file), TagOutcome::Tags(x) if x == tags_of(names)),
+                "{id}"
+            );
+        };
+        expect(0, &["file", "non-executable"]);
+        expect(1, &["file", "executable"]);
+        expect(2, &["symlink"]);
+        // a gitlink keeps its lstat: gone under the nonexistent root
+        assert!(matches!(t.tags_for(FileId(3), file), TagOutcome::Vanished));
+        assert!(matches!(t.meta.peek(0), Some(MetaTier::Trusted(_))));
+        // the executable bit is never the index's
+        let exe = meta_query(&["executable"]);
+        assert!(matches!(t.tags_for(FileId(1), exe), TagOutcome::Vanished));
+        assert!(
+            matches!(t.meta.peek(1), Some(MetaTier::Trusted(_))),
+            "the trusted cell stays for other queries"
+        );
+        assert!(
+            t.exact_stat.0.get().is_some(),
+            "answered from the exact cells"
+        );
+        assert!(matches!(t.tags_for(FileId(4), exe), TagOutcome::Vanished));
+        assert!(matches!(t.meta.peek(4), Some(MetaTier::Vanished)));
+        // after the flag is cleared a name-tag query builds the stat tier from the trusted meta, not an lstat
+        valid.store(false, Ordering::Release);
+        assert!(
+            matches!(t.tags(FileId(0), stat_needs()), TagOutcome::Tags(x) if x.contains("python"))
+        );
+        assert!(matches!(t.stat.peek(0), Some(StatTier::Trusted(_))));
+        // ... and a new meta tier takes an lstat
+        let mut u = table(&["b.py"]);
+        let valid = Arc::new(AtomicBool::new(false));
+        assert!(u.trust_index_modes(Box::new([0o100_644]), valid, tags_of(&["file"])));
+        assert!(matches!(u.tags_for(FileId(0), file), TagOutcome::Vanished));
+    }
+
+    /// The meta tier follows `retain_lexists` and a pending `lexists` meta is adopted into it (never into the stat
+    /// tier) for a meta-only query, and into the stat tier otherwise.
+    #[cfg(unix)]
+    #[test]
+    fn meta_tier_is_compacted_and_adopted() {
+        let d = tempfile::tempdir().unwrap();
+        for name in ["keep.py", "keep2.sh"] {
+            std::fs::write(d.path().join(name), b"x").unwrap();
+        }
+        let mut t = FileTable::from_args(
+            ["keep.py", "gone.py", "keep2.sh"]
+                .iter()
+                .map(OsString::from)
+                .collect(),
+            d.path(),
+        );
+        let file = meta_query(&["file"]);
+        assert!(matches!(t.tags_for(FileId(1), file), TagOutcome::Vanished));
+        assert!(matches!(t.tags_for(FileId(2), file), TagOutcome::Tags(_)));
+        t.retain_lexists();
+        assert_eq!(t.len(), 2);
+        assert!(t.meta.peek(0).is_none());
+        assert!(matches!(t.meta.peek(1), Some(MetaTier::Present(_))));
+        let pending: Box<[Option<Meta>]> = Box::new([Some(Meta::regular(true)), None]);
+        t.adopt(FileId(0), &pending, file);
+        assert!(matches!(t.meta.peek(0), Some(MetaTier::Present(m)) if m.is_executable()));
+        assert!(t.stat.0.get().is_none());
+        // adopted for a full query: the stat tier, unless the meta tier already answered
+        t.adopt(FileId(0), &pending, Query::full(stat_needs()));
+        assert!(t.stat.peek(0).is_none());
+        let u = FileTable::from_args(vec!["x.py".into()], d.path());
+        u.adopt(FileId(0), &pending, Query::full(stat_needs()));
+        assert!(u.meta.0.get().is_none());
+        assert!(matches!(u.stat.peek(0), Some(StatTier::Present(_))));
+    }
+
+    /// The meta tier's cell stays small: 8 bytes against the stat tier's 64 (Linux's futex `Once`).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn meta_cells_are_small() {
+        assert!(size_of::<OnceLock<MetaTier>>() <= 8);
+        assert!(size_of::<OnceLock<StatTier>>() >= 48);
     }
 
     /// ADR-110: the concatenation reports the first error in index order however the partitions finished, and
