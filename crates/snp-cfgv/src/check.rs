@@ -329,27 +329,6 @@ impl CheckFn {
         Self::OneOf(possible.into_iter().map(Into::into).collect())
     }
 
-    /// `check_regex` backed by the [`regex`](https://docs.rs/regex) crate.
-    ///
-    /// The `regex` crate's syntax differs from Python's `re` (no
-    /// look-around, no back-references, no `\Z`, ...), so this rejects some
-    /// patterns Python accepts and vice versa. Use
-    /// [`CheckFn::check_regex_with`] or [`CheckFn::check_regex_try_with`]
-    /// to plug in a Python-compatible validator. `bytes` patterns are
-    /// decoded as Latin-1 ([`RegexPattern::to_text`]) and checked with
-    /// `regex::bytes`.
-    #[cfg(feature = "regex")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "regex")))]
-    #[must_use]
-    pub fn check_regex() -> Self {
-        Self::check_regex_try_with(|pattern| {
-            Ok(match pattern {
-                RegexPattern::Bytes(_) => regex::bytes::Regex::new(&pattern.to_text()).is_ok(),
-                _ => regex::Regex::new(&pattern.to_text()).is_ok(),
-            })
-        })
-    }
-
     /// `check_regex` with a caller-supplied validity test, e.g. a validator
     /// for Python's `re` dialect.
     ///

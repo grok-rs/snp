@@ -55,23 +55,6 @@ fn test_check_one_of_ok() {
     check.check(&Value::Int(2)).unwrap();
 }
 
-// ---- check_regex tests ----
-
-#[test]
-#[cfg(feature = "regex")]
-fn test_check_regex() {
-    let check = CheckFn::check_regex();
-    let err = check.check(&Value::String("(".into())).unwrap_err();
-    assert_eq!(err.message(), "'(' is not a valid python regex");
-}
-
-#[test]
-#[cfg(feature = "regex")]
-fn test_check_regex_ok() {
-    let check = CheckFn::check_regex();
-    check.check(&Value::String("^$".into())).unwrap();
-}
-
 // ---- check_array tests ----
 
 #[test]
@@ -91,12 +74,17 @@ fn test_check_array_ok() {
 
 // ---- check_and tests ----
 
+/// `check_regex` with a stand-in for Python's `re` (ADR-116 dropped the `regex`-crate-backed
+/// `check_regex()`; snp plugs in `snp_pyre::cfgv_is_valid`).
+fn check_regex() -> CheckFn {
+    CheckFn::check_regex_with(|p| p != "(")
+}
+
 #[test]
-#[cfg(feature = "regex")]
 fn test_check_and() {
     let check = CheckFn::check_and(vec![
         CheckFn::Type(ValueType::String, None),
-        CheckFn::check_regex(),
+        check_regex(),
     ]);
     let err = check.check(&Value::Bool(true)).unwrap_err();
     assert_eq!(err.message(), "Expected str got bool");
@@ -106,11 +94,10 @@ fn test_check_and() {
 }
 
 #[test]
-#[cfg(feature = "regex")]
 fn test_check_and_ok() {
     let check = CheckFn::check_and(vec![
         CheckFn::Type(ValueType::String, None),
-        CheckFn::check_regex(),
+        check_regex(),
     ]);
     check.check(&Value::String("^$".into())).unwrap();
 }

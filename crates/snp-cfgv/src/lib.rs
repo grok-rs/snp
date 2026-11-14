@@ -57,9 +57,6 @@
 //!
 //! # Features
 //!
-//! * `regex` (default): `CheckFn::check_regex()` backed by the `regex`
-//!   crate. Without it, supply a validator with
-//!   [`CheckFn::check_regex_with`].
 //! * `serde`: `Serialize`/`Deserialize` for [`Value`] and a `Deserializer`
 //!   for `&Value`, to convert validated values into typed structs.
 //!
@@ -75,12 +72,11 @@
 //!   `ValueError` for is reproduced ([`BigInt`], [`Value::try_repr`], and
 //!   uncaught errors from validation), but the infallible [`Value::repr`]
 //!   and `Display` write such integers in hexadecimal.
-//! * `CheckFn::check_regex()` (feature `regex`) uses the `regex` crate's
-//!   dialect; plug in a validator of Python's `re` syntax with
-//!   [`CheckFn::check_regex_with`] or [`CheckFn::check_regex_try_with`].
+//! * `check_regex` needs a validator of Python's `re` syntax: plug one in
+//!   with [`CheckFn::check_regex_with`] or [`CheckFn::check_regex_try_with`]
+//!   (snp uses `snp_pyre::cfgv_is_valid`).
 
 #![forbid(unsafe_code)]
-#![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod check;
 mod condition;
@@ -99,7 +95,6 @@ pub use error::{ValidationError, validate_context};
 pub use load::{LoadError, load_from_filename, load_from_filename_with};
 pub use schema::Schema;
 #[cfg(feature = "serde")]
-#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 pub use serde_impl::{DeserializeError, from_value};
 pub use validator::{Cx, MapItem, Validator, WarnCallback};
 pub use value::{

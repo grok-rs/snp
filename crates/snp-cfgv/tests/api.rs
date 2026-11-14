@@ -371,18 +371,11 @@ fn regex_checks() {
     let python_like = CheckFn::check_regex_with(|p| !p.contains("(?<!") || p.ends_with("bar"));
     assert!(python_like.check(&Value::from("(?<!foo)bar")).is_ok());
     assert_eq!(format!("{python_like:?}"), "Regex(..)");
-    #[cfg(feature = "regex")]
     {
-        let builtin = CheckFn::check_regex();
+        // A stand-in validator (ADR-116 dropped the `regex`-crate-backed `check_regex()`): the messages,
+        // bytes decoding and the uncaught `TypeError` come from cfgv, not from the validator.
+        let builtin = CheckFn::check_regex_with(|p| !p.ends_with('\\') && p != "(");
         assert!(builtin.check(&Value::from("^a.*$")).is_ok());
-        // The regex crate does not support look-behind; Python does.
-        assert_eq!(
-            builtin
-                .check(&Value::from("(?<!foo)bar"))
-                .unwrap_err()
-                .message(),
-            "'(?<!foo)bar' is not a valid python regex"
-        );
         assert_eq!(
             builtin.check(&Value::from("foo\\")).unwrap_err().message(),
             "'foo\\\\' is not a valid python regex"
