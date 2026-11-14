@@ -10,8 +10,8 @@
 //! | Shape | git spawns | hook spawns | total |
 //! |---|---|---|---|
 //! | B1 `--version` | 0 | 0 | **0** |
-//! | B2 `run noop-01` (1 `always_run` hook, nothing staged) | 1 combined `rev-parse` + fan-out A, B, C + the stash's `write-tree` and `diff-index` + 1 `git diff` (no Stat mode below 3 process hooks) | 1 | **≤ 8** |
-//! | B3 `run` (10 such hooks) | 1 combined `rev-parse` + fan-out A, B, C, F, G (E skipped, P17) + `write-tree` + `diff-index` | 10 | **≤ 18** |
+//! | B2 `run noop-01` (1 `always_run` hook, nothing staged) | 1 combined `rev-parse` + F, G (F answers A), B, C + the stash's `write-tree` and `diff-index` (Stat mode from one hook on a small tree, ADR-104); with fewer than 3 CPUs A, B, C + 1 `git diff` | 1 | **≤ 8** |
+//! | B3 `run` (10 such hooks) | 1 combined `rev-parse` + F, G, B, C (E skipped, P17) + `write-tree` + `diff-index`; with fewer than 3 CPUs or a large tree A as well | 10 | **≤ 17** (≤ 18) |
 //! | B4 `run --all-files`, 1 hook with filenames, 2 000 files, `PRE_COMMIT_NO_CONCURRENCY=1` | 7 | exactly 1 (one partition) | **≤ 8** |
 //! | B6 13 pre-commit-hooks hooks, Tier A fast path, `--all-files` | 7 + ≤ 4 per-run pre-commit-hooks facts (`diff --staged --diff-filter=A`, `check-attr --stdin`, `ls-files`, `ls-files --stage`) + ≤ 2 slack | 0 (all native, no Python) | **≤ 13** |
 //!
@@ -173,7 +173,13 @@ const WARM_RUN_GIT: usize = 1 + 6;
 /// executed: one combined `rev-parse`; fan-out A, B, C, plus F and G when the Stat mode applies (Unix, from three
 /// process hooks on, ARCHITECTURE §3.1 step 14); the stash's `write-tree` + `diff-index` (02 §7); one `git diff` per
 /// executed hook without the Stat mode (and on Windows the baseline as well, ADR-043).
-const fn stash_run_git(process_hooks: usize) -> usize {
+///
+/// On a `small` tree (at most 256 index entries) with three or more CPUs, F and G start first and F answers A, and
+/// the Stat mode applies from one process hook on (ADR-104): B, C, F and G, and no `git diff`.
+fn stash_run_git(process_hooks: usize, small: bool) -> usize {
+    if cfg!(unix) && small && snp_proc::xargs::cpu_count().get() >= 3 && process_hooks >= 1 {
+        return 1 + 4 + 2;
+    }
     let stat = cfg!(unix) && process_hooks >= 3;
     let fan_out = if stat { 5 } else { 3 };
     let diffs = if stat {
@@ -242,10 +248,11 @@ fn b2_one_noop_hook_within_8_spawns() {
     let env = TestEnv::new(bins());
     let repo = noop_repo(&env, "b2", &noop_config(10));
     let (out, log) = run_logged(&env, &repo, &["run", "noop-01"], &[]);
-    assert_bounds("B2", &out, &log, stash_run_git(1) + 1, 1);
+    assert_bounds("B2", &out, &log, stash_run_git(1, true) + 1, 1);
 }
 
-/// B3: ten `always_run` noop hooks, nothing staged: ≤ 18 spawns (8 git + 10 hooks, no `git diff`).
+/// B3: ten `always_run` noop hooks, nothing staged: ≤ 17 spawns (7 git + 10 hooks, no `git diff`; 18 with fewer
+/// than three CPUs).
 #[test]
 #[cfg_attr(
     not(feature = "testing"),
@@ -255,7 +262,7 @@ fn b3_ten_noop_hooks_within_18_spawns() {
     let env = TestEnv::new(bins());
     let repo = noop_repo(&env, "b3", &noop_config(10));
     let (out, log) = run_logged(&env, &repo, &["run"], &[]);
-    assert_bounds("B3", &out, &log, stash_run_git(10) + 10, 10);
+    assert_bounds("B3", &out, &log, stash_run_git(10, true) + 10, 10);
     // the hooks run in their own process groups only when isolation is asked for; `true` inherits
     assert!(
         log.spawns
@@ -284,7 +291,13 @@ fn b3_spawns_do_not_grow_with_tracked_files() {
     }
     let repo = b.stage_all().commit("init").build();
     let (out, log) = run_logged(&env, &repo, &["run"], &[]);
-    assert_bounds("B3 (2k files)", &out, &log, stash_run_git(10) + 10, 10);
+    assert_bounds(
+        "B3 (2k files)",
+        &out,
+        &log,
+        stash_run_git(10, false) + 10,
+        10,
+    );
 }
 
 /// B4 shape: `run --all-files`, one hook with filenames over 2 000 files and one job: exactly one partition, so one

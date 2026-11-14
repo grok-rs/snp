@@ -130,6 +130,40 @@ pub struct IndexEntries {
     pub modes: Box<[u32]>,
 }
 
+/// The stat stamp of an index file ([`crate::Git::index_stamp`]): device, inode, size, and the modification and
+/// status-change times in nanoseconds. Git replaces the index by renaming `index.lock` over it, so any rewrite gives
+/// a new inode as well as new times.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndexStamp {
+    dev: u64,
+    ino: u64,
+    size: u64,
+    mtime: (i64, i64),
+    ctime: (i64, i64),
+}
+
+impl IndexStamp {
+    /// The stamp of `path` (Unix); `None` when it cannot be stat'ed or on other platforms.
+    #[cfg(unix)]
+    pub(crate) fn of(path: &std::path::Path) -> Option<Self> {
+        use std::os::unix::fs::MetadataExt as _;
+        let m = std::fs::metadata(path).ok()?;
+        Some(Self {
+            dev: m.dev(),
+            ino: m.ino(),
+            size: m.size(),
+            mtime: (m.mtime(), m.mtime_nsec()),
+            ctime: (m.ctime(), m.ctime_nsec()),
+        })
+    }
+
+    /// No stable inode or ctime outside Unix: never a stamp.
+    #[cfg(not(unix))]
+    pub(crate) fn of(_path: &std::path::Path) -> Option<Self> {
+        None
+    }
+}
+
 /// A record git printed in a shape the parser does not know.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BadRecord(pub(crate) Vec<u8>);
@@ -158,30 +192,51 @@ fn u32_at(i: usize) -> Result<u32, BadRecord> {
 }
 
 /// `git ls-files -s -z`: `<mode> SP <object> SP <stage> TAB <path> NUL` per entry (unmerged paths appear once per
-/// stage, in index order).
-pub(crate) fn parse_ls_files_stage(buf: Vec<u8>) -> Result<IndexEntries, BadRecord> {
+/// stage, in index order), and whether any record has a stage other than 0: `git ls-files --unmerged` prints exactly
+/// those records, so its output is non-blank iff this is `true` (ADR-104). The stage is parsed strictly (one digit,
+/// 0–3), over every raw record, before any caller filters or deduplicates.
+pub(crate) fn parse_ls_files_stages(buf: Vec<u8>) -> Result<(IndexEntries, bool), BadRecord> {
     let records =
         ZList::from_z(buf).map_err(|_| BadRecord(b"git output larger than 4 GiB".to_vec()))?;
     let (buf, spans) = records.into_parts();
     let mut out_spans = Vec::new();
     let mut modes = Vec::new();
+    let mut unmerged = false;
     for (s, e) in spans {
         let rec = slice(&buf, s, e);
-        let tab = memchr::memchr(b'\t', rec).ok_or_else(|| BadRecord(rec.to_vec()))?;
+        let bad = || BadRecord(rec.to_vec());
+        let tab = memchr::memchr(b'\t', rec).ok_or_else(bad)?;
         let head = rec.get(..tab).unwrap_or_default();
-        let mode_field = head.split(|&b| b == b' ').next().unwrap_or_default();
-        let mode = octal(mode_field).ok_or_else(|| BadRecord(rec.to_vec()))?;
+        let mut fields = head.split(|&b| b == b' ');
+        let mode = fields.next().and_then(octal).ok_or_else(bad)?;
+        let _object = fields.next().ok_or_else(bad)?;
+        let stage = match fields.next() {
+            Some([d @ b'0'..=b'3']) => *d,
+            _ => return Err(bad()),
+        };
+        if fields.next().is_some() {
+            return Err(bad());
+        }
+        unmerged |= stage != b'0';
         let path_start = s
             .checked_add(u32_at(tab)?)
             .and_then(|v| v.checked_add(1))
-            .ok_or_else(|| BadRecord(rec.to_vec()))?;
+            .ok_or_else(bad)?;
         out_spans.push((path_start, e));
         modes.push(mode);
     }
-    Ok(IndexEntries {
-        paths: ZList::from_parts(buf, out_spans),
-        modes: modes.into_boxed_slice(),
-    })
+    Ok((
+        IndexEntries {
+            paths: ZList::from_parts(buf, out_spans),
+            modes: modes.into_boxed_slice(),
+        },
+        unmerged,
+    ))
+}
+
+/// [`parse_ls_files_stages`] without the unmerged flag.
+pub(crate) fn parse_ls_files_stage(buf: Vec<u8>) -> Result<IndexEntries, BadRecord> {
+    parse_ls_files_stages(buf).map(|(e, _)| e)
 }
 
 /// `git diff --staged --raw -z …`: `:<src mode> SP <dst mode> SP <src> SP <dst> SP <status> NUL <path> NUL`, with a
@@ -248,7 +303,8 @@ mod tests {
                     100755 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 0\tbin/x\twith tab\0\
                     120000 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 0\tlink\0\
                     160000 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 0\tsub\0";
-        let e = parse_ls_files_stage(out.to_vec()).unwrap();
+        let (e, unmerged) = parse_ls_files_stages(out.to_vec()).unwrap();
+        assert!(!unmerged);
         let paths: Vec<&[u8]> = e.paths.iter().collect();
         assert_eq!(
             paths,
@@ -258,6 +314,30 @@ mod tests {
         assert!(parse_ls_files_stage(b"garbage\0".to_vec()).is_err());
         assert!(parse_ls_files_stage(b"9x 0 0\tp\0".to_vec()).is_err());
         assert!(parse_ls_files_stage(Vec::new()).unwrap().paths.is_empty());
+    }
+
+    /// The stage field is strict and `unmerged` covers every raw record (ADR-104).
+    #[test]
+    fn ls_files_stage_unmerged() {
+        let sha = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
+        let rec = |mode: &str, stage: &str, path: &str| format!("{mode} {sha} {stage}\t{path}\0");
+        for stage in ["1", "2", "3"] {
+            let out = format!("{}{}", rec("100644", "0", "a"), rec("100644", stage, "b"));
+            let (e, unmerged) = parse_ls_files_stages(out.into_bytes()).unwrap();
+            assert!(unmerged, "stage {stage}");
+            assert_eq!(e.paths.len(), 2);
+        }
+        // a gitlink conflict is unmerged as well
+        let out = format!("{}{}", rec("160000", "2", "sub"), rec("160000", "3", "sub"));
+        assert!(parse_ls_files_stages(out.into_bytes()).unwrap().1);
+        for bad in ["4", "00", "", "x", "0 extra"] {
+            let out = rec("100644", bad, "a");
+            assert!(
+                parse_ls_files_stages(out.into_bytes()).is_err(),
+                "stage {bad:?}"
+            );
+        }
+        assert!(parse_ls_files_stages(format!("100644 {sha}\ta\0").into_bytes()).is_err());
     }
 
     #[test]

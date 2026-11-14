@@ -1981,7 +1981,7 @@ other packages and makes "only hooks take files" a property of the API.
 158,253; snp's own maxrss at 4-CPU affinity 24.2 → 17.7 MiB (getrusage, median of 10). B5: peak 10.2 → 7.3 MB,
 blocks 185,963 → 127,179. The harness's process-tree RSS stays near git's own ~20 MiB floor. Serial work drops by a few ms on B4
 (not gate-visible). `snp_proc::spawn` gains two public functions (catalogued in `crates/snp-proc/tests/api.rs`).
-### ADR-104 — Run pipeline step 6: the architecture text, the warm-path baseline
+### ADR-104 — Run pipeline step 6: the architecture text, the warm-path baseline, F and G first
 
 *Amends ADR-047 and ARCHITECTURE §3.1 rows 6, 10, 15 and 16, §3.7 item 5 and the §12.1 spawn model; implements
 ADR-078(3) as written.*
@@ -2005,11 +2005,34 @@ Every resolution context of a command gets `RunCtx::fetch` behind a request coun
 happens. The baseline is elided only when both counters are unchanged from before `all_hooks` to after
 `install_envs`. The 250 ms bound stays as a second guard: a long wait, such as a contended store lock, is also a
 window in which an autosave must count as pre-existing. ADR-078 itself is not amended.
+(3) *F and G first on a small tree (P09).* For a stashing run where Stat mode is possible, F and G start at the top of
+step 6, before the config load, when the index has at most 256 entries, there are three or more CPUs, and both the
+worktree and the git directory pass `stat_oracle_safe`. `Git::tracked_with_stages` parses each record's stage
+strictly (one digit, 0–3) over every raw record, and a stage other than 0 answers query A: `git ls-files --unmerged`
+prints exactly those records (a COMPATIBILITY §6.2 equivalence test covers both sides modified, deleted by us,
+deleted by them, a gitlink conflict, a stage-0-only, an empty and a missing index). On any failure of F (spawn,
+exit status, parse, thread), A is asked at the same position, so the error is pre-commit's. Larger indexes keep
+ADR-084(6): F and G after the load, from three process-hook candidates. (4) *One hook.* With F and G from step 6, the
+Stat mode applies from one executed process hook when tracked entries plus their ancestor directories number at most
+256; above that one or two hooks keep Git mode, three or more use Stat mode as before. (5) *Stale F (C2).* F was read
+before the stash waits for the worktree lock, so another run's `git add` meanwhile could hide a hook's edit to the
+added paths from Stat mode (a latent fail-open of K5, present since ADR-084(6) for three or more candidates). The
+index file's stamp (dev, ino, size, mtime ns, ctime ns; `Git::index_stamp`) is taken before F and compared after
+`snp_stash::enter`; any change, or no stamp, drops early F and G, which step 14 asks again. The stash's own index
+rewrites (a checkout of unstaged files, a `write-tree` that refreshes the cache tree) also drop them; switching to
+ADR-097's `StashGuard::lock_contended()` once it lands will keep F in those cases (a marked follow-up in the code).
+(6) The side-query thread at step 14 is not started when it has nothing to ask, and `wants_staged` is decided once.
 **Rationale.** The text is what reviewers and later batches read; a stale "C runs in parallel" sends the next
 optimisation after the wrong call. Counting the work is exact where the timer was a guess, and both checks only ever
 choose pre-commit's position for the baseline, so neither can make output differ from pre-commit 4.7.0.
+Starting F and G before the load takes them off the critical path, and deriving A from F saves a spawn there. The
+size gates come from measurements: a 2 000-file, one-hook run spent 32% more instructions with F and G started early
+and Git mode kept, so a larger index waits for the config.
 **Consequences.** A run that installs or clones anything takes one extra `git diff` before its first hook, as
-pre-commit does. Warm runs are unchanged: nothing counts, and B2/B3 keep their spawn counts.
+pre-commit does. Warm runs keep the baseline elision. B3 and B9 start 7 git processes instead of 8; B2 stays at 7 (F
+and G replace A and the after-hook `git diff`). A small tree with one hook spends more instructions in total (F, G
+and the stat pass against A and one `git diff`; +10% on a 100-file fixture), with one spawn fewer on the critical
+path.
 
 ## Appendix A — Open questions of the research documents, resolved
 

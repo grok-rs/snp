@@ -160,16 +160,32 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     // step 6: the speculative config load (warnings buffered) beside the read-only preflight git calls, and — for a
     // stashing run on the stat-capable path — the DiffOracle inputs F and G, which the stash does not change (only
     // its intent-to-add clearing changes the index: then F is asked again after it). Started here they are off the
-    // critical path instead of a serial git stage after the stash (B2/B3, ADR-084).
+    // critical path instead of a serial git stage after the stash (B2/B3, ADR-084). On a small tree F and G start
+    // first, before the load, and F also answers query A (ADR-104).
     let buffered = Buffered::default();
-    let speculate = stash && stat_possible(&git0, &info, &cx.env);
+    let entries = stat_entries(&git0, &info, &cx.env).filter(|_| stash);
+    let speculate = entries.is_some();
+    let hoist = entries.is_some_and(|n| hoist_early(&info, n));
+    // taken before F starts: compared after the stash, it shows a rewrite of the index while we waited (ADR-104)
+    let stamp = if speculate {
+        git0.index_stamp(&info)
+    } else {
+        None
+    };
     let (loaded, unmerged, unstaged, early) = std::thread::scope(|s| {
+        let f = hoist
+            .then(|| std::thread::Builder::new().spawn_scoped(s, || git0.tracked_with_stages()));
+        let g = hoist.then(|| {
+            std::thread::Builder::new()
+                .spawn_scoped(s, || git0.config_origins().ok().map(Arc::from))
+        });
         let load = std::thread::Builder::new().spawn_scoped(s, || {
             let loaded = common::load_config_with(cx, &src, &buffered.warn, &buffered.diag);
-            // Only for a config with three or more process-hook candidates: below that the stat path does not pay
-            // for its two spawns (B2's spawn budget). A thread that could not start, panicked or failed leaves its
-            // input to step 14.
+            // Without the hoist, only for a config with three or more process-hook candidates: below that the
+            // stat path does not pay for its two spawns (B2's spawn budget). A thread that could not start,
+            // panicked or failed leaves its input to step 14.
             let early = if speculate
+                && !hoist
                 && loaded
                     .as_ref()
                     .is_ok_and(|c| process_candidates(c, &a.hooks) >= 3)
@@ -188,7 +204,21 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         });
         let unstaged = std::thread::Builder::new()
             .spawn_scoped(s, || stash.then(|| git0.config_is_unstaged(&config)));
-        let unmerged = stash.then(|| git0.has_unmerged());
+        // query A: from F when F ran and parsed; on any failure of F, `git ls-files --unmerged` at the same
+        // position, so a broken index reports pre-commit's own CalledProcessError
+        let (unmerged, tracked) = match f {
+            Some(Ok(h)) => match h.join() {
+                Ok(Ok((entries, unmerged))) => (Some(Ok(unmerged)), Some(Arc::new(entries))),
+                Ok(Err(_)) | Err(_) => (Some(git0.has_unmerged()), None),
+            },
+            Some(Err(_)) => (Some(git0.has_unmerged()), None),
+            None => (stash.then(|| git0.has_unmerged()), None),
+        };
+        let origins = match g {
+            Some(Ok(h)) => h.join().ok().flatten(),
+            Some(Err(_)) => git0.config_origins().ok().map(Arc::from),
+            None => None,
+        };
         let unstaged = match unstaged {
             Ok(h) => h.join().unwrap_or_else(|p| Some(Err(panicked(&p)))),
             Err(_) => stash.then(|| git0.config_is_unstaged(&config)),
@@ -201,6 +231,11 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
                 common::load_config_with(cx, &src, &buffered.warn, &buffered.diag),
                 Early::default(),
             ),
+        };
+        let early = if hoist {
+            Early { tracked, origins }
+        } else {
+            early
         };
         (loaded, unmerged, unstaged, early)
     });
@@ -261,6 +296,16 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         }
         st.stash = Some(guard);
     }
+    // F and G from step 6 describe the index only if nobody rewrote it meanwhile, such as another run's `git add`
+    // while we waited for the worktree lock (C2). The stamp also changes when the stash itself rewrote the index;
+    // then F is asked again at step 14 (fail closed).
+    // FOLLOW-UP(ADR-097): use `StashGuard::lock_contended()` once batch B lands, so that the stash's own index
+    // rewrites stop discarding F and G.
+    let early = if stamp.is_some() && git0.index_stamp(&info) == stamp {
+        early
+    } else {
+        Early::default()
+    };
     let git = git0.with_env(run_env.clone());
     // step 10: the config (warnings at pre-commit's position), the overlay
     buffered.replay(printer);
@@ -346,17 +391,28 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         tracked: early.tracked.filter(|_| !ita_cleared),
         origins: early.origins,
     };
+    // From one executed process hook on when step 6 already has F and G and the tree is small enough that the stat
+    // pass beats the after-hook `git diff`; otherwise from three on (ADR-104)
+    let stat_possible = match (&early.tracked, &early.origins) {
+        (Some(tracked), Some(_)) => {
+            process_hooks >= 3 || (process_hooks >= 1 && small_tree(tracked))
+        }
+        _ => process_hooks >= 3 && stat_possible(&git, &info, &run_env),
+    };
+    let wants_staged = needs_files && files::wants_staged(&sel, &git, &info);
     let have_early = early.tracked.is_some() && early.origins.is_some();
-    let stat_possible = (process_hooks >= 3 || (have_early && process_hooks >= 1))
-        && (have_early || stat_possible(&git, &info, &run_env));
+    let side_work = wants_staged || (stat_possible && !have_early);
     let (installed, side) = std::thread::scope(|s| {
-        let side = std::thread::Builder::new().spawn_scoped(s, || {
-            side_queries(&git, &sel, &info, needs_files, stat_possible, &early)
+        // no thread when the side queries have nothing to ask
+        let side = side_work.then(|| {
+            std::thread::Builder::new().spawn_scoped(s, || {
+                side_queries(&git, wants_staged, stat_possible, &early)
+            })
         });
         let installed = cx.resolver.install_envs(&to_install, &rcx);
         let side = match side {
-            Ok(h) => h.join().unwrap_or_else(|p| Err(panicked(&p))),
-            Err(_) => side_queries(&git, &sel, &info, needs_files, stat_possible, &early),
+            Some(Ok(h)) => h.join().unwrap_or_else(|p| Err(panicked(&p))),
+            Some(Err(_)) | None => side_queries(&git, wants_staged, stat_possible, &early),
         };
         (installed, side)
     });
@@ -511,10 +567,59 @@ fn stash_ctx(
 /// Whether the `DiffOracle`'s Stat mode can apply (Unix, ≤ 16 384 index entries, no `SNP_DIFF_MODE=git`, no
 /// `GIT_ATTR_SOURCE`): only then are fan-out queries F and G taken.
 fn stat_possible(git: &Git, info: &RepoInfo, env: &Env) -> bool {
-    cfg!(unix)
-        && env.get("SNP_DIFF_MODE").is_none_or(|v| v != "git")
-        && env.get("GIT_ATTR_SOURCE").is_none()
-        && git.index_entry_count(info).is_some_and(|n| n <= 16_384)
+    stat_entries(git, info, env).is_some()
+}
+
+/// The index-header entry count when [`stat_possible`] holds.
+fn stat_entries(git: &Git, info: &RepoInfo, env: &Env) -> Option<u32> {
+    if !cfg!(unix)
+        || env.get("SNP_DIFF_MODE").is_some_and(|v| v == "git")
+        || env.get("GIT_ATTR_SOURCE").is_some()
+    {
+        return None;
+    }
+    git.index_entry_count(info).filter(|n| *n <= 16_384)
+}
+
+/// Whether F and G start at the top of step 6, before the config load (ADR-104): an index of at most
+/// [`SMALL_TREE`] entries `n` (F and G are cheap, and one process hook already uses them), three or more CPUs (the
+/// load, B, F and G overlap), and the worktree and the git directory on filesystems the Stat mode accepts (one statfs
+/// each), so no G is spent on a run whose oracle would refuse the Stat mode anyway. A larger index waits for the
+/// config: F and G only pay from three process hooks on there, and one hook keeps Git mode (measured: a 2 000-file,
+/// one-hook run spent 32% more instructions with both queries started early).
+fn hoist_early(info: &RepoInfo, n: u32) -> bool {
+    let safe = |p: &std::path::Path| snp_os::fsinfo::stat_oracle_safe(p).unwrap_or(false);
+    usize::try_from(n).is_ok_and(|n| n <= SMALL_TREE)
+        && snp_proc::xargs::cpu_count().get() >= 3
+        && safe(&info.root)
+        && safe(&info.git_dir)
+}
+
+/// Tracked entries plus their ancestor directories up to which one or two process hooks use the Stat mode: below it
+/// the stat pass (and the two `.gitattributes` stats per directory) costs less than the after-hook `git diff` it
+/// replaces; above it Git mode was measured faster for one to three hooks at 500–4 000 files (ADR-104).
+const SMALL_TREE: usize = 256;
+
+/// Whether `tracked` has at most [`SMALL_TREE`] entries and distinct ancestor directories together.
+fn small_tree(tracked: &IndexEntries) -> bool {
+    let entries = tracked.paths.len();
+    if entries > SMALL_TREE {
+        return false;
+    }
+    let mut dirs: std::collections::HashSet<&[u8]> = std::collections::HashSet::new();
+    for path in tracked.paths.iter() {
+        let mut rest = path;
+        while let Some(slash) = rest.iter().rposition(|&b| b == b'/') {
+            rest = rest.get(..slash).unwrap_or_default();
+            if !dirs.insert(rest) {
+                break;
+            }
+            if entries.saturating_add(dirs.len()) > SMALL_TREE {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Fan-out queries E (staged list), F (`ls-files -s -z`) and G (`config --list --show-origin -z`).
@@ -552,47 +657,36 @@ struct Early {
     origins: Option<Arc<[PathBuf]>>,
 }
 
-fn side_queries(
-    git: &Git,
-    sel: &Selection<'_>,
-    info: &RepoInfo,
-    needs_files: bool,
-    stat: bool,
-    early: &Early,
-) -> Result<Side, Failure> {
-    if stat && let (Some(tracked), Some(origins)) = (&early.tracked, &early.origins) {
-        let staged =
-            (needs_files && files::wants_staged(sel, git, info)).then(|| git.staged_files());
+/// E, and F/G unless step 6 has them. `wants_staged` is decided once by the caller (it stats the merge files).
+fn side_queries(git: &Git, wants_staged: bool, stat: bool, early: &Early) -> Result<Side, Failure> {
+    let early_pair = match (&early.tracked, &early.origins) {
+        (Some(t), Some(o)) => Some((Arc::clone(t), Arc::clone(o))),
+        _ => None,
+    };
+    if !stat || early_pair.is_some() {
+        let (tracked, origins) = early_pair.filter(|_| stat).unzip();
         return Ok(Side {
-            staged: staged.transpose()?,
-            tracked: Some(Arc::clone(tracked)),
-            origins: Some(Arc::clone(origins)),
+            staged: wants_staged.then(|| git.staged_files()).transpose()?,
+            tracked,
+            origins,
         });
     }
     // E, F and G are independent read-only queries: each on its own thread, so one spawn is on the critical path
     std::thread::scope(|s| {
-        let spawn_f = || {
-            std::thread::Builder::new()
-                .spawn_scoped(s, || git.tracked_with_modes().ok().map(Arc::new))
-        };
-        let spawn_g = || {
-            std::thread::Builder::new().spawn_scoped(s, || git.config_origins().ok().map(Arc::from))
-        };
-        let f = stat.then(spawn_f);
-        let g = stat.then(spawn_g);
-        let staged =
-            (needs_files && files::wants_staged(sel, git, info)).then(|| git.staged_files());
+        let f = std::thread::Builder::new()
+            .spawn_scoped(s, || git.tracked_with_modes().ok().map(Arc::new));
+        let g = std::thread::Builder::new()
+            .spawn_scoped(s, || git.config_origins().ok().map(Arc::from));
+        let staged = wants_staged.then(|| git.staged_files());
         // a failure of F or G only costs the Stat mode (the oracle falls back to `git diff`); a thread that could
         // not start runs its query here
         let tracked = match f {
-            Some(Ok(h)) => h.join().ok().flatten(),
-            Some(Err(_)) => git.tracked_with_modes().ok().map(Arc::new),
-            None => None,
+            Ok(h) => h.join().ok().flatten(),
+            Err(_) => git.tracked_with_modes().ok().map(Arc::new),
         };
         let origins = match g {
-            Some(Ok(h)) => h.join().ok().flatten(),
-            Some(Err(_)) => git.config_origins().ok().map(Arc::from),
-            None => None,
+            Ok(h) => h.join().ok().flatten(),
+            Err(_) => git.config_origins().ok().map(Arc::from),
         };
         Ok(Side {
             staged: staged.transpose()?,

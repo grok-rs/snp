@@ -82,7 +82,7 @@ impl Sandbox {
         self.root.join(rel)
     }
 
-    fn command(&self, cwd: &Path, args: &[&OsStr]) -> Command {
+    pub(crate) fn command(&self, cwd: &Path, args: &[&OsStr]) -> Command {
         // `Command::new("git")` would search the parent's PATH: resolve against the sandbox PATH instead.
         let mut c = match snp_proc::resolve::find_executable(OsStr::new("git"), &self.env, cwd) {
             Some(exe) => Command::new(exe),

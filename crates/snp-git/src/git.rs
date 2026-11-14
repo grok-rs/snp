@@ -23,7 +23,9 @@ use snp_pycompat::text::{bytes_strip, splitlines, strip};
 mod pathspec;
 
 use crate::run::{self, Out, bare_git_argv, concat, os_from_bytes};
-use crate::types::{BadRecord, is_null_oid, parse_diff_raw, parse_ls_files_stage};
+use crate::types::{
+    BadRecord, IndexStamp, is_null_oid, parse_diff_raw, parse_ls_files_stage, parse_ls_files_stages,
+};
 use crate::zlist::TooLarge;
 use crate::{
     DiffFingerprint, DiffIndex, GitBackend, GitExe, IndexEntries, MergeState, ObjectId, PrePushNs,
@@ -858,6 +860,22 @@ impl Git {
     pub fn tracked_with_modes(&self) -> Result<IndexEntries, Failure> {
         let out = self.checked(&["ls-files", "-s", "-z"])?;
         parse_ls_files_stage(out.stdout).map_err(|r| bad_record("ls-files -s -z", &r))
+    }
+
+    /// [`Self::tracked_with_modes`] plus whether the index has unmerged entries, from the same `git ls-files -s -z`:
+    /// `true` iff [`Self::has_unmerged`] would be (ADR-104; COMPATIBILITY §6.2 equivalence test). A failure is the
+    /// caller's cue to ask `git ls-files --unmerged` itself, so the reported error stays pre-commit's.
+    pub fn tracked_with_stages(&self) -> Result<(IndexEntries, bool), Failure> {
+        let out = self.checked(&["ls-files", "-s", "-z"])?;
+        parse_ls_files_stages(out.stdout).map_err(|r| bad_record("ls-files -s -z", &r))
+    }
+
+    /// The index file's identity and change stamp (no spawn): two equal stamps around a span mean nobody rewrote the
+    /// index in between, so an `ls-files -s -z` taken before it still describes it (ADR-104). `None` when the index
+    /// cannot be stat'ed, and always on non-Unix platforms (no stable inode or ctime there): callers treat `None` as
+    /// "changed".
+    pub fn index_stamp(&self, info: &RepoInfo) -> Option<IndexStamp> {
+        IndexStamp::of(&info.index_file)
     }
 
     /// `git diff --staged --raw -z --no-renames --diff-filter=ACMRTUXB` (checked): the staged paths with their index
