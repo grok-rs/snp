@@ -77,6 +77,7 @@
 //!   (snp uses `snp_pyre::cfgv_is_valid`).
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 mod check;
 mod condition;
