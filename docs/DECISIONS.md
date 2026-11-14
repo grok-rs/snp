@@ -15,7 +15,8 @@ upstream refresh; ADR-093 the path-limited stash checkout; ADR-094 Rust 1.100; A
 ADR-096 the owner's decision to make the Verus proofs blocking;
 ADR-097 the stash re-verification by stat stamps; ADR-098 the tier-1 prefilter; ADR-099 the paired bench gate; ADR-100
 the B8 heap budget and counters; ADR-101 classification CPU and fan-out sizing; ADR-102 native-hook facts; ADR-103
-borrowed hook argv; ADR-104 the step-6 changes of the run pipeline; ADR-105 the hook script template v2.
+borrowed hook argv; ADR-104 the step-6 changes of the run pipeline; ADR-105 the hook script template v2; ADR-116 the
+absorption of cfgv and file-identify into the workspace.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -643,6 +644,9 @@ target, commit.
 
 ### ADR-061 — Pinning the sibling user crates in CI and releases
 
+*Status: Superseded by ADR-116 (cfgv and file-identify are the workspace crates snp-cfgv and snp-identify; `deps.lock`,
+the sibling checkouts, the drift job and the user-crate release gates are gone). The superseding ADR is normative.*
+
 **Context.** cfgv and file-identify are path dependencies outside the repository (`../cfgv-rs`, `../file-identify`,
 branch `snp-support`). Nothing said how GitHub CI, the platform matrix, nightly fuzzing or the cargo-dist/maturin
 release builds get those checkouts or at which commit; `cargo build --locked` fails on a clean `grok-rs/snp` checkout;
@@ -1243,6 +1247,10 @@ and COMPATIBILITY §5.7/§5.8/§7.4 describe it.
 
 ### ADR-088 — Release channels: crates.io and Homebrew
 
+*Status: Accepted; amended by ADR-116 (the publish set gains snp-cfgv and snp-identify, which replace the external
+user crates cfgv and file-identify and their ADR-061 provenance requirement). The amending ADR is normative where
+they differ.*
+
 **Context.** ADR-049 released snp through cargo-dist (GitHub releases, shell/PowerShell installers) and PyPI
 `snp-cli`; the whole workspace was `publish = false`, and ADR-050 chose 2.0.0 because the crates.io name `snp` held
 the unrelated 1.x, so `cargo install snp` installed that older tool (installation guide: "not yet available").
@@ -1757,6 +1765,9 @@ new divergence. The 256 KiB cap re-tunes against CI's B12u RSS once batch C halv
 
 ### ADR-099 — The bench gate pairs interleaved base and head rounds; the base is built like the head
 
+*Status: Accepted; amended by ADR-116 (a base with `deps.lock` gets its crates from its own `deps-lock.sh`; a base
+without it needs none). The amending ADR is normative where they differ.*
+
 **Context.** The performance analysis of 2026-11 (P06, P07) measured why same-code pull requests failed the bench
 gate. `bench.yml` measured the base commit's snp on every scenario, then the head's: the two windows of one scenario
 were about a minute apart, and each window's 95 % interval only covered the scatter inside it. Same-binary repeats
@@ -2091,6 +2102,67 @@ the same problem impossible for the next template.
 it, since `bench setup` installs the head's script for both builds; process counts and absolute B9 do. Hook scripts
 written by snp 2.0.0–2.0.1 keep working unchanged; `snp doctor` warns about them until `snp install` rewrites them.
 pre-commit's and prek's `is_our_script` still match the compat IDs, so the last installer still wins.
+
+### ADR-116 — cfgv and file-identify are workspace crates: snp-cfgv and snp-identify
+
+*Supersedes ADR-061. Amends ADR-088 (the publish set), ADR-099 (decision 1: how a base gets its user crates),
+ARCHITECTURE FD-3, §1.1–§1.3 and §1.5. The owner's decision of 2026-11-14.*
+
+**Context.** cfgv (Python cfgv 3.5.0) and file-identify (Python identify 2.6.20) are the owner's crates. FD-3 bound
+them as path dependencies outside the repository (`../cfgv-rs`, `../file-identify`, branch `snp-support`), and
+ADR-061 made that work: a committed `deps.lock`, a checkout step in every job of every workflow (42 steps), a
+scheduled drift job, three release gates (pins, clean siblings, crates.io provenance of both crates), a symlink helper
+for linked worktrees, and nightly and deny-fixture workarounds for tools that copy the tree. A fresh clone did not
+build (`cargo build --locked` and even `cargo fmt --all --check` failed without the siblings), every change to either
+crate was a commit in another repository plus a `deps.lock` bump, and a release had to publish two crates from other
+repositories first. Both crates exist only for snp: their `snp-support` branches track exactly what snp binds.
+**Decision.** (1) **Import with history.** `git subtree add` imports both repositories at exactly the `deps.lock`
+revisions (cfgv-rs `6a04a30c3f11b9582570cf4cf0639699efe3dc9f`, file-identify
+`1324f403ba9b519b466fd27d186ae4e75cfa8d0b`) under `crates/snp-cfgv` and `crates/snp-identify`, unsquashed; every
+adaptation is a separate commit on top. The import merges must never be rebased (that would replay the imported
+commits at the repository root): a branch carrying them is updated with `git merge`. (2) **Names.** The packages are
+`snp-cfgv` and `snp-identify`; the libraries keep the names `cfgv` and `file_identify` (`[lib] name`), and the
+workspace dependency keys stay `cfgv` and `file-identify` with `package = "snp-…"`. The crates.io names `cfgv` and
+`file-identify` belong to the owner's standalone crates, which keep their own semver lines; the absorbed copies are
+internal crates with no API promise and join snp's `=X.Y.Z` release train like every other `snp-*` crate (ADR-088).
+Keeping the library names means none of the 41 files that write `cfgv::` or `file_identify::` changes, and a diff
+against the standalone crates stays readable. (3) **Workspace integration.** Both inherit version, edition,
+rust-version (MSRV 1.85 → 1.100), license, repository, authors and `[lints] workspace = true`; their own toolchain
+pin, clippy/rustfmt/deny/typos configuration, Renovate/Dependabot settings, workflows, lockfiles and pre-commit
+config are dropped. Every S2/clippy finding is fixed without changing behaviour (bounded arithmetic made explicit or
+`#[expect]`ed with its bound, `with_capacity` → `try_reserve`, `#[allow]` → `#[expect(.., reason)]`, test files in
+`#[cfg(test)]` modules); the parity vectors, unit, property, API and doc tests pass unchanged. Two removals: cfgv's
+`regex` feature (`CheckFn::check_regex()` on the `regex` crate's dialect; snp always plugs in
+`snp_pyre::cfgv_is_valid` through `check_regex_with`, and deny.toml allows `regex` only behind snp-pyre, ADR-003) and
+file-identify's command-line tool (unused by snp; it needed clap, banned outside xtask, ADR-010). cfgv keeps its
+optional `serde` feature (tests and the `cfgv_validate` fuzz target) and has no default features, as snp always built
+it. Each crate keeps its LICENSE (its copyright line), a short README (compiled as doctests) and its CHANGELOG as
+frozen history. (4) **Tests, data, fuzz, benches.** The crates' tests run in `cargo nextest run --workspace`; their
+generators move into xtask and read the pc470 oracle (CPython 3.12.3 with the hash-locked identify 2.6.20 and cfgv
+3.5.0 of `requirements-pc470.txt`): `cargo xtask identify-tables [--check]` (file-identify's own Rust table generator),
+`cargo xtask identify-vectors` and `cargo xtask cfgv-vectors` (the Python generators); regenerating reproduces the
+committed data byte for byte (only the generated files' headers name the new commands). file-identify's PyPI wheel
+download script is dropped (the oracle provides identify). The seven fuzz targets join `fuzz/` as `cfgv_*` and
+`identify_*`; file-identify's harness-less bench stays in its crate; the ADR-061 drift tests stay as consumer-side
+contract tests (`cfgv_contract.rs`, `identify_contract.rs`). (5) **DAG.** `check-dag` tracks both as workspace leaves
+without the implicit snp-core edge; the consumers are unchanged (snp-yaml, snp-config, snp-hooks → snp-cfgv;
+snp-proc, snp-files, snp-config, snp-hooks, snp-migrate → snp-identify). (6) **CI and releases.** `deps.lock`,
+`deps-lock.sh`, every checkout step, the drift workflow and release gates 1, 2 and 5 (with `--lock`,
+`--skip-registry`, `--index`, `--dl`) are removed; the gates keep their numbers. One exception remains: bench.yml's
+paired gate builds the base commit, and a base from before this ADR (it has `deps.lock`) gets its pinned crates next
+to it from its own `deps-lock.sh`, and only then. (7) **Publishing.** Gate 6 checks the two packages like every other
+published crate; `publish-crates.sh` takes them from `cargo metadata` and publishes in dependency order. The standalone
+repositories and crates.io packages `cfgv` and `file-identify` are left alone: snp never pushes to or publishes them.
+**Rationale.** A move, not a fork in spirit: the code, its history and its tests come along, and the only behaviour
+changes are the two removals nobody used. Absorbing deletes more machinery (−337 lines of workflows and scripts, three
+release gates, a scheduled job) than it adds, makes the workspace buildable from a clean clone and from any worktree,
+and lets a change to cfgv or identify land atomically with its consumer and its tests. Renaming the packages while
+keeping the library names is the one combination that neither collides with the standalone crates on crates.io nor
+touches the consumers.
+**Consequences.** 28 crates (§1.1). The published closure gains `snp-cfgv` and `snp-identify` and loses the external
+`cfgv` and `file-identify`, so the release graph keeps its size (§11.7 budget of 120 packages). A fix made in a
+standalone repository reaches snp only as an explicit port (or `git subtree pull --prefix=crates/snp-… <repo> <rev>`,
+then the workspace adaptation), and the reverse holds for fixes made here. ADR-061 is superseded in full.
 
 ## Appendix A — Open questions of the research documents, resolved
 

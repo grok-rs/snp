@@ -70,9 +70,8 @@ gh attestation verify snp-x86_64-unknown-linux-gnu.tar.xz --repo grok-rs/snp
 cargo audit bin ~/.local/bin/snp
 ```
 
-Releases are built from a clean checkout of a tagged commit together with the two user crates snp depends on (cfgv and
-file-identify) at the commits pinned in `deps.lock`; the release workflow refuses to build when those crates are not
-published on crates.io from exactly those commits.
+Releases are built from a clean checkout of a tagged commit; every crate snp is built from is part of that checkout,
+and the crates published to crates.io all carry the release's exact version.
 
 ## PyPI: `snp-cli`
 
@@ -124,12 +123,11 @@ when the first `snp` on `PATH` is not the one you are running.
 
 ## From source
 
-The repository depends on two sibling checkouts pinned in `deps.lock`
-([cfgv-rs](https://github.com/grok-rs/cfgv-rs) and [file-identify](https://github.com/grok-rs/file-identify)):
+A clone of the repository is all it takes (every crate, including the ports of Python cfgv and identify, is in the
+workspace):
 
 ```sh
 git clone https://github.com/grok-rs/snp && cd snp
-.github/scripts/deps-lock.sh checkout     # clones ../cfgv-rs and ../file-identify at the pinned commits
 cargo build --profile dist --locked -p snp
 ./target/dist/snp --version
 ```

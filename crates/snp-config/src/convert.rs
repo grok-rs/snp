@@ -86,7 +86,7 @@ pub(crate) fn key_str(k: &Value) -> String {
     k.try_to_string().unwrap_or_else(|_| k.to_string())
 }
 
-/// `sorted(keys)` rendered with `str()`, in Python's order: cfgv-rs's `py_sort` (reached through
+/// `sorted(keys)` rendered with `str()`, in Python's order: snp-cfgv's `py_sort` (reached through
 /// `WarnAdditionalKeys`, which hands its callback the extra keys sorted), the order of the root and repo
 /// warnings. Strings sort by code point, numbers and booleans numerically, other types by type rank (pre-commit
 /// would crash on a non-string key, D-CRASH-02); keys a Python dict collapses (`1`, `true`) are one key.

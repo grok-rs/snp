@@ -33,7 +33,7 @@
 |---|---|
 | FD-1 | Binary `snp`. In-place replacement for pre-commit: same `.pre-commit-config.yaml` / `.pre-commit-hooks.yaml`, CLI subcommands/flags, output layout, exit codes, env vars. Branding follows `argv[0]`: through a `pre-commit` name the user-facing text is byte-identical to pre-commit 4.7.0 (product name included); as `snp` the layout is identical but the product name is `snp`. |
 | FD-2 | Own cache store: `SNP_HOME` > `$XDG_CACHE_HOME/snp` > `~/.cache/snp` (Windows `%USERPROFILE%\.cache\snp`, the platform equivalent of pre-commit's own default, 14 P-65). Never read or write pre-commit's store; no SQLite; hash-keyed directories with marker files written last. |
-| FD-3 | User crates as path deps with version requirements: `cfgv = { path = "../cfgv-rs", version = "0.3" }`, `file-identify = { path = "../file-identify", version = "0.5" }` (branch `snp-support`; the real APIs are bound in §1.5). |
+| FD-3 | The owner's crates cfgv and file-identify are part of the workspace: `crates/snp-cfgv` and `crates/snp-identify` (packages `snp-cfgv` / `snp-identify` on snp's `=X.Y.Z` release train, libraries `cfgv` / `file_identify`, workspace keys `cfgv` / `file-identify`), imported with their full history (ADR-116, the owner's decision of 2026-11-14, which replaced the sibling path dependencies `../cfgv-rs` / `../file-identify` of ADR-061); the APIs snp binds are listed in §1.5. |
 | FD-4 | `rust-toolchain.toml` channel `1.100.0`; `rust-version = "1.100"`; edition 2024; resolver 3 (ADR-094). |
 | FD-5 | `unsafe_code = "forbid"` in every snp crate; no panics on any input; `panic = "unwind"` + top-level guard (exit 3 + crash log) so the stash guard always restores; SIGINT/SIGTERM/SIGHUP-safe restore; fail closed. |
 | FD-6 | Behave exactly like pre-commit 4.7.0 except where pre-commit crashes, loses user data or has security bugs; every deliberate divergence is in the DIVERGENCES register (`docs/COMPATIBILITY.md` §5). |
@@ -112,12 +112,13 @@ snp/
 ├─ Cargo.lock              committed; regenerated mechanically on merge (`cargo update -w`), never hand-merged
 ├─ rust-toolchain.toml     channel = "1.100.0", components = ["rustfmt", "clippy", "llvm-tools-preview"], profile = "minimal"
 ├─ rustfmt.toml clippy.toml deny.toml typos.toml .cargo/config.toml .config/nextest.toml .gitignore LICENSE README.md
-├─ deps.lock               pinned commits of the sibling user crates (cfgv-rs, file-identify) for CI and releases (ADR-061)
 ├─ .github/workflows/      ci.yml (WP-00), nightly.yml (WP-00 skeleton; jobs call xtask tasks), platform.yml + release.yml (WP-37),
 │                          bench.yml (WP-36), difftest.yml (WP-35)
 ├─ crates/
 │  ├─ snp-core/            vocabulary, Env/EnvPatch, CancelToken, Failure envelope, Printer (Python stdout model), sync, spawnlock
 │  ├─ snp-pycompat/        Python stdlib semantics (15 §A6) + precommit composites, MT19937, EAW, float repr
+│  ├─ snp-cfgv/            Python cfgv 3.5.0: values, schemas, validators, cfgv-exact messages (library `cfgv`, ADR-116)
+│  ├─ snp-identify/        Python identify 2.6.20: tag tables, shebangs, classification (library `file_identify`, ADR-116)
 │  ├─ snp-argparse/        argparse-compatible parser + HelpFormatter + textwrap port
 │  ├─ snp-cli/             pre-commit + snp ParserSpec tables (verbatim help), typed `Cli` façade
 │  ├─ snp-pyre/            Python `re` front end (CPython 3.12), lowering, two engines, fast kinds, cache
@@ -151,30 +152,31 @@ snp/
 └─ docs/                   ARCHITECTURE.md, DECISIONS.md, COMPATIBILITY.md, WBS.md, research/, divergences/<ID>.md, user/
 ```
 
-26 crates. Sizing rule: each crate is 1–10 kLOC with one owner per wave. Every compile-heavy third-party subtree lives
+28 crates. Sizing rule: each crate is 1–10 kLOC with one owner per wave. Every compile-heavy third-party subtree lives
 in exactly one crate (`regex`/`fancy-regex` → snp-pyre, `ureq`/`rustls`/`tar`/`zip` →
 snp-net) so they compile in parallel and downstream edits never rebuild them.
 
 ### 1.2 Dependency DAG and implementation waves
 
-Internal edges (every crate except `snp-pycompat` and `snp-probe` (a standalone dev binary) — `xtask` included — also depends on `snp-core`; `snp-core` depends on `snp-pycompat`):
+Internal edges (every crate except `snp-pycompat`, the absorbed leaves `snp-cfgv` and `snp-identify` (ADR-116) and `snp-probe` (a standalone dev binary) — `xtask` included — also depends on `snp-core`; `snp-core` depends on `snp-pycompat`; `cfgv` and `identify` below are `snp-cfgv` and `snp-identify`):
 
 ```
 snp-pycompat   ← snp-core
+snp-cfgv       ()                               snp-identify  ()
 snp-argparse   (pycompat)                       snp-cli       (argparse)
-snp-pyre       (pycompat)                       snp-yaml      (pycompat; cfgv)
-snp-os         (pycompat)                       snp-proc      (pycompat, os; file-identify)
+snp-pyre       (pycompat)                       snp-yaml      (pycompat, cfgv)
+snp-os         (pycompat)                       snp-proc      (pycompat, os, identify)
 snp-net        (os)                             snp-lang      (pycompat, os, proc, net)
 snp-pyparsers  (pycompat)                       snp-hooks-data()
 snp-git        (pycompat, os, proc)             snp-testkit   (proc, git)          snp-probe ()
-snp-config     (pycompat, yaml, pyre; cfgv, file-identify)
-snp-store      (pycompat, os)                   snp-files     (pycompat, pyre, os, proc; file-identify)
+snp-config     (pycompat, yaml, pyre, cfgv, identify)
+snp-store      (pycompat, os)                   snp-files     (pycompat, pyre, os, proc, identify)
 snp-stash      (pycompat, os, proc, git)
-snp-hooks      (pycompat, pyre, argparse, cli, proc, os, git, pyparsers, hooks-data; file-identify, cfgv)
+snp-hooks      (pycompat, pyre, argparse, cli, proc, os, git, pyparsers, hooks-data, identify, cfgv)
 snp-repo       (config, store, git, lang, hooks-data, files, proc, os, pyre, net)
 snp-run        (repo, stash, hooks, files, config, store, git, lang, proc, os, pyre, yaml, cli, pycompat, net)
 snp-cmd        (config, store, git, stash, yaml, os, proc, cli, pycompat, hooks-data, pyre)
-snp-migrate    (config, yaml, pyre, hooks-data; file-identify)
+snp-migrate    (config, yaml, pyre, hooks-data, identify)
 snp            (run, cmd, migrate, repo, hooks, cli, store, proc, os, net, git, pyre, lang)
 snp-difftest   (testkit, yaml)
 xtask          (cli, hooks, argparse)           — build-time tool, never shipped; may not depend on snp or snp-difftest
@@ -252,9 +254,9 @@ its tests run with a fake resolver before snp-repo lands. Critical path: pycompa
   targets iff it wins (ADR-079).
 * **Dependencies** (complete `[workspace.dependencies]`, exact versions from 07 §6 unless noted; WP-00 owns the root
   manifest and nobody edits it later — a package needing a new external dependency files an ADR and the integration
-  lead adds it): `cfgv` (path `../cfgv-rs`, `version = "0.3"`, `default-features = false`), `file-identify` (path
-  `../file-identify`, `version = "0.5"`, `default-features = false`) — the sibling checkouts are pinned by the
-  committed `deps.lock` (commit SHAs) that every workflow checks out (ADR-061), `libyaml-safer 0.3.0`, `regex 1.13.1`,
+  lead adds it): `cfgv` (path `crates/snp-cfgv`, `package = "snp-cfgv"`, `version = "=X.Y.Z"`) and `file-identify`
+  (path `crates/snp-identify`, `package = "snp-identify"`, `version = "=X.Y.Z"`), the absorbed crates (ADR-116),
+  `libyaml-safer 0.3.0`, `regex 1.13.1`,
   `regex-syntax 0.8.11`, `fancy-regex 0.19.2`, `unicode-ident 1`, `unicode_names2 =4.0.0` (feature `py-re-names` of
   snp-pyre, default on), `memchr 2.8.3`, `bstr 1.13.1`, `indexmap 2.14.2`, `blake3 1.8.7`, `sha2 0.11.0`, `md-5 0.11.0`, `serde 1.0.229` + `serde_json 1.0.151` (state files and JSON I/O only),
   `toml 1.1.6` (snp-migrate; tests of snp-pyparsers), `thiserror 2.0.21`, `tracing 0.1.44` + `tracing-subscriber
@@ -272,7 +274,7 @@ its tests run with a fake resolver before snp-repo lands. Critical path: pycompa
   ["snp"]` for the musl allocator), `regex` outside `snp-pyre` (wrappers; `snp-pycompat` is regex-free), `memmap2`,
   `anstyle-query`
   (Windows colour goes through `winapi-util`, ADR-029), `unicode-width` (EAW comes from pycompat tables), `nix`.
-  `sources`: crates.io + the two user path crates only. Licenses allow-list: MIT, Apache-2.0, BSD-2/3, ISC,
+  `sources`: crates.io only (every path dependency is a workspace member, ADR-116). Licenses allow-list: MIT, Apache-2.0, BSD-2/3, ISC,
   Unicode-3.0, Zlib, MPL-2.0 (file-level).
 * **Output discipline**: no crate prints. Only `snp_core::output::Printer` writes stdout/stderr; lower crates return
   data or receive `&Printer`/`&dyn WarnSink`/`&dyn DiagSink`. Children write to inherited fds only where pre-commit
@@ -2230,10 +2232,14 @@ pub fn normalise(tier: Tier, bytes: &[u8], map: &BrandMap) -> Vec<u8>;
 #[derive(Debug)] pub struct BrandMap { /* tests/differential/brand_map.yaml; non-argparse texts only */ }
 ```
 
-### 1.5 User-crate bindings (the real APIs on the `snp-support` branches)
+### 1.5 cfgv and file-identify bindings (`crates/snp-cfgv`, `crates/snp-identify`)
 
-cfgv 0.3.0 (`/home/dromix/projects/cfgv-rs`, branch `snp-support`, re-verified at `6a04a30`; the commit CI and
-releases build against is the one recorded in `deps.lock` (ADR-061); `rust-version = 1.85`, `default-features = false`):
+The owner's cfgv and file-identify crates were absorbed into the workspace with their full history (ADR-116; until
+then sibling checkouts on branch `snp-support`, pinned by `deps.lock`, ADR-061). They are leaves of the §1.2 DAG,
+inherit the workspace's version, MSRV and lints, and keep their library names, so the bindings below are unchanged.
+
+cfgv (`crates/snp-cfgv`, imported from cfgv-rs 0.3.0 at `6a04a30`; no default features, the optional `serde` feature
+is used only by its tests and fuzz target; the `regex`-crate-backed `CheckFn::check_regex()` was dropped, ADR-116):
 * `cfgv::{Value, Map (= IndexMap<Value, Value>), Set (= IndexSet<Value>), BigInt, Date, DateTime, Schema, Validator,
   MapItem, Cx, CheckFn, RegexCheck, ValidationError, validate_with, apply_defaults_owned, load_from_filename_with}`.
   `Value` already has `Null, Bool, Int, BigInt, Float, String, Bytes, List, Tuple, Map, Set, Date, DateTime` — no new
@@ -2257,8 +2263,8 @@ releases build against is the one recorded in `deps.lock` (ADR-061); `rust-versi
 * Extension keys are additional `MapItem`s appended after pre-commit's items and added to the known-key lists of the
   `WarnAdditionalKeys` items, so error precedence and every warning for pre-commit keys is unchanged.
 
-file-identify 0.5.0 (`/home/dromix/projects/file-identify`, branch `snp-support`, re-verified at `1324f40`; pinned by
-`deps.lock`; `rust-version = 1.85`, no default features):
+file-identify (`crates/snp-identify`, imported from file-identify 0.5.0 at `1324f40`; no features; the tables are
+regenerated from the oracle's identify by `cargo xtask identify-tables`):
 * `Tag`, `TagSet` (`Copy` bitset; `union`, `intersection`, `is_subset`, `is_disjoint`, `intersects`, `from_names`),
   `ALL_TAGS`, `IDENTIFY_VERSION` ("2.6.20"), `tags_from_filename(impl AsRef<[u8]>) -> TagSet`,
   `tags_from_interpreter(&str)`, `Meta::{from_metadata(&Metadata, ExecPolicy), from_git_mode_with(u32, ExecPolicy) -> Option<Meta>}`,
@@ -2268,9 +2274,11 @@ file-identify 0.5.0 (`/home/dromix/projects/file-identify`, branch `snp-support`
   (a non-UTF-8 shebang yields an empty vector, identify parity), `MAX_SHEBANG_BYTES` (64 KiB), `TEXT_PROBE_LEN`.
 * Windows: `FileKind::from_file_type` reports a directory junction as `Symlink` (no `unsafe` to read the reparse tag);
   identify reports `directory` — registered divergence D-PLAT-12.
-* WP-00 adds `crates/snp-config/tests/user_crates.rs` and `crates/snp-files/tests/user_crates.rs`, which name every
-  cfgv / file-identify item listed in this section with explicit types, so a breaking change on either branch fails
-  CI at the drift check of ADR-061 instead of inside a later package.
+* `crates/snp-config/tests/cfgv_contract.rs` and `crates/snp-files/tests/identify_contract.rs` name every cfgv /
+  file-identify item listed in this section with explicit types and exercise the behaviour the consumers rely on, so a
+  change to either crate that breaks a binding fails next to its consumer (until ADR-116 they were the ADR-061 drift
+  checks, `user_crates.rs`). The crates' own unit, property, API and Python-parity tests run with the workspace's;
+  their parity vectors come from the pc470 oracle (`cargo xtask cfgv-vectors`, `cargo xtask identify-vectors`).
 
 ### 1.6 Workspace (multi-project) mode — seams in v1, implementation in v1.1
 
@@ -3673,8 +3681,7 @@ divergent only above 64 logical CPUs, D-PLAT-10; junction detection: not possibl
 
 ### 11.7 Supply chain
 
-`cargo-deny` (advisories with `yanked = deny`, bans §1.3, license allow-list, sources = crates.io + the two path
-crates), `cargo audit` nightly, committed `Cargo.lock` + `--locked` everywhere, minimum versions `rustls ≥ 0.23.45`,
+`cargo-deny` (advisories with `yanked = deny`, bans §1.3, license allow-list, sources = crates.io only), `cargo audit` nightly, committed `Cargo.lock` + `--locked` everywhere, minimum versions `rustls ≥ 0.23.45`,
 `tar ≥ 0.4.46`, no build scripts in snp crates, `cargo auditable` release builds, SBOM (cargo-cyclonedx), GitHub
 artifact attestations, checksums for every release asset, dependency budget ≤ 120 packages in the release graph.
 `libyaml-safer` (single maintainer) is wrapped by `snp-yaml`'s event adapter, fuzzed, and fork-ready via
@@ -3737,9 +3744,9 @@ the critical path (≈ 1 ms each measured); B2 (one hook; Stat mode from one hoo
 ### 12.3 Measurement and gates
 
 `cargo xtask bench setup|run|gate` (WP-36): hyperfine `-N -w 5 -r 50` against the oracle (`pc470-py312`) and pinned
-prek, JSON history, PR comment. Pull requests and pushes build the base commit like the head (its own `deps.lock`
-crates, toolchain and stores) and measure both in interleaved ABBA rounds per scenario, pre-commit and prek right
-after (ADR-099); the gate fails when the median per-round ratio exceeds 5 % and 0.1 ms with its 95 % interval above 1,
+prek, JSON history, PR comment. Pull requests and pushes build the base commit like the head (its own toolchain,
+stores, pre-ADR-116 `deps.lock` crates) and measure both in interleaved ABBA rounds per scenario, pre-commit and
+prek right after (ADR-099); the gate fails when the median per-round ratio exceeds 5 % and 0.1 ms with its 95 % interval above 1,
 or on any hard-budget breach; a comparison with another record (> 5 % and > 0.1 ms with non-overlapping 95 % CIs) is
 reported (history from other runner VMs, ADR-090). Deterministic counters (`strace -f --seccomp-bpf -c`, every
 event): clones, `statx` and `newfstatat` are gated base against head on the same runner (+10 % and ≥ 5; +2 % and ≥ 50
@@ -3868,8 +3875,8 @@ Toolchain 1.100.0 (pinned) + MSRV job 1.100.0 (`cargo check --workspace --all-ta
 `ubuntu-24.04-arm`, `macos-15` (arm64), `macos-15-intel`, `windows-2025`, `windows-11-arm`; musl static build smoke;
 git versions per §13.1 L6 via containers; nextest profiles `default` (hermetic), `ci` (retries 2, JUnit), `nightly`
 (all). Coverage (llvm-cov) reported; mutation testing (`cargo mutants`) nightly on snp-stash, snp-proc::xargs,
-snp-argparse, snp-pyre. Every workflow first checks out the user crates as siblings at the `deps.lock` SHAs (ADR-061);
-a scheduled drift job compares those SHAs with the `snp-support` branch heads and opens an issue when they differ.
+snp-argparse, snp-pyre. The workspace is self-contained: no workflow checks out another repository to build it
+(ADR-116 removed ADR-061's sibling checkouts and drift job).
 `perf-smoke` (release-mode `#[ignore = "perf"]` tests) runs on push. Proofs (ADR-095, docs/VERIFICATION.md §7): the
 required `xtask gates` job runs `cargo xtask proofs check` and, since ADR-096, `cargo xtask proofs verus` (blocking, on
 every change); release gate 7 re-verifies the tag (Verus and Lean) and requires the release notes to accept any

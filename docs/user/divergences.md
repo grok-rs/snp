@@ -104,7 +104,7 @@ unknown key, which pre-commit otherwise reports with a warning and accepts (13 X
 an obvious bug whose fix cannot weaken a check).
 
 snp prints the warning pre-commit intended: `str()` of every key, ordered like Python's `sorted()` within a type
-and grouped by type rank across types (`None`, then numbers and booleans, then strings, …; cfgv-rs's
+and grouped by type rank across types (`None`, then numbers and booleans, then strings, …; snp-cfgv's
 `py_sort`). Keys that Python dict semantics collapse (`1` and `true`) are one key, as in PyYAML.
 
 The same applies one level down. `Hook.create` (`hook.py:49-57`) warns about a hook's unknown keys with
