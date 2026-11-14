@@ -9,7 +9,7 @@ use snp_core::failure::{ExcKind, Failure};
 use snp_proc::pool::JobPool;
 use snp_pyre::{MatchError, MatchKind, PyRegex};
 
-use crate::table::{REGEX_THREADS, par_chunks_on};
+use crate::table::{PARALLEL_MIN, REGEX_THREADS, par_chunks_on};
 use crate::{FileId, FileTable, HookFilter, TagOutcome, messages};
 
 /// `Classifier.from_config`: top-level include/exclude (`re.search` on the `/`-path), then lexists.
@@ -40,18 +40,19 @@ impl Classifier {
         pool: &JobPool,
     ) -> Result<Self, Failure> {
         let t: &FileTable = &table;
-        let found: Vec<(FileId, Meta)> = par_chunks_on(pool, t.len(), REGEX_THREADS, |range| {
-            let mut out = Vec::new();
-            for raw in range {
-                let id = FileId(u32::try_from(raw).unwrap_or(u32::MAX));
-                if passes(t, id, include, exclude)?
-                    && let Some(meta) = t.lexists_meta(raw)
-                {
-                    out.push((id, meta));
+        let found: Vec<(FileId, Meta)> =
+            par_chunks_on(pool, t.len(), REGEX_THREADS, false, |range| {
+                let mut out = Vec::new();
+                for raw in range {
+                    let id = FileId(u32::try_from(raw).unwrap_or(u32::MAX));
+                    if passes(t, id, include, exclude)?
+                        && let Some(meta) = t.lexists_meta(raw)
+                    {
+                        out.push((id, meta));
+                    }
                 }
-            }
-            Ok(out)
-        })?;
+                Ok(out)
+            })?;
         let mut pending = vec![None; t.len()].into_boxed_slice();
         let mut kept = Vec::new();
         for (id, meta) in found {
@@ -85,7 +86,8 @@ impl Classifier {
         let adopt = pending.as_deref().filter(|_| f.needs.any());
         let table: &FileTable = &self.table;
         let kept = &self.kept;
-        par_chunks_on(pool, kept.len(), REGEX_THREADS, |range| {
+        let cheap = kept.len() >= PARALLEL_MIN && memoized(table, kept, f);
+        par_chunks_on(pool, kept.len(), REGEX_THREADS, cheap, |range| {
             let mut out = Vec::new();
             for &id in kept.get(range).unwrap_or_default() {
                 if f.prefix
@@ -130,11 +132,42 @@ impl Classifier {
     }
 }
 
+/// Whether `for_hook(f)` over `kept` is memory-only work (ADR-101): both patterns are trivial (no regex call) and
+/// every file they and the prefix pass either needs no tags or has every tier `f.needs` already memoised (a later
+/// hook with the same type filters). Then the classification runs on the calling thread instead of the pool.
+fn memoized(table: &FileTable, kept: &[FileId], f: &HookFilter) -> bool {
+    let trivial = |re: &PyRegex| matches!(re.kind(), MatchKind::All | MatchKind::EmptyOrNewline);
+    if !trivial(&f.files) || !trivial(&f.exclude) {
+        return false;
+    }
+    if no_type_filter(f) {
+        return true;
+    }
+    kept.iter().all(|&id| {
+        if f.prefix
+            .as_ref()
+            .is_some_and(|p| table.relative_to(id, p).is_none())
+        {
+            return true;
+        }
+        match passes(table, id, &f.files, &f.exclude) {
+            Ok(false) => true,
+            Ok(true) => table.tiers_ready(id, f.needs),
+            Err(_) => false,
+        }
+    })
+}
+
+/// `types: []` with the default `types_or`/`exclude_types`: every tag set matches.
+fn no_type_filter(f: &HookFilter) -> bool {
+    f.types.is_empty() && f.types_or.is_empty() && f.exclude_types.is_empty()
+}
+
 /// The type filter for one file: `Ok(false)` drops it (no match, or gone), `Err` fails the run (unreadable).
 fn keep(table: &FileTable, id: FileId, f: &HookFilter) -> Result<bool, Failure> {
     // No type filter at all (`types: []`, the default `types_or`/`exclude_types`): every tag set matches, so only a
     // file already known to be gone is dropped; no tag needs computing.
-    if f.types.is_empty() && f.types_or.is_empty() && f.exclude_types.is_empty() {
+    if no_type_filter(f) {
         return Ok(!table.known_vanished(id));
     }
     match table.tags(id, f.needs) {
