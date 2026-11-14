@@ -16,8 +16,7 @@
 # Jobs that drive an xtask task owned by another package run once that task is implemented: the `tasks` job reports
 # whether each task is still its W0 stub (a `todo!()` body), and the job is skipped (with a notice) until it is not.
 #
-# Layout (as in ci.yml): the repository at $GITHUB_WORKSPACE/snp, the user crates next to it at the deps.lock commits
-# (ADR-061); every job checks them out first.
+# Layout (as in ci.yml): the repository at $GITHUB_WORKSPACE/snp; the workspace is self-contained.
 name: nightly
 
 on:
@@ -74,8 +73,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: taiki-e/install-action@v2
         with: { tool: cargo-nextest }
@@ -97,8 +94,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: taiki-e/install-action@v2
         with: { tool: cargo-nextest }
@@ -117,8 +112,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
@@ -143,8 +136,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: taiki-e/install-action@v2
         with: { tool: cargo-nextest }
@@ -159,8 +150,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: astral-sh/setup-uv@v6
       - run: cargo xtask oracle install
@@ -178,8 +167,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install nightly --profile minimal
       - uses: taiki-e/install-action@v2
         with: { tool: cargo-fuzz }
@@ -204,8 +191,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: astral-sh/setup-uv@v6
       - run: cargo build --release --locked -p snp -p snp-probe --bins
@@ -230,8 +215,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - run: cargo xtask catalog-status | tee -a "$GITHUB_STEP_SUMMARY"
 
@@ -259,14 +242,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: taiki-e/install-action@v2
         with: { tool: "cargo-mutants,cargo-nextest" }
-      # cargo-mutants builds a copy of the tree in $TMPDIR, where the workspace's `../cfgv-rs` and
-      # `../file-identify` path dependencies must resolve too: the copy goes to a directory of its own that holds
-      # links to the user crates checked out next to the repository.
+      # cargo-mutants builds a copy of the tree in $TMPDIR (a directory of its own under the runner's temp).
       #
       # Some mutants make a test allocate without bound; the runner VM (16 GB) then loses its runner process ("The
       # runner has received a shutdown signal") and the whole shard with it. The run is confined to a memory-capped
@@ -282,10 +261,6 @@ jobs:
         run: |
           export TMPDIR="$RUNNER_TEMP/mutants"
           mkdir -p "$TMPDIR"
-          for dep in cfgv-rs file-identify; do
-            ln -sfn "$GITHUB_WORKSPACE/$dep" "$TMPDIR/$dep"
-            test -f "$TMPDIR/$dep/Cargo.toml"
-          done
           status=0
           # shellcheck disable=SC2086
           sudo systemd-run --scope --quiet -p MemoryMax=10G -p MemorySwapMax=0 -p OOMPolicy=continue \
@@ -328,8 +303,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: taiki-e/install-action@v2
         with: { tool: "cargo-llvm-cov,cargo-nextest" }
@@ -364,8 +337,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: actions/checkout@v4
         with:
@@ -403,8 +374,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - run: cargo xtask proofs install
       - name: Z3 seed sweep

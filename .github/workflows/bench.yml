@@ -4,8 +4,8 @@
 #           thresholds; the perf-smoke tests of ci.yml only catch a 3x regression).
 # * e2e:    hyperfine scenarios B1-B12 of snp (dist) vs pre-commit 4.7.0 (pc470-py312) and prek 0.5.10 on the Linux
 #           reference runner. Pull requests and pushes to main also build the base commit (the PR base, or the commit
-#           before the push) at base/snp, against its own deps.lock crates (base/cfgv-rs, base/file-identify) and its
-#           own toolchain, with its own stores; `bench run --base-snp` measures the two binaries in interleaved ABBA
+#           before the push) at base/snp with its own toolchain and its own stores (a base from before ADR-116 also
+#           gets its own deps.lock crates at base/cfgv-rs and base/file-identify); `bench run --base-snp` measures the two binaries in interleaved ABBA
 #           rounds per scenario, pre-commit and prek right after, and the gate pairs the rounds (ADR-099). Every event
 #           counts clones, statx, newfstatat, opens, dirents and execs with strace (`--counts`); with a base, clones,
 #           statx and newfstatat are gated against it and the exec argv diff is in the comment (ADR-100). Pull
@@ -31,7 +31,6 @@ on:
       - "crates/**"
       - "Cargo.toml"
       - "Cargo.lock"
-      - "deps.lock"
       - "bench/**"
       - "xtask/src/tasks/bench.rs"
       - ".github/workflows/bench.yml"
@@ -66,8 +65,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: snp, key: bench-micro }
@@ -96,8 +93,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: snp, key: bench-e2e }
@@ -119,11 +114,13 @@ jobs:
         run: find target/bench -mindepth 1 -maxdepth 1 ! -name base-target -exec rm -rf {} + 2>/dev/null || true
       - run: cargo xtask bench setup --scenarios "$BENCH_SCENARIOS"
       # Pull requests and pushes: the base commit's snp (the PR base, or the commit before the push), built on this
-      # runner like the head (ADR-099): checked out at base/snp, its own deps.lock crates next to it (base/cfgv-rs,
-      # base/file-identify, so its `../cfgv-rs` paths resolve to them), its own rust-toolchain.toml and .cargo, and
-      # `--locked`. A baseline from the history comes from another VM, and runner variance alone exceeds the 5 %
-      # regression threshold on millisecond scenarios (B1: +57 % for an identical binary), which is why the history
-      # is only reported.
+      # runner like the head (ADR-099): checked out at base/snp, with its own rust-toolchain.toml and .cargo, and
+      # `--locked`. A base from before ADR-116 (it still has deps.lock and `../cfgv-rs` / `../file-identify` path
+      # dependencies) gets its pinned crates next to it (base/cfgv-rs, base/file-identify) from its own
+      # .github/scripts/deps-lock.sh, which every such commit carries; a base without deps.lock needs nothing. A
+      # baseline from the history comes from another VM, and runner variance alone exceeds the 5 % regression
+      # threshold on millisecond scenarios (B1: +57 % for an identical binary), which is why the history is only
+      # reported.
       - name: Base commit
         if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000')
         uses: actions/checkout@v4
@@ -133,10 +130,10 @@ jobs:
       - name: Build the base commit
         if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000')
         run: |
-          .github/scripts/deps-lock.sh checkout ../base/snp/deps.lock
-          if ! cmp -s deps.lock ../base/snp/deps.lock; then
-            echo "The base builds against other user-crate revisions:"
-            diff deps.lock ../base/snp/deps.lock || true
+          if [ -f ../base/snp/deps.lock ]; then
+            echo "The base predates ADR-116: checking out its deps.lock crates next to it"
+            [ -x ../base/snp/.github/scripts/deps-lock.sh ] || { echo "::error::the base has deps.lock but no deps-lock.sh"; exit 1; }
+            ../base/snp/.github/scripts/deps-lock.sh checkout
           fi
           if ! cmp -s rust-toolchain.toml ../base/snp/rust-toolchain.toml; then
             echo "The base builds with another toolchain:"
@@ -200,8 +197,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install && rustup target add x86_64-unknown-linux-musl
       - name: musl toolchain
         working-directory: .

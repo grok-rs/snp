@@ -11,7 +11,7 @@
 #               `cargo xtask difftest --suite generated --seed <id> --case <i>`); failures are shrunk and their
 #               scenario.yaml + repro.sh uploaded.
 #
-# Layout as in ci.yml: the repository at $GITHUB_WORKSPACE/snp, the user crates next to it at the deps.lock commits.
+# Layout as in ci.yml: the repository at $GITHUB_WORKSPACE/snp.
 name: difftest
 
 on:
@@ -50,8 +50,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: snp }
@@ -89,8 +87,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: snp }
@@ -116,8 +112,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: snp }

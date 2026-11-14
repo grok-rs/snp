@@ -1,14 +1,13 @@
-# Release (WBS WP-37; ADR-049, ADR-061; ARCHITECTURE §11.7; 07 §3.17). Owned by WP-37.
+# Release (WBS WP-37; ADR-049, ADR-088, ADR-116; ARCHITECTURE §11.7; 07 §3.17). Owned by WP-37.
 #
 # Maintained by hand in the layout of cargo-dist 0.32's generated workflow (dist-workspace.toml has
 # `allow-dirty = ["ci"]`), with the snp specifics:
 #
-# * every job checks the repository out at $GITHUB_WORKSPACE/snp and the user crates next to it at the deps.lock
-#   commits (ADR-061), so `../cfgv-rs` and `../file-identify` resolve;
-# * `gates` runs first: `cargo xtask release gates` (deps.lock pins exactly the user crates; the siblings are clean at
-#   the pinned commits; the snp checkout is clean; the tag is `v` + the workspace version with a CHANGELOG section;
-#   cfgv and file-identify are published on crates.io from exactly the pinned commits, `.cargo_vcs_info.json`; the
-#   crates.io publish set is pinned and self-contained, ADR-088; gate 7: no kernel is proof-pending unless the
+# * every job checks the repository out at $GITHUB_WORKSPACE/snp (a self-contained workspace: cfgv and file-identify
+#   are its crates snp-cfgv and snp-identify, ADR-116);
+# * `gates` runs first: `cargo xtask release gates` (the snp checkout is clean; the tag is `v` + the workspace version
+#   with a CHANGELOG section; the crates.io publish set, snp-cfgv and snp-identify included, is pinned and
+#   self-contained, ADR-088; gate 7: no kernel is proof-pending unless the
 #   CHANGELOG section accepts it, and Verus and Lean re-verify the commit, ADR-096), then `cargo publish --workspace
 #   --dry-run` packages and builds every published crate against the registry. A mismatch stops the release before
 #   anything is built;
@@ -21,8 +20,8 @@
 #   grok-rs/homebrew-tap, HOMEBREW_TAP_DEPLOY_KEY) run after it (ADR-088). Pre-releases skip all three channels.
 #
 # Triggers: a pushed tag `vX.Y.Z` releases. A pull request that changes the release configuration, and a manual run
-# with the default tag `dry-run`, run the gates (without the registry check), the crates.io dry run, `dist plan` and
-# the builds, but publish nothing.
+# with the default tag `dry-run`, run the gates (accepting an Unreleased CHANGELOG section), the crates.io dry run,
+# `dist plan` and the builds, but publish nothing.
 #
 # Runners: the arm64 Linux and Windows runners exist for public repositories only. While the repository is private a
 # dry run builds the other targets (the dist matrix and the wheel matrix drop the arm64 Linux/Windows entries, as
@@ -67,7 +66,7 @@ defaults:
 
 jobs:
   gates:
-    name: release gates (ADR-061)
+    name: release gates
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     outputs:
@@ -130,8 +129,6 @@ jobs:
             echo "private=false" >> "$GITHUB_OUTPUT"
           fi
           echo "wheels=$wheels" >> "$GITHUB_OUTPUT"
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       # Gate 7 (ADR-096) re-verifies the commit with the pinned Verus (zip, verusfmt and rustc 1.99.1, sha256-checked
       # by proofs-tools.sh; no cache here, a release starts from the pins) and Lean (elan and the toolchain of
@@ -154,8 +151,8 @@ jobs:
           if [ -n "$TAG" ]; then
             cargo xtask release gates --tag "$TAG"
           else
-            # dry runs and pull requests: the user crates need not be published yet, the version not be released
-            cargo xtask release gates --skip-registry --allow-unreleased
+            # dry runs and pull requests: the version need not be released yet
+            cargo xtask release gates --allow-unreleased
           fi
       # ADR-088: every crate of the publish set packages and builds on its own against crates.io (cargo resolves
       # the not-yet-published ones from the packages it just made), before anything is built or published.
@@ -178,8 +175,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - name: Install dist
         working-directory: .
@@ -234,8 +229,6 @@ jobs:
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - name: Install dist
         working-directory: .
@@ -316,8 +309,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - uses: actions/download-artifact@v4
         with: { name: cargo-dist-cache, path: ~/.cargo/bin/ }
@@ -407,7 +398,7 @@ jobs:
 
   wheels:
     # snp-cli (ADR-049, 11 §A.9.3): maturin `bindings = "bin"`, the `snp` binary only. Linux wheels are manylinux
-    # 2_17 builds made in maturin's container (the whole workspace, siblings included, is mounted); Windows wheels link
+    # 2_17 builds made in maturin's container (the whole workspace is mounted); Windows wheels link
     # the CRT statically like the archives.
     name: wheel (${{ matrix.target }})
     needs: gates
@@ -421,8 +412,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - name: Static CRT on Windows
         if: runner.os == 'Windows'
         run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> "$GITHUB_ENV"
@@ -467,8 +456,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - uses: actions/download-artifact@v4
         with: { name: cargo-dist-cache, path: ~/.cargo/bin/ }
       - run: chmod +x ~/.cargo/bin/dist
@@ -578,8 +565,6 @@ jobs:
           path: snp
           ref: ${{ needs.gates.outputs.tag }}
           persist-credentials: false
-      - name: User crates at the deps.lock commits
-        run: .github/scripts/deps-lock.sh checkout
       - run: rustup toolchain install
       - name: cargo publish
         env:

@@ -7,8 +7,7 @@
 # the nightly `proofs-*` jobs of nightly.yml check the models against CPython and sweep Z3 seeds.
 #
 # The job always starts and exits early when no relevant path changed: an `on.paths` filter would leave a check that
-# is later made required pending forever. Layout as in ci.yml: the repository at $GITHUB_WORKSPACE/snp, the user
-# crates next to it at the deps.lock commits.
+# is later made required pending forever. Layout as in ci.yml: the repository at $GITHUB_WORKSPACE/snp.
 name: proofs
 
 on:
@@ -65,9 +64,6 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
             echo "No model-relevant change: nothing to check."
           fi
-      - name: User crates at the deps.lock commits
-        if: steps.paths.outputs.run == 'true'
-        run: .github/scripts/deps-lock.sh checkout
       # leanprover/lean-action v1.7.1: installs elan and the toolchain of proofs/lean/lean-toolchain, builds with
       # --wfail (a `sorry` is only a warning otherwise). Its own axiom-audit and leanchecker steps stay off: they derive
       # the module name from the package name ("Snpmodels", not SnpModels) and find no oleans. `cargo xtask proofs lean`

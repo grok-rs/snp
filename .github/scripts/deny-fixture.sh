@@ -3,10 +3,9 @@
 #
 #   deny-fixture.sh
 #
-# Copies the workspace (tracked files, working-tree contents) into a temporary directory next to links to the
-# sibling user crates, plants one banned dependency at a time in crates/snp-pycompat/Cargo.toml (`regex`, which is
-# allowed only behind snp-pyre; `which`; `tokio`) and expects `cargo deny check bans` to fail naming that crate as
-# banned. Exits non-zero when a plant is accepted, so a weakened deny.toml fails CI. Needs network access for the
+# Copies the workspace (tracked files, working-tree contents) into a temporary directory, plants one banned
+# dependency at a time in crates/snp-pycompat/Cargo.toml (`regex`, which is allowed only behind snp-pyre; `which`;
+# `tokio`) and expects `cargo deny check bans` to fail naming that crate as banned. Exits non-zero when a plant is accepted, so a weakened deny.toml fails CI. Needs network access for the
 # crates.io index (the plants are resolved into the copy's Cargo.lock only).
 set -euo pipefail
 
@@ -16,9 +15,6 @@ trap 'rm -rf "$tmp"' EXIT
 
 mkdir "$tmp/base"
 (cd "$root" && git ls-files -z | tar --null -T - -cf -) | tar -xf - -C "$tmp/base"
-for sibling in cfgv-rs file-identify; do
-    ln -s "$(cd "$root/../$sibling" && pwd)" "$tmp/$sibling"
-done
 
 failed=0
 for plant in 'regex = { workspace = true }' 'which = "7"' 'tokio = { version = "1", default-features = false }'; do
