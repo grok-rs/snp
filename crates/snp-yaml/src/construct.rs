@@ -53,7 +53,7 @@ pub fn construct(doc: &Document, schema: Schema, lim: &Limits) -> Result<Value, 
     let graph = construct_graph(doc, schema, lim)?;
     match graph.root {
         None => Ok(Value::Null),
-        Some(root) => graph.materialize(root),
+        Some(root) => graph.materialize(root, lim),
     }
 }
 
@@ -458,12 +458,12 @@ impl<'d> State<'d> {
             }
             Gen::Map => {
                 let pairs = self.construct_mapping(id)?;
-                Built::Map(self.dict_entries(&pairs))
+                Built::Map(self.dict_entries(&pairs, node.start)?)
             }
             Gen::Set => {
                 let pairs = self.construct_mapping(id)?;
                 Built::Set(
-                    self.dict_entries(&pairs)
+                    self.dict_entries(&pairs, node.start)?
                         .into_iter()
                         .map(|(k, _)| k)
                         .collect(),
@@ -938,10 +938,20 @@ impl<'d> State<'d> {
     }
 
     /// `dict.__setitem__` over constructed pairs: equal keys (Python equality, `1 == 1.0 == True`) keep the first
-    /// key and its position and take the last value.
-    fn dict_entries(&self, pairs: &[(NodeId, NodeId)]) -> Vec<(NodeId, NodeId)> {
+    /// key and its position and take the last value. Both tables are sized for `pairs` up front; a failed
+    /// reservation is the node-limit error at the mapping's mark `at`.
+    fn dict_entries(
+        &self,
+        pairs: &[(NodeId, NodeId)],
+        at: Mark,
+    ) -> Result<Vec<(NodeId, NodeId)>, YamlError> {
         let mut index: IndexMap<&Value, usize> = IndexMap::new();
         let mut out: Vec<(NodeId, NodeId)> = Vec::new();
+        index
+            .try_reserve(pairs.len())
+            .map_err(|_| self.limit_nodes_error(at))?;
+        out.try_reserve_exact(pairs.len())
+            .map_err(|_| self.limit_nodes_error(at))?;
         for (k, v) in pairs {
             let Some(Some(Built::Scalar(key))) = self.built.get(k.index()) else {
                 continue;
@@ -955,7 +965,7 @@ impl<'d> State<'d> {
                 out.push((*k, *v));
             }
         }
-        out
+        Ok(out)
     }
 }
 
@@ -963,8 +973,9 @@ impl Graph {
     // --- phase 3: materialisation ------------------------------------------------------------------------------
 
     /// Builds the `cfgv::Value` tree (an explicit stack; at most `max_constructed_nodes` nodes, checked in
-    /// phase 2).
-    fn materialize(&self, root: NodeId) -> Result<Value, YamlError> {
+    /// phase 2). A collection takes its items off the value stack in one piece and sizes its table up front; a
+    /// failed reservation is the node-limit error.
+    fn materialize(&self, root: NodeId, lim: &Limits) -> Result<Value, YamlError> {
         enum Task {
             Enter(NodeId),
             Seq(usize),
@@ -972,6 +983,7 @@ impl Graph {
             Set(usize),
             Pairs(usize),
         }
+        let limit = || YamlError::limit(limit_nodes(lim.max_constructed_nodes), None);
         let mut tasks = vec![Task::Enter(root)];
         let mut values: Vec<Value> = Vec::new();
         while let Some(task) = tasks.pop() {
@@ -1011,19 +1023,21 @@ impl Graph {
                     }
                 },
                 Task::Seq(n) => {
-                    let items = pop_n(&mut values, n);
+                    let items = tail(&mut values, n);
                     values.push(Value::List(items));
                 }
                 Task::Set(n) => {
                     let mut set = Set::new();
-                    for k in pop_n(&mut values, n) {
+                    set.try_reserve(n).map_err(|_| limit())?;
+                    for k in tail(&mut values, n) {
                         set.insert(k);
                     }
                     values.push(Value::Set(set));
                 }
                 Task::Map(n) => {
-                    let flat = pop_n(&mut values, n.saturating_mul(2));
+                    let flat = tail(&mut values, n.saturating_mul(2));
                     let mut map = Map::new();
+                    map.try_reserve(n).map_err(|_| limit())?;
                     let mut it = flat.into_iter();
                     while let (Some(k), Some(v)) = (it.next(), it.next()) {
                         // Python dict semantics: an equal key keeps its first position and object, the value
@@ -1033,8 +1047,9 @@ impl Graph {
                     values.push(Value::Map(map));
                 }
                 Task::Pairs(n) => {
-                    let flat = pop_n(&mut values, n.saturating_mul(2));
+                    let flat = tail(&mut values, n.saturating_mul(2));
                     let mut list = Vec::new();
+                    list.try_reserve_exact(n).map_err(|_| limit())?;
                     let mut it = flat.into_iter();
                     while let (Some(k), Some(v)) = (it.next(), it.next()) {
                         list.push(Value::Tuple(vec![k, v]));
@@ -1049,17 +1064,13 @@ impl Graph {
     }
 }
 
-/// The last `n` values, in order.
-fn pop_n(values: &mut Vec<Value>, n: usize) -> Vec<Value> {
-    let mut out = Vec::new();
-    for _ in 0..n {
-        match values.pop() {
-            Some(v) => out.push(v),
-            None => break,
-        }
-    }
-    out.reverse();
-    out
+/// The last `n` values (all of them when there are fewer), in order, moved out in one allocation.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the split point len - min(n, len) is at most len, so split_off cannot panic"
+)]
+fn tail(values: &mut Vec<Value>, n: usize) -> Vec<Value> {
+    values.split_off(values.len().saturating_sub(n))
 }
 
 // --- scalar constructors --------------------------------------------------------------------------------------
@@ -1261,4 +1272,33 @@ fn construct_timestamp(value: &str) -> Result<Value, YamlError> {
     )
     .map(Value::DateTime)
     .map_err(date_err)
+}
+
+#[cfg(test)]
+mod tests {
+    use cfgv::Value;
+
+    use super::tail;
+
+    fn ints(r: std::ops::Range<i64>) -> Vec<Value> {
+        r.map(Value::Int).collect()
+    }
+
+    /// `tail` takes the last `n` values in order, all of them when `n` is larger, none for 0.
+    #[test]
+    fn tail_moves_the_last_values_in_order() {
+        for (len, n, keep) in [
+            (5, 2, 3),
+            (5, 0, 5),
+            (5, 5, 0),
+            (5, 9, 0),
+            (0, 0, 0),
+            (0, 3, 0),
+        ] {
+            let mut values = ints(0..len);
+            let got = tail(&mut values, n);
+            assert_eq!(values, ints(0..keep), "len {len}, n {n}");
+            assert_eq!(got, ints(keep..len), "len {len}, n {n}");
+        }
+    }
 }
