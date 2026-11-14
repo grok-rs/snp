@@ -240,12 +240,202 @@ fn tier1_prefilter_skips_the_backtracking_engine() {
     probe::set_prefilter_off(false);
 
     let before = probe::exact_runs();
+    let forward_before = probe::forward_runs();
     let got = answers();
     let with = probe::exact_runs() - before;
+    let forward = probe::forward_runs().since(forward_before);
 
     assert_eq!(got, reference);
     assert_eq!(reference.iter().filter(|&&m| m).count(), 100);
     assert_eq!(without, 2_000);
     // Only the `.md` paths reach the backtracking engine.
     assert_eq!(with, 100);
+    // ADR-108: the prefilter's forward lazy DFA answers every path; neither the bounded backtracker nor the
+    // PikeVM runs. (The relaxed text has an anchor, so no usefulness check runs on "".)
+    assert_eq!(
+        forward,
+        probe::ForwardRuns {
+            dfa: 2_000,
+            backtrack: 0,
+            pikevm: 0
+        }
+    );
+}
+
+/// ADR-108: B12u's `u05` relaxed text builds the prefilter's forward lazy DFA within the 256 KiB cap, which
+/// `regex`'s engine could not use: its reverse DFA alone does not fit, so it ran the bounded backtracker on every
+/// admitted path.
+#[test]
+fn u05_relaxed_text_builds_a_forward_dfa_at_the_cap() {
+    use regex_automata::hybrid;
+    use regex_automata::nfa::thompson::{self, WhichCaptures};
+
+    use crate::Options;
+    use crate::compile::testing::full_texts;
+    use crate::engine::{PREFILTER_DFA_SIZE_LIMIT, Prefilter};
+
+    let texts = full_texts(r"\b\w{3,8}\b/\w+\.md$", Options::CONFIG).unwrap();
+    let relaxed = texts.relaxed.as_deref().unwrap();
+    let prefilter = Prefilter::forward(
+        relaxed,
+        texts.bytes,
+        texts.depth,
+        texts.relaxed_anchored,
+        PREFILTER_DFA_SIZE_LIMIT,
+    )
+    .unwrap();
+    assert_eq!(prefilter.has_lazy_dfa(), Some(true));
+
+    // Why `regex` fell back: the forward DFA fits the cap, the reverse one does not.
+    let fits = |reverse: bool| {
+        let nfa = thompson::Compiler::new()
+            .configure(
+                thompson::Config::new()
+                    .reverse(reverse)
+                    .which_captures(WhichCaptures::None),
+            )
+            .build(relaxed)
+            .unwrap();
+        hybrid::dfa::Builder::new()
+            .configure(hybrid::dfa::Config::new().cache_capacity(PREFILTER_DFA_SIZE_LIMIT))
+            .build_from_nfa(nfa)
+            .is_ok()
+    };
+    assert!(fits(false));
+    assert!(!fits(true));
+}
+
+/// ADR-108: a relaxed text whose forward lazy DFA does not fit the cap keeps its prefilter on the NFA engines
+/// (never "no prefilter"): the bounded backtracker answers paths of at most 128 bytes, the `PikeVM` longer ones,
+/// and every answer equals `regex`'s and the unfiltered exact engine's.
+#[test]
+#[expect(clippy::disallowed_methods, reason = "fixed repeat counts")]
+fn a_forward_dfa_that_fails_at_the_cap_falls_back() {
+    use crate::compile::testing::full_texts;
+    use crate::engine::{Hay, PREFILTER_DFA_SIZE_LIMIT, Prefilter, T1, probe};
+    use crate::{MatchKind, Options, PyRegex};
+
+    let pattern = r"\b\w{40}\b";
+    let texts = full_texts(pattern, Options::CONFIG).unwrap();
+    let relaxed = texts.relaxed.as_deref().unwrap();
+    let prefilter = Prefilter::forward(
+        relaxed,
+        texts.bytes,
+        texts.depth,
+        texts.relaxed_anchored,
+        PREFILTER_DFA_SIZE_LIMIT,
+    )
+    .unwrap();
+    assert_eq!(prefilter.has_lazy_dfa(), Some(false));
+    let reference = T1::build(relaxed, texts.bytes, texts.depth).unwrap();
+
+    let word = "\u{e9}".repeat(40);
+    let short = [
+        word.clone(),
+        format!("x/{word}/y"),
+        "\u{e9}".repeat(39),
+        format!("{} {}", "\u{e9}".repeat(20), "\u{e9}".repeat(20)),
+    ];
+    let long = [
+        format!("{}/{word}", "d/".repeat(70)),
+        format!("{}/x", "\u{e9}/".repeat(80)),
+    ];
+    assert!(short.iter().all(|h| h.len() <= 128));
+    assert!(long.iter().all(|h| h.len() > 128));
+
+    let before = probe::forward_runs();
+    for h in short.iter().chain(&long) {
+        for hay in [Hay::Str(h), Hay::Bytes(h.as_bytes())] {
+            assert_eq!(prefilter.admits(hay), reference.is_match(hay), "{h:?}");
+        }
+    }
+    // Bytes that are not UTF-8 never match a str pattern, on either engine.
+    let invalid = [word.as_bytes(), b"\xff"].concat();
+    assert!(!prefilter.admits(Hay::Bytes(&invalid)));
+    assert!(!reference.is_match(Hay::Bytes(&invalid)));
+    let runs = probe::forward_runs().since(before);
+    assert_eq!(
+        runs,
+        probe::ForwardRuns {
+            dfa: 0,
+            backtrack: 8,
+            pikevm: 4
+        }
+    );
+
+    // End to end: the same answers with and without the prefilter.
+    let re = PyRegex::compile(pattern, Options::CONFIG).unwrap();
+    assert_eq!(re.kind(), MatchKind::Tier1);
+    let answers = |h: &str| {
+        (
+            re.search(h),
+            re.match_prefix(h),
+            re.fullmatch(h),
+            re.search_bytes(h.as_bytes()),
+        )
+    };
+    for h in short.iter().chain(&long) {
+        let with = answers(h);
+        probe::set_prefilter_off(true);
+        let without = answers(h);
+        probe::set_prefilter_off(false);
+        assert_eq!(with, without, "{h:?}");
+    }
+}
+
+/// ADR-108: when the forward lazy DFA quits (a Unicode word boundary meets a non-ASCII byte) or gives up (its
+/// cache thrashes), the NFA engines answer, with `regex`'s answers.
+#[test]
+fn a_forward_dfa_that_quits_or_gives_up_falls_back() {
+    use crate::engine::{Hay, PREFILTER_DFA_SIZE_LIMIT, Prefilter, T1, probe};
+
+    let check = |text: &str, hays: &[&str], want: probe::ForwardRuns| {
+        let prefilter =
+            Prefilter::forward(text, false, 1, false, PREFILTER_DFA_SIZE_LIMIT).unwrap();
+        assert_eq!(prefilter.has_lazy_dfa(), Some(true), "{text}");
+        let reference = T1::build(text, false, 1).unwrap();
+        let before = probe::forward_runs();
+        for h in hays {
+            assert_eq!(
+                prefilter.admits(Hay::Str(h)),
+                reference.is_match(Hay::Str(h)),
+                "{text} on {h:?}"
+            );
+        }
+        assert_eq!(probe::forward_runs().since(before), want, "{text}");
+    };
+
+    // Quit: a Unicode `\b` that must look at a non-ASCII byte (after `xyz`, or before it once the literal
+    // prefilter jumps there); the ASCII haystack stays on the DFA.
+    check(
+        r"\bxyz\b",
+        &["xyz\u{e9}", "\u{e9}xyz", "a xyz b"],
+        probe::ForwardRuns {
+            dfa: 1,
+            backtrack: 2,
+            pikevm: 0,
+        },
+    );
+
+    // Give up: `[ab]*a[ab]{16}` has 2^17 DFA states; a pseudo-random a/b haystack makes about one new state per
+    // byte, so the 256 KiB cache is cleared over and over at well under 10 bytes per state.
+    let mut x = 0x2545_f491_u32;
+    let random: String = (0..200_000)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            if x & 1 == 0 { 'a' } else { 'b' }
+        })
+        .collect();
+    let no_match = format!("{random}c");
+    check(
+        r"\A[ab]*a[ab]{16}c\z",
+        &[&random, &no_match],
+        probe::ForwardRuns {
+            dfa: 0,
+            backtrack: 0,
+            pikevm: 2,
+        },
+    );
 }

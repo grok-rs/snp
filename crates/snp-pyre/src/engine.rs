@@ -5,9 +5,12 @@
 //!   `nest_limit` 2048. A haystack that meets a condition bit of the fast text uses the exact variant, which
 //!   runs on `fancy_regex` behind a relaxed tier-1 [`Prefilter`] when the condition is a word boundary or a
 //!   nullable-loop span (ADR-098): the prefilter is built on the first haystack that needs the exact variant
-//!   (eagerly with an eager exact fallback) with a 256 KiB lazy-DFA cache.
+//!   (eagerly with an eager exact fallback). It is the forward-only `is_match` engine [`Forward`] (ADR-108): a
+//!   lazy DFA with a 256 KiB cache over a forward NFA without capture states, falling back to the bounded
+//!   backtracker or the `PikeVM` when the DFA cannot be built, gives up or quits.
 //! * Tier 2: `fancy_regex` with `backtrack_limit` 10⁸, delegate limits 64 MiB / 2 MiB, always behind the
-//!   relaxed tier-1 prefilter; bytes patterns run on the Latin-1 lane (each byte `b` becomes `char::from(b)`).
+//!   relaxed tier-1 prefilter (`regex` with the crate-default 2 MiB cache); bytes patterns run on the Latin-1
+//!   lane (each byte `b` becomes `char::from(b)`).
 //!
 //! A prefilter that could not be built, or that would match every haystack, is simply absent: it only ever
 //! turns a haystack the relaxed text rejects into a no-match (relaxed ⊇ exact, §A.6.11), never into an error.
@@ -20,6 +23,12 @@
 use std::borrow::Cow;
 use std::sync::OnceLock;
 
+use regex_automata::nfa::thompson::{self, WhichCaptures, backtrack, pikevm};
+use regex_automata::util::pool::Pool;
+use regex_automata::util::syntax;
+use regex_automata::{Input, hybrid};
+use regex_syntax::hir::Look;
+
 use crate::error::MatchError;
 use crate::lower::Cond;
 use crate::messages;
@@ -28,9 +37,13 @@ use crate::messages;
 const SIZE_LIMIT: usize = 64 << 20;
 /// `dfa_size_limit`: the crate default, the lazy-DFA cache capacity per regex per thread (ADR-079).
 const DFA_SIZE_LIMIT: usize = 2 << 20;
-/// `dfa_size_limit` of the tier-1 exact fallback's prefilter (ADR-098): it runs only on the haystacks that meet a
-/// condition bit, and a full 2 MiB cache per pattern per worker thread would cost B12u ~5 MiB of RSS.
-const PREFILTER_DFA_SIZE_LIMIT: usize = 256 << 10;
+/// The lazy-DFA cache capacity of the tier-1 exact fallback's prefilter (ADR-098, ADR-108): it runs only on the
+/// haystacks that meet a condition bit, and a full 2 MiB cache per pattern per worker thread would cost B12u
+/// ~5 MiB of RSS. A forward-only DFA fits it where `regex`'s forward + reverse pair did not (ADR-108).
+pub(crate) const PREFILTER_DFA_SIZE_LIMIT: usize = 256 << 10;
+/// Haystacks longer than this go to the `PikeVM` rather than the bounded backtracker when [`Forward`] falls back:
+/// the backtracker cannot stop at the earliest match (regex-automata `meta`'s rule for `is_match`).
+const BACKTRACK_MAX_HAYSTACK: usize = 128;
 /// `nest_limit` of tier 1 (Python's 484 nested groups lower to well under 2048 levels).
 const NEST_LIMIT: u32 = 2048;
 /// fancy-regex `backtrack_limit` (§A.1 item 10).
@@ -81,26 +94,16 @@ pub(crate) enum T1 {
 impl T1 {
     /// Builds `text` (on a large stack when `depth` is deep).
     pub(crate) fn build(text: &str, bytes: bool, depth: u32) -> Result<Self, String> {
-        Self::build_limited(text, bytes, depth, DFA_SIZE_LIMIT)
-    }
-
-    /// [`T1::build`] with a lazy-DFA cache capacity of `dfa_size_limit`.
-    fn build_limited(
-        text: &str,
-        bytes: bool,
-        depth: u32,
-        dfa_size_limit: usize,
-    ) -> Result<Self, String> {
-        on_stack(depth, || Self::build_here(text, bytes, dfa_size_limit))
+        on_stack(depth, || Self::build_here(text, bytes))
             .unwrap_or_else(|| Err(messages::NO_BUILD_THREAD.into()))
     }
 
-    fn build_here(text: &str, bytes: bool, dfa_size_limit: usize) -> Result<Self, String> {
+    fn build_here(text: &str, bytes: bool) -> Result<Self, String> {
         if bytes {
             regex::bytes::RegexBuilder::new(text)
                 .unicode(false)
                 .size_limit(SIZE_LIMIT)
-                .dfa_size_limit(dfa_size_limit)
+                .dfa_size_limit(DFA_SIZE_LIMIT)
                 .nest_limit(NEST_LIMIT)
                 .build()
                 .map(Self::Bytes)
@@ -108,7 +111,7 @@ impl T1 {
         } else {
             regex::RegexBuilder::new(text)
                 .size_limit(SIZE_LIMIT)
-                .dfa_size_limit(dfa_size_limit)
+                .dfa_size_limit(DFA_SIZE_LIMIT)
                 .nest_limit(NEST_LIMIT)
                 .build()
                 .map(Self::Str)
@@ -139,28 +142,207 @@ impl T1 {
 /// A relaxed tier-1 prefilter in front of a backtracking engine (§A.6.11, ADR-098): a haystack it rejects
 /// has no match, because the relaxed text's language is a superset of the exact text's.
 #[derive(Debug)]
-pub(crate) struct Prefilter(T1);
+pub(crate) struct Prefilter(Screen);
+
+/// The engine of a [`Prefilter`].
+#[derive(Debug)]
+enum Screen {
+    /// Tier 2's prefilter: `regex` with the crate-default 2 MiB lazy-DFA cache (ADR-079).
+    Regex(T1),
+    /// The tier-1 exact fallback's prefilter: the forward-only engine (ADR-108).
+    Forward(Box<Forward>),
+}
 
 impl Prefilter {
-    /// The prefilter of the relaxed `text`, or `None` when it cannot be built or is useless: a text without
-    /// anchors that matches the empty string matches every haystack.
-    fn build(
+    /// Tier 2's prefilter of the relaxed `text`, or `None` when it cannot be built or is useless.
+    fn regex(text: &str, bytes: bool, depth: u32, anchored: bool) -> Option<Self> {
+        let re = T1::build(text, bytes, depth).ok()?;
+        Self(Screen::Regex(re)).useful(anchored)
+    }
+
+    /// The tier-1 exact fallback's prefilter of the relaxed `text` on the forward-only engine with a lazy-DFA
+    /// cache of `cache_capacity` bytes, or `None` when its NFA cannot be built or it is useless. A lazy DFA that
+    /// cannot be built at that capacity leaves the prefilter on the linear NFA engines, never without one.
+    pub(crate) fn forward(
         text: &str,
         bytes: bool,
         depth: u32,
         anchored: bool,
-        dfa_size_limit: usize,
+        cache_capacity: usize,
     ) -> Option<Self> {
-        T1::build_limited(text, bytes, depth, dfa_size_limit)
-            .ok()
-            .filter(|r| anchored || !r.is_match(Hay::Bytes(b"")))
-            .map(Self)
+        let engine = Forward::build(text, bytes, depth, cache_capacity)?;
+        Self(Screen::Forward(Box::new(engine))).useful(anchored)
+    }
+
+    /// `self`, unless it is useless: a text without anchors that matches the empty string matches every
+    /// haystack.
+    fn useful(self, anchored: bool) -> Option<Self> {
+        (anchored || !self.admits(Hay::Bytes(b""))).then_some(self)
     }
 
     /// `false`: the haystack has no match of the exact text (under search, `re.match` and, on the fullmatch
     /// engines, `re.fullmatch` semantics alike).
-    fn admits(&self, h: Hay<'_>) -> bool {
-        self.0.is_match(h)
+    pub(crate) fn admits(&self, h: Hay<'_>) -> bool {
+        match &self.0 {
+            Screen::Regex(re) => re.is_match(h),
+            Screen::Forward(f) => f.is_match(h),
+        }
+    }
+
+    /// Whether the forward-only engine has its lazy DFA (`None`: the prefilter runs on `regex`).
+    #[cfg(test)]
+    pub(crate) fn has_lazy_dfa(&self) -> Option<bool> {
+        match &self.0 {
+            Screen::Regex(_) => None,
+            Screen::Forward(f) => Some(f.dfa.is_some()),
+        }
+    }
+}
+
+/// The forward-only `is_match` engine of the tier-1 prefilter (ADR-108).
+///
+/// `regex`'s engine needs a forward *and* a reverse lazy DFA in one cache; with the prefilter's 256 KiB cap the
+/// pair often does not fit (B12u's `\b\w{3,8}\b/\w+\.md$`: its relaxed text's reverse NFA has 12 366 states
+/// against the forward one's 2 979, and the reverse DFA alone exceeds the cap), and it then runs the bounded
+/// backtracker on every haystack, clearing its visited set each time. A yes/no answer
+/// needs no match start, so this engine builds only the forward half, from the same syntax configuration as
+/// [`T1`] (str: Unicode and UTF-8; bytes: neither; nest limit 2048; NFA size limit 64 MiB), without capture
+/// states, and searches with `earliest`. When the DFA cannot be built at the capacity, gives up (cache
+/// thrashing) or quits (a Unicode word boundary on a non-ASCII byte), the bounded backtracker answers on
+/// haystacks of at most [`BACKTRACK_MAX_HAYSTACK`] bytes that fit its visited capacity, and the `PikeVM` on the
+/// rest — the engines and the order of regex-automata `meta`'s `is_match_nofail`. Every engine answers
+/// `is_match` exactly; only the cost differs.
+#[derive(Debug)]
+pub(crate) struct Forward {
+    /// The lazy DFA (`None`: it could not be built at the cache capacity).
+    dfa: Option<hybrid::dfa::DFA>,
+    /// The bounded backtracker (`None`: it could not be built).
+    backtrack: Option<backtrack::BoundedBacktracker>,
+    /// The `PikeVM`: answers every haystack.
+    pikevm: pikevm::PikeVM,
+    /// The per-thread search caches.
+    caches: Pool<ForwardCache>,
+    /// A str pattern: bytes that are not UTF-8 never match.
+    text: bool,
+}
+
+/// One thread's search state of a [`Forward`]; each part is created on its engine's first use, so a thread
+/// whose searches the DFA answers never allocates the NFA engines' caches.
+#[derive(Debug, Default)]
+struct ForwardCache {
+    dfa: Option<hybrid::dfa::Cache>,
+    backtrack: Option<backtrack::Cache>,
+    pikevm: Option<pikevm::Cache>,
+}
+
+impl Forward {
+    /// Builds `text` (on a large stack when `depth` is deep); `None` when the text does not parse or its NFA
+    /// exceeds the size limit.
+    fn build(text: &str, bytes: bool, depth: u32, cache_capacity: usize) -> Option<Self> {
+        on_stack(depth, || Self::build_here(text, bytes, cache_capacity)).flatten()
+    }
+
+    fn build_here(text: &str, bytes: bool, cache_capacity: usize) -> Option<Self> {
+        let utf8 = !bytes;
+        let syntax = syntax::Config::new()
+            .unicode(utf8)
+            .utf8(utf8)
+            .nest_limit(NEST_LIMIT);
+        let hir = syntax::parse_with(text, &syntax).ok()?;
+        let nfa = thompson::Compiler::new()
+            .configure(
+                thompson::Config::new()
+                    .utf8(utf8)
+                    .nfa_size_limit(Some(SIZE_LIMIT))
+                    .shrink(false)
+                    .which_captures(WhichCaptures::None),
+            )
+            .build_from_hir(&hir)
+            .ok()?;
+        // A prefix-literal prefilter, as `meta` builds it: leftmost-first, and only for an unanchored search.
+        let pre = if hir.properties().look_set_prefix().contains(Look::Start) {
+            None
+        } else {
+            regex_automata::util::prefilter::Prefilter::from_hirs_prefix(
+                regex_automata::MatchKind::LeftmostFirst,
+                &[&hir],
+            )
+        };
+        let dfa = hybrid::dfa::Builder::new()
+            .configure(
+                hybrid::dfa::Config::new()
+                    .match_kind(regex_automata::MatchKind::LeftmostFirst)
+                    .prefilter(pre.clone())
+                    .specialize_start_states(pre.is_some())
+                    .unicode_word_boundary(true)
+                    .cache_capacity(cache_capacity)
+                    .skip_cache_capacity_check(false)
+                    .minimum_cache_clear_count(Some(3))
+                    .minimum_bytes_per_state(Some(10)),
+            )
+            .build_from_nfa(nfa.clone())
+            .ok();
+        let backtrack = backtrack::Builder::new()
+            .configure(backtrack::Config::new().prefilter(pre.clone()))
+            .build_from_nfa(nfa.clone())
+            .ok();
+        let pikevm = pikevm::Builder::new()
+            .configure(pikevm::Config::new().prefilter(pre))
+            .build_from_nfa(nfa)
+            .ok()?;
+        Some(Self {
+            dfa,
+            backtrack,
+            pikevm,
+            caches: Pool::new(ForwardCache::default),
+            text: utf8,
+        })
+    }
+
+    /// `is_match` under search semantics (str engines never match bytes that are not UTF-8).
+    fn is_match(&self, h: Hay<'_>) -> bool {
+        let hay = if self.text {
+            match h.text() {
+                Some(t) => t.as_bytes(),
+                None => return false,
+            }
+        } else {
+            h.bytes()
+        };
+        let input = Input::new(hay).earliest(true);
+        let mut cache = self.caches.get();
+        if let Some(dfa) = &self.dfa {
+            let c = cache.dfa.get_or_insert_with(|| dfa.create_cache());
+            if let Ok(found) = dfa.try_search_fwd(c, &input) {
+                #[cfg(test)]
+                probe::count_forward(probe::Answer::Dfa);
+                return found.is_some();
+            }
+            // Gave up or quit: the NFA engines answer.
+        }
+        self.is_match_nofail(&mut cache, &input)
+    }
+
+    /// The NFA engines' answer: the bounded backtracker when the haystack is short and fits its visited
+    /// capacity, otherwise (or if it reports an error) the `PikeVM`, which never fails.
+    fn is_match_nofail(&self, cache: &mut ForwardCache, input: &Input<'_>) -> bool {
+        if let Some(bt) = &self.backtrack
+            && input.haystack().len() <= BACKTRACK_MAX_HAYSTACK
+            && input.get_span().len() <= bt.max_haystack_len()
+        {
+            let c = cache.backtrack.get_or_insert_with(|| bt.create_cache());
+            if let Ok(found) = bt.try_is_match(c, input.clone()) {
+                #[cfg(test)]
+                probe::count_forward(probe::Answer::Backtrack);
+                return found;
+            }
+        }
+        #[cfg(test)]
+        probe::count_forward(probe::Answer::PikeVm);
+        let c = cache
+            .pikevm
+            .get_or_insert_with(|| self.pikevm.create_cache());
+        self.pikevm.is_match(c, input.clone())
     }
 }
 
@@ -353,7 +535,7 @@ impl Fallback {
         self.relaxed
             .get_or_init(|| {
                 self.relaxed_src.as_deref().and_then(|s| {
-                    Prefilter::build(
+                    Prefilter::forward(
                         s,
                         self.bytes,
                         self.depth,
@@ -422,13 +604,7 @@ impl Compiled {
         if texts.tier2 {
             let exact = T2::build(&wrap(&texts.main), texts.bytes, depth)?;
             let relaxed = texts.relaxed.as_deref().and_then(|r| {
-                Prefilter::build(
-                    &wrap(r),
-                    texts.bytes,
-                    depth,
-                    texts.relaxed_anchored,
-                    DFA_SIZE_LIMIT,
-                )
+                Prefilter::regex(&wrap(r), texts.bytes, depth, texts.relaxed_anchored)
             });
             return Ok(Self::T2 { relaxed, exact });
         }
@@ -539,11 +715,61 @@ pub(crate) mod probe {
     thread_local! {
         static EXACT_RUNS: Cell<u64> = const { Cell::new(0) };
         static PREFILTER_OFF: Cell<bool> = const { Cell::new(false) };
+        static FORWARD: Cell<ForwardRuns> = const { Cell::new(ForwardRuns { dfa: 0, backtrack: 0, pikevm: 0 }) };
+    }
+
+    /// Which engine of [`super::Forward`] answered.
+    #[derive(Copy, Clone, Debug)]
+    pub(super) enum Answer {
+        /// The lazy DFA.
+        Dfa,
+        /// The bounded backtracker.
+        Backtrack,
+        /// The `PikeVM`.
+        PikeVm,
+    }
+
+    /// The answers of the forward-only prefilter engines on this thread so far, per engine.
+    #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+    pub(crate) struct ForwardRuns {
+        pub(crate) dfa: u64,
+        pub(crate) backtrack: u64,
+        pub(crate) pikevm: u64,
+    }
+
+    impl ForwardRuns {
+        /// The answers since `earlier`.
+        pub(crate) fn since(self, earlier: Self) -> Self {
+            Self {
+                dfa: self.dfa.saturating_sub(earlier.dfa),
+                backtrack: self.backtrack.saturating_sub(earlier.backtrack),
+                pikevm: self.pikevm.saturating_sub(earlier.pikevm),
+            }
+        }
     }
 
     /// One run of a backtracking engine.
     pub(super) fn count_exact_run() {
         EXACT_RUNS.with(|c| c.set(c.get().saturating_add(1)));
+    }
+
+    /// One answer of the forward-only prefilter engine.
+    pub(super) fn count_forward(answer: Answer) {
+        FORWARD.with(|c| {
+            let mut runs = c.get();
+            let slot = match answer {
+                Answer::Dfa => &mut runs.dfa,
+                Answer::Backtrack => &mut runs.backtrack,
+                Answer::PikeVm => &mut runs.pikevm,
+            };
+            *slot = slot.saturating_add(1);
+            c.set(runs);
+        });
+    }
+
+    /// The forward-only prefilter engine's answers on this thread so far.
+    pub(crate) fn forward_runs() -> ForwardRuns {
+        FORWARD.with(Cell::get)
     }
 
     /// The backtracking-engine runs on this thread so far.
