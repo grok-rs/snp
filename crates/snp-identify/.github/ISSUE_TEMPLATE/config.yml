@@ -1,0 +1,14 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 📚 Documentation
+    url: https://docs.rs/file-identify
+    about: Read the documentation for usage examples and API reference
+  - name: 💬 Discussions
+    url: https://github.com/grok-rs/file-identify/discussions
+    about: Ask questions, share ideas, and discuss with the community
+  - name: 🔒 Security Issues
+    url: https://github.com/grok-rs/file-identify/security/advisories/new
+    about: Report security vulnerabilities privately
+  - name: 🐍 Python Original
+    url: https://github.com/pre-commit/identify
+    about: Reference implementation in Python

@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+    - run: cargo test --all-features
+    - name: Publish to crates.io
+      run: cargo publish --token "$RELEASE_TOKEN"
+      env:
+        RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+
+  release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    needs: [publish]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: softprops/action-gh-release@v2
+      with:
+        generate_release_notes: true
