@@ -105,32 +105,14 @@ pub(crate) fn run_pipeline(a: &RunArgs, cx: &RunCtx, inv: &Invocation<'_>) -> Re
     }
 }
 
-/// `run.py:run` from `_adjust_args_and_chdir` on.
-#[expect(
-    clippy::too_many_lines,
-    reason = "pre-commit's run() in source order, one step after another"
-)]
+/// `run.py:run` from `_adjust_args_and_chdir` on, step by step (ARCHITECTURE §3.1). The step functions borrow the
+/// stash (never own it), so every exit still goes through [`run_pipeline`]'s explicit restore.
 fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Result<i32, Failure> {
     let printer = &*cx.printer;
     // §3.1 steps 3–4: discovery, with the config read speculatively at the invocation cwd meanwhile (ADR-104), then
     // `_adjust_args_and_chdir` as a pure function
     let early_buffered = Buffered::default();
-    let (found, preloaded) = std::thread::scope(|s| {
-        let spec = (inv.discovered.is_none() && !inv.fixed_paths).then(|| {
-            std::thread::Builder::new()
-                .spawn_scoped(s, || speculative_config(cx, a, &early_buffered))
-        });
-        let found = match &inv.discovered {
-            Some((git, info)) => Ok((git.clone(), info.clone())),
-            None => common::discover(cx),
-        };
-        // a thread that could not start or panicked leaves the load to step 6
-        let spec = spec
-            .and_then(Result::ok)
-            .and_then(|h| h.join().ok())
-            .flatten();
-        (found, spec)
-    });
+    let (found, preloaded) = discover(cx, a, inv, &early_buffered);
     let (git0, info) = found?;
     let root = info.root.clone();
     let rebase = |f: &OsString| {
@@ -177,136 +159,37 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     for line in recovery.unwrap_or_default() {
         printer.diag(&line);
     }
-    // step 6: the speculative config load (warnings buffered) beside the read-only preflight git calls, and — for a
-    // stashing run on the stat-capable path — the DiffOracle inputs F and G, which the stash does not change (only
-    // its intent-to-add clearing changes the index: then F is asked again after it). Started here they are off the
-    // critical path instead of a serial git stage after the stash (B2/B3, ADR-084). F and G start first when they
-    // will be used — the config is already loaded, or the tree is small — and F then also answers query A (ADR-104).
+    // step 6: the read-only preflight queries beside the config load and the DiffOracle inputs
     let buffered = Buffered::default();
-    let entries = stat_entries(&git0, &info, &cx.env).filter(|_| stash);
-    let speculate = entries.is_some();
-    let candidates = preloaded.as_ref().map(|loaded| {
-        loaded
-            .as_ref()
-            .map_or(0, |c| process_candidates(c, &a.hooks))
-    });
-    let hoist = entries.is_some_and(|n| hoist_early(&info, n, candidates));
     let have_config = preloaded.is_some();
-    // taken before F starts: compared after the stash, it shows a rewrite of the index while we waited (ADR-104)
-    let stamp = if speculate {
-        git0.index_stamp(&info)
-    } else {
-        None
+    let step6 = Step6 {
+        cx,
+        a,
+        git: &git0,
+        info: &info,
+        src: &src,
+        config: &config,
+        stash,
+        buffered: &buffered,
     };
-    let (loaded, unmerged, unstaged, early) = std::thread::scope(|s| {
-        let f = hoist
-            .then(|| std::thread::Builder::new().spawn_scoped(s, || git0.tracked_with_stages()));
-        let g = hoist.then(|| {
-            std::thread::Builder::new()
-                .spawn_scoped(s, || git0.config_origins().ok().map(Arc::from))
-        });
-        let load = (!have_config).then(|| {
-            std::thread::Builder::new().spawn_scoped(s, || {
-                let loaded = common::load_config_with(cx, &src, &buffered.warn, &buffered.diag);
-                // Without the hoist, only for a config with three or more process-hook candidates: below that the
-                // stat path does not pay for its two spawns (B2's spawn budget). A thread that could not start,
-                // panicked or failed leaves its input to step 14.
-                let early = if speculate
-                    && !hoist
-                    && loaded
-                        .as_ref()
-                        .is_ok_and(|c| process_candidates(c, &a.hooks) >= 3)
-                {
-                    let f = std::thread::Builder::new()
-                        .spawn_scoped(s, || git0.tracked_with_modes().ok().map(Arc::new));
-                    let origins = git0.config_origins().ok().map(Arc::from);
-                    Early {
-                        tracked: f.ok().and_then(|h| h.join().ok().flatten()),
-                        origins,
-                    }
-                } else {
-                    Early::default()
-                };
-                (loaded, early)
-            })
-        });
-        let unstaged = std::thread::Builder::new()
-            .spawn_scoped(s, || stash.then(|| git0.config_is_unstaged(&config)));
-        // query A: from F when F ran and parsed; on any failure of F, `git ls-files --unmerged` at the same
-        // position, so a broken index reports pre-commit's own CalledProcessError
-        let (unmerged, tracked) = match f {
-            Some(Ok(h)) => match h.join() {
-                Ok(Ok((entries, unmerged))) => (Some(Ok(unmerged)), Some(Arc::new(entries))),
-                Ok(Err(_)) | Err(_) => (Some(git0.has_unmerged()), None),
-            },
-            Some(Err(_)) => (Some(git0.has_unmerged()), None),
-            None => (stash.then(|| git0.has_unmerged()), None),
-        };
-        let origins = match g {
-            Some(Ok(h)) => h.join().ok().flatten(),
-            Some(Err(_)) => git0.config_origins().ok().map(Arc::from),
-            None => None,
-        };
-        let unstaged = match unstaged {
-            Ok(h) => h.join().unwrap_or_else(|p| Some(Err(panicked(&p)))),
-            Err(_) => stash.then(|| git0.config_is_unstaged(&config)),
-        };
-        let (loaded, early) = match (preloaded, load) {
-            (Some(loaded), _) => (loaded, Early::default()),
-            (None, Some(Ok(h))) => h
-                .join()
-                .unwrap_or_else(|p| (Err(panicked(&p)), Early::default())),
-            (None, Some(Err(_)) | None) => (
-                common::load_config_with(cx, &src, &buffered.warn, &buffered.diag),
-                Early::default(),
-            ),
-        };
-        let early = if hoist {
-            Early { tracked, origins }
-        } else {
-            early
-        };
-        (loaded, unmerged, unstaged, early)
-    });
+    let six = step6.run(preloaded);
     if inv.direct
-        && let Ok(cfg) = &loaded
+        && let Ok(cfg) = &six.loaded
     {
         run_hint(cx, &git0, &info, cfg);
     }
     // step 7: preflight in pre-commit's order
-    if unmerged.transpose()?.unwrap_or(false) {
-        printer.log(Level::Error, messages::UNMERGED);
-        return Ok(1);
-    }
     let from = a.from_ref.as_ref().filter(|r| !r.is_empty());
     let to = a.to_ref.as_ref().filter(|r| !r.is_empty());
-    if from.is_some() != to.is_some() {
-        printer.log(Level::Error, messages::BOTH_REFS);
-        return Ok(1);
-    }
-    if unstaged.transpose()?.unwrap_or(false) {
-        printer.log(
-            Level::Error,
-            &messages::config_unstaged(&config.to_string_lossy()),
-        );
-        return Ok(1);
-    }
-    if files::commit_msg_stage(a.hook_stage)
-        && commit_msg_filename.as_ref().is_none_or(|f| f.is_empty())
-    {
-        printer.log(
-            Level::Error,
-            &messages::commit_msg_required(a.hook_stage.as_str()),
-        );
-        return Ok(1);
-    }
-    if a.hook_stage == Stage::Hook(HookType::PostCheckout)
-        && cx
-            .env
-            .get_nonempty("_PRE_COMMIT_SKIP_POST_CHECKOUT")
-            .is_some()
-    {
-        return Ok(0);
+    let pre = Preflight {
+        unmerged: six.unmerged,
+        refs_paired: from.is_some() == to.is_some(),
+        unstaged: six.unstaged,
+        config: &config,
+        commit_msg_filename: commit_msg_filename.as_ref(),
+    };
+    if let Some(code) = pre.check(cx, a)? {
+        return Ok(code);
     }
     // step 8: run_env
     let mut run_env = runenv::run_env(&cx.env, a);
@@ -330,8 +213,16 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     // then F is asked again at step 14 (fail closed).
     // FOLLOW-UP(ADR-097): use `StashGuard::lock_contended()` once batch B lands, so that the stash's own index
     // rewrites stop discarding F and G.
-    let early = if stamp.is_some() && git0.index_stamp(&info) == stamp {
-        early
+    let fresh = six.stamp.is_some() && git0.index_stamp(&info) == six.stamp;
+    let ita_cleared = st
+        .stash
+        .as_ref()
+        .is_some_and(StashGuard::cleared_intent_to_add);
+    let early = if fresh {
+        Early {
+            tracked: six.early.tracked.filter(|_| !ita_cleared),
+            origins: six.early.origins,
+        }
     } else {
         Early::default()
     };
@@ -342,7 +233,7 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     } else {
         buffered.replay(printer);
     }
-    let mut cfg = loaded?;
+    let mut cfg = six.loaded?;
     let overlay = common::apply_overlay(cx, &mut cfg, &git, a.ext.no_local_config)?;
     if common::uses_store(&cfg) {
         st.store_guard = Some(common::store_lock(cx, inv.store)?);
@@ -362,27 +253,360 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     let t_resolve = cx.clock.now();
     let work_before = (cx.resolver.store_work(), parts.downloads());
     let all = cx.resolver.all_hooks(&rcx)?;
-    // step 12: selection
+    // steps 12–13: selection; SKIP, SNP_SKIP_GROUPS, skip/only conditions
     let strict = common::ext_mode(&cx.env) == snp_config::ExtMode::Strict;
+    let conds = Conditions::new(&git, &info, &run_env, &cx.cancel, &cx.regexes);
+    let picked = match select(cx, a, &all, &cfg, &run_env, &conds, strict) {
+        Ok(p) => p,
+        Err(code) => return Ok(code),
+    };
+    // step 14 (and the side fan-out: staged list and the DiffOracle inputs, read-only, beside the installs)
+    let sel = Selection {
+        stage: a.hook_stage,
+        commit_msg_filename: commit_msg_filename.as_ref(),
+        refs: from.zip(to),
+        files: &cli_files,
+        all_files: a.all_files,
+    };
+    let needs_files = picked
+        .hooks
+        .iter()
+        .any(|h| !h.def.always_run || h.def.pass_filenames);
+    let side = install_beside_side_queries(
+        cx,
+        &rcx,
+        &git,
+        &info,
+        &run_env,
+        &sel,
+        &picked,
+        &early,
+        needs_files,
+    )?;
+    // step 15: cols, the file table, the classifier
+    let names: Vec<&str> = picked.hooks.iter().map(|h| &*h.def.name).collect();
+    let cols = render::cols(&names);
+    let classifier = classifier(cx, &cfg, &sel, &git, &info, side.staged, needs_files)?;
+    // step 16: the baseline digest (ADR-078); a resolver that does not count its work never looks quiet
+    let quiet =
+        work_before.0.is_some() && (cx.resolver.store_work(), parts.downloads()) == work_before;
+    let baseline = baseline(cx, st.stash.as_ref(), &git, &run_env, t_resolve, quiet);
+    let mut oracle = DiffOracle::new(&git, &info, &run_env, baseline, side.tracked, side.origins)?;
+    // steps 17–20
+    let lp = ExecLoop {
+        cx,
+        a,
+        inv,
+        git: &git,
+        run_env: &run_env,
+        rcx: &rcx,
+        cfg: &cfg,
+        picked: &picked,
+        cols,
+        classifier: classifier.as_ref(),
+        strict,
+        refs: sel.refs.is_some(),
+    };
+    lp.run(st.stash.as_mut(), &mut oracle)
+}
+
+/// §3.1 step 14: `install_envs`, with the side queries (the staged list E, and F/G unless step 6 has them) on a
+/// thread beside it.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the run's borrowed state, one argument per piece"
+)]
+fn install_beside_side_queries(
+    cx: &RunCtx,
+    rcx: &snp_repo::ResolveCtx<'_>,
+    git: &Git,
+    info: &RepoInfo,
+    run_env: &Env,
+    sel: &Selection<'_>,
+    picked: &Picked<'_>,
+    early: &Early,
+    needs_files: bool,
+) -> Result<Side, Failure> {
+    let process_hooks = picked
+        .to_install
+        .iter()
+        .filter(|h| matches!(h.exec, snp_repo::ExecKind::Language))
+        .count();
+    // F and G cost two spawns and save one `git diff` per executed process hook: from three hooks on, or from one
+    // when step 6 already has them and the tree is small enough that the stat pass beats the diff (ADR-104)
+    let stat = match (&early.tracked, &early.origins) {
+        (Some(tracked), Some(_)) => {
+            process_hooks >= 3 || (process_hooks >= 1 && small_tree(tracked))
+        }
+        _ => process_hooks >= 3 && stat_possible(git, info, run_env),
+    };
+    let wants_staged = needs_files && files::wants_staged(sel, git, info);
+    let have_early = early.tracked.is_some() && early.origins.is_some();
+    let side_work = wants_staged || (stat && !have_early);
+    let (installed, side) = std::thread::scope(|s| {
+        let queries = || side_queries(git, wants_staged, stat, early);
+        // no thread when the side queries have nothing to ask; inline when it cannot start
+        let side = side_work.then(|| common::fork(s, queries));
+        let installed = cx.resolver.install_envs(&picked.to_install, rcx);
+        let side = match side {
+            Some(f) => f.join(|p| Err(panicked(&p))),
+            None => queries(),
+        };
+        (installed, side)
+    });
+    installed?;
+    side
+}
+
+/// §3.1 step 15: the file table and the classifier when some hook reads files or refs are given; otherwise only the
+/// merge-conflict notice (P17), printed exactly when pre-commit would.
+fn classifier(
+    cx: &RunCtx,
+    cfg: &Config,
+    sel: &Selection<'_>,
+    git: &Git,
+    info: &RepoInfo,
+    staged: Option<snp_git::ZList>,
+    needs_files: bool,
+) -> Result<Option<Classifier>, Failure> {
+    if needs_files || sel.refs.is_some() {
+        let table = files::table(sel, git, info, &cx.printer, staged)?;
+        let include = regex(cx, &cfg.files)?;
+        let exclude = regex(cx, &cfg.exclude)?;
+        return Ok(Some(Classifier::new(
+            Arc::new(table),
+            &include,
+            &exclude,
+            &cx.pool,
+        )?));
+    }
+    if files::merge_branch(sel, git, info) {
+        cx.printer.log(Level::Info, messages::MERGE_CONFLICT_ONLY);
+    }
+    Ok(None)
+}
+
+/// §3.1 step 3: discovery (or the caller's), with the config discovered and loaded at the invocation cwd on a thread
+/// meanwhile (`run` only; ADR-104). The thread's result is `None` when it could not start or panicked: step 6 then
+/// loads as before.
+fn discover(
+    cx: &RunCtx,
+    a: &RunArgs,
+    inv: &Invocation<'_>,
+    buffered: &Buffered,
+) -> (Result<(Git, RepoInfo), Failure>, Option<Speculated>) {
+    std::thread::scope(|s| {
+        let spec = (inv.discovered.is_none() && !inv.fixed_paths)
+            .then(|| common::fork(s, || speculative_config(cx, a, buffered)));
+        let found = match &inv.discovered {
+            Some((git, info)) => Ok((git.clone(), info.clone())),
+            None => common::discover(cx),
+        };
+        let spec = spec.and_then(|f| f.join_or_run(|| None, |_| None));
+        (found, spec)
+    })
+}
+
+/// The config path step 3 resolved at the invocation cwd and its load.
+type Speculated = (OsString, Result<Config, Failure>);
+
+/// §3.1 step 6's inputs.
+struct Step6<'s> {
+    cx: &'s RunCtx,
+    a: &'s RunArgs,
+    git: &'s Git,
+    info: &'s RepoInfo,
+    src: &'s snp_config::ConfigSource,
+    config: &'s OsStr,
+    stash: bool,
+    /// The step-6 load's warnings (unused when step 3's load is kept).
+    buffered: &'s Buffered,
+}
+
+/// §3.1 step 6's results.
+struct Six {
+    loaded: Result<Config, Failure>,
+    /// Query A (`None`: not a stashing run).
+    unmerged: Option<Result<bool, Failure>>,
+    /// Query B (`None`: not a stashing run).
+    unstaged: Option<Result<bool, Failure>>,
+    early: Early,
+    /// The index stamp taken before F (ADR-104).
+    stamp: Option<snp_git::IndexStamp>,
+}
+
+impl Step6<'_> {
+    /// The speculative config load (warnings buffered) beside the read-only preflight git calls, and — for a stashing
+    /// run on the stat-capable path — the `DiffOracle` inputs F and G, which the stash does not change (only its
+    /// intent-to-add clearing changes the index: then F is asked again after it). Started here they are off the
+    /// critical path instead of a serial git stage after the stash (B2/B3, ADR-084). F and G start first when they
+    /// will be used (the config is already loaded, or the tree is small), and F then also answers query A (ADR-104).
+    fn run(&self, preloaded: Option<Result<Config, Failure>>) -> Six {
+        let (cx, a, git, stash) = (self.cx, self.a, self.git, self.stash);
+        let entries = stat_entries(git, self.info, &cx.env).filter(|_| stash);
+        let speculate = entries.is_some();
+        let candidates = preloaded.as_ref().map(|loaded| {
+            loaded
+                .as_ref()
+                .map_or(0, |c| process_candidates(c, &a.hooks))
+        });
+        let hoist = entries.is_some_and(|n| hoist_early(self.info, n, candidates));
+        // taken before F starts: compared after the stash, it shows a rewrite of the index while we waited
+        let stamp = if speculate {
+            git.index_stamp(self.info)
+        } else {
+            None
+        };
+        let load_now =
+            || common::load_config_with(cx, self.src, &self.buffered.warn, &self.buffered.diag);
+        std::thread::scope(|s| {
+            let f = hoist.then(|| common::fork(s, || git.tracked_with_stages().ok()));
+            let g = hoist.then(|| common::fork(s, || git.config_origins().ok().map(Arc::from)));
+            let load = preloaded.is_none().then(|| {
+                common::fork(s, move || {
+                    let loaded = load_now();
+                    // Without the hoist, only for a config with three or more process-hook candidates: below
+                    // that the stat path does not pay for its two spawns (B2's spawn budget). A thread that could
+                    // not start, panicked or failed leaves its input to step 14.
+                    let early = if speculate
+                        && !hoist
+                        && loaded
+                            .as_ref()
+                            .is_ok_and(|c| process_candidates(c, &a.hooks) >= 3)
+                    {
+                        let f = common::fork(s, || git.tracked_with_modes().ok().map(Arc::new));
+                        let origins = git.config_origins().ok().map(Arc::from);
+                        Early {
+                            tracked: f.join_or_run(|| None, |_| None),
+                            origins,
+                        }
+                    } else {
+                        Early::default()
+                    };
+                    (loaded, early)
+                })
+            });
+            let unstaged = common::fork(s, || stash.then(|| git.config_is_unstaged(self.config)));
+            // query A: from F when F ran and parsed; on any failure of F (spawn, exit status, parse, panic), `git
+            // ls-files --unmerged` at the same position, so a broken index reports pre-commit's own error
+            let (unmerged, tracked) = match f.map(|f| f.join(|_| None)) {
+                Some(Some((entries, unmerged))) => (Some(Ok(unmerged)), Some(Arc::new(entries))),
+                Some(None) => (Some(git.has_unmerged()), None),
+                None => (stash.then(|| git.has_unmerged()), None),
+            };
+            let origins = g.and_then(|g| g.join(|_| None));
+            let unstaged = unstaged.join(|p| Some(Err(panicked(&p))));
+            let (loaded, early) = match (preloaded, load) {
+                (Some(loaded), _) => (loaded, Early::default()),
+                // a thread that could not start loads here, without speculating F and G
+                (None, Some(l)) => l.join_or_run(
+                    || (load_now(), Early::default()),
+                    |p| (Err(panicked(&p)), Early::default()),
+                ),
+                (None, None) => (load_now(), Early::default()),
+            };
+            let early = if hoist {
+                Early { tracked, origins }
+            } else {
+                early
+            };
+            Six {
+                loaded,
+                unmerged,
+                unstaged,
+                early,
+                stamp,
+            }
+        })
+    }
+}
+
+/// §3.1 step 7's inputs.
+struct Preflight<'p> {
+    unmerged: Option<Result<bool, Failure>>,
+    /// `--from-ref` and `--to-ref` are both given or both absent.
+    refs_paired: bool,
+    unstaged: Option<Result<bool, Failure>>,
+    config: &'p OsStr,
+    commit_msg_filename: Option<&'p OsString>,
+}
+
+impl Preflight<'_> {
+    /// The preflight checks in pre-commit's order; `Some(code)` ends the run.
+    fn check(self, cx: &RunCtx, a: &RunArgs) -> Result<Option<i32>, Failure> {
+        let printer = &*cx.printer;
+        if self.unmerged.transpose()?.unwrap_or(false) {
+            printer.log(Level::Error, messages::UNMERGED);
+            return Ok(Some(1));
+        }
+        if !self.refs_paired {
+            printer.log(Level::Error, messages::BOTH_REFS);
+            return Ok(Some(1));
+        }
+        if self.unstaged.transpose()?.unwrap_or(false) {
+            printer.log(
+                Level::Error,
+                &messages::config_unstaged(&self.config.to_string_lossy()),
+            );
+            return Ok(Some(1));
+        }
+        if files::commit_msg_stage(a.hook_stage)
+            && self.commit_msg_filename.is_none_or(|f| f.is_empty())
+        {
+            printer.log(
+                Level::Error,
+                &messages::commit_msg_required(a.hook_stage.as_str()),
+            );
+            return Ok(Some(1));
+        }
+        if a.hook_stage == Stage::Hook(HookType::PostCheckout)
+            && cx
+                .env
+                .get_nonempty("_PRE_COMMIT_SKIP_POST_CHECKOUT")
+                .is_some()
+        {
+            return Ok(Some(0));
+        }
+        Ok(None)
+    }
+}
+
+/// The hooks of steps 12–13.
+struct Picked<'h> {
+    /// Selected by id/alias, stage and group, config order.
+    hooks: Vec<&'h ResolvedHook>,
+    /// Per selected hook: skipped.
+    skipped: Vec<bool>,
+    /// The selected hooks not skipped.
+    to_install: Vec<&'h ResolvedHook>,
+}
+
+/// §3.1 steps 12–13: selection by group, id/alias and stage (`Err(1)` after the message), then `SKIP`,
+/// `SNP_SKIP_GROUPS` and the `skip`/`only` conditions.
+fn select<'h>(
+    cx: &RunCtx,
+    a: &RunArgs,
+    all: &'h [ResolvedHook],
+    cfg: &Config,
+    run_env: &Env,
+    conds: &Conditions<'_>,
+    strict: bool,
+) -> Result<Picked<'h>, i32> {
+    let printer = &*cx.printer;
     let groups = GroupFilter::new(&a.ext.groups, &a.ext.require_groups, &a.ext.no_groups);
-    if let Some((missing, known)) = groups.unknown(&all) {
+    if let Some((missing, known)) = groups.unknown(all) {
         printer.write_line(messages::no_group(missing, &known).as_bytes());
-        return Ok(1);
+        return Err(1);
     }
     let selectors: Vec<OsString> = a.hooks.iter().filter(|h| !h.is_empty()).cloned().collect();
-    let hooks: Vec<&ResolvedHook> =
-        match crate::select::select(&all, &selectors, a.hook_stage, &groups) {
-            Ok(h) => h,
-            Err(missing) => {
-                printer.write_line(
-                    messages::no_hook(&missing.to_string_lossy(), a.hook_stage.as_str()).as_bytes(),
-                );
-                return Ok(1);
-            }
-        };
-    // step 13: SKIP, SNP_SKIP_GROUPS, skip/only conditions
-    let skips = Skips::from_env(&run_env, strict);
-    let conds = Conditions::new(&git, &info, &run_env, &cx.cancel, &cx.regexes);
+    let hooks =
+        crate::select::select(all, &selectors, a.hook_stage, &groups).map_err(|missing| {
+            printer.write_line(
+                messages::no_hook(&missing.to_string_lossy(), a.hook_stage.as_str()).as_bytes(),
+            );
+            1
+        })?;
+    let skips = Skips::from_env(run_env, strict);
     let root_skipped = !strict && conds.skipped(&cfg.root_ext.skip, &cfg.root_ext.only, &[]);
     let skipped: Vec<bool> = hooks
         .iter()
@@ -393,153 +617,104 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
                         || conds.skipped(&h.def.ext.skip, &h.def.ext.only, &h.def.ext.env)))
         })
         .collect();
-    let to_install: Vec<&ResolvedHook> = hooks
+    let to_install = hooks
         .iter()
         .zip(&skipped)
         .filter(|(_, s)| !**s)
         .map(|(h, _)| *h)
         .collect();
-    // step 14 (and the side fan-out: staged list and the DiffOracle inputs, read-only, beside the installs)
-    let sel = Selection {
-        stage: a.hook_stage,
-        commit_msg_filename: commit_msg_filename.as_ref(),
-        refs: from.zip(to),
-        files: &cli_files,
-        all_files: a.all_files,
-    };
-    let needs_files = hooks
-        .iter()
-        .any(|h| !h.def.always_run || h.def.pass_filenames);
-    // F and G cost two spawns and save one `git diff` per executed process hook: worth it from three hooks on, or
-    // from one when step 6 already has them (off the critical path)
-    let process_hooks = to_install
-        .iter()
-        .filter(|h| matches!(h.exec, snp_repo::ExecKind::Language))
-        .count();
-    let ita_cleared = st
-        .stash
-        .as_ref()
-        .is_some_and(StashGuard::cleared_intent_to_add);
-    let early = Early {
-        tracked: early.tracked.filter(|_| !ita_cleared),
-        origins: early.origins,
-    };
-    // From one executed process hook on when step 6 already has F and G and the tree is small enough that the stat
-    // pass beats the after-hook `git diff`; otherwise from three on (ADR-104)
-    let stat_possible = match (&early.tracked, &early.origins) {
-        (Some(tracked), Some(_)) => {
-            process_hooks >= 3 || (process_hooks >= 1 && small_tree(tracked))
-        }
-        _ => process_hooks >= 3 && stat_possible(&git, &info, &run_env),
-    };
-    let wants_staged = needs_files && files::wants_staged(&sel, &git, &info);
-    let have_early = early.tracked.is_some() && early.origins.is_some();
-    let side_work = wants_staged || (stat_possible && !have_early);
-    let (installed, side) = std::thread::scope(|s| {
-        // no thread when the side queries have nothing to ask
-        let side = side_work.then(|| {
-            std::thread::Builder::new().spawn_scoped(s, || {
-                side_queries(&git, wants_staged, stat_possible, &early)
-            })
-        });
-        let installed = cx.resolver.install_envs(&to_install, &rcx);
-        let side = match side {
-            Some(Ok(h)) => h.join().unwrap_or_else(|p| Err(panicked(&p))),
-            Some(Err(_)) | None => side_queries(&git, wants_staged, stat_possible, &early),
+    Ok(Picked {
+        hooks,
+        skipped,
+        to_install,
+    })
+}
+
+/// §3.1 steps 17–20's inputs.
+struct ExecLoop<'x> {
+    cx: &'x RunCtx,
+    a: &'x RunArgs,
+    inv: &'x Invocation<'x>,
+    git: &'x Git,
+    run_env: &'x Env,
+    rcx: &'x snp_repo::ResolveCtx<'x>,
+    cfg: &'x Config,
+    picked: &'x Picked<'x>,
+    cols: usize,
+    classifier: Option<&'x Classifier>,
+    strict: bool,
+    /// `--from-ref`/`--to-ref` are set.
+    refs: bool,
+}
+
+impl ExecLoop<'_> {
+    /// Steps 17–20: the hooks, `--show-diff-on-failure` (inside the stash) and the `stage_fixed` staging before the
+    /// restore. The stash is only borrowed: the caller's single exit restores it.
+    fn run(&self, stash: Option<&mut StashGuard>, oracle: &mut DiffOracle) -> Result<i32, Failure> {
+        let (cx, a, git, run_env, cfg) = (self.cx, self.a, self.git, self.run_env, self.cfg);
+        let printer = &*cx.printer;
+        let facts = snp_git::pch_facts::PchFacts::new(git.clone());
+        let color = printer.color();
+        let meta_cx = meta::MetaCx {
+            cx,
+            git,
+            env: run_env,
+            store: &cx.store,
+            rcx: self.rcx,
         };
-        (installed, side)
-    });
-    installed?;
-    let side = side?;
-    // step 15: cols, the file table, the classifier
-    let names: Vec<&str> = hooks.iter().map(|h| &*h.def.name).collect();
-    let cols = render::cols(&names);
-    let classifier = if needs_files || sel.refs.is_some() {
-        let table = files::table(&sel, &git, &info, printer, side.staged)?;
-        let include = regex(cx, &cfg.files)?;
-        let exclude = regex(cx, &cfg.exclude)?;
-        Some(Classifier::new(
-            Arc::new(table),
-            &include,
-            &exclude,
-            &cx.pool,
-        )?)
-    } else {
-        // P17: no hook reads the list, but the merge-conflict notice is printed exactly when pre-commit would
-        if files::merge_branch(&sel, &git, &info) {
-            printer.log(Level::Info, messages::MERGE_CONFLICT_ONLY);
+        let e = ExecEnv {
+            cx,
+            rcx: self.rcx,
+            git,
+            run_env,
+            color,
+            cpu: snp_proc::xargs::cpu_count(),
+            max_len: snp_proc::xargs::platform_max_length(cx.env.python_environ_size()),
+            facts: &facts,
+            stdin: self.inv.hook_stdin.clone(),
+            meta: &meta_cx,
+        };
+        let stage_fixed = !self.strict
+            && a.hook_stage == Stage::Hook(HookType::PreCommit)
+            && stash.is_some()
+            && !self.refs;
+        let lp = sched::Loop {
+            e: &e,
+            hooks: &self.picked.hooks,
+            skipped: &self.picked.skipped,
+            cols: self.cols,
+            verbose: a.verbose,
+            fail_fast: cfg.fail_fast || a.fail_fast,
+            classifier: self.classifier,
+            mode: output_mode(cfg, run_env, a, self.strict),
+            fail_on_changes: cfg.root_ext.fail_on_changes,
+            ci: run_env.is_truthy_flag("CI"),
+            stage_fixed,
+            root_ext: &cfg.root_ext,
+            no_tty: run_env.is_truthy_flag("SNP_NO_TTY"),
+        };
+        let res = sched::run_hooks(&lp, oracle)?;
+        let mut retval = res.retval;
+        // step 19: --show-diff-on-failure (inside the stash)
+        if retval != 0 && a.show_diff_on_failure && oracle.non_empty()? {
+            if a.all_files {
+                printer.write_line(messages::show_diff_all_files(cx.brand).as_bytes());
+            }
+            printer.write_line(messages::ALL_CHANGES.as_bytes());
+            printer.flush();
+            git.show_diff(color)?;
+            snp_os::term::ensure_vt();
         }
-        None
-    };
-    // step 16: the baseline digest (ADR-078); a resolver that does not count its work never looks quiet
-    let quiet =
-        work_before.0.is_some() && (cx.resolver.store_work(), parts.downloads()) == work_before;
-    let baseline = baseline(cx, st.stash.as_ref(), &git, &run_env, t_resolve, quiet);
-    let mut oracle = DiffOracle::new(&git, &info, &run_env, baseline, side.tracked, side.origins)?;
-    // step 17–18: execution
-    let facts = snp_git::pch_facts::PchFacts::new(git.clone());
-    let cpu = snp_proc::xargs::cpu_count();
-    let max_len = snp_proc::xargs::platform_max_length(cx.env.python_environ_size());
-    let color = printer.color();
-    let meta_cx = meta::MetaCx {
-        cx,
-        git: &git,
-        env: &run_env,
-        store: &cx.store,
-        rcx: &rcx,
-    };
-    let e = ExecEnv {
-        cx,
-        rcx: &rcx,
-        git: &git,
-        run_env: &run_env,
-        color,
-        cpu,
-        max_len,
-        facts: &facts,
-        stdin: inv.hook_stdin.clone(),
-        meta: &meta_cx,
-    };
-    let stage_fixed = !strict
-        && a.hook_stage == Stage::Hook(HookType::PreCommit)
-        && st.stash.is_some()
-        && sel.refs.is_none();
-    let lp = sched::Loop {
-        e: &e,
-        hooks: &hooks,
-        skipped: &skipped,
-        cols,
-        verbose: a.verbose,
-        fail_fast: cfg.fail_fast || a.fail_fast,
-        classifier: classifier.as_ref(),
-        mode: output_mode(&cfg, &run_env, a, strict),
-        fail_on_changes: cfg.root_ext.fail_on_changes,
-        ci: run_env.is_truthy_flag("CI"),
-        stage_fixed,
-        root_ext: &cfg.root_ext,
-        no_tty: run_env.is_truthy_flag("SNP_NO_TTY"),
-    };
-    let res = sched::run_hooks(&lp, &mut oracle)?;
-    let mut retval = res.retval;
-    // step 19: --show-diff-on-failure (inside the stash)
-    if retval != 0 && a.show_diff_on_failure && oracle.non_empty()? {
-        if a.all_files {
-            printer.write_line(messages::show_diff_all_files(cx.brand).as_bytes());
+        // step 20: stage_fixed staging (before the restore)
+        if !res.to_stage.is_empty()
+            && let Some(g) = stash
+            && !g.stage_fixed(&res.to_stage)?
+        {
+            printer.diag(messages::STAGE_FIXED_REFUSED);
+            retval = 1;
         }
-        printer.write_line(messages::ALL_CHANGES.as_bytes());
-        printer.flush();
-        git.show_diff(color)?;
-        snp_os::term::ensure_vt();
+        Ok(retval)
     }
-    // step 20: stage_fixed staging (before the restore)
-    if !res.to_stage.is_empty()
-        && let Some(g) = st.stash.as_mut()
-        && !g.stage_fixed(&res.to_stage)?
-    {
-        printer.diag(messages::STAGE_FIXED_REFUSED);
-        retval = 1;
-    }
-    Ok(retval)
 }
 
 /// `_has_*` helpers report a panic of their thread as the envelope's `PanicException`.
@@ -642,11 +817,7 @@ fn hoist_early(info: &RepoInfo, n: u32, candidates: Option<usize>) -> bool {
 /// cwd, loaded with its warnings buffered (ADR-104). It runs beside step 3's `rev-parse`; the caller accepts it only
 /// when the real root is the cwd and the real config path is byte-equal, and drops it (with its buffered warnings)
 /// otherwise. Discovery is note-free here: the stderr note is printed by the real resolution only.
-fn speculative_config(
-    cx: &RunCtx,
-    a: &RunArgs,
-    buffered: &Buffered,
-) -> Option<(OsString, Result<Config, Failure>)> {
+fn speculative_config(cx: &RunCtx, a: &RunArgs, buffered: &Buffered) -> Option<Speculated> {
     let cwd = &cx.invocation_cwd;
     let d =
         snp_config::discover::discover(a.config.explicit(), cwd, cwd, cx.brand, &cx.env).ok()?;
@@ -734,21 +905,13 @@ fn side_queries(git: &Git, wants_staged: bool, stat: bool, early: &Early) -> Res
     }
     // E, F and G are independent read-only queries: each on its own thread, so one spawn is on the critical path
     std::thread::scope(|s| {
-        let f = std::thread::Builder::new()
-            .spawn_scoped(s, || git.tracked_with_modes().ok().map(Arc::new));
-        let g = std::thread::Builder::new()
-            .spawn_scoped(s, || git.config_origins().ok().map(Arc::from));
+        let f = common::fork(s, || git.tracked_with_modes().ok().map(Arc::new));
+        let g = common::fork(s, || git.config_origins().ok().map(Arc::from));
         let staged = wants_staged.then(|| git.staged_files());
         // a failure of F or G only costs the Stat mode (the oracle falls back to `git diff`); a thread that could
         // not start runs its query here
-        let tracked = match f {
-            Ok(h) => h.join().ok().flatten(),
-            Err(_) => git.tracked_with_modes().ok().map(Arc::new),
-        };
-        let origins = match g {
-            Ok(h) => h.join().ok().flatten(),
-            Err(_) => git.config_origins().ok().map(Arc::from),
-        };
+        let tracked = f.join(|_| None);
+        let origins = g.join(|_| None);
         Ok(Side {
             staged: staged.transpose()?,
             tracked,

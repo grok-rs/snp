@@ -381,6 +381,81 @@ impl Fetch for CountingFetch {
     }
 }
 
+/// A computation forked onto a scoped thread, or kept to run at join time when the thread could not start (one helper
+/// for every fork of the run pipeline, ADR-104). Each call site names its own policy: what a thread that never
+/// started does instead ([`Forked::join`] runs the same closure here, [`Forked::join_or_run`] another one) and what a
+/// panic becomes. Join before any `?`, return or print, so the inline fallback runs at the same point.
+pub(crate) enum Forked<'scope, T, F> {
+    /// Running on its own thread.
+    Spawned(std::thread::ScopedJoinHandle<'scope, T>),
+    /// The thread could not start: `F` runs at join time.
+    Inline(F),
+}
+
+/// Starts `f` on a thread of `s`. `f` is `Copy` (it captures only shared borrows), so the copy that stays behind can
+/// run inline when the thread cannot start.
+pub(crate) fn fork<'scope, 'env, T, F>(
+    s: &'scope std::thread::Scope<'scope, 'env>,
+    f: F,
+) -> Forked<'scope, T, F>
+where
+    F: FnOnce() -> T + Send + Copy + 'scope,
+    T: Send + 'scope,
+{
+    fork_with(s, f, |s, f| std::thread::Builder::new().spawn_scoped(s, f))
+}
+
+/// [`fork`] over a given spawner (the tests refuse threads through it).
+fn fork_with<'scope, 'env, T, F, S>(
+    s: &'scope std::thread::Scope<'scope, 'env>,
+    f: F,
+    spawn: S,
+) -> Forked<'scope, T, F>
+where
+    F: FnOnce() -> T + Send + Copy + 'scope,
+    T: Send + 'scope,
+    S: FnOnce(
+        &'scope std::thread::Scope<'scope, 'env>,
+        F,
+    ) -> std::io::Result<std::thread::ScopedJoinHandle<'scope, T>>,
+{
+    match spawn(s, f) {
+        Ok(h) => Forked::Spawned(h),
+        Err(_) => Forked::Inline(f),
+    }
+}
+
+impl<T, F: FnOnce() -> T> Forked<'_, T, F> {
+    /// The thread's value, `on_panic(payload)` when it panicked, or `f()` run here when it never started.
+    pub(crate) fn join(self, on_panic: impl FnOnce(Box<dyn std::any::Any + Send>) -> T) -> T {
+        match self {
+            Self::Spawned(h) => h.join().unwrap_or_else(on_panic),
+            Self::Inline(f) => f(),
+        }
+    }
+
+    /// As [`Self::join`], but a thread that never started runs `inline` instead of `f`.
+    pub(crate) fn join_or_run(
+        self,
+        inline: impl FnOnce() -> T,
+        on_panic: impl FnOnce(Box<dyn std::any::Any + Send>) -> T,
+    ) -> T {
+        match self {
+            Self::Spawned(h) => h.join().unwrap_or_else(on_panic),
+            Self::Inline(_) => inline(),
+        }
+    }
+}
+
+impl<T, F> std::fmt::Debug for Forked<'_, T, F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Spawned(_) => "Forked::Spawned",
+            Self::Inline(_) => "Forked::Inline",
+        })
+    }
+}
+
 /// A `Printer` whose output goes nowhere (nested resolution inside meta hooks: pre-commit's subprocess has no
 /// logging handler, so INFO records such as `Initializing environment` are dropped).
 pub(crate) fn null_printer(cx: &RunCtx) -> Printer {
@@ -505,6 +580,49 @@ mod tests {
             rebase_path(OsStr::new("/elsewhere/x"), cwd, root),
             *sep("../elsewhere/x")
         );
+    }
+
+    /// The fork helper's inline path: a thread that cannot start runs the closure (or the given fallback) at join
+    /// time.
+    #[test]
+    fn forked_runs_inline_when_the_thread_cannot_start() {
+        fn refuse<'scope, T, F>(
+            _: &'scope std::thread::Scope<'scope, '_>,
+            _: F,
+        ) -> std::io::Result<std::thread::ScopedJoinHandle<'scope, T>> {
+            Err(std::io::Error::other("refused"))
+        }
+        std::thread::scope(|s| {
+            let x = 41;
+            let plus = move || x + 1;
+            let f = fork_with(s, plus, refuse);
+            assert!(matches!(f, Forked::Inline(_)), "{f:?}");
+            assert_eq!(f.join(|_| 0), 42);
+            let g = fork_with(s, plus, refuse);
+            assert_eq!(g.join_or_run(|| 7, |_| 0), 7);
+        });
+    }
+
+    /// The fork helper's thread path: the value, or the call site's mapping of a panic.
+    #[test]
+    fn forked_maps_a_panic() {
+        std::thread::scope(|s| {
+            let ok = fork(s, || 5);
+            assert!(matches!(ok, Forked::Spawned(_)), "{ok:?}");
+            assert_eq!(ok.join(|_| 0), 5);
+            let boom = fork(s, || -> i32 { std::panic::panic_any("boom") });
+            let mapped = boom.join_or_run(
+                || 0,
+                |p| {
+                    if p.downcast_ref::<&str>() == Some(&"boom") {
+                        -1
+                    } else {
+                        -2
+                    }
+                },
+            );
+            assert_eq!(mapped, -1);
+        });
     }
 
     #[test]

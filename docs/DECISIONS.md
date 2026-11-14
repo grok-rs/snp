@@ -2031,6 +2031,12 @@ step 4's resolved config path is byte-equal; otherwise the result and its warnin
 before. A kept config also decides F and G at the top of step 6: from three process-hook candidates always (ADR-084(6)
 took them then too, only after the load), never without one, and with one or two only on a small tree. No speculative
 git child is started (stage 2 of P24 waits for the interleaved bench gate of ADR-099 to show a gain beyond noise).
+(8) *One fork helper (P25(a/b)).* Every thread of the pipeline goes through `common::fork`, which takes a `Copy`
+closure by value and joins with a policy named at the call site: a thread that cannot start runs the same closure (or a
+named fallback) at join time, and a panic becomes what the site says (`PanicException`, `None`, or "ask query A").
+`body()` is split into step functions (`discover`, `Step6`, `Preflight`, `select`, `install_beside_side_queries`,
+`classifier`, `ExecLoop`) that only borrow the stash, so every exit still goes through the single restore of
+`run_pipeline` (ADR-066).
 **Rationale.** The text is what reviewers and later batches read; a stale "C runs in parallel" sends the next
 optimisation after the wrong call. Counting the work is exact where the timer was a guess, and both checks only ever
 choose pre-commit's position for the baseline, so neither can make output differ from pre-commit 4.7.0.
