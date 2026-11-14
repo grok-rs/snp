@@ -67,8 +67,46 @@ mutants = [
     { find = "Some(&b) if is_eol(b) => start = i,", replace = "Some(&b) if b == 10 => start = i," },
 ]
 
+[[kernel]]
+id = "K5a-zsplit"
+status = "verified"
+file = "crates/snp-pycompat/src/precommit/zsplit.rs"
+mount = "snp_pycompat_precommit_zsplit"
+spec = "proofs/verus/spec/zsplit.rs"
+callers = ["crates/snp-pycompat/src/precommit.rs::zsplit", "crates/snp-pycompat/src/precommit.rs::ZSplit::next"]
+verified_min = 19
+mutants = [
+    # The strip treats `\x01` as the NUL to strip.
+    { find = "b.get(start) == Some(&0)", replace = "b.get(start) == Some(&1)" },
+    # A single-byte record after stripping is dropped.
+    { find = "if start == end {", replace = "if start >= end.saturating_sub(1) {" },
+    # The NUL search reports the byte after the NUL.
+    { find = "return Some(i);", replace = "return Some(i.saturating_add(1));" },
+    # Spec mutant: the record after a NUL keeps the NUL (`lemma_split_win_join`, `lemma_split_win_nul_free`).
+    { file = "proofs/verus/spec/zsplit.rs", find = "seq![b.subrange(st, j)] + split_win(b, j + 1, j + 1, hi)", replace = "seq![b.subrange(st, j)] + split_win(b, j, j + 1, hi)" },
+]
+
+[[kernel]]
+id = "K5b-zlist-split"
+status = "verified"
+file = "crates/snp-git/src/zlist/split.rs"
+mount = "snp_git_zlist_split"
+spec = "proofs/verus/spec/zlist_split.rs"
+callers = ["crates/snp-git/src/zlist.rs::ZList::split"]
+verified_min = 12
+mutants = [
+    # `from_z` deduplicates too.
+    { find = "let keep = !dedup || spans.is_empty()", replace = "let keep = spans.is_empty()" },
+    # A buffer over 64 KiB is refused as too large.
+    { find = "u32::try_from(n)", replace = "u16::try_from(n)" },
+    # The dedup comparison ignores the first byte.
+    { find = "if buf[xs + i] != buf[ys + i] {", replace = "if buf[xs + i] != buf[ys + i] && i > 0 {" },
+    # The scalar finder skips the byte at `from`.
+    { find = "let mut i = from;", replace = "let mut i = from.saturating_add(1);" },
+]
+
 # [[model]]: Lean models with oracle tests and fingerprinted anchors (K3, K4).
-# [[trusted]]: empty in M1 (§10 row 8). From M2: { item = "Memchr: FindByte", kernel = "K5", test = "…" }
+# [[trusted]]: production impls of kernel traits (§2.6, §10 row 8), each with its differential test (G8).
 
 [[model]]
 id = "K3-end-of-file-fixer"
@@ -128,3 +166,11 @@ anchors = [
 "SnpModels.Shlex.pySplit_eq_split" = "67a279bf3ae4866e"
 "SnpModels.Shlex.split_quote" = "4ab0fa788ac59903"
 "SnpModels.Shlex.split_join" = "c86111f19da7c967"
+
+# memchr 2.x `memchr(needle, &hay[from..])` shifted by `from`: the first `needle` at or after `from`, the contract of
+# `FindByte::find_byte` (K5b). Tested against the verified `Scalar` (and checked by every debug build of
+# `ZList::split`).
+[[trusted]]
+item = "Memchr: FindByte"
+kernel = "K5b-zlist-split"
+test = "crates/snp-git/src/zlist.rs::memchr_matches_scalar"

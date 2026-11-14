@@ -10,8 +10,13 @@ use crate::text::{
     bytes_strip, rsplit4, splitlines, splitlines_keepends, strip,
 };
 
+mod zsplit;
+
 /// `git.zsplit(s)` (`git.py:19-24`): `-z` output with leading/trailing NULs stripped, split on
 /// NUL; interior empty records are kept; no allocation.
+///
+/// Unverified glue of kernel K5a (ADR-095, docs/VERIFICATION.md §9.2): the NUL search is the verified
+/// `zsplit::find_nul`, and each `next` takes the step of `lemma_split_nul_step`.
 #[derive(Clone, Debug)]
 pub struct ZSplit<'a> {
     rest: Option<&'a [u8]>,
@@ -22,7 +27,7 @@ impl<'a> Iterator for ZSplit<'a> {
 
     fn next(&mut self) -> Option<&'a [u8]> {
         let rest = self.rest?;
-        let Some(i) = rest.iter().position(|&b| b == 0) else {
+        let Some(i) = zsplit::find_nul(rest) else {
             self.rest = None;
             return Some(rest);
         };
@@ -34,15 +39,12 @@ impl<'a> Iterator for ZSplit<'a> {
 impl FusedIterator for ZSplit<'_> {}
 
 /// `git.zsplit(s)` (`git.py:19-24`): `s.strip('\0')`; empty → no records; else `split('\0')`.
+///
+/// The strip is the verified `zsplit::strip_nul` (kernel K5a, ADR-095).
 #[must_use]
 pub fn zsplit(b: &[u8]) -> ZSplit<'_> {
-    let start = b.iter().take_while(|&&c| c == 0).count();
-    let end = b
-        .len()
-        .saturating_sub(b.iter().rev().take_while(|&&c| c == 0).count());
-    let t = b.get(start..end).unwrap_or_default();
     ZSplit {
-        rest: (!t.is_empty()).then_some(t),
+        rest: zsplit::strip_nul(b).and_then(|(start, end)| b.get(start..end)),
     }
 }
 

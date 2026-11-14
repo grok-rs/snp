@@ -27,3 +27,13 @@ pub mod snp_net_archive_entry;
 #[verus_verify]
 #[path = "../../crates/snp-hooks/src/pch/p0/kernels/eof.rs"]
 pub mod snp_hooks_pch_p0_kernels_eof;
+
+/// K5a: `git.zsplit` byte loops (snp-pycompat).
+#[verus_verify]
+#[path = "../../crates/snp-pycompat/src/precommit/zsplit.rs"]
+pub mod snp_pycompat_precommit_zsplit;
+
+/// K5b: `ZList::split` spans and the `FindByte` kernel trait (snp-git).
+#[verus_verify]
+#[path = "../../crates/snp-git/src/zlist/split.rs"]
+pub mod snp_git_zlist_split;
