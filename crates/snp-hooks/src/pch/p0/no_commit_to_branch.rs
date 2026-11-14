@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use snp_argparse::{ActionSpec, ParserSpec};
 use snp_core::failure::PyExc;
+use snp_git::pch_facts::FactSet;
 use snp_hooks_data::Epoch;
 use snp_pyre::{Options, PyReError, PyRegex};
 
@@ -135,6 +136,11 @@ impl NativeHook for NoCommitToBranch {
             }
         }
         Ok(())
+    }
+
+    /// `symbolic-ref HEAD` (`is_on_branch`).
+    fn facts(&self, _args: &[Arc<str>], _epoch: Epoch) -> FactSet {
+        FactSet::BRANCH
     }
 
     fn run(&self, cx: &HookCx<'_>, argv: &[&OsStr]) -> Outcome {

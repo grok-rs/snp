@@ -59,6 +59,7 @@ mod api {
         has::<Result<(), String>>(h.preflight(Epoch(600), &[]));
         has::<Outcome>(h.run(cx, &[OsStr::new("a.py")]));
         has::<bool>(h.reports_modifications_exactly());
+        has::<snp_git::pch_facts::FactSet>(h.facts(&[], Epoch(600)));
     }
 
     /// The public fields of `HookCx`.
@@ -93,6 +94,8 @@ mod api {
         has::<fn(&Git, &PchFacts, &Env, &CancelToken)>(hook_cx);
         has::<fn(&dyn NativeHook, &HookCx<'_>)>(native_hook);
         assert!(Probe.reports_modifications_exactly());
+        // ADR-102: the provided `facts` method names no fact by default
+        assert!(Probe.facts(&[], Epoch(600)).is_empty());
         let outcome = Outcome {
             code: 1,
             output: b"x\n".to_vec(),

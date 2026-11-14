@@ -12,6 +12,7 @@ use std::ffi::OsStr;
 use std::sync::Arc;
 
 use snp_argparse::{ActionSpec, ParserSpec};
+use snp_git::pch_facts::FactSet;
 use snp_hooks_data::Epoch;
 
 use super::kernels;
@@ -39,7 +40,9 @@ pub(crate) static SPEC: ParserSpec = ParserSpec {
 
 /// The [`snp_git::pch_facts::PchFacts::tracked_derived`] tag of the repository index at `epoch` / `windows`.
 fn index_tag(epoch: u16, windows: bool) -> u32 {
-    u32::from(epoch).saturating_mul(2).saturating_add(u32::from(windows))
+    u32::from(epoch)
+        .saturating_mul(2)
+        .saturating_add(u32::from(windows))
 }
 
 /// The native.
@@ -60,6 +63,10 @@ impl NativeHook for CheckCaseConflict {
 
     fn preflight(&self, epoch: Epoch, _args: &[Arc<str>]) -> Result<(), String> {
         epoch_in(epoch, 3)
+    }
+
+    fn facts(&self, _args: &[Arc<str>], _epoch: Epoch) -> FactSet {
+        FactSet::TRACKED.union(FactSet::ADDED)
     }
 
     fn run(&self, cx: &HookCx<'_>, argv: &[&OsStr]) -> Outcome {

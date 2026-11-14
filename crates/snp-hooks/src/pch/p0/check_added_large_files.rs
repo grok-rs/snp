@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use snp_argparse::{ActionSpec, ParserSpec};
 use snp_core::failure::PyExc;
+use snp_git::pch_facts::FactSet;
 use snp_hooks_data::Epoch;
 use snp_pyparsers::json::{JsonValue, PyMinor};
 
@@ -217,6 +218,20 @@ impl NativeHook for CheckAddedLargeFiles {
             Ok(())
         } else {
             epoch_in(epoch, 3)
+        }
+    }
+
+    /// The upstream variant's `added_files()`, unless `--enforce-all` (epoch >= 2; any argument argparse could take
+    /// for it counts) skips it; the builtin reads the raw `-z` list itself, uncached.
+    fn facts(&self, args: &[Arc<str>], epoch: Epoch) -> FactSet {
+        let enforce_all = epoch.0 >= 2
+            && args
+                .iter()
+                .any(|a| a.len() >= 3 && "--enforce-all".starts_with(&**a));
+        if self.builtin || enforce_all {
+            FactSet::NONE
+        } else {
+            FactSet::ADDED
         }
     }
 
