@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use snp_argparse::{ActionSpec, ParserSpec};
 use snp_core::failure::PyExc;
+use snp_git::pch_facts::FactSet;
 use snp_hooks_data::Epoch;
 
 use super::common::{self, cmd_output, epoch_in, filenames, py_rstrip, read_all};
@@ -115,6 +116,15 @@ impl NativeHook for CheckMergeConflict {
             Ok(())
         } else {
             epoch_in(epoch, 3)
+        }
+    }
+
+    /// `rev-parse --git-dir` (`is_in_merge`), except at epoch 1 (the literal `.git`).
+    fn facts(&self, _args: &[Arc<str>], epoch: Epoch) -> FactSet {
+        if self.builtin || epoch.0 >= 2 {
+            FactSet::GIT_DIR
+        } else {
+            FactSet::NONE
         }
     }
 

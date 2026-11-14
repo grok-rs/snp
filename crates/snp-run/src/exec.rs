@@ -8,6 +8,7 @@
 //!
 //! Owner: WP-32.
 
+use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
@@ -91,7 +92,8 @@ pub(crate) fn hook_cwd(root: &Path, h: &ResolvedHook) -> PathBuf {
     }
 }
 
-/// Runs one hook on `files` (already `()` when `pass_filenames: false`; relative to the hook's cwd). With `tty`
+/// Runs one hook on `files` (already `()` when `pass_filenames: false`; relative to the hook's cwd; normally
+/// borrowed from the run's file table, ADR-103). With `tty`
 /// (an `interactive` hook that found a terminal, ADR-085) a process hook's partitions run one after another on the
 /// terminal, uncaptured; hooks that run inside snp ignore it.
 ///
@@ -102,7 +104,7 @@ pub(crate) fn hook_cwd(root: &Path, h: &ResolvedHook) -> PathBuf {
 pub(crate) fn run_hook(
     e: &ExecEnv<'_>,
     h: &ResolvedHook,
-    files: &[OsString],
+    files: &[Cow<'_, OsStr>],
     tty: Option<&Terminal>,
 ) -> Result<Ran, Failure> {
     let cwd = hook_cwd(e.git.root(), h);
@@ -169,15 +171,16 @@ pub(crate) fn child_env(base: &Env, h: &ResolvedHook) -> Env {
     base.patched(&p)
 }
 
-/// `files` in `lang_base._shuffled` order when `shuffle`.
-fn shuffled(files: &[OsString], shuffle: bool) -> Vec<&OsStr> {
+/// `files` in `lang_base._shuffled` order when `shuffle` (always a fresh list, so a `stage_fixed` verify re-run
+/// sees the same order).
+fn shuffled<'f>(files: &'f [Cow<'_, OsStr>], shuffle: bool) -> Vec<&'f OsStr> {
     if !shuffle || files.len() < 2 {
-        return files.iter().map(OsString::as_os_str).collect();
+        return files.iter().map(AsRef::as_ref).collect();
     }
     snp_pycompat::random::precommit_shuffled_indices(files.len())
         .into_iter()
         .filter_map(|i| files.get(usize::try_from(i).ok()?))
-        .map(OsString::as_os_str)
+        .map(AsRef::as_ref)
         .collect()
 }
 
@@ -186,7 +189,7 @@ fn run_plan(
     e: &ExecEnv<'_>,
     h: &ResolvedHook,
     plan: RunPlan,
-    files: &[OsString],
+    files: &[Cow<'_, OsStr>],
     cwd: &Path,
     tty: Option<&Terminal>,
 ) -> Result<Ran, Failure> {
@@ -327,16 +330,10 @@ fn run_xargs(
     let results = e.cx.pool.map_ordered(threads, parts.len(), |i| {
         fault::hit(Point::WorkerPartition);
         let range = parts.get(i).cloned().unwrap_or(0..0);
-        let mut argv = cmd.clone();
-        argv.extend(
-            files
-                .get(range)
-                .unwrap_or_default()
-                .iter()
-                .map(|f| f.to_os_string()),
-        );
+        // the partition's files are appended at spawn time, borrowed (ADR-103)
+        let part_files = files.get(range).unwrap_or_default();
         let spec = Spec {
-            argv: &argv,
+            argv: &cmd,
             env,
             cwd,
             stdin: match (tty, &stdin) {
@@ -350,9 +347,10 @@ fn run_xargs(
             cancel: &e.cx.cancel,
         };
         if tty.is_some() {
-            return Ok(interactive_part(&spec));
+            return Ok(interactive_part(&spec, part_files));
         }
-        Ok(match spawn::merged(&spec, pty, &e.cx.budget) {
+        let merged = spawn::merged_hook(&spec, part_files, pty, &e.cx.budget);
+        Ok(match merged {
             Ok(m) => Part {
                 status: m.status,
                 output: m.output,
@@ -405,8 +403,8 @@ fn run_xargs(
 
 /// One partition of an interactive hook: on the terminal, nothing captured; an unstartable program reports its error
 /// like any partition (`util.py:86-87`).
-fn interactive_part(spec: &Spec<'_>) -> Part {
-    match spawn::interactive(spec) {
+fn interactive_part(spec: &Spec<'_>, files: &[&OsStr]) -> Part {
+    match spawn::interactive_hook(spec, files) {
         Ok(r) => Part {
             status: r.status,
             output: Output::Memory(Vec::new()),
@@ -476,7 +474,7 @@ fn run_native(
     source: NativeSource,
     id: &str,
     epoch: Epoch,
-    files: &[OsString],
+    files: &[Cow<'_, OsStr>],
     cwd: &Path,
 ) -> Result<Ran, Failure> {
     let Some(native) = snp_hooks::native(source, id) else {
@@ -548,7 +546,7 @@ fn run_pygrep(
     e: &ExecEnv<'_>,
     args: &[Arc<str>],
     entry: &str,
-    files: &[OsString],
+    files: &[Cow<'_, OsStr>],
     cwd: &Path,
 ) -> Result<Ran, Failure> {
     let columns = snp_hooks::columns(e.run_env, None);
@@ -556,7 +554,7 @@ fn run_pygrep(
         Ok(c) => c,
         Err((code, out)) => return Ok(Ran::error(i64::from(code), out)),
     };
-    let order: Vec<&OsStr> = files.iter().map(OsString::as_os_str).collect();
+    let order: Vec<&OsStr> = files.iter().map(AsRef::as_ref).collect();
     let mut cmd = vec![
         OsString::from("/usr/bin/python3"),
         OsString::from("-m"),
@@ -615,7 +613,9 @@ mod tests {
 
     #[test]
     fn shuffle_matches_python() {
-        let files: Vec<OsString> = (0..10).map(|i| OsString::from(i.to_string())).collect();
+        let files: Vec<Cow<'_, OsStr>> = (0..10)
+            .map(|i| Cow::Owned(OsString::from(i.to_string())))
+            .collect();
         let got: Vec<String> = shuffled(&files, true)
             .iter()
             .map(|s| s.to_string_lossy().into_owned())

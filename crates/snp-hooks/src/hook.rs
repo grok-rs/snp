@@ -10,7 +10,7 @@ use snp_core::cancel::CancelToken;
 use snp_core::env::Env;
 use snp_core::path::RepoPath;
 use snp_git::Git;
-use snp_git::pch_facts::PchFacts;
+use snp_git::pch_facts::{FactSet, PchFacts};
 use snp_hooks_data::Epoch;
 
 /// What a native hook sees of the run.
@@ -67,5 +67,12 @@ pub trait NativeHook: Send + Sync + 'static {
     /// Whether `Outcome::modified` is exact (otherwise the runner diffs).
     fn reports_modifications_exactly(&self) -> bool {
         true
+    }
+    /// The per-run [`PchFacts`] a run with these `args` at `epoch` asks for, so the runner can compute them ahead of
+    /// the hook (ADR-102). A hint: it must never name a fact the run would not ask for on its normal path (an error
+    /// path may stop earlier), and per-partition calls (`lfs_files`, `index_modes`, other `raw` calls) are never
+    /// named. Default: none.
+    fn facts(&self, _args: &[Arc<str>], _epoch: Epoch) -> FactSet {
+        FactSet::NONE
     }
 }

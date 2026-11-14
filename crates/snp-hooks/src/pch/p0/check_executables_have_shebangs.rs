@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use snp_argparse::{ActionSpec, ParserSpec};
 use snp_core::failure::PyExc;
+use snp_git::pch_facts::FactSet;
 use snp_hooks_data::Epoch;
 
 use super::common::{self, cmd_output, epoch_in, filenames, read_head};
@@ -167,6 +168,15 @@ impl NativeHook for CheckExecutablesHaveShebangs {
             Ok(())
         } else {
             epoch_in(epoch, 5)
+        }
+    }
+
+    /// `config core.fileMode` (the git-index decision of epoch 5).
+    fn facts(&self, _args: &[Arc<str>], epoch: Epoch) -> FactSet {
+        if self.builtin || epoch.0 >= 5 {
+            FactSet::FILE_MODE
+        } else {
+            FactSet::NONE
         }
     }
 

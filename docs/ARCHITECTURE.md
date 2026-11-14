@@ -1085,6 +1085,10 @@ pub mod spawn {
     /// macOS), OPOST|ONLCR cleared, stdin /dev/null, 0×0 size, slave dropped before reading, EIO = EOF. pty failure →
     /// pipe (X13-EXE-06). Hooks only.
     pub fn merged(spec: &Spec<'_>, pty: bool, budget: &OutputBudget) -> Result<Merged, SpawnError>;
+    /// [`merged`] for one hook partition (ADR-103): argv is `spec.argv` followed by `files`, borrowed from the run's
+    /// file table (no owned argv per partition). The `.bat`/`.cmd` line-break refusal (D-PLAT-03) and the spawn trace
+    /// see the whole list. The other entry points take no files, so snp's own commands never carry any.
+    pub fn merged_hook(spec: &Spec<'_>, files: &[&OsStr], pty: bool, budget: &OutputBudget) -> Result<Merged, SpawnError>;
     /// stdout streamed into `sink` (diff hashing, stash patch), stderr captured. Returns status and stderr.
     pub fn stream(spec: &Spec<'_>, sink: &mut dyn io::Write) -> Result<(PyStatus, Vec<u8>), SpawnError>;
     pub fn inherit(spec: &Spec<'_>) -> Result<PyStatus, SpawnError>;   // legacy hooks, show-diff, hazmat children
@@ -1093,6 +1097,7 @@ pub mod spawn {
     /// before and restored when the child was killed or died of a signal.
     #[derive(Debug)] pub struct Interactive { pub status: PyStatus, pub timed_out: bool, pub interrupted: bool }
     pub fn interactive(spec: &Spec<'_>) -> Result<Interactive, SpawnError>;
+    pub fn interactive_hook(spec: &Spec<'_>, files: &[&OsStr]) -> Result<Interactive, SpawnError>; // + files, as merged_hook (ADR-103)
 }
 pub mod tty {
     /// ADR-085: snp's stdin when it is a terminal, else `/dev/tty` (Windows `CONIN$`); Unix: `Err(Background)` unless
@@ -1544,7 +1549,14 @@ pub mod pch_facts {
         pub fn lfs_files(&self, paths: &[&[u8]]) -> Result<Vec<Vec<u8>>, Failure>;    // check-attr filter (09 §4.E); whole-index memo (ADR-082)
         pub fn current_branch(&self) -> Result<Option<String>, Failure>;              // symbolic-ref HEAD
         pub fn raw(&self, args: &[&OsStr]) -> Result<Captured, Failure>;               // any other catalogued call (rev-parse --git-dir memoised, ADR-082)
+        /// A value built once per tracked_files() answer and tag (check-case-conflict's repository index, ADR-102).
+        pub fn tracked_derived<T: Any + Send + Sync>(&self, tracked: &Arc<[Vec<u8>]>, tag: u32,
+            build: impl FnOnce(&[Vec<u8>]) -> T) -> Option<Arc<T>>;
+        /// Computes `set` ahead of the hooks (one git child at a time; results and errors dropped; ADR-102).
+        pub fn prefetch(&self, set: FactSet, stop: &dyn Fn() -> bool);
     }
+    /// TRACKED | ADDED | GIT_DIR | FILE_MODE | BRANCH (`union`, `contains`, `is_empty`; ADR-102).
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)] pub struct FactSet(/* bits */);
 }
 /// 11 §A.5.1 hook-script classifier (pure, bounded file reads: ≤ 1 MiB, multi-pattern scan; lowest class rank wins).
 /// Used by snp-cmd (install/uninstall/doctor) and by snp-run's `run` hint (ADR-070).
@@ -1971,6 +1983,9 @@ pub trait NativeHook: Send + Sync + 'static {
     /// input order; the first crash stops the partition (09 §2.6).
     fn run(&self, cx: &HookCx<'_>, argv: &[&OsStr]) -> Outcome;
     fn reports_modifications_exactly(&self) -> bool { true }
+    /// The per-run PchFacts a run with these args at this epoch asks for, so the runner can compute them ahead
+    /// (ADR-102). A hint that never names a fact the normal path would not ask for; never per-partition calls.
+    fn facts(&self, args: &[Arc<str>], epoch: Epoch) -> snp_git::pch_facts::FactSet { FactSet::NONE }
 }
 /// Shared machinery every native uses (WP-26 milestone M1, frozen here so WP-27 codes against it; ADR-071).
 pub mod framework {
@@ -2521,6 +2536,14 @@ startup Env (captured once in main, minus __PYVENV_LAUNCHER__/PYTHONEXECUTABLE)
 * Execution uses `std::thread::scope` with `Builder::spawn_scoped` (a refused thread is a `Failure`): the main thread
   owns the guard and the printer ordering; worker threads only spawn, wait on their reader channels and return results. A single-partition hook runs inline on the main thread (no thread hop). A
   panicking worker is joined as `Failure::Exc(PanicException …)`; the main thread still restores the stash.
+* **Fact prefetch (ADR-102):** at the first executed hook of an unbroken run of in-process hooks (native, meta,
+  `pygrep`, `fail`; execution order) whose selected, unskipped natives name `NativeHook::facts`, one scoped thread
+  computes those `PchFacts` (one git child at a time, the facts' own Tool role) while the earlier hooks of the run
+  execute. It takes one pool permit before any fact slot (lock order: permit, then slot; with N = 1 the natives simply
+  wait for it), checks the cancel token and a stop flag between fetches, and drops every result and error: the hooks
+  ask again and are answered from the cache or compute exactly as without it. It starts after the diff oracle's
+  baseline and is joined before any user process hook starts and at the end of the loop (before show-diff,
+  `stage_fixed` and the restore), so no snp git ever runs beside a user process hook.
 
 ### 3.5 xargs partitioning and Python-exact shuffle
 
@@ -3684,7 +3707,7 @@ the critical path (≈ 1 ms each measured); B2 (one hook, no Stat mode below thr
 | T4 | Speculative config load during the fan-out, accepted only when the config has no unstaged change (ADR-047) | run, config |
 | T5 | DiffOracle stat path + racy hashing (Unix); baseline elision on `diff-index` rc 0 | stash, run |
 | T6 | Streaming blake3 of `git diff` and of the stash patch (O(1) memory) | git, stash |
-| T7 | Arena paths + `u32` ids; shuffle on ids; `TagSet` bitsets | files, pycompat |
+| T7 | Arena paths + `u32` ids; shuffle on ids; `TagSet` bitsets; per-hook argv borrowed from the arena, `RepoPath`s built only where consumed, partition files appended at spawn (ADR-103) | files, pycompat, run, proc |
 | T8 | Three-tier lazy tagging driven by filter needs; git-mode zero-syscall path; P17 classifier skip | files, run |
 | T9 | Regex fast kinds (`''`, `^$`, prefix/suffix/contains), tier-1 DFA, mandatory tier-2 prefilter, pattern cache | pyre |
 | T10 | One global `JobPool`, inline single partitions, scoped threads, separate Net/Install limiters | proc, run |

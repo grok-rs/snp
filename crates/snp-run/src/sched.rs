@@ -7,18 +7,25 @@
 //!
 //! Owner: WP-32.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::OsString;
+use std::ffi::OsStr;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::{Scope, ScopedJoinHandle};
 use std::time::Instant;
 
 use snp_config::ext::{FailOnChanges, OutputMode, Priority, RootExt, StageFixed};
+use snp_core::cancel::CancelToken;
 use snp_core::failure::Failure;
 use snp_core::lang::LanguageId;
 use snp_core::output::Printer;
 use snp_core::path::RepoPath;
+use snp_files::FileId;
 use snp_files::{Classifier, HookFilter};
 use snp_git::Git;
+use snp_git::pch_facts::{FactSet, PchFacts};
+use snp_proc::pool::JobPool;
 use snp_proc::tty::Terminal;
 use snp_repo::{ExecKind, ResolvedHook};
 use snp_stash::diff_oracle::{Change, DiffOracle};
@@ -104,10 +111,12 @@ impl Done {
 struct Job<'h> {
     pos: usize,
     hook: &'h ResolvedHook,
-    /// The files passed (`()` when `pass_filenames: false`), relative to the hook's cwd.
-    argv_files: Vec<OsString>,
-    /// The hook's input files (root-relative): `stage_fixed` and bucket attribution.
-    inputs: Vec<RepoPath>,
+    /// The files passed (`()` when `pass_filenames: false`), relative to the hook's cwd: borrowed from the run's
+    /// file table (an owned name only where the table's view is not the argv bytes; ADR-103).
+    argv_files: Vec<Cow<'h, OsStr>>,
+    /// The hook's input files; their root-relative [`RepoPath`]s ([`input_paths`]) are built only where they are
+    /// consumed (`stage_fixed` stamps, bucket attribution).
+    ids: Vec<FileId>,
 }
 
 /// The effective `priority` (implicit = flattened index).
@@ -298,8 +307,7 @@ impl Out<'_> {
                 f.write_all(b"\n")
             });
         if let Err(e) = r {
-            let text =
-                snp_core::failure::pyerr::os_error_text(&e, Some(std::ffi::OsStr::new(name)), None);
+            let text = snp_core::failure::pyerr::os_error_text(&e, Some(OsStr::new(name)), None);
             self.printer.log(
                 snp_core::output::Level::Warning,
                 &messages::log_file_failed(name, &text),
@@ -334,57 +342,15 @@ pub(crate) fn run_hooks(l: &Loop<'_>, oracle: &mut DiffOracle) -> Result<LoopRes
     };
     let mut res = LoopResult::default();
     let mut fixes = Fixes::default();
-    let mut stop = false;
-    for bucket in buckets(l.hooks, l.root_ext) {
-        if stop {
-            break;
-        }
-        check_cancel(e)?;
-        let mut jobs = Vec::new();
-        for &pos in &bucket {
-            let Some(h) = l.hooks.get(pos).copied() else {
-                continue;
-            };
-            let (argv_files, inputs) = filenames(l, h)?;
-            if l.skipped.get(pos).copied().unwrap_or(false) {
-                out.done.insert(pos, Done::skipped(Status::Skipped));
-            } else if argv_files.is_empty() && !h.def.always_run {
-                out.done.insert(pos, Done::skipped(Status::NoFiles));
-            } else {
-                jobs.push(Job {
-                    pos,
-                    hook: h,
-                    argv_files: if h.def.pass_filenames {
-                        argv_files
-                    } else {
-                        Vec::new()
-                    },
-                    inputs,
-                });
-            }
-        }
-        // statuses that need no run print at once when they are next in line
-        out.flush(l.hooks);
-        for group in groups(l, jobs) {
-            let finished = if group.len() == 1 {
-                run_sequential(l, &mut out, oracle, &mut fixes, group)?
-            } else {
-                run_bucket(l, oracle, &mut fixes, group)?
-            };
-            for (pos, d) in finished {
-                let h = l.hooks.get(pos);
-                if d.failed {
-                    res.retval = 1;
-                    if l.fail_fast || h.is_some_and(|h| h.def.fail_fast) {
-                        // the bucket is the unit (§3.1 step 18): its remaining members still run
-                        stop = true;
-                    }
-                }
-                out.done.insert(pos, d);
-            }
-            out.flush(l.hooks);
-        }
-    }
+    let all = buckets(l.hooks, l.root_ext);
+    let halt = AtomicBool::new(false);
+    std::thread::scope(|s| {
+        let mut pf = Prefetch::new(l, s, &all, &halt);
+        let r = run_buckets(l, oracle, &mut out, &mut fixes, &mut res, &mut pf, &all);
+        // always before show-diff, `stage_fixed` and the restore (the caller's), and before an error leaves
+        pf.join();
+        r
+    })?;
     out.drain(l.hooks);
     if l.mode == OutputMode::Summary {
         let wall = secs(e, started_at);
@@ -412,6 +378,75 @@ pub(crate) fn run_hooks(l: &Loop<'_>, oracle: &mut DiffOracle) -> Result<LoopRes
     Ok(res)
 }
 
+/// The bucket loop of [`run_hooks`].
+fn run_buckets<'s>(
+    l: &'s Loop<'s>,
+    oracle: &mut DiffOracle,
+    out: &mut Out<'_>,
+    fixes: &mut Fixes,
+    res: &mut LoopResult,
+    pf: &mut Prefetch<'s, '_>,
+    all: &[Vec<usize>],
+) -> Result<(), Failure> {
+    let e = l.e;
+    let mut stop = false;
+    for bucket in all {
+        if stop {
+            break;
+        }
+        check_cancel(e)?;
+        let mut jobs = Vec::new();
+        for &pos in bucket {
+            let Some(h) = l.hooks.get(pos).copied() else {
+                continue;
+            };
+            let (argv_files, ids) = filenames(l, h)?;
+            if l.skipped.get(pos).copied().unwrap_or(false) {
+                out.done.insert(pos, Done::skipped(Status::Skipped));
+            } else if argv_files.is_empty() && !h.def.always_run {
+                out.done.insert(pos, Done::skipped(Status::NoFiles));
+            } else {
+                jobs.push(Job {
+                    pos,
+                    hook: h,
+                    argv_files: if h.def.pass_filenames {
+                        argv_files
+                    } else {
+                        Vec::new()
+                    },
+                    ids,
+                });
+            }
+        }
+        // statuses that need no run print at once when they are next in line
+        out.flush(l.hooks);
+        for group in groups(l, jobs) {
+            let finished = if group.len() == 1 {
+                run_sequential(l, out, oracle, fixes, pf, group)?
+            } else {
+                // no snp git runs beside a user process hook (§3.4)
+                if !group.iter().all(|j| in_process(j.hook)) {
+                    pf.join();
+                }
+                run_bucket(l, oracle, fixes, group)?
+            };
+            for (pos, d) in finished {
+                let h = l.hooks.get(pos);
+                if d.failed {
+                    res.retval = 1;
+                    if l.fail_fast || h.is_some_and(|h| h.def.fail_fast) {
+                        // the bucket is the unit (§3.1 step 18): its remaining members still run
+                        stop = true;
+                    }
+                }
+                out.done.insert(pos, d);
+            }
+            out.flush(l.hooks);
+        }
+    }
+    Ok(())
+}
+
 fn check_cancel(e: &ExecEnv<'_>) -> Result<(), Failure> {
     match e.cx.cancel.reason() {
         Some(snp_core::cancel::CancelReason::StdoutClosed) => Err(Failure::StdoutClosed),
@@ -426,8 +461,12 @@ fn secs(e: &ExecEnv<'_>, t: Instant) -> f64 {
 }
 
 /// `classifier.filenames_for_hook(hook)` for every hook (skipped ones too: the tag cache fills in pre-commit's order)
-/// unless the hook never consults files; `(argv files relative to the hook cwd, root-relative inputs)`.
-fn filenames(l: &Loop<'_>, h: &ResolvedHook) -> Result<(Vec<OsString>, Vec<RepoPath>), Failure> {
+/// unless the hook never consults files; `(argv files relative to the hook cwd, the files' ids)`. The argv names are
+/// borrowed from the classifier's file table (ADR-103).
+fn filenames<'a>(
+    l: &Loop<'a>,
+    h: &ResolvedHook,
+) -> Result<(Vec<Cow<'a, OsStr>>, Vec<FileId>), Failure> {
     let Some(c) = l.classifier else {
         return Ok((Vec::new(), Vec::new()));
     };
@@ -445,22 +484,174 @@ fn filenames(l: &Loop<'_>, h: &ResolvedHook) -> Result<(Vec<OsString>, Vec<RepoP
     )
     .map_err(|err| Failure::unexpected("re.error", err.to_string()))?;
     let ids = c.for_hook(&f, &l.e.cx.pool)?;
-    let mut argv = Vec::new();
-    let mut inputs = Vec::new();
-    for id in ids {
-        match &h.def.ext.root {
-            Some(prefix) => {
-                if let Some(rel) = c.table.relative_to(id, prefix) {
-                    argv.push(crate::files::os_from_bytes(&rel));
-                }
-            }
-            None => argv.push(c.table.os(id).into_owned()),
-        }
-        if let Some(p) = RepoPath::new(c.table.bytes(id)) {
-            inputs.push(p);
+    let table = &c.table;
+    let argv = match &h.def.ext.root {
+        Some(prefix) => ids
+            .iter()
+            .filter_map(|&id| table.relative_to(id, prefix).map(os_cow))
+            .collect(),
+        None => ids.iter().map(|&id| table.os(id)).collect(),
+    };
+    Ok((argv, ids))
+}
+
+/// Table bytes as an argv name: borrowed when the bytes are the name (Unix always; elsewhere valid UTF-8), else the
+/// owned conversion of [`crate::files::os_from_bytes`].
+fn os_cow(b: Cow<'_, [u8]>) -> Cow<'_, OsStr> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
+        match b {
+            Cow::Borrowed(b) => Cow::Borrowed(OsStr::from_bytes(b)),
+            Cow::Owned(v) => Cow::Owned(std::ffi::OsString::from_vec(v)),
         }
     }
-    Ok((argv, inputs))
+    #[cfg(not(unix))]
+    {
+        match b {
+            Cow::Borrowed(b) => match std::str::from_utf8(b) {
+                Ok(s) => Cow::Borrowed(OsStr::new(s)),
+                Err(_) => Cow::Owned(crate::files::os_from_bytes(b)),
+            },
+            Cow::Owned(v) => Cow::Owned(crate::files::os_from_bytes(&v)),
+        }
+    }
+}
+
+/// The root-relative paths of a job's input files (`RepoPath::new` of each table name; the invalid ones dropped, so
+/// an empty list still means "no valid input path").
+fn input_paths(l: &Loop<'_>, ids: &[FileId]) -> Vec<RepoPath> {
+    let Some(c) = l.classifier else {
+        return Vec::new();
+    };
+    ids.iter()
+        .filter_map(|&id| RepoPath::new(c.table.bytes(id)))
+        .collect()
+}
+
+/// Whether a hook runs inside snp (native, meta, `pygrep`, `fail`): it starts no user process.
+fn in_process(h: &ResolvedHook) -> bool {
+    match h.exec {
+        ExecKind::Native { .. } | ExecKind::Meta(_) => true,
+        _ => matches!(h.def.language, LanguageId::Pygrep | LanguageId::Fail),
+    }
+}
+
+/// The per-run git facts a hook's native implementation asks for (`NativeHook::facts`; none for other hooks).
+fn hook_facts(h: &ResolvedHook) -> FactSet {
+    match &h.exec {
+        ExecKind::Native { source, id, epoch } => {
+            snp_hooks::native(*source, id).map_or(FactSet::NONE, |n| n.facts(&h.def.args, *epoch))
+        }
+        _ => FactSet::NONE,
+    }
+}
+
+/// The pre-commit-hooks fact prefetch (ADR-102): at the first executed hook of an unbroken run of in-process hooks
+/// (in execution order) that holds a consumer, one scoped thread computes the [`PchFacts`] the run's selected,
+/// unskipped natives will ask for, while the hooks before them run. It holds one pool permit (taken before any
+/// fact slot: lock order permit, then slot), runs one git child at a time with the facts' own role, checks the
+/// cancel token and a stop flag between fetches, and drops every result and error (the hooks ask again and are
+/// answered from the cache, or compute exactly as without it). It is joined before a user process hook starts
+/// (§3.4 stays strictly sequential) and at the end of the loop.
+struct Prefetch<'s, 'scope> {
+    scope: &'scope Scope<'scope, 's>,
+    facts: &'s PchFacts,
+    pool: &'s JobPool,
+    cancel: &'s CancelToken,
+    halt: &'s AtomicBool,
+    /// Hook positions in execution order.
+    order: Vec<usize>,
+    /// Execution indices below this one belong to runs already looked at.
+    covered: usize,
+    running: Option<ScopedJoinHandle<'scope, ()>>,
+}
+
+impl<'s, 'scope> Prefetch<'s, 'scope> {
+    fn new(
+        l: &'s Loop<'s>,
+        scope: &'scope Scope<'scope, 's>,
+        buckets: &[Vec<usize>],
+        halt: &'s AtomicBool,
+    ) -> Self {
+        Self {
+            scope,
+            facts: l.e.facts,
+            pool: &l.e.cx.pool,
+            cancel: &l.e.cx.cancel,
+            halt,
+            order: buckets.iter().flatten().copied().collect(),
+            covered: 0,
+            running: None,
+        }
+    }
+
+    /// Before the in-process hook at `pos` runs: starts the prefetch for the run it begins, unless that run was
+    /// already looked at. The diff oracle's baseline is taken first, so no fact git overlaps it.
+    fn start(&mut self, l: &Loop<'_>, oracle: &mut DiffOracle, pos: usize) -> Result<(), Failure> {
+        let Some(first) = self
+            .order
+            .iter()
+            .skip(self.covered)
+            .position(|&p| p == pos)
+            .and_then(|i| i.checked_add(self.covered))
+        else {
+            return Ok(());
+        };
+        let mut set = FactSet::NONE;
+        let mut end = first;
+        for &p in self.order.iter().skip(first) {
+            let Some(h) = l.hooks.get(p).copied() else {
+                break;
+            };
+            if !in_process(h) {
+                break;
+            }
+            if !l.skipped.get(p).copied().unwrap_or(false) {
+                set = set.union(hook_facts(h));
+            }
+            end = end.saturating_add(1);
+        }
+        self.covered = end;
+        if set.is_empty() {
+            return Ok(());
+        }
+        self.join();
+        oracle.before_hook()?;
+        let (facts, pool, cancel, halt) = (self.facts, self.pool, self.cancel, self.halt);
+        let spawned = std::thread::Builder::new()
+            .name("snp-prefetch".to_owned())
+            .spawn_scoped(self.scope, move || {
+                let Some(_permit) = pool.acquire() else {
+                    return;
+                };
+                facts.prefetch(set, &|| {
+                    halt.load(Ordering::Relaxed) || cancel.is_cancelled()
+                });
+            });
+        // a thread the OS refuses only means no prefetch
+        self.running = spawned.ok();
+        Ok(())
+    }
+
+    /// Stops the prefetch after its current git child and waits for it.
+    fn join(&mut self) {
+        if let Some(h) = self.running.take() {
+            self.halt.store(true, Ordering::Relaxed);
+            // nothing of the prefetch is reported: a panic already went through the panic hook (ADR-066)
+            let _joined = h.join();
+            self.halt.store(false, Ordering::Relaxed);
+        }
+    }
+}
+
+impl std::fmt::Debug for Prefetch<'_, '_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Prefetch")
+            .field("covered", &self.covered)
+            .field("running", &self.running.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 /// Whether modifications fail this hook (`fail_on_changes`).
@@ -548,12 +739,12 @@ impl Fixes {
 /// `git diff --name-only -z` (worktree vs index) as root-relative paths: the tracked files currently dirty.
 fn dirty(git: &Git) -> Result<BTreeSet<RepoPath>, Failure> {
     let args = [
-        std::ffi::OsStr::new("diff"),
-        std::ffi::OsStr::new("--name-only"),
-        std::ffi::OsStr::new("-z"),
-        std::ffi::OsStr::new("--no-ext-diff"),
-        std::ffi::OsStr::new("--no-textconv"),
-        std::ffi::OsStr::new("--ignore-submodules"),
+        OsStr::new("diff"),
+        OsStr::new("--name-only"),
+        OsStr::new("-z"),
+        OsStr::new("--no-ext-diff"),
+        OsStr::new("--no-textconv"),
+        OsStr::new("--ignore-submodules"),
     ];
     let c = git.run_raw(&args)?;
     Ok(c.stdout
@@ -568,6 +759,7 @@ fn run_sequential(
     out: &mut Out<'_>,
     oracle: &mut DiffOracle,
     fixes: &mut Fixes,
+    pf: &mut Prefetch<'_, '_>,
     jobs: Vec<Job<'_>>,
 ) -> Result<Vec<(usize, Done)>, Failure> {
     let mut finished = Vec::new();
@@ -577,6 +769,11 @@ fn run_sequential(
             out.begin_interactive(l.hooks, job.pos, &job.hook.def.name);
         } else if out.can_start(job.pos) {
             out.start(job.pos, &job.hook.def.name);
+        }
+        if in_process(job.hook) {
+            pf.start(l, oracle, job.pos)?;
+        } else {
+            pf.join();
         }
         let d = run_one(l, oracle, fixes, &job, tty.as_ref())?;
         // a killed interactive hook (timeout, signal) was cut off mid-prompt: its status line starts a new line
@@ -619,7 +816,13 @@ fn run_one(
     let root = e.git.root();
     let h = job.hook;
     let sf = stage_fixed(l, h);
-    let inputs: BTreeSet<&RepoPath> = job.inputs.iter().collect();
+    // the input paths and their set exist only for an active `stage_fixed`
+    let input_list = if sf.is_some() {
+        input_paths(l, &job.ids)
+    } else {
+        Vec::new()
+    };
+    let inputs: BTreeSet<&RepoPath> = input_list.iter().collect();
     let dirty_before = if sf.is_some() {
         dirty(e.git)?
     } else {
@@ -628,7 +831,7 @@ fn run_one(
     // M: the hook's inputs; O also counts files an earlier hook already dirtied (stamped: usually few)
     let (input_stamps, other_stamps) = if sf.is_some() {
         (
-            stamp::stamps(root, &job.inputs),
+            stamp::stamps(root, &input_list),
             stamp::stamps(root, dirty_before.iter().filter(|p| !inputs.contains(p))),
         )
     } else {
@@ -749,9 +952,11 @@ fn run_bucket(
     let e = l.e;
     let root = e.git.root();
     let dirty_before = dirty(e.git)?;
-    let watched: BTreeSet<RepoPath> = jobs
+    let inputs: Vec<Vec<RepoPath>> = jobs.iter().map(|j| input_paths(l, &j.ids)).collect();
+    let watched: BTreeSet<RepoPath> = inputs
         .iter()
-        .flat_map(|j| j.inputs.iter().cloned())
+        .flatten()
+        .cloned()
         .chain(dirty_before.iter().cloned())
         .collect();
     let before = stamp::stamps(root, &watched);
@@ -769,7 +974,7 @@ fn run_bucket(
         let dirty_after = dirty(e.git)?;
         let mut changed: BTreeSet<RepoPath> = stamp::changed(root, &before).into_iter().collect();
         changed.extend(dirty_after.difference(&dirty_before).cloned());
-        attribute(&rans, &jobs, &changed, is_writer)
+        attribute(&rans, &jobs, &inputs, &changed, is_writer)
     } else {
         BTreeSet::new()
     };
@@ -815,7 +1020,7 @@ fn run_concurrently(lp: &Loop<'_>, jobs: &[Job<'_>]) -> Result<Vec<BucketRun>, F
                 std::thread::Builder::new().spawn_scoped(s, move || {
                     let mut mine = Vec::new();
                     loop {
-                        let idx = cursor.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let idx = cursor.fetch_add(1, Ordering::Relaxed);
                         let Some(job) = jobs.get(idx) else {
                             break;
                         };
@@ -873,9 +1078,11 @@ fn run_concurrently(lp: &Loop<'_>, jobs: &[Job<'_>]) -> Result<Vec<BucketRun>, F
 /// file list (`pass_filenames: false`, or no inputs) could have written any path. Otherwise every writer fails
 /// (conservative, fail closed). A writer can still write outside its inputs undetected by this rule; the run's exit
 /// status is never affected (some hook always fails), only which one is named.
+/// `inputs` holds each job's [`input_paths`].
 fn attribute(
     rans: &[BucketRun],
     jobs: &[Job<'_>],
+    inputs: &[Vec<RepoPath>],
     changed: &BTreeSet<RepoPath>,
     is_writer: impl Fn(&Ran, &Job<'_>) -> bool,
 ) -> BTreeSet<usize> {
@@ -885,8 +1092,9 @@ fn attribute(
         .enumerate()
         .filter(|(_, ((r, _), j))| is_writer(r, j))
         .map(|(i, (_, j))| {
-            let unconstrained = !j.hook.def.pass_filenames || j.inputs.is_empty();
-            (i, (!unconstrained).then(|| j.inputs.iter().collect()))
+            let mine: &[RepoPath] = inputs.get(i).map_or(&[], Vec::as_slice);
+            let unconstrained = !j.hook.def.pass_filenames || mine.is_empty();
+            (i, (!unconstrained).then(|| mine.iter().collect()))
         })
         .collect();
     let all: BTreeSet<usize> = writers.iter().map(|(i, _)| *i).collect();

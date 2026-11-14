@@ -12,6 +12,7 @@ use std::ffi::OsStr;
 use std::sync::Arc;
 
 use snp_argparse::{ActionSpec, ParserSpec};
+use snp_git::pch_facts::FactSet;
 use snp_hooks_data::Epoch;
 
 use super::kernels;
@@ -37,6 +38,13 @@ pub(crate) static SPEC: ParserSpec = ParserSpec {
     add_help: true,
 };
 
+/// The [`snp_git::pch_facts::PchFacts::tracked_derived`] tag of the repository index at `epoch` / `windows`.
+fn index_tag(epoch: u16, windows: bool) -> u32 {
+    u32::from(epoch)
+        .saturating_mul(2)
+        .saturating_add(u32::from(windows))
+}
+
 /// The native.
 #[derive(Debug)]
 pub(crate) struct CheckCaseConflict;
@@ -57,6 +65,10 @@ impl NativeHook for CheckCaseConflict {
         epoch_in(epoch, 3)
     }
 
+    fn facts(&self, _args: &[Arc<str>], _epoch: Epoch) -> FactSet {
+        FactSet::TRACKED.union(FactSet::ADDED)
+    }
+
     fn run(&self, cx: &HookCx<'_>, argv: &[&OsStr]) -> Outcome {
         let ns = match common::parse(cx, &SPEC, PROG, argv) {
             Ok(ns) => ns,
@@ -72,9 +84,16 @@ impl NativeHook for CheckCaseConflict {
             Err(f) => return framework::crashed(out, &facts_exc(f, false)),
         };
         let files: Vec<&[u8]> = filenames(&ns).into_iter().map(bytes_of).collect();
-        let repo: Vec<&[u8]> = repo.iter().map(Vec::as_slice).collect();
         let added: Vec<&[u8]> = added.iter().map(Vec::as_slice).collect();
-        let names = kernels::case_conflicts(&repo, &files, &added, cx.epoch.0, cx.windows);
+        let (epoch, windows) = (cx.epoch.0, cx.windows);
+        // the repository side is built once per `git ls-files` answer, outside any partition (ADR-102)
+        let index = cx
+            .facts
+            .tracked_derived(&repo, index_tag(epoch, windows), |r| {
+                kernels::RepoCaseIndex::new(r, epoch, windows)
+            });
+        let index = index.as_deref().and_then(Option::as_ref);
+        let names = kernels::case_conflicts_indexed(index, &repo, &files, &added, epoch, windows);
         let mut out = out;
         for n in &names {
             let mut line = b"Case-insensitivity conflict found: ".to_vec();

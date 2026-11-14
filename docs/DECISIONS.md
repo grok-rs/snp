@@ -16,7 +16,8 @@ ADR-096 the owner's decision to make the Verus proofs blocking;
 ADR-099 the paired bench gate; ADR-100 the B8 heap budget and counters;
 ADR-098 the tier-1 prefilter;
 ADR-097 the stash re-verification by stat stamps;
-ADR-101 classification CPU and fan-out sizing.
+ADR-101 classification CPU and fan-out sizing;
+ADR-102 native-hook facts; ADR-103 borrowed hook argv.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -1885,6 +1886,96 @@ milliseconds to tens of milliseconds.
 **Consequences.** B8 runs one content `diff-index` and one name-only `diff-index` instead of two content ones (the exec
 count is unchanged), and snp's own CPU drops by the blake3 share. `KEPT_CHANGING`, every message and the git argv of
 every other call are unchanged. ARCHITECTURE S3 and §4.2 step 6, D-DATA-13 and WBS WP-23 state it.
+---
+
+### ADR-102 — Native-hook facts: `NativeHook::facts`, the PchFacts prefetch, the case-conflict repository index
+
+*Amends ARCHITECTURE §1.4.19 (the frozen native-hook contract gains a provided method), §1.4.13 (`pch_facts`) and
+§3.4 (one prefetch thread beside in-process hooks).*
+
+**Context.** The performance analysis of November 2026 (P08, P10) measured two costs of the pre-commit-hooks natives
+in B6 (13 natives, 960 files, `--all-files`). (1) Every per-run git fact (`ls-files`, `diff --staged
+--diff-filter=A`, `rev-parse --git-dir`, `config core.fileMode`, `symbolic-ref HEAD`) is spawned on the critical path
+by the first partition that asks for it, one after another, while the CPU is otherwise idle between natives.
+(2) check-case-conflict rebuilds the whole repository side (the `ls-files` set, every parent directory, and the CPython
+lowercase of each) in every partition: about 31,000 allocations per run on 4 CPUs and 153,000 on the 22-CPU laptop,
+and 75–190 ms per partition on a 50,000-file list. Separately, the `tracked` and `added` caches were stamped with the
+index and `HEAD` only, although their output follows `core.quotePath` and `diff.renames`: a hook that changed either
+setting during a run left the next native with a stale list.
+**Decision.** (1) `NativeHook` gains the provided method `facts(&self, args, epoch) -> FactSet` (default empty).
+It names the per-run facts the hook's normal path asks for at that epoch and with those arguments, and nothing else:
+check-merge-conflict `GIT_DIR` (epoch ≥ 2 or builtin); check-case-conflict `TRACKED | ADDED`;
+check-added-large-files `ADDED` for the upstream variant unless `--enforce-all` (or any argparse abbreviation of it)
+applies at epoch ≥ 2 (the builtin reads the raw `-z` list, uncached); check-executables-have-shebangs `FILE_MODE`
+at epoch 5 (builtin included); no-commit-to-branch `BRANCH`. Per-partition calls (`lfs_files`, `index_modes`,
+destroyed-symlinks' `status`/`cat-file`, other `raw` calls) are never named. (2) `PchFacts::prefetch(set, stop)`
+computes the set through the facts' own accessors, one git child at a time, checking `stop` before each, and drops
+every result and error. The run loop starts it at the first executed hook of an unbroken run of in-process hooks
+(native, meta, `pygrep`, `fail`, in execution order) whose unskipped natives name facts, after the diff oracle's
+baseline, on one scoped thread that holds one `JobPool` permit taken before any fact slot (lock order: permit, then
+slot). It is joined (stop flag set, current child finished) before any user process hook starts and at the end of the
+loop, before show-diff, `stage_fixed` and the restore. (3) check-case-conflict builds a `RepoCaseIndex` once per
+`tracked_files()` answer through `PchFacts::tracked_derived` (a memo keyed by that answer's `Arc` identity, held
+strongly, the value's type and a tag of epoch and platform; filled through a `OnceLock` cloned out of the memo's lock,
+so concurrent partitions wait for one build and no build runs under a fact lock). A partition computes its relevant
+set V (files, staged-added names, their parents) and calls the unchanged kernel only when some lowercase `l` of V has
+two names in V or `lower_counts[l]` (over the deduplicated repository set R) exceeds the names of V ∩ R lowering to
+`l`; otherwise it reports nothing. Epoch 2 on Windows (`ntpath.dirname` parents) keeps the per-partition kernel.
+`py_lower` lowers pure ASCII with `to_ascii_lowercase` and copies nothing already lowercase. (4) The `tracked` and
+`added` slots are also stamped with the repository config files (`config`, `config.worktree` of the git dir and the
+common dir).
+**Rationale.** The facts are the same calls with the same environment and cache, made earlier: a hook that asks gets
+the cached answer when the index, `HEAD` (and config) stamps are unchanged, or computes exactly as before; errors are
+never cached, so an error a hook sees is its own call's. In-process hooks are the only ones that can overlap a fact
+query without changing what a user process observes (§3.4 stays strictly sequential for them). The analysis measured
+giving up one permit for the whole run as free at 4 CPUs, which keeps S7 without an amendment; with N = 1 the
+natives wait for the prefetch's permit, which is released after at most five short git children, so no permit holder
+ever waits on the prefetch while it waits on that holder. The case index condition is exact: a lowercase of V lowers
+a repository name outside V exactly when R holds more names with that lowercase than V ∩ R does; running the kernel
+for the report keeps every message and its order the kernel's. A process-wide static would outlive the facts it was
+built from (S6), so the memo lives in `PchFacts`.
+**Consequences.** B6: the fact spawns leave the critical path (CI expectation −2.5..4 ms, to be confirmed by the
+bench gate); the git argv set is unchanged (10 children). Measured locally on the 22-CPU laptop (valgrind dhat, snp
+only): check-case-conflict blocks 156,488 → 12,761, all B6 blocks 280,736 → 120,787; `perf stat` instructions of the
+whole process tree 337 M → 167 M. The facts hint is a static decision:
+a consumer that ends up with no files (`files`/`types` filters) still has its facts prefetched, one read-only git
+child more than before for that run; output and exit status are unchanged. A panic inside the prefetch goes through
+the panic hook like any snp thread (ADR-066: a bug, exit 3); the join result itself is not inspected. Tests: a
+differential test and the case-conflict fuzz target assert the indexed decision equals the kernel's for epochs 1–3 on
+both platforms, ScriptedBackend call-log tests check `facts()` ⊆ the calls each consumer makes, the snp-run pipeline
+tests (`prefetch.rs`) check through a recording, delaying git backend that no snp git runs while a `language: system`
+hook runs, sequential or in a mixed priority bucket, with 1 and 4 permits (dropping either join fails them), and that a
+single-partition `check-added-large-files` commit spawns the same `GIT_TRACE` git argv list as 7692989, and the snp-run
+and snp-hooks suites pass with `SNP_JOBS=1` and `SNP_JOBS=2` (a single pool permit cannot deadlock the prefetch).
+
+---
+
+### ADR-103 — snp-proc hook-files spawn entry points; per-hook argv borrowed from the file table
+
+*Amends ARCHITECTURE §1.4.8 (`spawn`) and §12.2 T7 (the arena-paths technique now reaches the argv).*
+
+**Context.** B4 (`run --all-files`, 50,000 files, one hook) peaked at 16.1 MB of heap (dhat, 313,000 blocks): the
+run loop copied every file name into an owned `OsString` argv list and a `RepoPath` input list per hook, the executor
+copied the shuffled list again, and every xargs partition cloned the command and copied each of its file names into
+the `Spec` argv. T7's arena design (one byte arena, `u32` ids) stopped at the scheduler.
+**Decision.** (1) `snp_proc::spawn::merged_hook(spec, files, pty, budget)` and `interactive_hook(spec, files)`
+append `files: &[&OsStr]` to `spec.argv` at spawn time; `merged` and `interactive` call them with no files, and no
+other entry point takes files, so Critical and Tool commands never carry any. `Spec` is unchanged (no new field). The
+Windows `.bat`/`.cmd` line-break refusal (D-PLAT-03), the spawn trace and the program name see `argv` followed by
+`files`. (2) A job keeps its hook's `FileId`s and an argv list of `Cow<OsStr>` borrowed from the classifier's table
+(`FileTable::os`, `relative_to`; an owned name only where the table's view is not the argv bytes). `RepoPath`s are
+built only where consumed (`stage_fixed` stamps, buckets of several jobs), with the same `RepoPath::new` filter, so an
+empty input list still means "no valid path" for attribution; the input set of a hook exists only under an active
+`stage_fixed`. The NoFiles decision and the shuffle use the post-`relative_to` list; skipped hooks are still
+classified (tag-cache order); the shuffle still returns a fresh list, so a `stage_fixed` verify re-run sees the same
+order. Each xargs partition passes its slice of the borrowed list.
+**Rationale.** The argv a child receives is byte-for-byte what it was (the same names in the same order after the
+same command); only where the bytes live changes. Keeping files out of `Spec` avoids touching every struct literal of
+other packages and makes "only hooks take files" a property of the API.
+**Consequences.** Measured locally on B4 (valgrind dhat, snp only): heap peak 15.9 → 8.9 MB, blocks 312,897 →
+158,253; snp's own maxrss at 4-CPU affinity 24.2 → 17.7 MiB (getrusage, median of 10). B5: peak 10.2 → 7.3 MB,
+blocks 185,963 → 127,179. The harness's process-tree RSS stays near git's own ~20 MiB floor. Serial work drops by a few ms on B4
+(not gate-visible). `snp_proc::spawn` gains two public functions (catalogued in `crates/snp-proc/tests/api.rs`).
 
 ## Appendix A — Open questions of the research documents, resolved
 

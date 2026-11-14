@@ -14,7 +14,9 @@ fn staged(h: &H, path: &str, content: &[u8]) {
 
 #[test]
 fn priority_buckets_run_concurrently_and_print_in_config_order() {
-    let h = H::new();
+    let mut h = H::new();
+    // the two hooks must run at the same time: two pool permits, whatever `SNP_JOBS` the suite runs with
+    h.jobs = 2;
     let a = h.path("a.flag");
     let b = h.path("b.flag");
     // each hook waits (≤ 5 s) for the other's flag: they pass only when they run at the same time

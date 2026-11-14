@@ -19,7 +19,7 @@ use snp_core::env::Env;
 use snp_core::failure::Failure;
 use snp_core::output::{ColorSetting, Printer, PrinterOpts};
 use snp_core::stage::{HookType, Stage};
-use snp_git::{GitExe, ProcBackend};
+use snp_git::{GitBackend, GitExe, ProcBackend};
 use snp_lang::{PlanCtx, ProcRunner, RunPlan, ToolProbe};
 use snp_proc::pool::{JobPool, Limiter};
 use snp_proc::spawn::{OutputBudget, Role};
@@ -329,6 +329,10 @@ pub(crate) struct H {
     pub(crate) cancel_after: Option<Duration>,
     /// stdout fails with EPIPE (a closed pager).
     pub(crate) broken_stdout: bool,
+    /// The real store-backed resolver instead of [`Fake`] (`repo: builtin`, the pre-commit-hooks fast path).
+    pub(crate) resolver: Option<Arc<dyn Resolve>>,
+    /// The run's Tool-role git backend instead of a plain [`ProcBackend`] (a recording or delaying wrapper).
+    pub(crate) backend: Option<Arc<dyn GitBackend>>,
 }
 
 impl H {
@@ -363,9 +367,16 @@ impl H {
             clock: None,
             color: false,
             cwd: None,
-            jobs: 4,
+            // `SNP_JOBS` of the test process sizes the pool (the suite also runs with 1 and 2 permits, ADR-102)
+            jobs: Env::capture_process()
+                .get_nonempty("SNP_JOBS")
+                .and_then(|v| v.to_str()?.parse().ok())
+                .filter(|&n: &usize| n > 0)
+                .unwrap_or(4),
             cancel_after: None,
             broken_stdout: false,
+            resolver: None,
+            backend: None,
         };
         h.git(&["init", "-q", "-b", "main"]);
         h.git(&["config", "commit.gpgsign", "false"]);
@@ -485,11 +496,16 @@ impl H {
                 source: StoreSource::SnpHome,
             }),
             git_exe,
-            git_backend: Arc::new(ProcBackend {
-                cancel: cancel.clone(),
-                role: Role::Tool,
+            git_backend: self.backend.clone().unwrap_or_else(|| {
+                Arc::new(ProcBackend {
+                    cancel: cancel.clone(),
+                    role: Role::Tool,
+                })
             }),
-            resolver: Arc::<Fake>::clone(&self.fake),
+            resolver: self
+                .resolver
+                .clone()
+                .unwrap_or_else(|| Arc::<Fake>::clone(&self.fake)),
             cancel: cancel.clone(),
             signals: None,
             pool: JobPool::new(jobs, cancel.clone()),

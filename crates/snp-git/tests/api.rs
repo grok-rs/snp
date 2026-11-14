@@ -17,7 +17,7 @@ mod api {
     use snp_core::output::Printer;
     use snp_core::path::RepoPath;
     use snp_git::hookscripts::{self, Owner};
-    use snp_git::pch_facts::PchFacts;
+    use snp_git::pch_facts::{FactSet, PchFacts};
     use snp_git::{
         CloneMode, DiffFingerprint, DiffIndex, Git, GitBackend, GitCaps, GitExe, GitVersion,
         IndexEntries, MergeState, ObjectId, OwnedRepo, PrePushNs, ProcBackend, RepoInfo, RevInfo,
@@ -221,6 +221,11 @@ mod api {
         has::<fn(&Env) -> Env>(snp_git::no_git_env);
     }
 
+    /// `PchFacts::tracked_derived` with an explicit value type (its `build` is an `impl FnOnce`).
+    fn tracked_derived(f: &PchFacts, tracked: &Arc<[Vec<u8>]>) -> Option<Arc<usize>> {
+        f.tracked_derived(tracked, 0, <[Vec<u8>]>::len)
+    }
+
     #[test]
     fn pch_facts_and_hookscripts() {
         has::<fn(Git) -> PchFacts>(PchFacts::new);
@@ -230,6 +235,27 @@ mod api {
         has::<fn(&PchFacts, &[&[u8]]) -> Result<Vec<Vec<u8>>, Failure>>(PchFacts::lfs_files);
         has::<fn(&PchFacts) -> Result<Option<String>, Failure>>(PchFacts::current_branch);
         has::<fn(&PchFacts, &[&OsStr]) -> Result<Captured, Failure>>(PchFacts::raw);
+        // ADR-102: the fact prefetch and the tracked-list memo
+        has::<fn(&PchFacts, FactSet, &dyn Fn() -> bool)>(PchFacts::prefetch);
+        has::<fn(&PchFacts, &Arc<[Vec<u8>]>) -> Option<Arc<usize>>>(tracked_derived);
+        has::<[FactSet; 6]>([
+            FactSet::NONE,
+            FactSet::TRACKED,
+            FactSet::ADDED,
+            FactSet::GIT_DIR,
+            FactSet::FILE_MODE,
+            FactSet::BRANCH,
+        ]);
+        has::<fn(FactSet, FactSet) -> FactSet>(FactSet::union);
+        has::<fn(FactSet, FactSet) -> bool>(FactSet::contains);
+        has::<fn(FactSet) -> bool>(FactSet::is_empty);
+        assert!(
+            FactSet::TRACKED
+                .union(FactSet::ADDED)
+                .contains(FactSet::ADDED)
+        );
+        assert!(!FactSet::TRACKED.contains(FactSet::BRANCH));
+        assert!(FactSet::default().is_empty());
         has::<[Owner; 8]>([
             Owner::Missing,
             Owner::NotAFile,

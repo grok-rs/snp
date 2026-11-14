@@ -48,6 +48,13 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   helper threads than the pool has permits, and a hook whose files are already classified does it on the calling
   thread. Output, argv and errors are unchanged. A root plus file name longer than `PATH_MAX` is now found, as
   pre-commit finds it through its relative path.
+- The per-run git queries of the pre-commit-hooks natives (`ls-files`, `diff --staged --diff-filter=A`,
+  `rev-parse --git-dir`, `config core.fileMode`, `symbolic-ref HEAD`) are computed on one background thread while the
+  earlier in-process hooks run, instead of on the critical path; nothing runs beside a user process hook (ADR-102).
+- check-case-conflict builds its repository index once per run instead of once per partition, and lowercases ASCII
+  names without the Unicode tables (ADR-102).
+- Hook argv lists are borrowed from the run's file table and appended at spawn time: `run --all-files` on 50,000
+  files makes about half as many allocations and its heap peaks about 7 MB lower (ADR-103).
 
 - Benchmarks (developer tooling, no runtime change): pull requests and pushes measure the base commit's snp, built
   against its own `deps.lock` crates and toolchain and primed into its own stores, in interleaved ABBA rounds with the
@@ -103,6 +110,9 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
 - The stash lists its patch's files (`git apply --numstat`) before the re-verification instead of after it, so an
   editor autosave that lands while the list is taken is caught and stashed instead of overwritten by the checkout
   (the window was about 48 ms for a 10 MB patch). A listing error is still reported only once the patch is verified.
+- The cached `git ls-files` and `git diff --staged --diff-filter=A` answers of the pre-commit-hooks natives are
+  recomputed when the repository config changes during a run (they follow `core.quotePath` and `diff.renames`); before,
+  a hook that changed either setting left the next native with a stale list (ADR-102).
 
 ### Security
 

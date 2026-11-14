@@ -465,7 +465,7 @@ fn attribute_to_cwd(io: io::Error, cwd: &Path) -> io::Error {
 ///
 /// pre-commit's `cmd_output_b` (`util.py:81-113`) with separate stdout/stderr pipes.
 pub fn capture(spec: &Spec<'_>) -> Result<Captured, SpawnError> {
-    let mut started = start(spec, Stdio::piped(), Stdio::piped(), false)?;
+    let mut started = start(spec, &[], Stdio::piped(), Stdio::piped(), false)?;
     let (tx, rx) = mpsc::sync_channel(CHANNEL_BOUND);
     if let Err(io) = attach_pipes(&mut started, &tx) {
         return Err(started.abort(io));
@@ -495,12 +495,27 @@ pub fn capture(spec: &Spec<'_>) -> Result<Captured, SpawnError> {
 /// Windows has no pty (`cmd_output_p = cmd_output_b`). A pty that cannot be allocated (no `/dev/ptmx`, out of ptys)
 /// falls back to the pipe (D-CRASH-16: pre-commit crashes with exit 3).
 pub fn merged(spec: &Spec<'_>, pty: bool, budget: &OutputBudget) -> Result<Merged, SpawnError> {
-    merged_impl(spec, pty, budget, false)
+    merged_impl(spec, &[], pty, budget, false)
+}
+
+/// [`merged`] for one hook partition (ADR-103): the child's argv is `spec.argv` followed by `files`, borrowed from
+/// the run's file table instead of copied into one owned argv per partition. Everything that looks at argv — the
+/// Windows `.bat`/`.cmd` line-break refusal (D-PLAT-03), the spawn trace — sees the whole list; errors name
+/// `spec.argv[0]` as [`merged`] does. Only hooks take files: snp's own commands go through the entry points without
+/// them.
+pub fn merged_hook(
+    spec: &Spec<'_>,
+    files: &[&OsStr],
+    pty: bool,
+    budget: &OutputBudget,
+) -> Result<Merged, SpawnError> {
+    merged_impl(spec, files, pty, budget, false)
 }
 
 /// [`merged`] with a test hook that simulates a pty allocation failure.
 pub(crate) fn merged_impl(
     spec: &Spec<'_>,
+    files: &[&OsStr],
     pty: bool,
     budget: &OutputBudget,
     fail_pty: bool,
@@ -513,7 +528,7 @@ pub(crate) fn merged_impl(
             pty::open()
         };
         if let Ok(p) = opened {
-            return merged_on(spec, MergedSink::Pty(p), budget);
+            return merged_on(spec, files, MergedSink::Pty(p), budget);
         }
         tracing::debug!(target: "snp::spawn", "pty allocation failed; falling back to a pipe");
     }
@@ -527,7 +542,7 @@ pub(crate) fn merged_impl(
         program: spec_program(spec),
         io,
     })?;
-    merged_on(spec, MergedSink::Pipe(r, w), budget)
+    merged_on(spec, files, MergedSink::Pipe(r, w), budget)
 }
 
 /// Where merged output comes from.
@@ -542,6 +557,7 @@ enum MergedSink {
 /// Spawns with stdout and stderr on `sink` and collects the merged output under `budget`.
 fn merged_on(
     spec: &Spec<'_>,
+    files: &[&OsStr],
     sink: MergedSink,
     budget: &OutputBudget,
 ) -> Result<Merged, SpawnError> {
@@ -574,7 +590,7 @@ fn merged_on(
         }
     };
     // `start` drops the Command (and with it the parent's copies of the write ends) before returning.
-    let started = start(spec, out, err, pty_mode)?;
+    let started = start(spec, files, out, err, pty_mode)?;
     let (tx, rx) = mpsc::sync_channel(CHANNEL_BOUND);
     if let Err(io) = spawn_reader(reader, Stream::Out, &tx, pty_mode) {
         return Err(started.abort(io));
@@ -707,7 +723,7 @@ impl<'b> Collector<'b> {
 /// A failing `sink` stops the copying (the rest of stdout is drained and discarded) and is reported as the
 /// `SpawnError` after the child exited.
 pub fn stream(spec: &Spec<'_>, sink: &mut dyn Write) -> Result<(PyStatus, Vec<u8>), SpawnError> {
-    let mut started = start(spec, Stdio::piped(), Stdio::piped(), false)?;
+    let mut started = start(spec, &[], Stdio::piped(), Stdio::piped(), false)?;
     let (tx, rx) = mpsc::sync_channel(CHANNEL_BOUND);
     if let Err(io) = attach_pipes(&mut started, &tx) {
         return Err(started.abort(io));
@@ -739,7 +755,7 @@ pub fn stream(spec: &Spec<'_>, sink: &mut dyn Write) -> Result<(PyStatus, Vec<u8
 /// `subprocess.call(…)` parity (`hook_impl.py:40-46`, `staged_files_only.py`'s show-diff): stdout and stderr are
 /// snp's own; stdin per `spec.stdin`.
 pub fn inherit(spec: &Spec<'_>) -> Result<PyStatus, SpawnError> {
-    let started = start(spec, Stdio::inherit(), Stdio::inherit(), false)?;
+    let started = start(spec, &[], Stdio::inherit(), Stdio::inherit(), false)?;
     let waited = started.supervise(spec, None, |_, _| {});
     Ok(waited.status)
 }
@@ -761,12 +777,18 @@ pub struct Interactive {
 /// process group; a deadline or cancellation therefore signals the child process only, not its descendants. When the
 /// child was killed or died of a signal, the terminal modes saved before the spawn are put back.
 pub fn interactive(spec: &Spec<'_>) -> Result<Interactive, SpawnError> {
+    interactive_hook(spec, &[])
+}
+
+/// [`interactive`] for one partition of an `interactive` hook: argv is `spec.argv` followed by `files`, as in
+/// [`merged_hook`].
+pub fn interactive_hook(spec: &Spec<'_>, files: &[&OsStr]) -> Result<Interactive, SpawnError> {
     let terminal = match &spec.stdin {
         Stdin::Terminal(t) => Some(t),
         _ => None,
     };
     let saved = terminal.and_then(crate::tty::Terminal::save);
-    let started = start(spec, Stdio::inherit(), Stdio::inherit(), false)?;
+    let started = start(spec, files, Stdio::inherit(), Stdio::inherit(), false)?;
     let waited = started.supervise(spec, None, |_, _| {});
     if let (Some(t), Some(saved)) = (terminal, &saved)
         && (waited.timed_out || waited.interrupted || waited.status.0 < 0)
@@ -1156,13 +1178,17 @@ fn py_status(st: ExitStatus) -> PyStatus {
 
 /// The D-PLAT-03 refusal: a `.bat`/`.cmd` program receiving an argument with a CR or LF (Rust's `BatBadBut` guard
 /// would refuse it with an opaque "batch file arguments are invalid").
+/// `args` are the arguments after the program, the partition files of a hook included.
 #[cfg(any(test, windows))]
-fn batch_line_break(program: &OsStr, args: &[OsString]) -> Option<String> {
+fn batch_line_break<'a>(
+    program: &OsStr,
+    mut args: impl Iterator<Item = &'a OsStr>,
+) -> Option<String> {
     let lower = program.as_encoded_bytes().to_ascii_lowercase();
     if !(lower.ends_with(b".bat") || lower.ends_with(b".cmd")) {
         return None;
     }
-    let bad = args.iter().find(|a| {
+    let bad = args.find(|a| {
         a.as_encoded_bytes()
             .iter()
             .any(|b| *b == b'\r' || *b == b'\n')
@@ -1180,10 +1206,12 @@ fn program_path(arg0: &OsStr, cwd: &Path) -> PathBuf {
     }
 }
 
-/// Builds and spawns the command of `spec` (stdout/stderr as given; stdin per `spec.stdin`, `/dev/null` instead of
-/// an empty pipe in pty mode), registers the child and arranges its stdin.
+/// Builds and spawns the command of `spec` with `files` appended to its argv (a hook partition's; empty for every
+/// other spawn), stdout/stderr as given, stdin per `spec.stdin` (`/dev/null` instead of an empty pipe in pty mode),
+/// registers the child and arranges its stdin.
 fn start(
     spec: &Spec<'_>,
+    files: &[&OsStr],
     stdout: Stdio,
     stderr: Stdio,
     pty_mode: bool,
@@ -1205,7 +1233,12 @@ fn start(
         spec.group
     };
     #[cfg(windows)]
-    if let Some(msg) = batch_line_break(arg0, args) {
+    if let Some(msg) = batch_line_break(
+        arg0,
+        args.iter()
+            .map(OsString::as_os_str)
+            .chain(files.iter().copied()),
+    ) {
         return Err(fail(io::Error::new(io::ErrorKind::InvalidInput, msg)));
     }
     let mut cmd = Command::new(program_path(arg0, spec.cwd));
@@ -1217,7 +1250,7 @@ fn start(
             cmd.process_group(0);
         }
     }
-    cmd.args(args).current_dir(spec.cwd);
+    cmd.args(args).args(files).current_dir(spec.cwd);
     let env = if spec.role == Role::Critical {
         spec.env
             .patched(&EnvPatch::default().set("GIT_TERMINAL_PROMPT", "0"))
@@ -1232,7 +1265,7 @@ fn start(
         (Stdin::Terminal(t), _) => t.stdio().map_err(fail)?,
     };
     cmd.stdin(stdin_mode).stdout(stdout).stderr(stderr);
-    crate::trace::log_spawn(spec.argv, &env, spec.cwd, spec.role, group);
+    crate::trace::log_spawn(spec.argv, files, &env, spec.cwd, spec.role, group);
     #[cfg(feature = "testing")]
     crate::spawn_log::record(spec.role, group, arg0);
 
@@ -1874,7 +1907,7 @@ mod tests {
         let argv = sh("[ -t 1 ] && echo out-tty; [ -t 0 ] || echo in-not-tty; echo err >&2");
         let mut s = spec(&argv, &env, Path::new("/"), &cancel);
         s.role = Role::Hook;
-        let m = merged_impl(&s, true, &budget(1 << 20), true).unwrap();
+        let m = merged_impl(&s, &[], true, &budget(1 << 20), true).unwrap();
         assert_eq!(m.status, PyStatus(0));
         assert_eq!(bytes_of(&m.output), b"in-not-tty\nerr\n");
     }
@@ -1999,15 +2032,29 @@ mod tests {
 
     #[test]
     fn batch_line_break_refusal() {
-        let args = [OsString::from("ok"), OsString::from("a\nb")];
-        assert_eq!(
-            batch_line_break(OsStr::new("C:\\x\\run.CMD"), &args).as_deref(),
-            Some(
-                "Executable `C:\\x\\run.CMD` cannot receive an argument containing a line break: 'a\\nb'"
-            )
+        let args = [OsStr::new("ok"), OsStr::new("a\nb")];
+        let want = Some(
+            "Executable `C:\\x\\run.CMD` cannot receive an argument containing a line break: 'a\\nb'",
         );
-        assert!(batch_line_break(OsStr::new("run.exe"), &args).is_none());
-        assert!(batch_line_break(OsStr::new("run.bat"), &args[..1]).is_none());
+        assert_eq!(
+            batch_line_break(OsStr::new("C:\\x\\run.CMD"), args.into_iter()).as_deref(),
+            want
+        );
+        // a hook partition: the offending name is one of the files appended after the command (ADR-103)
+        let cmd = [OsString::from("--flag")];
+        let files = [OsStr::new("ok.py"), OsStr::new("a\nb")];
+        assert_eq!(
+            batch_line_break(
+                OsStr::new("C:\\x\\run.CMD"),
+                cmd.iter()
+                    .map(OsString::as_os_str)
+                    .chain(files.iter().copied())
+            )
+            .as_deref(),
+            want
+        );
+        assert!(batch_line_break(OsStr::new("run.exe"), args.into_iter()).is_none());
+        assert!(batch_line_break(OsStr::new("run.bat"), args.into_iter().take(1)).is_none());
     }
 
     #[test]
