@@ -155,9 +155,10 @@ const EMPTY_BLOBS: [&[u8]; 2] = [
 
 /// The incremental parser behind [`TaggedIndex`]: `git ls-files -s -v -z` streams through it (`io::Write`), so the
 /// listing (about 80 bytes per entry) never sits in memory; only the paths are kept, NUL-separated as git printed
-/// them. Records are `<tag> SP <mode> SP <object> SP <stage> TAB <path> NUL`; every field is checked (S2: no
-/// indexing, no unchecked arithmetic), and a malformed record makes [`TaggedParser::finish`] fail, so the caller
-/// asks `git ls-files -z --deduplicate` instead.
+/// them. Records are `<tag> SP <mode> SP <object> SP <stage> TAB <path> NUL`, parsed by position with `memchr` (S2:
+/// no indexing, no unchecked arithmetic): a letter, an octal mode, an object of 40 or 64 bytes without a space or a
+/// TAB (it is only compared with the empty blob's id), a stage digit 0–3. A malformed record makes
+/// [`TaggedParser::finish`] fail, so the caller asks `git ls-files -z --deduplicate` instead.
 #[derive(Debug, Default)]
 pub(crate) struct TaggedParser {
     /// The start of a record whose NUL has not arrived yet.
@@ -177,26 +178,46 @@ impl TaggedParser {
     /// Parses one complete record (without its NUL).
     fn record(&mut self, rec: &[u8]) -> Result<(), BadRecord> {
         let bad = || BadRecord(rec.to_vec());
-        let tab = memchr::memchr(b'\t', rec).ok_or_else(bad)?;
-        let head = rec.get(..tab).ok_or_else(bad)?;
-        let path = rec.get(tab.saturating_add(1)..).ok_or_else(bad)?;
-        let mut fields = head.split(|&b| b == b' ');
-        let tag = match fields.next() {
-            Some(&[t]) if t.is_ascii_alphabetic() => t,
-            _ => return Err(bad()),
-        };
-        let mode = fields.next().and_then(octal).ok_or_else(bad)?;
-        let object = fields
-            .next()
-            .filter(|o| matches!(o.len(), 40 | 64) && o.iter().all(u8::is_ascii_hexdigit))
-            .ok_or_else(bad)?;
-        let Some(&[stage @ b'0'..=b'3']) = fields.next() else {
+        // `<tag> SP`: one letter
+        let [tag, b' ', rest @ ..] = rec else {
             return Err(bad());
         };
-        if fields.next().is_some() {
+        if !tag.is_ascii_alphabetic() {
             return Err(bad());
         }
-        self.flagged |= tag != b'H' || stage != b'0';
+        // `<mode> SP`: the modes git writes, else a few octal digits
+        let (mode, rest) = match rest {
+            [b'1', b'0', b'0', b'6', b'4', b'4', b' ', rest @ ..] => (0o100_644, rest),
+            [b'1', b'0', b'0', b'7', b'5', b'5', b' ', rest @ ..] => (0o100_755, rest),
+            [b'1', b'2', b'0', b'0', b'0', b'0', b' ', rest @ ..] => (0o120_000, rest),
+            _ => {
+                let sp = rest
+                    .iter()
+                    .take(8)
+                    .position(|&b| b == b' ')
+                    .ok_or_else(bad)?;
+                let mode = octal(rest.get(..sp).unwrap_or_default()).ok_or_else(bad)?;
+                (mode, rest.get(sp.saturating_add(1)..).unwrap_or_default())
+            }
+        };
+        // `<object> SP`: 40 or 64 bytes (SHA-1 or SHA-256) without a space or a TAB inside
+        let len = if rest.get(40) == Some(&b' ') {
+            40
+        } else if rest.get(64) == Some(&b' ') {
+            64
+        } else {
+            return Err(bad());
+        };
+        let object = rest.get(..len).unwrap_or_default();
+        if memchr::memchr2(b' ', b'\t', object).is_some() {
+            return Err(bad());
+        }
+        let rest = rest.get(len.saturating_add(1)..).unwrap_or_default();
+        // `<stage> TAB <path>`
+        let [stage @ b'0'..=b'3', b'\t', path @ ..] = rest else {
+            return Err(bad());
+        };
+        self.flagged |= *tag != b'H' || *stage != b'0';
         // A run of equal paths (the stages of an unmerged entry) is listed once, as `--deduplicate` does.
         if let Some(&(s, e)) = self.spans.last()
             && slice(&self.buf, s, e) == path
@@ -213,7 +234,9 @@ impl TaggedParser {
         self.buf.extend_from_slice(path);
         self.buf.push(0);
         self.spans.push((start, end));
-        let empty = EMPTY_BLOBS.iter().any(|e| object.eq_ignore_ascii_case(e));
+        // the first byte rules out nearly every object before any comparison
+        let empty = matches!(object.first(), Some(b'e' | b'E' | b'4'))
+            && EMPTY_BLOBS.iter().any(|e| object.eq_ignore_ascii_case(e));
         self.modes.push(if empty { 0 } else { mode });
         Ok(())
     }
@@ -577,7 +600,8 @@ mod tests {
             format!("1 100644 {SHA} 0\ta\0"),
             format!("H 9x {SHA} 0\ta\0"),
             format!("H 100644 {} 0\ta\0", SHA.get(..39).unwrap()),
-            format!("H 100644 {}g 0\ta\0", SHA.get(..39).unwrap()),
+            format!("H 100644 {}\t 0\ta\0", SHA.get(..39).unwrap()),
+            format!("H 100644 {SHA}0 0\ta\0"),
             format!("H 100644 {SHA} 4\ta\0"),
             format!("H 100644 {SHA} 00\ta\0"),
             format!("H 100644 {SHA} 0 x\ta\0"),

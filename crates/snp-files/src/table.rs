@@ -122,12 +122,14 @@ const KIND_TAGS: TagSet = EXEC_TAGS.with(Tag::FILE);
 /// are `file`, its mode tag and its name tags, and only name tags give `text`/`binary` before the content is read,
 /// so an empty name-tag set always leaves content to read). Then its executable bit decides whether the shebang is
 /// read.
+#[inline]
 fn no_name_tags(class: &Classification) -> bool {
     matches!(class, Classification::NeedsContent(p) if p.tags().difference(KIND_TAGS).is_empty())
 }
 
 /// Whether a query for `n` (from a filter that references `executable`/`non-executable` when `exec_tags`) can
 /// observe the executable bit of `class`: through those tags, or through the shebang of a file without name tags.
+#[inline]
 fn observes_exec(class: &Classification, n: Needs, exec_tags: bool) -> bool {
     exec_tags || (n.shebang && no_name_tags(class))
 }
@@ -610,6 +612,7 @@ impl FileTable {
 
     /// The outcome of a classification for `n`: its tags, or the head tier memoised in `heads` when `n` asks for a
     /// category the stat tier left open.
+    #[inline]
     fn outcome<'t>(
         &'t self,
         i: usize,
