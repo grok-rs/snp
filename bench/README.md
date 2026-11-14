@@ -76,7 +76,7 @@ succeeded, so an interrupted setup leaves nothing for `run` to measure.
 | B5 | `files50k` with `types`/`types_or`/`exclude_types` | `run --all-files --config types.yaml` | time (≤ 1.3× B4) |
 | B6 | `pch960`: 960 clean files, 13 pre-commit-hooks hooks at v6.0.0 (prek's medium corpus) | `run --all-files` | time, RSS (B12 ≤ 25 MB = 23.84 MiB) |
 | B7 | `pch960`, store removed before every run (`--prepare`) | `run --all-files` | time |
-| B8 | `stash10m`: a 10 MiB unstaged rewrite of a tracked file + one staged change | `run` | time, RSS (information: git's diff is the largest process); nightly: heap peak (dhat, ≤ B3's + 2 MB, hard) |
+| B8 | `stash10m`: a 10 MiB unstaged rewrite of a tracked file (every line, and the size) + one staged change | `run` | time, RSS (information: git's diff is the largest process); nightly: heap peak (dhat, ≤ B3's + 2 MB, hard) |
 | B9 | `noop10` with the tool's own installed hook | `git commit --allow-empty` | time (≤ B3 + 3 ms) |
 | B10 | `validate1000`: 1 000 local hooks | `validate-config big.yaml` | time |
 | B11 | `gc500`: 500 hook repositories used by 200 configurations, all installed and tracked (prek primed with `run --config`, its tracking path; `setup` checks 200 configs and 500 repositories per store) | `gc` | time |
@@ -97,6 +97,13 @@ pre-commit `<store>/patch[0-9]*-[0-9]*`, prek `<store>/patches/[0-9]*-[0-9]*.pat
 each RSS run, after the scenario and at the start of `run`. Journals, pointers and every other store file stay; when a
 `run-*.snp-journal` or a fixture's `.git/snp-stash*.journal` exists, a run was interrupted, and the harness refuses
 rather than delete its patch.
+
+B8's rewrite changes the file's size, as real rewrites do. An equal-size rewrite made B8 bimodal for every tool: the
+restore recreates the file on the inode number the checkout's file had, and git (built without `USE_NSEC`, its
+default) compares stat times to the whole second, so after a run whose checkout and restore fell in the same second
+the file's stat matched its index entry, and about seven git calls of the next run hashed the 10 MiB again (+80 %
+instructions for the whole tree). The share of such runs followed each tool's own timing; on CI snp's and
+pre-commit's runs fell into two modes 100-160 ms apart.
 
 Counters (`--counts`, Linux): after the timing runs, one `strace -f --seccomp-bpf -c` pass per binary over clones
 (`clone` + `clone3` + `fork` + `vfork`), `statx`, `newfstatat`, `openat`, `getdents64` and `execve` across the whole

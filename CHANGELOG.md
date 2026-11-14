@@ -79,6 +79,11 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   which is git's; the RSS column names the largest process of the tree; new soft nightly allocation ceilings; a
   `perf_patch_stream` perf-smoke test bounds the stash's resident growth on a 24 MB patch; B8's stash patches no longer
   pile up in the stores; prek's B11 store tracks its 200 configs (ADR-100).
+- Benchmarks: B8's unstaged rewrite also changes the file's size, as real rewrites do. With an equal size, the run
+  after one whose checkout and restore fell in the same second found the file's stat equal to its index entry (a
+  default git build compares stat times to the whole second, and the restored file got the checked-out file's inode
+  number back), so about seven git calls hashed the 10 MiB file again: +80 % instructions for the whole tree, in a
+  timing-dependent share of every tool's runs. B8 times are not comparable with earlier records.
 
 ### Fixed
 
