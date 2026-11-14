@@ -371,4 +371,76 @@ mod classify {
             .unwrap();
         assert_eq!(none.len(), 3);
     }
+
+    /// ADR-101: `--files $'x\xc3' $'\xa9y.py'` joins into a valid arena ("xéy.py") whose spans split the "é"; each
+    /// name still matches on its own lossy view, so `files: \.py$` keeps only the second.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn joined_args_splitting_a_character_match_their_own_view() {
+        use std::os::unix::ffi::OsStringExt;
+        let d = tempfile::tempdir().unwrap();
+        let names = [b"x\xc3".to_vec(), b"\xa9y.py".to_vec()];
+        for n in &names {
+            std::fs::write(d.path().join(OsString::from_vec(n.clone())), b"x\n").unwrap();
+        }
+        let cache = RegexCache::new();
+        let pool = pool(2);
+        let c = classifier(
+            FileTable::from_args(
+                names.iter().cloned().map(OsString::from_vec).collect(),
+                d.path(),
+            ),
+            &cache,
+            &pool,
+        );
+        assert_eq!(views(&c, &c.kept), ["x\u{fffd}", "\u{fffd}y.py"]);
+        let py = c
+            .for_hook(&filter("\\.py$", "^$", &["file"], None, &cache), &pool)
+            .unwrap();
+        assert_eq!(py, [FileId(1)]);
+    }
+
+    /// The first unreadable file in table order is the one reported, with two of them in different partitions:
+    /// inline (one permit), on the pool, and again once the head tier is memoised (the memory-only partition that
+    /// runs on the calling thread, ADR-101).
+    #[cfg(unix)]
+    #[test]
+    fn first_unreadable_file_in_order_wins_inline_and_on_the_pool() {
+        use std::os::unix::fs::PermissionsExt;
+        if rustix::process::geteuid().is_root() {
+            return;
+        }
+        let d = tempfile::tempdir().unwrap();
+        let names = unknown_names(d.path(), 2_000);
+        for k in [700, 1_900] {
+            let p = d.path().join(&names[k]);
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        let cache = RegexCache::new();
+        let text_filter = filter("", "^$", &["text"], None, &cache);
+        for permits in [1, 8] {
+            let pool = pool(permits);
+            let c = classifier(FileTable::from_args(names.clone(), d.path()), &cache, &pool);
+            for round in 0..2 {
+                let err = c.for_hook(&text_filter, &pool).unwrap_err();
+                let snp_core::failure::Failure::Exc { exc, .. } = err else {
+                    panic!("not an exception: {err:?}")
+                };
+                assert_eq!(
+                    String::from_utf8_lossy(&exc.text),
+                    "[Errno 13] Permission denied: 'data700.unknownext'",
+                    "permits {permits}, round {round}"
+                );
+            }
+            // Memoised, the files without content needs classify on the calling thread under a permit.
+            let file = c
+                .for_hook(&filter("", "^$", &["file"], None, &cache), &pool)
+                .unwrap();
+            assert_eq!(file.len(), 2_000);
+        }
+        for k in [700, 1_900] {
+            let p = d.path().join(&names[k]);
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+    }
 }

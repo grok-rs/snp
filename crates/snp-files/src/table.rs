@@ -12,6 +12,13 @@
 //!   shebang's interpreter tags, or `Vanished`/`Unreadable`;
 //! * **view** — the lossy-UTF-8 / `/`-normalised matching view, only for names that are not already clean UTF-8.
 //!
+//! The arena's UTF-8 is validated once when the table is built (ADR-101): a valid arena is kept as a `String` and
+//! the matching view of a name is a slice of it; only names of an invalid arena, or spans that do not fall on
+//! character boundaries (`--files` arguments are joined without a separator), are checked one by one. On Linux the
+//! `lstat` and `open` of the stat and head tiers are relative to one `O_PATH` descriptor of the root (`statx`,
+//! `openat`), as pre-commit's relative names are relative to its working directory; the path-based calls remain
+//! the fallback whenever that descriptor or `statx` is unavailable.
+//!
 //! Owner: WP-22.
 
 use std::borrow::Cow;
@@ -135,12 +142,39 @@ struct Interner {
     index: HashMap<TagSet, u16>,
 }
 
+/// The path arena, its UTF-8 validated once (ADR-101).
+enum Arena {
+    /// Valid UTF-8 (and, on Windows, free of `\`): spans on character boundaries are matching views as they are.
+    Text(String),
+    /// Anything else: every span is checked on its own.
+    Bytes(Vec<u8>),
+}
+
+impl Arena {
+    /// Validates `buf` once (zero-copy either way).
+    fn new(buf: Vec<u8>) -> Self {
+        match String::from_utf8(buf) {
+            Ok(s) if cfg!(windows) && s.contains('\\') => Self::Bytes(s.into_bytes()),
+            Ok(s) => Self::Text(s),
+            Err(e) => Self::Bytes(e.into_bytes()),
+        }
+    }
+
+    /// The raw bytes.
+    fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Text(s) => s.as_bytes(),
+            Self::Bytes(b) => b,
+        }
+    }
+}
+
 /// One byte arena + spans; tier columns allocated on first need (§2.3, ADR-079).
 ///
 /// pre-commit's `Classifier.filenames` plus the `functools.cache` of `_types_for_file` (`run.py:72-79`).
 pub struct FileTable {
     /// All paths, as git printed them.
-    arena: Vec<u8>,
+    arena: Arena,
     /// Half-open `(start, end)` offsets into `arena`, in git (or argument) order.
     spans: Box<[(u32, u32)]>,
     /// The repository root the relative paths are resolved against for `lstat`/`open`.
@@ -159,13 +193,16 @@ pub struct FileTable {
     view: Column<Box<str>>,
     /// `lexists` results of the newest `Classifier::new`, adopted as the stat tier of the first hook's candidates.
     pending: Mutex<Option<Box<[Option<Meta>]>>>,
+    /// The root as an `O_PATH` descriptor, opened on first need; `None` when it cannot be opened (ADR-101).
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    root_fd: OnceLock<Option<rustix::fd::OwnedFd>>,
 }
 
 impl fmt::Debug for FileTable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FileTable")
             .field("len", &self.spans.len())
-            .field("arena_bytes", &self.arena.len())
+            .field("arena_bytes", &self.arena.as_bytes().len())
             .field("root", &self.root)
             .field("git_modes", &self.git_modes.is_some())
             .finish_non_exhaustive()
@@ -173,7 +210,7 @@ impl fmt::Debug for FileTable {
 }
 
 /// Below this many files `prefetch` runs inline (thread start-up costs more than the work).
-const PARALLEL_MIN: usize = 256;
+pub(crate) const PARALLEL_MIN: usize = 256;
 /// Files per prefetch partition (at least).
 const CHUNK_MIN: usize = 64;
 
@@ -222,7 +259,7 @@ impl FileTable {
     /// Common constructor.
     fn build(arena: Vec<u8>, spans: Box<[(u32, u32)]>, root: &Path) -> Self {
         Self {
-            arena,
+            arena: Arena::new(arena),
             spans,
             root: root.to_path_buf(),
             git_modes: None,
@@ -232,6 +269,8 @@ impl FileTable {
             head: Column::new(),
             view: Column::new(),
             pending: Mutex::new(None),
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            root_fd: OnceLock::new(),
         }
     }
 
@@ -360,6 +399,12 @@ impl FileTable {
         let Some(i) = self.index(id) else {
             return "";
         };
+        // A valid arena: the span itself, unless it splits a character (joined `--files` arguments).
+        if let Arena::Text(s) = &self.arena
+            && let Some(v) = self.span(i).and_then(|r| s.get(r))
+        {
+            return v;
+        }
         let bytes = self.bytes_at(i);
         if let Ok(s) = std::str::from_utf8(bytes)
             && !(cfg!(windows) && s.contains('\\'))
@@ -451,6 +496,33 @@ impl FileTable {
         }
     }
 
+    /// Whether `tags(id, n)` is answered from memoised cells alone (no `lstat`, `open` or name-tier computation):
+    /// the file is known to be gone, or every tier `n` needs for it is computed (ADR-101). A pending `lexists` meta
+    /// does not count: adopting it still classifies the name.
+    pub(crate) fn tiers_ready(&self, id: FileId, n: Needs) -> bool {
+        let Some(i) = self.index(id) else {
+            return true;
+        };
+        if self.known_vanished(id) {
+            return true;
+        }
+        if !n.any() {
+            return self
+                .name
+                .get()
+                .and_then(|ids| ids.get(i))
+                .is_some_and(|c| c.load(Ordering::Acquire) != 0);
+        }
+        match self.stat.peek(i) {
+            None => false,
+            Some(StatTier::Vanished | StatTier::Present(Classification::Done(_))) => true,
+            Some(StatTier::Present(Classification::NeedsContent(p))) => {
+                let need = (n.encoding && p.needs_encoding()) || (n.shebang && p.needs_shebang());
+                !need || self.head.peek(i).is_some()
+            }
+        }
+    }
+
     /// Whether entry `id` is already known to be gone (a computed stat or head tier said so); no I/O.
     pub(crate) fn known_vanished(&self, id: FileId) -> bool {
         let Some(i) = self.index(id) else {
@@ -485,28 +557,84 @@ impl FileTable {
         (i < self.spans.len()).then_some(i)
     }
 
+    /// The arena range of entry `i`.
+    fn span(&self, i: usize) -> Option<Range<usize>> {
+        let &(s, e) = self.spans.get(i)?;
+        Some(usize::try_from(s).ok()?..usize::try_from(e).ok()?)
+    }
+
     /// The bytes of entry `i` (empty when out of range).
     fn bytes_at(&self, i: usize) -> &[u8] {
-        self.spans
-            .get(i)
-            .and_then(|&(s, e)| {
-                self.arena
-                    .get(usize::try_from(s).ok()?..usize::try_from(e).ok()?)
-            })
+        self.span(i)
+            .and_then(|r| self.arena.as_bytes().get(r))
             .unwrap_or_default()
     }
 
-    /// Where entry `i` is on disk: `root/<path>` (pre-commit runs in the root with relative names).
+    /// Where entry `i` is on disk: `root/<path>` (pre-commit runs in the root with relative names). One allocation
+    /// of the final size; `push` keeps `join`'s rule that an absolute name replaces the root.
     fn fs_path(&self, i: usize) -> PathBuf {
         #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStrExt;
-            self.root.join(OsStr::from_bytes(self.bytes_at(i)))
+            joined(&self.root, OsStr::from_bytes(self.bytes_at(i)))
         }
         #[cfg(not(unix))]
         {
             let id = FileId(u32::try_from(i).unwrap_or(u32::MAX));
             self.root.join(self.match_view(id))
+        }
+    }
+
+    /// The root descriptor (`O_PATH | O_DIRECTORY | O_CLOEXEC`), opened once; `None` when it cannot be opened, in
+    /// which case every caller uses the path-based call (never "gone": that would skip every hook, K5).
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn root_fd(&self) -> Option<rustix::fd::BorrowedFd<'_>> {
+        use rustix::fd::AsFd;
+        use rustix::fs::{Mode, OFlags};
+        self.root_fd
+            .get_or_init(|| {
+                rustix::fs::open(
+                    &self.root,
+                    OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+                    Mode::empty(),
+                )
+                .ok()
+            })
+            .as_ref()
+            .map(AsFd::as_fd)
+    }
+
+    /// `lstat` of entry `i` relative to the root descriptor (`statx`, type/mode/owner only): `Ok(Some(meta))`
+    /// present, `Ok(None)` gone (every error, as `os.path.lexists`), `Err(PathFallback)` when the path-based call
+    /// must decide (no descriptor, `statx` unavailable or refused, or a result without type and mode).
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn statx_meta(&self, i: usize) -> Result<Option<Meta>, PathFallback> {
+        use std::os::unix::ffi::OsStrExt;
+
+        use rustix::fs::{AtFlags, StatxFlags};
+        use rustix::io::Errno;
+        let fd = self.root_fd().ok_or(PathFallback)?;
+        let want = StatxFlags::TYPE | StatxFlags::MODE | StatxFlags::UID | StatxFlags::GID;
+        match rustix::fs::statx(
+            fd,
+            OsStr::from_bytes(self.bytes_at(i)),
+            AtFlags::SYMLINK_NOFOLLOW,
+            want,
+        ) {
+            Ok(st) => {
+                let got = StatxFlags::from_bits_retain(st.stx_mask);
+                if got.contains(want) {
+                    Ok(Some(stat_meta(
+                        u32::from(st.stx_mode),
+                        st.stx_uid,
+                        st.stx_gid,
+                    )))
+                } else {
+                    Err(PathFallback)
+                }
+            }
+            Err(Errno::NOSYS | Errno::PERM) => Err(PathFallback),
+            Err(_) => Ok(None),
         }
     }
 
@@ -527,6 +655,10 @@ impl FileTable {
         }
         if let Some(m) = self.trusted_meta(i) {
             return Some(m);
+        }
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if let Ok(decided) = self.statx_meta(i) {
+            return decided;
         }
         std::fs::symlink_metadata(self.fs_path(i))
             .ok()
@@ -599,8 +731,7 @@ impl FileTable {
         if self.bytes_at(i).is_empty() {
             return Head::Vanished;
         }
-        let path = self.fs_path(i);
-        let file = match open_nonblocking(&path) {
+        let file = match self.open_head(i) {
             Ok(f) => f,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Head::Vanished,
             Err(e) => return Head::Unreadable(Box::new(self.os_error(i, &e))),
@@ -609,6 +740,31 @@ impl FileTable {
             Ok(tags) => Head::Tags(tags),
             Err(e) => Head::Unreadable(Box::new(self.os_error(i, &e))),
         }
+    }
+
+    /// `open(name, 'rb')` of entry `i`, non-blocking and without acquiring a terminal: on Linux `openat` relative to
+    /// the root descriptor (with `O_CLOEXEC`, so no spawned child inherits it), else by path.
+    fn open_head(&self, i: usize) -> io::Result<File> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if let Some(fd) = self.root_fd() {
+            use std::os::unix::ffi::OsStrExt;
+
+            use rustix::fs::{Mode, OFlags};
+            let flags = OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOCTTY | OFlags::CLOEXEC;
+            let name = OsStr::from_bytes(self.bytes_at(i));
+            // Retried on EINTR, as std's `open` is.
+            return loop {
+                match rustix::fs::openat(fd, name, flags, Mode::empty()) {
+                    Err(rustix::io::Errno::INTR) => {}
+                    other => {
+                        break other
+                            .map(File::from)
+                            .map_err(|e| io::Error::from_raw_os_error(e.raw_os_error()));
+                    }
+                }
+            };
+        }
+        open_nonblocking(&self.fs_path(i))
     }
 
     /// The `OSError` pre-commit reports for entry `i` (its relative name, as passed to `tags_from_path`).
@@ -667,25 +823,37 @@ pub(crate) fn par_chunks<T: Send>(
     n: usize,
     f: impl Fn(Range<usize>) -> Result<Vec<T>, Failure> + Sync,
 ) -> Result<Vec<T>, Failure> {
-    par_chunks_on(pool, n, usize::MAX, f)
+    par_chunks_on(pool, n, usize::MAX, false, f)
 }
 
 /// The most threads that match `files`/`exclude` patterns at once, whatever the pool size: every thread that runs a
 /// pattern gets its own lazy-DFA cache for it (~77 KB each), so 20 patterns on 32 threads held 27 MB of caches (B12u)
-/// while the wall time hardly improves beyond 8 threads.
+/// while the wall time hardly improves beyond 8 threads. The pool's core count caps it further (ADR-101): more
+/// matching threads than cores only add caches and wake-ups (4 on a 4-CPU CI runner with `SNP_JOBS=32`).
 pub(crate) const REGEX_THREADS: usize = 8;
 
-/// [`par_chunks`] on at most `max_threads` threads.
+/// [`par_chunks`] on at most min(`max_threads`, permits, cores) threads (ADR-101).
+///
+/// `cheap` says the caller knows the work is memory-only (no regex call, no `lstat`/`open`): then a large `n` runs
+/// on the calling thread too, as one partition under a permit (`JobPool::run_inline`: cancellation and panics as on
+/// the pool), since starting threads costs more than the work. Deterministic: no timing decides the thread count.
 pub(crate) fn par_chunks_on<T: Send>(
     pool: &JobPool,
     n: usize,
     max_threads: usize,
+    cheap: bool,
     f: impl Fn(Range<usize>) -> Result<Vec<T>, Failure> + Sync,
 ) -> Result<Vec<T>, Failure> {
     let permits = pool.permits();
-    let threads = permits.get().min(max_threads.max(1));
+    let threads = permits
+        .get()
+        .min(max_threads.max(1))
+        .min(pool.cores().get());
     if n < PARALLEL_MIN || threads == 1 || JobPool::holds_permit() {
         return f(0..n);
+    }
+    if cheap {
+        return pool.run_inline(|| f(0..n));
     }
     let threads = NonZeroUsize::new(threads).unwrap_or(permits);
     let per = n.div_ceil(threads.get().saturating_mul(4)).max(CHUNK_MIN);
@@ -751,6 +919,86 @@ fn os_bytes(p: &OsStr) -> &[u8] {
     p.as_encoded_bytes()
 }
 
+/// `root.join(name)` in one allocation of the final size (`push` replaces the root when `name` is absolute).
+#[cfg(unix)]
+fn joined(root: &Path, name: &OsStr) -> PathBuf {
+    let root_len = root.as_os_str().len();
+    let mut p = PathBuf::with_capacity(root_len.saturating_add(1).saturating_add(name.len()));
+    p.as_mut_os_string().push(root.as_os_str());
+    p.push(name);
+    p
+}
+
+/// `Meta::from_metadata(lstat, ExecPolicy::PythonCompat)` from a raw `st_mode`, `st_uid` and `st_gid`: the kind from
+/// `S_IFMT` (directory, symlink, socket, regular, anything else) and, for regular files and the rest, identify's
+/// `os.access(X_OK)` emulation (root needs any `x` bit, the owner the user bit, a group member the group bit, others
+/// the other bit). A differential test pins it to file-identify; file-identify 0.5.x will expose it as
+/// `Meta::from_unix_stat` (ADR-101).
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn stat_meta(mode: u32, uid: u32, gid: u32) -> Meta {
+    const S_IFMT: u32 = 0o170_000;
+    let kind = match mode & S_IFMT {
+        0o040_000 => FileKind::Directory,
+        0o120_000 => FileKind::Symlink,
+        0o140_000 => FileKind::Socket,
+        0o100_000 => FileKind::Regular,
+        _ => FileKind::Other,
+    };
+    let executable = matches!(kind, FileKind::Regular | FileKind::Other) && {
+        let ids = process_ids();
+        if ids.uid == 0 {
+            mode & 0o111 != 0
+        } else if uid == ids.uid {
+            mode & 0o100 != 0
+        } else if gid == ids.gid || ids.groups().contains(&gid) {
+            mode & 0o010 != 0
+        } else {
+            mode & 0o001 != 0
+        }
+    };
+    Meta::new(kind, executable)
+}
+
+/// `FileTable::statx_meta` could not decide: the path-based `lstat` must.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[derive(Debug, PartialEq, Eq)]
+struct PathFallback;
+
+/// The process's real uid and gid (queried once) and its supplementary groups (queried on first need).
+#[cfg(any(target_os = "linux", target_os = "android"))]
+struct ProcessIds {
+    /// `getuid()`.
+    uid: u32,
+    /// `getgid()`.
+    gid: u32,
+    /// `getgroups()`, empty when it fails.
+    groups: OnceLock<Box<[u32]>>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl ProcessIds {
+    /// The supplementary groups.
+    fn groups(&self) -> &[u32] {
+        self.groups.get_or_init(|| {
+            rustix::process::getgroups().map_or_else(
+                |_| Box::default(),
+                |g| g.into_iter().map(rustix::process::Gid::as_raw).collect(),
+            )
+        })
+    }
+}
+
+/// The cached [`ProcessIds`].
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn process_ids() -> &'static ProcessIds {
+    static IDS: OnceLock<ProcessIds> = OnceLock::new();
+    IDS.get_or_init(|| ProcessIds {
+        uid: rustix::process::getuid().as_raw(),
+        gid: rustix::process::getgid().as_raw(),
+        groups: OnceLock::new(),
+    })
+}
+
 /// `open(path, 'rb')` that never blocks on a FIFO or acquires a terminal (`O_NONBLOCK | O_NOCTTY`, X13-CLS-03).
 fn open_nonblocking(path: &Path) -> io::Result<File> {
     #[cfg(unix)]
@@ -792,16 +1040,68 @@ mod tests {
             NonZeroUsize::new(32).unwrap(),
             snp_core::cancel::CancelToken::new(),
         );
-        let seen = Mutex::new(std::collections::HashSet::new());
-        let out = par_chunks_on(&pool, 20_000, REGEX_THREADS, |r| {
-            seen.lock().unwrap().insert(std::thread::current().id());
-            std::thread::sleep(std::time::Duration::from_micros(200));
+        let threads = |pool: &JobPool| {
+            let seen = Mutex::new(std::collections::HashSet::new());
+            let out = par_chunks_on(pool, 20_000, REGEX_THREADS, false, |r| {
+                seen.lock().unwrap().insert(std::thread::current().id());
+                std::thread::sleep(std::time::Duration::from_micros(200));
+                Ok(r.collect::<Vec<usize>>())
+            })
+            .unwrap();
+            assert_eq!(out, (0..20_000).collect::<Vec<_>>());
+            seen.into_inner().unwrap().len()
+        };
+        // The calling thread may take every chunk before a helper starts (a 1-core runner), hence `1..`.
+        let n = threads(&pool);
+        assert!((1..=REGEX_THREADS).contains(&n), "{n}");
+        // ADR-101: the pool's core count caps it further.
+        let two_cores = JobPool::with_cores(
+            NonZeroUsize::new(32).unwrap(),
+            NonZeroUsize::new(2).unwrap(),
+            snp_core::cancel::CancelToken::new(),
+        );
+        let n = threads(&two_cores);
+        assert!((1..=2).contains(&n), "{n}");
+    }
+
+    /// The first error in index order wins, whether the chunks run inline, on the pool or as one cheap partition;
+    /// the cheap partition runs on the calling thread under a permit.
+    #[test]
+    fn par_chunks_on_first_error_in_index_order_wins() {
+        let fail_at = |r: Range<usize>| -> Result<Vec<usize>, Failure> {
+            for i in r.clone() {
+                if i == 300 || i == 9_000 {
+                    return Err(Failure::fatal("t", format!("at {i}")));
+                }
+            }
+            Ok(r.collect())
+        };
+        let text = |e: Failure| match e {
+            Failure::Exc { exc, .. } => String::from_utf8_lossy(&exc.text).into_owned(),
+            other => format!("{other:?}"),
+        };
+        for permits in [1, 8] {
+            let pool = JobPool::new(
+                NonZeroUsize::new(permits).unwrap(),
+                snp_core::cancel::CancelToken::new(),
+            );
+            for cheap in [false, true] {
+                let e = par_chunks_on(&pool, 10_000, REGEX_THREADS, cheap, fail_at).unwrap_err();
+                assert_eq!(text(e), "at 300", "permits {permits}, cheap {cheap}");
+            }
+        }
+        let pool = JobPool::new(
+            NonZeroUsize::new(4).unwrap(),
+            snp_core::cancel::CancelToken::new(),
+        );
+        let me = std::thread::current().id();
+        let out = par_chunks_on(&pool, 1_000, REGEX_THREADS, true, |r| {
+            assert!(JobPool::holds_permit());
+            assert_eq!(std::thread::current().id(), me);
             Ok(r.collect::<Vec<usize>>())
         })
         .unwrap();
-        assert_eq!(out, (0..20_000).collect::<Vec<_>>());
-        let threads = seen.lock().unwrap().len();
-        assert!((2..=REGEX_THREADS).contains(&threads), "{threads}");
+        assert_eq!(out.len(), 1_000);
     }
 
     fn table(paths: &[&str]) -> FileTable {
@@ -899,6 +1199,282 @@ mod tests {
         let mut t = table(&["q"]);
         t.set_trusted_modes(vec![(&b"q"[..], 0o777)]);
         assert!(matches!(t.tags(FileId(0), n), TagOutcome::Vanished));
+    }
+
+    /// ADR-101: a valid arena is validated once; its views are slices of it.
+    #[test]
+    fn valid_arena_views_borrow_the_arena() {
+        let t = FileTable::from_zbuf(
+            b"a.py\0d\xc3\xa9j\xc3\xa0/b\0".to_vec(),
+            vec![(0, 4), (5, 13)],
+            Path::new("/r"),
+        );
+        assert!(matches!(t.arena, Arena::Text(_)) || cfg!(windows));
+        assert_eq!(t.match_view(FileId(0)), "a.py");
+        assert_eq!(t.match_view(FileId(1)), "déjà/b");
+        let arena = t.arena.as_bytes().as_ptr_range();
+        assert!(arena.contains(&t.match_view(FileId(1)).as_ptr()));
+        assert!(t.view.0.get().is_none(), "no lossy cell was needed");
+    }
+
+    /// `--files` arguments are joined without a separator, so a valid arena can hold spans that split a character:
+    /// their views are the lossy decoding of each span, never "".
+    #[cfg(unix)]
+    #[test]
+    fn joined_args_that_split_a_character_get_lossy_views() {
+        use std::os::unix::ffi::OsStringExt;
+        let t = FileTable::from_args(
+            vec![
+                OsString::from_vec(b"x\xc3".to_vec()),
+                OsString::from_vec(b"\xa9y.py".to_vec()),
+            ],
+            Path::new("/r"),
+        );
+        assert!(
+            matches!(t.arena, Arena::Text(_)),
+            "x\u{e9}y.py is valid UTF-8"
+        );
+        assert_eq!(t.match_view(FileId(0)), "x\u{fffd}");
+        assert_eq!(t.match_view(FileId(1)), "\u{fffd}y.py");
+        assert_eq!(t.bytes(FileId(1)), b"\xa9y.py");
+    }
+
+    /// An invalid arena checks each span: valid names borrow, invalid ones get the lossy view.
+    #[test]
+    fn mixed_arena_checks_each_span() {
+        let t = FileTable::from_zbuf(
+            b"ok.py\0bad\xff.py\0\xc3\xa9.txt\0".to_vec(),
+            vec![(0, 5), (6, 13), (14, 20)],
+            Path::new("/r"),
+        );
+        assert!(matches!(t.arena, Arena::Bytes(_)));
+        assert_eq!(t.match_view(FileId(0)), "ok.py");
+        assert_eq!(t.match_view(FileId(1)), "bad\u{fffd}.py");
+        assert_eq!(t.match_view(FileId(2)), "\u{e9}.txt");
+    }
+
+    /// `joined` is `Path::join` (an absolute name replaces the root).
+    #[cfg(unix)]
+    #[test]
+    fn joined_is_join() {
+        for (root, name) in [
+            ("/r", "a/b"),
+            ("/r/", "a"),
+            ("", "a"),
+            ("rel", "x"),
+            ("/r", "/abs/x"),
+            ("/", "a"),
+        ] {
+            assert_eq!(
+                joined(Path::new(root), OsStr::new(name)),
+                Path::new(root).join(name),
+                "{root:?} {name:?}"
+            );
+        }
+    }
+
+    /// ADR-101: the `statx` stat tier equals `Meta::from_metadata(symlink_metadata)` for every kind and mode,
+    /// including a broken symlink (present), files of another owner and absolute names (`/dev/null`).
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn statx_meta_matches_file_identify() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path();
+        let mut names: Vec<&str> = Vec::new();
+        for (name, mode) in [
+            ("r644", 0o644),
+            ("r744", 0o744),
+            ("r654", 0o654),
+            ("r645", 0o645),
+            ("r755", 0o755),
+            ("r000", 0o000),
+            ("r011", 0o011),
+        ] {
+            std::fs::write(root.join(name), b"x").unwrap();
+            std::fs::set_permissions(root.join(name), std::fs::Permissions::from_mode(mode))
+                .unwrap();
+            names.push(name);
+        }
+        std::os::unix::fs::symlink("r644", root.join("link")).unwrap();
+        std::os::unix::fs::symlink("missing", root.join("broken")).unwrap();
+        std::fs::create_dir_all(root.join("dir")).unwrap();
+        let fd = rustix::fs::open(
+            root,
+            rustix::fs::OFlags::PATH | rustix::fs::OFlags::DIRECTORY,
+            rustix::fs::Mode::empty(),
+        )
+        .unwrap();
+        rustix::fs::mknodat(
+            &fd,
+            "fifo",
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::from_raw_mode(0o644),
+            0,
+        )
+        .unwrap();
+        let _sock = std::os::unix::net::UnixListener::bind(root.join("sock")).unwrap();
+        names.extend([
+            "link",
+            "broken",
+            "dir",
+            "fifo",
+            "sock",
+            "/dev/null",
+            "/etc/passwd",
+            "/bin/sh",
+            "/usr/bin/env",
+            "gone",
+            "dir/../r755",
+        ]);
+        let t = FileTable::from_args(names.iter().map(OsString::from).collect(), root);
+        assert!(t.root_fd().is_some());
+        for (i, name) in names.iter().enumerate() {
+            let path = root.join(name);
+            let want = std::fs::symlink_metadata(&path)
+                .ok()
+                .map(|md| Meta::from_metadata(&md, ExecPolicy::PythonCompat));
+            assert_eq!(t.statx_meta(i).ok(), Some(want), "{name}");
+            assert_eq!(t.lexists_meta(i), want, "{name}");
+        }
+        assert!(
+            matches!(t.lexists_meta(names.iter().position(|&n| n == "broken").unwrap()), Some(m) if m.kind() == FileKind::Symlink)
+        );
+    }
+
+    /// A root that cannot be opened falls back to the path-based calls: never "gone" (K5).
+    #[cfg(unix)]
+    #[test]
+    fn unopenable_root_falls_back_to_paths() {
+        // The test runs in the package directory: `"" / Cargo.toml` is a relative path that exists.
+        let t = table_at(&["Cargo.toml", "src/lib.rs", "missing"], "");
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        assert!(t.root_fd().is_none());
+        assert!(t.lexists_meta(0).is_some());
+        let TagOutcome::Tags(tags) = t.tags(
+            FileId(1),
+            Needs {
+                stat: true,
+                encoding: true,
+                shebang: true,
+            },
+        ) else {
+            panic!("src/lib.rs is readable")
+        };
+        assert!(tags.contains("text") && tags.contains("rust"), "{tags}");
+        assert!(t.lexists_meta(2).is_none());
+    }
+
+    #[cfg(unix)]
+    fn table_at(paths: &[&str], root: &str) -> FileTable {
+        FileTable::from_args(paths.iter().map(OsString::from).collect(), Path::new(root))
+    }
+
+    /// The root descriptor and every file the head tier opens carry `FD_CLOEXEC` (a spawned hook inherits neither).
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn descriptors_are_close_on_exec() {
+        use rustix::io::FdFlags;
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("a.unknownext"), b"hello\n").unwrap();
+        let t = FileTable::from_args(vec!["a.unknownext".into()], d.path());
+        let root = t.root_fd().unwrap();
+        assert!(
+            rustix::io::fcntl_getfd(root)
+                .unwrap()
+                .contains(FdFlags::CLOEXEC)
+        );
+        let f = t.open_head(0).unwrap();
+        assert!(
+            rustix::io::fcntl_getfd(&f)
+                .unwrap()
+                .contains(FdFlags::CLOEXEC)
+        );
+        let flags = rustix::fs::fcntl_getfl(&f).unwrap();
+        assert!(flags.contains(rustix::fs::OFlags::NONBLOCK));
+    }
+
+    /// An unreadable file reports pre-commit's `PermissionError` text through the dirfd-relative `openat`.
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_head_reports_the_python_error() {
+        use std::os::unix::fs::PermissionsExt;
+        if rustix::process::geteuid().is_root() {
+            return;
+        }
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("secret.unknownext");
+        std::fs::write(&p, b"x").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let t = FileTable::from_args(vec!["secret.unknownext".into()], d.path());
+        let n = Needs {
+            stat: true,
+            encoding: true,
+            shebang: false,
+        };
+        let TagOutcome::Unreadable(exc) = t.tags(FileId(0), n) else {
+            panic!("chmod 000 must be unreadable")
+        };
+        assert_eq!(&*exc.ty, "PermissionError");
+        assert_eq!(
+            String::from_utf8_lossy(&exc.text),
+            "[Errno 13] Permission denied: 'secret.unknownext'"
+        );
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+
+    /// A root plus name longer than `PATH_MAX` still finds the file relative to the root descriptor, as
+    /// pre-commit's relative `lstat`/`open` in the root do.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn over_long_root_plus_name_counts_as_present() {
+        use rustix::fs::{Mode, OFlags};
+        let d = tempfile::tempdir().unwrap();
+        let comp: String = std::iter::repeat_n('d', 200).collect();
+        // Root: ~12 × 201 bytes (under PATH_MAX); name: 12 × 201 bytes more (the sum is over 4096).
+        let mut root = d.path().to_path_buf();
+        for _ in 0..12 {
+            root.push(&comp);
+        }
+        std::fs::create_dir_all(&root).unwrap();
+        let mut dir = rustix::fs::open(
+            &root,
+            OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .unwrap();
+        let mut rel = String::new();
+        for _ in 0..12 {
+            rustix::fs::mkdirat(&dir, comp.as_str(), Mode::from_raw_mode(0o755)).unwrap();
+            dir = rustix::fs::openat(
+                &dir,
+                comp.as_str(),
+                OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+            .unwrap();
+            rel.push_str(&comp);
+            rel.push('/');
+        }
+        let f = rustix::fs::openat(
+            &dir,
+            "f.py",
+            OFlags::WRONLY | OFlags::CREATE | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o644),
+        )
+        .unwrap();
+        drop(f);
+        rel.push_str("f.py");
+        assert!(root.as_os_str().len() + rel.len() > 4096);
+        let t = FileTable::from_args(vec![rel.into()], &root);
+        let n = Needs {
+            stat: true,
+            encoding: true,
+            shebang: true,
+        };
+        assert!(
+            matches!(t.tags(FileId(0), n), TagOutcome::Tags(tags) if tags.contains("python") && tags.contains("text"))
+        );
     }
 
     #[test]

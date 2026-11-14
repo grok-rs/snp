@@ -5,7 +5,8 @@
 //! that do not exist), trusted git modes and a few filters built from the files' own tags. Checked: no panic; the
 //! name/stat/head tiers agree with full identification for every filter (partial-tier outcome == full-tag outcome,
 //! ADR-041); `Classifier::for_hook` keeps table order and only ids of the table; `relative_to` is boundary-aware
-//! and never returns a slice that is not a suffix of the path.
+//! and never returns a slice that is not a suffix of the path; a `from_args` table's matching view of every name is
+//! the lossy decoding of its bytes (ADR-101).
 //!
 //! Owner: WP-22.
 #![no_main]
@@ -107,6 +108,21 @@ fuzz_target!(|data: &[u8]| {
         buf.extend_from_slice(n);
         spans.push((s, u32::try_from(buf.len()).unwrap_or(u32::MAX)));
         buf.push(0);
+    }
+    // ADR-101: `--files` arguments are joined without a separator, so the arena can be valid UTF-8 while a name
+    // splits a character; every view is still the lossy decoding of the name's own bytes (never "").
+    #[cfg(unix)]
+    {
+        let args: Vec<std::ffi::OsString> = rest
+            .split(|&b| b == 0)
+            .take(16)
+            .map(|a| os(a).to_os_string())
+            .collect();
+        let t = FileTable::from_args(args, dir);
+        for i in 0..t.len() {
+            let id = FileId(u32::try_from(i).unwrap_or(u32::MAX));
+            assert_eq!(t.match_view(id), String::from_utf8_lossy(t.bytes(id)));
+        }
     }
     let mut table = FileTable::from_zbuf(buf, spans, dir);
     let len = table.len();

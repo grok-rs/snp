@@ -327,7 +327,13 @@ pub fn in_root(root: &Path, name: &OsStr) -> PathBuf {
     if name.is_empty() {
         PathBuf::new()
     } else {
-        root.join(name)
+        // `root.join(name)` in one allocation of the final size (ADR-101); `push` keeps join's rule that an
+        // absolute name replaces the root.
+        let root_len = root.as_os_str().len();
+        let mut p = PathBuf::with_capacity(root_len.saturating_add(1).saturating_add(name.len()));
+        p.as_mut_os_string().push(root.as_os_str());
+        p.push(name);
+        p
     }
 }
 
