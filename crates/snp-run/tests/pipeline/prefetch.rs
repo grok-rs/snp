@@ -293,10 +293,33 @@ fn prefetch_adds_no_git_call_to_a_check_added_large_files_commit() {
             .count();
         assert_eq!(added, 1, "SNP_JOBS={jobs}: {got:#?}");
         // the exact list holds for the git range it was taken in (GitCaps changes other calls outside it)
+        // ADR-104(3) starts F (`ls-files -s -z`) and G (`config --list --show-origin -z`) early on a small tree when
+        // Stat mode is possible (three or more CPUs, `stat_oracle_safe` worktree and git dir); F then answers query A
+        // (`ls-files --unmerged`). Which variant runs depends on the machine, so both are exact.
         if exact_list_applies(&env, &root) {
-            assert_eq!(got, EXPECTED_CALF_GIT, "SNP_JOBS={jobs}");
+            let early_fg = expected_calf_git_with_early_fg();
+            assert!(
+                got == EXPECTED_CALF_GIT || got == early_fg,
+                "SNP_JOBS={jobs}: {got:#?}\nexpected {EXPECTED_CALF_GIT:#?}\nor, with ADR-104's early F and G, {early_fg:#?}"
+            );
         }
     }
+}
+
+/// [`EXPECTED_CALF_GIT`] when ADR-104(3) starts F and G at the top of step 6: F and G are added and F answers query
+/// A, so `ls-files --unmerged` is not spawned. The `added` query still runs once, so the prefetch adds no call.
+fn expected_calf_git_with_early_fg() -> Vec<String> {
+    let mut v: Vec<String> = EXPECTED_CALF_GIT
+        .iter()
+        .filter(|a| **a != "ls-files --unmerged")
+        .map(|a| (*a).to_owned())
+        .chain([
+            "config --list --show-origin -z".to_owned(),
+            "ls-files -s -z".to_owned(),
+        ])
+        .collect();
+    v.sort();
+    v
 }
 
 /// Whether the git on the test PATH has the capabilities [`EXPECTED_CALF_GIT`] was recorded with (2.31 ≤ git <
