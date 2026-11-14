@@ -627,8 +627,8 @@ mod tests {
         }
     }
 
-    /// The nightly model check runs `py_vs_lean` isolated under CPython 3.12 against pre-commit-hooks at the commit
-    /// `gen-pch-data` pins for v6.0.0; the seed sweep covers seeds 1-5 and the half-rlimit report.
+    /// The nightly model check runs the Lean audits and `py_vs_lean` isolated under CPython 3.12 against
+    /// pre-commit-hooks at the commit `gen-pch-data` pins for v6.0.0; the seed sweep covers seeds 1-5 and the half-rlimit report.
     #[test]
     fn the_nightly_proof_jobs_use_the_pinned_inputs() {
         let nightly = workflow("nightly.yml");
@@ -638,6 +638,9 @@ mod tests {
             "{models}"
         );
         assert!(models.contains("--expect-python 3.12"), "{models}");
+        // the L1-L5 audits gate 7 blocks on run nightly too, not first at tag time
+        assert!(models.contains("run: cargo xtask proofs lean"), "{models}");
+        assert!(models.contains("deps-lock.sh checkout"), "{models}");
         assert!(models.contains("python-version: \"3.12\""), "{models}");
         let sha = models
             .split("ref: ")

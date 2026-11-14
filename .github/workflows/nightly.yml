@@ -9,7 +9,8 @@
 #   workflow does not duplicate them);
 # * mutants: cargo-mutants on snp-stash, snp-proc (xargs), snp-argparse and snp-pyre;
 # * coverage: llvm-cov over the hermetic suite, published as an artifact;
-# * proofs-models: the Lean models against CPython 3.12 and pre-commit-hooks v6.0.0 (py_vs_lean, ADR-096);
+# * proofs-models: the Lean audits (`proofs lean`) and the models against CPython 3.12 and pre-commit-hooks v6.0.0
+#   (py_vs_lean, ADR-096);
 # * proofs-sweep: the Verus proofs under Z3 seeds 1-5 (a failure fails the job) and at half the rlimit (reported).
 #
 # Jobs that drive an xtask task owned by another package run once that task is implemented: the `tasks` job reports
@@ -355,12 +356,17 @@ jobs:
     # transliterate, `shlex-model` against CPython 3.12's shlex and `eof-model` against pre-commit-hooks v6.0.0's
     # end_of_file_fixer (the commit gen-pch-data pins for the tag; py_vs_lean also checks its setup.cfg version).
     # Exhaustive small inputs plus 10 000 seeded random cases per model, seeded by the run id (a mismatch prints its
-    # seed). Per-PR CI stays free of Python (§13.3).
+    # seed). Per-PR CI stays free of Python (§13.3). The job also runs the audits of `cargo xtask proofs lean` (L1-L5),
+    # which gate 7 makes blocking at tag time while the per-PR `lean` job of proofs.yml is advisory: a Lean regression
+    # that merged under the advisory job turns this job red the next night, not the next tag.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with: { path: snp, persist-credentials: false }
+      - name: User crates at the deps.lock commits
+        run: .github/scripts/deps-lock.sh checkout
+      - run: rustup toolchain install
       - uses: actions/checkout@v4
         with:
           repository: pre-commit/pre-commit-hooks
@@ -378,6 +384,8 @@ jobs:
           axiom-audit: false
           leanchecker: false
           use-mathlib-cache: false
+      - name: Lean audits (L1-L5)
+        run: cargo xtask proofs lean
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - name: py_vs_lean

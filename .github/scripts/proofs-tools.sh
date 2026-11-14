@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Pinned proof tools (ADR-095, docs/VERIFICATION.md §5; owned by WP-00). Used by proofs.yml and
-# `cargo xtask proofs install|verus|mutants|status`; runnable locally.
+# Pinned proof tools (ADR-095, docs/VERIFICATION.md §5; owned by WP-00). Used by
+# `cargo xtask proofs install|verus|mutants|status`, which ci.yml (xtask gates), release.yml (gates) and nightly.yml
+# (proofs-sweep) run (ADR-096); runnable locally.
 #
 #   proofs-tools.sh install   download the Verus release zip and verusfmt pinned in proofs/registry.toml, check
 #                             their sha256, unpack them into the tools directory, and install Verus's rustc

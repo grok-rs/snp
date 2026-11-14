@@ -1612,7 +1612,7 @@ nightly CPython check planned. M1's kernels have landed (docs/VERIFICATION.md §
 kernel edit that broke its proof could merge with only the advisory `proofs.yml` job red. On 2026-11-14 the owner
 decided: "code should be proved". Measured on the M1 tree: `cargo xtask proofs verus` (40 items, 10 mutants) takes
 about 46 s; with `--no-mutants` the root run takes 3–6 s under each of Z3 seeds 1–5 and at `--rlimit 5` (half
-Verus's default of 10); `py_vs_lean` agrees on 413,372 shlex and 39,524 end-of-file-fixer cases in about 100 s.
+Verus's default of 10); `py_vs_lean` agrees on 413,372 shlex and 39,524 end-of-file-fixer cases in about 20 s.
 **Decision.** (1) *Blocking Verus.* The required `xtask gates` job of ci.yml runs `cargo xtask proofs install` and
 `cargo xtask proofs verus` (V1–V4) after `proofs check`, on every push and pull request (no path filter), caching the
 tools directory and `~/.rustup/toolchains/1.99.1-*` under a key of the registry's `[verus]` pins and
@@ -1628,7 +1628,7 @@ that version's CHANGELOG section (the GitHub release notes), optionally a list i
 `- Proof pending: K2-archive-entry (#123): …`; the marker is case-sensitive, the id is matched whole, and lines in
 fenced code blocks do not count. Gate 7 fails for a pending kernel without such a line and for a line that names a
 verified or unknown kernel. With `--allow-unreleased` the `## [Unreleased]` section counts when the version has no
-section. (4) *Nightly.* nightly.yml gains `proofs-models` (lean-action builds the oracle executables; `python3 -I
+section. (4) *Nightly.* nightly.yml gains `proofs-models` (lean-action builds the oracle executables; `cargo xtask proofs lean`; `python3 -I
 xtask/oracle/py_vs_lean.py --expect-python 3.12 --rounds 10000 --seed $GITHUB_RUN_ID` under CPython 3.12 against
 pre-commit-hooks checked out at the v6.0.0 commit gen-pch-data pins) and `proofs-sweep` (`proofs verus --no-mutants
 --smt-option smt.random_seed=N` for N = 1…5, a failure fails the job; then `--rlimit 5`, a failure is a warning in
@@ -1644,7 +1644,11 @@ luck before a Verus bump or an unrelated edit exposes them; a half-rlimit failur
 warns.
 **Consequences.** Every pull request needs green Verus proofs; a kernel edit whose proof is not ready takes the
 escape hatch (`status = "pending"`, unmounted, marker line), and the next release must accept it in its notes or
-re-verify it. `xtask gates` takes about 45 s longer warm and about 2 min cold. A release run installs Verus and Lean
+re-verify it. The pending check also runs per pull request in platform.yml's (non-required) documentation job
+against `## [Unreleased]`, so the PR that takes the escape hatch adds its `Proof pending:` line there and the PR that
+re-verifies the kernel removes it. Lean stays advisory per PR but blocks at gate 7: a Lean regression that merges
+under the advisory job turns the nightly `proofs-models` job red and must be fixed before the next tag. `xtask
+gates` takes about 45 s longer warm and about 2 min cold. A release run installs Verus and Lean
 (a few minutes cold). The kill criterion of ADR-095 (11) still applies: past it the Verus step returns to advisory
 by a new ADR. M1 exit criterion 7 (docs/VERIFICATION.md §12) is met.
 
