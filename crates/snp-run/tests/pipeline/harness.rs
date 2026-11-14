@@ -364,9 +364,9 @@ impl H {
             color: false,
             cwd: None,
             // `SNP_JOBS` of the test process sizes the pool (the suite also runs with 1 and 2 permits, ADR-102)
-            jobs: std::env::var("SNP_JOBS")
-                .ok()
-                .and_then(|v| v.parse().ok())
+            jobs: Env::capture_process()
+                .get_nonempty("SNP_JOBS")
+                .and_then(|v| v.to_str()?.parse().ok())
                 .filter(|&n: &usize| n > 0)
                 .unwrap_or(4),
             cancel_after: None,
