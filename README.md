@@ -1,7 +1,8 @@
 <p align="center">
   <picture>
     <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/logo.png">
-    <img src="docs/assets/logo.gif" alt="snp — You Shell Not Pass: pixel art of a wizard guarding the bridge between a developer's terminal and main. Each git commit flies to him while the fmt, lint and test hooks run: badly formatted code is re-indented on the spot and passes; a commit with a lint error and a failing test is blocked with a slam of his staff and thrown back to the terminal; the fixed commit lands on main and the branch stays green." width="960">
+    <source type="image/webp" srcset="docs/assets/logo.webp">
+    <img src="docs/assets/logo.gif" alt="snp — You Shell Not Pass: a pixel-art wizard guards a stone bridge in front of the repository. He slams his terminal-cursor staff down and a corrupted commit is thrown back, failing lint, test and fmt; it tumbles into the abyss, trips a git hook lever, and the pulse runs along the commit graph in the bridge to recharge his staff just as the next bad commit sneaks up." width="900">
   </picture>
 </p>
 
