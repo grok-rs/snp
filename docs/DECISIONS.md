@@ -16,7 +16,8 @@ ADR-096 the owner's decision to make the Verus proofs blocking;
 ADR-097 the stash re-verification by stat stamps; ADR-098 the tier-1 prefilter; ADR-099 the paired bench gate; ADR-100
 the B8 heap budget and counters; ADR-101 classification CPU and fan-out sizing; ADR-102 native-hook facts; ADR-103
 borrowed hook argv; ADR-104 the step-6 changes of the run pipeline; ADR-105 the hook script template v2; ADR-108 the
-forward-only engine of the tier-1 prefilter; ADR-116 the absorption of cfgv and file-identify into the workspace.
+forward-only engine of the tier-1 prefilter; ADR-112 snp-yaml's owning materialisation; ADR-116 the absorption of cfgv
+and file-identify into the workspace.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -2154,6 +2155,45 @@ peak 11.14 → 8.95 MB; DHAT 295 979 → 288 830 blocks; the largest process's R
 −0.12 % (mean of five alternating runs; its run-to-run spread is ±0.13 %); B1 is −0.25 % from the binary's layout
 alone (glibc's `/proc/self/maps` parse and 46 more relocations; no snp function differs). A pattern whose forward DFA still does not fit the cap costs what it did before; tier 2 is unchanged.
 
+### ADR-112 — snp-yaml materialises by moving what occurs once; the `Node.tag` type change is deferred
+
+*Relates to ADR-002 (snp's own constructor), D-SEC-11 (limits before anything is copied) and ADR-088 (snp-yaml is a
+published crate).*
+
+**Context.** `construct` builds the PyYAML object graph (phase 1), checks cycles and the expanded size on it (phase 2)
+and then materialises the `cfgv::Value` tree (phase 3). Phase 3 read the graph by reference: it cloned every built
+scalar into the tree and dropped the graph's copy afterwards, and it rebuilt a shared collection at each occurrence.
+In `validate-config` on 1,000 hooks (B10) that is about 18,000 string clones. Moving a value out is only sound for a
+node that occurs once in the tree, and "has an alias" is not that test: a mapping merged with `<<` shares its
+unanchored values with the merging mapping, and a list may hold one alias twice. `construct_scalar` follows `=`
+value-key chains through the composed document, so a scalar must not move at construct time either. The wave-3 plan
+also proposed `Node.tag: Cow<'static, str>` (about 21,000 tag allocations in B10). That changes the type of a public
+field of a published crate.
+**Decision.** (1) `construct` consumes its graph. After phase 2 and before anything moves, `Graph::occurrences`
+counts each node's occurrences in the tree, saturating at 2: its number of paths from the root over the built edges
+as stored, with merged pairs included, duplicate keys already dropped and a repeated item counted at each position.
+A depth-first walk marks a node shared when a second edge reaches it, and then everything below a shared node is
+marked shared too. By induction in topological order, that is exactly "two or more paths". Anchor and alias flags are
+not used, and in-degree alone does not decide. (2) In phase 3 a node that occurs once moves its value
+(`Option::take`) and leaves its slot empty. Reaching that slot a second time is the internal invalid-document error,
+never an empty value. A shared scalar is cloned. A shared collection is built once, kept in its slot as a finished
+value and cloned for its later occurrences. (3) Fail closed: if the counts cannot be allocated, phase 3 copies every
+node as before, leaving the graph untouched. (4) Nothing moves at construct time. `emit::redump` and `compose`
+keep borrowing. No public signature changes: `construct(&Document, …)` builds and drops its own graph. (5) The
+`Node.tag: Cow<'static, str>` change is **deferred**. It would break the public API of `snp-yaml`, which ADR-088
+publishes at the workspace version, so it needs an owner decision and a major-version plan. Implicit tags stay
+`Box<str>`.
+**Rationale.** A move is safe exactly when its node occurs once, and the path count tells that without depending on
+the traversal order or on the cache of shared collections. The cache saves rebuilding a shared collection, but
+correctness does not rely on it. The counting walk is linear in the edges, under 1M instructions for B10's 21,000
+nodes. Unit tests compare the classes with exact counts from expanding the tree, over the shared-node fixtures and
+400 generated documents with anchors, aliases, merges, sets, omaps and pairs. They also check that the owned and
+copying paths give the same tree, which slots empty, and that a forged single count is an error.
+**Consequences.** B10 (callgrind, fat-LTO profiling build): `construct` 33.6M → 28.8M instructions, 223,228 → 205,200
+heap blocks; heap peak 9.64 → 9.47 MB, with 86,031 → 64,979 live blocks at the peak. `gc` on 500 configs (B11)
+loses 6,063 blocks. A shared collection holds one extra finished copy until `construct` returns. Loaded values,
+errors and their order (the recursive-node and limit errors come from phase 2, which is unchanged) are the same.
+
 ### ADR-116 — cfgv and file-identify are workspace crates: snp-cfgv and snp-identify
 
 *Supersedes ADR-061. Amends ADR-088 (the publish set), ADR-099 (decision 1: how a base gets its user crates),
@@ -2218,6 +2258,7 @@ touches the consumers.
 `cfgv` and `file-identify`, so the release graph keeps its size (§11.7 budget of 120 packages). A fix made in a
 standalone repository reaches snp only as an explicit port (or `git subtree pull --prefix=crates/snp-… <repo> <rev>`,
 then the workspace adaptation), and the reverse holds for fixes made here. ADR-061 is superseded in full.
+
 ## Appendix A — Open questions of the research documents, resolved
 
 Format: question → decision (ADR or divergence). "Parity" = behave as pre-commit 4.6.2.

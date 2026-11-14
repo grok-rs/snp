@@ -729,6 +729,42 @@ mod acceptance {
         );
     }
 
+    /// Nodes that occur more than once in the loaded value (ADR-112's owning materialisation moves a node only when
+    /// it occurs once): `<<: *a`, `<<: [*a, *b]` whose merged values have no anchor, an aliased collection used
+    /// twice and nested, a scalar alias used as key and value, and a `=` value-key chain that reads a scalar the
+    /// tree also holds. Expected values from the oracle (PyYAML 6.0.3 `CSafeLoader`).
+    #[test]
+    fn shared_nodes_load_as_pyyaml() {
+        let cases = [
+            (
+                "a: &a {x: 1, y: [2, 3]}\nb:\n  <<: *a\n  z: 4\n",
+                "{'a': {'x': 1, 'y': [2, 3]}, 'b': {'x': 1, 'y': [2, 3], 'z': 4}}",
+            ),
+            (
+                "a: &a {x: 1, s: [p, q]}\nb: &b {y: 2, x: 9, t: {u: v}}\nc:\n  <<: [*a, *b]\n  w: 3\n",
+                "{'a': {'x': 1, 's': ['p', 'q']}, 'b': {'y': 2, 'x': 9, 't': {'u': 'v'}}, \
+                 'c': {'y': 2, 'x': 1, 't': {'u': 'v'}, 's': ['p', 'q'], 'w': 3}}",
+            ),
+            (
+                "l: &l [1, {k: v}, [s]]\nm: *l\nn: [*l, *l]\n",
+                "{'l': [1, {'k': 'v'}, ['s']], 'm': [1, {'k': 'v'}, ['s']], \
+                 'n': [[1, {'k': 'v'}, ['s']], [1, {'k': 'v'}, ['s']]]}",
+            ),
+            ("[&m {=: x}, !!str {=: *m}]\n", "[{'=': 'x'}, 'x']"),
+            (
+                "- &s str\n- *s\n- {*s : *s}\n",
+                "['str', 'str', {'str': 'str'}]",
+            ),
+            (
+                "a: &a [&b [&c [x]]]\nb: [*a, *b, *c]\n",
+                "{'a': [[['x']]], 'b': [[[['x']]], [['x']], ['x']]}",
+            ),
+        ];
+        for (text, want) in cases {
+            assert_eq!(value(text).repr(), want, "{text:?}");
+        }
+    }
+
     /// A control character at libyaml's 16 KiB raw-chunk boundary (the reader's slow path, ADR-002 port): inside a
     /// plain scalar on either side of the boundary, after a multi-byte character that straddles it, behind a BOM
     /// (the position counts it), and a scanner error in the first chunk that wins over a control character in the

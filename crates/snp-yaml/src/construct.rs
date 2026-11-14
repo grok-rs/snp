@@ -11,7 +11,10 @@
 //!    represents with self-referencing objects). A `cfgv::Value` is a tree, so a cycle is reported as PyYAML's
 //!    `found unconstructable recursive node`, and the expanded tree must stay within `max_constructed_nodes` and
 //!    `max_depth` (D-SEC-11) — checked on the DAG in linear time, before anything is copied.
-//! 3. **Materialisation** into a `cfgv::Value` with an explicit stack (no recursion).
+//! 3. **Materialisation** into a `cfgv::Value` with an explicit stack (no recursion). It consumes the graph
+//!    (ADR-112): after the limits and before anything moves, each node's number of occurrences in the tree is
+//!    counted over the built edges; a node that occurs once moves its value into the tree, and a shared node is
+//!    built once and cloned for its later occurrences.
 //!
 //! Owner: WP-14.
 
@@ -50,10 +53,13 @@ use crate::{Limits, Mark, Schema, YamlError, compose};
 /// document (`root: None`) is `None`. Python values that a tree cannot hold — a collection that contains itself —
 /// are the error `found unconstructable recursive node` (D-SEC-11).
 pub fn construct(doc: &Document, schema: Schema, lim: &Limits) -> Result<Value, YamlError> {
-    let graph = construct_graph(doc, schema, lim)?;
+    let mut graph = construct_graph(doc, schema, lim)?;
     match graph.root {
         None => Ok(Value::Null),
-        Some(root) => graph.materialize(root, lim),
+        Some(root) => {
+            let occurs = graph.occurrences(root);
+            graph.materialize(root, occurs.as_deref(), lim)
+        }
     }
 }
 
@@ -101,7 +107,8 @@ pub fn load(text: &str, lim: &Limits) -> Result<Value, YamlError> {
 /// What phase 1 built for a node (`constructed_objects[node]`).
 #[derive(Debug, Clone)]
 pub(crate) enum Built {
-    /// A scalar constructor's value (always hashable).
+    /// A scalar constructor's value (always hashable). While [`Graph::materialize`] runs, also the finished value
+    /// of a shared collection.
     Scalar(Value),
     /// A collection whose generator is queued (`yield data` happened, the body has not run).
     Pending(Gen),
@@ -805,13 +812,7 @@ impl<'d> State<'d> {
 
     /// Child `i` of a built node (a mapping's children are key, value, key, value, …).
     fn child(&self, id: NodeId, i: usize) -> Option<NodeId> {
-        match self.built.get(id.index()) {
-            Some(Some(Built::Seq(items) | Built::Set(items))) => items.get(i).copied(),
-            Some(Some(Built::Map(pairs) | Built::Pairs(pairs))) => pairs
-                .get(i.wrapping_div(2))
-                .map(|(k, v)| if i.wrapping_rem(2) == 0 { *k } else { *v }),
-            _ => None,
-        }
+        built_child(&self.built, id, i)
     }
 
     /// Checks the expanded size (nodes, aliases counted at every use) and depth of the root, rejecting cycles.
@@ -969,72 +970,185 @@ impl<'d> State<'d> {
     }
 }
 
+/// [`Graph::occurrences`] of a node: outside the tree, exactly once in it, or at least twice.
+const ABSENT: u8 = 0;
+/// See [`ABSENT`].
+const ONCE: u8 = 1;
+/// See [`ABSENT`].
+const SHARED: u8 = 2;
+
+/// Child `i` of a built node (a mapping's children are key, value, key, value, …; a tuple of `!!omap`/`!!pairs` is
+/// not a node of its own).
+fn built_child(built: &[Option<Built>], id: NodeId, i: usize) -> Option<NodeId> {
+    match built.get(id.index()) {
+        Some(Some(Built::Seq(items) | Built::Set(items))) => items.get(i).copied(),
+        Some(Some(Built::Map(pairs) | Built::Pairs(pairs))) => pairs
+            .get(i.wrapping_div(2))
+            .map(|(k, v)| if i.wrapping_rem(2) == 0 { *k } else { *v }),
+        _ => None,
+    }
+}
+
 impl Graph {
     // --- phase 3: materialisation ------------------------------------------------------------------------------
+
+    /// Child `i` of a built node.
+    fn child(&self, id: NodeId, i: usize) -> Option<NodeId> {
+        built_child(&self.built, id, i)
+    }
+
+    /// How often each node occurs in the materialised tree, saturating at [`SHARED`]: the number of its paths
+    /// from `root` over the built edges as they are stored (merged pairs included, duplicate keys already
+    /// dropped, an item repeated in a list counted at each position). Run after phase 2 (an acyclic graph whose
+    /// expansion fits the limits) and before anything moves.
+    ///
+    /// A node is shared when two edges reach it (the first edge of a depth-first walk visits it, any later edge
+    /// finds it visited) or when it is below a shared node: by induction in topological order that is exactly
+    /// "two or more paths". Anchors and aliases play no part (a mapping merged with `<<` shares its unanchored
+    /// values). `None` when a reservation fails, and the caller copies every node instead.
+    fn occurrences(&self, root: NodeId) -> Option<Vec<u8>> {
+        let mut occurs: Vec<u8> = Vec::new();
+        occurs.try_reserve_exact(self.built.len()).ok()?;
+        occurs.resize(self.built.len(), ABSENT);
+        *occurs.get_mut(root.index())? = ONCE;
+        let mut walk: Vec<(NodeId, usize)> = Vec::new();
+        let mut shared: Vec<NodeId> = Vec::new();
+        walk.try_reserve(1).ok()?;
+        walk.push((root, 0));
+        while let Some(top) = walk.last_mut() {
+            let Some(child) = self.child(top.0, top.1) else {
+                walk.pop();
+                continue;
+            };
+            top.1 = top.1.saturating_add(1);
+            let seen = occurs.get_mut(child.index())?;
+            match *seen {
+                ABSENT => {
+                    *seen = ONCE;
+                    walk.try_reserve(1).ok()?;
+                    walk.push((child, 0));
+                }
+                ONCE => {
+                    *seen = SHARED;
+                    shared.try_reserve(1).ok()?;
+                    shared.push(child);
+                }
+                _ => {}
+            }
+        }
+        // Everything below a shared node is shared; each node is queued at most once.
+        while let Some(id) = shared.pop() {
+            let mut i = 0usize;
+            while let Some(child) = self.child(id, i) {
+                i = i.saturating_add(1);
+                let seen = occurs.get_mut(child.index())?;
+                if *seen != SHARED {
+                    *seen = SHARED;
+                    shared.try_reserve(1).ok()?;
+                    shared.push(child);
+                }
+            }
+        }
+        Some(occurs)
+    }
 
     /// Builds the `cfgv::Value` tree (an explicit stack; at most `max_constructed_nodes` nodes, checked in
     /// phase 2). A collection takes its items off the value stack in one piece and sizes its table up front; a
     /// failed reservation is the node-limit error.
-    fn materialize(&self, root: NodeId, lim: &Limits) -> Result<Value, YamlError> {
+    ///
+    /// With `occurs` ([`Self::occurrences`]) the graph is consumed: a node that occurs once moves its value into
+    /// the tree and leaves its slot empty, so reaching it a second time would be the invalid-document error,
+    /// never a moved-out value; a shared scalar is cloned; a shared collection is built once, kept in its slot
+    /// as a finished value, and cloned for its later occurrences. Without `occurs` every scalar is cloned and
+    /// every occurrence of a collection built again (the copying path; the graph is left as it was).
+    fn materialize(
+        &mut self,
+        root: NodeId,
+        occurs: Option<&[u8]>,
+        lim: &Limits,
+    ) -> Result<Value, YamlError> {
         enum Task {
             Enter(NodeId),
-            Seq(usize),
-            Map(usize),
-            Set(usize),
-            Pairs(usize),
+            Seq(NodeId, usize),
+            Map(NodeId, usize),
+            Set(NodeId, usize),
+            Pairs(NodeId, usize),
+        }
+        /// Queues a collection's children before the task that collects them; `false` for a scalar or a
+        /// pending generator.
+        fn open(tasks: &mut Vec<Task>, id: NodeId, built: &Built) -> bool {
+            match built {
+                Built::Seq(items) => {
+                    tasks.push(Task::Seq(id, items.len()));
+                    tasks.extend(items.iter().rev().map(|c| Task::Enter(*c)));
+                }
+                Built::Set(items) => {
+                    tasks.push(Task::Set(id, items.len()));
+                    tasks.extend(items.iter().rev().map(|c| Task::Enter(*c)));
+                }
+                Built::Map(pairs) => {
+                    tasks.push(Task::Map(id, pairs.len()));
+                    for (k, v) in pairs.iter().rev() {
+                        tasks.push(Task::Enter(*v));
+                        tasks.push(Task::Enter(*k));
+                    }
+                }
+                Built::Pairs(pairs) => {
+                    tasks.push(Task::Pairs(id, pairs.len()));
+                    for (k, v) in pairs.iter().rev() {
+                        tasks.push(Task::Enter(*v));
+                        tasks.push(Task::Enter(*k));
+                    }
+                }
+                Built::Scalar(_) | Built::Pending(_) => return false,
+            }
+            true
         }
         let limit = || YamlError::limit(limit_nodes(lim.max_constructed_nodes), None);
+        let invalid = || YamlError::marked("YAMLError", None, None, INVALID_DOCUMENT, None);
+        let once = |id: NodeId| occurs.is_some_and(|o| o.get(id.index()) == Some(&ONCE));
         let mut tasks = vec![Task::Enter(root)];
         let mut values: Vec<Value> = Vec::new();
         while let Some(task) = tasks.pop() {
-            match task {
-                Task::Enter(id) => match self.built.get(id.index()) {
-                    Some(Some(Built::Scalar(v))) => values.push(v.clone()),
-                    Some(Some(Built::Seq(items))) => {
-                        tasks.push(Task::Seq(items.len()));
-                        tasks.extend(items.iter().rev().map(|c| Task::Enter(*c)));
-                    }
-                    Some(Some(Built::Set(items))) => {
-                        tasks.push(Task::Set(items.len()));
-                        tasks.extend(items.iter().rev().map(|c| Task::Enter(*c)));
-                    }
-                    Some(Some(Built::Map(pairs))) => {
-                        tasks.push(Task::Map(pairs.len()));
-                        for (k, v) in pairs.iter().rev() {
-                            tasks.push(Task::Enter(*v));
-                            tasks.push(Task::Enter(*k));
+            let (id, done) = match task {
+                Task::Enter(id) => {
+                    let Some(slot) = self.built.get_mut(id.index()) else {
+                        return Err(invalid());
+                    };
+                    let handled = if once(id) {
+                        match slot.take() {
+                            Some(Built::Scalar(v)) => {
+                                values.push(v);
+                                true
+                            }
+                            Some(b) => open(&mut tasks, id, &b),
+                            None => false,
                         }
-                    }
-                    Some(Some(Built::Pairs(pairs))) => {
-                        tasks.push(Task::Pairs(pairs.len()));
-                        for (k, v) in pairs.iter().rev() {
-                            tasks.push(Task::Enter(*v));
-                            tasks.push(Task::Enter(*k));
+                    } else {
+                        match slot {
+                            Some(Built::Scalar(v)) => {
+                                values.push(v.clone());
+                                true
+                            }
+                            Some(b) => open(&mut tasks, id, b),
+                            None => false,
                         }
+                    };
+                    if !handled {
+                        return Err(invalid());
                     }
-                    _ => {
-                        return Err(YamlError::marked(
-                            "YAMLError",
-                            None,
-                            None,
-                            INVALID_DOCUMENT,
-                            None,
-                        ));
-                    }
-                },
-                Task::Seq(n) => {
-                    let items = tail(&mut values, n);
-                    values.push(Value::List(items));
+                    continue;
                 }
-                Task::Set(n) => {
+                Task::Seq(id, n) => (id, Value::List(tail(&mut values, n))),
+                Task::Set(id, n) => {
                     let mut set = Set::new();
                     set.try_reserve(n).map_err(|_| limit())?;
                     for k in tail(&mut values, n) {
                         set.insert(k);
                     }
-                    values.push(Value::Set(set));
+                    (id, Value::Set(set))
                 }
-                Task::Map(n) => {
+                Task::Map(id, n) => {
                     let flat = tail(&mut values, n.saturating_mul(2));
                     let mut map = Map::new();
                     map.try_reserve(n).map_err(|_| limit())?;
@@ -1044,9 +1158,9 @@ impl Graph {
                         // is replaced (`IndexMap::insert`).
                         map.insert(k, v);
                     }
-                    values.push(Value::Map(map));
+                    (id, Value::Map(map))
                 }
-                Task::Pairs(n) => {
+                Task::Pairs(id, n) => {
                     let flat = tail(&mut values, n.saturating_mul(2));
                     let mut list = Vec::new();
                     list.try_reserve_exact(n).map_err(|_| limit())?;
@@ -1054,13 +1168,18 @@ impl Graph {
                     while let (Some(k), Some(v)) = (it.next(), it.next()) {
                         list.push(Value::Tuple(vec![k, v]));
                     }
-                    values.push(Value::List(list));
+                    (id, Value::List(list))
                 }
+            };
+            if occurs.is_some()
+                && !once(id)
+                && let Some(slot) = self.built.get_mut(id.index())
+            {
+                *slot = Some(Built::Scalar(done.clone()));
             }
+            values.push(done);
         }
-        values
-            .pop()
-            .ok_or_else(|| YamlError::marked("YAMLError", None, None, INVALID_DOCUMENT, None))
+        values.pop().ok_or_else(invalid)
     }
 }
 
@@ -1276,12 +1395,263 @@ fn construct_timestamp(value: &str) -> Result<Value, YamlError> {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use cfgv::Value;
 
-    use super::tail;
+    use super::{ABSENT, Built, Graph, ONCE, SHARED, construct_graph, tail};
+    use crate::{Limits, NodeId, Schema, YamlError, compose};
 
     fn ints(r: std::ops::Range<i64>) -> Vec<Value> {
         r.map(Value::Int).collect()
+    }
+
+    /// Documents where nodes occur more than once, with and without aliases of their own: merged mappings
+    /// (`<<: *a`, `<<: [*a, *b]`) share their unanchored values, an aliased collection is used twice and nested,
+    /// scalars are shared as keys and values, `!!set`/`!!omap`/`!!pairs` members are shared, and `=` value-key
+    /// chains read a scalar that is also in the tree (`[&m {=: x}, !!str {=: *m}]`).
+    const SHARING: &[&str] = &[
+        "a: &a {x: 1, y: [2, 3]}\nb:\n  <<: *a\n  z: 4\n",
+        "a: &a {x: 1, s: [p, q]}\nb: &b {y: 2, x: 9, t: {u: v}}\nc:\n  <<: [*a, *b]\n  w: 3\n",
+        "l: &l [1, {k: v}, [s]]\nm: *l\nn: [*l, *l]\n",
+        "[&m {=: x}, !!str {=: *m}]\n",
+        "- &s str\n- *s\n- {*s : *s}\n",
+        "a: &a {<<: {x: 1}}\nb: *a\nc: {<<: *a, y: 2}\n",
+        "s: !!set {&k a: null, b: null}\nt: *k\n",
+        "o: !!omap [{&k a: 1}, {b: *k}]\np: !!pairs [{x: &v [1]}, {y: *v}]\n",
+        "a: &a [&b [&c [x]]]\nb: [*a, *b, *c]\n",
+        "{&k 1: one, *k : uno, 1.0: eins, true: wahr}\n",
+        "a: &a {x: &x [1]}\nb: {<<: *a, y: *x}\nc: [*x, *a]\n",
+        "plain: [1, two, {three: 3}]\n",
+        "x\n",
+    ];
+
+    /// A deterministic generator of flow documents for [`generated`]: anchors on any node, aliases only to
+    /// anchors already closed (never a recursive node), merges of closed anchored mappings, scalar or alias
+    /// keys only (no unhashable key), `!!set`, `!!omap` and `!!pairs`.
+    struct Gen {
+        state: u64,
+        out: String,
+        anchors: usize,
+        scalars: Vec<String>,
+        maps: Vec<String>,
+        any: Vec<String>,
+    }
+
+    impl Gen {
+        fn pick(&mut self, n: usize) -> usize {
+            self.state ^= self.state << 13;
+            self.state ^= self.state >> 7;
+            self.state ^= self.state << 17;
+            usize::try_from(self.state % u64::try_from(n).unwrap()).unwrap()
+        }
+
+        fn one_of(&mut self, pool: &[String]) -> String {
+            pool[self.pick(pool.len())].clone()
+        }
+
+        fn anchor(&mut self) -> Option<String> {
+            (self.pick(3) == 0).then(|| {
+                self.anchors += 1;
+                let a = format!("a{}", self.anchors);
+                write!(self.out, "&{a} ").unwrap();
+                a
+            })
+        }
+
+        fn scalar(&mut self) {
+            let a = self.anchor();
+            let s = ["x", "y", "1", "2.5", "true", "~", "'q'", "2001-01-01"][self.pick(8)];
+            self.out.push_str(s);
+            if let Some(a) = a {
+                self.scalars.push(a.clone());
+                self.any.push(a);
+            }
+        }
+
+        /// A key: an alias to a scalar, the `=` value key when `eq` (a mapping or set key; a constructor error
+        /// in an `!!omap`/`!!pairs` item, a sequence or a value), or a scalar.
+        fn key(&mut self, eq: bool) {
+            match self.pick(4) {
+                0 if !self.scalars.is_empty() => {
+                    let a = self.one_of(&self.scalars.clone());
+                    write!(self.out, "*{a} ").unwrap();
+                }
+                1 if eq => self.out.push('='),
+                _ => self.scalar(),
+            }
+        }
+
+        fn node(&mut self, depth: usize) {
+            match if depth == 0 { 0 } else { self.pick(7) } {
+                0 | 1 if !self.any.is_empty() && self.pick(2) == 0 => {
+                    let a = self.one_of(&self.any.clone());
+                    write!(self.out, "*{a}").unwrap();
+                }
+                0 | 1 => self.scalar(),
+                2 | 3 => self.map(depth - 1),
+                4 => self.seq(depth - 1, "", 4, false),
+                5 => {
+                    let a = self.anchor();
+                    self.out.push_str("!!set {");
+                    for i in 0..self.pick(4) {
+                        self.out.push_str(if i == 0 { "" } else { ", " });
+                        self.key(true);
+                    }
+                    self.out.push('}');
+                    if let Some(a) = a {
+                        self.any.push(a);
+                    }
+                }
+                _ => {
+                    let tag = if self.pick(2) == 0 {
+                        "!!omap "
+                    } else {
+                        "!!pairs "
+                    };
+                    self.seq(depth - 1, tag, 3, true);
+                }
+            }
+        }
+
+        fn seq(&mut self, depth: usize, tag: &str, width: usize, pairs: bool) {
+            let a = self.anchor();
+            write!(self.out, "{tag}[").unwrap();
+            for i in 0..self.pick(width) {
+                self.out.push_str(if i == 0 { "" } else { ", " });
+                if pairs {
+                    self.out.push('{');
+                    self.key(false);
+                    self.out.push_str(": ");
+                    self.node(depth);
+                    self.out.push('}');
+                } else {
+                    self.node(depth);
+                }
+            }
+            self.out.push(']');
+            if let Some(a) = a {
+                self.any.push(a);
+            }
+        }
+
+        fn map(&mut self, depth: usize) {
+            let a = self.anchor();
+            self.out.push('{');
+            for i in 0..self.pick(5) {
+                self.out.push_str(if i == 0 { "" } else { ", " });
+                if !self.maps.is_empty() && self.pick(4) == 0 {
+                    let m = self.one_of(&self.maps.clone());
+                    if self.pick(2) == 0 {
+                        write!(self.out, "<<: *{m}").unwrap();
+                    } else {
+                        let n = self.one_of(&self.maps.clone());
+                        write!(self.out, "<<: [*{m}, *{n}]").unwrap();
+                    }
+                } else {
+                    self.key(true);
+                    self.out.push_str(": ");
+                    self.node(depth);
+                }
+            }
+            self.out.push('}');
+            if let Some(a) = a {
+                self.maps.push(a.clone());
+                self.any.push(a);
+            }
+        }
+    }
+
+    /// 400 generated documents (see [`Gen`]): a root mapping of four entries, each up to three levels deep.
+    fn generated() -> Vec<String> {
+        let mut g = Gen {
+            state: 0x9e37_79b9_7f4a_7c15,
+            out: String::new(),
+            anchors: 0,
+            scalars: Vec::new(),
+            maps: Vec::new(),
+            any: Vec::new(),
+        };
+        (0..400)
+            .map(|_| {
+                g.out.clear();
+                g.scalars.clear();
+                g.maps.clear();
+                g.any.clear();
+                for k in 0..4 {
+                    write!(g.out, "k{k}: ").unwrap();
+                    g.node(3);
+                    g.out.push('\n');
+                }
+                g.out.clone()
+            })
+            .collect()
+    }
+
+    /// Every test document: [`SHARING`], then the generated ones.
+    fn corpus() -> Vec<String> {
+        SHARING
+            .iter()
+            .map(|s| (*s).to_owned())
+            .chain(generated())
+            .collect()
+    }
+
+    /// Phases 1 and 2 of `text` with a budget small enough for [`exact_counts`].
+    fn graph(text: &str) -> (Graph, NodeId) {
+        let lim = Limits {
+            max_constructed_nodes: 20_000,
+            ..Limits::default()
+        };
+        let g = compose(text, Schema::PyYaml11Safe, &lim)
+            .and_then(|doc| construct_graph(&doc, Schema::PyYaml11Safe, &lim))
+            .unwrap_or_else(|e: YamlError| panic!("{text:?}: {e}"));
+        let root = g.root.expect("a root");
+        (g, root)
+    }
+
+    /// The variant of each slot of a graph (`None` for an empty one).
+    type Kinds = Vec<Option<std::mem::Discriminant<Built>>>;
+
+    /// [`Kinds`] of `g`.
+    fn kinds(g: &Graph) -> Kinds {
+        g.built
+            .iter()
+            .map(|slot| slot.as_ref().map(std::mem::discriminant))
+            .collect()
+    }
+
+    /// The exact number of occurrences of every node, by expanding the tree.
+    fn exact_counts(g: &Graph, root: NodeId) -> Vec<u64> {
+        let mut counts = vec![0u64; g.built.len()];
+        let mut stack = vec![root];
+        while let Some(id) = stack.pop() {
+            counts[id.index()] += 1;
+            let mut i = 0;
+            while let Some(c) = g.child(id, i) {
+                stack.push(c);
+                i += 1;
+            }
+        }
+        counts
+    }
+
+    /// `text` materialised twice: owned (with its occurrence counts) and copying (which must leave its graph as
+    /// phase 2 built it). Returns the owned graph, the counts, the phase-2 slot variants and both trees.
+    fn both(text: &str) -> (Graph, Vec<u8>, Kinds, Value, Value) {
+        let (mut owned, root) = graph(text);
+        let (mut copied, _) = graph(text);
+        let before = kinds(&copied);
+        let lim = Limits::default();
+        let occurs = owned.occurrences(root).expect("counts");
+        let a = owned.materialize(root, Some(&occurs), &lim).expect("owned");
+        let b = copied.materialize(root, None, &lim).expect("copied");
+        assert_eq!(
+            kinds(&copied),
+            before,
+            "{text:?}: the copying path changed its graph"
+        );
+        (owned, occurs, before, a, b)
     }
 
     /// `tail` takes the last `n` values in order, all of them when `n` is larger, none for 0.
@@ -1299,6 +1669,100 @@ mod tests {
             let got = tail(&mut values, n);
             assert_eq!(values, ints(0..keep), "len {len}, n {n}");
             assert_eq!(got, ints(keep..len), "len {len}, n {n}");
+        }
+    }
+
+    /// The occurrence classes are the exact path counts saturated at 2, for every node (outside the tree: 0).
+    #[test]
+    fn occurrences_are_the_path_counts_saturated_at_two() {
+        let (mut once, mut shared, mut absent) = (0, 0, 0);
+        for text in corpus() {
+            let (g, root) = graph(&text);
+            let occurs = g.occurrences(root).expect("counts");
+            for (i, (&exact, &got)) in exact_counts(&g, root).iter().zip(&occurs).enumerate() {
+                assert_eq!(u64::from(got), exact.min(2), "{text:?}: node {i}");
+                match got {
+                    ONCE => once += 1,
+                    SHARED => shared += 1,
+                    _ => absent += 1,
+                }
+            }
+        }
+        // The corpus exercises every class (merged values and `<<` keys are outside the tree).
+        assert!(
+            once > 5_000 && shared > 1_000 && absent > 100,
+            "{once} once, {shared} shared, {absent} absent"
+        );
+    }
+
+    /// The owned materialisation gives the copying one's tree; it empties exactly the slots of nodes that occur
+    /// once, keeps a value in every shared slot and leaves the nodes outside the tree as phase 2 built them.
+    #[test]
+    fn owned_materialisation_moves_only_single_occurrences() {
+        for text in corpus() {
+            let (owned, occurs, before, a, b) = both(&text);
+            assert_eq!(a, b, "{text:?}");
+            for (i, (slot, built)) in owned.built.iter().zip(&before).enumerate() {
+                match occurs[i] {
+                    ONCE => assert!(slot.is_none(), "{text:?}: node {i} moved"),
+                    SHARED => assert!(
+                        matches!(slot, Some(Built::Scalar(_))),
+                        "{text:?}: node {i} kept"
+                    ),
+                    _ => assert_eq!(
+                        (occurs[i], slot.as_ref().map(std::mem::discriminant)),
+                        (ABSENT, *built),
+                        "{text:?}: node {i} untouched"
+                    ),
+                }
+            }
+        }
+    }
+
+    /// The [`SHARING`] documents load as PyYAML 6.0.3 loads them (`repr`; the `!!set` in insertion order).
+    #[test]
+    fn sharing_documents_match_pyyaml() {
+        let expected = [
+            "{'a': {'x': 1, 'y': [2, 3]}, 'b': {'x': 1, 'y': [2, 3], 'z': 4}}",
+            "{'a': {'x': 1, 's': ['p', 'q']}, 'b': {'y': 2, 'x': 9, 't': {'u': 'v'}}, 'c': {'y': 2, 'x': 1, 't': {'u': 'v'}, 's': ['p', 'q'], 'w': 3}}",
+            "{'l': [1, {'k': 'v'}, ['s']], 'm': [1, {'k': 'v'}, ['s']], 'n': [[1, {'k': 'v'}, ['s']], [1, {'k': 'v'}, ['s']]]}",
+            "[{'=': 'x'}, 'x']",
+            "['str', 'str', {'str': 'str'}]",
+            "{'a': {'x': 1}, 'b': {'x': 1}, 'c': {'x': 1, 'y': 2}}",
+            "{'s': {'a', 'b'}, 't': 'a'}",
+            "{'o': [('a', 1), ('b', 'a')], 'p': [('x', [1]), ('y', [1])]}",
+            "{'a': [[['x']]], 'b': [[[['x']]], [['x']], ['x']]}",
+            "{1: 'wahr'}",
+            "{'a': {'x': [1]}, 'b': {'x': [1], 'y': [1]}, 'c': [[1], {'x': [1]}]}",
+            "{'plain': [1, 'two', {'three': 3}]}",
+            "'x'",
+        ];
+        assert_eq!(expected.len(), SHARING.len());
+        for (text, want) in SHARING.iter().zip(expected) {
+            let (_, _, _, a, b) = both(text);
+            assert_eq!(
+                (a.repr(), b.repr()),
+                (want.to_owned(), want.to_owned()),
+                "{text:?}"
+            );
+        }
+    }
+
+    /// A count that claims one occurrence for a shared node fails closed: the second visit finds the slot empty
+    /// and the result is the invalid-document error, never a tree with a moved-out (empty) value.
+    #[test]
+    fn a_wrong_single_count_is_an_error_not_a_wrong_value() {
+        for text in [
+            "[&s x, *s]\n",
+            "[&l [1], *l]\n",
+            "{a: &m {k: v}, b: {<<: *m}}\n",
+        ] {
+            let (mut g, root) = graph(text);
+            let forged = vec![ONCE; g.built.len()];
+            let e = g
+                .materialize(root, Some(&forged), &Limits::default())
+                .expect_err("second visit");
+            assert_eq!(e.to_string(), crate::messages::INVALID_DOCUMENT, "{text:?}");
         }
     }
 }
