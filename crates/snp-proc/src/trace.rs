@@ -155,7 +155,9 @@ pub(crate) fn render_env(env: &Env) -> String {
 }
 
 /// Emits the `snp::spawn` trace event (nothing is rendered unless a subscriber enables TRACE for it). The logged
-/// argv is `argv` followed by `files` (a hook partition's file arguments; empty for every other spawn).
+/// argv is `argv` followed by `files` (a hook partition's file arguments; empty for every other spawn). The logged
+/// environment is the child's: `env`, for a Critical command with `GIT_TERMINAL_PROMPT=0` in place or last
+/// ([`crate::spawn::critical_env`]; the spawn sets the override on its `Command`, so the snapshot is built only here).
 pub(crate) fn log_spawn(
     argv: &[std::ffi::OsString],
     files: &[&OsStr],
@@ -165,6 +167,8 @@ pub(crate) fn log_spawn(
     group: Group,
 ) {
     if tracing::enabled!(target: "snp::spawn", tracing::Level::TRACE) {
+        let critical = (role == Role::Critical).then(|| crate::spawn::critical_env(env));
+        let env = critical.as_ref().unwrap_or(env);
         tracing::trace!(
             target: "snp::spawn",
             role = ?role,
