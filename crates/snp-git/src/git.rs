@@ -930,25 +930,24 @@ impl Git {
     /// `core.fileMode` and `core.symlinks` true or unset (git's default), and `core.fsmonitor`,
     /// `core.useBuiltinFSMonitor`, `core.ignoreStat`, `core.sparseCheckout` and `index.sparse` false or unset. One
     /// `git config -z --bool --get-regexp`; a value git cannot read as a boolean (an fsmonitor hook path) makes git
-    /// fail, and any failure is `false` (fail closed).
+    /// fail. Only a child that ran and answered can grant the trust (fail closed): a spawn failure, a status other
+    /// than 0 or 1 (no key matched), an exit 1 that printed something or a malformed record is `false`.
     pub fn trusts_index_modes(&self) -> bool {
         const KEYS: &str = "^(core\\.(filemode|symlinks|fsmonitor|usebuiltinfsmonitor|ignorestat|sparsecheckout)|index\\.sparse)$";
         let argv = self.argv(&["config", "-z", "--bool", "--get-regexp", KEYS]);
-        let out = run::capture(
-            self.backend.as_ref(),
-            &argv,
-            &self.env,
-            &self.root,
-            Group::Inherit,
-        );
-        let Ok(records) = (match out.status {
-            0 => ZList::from_z(out.stdout),
-            1 => Ok(ZList::default()),
-            _ => return false,
-        }) else {
+        // not `run::capture`: its spawn failure is `_oserror_to_output`'s status 1, which reads as "no key set"
+        let Ok(out) =
+            self.backend
+                .capture(&argv, &self.env, &self.root, Stdin::Null, Group::Inherit)
+        else {
             return false;
         };
-        trust_config(records.iter())
+        let records = match out.status.0 {
+            0 => ZList::from_z(out.stdout),
+            1 if out.stdout.is_empty() => Ok(ZList::default()),
+            _ => return false,
+        };
+        records.is_ok_and(|r| trust_config(r.iter()))
     }
 
     /// `git ls-files -s -z` (checked): every index entry with its mode, unmerged stages included (ADR-079).
@@ -1435,6 +1434,42 @@ mod tests {
         assert!(!t(&[b"core.other\nfalse"]));
         assert!(!t(&[b"core.filemode\nyes"]));
         assert!(!t(&[b"core.filemode"]));
+    }
+
+    /// ADR-106 (K5): only a `git config` that ran and answered grants the trust. A spawn failure is no answer (not
+    /// `_oserror_to_output`'s status 1, which would read as "no key set"), nor is an exit 1 that printed records,
+    /// another status or a malformed record.
+    #[test]
+    fn trusts_index_modes_fails_closed_without_an_answer() {
+        use crate::testing::{Response, ScriptedBackend};
+        let exit = |code: i64, stdout: &[u8]| Response::Exit {
+            code,
+            stdout: stdout.to_vec(),
+            stderr: Vec::new(),
+        };
+        let scripted = Arc::new(ScriptedBackend::new());
+        let git = scripted_git(Arc::clone(&scripted));
+        scripted.on("config *", exit(1, b""));
+        assert!(
+            git.trusts_index_modes(),
+            "exit 1, nothing printed: no key set"
+        );
+        scripted.on(
+            "config *",
+            exit(0, b"core.filemode\ntrue\0index.sparse\nfalse\0"),
+        );
+        assert!(git.trusts_index_modes());
+        for (what, response) in [
+            ("EAGAIN", Response::SpawnError(11)),
+            ("ENOMEM", Response::SpawnError(12)),
+            ("ENOENT", Response::SpawnError(2)),
+            ("exit 1 with records", exit(1, b"core.filemode\ntrue\0")),
+            ("exit 128", exit(128, b"")),
+            ("exit 0, malformed", exit(0, b"core.filemode\0")),
+        ] {
+            scripted.on("config *", response);
+            assert!(!git.trusts_index_modes(), "{what}");
+        }
     }
 
     fn scripted_git(scripted: Arc<crate::testing::ScriptedBackend>) -> Git {
