@@ -1,12 +1,16 @@
-//! Lookups without a `Value` key: `StrKey` finds the entry the equal
-//! `Value::String` finds.
+//! Lookups without a `Value` key, and the single-probe validators: `StrKey`
+//! finds the entry the equal `Value::String` finds, and `apply_defaults`,
+//! `remove_defaults` and `check` agree with reference models written with the
+//! plain `contains_key` / `get` / `insert` probes of Python cfgv's code.
 
 #[cfg(test)]
 mod probes {
     use std::collections::hash_map::RandomState;
     use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher, Hasher};
 
-    use cfgv::{Map, Set, StrKey, Value};
+    use cfgv::{
+        CheckFn, ConditionValue, Cx, Map, Schema, Set, StrKey, Validator, Value, value_map,
+    };
     use proptest::prelude::*;
 
     /// FNV-1a: a third, fixed-key hasher that is neither `SipHash` flavour.
@@ -119,6 +123,218 @@ mod probes {
                 prop_assert!(same, "{k:?} in {m:?}");
                 prop_assert_eq!(s.get_index_of(&StrKey(k)), s.get_index_of(&Value::from(*k)));
             }
+        }
+    }
+
+    // --- Single-probe validators vs the double-probe reference --------------
+
+    fn s(k: &str) -> Value {
+        Value::from(k)
+    }
+
+    /// Every item kind that probes: optional, optional recurse (default then recurse), conditional optional,
+    /// conditional recurse, required, conditional with `ensure_absent`.
+    fn schema() -> Schema {
+        let inner = || {
+            Schema::map(
+                "R",
+                None,
+                vec![Validator::optional("x", CheckFn::check_any(), 0)],
+            )
+        };
+        Schema::map(
+            "M",
+            None,
+            vec![
+                Validator::optional("a", CheckFn::check_string(), "A"),
+                Validator::optional_recurse("r", inner(), value_map! {}),
+                Validator::conditional_optional(
+                    "b",
+                    CheckFn::check_string(),
+                    "B",
+                    "c",
+                    ConditionValue::Exact(s("yes")),
+                ),
+                Validator::conditional_recurse("q", inner(), "c", ConditionValue::Not(s("no"))),
+            ],
+        )
+    }
+
+    fn check_schema() -> Schema {
+        Schema::map(
+            "M",
+            None,
+            vec![
+                Validator::required("id", CheckFn::check_string()),
+                Validator::conditional_with_absent(
+                    "rev",
+                    CheckFn::check_string(),
+                    "repo",
+                    ConditionValue::NotIn(vec![s("local"), s("meta")]),
+                    true,
+                ),
+                Validator::conditional_optional_with_absent(
+                    "b",
+                    CheckFn::check_string(),
+                    "B",
+                    "c",
+                    ConditionValue::In(vec![s("yes")]),
+                    true,
+                ),
+            ],
+        )
+    }
+
+    fn set_default(m: &mut Map, k: &str, default: Value) {
+        if !m.contains_key(&s(k)) {
+            m.insert(s(k), default);
+        }
+    }
+
+    fn remove_if_default(m: &mut Map, k: &str, default: &Value) {
+        if m.get(&s(k)) == Some(default) {
+            m.shift_remove(&s(k));
+        }
+    }
+
+    fn inner_ref(m: &mut Map, k: &str, apply: bool) {
+        if let Some(Value::Map(inner)) = m.get_mut(&s(k)) {
+            if apply {
+                set_default(inner, "x", Value::Int(0));
+            } else {
+                remove_if_default(inner, "x", &Value::Int(0));
+            }
+        }
+    }
+
+    /// `schema()`'s `apply_defaults` / `remove_defaults`, written as Python cfgv does it.
+    fn reference(mut m: Map, apply: bool) -> Map {
+        let cond_b = m.get(&s("c")) == Some(&s("yes"));
+        if apply {
+            set_default(&mut m, "a", s("A"));
+            set_default(&mut m, "r", value_map! {});
+            inner_ref(&mut m, "r", true);
+            if cond_b {
+                set_default(&mut m, "b", s("B"));
+            }
+        } else {
+            remove_if_default(&mut m, "a", &s("A"));
+            if m.contains_key(&s("r")) {
+                inner_ref(&mut m, "r", false);
+                remove_if_default(&mut m, "r", &value_map! {});
+            }
+            if cond_b {
+                remove_if_default(&mut m, "b", &s("B"));
+            }
+        }
+        if m.get(&s("c")).is_some_and(|c| *c != s("no")) {
+            inner_ref(&mut m, "q", apply);
+        }
+        m
+    }
+
+    fn map_key() -> impl Strategy<Value = Value> {
+        prop_oneof![
+            4 => prop::sample::select(vec!["a", "r", "b", "c", "q", "x", "id", "rev", "repo"]).prop_map(s),
+            1 => Just(Value::Bytes(b"a".to_vec())),
+            1 => Just(Value::Int(1)),
+            1 => Just(Value::Bool(true)),
+        ]
+    }
+
+    fn map_value() -> impl Strategy<Value = Value> {
+        prop_oneof![
+            prop::sample::select(vec!["A", "B", "yes", "no", "local", "meta", "v"]).prop_map(s),
+            Just(value_map! {}),
+            Just(value_map! {"x" => 0}),
+            Just(value_map! {"x" => 1, "y" => 0}),
+            Just(Value::Int(0)),
+            Just(Value::Null),
+        ]
+    }
+
+    fn arb_map() -> impl Strategy<Value = Map> {
+        prop::collection::vec((map_key(), map_value()), 0..10).prop_map(|e| e.into_iter().collect())
+    }
+
+    fn ordered(m: &Map) -> Vec<(&Value, &Value)> {
+        m.iter().collect()
+    }
+
+    /// `check_schema()`'s error message, written as Python cfgv does it (`_check_required`, `_check_conditional`).
+    fn check_reference(m: &Map) -> Option<String> {
+        let leaf = |msg: String| Some(format!("\n==> At M()\n=====> {msg}"));
+        let at = |k: &str, msg: &str| Some(format!("\n==> At M()\n==> At key: {k}\n=====> {msg}"));
+        if !m.contains_key(&s("id")) {
+            return leaf("Missing required key: id".to_owned());
+        }
+        if m.get(&s("id")).and_then(Value::as_str).is_none() {
+            return at(
+                "id",
+                &format!("Expected string got {}", m[&s("id")].type_name()),
+            );
+        }
+        let repo = m.get(&s("repo"));
+        if ConditionValue::NotIn(vec![s("local"), s("meta")]).matches(repo) {
+            if !m.contains_key(&s("rev")) {
+                return leaf("Missing required key: rev".to_owned());
+            }
+            if m.get(&s("rev")).and_then(Value::as_str).is_none() {
+                return at(
+                    "rev",
+                    &format!("Expected string got {}", m[&s("rev")].type_name()),
+                );
+            }
+        } else if m.contains_key(&s("repo"))
+            && let Some(found) = m.get(&s("rev"))
+        {
+            return leaf(format!(
+                "Expected rev to be absent when repo is any of ('local', 'meta'), found rev: {}",
+                found.repr()
+            ));
+        }
+        let c = m.get(&s("c"));
+        if ConditionValue::In(vec![s("yes")]).matches(c) {
+            if let Some(b) = m.get(&s("b"))
+                && b.as_str().is_none()
+            {
+                return at("b", &format!("Expected string got {}", b.type_name()));
+            }
+        } else if m.contains_key(&s("c"))
+            && let Some(found) = m.get(&s("b"))
+        {
+            return leaf(format!(
+                "Expected b to be absent when c is not any of ('yes',), found b: {}",
+                found.repr()
+            ));
+        }
+        None
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        /// Same entries in the same order (Python `setdefault` appends; `del` keeps the order of the rest).
+        #[test]
+        fn defaults_agree_with_the_reference(m in arb_map()) {
+            let schema = schema();
+            let applied = schema.apply_defaults_owned(Value::Map(m.clone()));
+            let expected = reference(m.clone(), true);
+            prop_assert_eq!(applied.as_map().map(ordered), Some(ordered(&expected)));
+            let removed = schema.remove_defaults_owned(Value::Map(m.clone()));
+            let expected = reference(m, false);
+            prop_assert_eq!(removed.as_map().map(ordered), Some(ordered(&expected)));
+        }
+
+        /// Same verdict and byte-identical message (the missing-key error before the value's check, the
+        /// `ensure_absent` branch only when the condition key is present).
+        #[test]
+        fn check_agrees_with_the_reference(m in arb_map()) {
+            let got = check_schema()
+                .check_with(&Value::Map(m.clone()), &mut Cx::discard())
+                .err()
+                .map(|e| e.to_string());
+            prop_assert_eq!(got, check_reference(&m), "{:?}", m);
         }
     }
 }
