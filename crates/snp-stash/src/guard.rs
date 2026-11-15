@@ -273,16 +273,102 @@ impl Write for Compare {
     }
 }
 
+/// The patch bytes between two early writeback requests ([`Writeback`]).
+const WRITEBACK_STEP: u64 = 4 << 20;
+
+/// ADR-117: early writeback of a large patch while git still prints it. Past every [`WRITEBACK_STEP`] bytes a worker
+/// thread `fdatasync`s the patch through its own read-only handle, so the disk writes overlap the diff and step 6's
+/// `fsync` (which still runs, unchanged) only has the tail left. Linux only (on macOS each sync would be an
+/// `F_FULLFSYNC`); a patch below one step never starts the worker. The worker's handle is a file description of its
+/// own: a writeback error it sees is still reported to the writer's final `fsync` (errseq), and the worker's first
+/// error fails the first pass as a write error would (fail closed). A worker that cannot start only means no early
+/// writeback.
+struct Writeback<'scope, 'env> {
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+    worker: Option<(
+        std::sync::mpsc::SyncSender<()>,
+        std::thread::ScopedJoinHandle<'scope, io::Result<()>>,
+    )>,
+    off: bool,
+    written: u64,
+    next: u64,
+    /// `File::sync_data` (a test double in the unit tests).
+    sync: fn(&File) -> io::Result<()>,
+}
+
+impl<'scope, 'env> Writeback<'scope, 'env> {
+    fn new(scope: &'scope std::thread::Scope<'scope, 'env>) -> Self {
+        Self {
+            scope,
+            worker: None,
+            off: !cfg!(any(target_os = "linux", target_os = "android")),
+            written: 0,
+            next: WRITEBACK_STEP,
+            sync: File::sync_data,
+        }
+    }
+
+    /// `n` more bytes went to the writer of `path`; past the next step, a sync is requested (coalesced while one is
+    /// pending).
+    fn wrote(&mut self, n: usize, path: &Path) {
+        self.written = self
+            .written
+            .saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
+        if self.off || self.written < self.next {
+            return;
+        }
+        self.next = self.written.saturating_add(WRITEBACK_STEP);
+        if self.worker.is_none() {
+            let Ok(file) = File::open(path) else {
+                self.off = true;
+                return;
+            };
+            let (tx, rx) = std::sync::mpsc::sync_channel::<()>(1);
+            let sync = self.sync;
+            let spawned = std::thread::Builder::new()
+                .name("snp-writeback".to_owned())
+                .spawn_scoped(self.scope, move || {
+                    while rx.recv().is_ok() {
+                        sync(&file)?;
+                    }
+                    Ok(())
+                });
+            let Ok(h) = spawned else {
+                self.off = true;
+                return;
+            };
+            self.worker = Some((tx, h));
+        }
+        if let Some((tx, _)) = &self.worker {
+            let _pending: Result<(), _> = tx.try_send(());
+        }
+    }
+
+    /// Stops the worker after its pending sync: its first error, if any.
+    fn finish(&mut self) -> io::Result<()> {
+        match self.worker.take() {
+            Some((tx, h)) => {
+                drop(tx);
+                h.join().unwrap_or_else(|_| {
+                    Err(io::Error::other("the patch writeback thread panicked"))
+                })
+            }
+            None => Ok(()),
+        }
+    }
+}
+
 /// The first `diff-index` sink: the patch file (`patches/patch<secs>-<pid>[-<n>]`, `create_new` 0600) is created at
 /// the first byte, so a clean run never touches the store. A creation or write error is kept (and stops the stream)
 /// so the caller can tell a read-only store (X13-ST-04) from a git failure.
-struct LazyPatch<'a> {
+struct LazyPatch<'a, 'scope, 'env> {
     inner: &'a Inner,
     opened: Option<(PathBuf, BufWriter<File>)>,
     failed: Option<(io::Error, PathBuf)>,
+    early: Writeback<'scope, 'env>,
 }
 
-impl Write for LazyPatch<'_> {
+impl Write for LazyPatch<'_, '_, '_> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.failed.is_some() {
             return Err(io::Error::from(io::ErrorKind::BrokenPipe));
@@ -300,11 +386,17 @@ impl Write for LazyPatch<'_> {
         let Some((p, w)) = self.opened.as_mut() else {
             return Err(io::Error::from(io::ErrorKind::BrokenPipe));
         };
-        w.write(buf).map_err(|e| {
-            let kind = e.kind();
-            self.failed = Some((e, p.clone()));
-            io::Error::from(kind)
-        })
+        match w.write(buf) {
+            Ok(n) => {
+                self.early.wrote(n, p);
+                Ok(n)
+            }
+            Err(e) => {
+                let kind = e.kind();
+                self.failed = Some((e, p.clone()));
+                Err(io::Error::from(kind))
+            }
+        }
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -655,19 +747,27 @@ impl Inner {
                 _ => Ok(FirstPass::Nothing { clean: false }),
             };
         }
-        let (first, opened, failed) = {
+        let (first, opened, failed) = std::thread::scope(|s| {
             let mut sink = LazyPatch {
                 inner: self,
                 opened: None,
                 failed: None,
+                early: Writeback::new(s),
             };
             let res = self.git().diff_index_patch(tree, &mut sink);
             let flushed = sink.opened.as_mut().map_or(Ok(()), |(_, w)| w.flush());
             if let (Err(e), Some((p, _))) = (flushed, &sink.opened) {
                 sink.failed = Some((e, p.clone()));
             }
+            // the early writeback's error counts as a write error
+            let synced = sink.early.finish();
+            if let (Err(e), Some((p, _))) = (synced, &sink.opened)
+                && sink.failed.is_none()
+            {
+                sink.failed = Some((e, p.clone()));
+            }
             (res, sink.opened, sink.failed)
-        };
+        });
         let discard = |opened: Option<(PathBuf, BufWriter<File>)>| {
             if let Some((p, w)) = opened {
                 drop(w);
@@ -1463,9 +1563,12 @@ impl Drop for StashGuard {
 #[cfg(test)]
 mod tests {
     use std::fs::File;
+    use std::io;
+    use std::path::Path;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant, SystemTime};
 
-    use super::{CLOCK_SLACK, Compare, LockStamp, clock_consistent};
+    use super::{CLOCK_SLACK, Compare, LockStamp, WRITEBACK_STEP, Writeback, clock_consistent};
 
     /// A stamp taken "now", with `M0` `behind` the wall clock.
     fn stamp(behind: Duration) -> LockStamp {
@@ -1544,5 +1647,76 @@ mod tests {
         assert!(!compare(b"abcdef", &[b"abc"]));
         assert!(!compare(b"abc", &[b"abc", b"d"]));
         assert!(!compare(b"abc", &[b"abcd"]));
+    }
+
+    static SYNCS: AtomicUsize = AtomicUsize::new(0);
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "the signature of `File::sync_data`, which it stands in for"
+    )]
+    fn counted(_: &File) -> io::Result<()> {
+        SYNCS.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn failing(_: &File) -> io::Result<()> {
+        Err(io::Error::from_raw_os_error(5))
+    }
+
+    /// Feeds `chunks` writes of `size` bytes to a [`Writeback`] (Linux behaviour forced on) and returns its outcome.
+    fn writeback(
+        sync: fn(&File) -> io::Result<()>,
+        chunks: usize,
+        size: usize,
+    ) -> (bool, io::Result<()>) {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("patch");
+        std::fs::write(&p, b"x").unwrap();
+        std::thread::scope(|s| {
+            let mut w = Writeback::new(s);
+            w.off = false;
+            w.sync = sync;
+            for _ in 0..chunks {
+                w.wrote(size, &p);
+            }
+            let started = w.worker.is_some();
+            (started, w.finish())
+        })
+    }
+
+    /// ADR-117: a patch below one step never starts the worker; a larger one is synced early (requests coalesce while
+    /// one is pending, so at least one and at most one per step); a failed early sync is the first pass's error.
+    #[test]
+    fn early_writeback_starts_past_a_step_and_reports_its_error() {
+        let step = usize::try_from(WRITEBACK_STEP).unwrap();
+        let (started, res) = writeback(counted, 4, step / 8);
+        assert!(!started);
+        res.unwrap();
+        SYNCS.store(0, Ordering::SeqCst);
+        let (started, res) = writeback(counted, 5, step);
+        assert!(started);
+        res.unwrap();
+        let n = SYNCS.load(Ordering::SeqCst);
+        assert!((1..=5).contains(&n), "{n} syncs");
+        let (started, res) = writeback(failing, 3, step);
+        assert!(started);
+        assert_eq!(res.unwrap_err().raw_os_error(), Some(5));
+    }
+
+    /// A worker that cannot open the patch means no early writeback, not an error.
+    #[test]
+    fn early_writeback_without_the_file_is_off() {
+        std::thread::scope(|s| {
+            let mut w = Writeback::new(s);
+            w.off = false;
+            w.sync = failing;
+            w.wrote(
+                usize::try_from(WRITEBACK_STEP).unwrap(),
+                Path::new("/nonexistent/snp/patch"),
+            );
+            assert!(w.off && w.worker.is_none());
+            w.finish().unwrap();
+        });
     }
 }
