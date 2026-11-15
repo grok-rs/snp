@@ -2347,20 +2347,14 @@ mod tests {
         std::os::unix::fs::symlink("a.py", root.join("link.py")).unwrap();
         std::os::unix::fs::symlink("missing", root.join("broken")).unwrap();
         std::fs::create_dir_all(root.join("dir")).unwrap();
-        let fd = rustix::fs::open(
-            root,
-            rustix::fs::OFlags::PATH | rustix::fs::OFlags::DIRECTORY,
-            rustix::fs::Mode::empty(),
-        )
-        .unwrap();
-        rustix::fs::mknodat(
-            &fd,
-            "fifo",
-            rustix::fs::FileType::Fifo,
-            rustix::fs::Mode::from_raw_mode(0o644),
-            0,
-        )
-        .unwrap();
+        // mkfifo(1) is POSIX; rustix has no mknodat or O_PATH on Apple targets.
+        let st = std::process::Command::new("mkfifo")
+            .arg("-m")
+            .arg("644")
+            .arg(root.join("fifo"))
+            .status()
+            .unwrap();
+        assert!(st.success(), "mkfifo: {st}");
         let _sock = std::os::unix::net::UnixListener::bind(root.join("sock")).unwrap();
         let names = [
             "a.py",
