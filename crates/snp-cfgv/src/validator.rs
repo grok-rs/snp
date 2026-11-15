@@ -2,7 +2,10 @@
 //! warning context.
 
 use std::fmt;
+use std::hash::BuildHasher;
 use std::sync::Arc;
+
+use indexmap::map::raw_entry_v1::{RawEntryApiV1, RawEntryMut};
 
 use crate::check::{CheckFn, join_str};
 use crate::condition::ConditionValue;
@@ -373,16 +376,14 @@ impl fmt::Debug for Validator {
 
 // --- Check logic (cfgv.py `_check_*`) --------------------------------------
 
-/// `_require_key`.
-fn require_key(key: &Value, dct: &Map) -> Result<(), ValidationError> {
-    if dct.contains_key(key) {
-        Ok(())
-    } else {
-        Err(ValidationError::new(format!(
-            "Missing required key: {}",
-            key.try_to_string()?
-        )))
-    }
+/// The check of a present value (the second half of `_check_optional`).
+fn check_present<F>(key: &Value, val: &Value, check: F) -> Result<(), ValidationError>
+where
+    F: FnOnce(&Value) -> Result<(), ValidationError>,
+{
+    // Python formats the context before running the check.
+    key.check_str_digits()?;
+    validate_context(|| format!("At key: {key}"), || check(val))
 }
 
 /// `_check_optional` with an arbitrary check of the value.
@@ -390,34 +391,38 @@ fn check_optional_with<F>(key: &Value, dct: &Map, check: F) -> Result<(), Valida
 where
     F: FnOnce(&Value) -> Result<(), ValidationError>,
 {
-    match dct.get(key) {
-        Some(val) => {
-            // Python formats the context before running the check.
-            key.check_str_digits()?;
-            validate_context(|| format!("At key: {key}"), || check(val))
-        }
-        None => Ok(()),
-    }
+    dct.get(key)
+        .map_or(Ok(()), |val| check_present(key, val, check))
 }
 
-/// `_check_required` with an arbitrary check of the value.
+/// `_check_required` (`_require_key`, then `_check_optional`) with an
+/// arbitrary check of the value, in one probe: a missing key is the error,
+/// a present one is checked.
 fn check_required_with<F>(key: &Value, dct: &Map, check: F) -> Result<(), ValidationError>
 where
     F: FnOnce(&Value) -> Result<(), ValidationError>,
 {
-    require_key(key, dct)?;
-    check_optional_with(key, dct, check)
+    match dct.get(key) {
+        Some(val) => check_present(key, val, check),
+        None => Err(ValidationError::new(format!(
+            "Missing required key: {}",
+            key.try_to_string()?
+        ))),
+    }
 }
 
-/// The `ensure_absent` branch of `_check_conditional`.
+/// The `ensure_absent` branch of `_check_conditional`. `condition` is the
+/// condition key's value (`None` when it is missing), which the caller has
+/// already read to evaluate the condition.
 fn check_ensure_absent(
     key: &Value,
     condition_key: &Value,
     condition_value: &ConditionValue,
     ensure_absent: bool,
+    condition: Option<&Value>,
     dct: &Map,
 ) -> Result<(), ValidationError> {
-    if !ensure_absent || !dct.contains_key(condition_key) {
+    if !ensure_absent || condition.is_none() {
         return Ok(());
     }
     match dct.get(key) {
@@ -445,25 +450,41 @@ fn extra_keys<'a>(dct: &'a Map, keys: &[Value]) -> Vec<&'a Value> {
 /// Applies or removes defaults of a nested schema in place.
 fn recurse_in_place(dct: &mut Map, key: &Value, schema: &Schema, apply: bool) {
     if let Some(slot) = dct.get_mut(key) {
-        if apply {
-            schema.apply_defaults_in_place(slot);
-        } else {
-            schema.remove_defaults_in_place(slot);
+        transform_slot(slot, schema, apply);
+    }
+}
+
+/// Applies or removes the defaults of a nested schema to one value.
+fn transform_slot(slot: &mut Value, schema: &Schema, apply: bool) {
+    if apply {
+        schema.apply_defaults_in_place(slot);
+    } else {
+        schema.remove_defaults_in_place(slot);
+    }
+}
+
+/// `dct.setdefault(key, default)` in one probe: the key is hashed once, and
+/// the key and the default are cloned only when the key is missing (then
+/// inserted at the end, like Python). Returns the value now under `key`.
+fn set_default<'a>(dct: &'a mut Map, key: &Value, default: &Value) -> &'a mut Value {
+    let hash = dct.hasher().hash_one(key);
+    match dct.raw_entry_mut_v1().from_key_hashed_nocheck(hash, key) {
+        RawEntryMut::Occupied(slot) => slot.into_mut(),
+        // `hash` is the map's own hash of `key`, and a clone hashes alike.
+        RawEntryMut::Vacant(slot) => {
+            slot.insert_hashed_nocheck(hash, key.clone(), default.clone())
+                .1
         }
     }
 }
 
-/// `dct.setdefault(key, default)`.
-fn set_default(dct: &mut Map, key: &Value, default: &Value) {
-    if !dct.contains_key(key) {
-        dct.insert(key.clone(), default.clone());
-    }
-}
-
-/// `if dct.get(key, MISSING) == default: del dct[key]` (order-preserving).
+/// `if dct.get(key, MISSING) == default: del dct[key]` (order-preserving),
+/// in one probe.
 fn remove_if_default(dct: &mut Map, key: &Value, default: &Value) {
-    if dct.get(key) == Some(default) {
-        dct.shift_remove(key);
+    if let Some((index, _, val)) = dct.get_full(key)
+        && val == default
+    {
+        dct.shift_remove_index(index);
     }
 }
 
@@ -498,10 +519,18 @@ impl Validator {
                 condition_value,
                 ensure_absent,
             } => {
-                if condition_value.matches(dct.get(condition_key)) {
+                let condition = dct.get(condition_key);
+                if condition_value.matches(condition) {
                     check_required_with(key, dct, |v| check_fn.check(v))
                 } else {
-                    check_ensure_absent(key, condition_key, condition_value, *ensure_absent, dct)
+                    check_ensure_absent(
+                        key,
+                        condition_key,
+                        condition_value,
+                        *ensure_absent,
+                        condition,
+                        dct,
+                    )
                 }
             }
             Self::ConditionalOptional {
@@ -512,10 +541,18 @@ impl Validator {
                 ensure_absent,
                 ..
             } => {
-                if condition_value.matches(dct.get(condition_key)) {
+                let condition = dct.get(condition_key);
+                if condition_value.matches(condition) {
                     check_optional_with(key, dct, |v| check_fn.check(v))
                 } else {
-                    check_ensure_absent(key, condition_key, condition_value, *ensure_absent, dct)
+                    check_ensure_absent(
+                        key,
+                        condition_key,
+                        condition_value,
+                        *ensure_absent,
+                        condition,
+                        dct,
+                    )
                 }
             }
             Self::ConditionalRecurse {
@@ -525,10 +562,18 @@ impl Validator {
                 condition_value,
                 ensure_absent,
             } => {
-                if condition_value.matches(dct.get(condition_key)) {
+                let condition = dct.get(condition_key);
+                if condition_value.matches(condition) {
                     check_required_with(key, dct, |v| schema.check_with(v, cx))
                 } else {
-                    check_ensure_absent(key, condition_key, condition_value, *ensure_absent, dct)
+                    check_ensure_absent(
+                        key,
+                        condition_key,
+                        condition_value,
+                        *ensure_absent,
+                        condition,
+                        dct,
+                    )
                 }
             }
             Self::NoAdditionalKeys { keys } => {
@@ -557,15 +602,14 @@ impl Validator {
     pub fn apply_default(&self, dct: &mut Map) {
         match self {
             Self::RequiredRecurse { key, schema } => recurse_in_place(dct, key, schema, true),
-            Self::Optional { key, default, .. } => set_default(dct, key, default),
+            Self::Optional { key, default, .. } => {
+                set_default(dct, key, default);
+            }
             Self::OptionalRecurse {
                 key,
                 schema,
                 default,
-            } => {
-                set_default(dct, key, default);
-                recurse_in_place(dct, key, schema, true);
-            }
+            } => transform_slot(set_default(dct, key, default), schema, true),
             Self::ConditionalOptional {
                 key,
                 default,
@@ -608,9 +652,11 @@ impl Validator {
                 schema,
                 default,
             } => {
-                if dct.contains_key(key) {
-                    recurse_in_place(dct, key, schema, false);
-                    remove_if_default(dct, key, default);
+                if let Some((index, _, slot)) = dct.get_full_mut(key) {
+                    transform_slot(slot, schema, false);
+                    if *slot == *default {
+                        dct.shift_remove_index(index);
+                    }
                 }
             }
             Self::ConditionalOptional {
