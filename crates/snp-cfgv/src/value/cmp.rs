@@ -128,16 +128,54 @@ impl PartialEq for Value {
 
 impl Eq for Value {}
 
+/// The hash of a `str` value: shared by [`Value`] and [`StrKey`], so the two
+/// agree under every hasher by construction.
+fn hash_str<H: Hasher>(s: &str, state: &mut H) {
+    state.write_u8(TAG_STR);
+    s.hash(state);
+}
+
+/// A borrowed `str` that looks up the [`Value::String`] key equal to it in a
+/// [`Map`](super::Map) or [`Set`](super::Set), by hash, without building a
+/// `Value`: `map.get(&StrKey("id"))` is `map.get(&Value::from("id"))` with no
+/// allocation.
+///
+/// It hashes exactly like the equal `Value::String` and is
+/// [`Equivalent`](indexmap::Equivalent) only to a `Value::String` with the
+/// same contents (Python: `'1' != 1`, `'id' != b'id'`), so it finds the very
+/// entry the `Value` key finds, or none when that finds none.
+///
+/// ```
+/// use cfgv::{Map, StrKey, Value};
+///
+/// let mut m = Map::new();
+/// m.insert(Value::Bytes(b"id".to_vec()), Value::Int(1));
+/// assert_eq!(m.get(&StrKey("id")), None);
+/// m.insert(Value::from("id"), Value::Int(2));
+/// assert_eq!(m.get(&StrKey("id")), Some(&Value::Int(2)));
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct StrKey<'a>(pub &'a str);
+
+impl Hash for StrKey<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        hash_str(self.0, state);
+    }
+}
+
+impl indexmap::Equivalent<Value> for StrKey<'_> {
+    fn equivalent(&self, key: &Value) -> bool {
+        matches!(key, Value::String(s) if s == self.0)
+    }
+}
+
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
         if let Some(n) = self.as_num() {
             return hash_num(n, state);
         }
         match self {
-            Self::String(s) => {
-                state.write_u8(TAG_STR);
-                s.hash(state);
-            }
+            Self::String(s) => hash_str(s, state),
             Self::Bytes(b) => {
                 state.write_u8(TAG_BYTES);
                 b.hash(state);
