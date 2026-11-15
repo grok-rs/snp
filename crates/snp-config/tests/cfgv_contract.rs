@@ -12,7 +12,7 @@ mod cfgv_bindings {
 
     use cfgv::{
         BigInt, CheckFn, Cx, Date, DateTime, LoadError, Map, MapItem, RegexCheck, RegexPattern,
-        Schema, Set, ValidationError, Validator, Value,
+        Schema, Set, StrKey, ValidationError, Validator, Value,
     };
 
     fn send_sync<T: Send + Sync>() {}
@@ -92,6 +92,21 @@ mod cfgv_bindings {
         send_sync::<Schema>();
         send_sync::<CheckFn>();
         send_sync::<ValidationError>();
+    }
+
+    /// `StrKey` (`PriorityAliases`, the dump marker, the rev-line rewrite): the entry of the equal `str` key, never a
+    /// key of another type.
+    #[test]
+    fn str_key() {
+        let mut m = Map::new();
+        m.insert(Value::Bytes(b"repo".to_vec()), Value::Int(1));
+        assert_eq!(m.get(&StrKey("repo")), None);
+        m.insert(Value::from("repo"), Value::Int(2));
+        let key: StrKey<'_> = StrKey("repo");
+        assert_eq!(m.get(&key), Some(&Value::Int(2)));
+        assert!(m.contains_key(&StrKey("repo")));
+        let set: Set = std::iter::once(Value::from("a")).collect();
+        assert!(set.contains(&StrKey("a")));
     }
 
     #[test]
