@@ -2414,10 +2414,13 @@ a partial set cached by an earlier hook that needed only the name tier. A run to
   hook (a crate-private refinement of `Needs`, which stays a published struct with three public fields; the public
   `tags` keeps asking for full identification). A file that already has a stat tier answers from it; a file that
   has a meta cell gets its stat tier built from that same observation, never a second `lstat` (so D-CRASH-08's
-  memo semantics are unchanged), and a meta taken from a trusted index mode stays `Trusted`. The classifier's
-  pending `lexists` metas are adopted into the meta tier for a meta-only first hook, into the stat tier otherwise;
-  when every kept file was trusted there is no pending column at all. A kind file-identify adds later is
-  classified in full (fail closed).
+  memo semantics are unchanged), and a meta taken from a trusted index mode stays `Trusted`. When trusted index
+  modes serve a run with a filter that needs shebang tags, `FileTable::query` keeps every filter off the meta tier:
+  there a file without name tags gets no trusted cell and takes its `lstat` at its first identification (ADR-106),
+  and only classifying the name tells which files those are, so such a run classifies exactly as without the meta
+  tier. The classifier's pending `lexists` metas are adopted into the meta tier for a meta-only first hook, into the
+  stat tier otherwise; when every kept file was trusted there is no pending column at all. A kind file-identify
+  adds later is classified in full (fail closed).
   A filter referencing only name-derived tags (`python`, `yaml`, …) still needs the stat tier: identify tags a
   symlink, directory or socket with its type tag alone (`link.py` is not `python`), so the name tier alone answers
   only filters that reference no tag at all.

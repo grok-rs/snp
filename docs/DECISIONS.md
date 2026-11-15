@@ -2270,28 +2270,40 @@ count as regular files, as in `FileTable::classify`; a kind file-identify adds l
 tier decides (fail closed). (2) *One observation.* A file that has a stat tier answers a meta-only query from it; the
 stat tier of a file with a meta cell is built from that meta, never from a second `lstat`, and a trusted meta stays
 `Trusted`; a meta-only query that observes the executable bit of a trusted meta takes the `lstat` answer from the
-exact cells (ADR-106 decision (4)). `known_vanished` reads the meta cell until a stat tier exists, `tiers_ready`
-counts the meta cell for a meta-only query, `retain_lexists` compacts the column. (3) *Adoption.* The first hook
-after `Classifier::new` adopts the pending `lexists` metas into the meta tier when its filter is meta-only and into the
-stat tier otherwise, never over a computed cell; when every kept file was trusted there is no pending column at
-all. (4) *API.* `Needs`, a published struct with three public fields, is unchanged (a field would break every struct
-literal of it): the refinement is a crate-private `Query` (the tiers, ADR-106's executable-bit rule and the
-meta-only rule) built by `HookFilter::query`, and the public `FileTable::tags` keeps asking for full identification.
-(5) *Reservations.* `Classifier::new` reserves `kept` once with `try_reserve_exact` (never an in-place collect, which
-would keep the larger `(FileId, Option<Meta>)` buffer for the run); `par_chunks_on` returns the first error in index
-order before reserving anything, otherwise reuses the first partition and reserves the rest once; a failed
-reservation means ordinary growth. `for_hook` reserves nothing per partition (that would over-reserve for selective
-hooks).
+exact cells (ADR-106 decision (4)). ADR-106 decision (4) is kept as it stands: when trusted index modes serve a run
+with a filter that needs shebang tags, a file without name tags gets no trusted cell and takes its `lstat` at its
+first identification, and only classifying its name tells which files those are, so in such a run no filter is
+meta-only (`FileTable::query` clears the flag once per hook; the trust is fixed before the classifier shares the
+table) and classification is exactly ADR-106's. Every trusted meta cell therefore gives a trusted stat tier.
+`known_vanished` reads the meta cell until a stat tier exists, `tiers_ready` counts the meta cell for a meta-only
+query, `retain_lexists` compacts the column. (3) *Adoption.* The first hook after `Classifier::new` adopts the
+pending `lexists` metas into the meta tier when its filter is meta-only and into the stat tier otherwise, never over a
+computed cell; when every kept file was trusted there is no pending column at all. (4) *API.* `Needs`, a published
+struct with three public fields, is unchanged (a field would break every struct literal of it): the refinement is a
+crate-private `Query` (the tiers, ADR-106's executable-bit rule and the meta-only rule) built by `HookFilter::query`
+and weighed against the table's trust by `FileTable::query`, and the public `FileTable::tags` keeps asking for full
+identification. (5) *Reservations.* `Classifier::new` reserves `kept` once with `try_reserve_exact` (never an
+in-place collect, which would keep the larger `(FileId, Option<Meta>)` buffer for the run); `par_chunks_on` returns
+the first error in index order before reserving anything, otherwise reuses the first partition and reserves the rest
+once; a failed reservation means ordinary growth. `for_hook` reserves nothing per partition (that would over-reserve
+for selective hooks).
 **Rationale.** Exact by construction: the filter references only meta tags, and `meta_tags(m)` is full
 identification's tags restricted to the meta tags for every name, shebang and content. Tests pin it: a property test
 over every kind, both executable bits, arbitrary names and contents, through file-identify's `classify` and snp's
 mapping; no entry of identify's `NAMES`, `EXTENSIONS`, `EXTENSIONS_NEED_BINARY_CHECK` or `INTERPRETERS` tables holds a
 meta tag; a filesystem differential over every kind of entry (a meta-only query never reads content, so it is never
 `Unreadable`, and it is `Vanished` exactly where the stat tier is); and classifier runs in which meta-only and content
-hooks give the same files and errors alone, first or last, with and without trusted modes. D-CRASH-08's semantics
-are unchanged: a later stat tier is the first observation, so a file deleted after a meta-only hook keeps its name
-tags and is dropped by the first hook that needs its content, as with the stat tier before. A stat tier that ignores
-the meta cell, and a wrong meta tag, each fail several of these tests.
+hooks give the same files and errors alone, first or last, untrusted and trusted (declared with and without a shebang
+filter). D-CRASH-08's semantics are unchanged: a later stat tier is the first observation, so a file deleted after a
+meta-only hook keeps its name tags and is dropped by the first hook that needs its content, as with the stat tier
+before. A stat tier that ignores the meta cell, and a wrong meta tag, each fail several of these tests. Review found
+that taking the meta cell from the index in a shebang run as well broke parity: a file without name tags then took
+its first `lstat` when a later hook needed its name tags, after a hook could have changed its executable bit, so a
+`[python]` hook after a `[file]` hook that ran `chmod +x` on an extensionless script got the file, and `chmod -x` or
+a deletion lost one, where pre-commit's memo of the first identification decides. A regression test runs those
+changes after a meta-only and a `text` first hook, untrusted and trusted, against pre-commit's outcomes. Refusing
+the index meta per file instead would classify each file at the meta-only hook and again when its stat tier is
+built: twice ADR-106's classification work in exactly these runs.
 **Consequences.** Measured on private copies of the bench fixtures with the profiling build (fat LTO) against the
 ADR-106 tree, callgrind instructions and dhat of the snp process. The classifier's thread count follows
 `available_parallelism`, which reads a cgroup CPU quota the local governor changes during a run, so each pair ran
@@ -2304,10 +2316,18 @@ unchanged. A config whose meta-only hook runs before a hook that needs name tags
 with `[file]` then `[text]` cost 0.33% more instructions and 0.34 MB more heap peak, `[text]` then `[file]` 0.45% more
 and 0.06 MB less (one job). Allocation counts hardly move (B4 56,866 → 56,833 blocks, B12u −139): most of the
 expected saving was the per-partition growth that only the rejected per-chunk reservation removes. Output, exit
-status, hook argv and the snp process's `statx`, `openat` and `read` counts are identical on B4, B5, B6 and B12u
-(B12u's output also matches pre-commit 4.7.0's). Two other layouts (the meta-only answer out of line; the per-file
-loop monomorphised per query kind) measured worse in every scenario. Not done: the plan's public `Needs.meta_only`
-field (a breaking change of a published crate) and the per-chunk reservation in `for_hook` (rejected).
+status, hook argv and the snp process's `statx` and `openat` counts are identical on B4, B5, B6 and B12u, and so
+are its `read` counts up to the few dozen by which pipe reads of child output vary between runs of one binary
+(B12u's output also matches pre-commit 4.7.0's). Keeping shebang runs off the meta tier (one job, CPUs 0-3 pinned):
+50,000 files trusted with `[file]` then `[python]` run 172.86 M instructions under ADR-106, 173.00 M with the first
+draft and 172.53 M now, with one `FileTable::classify` per file (37.85 M under ADR-106, 37.84 M now) and the same
+`statx` and `openat` counts; the heap peak is ADR-106's again (9.08 MB, now 9.02 MB) where the draft's was 6.89 MB,
+because the draft built the stat column at the `[python]` hook, the deferral that broke parity (keeping it for files
+with name tags would need file-identify to classify from precomputed name tags, or a second classification per
+file). B4 (103.84 M → 103.76 M), B5, B12u and the classifier's share of B6 do not move beyond run-to-run noise.
+Two other layouts (the meta-only answer out of line; the per-file loop monomorphised per query kind) measured worse
+in every scenario. Not done: the plan's public `Needs.meta_only` field (a breaking change of a published crate) and
+the per-chunk reservation in `for_hook` (rejected).
 
 ### ADR-112 — snp-yaml materialises by moving what occurs once; the `Node.tag` type change is deferred
 

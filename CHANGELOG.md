@@ -116,7 +116,9 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   `executable`, `non-executable`) are classified from each file's kind and executable bit alone, without computing
   name tags (ADR-110). `run --all-files` on 50,000 files with the default filter runs about 27% fewer instructions
   in snp and its heap peaks about 3 MB lower. A file's later name-tag or content classification reuses that first
-  observation, as before. Output, argv and errors are unchanged.
+  observation, as before. A clean `run --all-files` that also has a hook filtering on an interpreter tag (`python`,
+  `shell`, …) classifies as it did before this change: there a file whose name gives no tags must be classified in
+  full at its first hook. Output, argv and errors are unchanged.
 
 - Benchmarks (developer tooling, no runtime change): pull requests and pushes measure the base commit's snp, built
   against its own `deps.lock` crates and toolchain and primed into its own stores, in interleaved ABBA rounds with the
