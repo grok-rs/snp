@@ -9,7 +9,8 @@
 //! Owner: WP-21.
 
 use cfgv::{
-    CheckFn, ConditionValue, Cx, Map, MapItem, ValidationError, Validator, Value, validate_context,
+    CheckFn, ConditionValue, Cx, Map, MapItem, StrKey, ValidationError, Validator, Value,
+    validate_context,
 };
 use file_identify::Tag;
 use snp_core::brand::Brand;
@@ -595,8 +596,9 @@ impl MapItem for PriorityAliases {
                 let Some(name) = get(hook, "priority").and_then(Value::as_str) else {
                     continue;
                 };
-                // Hashed: one probe per hook into a user-sized dict (a scan would cost hooks × priorities).
-                if defined.is_some_and(|d| d.contains_key(&Value::from(name))) {
+                // Hashed, through `StrKey` (no key allocation): one probe per hook into a user-sized dict (a scan
+                // would cost hooks × priorities).
+                if defined.is_some_and(|d| d.contains_key(&StrKey(name))) {
                     continue;
                 }
                 let repo_id =

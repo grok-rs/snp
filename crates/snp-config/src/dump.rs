@@ -2,7 +2,7 @@
 //!
 //! Owner: WP-21.
 
-use cfgv::{Map, Value};
+use cfgv::{Map, StrKey, Value};
 
 use crate::overlay::{marker_key, skip_groups_key};
 use crate::{Config, messages};
@@ -58,11 +58,11 @@ pub fn effective_dump(cfg: &Config, json: bool) -> String {
     let mut out = String::new();
     if let Some(m) = marker.as_ref().and_then(Value::as_map) {
         let path = m
-            .get(&Value::from("path"))
+            .get(&StrKey("path"))
             .and_then(Value::as_str)
             .unwrap_or_default();
         let fields: Vec<String> = m
-            .get(&Value::from("fields"))
+            .get(&StrKey("fields"))
             .and_then(Value::as_array)
             .unwrap_or_default()
             .iter()
