@@ -144,6 +144,28 @@ impl St {
         Self::from_result(std::fs::metadata(p))
     }
 
+    /// `(lstat, stat)` of an input: what [`Self::lstat`] and [`Self::stat`] return, from one `lstat` call unless the
+    /// path is a symlink.
+    fn lstat_and_stat(p: &Path) -> (Self, Self) {
+        Self::lstat_then_stat(p, Self::stat)
+    }
+
+    /// [`Self::lstat_and_stat`] with the `stat` call passed in (the tests count it).
+    ///
+    /// Only a symlink as the last component makes `stat` resolve a path differently from `lstat`. Otherwise both
+    /// resolve the leading components alike and end at the same inode, or fail at the same component with the same
+    /// error, so the raw `lstat` result (before [`Self::dir_identity`]) is the `stat` result. Off Unix (where Stat
+    /// mode never runs) a reparse point that is not a symlink breaks that argument, so `stat` is always called there.
+    fn lstat_then_stat(p: &Path, stat: impl FnOnce(&Path) -> Self) -> (Self, Self) {
+        let raw = Self::from_result(std::fs::symlink_metadata(p));
+        let follow = if cfg!(unix) && raw.kind != Kind::Symlink {
+            raw
+        } else {
+            stat(p)
+        };
+        (raw.dir_identity(), follow)
+    }
+
     #[cfg(unix)]
     fn from_metadata(md: &std::fs::Metadata) -> Self {
         use std::os::unix::fs::MetadataExt;
@@ -430,9 +452,10 @@ fn stat_all(paths: &[PathBuf]) -> Vec<St> {
     par_map(paths, |p| St::lstat(p))
 }
 
-/// `(lstat, stat)` of every input (parallel chunks above [`PARALLEL_STAT`]).
+/// `(lstat, stat)` of every input (parallel chunks above [`PARALLEL_STAT`]): one `lstat` per input, plus a `stat` for
+/// each symlink ([`St::lstat_and_stat`]).
 fn stat_inputs(inputs: &[(PathBuf, InputKind)]) -> Vec<(St, St)> {
-    par_map(inputs, |(p, _)| (St::lstat(p), St::stat(p)))
+    par_map(inputs, |(p, _)| St::lstat_and_stat(p))
 }
 
 fn snapshot_with(
@@ -781,5 +804,131 @@ impl DiffOracle {
         let d = self.git.diff_fingerprint()?;
         self.last = Some(d);
         Ok(d.non_empty)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The reference: an `lstat` and a `stat` call per input, as `stat_inputs` took them before.
+    fn two_calls(p: &Path) -> (St, St) {
+        (St::lstat(p), St::stat(p))
+    }
+
+    /// [`St::lstat_then_stat`] and how many times it called `stat`.
+    fn counted(p: &Path) -> ((St, St), usize) {
+        let mut calls = 0_usize;
+        let got = St::lstat_then_stat(p, |p| {
+            calls += 1;
+            St::stat(p)
+        });
+        (got, calls)
+    }
+
+    /// A regular file and a directory take one `lstat` and no `stat` on Unix (off Unix `stat` is always called); the
+    /// `stat` half of a directory keeps the size and times its `lstat` half drops.
+    #[test]
+    fn a_file_or_a_directory_takes_one_call_on_unix() {
+        let d = tempfile::tempdir().unwrap();
+        let file = d.path().join("file");
+        let dir = d.path().join("dir");
+        std::fs::write(&file, "x = 1\n").unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("entry"), "e").unwrap();
+        for (p, kind) in [(&file, Kind::File), (&dir, Kind::Dir)] {
+            let ((l, s), calls) = counted(p);
+            assert_eq!((l, s), two_calls(p), "{}", p.display());
+            assert_eq!((l.kind, s.kind), (kind, kind), "{}", p.display());
+            assert_eq!(calls, usize::from(!cfg!(unix)), "{}", p.display());
+            assert_eq!(l, s.dir_identity(), "{}", p.display());
+        }
+        let ((l, s), _) = counted(&dir);
+        assert_ne!(l, s, "the stat half of a directory is its full stat");
+        assert_eq!(St::lstat_and_stat(&file), counted(&file).0);
+    }
+
+    /// Every other shape an input can take: the pair equals the two-call result, and `stat` is called exactly when
+    /// `lstat` saw a symlink (to a file or a directory, dangling, a loop, into an unsearchable directory, a chain).
+    #[cfg(unix)]
+    #[test]
+    fn one_lstat_per_input_unless_it_is_a_symlink() {
+        use rustix::io::Errno;
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let d = tempfile::tempdir().unwrap();
+        let at = |rel: &str| d.path().join(rel);
+        std::fs::write(at("file"), "x = 1\n").unwrap();
+        std::fs::write(at("empty"), "").unwrap();
+        std::fs::create_dir_all(at("dir")).unwrap();
+        std::fs::write(at("dir/entry"), "e").unwrap();
+        std::fs::create_dir_all(at("locked")).unwrap();
+        std::fs::write(at("locked/f"), "f").unwrap();
+        for (target, link) in [
+            ("file", "to-file"),
+            ("dir", "to-dir"),
+            ("nowhere", "dangling"),
+            ("self", "self"),
+            ("loop-b", "loop-a"),
+            ("loop-a", "loop-b"),
+            ("to-file", "chain"),
+            ("locked/f", "into-locked"),
+        ] {
+            symlink(target, at(link)).unwrap();
+        }
+        let socket = std::os::unix::net::UnixListener::bind(at("sock")).unwrap();
+        std::fs::set_permissions(at("locked"), std::fs::Permissions::from_mode(0o000)).unwrap();
+        let err = |e: Errno| Kind::Error(e.raw_os_error());
+        let denied = if rustix::process::geteuid().is_root() {
+            Kind::File
+        } else {
+            err(Errno::ACCESS)
+        };
+        let long: String = std::iter::repeat_n('n', 300).collect();
+        // (path, kinds of the lstat and stat halves); `None`: platform-defined (whether `lstat` follows a symlink
+        // before a trailing slash).
+        let cases: [(&str, Option<(Kind, Kind)>); 22] = [
+            ("file", Some((Kind::File, Kind::File))),
+            ("empty", Some((Kind::File, Kind::File))),
+            ("dir", Some((Kind::Dir, Kind::Dir))),
+            ("dir/entry", Some((Kind::File, Kind::File))),
+            ("sock", Some((Kind::Other, Kind::Other))),
+            ("missing", Some((Kind::Missing, Kind::Missing))),
+            ("file/x", Some((Kind::Missing, Kind::Missing))),
+            ("dangling/x", Some((Kind::Missing, Kind::Missing))),
+            // a trailing slash after a symlink to a file: ENOTDIR on Linux, macOS resolves the link
+            (
+                "to-file/",
+                cfg!(target_os = "linux").then_some((Kind::Missing, Kind::Missing)),
+            ),
+            ("to-dir/entry", Some((Kind::File, Kind::File))),
+            ("self/x", Some((err(Errno::LOOP), err(Errno::LOOP)))),
+            (
+                &long,
+                Some((err(Errno::NAMETOOLONG), err(Errno::NAMETOOLONG))),
+            ),
+            ("locked", Some((Kind::Dir, Kind::Dir))),
+            ("locked/f", Some((denied, denied))),
+            ("to-file", Some((Kind::Symlink, Kind::File))),
+            ("to-dir", Some((Kind::Symlink, Kind::Dir))),
+            ("dangling", Some((Kind::Symlink, Kind::Missing))),
+            ("self", Some((Kind::Symlink, err(Errno::LOOP)))),
+            ("loop-a", Some((Kind::Symlink, err(Errno::LOOP)))),
+            ("chain", Some((Kind::Symlink, Kind::File))),
+            ("into-locked", Some((Kind::Symlink, denied))),
+            ("to-dir/", None),
+        ];
+        let got: Vec<_> = cases
+            .iter()
+            .map(|(rel, _)| (counted(&at(rel)), two_calls(&at(rel))))
+            .collect();
+        std::fs::set_permissions(at("locked"), std::fs::Permissions::from_mode(0o700)).unwrap();
+        drop(socket);
+        for ((rel, want), (((l, s), calls), reference)) in cases.iter().zip(got) {
+            assert_eq!((l, s), reference, "{rel:?}");
+            assert_eq!(calls, usize::from(l.kind == Kind::Symlink), "{rel:?}");
+            if let Some(kinds) = want {
+                assert_eq!((l.kind, s.kind), *kinds, "{rel:?}");
+            }
+        }
     }
 }

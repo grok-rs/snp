@@ -315,10 +315,25 @@ fn set_mtime(p: &Path, t: SystemTime) {
     }
 }
 
+/// Makes a directory searchable again when the test ends, by a panic too (the sandbox could not be removed).
+#[cfg(unix)]
+struct Searchable(PathBuf);
+
+#[cfg(unix)]
+impl Drop for Searchable {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        ign(std::fs::set_permissions(
+            &self.0,
+            std::fs::Permissions::from_mode(0o755),
+        ));
+    }
+}
+
 /// One random "hook": a mutation of the worktree, the index, the attributes or the config.
 fn mutate(sb: &Sandbox, repo: &Path, rng: &mut Rng) -> &'static str {
     let file = repo.join(rng.pick(&FILES));
-    match rng.below(17) {
+    match rng.below(21) {
         0 | 1 => {
             ign(std::fs::create_dir_all(file.parent().unwrap()));
             ign(std::fs::remove_file(&file));
@@ -366,10 +381,18 @@ fn mutate(sb: &Sandbox, repo: &Path, rng: &mut Rng) -> &'static str {
         6 => {
             let dir = repo.join(rng.pick(&["", "dir", "dir/sub"]));
             let ga = dir.join(".gitattributes");
-            if rng.below(3) == 0 {
-                ign(std::fs::remove_file(&ga));
-            } else {
-                ign(std::fs::write(&ga, rng.pick(&ATTRS)));
+            match rng.below(4) {
+                0 => ign(std::fs::remove_file(&ga)),
+                1 => {
+                    // Replaced by a symlink: git 2.32 and later do not follow an in-tree one, older git does.
+                    #[cfg(unix)]
+                    {
+                        ign(std::fs::remove_file(&ga));
+                        ign(std::os::unix::fs::symlink(sb.path("ga-target"), &ga));
+                    }
+                }
+                // Through the symlink when it is one.
+                _ => ign(std::fs::write(&ga, rng.pick(&ATTRS))),
             }
             "gitattributes"
         }
@@ -402,7 +425,8 @@ fn mutate(sb: &Sandbox, repo: &Path, rng: &mut Rng) -> &'static str {
             "include.path"
         }
         10 => {
-            ign(std::fs::write(sb.path("attrs"), rng.pick(&ATTRS)));
+            // Through the symlink when it is one (arm 16).
+            ign(std::fs::write(sb.path("adir/attrs"), rng.pick(&ATTRS)));
             "core.attributesFile"
         }
         11 => {
@@ -438,6 +462,59 @@ fn mutate(sb: &Sandbox, repo: &Path, rng: &mut Rng) -> &'static str {
             drop(sb.git_status(repo, &["symbolic-ref", "HEAD", to]));
             "symbolic-ref"
         }
+        16 => {
+            // The `core.attributesFile` input replaced by a symlink (to a file, retargeted, dangling, to itself, a
+            // two-link loop) or by a regular file again.
+            #[cfg(unix)]
+            {
+                let attrs = sb.path("adir/attrs");
+                ign(std::fs::remove_file(&attrs));
+                match *rng.pick(&["t1", "t2", "nowhere", "attrs", "loop-b", ""]) {
+                    "" => ign(std::fs::write(&attrs, rng.pick(&ATTRS))),
+                    target => ign(std::os::unix::fs::symlink(target, &attrs)),
+                }
+            }
+            "attributesFile symlink"
+        }
+        17 => {
+            // A symlink's target changes, appears or disappears (`nowhere` stays dangling).
+            let target = sb.path(rng.pick(&["adir/t1", "adir/t2", "adir/nowhere", "ga-target"]));
+            if target.ends_with("nowhere") || rng.below(3) == 0 {
+                ign(std::fs::remove_file(&target));
+            } else {
+                ign(std::fs::write(&target, rng.pick(&ATTRS)));
+            }
+            "symlink target"
+        }
+        18 => {
+            // The directory holding `core.attributesFile` becomes unsearchable (`EACCES`; git warns and goes on) or
+            // searchable again.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = if rng.below(2) == 0 { 0o000 } else { 0o755 };
+                ign(std::fs::set_permissions(
+                    sb.path("adir"),
+                    std::fs::Permissions::from_mode(mode),
+                ));
+            }
+            "unsearchable"
+        }
+        19 => {
+            // The `include.path` input replaced by a symlink, possibly dangling (never a loop or an unsearchable
+            // directory: git dies on an include it cannot access).
+            #[cfg(unix)]
+            {
+                let target = *rng.pick(&["inc-target.cfg", "nowhere.cfg"]);
+                if target == "nowhere.cfg" {
+                    ign(std::fs::remove_file(sb.path(target)));
+                }
+                let inc = sb.path("inc.cfg");
+                ign(std::fs::remove_file(&inc));
+                ign(std::os::unix::fs::symlink(target, &inc));
+            }
+            "include symlink"
+        }
         _ => "noop",
     }
 }
@@ -465,6 +542,12 @@ fn randomized_soundness_against_real_git_diff() {
     }
     sb.git(&repo, &["add", "."]);
     // include.path and core.attributesFile targets that do not exist yet; XDG attributes via the default path.
+    // `adir/loop-b` points back at `adir/attrs`: a loop once arm 16 points `attrs` at it.
+    std::fs::create_dir_all(sb.path("adir")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("attrs", sb.path("adir/loop-b")).unwrap();
+    #[cfg(unix)]
+    let _searchable = Searchable(sb.path("adir"));
     sb.git(
         &repo,
         &[
@@ -478,7 +561,7 @@ fn randomized_soundness_against_real_git_diff() {
         &[
             std::ffi::OsStr::new("config"),
             "core.attributesFile".as_ref(),
-            sb.path("attrs").as_os_str(),
+            sb.path("adir/attrs").as_os_str(),
         ],
     );
     std::fs::write(sb.path("onbranch.cfg"), "[core]\n\tautocrlf = true\n").unwrap();
@@ -571,6 +654,61 @@ fn a_head_move_under_an_onbranch_include_is_seen() {
         let after = git.diff_fingerprint().unwrap();
         assert_ne!(before, after, "{mv:?}: the real diff changed");
         assert_eq!(got, Change::Changed, "{mv:?}");
+    }
+}
+
+/// A symlinked input is compared by its own `lstat` and by its target's `stat`. With neither racy (both older than
+/// git's 2 s window, so nothing is content-hashed), a hook that only rewrites (same size) or removes the target of a
+/// symlinked `core.attributesFile` is seen (`-diff` turns the unstaged change into "Binary files … differ"), and a
+/// hook that leaves it alone costs no spawn.
+#[cfg(unix)]
+#[test]
+fn a_change_behind_a_symlinked_input_is_seen() {
+    let cases = [("rewrite", "*.md  -diff\n"), ("remove", "*.txt -diff\n")];
+    let setups: Vec<(Sandbox, PathBuf)> = cases
+        .iter()
+        .map(|(_, attrs)| {
+            let sb = Sandbox::new();
+            let repo = repo_with_files(&sb);
+            sb.write(&repo, "a.txt", b"alpha changed\n");
+            std::fs::write(sb.path("target"), attrs).unwrap();
+            std::os::unix::fs::symlink("target", sb.path("attrs")).unwrap();
+            sb.git(
+                &repo,
+                &[
+                    std::ffi::OsStr::new("config"),
+                    "core.attributesFile".as_ref(),
+                    sb.path("attrs").as_os_str(),
+                ],
+            );
+            (sb, repo)
+        })
+        .collect();
+    if !stat_mode_possible(&setups[0].1) {
+        return;
+    }
+    std::thread::sleep(Duration::from_millis(2_500));
+    for ((case, _), (sb, repo)) in cases.iter().zip(&setups) {
+        let spy = Spy::new();
+        let (mut o, git, _) = oracle(sb, repo, &sb.env, Some(Arc::<Spy>::clone(&spy)));
+        assert_eq!(o.mode(), DiffMode::Stat, "{case}");
+        let before = git.diff_fingerprint().unwrap();
+        o.before_hook().unwrap();
+        assert_eq!(o.after_hook().unwrap(), Change::Unchanged, "{case}");
+        assert!(spy.calls().is_empty(), "{case}: {:?}", spy.calls());
+        o.before_hook().unwrap();
+        if *case == "rewrite" {
+            std::fs::write(sb.path("target"), "*.txt -diff\n").unwrap();
+        } else {
+            std::fs::remove_file(sb.path("target")).unwrap();
+        }
+        let got = o.after_hook().unwrap();
+        assert_ne!(
+            git.diff_fingerprint().unwrap(),
+            before,
+            "{case}: the real diff changed"
+        );
+        assert_eq!(got, Change::Changed, "{case}");
     }
 }
 

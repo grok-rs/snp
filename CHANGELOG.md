@@ -119,6 +119,10 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   observation, as before. A clean `run --all-files` that also has a hook filtering on an interpreter tag (`python`,
   `shell`, …) classifies as it did before this change: there a file whose name gives no tags must be classified in
   full at its first hook. Output, argv and errors are unchanged.
+- The diff oracle's Stat mode takes one `lstat` per input of `git diff` (the index, `HEAD`, every config and
+  attributes file) instead of an `lstat` and a `stat`; only an input that is a symlink is also `stat`ed through to its
+  target. A run of 10 hooks on a clean tree makes 143 fewer `statx` calls in snp's process (311 instead of 454: 13
+  inputs, 11 snapshots and comparisons). What is compared, and so every result, is unchanged.
 
 - Benchmarks (developer tooling, no runtime change): pull requests and pushes measure the base commit's snp, built
   against its own `deps.lock` crates and toolchain and primed into its own stores, in interleaved ABBA rounds with the
