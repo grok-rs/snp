@@ -706,9 +706,11 @@ impl Inner {
     /// caller abandons the patch.
     ///
     /// The order is load-bearing: `self.patch` is set before the journal names it; the patch is synced, the journal
-    /// and pointer (state `stashed`) written, the directory synced; the paths are listed and only then is the patch
-    /// verified, so the verification is the last read of the worktree before the checkout. The verification wins: a
-    /// listing error counts only once the patch is verified, and a rewritten patch is listed again.
+    /// and pointer (state `stashed`) written, the directory synced ([`Inner::make_durable`]), while the paths are
+    /// listed from the written patch beside it (ADR-117: the listing reads only the patch, never the worktree); only
+    /// then is the patch verified, so the verification is the last read of the worktree before the checkout. The
+    /// verification wins: a listing error counts only once the patch is durable and verified, and a rewritten patch
+    /// is listed again.
     ///
     /// ADR-097: the verification is a stat-stamp pass when it can prove that nothing the patch could include changed
     /// since this run took the worktree ([`Inner::unchanged_since_lock`]), else the ADR-067 second `diff-index`.
@@ -718,24 +720,25 @@ impl Inner {
         path: &Path,
         mut w: BufWriter<File>,
     ) -> Result<Secured, Failure> {
-        // 6. durable: the patch, then the journal + pointer (state `stashed`).
-        self.patch = Some(path.to_path_buf());
-        w.get_ref()
-            .sync_all()
-            .map_err(|e| Failure::from_io(&e, Some(path.as_os_str()), None))?;
-        self.journal_state(State::Stashed)?;
-        // Creating or replacing a store journal has synced `patches/` already, after the patch file was created.
-        // Without one (intent-to-add files were cleared while the store journal could not be written, then the patch
-        // was created) this is the only sync of the patch's directory entry.
-        if self.journal.as_ref().is_none_or(|j| j.file.is_none()) {
-            journal::sync_dir(&self.cx.patches_dir)
-                .map_err(|e| Failure::from_io(&e, Some(self.cx.patches_dir.as_os_str()), None))?;
-        }
-        fault::hit(Point::StashState(4));
         // 7. D-DATA-19: the checkout rewrites exactly the files of the patch, so a change `git diff` cannot see (a
         // clean filter hides it, or the file is `--assume-unchanged`) is never overwritten. git's own parser lists
-        // them, and refuses a patch it could not apply before anything is changed.
-        let mut listed = self.git().patch_paths(path);
+        // them, and refuses a patch it could not apply before anything is changed. The listing only reads the
+        // written patch (ours, flushed), so it runs beside step 6 (ADR-117); its result is used only once the patch
+        // is durable and verified, and the thread is joined before any exit (a failed step 6 abandons the file).
+        self.patch = Some(path.to_path_buf());
+        let git = self.git().clone();
+        let (durable, listing) = std::thread::scope(|s| {
+            let listing = std::thread::Builder::new()
+                .name("snp-numstat".to_owned())
+                .spawn_scoped(s, || git.patch_paths(path))
+                .ok();
+            let durable = self.make_durable(path, &w);
+            (durable, listing.and_then(|h| h.join().ok()))
+        });
+        durable?;
+        fault::hit(Point::StashState(4));
+        // a thread the OS refused, or a panicked one, lists here, in ADR-097's order
+        let mut listed = listing.unwrap_or_else(|| self.git().patch_paths(path));
         let fast = match &listed {
             Ok(paths) if !paths.is_empty() => self.unchanged_since_lock(tree, paths),
             _ => false,
@@ -761,6 +764,23 @@ impl Inner {
             ));
         }
         Ok(Secured::Paths(paths))
+    }
+
+    /// Step 6: the patch synced, then the journal + pointer (state `stashed`), then — without a store journal — the
+    /// patch's directory.
+    fn make_durable(&mut self, path: &Path, w: &BufWriter<File>) -> Result<(), Failure> {
+        w.get_ref()
+            .sync_all()
+            .map_err(|e| Failure::from_io(&e, Some(path.as_os_str()), None))?;
+        self.journal_state(State::Stashed)?;
+        // Creating or replacing a store journal has synced `patches/` already, after the patch file was created.
+        // Without one (intent-to-add files were cleared while the store journal could not be written, then the patch
+        // was created) this is the only sync of the patch's directory entry.
+        if self.journal.as_ref().is_none_or(|j| j.file.is_none()) {
+            journal::sync_dir(&self.cx.patches_dir)
+                .map_err(|e| Failure::from_io(&e, Some(self.cx.patches_dir.as_os_str()), None))?;
+        }
+        Ok(())
     }
 
     /// The ADR-067 re-verification (the ADR-097 fallback): a second `diff-index` must print exactly the bytes of the
@@ -1442,6 +1462,7 @@ impl Drop for StashGuard {
 
 #[cfg(test)]
 mod tests {
+    use std::fs::File;
     use std::time::{Duration, Instant, SystemTime};
 
     use super::{CLOCK_SLACK, Compare, LockStamp, clock_consistent};
@@ -1505,7 +1526,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("patch");
         std::fs::write(&p, patch).unwrap();
-        let mut c = Compare::new(std::fs::File::open(&p).unwrap());
+        let mut c = Compare::new(File::open(&p).unwrap());
         for chunk in printed {
             assert_eq!(c.write(chunk).unwrap(), chunk.len());
         }
