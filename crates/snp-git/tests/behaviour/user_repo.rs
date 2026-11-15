@@ -249,8 +249,11 @@ fn all_files_tagged_equals_ls_files_deduplicate() {
     // a plain index: odd names, an executable, a symlink, an empty file (mode 0: proves nothing), a gitlink
     let repo = sb.init("plain");
     sb.write(&repo, "a b.txt", b"a");
-    sb.write(&repo, "tab\there", b"t");
-    sb.write(&repo, "nl\nhere", b"n");
+    #[cfg(unix)] // not valid Windows file names
+    {
+        sb.write(&repo, "tab\there", b"t");
+        sb.write(&repo, "nl\nhere", b"n");
+    }
     sb.write(&repo, "интервью", b"i");
     sb.write(&repo, "x.sh", b"#!/bin/sh\n");
     sb.write(&repo, "empty", b"");
