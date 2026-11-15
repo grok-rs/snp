@@ -326,7 +326,7 @@ enum Fixture {
     Files50k,
     /// 960 clean files and the 13 pre-commit-hooks hooks at v6.0.0 (prek's medium corpus).
     Pch960,
-    /// A 10 MiB tracked file with a 10 MiB unstaged rewrite and one staged change.
+    /// A 10 MiB tracked file with a 10 MiB unstaged rewrite of another size and one staged change.
     Stash10M,
     /// A configuration of 1 000 local hooks (`big.yaml`).
     Validate1000,
@@ -1167,6 +1167,18 @@ fn big_text(salt: u32) -> String {
     s
 }
 
+/// B8's `big.txt`: the committed text and its unstaged rewrite, which changes every line and, as a real rewrite
+/// does, the size. With an equal size B8 measured git's racy-git work as much as the stash: the restore recreates
+/// the checked-out file, which gets its inode number back, and git (built without `USE_NSEC`, its default) compares
+/// stat times to the whole second, so whenever the previous run's checkout and restore fell in the same second the
+/// file's stat matched its index entry and about seven git calls of the next run hashed the 10 MiB again (~2.5 G
+/// instructions, +80 % for the whole tree), in a share of the runs set by each tool's own timing.
+fn stash10m_texts() -> (String, String) {
+    let mut rewrite = big_text(2);
+    rewrite.push_str("one more line: the rewrite changes the size\n");
+    (big_text(1), rewrite)
+}
+
 fn gen_stash10m(work: &Work, dir: &Path) -> anyhow::Result<()> {
     init_repo(work, dir)?;
     write_file(
@@ -1175,13 +1187,14 @@ fn gen_stash10m(work: &Work, dir: &Path) -> anyhow::Result<()> {
         b"repos:\n-   repo: local\n    hooks:\n    -   id: true-small\n        name: true on small.txt\n        \
           entry: 'true'\n        language: system\n        files: '^small\\.txt$'\n",
     )?;
-    write_file(dir, "big.txt", big_text(1).as_bytes())?;
+    let (committed, rewrite) = stash10m_texts();
+    write_file(dir, "big.txt", committed.as_bytes())?;
     write_file(dir, "small.txt", b"small\n")?;
     commit_all(work, dir, "init")?;
     // a staged change for the hook, a 10 MiB unstaged rewrite for the stash
     write_file(dir, "small.txt", b"small, changed\n")?;
     git(work, dir, &["add", "small.txt"])?;
-    write_file(dir, "big.txt", big_text(2).as_bytes())
+    write_file(dir, "big.txt", rewrite.as_bytes())
 }
 
 fn gen_validate1000(work: &Work, dir: &Path) -> anyhow::Result<()> {
@@ -5727,6 +5740,18 @@ mod tests {
         assert!(noop_config(10).contains("noop-10"));
         assert_eq!(big_text(1).len() >> 20, 10);
         assert_ne!(big_text(1), big_text(2));
+    }
+
+    #[test]
+    fn b8_rewrites_every_line_and_changes_the_size() {
+        let (committed, rewrite) = stash10m_texts();
+        assert_eq!((committed.len() >> 20, rewrite.len() >> 20), (10, 10));
+        // every committed line changes, so the patch still carries both 10 MiB sides
+        let old: BTreeSet<&str> = committed.lines().collect();
+        assert!(rewrite.lines().all(|l| !old.contains(l)));
+        // an equal size lets git's whole-second stat check match the previous run's checkout stamp when the
+        // restore reuses the inode within that second: every later git call then hashes the file again
+        assert_ne!(committed.len(), rewrite.len());
     }
 
     #[test]
