@@ -139,7 +139,13 @@ impl T1 {
         if probe::scan_off() {
             return Self::build(text, bytes, depth);
         }
-        if !scan || bytes {
+        // Cheap pre-check, so that most texts are parsed once (by `regex`): the large classes the lowering emits
+        // come from Unicode properties (`\w` is `[\pL\pN_]`); its other class members are written out one range
+        // at a time, and `\d` (70 ranges) is the largest class escape it emits. A text this skips stays on
+        // `regex`, which is always correct.
+        let property = memchr::memmem::find(text.as_bytes(), b"\\p").is_some()
+            || memchr::memmem::find(text.as_bytes(), b"\\P").is_some();
+        if !scan || bytes || !property {
             return Self::build(text, bytes, depth);
         }
         on_stack(depth, || Self::build_scan_here(text, depth, false))
