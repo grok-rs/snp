@@ -15,8 +15,9 @@ upstream refresh; ADR-093 the path-limited stash checkout; ADR-094 Rust 1.100; A
 ADR-096 the owner's decision to make the Verus proofs blocking;
 ADR-097 the stash re-verification by stat stamps; ADR-098 the tier-1 prefilter; ADR-099 the paired bench gate; ADR-100
 the B8 heap budget and counters; ADR-101 classification CPU and fan-out sizing; ADR-102 native-hook facts; ADR-103
-borrowed hook argv; ADR-104 the step-6 changes of the run pipeline; ADR-105 the hook script template v2; ADR-116 the
-absorption of cfgv and file-identify into the workspace.
+borrowed hook argv; ADR-104 the step-6 changes of the run pipeline; ADR-105 the hook script template v2; ADR-108 the
+forward-only engine of the tier-1 prefilter; ADR-112 snp-yaml's owning materialisation; ADR-116 the absorption of cfgv
+and file-identify into the workspace.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -56,7 +57,7 @@ serde_yaml-family crates are banned; the composer is an arena (aliases share nod
 
 ### ADR-003 — Regular expressions: the 01 Addendum, verbatim (C3)
 
-*Status: Accepted; amended by ADR-079 (tier-1/2 lazy-DFA cache = the crate default 2 MiB; `size_limit` 64 MiB unchanged) and ADR-098 (the tier-1 exact fallback runs behind the relaxed prefilter). The amending ADRs are normative where they differ.*
+*Status: Accepted; amended by ADR-079 (tier-1/2 lazy-DFA cache = the crate default 2 MiB; `size_limit` 64 MiB unchanged), ADR-098 (the tier-1 exact fallback runs behind the relaxed prefilter) and ADR-108 (that prefilter runs on a forward-only `regex-automata` engine). The amending ADRs are normative where they differ.*
 
 **Context.** 01 §13/§18.1 and 04a §12.3 proposed two tiers, 07 D4 picked fancy-regex alone, 10 Q6 deferred; all three
 proposals then contradicted the normative 01 Addendum (corpus of 4,858 real patterns) on constants and grammar.
@@ -921,6 +922,8 @@ these cases. Amends ADR-027.
 
 ### ADR-079 — Resource tuning: regex DFA cache, FileTable layout, probe-fact persistence, musl allocator
 
+*Status: Accepted; item (1) amended by ADR-098 (the tier-1 exact fallback's prefilter caps its lazy-DFA cache at 256 KiB) and ADR-108 (that prefilter is a forward-only lazy DFA, with the linear NFA engines behind it). The amending ADRs are normative where they differ.*
+
 **Decision.** (1) `dfa_size_limit` (tier 1) and `delegate_dfa_size_limit` (tier 2) use the crate default 2 MiB: it is
 the lazy-DFA cache capacity per regex per thread, not an acceptance limit (64 MiB allowed threads × patterns × 64 MiB
 RSS); a thrashing cache falls back to linear engines with identical results; `size_limit` 64 MiB stays the acceptance
@@ -1731,6 +1734,8 @@ every other call are unchanged. ARCHITECTURE S3 and §4.2 step 6, D-DATA-13 and 
 
 *Amends ADR-003 (01 Addendum §A.6.5, §A.6.11) and the D-SEC-10 rationale.*
 
+*Status: Accepted; item (4) amended by ADR-108 (the prefilter is a forward-only `regex-automata` engine within the same 256 KiB cap). The amending ADR is normative where they differ.*
+
 **Context.** A tier-1 pattern whose fast text took a cheaper anchor form sends the haystacks that meet a condition
 bit (§A.6.5) to the exact text on `fancy-regex`. For a str `\b`/`\B` that is every non-ASCII haystack, and the
 exact look-around forms make `fancy-regex` run its backtracking VM instead of delegating to `regex`. B12u's
@@ -2102,6 +2107,103 @@ the same problem impossible for the next template.
 it, since `bench setup` installs the head's script for both builds; process counts and absolute B9 do. Hook scripts
 written by snp 2.0.0–2.0.1 keep working unchanged; `snp doctor` warns about them until `snp install` rewrites them.
 pre-commit's and prek's `is_our_script` still match the compat IDs, so the last installer still wins.
+
+### ADR-108 — The tier-1 prefilter runs on a forward-only `regex-automata` engine
+
+*Amends ADR-098 (4), ADR-079 (1) and ADR-003; a tuning follow-up of the wave-1 prefilter (ADR-098), not a
+regression fix: no output was ever affected. Makes `regex-automata` a direct dependency of snp-pyre.*
+
+**Context.** ADR-098 put the tier-1 exact fallback behind the relaxed prefilter and capped that prefilter's lazy-DFA
+cache at 256 KiB per pattern per thread. The prefilter was a `regex` build, and `regex`'s engine needs a forward
+*and* a reverse lazy DFA in that one cache; when the pair does not fit, it builds no lazy DFA at all and answers every
+`is_match` with the bounded backtracker, which clears its visited set on each search. B12u's `\b\w{3,8}\b/\w+\.md$`
+is such a pattern: its relaxed text's reverse NFA has 12 366 states against the forward one's 2 979, and the reverse
+DFA alone does not fit 256 KiB. On 43d95e9 (callgrind, B12u) `Fallback::admits` took 807 M of the run's 1 423 M
+instructions, 304 M of them `memset` under `BoundedBacktracker::search_imp`. The 512 KiB stop-gap fits the pair but
+costs about 0.56 MB per worker cache (about 4.4 MiB at 8 threads) against the 28.61 MiB hard budget.
+**Decision.** (1) The tier-1 exact fallback's prefilter is `engine::Forward`, an `is_match`-only engine built on
+`regex-automata` directly: the relaxed text is parsed with tier 1's syntax configuration (str: Unicode and UTF-8;
+bytes: neither; nest limit 2048) inside `on_stack`, compiled to one forward Thompson NFA without capture states (NFA
+size limit 64 MiB; UTF-8 empty-match mode for str, as `regex` sets it), and searched unanchored with `earliest` by a
+lazy DFA (`hybrid`) with the 256 KiB cache, `minimum_cache_clear_count(3)`, `minimum_bytes_per_state(10)` and
+heuristic Unicode word boundaries — `regex`'s own settings. Per-thread caches come from a
+`regex_automata::util::pool::Pool`, and each part of a cache is allocated on its engine's first use. A prefix-literal
+prefilter is built from the same HIR (leftmost-first) only when the text is not anchored at the start, as `regex`
+builds it. (2) When the lazy DFA cannot be built at the capacity, gives up or quits, the bounded backtracker answers
+haystacks of at most 128 bytes that fit its visited capacity and the PikeVM the rest: the engines and the order of
+`meta`'s `is_match_nofail`. Every search error falls back, nothing unwraps, and the prefilter never silently becomes
+absent: as before, only a text that does not parse or exceeds the NFA size limit has none. (3) The usefulness rule
+(`relaxed_anchored || !is_match("")`) and the str rule (bytes that are not UTF-8 never match) are evaluated on the new
+engine. (4) Tier 2's prefilter keeps `regex` with the crate-default 2 MiB cache (ADR-079): moving it gains nothing on
+B12u. (5) `regex-automata 0.4.18` is a workspace dependency used by snp-pyre only, with `default-features = false` and
+the features `std`, `syntax`, `unicode`, `hybrid`, `nfa-pikevm`, `nfa-backtrack`, `perf-literal` — a subset of what
+`regex` already enables (not `dfa-build`), so the release graph, the package set of both lock files and the ADR-088
+closure are unchanged; the lock files gain only snp-pyre's dependency edge. (6) The 512 KiB stop-gap is rejected.
+**Rationale.** Every `regex-automata` engine answers `is_match` exactly for the same NFA; only the cost differs, so
+the prefilter's language, relaxed ⊇ exact, and every match answer are unchanged. `forward_prefilter_agrees_with_regex`
+compares the engine with `regex` on random relaxed texts (search and fullmatch forms, str and bytes, with the lazy DFA
+and with a cache too small for it) over short, long and non-UTF-8 haystacks; unit tests pin u05's DFA at the cap, the
+build-failure fallback (`\b\w{40}\b`, about 13 000 NFA states), the quit and give-up fallbacks, and the unwind-safety
+of `PyRegex`; `relaxed_is_a_superset`, `tier1_prefilter_keeps_every_answer`, the backtrack tests and the CPython
+vectors with the prefilter on still pass. A forward DFA needs a fraction of the pair's minimum cache, so the same cap
+gives more patterns a lazy DFA; u05's cache holds 99 128 bytes after all 20 000 B12u paths.
+**Consequences.** Measured on the B12u fixture with fat-LTO profiling builds of 43d95e9 and this change: callgrind
+1 423.2 M → 647.4 M instructions (−54.5 %); the prefilter path (20 000 admits plus its one build) 26.6 M instead of
+807 M, with no bounded backtracker or PikeVM left in the profile (`memset` 303.8 M → 5.3 M in the whole run); massif
+peak 11.14 → 8.95 MB; DHAT 295 979 → 288 830 blocks; the largest process's RSS median 26.09 → 25.93 MiB (max 27.48 →
+26.79, 30 interleaved runs); output byte-identical to pre-commit 4.7.0. B4–B11 move by at most ±0.05 % and B3 by
+−0.12 % (mean of five alternating runs; its run-to-run spread is ±0.13 %); B1 is −0.25 % from the binary's layout
+alone (glibc's `/proc/self/maps` parse and 46 more relocations; no snp function differs). A pattern whose forward DFA still does not fit the cap costs what it did before; tier 2 is unchanged.
+
+### ADR-112 — snp-yaml materialises by moving what occurs once; the `Node.tag` type change is deferred
+
+*Relates to ADR-002 (snp's own constructor), D-SEC-11 (limits before anything is copied) and ADR-088 (snp-yaml is a
+published crate).*
+
+**Context.** `construct` builds the PyYAML object graph (phase 1), checks cycles and the expanded size on it (phase 2)
+and then materialises the `cfgv::Value` tree (phase 3). Phase 3 read the graph by reference: it cloned every built
+scalar into the tree and dropped the graph's copy afterwards, and it rebuilt a shared collection at each occurrence.
+In `validate-config` on 1,000 hooks (B10) that is about 18,000 string clones. Moving a value out is only sound for a
+node that occurs once in the tree, and "has an alias" is not that test: a mapping merged with `<<` shares its
+unanchored values with the merging mapping, and a list may hold one alias twice. `construct_scalar` follows `=`
+value-key chains through the composed document, so a scalar must not move at construct time either. The wave-3 plan
+also proposed `Node.tag: Cow<'static, str>` (about 21,000 tag allocations in B10). That changes the type of a public
+field of a published crate.
+**Decision.** (1) `construct` consumes its graph. After phase 2 and before anything moves, `Graph::occurrences` counts
+each node's occurrences in the tree, saturating at 2: its number of paths from the root over the built edges as
+stored, with merged pairs included, duplicate keys already dropped and a repeated item counted at each position. A
+depth-first walk marks a node shared when a second edge reaches it, and then everything below a shared node is marked
+shared too. By induction in topological order, that is exactly "two or more paths". Anchor and alias flags are not
+used, and in-degree alone does not decide. (2) In phase 3 a node that occurs once moves its value (`Option::take`) and
+leaves its slot empty. Reaching that slot a second time is the internal invalid-document error, never an empty value.
+A shared scalar is cloned and a shared collection is built again at each occurrence, as before; phase 3 keeps no
+finished copy of a shared collection. (3) Fail closed: if the counts cannot be allocated, phase 3 copies every node as
+before, leaving the graph untouched. (4) Nothing moves at construct time. `emit::redump` and `compose` keep borrowing.
+No public signature changes: `construct(&Document, …)` builds and drops its own graph. (5) The
+`Node.tag: Cow<'static, str>` change is **deferred**. It would break the public API of `snp-yaml`, which ADR-088
+publishes at the workspace version, so it needs an owner decision and a major-version plan. Implicit tags stay
+`Box<str>`.
+**Rationale.** A move is safe exactly when its node occurs once, and the path count tells that without depending on
+the traversal order. Phase 3 holds only the graph and the tree, so its work and memory never exceed the copying
+path's, which phase 2 bounds by `max_constructed_nodes` (D-SEC-11). A cache that kept the finished value of every
+shared collection was rejected: everything below a shared collection is shared too, so the cache held the sum of their
+subtree sizes, about depth × tree. `a: &s [[…[x0, …, xm]…]]` 500 levels deep with `b: *s` stays inside every limit,
+and its tree has about 2 × m values; the cache would hold about 500 × m (some 2.5 × 10⁸ near the node limit, about
+20 GB), where pre-commit shares the objects and the copying path holds one tree. Caching only the nodes a second
+edge reaches directly would be bounded by the tree, but it adds up to one more tree of memory for a gain that only
+documents with large aliased collections see, and none of the benchmarks has an alias. The counting walk is linear in
+the edges, under 1M instructions for B10's 21,000 nodes. Unit tests compare the classes with exact counts from
+expanding the tree, over the shared-node fixtures and 400 generated documents with anchors, aliases, merges, sets,
+omaps and pairs. They also check that the owned and copying paths give the same tree, that the owned path empties
+exactly the single-occurrence slots and leaves every other slot as phase 2 built it, that nested shared collections
+leave no more values in the graph than phase 2 built, and that a forged single count is an error.
+`tests/memory_shared.rs` gates the dhat peak heap of the 500-level shared collection.
+**Consequences.** B10 (callgrind, fat-LTO profiling build): `construct` 33.6M → 28.7M instructions, 223,228 → 205,200
+heap blocks; heap peak 9.64 → 9.47 MB, with 86,031 → 64,979 live blocks at the peak. `gc` on 500 configs (B11) loses
+6,063 blocks. A document with aliases costs at most what it cost before: its shared nodes are copied at each
+occurrence and only its single-occurrence nodes move. `validate-config` of the 500-level spine over 20,000 leaves
+(61 KB) peaks at 18.7 MB RSS, against 18.8 MB before this ADR and 1.1 GB with the rejected cache. Loaded values,
+errors and their order (the recursive-node and limit errors come from phase 2, which is unchanged) are the same.
 
 ### ADR-116 — cfgv and file-identify are workspace crates: snp-cfgv and snp-identify
 

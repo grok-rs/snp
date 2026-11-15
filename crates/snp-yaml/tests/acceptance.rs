@@ -728,4 +728,132 @@ mod acceptance {
             "{e}"
         );
     }
+
+    /// Nodes that occur more than once in the loaded value (ADR-112's owning materialisation moves a node only when
+    /// it occurs once): `<<: *a`, `<<: [*a, *b]` whose merged values have no anchor, an aliased collection used
+    /// twice and nested, a scalar alias used as key and value, and a `=` value-key chain that reads a scalar the
+    /// tree also holds. Expected values from the oracle (PyYAML 6.0.3 `CSafeLoader`).
+    #[test]
+    fn shared_nodes_load_as_pyyaml() {
+        let cases = [
+            (
+                "a: &a {x: 1, y: [2, 3]}\nb:\n  <<: *a\n  z: 4\n",
+                "{'a': {'x': 1, 'y': [2, 3]}, 'b': {'x': 1, 'y': [2, 3], 'z': 4}}",
+            ),
+            (
+                "a: &a {x: 1, s: [p, q]}\nb: &b {y: 2, x: 9, t: {u: v}}\nc:\n  <<: [*a, *b]\n  w: 3\n",
+                "{'a': {'x': 1, 's': ['p', 'q']}, 'b': {'y': 2, 'x': 9, 't': {'u': 'v'}}, \
+                 'c': {'y': 2, 'x': 1, 't': {'u': 'v'}, 's': ['p', 'q'], 'w': 3}}",
+            ),
+            (
+                "l: &l [1, {k: v}, [s]]\nm: *l\nn: [*l, *l]\n",
+                "{'l': [1, {'k': 'v'}, ['s']], 'm': [1, {'k': 'v'}, ['s']], \
+                 'n': [[1, {'k': 'v'}, ['s']], [1, {'k': 'v'}, ['s']]]}",
+            ),
+            ("[&m {=: x}, !!str {=: *m}]\n", "[{'=': 'x'}, 'x']"),
+            (
+                "- &s str\n- *s\n- {*s : *s}\n",
+                "['str', 'str', {'str': 'str'}]",
+            ),
+            (
+                "a: &a [&b [&c [x]]]\nb: [*a, *b, *c]\n",
+                "{'a': [[['x']]], 'b': [[[['x']]], [['x']], ['x']]}",
+            ),
+        ];
+        for (text, want) in cases {
+            assert_eq!(value(text).repr(), want, "{text:?}");
+        }
+    }
+
+    /// A control character at libyaml's 16 KiB raw-chunk boundary (the reader's slow path, ADR-002 port): inside a
+    /// plain scalar on either side of the boundary, after a multi-byte character that straddles it, behind a BOM
+    /// (the position counts it), and a scanner error in the first chunk that wins over a control character in the
+    /// second. Expected texts from the oracle (PyYAML 6.0.3 `CSafeLoader`, libyaml 0.2.5).
+    #[test]
+    fn control_characters_at_the_raw_chunk_boundary() {
+        const CHUNK: usize = 16_384;
+        let reader = |c: &str, position: usize| {
+            format!(
+                "unacceptable character #x{c}: control characters are not allowed\n  in \"<unicode string>\", position {position}"
+            )
+        };
+        let cases: Vec<(String, String, String)> = vec![
+            // A control character in a plain scalar at the last byte of chunk 1, the first and second of chunk 2.
+            (
+                format!("a: {}\u{1}yz\n", rep("x", CHUNK - 4)),
+                "ReaderError".into(),
+                reader("0001", CHUNK - 1),
+            ),
+            (
+                format!("a: {}\u{1}yz\n", rep("x", CHUNK - 3)),
+                "ReaderError".into(),
+                reader("0001", CHUNK),
+            ),
+            (
+                format!("a: {}\u{1}yz\n", rep("x", CHUNK - 2)),
+                "ReaderError".into(),
+                reader("0001", CHUNK + 1),
+            ),
+            (
+                format!("a: {}\u{7f}\n", rep("x", CHUNK - 3)),
+                "ReaderError".into(),
+                reader("007f", CHUNK),
+            ),
+            // `é` (2 bytes) and `€` (3 bytes) straddle the boundary; the control character follows them.
+            (
+                format!("a: {}\u{e9}\u{1}z\n", rep("x", CHUNK - 4)),
+                "ReaderError".into(),
+                reader("0001", CHUNK + 1),
+            ),
+            (
+                format!("a: {}\u{20ac}\u{2}z\n", rep("x", CHUNK - 5)),
+                "ReaderError".into(),
+                reader("0002", CHUNK + 1),
+            ),
+            // Behind a BOM the position counts the BOM's 3 bytes.
+            (
+                format!("\u{feff}a: {}\u{1}z\n", rep("x", CHUNK - 6)),
+                "ReaderError".into(),
+                reader("0001", CHUNK),
+            ),
+            (
+                format!("\u{feff}a: {}\u{1}z\n", rep("x", CHUNK - 7)),
+                "ReaderError".into(),
+                reader("0001", CHUNK - 1),
+            ),
+            // A NUL right after a plain scalar that fills chunk 1.
+            (
+                format!("a: {}y\u{0}", rep("x", CHUNK - 3)),
+                "ReaderError".into(),
+                reader("0000", CHUNK + 1),
+            ),
+            // The comment reaches chunk 2, so its control character is found while the comment is skipped.
+            (
+                format!("a: b\n{}\u{1}\n", rep("#", CHUNK + 100)),
+                "ReaderError".into(),
+                reader("0001", CHUNK + 105),
+            ),
+            // The scanner error in chunk 1 comes first: chunk 2 is never decoded.
+            (
+                format!("a: @\n{}\u{1}\n", rep("#", CHUNK + 100)),
+                "ScannerError".into(),
+                "while scanning for the next token\nfound character that cannot start any token\n  in \"<unicode string>\", line 1, column 4".into(),
+            ),
+        ];
+        for (text, class, message) in &cases {
+            let (got_class, got_message) = err(text);
+            assert_eq!(
+                (&got_class, &got_message),
+                (class, message),
+                "{:?}…",
+                text.get(..8)
+            );
+        }
+        // Without a control character the plain scalar spans the boundary.
+        let long = rep("x", CHUNK + 10);
+        assert_eq!(
+            value(&format!("a: {long}\n")),
+            value_map! {"a" => long.as_str()}
+        );
+    }
 }

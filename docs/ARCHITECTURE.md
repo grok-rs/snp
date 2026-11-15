@@ -257,7 +257,8 @@ its tests run with a fake resolver before snp-repo lands. Critical path: pycompa
   lead adds it): `cfgv` (path `crates/snp-cfgv`, `package = "snp-cfgv"`, `version = "=X.Y.Z"`) and `file-identify`
   (path `crates/snp-identify`, `package = "snp-identify"`, `version = "=X.Y.Z"`), the absorbed crates (ADR-116),
   `libyaml-safer 0.3.0`, `regex 1.13.1`,
-  `regex-syntax 0.8.11`, `fancy-regex 0.19.2`, `unicode-ident 1`, `unicode_names2 =4.0.0` (feature `py-re-names` of
+  `regex-syntax 0.8.11`, `regex-automata 0.4.18` (snp-pyre only, the tier-1 prefilter's forward engine; default
+  features off, a subset of what `regex` enables; ADR-108), `fancy-regex 0.19.2`, `unicode-ident 1`, `unicode_names2 =4.0.0` (feature `py-re-names` of
   snp-pyre, default on), `memchr 2.8.3`, `bstr 1.13.1`, `indexmap 2.14.2`, `blake3 1.8.7`, `sha2 0.11.0`, `md-5 0.11.0`, `serde 1.0.229` + `serde_json 1.0.151` (state files and JSON I/O only),
   `toml 1.1.6` (snp-migrate; tests of snp-pyparsers), `thiserror 2.0.21`, `tracing 0.1.44` + `tracing-subscriber
   0.3.23`, `ureq 3.4.2` (rustls + platform-verifier + gzip), `flate2 1.1.10`, `tar 0.4.46`, `zip 8.6.0`,
@@ -2322,6 +2323,12 @@ Memory shape (100k-file, 50-hook repo target ≤ 30 MB RSS): strings `Arc<str>` 
 `''`/`'^$'` interned through `RegexCache`), stage sets `u16`, tag sets the `file-identify` `Copy` bitset, regexes
 compiled once per distinct `(pattern, Options)` and lazily (engines built on first match).
 
+Conversion (and snp-config's `MapItem`s, on the dict they check) builds no `cfgv::Value` key to read a dict: a literal
+key is found by scanning the dict for the equal `str` key (cfgv's equality never equates a `str` with another type, so
+it is the entry the hashed lookup finds), and the extension keys of a hook or root dict are parsed in one pass. A
+probe for a name read from the input (a `priority` alias in the root `priorities`) stays hashed, so a config costs at
+most a constant times its keys.
+
 ### 2.2 Stage / HookType / Language enums
 
 `HookType` (10, source order), `Stage = Hook(HookType) | Manual` (11), `StageSet(u16)`, `LanguageId` (21, sorted).
@@ -2495,8 +2502,10 @@ startup Env (captured once in main, minus __PYVENV_LAUNCHER__/PYTHONEXECUTABLE)
    `regex-syntax` UCD 16; **tier 1** `regex` 1.13 (str) / `regex::bytes` `unicode(false)` (pygrep) for patterns
    without backtracking constructs; **tier 2** `fancy-regex` 0.19.2 (`backtrack_limit(100_000_000)`, Latin-1 lane for
    bytes, never `BytesMode::Ascii`) for look-around/backrefs/conditionals/atomic/possessive, always behind the
-   **mandatory relaxed tier-1 prefilter** (§A.6.11). The same prefilter (built on first need, 256 KiB lazy-DFA cache)
-   guards the tier-1 exact fallback of a `\b`/`\B` or match-span condition (ADR-098).
+   **mandatory relaxed tier-1 prefilter** (§A.6.11). The same relaxed text guards the tier-1 exact fallback of a
+   `\b`/`\B` or match-span condition (ADR-098), built on first need on a forward-only `regex-automata` engine: a lazy
+   DFA with a 256 KiB cache, or the bounded backtracker / PikeVM when the DFA cannot be built, gives up or quits
+   (ADR-108).
 3. **Anchors** (§A.6.5): non-MULTILINE `$` is canonically `(?=\n?\z)`; the fast tier-1 form `\z` is used only when the
    haystack does not end with `\n` (`Path`), `(?m:$)` for pygrep by-line (`Line`); `\Z`→`\z`; Unicode `\b`/`\B` use
    the exact look-around forms with `W=[\p{L}\p{N}_]`, with the tier-1 `\b`/`\B` fast form only for ASCII (and, for
@@ -3654,7 +3663,7 @@ and no file names.
 |---|---|
 | Recursion on input | none unbounded: YAML composer/constructor iterative or depth-capped (512); regex parser explicit depth ≤ 484; JSON/YAML checkers iterative with CPython thresholds; `cfgv::Value` drop safe because depth ≤ 512 |
 | YAML size / nodes | 16 MiB file, 1 M constructed nodes (alias bombs), arena ids (no copies during compose) |
-| Regex | Python repeat bound; tier-1 `size_limit` 64 MiB (compile acceptance) and `dfa_size_limit` = the crate default 2 MiB — it is the lazy-DFA cache capacity **per regex per thread**, not an acceptance limit, so 64 MiB would allow threads × patterns × 64 MiB; a thrashing cache falls back to the linear engines with identical results; tier 2 `delegate_size_limit` 64 MiB, `delegate_dfa_size_limit` 2 MiB, `backtrack_limit` 1e8 → error, never a hang; emitted tier-2 nesting < 64 or `Unsupported` (ADR-079; supersedes the 01 Addendum §A.6 `dfa_size_limit(64<<20)` constants) |
+| Regex | Python repeat bound; tier-1 `size_limit` 64 MiB (compile acceptance) and `dfa_size_limit` = the crate default 2 MiB — it is the lazy-DFA cache capacity **per regex per thread**, not an acceptance limit, so 64 MiB would allow threads × patterns × 64 MiB; a thrashing cache falls back to the linear engines with identical results; tier 2 `delegate_size_limit` 64 MiB, `delegate_dfa_size_limit` 2 MiB, `backtrack_limit` 1e8 → error, never a hang; emitted tier-2 nesting < 64 or `Unsupported` (ADR-079; supersedes the 01 Addendum §A.6 `dfa_size_limit(64<<20)` constants); the tier-1 exact fallback's prefilter is a forward-only lazy DFA whose cache is capped at 256 KiB per pattern per thread (B12u's `\b` pattern uses ~99 KB), with the linear NFA engines behind it (ADR-098, ADR-108) |
 | Hook output | one global 64 MiB in-memory budget, then spill to an unnamed file |
 | pre-push / `use_stdin` | 64 MiB; more fails closed with an exact FatalError (exit 1), never truncated (§3.10, D-SEC-12) |
 | File descriptors | pool clamped to `(RLIMIT_NOFILE soft − 64) / 8`; the limit is never raised (children inherit it) |

@@ -148,11 +148,21 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// `CACHE(parser, n)`.
+    /// `CACHE(parser, n)`: nothing to do while `n` characters are decoded and unread, or once the input is
+    /// exhausted; otherwise [`Self::fill`].
+    #[inline]
     pub(crate) fn cache(&mut self, n: usize) -> Result<(), Error> {
         if self.unread >= n || self.eof {
             return Ok(());
         }
+        self.fill(n)
+    }
+
+    /// `yaml_parser_update_buffer(parser, n)`: decodes the next raw chunks until `n` characters are unread, or
+    /// appends the NUL at the end of the input. Runs about once per 16 KiB chunk, out of line.
+    #[cold]
+    #[inline(never)]
+    fn fill(&mut self, n: usize) -> Result<(), Error> {
         let total = self.body.len().saturating_add(self.bom);
         loop {
             if self.raw_read >= total {
@@ -185,17 +195,27 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// `buffer[k]`: the `k`-th unread character; NUL past the end of the input (libyaml's terminator).
+    /// `buffer[k]`: the `k`-th unread character; NUL past the end of the input (libyaml's terminator). The
+    /// current character when it is ASCII is read inline; everything else is [`Self::peek_slow`].
+    #[inline]
     pub(crate) fn peek(&self, k: usize) -> char {
-        let bytes = self.body.as_bytes();
         if k == 0
-            && let Some(&b) = bytes.get(self.pos)
+            && let Some(&b) = self.body.as_bytes().get(self.pos)
             && b.is_ascii()
         {
             return char::from(b);
         }
-        // Fast path: ASCII up to the wanted character (one byte per character).
-        if let Some(window) = bytes.get(self.pos..self.pos.saturating_add(k).saturating_add(1))
+        self.peek_slow(k)
+    }
+
+    /// [`Self::peek`] for lookahead (`k > 0`), a non-ASCII character or the end of the input.
+    #[inline(never)]
+    fn peek_slow(&self, k: usize) -> char {
+        // ASCII up to the wanted character (one byte per character).
+        if let Some(window) = self
+            .body
+            .as_bytes()
+            .get(self.pos..self.pos.saturating_add(k).saturating_add(1))
             && window.is_ascii()
             && let Some(&b) = window.last()
         {
@@ -208,10 +228,11 @@ impl<'a> Reader<'a> {
     }
 
     /// Consumes `buffer[0]` (no-op at the end of the input) and returns it.
+    #[inline]
     pub(crate) fn advance(&mut self) -> char {
         let c = match self.body.as_bytes().get(self.pos) {
             Some(&b) if b.is_ascii() => char::from(b),
-            Some(_) => self.peek(0),
+            Some(_) => self.peek_slow(0),
             None => '\0',
         };
         if self.pos < self.body.len() {
@@ -229,5 +250,118 @@ impl<'a> Reader<'a> {
     /// The input between two byte offsets of the body (empty if they are not character boundaries).
     pub(crate) fn slice(&self, start: usize, end: usize) -> &'a str {
         self.body.get(start..end).unwrap_or("")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Error, RAW_CHUNK, Reader};
+
+    /// `s` repeated `n` times (`str::repeat` is a disallowed method).
+    fn rep(s: &str, n: usize) -> String {
+        std::iter::repeat_n(s, n).collect()
+    }
+
+    /// `peek(k)` and `advance` against the text's characters at every position (the one-byte fast path, the
+    /// ASCII-window and `chars().nth` slow paths, the NUL past the end), with `CACHE` interleaved as the scanner
+    /// does.
+    #[test]
+    fn peek_and_advance_match_the_text_on_every_path() {
+        let long = format!("{}\u{e9}{}", rep("a", RAW_CHUNK - 1), rep("b", 3));
+        let texts = [
+            "",
+            "a",
+            "ab\n",
+            "\u{e9}",
+            "a\u{e9}",
+            "\u{e9}a",
+            "a\u{20ac}b",
+            "x\u{10000}y\u{85}z",
+            "\u{feff}x\u{e9}",
+            "\u{feff}",
+            &long,
+        ];
+        for text in texts {
+            let chars: Vec<char> = text.trim_prefix('\u{feff}').chars().collect();
+            let mut r = Reader::new(text);
+            for i in 0..=chars.len().saturating_add(1) {
+                assert_eq!(r.cache(4), Ok(()), "{text:?} at {i}");
+                for k in 0..5 {
+                    let want = chars.get(i.saturating_add(k)).copied().unwrap_or('\0');
+                    assert_eq!(r.peek(k), want, "{text:?}: peek({k}) at {i}");
+                }
+                let want = chars.get(i).copied().unwrap_or('\0');
+                assert_eq!(r.advance(), want, "{text:?}: advance at {i}");
+            }
+        }
+    }
+
+    /// `CACHE(n)` decodes nothing while `n` characters are decoded and unread; a character that straddles the
+    /// chunk end waits for the next chunk; the end of the input appends one NUL, once.
+    #[test]
+    fn cache_decodes_whole_chunks_on_demand() {
+        let text = format!("{}\u{e9}{}", rep("a", RAW_CHUNK - 1), rep("b", 10));
+        let mut r = Reader::new(&text);
+        assert_eq!(r.cache(1), Ok(()));
+        // `é` straddles the chunk end: only the `a`s are decoded.
+        assert_eq!(
+            (r.raw_read, r.decoded, r.unread),
+            (RAW_CHUNK, RAW_CHUNK - 1, RAW_CHUNK - 1)
+        );
+        // Early return: enough characters are decoded, nothing more is read.
+        assert_eq!(r.cache(RAW_CHUNK - 1), Ok(()));
+        assert_eq!(r.raw_read, RAW_CHUNK);
+        for _ in 0..RAW_CHUNK - 2 {
+            r.advance();
+        }
+        assert_eq!(r.unread, 1);
+        assert_eq!(r.cache(2), Ok(()));
+        assert_eq!((r.decoded, r.unread, r.eof), (text.len(), 12, false));
+        assert_eq!(r.cache(13), Ok(()));
+        assert_eq!((r.unread, r.eof), (13, true));
+        // At the end, CACHE never appends a second NUL.
+        assert_eq!(r.cache(20), Ok(()));
+        assert_eq!(r.unread, 13);
+        let mut empty = Reader::new("");
+        assert_eq!(empty.cache(1), Ok(()));
+        assert_eq!((empty.unread, empty.eof), (1, true));
+    }
+
+    /// A control character is reported when the chunk holding it is decoded, at its byte offset in the input (a
+    /// BOM counted), not before.
+    #[test]
+    fn control_characters_are_found_with_their_chunk() {
+        for (prefix, bom) in [("", 0), ("\u{feff}", 3)] {
+            for at in [RAW_CHUNK - 1, RAW_CHUNK, RAW_CHUNK + 1] {
+                let body = at.saturating_sub(bom);
+                let text = format!("{prefix}{}\u{1}z", rep("x", body));
+                let mut r = Reader::new(&text);
+                let first = r.cache(1);
+                if at < RAW_CHUNK {
+                    assert_eq!(
+                        first,
+                        Err(Error::Reader {
+                            value: 1,
+                            offset: at
+                        }),
+                        "{at}"
+                    );
+                    continue;
+                }
+                assert_eq!(first, Ok(()), "{at}: chunk 1 is clean");
+                let unread = r.unread;
+                for _ in 0..unread {
+                    r.advance();
+                }
+                assert_eq!(
+                    r.cache(1),
+                    Err(Error::Reader {
+                        value: 1,
+                        offset: at
+                    }),
+                    "{at}"
+                );
+            }
+        }
     }
 }

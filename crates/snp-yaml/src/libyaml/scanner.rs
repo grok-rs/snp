@@ -145,10 +145,12 @@ impl<'a> Scanner<'a> {
 
     // --- buffer primitives (libyaml's macros) -------------------------------------------------------------------
 
+    #[inline]
     fn cache(&mut self, n: usize) -> R<()> {
         self.reader.cache(n)
     }
 
+    #[inline]
     fn ch(&self, k: usize) -> char {
         self.reader.peek(k)
     }
@@ -158,6 +160,7 @@ impl<'a> Scanner<'a> {
     }
 
     /// `SKIP`.
+    #[inline]
     fn skip(&mut self) {
         self.reader.advance();
         self.mark.index = self.mark.index.saturating_add(1);

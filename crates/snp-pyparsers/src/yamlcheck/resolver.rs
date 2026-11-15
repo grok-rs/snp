@@ -5,6 +5,8 @@
 //!
 //! Owner: WP-17.
 
+use std::borrow::Cow;
+
 use super::{Fail, Loader, R, Rx, Ver};
 use crate::pystr;
 
@@ -19,14 +21,39 @@ const YAML: &str = "tag:yaml.org,2002:yaml";
 /// `BaseResolver.DEFAULT_SCALAR_TAG`.
 pub(super) const STR: &str = "tag:yaml.org,2002:str";
 
+/// The rules registered for one first character, in registration order: at most one of each of the eight
+/// kinds (bool, float, int, merge, null, timestamp, value, yaml), so the array never fills.
+#[derive(Debug, Clone, Copy)]
+struct Rules {
+    rx: [Rx; 8],
+    len: usize,
+}
+
+impl Rules {
+    fn push(&mut self, rx: Rx) {
+        if let Some(slot) = self.rx.get_mut(self.len) {
+            *slot = rx;
+            self.len = self.len.saturating_add(1);
+        }
+    }
+
+    fn as_slice(&self) -> &[Rx] {
+        self.rx.get(..self.len).unwrap_or_default()
+    }
+}
+
 /// The rules registered for `first` (a code point, `None` for the empty string) under version 1.1 or 1.2.
-fn rules(v11: bool, first: Option<u32>) -> Vec<Rx> {
+fn rules(v11: bool, first: Option<u32>) -> Rules {
     let c = first.and_then(char::from_u32);
-    let mut out = Vec::new();
+    let mut out = Rules {
+        rx: [Rx::Null; 8],
+        len: 0,
+    };
     let digit = c.is_some_and(|c| c.is_ascii_digit());
     let sign = c.is_some_and(|c| c == '-' || c == '+');
     if v11 {
-        if c.is_some_and(|c| "yYnNtTfFoO".contains(c)) {
+        if c.is_some_and(|c| matches!(c, 'y' | 'Y' | 'n' | 'N' | 't' | 'T' | 'f' | 'F' | 'o' | 'O'))
+        {
             out.push(Rx::Bool11);
         }
         if digit || sign || c == Some('.') {
@@ -36,7 +63,7 @@ fn rules(v11: bool, first: Option<u32>) -> Vec<Rx> {
             out.push(Rx::Int11);
         }
     } else {
-        if c.is_some_and(|c| "tTfF".contains(c)) {
+        if c.is_some_and(|c| matches!(c, 't' | 'T' | 'f' | 'F')) {
             out.push(Rx::Bool12);
         }
         if digit || sign || c == Some('.') {
@@ -49,7 +76,7 @@ fn rules(v11: bool, first: Option<u32>) -> Vec<Rx> {
     if c == Some('<') {
         out.push(Rx::Merge);
     }
-    if first.is_none() || c.is_some_and(|c| "~nN".contains(c)) {
+    if first.is_none() || c.is_some_and(|c| matches!(c, '~' | 'n' | 'N')) {
         out.push(Rx::Null);
     }
     if digit {
@@ -58,7 +85,7 @@ fn rules(v11: bool, first: Option<u32>) -> Vec<Rx> {
     if c == Some('=') {
         out.push(Rx::Value);
     }
-    if c.is_some_and(|c| "!&*".contains(c)) {
+    if c.is_some_and(|c| matches!(c, '!' | '&' | '*')) {
         out.push(Rx::Yaml);
     }
     out
@@ -473,21 +500,21 @@ impl Loader<'_, '_> {
     }
 
     /// `VersionedResolver.resolve(ScalarNode, value, implicit)` (the caller pushed its frame).
-    pub(super) fn resolve_scalar(&mut self, value: &[u8], implicit: bool) -> R<String> {
+    pub(super) fn resolve_scalar(&mut self, value: &[u8], implicit: bool) -> R<Cow<'static, str>> {
         if implicit {
             let v = self.versioned_resolver()?;
             let first = pystr::code_points(value).next();
             let candidates = rules(v.is11(), first);
             self.versioned_resolver()?;
-            for rx in candidates {
+            for &rx in candidates.as_slice() {
                 self.rx_call(rx)?;
                 if rx_match(rx, value) {
                     self.touch(1)?; // Tag(suffix=tag)
-                    return Ok(tag_of(rx).to_owned());
+                    return Ok(Cow::Borrowed(tag_of(rx)));
                 }
             }
         }
-        Ok(STR.to_owned())
+        Ok(Cow::Borrowed(STR))
     }
 }
 
@@ -497,12 +524,72 @@ mod tests {
 
     fn resolve(v11: bool, s: &str) -> &'static str {
         let b = s.as_bytes();
-        for rx in rules(v11, pystr::code_points(b).next()) {
+        for &rx in rules(v11, pystr::code_points(b).next()).as_slice() {
             if rx_match(rx, b) {
                 return tag_of(rx);
             }
         }
         STR
+    }
+
+    /// `rules` as it was: a `Vec` built with `str::contains`.
+    fn rules_reference(v11: bool, first: Option<u32>) -> Vec<Rx> {
+        let c = first.and_then(char::from_u32);
+        let mut out = Vec::new();
+        let digit = c.is_some_and(|c| c.is_ascii_digit());
+        let sign = c.is_some_and(|c| c == '-' || c == '+');
+        if v11 {
+            if c.is_some_and(|c| "yYnNtTfFoO".contains(c)) {
+                out.push(Rx::Bool11);
+            }
+            if digit || sign || c == Some('.') {
+                out.push(Rx::Float11);
+            }
+            if digit || sign {
+                out.push(Rx::Int11);
+            }
+        } else {
+            if c.is_some_and(|c| "tTfF".contains(c)) {
+                out.push(Rx::Bool12);
+            }
+            if digit || sign || c == Some('.') {
+                out.push(Rx::Float12);
+            }
+            if digit || sign {
+                out.push(Rx::Int12);
+            }
+        }
+        if c == Some('<') {
+            out.push(Rx::Merge);
+        }
+        if first.is_none() || c.is_some_and(|c| "~nN".contains(c)) {
+            out.push(Rx::Null);
+        }
+        if digit {
+            out.push(Rx::Timestamp);
+        }
+        if c == Some('=') {
+            out.push(Rx::Value);
+        }
+        if c.is_some_and(|c| "!&*".contains(c)) {
+            out.push(Rx::Yaml);
+        }
+        out
+    }
+
+    #[test]
+    fn rules_keep_the_registration_order() {
+        for v11 in [false, true] {
+            assert_eq!(rules(v11, None).as_slice(), rules_reference(v11, None));
+            // every code point, surrogates (from a `\ud800` escape) included
+            for cp in 0..=0x10_FFFF_u32 {
+                assert_eq!(
+                    rules(v11, Some(cp)).as_slice(),
+                    rules_reference(v11, Some(cp)),
+                    "{v11} {cp:#x}"
+                );
+            }
+        }
     }
 
     #[test]

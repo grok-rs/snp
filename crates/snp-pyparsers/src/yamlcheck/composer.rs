@@ -4,10 +4,12 @@
 //!
 //! Owner: WP-17.
 
+use std::borrow::Cow;
+
 use snp_pycompat::repr::repr_str;
 
 use super::construct::{Node, NodeId, NodeKind, TagCache};
-use super::parser::{EvId, Event};
+use super::parser::{EvId, Event, EventHead};
 use super::{Fail, Loader, R, YamlWarning, marked};
 
 /// A collection under construction on the explicit stack.
@@ -44,7 +46,7 @@ impl Loader<'_, '_> {
         })
     }
 
-    fn c_peek(&mut self) -> R<Event> {
+    fn c_peek(&mut self) -> R<EventHead> {
         self.touch(2)?;
         self.peek_event()?.ok_or_else(|| {
             Fail::crash(
@@ -293,34 +295,35 @@ impl Loader<'_, '_> {
     }
 
     /// The resolved tag of a collection start event (`tag is None or str(tag) == '!'` → `resolve(...)`).
-    fn collection_tag(&mut self, ev: &Event, is_seq: bool) -> R<(String, TagCache)> {
+    fn collection_tag(&mut self, ev: &Event, is_seq: bool) -> R<(Cow<'static, str>, TagCache)> {
         if let Some(t) = &ev.tag {
             self.touch(2)?;
             if t != "!" {
-                return Ok((t.clone(), TagCache::Cached));
+                return Ok((Cow::Owned(t.clone()), TagCache::Cached));
             }
         }
         self.c_resolver()?;
         self.touch(1)?; // resolve(): no implicit resolvers for collections
         Ok(if is_seq {
-            ("tag:yaml.org,2002:seq".to_owned(), TagCache::Default(1))
+            (Cow::Borrowed("tag:yaml.org,2002:seq"), TagCache::Default(1))
         } else {
-            ("tag:yaml.org,2002:map".to_owned(), TagCache::Default(2))
+            (Cow::Borrowed("tag:yaml.org,2002:map"), TagCache::Default(2))
         })
     }
 
     /// `compose_scalar_node(anchor)` (the caller pushed its frame).
     fn compose_scalar_node(&mut self, anchor: Option<String>) -> R<NodeId> {
         let ev = self.c_get()?;
-        let explicit = match &ev.tag {
+        // the event is consumed here: its tag moves into the node
+        let explicit = match ev.tag {
             Some(t) => {
                 self.touch(2)?;
-                (t != "!").then(|| t.clone())
+                (t != "!").then_some(t)
             }
             None => None,
         };
         let (tag, tag_cache) = if let Some(t) = explicit {
-            (t, TagCache::Cached)
+            (Cow::Owned(t), TagCache::Cached)
         } else {
             self.c_resolver()?;
             let t = self.frame(|s| s.resolve_scalar(&ev.value, ev.implicit.0))?;

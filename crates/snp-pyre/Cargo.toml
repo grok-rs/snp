@@ -21,6 +21,7 @@ fancy-regex.workspace = true
 indexmap.workspace = true
 memchr.workspace = true
 regex.workspace = true
+regex-automata.workspace = true
 regex-syntax.workspace = true
 unicode-ident.workspace = true
 unicode_names2 = { workspace = true, optional = true }

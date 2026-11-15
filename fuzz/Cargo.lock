@@ -1265,6 +1265,7 @@ dependencies = [
  "indexmap",
  "memchr",
  "regex",
+ "regex-automata",
  "regex-syntax",
  "snp-core",
  "snp-pycompat",

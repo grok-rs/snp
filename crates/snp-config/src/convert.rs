@@ -36,8 +36,16 @@ pub(crate) fn arc(s: &str) -> Arc<str> {
         .map_or_else(|| Arc::from(s), Arc::clone)
 }
 
+/// `m[k]` for a `str` key, found without building a `Value` key (no allocation, no hash). cfgv's `Value` equality
+/// never equates a `str` with another type and a dict holds each `str` key once, so the first string key equal to
+/// `k` is the entry `m.get(&Value::from(k))` finds; a non-string key never matches.
+///
+/// A probe costs one pass over the dict. Callers probe a dict only for a fixed set of literal keys (never for a name
+/// read from the input; such a probe stays hashed) and parse the extension keys in one pass, so a config costs at
+/// most a constant times its keys.
 pub(crate) fn get<'a>(m: &'a Map, k: &str) -> Option<&'a Value> {
-    m.get(&Value::from(k))
+    m.iter()
+        .find_map(|(key, v)| (key.as_str() == Some(k)).then_some(v))
 }
 
 pub(crate) fn get_str<'a>(m: &'a Map, k: &str) -> Option<&'a str> {
@@ -241,9 +249,9 @@ pub(crate) fn config(source: ConfigSource, raw: Value, ext_mode: ExtMode) -> Con
             },
         );
     let mut default_language_version = IndexMap::new();
+    let configured = get(m, "default_language_version").and_then(Value::as_map);
     for lang in LanguageId::ALL {
-        let v = get(m, "default_language_version")
-            .and_then(Value::as_map)
+        let v = configured
             .and_then(|d| get_str(d, lang.as_str()))
             .unwrap_or(DEFAULT);
         default_language_version.insert(lang, arc(v));
@@ -278,5 +286,78 @@ pub(crate) fn manifest(raw: &Value) -> Manifest {
             .filter_map(Value::as_map)
             .map(|h| hook_def(h, ExtMode::Strict))
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proptest::prelude::*;
+
+    use super::*;
+
+    /// Probe names (hook, repo and root keys) and near misses: empty, case, whitespace, non-ASCII.
+    const NAMES: [&str; 12] = [
+        "id",
+        "name",
+        "repo",
+        "hooks",
+        "priority",
+        "language",
+        "",
+        "Id",
+        "id ",
+        "é",
+        "\u{1f600}",
+        "1",
+    ];
+
+    /// A dict key: a string, or a value of another type that spells (or contains) a probe name.
+    fn key() -> impl Strategy<Value = Value> {
+        let name = || prop::sample::select(NAMES.to_vec());
+        prop_oneof![
+            4 => name().prop_map(Value::from),
+            1 => name().prop_map(|s| Value::Bytes(s.as_bytes().to_vec())),
+            1 => name().prop_map(|s| Value::Tuple(vec![Value::from(s)])),
+            1 => (0_i64..3).prop_map(Value::Int),
+            1 => any::<bool>().prop_map(Value::Bool),
+            1 => Just(Value::Null),
+            1 => Just(Value::Float(1.0)),
+        ]
+    }
+
+    proptest! {
+        /// `get` returns the very entry of the hashed lookup `m.get(&Value::from(k))` (or none when it finds none),
+        /// whatever the mix and order of key types.
+        #[test]
+        fn get_is_the_hashed_lookup(entries in prop::collection::vec((key(), 0_i64..100), 0..24)) {
+            let m: Map = entries.into_iter().map(|(k, v)| (k, Value::Int(v))).collect();
+            for k in NAMES {
+                let same = match (get(&m, k), m.get(&Value::from(k))) {
+                    (Some(a), Some(b)) => std::ptr::eq(a, b),
+                    (None, None) => true,
+                    _ => false,
+                };
+                prop_assert!(same, "{k:?} in {m:?}");
+            }
+        }
+    }
+
+    /// A key of another type never answers a string probe (Python: `b'id' != 'id'`, `1 != '1'`, `True != 'True'`).
+    #[test]
+    fn get_never_matches_a_non_string_key() {
+        let mut m: Map = [
+            (Value::Bytes(b"id".to_vec()), Value::from("bytes")),
+            (Value::Tuple(vec![Value::from("id")]), Value::from("tuple")),
+            (Value::Int(1), Value::from("int")),
+            (Value::Null, Value::from("null")),
+        ]
+        .into_iter()
+        .collect();
+        for k in ["id", "1", "True", "true", "None", "null", ""] {
+            assert_eq!(get(&m, k), None, "{k:?}");
+        }
+        m.insert(Value::from("id"), Value::from("str"));
+        assert_eq!(get_str(&m, "id"), Some("str"));
+        assert_eq!(get(&Map::new(), "id"), None);
     }
 }

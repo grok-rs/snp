@@ -1942,6 +1942,7 @@ dependencies = [
  "memchr",
  "proptest",
  "regex",
+ "regex-automata",
  "regex-syntax",
  "serde_json",
  "snp-core",

@@ -50,7 +50,7 @@ pub(super) enum Bt {
 }
 
 /// `asciitab.h` (non-namespace: `':'` is a name-start character); `internal` is `iasciitab.h` (CR is `BT_S`).
-pub(super) const fn ascii_type(b: u8, internal: bool) -> Bt {
+const fn ascii_type(b: u8, internal: bool) -> Bt {
     match b {
         0x09 | 0x20 => Bt::S,
         0x0A => Bt::Lf,
@@ -118,19 +118,84 @@ pub(super) fn is_name_cp(cp: u32) -> bool {
     in_ranges(names::NAME, cp)
 }
 
-/// `latin1tab.h`: the byte types of U+0080–U+00FF (also the UTF-16 types when the high byte is 0).
-fn latin1_type(b: u8) -> Bt {
+/// [`in_ranges`] for the table builders: a linear scan (the tables are built at compile time).
+const fn in_ranges_const(table: &[(u16, u16)], c: u16) -> bool {
+    let mut rest = table;
+    while let [(a, b), tail @ ..] = rest {
+        if *a <= c && c <= *b {
+            return true;
+        }
+        rest = tail;
+    }
+    false
+}
+
+/// The type of byte `b` (code point `cp`, the same value) in the one-byte-per-character encoding `kind`: UTF-8's
+/// lead and trail bytes (`utf8tab.h`), `latin1tab.h` (also the UTF-16 types when the high byte is 0) or the ASCII
+/// encoding (every byte ≥ 0x80 is `BT_NONXML`).
+const fn byte_type(kind: TableKind, b: u8, cp: u16) -> Bt {
     if b < 0x80 {
-        return ascii_type(b, false);
+        return ascii_type(b, matches!(kind, TableKind::Internal));
     }
-    let cp = u32::from(b);
-    if is_nmstrt_cp(cp) {
-        Bt::Nmstrt
-    } else if is_name_cp(cp) {
-        Bt::Name
-    } else {
-        Bt::Other
+    match kind {
+        TableKind::Utf8 | TableKind::Internal => match b {
+            0x80..=0xBF => Bt::Trail,
+            0xC0..=0xDF => Bt::Lead2,
+            0xE0..=0xEF => Bt::Lead3,
+            0xF0..=0xF4 => Bt::Lead4,
+            _ => Bt::Nonxml,
+        },
+        TableKind::Latin1 => {
+            if in_ranges_const(names::NMSTRT, cp) {
+                Bt::Nmstrt
+            } else if in_ranges_const(names::NAME, cp) {
+                Bt::Name
+            } else {
+                Bt::Other
+            }
+        }
+        TableKind::Ascii => Bt::Nonxml,
     }
+}
+
+/// The encodings whose byte types are one table lookup.
+#[derive(Copy, Clone)]
+enum TableKind {
+    Utf8,
+    Internal,
+    Latin1,
+    Ascii,
+}
+
+/// The 256 byte types of `kind`, built at compile time from [`byte_type`].
+const fn byte_types(kind: TableKind) -> [Bt; 256] {
+    let mut t = [Bt::Nonxml; 256];
+    let mut rest: &mut [Bt] = &mut t;
+    let (mut b, mut cp) = (0u8, 0u16);
+    while let Some((slot, tail)) = rest.split_first_mut() {
+        *slot = byte_type(kind, b, cp);
+        rest = tail;
+        b = b.wrapping_add(1);
+        cp = cp.wrapping_add(1);
+    }
+    t
+}
+
+/// `utf8_encoding`'s byte types.
+static UTF8_TYPES: [Bt; 256] = byte_types(TableKind::Utf8);
+/// `internal_utf8_encoding`'s byte types (CR is `BT_S`).
+static INTERNAL_TYPES: [Bt; 256] = byte_types(TableKind::Internal);
+/// `latin1_encoding`'s byte types (`latin1tab.h`).
+static LATIN1_TYPES: [Bt; 256] = byte_types(TableKind::Latin1);
+/// `ascii_encoding`'s byte types.
+static ASCII_TYPES: [Bt; 256] = byte_types(TableKind::Ascii);
+
+/// `latin1tab.h`: the byte types of U+0000–U+00FF (also the UTF-16 types when the high byte is 0).
+fn latin1_type(b: u8) -> Bt {
+    LATIN1_TYPES
+        .get(usize::from(b))
+        .copied()
+        .unwrap_or(Bt::Nonxml)
 }
 
 /// `checkCharRefNumber`.
@@ -300,45 +365,45 @@ impl Enc {
         }
     }
 
-    /// `BYTE_TYPE(enc, p)`; `buf[p..]` holds at least `minbpc` bytes.
-    pub(super) fn bt(&self, buf: &[u8], p: usize) -> Bt {
-        let b0 = buf.get(p).copied().unwrap_or(0);
+    /// The byte-type table of a one-byte-per-character encoding (`None` for UTF-16).
+    #[inline]
+    fn byte_table(&self) -> Option<&[Bt; 256]> {
         match self {
-            Self::Utf8 | Self::Internal => {
-                if b0 < 0x80 {
-                    ascii_type(b0, matches!(self, Self::Internal))
-                } else {
-                    match b0 {
-                        0x80..=0xBF => Bt::Trail,
-                        0xC0..=0xDF => Bt::Lead2,
-                        0xE0..=0xEF => Bt::Lead3,
-                        0xF0..=0xF4 => Bt::Lead4,
-                        _ => Bt::Nonxml,
-                    }
-                }
-            }
-            Self::Latin1 => latin1_type(b0),
-            Self::Ascii => {
-                if b0 < 0x80 {
-                    ascii_type(b0, false)
-                } else {
-                    Bt::Nonxml
-                }
-            }
-            Self::Little2 | Self::Big2 => {
-                let b1 = buf.get(p.saturating_add(1)).copied().unwrap_or(0);
-                let (hi, lo) = if matches!(self, Self::Little2) {
-                    (b1, b0)
-                } else {
-                    (b0, b1)
-                };
-                if hi == 0 {
-                    latin1_type(lo)
-                } else {
-                    unicode_byte_type(hi, lo)
-                }
-            }
-            Self::Unknown(t) => t.0.get(usize::from(b0)).copied().unwrap_or(Bt::Malform),
+            Self::Utf8 => Some(&UTF8_TYPES),
+            Self::Internal => Some(&INTERNAL_TYPES),
+            Self::Latin1 => Some(&LATIN1_TYPES),
+            Self::Ascii => Some(&ASCII_TYPES),
+            Self::Unknown(t) => Some(&t.0),
+            Self::Little2 | Self::Big2 => None,
+        }
+    }
+
+    /// `BYTE_TYPE(enc, p)`; `buf[p..]` holds at least `minbpc` bytes (a missing byte reads as 0).
+    #[inline]
+    pub(super) fn bt(&self, buf: &[u8], p: usize) -> Bt {
+        match self.byte_table() {
+            Some(t) => t
+                .get(usize::from(buf.get(p).copied().unwrap_or(0)))
+                .copied()
+                .unwrap_or(Bt::Malform),
+            None => self.bt_utf16(buf, p),
+        }
+    }
+
+    /// [`Enc::bt`] for the two-byte encodings.
+    #[inline(never)]
+    fn bt_utf16(&self, buf: &[u8], p: usize) -> Bt {
+        let b0 = buf.get(p).copied().unwrap_or(0);
+        let b1 = buf.get(p.saturating_add(1)).copied().unwrap_or(0);
+        let (hi, lo) = if matches!(self, Self::Little2) {
+            (b1, b0)
+        } else {
+            (b0, b1)
+        };
+        if hi == 0 {
+            latin1_type(lo)
+        } else {
+            unicode_byte_type(hi, lo)
         }
     }
 
@@ -520,5 +585,137 @@ pub(super) fn builtin(name: &[u8]) -> Option<Builtin> {
         Some(Builtin::Utf16Le)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `latin1tab.h` as `Enc::bt` computed it before the tables: the reference the table must equal.
+    fn reference_latin1(b: u8) -> Bt {
+        if b < 0x80 {
+            return ascii_type(b, false);
+        }
+        let cp = u32::from(b);
+        if is_nmstrt_cp(cp) {
+            Bt::Nmstrt
+        } else if is_name_cp(cp) {
+            Bt::Name
+        } else {
+            Bt::Other
+        }
+    }
+
+    /// `Enc::bt` before the tables.
+    fn reference_bt(enc: &Enc, buf: &[u8], p: usize) -> Bt {
+        let b0 = buf.get(p).copied().unwrap_or(0);
+        match enc {
+            Enc::Utf8 | Enc::Internal => {
+                if b0 < 0x80 {
+                    ascii_type(b0, matches!(enc, Enc::Internal))
+                } else {
+                    match b0 {
+                        0x80..=0xBF => Bt::Trail,
+                        0xC0..=0xDF => Bt::Lead2,
+                        0xE0..=0xEF => Bt::Lead3,
+                        0xF0..=0xF4 => Bt::Lead4,
+                        _ => Bt::Nonxml,
+                    }
+                }
+            }
+            Enc::Latin1 => reference_latin1(b0),
+            Enc::Ascii => {
+                if b0 < 0x80 {
+                    ascii_type(b0, false)
+                } else {
+                    Bt::Nonxml
+                }
+            }
+            Enc::Little2 | Enc::Big2 => {
+                let b1 = buf.get(p.saturating_add(1)).copied().unwrap_or(0);
+                let (hi, lo) = if matches!(enc, Enc::Little2) {
+                    (b1, b0)
+                } else {
+                    (b0, b1)
+                };
+                if hi == 0 {
+                    reference_latin1(lo)
+                } else {
+                    unicode_byte_type(hi, lo)
+                }
+            }
+            Enc::Unknown(t) => t.0.get(usize::from(b0)).copied().unwrap_or(Bt::Malform),
+        }
+    }
+
+    #[test]
+    fn byte_tables_equal_the_byte_type_functions() {
+        for enc in [Enc::Utf8, Enc::Internal, Enc::Latin1, Enc::Ascii] {
+            for b in 0..=u8::MAX {
+                let buf = [b'x', b, b'y'];
+                assert_eq!(
+                    enc.bt(&buf, 1),
+                    reference_bt(&enc, &buf, 1),
+                    "{enc:?} {b:#04x}"
+                );
+            }
+            // A byte past the end reads as 0, as before.
+            assert_eq!(enc.bt(b"", 0), reference_bt(&enc, b"", 0), "{enc:?}");
+            assert_eq!(enc.bt(b"", 0), Bt::Nonxml, "{enc:?}");
+        }
+        for b in 0..=u8::MAX {
+            assert_eq!(latin1_type(b), reference_latin1(b), "{b:#04x}");
+        }
+    }
+
+    #[test]
+    fn utf16_and_unknown_encodings_keep_their_paths() {
+        for enc in [Enc::Little2, Enc::Big2] {
+            for hi in 0..=u8::MAX {
+                for lo in 0..=u8::MAX {
+                    let buf = [hi, lo];
+                    assert_eq!(
+                        enc.bt(&buf, 0),
+                        reference_bt(&enc, &buf, 0),
+                        "{enc:?} {hi:#04x} {lo:#04x}"
+                    );
+                }
+            }
+            // One byte left: the missing half reads as 0.
+            for b in 0..=u8::MAX {
+                assert_eq!(
+                    enc.bt(&[b], 0),
+                    reference_bt(&enc, &[b], 0),
+                    "{enc:?} {b:#04x}"
+                );
+            }
+        }
+        // A cp1252-like map: ASCII identity, 0x80 -> U+20AC, 0x81 undefined, the rest Latin-1.
+        let mut map = [0i32; 256];
+        for (i, slot) in map.iter_mut().enumerate() {
+            *slot = i32::try_from(i).unwrap();
+        }
+        map[0x80] = 0x20AC;
+        map[0x81] = -1;
+        let enc = unknown_encoding(&map).unwrap();
+        for b in 0..=u8::MAX {
+            assert_eq!(enc.bt(&[b], 0), reference_bt(&enc, &[b], 0), "{b:#04x}");
+        }
+        assert_eq!(enc.bt(&[0x81], 0), Bt::Malform);
+        assert_eq!(enc.bt(&[0xE9], 0), Bt::Nmstrt);
+    }
+
+    #[test]
+    fn char_ref_numbers_use_the_latin1_table() {
+        let reference = |n: i64| match n >> 8 {
+            0xD8..=0xDF => -1,
+            0 if u8::try_from(n).is_ok_and(|b| reference_latin1(b) == Bt::Nonxml) => -1,
+            0xFF if n == 0xFFFE || n == 0xFFFF => -1,
+            _ => n,
+        };
+        for n in -1..=0x11_0000_i64 {
+            assert_eq!(check_char_ref_number(n), reference(n), "{n:#x}");
+        }
     }
 }

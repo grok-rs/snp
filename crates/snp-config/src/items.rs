@@ -16,6 +16,7 @@ use snp_core::brand::Brand;
 use snp_core::profile;
 use snp_core::stage::Stage;
 
+use crate::convert::get;
 use crate::messages;
 
 /// `C.DEFAULT`.
@@ -255,7 +256,7 @@ impl MapItem for DeprecatedStagesWarning {
         if !legacy.is_empty() {
             let list = messages::join(&legacy);
             if self.hook {
-                let id = dct.get(&Value::from("id")).map_or_default(Value::to_string);
+                let id = get(dct, "id").map_or_default(Value::to_string);
                 cx.warn(messages::hook_deprecated_stages(self.brand, &id, &list));
             } else {
                 cx.warn(messages::top_deprecated_stages(self.brand, &list));
@@ -374,8 +375,7 @@ impl MapItem for WarnMutableRev {
             && !rev.contains('.')
             && !is_hex_rev(rev)
         {
-            let repo = dct
-                .get(&Value::from("repo"))
+            let repo = get(dct, "repo")
                 .map(Value::try_repr)
                 .transpose()?
                 .unwrap_or_default();
@@ -427,10 +427,7 @@ impl MapItem for SensibleRegex {
             return Ok(());
         };
         let key = self.key.try_repr()?;
-        let id = || {
-            dct.get(&Value::from("id"))
-                .map_or_else(|| Ok("None".to_owned()), Value::try_repr)
-        };
+        let id = || get(dct, "id").map_or_else(|| Ok("None".to_owned()), Value::try_repr);
         if val.contains("/*") {
             let msg = if self.hook {
                 messages::hook_regex_glob(&key, &id()?)
@@ -467,7 +464,7 @@ impl MapItem for SensibleRegex {
 pub(crate) struct UnlessBuiltin(pub(crate) Validator);
 
 fn is_builtin(dct: &Map) -> bool {
-    dct.get(&Value::from("repo")).and_then(Value::as_str) == Some(BUILTIN)
+    get(dct, "repo").and_then(Value::as_str) == Some(BUILTIN)
 }
 
 impl MapItem for UnlessBuiltin {
@@ -501,7 +498,7 @@ pub(crate) struct BuiltinNoRev;
 impl MapItem for BuiltinNoRev {
     fn check(&self, dct: &Map, _cx: &mut Cx<'_>) -> Result<(), ValidationError> {
         if is_builtin(dct)
-            && let Some(rev) = dct.get(&Value::from("rev"))
+            && let Some(rev) = get(dct, "rev")
         {
             return Err(ValidationError::new(messages::builtin_rev(
                 &rev.try_repr()?,
@@ -559,14 +556,10 @@ pub(crate) struct InteractiveLanguage;
 
 impl MapItem for InteractiveLanguage {
     fn check(&self, dct: &Map, _cx: &mut Cx<'_>) -> Result<(), ValidationError> {
-        if dct
-            .get(&Value::from("interactive"))
-            .and_then(Value::as_bool)
-            != Some(true)
-        {
+        if get(dct, "interactive").and_then(Value::as_bool) != Some(true) {
             return Ok(());
         }
-        match dct.get(&Value::from("language")).and_then(Value::as_str) {
+        match get(dct, "language").and_then(Value::as_str) {
             Some(lang @ ("fail" | "pygrep")) => validate_context(
                 || "At key: interactive".to_owned(),
                 || {
@@ -588,29 +581,28 @@ pub(crate) struct PriorityAliases;
 
 impl MapItem for PriorityAliases {
     fn check(&self, dct: &Map, _cx: &mut Cx<'_>) -> Result<(), ValidationError> {
-        let defined = dct.get(&Value::from("priorities")).and_then(Value::as_map);
-        let Some(repos) = dct.get(&Value::from("repos")).and_then(Value::as_array) else {
+        let defined = get(dct, "priorities").and_then(Value::as_map);
+        let Some(repos) = get(dct, "repos").and_then(Value::as_array) else {
             return Ok(());
         };
         for repo in repos {
             let Some(repo) = repo.as_map() else { continue };
-            let Some(hooks) = repo.get(&Value::from("hooks")).and_then(Value::as_array) else {
+            let Some(hooks) = get(repo, "hooks").and_then(Value::as_array) else {
                 continue;
             };
             for hook in hooks {
                 let Some(hook) = hook.as_map() else { continue };
-                let Some(name) = hook.get(&Value::from("priority")).and_then(Value::as_str) else {
+                let Some(name) = get(hook, "priority").and_then(Value::as_str) else {
                     continue;
                 };
+                // Hashed: one probe per hook into a user-sized dict (a scan would cost hooks × priorities).
                 if defined.is_some_and(|d| d.contains_key(&Value::from(name))) {
                     continue;
                 }
-                let repo_id = repo
-                    .get(&Value::from("repo"))
-                    .map_or_else(|| Ok("MISSING".to_owned()), Value::try_repr)?;
-                let hook_id = hook
-                    .get(&Value::from("id"))
-                    .map_or_else(|| Ok("MISSING".to_owned()), Value::try_repr)?;
+                let repo_id =
+                    get(repo, "repo").map_or_else(|| Ok("MISSING".to_owned()), Value::try_repr)?;
+                let hook_id =
+                    get(hook, "id").map_or_else(|| Ok("MISSING".to_owned()), Value::try_repr)?;
                 return Err(ValidationError::new(messages::priority_unknown(
                     &snp_pycompat::repr::repr_str(name),
                 ))

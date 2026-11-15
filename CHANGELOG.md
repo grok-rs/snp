@@ -68,8 +68,16 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   allocates nothing until a line changes. mixed-line-ending skips its per-line count in a file without a carriage
   return. Output, fixes and exit codes are unchanged. snp's own instruction count (callgrind) falls by 5% on the
   B6 benchmark (13 pre-commit-hooks over 960 files) and by about 8% on a 372-file source tree.
+- check-xml and check-yaml use less CPU: check-xml looks each byte's expat type up in a table instead of computing
+  it, and check-yaml tests ruamel's character sets with `matches!` instead of string searches and no longer
+  allocates for YAML versions, resolved tags, prefix checks and peeked tokens, or hashes node ids. Output, messages,
+  marks and the emulated recursion limit are unchanged.
 - Hook argv lists are borrowed from the run's file table and appended at spawn time: `run --all-files` on 50,000
   files makes about half as many allocations and its heap peaks about 7 MB lower (ADR-103).
+- Loading a config or manifest does less work: hook and root keys are read without building a key value per lookup,
+  and a hook's extension keys are parsed in one pass over it. `validate-config` of 1,000 local hooks makes about
+  37,000 (16%) fewer allocations and runs about 7% fewer instructions; `gc` over 200 configs about 9% fewer. Output
+  is unchanged.
 - The installed hook script (template v2, ID `405bd8559925d194c1d22af6ef66282e`) finds its directory by parameter
   expansion instead of running `dirname`: one process less per hook run, with the same `--hook-dir` (ADR-105). It
   keeps the old template's ID as a `# snp 2.0 compat ID:` line, so snp 2.0.0–2.0.1 still recognise it. Scripts
@@ -80,6 +88,18 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   command instead of on a copy of the whole environment: two fewer allocations per environment variable and command
   (about 220 fewer in a no-op `run`, about 500 in the 10 MB stash scenario, and about 1% fewer instructions in both).
   The child's environment and the `SNP_LOG=trace` line are unchanged.
+- Wave-1 tuning follow-up to the tier-1 prefilter (ADR-098; no output change): the relaxed prefilter in front of the
+  exact fallback of a `\b`/`\B` pattern now runs on a forward-only `regex-automata` lazy DFA within the same
+  256 KiB cache. `regex`'s engine also needs a reverse DFA there, and when the pair did not fit (as for
+  `\b\w{3,8}\b/\w+\.md$`) it ran the bounded backtracker on every non-ASCII path. On the B12u benchmark snp executes
+  55 % fewer instructions (callgrind 1,423 M → 647 M) and its heap peaks about 2 MB lower; the other scenarios are
+  unchanged. `regex-automata` 0.4.18, already built as part of `regex`, is now a direct dependency of snp-pyre
+  (ADR-108).
+- Loading YAML (every config and manifest load, `validate-config`, `gc`) uses less CPU and fewer allocations. The
+  reader checks each 16 KiB chunk once and reads the current character without a function call. The constructor
+  sizes its tables up front. The loaded value takes the parsed values of nodes that occur once instead of copying
+  them (ADR-112). `validate-config` on 1,000 hooks runs about 12% fewer instructions with about 29,000 fewer heap
+  allocations; `gc` on 500 configs runs about 5% fewer. Loaded values, errors and their order are unchanged.
 
 - Benchmarks (developer tooling, no runtime change): pull requests and pushes measure the base commit's snp, built
   against its own `deps.lock` crates and toolchain and primed into its own stores, in interleaved ABBA rounds with the

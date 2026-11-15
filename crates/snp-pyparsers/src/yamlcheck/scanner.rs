@@ -14,13 +14,75 @@ use crate::pystr;
 /// ruamel's spelling in its escape-sequence messages.
 const RUAMEL_HEX_WORD: &str = concat!("hex", "decimal");
 
-/// `_THE_END`.
-const THE_END: &str = "\n\0\r\u{85}\u{2028}\u{2029}";
-/// `_THE_END_SPACE_TAB`.
-const THE_END_SPACE_TAB: &str = " \n\0\t\r\u{85}\u{2028}\u{2029}";
+// The character sets ruamel tests with `ch in '…'` (a set used once is an inline `matches!` at its site).
 
-fn is_in(c: char, set: &str) -> bool {
-    set.contains(c)
+/// `ch in _THE_END` (`'\n\0\r\x85\u2028\u2029'`).
+const fn is_the_end(c: char) -> bool {
+    matches!(c, '\n' | '\0' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}')
+}
+
+/// `ch in _THE_END_SPACE_TAB` (`' \n\0\t\r\x85\u2028\u2029'`).
+const fn is_the_end_space_tab(c: char) -> bool {
+    matches!(
+        c,
+        ' ' | '\n' | '\0' | '\t' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}'
+    )
+}
+
+/// `ch in '\0 \r\n\x85\u2028\u2029'`: NUL, a space or a line break.
+const fn is_nul_space_break(c: char) -> bool {
+    matches!(
+        c,
+        '\0' | ' ' | '\r' | '\n' | '\u{85}' | '\u{2028}' | '\u{2029}'
+    )
+}
+
+/// `ch in '\r\n\x85\u2028\u2029'` (also spelled `'\n\r\x85\u2028\u2029'`): a line break.
+const fn is_break(c: char) -> bool {
+    matches!(c, '\r' | '\n' | '\u{85}' | '\u{2028}' | '\u{2029}')
+}
+
+/// `ch in ' \r\n\x85\u2028\u2029'`: a space or a line break.
+const fn is_space_break(c: char) -> bool {
+    matches!(c, ' ' | '\r' | '\n' | '\u{85}' | '\u{2028}' | '\u{2029}')
+}
+
+/// `ch in ' \t'`.
+const fn is_space_tab(c: char) -> bool {
+    matches!(c, ' ' | '\t')
+}
+
+/// ``ch in '\0 \t\r\n\x85\u2028\u2029-?:,[]{}#&*!|>\'"%@`'``: the characters `check_plain` looks closer at.
+const fn is_plain_indicator(c: char) -> bool {
+    matches!(
+        c,
+        '\0' | ' '
+            | '\t'
+            | '\r'
+            | '\n'
+            | '\u{85}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '-'
+            | '?'
+            | ':'
+            | ','
+            | '['
+            | ']'
+            | '{'
+            | '}'
+            | '#'
+            | '&'
+            | '*'
+            | '!'
+            | '|'
+            | '>'
+            | '\''
+            | '"'
+            | '%'
+            | '@'
+            | '`'
+    )
 }
 
 /// The token classes, by their `id`.
@@ -101,6 +163,14 @@ pub(super) struct Token {
     pub(super) end: Mark,
     pub(super) data: TokData,
     pub(super) comment: bool,
+}
+
+/// What the parser reads of a peeked token: its class and marks (the payload stays queued, uncopied).
+#[derive(Debug)]
+pub(super) struct TokHead {
+    pub(super) id: TokId,
+    pub(super) start: Mark,
+    pub(super) end: Mark,
 }
 
 impl Token {
@@ -246,13 +316,17 @@ impl Loader<'_, '_> {
         })
     }
 
-    /// `peek_token()`.
-    pub(super) fn peek_token(&mut self) -> R<Option<Token>> {
+    /// `peek_token()`: the class and marks of the next token.
+    pub(super) fn peek_token(&mut self) -> R<Option<TokHead>> {
         self.frame(|s| {
             while s.need_more_tokens()? {
                 s.fetch_more_tokens()?;
             }
-            Ok(s.sc.tokens.front().cloned())
+            Ok(s.sc.tokens.front().map(|t| TokHead {
+                id: t.id,
+                start: t.start.clone(),
+                end: t.end.clone(),
+            }))
         })
     }
 
@@ -732,7 +806,7 @@ impl Loader<'_, '_> {
             s.touch(1)?;
             if s.r.column == 0 && s.prefix_is(marker)? {
                 let c = s.peek(3)?;
-                return Ok(is_in(c, THE_END_SPACE_TAB));
+                return Ok(is_the_end_space_tab(c));
             }
             Ok(false)
         })
@@ -747,7 +821,7 @@ impl Loader<'_, '_> {
     }
 
     fn check_block_entry(&mut self) -> R<bool> {
-        self.frame(|s| Ok(is_in(s.peek(1)?, THE_END_SPACE_TAB)))
+        self.frame(|s| Ok(is_the_end_space_tab(s.peek(1)?)))
     }
 
     fn check_key(&mut self) -> R<bool> {
@@ -755,7 +829,7 @@ impl Loader<'_, '_> {
             if s.flow_level()? != 0 {
                 return Ok(true);
             }
-            Ok(is_in(s.peek(1)?, THE_END_SPACE_TAB))
+            Ok(is_the_end_space_tab(s.peek(1)?))
         })
     }
 
@@ -767,44 +841,43 @@ impl Loader<'_, '_> {
                 }
             } else if s.flow_level()? != 0 {
                 if s.sc.flow_context.last() == Some(&'[') {
-                    if !is_in(s.peek(1)?, THE_END_SPACE_TAB) {
+                    if !is_the_end_space_tab(s.peek(1)?) {
                         return Ok(false);
                     }
                 } else if s.sc.tokens.back().is_some_and(|t| t.id == TokId::Value)
-                    && !is_in(s.peek(1)?, THE_END_SPACE_TAB)
+                    && !is_the_end_space_tab(s.peek(1)?)
                 {
                     return Ok(false);
                 }
                 return Ok(true);
             }
-            Ok(is_in(s.peek(1)?, THE_END_SPACE_TAB))
+            Ok(is_the_end_space_tab(s.peek(1)?))
         })
     }
 
     fn check_plain(&mut self) -> R<bool> {
-        const IND: &str = "\0 \t\r\n\u{85}\u{2028}\u{2029}-?:,[]{}#&*!|>'\"%@`";
         self.frame(|s| {
             let ch = s.peek(0)?;
             if s.spv()?.is11() {
-                if !is_in(ch, IND) {
+                if !is_plain_indicator(ch) {
                     return Ok(true);
                 }
                 let c1 = s.peek(1)?;
-                return Ok(!is_in(c1, THE_END_SPACE_TAB)
-                    && (ch == '-' || s.flow_level()? == 0 && is_in(ch, "?:")));
+                return Ok(!is_the_end_space_tab(c1)
+                    && (ch == '-' || s.flow_level()? == 0 && matches!(ch, '?' | ':')));
             }
-            if !is_in(ch, IND) {
+            if !is_plain_indicator(ch) {
                 return Ok(true);
             }
             let ch1 = s.peek(1)?;
-            if ch == '-' && !is_in(ch1, THE_END_SPACE_TAB) {
+            if ch == '-' && !is_the_end_space_tab(ch1) {
                 return Ok(true);
             }
-            if ch == ':' && s.flow_level()? != 0 && !is_in(ch1, " \t") {
+            if ch == ':' && s.flow_level()? != 0 && !is_space_tab(ch1) {
                 return Ok(true);
             }
-            Ok(!is_in(s.peek(1)?, THE_END_SPACE_TAB)
-                && (ch == '-' || s.flow_level()? == 0 && is_in(ch, "?:")))
+            Ok(!is_the_end_space_tab(s.peek(1)?)
+                && (ch == '-' || s.flow_level()? == 0 && matches!(ch, '?' | ':')))
         })
     }
 
@@ -814,13 +887,17 @@ impl Loader<'_, '_> {
             if s.r.index == 0 && s.peek(0)? == '\u{feff}' {
                 s.fwd()?;
             }
-            let white: &str = if s.flow_level()? > 0 { " \t" } else { " " };
+            // `_the_end = ' \t' if self.flow_level else ' '`, read once
+            let flow = s.flow_level()? > 0;
             loop {
-                while is_in(s.peek(0)?, white) {
+                while {
+                    let c = s.peek(0)?;
+                    c == ' ' || flow && c == '\t'
+                } {
                     s.fwd()?;
                 }
                 if s.peek(0)? == '#' {
-                    while !is_in(s.peek(0)?, THE_END) {
+                    while !is_the_end(s.peek(0)?) {
                         s.fwd()?;
                     }
                 }
@@ -851,7 +928,7 @@ impl Loader<'_, '_> {
             } else {
                 value = None;
                 end = s.get_mark()?;
-                while !is_in(s.peek(0)?, THE_END) {
+                while !is_the_end(s.peek(0)?) {
                     s.fwd()?;
                 }
             }
@@ -867,7 +944,7 @@ impl Loader<'_, '_> {
         self.frame(|s| {
             let mut length = 0usize;
             let mut ch = s.peek(length)?;
-            while ch.is_ascii_alphanumeric() || is_in(ch, "-_:.") {
+            while ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | ':' | '.') {
                 length = length.saturating_add(1);
                 ch = s.peek(length)?;
             }
@@ -881,7 +958,7 @@ impl Loader<'_, '_> {
             let value = s.prefix(length)?;
             s.forward(length)?;
             let ch = s.peek(0)?;
-            if !is_in(ch, "\0 \r\n\u{85}\u{2028}\u{2029}") {
+            if !is_nul_space_break(ch) {
                 let p = format!(
                     "expected alphabetic or numeric character, but found {}",
                     repr_str(&ch.to_string())
@@ -908,7 +985,7 @@ impl Loader<'_, '_> {
             }
             s.fwd()?;
             let minor = s.scan_yaml_directive_number(start)?;
-            if !is_in(s.peek(0)?, "\0 \r\n\u{85}\u{2028}\u{2029}") {
+            if !is_nul_space_break(s.peek(0)?) {
                 let c = s.peek(0)?;
                 let p = format!(
                     "expected a digit or '.', but found {}",
@@ -916,7 +993,7 @@ impl Loader<'_, '_> {
                 );
                 return s.scan_err_here(Some("while scanning a directive"), Some(start), &p);
             }
-            let v = Ver(major, minor);
+            let v = Ver::from_digits(major, minor);
             s.sc.yaml_version = Some(v.clone());
             s.touch(1)?; // Version(major, minor)
             Ok(v)
@@ -961,7 +1038,7 @@ impl Loader<'_, '_> {
             let prefix = s.frame(|s| {
                 let value = s.scan_tag_uri("directive", start)?;
                 let ch = s.peek(0)?;
-                if !is_in(ch, "\0 \r\n\u{85}\u{2028}\u{2029}") {
+                if !is_nul_space_break(ch) {
                     let p = format!("expected ' ', but found {}", repr_str(&ch.to_string()));
                     return s.scan_err_here(Some("while scanning a directive"), Some(start), &p);
                 }
@@ -977,12 +1054,12 @@ impl Loader<'_, '_> {
                 s.fwd()?;
             }
             if s.peek(0)? == '#' {
-                while !is_in(s.peek(0)?, THE_END) {
+                while !is_the_end(s.peek(0)?) {
                     s.fwd()?;
                 }
             }
             let ch = s.peek(0)?;
-            if !is_in(ch, THE_END) {
+            if !is_the_end(ch) {
                 let p = format!(
                     "expected a comment or a line break, but found {}",
                     repr_str(&ch.to_string())
@@ -1018,7 +1095,26 @@ impl Loader<'_, '_> {
             }
             let value = s.prefix(length)?;
             s.forward(length)?;
-            if !is_in(ch, "\0 \t\r\n\u{85}\u{2028}\u{2029}?:,[]{}%@`") {
+            if !matches!(
+                ch,
+                '\0' | ' '
+                    | '\t'
+                    | '\r'
+                    | '\n'
+                    | '\u{85}'
+                    | '\u{2028}'
+                    | '\u{2029}'
+                    | '?'
+                    | ':'
+                    | ','
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | '%'
+                    | '@'
+                    | '`'
+            ) {
                 let p = format!(
                     "expected alphabetic or numeric character, but found {}",
                     repr_str(&ch.to_string())
@@ -1055,14 +1151,14 @@ impl Loader<'_, '_> {
                     return s.scan_err_here(Some("while parsing a tag"), Some(&start), &p);
                 }
                 s.fwd()?;
-            } else if is_in(ch, THE_END_SPACE_TAB) {
+            } else if is_the_end_space_tab(ch) {
                 handle = None;
                 suffix = short_handle.to_owned();
                 s.fwd()?;
             } else {
                 let mut length = 1usize;
                 let mut use_handle = false;
-                while !is_in(ch, "\0 \r\n\u{85}\u{2028}\u{2029}") {
+                while !is_nul_space_break(ch) {
                     if ch == '!' {
                         use_handle = true;
                         break;
@@ -1079,7 +1175,7 @@ impl Loader<'_, '_> {
                 suffix = s.scan_tag_uri("tag", &start)?;
             }
             let ch = s.peek(0)?;
-            if !is_in(ch, "\0 \r\n\u{85}\u{2028}\u{2029}") {
+            if !is_nul_space_break(ch) {
                 let p = format!("expected ' ', but found {}", repr_str(&ch.to_string()));
                 return s.scan_err_here(Some("while scanning a tag"), Some(&start), &p);
             }
@@ -1129,13 +1225,12 @@ impl Loader<'_, '_> {
                 for b in &breaks {
                     chunks.extend_from_slice(b.as_bytes());
                 }
-                let leading_non_space = !is_in(s.peek(0)?, " \t");
+                let leading_non_space = !is_space_tab(s.peek(0)?);
                 let mut length = 0usize;
-                while !is_in(s.peek(length)?, THE_END) {
+                while !is_the_end(s.peek(length)?) {
                     length = length.saturating_add(1);
                 }
-                let text = s.prefix(length)?;
-                chunks.extend_from_slice(text.as_bytes());
+                s.prefix_into(length, &mut chunks)?;
                 s.forward(length)?;
                 line_break = s.scan_line_break()?;
                 (breaks, end) = s.scan_block_scalar_breaks(indent)?;
@@ -1148,7 +1243,7 @@ impl Loader<'_, '_> {
                     if folded
                         && line_break == "\n"
                         && leading_non_space
-                        && !is_in(s.peek(0)?, " \t")
+                        && !is_space_tab(s.peek(0)?)
                     {
                         if breaks.is_empty() {
                             chunks.push(b' ');
@@ -1205,7 +1300,7 @@ impl Loader<'_, '_> {
                     "expected indentation indicator in the range 1-9, but found 0",
                 )
             };
-            if is_in(ch, "+-") {
+            if matches!(ch, '+' | '-') {
                 chomping = Some(ch == '+');
                 s.fwd()?;
                 ch = s.peek(0)?;
@@ -1223,13 +1318,13 @@ impl Loader<'_, '_> {
                 increment = Some(i64::from(d));
                 s.fwd()?;
                 ch = s.peek(0)?;
-                if is_in(ch, "+-") {
+                if matches!(ch, '+' | '-') {
                     chomping = Some(ch == '+');
                     s.fwd()?;
                 }
             }
             let ch = s.peek(0)?;
-            if !is_in(ch, "\0 \r\n\u{85}\u{2028}\u{2029}") {
+            if !is_nul_space_break(ch) {
                 let p = format!(
                     "expected chomping or indentation indicators, but found {}",
                     repr_str(&ch.to_string())
@@ -1250,13 +1345,13 @@ impl Loader<'_, '_> {
             }
             if s.peek(0)? == '#' {
                 comment = true;
-                while !is_in(s.peek(0)?, THE_END) {
+                while !is_the_end(s.peek(0)?) {
                     s.peek(0)?;
                     s.fwd()?;
                 }
             }
             let ch = s.peek(0)?;
-            if !is_in(ch, THE_END) {
+            if !is_the_end(ch) {
                 let p = format!(
                     "expected a comment or a line break, but found {}",
                     repr_str(&ch.to_string())
@@ -1274,7 +1369,7 @@ impl Loader<'_, '_> {
             let mut first_indent: i64 = -1;
             let mut max_indent: i64 = 0;
             let mut end = s.get_mark()?;
-            while is_in(s.peek(0)?, " \r\n\u{85}\u{2028}\u{2029}") {
+            while is_space_break(s.peek(0)?) {
                 if s.peek(0)? == ' ' {
                     s.fwd()?;
                     s.touch(1)?;
@@ -1318,7 +1413,7 @@ impl Loader<'_, '_> {
             {
                 s.fwd()?;
             }
-            while is_in(s.peek(0)?, "\r\n\u{85}\u{2028}\u{2029}") {
+            while is_break(s.peek(0)?) {
                 chunks.push(s.scan_line_break()?);
                 end = s.get_mark()?;
                 while {
@@ -1366,19 +1461,30 @@ impl Loader<'_, '_> {
         self.frame(|s| {
             loop {
                 let mut length = 0usize;
-                while !is_in(s.peek(length)?, " \n'\"\\\0\t\r\u{85}\u{2028}\u{2029}") {
+                while !matches!(
+                    s.peek(length)?,
+                    ' ' | '\n'
+                        | '\''
+                        | '"'
+                        | '\\'
+                        | '\0'
+                        | '\t'
+                        | '\r'
+                        | '\u{85}'
+                        | '\u{2028}'
+                        | '\u{2029}'
+                ) {
                     length = length.saturating_add(1);
                 }
                 if length != 0 {
-                    let t = s.prefix(length)?;
-                    out.extend_from_slice(t.as_bytes());
+                    s.prefix_into(length, out)?;
                     s.forward(length)?;
                 }
                 let ch = s.peek(0)?;
                 if !double && ch == '\'' && s.peek(1)? == '\'' {
                     out.push(b'\'');
                     s.forward(2)?;
-                } else if double && ch == '\'' || !double && is_in(ch, "\"\\") {
+                } else if double && ch == '\'' || !double && matches!(ch, '"' | '\\') {
                     let mut b = [0u8; 4];
                     out.extend_from_slice(ch.encode_utf8(&mut b).as_bytes());
                     s.fwd()?;
@@ -1411,7 +1517,7 @@ impl Loader<'_, '_> {
                         }
                         pystr::push_cp(out, u32::try_from(code).unwrap_or(0xFFFD));
                         s.forward(length)?;
-                    } else if is_in(ch, "\n\r\u{85}\u{2028}\u{2029}") {
+                    } else if is_break(ch) {
                         s.scan_line_break()?;
                         let breaks = s.scan_flow_scalar_breaks(start)?;
                         for b in breaks {
@@ -1431,7 +1537,7 @@ impl Loader<'_, '_> {
     fn scan_flow_scalar_spaces(&mut self, _double: bool, start: &Mark, out: &mut Vec<u8>) -> R<()> {
         self.frame(|s| {
             let mut length = 0usize;
-            while is_in(s.peek(length)?, " \t") {
+            while is_space_tab(s.peek(length)?) {
                 length = length.saturating_add(1);
             }
             let whitespaces = s.prefix(length)?;
@@ -1443,7 +1549,7 @@ impl Loader<'_, '_> {
                     Some(start),
                     "found unexpected end of stream",
                 );
-            } else if is_in(ch, "\r\n\u{85}\u{2028}\u{2029}") {
+            } else if is_break(ch) {
                 let line_break = s.scan_line_break()?;
                 let breaks = s.scan_flow_scalar_breaks(start)?;
                 if line_break != "\n" {
@@ -1465,18 +1571,17 @@ impl Loader<'_, '_> {
         self.frame(|s| {
             let mut chunks = Vec::new();
             loop {
-                let prefix = s.prefix(3)?;
-                if (prefix == "---" || prefix == "...") && is_in(s.peek(3)?, THE_END_SPACE_TAB) {
+                if s.prefix_is_doc_marker()? && is_the_end_space_tab(s.peek(3)?) {
                     return s.scan_err_here(
                         Some("while scanning a quoted scalar"),
                         Some(start),
                         "found unexpected document separator",
                     );
                 }
-                while is_in(s.peek(0)?, " \t") {
+                while is_space_tab(s.peek(0)?) {
                     s.fwd()?;
                 }
-                if is_in(s.peek(0)?, "\r\n\u{85}\u{2028}\u{2029}") {
+                if is_break(s.peek(0)?) {
                     chunks.push(s.scan_line_break()?);
                 } else {
                     return Ok(chunks);
@@ -1500,14 +1605,14 @@ impl Loader<'_, '_> {
                 let mut ch;
                 loop {
                     ch = s.peek(length)?;
-                    let pass = ch == ':' && !is_in(s.peek(length.saturating_add(1))?, THE_END_SPACE_TAB)
+                    let pass = ch == ':' && !is_the_end_space_tab(s.peek(length.saturating_add(1))?)
                         || ch == '?' && !s.spv()?.is11();
                     if !pass
-                        && (is_in(ch, THE_END_SPACE_TAB)
+                        && (is_the_end_space_tab(ch)
                         || s.flow_level()? == 0
                             && ch == ':'
-                            && is_in(s.peek(length.saturating_add(1))?, THE_END_SPACE_TAB)
-                        || s.flow_level()? != 0 && is_in(ch, ",:?[]{}"))
+                            && is_the_end_space_tab(s.peek(length.saturating_add(1))?)
+                        || s.flow_level()? != 0 && matches!(ch, ',' | ':' | '?' | '[' | ']' | '{' | '}'))
                     {
                         break;
                     }
@@ -1515,9 +1620,20 @@ impl Loader<'_, '_> {
                 }
                 if s.flow_level()? != 0
                     && ch == ':'
-                    && !is_in(
+                    && !matches!(
                         s.peek(length.saturating_add(1))?,
-                        "\0 \t\r\n\u{85}\u{2028}\u{2029},[]{}",
+                        '\0' | ' '
+                            | '\t'
+                            | '\r'
+                            | '\n'
+                            | '\u{85}'
+                            | '\u{2028}'
+                            | '\u{2029}'
+                            | ','
+                            | '['
+                            | ']'
+                            | '{'
+                            | '}'
                     )
                 {
                     s.forward(length)?;
@@ -1539,8 +1655,7 @@ impl Loader<'_, '_> {
                         chunks.extend_from_slice(x.as_bytes());
                     }
                 }
-                let text = s.prefix(length)?;
-                chunks.extend_from_slice(text.as_bytes());
+                s.prefix_into(length, &mut chunks)?;
                 s.forward(length)?;
                 end = s.get_mark()?;
                 spaces = s.scan_plain_spaces(&start)?;
@@ -1582,23 +1697,19 @@ impl Loader<'_, '_> {
             let whitespaces = s.prefix(length)?;
             s.forward(length)?;
             let ch = s.peek(0)?;
-            if is_in(ch, "\r\n\u{85}\u{2028}\u{2029}") {
+            if is_break(ch) {
                 let line_break = s.scan_line_break()?;
                 s.sc.allow_simple_key = true;
-                let prefix = s.prefix(3)?;
-                if (prefix == "---" || prefix == "...") && is_in(s.peek(3)?, THE_END_SPACE_TAB) {
+                if s.prefix_is_doc_marker()? && is_the_end_space_tab(s.peek(3)?) {
                     return Ok(None);
                 }
                 let mut breaks = Vec::new();
-                while is_in(s.peek(0)?, " \r\n\u{85}\u{2028}\u{2029}") {
+                while is_space_break(s.peek(0)?) {
                     if s.peek(0)? == ' ' {
                         s.fwd()?;
                     } else {
                         breaks.push(s.scan_line_break()?);
-                        let prefix = s.prefix(3)?;
-                        if (prefix == "---" || prefix == "...")
-                            && is_in(s.peek(3)?, THE_END_SPACE_TAB)
-                        {
+                        if s.prefix_is_doc_marker()? && is_the_end_space_tab(s.peek(3)?) {
                             return Ok(None);
                         }
                     }
@@ -1627,7 +1738,7 @@ impl Loader<'_, '_> {
             let mut length = 1usize;
             let mut ch = s.peek(length)?;
             if ch != ' ' {
-                while ch.is_ascii_alphanumeric() || is_in(ch, "-_") {
+                while ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
                     length = length.saturating_add(1);
                     ch = s.peek(length)?;
                 }
@@ -1651,10 +1762,35 @@ impl Loader<'_, '_> {
             let mut length = 0usize;
             let mut ch = s.peek(length)?;
             loop {
-                let ok = ch.is_ascii_alphanumeric() || is_in(ch, "-;/?:@&=+$,_.!~*'()[]%") || {
-                    let v = s.spv()?.gt11();
-                    v && ch == '#'
-                };
+                let ok = ch.is_ascii_alphanumeric()
+                    || matches!(
+                        ch,
+                        '-' | ';'
+                            | '/'
+                            | '?'
+                            | ':'
+                            | '@'
+                            | '&'
+                            | '='
+                            | '+'
+                            | '$'
+                            | ','
+                            | '_'
+                            | '.'
+                            | '!'
+                            | '~'
+                            | '*'
+                            | '\''
+                            | '('
+                            | ')'
+                            | '['
+                            | ']'
+                            | '%'
+                    )
+                    || {
+                        let v = s.spv()?.gt11();
+                        v && ch == '#'
+                    };
                 if !ok {
                     break;
                 }
@@ -1725,14 +1861,14 @@ impl Loader<'_, '_> {
     pub(super) fn scan_line_break(&mut self) -> R<String> {
         self.frame(|s| {
             let ch = s.peek(0)?;
-            if is_in(ch, "\r\n\u{85}") {
+            if matches!(ch, '\r' | '\n' | '\u{85}') {
                 if s.prefix_is("\r\n")? {
                     s.forward(2)?;
                 } else {
                     s.fwd()?;
                 }
                 return Ok("\n".to_owned());
-            } else if is_in(ch, "\u{2028}\u{2029}") {
+            } else if matches!(ch, '\u{2028}' | '\u{2029}') {
                 s.fwd()?;
                 return Ok(ch.to_string());
             }
@@ -1743,7 +1879,7 @@ impl Loader<'_, '_> {
 
 /// `compat.check_anchorname_char`.
 fn check_anchorname_char(ch: char) -> bool {
-    if is_in(ch, ",[]{}") {
+    if matches!(ch, ',' | '[' | ']' | '{' | '}') {
         return false;
     }
     matches!(ch, '\x21'..='\x7e' | '\u{a0}'..='\u{d7ff}' | '\u{10000}'..='\u{10ffff}')
@@ -1781,5 +1917,151 @@ const fn escape_code_len(ch: char) -> Option<usize> {
         'u' => Some(4),
         'U' => Some(8),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every `char` (U+0000..=U+10FFFF without the surrogates).
+    fn every_char() -> impl Iterator<Item = char> {
+        (0..=0x10_FFFF_u32).filter_map(char::from_u32)
+    }
+
+    /// A ruamel set string and the predicate that replaces `ch in '…'`.
+    type Set = (&'static str, fn(char) -> bool);
+
+    /// Asserts `f(c) == set.contains(c)` for every character.
+    fn same_as_ruamel(sets: &[Set]) {
+        for c in every_char() {
+            for &(set, f) in sets {
+                assert_eq!(f(c), set.contains(c), "{c:?} in {set:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn named_sets_equal_ruamel_strings() {
+        same_as_ruamel(&[
+            ("\n\0\r\u{85}\u{2028}\u{2029}", is_the_end),
+            (" \n\0\t\r\u{85}\u{2028}\u{2029}", is_the_end_space_tab),
+            ("\0 \r\n\u{85}\u{2028}\u{2029}", is_nul_space_break),
+            ("\r\n\u{85}\u{2028}\u{2029}", is_break),
+            ("\n\r\u{85}\u{2028}\u{2029}", is_break),
+            (" \r\n\u{85}\u{2028}\u{2029}", is_space_break),
+            (" \t", is_space_tab),
+            (
+                "\0 \t\r\n\u{85}\u{2028}\u{2029}-?:,[]{}#&*!|>'\"%@`",
+                is_plain_indicator,
+            ),
+        ]);
+    }
+
+    /// The sets used once, as the inline `matches!` at their sites spells them.
+    #[test]
+    fn inline_sets_equal_ruamel_strings() {
+        same_as_ruamel(&[
+            ("?:", |c| matches!(c, '?' | ':')),
+            ("-_:.", |c| matches!(c, '-' | '_' | ':' | '.')),
+            ("\0 \t\r\n\u{85}\u{2028}\u{2029}?:,[]{}%@`", |c| {
+                matches!(
+                    c,
+                    '\0' | ' '
+                        | '\t'
+                        | '\r'
+                        | '\n'
+                        | '\u{85}'
+                        | '\u{2028}'
+                        | '\u{2029}'
+                        | '?'
+                        | ':'
+                        | ','
+                        | '['
+                        | ']'
+                        | '{'
+                        | '}'
+                        | '%'
+                        | '@'
+                        | '`'
+                )
+            }),
+            ("+-", |c| matches!(c, '+' | '-')),
+            (" \n'\"\\\0\t\r\u{85}\u{2028}\u{2029}", |c| {
+                matches!(
+                    c,
+                    ' ' | '\n'
+                        | '\''
+                        | '"'
+                        | '\\'
+                        | '\0'
+                        | '\t'
+                        | '\r'
+                        | '\u{85}'
+                        | '\u{2028}'
+                        | '\u{2029}'
+                )
+            }),
+            ("\"\\", |c| matches!(c, '"' | '\\')),
+            (",:?[]{}", |c| {
+                matches!(c, ',' | ':' | '?' | '[' | ']' | '{' | '}')
+            }),
+            ("\0 \t\r\n\u{85}\u{2028}\u{2029},[]{}", |c| {
+                matches!(
+                    c,
+                    '\0' | ' '
+                        | '\t'
+                        | '\r'
+                        | '\n'
+                        | '\u{85}'
+                        | '\u{2028}'
+                        | '\u{2029}'
+                        | ','
+                        | '['
+                        | ']'
+                        | '{'
+                        | '}'
+                )
+            }),
+            ("-_", |c| matches!(c, '-' | '_')),
+            ("-;/?:@&=+$,_.!~*'()[]%", |c| {
+                matches!(
+                    c,
+                    '-' | ';'
+                        | '/'
+                        | '?'
+                        | ':'
+                        | '@'
+                        | '&'
+                        | '='
+                        | '+'
+                        | '$'
+                        | ','
+                        | '_'
+                        | '.'
+                        | '!'
+                        | '~'
+                        | '*'
+                        | '\''
+                        | '('
+                        | ')'
+                        | '['
+                        | ']'
+                        | '%'
+                )
+            }),
+            ("\r\n\u{85}", |c| matches!(c, '\r' | '\n' | '\u{85}')),
+            ("\u{2028}\u{2029}", |c| matches!(c, '\u{2028}' | '\u{2029}')),
+            (",[]{}", |c| matches!(c, ',' | '[' | ']' | '{' | '}')),
+            // scan_to_next_token's `_the_end = ' \t' if self.flow_level else ' '`, both ways
+            (" \t", |c| {
+                let flow = true;
+                c == ' ' || flow && c == '\t'
+            }),
+            (" ", |c| {
+                let flow = false;
+                c == ' ' || flow && c == '\t'
+            }),
+        ]);
     }
 }

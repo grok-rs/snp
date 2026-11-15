@@ -513,10 +513,6 @@ pub(crate) fn root_check(key: &'static str) -> CheckFn {
 
 // --- parsing (validated values only; never fails) --------------------------------------------------------------
 
-fn get<'a>(m: &'a Map, k: &str) -> Option<&'a Value> {
-    m.get(&Value::from(k))
-}
-
 fn arc(s: &str) -> Arc<str> {
     Arc::from(s)
 }
@@ -634,59 +630,88 @@ pub(crate) fn apply_hook_key(ext: &mut HookExt, key: &str, v: &Value) {
     }
 }
 
-/// The hook-level extension keys of a validated hook dict.
+/// The hook-level extension keys of a validated hook dict, in one pass over the dict. Each key sets only its own
+/// field and a dict holds a key once, so the dict's order gives the result `HOOK_EXT_KEYS` order would; every other
+/// key (pre-commit's, unknown, `follow`, non-string) falls to [`apply_hook_key`]'s no-op arm.
 pub(crate) fn parse_hook_ext(m: &Map) -> HookExt {
     let mut ext = HookExt::default();
-    for key in HOOK_EXT_KEYS {
-        if let Some(v) = get(m, key) {
+    for (k, v) in m {
+        if let Some(key) = k.as_str() {
             apply_hook_key(&mut ext, key, v);
         }
     }
     ext
 }
 
-/// The root-level extension keys of a validated config.
-pub(crate) fn parse_root_ext(m: &Map) -> RootExt {
-    let mut ext = RootExt::default();
-    if let Some(v) = get(m, "minimum_snp_version").and_then(Value::as_str) {
-        ext.minimum_snp_version = Some(arc(v));
-    }
-    if let Some(p) = get(m, "priorities").and_then(Value::as_map) {
-        for (k, v) in p {
-            if let (Some(k), Some(v)) = (k.as_str(), v.as_int().and_then(|i| u32::try_from(i).ok()))
-            {
-                ext.priorities.insert(arc(k), v);
+/// Applies one validated root-level extension key to `ext` (other keys are ignored).
+fn apply_root_key(ext: &mut RootExt, key: &str, v: &Value) {
+    match key {
+        "minimum_snp_version" => {
+            if let Some(s) = v.as_str() {
+                ext.minimum_snp_version = Some(arc(s));
             }
         }
+        "priorities" => {
+            if let Some(p) = v.as_map() {
+                for (name, value) in p {
+                    if let (Some(name), Some(value)) = (
+                        name.as_str(),
+                        value.as_int().and_then(|i| u32::try_from(i).ok()),
+                    ) {
+                        ext.priorities.insert(arc(name), value);
+                    }
+                }
+            }
+        }
+        "fail_on_changes" => {
+            if let Some(f) = parse_fail_on_changes(v) {
+                ext.fail_on_changes = f;
+            }
+        }
+        "skip" => ext.skip = parse_conditions(v),
+        "only" => ext.only = parse_conditions(v),
+        "allow_disable" => {
+            if let Some(b) = v.as_bool() {
+                ext.allow_disable = b;
+            }
+        }
+        "fast_path" => {
+            ext.fast_path = match v.as_str() {
+                Some("off") => FastPath::Off,
+                Some("exact") => FastPath::Exact,
+                _ => FastPath::Auto,
+            };
+        }
+        "fast_path_exclude" => {
+            if let Some(ids) = v.as_array() {
+                ext.fast_path_exclude = ids.iter().filter_map(Value::as_str).map(arc).collect();
+            }
+        }
+        "fast_path_coalesce" => {
+            if let Some(b) = v.as_bool() {
+                ext.fast_path_coalesce = b;
+            }
+        }
+        "output" => {
+            ext.output = match v.as_str() {
+                Some("summary") => OutputMode::Summary,
+                Some("quiet") => OutputMode::Quiet,
+                _ => OutputMode::Default,
+            };
+        }
+        _ => {}
     }
-    if let Some(f) = get(m, "fail_on_changes").and_then(parse_fail_on_changes) {
-        ext.fail_on_changes = f;
+}
+
+/// The root-level extension keys of a validated config, in one pass over the dict (each key sets only its own
+/// field, as in [`parse_hook_ext`]).
+pub(crate) fn parse_root_ext(m: &Map) -> RootExt {
+    let mut ext = RootExt::default();
+    for (k, v) in m {
+        if let Some(key) = k.as_str() {
+            apply_root_key(&mut ext, key, v);
+        }
     }
-    if let Some(v) = get(m, "skip") {
-        ext.skip = parse_conditions(v);
-    }
-    if let Some(v) = get(m, "only") {
-        ext.only = parse_conditions(v);
-    }
-    if let Some(b) = get(m, "allow_disable").and_then(Value::as_bool) {
-        ext.allow_disable = b;
-    }
-    ext.fast_path = match get(m, "fast_path").and_then(Value::as_str) {
-        Some("off") => FastPath::Off,
-        Some("exact") => FastPath::Exact,
-        _ => FastPath::Auto,
-    };
-    if let Some(ids) = get(m, "fast_path_exclude").and_then(Value::as_array) {
-        ext.fast_path_exclude = ids.iter().filter_map(Value::as_str).map(arc).collect();
-    }
-    if let Some(b) = get(m, "fast_path_coalesce").and_then(Value::as_bool) {
-        ext.fast_path_coalesce = b;
-    }
-    ext.output = match get(m, "output").and_then(Value::as_str) {
-        Some("summary") => OutputMode::Summary,
-        Some("quiet") => OutputMode::Quiet,
-        _ => OutputMode::Default,
-    };
     ext
 }
 
@@ -886,7 +911,206 @@ pub fn parse_go_duration(s: &str) -> Result<Duration, String> {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
+
+    /// The hashed probe the parsers used before their single pass.
+    fn probe<'a>(m: &'a Map, k: &str) -> Option<&'a Value> {
+        m.get(&Value::from(k))
+    }
+
+    /// Reference model of [`parse_hook_ext`]: one hashed probe per `HOOK_EXT_KEYS` entry, in that order.
+    fn parse_hook_ext_by_probes(m: &Map) -> HookExt {
+        let mut ext = HookExt::default();
+        for key in HOOK_EXT_KEYS {
+            if let Some(v) = probe(m, key) {
+                apply_hook_key(&mut ext, key, v);
+            }
+        }
+        ext
+    }
+
+    /// Reference model of [`parse_root_ext`]: one hashed probe per root extension key, in `ROOT_EXT_KEYS` order.
+    fn parse_root_ext_by_probes(m: &Map) -> RootExt {
+        let mut ext = RootExt::default();
+        if let Some(v) = probe(m, "minimum_snp_version").and_then(Value::as_str) {
+            ext.minimum_snp_version = Some(arc(v));
+        }
+        if let Some(p) = probe(m, "priorities").and_then(Value::as_map) {
+            for (k, v) in p {
+                if let (Some(k), Some(v)) =
+                    (k.as_str(), v.as_int().and_then(|i| u32::try_from(i).ok()))
+                {
+                    ext.priorities.insert(arc(k), v);
+                }
+            }
+        }
+        if let Some(f) = probe(m, "fail_on_changes").and_then(parse_fail_on_changes) {
+            ext.fail_on_changes = f;
+        }
+        if let Some(v) = probe(m, "skip") {
+            ext.skip = parse_conditions(v);
+        }
+        if let Some(v) = probe(m, "only") {
+            ext.only = parse_conditions(v);
+        }
+        if let Some(b) = probe(m, "allow_disable").and_then(Value::as_bool) {
+            ext.allow_disable = b;
+        }
+        ext.fast_path = match probe(m, "fast_path").and_then(Value::as_str) {
+            Some("off") => FastPath::Off,
+            Some("exact") => FastPath::Exact,
+            _ => FastPath::Auto,
+        };
+        if let Some(ids) = probe(m, "fast_path_exclude").and_then(Value::as_array) {
+            ext.fast_path_exclude = ids.iter().filter_map(Value::as_str).map(arc).collect();
+        }
+        if let Some(b) = probe(m, "fast_path_coalesce").and_then(Value::as_bool) {
+            ext.fast_path_coalesce = b;
+        }
+        ext.output = match probe(m, "output").and_then(Value::as_str) {
+            Some("summary") => OutputMode::Summary,
+            Some("quiet") => OutputMode::Quiet,
+            _ => OutputMode::Default,
+        };
+        ext
+    }
+
+    /// Values for any key: the valid spellings of every extension key and values of the wrong type or range (the
+    /// parsers never fail and must ignore what they cannot use exactly as before).
+    fn values() -> Vec<Value> {
+        let list = |items: Vec<Value>| Value::List(items);
+        vec![
+            Value::Null,
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Int(3),
+            Value::Int(-1),
+            Value::Int(1 << 40),
+            Value::Float(2.5),
+            Value::from(""),
+            Value::from("early"),
+            Value::from("1.2"),
+            Value::from("trust"),
+            Value::from("verify"),
+            Value::from("ci"),
+            Value::from("non-ci"),
+            Value::from("never"),
+            Value::from("always"),
+            Value::from("merge"),
+            Value::from("1m30s"),
+            Value::from("./sub//dir/"),
+            Value::from("/abs"),
+            Value::from("off"),
+            Value::from("exact"),
+            Value::from("summary"),
+            Value::from("quiet"),
+            list(vec![Value::from("g1"), Value::Int(2), Value::from("g2")]),
+            list(vec![
+                Value::from("rebase"),
+                cfgv::value_map! {"ref" => "main", "ci" => true},
+            ]),
+            cfgv::value_map! {"env" => "CI"},
+            cfgv::value_map! {"A" => "1", "B" => "x"},
+            cfgv::value_map! {"early" => 1, "late" => 9, "bad" => -1},
+            Value::Tuple(vec![Value::from("bisect")]),
+        ]
+    }
+
+    /// Keys of a dict under test: every extension key (hook and root), pre-commit keys, unknown keys and non-string
+    /// keys that spell an extension key.
+    fn keys() -> Vec<Value> {
+        let mut keys: Vec<Value> = HOOK_EXT_KEYS
+            .iter()
+            .chain(&ROOT_EXT_KEYS)
+            .chain(&crate::schema::HOOK_KEYS)
+            .chain(&["repos", "zzz", ""])
+            .map(|k| Value::from(*k))
+            .collect();
+        keys.push(Value::Bytes(b"env".to_vec()));
+        keys.push(Value::Tuple(vec![Value::from("skip")]));
+        keys.push(Value::Int(1));
+        keys.push(Value::Null);
+        keys
+    }
+
+    fn dict() -> impl Strategy<Value = Map> {
+        let entry = (prop::sample::select(keys()), prop::sample::select(values()));
+        prop::collection::vec(entry, 0..40)
+            .prop_shuffle()
+            .prop_map(|entries| entries.into_iter().collect())
+    }
+
+    proptest! {
+        /// The single pass parses exactly what the ordered hashed probes parsed, for any key order and mix.
+        #[test]
+        fn parse_hook_ext_matches_the_ordered_probes(m in dict()) {
+            prop_assert_eq!(
+                format!("{:?}", parse_hook_ext(&m)),
+                format!("{:?}", parse_hook_ext_by_probes(&m))
+            );
+        }
+
+        #[test]
+        fn parse_root_ext_matches_the_ordered_probes(m in dict()) {
+            prop_assert_eq!(
+                format!("{:?}", parse_root_ext(&m)),
+                format!("{:?}", parse_root_ext_by_probes(&m))
+            );
+        }
+    }
+
+    /// The single passes hand every string key to the `apply_*_key` matches, so those must act on their extension
+    /// keys only: every other key leaves the default, and every extension key but `follow` changes something.
+    #[test]
+    fn only_extension_keys_apply() {
+        let hook_default = format!("{:?}", HookExt::default());
+        let root_default = format!("{:?}", RootExt::default());
+        let others = crate::schema::HOOK_KEYS
+            .iter()
+            .chain(&["repos", "follow", "zzz", "", "Priority", "env "]);
+        for key in others.clone().chain(&ROOT_EXT_KEYS) {
+            if HOOK_EXT_KEYS.contains(key) && *key != "follow" {
+                continue;
+            }
+            for v in values() {
+                let mut ext = HookExt::default();
+                apply_hook_key(&mut ext, key, &v);
+                assert_eq!(format!("{ext:?}"), hook_default, "hook {key:?} {v:?}");
+            }
+        }
+        for key in others.chain(&HOOK_EXT_KEYS) {
+            if ROOT_EXT_KEYS.contains(key) {
+                continue;
+            }
+            for v in values() {
+                let mut ext = RootExt::default();
+                apply_root_key(&mut ext, key, &v);
+                assert_eq!(format!("{ext:?}"), root_default, "root {key:?} {v:?}");
+            }
+        }
+        let changes_hook = |key: &str| {
+            values().iter().any(|v| {
+                let mut ext = HookExt::default();
+                apply_hook_key(&mut ext, key, v);
+                format!("{ext:?}") != hook_default
+            })
+        };
+        let changes_root = |key: &str| {
+            values().iter().any(|v| {
+                let mut ext = RootExt::default();
+                apply_root_key(&mut ext, key, v);
+                format!("{ext:?}") != root_default
+            })
+        };
+        for key in HOOK_EXT_KEYS.iter().filter(|k| **k != "follow") {
+            assert!(changes_hook(key), "hook {key:?}");
+        }
+        for key in ROOT_EXT_KEYS {
+            assert!(changes_root(key), "root {key:?}");
+        }
+    }
 
     #[test]
     fn go_durations() {

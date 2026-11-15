@@ -1,12 +1,12 @@
 //! Property tests (01 Addendum §A.8 item 5): `compile` never panics; the relaxed prefilter never rejects a
-//! haystack the exact pattern matches, and the tier-1 one changes no answer (ADR-098); the fast tier-1 text
-//! agrees with the exact text on every haystack that meets no condition bit; the cheap match kinds agree with
-//! the engines.
+//! haystack the exact pattern matches, and the tier-1 one changes no answer (ADR-098); the tier-1 prefilter's
+//! forward-only engine answers as `regex` does (ADR-108); the fast tier-1 text agrees with the exact text on
+//! every haystack that meets no condition bit; the cheap match kinds agree with the engines.
 
 use proptest::prelude::*;
 
 use crate::compile::testing::{compile_engines, full_texts};
-use crate::engine::{Hay, T1, T2, full, probe};
+use crate::engine::{Hay, PREFILTER_DFA_SIZE_LIMIT, Prefilter, T1, T2, full, probe};
 use crate::{Haystack, MatchKind, Mode, Options, PyRegex};
 
 /// Pattern fragments covering the lowering rules (str and bytes).
@@ -106,6 +106,9 @@ fn haystack() -> impl Strategy<Value = String> {
     .prop_map(|v| v.into_iter().collect())
 }
 
+/// 140 bytes: a haystack behind it is too long for the bounded backtracker of the forward prefilter engine.
+const LONG_PAD: &str = "_._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._._.";
+
 fn options(mode: Mode, sel: u8) -> Options {
     let haystack = match sel % 3 {
         0 => Haystack::Path,
@@ -201,6 +204,36 @@ proptest! {
             let without = answers(h);
             probe::set_prefilter_off(false);
             prop_assert_eq!(with, without, "{:?} {:?} on {:?}", p, opts, h);
+        }
+    }
+
+    /// The forward-only prefilter engine (ADR-108) answers `is_match` exactly as `regex` does on every relaxed
+    /// text, in the search and the fullmatch form: with its lazy DFA, and with a cache too small for the DFA (the
+    /// bounded backtracker on haystacks of at most 128 bytes, the `PikeVM` on longer ones); str patterns never
+    /// match bytes that are not UTF-8.
+    #[test]
+    fn forward_prefilter_agrees_with_regex(p in pattern(), sel in 0_u8..16, bytes in any::<bool>(), full_form in any::<bool>(), no_dfa in any::<bool>(), hs in proptest::collection::vec(haystack(), 1..12)) {
+        let mode = if bytes { Mode::Bytes } else { Mode::Str };
+        let opts = options(mode, sel);
+        let Some(texts) = full_texts(&p, opts) else { return Ok(()) };
+        let Some(relaxed) = texts.relaxed.as_deref() else { return Ok(()) };
+        let text = if full_form { full(relaxed) } else { relaxed.to_owned() };
+        let depth = texts.depth.saturating_add(1);
+        let Ok(reference) = T1::build(&text, texts.bytes, depth) else { return Ok(()) };
+        let capacity = if no_dfa { 1 } else { PREFILTER_DFA_SIZE_LIMIT };
+        // Built without the usefulness rule (anchored = true), so that every text is compared.
+        let forward = Prefilter::forward(&text, texts.bytes, depth, true, capacity);
+        prop_assert!(forward.is_some(), "{p:?} {opts:?}: {text:?} has no forward engine");
+        let Some(forward) = forward else { return Ok(()) };
+        if no_dfa {
+            prop_assert_eq!(forward.has_lazy_dfa(), Some(false));
+        }
+        for h in &hs {
+            let long = format!("{LONG_PAD}{h}");
+            let invalid = [h.as_bytes(), b"\xff"].concat();
+            for hay in [Hay::Str(h), Hay::Bytes(h.as_bytes()), Hay::Str(&long), Hay::Bytes(&invalid)] {
+                prop_assert_eq!(forward.admits(hay), reference.is_match(hay), "{:?} {:?}: {:?} on {:?}", p, opts, text, hay);
+            }
         }
     }
 
