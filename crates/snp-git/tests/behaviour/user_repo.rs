@@ -241,7 +241,10 @@ fn all_files_tagged_equals_ls_files_deduplicate() {
             .iter()
             .flat_map(|r| [r, b"\0"].concat())
             .collect();
-        assert_eq!(joined, sb.git(repo, &["ls-files", "-z", "--deduplicate"]));
+        // `--deduplicate` is git >= 2.31; older git is covered by the all_files() comparison above
+        if sb.exe().caps.ls_files_dedup {
+            assert_eq!(joined, sb.git(repo, &["ls-files", "-z", "--deduplicate"]));
+        }
         assert_eq!(tagged.modes.len(), tagged.paths.len());
         assert_eq!(tagged.plain, plain, "{repo:?}");
         tagged
@@ -414,26 +417,25 @@ fn trusts_index_modes_follows_the_effective_config() {
         assert_eq!(git.trusts_index_modes(), trusted, "{key}={value}");
         unset(key);
     }
-    // `-c` and `GIT_CONFIG_COUNT` are git's own business: both count
+    // `-c` and `GIT_CONFIG_COUNT` are git's own business: both count (`GIT_CONFIG_PARAMETERS` in the pre-2.31
+    // `'key=value'` form, which every git reads)
     let with = |vars: &[(&'static str, &'static str)]| {
         let patch = vars
             .iter()
             .fold(EnvPatch::default(), |p, &(k, v)| p.set(k, v));
         git.with_env(sb.env.patched(&patch)).trusts_index_modes()
     };
-    assert!(!with(&[(
-        "GIT_CONFIG_PARAMETERS",
-        "'core.fsmonitor'='true'"
-    )]));
-    assert!(!with(&[
-        ("GIT_CONFIG_COUNT", "1"),
-        ("GIT_CONFIG_KEY_0", "core.symlinks"),
-        ("GIT_CONFIG_VALUE_0", "false"),
-    ]));
-    assert!(with(&[(
-        "GIT_CONFIG_PARAMETERS",
-        "'core.fsmonitor'='false'"
-    )]));
+    assert!(!with(&[("GIT_CONFIG_PARAMETERS", "'core.fsmonitor=true'")]));
+    // `GIT_CONFIG_COUNT` is git >= 2.31 (the same release as `ls-files --deduplicate`); older git ignores it, and
+    // so does its `git config` answer
+    if sb.exe().caps.ls_files_dedup {
+        assert!(!with(&[
+            ("GIT_CONFIG_COUNT", "1"),
+            ("GIT_CONFIG_KEY_0", "core.symlinks"),
+            ("GIT_CONFIG_VALUE_0", "false"),
+        ]));
+    }
+    assert!(with(&[("GIT_CONFIG_PARAMETERS", "'core.fsmonitor=false'")]));
 }
 
 /// D-CRASH-26 on a real git 2.30 (WBS WP-18 acceptance): `crates/snp-git/tests/old-git/git` runs Debian 11's git
