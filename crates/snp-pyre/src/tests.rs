@@ -284,7 +284,7 @@ fn u05_relaxed_text_builds_a_forward_dfa_at_the_cap() {
         PREFILTER_DFA_SIZE_LIMIT,
     )
     .unwrap();
-    assert_eq!(prefilter.has_lazy_dfa(), Some(true));
+    assert!(prefilter.has_lazy_dfa());
 
     // Why `regex` fell back: the forward DFA fits the cap, the reverse one does not.
     let fits = |reverse: bool| {
@@ -326,7 +326,7 @@ fn a_forward_dfa_that_fails_at_the_cap_falls_back() {
         PREFILTER_DFA_SIZE_LIMIT,
     )
     .unwrap();
-    assert_eq!(prefilter.has_lazy_dfa(), Some(false));
+    assert!(!prefilter.has_lazy_dfa());
     let reference = T1::build(relaxed, texts.bytes, texts.depth).unwrap();
 
     let word = "\u{e9}".repeat(40);
@@ -392,7 +392,7 @@ fn a_forward_dfa_that_quits_or_gives_up_falls_back() {
     let check = |text: &str, hays: &[&str], want: probe::ForwardRuns| {
         let prefilter =
             Prefilter::forward(text, false, 1, false, PREFILTER_DFA_SIZE_LIMIT).unwrap();
-        assert_eq!(prefilter.has_lazy_dfa(), Some(true), "{text}");
+        assert!(prefilter.has_lazy_dfa(), "{text}");
         let reference = T1::build(text, false, 1).unwrap();
         let before = probe::forward_runs();
         for h in hays {
@@ -438,4 +438,261 @@ fn a_forward_dfa_that_quits_or_gives_up_falls_back() {
             pikevm: 2,
         },
     );
+}
+
+/// B12u's 20 `files` patterns (xtask `bench.rs` `UNICODE_PATTERNS`).
+const B12U_PATTERNS: [&str; 20] = [
+    "(?i)^données/",
+    r"^\w+/\w+_\d+\.py$",
+    "(?i)straße|strasse",
+    r"[^\W\d_]{6,}_\d+\.",
+    "^(?:日本語|中文资料)/",
+    r"\b\w{3,8}\b/\w+\.md$",
+    "(?i)ünïcödé",
+    r"^[\w\-]+(?:/[\w\-]+){2,}\.json$",
+    r"\d{3,}\.(?:ts|tsx|js)$",
+    "(?i)^(?:ελληνικά|русский)/",
+    "[αβγδεζηθ]",
+    r"(?:\w+/){3}\w+_\d{2}\.",
+    r"[\u4e00-\u9fff]{2,}",
+    "(?i)caf[ée]",
+    r"^\w*\d\w*/",
+    "(?:^|/)測試|测试/",
+    r"\W\w+_\d+\.min\.js$",
+    r"(?i)naïve/.+\.ya?ml$",
+    "[ऀ-ॿ]+",
+    r"^\w+(?:/\w+)*/\w+_1\d*\.\w+$",
+];
+
+/// The bench corpus (xtask `bench.rs` `corpus`): `corpus(20_000, 0x5eed_0002, true)` is B12u's paths.
+fn corpus(n: usize, seed: u32, unicode: bool) -> Vec<String> {
+    const TOP: &[&str] = &[
+        "src", "src", "src", "lib", "tests", "tests", "docs", "pkg", "app", "scripts", "tools",
+        "assets", "examples",
+    ];
+    const MID: &[&str] = &[
+        "core",
+        "util",
+        "api",
+        "models",
+        "views",
+        "handlers",
+        "internal",
+        "fixtures",
+        "components",
+        "commands",
+        "io",
+        "parser",
+        "net",
+        "store",
+        "config",
+        "cli",
+        "web",
+        "db",
+        "auth",
+        "data",
+        "templates",
+        "v1",
+    ];
+    const STEM: &[&str] = &[
+        "main", "mod", "lib", "index", "test_api", "conftest", "setup", "README", "utils",
+        "helpers", "settings", "schema", "client", "server", "worker", "types", "errors", "app",
+        "router", "styles",
+    ];
+    const EXT: &[&str] = &[
+        "py", "py", "py", "py", "js", "js", "ts", "tsx", "rs", "rs", "go", "md", "md", "rst",
+        "txt", "yaml", "yml", "json", "toml", "cfg", "ini", "html", "css", "svg", "sh", "pyi",
+        "xml", "c", "h",
+    ];
+    const UNICODE: &[&str] = &[
+        "données",
+        "Ελληνικά",
+        "русский",
+        "日本語",
+        "中文资料",
+        "हिन्दी",
+        "٣٤٥",
+        "e\u{301}cole",
+        "Straße",
+        "naïve",
+        "Ωmega",
+        "über",
+        "café",
+        "测试",
+        "Ünïcödé",
+    ];
+    struct Lcg(u32);
+    impl Lcg {
+        fn below(&mut self, n: usize) -> usize {
+            self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            usize::try_from(self.0 >> 8).unwrap() % n
+        }
+        fn pick(&mut self, items: &[&'static str]) -> &'static str {
+            items[self.below(items.len())]
+        }
+    }
+    let mut rng = Lcg(seed);
+    let mut out = Vec::new();
+    for i in 0..n {
+        let mut p = String::from(rng.pick(if unicode { UNICODE } else { TOP }));
+        for _ in 0..rng.below(4) {
+            p.push('/');
+            p.push_str(if unicode && rng.below(2) == 0 {
+                rng.pick(UNICODE)
+            } else {
+                rng.pick(MID)
+            });
+        }
+        let stem = rng.pick(if unicode { UNICODE } else { STEM });
+        let ext = rng.pick(EXT);
+        out.push(format!("{p}/{stem}_{i}.{ext}"));
+    }
+    out
+}
+
+/// ADR-115: the scan engine takes the tier-1 texts of str patterns on path haystacks that have a large Unicode
+/// class (B12u's eight `\w` and `[^\W\d_]` patterns), and nothing else: pygrep's line and blob patterns, bytes
+/// patterns and texts above the eager-build estimate keep `regex`, built at compile time.
+#[test]
+fn the_scan_engine_takes_str_path_texts_with_a_large_unicode_class() {
+    use crate::compile::testing::search_is_scan;
+    use crate::{Haystack, Mode, Options, PyRegex};
+
+    let scan = |p: &str, o: Options| search_is_scan(&PyRegex::compile(p, o).unwrap());
+    let got: Vec<usize> = (0..B12U_PATTERNS.len())
+        .filter(|&i| scan(B12U_PATTERNS[i], Options::CONFIG) == Some(true))
+        .collect();
+    assert_eq!(got, [1, 3, 5, 7, 11, 14, 16, 19]);
+    // `\d` (70 ranges), case-folded literals and CJK or Devanagari ranges stay on `regex`.
+    for i in [0, 2, 4, 6, 8, 9, 10, 12, 13, 15, 17, 18] {
+        assert_eq!(scan(B12U_PATTERNS[i], Options::CONFIG), Some(false), "{i}");
+    }
+    let line = Options {
+        haystack: Haystack::Line,
+        ..Options::CONFIG
+    };
+    let blob = Options {
+        haystack: Haystack::Blob,
+        ..Options::CONFIG
+    };
+    let bytes = Options {
+        mode: Mode::Bytes,
+        ..Options::CONFIG
+    };
+    for o in [line, blob, bytes] {
+        assert_eq!(scan(r"\w+_\d", o), Some(false), "{o:?}");
+    }
+    assert_eq!(scan(r"\w+_\d", Options::CONFIG), Some(true));
+    // `\w{19}` is below the eager-build estimate (20 000), `\w{25}` above it.
+    assert_eq!(scan(r"\w{19}", Options::CONFIG), Some(true));
+    assert_eq!(scan(r"\w{25}", Options::CONFIG), Some(false));
+    // Tier 2 has no tier-1 fast engine.
+    assert_eq!(scan(r"(?<=a)\w", Options::CONFIG), None);
+}
+
+/// ADR-115: on B12u's 20 000 paths (and ASCII ones, where Rust's `\b` decides), every pattern answers
+/// `re.search`, `re.match` and `re.fullmatch` the same on the scan engine as on `regex`, and match spans too.
+#[test]
+fn the_scan_engine_answers_like_regex_on_the_bench_paths() {
+    use crate::compile::testing::search_is_scan;
+    use crate::engine::probe;
+    use crate::{Options, PyRegex};
+
+    let mut paths = corpus(20_000, 0x5eed_0002, true);
+    paths.extend(corpus(2_000, 0x5eed_0001, false));
+    paths.extend(["", "\n", "a", "a\n", "x y", "é", "_1/a_1.b"].map(str::to_owned));
+    let extra = [
+        r"\b\w{2,}\b",
+        r"\w+\B",
+        r"^\w+\b/",
+        r"(?:\w|-)+\.\w+$",
+        r"\w*",
+    ];
+    let mut matched = 0_usize;
+    for p in B12U_PATTERNS.iter().chain(&extra) {
+        let re = PyRegex::compile(p, Options::CONFIG).unwrap();
+        probe::set_scan_off(true);
+        let reference = PyRegex::compile(p, Options::CONFIG).unwrap();
+        probe::set_scan_off(false);
+        assert_eq!(search_is_scan(&reference), Some(false), "{p}");
+        for (i, h) in paths.iter().enumerate() {
+            let got = (re.search(h), re.match_prefix(h), re.fullmatch(h));
+            let want = (
+                reference.search(h),
+                reference.match_prefix(h),
+                reference.fullmatch(h),
+            );
+            assert_eq!(got, want, "{p} on {h:?}");
+            matched += usize::from(got.0 == Ok(true)) + usize::from(got.1 == Ok(true));
+            if i % 97 == 0 {
+                assert_eq!(
+                    re.search_bytes(h.as_bytes()),
+                    reference.search_bytes(h.as_bytes()),
+                    "{p} on {h:?}"
+                );
+            }
+        }
+    }
+    assert!(matched > 10_000, "{matched}");
+}
+
+/// ADR-115: a text the scan engine cannot build fails with `regex`'s message: parse errors (including the nest
+/// limit) and the compiled-size limit, which `regex`'s forward NFA with capture states reaches first.
+#[test]
+#[expect(clippy::disallowed_methods, reason = "fixed repeat counts")]
+fn the_scan_engine_reports_the_errors_of_regex() {
+    use crate::engine::T1;
+
+    let deep = format!("{}\\w{}", "(?:".repeat(2100), ")".repeat(2100));
+    for (text, depth) in [
+        ("[", 1),
+        (r"\w(", 1),
+        (r"\w{2,1}", 1),
+        (r"\p{Nope}\w", 1),
+        (deep.as_str(), 2101),
+        (r"\w{4000}", 1),
+    ] {
+        let want = T1::build(text, false, depth).unwrap_err();
+        assert_eq!(T1::build_scan(text, depth).unwrap_err(), want, "{text:.20}");
+        assert_eq!(
+            T1::build_tier1(text, false, depth, true).unwrap_err(),
+            want,
+            "{text:.20}"
+        );
+    }
+    assert!(
+        T1::build(r"\w{4000}", false, 1)
+            .unwrap_err()
+            .contains("compiled size exceeds 67108864 bytes")
+    );
+}
+
+/// ADR-115's premise: below the eager-build estimate no text reaches `regex`'s size limit, so the scan engine's
+/// lazily built span engine (and every other lazily built variant) cannot fail. The worst texts the scan engine
+/// takes fit `regex`, with its reverse NFA, in a quarter of the limit.
+#[test]
+fn texts_below_the_eager_estimate_fit_regex_with_a_margin() {
+    use crate::compile::testing::{full_texts, search_is_scan};
+    use crate::engine::full;
+    use crate::{Options, PyRegex};
+
+    for p in [
+        r"\w{19}",
+        r"\W{19}",
+        r"(?i)\w{19}",
+        r"[^\W\d_]{17}",
+        r"\b\w{18}\b",
+        r"(?:\w|\d){17}",
+    ] {
+        let re = PyRegex::compile(p, Options::CONFIG).unwrap();
+        assert_eq!(search_is_scan(&re), Some(true), "{p}");
+        let texts = full_texts(p, Options::CONFIG).unwrap();
+        for text in [texts.main.to_string(), full(&texts.main)] {
+            let built = regex::RegexBuilder::new(&text)
+                .size_limit(16 << 20)
+                .nest_limit(2048)
+                .build();
+            assert!(built.is_ok(), "{p}: {built:?}");
+        }
+    }
 }

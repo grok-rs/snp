@@ -333,6 +333,7 @@ fn texts(
             depth: exact.depth.max(relaxed.depth),
             bytes,
             relaxed_anchored: relaxed.anchored,
+            haystack: opts.haystack,
         }
     } else {
         let mut fast = lower::lower_with(ast, Variant::Fast, opts.haystack, quirk);
@@ -379,6 +380,7 @@ fn texts(
             cond: fast.cond,
             depth,
             bytes,
+            haystack: opts.haystack,
         }
     };
     if tier2 && texts.depth >= crate::engine::FANCY_MAX_DEPTH {
@@ -397,6 +399,15 @@ pub(crate) mod testing {
         let re = PyRegex::compile(src, opts).ok()?;
         match re.imp {
             Imp::Engines(e) => Some(e.texts),
+            _ => None,
+        }
+    }
+
+    /// Whether the search engines' tier-1 fast engine of `re` is the scan engine (ADR-115; `None`: a cheap kind
+    /// or tier 2).
+    pub(crate) fn search_is_scan(re: &PyRegex) -> Option<bool> {
+        match &re.imp {
+            Imp::Engines(e) => e.search.fast_is_scan(),
             _ => None,
         }
     }
