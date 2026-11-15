@@ -884,8 +884,8 @@ mod tests {
             err(Errno::ACCESS)
         };
         let long: String = std::iter::repeat_n('n', 300).collect();
-        // (path, kinds of the lstat and stat halves); `None`: platform-defined (a trailing slash after a symlink to a
-        // directory may or may not be followed by `lstat`).
+        // (path, kinds of the lstat and stat halves); `None`: platform-defined (whether `lstat` follows a symlink
+        // before a trailing slash).
         let cases: [(&str, Option<(Kind, Kind)>); 22] = [
             ("file", Some((Kind::File, Kind::File))),
             ("empty", Some((Kind::File, Kind::File))),
@@ -895,7 +895,11 @@ mod tests {
             ("missing", Some((Kind::Missing, Kind::Missing))),
             ("file/x", Some((Kind::Missing, Kind::Missing))),
             ("dangling/x", Some((Kind::Missing, Kind::Missing))),
-            ("to-file/", Some((Kind::Missing, Kind::Missing))),
+            // a trailing slash after a symlink to a file: ENOTDIR on Linux, macOS resolves the link
+            (
+                "to-file/",
+                cfg!(target_os = "linux").then_some((Kind::Missing, Kind::Missing)),
+            ),
             ("to-dir/entry", Some((Kind::File, Kind::File))),
             ("self/x", Some((err(Errno::LOOP), err(Errno::LOOP)))),
             (
