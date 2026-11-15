@@ -78,6 +78,10 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   and a hook's extension keys are parsed in one pass over it. `validate-config` of 1,000 local hooks makes about
   37,000 (16%) fewer allocations and runs about 7% fewer instructions; `gc` over 200 configs about 9% fewer. Output
   is unchanged.
+- cfgv probes each key once while validating and applying defaults (a default is hashed once and cloned only when
+  missing; a required key is read once), and the remaining config lookups that built a key value now use the new
+  `cfgv::StrKey`. `validate-config` of 1,000 local hooks runs about 3% fewer instructions, `gc` over 200 configs about
+  3.5% fewer. Output and messages are unchanged.
 - The installed hook script (template v2, ID `405bd8559925d194c1d22af6ef66282e`) finds its directory by parameter
   expansion instead of running `dirname`: one process less per hook run, with the same `--hook-dir` (ADR-105). It
   keeps the old template's ID as a `# snp 2.0 compat ID:` line, so snp 2.0.0–2.0.1 still recognise it. Scripts
