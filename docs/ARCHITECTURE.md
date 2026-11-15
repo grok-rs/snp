@@ -2568,7 +2568,12 @@ startup Env (captured once in main, minus __PYVENV_LAUNCHER__/PYTHONEXECUTABLE)
    **mandatory relaxed tier-1 prefilter** (§A.6.11). The same relaxed text guards the tier-1 exact fallback of a
    `\b`/`\B` or match-span condition (ADR-098), built on first need on a forward-only `regex-automata` engine: a lazy
    DFA with a 256 KiB cache, or the bounded backtracker / PikeVM when the DFA cannot be built, gives up or quits
-   (ADR-108).
+   (ADR-108). Tier 2's prefilter runs on the same engine with a 2 MiB cache. **Tier-1 scan engine** (ADR-115): a
+   str text on path haystacks (`files`, `exclude`, branch and test-name patterns) below the eager-build estimate
+   whose HIR has a Unicode class of at least 128 ranges (Python's `\w`, `[^\W\d_]`) runs on that forward-only
+   engine with `regex`'s 2 MiB cache instead of `regex`: `re.search` is an unanchored and `re.match` an anchored
+   `is_match`, and a match span builds `regex` on first need. pygrep (`Line`/`Blob`) and bytes texts, texts without
+   such a class and texts above the estimate keep `regex`, built at compile time; build errors are `regex`'s strings.
 3. **Anchors** (§A.6.5): non-MULTILINE `$` is canonically `(?=\n?\z)`; the fast tier-1 form `\z` is used only when the
    haystack does not end with `\n` (`Path`), `(?m:$)` for pygrep by-line (`Line`); `\Z`→`\z`; Unicode `\b`/`\B` use
    the exact look-around forms with `W=[\p{L}\p{N}_]`, with the tier-1 `\b`/`\B` fast form only for ASCII (and, for
@@ -3728,7 +3733,7 @@ and no file names.
 |---|---|
 | Recursion on input | none unbounded: YAML composer/constructor iterative or depth-capped (512); regex parser explicit depth ≤ 484; JSON/YAML checkers iterative with CPython thresholds; `cfgv::Value` drop safe because depth ≤ 512 |
 | YAML size / nodes | 16 MiB file, 1 M constructed nodes (alias bombs), arena ids (no copies during compose) |
-| Regex | Python repeat bound; tier-1 `size_limit` 64 MiB (compile acceptance) and `dfa_size_limit` = the crate default 2 MiB — it is the lazy-DFA cache capacity **per regex per thread**, not an acceptance limit, so 64 MiB would allow threads × patterns × 64 MiB; a thrashing cache falls back to the linear engines with identical results; tier 2 `delegate_size_limit` 64 MiB, `delegate_dfa_size_limit` 2 MiB, `backtrack_limit` 1e8 → error, never a hang; emitted tier-2 nesting < 64 or `Unsupported` (ADR-079; supersedes the 01 Addendum §A.6 `dfa_size_limit(64<<20)` constants); the tier-1 exact fallback's prefilter is a forward-only lazy DFA whose cache is capped at 256 KiB per pattern per thread (B12u's `\b` pattern uses ~99 KB), with the linear NFA engines behind it (ADR-098, ADR-108) |
+| Regex | Python repeat bound; tier-1 `size_limit` 64 MiB (compile acceptance) and `dfa_size_limit` = the crate default 2 MiB — it is the lazy-DFA cache capacity **per regex per thread**, not an acceptance limit, so 64 MiB would allow threads × patterns × 64 MiB; a thrashing cache falls back to the linear engines with identical results; tier 2 `delegate_size_limit` 64 MiB, `delegate_dfa_size_limit` 2 MiB, `backtrack_limit` 1e8 → error, never a hang; emitted tier-2 nesting < 64 or `Unsupported` (ADR-079; supersedes the 01 Addendum §A.6 `dfa_size_limit(64<<20)` constants); the tier-1 exact fallback's prefilter is a forward-only lazy DFA whose cache is capped at 256 KiB per pattern per thread (B12u's `\b` pattern uses ~99 KB), with the linear NFA engines behind it (ADR-098, ADR-108); the tier-1 scan engine and tier 2's prefilter are the same forward-only engine with a 2 MiB cache, and the scan engine builds no reverse DFA, so its per-thread cache is at most half of `regex`'s pair (ADR-115) |
 | Hook output | one global 64 MiB in-memory budget, then spill to an unnamed file |
 | pre-push / `use_stdin` | 64 MiB; more fails closed with an exact FatalError (exit 1), never truncated (§3.10, D-SEC-12) |
 | File descriptors | pool clamped to `(RLIMIT_NOFILE soft − 64) / 8`; the limit is never raised (children inherit it) |

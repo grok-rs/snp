@@ -17,8 +17,8 @@ ADR-097 the stash re-verification by stat stamps; ADR-098 the tier-1 prefilter; 
 the B8 heap budget and counters; ADR-101 classification CPU and fan-out sizing; ADR-102 native-hook facts; ADR-103
 borrowed hook argv; ADR-104 the step-6 changes of the run pipeline; ADR-105 the hook script template v2; ADR-106 trusted
 index modes on clean `--all-files` runs; ADR-108 the forward-only engine of the tier-1 prefilter; ADR-110 the meta-only
-classification tier; ADR-112 snp-yaml's owning materialisation; ADR-116 the absorption of cfgv and file-identify into
-the workspace; ADR-118 the musl mimalloc build without transparent huge pages.
+classification tier; ADR-112 snp-yaml's owning materialisation; ADR-115 the tier-1 scan engine; ADR-116 the absorption
+of cfgv and file-identify into the workspace; ADR-118 the musl mimalloc build without transparent huge pages.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -58,7 +58,7 @@ serde_yaml-family crates are banned; the composer is an arena (aliases share nod
 
 ### ADR-003 — Regular expressions: the 01 Addendum, verbatim (C3)
 
-*Status: Accepted; amended by ADR-079 (tier-1/2 lazy-DFA cache = the crate default 2 MiB; `size_limit` 64 MiB unchanged), ADR-098 (the tier-1 exact fallback runs behind the relaxed prefilter) and ADR-108 (that prefilter runs on a forward-only `regex-automata` engine). The amending ADRs are normative where they differ.*
+*Status: Accepted; amended by ADR-079 (tier-1/2 lazy-DFA cache = the crate default 2 MiB; `size_limit` 64 MiB unchanged), ADR-098 (the tier-1 exact fallback runs behind the relaxed prefilter) ADR-108 (that prefilter runs on a forward-only `regex-automata` engine) and ADR-115 (tier-1 str path texts with a large Unicode class run on that engine instead of `regex`; tier 2's prefilter too). The amending ADRs are normative where they differ.*
 
 **Context.** 01 §13/§18.1 and 04a §12.3 proposed two tiers, 07 D4 picked fancy-regex alone, 10 Q6 deferred; all three
 proposals then contradicted the normative 01 Addendum (corpus of 4,858 real patterns) on constants and grammar.
@@ -2205,6 +2205,9 @@ Wave-3 F1 (meta-only tier) and S1 (one `lstat` per oracle input) build on this a
 
 ### ADR-108 — The tier-1 prefilter runs on a forward-only `regex-automata` engine
 
+*Status: Accepted; amended by ADR-115 (the same engine also serves tier 2's prefilter, with a 2 MiB cache, and the
+tier-1 scan engine; it answers anchored searches too). The amending ADR is normative where they differ.*
+
 *Amends ADR-098 (4), ADR-079 (1) and ADR-003; a tuning follow-up of the wave-1 prefilter (ADR-098), not a
 regression fix: no output was ever affected. Makes `regex-automata` a direct dependency of snp-pyre.*
 
@@ -2379,6 +2382,59 @@ occurrence and only its single-occurrence nodes move. `validate-config` of the 5
 (61 KB) peaks at 18.7 MB RSS, against 18.8 MB before this ADR and 1.1 GB with the rejected cache. Loaded values,
 errors and their order (the recursive-node and limit errors come from phase 2, which is unchanged) are the same.
 
+### ADR-115 — The tier-1 scan engine: str path texts with a large Unicode class skip `regex`
+
+*Amends ADR-108 (the forward-only engine also runs tier-1 texts and tier 2's prefilter) and ADR-003 (tier 1 is no longer
+`regex` for every text); wave-3 deep-dive finding Q18. No output change.*
+
+**Context.** After ADR-108, B12u (20 Unicode `files` patterns, 20 000 non-ASCII paths, 32 jobs) spent 77.2 M of its
+652.6 M instructions (callgrind, fat-LTO profiling build of 10f0e1a) building the 20 tier-1 `regex` engines, most of it
+for the eight texts with Python's `\w` or `[^\W\d_]`, which lower to `[\pL\pN_]`-style classes of about 770 ranges.
+`regex` compiles such a class into a forward NFA with capture states *and* into a reverse NFA (larger, for its reverse
+lazy DFA), and tries a one-pass DFA and a bounded backtracker over the capture NFA. A path pattern needs none of that:
+`files`, `exclude`, `no-commit-to-branch` and `name-tests-test` only ask `re.search`, `re.match` and `re.fullmatch`,
+which are yes/no questions; only pygrep (line and blob haystacks) asks for match spans. Matching was 276 M more, of it
+90.5 M in `regex`'s reverse-suffix strategy for texts like `[^\W\d_]{6,}_\d+\.`.
+**Decision.** (1) A tier-1 text (search, `re.match` or `re.fullmatch` variant) runs on `engine::Scan`, the forward-only
+engine of ADR-108 with `regex`'s 2 MiB lazy-DFA cache, when all of these hold: the pattern is str, its haystacks are
+paths (`Options::haystack == Path`), its expansion estimate is at most the eager-build threshold (`EAGER_EST`, 20 000),
+the text contains a Unicode property (`\p`/`\P`, a cheap pre-check so that other texts are parsed once, by `regex`)
+and its HIR, parsed with tier 1's syntax configuration, has a Unicode class of at least 128 ranges. Every other text —
+pygrep and bytes patterns, texts without such a class, texts above the estimate — keeps `regex`, built at compile time
+as before. (2) `re.search` is an unanchored `earliest` search and `re.match` an anchored one (the leftmost match starts
+at 0 iff some match does); `re.fullmatch` is the search of the `\A(?:P)\z` text as before. A match span
+(`search_bytes`, never called on path patterns in snp) builds `regex` for the text on first need and returns
+`MatchError::Backtrack` if that build fails. (3) Build errors are the strings `regex` reports: a parse error (including
+the nest limit) is `regex-syntax`'s message, an NFA over the 64 MiB size limit is `compiled size exceeds 67108864
+bytes`, another NFA error `error building NFA`. `regex` parses with the same configuration and compiles the same
+forward NFA plus capture states first, so every text the scan engine rejects `regex` rejects with the same message.
+(4) Tier 2's relaxed prefilter also moves from `regex` to the forward-only engine, with a 2 MiB cache (ADR-079's
+default); a prefilter that cannot be built is absent, as before. (5) No dependency, feature or lock-file change.
+**Rationale.** Every `regex-automata` engine answers `is_match` exactly for the same NFA (ADR-108), and an anchored
+search answers "a match starts at 0" exactly, so every match decision is unchanged; the scan engine merely skips the
+reverse NFA, the capture states and the one-pass attempt. The converse direction of (3) — a text the scan engine
+accepts but `regex` would reject — is ruled out by the estimate bound, the premise every lazily built variant (exact
+fallbacks, `re.match` and `re.fullmatch` engines) already relies on: `texts_below_the_eager_estimate_fit_regex_with_a_margin`
+builds `regex` for the worst eligible texts (`\w{19}`, `(?i)\w{19}`, `[^\W\d_]{17}`, `\b\w{18}\b`, their fullmatch forms)
+within a quarter of the size limit. Tests: `scan_agrees_with_regex` (is_match, match at 0 and span against `regex` on
+every str tier-1 text of the generator, search and fullmatch forms, short, long and non-UTF-8 haystacks) and
+`scan_keeps_every_answer` (end to end with the scan engine switched off by a test probe, including compile errors);
+B12u's 20 patterns plus five `\b`/`\B`/nullable texts on its 20 000 paths and 2 000 ASCII paths; the error strings
+(parse, nest limit, size limit); and the engine choice (pygrep, bytes and over-estimate texts keep `regex`). The
+128-range threshold separates `\w`-like classes (about 730–770 ranges) from `\d` (70) and case-folded literals (2–3),
+whose `regex` builds are cheap and whose literal strategies `regex` does better.
+**Consequences.** Measured on the B12u fixture with fat-LTO profiling builds of 10f0e1a and this change: callgrind
+652.6 M → 555.8 M instructions (−14.8 %): engine builds 77.2 M → 44.7 M, matching about 276 M → 216 M (the forward
+scan beats `regex`'s reverse-suffix strategy on these paths); massif peak 8.94 → 6.47 MB; DHAT 285 786 → 259 246
+blocks and 57.0 → 43.0 MB allocated (at the engine-build site 94 768 → 68 544 blocks and 22.7 → 11.3 MB; bytes live at
+the global peak 8.38 → 4.84 MB); output byte-identical. B1–B11 are unchanged or better
+(B3 −0.09 %, B4 −0.02 %, B6 −0.11 % as means of four runs; B5, B8, B10, B11 within ±0.07 %; B1 −0.29 % from the
+binary's layout alone). Per-thread memory of a scan text is one forward lazy-DFA cache (at most 2 MiB) instead of
+`regex`'s forward and reverse caches. A scan text's matching no longer uses `regex`'s reverse strategies (reverse
+suffix, reverse anchored): a path pattern that only `regex`'s reverse-anchored search could reject in a few bytes is
+now scanned forward in full, which stays linear and is what the B12u numbers include. The plan's target for the build
+site (−45..70 M) assumed the pre-ADR-108 profile, where the prefilter's `regex` build was part of it.
+
 ### ADR-116 — cfgv and file-identify are workspace crates: snp-cfgv and snp-identify
 
 *Supersedes ADR-061. Amends ADR-088 (the publish set), ADR-099 (decision 1: how a base gets its user crates),
@@ -2443,6 +2499,7 @@ touches the consumers.
 `cfgv` and `file-identify`, so the release graph keeps its size (§11.7 budget of 120 packages). A fix made in a
 standalone repository reaches snp only as an explicit port (or `git subtree pull --prefix=crates/snp-… <repo> <rev>`,
 then the workspace adaptation), and the reverse holds for fixes made here. ADR-061 is superseded in full.
+
 ### ADR-118 — The musl mimalloc build disables mimalloc's transparent huge pages
 
 *Amends ADR-079 (4). No budget, gate or adopted allocator changes: `[musl] adopted` stays `"system"`.*

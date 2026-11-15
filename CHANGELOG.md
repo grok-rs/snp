@@ -99,6 +99,12 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   55 % fewer instructions (callgrind 1,423 M → 647 M) and its heap peaks about 2 MB lower; the other scenarios are
   unchanged. `regex-automata` 0.4.18, already built as part of `regex`, is now a direct dependency of snp-pyre
   (ADR-108).
+- `files`/`exclude` patterns with Python's `\w` or `[^\W\d_]` (and other str path patterns with a Unicode class of
+  128 ranges or more) compile to the forward-only engine of ADR-108 instead of `regex`, which also built a reverse
+  automaton, capture states and a one-pass DFA these yes/no questions never use; tier 2's prefilter uses the same
+  engine. Every match decision and error message is unchanged; pygrep and bytes patterns keep `regex`. On the B12u
+  benchmark snp executes 15 % fewer instructions (callgrind 652.6 M → 555.8 M) and its heap peaks about 2.5 MB lower;
+  the other scenarios are unchanged (ADR-115).
 - Loading YAML (every config and manifest load, `validate-config`, `gc`) uses less CPU and fewer allocations. The
   reader checks each 16 KiB chunk once and reads the current character without a function call. The constructor
   sizes its tables up front. The loaded value takes the parsed values of nodes that occur once instead of copying
