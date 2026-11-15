@@ -151,6 +151,14 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   default git build compares stat times to the whole second, and the restored file got the checked-out file's inode
   number back), so about seven git calls hashed the 10 MiB file again: +80 % instructions for the whole tree, in a
   timing-dependent share of every tool's runs. B8 times are not comparable with earlier records.
+- A stash of unstaged files does less on the critical path (ADR-117; same git argv per call, patch bytes, messages and
+  journal states, and every `fsync` still runs before the checkout). The stash's own checkout rewrites the index, which used to drop the oracle's early
+  index read, so a run with one or two hooks fell back to a real `git diff` after each hook; on a small tree the
+  index is now read again instead (and the config file list kept unless the worktree lock was contended), so the
+  stat oracle decides without that diff. `git apply --numstat` lists the patch's files while the patch is being made
+  durable, and a patch larger than 4 MiB is written back to disk (Linux) while git still prints it, so the final
+  `fsync` has only the tail left. On B8 (a 10 MB unstaged rewrite) the whole tree runs 10% fewer instructions
+  (2,960 M → 2,655 M) and the numstat and most of the patch's disk writes leave the critical path.
 
 ### Fixed
 

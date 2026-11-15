@@ -18,7 +18,8 @@ the B8 heap budget and counters; ADR-101 classification CPU and fan-out sizing; 
 borrowed hook argv; ADR-104 the step-6 changes of the run pipeline; ADR-105 the hook script template v2; ADR-106 trusted
 index modes on clean `--all-files` runs; ADR-108 the forward-only engine of the tier-1 prefilter; ADR-110 the meta-only
 classification tier; ADR-112 snp-yaml's owning materialisation; ADR-115 the tier-1 scan engine; ADR-116 the absorption
-of cfgv and file-identify into the workspace; ADR-118 the musl mimalloc build without transparent huge pages.
+of cfgv and file-identify into the workspace; ADR-117 the B8 stash-time overlaps; ADR-118 the musl mimalloc build
+without transparent huge pages.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -1687,6 +1688,8 @@ by a new ADR. M1 exit criterion 7 (docs/VERIFICATION.md §12) is met.
 *Amends ADR-067 (the second `diff-index` digest before the checkout); decides the stat-based re-verification ADR-084
 deferred.*
 
+*Status: Accepted; item (1) amended by ADR-117 (the listing runs beside the durability step). The amending ADR is normative where they differ.*
+
 **Context.** ADR-067 closes the autosave window its fsyncs open with a second full `git diff-index --binary` whose
 blake3 digest must equal the streamed patch's. On the B8 scenario (a 10 MB unstaged change) that second diff is the
 largest single cost of the run: about 268 ms of the local light-tracer timeline, on the critical path, and blake3 is
@@ -2007,6 +2010,8 @@ blocks 185,963 → 127,179. The harness's process-tree RSS stays near git's own 
 
 *Amends ADR-047, ADR-084(6) and ARCHITECTURE §3.1 rows 3, 6, 10, 15 and 16, §3.7 item 5, the §12.1 spawn model and the
 §1.4.13 listing; implements ADR-078(3) as written.*
+
+*Status: Accepted; items (4) and (5) amended by ADR-117 (F asked again after the stash's own index rewrite, G kept). The amending ADR is normative where they differ.*
 
 **Context.** The performance review of November 2026 (P25(c)) found the step-6 text out of date with the code. Row 6
 put the ITA query C in the parallel fan-out, but the stash asks it serially (B2's fourth git call). It also listed E
@@ -2503,6 +2508,49 @@ touches the consumers.
 standalone repository reaches snp only as an explicit port (or `git subtree pull --prefix=crates/snp-… <repo> <rev>`,
 then the workspace adaptation), and the reverse holds for fixes made here. ADR-061 is superseded in full.
 
+### ADR-117 — B8: the stash's own index rewrite keeps the Stat mode; the listing and the patch's disk writes overlap
+
+*Amends ADR-104 (4) and (5) (one hook's Stat mode, the stale-F rule) and ADR-097 (1) (the listing runs beside the
+durability step, not after it). Every durability, verification and recovery rule of ADR-027, ADR-067, ADR-078,
+ADR-097 and D-DATA-19 is unchanged.*
+
+**Context.** B8 (a 10 MB unstaged rewrite) was snp's only scenario behind prek: 418 ms against 292 ms at p50 (CI run
+43679145928 on 10f0e1a; pre-commit 448 ms). Measured on that commit with the bench fixture: the whole tree ran
+2,960 M instructions against prek's 2,467 M, but that explains only part of the wall gap. Per child (strace `-f -T`,
+median of 15 local runs): snp's content `diff-index` matches prek's; then the 21.4 MB patch's `fsync` (78–205 ms,
+following the disk's load; prek never syncs), then `git apply --numstat` (48–52 ms, 121 M), both on the critical
+path; then two pre-commit-parity `git diff` calls of 40–62 ms (361 M) each where prek runs one. Each re-hashes the
+10 MiB file, which the checkout left racily clean (a default git build compares stat times to the whole second, and
+the checkout writes the file and the index in the same second). The second one ran only because the stash's checkout
+changes the index stamp: ADR-104(5) then dropped the early F and G, and one hook without them uses Git mode (the
+FOLLOW-UP left in the code).
+**Decision.** (1) *Stale F.* F is asked again at step 14 whenever the stamp changed, as before, and now also for one or
+two process hooks when the dropped F described a small tree (ADR-104(4)'s rule; the stale F's size is a cost hint,
+never an input). G does not read the index: it is kept unless `StashGuard::lock_contended()` (another run's hooks
+may have changed the config files while we waited), also after an intent-to-add clearing. (2) *Listing beside
+durability.* `git apply --numstat` runs on a thread beside step 6 (the patch's `sync_all`, the journal and pointer,
+the directory sync). It reads only the written, flushed patch (ours, `create_new` 0600), never the worktree; its
+result is used only once the patch is durable and verified; the thread is joined before any exit; a thread the OS
+refuses lists afterwards, in ADR-097's order. The verification stays the last read of the worktree before the
+checkout, and a listing error still counts only after it. (3) *Early writeback.* On Linux, past every 4 MiB of patch
+a worker thread `fdatasync`s the patch through its own read-only handle (requests coalesce while one is pending), so
+the disk writes overlap the diff; step 6's `sync_all` is unchanged and only has the tail left. A patch below 4 MiB
+never starts the worker; a worker that cannot start means no early writeback. The worker's handle is a file
+description of its own, so a writeback error it sees is still reported to the writer's final `fsync` (Linux errseq),
+and its first error fails step 5 as a write error does (fail closed). macOS is excluded: every sync there is an
+`F_FULLFSYNC`.
+**Rejected.** (a) Avoiding the racily clean entries after the checkout: only an index written in a later second clears
+them, which needs a refresh that hashes the file once more and writes an index pre-commit never writes. (b) Running
+the name-only query of ADR-097(3) beside step 6: it is the verification, and the window it covers would grow by the
+`fsync`. (c) Owner decisions, not taken: skipping the post-checkout baseline `git diff` (prek's clean baseline; amends
+ADR-078), dropping or deferring the patch `fsync`, and listing the paths without git's parser (D-DATA-19).
+**Consequences.** B8: 2,960 M → 2,655 M instructions for the tree (−10.3%; prek 2,467 M); one `ls-files -s -z` more
+and one `git diff` less, so the process count stays 16; snp's own instructions 17.3 M → 72.6 M (blake3 of the racy
+10 MiB file at the snapshot and the comparison, in place of git's 361 M re-hash). Locally, under the disk load of a
+shared machine, the critical-path patch `fsync` fell from a median of 205 ms to 82 ms (minimum 25 → 1.7 ms) and the
+numstat left the critical path. Other runs: a stash with one or two process hooks on a small tree uses the Stat mode
+(one `ls-files` beside the staged-list query instead of a `git diff` after each hook); patches below 4 MiB keep
+their syscalls. ARCHITECTURE §3.1 step 6 and §4.2 steps 5–6 state it.
 ### ADR-118 — The musl mimalloc build disables mimalloc's transparent huge pages
 
 *Amends ADR-079 (4). No budget, gate or adopted allocator changes: `[musl] adopted` stays `"system"`.*

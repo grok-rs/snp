@@ -327,12 +327,12 @@ reason = "not profiled yet (17-26 % behind prek on CI, more on musl)"
 [[known_miss]]
 scenario = "B8"
 check = "p50 <= pre-commit"
-reason = "the patch is computed twice to re-verify it before the checkout (ADR-067, deferred by ADR-084)"
+reason = "the patch is made durable (fsync of the 21 MB patch, journal, ADR-067) and re-verified (ADR-097) before the checkout, which pre-commit does not; since ADR-097 the patch is computed once (CI 10f0e1a: 418 vs 448 ms)"
 
 [[known_miss]]
 scenario = "B8"
 check = "p50 <= prek"
-reason = "the patch is computed twice to re-verify it before the checkout (ADR-067, deferred by ADR-084)"
+reason = "prek neither syncs the 21 MB patch (snp: fsync, ADR-067, early writeback ADR-117), nor lists it with git apply --numstat (121 M instructions, D-DATA-19), nor re-verifies it (ADR-097); tree 2,655 M vs prek's 2,467 M instructions after ADR-117"
 
 [[known_miss]]
 scenario = "B11"
