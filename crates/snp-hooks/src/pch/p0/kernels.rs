@@ -1,10 +1,13 @@
 //! The byte-level cores of the P0 natives, without file system or git access: what fuzz targets and unit tests
-//! drive. Each function documents the upstream source it reproduces; none allocates more than its output and none
-//! panics on any input.
+//! drive. Each function documents the upstream source it reproduces; none allocates more than its output (or, for
+//! trailing-whitespace, the content's length, which bounds it) and none panics on any input.
 //!
 //! Owner: WP-26.
 
+use std::sync::LazyLock;
+
 use memchr::memchr_iter;
+use memchr::memmem::Finder;
 
 mod eof;
 pub use eof::{EofAction, end_of_file, end_of_file_bytes, end_of_file_run};
@@ -30,60 +33,105 @@ fn rstrip<'a>(line: &'a [u8], chars: Option<&[u8]>) -> &'a [u8] {
     line.get(..end).unwrap_or_default()
 }
 
-/// `trailing_whitespace_fixer._process_line` (`trailing_whitespace_fixer.py:25-41`).
-fn process_line<'a>(line: &'a [u8], md: bool, chars: Option<&[u8]>, out: &mut Vec<u8>) {
-    let (body, eol): (&'a [u8], &[u8]) = if let Some(b) = line.strip_suffix(b"\r\n") {
-        (b, b"\r\n")
-    } else if let Some(b) = line.strip_suffix(b"\n") {
-        (b, b"\n")
+/// What `trailing_whitespace_fixer._process_line` (`trailing_whitespace_fixer.py:25-41`) returns for a line, as
+/// the three pieces it concatenates, borrowed: `kept ++ pad ++ eol`.
+///
+/// `kept` is a prefix of the line's body, `pad` the markdown hard break `"  "` (the body's own last two bytes) or
+/// empty, `eol` the line's own ending; the bytes between `kept` and `pad` are the ones stripped. The result is a
+/// deletion of the line, so it equals the line exactly when it is as long ([`Parts::keeps`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Parts<'a> {
+    kept: &'a [u8],
+    pad: &'static [u8],
+    eol: &'static [u8],
+}
+
+impl Parts<'_> {
+    /// `kept ++ pad ++ eol == line`: a deletion of the line is as long as the line only when nothing was stripped.
+    fn keeps(&self, line: &[u8]) -> bool {
+        self.kept
+            .len()
+            .saturating_add(self.pad.len())
+            .saturating_add(self.eol.len())
+            == line.len()
+    }
+
+    /// Appends `kept ++ pad ++ eol` to `out`.
+    fn write_to(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.kept);
+        out.extend_from_slice(self.pad);
+        out.extend_from_slice(self.eol);
+    }
+}
+
+/// A `readlines()` line split into its body and its ending (`\r\n`, `\n` or none).
+fn split_eol(line: &[u8]) -> (&[u8], &'static [u8]) {
+    if let Some(body) = line.strip_suffix(b"\r\n") {
+        (body, b"\r\n")
+    } else if let Some(body) = line.strip_suffix(b"\n") {
+        (body, b"\n")
     } else {
         (line, b"")
-    };
-    // `not line.isspace()` is true for an empty line (`b''.isspace()` is False).
-    let is_space = !body.is_empty() && body.iter().all(|&b| is_ascii_ws(b));
-    if md && !is_space && body.ends_with(b"  ") {
-        let head = body.get(..body.len().saturating_sub(2)).unwrap_or_default();
-        out.extend_from_slice(rstrip(head, chars));
-        out.extend_from_slice(b"  ");
-    } else {
-        out.extend_from_slice(rstrip(body, chars));
     }
-    out.extend_from_slice(eol);
+}
+
+/// `trailing_whitespace_fixer._process_line` (`trailing_whitespace_fixer.py:25-41`) as borrowed [`Parts`].
+fn process_line<'a>(line: &'a [u8], md: bool, chars: Option<&[u8]>) -> Parts<'a> {
+    let (body, eol) = split_eol(line);
+    // `not line.isspace()`, tested only where it decides: a body ending in two spaces is not empty, so it is
+    // `isspace()` exactly when every byte is ASCII-WS.
+    if md && body.ends_with(b"  ") && !body.iter().all(|&b| is_ascii_ws(b)) {
+        let head = body.get(..body.len().saturating_sub(2)).unwrap_or_default();
+        Parts {
+            kept: rstrip(head, chars),
+            pad: b"  ",
+            eol,
+        }
+    } else {
+        Parts {
+            kept: rstrip(body, chars),
+            pad: b"",
+            eol,
+        }
+    }
+}
+
+/// `readlines()` of a binary file: `(offset, line)` for each line, split after each `\n` (a lone `\r` is not a line
+/// break), the last one possibly unterminated.
+fn readlines(content: &[u8]) -> impl Iterator<Item = (usize, &[u8])> {
+    let mut start = 0_usize;
+    let mut breaks = memchr_iter(b'\n', content);
+    std::iter::from_fn(move || {
+        let end = match breaks.next() {
+            Some(nl) => nl.saturating_add(1),
+            None if start < content.len() => content.len(),
+            None => return None,
+        };
+        let at = start;
+        start = end;
+        Some((at, content.get(at..end).unwrap_or_default()))
+    })
 }
 
 /// `trailing_whitespace_fixer._fix_file` (`:8-22`) on the file's bytes: `Some(new bytes)` when any line changed.
 ///
-/// Lines are `readlines()` of a binary file (split after each `\n`; a lone `\r` is not a line break). Lines are
-/// copied only from the first changed one on.
+/// Nothing is copied or allocated until a line changes. Then the unchanged prefix is copied once and every later
+/// line's `Parts` are written into an output reserved at the content's length, which bounds it (the fix only
+/// deletes bytes; when the reservation fails the output grows as usual).
 pub fn trailing_whitespace(content: &[u8], md: bool, chars: Option<&[u8]>) -> Option<Vec<u8>> {
-    let mut out: Option<Vec<u8>> = None;
-    let mut start = 0_usize;
-    let mut scratch = Vec::new();
-    let mut each = |line: &[u8], line_start: usize, out: &mut Option<Vec<u8>>| {
-        scratch.clear();
-        process_line(line, md, chars, &mut scratch);
-        match out {
-            Some(o) => o.extend_from_slice(&scratch),
-            None if scratch.as_slice() != line => {
-                let mut o = Vec::new();
-                o.extend_from_slice(content.get(..line_start).unwrap_or_default());
-                o.extend_from_slice(&scratch);
-                *out = Some(o);
-            }
-            None => {}
-        }
-    };
-    for nl in memchr_iter(b'\n', content) {
-        let end = nl.saturating_add(1);
-        let line = content.get(start..end).unwrap_or_default();
-        each(line, start, &mut out);
-        start = end;
+    let mut lines = readlines(content);
+    let (at, first) = lines.find_map(|(at, line)| {
+        let parts = process_line(line, md, chars);
+        (!parts.keeps(line)).then_some((at, parts))
+    })?;
+    let mut out = Vec::new();
+    out.try_reserve(content.len()).unwrap_or_default();
+    out.extend_from_slice(content.get(..at).unwrap_or_default());
+    first.write_to(&mut out);
+    for (_, line) in lines {
+        process_line(line, md, chars).write_to(&mut out);
     }
-    if start < content.len() {
-        let line = content.get(start..).unwrap_or_default();
-        each(line, start, &mut out);
-    }
-    out
+    Some(out)
 }
 
 /// `mixed-line-ending --fix` (`mixed_line_ending.py:22`): `auto`, `no`, `cr`, `crlf` or `lf`.
@@ -136,49 +184,88 @@ fn splitlines_keepends(content: &[u8]) -> impl Iterator<Item = &[u8]> {
     })
 }
 
-/// `mixed_line_ending.fix_filename` (`:22-62`) on bytes: `(return value, Some(new bytes) when it rewrites)`.
-///
-/// Counts the first ending each line has in the order CR, CRLF, LF (`line.endswith`); `mixed` = more than one
-/// kind present. `auto` picks the most frequent kind with ties preferring LF > CRLF > CR; an explicit target
-/// rewrites when any other kind is present. A rewrite is `line.rstrip(b'\r\n') + ending` for every line,
-/// including an unterminated last line.
-pub fn mixed_line_ending(content: &[u8], fix: LineFix) -> (bool, Option<Vec<u8>>) {
-    let (mut cr, mut crlf, mut lf) = (0_usize, 0_usize, 0_usize);
+/// The line endings `mixed_line_ending.fix_filename` counts (`:28-34`): per line, the first of CR, CRLF, LF it
+/// ends with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Endings {
+    cr: usize,
+    crlf: usize,
+    lf: usize,
+}
+
+/// What `fix_filename` does with the counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Verdict {
+    /// Return this value and leave the file alone.
+    Keep(bool),
+    /// Rewrite every line to end with this ending, and return `True`.
+    Rewrite(&'static [u8]),
+}
+
+/// `fix_filename`'s counting pass (`:28-34`, `line.endswith` in the order CR, CRLF, LF).
+fn count_endings(content: &[u8]) -> Endings {
+    let mut n = Endings {
+        cr: 0,
+        crlf: 0,
+        lf: 0,
+    };
     for line in splitlines_keepends(content) {
         if line.ends_with(b"\r") {
-            cr = cr.saturating_add(1);
+            n.cr = n.cr.saturating_add(1);
         } else if line.ends_with(b"\r\n") {
-            crlf = crlf.saturating_add(1);
+            n.crlf = n.crlf.saturating_add(1);
         } else if line.ends_with(b"\n") {
-            lf = lf.saturating_add(1);
+            n.lf = n.lf.saturating_add(1);
         }
     }
-    let kinds = [cr, crlf, lf].iter().filter(|&&n| n > 0).count();
-    let mixed = kinds > 1;
-    let ending: &[u8] = match fix {
-        LineFix::No => return (mixed, None),
-        LineFix::Auto if !mixed => return (false, None),
-        LineFix::Auto => {
-            let mut best: (&[u8], usize) = (b"\n", 0);
-            for (e, n) in [(&b"\r"[..], cr), (b"\r\n", crlf), (b"\n", lf)] {
-                if n >= best.1 {
-                    best = (e, n);
-                }
-            }
-            best.0
-        }
-        LineFix::Cr | LineFix::Crlf | LineFix::Lf => {
-            let (target, others): (&[u8], usize) = match fix {
-                LineFix::Cr => (b"\r", crlf.saturating_add(lf)),
-                LineFix::Crlf => (b"\r\n", cr.saturating_add(lf)),
-                _ => (b"\n", cr.saturating_add(crlf)),
-            };
-            if others == 0 {
-                return (false, None);
-            }
-            target
+    n
+}
+
+/// `fix_filename`'s decision (`:36-62`): `mixed` = more than one kind present; `auto` picks the most frequent kind
+/// with ties preferring LF > CRLF > CR; an explicit target rewrites when any other kind is present.
+fn decide(n: Endings, fix: LineFix) -> Verdict {
+    let mixed = [n.cr, n.crlf, n.lf].iter().filter(|&&k| k > 0).count() > 1;
+    let explicit = |target: &'static [u8], others: usize| {
+        if others == 0 {
+            Verdict::Keep(false)
+        } else {
+            Verdict::Rewrite(target)
         }
     };
+    match fix {
+        LineFix::No => Verdict::Keep(mixed),
+        LineFix::Auto if !mixed => Verdict::Keep(false),
+        LineFix::Auto => {
+            let mut best: (&'static [u8], usize) = (b"\n", 0);
+            for (e, k) in [(&b"\r"[..], n.cr), (b"\r\n", n.crlf), (b"\n", n.lf)] {
+                if k >= best.1 {
+                    best = (e, k);
+                }
+            }
+            Verdict::Rewrite(best.0)
+        }
+        LineFix::Cr => explicit(b"\r", n.crlf.saturating_add(n.lf)),
+        LineFix::Crlf => explicit(b"\r\n", n.cr.saturating_add(n.lf)),
+        LineFix::Lf => explicit(b"\n", n.cr.saturating_add(n.crlf)),
+    }
+}
+
+/// [`decide`] for content without a `\r`, without the counting pass: such content counts `cr = crlf = 0` and
+/// `lf` = its number of `\n`, so it is never mixed and only an explicit CR or CRLF target rewrites it, when it
+/// holds a `\n`.
+fn decide_cr_free(content: &[u8], fix: LineFix) -> Verdict {
+    let has_lf = || memchr::memchr(b'\n', content).is_some();
+    match fix {
+        LineFix::Cr if has_lf() => Verdict::Rewrite(b"\r"),
+        LineFix::Crlf if has_lf() => Verdict::Rewrite(b"\r\n"),
+        LineFix::Auto | LineFix::No | LineFix::Cr | LineFix::Crlf | LineFix::Lf => {
+            Verdict::Keep(false)
+        }
+    }
+}
+
+/// `_fix` (`:16-19`): `line.rstrip(b'\r\n') + ending` for every line, including an unterminated last line.
+fn rewrite_endings(content: &[u8], ending: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     for line in splitlines_keepends(content) {
         let end = line
@@ -188,7 +275,22 @@ pub fn mixed_line_ending(content: &[u8], fix: LineFix) -> (bool, Option<Vec<u8>>
         out.extend_from_slice(line.get(..end).unwrap_or_default());
         out.extend_from_slice(ending);
     }
-    (true, Some(out))
+    out
+}
+
+/// `mixed_line_ending.fix_filename` (`:24-62`) on bytes: `(return value, Some(new bytes) when it rewrites)`.
+///
+/// Content without a `\r` (most files) skips the counting pass (`decide_cr_free`).
+pub fn mixed_line_ending(content: &[u8], fix: LineFix) -> (bool, Option<Vec<u8>>) {
+    let verdict = if memchr::memchr(b'\r', content).is_none() {
+        decide_cr_free(content, fix)
+    } else {
+        decide(count_endings(content), fix)
+    };
+    match verdict {
+        Verdict::Keep(ret) => (ret, None),
+        Verdict::Rewrite(ending) => (true, Some(rewrite_endings(content, ending))),
+    }
 }
 
 /// The UTF-8 byte-order mark.
@@ -261,8 +363,21 @@ pub const PRIVATE_KEY_PATTERNS: [&[u8]; 10] = [
     b"BEGIN OpenVPN Static key V1",
 ];
 
+/// The text every pattern but `PuTTY-User-Key-File-2` (5, both epochs) and `BEGIN OpenVPN Static key V1` (9, epoch 2)
+/// holds: content without it holds no other pattern (see the test
+/// `private_key_patterns_hold_the_anchor_once_or_are_the_two_exceptions`).
+static ANCHOR: LazyLock<Finder<'static>> = LazyLock::new(|| Finder::new(b"PRIVATE KEY"));
+static PUTTY: LazyLock<Finder<'static>> = LazyLock::new(|| Finder::new(PRIVATE_KEY_PATTERNS[5]));
+static OPENVPN: LazyLock<Finder<'static>> = LazyLock::new(|| Finder::new(PRIVATE_KEY_PATTERNS[9]));
+
 /// `any(line in content for line in BLACKLIST)` for the epoch's pattern set.
+///
+/// Content without `PRIVATE KEY` (nearly every file) is searched for that anchor and the two patterns without it,
+/// with finders built once; content holding the anchor runs the full scan of every pattern.
 pub fn has_private_key(content: &[u8], epoch: u16) -> bool {
+    if ANCHOR.find(content).is_none() {
+        return PUTTY.find(content).is_some() || (epoch >= 2 && OPENVPN.find(content).is_some());
+    }
     let n = if epoch >= 2 { 10 } else { 8 };
     PRIVATE_KEY_PATTERNS
         .iter()

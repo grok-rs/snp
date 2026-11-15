@@ -33,6 +33,7 @@ pub(crate) fn drive(scenario: &str) -> bool {
         "quiesce_hold" => quiesce_hold(),
         "quiesce_critical" => quiesce_critical(),
         "trace" => trace(),
+        "trace_critical" => trace_critical(),
         _ => return false,
     }
     true
@@ -675,6 +676,149 @@ fn trace() {
     let argv = probe_argv(&["args", "https://user:SECRET4@example.com/repo.git"]);
     let m = spawn::merged(&hook(&argv, &env, &d, &cancel), false, &budget()).unwrap();
     report("status", m.status.0);
+}
+
+/// The test environment with `name=1` between `PATH` and `PRE_COMMIT_TEST_VAR`.
+fn env_with(name: &str) -> snp_core::env::Env {
+    snp_core::env::Env::from_pairs([
+        ("PATH", "/usr/bin:/bin"),
+        (name, "1"),
+        ("PRE_COMMIT_TEST_VAR", "from-env"),
+    ])
+}
+
+/// The spellings of `GIT_TERMINAL_PROMPT` a parent environment may use (Windows names are case-insensitive).
+fn prompt_spellings() -> &'static [&'static str] {
+    if cfg!(windows) {
+        &[
+            "GIT_TERMINAL_PROMPT",
+            "git_terminal_prompt",
+            "Git_Terminal_Prompt",
+        ]
+    } else {
+        &["GIT_TERMINAL_PROMPT", "git_terminal_prompt"]
+    }
+}
+
+/// ADR-065: a Critical child sees `GIT_TERMINAL_PROMPT=0` even when the parent environment sets it to `1`, under the
+/// parent's spelling on Windows (one variable, first spelling kept), as a distinct variable beside another spelling on
+/// Unix; Hook and Tool children get the environment unchanged.
+#[test]
+fn critical_children_override_the_parent_git_terminal_prompt() {
+    use snp_proc::spawn::Role;
+    let d = tempfile::tempdir().unwrap();
+    let cancel = CancelToken::new();
+    for &name in prompt_spellings() {
+        let env = env_with(name);
+        let query = probe_argv(&["env", "GIT_TERMINAL_PROMPT", name]);
+        let names = probe_argv(&["envnames"]);
+        let is_prompt = |n: &&str| n.eq_ignore_ascii_case("GIT_TERMINAL_PROMPT");
+        let upper = name == "GIT_TERMINAL_PROMPT";
+        for role in [Role::Critical, Role::Hook, Role::Tool] {
+            let mut spec = hook(&query, &env, d.path(), &cancel);
+            spec.role = role;
+            if role == Role::Critical {
+                spec.group = Group::Isolated;
+            }
+            let got = String::from_utf8(spawn::capture(&spec).unwrap().stdout).unwrap();
+            let (prompt, own) = match (role, cfg!(windows) || upper) {
+                (Role::Critical, true) => ("0", "0"),
+                (Role::Critical, false) => ("0", "1"),
+                (_, true) => ("1", "1"),
+                (_, false) => ("unset", "1"),
+            };
+            let sep = |v: &str| if v == "unset" { " " } else { "=" };
+            let want = format!(
+                "GIT_TERMINAL_PROMPT{}{prompt}\n{name}{}{own}\n",
+                sep(prompt),
+                sep(own)
+            );
+            assert_eq!(got, want, "{role:?} {name}");
+            spec.argv = &names;
+            let listed = String::from_utf8(spawn::capture(&spec).unwrap().stdout).unwrap();
+            let prompts: Vec<&str> = listed.lines().filter(is_prompt).collect();
+            let want = if role == Role::Critical && !(cfg!(windows) || upper) {
+                vec!["GIT_TERMINAL_PROMPT", name]
+            } else {
+                vec![name]
+            };
+            assert_eq!(prompts, want, "{role:?} {name}: {listed}");
+        }
+    }
+}
+
+/// `SNP_LOG=trace` logs the environment a Critical child gets: `GIT_TERMINAL_PROMPT="0"` in place of the parent's
+/// value (in the parent's position and, on Windows, spelling) or appended last; a Hook child's environment unchanged.
+/// Runs in a driver process with a global subscriber, as [`trace_log_shows_no_secrets`].
+#[test]
+fn trace_log_shows_the_critical_child_environment() {
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("trace.log");
+    let out = dir.path().join("results");
+    let st = driver_command("catalog::driver_entry", "trace_critical")
+        .env("SNP_PROC_TEST_DIR", dir.path())
+        .env("SNP_PROC_TEST_OUT", &out)
+        .env("SNP_PROC_TEST_LOG", &log_path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(st.success(), "{:?}", results(&out));
+    let log = std::fs::read_to_string(&log_path).unwrap();
+    let lines: Vec<&str> = log.lines().filter(|l| l.contains(" env=")).collect();
+    let path = r#"PATH="/usr/bin:/bin""#;
+    let var = r#"PRE_COMMIT_TEST_VAR="from-env""#;
+    let mut want = vec![
+        format!(r#"role=Critical group=Isolated env={path} {var} GIT_TERMINAL_PROMPT="0""#),
+        format!(r#"role=Hook group=Inherit env={path} GIT_TERMINAL_PROMPT="1" {var}"#),
+    ];
+    for &name in prompt_spellings() {
+        want.push(if cfg!(windows) || name == "GIT_TERMINAL_PROMPT" {
+            format!(r#"role=Critical group=Isolated env={path} {name}="0" {var}"#)
+        } else {
+            format!(
+                r#"role=Critical group=Isolated env={path} {name}="1" {var} GIT_TERMINAL_PROMPT="0""#
+            )
+        });
+    }
+    assert_eq!(lines.len(), want.len(), "{log}");
+    for (line, want) in lines.iter().zip(&want) {
+        let (head, env) = want.split_once(" env=").unwrap();
+        assert!(line.contains(head), "{want}\n{line}");
+        assert!(line.ends_with(&format!(" env={env}")), "{want}\n{line}");
+    }
+}
+
+/// The driver side of [`trace_log_shows_the_critical_child_environment`].
+fn trace_critical() {
+    use snp_proc::spawn::Role;
+    let log_path = PathBuf::from(driver_param("SNP_PROC_TEST_LOG").unwrap());
+    let file = std::fs::File::create(&log_path).unwrap();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_ansi(false)
+        .with_writer(std::sync::Mutex::new(file))
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).unwrap();
+    let d = PathBuf::from(driver_param("SNP_PROC_TEST_DIR").unwrap());
+    let cancel = CancelToken::new();
+    let argv = probe_argv(&["count"]);
+    let run = |env: &snp_core::env::Env, role: Role| {
+        let mut spec = hook(&argv, env, &d, &cancel);
+        spec.role = role;
+        spec.group = if role == Role::Critical {
+            Group::Isolated
+        } else {
+            Group::Inherit
+        };
+        spawn::capture(&spec).unwrap();
+    };
+    run(&env(), Role::Critical);
+    run(&env_with("GIT_TERMINAL_PROMPT"), Role::Hook);
+    for &name in prompt_spellings() {
+        run(&env_with(name), Role::Critical);
+    }
+    report("status", 0);
 }
 
 /// `SNP_TEST_SPAWN_LOG`: every spawn appends `<role> <group> <argv0 basename>`.

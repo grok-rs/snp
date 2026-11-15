@@ -600,10 +600,15 @@ Whole root after M2: 170 items verified, 0 errors, with `--no-cheating`, in abou
   - rmtree's `relative`: `Ok(c) ⇒ c` is non-empty and all Normal.
   - `normpath` is idempotent; it has no `.` or empty interior component; `..` appears only as a leading run of a relative path; `isabs` is preserved; and Python's exactly-two-leading-slashes case is kept.
   - Trusted: `std::path::absolute` and `Components`.
-- **K12 line fixers** (Verus; snp-hooks `kernels.rs:9-80, 186-262`).
+- **K12 line fixers** (Verus; snp-hooks `kernels.rs:17-135, 166-294`).
   - **Shared lemma:** readlines pieces and `splitlines(keepends)` pieces (CRLF by maximal munch) concatenate to the content.
   - **trailing-whitespace:** it equals `concat(map(_process_line, readlines(c)))` and returns `Some` iff that differs from `c`. The output is a subsequence of `c` with the same LF count. It is idempotent for `chars = None`.
   - **mixed-line-ending:** counts follow `fix_filename`; auto ties prefer LF > CRLF > CR; every line becomes its body plus the target ending, including an unterminated last line. The output is uniform, bodies are preserved, and it is idempotent.
+  - **Shapes of the perf batch H1 fast paths (2026-11), which K12 must cover as written.**
+    - trailing-whitespace: `process_line` returns borrowed `Parts { kept, pad, eol }` with `_process_line(l) = kept ++ pad ++ eol`. That is a deletion of `l`: `kept` is a prefix of the body and `pad` is the body's own last two bytes. Hence the lemma `keeps(l)` (`|kept| + |pad| + |eol| = |l|`) ⇔ `_process_line(l) = l`.
+    - `trailing_whitespace` returns `None`, having copied nothing, when every line keeps. Otherwise it returns `c[..at] ++` the parts of every line from the first changed one, where `at` is that line's offset. A `Some` output is strictly shorter than `c`, which is why the one reservation of `|c|` holds it.
+    - mixed-line-ending: `fix_filename` is `count_endings`, then `decide`, then `rewrite_endings`. Content without `\r` takes `decide_cr_free` instead, by the lemma "no CR ⇒ cr = crlf = 0, lf = |\n|", so `decide(count_endings(c), fix) = decide_cr_free(c, fix)`.
+    - The tests `trailing_whitespace_parts_are_the_former_line_and_keeps_is_equality` and `cr_free_content_counts_only_lf_and_decides_alike` check both lemmas bounded-exhaustively, and the `former` copies in `kernels/tests.rs` tie the kernels to the code before H1.
   - memchr/memchr2 enter through kernel traits. The ADR-081 bench gates and perf-smoke watch the loop rewrite.
 - **K13 xargs aggregate and batch resplit** (Verus; snp-proc `xargs.rs:272-315`).
   - `aggregate([]) = 0`; otherwise it returns the first code with maximal `unsigned_abs`, which is MIN-safe. `aggregate = 0 ⇔` all codes are 0.

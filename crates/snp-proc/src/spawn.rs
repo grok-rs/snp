@@ -1206,6 +1206,31 @@ fn program_path(arg0: &OsStr, cwd: &Path) -> PathBuf {
     }
 }
 
+/// The variable a Critical command always gets, and its value (ADR-065: no credential prompt can stall a restore).
+const CRITICAL_PROMPT: (&str, &str) = ("GIT_TERMINAL_PROMPT", "0");
+
+/// The child environment on `cmd`: `env_clear()` + `env` ([`Env::apply_to`]), then `GIT_TERMINAL_PROMPT=0` for a
+/// Critical command. std's `CommandEnv` keeps a name's first spelling (ASCII-case-insensitive on Windows) and replaces
+/// its value, so the child gets the variables of [`critical_env`] without a copy of the snapshot per restore-critical
+/// git command. (std's Windows comparison also folds non-ASCII case; where it merges two names `Env` keeps apart, the
+/// override is still set last, so the child's `GIT_TERMINAL_PROMPT` is `0` in every case.)
+fn apply_env(cmd: &mut Command, env: &Env, role: Role) {
+    env.apply_to(cmd);
+    if role == Role::Critical {
+        let (name, value) = CRITICAL_PROMPT;
+        cmd.env(name, value);
+    }
+}
+
+/// The environment of a Critical child as a snapshot: `env` with `GIT_TERMINAL_PROMPT=0` ([`Env::patched`]: in place,
+/// first spelling kept, when set; else last). Only the `SNP_LOG=trace` line builds it; the spawn uses [`apply_env`].
+pub(crate) fn critical_env(env: &Env) -> Env {
+    #[cfg(test)]
+    env_tests::count_snapshot();
+    let (name, value) = CRITICAL_PROMPT;
+    env.patched(&EnvPatch::default().set(name, value))
+}
+
 /// Builds and spawns the command of `spec` with `files` appended to its argv (a hook partition's; empty for every
 /// other spawn), stdout/stderr as given, stdin per `spec.stdin` (`/dev/null` instead of an empty pipe in pty mode),
 /// registers the child and arranges its stdin.
@@ -1251,13 +1276,7 @@ fn start(
         }
     }
     cmd.args(args).args(files).current_dir(spec.cwd);
-    let env = if spec.role == Role::Critical {
-        spec.env
-            .patched(&EnvPatch::default().set("GIT_TERMINAL_PROMPT", "0"))
-    } else {
-        spec.env.clone()
-    };
-    env.apply_to(&mut cmd);
+    apply_env(&mut cmd, spec.env, spec.role);
     let stdin_mode = match (&spec.stdin, pty_mode) {
         (Stdin::EmptyPipe, true) | (Stdin::Null, _) => Stdio::null(),
         (Stdin::EmptyPipe | Stdin::Bytes(_), _) => Stdio::piped(),
@@ -1265,7 +1284,7 @@ fn start(
         (Stdin::Terminal(t), _) => t.stdio().map_err(fail)?,
     };
     cmd.stdin(stdin_mode).stdout(stdout).stderr(stderr);
-    crate::trace::log_spawn(spec.argv, files, &env, spec.cwd, spec.role, group);
+    crate::trace::log_spawn(spec.argv, files, spec.env, spec.cwd, spec.role, group);
     #[cfg(feature = "testing")]
     crate::spawn_log::record(spec.role, group, arg0);
 
@@ -1552,6 +1571,134 @@ mod pty {
     }
 }
 
+/// The Critical environment override against the snapshot it replaces (every platform: nothing is spawned).
+#[cfg(test)]
+mod env_tests {
+    use std::cell::Cell;
+
+    use proptest::prelude::*;
+
+    use super::*;
+
+    thread_local! {
+        /// How many [`critical_env`] snapshots this thread built (the probe of the spawn's fast path).
+        static SNAPSHOTS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(super) fn count_snapshot() {
+        SNAPSHOTS.with(|n| n.set(n.get().saturating_add(1)));
+    }
+
+    /// The [`critical_env`] snapshots built on this thread so far (read by the Unix spawn tests).
+    #[cfg(unix)]
+    pub(super) fn snapshots() -> usize {
+        SNAPSHOTS.with(Cell::get)
+    }
+
+    /// The variables std gives the child (`get_envs` after `env_clear`: the whole environment), in std's order.
+    fn child_vars(cmd: &Command) -> Vec<(OsString, Option<OsString>)> {
+        cmd.get_envs()
+            .map(|(k, v)| (k.to_owned(), v.map(OsStr::to_owned)))
+            .collect()
+    }
+
+    /// [`apply_env`] on a fresh command.
+    fn fast(env: &Env, role: Role) -> Vec<(OsString, Option<OsString>)> {
+        let mut cmd = Command::new("x");
+        apply_env(&mut cmd, env, role);
+        child_vars(&cmd)
+    }
+
+    /// The pre-E1 spawn: a Critical command applies the whole [`critical_env`] snapshot, the others `env`.
+    fn snapshot(env: &Env, role: Role) -> Vec<(OsString, Option<OsString>)> {
+        let mut cmd = Command::new("x");
+        if role == Role::Critical {
+            critical_env(env).apply_to(&mut cmd);
+        } else {
+            env.apply_to(&mut cmd);
+        }
+        child_vars(&cmd)
+    }
+
+    fn is_prompt(name: &OsStr) -> bool {
+        if cfg!(windows) {
+            name.eq_ignore_ascii_case(CRITICAL_PROMPT.0)
+        } else {
+            name == CRITICAL_PROMPT.0
+        }
+    }
+
+    /// Both spawns give the child the same variables, and a Critical child exactly one `GIT_TERMINAL_PROMPT=0`.
+    fn check(env: &Env) {
+        for role in [Role::Critical, Role::Hook, Role::Tool] {
+            let got = fast(env, role);
+            assert_eq!(got, snapshot(env, role), "{role:?} {env:?}");
+            if role == Role::Critical {
+                let prompts: Vec<_> = got.iter().filter(|(k, _)| is_prompt(k)).collect();
+                assert_eq!(prompts.len(), 1, "{got:?}");
+                assert!(
+                    prompts
+                        .iter()
+                        .all(|(_, v)| v.as_deref() == Some(OsStr::new("0"))),
+                    "{got:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn critical_override_equals_the_patched_snapshot() {
+        let cases: [&[(&str, &str)]; 9] = [
+            &[],
+            &[("PATH", "/bin")],
+            &[("GIT_TERMINAL_PROMPT", "1")],
+            &[("PATH", "/bin"), ("GIT_TERMINAL_PROMPT", "1"), ("Z", "")],
+            &[("GIT_TERMINAL_PROMPT", "0"), ("PATH", "/bin")],
+            &[("git_terminal_prompt", "1"), ("PATH", "/bin")],
+            &[("PATH", "/bin"), ("Git_Terminal_Prompt", "")],
+            &[("git_terminal_prompt", "1"), ("GIT_TERMINAL_PROMPT", "2")],
+            &[("GIT_TERMINAL_PROMPTX", "1"), ("XGIT_TERMINAL_PROMPT", "1")],
+        ];
+        for pairs in cases {
+            check(&Env::from_pairs(pairs.iter().copied()));
+        }
+        // Windows keeps the parent's spelling (std's `CommandEnv` keeps the first key, as `Env::patched` does).
+        let lower = fast(
+            &Env::from_pairs([("git_terminal_prompt", "1")]),
+            Role::Critical,
+        );
+        let names: Vec<_> = lower.iter().map(|(k, _)| k.to_string_lossy()).collect();
+        if cfg!(windows) {
+            assert_eq!(names, ["git_terminal_prompt"]);
+        } else {
+            assert_eq!(names, ["GIT_TERMINAL_PROMPT", "git_terminal_prompt"]);
+        }
+    }
+
+    proptest! {
+        /// Any ASCII environment, with `GIT_TERMINAL_PROMPT` under several spellings or absent.
+        #[test]
+        fn critical_override_equals_the_patched_snapshot_on_any_environment(
+            pairs in prop::collection::vec(
+                (
+                    prop_oneof![
+                        Just("GIT_TERMINAL_PROMPT".to_owned()),
+                        Just("git_terminal_prompt".to_owned()),
+                        Just("Git_Terminal_PROMPT".to_owned()),
+                        Just("PATH".to_owned()),
+                        Just("Path".to_owned()),
+                        "[A-Za-z_]{1,4}",
+                    ],
+                    "[a-z0-9]{0,3}",
+                ),
+                0..12,
+            )
+        ) {
+            check(&Env::from_pairs(pairs));
+        }
+    }
+}
+
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
@@ -1721,6 +1868,34 @@ mod tests {
         s.role = Role::Critical;
         s.group = Group::Isolated;
         assert_eq!(capture(&s).unwrap().stdout, b"0");
+    }
+
+    /// The override is set on the `Command` over the parent's value: no [`critical_env`] snapshot is built while
+    /// `snp::spawn` tracing is off (the trace line builds it: `trace_log_shows_the_critical_child_environment`), and
+    /// Tool and Hook children keep the parent's value.
+    #[test]
+    fn critical_spawn_overrides_without_an_environment_snapshot() {
+        let argv = sh("printf '%s' \"$GIT_TERMINAL_PROMPT\"");
+        let env = Env::from_pairs([
+            ("PATH", "/usr/bin:/bin"),
+            ("GIT_TERMINAL_PROMPT", "1"),
+            ("SNP_TEST_VAR", "hello"),
+        ]);
+        let cancel = CancelToken::new();
+        let mut s = spec(&argv, &env, Path::new("/"), &cancel);
+        s.role = Role::Critical;
+        s.group = Group::Isolated;
+        assert!(!tracing::enabled!(target: "snp::spawn", tracing::Level::TRACE));
+        let before = env_tests::snapshots();
+        assert_eq!(capture(&s).unwrap().stdout, b"0");
+        let mut sink = Vec::new();
+        assert_eq!(stream(&s, &mut sink).unwrap().0, PyStatus(0));
+        assert_eq!(sink, b"0");
+        assert_eq!(env_tests::snapshots(), before);
+        for role in [Role::Tool, Role::Hook] {
+            s.role = role;
+            assert_eq!(capture(&s).unwrap().stdout, b"1", "{role:?}");
+        }
     }
 
     #[test]

@@ -62,6 +62,12 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   earlier in-process hooks run, instead of on the critical path; nothing runs beside a user process hook (ADR-102).
 - check-case-conflict builds its repository index once per run instead of once per partition, and lowercases ASCII
   names without the Unicode tables (ADR-102).
+- detect-private-key, trailing-whitespace and mixed-line-ending use less CPU per file. detect-private-key looks
+  for `PRIVATE KEY` first and, in a file without it (nearly every file), only for the two patterns that lack it,
+  with searchers built once per process instead of once per file and pattern. trailing-whitespace copies and
+  allocates nothing until a line changes. mixed-line-ending skips its per-line count in a file without a carriage
+  return. Output, fixes and exit codes are unchanged. snp's own instruction count (callgrind) falls by 5% on the
+  B6 benchmark (13 pre-commit-hooks over 960 files) and by about 8% on a 372-file source tree.
 - Hook argv lists are borrowed from the run's file table and appended at spawn time: `run --all-files` on 50,000
   files makes about half as many allocations and its heap peaks about 7 MB lower (ADR-103).
 - The installed hook script (template v2, ID `405bd8559925d194c1d22af6ef66282e`) finds its directory by parameter
@@ -70,6 +76,10 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   installed by those versions keep working; `snp doctor` reports them as "an older snp hook script" until `snp
   install` (or `snp doctor --fix`) rewrites them. A script with snp's header, an ID this version does not know and
   pre-commit's compat ID is treated as an snp script, never as pre-commit's.
+- Restore-critical git commands (the stash's queries, checkouts and applies) get `GIT_TERMINAL_PROMPT=0` set on the
+  command instead of on a copy of the whole environment: two fewer allocations per environment variable and command
+  (about 220 fewer in a no-op `run`, about 500 in the 10 MB stash scenario, and about 1% fewer instructions in both).
+  The child's environment and the `SNP_LOG=trace` line are unchanged.
 
 - Benchmarks (developer tooling, no runtime change): pull requests and pushes measure the base commit's snp, built
   against its own `deps.lock` crates and toolchain and primed into its own stores, in interleaved ABBA rounds with the
