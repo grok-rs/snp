@@ -1645,6 +1645,161 @@ fn one_hook_uses_the_stat_mode_only_on_a_small_tree() {
     }
 }
 
+/// ADR-117 (B8): a stash of unstaged files rewrites the index (its checkout), so F from step 6 is asked again; G, which
+/// does not read the index, is kept (the worktree lock was not contended). On a small tree one process hook then still
+/// uses the Stat mode: the baseline `git diff` and no after-hook one when the hook changes nothing, and a real diff
+/// that reports the hook's edit when it does. A larger tree keeps Git mode. Below three CPUs F is not taken at step 6
+/// and nothing changes.
+#[test]
+fn one_hook_keeps_the_stat_mode_after_the_stash_rewrote_the_index() {
+    let hoist = snp_proc::xargs::cpu_count().get() >= 3;
+    for (files, edits) in [(3_usize, false), (3, true), (300, false)] {
+        let stat = hoist && files == 3;
+        let mut h = H::new();
+        let entry = if edits {
+            "sh -c 'echo more >> t.txt' --"
+        } else {
+            "'true'"
+        };
+        h.config(&local(&sys(
+            "hook",
+            "hook",
+            entry,
+            "always_run: true\npass_filenames: false",
+        )));
+        h.write("t.txt", b"t\n");
+        h.write("u.txt", b"u\n");
+        for i in 0..files.saturating_sub(3) {
+            h.write(&format!("d{}/f{i}.txt", i % 7), b"x\n");
+        }
+        h.git(&["add", "."]);
+        h.git(&["commit", "-qm", "files"]);
+        h.write("u.txt", b"u\nunstaged\n");
+        let log = logged_git(&mut h);
+        let o = h.run(args());
+        assert_eq!(
+            o.code,
+            i32::from(edits),
+            "{files} files, edits={edits}: {o:?}"
+        );
+        assert_eq!(
+            o.stdout.contains("- files were modified by this hook"),
+            edits,
+            "{}",
+            o.stdout
+        );
+        assert_eq!(h.read("u.txt"), "u\nunstaged\n", "restored");
+        let spawns = git_spawns(&log);
+        let count = |p: &str| spawns.iter().filter(|s| s.starts_with(p)).count();
+        assert_eq!(
+            count("diff --no-ext-diff"),
+            if stat && !edits { 1 } else { 2 },
+            "{files} files, edits={edits}:\n{}",
+            spawns.join("\n")
+        );
+        if stat {
+            assert_eq!(count("ls-files -s -z"), 2, "{}", spawns.join("\n"));
+            assert_eq!(
+                count("config --list --show-origin"),
+                1,
+                "{}",
+                spawns.join("\n")
+            );
+        }
+    }
+}
+
+/// ADR-117: with one hook on a small tree the intent-to-add clearing also asks F again (G is kept), and the Stat mode
+/// still matches `git diff`: a write into the intent-to-add file (untracked while the hooks run) is no modification,
+/// a write into a tracked file is.
+#[test]
+fn one_hook_after_an_intent_to_add_clearing_matches_git_diff() {
+    for (target, modified) in [("n.txt", false), ("t.txt", true)] {
+        let mut h = H::new();
+        h.config(&local(&sys(
+            "touch",
+            "touch",
+            &format!("sh -c 'echo more >> {target}' --"),
+            "always_run: true\npass_filenames: false",
+        )));
+        h.write("t.txt", b"t\n");
+        h.git(&["add", "t.txt"]);
+        h.git(&["commit", "-qm", "t"]);
+        h.write("n.txt", b"n\n");
+        h.git(&["add", "-N", "n.txt"]);
+        let log = logged_git(&mut h);
+        let o = h.run(args());
+        assert_eq!(o.code, i32::from(modified), "{target}: {o:?}");
+        assert_eq!(
+            o.stdout.contains("- files were modified by this hook"),
+            modified,
+            "{target}: {}",
+            o.stdout
+        );
+        let spawns = git_spawns(&log);
+        if snp_proc::xargs::cpu_count().get() >= 3 {
+            let count = |p: &str| spawns.iter().filter(|s| s.starts_with(p)).count();
+            assert_eq!(count("ls-files -s -z"), 2, "{}", spawns.join("\n"));
+            assert_eq!(
+                count("config --list --show-origin"),
+                1,
+                "{}",
+                spawns.join("\n")
+            );
+        }
+    }
+}
+
+/// ADR-117: after a wait for the worktree lock G is asked again as well (another run's hooks may have changed the
+/// config files meanwhile); the Stat mode still applies.
+#[test]
+fn a_contended_lock_asks_g_again() {
+    if snp_proc::xargs::cpu_count().get() < 3 {
+        return;
+    }
+    let mut h = H::new();
+    h.config(&local(&sys(
+        "hook",
+        "hook",
+        "'true'",
+        "always_run: true\npass_filenames: false",
+    )));
+    h.write("u.txt", b"u\n");
+    h.git(&["add", "."]);
+    h.git(&["commit", "-qm", "files"]);
+    h.write("u.txt", b"u\nunstaged\n");
+    let log = logged_git(&mut h);
+    // hold the worktree lock (an flock, like another run's) for a moment
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(h.path(".git/snp-stash.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let holder = std::thread::Builder::new()
+        .spawn(move || {
+            std::thread::sleep(Duration::from_millis(400));
+            drop(lock);
+        })
+        .unwrap();
+    let o = h.run(args());
+    holder.join().unwrap();
+    assert_eq!(o.code, 0, "{o:?}");
+    assert!(o.stderr.contains("waiting for another"), "{o:?}");
+    let spawns = git_spawns(&log);
+    let count = |p: &str| spawns.iter().filter(|s| s.starts_with(p)).count();
+    assert_eq!(count("ls-files -s -z"), 2, "{}", spawns.join("\n"));
+    assert_eq!(
+        count("config --list --show-origin"),
+        2,
+        "{}",
+        spawns.join("\n")
+    );
+    assert_eq!(count("diff --no-ext-diff"), 1, "{}", spawns.join("\n"));
+    assert_eq!(h.read("u.txt"), "u\nunstaged\n", "restored");
+}
+
 /// ADR-104: the config read at the invocation cwd during discovery is used at the root and discarded from a
 /// subdirectory; either way its warning is printed once, at pre-commit's position, and the run is the same.
 #[test]
