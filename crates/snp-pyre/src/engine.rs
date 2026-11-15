@@ -272,8 +272,8 @@ fn has_large_class(hir: &Hir) -> bool {
 }
 
 /// A relaxed tier-1 prefilter in front of a backtracking engine (§A.6.11, ADR-098): a haystack it rejects
-/// has no match, because the relaxed text's language is a superset of the exact text's.
-/// Both tiers' prefilters run on the forward-only engine (ADR-108, ADR-115).
+/// has no match, because the relaxed text's language is a superset of the exact text's. Both tiers' prefilters
+/// run on the forward-only engine (ADR-108, ADR-115).
 #[derive(Debug)]
 pub(crate) struct Prefilter(Box<Forward>);
 
