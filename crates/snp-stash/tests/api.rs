@@ -116,5 +116,9 @@ mod api {
         has::<fn(&mut DiffOracle) -> Result<Change, Failure>>(DiffOracle::after_hook);
         has::<fn(&mut DiffOracle, bool, bool) -> Result<Change, Failure>>(DiffOracle::after_native);
         has::<fn(&mut DiffOracle) -> Result<bool, Failure>>(DiffOracle::non_empty);
+        // ADR-106
+        has::<fn(&mut DiffOracle, Arc<std::sync::atomic::AtomicBool>)>(
+            DiffOracle::guard_index_trust,
+        );
     }
 }

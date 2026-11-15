@@ -9,6 +9,7 @@ use snp_core::path::RepoPath;
 use snp_pyre::{Options, PyReError, PyRegex, RegexCache};
 
 use crate::Needs;
+use crate::table::Query;
 
 /// `Classifier.filenames_for_hook`'s inputs, compiled.
 #[derive(Debug, Clone)]
@@ -62,6 +63,17 @@ impl HookFilter {
             needs: needs_for(types.union(types_or).union(exclude_types)),
             prefix,
         })
+    }
+
+    /// The identification query of this filter: its `needs` and what the tags it references allow (ADR-106: never
+    /// the executable bit from an index mode when it references `executable`/`non-executable`; ADR-110: the meta
+    /// tier alone when every referenced tag is a meta tag and no content tier is needed). The classifier asks
+    /// `FileTable::query`, which also weighs the table's trusted index modes.
+    pub(crate) fn query(&self) -> Query {
+        Query::new(
+            self.needs,
+            self.types.union(self.types_or).union(self.exclude_types),
+        )
     }
 }
 

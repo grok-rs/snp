@@ -20,4 +20,6 @@ mod prefetch;
 #[cfg(test)]
 mod run;
 #[cfg(test)]
+mod trust;
+#[cfg(test)]
 mod try_repo;

@@ -2,6 +2,7 @@
 //!
 //! Owner: WP-22.
 
+use std::collections::TryReserveError;
 use std::sync::Arc;
 
 use file_identify::Meta;
@@ -9,7 +10,7 @@ use snp_core::failure::{ExcKind, Failure};
 use snp_proc::pool::JobPool;
 use snp_pyre::{MatchError, MatchKind, PyRegex};
 
-use crate::table::{PARALLEL_MIN, REGEX_THREADS, par_chunks_on};
+use crate::table::{PARALLEL_MIN, Query, REGEX_THREADS, par_chunks_on};
 use crate::{FileId, FileTable, HookFilter, TagOutcome, messages};
 
 /// `Classifier.from_config`: top-level include/exclude (`re.search` on the `/`-path), then lexists.
@@ -27,7 +28,10 @@ impl Classifier {
     /// `Classifier.from_config` + `__init__` (`run.py:73-74, 112-126`): keep a file when `include.search(path)` and
     /// not `exclude.search(path)` (on the matching view), then when `os.path.lexists(path)`. Order and duplicates are
     /// kept. Large tables are split into ordered partitions on the pool. The `lstat`s become the stat tier of the
-    /// files the first hook classifies (pre-commit's first `tags_from_path` of those files happens right after).
+    /// files the first hook classifies, or their meta tier when that hook's query is meta-only (ADR-110,
+    /// `FileTable::query`; pre-commit's first `tags_from_path` of those files happens right after). A file with a
+    /// trusted index mode (ADR-106) exists without a syscall; its meta or stat tier is built from the mode when a hook
+    /// first needs it.
     ///
     /// # Errors
     ///
@@ -40,28 +44,39 @@ impl Classifier {
         pool: &JobPool,
     ) -> Result<Self, Failure> {
         let t: &FileTable = &table;
-        let found: Vec<(FileId, Meta)> =
+        let found: Vec<(FileId, Option<Meta>)> =
             par_chunks_on(pool, t.len(), REGEX_THREADS, false, |range| {
                 let mut out = Vec::new();
                 for raw in range {
                     let id = FileId(u32::try_from(raw).unwrap_or(u32::MAX));
-                    if passes(t, id, include, exclude)?
-                        && let Some(meta) = t.lexists_meta(raw)
-                    {
-                        out.push((id, meta));
+                    if !passes(t, id, include, exclude)? {
+                        continue;
+                    }
+                    if t.index_exists(raw) {
+                        out.push((id, None));
+                    } else if let Some(meta) = t.lexists_meta(raw) {
+                        out.push((id, Some(meta)));
                     }
                 }
                 Ok(out)
             })?;
-        let mut pending = vec![None; t.len()].into_boxed_slice();
-        let mut kept = Vec::new();
-        for (id, meta) in found {
-            if let Some(slot) = t.index(id).and_then(|i| pending.get_mut(i)) {
-                *slot = Some(meta);
+        // Only `lstat`ed files have a meta to adopt: when every kept file was trusted (ADR-106) there is no pending
+        // column at all, and the first hook adopts nothing (an older column is still dropped).
+        let pending = found.iter().any(|(_, meta)| meta.is_some()).then(|| {
+            let mut pending = vec![None; t.len()].into_boxed_slice();
+            for &(id, meta) in &found {
+                if let Some(slot) = t.index(id).and_then(|i| pending.get_mut(i)) {
+                    *slot = meta;
+                }
             }
-            kept.push(id);
-        }
+            pending
+        });
         t.set_pending(pending);
+        // Sized once (never `found.into_iter().collect()`: an in-place collect would keep `found`'s larger buffer
+        // for the whole run); a failed reservation only means ordinary growth.
+        let mut kept = Vec::new();
+        let _reserved: Result<(), TryReserveError> = kept.try_reserve_exact(found.len());
+        kept.extend(found.iter().map(|&(id, _)| id));
         Ok(Self { table, kept })
     }
 
@@ -83,10 +98,11 @@ impl Classifier {
     pub fn for_hook(&self, f: &HookFilter, pool: &JobPool) -> Result<Vec<FileId>, Failure> {
         // The first hook after `Classifier::new` adopts its fresh `lstat`s (a hook that needs no tags discards them).
         let pending = self.table.take_pending();
-        let adopt = pending.as_deref().filter(|_| f.needs.any());
+        let q = self.table.query(f);
+        let adopt = pending.as_deref().filter(|_| q.needs.any());
         let table: &FileTable = &self.table;
         let kept = &self.kept;
-        let cheap = kept.len() >= PARALLEL_MIN && memoized(table, kept, f);
+        let cheap = kept.len() >= PARALLEL_MIN && memoized(table, kept, f, q);
         par_chunks_on(pool, kept.len(), REGEX_THREADS, cheap, |range| {
             let mut out = Vec::new();
             for &id in kept.get(range).unwrap_or_default() {
@@ -98,9 +114,9 @@ impl Classifier {
                     continue;
                 }
                 if let Some(p) = adopt {
-                    table.adopt(id, p);
+                    table.adopt(id, p, q);
                 }
-                if keep(table, id, f)? {
+                if keep(table, id, f, q)? {
                     out.push(id);
                 }
             }
@@ -118,13 +134,14 @@ impl Classifier {
     /// As [`Classifier::for_hook`] (an unreadable file whose content the types need).
     pub fn by_types(&self, ids: &[FileId], f: &HookFilter) -> Result<Vec<FileId>, Failure> {
         let pending = self.table.take_pending();
-        let adopt = pending.as_deref().filter(|_| f.needs.any());
+        let q = self.table.query(f);
+        let adopt = pending.as_deref().filter(|_| q.needs.any());
         let mut out = Vec::new();
         for &id in ids {
             if let Some(p) = adopt {
-                self.table.adopt(id, p);
+                self.table.adopt(id, p, q);
             }
-            if keep(&self.table, id, f)? {
+            if keep(&self.table, id, f, q)? {
                 out.push(id);
             }
         }
@@ -133,9 +150,10 @@ impl Classifier {
 }
 
 /// Whether `for_hook(f)` over `kept` is memory-only work (ADR-101): both patterns are trivial (no regex call) and
-/// every file they and the prefix pass either needs no tags or has every tier `f.needs` already memoised (a later
-/// hook with the same type filters). Then the classification runs on the calling thread instead of the pool.
-fn memoized(table: &FileTable, kept: &[FileId], f: &HookFilter) -> bool {
+/// every file they and the prefix pass either needs no tags or has every tier `q` needs already memoised (a later
+/// hook with the same type filters, or any later meta-only hook, ADR-110). Then the classification runs on the
+/// calling thread instead of the pool.
+fn memoized(table: &FileTable, kept: &[FileId], f: &HookFilter, q: Query) -> bool {
     let trivial = |re: &PyRegex| matches!(re.kind(), MatchKind::All | MatchKind::EmptyOrNewline);
     if !trivial(&f.files) || !trivial(&f.exclude) {
         return false;
@@ -152,7 +170,7 @@ fn memoized(table: &FileTable, kept: &[FileId], f: &HookFilter) -> bool {
         }
         match passes(table, id, &f.files, &f.exclude) {
             Ok(false) => true,
-            Ok(true) => table.tiers_ready(id, f.needs),
+            Ok(true) => table.tiers_ready(id, q),
             Err(_) => false,
         }
     })
@@ -164,13 +182,13 @@ fn no_type_filter(f: &HookFilter) -> bool {
 }
 
 /// The type filter for one file: `Ok(false)` drops it (no match, or gone), `Err` fails the run (unreadable).
-fn keep(table: &FileTable, id: FileId, f: &HookFilter) -> Result<bool, Failure> {
+fn keep(table: &FileTable, id: FileId, f: &HookFilter, q: Query) -> Result<bool, Failure> {
     // No type filter at all (`types: []`, the default `types_or`/`exclude_types`): every tag set matches, so only a
     // file already known to be gone is dropped; no tag needs computing.
     if no_type_filter(f) {
         return Ok(!table.known_vanished(id));
     }
-    match table.tags(id, f.needs) {
+    match table.tags_for(id, q) {
         TagOutcome::Tags(tags) => Ok(tags.matches_types(&f.types, &f.types_or, &f.exclude_types)),
         TagOutcome::Vanished => Ok(false),
         TagOutcome::Unreadable(exc) => Err(Failure::Exc {

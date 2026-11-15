@@ -130,6 +130,175 @@ pub struct IndexEntries {
     pub modes: Box<[u32]>,
 }
 
+/// `git ls-files -s -v -f -z` folded into the list [`crate::Git::all_files`] prints, with each path's index mode and
+/// whether every entry is a plain cached one (ADR-106): what a clean `git diff` lets a `--all-files` run trust
+/// instead of an `lstat` per file.
+#[derive(Debug, Clone, Default)]
+pub struct TaggedIndex {
+    /// The path of every record, a run of equal paths (the stages of an unmerged entry) once, in index order: byte
+    /// for byte the list of `ls-files -z --deduplicate`, in a compact buffer of its own (no mode or object text).
+    pub paths: ZList,
+    /// Per path, the mode of the first record of its run, or 0 when that record names the empty blob: `git diff`
+    /// cannot tell an empty file from a FIFO or a socket of size 0 (it compares their empty content), so an empty
+    /// entry proves nothing about the file's kind.
+    pub modes: Box<[u32]>,
+    /// Every record is tagged `H` (cached: neither assume-unchanged (`h` under `-v`), fsmonitor-valid (`h` under
+    /// `-f`), skip-worktree (`S`) nor unmerged) and has stage 0.
+    pub plain: bool,
+}
+
+/// The object id of the empty blob (`git hash-object -t blob /dev/null`) in SHA-1 and SHA-256 repositories.
+const EMPTY_BLOBS: [&[u8]; 2] = [
+    b"e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+    b"473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813",
+];
+
+/// The incremental parser behind [`TaggedIndex`]: `git ls-files -s -v -f -z` streams through it (`io::Write`), so the
+/// listing (about 80 bytes per entry) never sits in memory; only the paths are kept, NUL-separated as git printed
+/// them. Records are `<tag> SP <mode> SP <object> SP <stage> TAB <path> NUL`, parsed by position with `memchr` (S2:
+/// no indexing, no unchecked arithmetic): a letter, an octal mode, an object of 40 or 64 bytes without a space or a
+/// TAB (it is only compared with the empty blob's id), a stage digit 0–3. A malformed record makes
+/// [`TaggedParser::finish`] fail, so the caller asks `git ls-files -z --deduplicate` instead.
+#[derive(Debug, Default)]
+pub(crate) struct TaggedParser {
+    /// The start of a record whose NUL has not arrived yet.
+    carry: Vec<u8>,
+    /// The kept paths, each followed by a NUL.
+    buf: Vec<u8>,
+    /// `(start, end)` of each kept path in `buf`.
+    spans: Vec<(u32, u32)>,
+    modes: Vec<u32>,
+    /// A record other than `H` at stage 0 was seen.
+    flagged: bool,
+    /// The first malformed record (or the too-large marker); nothing is parsed after it.
+    bad: Option<BadRecord>,
+}
+
+impl TaggedParser {
+    /// Parses one complete record (without its NUL).
+    fn record(&mut self, rec: &[u8]) -> Result<(), BadRecord> {
+        let bad = || BadRecord(rec.to_vec());
+        // `<tag> SP`: one letter
+        let [tag, b' ', rest @ ..] = rec else {
+            return Err(bad());
+        };
+        if !tag.is_ascii_alphabetic() {
+            return Err(bad());
+        }
+        // `<mode> SP`: the modes git writes, else a few octal digits
+        let (mode, rest) = match rest {
+            [b'1', b'0', b'0', b'6', b'4', b'4', b' ', rest @ ..] => (0o100_644, rest),
+            [b'1', b'0', b'0', b'7', b'5', b'5', b' ', rest @ ..] => (0o100_755, rest),
+            [b'1', b'2', b'0', b'0', b'0', b'0', b' ', rest @ ..] => (0o120_000, rest),
+            _ => {
+                let sp = rest
+                    .iter()
+                    .take(8)
+                    .position(|&b| b == b' ')
+                    .ok_or_else(bad)?;
+                let mode = octal(rest.get(..sp).unwrap_or_default()).ok_or_else(bad)?;
+                (mode, rest.get(sp.saturating_add(1)..).unwrap_or_default())
+            }
+        };
+        // `<object> SP`: 40 or 64 bytes (SHA-1 or SHA-256) without a space or a TAB inside
+        let len = if rest.get(40) == Some(&b' ') {
+            40
+        } else if rest.get(64) == Some(&b' ') {
+            64
+        } else {
+            return Err(bad());
+        };
+        let object = rest.get(..len).unwrap_or_default();
+        if memchr::memchr2(b' ', b'\t', object).is_some() {
+            return Err(bad());
+        }
+        let rest = rest.get(len.saturating_add(1)..).unwrap_or_default();
+        // `<stage> TAB <path>`
+        let [stage @ b'0'..=b'3', b'\t', path @ ..] = rest else {
+            return Err(bad());
+        };
+        self.flagged |= *tag != b'H' || *stage != b'0';
+        // A run of equal paths (the stages of an unmerged entry) is listed once, as `--deduplicate` does.
+        if let Some(&(s, e)) = self.spans.last()
+            && slice(&self.buf, s, e) == path
+        {
+            return Ok(());
+        }
+        let too_large = || BadRecord(b"git output larger than 4 GiB".to_vec());
+        let start = u32::try_from(self.buf.len()).map_err(|_| too_large())?;
+        let end = start
+            .checked_add(u32::try_from(path.len()).map_err(|_| too_large())?)
+            .ok_or_else(too_large)?;
+        // the NUL after the path must fit as well: offsets stay below 4 GiB
+        end.checked_add(1).ok_or_else(too_large)?;
+        self.buf.extend_from_slice(path);
+        self.buf.push(0);
+        self.spans.push((start, end));
+        // the first byte rules out nearly every object before any comparison
+        let empty = matches!(object.first(), Some(b'e' | b'E' | b'4'))
+            && EMPTY_BLOBS.iter().any(|e| object.eq_ignore_ascii_case(e));
+        self.modes.push(if empty { 0 } else { mode });
+        Ok(())
+    }
+
+    /// Takes the next chunk of git's stdout.
+    pub(crate) fn feed(&mut self, mut chunk: &[u8]) {
+        while self.bad.is_none() {
+            let Some(nul) = memchr::memchr(0, chunk) else {
+                self.carry.extend_from_slice(chunk);
+                return;
+            };
+            let head = chunk.get(..nul).unwrap_or_default();
+            let parsed = if self.carry.is_empty() {
+                self.record(head)
+            } else {
+                // the record began in an earlier chunk; the carry keeps its capacity for the next one
+                let mut rec = std::mem::take(&mut self.carry);
+                rec.extend_from_slice(head);
+                let parsed = self.record(&rec);
+                rec.clear();
+                self.carry = rec;
+                parsed
+            };
+            if let Err(b) = parsed {
+                self.bad = Some(b);
+            }
+            chunk = chunk.get(nul.saturating_add(1)..).unwrap_or_default();
+        }
+    }
+
+    /// The listing, or the first malformed record. A last record without its NUL counts (as `git.zsplit` keeps
+    /// it); an empty listing is an empty list.
+    pub(crate) fn finish(mut self) -> Result<TaggedIndex, BadRecord> {
+        if self.bad.is_none() && !self.carry.is_empty() {
+            let rec = std::mem::take(&mut self.carry);
+            if let Err(b) = self.record(&rec) {
+                self.bad = Some(b);
+            }
+        }
+        if let Some(b) = self.bad {
+            return Err(b);
+        }
+        self.buf.shrink_to_fit();
+        Ok(TaggedIndex {
+            paths: ZList::from_parts(self.buf, self.spans),
+            modes: self.modes.into_boxed_slice(),
+            plain: !self.flagged,
+        })
+    }
+}
+
+impl std::io::Write for TaggedParser {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.feed(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// The stat stamp of an index file ([`crate::Git::index_stamp`]): device, inode, size, and the modification and
 /// status-change times in nanoseconds. Git replaces the index by renaming `index.lock` over it, so any rewrite gives
 /// a new inode as well as new times.
@@ -338,6 +507,136 @@ mod tests {
             );
         }
         assert!(parse_ls_files_stages(format!("100644 {sha}\ta\0").into_bytes()).is_err());
+    }
+
+    fn tagged(out: &[u8]) -> Result<TaggedIndex, BadRecord> {
+        let mut p = TaggedParser::default();
+        p.feed(out);
+        p.finish()
+    }
+
+    const SHA: &str = "78981922613b2afb6025042ff6bd878ac1994e85";
+    const EMPTY: &str = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
+
+    fn trec(tag: &str, mode: &str, object: &str, stage: &str, path: &str) -> String {
+        format!("{tag} {mode} {object} {stage}\t{path}\0")
+    }
+
+    /// ADR-106: tags, modes, the empty blob, stages and the `--deduplicate` fold of unmerged runs.
+    #[test]
+    fn ls_files_tagged_records() {
+        let out = [
+            trec("H", "100644", SHA, "0", "a b.txt"),
+            trec("H", "100755", SHA, "0", "bin/x\twith tab"),
+            trec("H", "120000", SHA, "0", "link"),
+            trec("H", "160000", SHA, "0", "sub"),
+            trec("H", "100644", EMPTY, "0", "__init__.py"),
+        ]
+        .concat();
+        let t = tagged(out.as_bytes()).unwrap();
+        assert!(t.plain);
+        let paths: Vec<&[u8]> = t.paths.iter().collect();
+        assert_eq!(
+            paths,
+            vec![
+                &b"a b.txt"[..],
+                b"bin/x\twith tab",
+                b"link",
+                b"sub",
+                b"__init__.py"
+            ]
+        );
+        assert_eq!(&*t.modes, &[0o100_644, 0o100_755, 0o120_000, 0o160_000, 0]);
+        // the paths keep git's NUL separators and nothing else of the listing
+        let (buf, _) = t.paths.into_parts();
+        assert_eq!(buf, b"a b.txt\0bin/x\twith tab\0link\0sub\0__init__.py\0");
+        // the SHA-256 empty blob is empty too
+        let sha256_empty = "473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813";
+        let t = tagged(trec("H", "100644", sha256_empty, "0", "e").as_bytes()).unwrap();
+        assert_eq!(&*t.modes, &[0]);
+        // every tag other than `H`, and every stage other than 0, clears `plain`
+        for (tag, stage) in [("h", "0"), ("S", "0"), ("s", "0"), ("M", "1"), ("H", "2")] {
+            let out = [
+                trec("H", "100644", SHA, "0", "a"),
+                trec(tag, "100644", SHA, stage, "b"),
+            ]
+            .concat();
+            assert!(!tagged(out.as_bytes()).unwrap().plain, "{tag} {stage}");
+        }
+        // an unmerged entry is listed once, with its first stage's mode
+        let out = [
+            trec("H", "100644", SHA, "0", "a"),
+            trec("M", "100644", SHA, "1", "f"),
+            trec("M", "100755", SHA, "2", "f"),
+            trec("M", "100644", SHA, "3", "f"),
+            trec("H", "100644", SHA, "0", "g"),
+        ]
+        .concat();
+        let t = tagged(out.as_bytes()).unwrap();
+        assert_eq!(t.paths.iter().collect::<Vec<_>>(), [&b"a"[..], b"f", b"g"]);
+        assert_eq!(&*t.modes, &[0o100_644, 0o100_644, 0o100_644]);
+        assert!(!t.plain);
+        // empty output: an empty list
+        let t = tagged(b"").unwrap();
+        assert!(t.paths.is_empty() && t.modes.is_empty() && t.plain);
+        // a last record without its NUL still counts (`git.zsplit`)
+        let t = tagged(
+            trec("H", "100644", SHA, "0", "x")
+                .trim_end_matches('\0')
+                .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(t.paths.iter().collect::<Vec<_>>(), [&b"x"[..]]);
+    }
+
+    /// Every malformed shape fails (the caller then asks `ls-files -z --deduplicate`), never panics.
+    #[test]
+    fn ls_files_tagged_rejects_malformed_records() {
+        for bad in [
+            "garbage\0".to_owned(),
+            "\0".to_owned(),
+            format!("100644 {SHA} 0\ta\0"),
+            format!("HH 100644 {SHA} 0\ta\0"),
+            format!("1 100644 {SHA} 0\ta\0"),
+            format!("H 9x {SHA} 0\ta\0"),
+            format!("H 100644 {} 0\ta\0", SHA.get(..39).unwrap()),
+            format!("H 100644 {}\t 0\ta\0", SHA.get(..39).unwrap()),
+            format!("H 100644 {SHA}0 0\ta\0"),
+            format!("H 100644 {SHA} 4\ta\0"),
+            format!("H 100644 {SHA} 00\ta\0"),
+            format!("H 100644 {SHA} 0 x\ta\0"),
+            format!("H 100644 {SHA} 0a\0"),
+            format!("{}garbage\0", trec("H", "100644", SHA, "0", "a")),
+        ] {
+            assert!(tagged(bad.as_bytes()).is_err(), "{bad:?}");
+        }
+    }
+
+    /// Fed in chunks of any size, the parser gives what one write gives.
+    #[test]
+    fn ls_files_tagged_chunking_is_invisible() {
+        let out = [
+            trec("H", "100644", SHA, "0", "a"),
+            trec("M", "100644", SHA, "1", "dé/f"),
+            trec("M", "100755", SHA, "2", "dé/f"),
+            trec("S", "120000", SHA, "0", "link"),
+            trec("H", "100644", EMPTY, "0", "e"),
+        ]
+        .concat();
+        let whole = tagged(out.as_bytes()).unwrap();
+        for size in 1..=out.len() {
+            let mut p = TaggedParser::default();
+            let mut rest = out.as_bytes();
+            while !rest.is_empty() {
+                let (chunk, tail) = rest.split_at_checked(size.min(rest.len())).unwrap();
+                std::io::Write::write_all(&mut p, chunk).unwrap();
+                rest = tail;
+            }
+            let t = p.finish().unwrap();
+            assert_eq!(t.paths, whole.paths, "chunk size {size}");
+            assert_eq!(t.modes, whole.modes);
+            assert_eq!(t.plain, whole.plain);
+        }
     }
 
     #[test]

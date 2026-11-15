@@ -210,6 +210,51 @@ fn native_fixers_and_the_show_diff_gate() {
     }
 }
 
+/// ADR-106: a guarded trust flag is cleared by every `after_hook` and `after_native`, whatever the result: an
+/// unchanged hook in Stat mode (no spawn), an unchanged hook in Git mode, a hook whose `git rm` keeps the diff empty,
+/// a native fixer that reported nothing, and every changed result. `before_hook` and the show-diff gate keep it.
+#[test]
+fn every_hook_result_clears_the_index_trust() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    for mode in ["", "git"] {
+        let sb = Sandbox::new();
+        let repo = repo_with_files(&sb);
+        let env = sb
+            .env
+            .patched(&EnvPatch::default().set("SNP_DIFF_MODE", mode));
+        let (mut o, _, _) = oracle(&sb, &repo, &env, None);
+        let valid = Arc::new(AtomicBool::new(true));
+        o.guard_index_trust(Arc::clone(&valid));
+        let fresh = || valid.store(true, Ordering::Release);
+        let cleared = || !valid.load(Ordering::Acquire);
+        o.before_hook().unwrap();
+        assert!(!o.non_empty().unwrap());
+        assert!(!cleared(), "before_hook and the show-diff gate keep it");
+        // an unchanged hook
+        assert_eq!(o.after_hook().unwrap(), Change::Unchanged);
+        assert!(cleared(), "{mode:?}: unchanged hook");
+        // a hook that ran `git rm`: file and index entry both gone, `git diff` stays empty
+        fresh();
+        o.before_hook().unwrap();
+        sb.git(&repo, &["rm", "-q", "a.txt"]);
+        assert_eq!(o.after_hook().unwrap(), Change::Unchanged);
+        assert!(cleared(), "{mode:?}: git rm");
+        // a changed hook
+        fresh();
+        o.before_hook().unwrap();
+        sb.write(&repo, "b.txt", b"changed\n");
+        assert_eq!(o.after_hook().unwrap(), Change::Changed);
+        assert!(cleared(), "{mode:?}: changed hook");
+        // native fixers: nothing reported, exact paths, the caveat path
+        for (modified, real) in [(false, false), (true, false), (false, true), (true, true)] {
+            fresh();
+            o.before_hook().unwrap();
+            o.after_native(modified, real).unwrap();
+            assert!(cleared(), "{mode:?}: after_native({modified}, {real})");
+        }
+    }
+}
+
 /// xorshift64*: deterministic randomness for the soundness test.
 struct Rng(u64);
 

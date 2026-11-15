@@ -227,6 +227,217 @@ fn dedup_fallback_equals_ls_files_deduplicate() {
     assert_eq!(joined, with_flag);
 }
 
+/// ADR-106: `ls-files -s -v -z` folded by `all_files_tagged` is `ls-files -z --deduplicate` byte for byte, in every
+/// index shape, and `plain` holds exactly when no entry is flagged or unmerged.
+#[test]
+fn all_files_tagged_equals_ls_files_deduplicate() {
+    let sb = Sandbox::new();
+    let check = |repo: &std::path::Path, plain: bool| {
+        let (git, _) = sb.discover(repo);
+        let tagged = git.all_files_tagged().unwrap();
+        assert_eq!(zl(&tagged.paths), zl(&git.all_files().unwrap()), "{repo:?}");
+        let joined: Vec<u8> = tagged
+            .paths
+            .iter()
+            .flat_map(|r| [r, b"\0"].concat())
+            .collect();
+        // `--deduplicate` is git >= 2.31; older git is covered by the all_files() comparison above
+        if sb.exe().caps.ls_files_dedup {
+            assert_eq!(joined, sb.git(repo, &["ls-files", "-z", "--deduplicate"]));
+        }
+        assert_eq!(tagged.modes.len(), tagged.paths.len());
+        assert_eq!(tagged.plain, plain, "{repo:?}");
+        tagged
+    };
+    // a plain index: odd names, an executable, a symlink, an empty file (mode 0: proves nothing), a gitlink
+    let repo = sb.init("plain");
+    sb.write(&repo, "a b.txt", b"a");
+    #[cfg(unix)] // not valid Windows file names
+    {
+        sb.write(&repo, "tab\there", b"t");
+        sb.write(&repo, "nl\nhere", b"n");
+    }
+    sb.write(&repo, "интервью", b"i");
+    sb.write(&repo, "x.sh", b"#!/bin/sh\n");
+    sb.write(&repo, "empty", b"");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(repo.join("x.sh"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        std::os::unix::fs::symlink("a b.txt", repo.join("link")).unwrap();
+    }
+    sb.git(&repo, &["add", "."]);
+    // an unpopulated submodule: an empty directory at the gitlink's path
+    std::fs::create_dir_all(repo.join("sub")).unwrap();
+    let oid = sb.git_text(&repo, &["hash-object", "x.sh"]);
+    sb.git(
+        &repo,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{},sub", oid.trim()),
+        ],
+    );
+    sb.commit(&repo, "init");
+    let t = check(&repo, true);
+    let mode = |name: &[u8]| {
+        let i = t.paths.iter().position(|p| p == name).unwrap();
+        t.modes[i]
+    };
+    assert_eq!(mode(b"a b.txt"), 0o100_644);
+    assert_eq!(mode(b"empty"), 0, "the empty blob proves nothing");
+    assert_eq!(mode(b"sub"), 0o160_000);
+    #[cfg(unix)]
+    {
+        assert_eq!(mode(b"x.sh"), 0o100_755);
+        assert_eq!(mode(b"link"), 0o120_000);
+    }
+    // assume-unchanged, skip-worktree: flagged
+    sb.git(&repo, &["update-index", "--assume-unchanged", "a b.txt"]);
+    check(&repo, false);
+    sb.git(&repo, &["update-index", "--no-assume-unchanged", "a b.txt"]);
+    sb.git(&repo, &["update-index", "--skip-worktree", "a b.txt"]);
+    check(&repo, false);
+    sb.git(&repo, &["update-index", "--no-skip-worktree", "a b.txt"]);
+    check(&repo, true);
+    // an intent-to-add entry is a plain cached entry (only the empty `git diff` excludes it)
+    sb.write(&repo, "ita.txt", b"i");
+    sb.git(&repo, &["add", "-N", "ita.txt"]);
+    check(&repo, true);
+    // an unmerged index: every stage once, not plain
+    let repo = sb.merge_conflict("conflict");
+    check(&repo, false);
+}
+
+/// ADR-106: git turns fsmonitor on from the environment when `core.fsmonitor` is unset (`GIT_TEST_FSMONITOR`, named
+/// `GIT_FSMONITOR_TEST` before git 2.20), which no configuration query can see, and `git diff` then skips the
+/// `lstat` of every fsmonitor-valid entry: with a hook that reports no change, a deleted file stays out of the diff.
+/// `-f` lists those entries in lowercase, so the listing is not plain, and the gate refuses on the variable itself.
+#[cfg(unix)]
+#[test]
+fn fsmonitor_valid_entries_are_flagged() {
+    use std::os::unix::fs::PermissionsExt;
+    let sb = Sandbox::new();
+    let repo = sb.init("repo");
+    sb.write(&repo, "f.txt", b"f\n");
+    sb.write(&repo, "g.txt", b"g\n");
+    sb.git(&repo, &["add", "."]);
+    sb.commit(&repo, "init");
+    // protocol 2 (git ≥ 2.26): a token and no path; protocol 1: no path
+    let hook = sb.path("fsmonitor-none");
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\nif test \"$1\" = 2; then printf 'last_update_token\\0'; fi\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let hook = hook.to_str().unwrap();
+    let vars = [("GIT_TEST_FSMONITOR", hook), ("GIT_FSMONITOR_TEST", hook)];
+    // the first refresh writes the fsmonitor extension, the second marks the entries fsmonitor-valid
+    for _ in 0..2 {
+        sb.git_with(&repo, &["update-index", "-q", "--refresh"], &vars);
+    }
+    std::fs::remove_file(repo.join("f.txt")).unwrap();
+    let (git, _) = sb.discover(&repo);
+    let patch = vars
+        .iter()
+        .fold(EnvPatch::default(), |p, &(k, v)| p.set(k, v));
+    let fsm = git.with_env(sb.env.patched(&patch));
+    let tagged = fsm.all_files_tagged().unwrap();
+    assert_eq!(zl(&tagged.paths), strs(&["f.txt", "g.txt"]));
+    assert!(!tagged.plain, "fsmonitor-valid entries are tagged `h`");
+    assert!(!fsm.trusts_index_modes());
+    // the same index without fsmonitor: every entry `H`, and `git diff` sees the deletion
+    assert!(git.all_files_tagged().unwrap().plain);
+    assert!(git.trusts_index_modes());
+    assert!(git.diff_fingerprint_clean().unwrap().0.non_empty);
+}
+
+/// ADR-106: `diff_fingerprint_clean` keeps the stdout-only fingerprint and reports whether git exited 0 with an empty
+/// stderr. `git diff` reports an unsearchable directory on stderr only and exits 0: not clean.
+#[cfg(unix)]
+#[test]
+fn diff_fingerprint_clean_needs_status_and_stderr() {
+    use std::os::unix::fs::PermissionsExt;
+
+    use snp_git::DiffFingerprint;
+    let sb = Sandbox::new();
+    let repo = sb.init("repo");
+    sb.write(&repo, "sub/a.txt", b"a\n");
+    sb.write(&repo, "b.txt", b"b\n");
+    sb.git(&repo, &["add", "."]);
+    sb.commit(&repo, "init");
+    let (git, _) = sb.discover(&repo);
+    let (fp, clean) = git.diff_fingerprint_clean().unwrap();
+    assert_eq!((fp, clean), (DiffFingerprint::EMPTY, true));
+    assert_eq!(git.diff_fingerprint().unwrap(), fp);
+    sb.write(&repo, "b.txt", b"changed\n");
+    let (fp, clean) = git.diff_fingerprint_clean().unwrap();
+    assert!(fp.non_empty && clean);
+    sb.git(&repo, &["checkout", "--", "b.txt"]);
+    if !rustix::process::geteuid().is_root() {
+        std::fs::set_permissions(repo.join("sub"), std::fs::Permissions::from_mode(0o000)).unwrap();
+        let (fp, clean) = git.diff_fingerprint_clean().unwrap();
+        std::fs::set_permissions(repo.join("sub"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(fp, DiffFingerprint::EMPTY, "stdout stays empty");
+        assert!(!clean, "the EACCES on stderr makes it unclean");
+    }
+}
+
+/// ADR-106: the configuration gate, as git resolves it (repository config, `-c`, `GIT_CONFIG_COUNT`).
+#[test]
+fn trusts_index_modes_follows_the_effective_config() {
+    let sb = Sandbox::new();
+    let repo = sb.init("repo");
+    let (git, _) = sb.discover(&repo);
+    let unset = |key: &str| {
+        drop(sb.git_status(&repo, &["config", "--unset-all", key]));
+    };
+    for key in ["core.filemode", "core.symlinks"] {
+        unset(key);
+    }
+    assert!(git.trusts_index_modes(), "unset counts as git's default");
+    for (key, value, trusted) in [
+        ("core.fileMode", "false", false),
+        ("core.fileMode", "true", true),
+        ("core.symlinks", "false", false),
+        ("core.symlinks", "yes", true),
+        ("core.fsmonitor", "true", false),
+        ("core.fsmonitor", "/path/to/hook", false),
+        ("core.fsmonitor", "false", true),
+        ("core.useBuiltinFSMonitor", "true", false),
+        ("core.ignoreStat", "true", false),
+        ("core.sparseCheckout", "true", false),
+        ("index.sparse", "true", false),
+        ("index.sparse", "false", true),
+    ] {
+        sb.git(&repo, &["config", key, value]);
+        assert_eq!(git.trusts_index_modes(), trusted, "{key}={value}");
+        unset(key);
+    }
+    // `-c` and `GIT_CONFIG_COUNT` are git's own business: both count (`GIT_CONFIG_PARAMETERS` in the pre-2.31
+    // `'key=value'` form, which every git reads)
+    let with = |vars: &[(&'static str, &'static str)]| {
+        let patch = vars
+            .iter()
+            .fold(EnvPatch::default(), |p, &(k, v)| p.set(k, v));
+        git.with_env(sb.env.patched(&patch)).trusts_index_modes()
+    };
+    assert!(!with(&[("GIT_CONFIG_PARAMETERS", "'core.fsmonitor=true'")]));
+    // `GIT_CONFIG_COUNT` is git >= 2.31 (the same release as `ls-files --deduplicate`); older git ignores it, and
+    // so does its `git config` answer
+    if sb.exe().caps.ls_files_dedup {
+        assert!(!with(&[
+            ("GIT_CONFIG_COUNT", "1"),
+            ("GIT_CONFIG_KEY_0", "core.symlinks"),
+            ("GIT_CONFIG_VALUE_0", "false"),
+        ]));
+    }
+    assert!(with(&[("GIT_CONFIG_PARAMETERS", "'core.fsmonitor=false'")]));
+}
+
 /// D-CRASH-26 on a real git 2.30 (WBS WP-18 acceptance): `crates/snp-git/tests/old-git/git` runs Debian 11's git
 /// 2.30.2 in a container. snp-git resolves it, gets the warning-band capabilities, discovers the repository with
 /// separate `rev-parse` calls and lists the files with the fallback, which equals the host git's
