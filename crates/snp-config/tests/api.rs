@@ -194,6 +194,12 @@ mod api {
         has::<fn(&[u8], &OsStr, &LoadOpts<'_>) -> Result<Manifest, ConfigError>>(
             snp_config::load_manifest_bytes,
         );
+        has::<fn(&ConfigSource, &LoadOpts<'_>) -> Result<cfgv::Value, ConfigError>>(
+            snp_config::check_config,
+        );
+        has::<fn(&Path, &OsStr, &LoadOpts<'_>) -> Result<cfgv::Value, ConfigError>>(
+            snp_config::check_manifest,
+        );
         has::<fn(Brand, ExtMode) -> &'static cfgv::Schema>(schema::config_schema);
         has::<fn(Brand) -> &'static cfgv::Schema>(schema::manifest_schema);
         has::<

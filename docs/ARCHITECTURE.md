@@ -1663,6 +1663,12 @@ pub fn load_config(src: &ConfigSource, o: &LoadOpts<'_>) -> Result<Config, Confi
 /// `display` is converted with `to_string_lossy` for cfgv's `load_from_filename_with(…, display_filename: Option<&str>, …)`.
 pub fn load_manifest(path: &Path, display: &OsStr, o: &LoadOpts<'_>) -> Result<Manifest, ConfigError>;
 pub fn load_manifest_bytes(bytes: &[u8], display: &OsStr, o: &LoadOpts<'_>) -> Result<Manifest, ConfigError>; // Tier A data
+/// Check-only halves of `load_config` / `load_manifest`: read, YAML-load, validate with warnings, no defaults and no
+/// model; `Ok` = the checked, un-defaulted value. They fail, warn and print FutureWarnings exactly when the full load
+/// does (the defaults and the conversion are infallible and silent). Used by non-strict `validate-config` /
+/// `validate-manifest`; `--strict`/`--portable` keep `load_config`.
+pub fn check_config(src: &ConfigSource, o: &LoadOpts<'_>) -> Result<cfgv::Value, ConfigError>;
+pub fn check_manifest(path: &Path, display: &OsStr, o: &LoadOpts<'_>) -> Result<cfgv::Value, ConfigError>;
 /// pre-commit's schemas reproduced item by item with cfgv 0.3 MapItem impls (01 §3–§5). `repo: builtin` validation
 /// (no `rev`; `entry`/`additional_dependencies` forbidden; `language` absent or `system`) is part of the config schema
 /// as cfgv MapItems with cfgv-style contexts and messages (ADR-070); the unknown-id check stays in snp-repo's merge.

@@ -107,10 +107,25 @@ fn read_reserved(r: impl Read, hint: usize, cap: u64) -> std::io::Result<Vec<u8>
 }
 
 /// The steps of `load_from_filename` inside `File {display}`: decode, YAML-load (manifest forward-compat
-/// guard), validate with warnings, apply defaults. The `files` / `exclude` patterns compiled by the checks
-/// (`items::Compiled`) print their `FutureWarning`s afterwards, also when a later item failed (pre-commit
-/// compiles them during validation, so its warnings reach stderr before the error).
+/// guard), validate with warnings ([`check_bytes`]), then apply the schema defaults (which can neither fail nor
+/// warn).
 pub(crate) fn validate_bytes(
+    bytes: &[u8],
+    display: &str,
+    schema: &Schema,
+    kind: Kind,
+    o: &LoadOpts<'_>,
+) -> Result<Value, ConfigError> {
+    check_bytes(bytes, display, schema, kind, o).map(|checked| defaulted(schema, checked))
+}
+
+/// The checking steps of `load_from_filename` inside `File {display}`: decode, YAML-load (manifest forward-compat
+/// guard), validate with warnings; `Ok` is the checked value without the schema defaults. Every error and warning
+/// of a load comes from here: the defaults and the typed conversion that follow are infallible and silent. The
+/// `files` / `exclude` patterns compiled by the checks (`items::Compiled`) print their `FutureWarning`s
+/// afterwards, also when a later item failed (pre-commit compiles them during validation, so its warnings reach
+/// stderr before the error).
+pub(crate) fn check_bytes(
     bytes: &[u8],
     display: &str,
     schema: &Schema,
@@ -137,11 +152,33 @@ pub(crate) fn validate_bytes(
             let checked = schema.check_with(&data, &mut cx);
             drop(cx);
             checked?;
-            Ok(schema.apply_defaults_owned(data))
+            Ok(data)
         },
     );
     future_warnings(&compiled, o);
     result.map_err(|e| ConfigError::invalid(kind.is_manifest(), &e))
+}
+
+/// `apply_defaults` of a checked value (no `Cx`: it cannot fail or warn).
+fn defaulted(schema: &Schema, checked: Value) -> Value {
+    #[cfg(test)]
+    probe::DEFAULTED.with(|n| n.set(n.get().saturating_add(1)));
+    schema.apply_defaults_owned(checked)
+}
+
+/// Test probe: how often this thread applied the schema defaults (the step check-only loads skip).
+#[cfg(test)]
+pub(crate) mod probe {
+    use std::cell::Cell;
+
+    thread_local! {
+        pub(crate) static DEFAULTED: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// The count so far on this thread.
+    pub(crate) fn defaulted() -> usize {
+        DEFAULTED.with(Cell::get)
+    }
 }
 
 /// Emits one `[WARNING] regex …` stderr line per distinct (pattern, `FutureWarning`) of the compiled `files` /
@@ -193,6 +230,39 @@ pub fn load_config(src: &ConfigSource, o: &LoadOpts<'_>) -> Result<Config, Confi
     let schema = schema::config_schema(o.brand, o.ext);
     let value = validate_bytes(&bytes, &display, schema, Kind::Config, o)?;
     Ok(convert::config(src.clone(), value, o.ext))
+}
+
+/// The checking half of [`load_config`]: read, decode, PyYAML-load and validate with warnings, without the schema
+/// defaults and the typed conversion. `Ok` is the checked, un-defaulted value; it fails, warns and prints regex
+/// `FutureWarning`s exactly when [`load_config`] does (non-strict `validate-config`; loads that read only a few
+/// raw keys).
+pub fn check_config(src: &ConfigSource, o: &LoadOpts<'_>) -> Result<Value, ConfigError> {
+    let display = display_name(&src.display, &src.path);
+    let bytes = read_file(&src.path, &display, false)?;
+    check_bytes(
+        &bytes,
+        &display,
+        schema::config_schema(o.brand, o.ext),
+        Kind::Config,
+        o,
+    )
+}
+
+/// The checking half of [`load_manifest`] (see [`check_config`]): `Ok` is the checked, un-defaulted value.
+pub fn check_manifest(
+    path: &Path,
+    display: &OsStr,
+    o: &LoadOpts<'_>,
+) -> Result<Value, ConfigError> {
+    let display = display_name(display, path);
+    let bytes = read_file(path, &display, true)?;
+    check_bytes(
+        &bytes,
+        &display,
+        schema::manifest_schema(o.brand),
+        Kind::Manifest,
+        o,
+    )
 }
 
 /// `load_manifest` (`clientlib.py`). `display` is converted with `to_string_lossy` for cfgv's
