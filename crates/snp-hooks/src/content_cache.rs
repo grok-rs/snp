@@ -5,7 +5,7 @@
 //! hook. This cache serves those re-reads from memory, but only when one `stat` of the path proves the bytes are the
 //! ones a fresh `open` + `read` would return:
 //!
-//! - **Fill** (only [`ContentCache::read`]: `read_all` and pygrep): `t0` is taken before the `open`, the `statx(fd)`
+//! - **Fill** (only `read_all` and pygrep): `t0` is taken before the `open`, the `statx(fd)`
 //!   that `std::fs::read` makes anyway gives the stamp, and the bytes are kept only when the file is a regular file
 //!   on the work tree's device, its mtime **and** ctime are older than `t0 − 2 s` (git's racy window: a file whose
 //!   last change is that old cannot change again within the same timestamp tick unnoticed), the bytes read equal the
