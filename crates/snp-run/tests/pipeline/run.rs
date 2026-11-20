@@ -1648,8 +1648,8 @@ fn one_hook_uses_the_stat_mode_only_on_a_small_tree() {
 /// ADR-117 (B8): a stash of unstaged files rewrites the index (its checkout), so F from step 6 is asked again; G, which
 /// does not read the index, is kept (the worktree lock was not contended). On a small tree one process hook then still
 /// uses the Stat mode: no `git diff` at all when the hook changes nothing (ADR-119 proves the post-checkout baseline
-/// empty on the warm path, held here by a stepping clock), and only the after-hook diff that reports the hook's edit
-/// when it does. A larger tree keeps Git mode (the baseline and the after-hook diff). Below three CPUs F is not taken
+/// empty on the warm path, held here by a stepping clock; on Linux, elsewhere the baseline runs), and only the
+/// after-hook diff that reports the hook's edit when it does. A larger tree keeps Git mode (the baseline and the after-hook diff). Below three CPUs F is not taken
 /// at step 6 and nothing changes.
 #[test]
 fn one_hook_keeps_the_stat_mode_after_the_stash_rewrote_the_index() {
@@ -1695,12 +1695,14 @@ fn one_hook_keeps_the_stat_mode_after_the_stash_rewrote_the_index() {
         assert_eq!(h.read("u.txt"), "u\nunstaged\n", "restored");
         let spawns = git_spawns(&log);
         let count = |p: &str| spawns.iter().filter(|s| s.starts_with(p)).count();
+        // the proven baseline (ADR-119, Linux only) and the after-hook diff that reports the edit
+        let proven = stat && cfg!(target_os = "linux");
         assert_eq!(
             count("diff --no-ext-diff"),
-            match (stat, edits) {
-                (true, false) => 0,
-                (true, true) => 1,
-                (false, _) => 2,
+            if stat {
+                usize::from(!proven) + usize::from(edits)
+            } else {
+                2
             },
             "{files} files, edits={edits}:\n{}",
             spawns.join("\n")
@@ -1808,7 +1810,12 @@ fn a_contended_lock_asks_g_again() {
         "{}",
         spawns.join("\n")
     );
-    assert_eq!(count("diff --no-ext-diff"), 0, "{}", spawns.join("\n"));
+    assert_eq!(
+        count("diff --no-ext-diff"),
+        usize::from(!cfg!(target_os = "linux")),
+        "ADR-119 proves the baseline on Linux:\n{}",
+        spawns.join("\n")
+    );
     assert_eq!(h.read("u.txt"), "u\nunstaged\n", "restored");
 }
 

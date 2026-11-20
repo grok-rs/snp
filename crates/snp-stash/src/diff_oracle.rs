@@ -367,8 +367,16 @@ fn build_inputs(
         None => seeds.extend(home.as_ref().map(|h| h.join(".gitconfig"))),
     }
     seeds.extend(xdg.as_ref().map(|x| x.join("git").join("config")));
-    let prefix = snp_proc::resolve::find_executable(std::ffi::OsStr::new("git"), env, &info.root)
-        .and_then(|exe| snp_os::realpath::realpath_nonstrict(&exe, &info.root).ok())
+    let exe = snp_proc::resolve::find_executable(std::ffi::OsStr::new("git"), env, &info.root);
+    let prefix = exe
+        .as_ref()
+        .and_then(|exe| snp_os::realpath::realpath_nonstrict(exe, &info.root).ok())
+        .and_then(|exe| exe.parent().and_then(Path::parent).map(Path::to_path_buf));
+    // the prefix of the `PATH` entry itself: a packager that links `<prefix>/bin/git` into a versioned tree builds
+    // git with `sysconfdir=<prefix>/etc` (Homebrew and Linuxbrew: `Cellar/git/<version>` is not where its
+    // system attributes file lives); ADR-119 needs every place git may read it from
+    let link_prefix = exe
+        .as_ref()
         .and_then(|exe| exe.parent().and_then(Path::parent).map(Path::to_path_buf));
     if let Some(s) = env.get_nonempty("GIT_CONFIG_SYSTEM") {
         seeds.push(PathBuf::from(s));
@@ -406,7 +414,7 @@ fn build_inputs(
         push(x.join("git").join("attributes"), InputKind::Other);
     }
     push(PathBuf::from("/etc/gitattributes"), InputKind::Other);
-    if let Some(p) = &prefix {
+    for p in prefix.iter().chain(&link_prefix) {
         push(p.join("etc").join("gitattributes"), InputKind::Other);
     }
     push(
@@ -621,6 +629,11 @@ impl StatState {
     /// tracked path is a directory (no path is beyond a symbolic link); and (e)
     /// [`checked_out_files_plain`]. Anything else answers `false`: the caller takes the real baseline.
     fn checkout_left_no_diff(&self, checked_out: &ZList, config: &CheckoutConfig) -> bool {
+        // (b) needs the system attributes file among the inputs; only Linux git builds are known to put it where
+        // `build_inputs` looks (`/etc`, or `<prefix>/etc` of the `PATH` entry or of its target)
+        if !PROOF_PLATFORM {
+            return false;
+        }
         let Some(snap) = &self.snapshot else {
             return false;
         };
@@ -660,6 +673,11 @@ impl StatState {
             )
     }
 }
+
+/// Whether ADR-119's proof is attempted on this platform: Linux only. On macOS the system attributes file of the
+/// usual builds is not provably among the snapshot's inputs (Xcode's git, packagers' `sysconfdir`), so a missing
+/// input there cannot prove that none exists; Windows has no Stat mode.
+const PROOF_PLATFORM: bool = cfg!(target_os = "linux");
 
 /// The hooks a path-limited `git checkout` can run (ADR-119): `post-checkout` (after the checkout of paths) and
 /// `post-index-change` (after every index write, git ≥ 2.22).

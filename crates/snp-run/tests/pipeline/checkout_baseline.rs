@@ -190,12 +190,15 @@ fn run(case: &Case<'_>, env: &[(&str, &str)]) -> (String, usize, bool) {
         "{}: the case must stash: {o:?}",
         case.name
     );
-    let stat = snp_os::fsinfo::stat_oracle_safe(&h.root).unwrap_or(false);
+    // ADR-119's proof is attempted on Linux only
+    let stat =
+        cfg!(target_os = "linux") && snp_os::fsinfo::stat_oracle_safe(&h.root).unwrap_or(false);
     (outcome(&h, &o), rec.before.load(Ordering::SeqCst), stat)
 }
 
 /// The run equals the always-diff path and `SNP_VERIFY_BASELINE` agrees; returns the default run's baseline-shaped
-/// `git diff` calls before the hook (0: elided) and whether the filesystem allows Stat mode at all.
+/// `git diff` calls before the hook (0: elided) and whether the proof can apply at all (Linux, a Stat-mode
+/// filesystem).
 fn check(case: &Case<'_>) -> (usize, bool) {
     check_with(case, &[])
 }
@@ -231,7 +234,7 @@ fn check_with(case: &Case<'_>, extra: &[(&str, &str)]) -> (usize, bool) {
     (before, stat)
 }
 
-/// Asserts that `case` skips the baseline (on a Stat-capable filesystem) and matches the always-diff path.
+/// Asserts that `case` skips the baseline (where the proof can apply) and matches the always-diff path.
 fn skips(case: &Case<'_>) {
     let (before, stat) = check(case);
     assert_eq!(
