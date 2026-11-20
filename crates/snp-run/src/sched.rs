@@ -25,7 +25,7 @@ use snp_files::FileId;
 use snp_files::{Classifier, HookFilter};
 use snp_git::Git;
 use snp_git::pch_facts::{FactSet, PchFacts};
-use snp_hooks::ContentCache;
+use snp_hooks::{ContentCache, WriteGate};
 use snp_proc::pool::JobPool;
 use snp_proc::tty::Terminal;
 use snp_repo::{ExecKind, ResolvedHook};
@@ -346,8 +346,9 @@ pub(crate) fn run_hooks(l: &Loop<'_>, oracle: &mut DiffOracle) -> Result<LoopRes
     let all = buckets(l.hooks, l.root_ext);
     let halt = AtomicBool::new(false);
     let mut contents = Contents::new(l, &all);
+    let defer = defers_baseline(l, &all, oracle);
     let ran = std::thread::scope(|s| {
-        let mut pf = Prefetch::new(l, s, &all, &halt);
+        let mut pf = Prefetch::new(l, s, &all, &halt, defer);
         let r = run_buckets(
             l,
             oracle,
@@ -585,6 +586,9 @@ struct Prefetch<'s, 'scope> {
     /// Execution indices below this one belong to runs already looked at.
     covered: usize,
     running: Option<ScopedJoinHandle<'scope, ()>>,
+    /// ADR-132's static gate holds: the baseline is deferred to the first native write, so the prefetch starts
+    /// without taking it.
+    defer: bool,
 }
 
 impl<'s, 'scope> Prefetch<'s, 'scope> {
@@ -593,6 +597,7 @@ impl<'s, 'scope> Prefetch<'s, 'scope> {
         scope: &'scope Scope<'scope, 's>,
         buckets: &[Vec<usize>],
         halt: &'s AtomicBool,
+        defer: bool,
     ) -> Self {
         Self {
             scope,
@@ -603,11 +608,13 @@ impl<'s, 'scope> Prefetch<'s, 'scope> {
             order: buckets.iter().flatten().copied().collect(),
             covered: 0,
             running: None,
+            defer,
         }
     }
 
     /// Before the in-process hook at `pos` runs: starts the prefetch for the run it begins, unless that run was
-    /// already looked at. The diff oracle's baseline is taken first, so no fact git overlaps it.
+    /// already looked at. The diff oracle's baseline is taken first, so no fact git overlaps it, except under
+    /// ADR-132's deferred baseline, where the first native write takes it (both only read the repository).
     fn start(&mut self, l: &Loop<'_>, oracle: &mut DiffOracle, pos: usize) -> Result<(), Failure> {
         let Some(first) = self
             .order
@@ -637,7 +644,9 @@ impl<'s, 'scope> Prefetch<'s, 'scope> {
             return Ok(());
         }
         self.join();
-        oracle.before_hook()?;
+        if !self.defer {
+            oracle.before_hook()?;
+        }
         let (facts, pool, cancel, halt) = (self.facts, self.pool, self.cancel, self.halt);
         let spawned = std::thread::Builder::new()
             .name("snp-prefetch".to_owned())
@@ -766,6 +775,37 @@ fn reads_contents(h: &ResolvedHook) -> bool {
     }
 }
 
+/// ADR-132's static gate, decided once before the loop: the oracle's baseline is deferred to the first native write
+/// only when it is not already known (ADR-078(3), ADR-106, ADR-119 supply it) and every selected, unskipped hook runs
+/// in process and reports its modifications exactly (`decide` then needs a baseline only after a write), no bucket
+/// holds two unskipped hooks (a concurrent group keeps its baseline before it) and no hook has an active
+/// `stage_fixed`. A run with any process hook keeps today's position, even when that hook ends up with no files:
+/// deferring there gains nothing (the process hook takes the same diff) and an external edit during the natives
+/// would go unreported (fail open).
+fn defers_baseline(l: &Loop<'_>, all: &[Vec<usize>], oracle: &DiffOracle) -> bool {
+    if oracle.baseline_known() {
+        return false;
+    }
+    let unskipped = |p: &&usize| !l.skipped.get(**p).copied().unwrap_or(false);
+    let qualifies =
+        |h: &ResolvedHook| in_process(h) && reports_exactly(h) && stage_fixed(l, h).is_none();
+    all.iter().all(|bucket| {
+        let mut run = bucket.iter().filter(unskipped);
+        let first = run.next();
+        run.next().is_none() && first.is_none_or(|&p| l.hooks.get(p).is_some_and(|h| qualifies(h)))
+    })
+}
+
+/// Whether an in-process hook's modification decision needs no baseline before it (ADR-132): a native that reports
+/// its writes exactly (`decide` uses `after_native`), or a hook that never writes (meta, `pygrep`, `fail`).
+fn reports_exactly(h: &ResolvedHook) -> bool {
+    match &h.exec {
+        ExecKind::Native { source, id, .. } => snp_hooks::native(*source, id)
+            .is_some_and(snp_hooks::NativeHook::reports_modifications_exactly),
+        _ => true,
+    }
+}
+
 /// Whether modifications fail this hook (`fail_on_changes`).
 fn changes_fail(l: &Loop<'_>, h: &ResolvedHook) -> bool {
     match h.def.ext.fail_on_changes.unwrap_or(l.fail_on_changes) {
@@ -888,7 +928,7 @@ fn run_sequential(
         } else {
             pf.join();
         }
-        let d = run_one(l, oracle, fixes, &job, tty.as_ref(), cache)?;
+        let d = run_one(l, oracle, fixes, &job, tty.as_ref(), cache, pf.defer)?;
         // a killed interactive hook (timeout, signal) was cut off mid-prompt: its status line starts a new line
         if tty.is_some() && d.code < 0 {
             out.printer.write(b"\n");
@@ -917,7 +957,9 @@ fn terminal(l: &Loop<'_>, h: &ResolvedHook) -> Option<Terminal> {
     }
 }
 
-/// One executed hook: run, modification decision, `stage_fixed`.
+/// One executed hook: run, modification decision, `stage_fixed`. With `defer` (ADR-132's static gate) and no known
+/// baseline, the hook gets a [`WriteGate`] instead of the oracle's `before_hook`: its first native write takes the
+/// baseline, which the oracle then compares with; a hook that writes nothing takes no `git diff`.
 fn run_one(
     l: &Loop<'_>,
     oracle: &mut DiffOracle,
@@ -925,6 +967,7 @@ fn run_one(
     job: &Job<'_>,
     tty: Option<&Terminal>,
     cache: Option<&ContentCache>,
+    defer: bool,
 ) -> Result<Done, Failure> {
     let e = l.e;
     let root = e.git.root();
@@ -952,8 +995,17 @@ fn run_one(
         (BTreeMap::new(), BTreeMap::new())
     };
     let t0 = e.cx.clock.now();
-    oracle.before_hook()?;
-    let ran = exec::run_hook(e, h, &job.argv_files, tty, cache)?;
+    let gate = (defer && !oracle.baseline_known()).then(|| WriteGate::new(e.git));
+    if gate.is_none() {
+        oracle.before_hook()?;
+    }
+    let ran = exec::run_hook(e, h, &job.argv_files, tty, cache, gate.as_ref());
+    // the gate's diff ran before the hook's first write: a failure of it is the baseline's (exit 3), and it comes
+    // first; a baseline it took is the one the hook is compared with
+    if let Some(baseline) = gate.and_then(WriteGate::into_baseline) {
+        oracle.adopt_baseline(baseline?);
+    }
+    let ran = ran?;
     let duration = Some(secs(e, t0));
     let mut change = decide(oracle, h, &ran)?;
     let mut ran = ran;
@@ -973,7 +1025,7 @@ fn run_one(
             } else {
                 // `verify`: one re-run on the same inputs; it must pass without new changes
                 oracle.before_hook()?;
-                let again = exec::run_hook(e, h, &job.argv_files, tty, cache)?;
+                let again = exec::run_hook(e, h, &job.argv_files, tty, cache, None)?;
                 let c2 = decide(oracle, h, &again)?;
                 let ok = again.code == 0 && c2 == Change::Unchanged;
                 ran = again;
@@ -1140,7 +1192,7 @@ fn run_concurrently(lp: &Loop<'_>, jobs: &[Job<'_>]) -> Result<Vec<BucketRun>, F
                         };
                         let t0 = env.cx.clock.now();
                         // two hooks of a bucket run concurrently: no content cache (ADR-131)
-                        let r = exec::run_hook(env, job.hook, &job.argv_files, None, None)
+                        let r = exec::run_hook(env, job.hook, &job.argv_files, None, None, None)
                             .map(|ran| (ran, Some(secs(env, t0))));
                         mine.push((idx, r));
                     }

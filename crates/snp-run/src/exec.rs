@@ -21,7 +21,7 @@ use snp_core::fault::{self, Point};
 use snp_core::path::RepoPath;
 use snp_git::Git;
 use snp_git::pch_facts::PchFacts;
-use snp_hooks::{ContentCache, Epoch, HookCx, NativeSource};
+use snp_hooks::{ContentCache, Epoch, HookCx, NativeSource, WriteGate};
 use snp_lang::RunPlan;
 use snp_proc::spawn::{self, Group, Output, PyStatus, Role, Spec, Stdin};
 use snp_proc::tty::Terminal;
@@ -95,7 +95,8 @@ pub(crate) fn hook_cwd(root: &Path, h: &ResolvedHook) -> PathBuf {
 /// Runs one hook on `files` (already `()` when `pass_filenames: false`; relative to the hook's cwd; normally
 /// borrowed from the run's file table, ADR-103). With `tty`
 /// (an `interactive` hook that found a terminal, ADR-085) a process hook's partitions run one after another on the
-/// terminal, uncaptured; hooks that run inside snp ignore it.
+/// terminal, uncaptured; hooks that run inside snp ignore it. `gate` (ADR-132) is the deferred baseline a native's
+/// first write takes; other hooks never write and ignore it.
 ///
 /// # Errors
 ///
@@ -107,6 +108,7 @@ pub(crate) fn run_hook(
     files: &[Cow<'_, OsStr>],
     tty: Option<&Terminal>,
     contents: Option<&ContentCache>,
+    gate: Option<&WriteGate>,
 ) -> Result<Ran, Failure> {
     let cwd = hook_cwd(e.git.root(), h);
     if h.def.ext.root.is_some() && !cwd.is_dir() {
@@ -140,7 +142,7 @@ pub(crate) fn run_hook(
             }
         }
         ExecKind::Native { source, id, epoch } => {
-            run_native(e, h, *source, id, *epoch, files, &cwd, contents)?
+            run_native(e, h, *source, id, *epoch, files, &cwd, contents, gate)?
         }
         _ => {
             let plan = e.cx.resolver.plan(h, e.rcx, e.color)?;
@@ -472,7 +474,7 @@ fn synthetic_cmd(prog: &str, args: &[Arc<str>]) -> Vec<OsString> {
 /// A native pre-commit-hooks port (or builtin variant): shuffled and partitioned like its console script.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the hook, its native's identity, its files and the window's cache"
+    reason = "the hook, its native's identity, its files, the window's cache and the hook's write gate"
 )]
 fn run_native(
     e: &ExecEnv<'_>,
@@ -483,6 +485,7 @@ fn run_native(
     files: &[Cow<'_, OsStr>],
     cwd: &Path,
     contents: Option<&ContentCache>,
+    gate: Option<&WriteGate>,
 ) -> Result<Ran, Failure> {
     let Some(native) = snp_hooks::native(source, id) else {
         return Err(Failure::unexpected(
@@ -519,6 +522,7 @@ fn run_native(
         facts: e.facts,
         cancel: &e.cx.cancel,
         cache: contents,
+        gate,
     };
     let threads = NonZeroUsize::new(parts.len().min(jobs.get())).unwrap_or(NonZeroUsize::MIN);
     let results = e.cx.pool.map_ordered(threads, parts.len(), |i| {

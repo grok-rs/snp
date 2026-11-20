@@ -895,6 +895,21 @@ impl DiffOracle {
         }
     }
 
+    /// Whether the fingerprint the next comparison starts from is known: the baseline was supplied (ADR-078(3),
+    /// ADR-106, ADR-119) or taken, and no native fixer made it stale since. ADR-132 defers the baseline only while
+    /// it is not.
+    pub fn baseline_known(&self) -> bool {
+        self.last.is_some()
+    }
+
+    /// ADR-132: the baseline a gated hook's first writer took (the real `git diff` before its first write, so of
+    /// the pre-hook tree) becomes the fingerprint the hook is compared with. The Stat-mode snapshot stays as it is
+    /// (none: a gated run never called [`Self::before_hook`]); [`Self::after_native`] takes one before its real
+    /// `git diff`.
+    pub fn adopt_baseline(&mut self, baseline: DiffFingerprint) {
+        self.last = Some(baseline);
+    }
+
     /// Falls back to Git mode for the rest of the run.
     fn fall_back_to_git_mode(&mut self) {
         self.mode = DiffMode::Git;
