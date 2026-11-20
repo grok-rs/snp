@@ -2,7 +2,8 @@
 //! against the full loads: for the pre-commit oracle corpus and for generated configs and manifests (valid and
 //! broken), the check fails exactly when the load fails, with the same rendered error, the same `[WARNING]`
 //! messages in the same order and the same regex `FutureWarning` lines; for a config that loads, applying the
-//! schema defaults to the checked value gives the load's `Config::raw`.
+//! schema defaults to the checked value gives the load's `Config::raw`, and the gc projections of the checked value
+//! (`snp_config::facts`) equal what the old marking read from the typed model.
 //!
 //! Owner: WP-21.
 
@@ -13,12 +14,14 @@ pub mod support;
 mod check_only {
     use std::ffi::OsStr;
     use std::fmt::Write as _;
+    use std::sync::Arc;
 
     use proptest::prelude::*;
     use proptest::strategy::ValueTree as _;
     use serde_json::Value as Json;
+    use snp_config::facts::{HookFacts, ManifestFacts, RepoFacts};
     use snp_config::validate::{self, FileKind};
-    use snp_config::{ConfigError, ConfigSource, ExtMode, schema};
+    use snp_config::{Config, ConfigError, ConfigSource, ExtMode, Manifest, RepoConfig, schema};
     use snp_core::brand::Brand;
 
     use crate::support::{BRANDS, Loaded, file_in_tempdir, vectors, with_opts};
@@ -77,6 +80,11 @@ mod check_only {
                         ));
                     }
                     if let (Ok(cfg), Ok(checked)) = (&full.result, check.result) {
+                        let facts = snp_config::facts::config_repos(&checked, ext);
+                        let want = config_facts(cfg);
+                        if facts != want {
+                            return Err(format!("{tag} facts: {facts:?} vs load {want:?}"));
+                        }
                         let defaulted =
                             schema::config_schema(brand, ext).apply_defaults_owned(checked);
                         if defaulted != cfg.raw {
@@ -88,11 +96,10 @@ mod check_only {
                     }
                 } else {
                     let display = OsStr::new(file);
-                    let full = with_opts(brand, ext, |o| {
-                        snp_config::load_manifest(&path, display, o).map(|_| ())
-                    });
+                    let full =
+                        with_opts(brand, ext, |o| snp_config::load_manifest(&path, display, o));
                     let check = with_opts(brand, ext, |o| {
-                        snp_config::check_manifest(&path, display, o).map(|_| ())
+                        snp_config::check_manifest(&path, display, o)
                     });
                     if seen(&full) != seen(&check) {
                         return Err(format!(
@@ -101,10 +108,88 @@ mod check_only {
                             seen(&check)
                         ));
                     }
+                    if let Some(bytes) = bytes {
+                        let check_bytes = with_opts(brand, ext, |o| {
+                            snp_config::check_manifest_bytes(bytes, display, o)
+                        });
+                        let full_bytes = with_opts(brand, ext, |o| {
+                            snp_config::load_manifest_bytes(bytes, display, o)
+                        });
+                        if seen(&full_bytes) != seen(&check_bytes) {
+                            return Err(format!(
+                                "{tag} manifest bytes: load {:?} vs check {:?}",
+                                seen(&full_bytes),
+                                seen(&check_bytes)
+                            ));
+                        }
+                    }
+                    if let (Ok(m), Ok(checked)) = (&full.result, &check.result) {
+                        let facts = snp_config::facts::manifest_hooks(checked);
+                        let want = manifest_facts(m);
+                        if facts != want {
+                            return Err(format!("{tag} facts: {facts:?} vs load {want:?}"));
+                        }
+                        for id in IDS.iter().chain(&["", "absent"]) {
+                            let got = facts.deps(id);
+                            let want = m.get(id).map(|h| &*h.additional_dependencies);
+                            if got != want {
+                                return Err(format!("{tag} deps({id}): {got:?} vs load {want:?}"));
+                            }
+                        }
+                    }
                 }
             }
         }
         Ok(())
+    }
+
+    /// What gc reads from a fully loaded config, through the typed model (the old marking's inputs).
+    fn config_facts(cfg: &Config) -> Vec<RepoFacts<'_>> {
+        cfg.repos
+            .iter()
+            .map(|r| match r {
+                RepoConfig::Remote { repo, rev, hooks } => RepoFacts::Remote {
+                    repo,
+                    rev,
+                    hooks: hooks
+                        .iter()
+                        .map(|h| HookFacts {
+                            id: &h.id,
+                            deps: h
+                                .raw
+                                .iter()
+                                .find(|(k, _)| k.as_str() == Some("additional_dependencies"))
+                                .and_then(|(_, v)| v.as_array())
+                                .map(|deps| {
+                                    deps.iter()
+                                        .filter_map(|d| d.as_str().map(Arc::from))
+                                        .collect()
+                                }),
+                        })
+                        .collect(),
+                },
+                RepoConfig::Local { hooks } => RepoFacts::Local {
+                    deps: hooks
+                        .iter()
+                        .map(|h| h.additional_dependencies.to_vec())
+                        .collect(),
+                },
+                RepoConfig::Meta { .. } => RepoFacts::Meta,
+                RepoConfig::Builtin { .. } => RepoFacts::Builtin,
+                other => panic!("a repo kind the facts do not cover: {other:?}"),
+            })
+            .collect()
+    }
+
+    /// What gc reads from a fully loaded manifest.
+    fn manifest_facts(m: &Manifest) -> ManifestFacts<'_> {
+        ManifestFacts {
+            hooks: m
+                .hooks
+                .iter()
+                .map(|h| (&*h.id, h.additional_dependencies.to_vec()))
+                .collect(),
+        }
     }
 
     fn input(c: &Json) -> Option<Vec<u8>> {
@@ -220,6 +305,8 @@ mod check_only {
         "bogus_key: 1",
         "priority: 3",
         "additional_dependencies: [x==1]",
+        "additional_dependencies: []",
+        "additional_dependencies: [a, 'b==2', c]",
         "always_run: yes",
         "pass_filenames: false",
         "language_version: default",
@@ -265,6 +352,43 @@ mod check_only {
             prop::collection::vec(hook(), 0..4),
         )
             .prop_map(|(kind, extra, hooks)| Repo { kind, extra, hooks })
+    }
+
+    /// `HOOK` lines that keep a hook valid (some warn), for the gc facts generators: most generated hooks then load.
+    const GC_LINES: &[usize] = &[0, 1, 2, 7, 10, 12, 15, 16, 17, 18, 19, 21, 22, 5];
+
+    /// A hook that usually loads: `name` / `entry` / `language` (required by local and manifest hooks) unless
+    /// dropped, then lines of `GC_LINES` (the dependency lines often).
+    fn gc_hook() -> impl Strategy<Value = Hook> {
+        (
+            prop::option::weighted(0.95, 0..IDS.len()),
+            prop::bool::weighted(0.9),
+            prop::collection::vec(
+                prop_oneof![
+                    2 => prop::sample::select(vec![17usize, 18, 19]),
+                    3 => prop::sample::select(GC_LINES.to_vec()),
+                ],
+                0..4,
+            ),
+        )
+            .prop_map(|(id, required, extra)| {
+                let mut lines = if required { vec![0, 1, 2] } else { Vec::new() };
+                lines.extend(extra);
+                Hook { id, lines }
+            })
+    }
+
+    /// A `repos` entry for the gc facts: remote (mostly), local, meta or builtin.
+    fn gc_repo() -> impl Strategy<Value = Repo> {
+        (
+            prop::sample::select(vec![0u8, 0, 0, 2, 2, 3, 4, 1]),
+            prop::collection::vec(gc_hook(), 0..4),
+        )
+            .prop_map(|(kind, hooks)| Repo {
+                kind,
+                extra: false,
+                hooks,
+            })
     }
 
     /// A one-byte corruption: (position permille, replacement byte).
@@ -372,6 +496,25 @@ mod check_only {
             prop_assert_eq!(compare("config", "cfg.yaml", Some(&bytes)), Ok(()));
         }
 
+        /// Mostly loadable configs: the gc facts of the check equal what the full load's model gives.
+        #[test]
+        fn generated_gc_configs_facts_equal_load(
+            top in prop::collection::vec(prop::sample::select(vec![0usize, 3, 9, 11, 13, 14]), 0..2),
+            repos in prop::collection::vec(gc_repo(), 0..5),
+        ) {
+            let bytes = render_config(&top, &repos);
+            prop_assert_eq!(compare("config", "cfg.yaml", Some(bytes.as_bytes())), Ok(()));
+        }
+
+        /// Mostly loadable manifests (duplicate ids, dependencies): the facts and the by-id lookup equal the load's.
+        #[test]
+        fn generated_gc_manifests_facts_equal_load(
+            hooks in prop::collection::vec(gc_hook(), 0..6),
+        ) {
+            let bytes = render_manifest(&hooks, false);
+            prop_assert_eq!(compare("manifest", "m.yaml", Some(bytes.as_bytes())), Ok(()));
+        }
+
         #[test]
         fn generated_manifests_check_equals_load(
             hooks in prop::collection::vec(hook(), 0..4),
@@ -442,6 +585,70 @@ mod check_only {
         assert!(
             oks >= 15 && errs >= 15 && warned >= 15 && futures >= 15,
             "ok {oks}, err {errs}, warned {warned}, future {futures}"
+        );
+    }
+
+    /// The generated inputs that load reach the facts gc depends on (so the facts comparison is not vacuous):
+    /// remote hooks with and without their own `additional_dependencies` (and an explicit `[]`), local hooks with
+    /// dependencies, and manifests with a duplicate id and with dependencies.
+    #[test]
+    fn generators_reach_every_fact() {
+        let mut runner = proptest::test_runner::TestRunner::deterministic();
+        let configs = prop::collection::vec(gc_repo(), 0..5);
+        let (mut own, mut inherited, mut empty, mut local) = (0, 0, 0, 0);
+        for _ in 0..300 {
+            let repos = configs.new_tree(&mut runner).expect("tree").current();
+            let (dir, path) =
+                file_in_tempdir("cfg.yaml", Some(render_config(&[], &repos).as_bytes()));
+            let src = ConfigSource {
+                path,
+                display: "cfg.yaml".into(),
+                project_root: dir.path().to_path_buf(),
+            };
+            let checked = with_opts(Brand::PreCommit, ExtMode::Enabled, |o| {
+                snp_config::check_config(&src, o)
+            });
+            let Ok(v) = checked.result else { continue };
+            for r in snp_config::facts::config_repos(&v, ExtMode::Enabled) {
+                match r {
+                    RepoFacts::Remote { hooks, .. } => {
+                        for h in hooks {
+                            match h.deps.as_deref() {
+                                None => inherited += 1,
+                                Some([]) => empty += 1,
+                                Some(_) => own += 1,
+                            }
+                        }
+                    }
+                    RepoFacts::Local { deps } => {
+                        local += deps.iter().filter(|d| !d.is_empty()).count();
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert!(
+            own >= 10 && inherited >= 10 && empty >= 10 && local >= 10,
+            "own {own}, inherited {inherited}, empty {empty}, local {local}"
+        );
+        let manifests = prop::collection::vec(gc_hook(), 0..6);
+        let (mut duplicated, mut with_deps) = (0, 0);
+        for _ in 0..300 {
+            let hooks = manifests.new_tree(&mut runner).expect("tree").current();
+            let bytes = render_manifest(&hooks, false).into_bytes();
+            let checked = with_opts(Brand::PreCommit, ExtMode::Enabled, |o| {
+                snp_config::check_manifest_bytes(&bytes, OsStr::new("m.yaml"), o)
+            });
+            let Ok(v) = checked.result else { continue };
+            let facts = snp_config::facts::manifest_hooks(&v);
+            let ids: std::collections::HashSet<&str> =
+                facts.hooks.iter().map(|(id, _)| *id).collect();
+            duplicated += usize::from(ids.len() < facts.hooks.len());
+            with_deps += usize::from(facts.hooks.iter().any(|(_, d)| !d.is_empty()));
+        }
+        assert!(
+            duplicated >= 10 && with_deps >= 10,
+            "duplicated {duplicated}, with deps {with_deps}"
         );
     }
 }

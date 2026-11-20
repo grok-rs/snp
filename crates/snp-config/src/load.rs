@@ -265,6 +265,21 @@ pub fn check_manifest(
     )
 }
 
+/// The checking half of [`load_manifest_bytes`] (see [`check_config`]): `Ok` is the checked, un-defaulted value.
+pub fn check_manifest_bytes(
+    bytes: &[u8],
+    display: &OsStr,
+    o: &LoadOpts<'_>,
+) -> Result<Value, ConfigError> {
+    check_bytes(
+        bytes,
+        &display.to_string_lossy(),
+        schema::manifest_schema(o.brand),
+        Kind::Manifest,
+        o,
+    )
+}
+
 /// `load_manifest` (`clientlib.py`). `display` is converted with `to_string_lossy` for cfgv's
 /// `load_from_filename_with(…, display_filename: Option<&str>, …)`.
 pub fn load_manifest(

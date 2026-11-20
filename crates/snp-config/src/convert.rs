@@ -13,7 +13,8 @@ use snp_core::lang::LanguageId;
 use snp_core::stage::{HookType, Stage, StageSet};
 
 use crate::ext::{self, HookExt};
-use crate::items::{BUILTIN, DEFAULT, LOCAL, META};
+use crate::facts::{RepoKind, hook_maps, repo_kind};
+use crate::items::DEFAULT;
 use crate::schema::HOOK_KEYS;
 use crate::{Config, ConfigHook, ConfigSource, ExtMode, HookDef, Manifest, RepoConfig};
 
@@ -198,28 +199,20 @@ pub(crate) fn config_hook(m: &Map, ext_mode: ExtMode) -> ConfigHook {
     }
 }
 
-fn hook_maps(repo: &Map) -> impl Iterator<Item = &Map> {
-    get(repo, "hooks")
-        .and_then(Value::as_array)
-        .unwrap_or_default()
-        .iter()
-        .filter_map(Value::as_map)
-}
-
 /// One validated `repos` entry → `RepoConfig`.
 pub(crate) fn repo_config(repo: &Map, ext_mode: ExtMode) -> RepoConfig {
     let url = get_str(repo, "repo").unwrap_or_default();
-    match url {
-        LOCAL => RepoConfig::Local {
+    match repo_kind(url, ext_mode) {
+        RepoKind::Local => RepoConfig::Local {
             hooks: hook_maps(repo).map(|h| hook_def(h, ext_mode)).collect(),
         },
-        META => RepoConfig::Meta {
+        RepoKind::Meta => RepoConfig::Meta {
             hooks: hook_maps(repo).map(|h| hook_def(h, ext_mode)).collect(),
         },
-        BUILTIN if ext_mode == ExtMode::Enabled => RepoConfig::Builtin {
+        RepoKind::Builtin => RepoConfig::Builtin {
             hooks: hook_maps(repo).map(|h| config_hook(h, ext_mode)).collect(),
         },
-        _ => RepoConfig::Remote {
+        RepoKind::Remote => RepoConfig::Remote {
             repo: Arc::from(url),
             rev: Arc::from(get_str(repo, "rev").unwrap_or_default()),
             hooks: hook_maps(repo).map(|h| config_hook(h, ext_mode)).collect(),
