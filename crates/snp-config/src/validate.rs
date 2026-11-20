@@ -103,6 +103,18 @@ pub fn validate(
     }
 }
 
+/// Validates one file; `Some(text)` = the `print(e)` block of a failure (`str(e)`, without the newline `print`
+/// adds). The text of an [uncaught](ConfigError::uncaught) error does not start with `\n`: it is the
+/// `{type}: {message}` of an exit-3 crash and the caller stops (13 X.4.1 CFG-09).
+pub fn validate_file(
+    kind: FileKind,
+    path: &OsStr,
+    o: &LoadOpts<'_>,
+    strict: bool,
+) -> Option<String> {
+    validate(kind, path, o, strict).err().map(|e| e.rendered)
+}
+
 #[cfg(test)]
 mod tests {
     use std::ffi::OsStr;
@@ -146,7 +158,7 @@ mod tests {
         validate(FileKind::Manifest, manifest.as_os_str(), &o, false).unwrap();
         validate(FileKind::Manifest, manifest.as_os_str(), &o, true).unwrap();
         assert_eq!(probe::defaulted(), before);
-        assert!(warn.take().is_empty());
+        assert_eq!(warn.take(), Vec::<String>::new());
         validate(FileKind::Config, cfg.as_os_str(), &o, true).unwrap();
         assert_eq!(probe::defaulted(), before + 1);
         // The W11 hook-key warning exists only on the strict path, which needs the model.
@@ -158,16 +170,4 @@ mod tests {
         );
         assert_eq!(probe::defaulted(), before + 1);
     }
-}
-
-/// Validates one file; `Some(text)` = the `print(e)` block of a failure (`str(e)`, without the newline `print`
-/// adds). The text of an [uncaught](ConfigError::uncaught) error does not start with `\n`: it is the
-/// `{type}: {message}` of an exit-3 crash and the caller stops (13 X.4.1 CFG-09).
-pub fn validate_file(
-    kind: FileKind,
-    path: &OsStr,
-    o: &LoadOpts<'_>,
-    strict: bool,
-) -> Option<String> {
-    validate(kind, path, o, strict).err().map(|e| e.rendered)
 }

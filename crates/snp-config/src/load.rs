@@ -343,7 +343,7 @@ mod tests {
             assert_eq!(got, data, "{hint}");
         }
         let capped = read_reserved(&data[..], usize::MAX / 2, 100).unwrap();
-        assert_eq!(capped, data.get(..100).unwrap());
+        assert_eq!(capped, &data[..100]);
     }
 
     /// `os.path.isfile` stays first: a directory or a missing path is "not a file", never opened.

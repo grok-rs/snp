@@ -150,7 +150,7 @@ mod check_only {
             compare(kind, "missing.yaml", None).expect("missing");
             let dir = tempfile::tempdir().expect("tempdir");
             let sub = dir.path().join("sub.yaml");
-            std::fs::create_dir(&sub).expect("mkdir");
+            std::fs::create_dir_all(&sub).expect("mkdir");
             let full = with_opts(Brand::Snp, ExtMode::Enabled, |o| {
                 snp_config::load_manifest(&sub, OsStr::new("sub.yaml"), o).map(|_| ())
             });
