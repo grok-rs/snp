@@ -362,7 +362,7 @@ mod tests {
             warn: &warn,
             diag: &diag,
         });
-        assert!(warn.take().is_empty());
+        assert_eq!(warn.take(), Vec::<String>::new());
         (out, diag.take(), regexes)
     }
 
@@ -458,10 +458,10 @@ mod tests {
         let broken = ["(".to_owned()];
         let before = probe::compiles();
         let ((), diag, _) = with_opts(|o| future_warnings(&broken, Kind::Manifest, o));
-        assert!(diag.is_empty());
+        assert_eq!(diag, Vec::<String>::new());
         assert_eq!(probe::compiles() - before, 0);
         let ((), diag, _) = with_opts(|o| future_warnings(&broken, Kind::Config, o));
-        assert!(diag.is_empty());
+        assert_eq!(diag, Vec::<String>::new());
         assert_eq!(probe::compiles() - before, 1);
     }
 

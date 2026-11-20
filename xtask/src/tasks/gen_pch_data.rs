@@ -1082,13 +1082,13 @@ fn render_models(tags: &[TagData]) -> anyhow::Result<String> {
         let mut idx = Vec::new();
         for m in &maps {
             let rendered = render_model_hook(m).with_context(|| format!("{}: model", t.tag))?;
-            let i = match distinct.iter().position(|d| *d == rendered) {
-                Some(i) => i,
-                None => {
+            let i = distinct
+                .iter()
+                .position(|d| *d == rendered)
+                .unwrap_or_else(|| {
                     distinct.push(rendered);
-                    distinct.len() - 1
-                }
-            };
+                    distinct.len().saturating_sub(1)
+                });
             idx.push(i);
         }
         per_tag.push((t.tag, idx));
@@ -1715,7 +1715,7 @@ mod tests {
         assert!(parse_manifest("-   id: [x]\n").is_err());
     }
 
-    /// The model reader takes every MANIFEST_HOOK_DICT key in the tags' shapes and refuses anything else.
+    /// The model reader takes every `MANIFEST_HOOK_DICT` key in the tags' shapes and refuses anything else.
     #[test]
     fn manifest_model_reader() {
         let m = "-   id: a\n    name: 'it''s'\n    entry: a\n    language: python\n    types: [text, 'executable']\n    \

@@ -1256,10 +1256,18 @@ mod tests {
                     assert!(warnings.is_empty(), "{tag:?}: {warnings:?}");
                     assert!(diag.is_empty(), "{tag:?}: {diag:?}");
                     assert_eq!(format!("{loaded:?}"), built, "{tag:?}");
+                    let mut loads = 0;
                     let (fast, warnings, diag) = with_opts(brand, ext, |o| {
-                        profile_manifest(profile, || unreachable!("no load"), o)
+                        profile_manifest(
+                            profile,
+                            || {
+                                loads += 1;
+                                OsString::new()
+                            },
+                            o,
+                        )
                     });
-                    assert!(warnings.is_empty() && diag.is_empty(), "{tag:?}");
+                    assert_eq!((loads, warnings, diag), (0, vec![], vec![]), "{tag:?}");
                     assert_eq!(format!("{:?}", fast.unwrap()), built, "{tag:?}");
                 }
             }
@@ -1277,14 +1285,6 @@ mod tests {
             hooks: &[("x", HookClass::FailLanguage, Epoch(1))],
             model: None,
         };
-        let (m, warnings, diag) = with_opts(Brand::Snp, ExtMode::Enabled, |o| {
-            profile_manifest(V6, || OsString::from("would-be.yaml"), o)
-        });
-        let m = m.unwrap();
-        assert_eq!(m.hooks.len(), 1);
-        assert_eq!(&*m.hooks[0].files, "[[a]");
-        assert!(warnings.is_empty());
-        assert_eq!(diag.len(), 1, "{diag:?}");
         static BROKEN: &TagProfile = &TagProfile {
             tag: "v6.0.0",
             commit: "3e8a8703264a2f4a69428a0aa4dcb512790b2c8c",
@@ -1292,6 +1292,21 @@ mod tests {
             hooks: &[],
             model: None,
         };
+        static MODEL_ONLY: &TagProfile = &TagProfile {
+            tag: "v6.0.0",
+            commit: "3e8a8703264a2f4a69428a0aa4dcb512790b2c8c",
+            manifest_yaml: "-   id: x\n",
+            hooks: &[],
+            model: Some(&[]),
+        };
+        let (m, warnings, diag) = with_opts(Brand::Snp, ExtMode::Enabled, |o| {
+            profile_manifest(V6, || OsString::from("would-be.yaml"), o)
+        });
+        let m = m.unwrap();
+        assert_eq!(m.hooks.len(), 1);
+        assert_eq!(&*m.hooks[0].files, "[[a]");
+        assert_eq!(warnings, Vec::<String>::new());
+        assert_eq!(diag.len(), 1, "{diag:?}");
         let (e, ..) = with_opts(Brand::Snp, ExtMode::Enabled, |o| {
             profile_manifest(BROKEN, || OsString::from("would-be.yaml"), o)
         });
@@ -1302,17 +1317,20 @@ mod tests {
             "{}",
             e.rendered
         );
-        static MODEL_ONLY: &TagProfile = &TagProfile {
-            tag: "v6.0.0",
-            commit: "3e8a8703264a2f4a69428a0aa4dcb512790b2c8c",
-            manifest_yaml: "-   id: x\n",
-            hooks: &[],
-            model: Some(&[]),
-        };
+        // The same broken YAML with a model: the model wins, nothing is loaded.
+        let mut loads = 0;
         let (m, ..) = with_opts(Brand::Snp, ExtMode::Enabled, |o| {
-            profile_manifest(MODEL_ONLY, || unreachable!("no load"), o)
+            profile_manifest(
+                MODEL_ONLY,
+                || {
+                    loads += 1;
+                    OsString::new()
+                },
+                o,
+            )
         });
-        assert!(m.unwrap().hooks.is_empty());
+        assert_eq!(m.unwrap().hooks.len(), 0);
+        assert_eq!(loads, 0);
     }
 
     #[test]
