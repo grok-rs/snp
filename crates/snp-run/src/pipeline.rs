@@ -279,6 +279,12 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         .hooks
         .iter()
         .any(|h| !h.def.always_run || h.def.pass_filenames);
+    // ADR-133: after a checkout ADR-119 may prove the baseline empty; git >= 2.42 names its system attributes file
+    let ask_system = cx.git_exe.caps.attr_system
+        && st
+            .stash
+            .as_ref()
+            .is_some_and(|g| g.checked_out().is_some() && !g.cleared_intent_to_add());
     let side = install_beside_side_queries(
         cx,
         &rcx,
@@ -289,6 +295,7 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         &picked,
         &early,
         needs_files,
+        ask_system,
     )?;
     // step 15: cols, the file table, the classifier (on a clean `--all-files` run from trusted index modes, with the
     // before-diff taken here: ADR-106)
@@ -318,7 +325,13 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     let files = side.origins.as_ref().map(|l| Arc::clone(&l.files));
     let mut oracle = DiffOracle::new(&git, &info, &run_env, baseline, side.tracked, files)?;
     if baseline.is_none() && warm {
-        checkout_baseline(cx, st.stash.as_ref(), side.origins.as_deref(), &mut oracle);
+        checkout_baseline(
+            cx,
+            st.stash.as_ref(),
+            side.origins.as_deref(),
+            side.system_attributes.as_ref(),
+            &mut oracle,
+        );
     }
     if let Some(flag) = fifteen.trust {
         oracle.guard_index_trust(flag);
@@ -357,6 +370,7 @@ fn install_beside_side_queries(
     picked: &Picked<'_>,
     early: &Early,
     needs_files: bool,
+    ask_system: bool,
 ) -> Result<Side, Failure> {
     let process_hooks = picked
         .to_install
@@ -379,19 +393,26 @@ fn install_beside_side_queries(
     let wants_staged = needs_files && files::wants_staged(sel, git, info);
     let have_early = early.tracked.is_some() && early.origins.is_some();
     let side_work = wants_staged || (stat && !have_early);
-    let (installed, side) = std::thread::scope(|s| {
+    let (installed, side, system) = std::thread::scope(|s| {
         let queries = || side_queries(git, wants_staged, stat, early);
         // no thread when the side queries have nothing to ask; inline when it cannot start
         let side = side_work.then(|| common::fork(s, queries));
+        // ADR-133: `git var GIT_ATTR_SYSTEM` with the executable and environment of the parity `git diff`, only for a
+        // Stat-mode oracle after a checkout (ADR-119's only use of it), per run; a failure is no answer
+        let system = (ask_system && stat).then(|| common::fork(s, || git.system_attributes()));
         let installed = cx.resolver.install_envs(&picked.to_install, rcx);
         let side = match side {
             Some(f) => f.join(|p| Err(panicked(&p))),
             None => queries(),
         };
-        (installed, side)
+        let system = system.and_then(|f| f.join(|_| None));
+        (installed, side, system)
     });
     installed?;
-    side
+    side.map(|side| Side {
+        system_attributes: system,
+        ..side
+    })
 }
 
 /// §3.1 step 15's results.
@@ -953,12 +974,14 @@ fn small_tree(tracked: &IndexEntries) -> bool {
     true
 }
 
-/// Fan-out queries E (staged list), F (`ls-files -s -z`) and G (`config --list --show-origin -z`).
+/// Fan-out queries E (staged list), F (`ls-files -s -v -z`) and G (`config --list --show-origin -z`), and the system
+/// attributes file `git var` named after a checkout (ADR-133).
 #[derive(Debug, Default)]
 struct Side {
     staged: Option<snp_git::ZList>,
     tracked: Option<Arc<IndexEntries>>,
     origins: Option<Arc<ConfigListing>>,
+    system_attributes: Option<snp_git::SystemAttributes>,
 }
 
 /// The hooks of `cfg` that may run as processes (local and remote; meta and builtin hooks are in-process), among
@@ -1003,6 +1026,7 @@ fn side_queries(git: &Git, wants_staged: bool, stat: bool, early: &Early) -> Res
             staged: wants_staged.then(|| git.staged_files()).transpose()?,
             tracked,
             origins,
+            system_attributes: None,
         });
     }
     // E, F and G are independent read-only queries: each on its own thread, so one spawn is on the critical path; a
@@ -1025,6 +1049,7 @@ fn side_queries(git: &Git, wants_staged: bool, stat: bool, early: &Early) -> Res
             staged: staged.transpose()?,
             tracked,
             origins,
+            system_attributes: None,
         })
     })
 }
@@ -1060,11 +1085,13 @@ fn baseline(
 /// ADR-119: on the warm path, after a stash that checked out the patch's files, the baseline is known empty when the
 /// oracle's Stat-mode snapshot proves the checkout left `git diff` empty (`DiffOracle::elide_checkout_baseline`);
 /// otherwise it stays lazy, as before. Not after an intent-to-add clearing, and only with query G's configuration
-/// facts. `SNP_VERIFY_BASELINE=1` takes a proven baseline with the real `git diff` and reports a non-empty one.
+/// facts; `system` is `git var GIT_ATTR_SYSTEM`'s answer of this run (ADR-133). `SNP_VERIFY_BASELINE=1` takes a
+/// proven baseline with the real `git diff` and reports a non-empty one.
 fn checkout_baseline(
     cx: &RunCtx,
     stash: Option<&StashGuard>,
     config: Option<&ConfigListing>,
+    system: Option<&snp_git::SystemAttributes>,
     oracle: &mut DiffOracle,
 ) {
     let Some(g) = stash.filter(|g| !g.cleared_intent_to_add()) else {
@@ -1074,7 +1101,8 @@ fn checkout_baseline(
         return;
     };
     let verify = cx.env.is_truthy_flag("SNP_VERIFY_BASELINE");
-    if oracle.elide_checkout_baseline(paths, &config.checkout, verify) == Elision::Mismatch {
+    if oracle.elide_checkout_baseline(paths, &config.checkout, system, verify) == Elision::Mismatch
+    {
         cx.printer.diag(messages::BASELINE_MISMATCH);
     }
 }
