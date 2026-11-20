@@ -24,7 +24,7 @@ use snp_core::env::Env;
 use snp_git::{GitBackend, ProcBackend};
 use snp_proc::spawn::{Captured, Group, PyStatus, Role, SpawnError, Stdin};
 
-use crate::harness::{H, Out, StepClock, args, local, sys};
+use crate::harness::{H, Out, StepClock, args, local, pinned_path, sys};
 
 const DIFF: &str = "diff --no-ext-diff --no-textconv --ignore-submodules";
 const MARK: &str = ".hook-ran";
@@ -205,6 +205,14 @@ fn proof_possible(h: &H) -> bool {
         && (cfg!(target_os = "linux") || git_var_answers(h))
 }
 
+/// `SNP_TEST_EXPECT_GIT_VAR=1` in the test process's environment (CI's macOS job with Homebrew git, beside
+/// `SNP_TEST_PIPELINE_GIT_DIR`): the harness git must answer `git var GIT_ATTR_SYSTEM` on a Stat-mode filesystem, so
+/// every case that skips the baseline really takes ADR-133's answered path; a git that does not answer fails the run
+/// instead of passing on the real-diff branch.
+fn answering_git_expected() -> bool {
+    Env::capture_process().is_truthy_flag("SNP_TEST_EXPECT_GIT_VAR")
+}
+
 /// What one run counted.
 struct Counts {
     /// Baseline-shaped `git diff` calls before the hook.
@@ -286,6 +294,11 @@ fn check_with(case: &Case<'_>, extra: &[(&str, &str)]) -> (usize, bool) {
 /// Asserts that `case` skips the baseline (where the proof can apply) and matches the always-diff path.
 fn skips(case: &Case<'_>) {
     let (before, stat) = check(case);
+    assert!(
+        stat || !answering_git_expected(),
+        "{}: SNP_TEST_EXPECT_GIT_VAR, but the proof cannot apply",
+        case.name
+    );
     assert_eq!(
         before,
         usize::from(!stat),
@@ -790,9 +803,9 @@ fn converting_flagged_or_patched_attributes_run_the_diff() {
 
 /// The `git` that the test's own commands run (first of the harness `PATH`).
 fn real_git() -> PathBuf {
-    ["/usr/local/bin/git", "/usr/bin/git", "/bin/git"]
-        .into_iter()
-        .map(PathBuf::from)
+    pinned_path()
+        .split(':')
+        .map(|d| Path::new(d).join("git"))
         .find(|p| p.is_file())
         .unwrap()
 }
@@ -824,7 +837,10 @@ fn converting_system_file(h: &H) {
     std::fs::write(d.join("gitattributes"), b"big.txt filter=upper\n").unwrap();
 }
 
-const WRAPPED: [(&str, &str); 1] = [("PATH", "<base>/wrap/bin:/usr/local/bin:/usr/bin:/bin")];
+/// The harness `PATH` behind the wrapper's directory.
+fn wrapped_path() -> String {
+    format!("<base>/wrap/bin:{}", pinned_path())
+}
 
 /// ADR-133 (a): the system attributes file comes from `git var GIT_ATTR_SYSTEM` (git >= 2.42), asked once per stashing
 /// run that checked files out, with the run's executable and environment. A wrapper `git` whose build has its own
@@ -853,7 +869,7 @@ fn git_var_names_the_system_attributes_file() {
         },
         after: &nothing,
     };
-    let (before, stat) = check_with(&converting, &WRAPPED);
+    let (before, stat) = check_with(&converting, &[("PATH", &wrapped_path())]);
     // without the answer (git < 2.42) only the heuristic looks: the documented hole of older gits on Linux
     assert_eq!(before, usize::from(new || !stat), "{}", converting.name);
     let missing = Case {
@@ -861,7 +877,7 @@ fn git_var_names_the_system_attributes_file() {
         before: &|h| wrapper(h, None),
         after: &nothing,
     };
-    let (before, stat) = check_with(&missing, &WRAPPED);
+    let (before, stat) = check_with(&missing, &[("PATH", &wrapped_path())]);
     assert_eq!(before, usize::from(!stat), "{}", missing.name);
 }
 
@@ -877,9 +893,9 @@ fn an_older_git_is_not_asked_and_keeps_the_heuristic() {
         },
         after: &nothing,
     };
-    let (_, c) = run_counted(&case, &WRAPPED);
+    let (_, c) = run_counted(&case, &[("PATH", &wrapped_path())]);
     assert_eq!(c.var, 0, "git < 2.42 is not asked");
-    let (before, stat) = check_with(&case, &WRAPPED);
+    let (before, stat) = check_with(&case, &[("PATH", &wrapped_path())]);
     assert_eq!(stat, cfg!(target_os = "linux") && stat);
     assert_eq!(before, usize::from(!stat), "{}", case.name);
 }
@@ -909,9 +925,38 @@ fn macos_proves_the_baseline_with_git_var() {
     let probe = H::new();
     let expected =
         git_var_answers(&probe) && snp_os::fsinfo::stat_oracle_safe(&probe.root).unwrap_or(false);
+    assert!(
+        expected || !answering_git_expected(),
+        "SNP_TEST_EXPECT_GIT_VAR: {} does not answer `git var GIT_ATTR_SYSTEM`",
+        real_git().display()
+    );
     let (before, stat) = check(&case);
     assert_eq!(stat, expected);
     assert_eq!(before, usize::from(!expected));
+}
+
+/// ADR-133 (a), the CI guard of the answered path: under `SNP_TEST_EXPECT_GIT_VAR` the harness git (first of
+/// `SNP_TEST_PIPELINE_GIT_DIR` and the pinned `PATH`) answers `git var GIT_ATTR_SYSTEM`, the proof can apply, and a
+/// stashing run asks `git var` exactly once and skips the baseline. Without it, nothing is asserted.
+#[test]
+fn an_expected_answering_git_takes_the_answered_path() {
+    if !answering_git_expected() {
+        return;
+    }
+    let probe = H::new();
+    assert!(
+        git_var_answers(&probe),
+        "SNP_TEST_EXPECT_GIT_VAR: {} does not answer `git var GIT_ATTR_SYSTEM` (git >= 2.42)",
+        real_git().display()
+    );
+    assert!(proof_possible(&probe), "not a Stat-mode filesystem");
+    let b8 = Case {
+        name: "b8 with an answering git",
+        before: &nothing,
+        after: &nothing,
+    };
+    let (_, c) = run_counted(&b8, &[]);
+    assert_eq!((c.var, c.before, c.stat), (1, 0, true));
 }
 
 /// A tracked directory replaced by a symbolic link: its files are beyond the link, so `diff-index` reports them

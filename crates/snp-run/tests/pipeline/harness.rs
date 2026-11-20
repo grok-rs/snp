@@ -346,6 +346,25 @@ pub(crate) struct H {
     pub(crate) backend: Option<Arc<dyn GitBackend>>,
 }
 
+/// The test-only directory of the git the pipeline tests run instead of the system one (`SNP_TEST_PIPELINE_GIT_DIR`
+/// in the test process's environment: CI's Homebrew git on macOS, where `/usr/bin/git` is Apple's older build), or
+/// `None`.
+pub(crate) fn test_git_dir() -> Option<OsString> {
+    Env::capture_process()
+        .get("SNP_TEST_PIPELINE_GIT_DIR")
+        .filter(|d| !d.is_empty())
+        .map(OsString::from)
+}
+
+/// The harness `PATH`: `/usr/local/bin:/usr/bin:/bin`, behind [`test_git_dir`] when set.
+pub(crate) fn pinned_path() -> String {
+    const SYSTEM: &str = "/usr/local/bin:/usr/bin:/bin";
+    match test_git_dir() {
+        Some(d) => format!("{}:{SYSTEM}", d.to_string_lossy()),
+        None => SYSTEM.to_owned(),
+    }
+}
+
 impl H {
     pub(crate) fn new() -> Self {
         let tmp = tempfile::tempdir().unwrap();
@@ -354,7 +373,7 @@ impl H {
         let home = base.join("home");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::create_dir_all(&home).unwrap();
-        let path = OsString::from("/usr/local/bin:/usr/bin:/bin");
+        let path = OsString::from(pinned_path());
         let env: Vec<(String, OsString)> = vec![
             ("PATH".into(), path),
             ("HOME".into(), home.clone().into()),
