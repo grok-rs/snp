@@ -22,7 +22,8 @@ overflow checks kept for every crate; ADR-115 the tier-1 scan engine; ADR-116 th
 into the workspace; ADR-117 the B8 stash-time overlaps; ADR-118 the musl mimalloc build without transparent huge pages;
 ADR-119 the proven post-checkout baseline; ADR-131 the file-content cache of consecutive in-process hooks; ADR-132 the
 baseline taken by the first native write in all-in-process runs; ADR-135 the hook script template v3; ADR-136 the wave-5
-bench methodology; ADR-137 PIE release artifacts and their hardening gate.
+bench methodology; ADR-137 PIE release artifacts and their hardening gate; ADR-138 the internal crates' API policy and
+snp-yaml's borrowed tags and scalar text.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -1258,7 +1259,8 @@ and COMPATIBILITY §5.7/§5.8/§7.4 describe it.
 ### ADR-088 — Release channels: crates.io and Homebrew
 
 *Status: Accepted; amended by ADR-116 (the publish set gains snp-cfgv and snp-identify, which replace the external
-user crates cfgv and file-identify and their ADR-061 provenance requirement). The amending ADR is normative where
+user crates cfgv and file-identify and their ADR-061 provenance requirement); (2) affirmed by ADR-138 (the published
+internal crates make no API stability promise and say so in their descriptions). The amending ADR is normative where
 they differ.*
 
 **Context.** ADR-049 released snp through cargo-dist (GitHub releases, shell/PowerShell installers) and PyPI
@@ -2404,6 +2406,9 @@ tests and the CLI goldens are unchanged.
 
 ### ADR-112 — snp-yaml materialises by moving what occurs once; the `Node.tag` type change is deferred
 
+*Status: Accepted; amended by ADR-138 ((5): `Node.tag` is `Cow<'static, str>` under ADR-088(2), no major version).
+The amending ADR is normative where they differ.*
+
 *Relates to ADR-002 (snp's own constructor), D-SEC-11 (limits before anything is copied) and ADR-088 (snp-yaml is a
 published crate).*
 
@@ -3162,6 +3167,70 @@ targets only once the repository is public). The x86_64-musl artifacts keep thei
 property, documented in §11.7, not checked). The verdict is revisited only for a hard startup gate missing by less
 than 0.25 ms with nothing else left to cut, or once stable Rust emits CET shadow stacks (BTI and PAC on aarch64) for
 snp's code, and even then for gnu only, never musl.
+
+### ADR-138 — Internal crates have no API promise; snp-yaml borrows resolved tags and scalar text
+
+*Status: Accepted. Affirms ADR-088(2) and amends ADR-112(5); the amended clause is superseded where they differ.
+Owner decision of 2026-11-21 (wave-5 panel `rust`, Y1; allocation lens alloc-7).*
+
+**Context.** ADR-112(5) deferred `Node.tag: Cow<'static, str>` because it changes a public field of `snp-yaml`, a
+crate ADR-088 publishes: it asked for "an owner decision and a major-version plan". ADR-088(2) had already stated
+the policy that answers it: the internal crates have no semver promise and snp requires each of them as `=X.Y.Z`.
+The unreleased 2.0.1 train also breaks snp-yaml 2.0.0's API anyway: `load` and `construct` return `cfgv::Value`,
+which ADR-116 moved from the crates.io crate `cfgv` 0.3 to `snp-cfgv`. On 2026-11-20, crates.io listed five reverse
+dependencies of snp-yaml, all of them snp's own crates. A major version of the whole workspace is not an option either:
+the workspace version is user-visible (`snp --version`, `minimum_snp_version`, the PyPI wheel, the Homebrew
+formula). In `validate-config` on 1,000 hooks (B10), the boxed tags were 21,053 allocations (about 18,000 scalar and
+3,000 collection tags), all for strings the resolver holds as statics. DHAT also showed snp-yaml's scanner allocating
+buffers it never reads. Each plain scalar that ends a line allocated a `String` for its one `\n` (`leading_break`:
+4,010 blocks in B10, 3,000 in B11). The blank run before a plain scalar's next word was copied while the value was
+still borrowed (2,000 blocks in B10). Quoted scalars grew their value one character at a time (6,000 blocks for
+B10's 3,000 quoted scalars). Every document built the two default `%TAG` directives as four `Vec<u8>`s (2,800 blocks
+in B11).
+**Decision.** (1) **ADR-088(2) is affirmed.** The 24 published library crates (snp-argparse, -cfgv, -cli, -cmd,
+-config, -core, -files, -git, -hooks, -hooks-data, -identify, -lang, -migrate, -net, -os, -proc, -pycompat,
+-pyparsers, -pyre, -repo, -run, -stash, -store, -yaml) are internal crates of snp. Their versions follow snp's, and
+their public API may change in any release without a major version. A change is recorded in the CHANGELOG. Each
+crate's crates.io `description` ends "(internal crate of snp; no API stability promise, versions follow snp)". The
+user-facing contract stays the `snp` binary's: its CLI, output, files and the `snp` package. snp-testkit,
+snp-difftest, snp-probe and xtask are unpublished and already say so. (2) **`Node.tag` is `Cow<'static, str>`**
+(amends ADR-112(5)). A tag the resolver assigns borrows its static string. That covers implicit plain scalars
+(`resolve_plain(..).as_tag()`), quoted scalars and the non-specific `!` (`STR_TAG`, or the plain-implicit
+resolution libyaml gives `!`), and untagged collections (`SEQ_TAG`, `MAP_TAG`). An explicit tag is
+`Cow::Owned(String)`. It keeps the bytes and the `UnicodeDecodeError` of `decode_tag`, and wrapping the decoded
+`String` copies nothing. `Debug` prints a `Cow` as the `str` it holds, so `{:?}` of a node or document is
+byte-identical. `Node` grows by 8 bytes per node. (3) **Scanner buffers (alloc-7, crate-private).**
+`leading_break` is an `Option<char>`, filled by `read_break`, the one-character form of `READ_LINE`. libyaml appends
+to it only when no break is pending and empties it whenever it is used, so it never holds more than one character.
+The blank run after a scalar's last non-blank character is a byte range of the input. Blanks are copied verbatim, so
+the range is copied only into a value that is already owned, and dropped at a break as libyaml clears its buffer.
+A quoted scalar stays borrowed until the first `''`, escape, escaped break or line break. Its value is then the input
+between the opening quote and that point (at a break, up to the start of the blanks before it, which libyaml
+drops). That text is copied once, and the scan continues as before. A scalar with none of these is copied once at
+the closing quote. The parser's `TagDirective` holds `Cow<'static, [u8]>`. The defaults `!` and `!!` borrow static
+bytes, and a document's own `%TAG` keeps its owned bytes. Lookup order and the duplicate check are unchanged.
+**Rationale.** Under (1), the type change needs no version plan: nothing outside snp builds against snp-yaml, and
+2.0.1 already changes its API. The private-representation alternative of the panel would have given the same gain
+without an API change. It costs about 200 lines and a second node type in the most parity-critical crate, and only
+pays off under a semver promise that ADR-088 never made. A 16-byte `Tag` newtype would save the 8 bytes per node at
+the cost of new API surface. Arena memory has never been the constraint, and B10's heap peak still falls. The scanner
+changes cannot take a wrong path. A borrowed value is, by construction, the very characters the old code pushed one by
+one (the reader holds the whole input, and every position is a character boundary). The per-character advance,
+`CACHE` calls, marks and error checks are unchanged, so reader errors, positions and messages are too. Anything that
+transforms text (escapes, `''`, folding) leaves the fast path before it happens.
+**Consequences.** Callgrind and DHAT of snp's process (profiling build, fixtures of `cargo xtask bench setup`,
+against the ADR-111 head): B10 165.9 M → 154.6 M instructions (−6.8%), 154,992 → 124,925 heap blocks (−19.4%),
+heap peak 8.58 → 8.40 MB; B11 150.2 M → 145.6 M (−3.1%), 187,635 → 170,235 blocks (−9.3%). Bytes allocated are
+unchanged (24.87 MB on B10). Tests: a test-only copy of the former quoted and plain scanners
+(`crates/snp-yaml/src/libyaml/scanner_reference.rs`) backs a differential test. On 60,000 generated quoted and 60,000
+plain scalars, some crossing a 16 KiB raw chunk, it compares values, styles, marks, errors and the scanner state
+after each scan. The scalars mix verbatim runs, blanks before breaks, every break form, `''`, valid and invalid
+escapes, escaped breaks, indicators and document markers, in block and flow context at several indentations. A
+seeded mutation of the break cut-off fails it. Unit tests cover each way off the quoted fast path. The raw-chunk
+acceptance test gains borrowed and folded quoted scalars and a reader error inside a quoted scalar. An acceptance
+test checks that resolved tags are `Borrowed`, explicit tags (`!!int`, `!local`, a `%TAG` prefix with `%41`) are
+`Owned`, and `Debug` matches `Box<str>`. The oracle vectors, the API contract test (now naming
+`Cow<'static, str>`), the CLI goldens and the difftest scenarios are unchanged.
 
 ## Appendix A — Open questions of the research documents, resolved
 

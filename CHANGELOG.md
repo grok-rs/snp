@@ -250,6 +250,13 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   compiled pattern once; snp-pyre sizes its parse buffers exactly. `validate-config` on 1,000 hooks runs 14.5% fewer
   instructions (193.5 M → 165.4 M) with 13,000 fewer allocations, `gc` on 500 configs 7.8% fewer (163.7 M →
   150.9 M). Messages, warnings, their order and every result are unchanged.
+- Loading YAML allocates less (ADR-138). Internal crates: snp-yaml's `Node.tag` is a `Cow<'static, str>` (was
+  `Box<str>`), borrowed for a tag the resolver assigns and owned for an explicit tag; the 24 published internal
+  crates make no API stability promise (ADR-088(2)) and now say so in their crates.io descriptions. The scanner
+  copies a quoted scalar once instead of character by character and no longer allocates for line breaks, blank runs
+  or the default `%TAG` handles. `validate-config` on 1,000 hooks runs 6.8% fewer instructions (165.9 M → 154.6 M)
+  with 30,000 (19%) fewer allocations, `gc` on 500 configs 3.1% fewer (150.2 M → 145.6 M) with 17,400 fewer. Loaded
+  values, errors, marks and `Debug` output are unchanged.
 
 ### Fixed
 
