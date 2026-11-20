@@ -180,11 +180,19 @@ fn shuffled<'f>(files: &'f [Cow<'_, OsStr>], shuffle: bool) -> Vec<&'f OsStr> {
     if !shuffle || files.len() < 2 {
         return files.iter().map(AsRef::as_ref).collect();
     }
-    snp_pycompat::random::precommit_shuffled_indices(files.len())
-        .into_iter()
-        .filter_map(|i| files.get(usize::try_from(i).ok()?))
-        .map(AsRef::as_ref)
-        .collect()
+    let order = snp_pycompat::random::precommit_shuffled_indices(files.len());
+    let mut out = Vec::new();
+    // `filter_map` hides the length from `collect` (a lower bound of 0: doubling growth, the 2x block of a 50k-file
+    // run at the heap peak); a failed reservation falls back to that growth
+    let _reserved: Result<(), std::collections::TryReserveError> =
+        out.try_reserve_exact(order.len());
+    out.extend(
+        order
+            .into_iter()
+            .filter_map(|i| files.get(usize::try_from(i).ok()?))
+            .map(AsRef::<OsStr>::as_ref),
+    );
+    out
 }
 
 /// `RunPlan` → `Ran`.
