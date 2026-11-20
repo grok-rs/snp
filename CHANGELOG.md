@@ -209,8 +209,8 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   priority group, and the following natives check one `stat` of the path (device, inode, size, mtime, ctime, type)
   instead of opening and reading it again; anything different reads the file, and a native that writes a file drops
   it first. Output and side effects are unchanged, including edits made by other programs between hooks
-  (`SNP_VERIFY_FILE_CACHE=1` cross-checks every reuse). On B6 snp makes 35.8% fewer system calls (43,451 → 27,914:
-  `openat` 6,880 → 2,435, `read` 10,977 → 4,154; `statx` +1,082).
+  (`SNP_VERIFY_FILE_CACHE=1` cross-checks every reuse). On B6 snp makes 36.5% fewer system calls (43,344 → 27,512:
+  `openat` 6,880 → 2,435, `read` 10,824 → 3,876; `statx` +1,082).
 
 ### Fixed
 

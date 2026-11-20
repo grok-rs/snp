@@ -2701,14 +2701,14 @@ bytes: a freshly written file is racy. (c) An inode map for aliases: ctime alrea
 of per-window lifetime: allowed by the validation, not needed for B6; revisit for configs that mix natives and process
 hooks. (e) Windows: stable std exposes no ctime or file id. (f) A non-SipHash hasher for the map: about 1 M
 instructions on B6 against HashDoS resistance.
-**Consequences.** B6 (fixture regenerated in `target/`, profiling build, strace `-f -c` of the tree): 43,451 → 27,914
-syscalls (−35.8%): `openat` 6,880 → 2,435, `close` 6,650 → 2,205, `read` 10,977 → 4,154, `lseek` 971 → 10, `statx`
-6,483 → 7,565 (+1,082: a hit's `statx(path)` replaces a read's `statx(fd)`, and `read_head` hits add one). B7: 43,897 →
-28,295, `statx` 6,484 → 7,566. ADR-100's paired `statx` gate therefore fails on this change for B6 and B7: it is
+**Consequences.** B6 (fixture regenerated in `target/`, profiling builds of `main` and of this change, strace `-f -c` of
+the tree): 43,344 → 27,512 syscalls (−36.5%): `openat` 6,880 → 2,435, `close` 6,650 → 2,205, `read` 10,824 → 3,876,
+`lseek` 971 → 10, `statx` 6,483 → 7,565 (+1,082: a hit's `statx(path)` replaces a read's `statx(fd)`, and `read_head`
+hits add one). B7: 43,966 → 28,361, `statx` 6,484 → 7,566. ADR-100's paired `statx` gate therefore fails on this change for B6 and B7: it is
 re-baselined as that ADR states, through two `[[known_miss]]` entries (`statx <= base`, B6 and B7) whose own check
 says to remove them once the base carries this change; no other counter or budget moves. snp's own instructions
-(callgrind, snp process): B6 89.7 M → 90.2 M (+0.6%: the map's hashing; the saving is in the kernel), B7 91.3 M → 91.8 M;
-dhat on B6: 92,191 → 90,340 blocks, heap peak 0.83 → 1.13 MiB (the cached files). Tests: a fixer-then-checker chain
+(callgrind, snp process): B6 89.8 M → 90.2 M (+0.5%: the map's hashing; the saving is in the kernel), B7 91.1 M → 92.0 M
+(+1.0%); dhat on B6: 92,163 → 90,321 blocks, heap peak 0.79 → 1.07 MiB (the cached files). Tests: a fixer-then-checker chain
 (trailing-whitespace → end-of-file-fixer → mixed-line-ending → check-yaml, check-json, detect-private-key), external
 edits between hooks (same size and new size, racy and old, a deletion), a same-size alias write, the caps, a
 non-regular file, errors, `chmod 000` after a fill, another device, end-of-file-fixer and shebang readers, pygrep,

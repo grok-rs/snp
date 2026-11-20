@@ -332,7 +332,7 @@ reason = "snp lists the patch with git apply --numstat (121 M instructions, D-DA
 [[known_miss]]
 scenario = "B6"
 check = "statx <= base"
-reason = "ADR-131 (the file-content cache) trades each read's statx(fd) for a hit's statx(path) and adds one per read_head hit: +1,082 statx against -15.5k syscalls in all (openat 6,880 -> 2,435); ADR-100's re-baseline, remove once the base carries ADR-131"
+reason = "ADR-131 (the file-content cache) trades each read's statx(fd) for a hit's statx(path) and adds one per read_head hit: +1,082 statx against -15.8k syscalls in all (openat 6,880 -> 2,435); ADR-100's re-baseline, remove once the base carries ADR-131"
 
 [[known_miss]]
 scenario = "B7"
