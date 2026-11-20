@@ -66,6 +66,12 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   local-path repositories with an in-place `realpath` and decodes each `.snp-repo.json` without a JSON tree (B11, 200
   configs and 500 repositories: 162M -> 114M instructions, 191k -> 114k allocations, 27.7 -> 15.3 MB allocated). The
   removal set, the kept markers and the output are unchanged.
+- A pinned `pre-commit/pre-commit-hooks` tag (Tier A) no longer loads its embedded manifest on every run: the
+  manifest is built from a model `cargo xtask gen-pch-data` generates per tag (the hooks after the schema defaults),
+  which a generated-data test proves equal to the load for every tag. Other manifests compile a `files`/`exclude`
+  pattern only when its parse reports a regex `FutureWarning`, instead of compiling every pattern to look for one
+  (B6, 13 pre-commit-hooks v6.0.0 hooks over 960 files: 89.4M -> 82.1M instructions; B7 91.1M -> 83.6M). Output,
+  errors and warnings are unchanged.
 - Faster stash of large unstaged changes on Linux: when the stat stamps of the patch's files prove they did not change
   since the run took the worktree lock, and `git diff-index --name-only` shows no other changed file, the stash no
   longer runs a second full `git diff-index --binary` to re-verify the patch (ADR-097). snp's own CPU in the 10 MB
