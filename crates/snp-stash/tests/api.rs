@@ -51,6 +51,7 @@ mod api {
             verify: false,
             old_git: false,
             report_recovery: true,
+            checkout_notice: None,
         }
     }
 

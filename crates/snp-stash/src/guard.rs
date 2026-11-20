@@ -23,6 +23,7 @@ use std::io::{self, BufReader, BufWriter, Read, Seek, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::mpsc::SyncSender;
 use std::time::{Duration, Instant, SystemTime};
 
 use snp_core::cancel::CancelToken;
@@ -70,6 +71,11 @@ pub struct StashCtx {
     /// Report orphaned stashes once the lock is held (§4.6). `false` when the run already reported them at its start
     /// ([`crate::recovery_report`] got the lock), so every notice is printed exactly once per run.
     pub report_recovery: bool,
+    /// Sent `()` once, right before step 8's checkout, and dropped unsent on every other exit of the stash steps, so a
+    /// receiver learns "a checkout is starting" or, from the disconnection, "none will" (snp-only, ADR-133: the run
+    /// overlaps `git var GIT_ATTR_SYSTEM` with the checkout). It never changes what the stash does; `None` sends
+    /// nothing.
+    pub checkout_notice: Option<SyncSender<()>>,
 }
 
 impl StashCtx {
@@ -288,7 +294,7 @@ const WRITEBACK_STEP: u64 = 4 << 20;
 struct Writeback<'scope, 'env> {
     scope: &'scope std::thread::Scope<'scope, 'env>,
     worker: Option<(
-        std::sync::mpsc::SyncSender<()>,
+        SyncSender<()>,
         std::thread::ScopedJoinHandle<'scope, io::Result<()>>,
     )>,
     off: bool,
@@ -705,6 +711,8 @@ impl Inner {
     /// pass (no patch, or the patch could not be written) only discard the file and never touch the journal. A panic
     /// unwinds without deleting anything (the `Drop` restore and the recovery notice still name the patch).
     fn stash(&mut self) -> Result<StashOutcome, Failure> {
+        // taken here, so every return below drops it unsent unless step 8 is reached
+        let notice = self.cx.checkout_notice.take();
         // 3. intent-to-add (`_intent_to_add_cleared`, + `--no-renames`: hazard b).
         let ita = self.git().intent_to_add()?;
         if !ita.is_empty() {
@@ -738,6 +746,10 @@ impl Inner {
         self.printer().log(Level::Info, &messages::stashing(&path));
         // 8. checkout (pre-commit's `try` starts here: a failing checkout still restores).
         self.flags.patch = PatchStep::Due;
+        if let Some(n) = notice {
+            // a full or disconnected receiver only loses an overlap
+            let _lost: Result<(), _> = n.try_send(());
+        }
         self.git().checkout_paths(&paths, true, Group::Isolated)?;
         fault::hit(Point::StashState(5));
         Ok(StashOutcome::Patch(path, paths))
