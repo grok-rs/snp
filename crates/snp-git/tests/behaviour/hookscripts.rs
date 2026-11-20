@@ -46,6 +46,10 @@ fn classify_every_fixture() {
             "snp-prior-5bb9bd89cf6c92c58fee7677ceaf4fc3",
             Owner::Snp { stale: true },
         ),
+        (
+            "snp-prior-405bd8559925d194c1d22af6ef66282e",
+            Owner::Snp { stale: true },
+        ),
     ] {
         assert_eq!(classify(&fixture(name)).unwrap(), want, "{name}");
     }

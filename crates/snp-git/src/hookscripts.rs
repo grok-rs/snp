@@ -39,13 +39,17 @@ pub enum Owner {
     Foreign,
 }
 
-/// The `# … ID:` marker of the current snp hook-script template: md5(`snp hook script template v2`) (ADR-105).
-pub const SNP_SCRIPT_ID: &str = "405bd8559925d194c1d22af6ef66282e";
+/// The `# … ID:` marker of the current snp hook-script template: md5(`snp hook script template v3`) (ADR-135).
+pub const SNP_SCRIPT_ID: &str = "b5aab319837cfd7b570aecfbefd9e801";
 
 /// Ids of earlier snp 2.x templates (a template change bumps the id and moves the old one here): v1, md5(`snp hook
-/// script template v1`), of snp 2.0.0–2.0.1. The v2 template still carries it as its `snp 2.0 compat ID` line, so
-/// it is checked only after [`SNP_SCRIPT_ID`].
-pub const SNP_PRIOR_IDS: &[&str] = &["5bb9bd89cf6c92c58fee7677ceaf4fc3"];
+/// script template v1`), of the released snp 2.0.0, and v2, md5(`snp hook script template v2`) (ADR-105), which
+/// only unreleased development builds installed. The current template still carries v1's id as its `snp 2.0 compat
+/// ID` line, so the list is checked only after [`SNP_SCRIPT_ID`].
+pub const SNP_PRIOR_IDS: &[&str] = &[
+    "5bb9bd89cf6c92c58fee7677ceaf4fc3",
+    "405bd8559925d194c1d22af6ef66282e",
+];
 
 /// The stable first comment line of every snp 2.x template: with a `# ID: ` line this binary does not know (a later
 /// template) and a pre-commit compat id, the script is still snp's (`Snp { stale: true }`), never the pre-commit
@@ -318,24 +322,36 @@ mod tests {
         );
         assert_eq!(
             SNP_PRIOR_IDS,
-            ["5bb9bd89cf6c92c58fee7677ceaf4fc3"],
-            "template v1 (snp 2.0.0-2.0.1) is the only earlier one"
+            [
+                "5bb9bd89cf6c92c58fee7677ceaf4fc3",
+                "405bd8559925d194c1d22af6ef66282e"
+            ],
+            "templates v1 (snp 2.0.0) and v2 (unreleased, ADR-105) are the earlier ones"
         );
         assert!(!SNP_PRIOR_IDS.contains(&SNP_SCRIPT_ID));
     }
 
-    /// v2 keeps the v1 id as a comment line: this binary sees the current id first, and snp 2.0.x, whose current
-    /// id is v1's, still sees its own script (ADR-105).
+    /// The current template keeps the v1 id as a comment line: this binary sees the current id first, and snp
+    /// 2.0.x, whose current id is v1's, still sees its own script (ADR-105, ADR-135). v2 and v1 scripts are stale.
     #[test]
-    fn v2_carries_the_v1_id_for_older_binaries() {
-        let v2 = format!(
+    fn current_template_carries_the_v1_id_for_older_binaries() {
+        let v3 = format!(
             "{SNP_HEADER}\n# ID: {SNP_SCRIPT_ID}\n# pre-commit compat ID: {}\n# prek compat ID: {PREK_ID}\n\
              # snp 2.0 compat ID: 5bb9bd89cf6c92c58fee7677ceaf4fc3\n",
             PRE_COMMIT_IDS[0]
         );
-        assert_eq!(classify_bytes(v2.as_bytes()), Owner::Snp { stale: false });
+        assert_eq!(classify_bytes(v3.as_bytes()), Owner::Snp { stale: false });
         // snp 2.0.x: `contains(SNP_SCRIPT_ID = v1)` first.
-        assert!(contains(v2.as_bytes(), "5bb9bd89cf6c92c58fee7677ceaf4fc3"));
+        assert!(contains(v3.as_bytes(), "5bb9bd89cf6c92c58fee7677ceaf4fc3"));
+        // A v2 script (a development build's install): stale, rewritten by `install` and `doctor --fix`.
+        let v2 = v3.replace(SNP_SCRIPT_ID, "405bd8559925d194c1d22af6ef66282e");
+        assert_eq!(classify_bytes(v2.as_bytes()), Owner::Snp { stale: true });
+        // A v1 script (snp 2.0.0): stale too.
+        let v1 = format!(
+            "{SNP_HEADER}\n# ID: 5bb9bd89cf6c92c58fee7677ceaf4fc3\n# pre-commit compat ID: {}\n",
+            PRE_COMMIT_IDS[0]
+        );
+        assert_eq!(classify_bytes(v1.as_bytes()), Owner::Snp { stale: true });
     }
 
     /// A later template (an id this binary does not know) under the stable header is a stale snp script, never the
