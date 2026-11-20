@@ -13,6 +13,7 @@
 //!
 //! Owner: WP-23.
 
+mod attributes;
 mod gitconfig;
 
 use std::collections::HashSet;
@@ -23,7 +24,9 @@ use std::time::SystemTime;
 
 use snp_core::env::Env;
 use snp_core::failure::Failure;
-use snp_git::{CheckoutConfig, DiffFingerprint, Git, IndexEntries, RepoInfo, ZList};
+use snp_git::{
+    CheckoutConfig, DiffFingerprint, Git, IndexEntries, RepoInfo, SystemAttributes, ZList,
+};
 
 /// At most this many index entries for Stat mode (ADR-027).
 const MAX_ENTRIES: usize = 16_384;
@@ -299,6 +302,8 @@ struct StatState {
     tracked: Arc<IndexEntries>,
     inputs: Vec<(PathBuf, InputKind)>,
     origins: Arc<[PathBuf]>,
+    /// The system attributes file `git var GIT_ATTR_SYSTEM` named for this run (ADR-133), one more input.
+    system_attributes: Option<PathBuf>,
     snapshot: Option<Snapshot>,
 }
 
@@ -339,12 +344,14 @@ fn tracked_paths(root: &Path, tracked: &IndexEntries) -> Option<(Vec<PathBuf>, u
     Some((files, n_files))
 }
 
-/// Builds the list of inputs (and whether `attr.tree` forbids Stat mode).
+/// Builds the list of inputs (and whether `attr.tree` forbids Stat mode); `system` is the system attributes file `git
+/// var` named (ADR-133), watched beside the places ADR-119 looks in.
 fn build_inputs(
     info: &RepoInfo,
     env: &Env,
     origins: &[PathBuf],
     dirs: &[PathBuf],
+    system: Option<&Path>,
 ) -> Option<Vec<(PathBuf, InputKind)>> {
     let env_facts = gitconfig::from_env(env, &info.root)?;
     if env.is_present("GIT_ATTR_SOURCE") || env_facts.attr_tree {
@@ -416,6 +423,9 @@ fn build_inputs(
     push(PathBuf::from("/etc/gitattributes"), InputKind::Other);
     for p in prefix.iter().chain(&link_prefix) {
         push(p.join("etc").join("gitattributes"), InputKind::Other);
+    }
+    if let Some(p) = system {
+        push(p.to_path_buf(), InputKind::Other);
     }
     push(
         info.common_dir.join("info").join("attributes"),
@@ -531,9 +541,20 @@ impl StatState {
         tracked: Arc<IndexEntries>,
         origins: Arc<[PathBuf]>,
     ) -> Option<Self> {
+        Self::with_system(info, env, tracked, origins, None)
+    }
+
+    /// [`Self::new`] watching the system attributes file `system` too (ADR-133).
+    fn with_system(
+        info: &RepoInfo,
+        env: &Env,
+        tracked: Arc<IndexEntries>,
+        origins: Arc<[PathBuf]>,
+        system: Option<PathBuf>,
+    ) -> Option<Self> {
         let (paths, n_files) = tracked_paths(&info.root, &tracked)?;
         let dirs = paths.get(n_files..).unwrap_or_default();
-        let inputs = build_inputs(info, env, &origins, dirs)?;
+        let inputs = build_inputs(info, env, &origins, dirs, system.as_deref())?;
         Some(Self {
             info: info.clone(),
             env: env.clone(),
@@ -542,6 +563,7 @@ impl StatState {
             tracked,
             inputs,
             origins,
+            system_attributes: system,
             snapshot: None,
         })
     }
@@ -622,17 +644,25 @@ impl StatState {
     /// diff` prints nothing when (a) the effective configuration is plain ([`CheckoutConfig::plain`]: no
     /// `core.autocrlf`, fsmonitor, ignoreStat, sparse checkout, configuration-based hook, `core.attributesFile` or
     /// `attr.tree`, as git itself lists them, not as the best-effort `gitconfig` reader reads them) and no fsmonitor
-    /// test hook is in the environment; (b) no attributes file exists (every attributes input of the snapshot is
-    /// missing: with no `core.attributesFile`, the default one is among them) and the index tracks none ([`index_plain`]), so no filter, `text`/`eol`/`crlf`, `ident` or
+    /// test hook is in the environment; (b) no attributes input converts anything (ADR-133: every attributes input of
+    /// the snapshot is missing or a regular file whose tokens set or value none of the converting attributes,
+    /// `text=auto` allowed under [`text_auto_allowed`]; with no `core.attributesFile`, the default one is among
+    /// them), the patch holds no `.gitattributes`, and every tracked `.gitattributes` is an unflagged regular file in
+    /// the worktree ([`index_attributes_plain`]), so no filter, `text`/`eol`/`crlf`, `ident` or
     /// `working-tree-encoding` conversion applies and the checkout wrote each blob's bytes, which `git diff` reads
-    /// back unconverted; (c) no `post-checkout` or
-    /// `post-index-change` hook exists, the two hooks a path-limited checkout runs; (d) every directory holding a
-    /// tracked path is a directory (no path is beyond a symbolic link); and (e)
-    /// [`checked_out_files_plain`]. Anything else answers `false`: the caller takes the real baseline.
-    fn checkout_left_no_diff(&self, checked_out: &ZList, config: &CheckoutConfig) -> bool {
-        // (b) needs the system attributes file among the inputs; only Linux git builds are known to put it where
-        // `build_inputs` looks (`/etc`, or `<prefix>/etc` of the `PATH` entry or of its target)
-        if !PROOF_PLATFORM {
+    /// back unconverted; (c) no `post-checkout` or `post-index-change` hook exists, the two hooks a path-limited
+    /// checkout runs; (d) every directory holding a tracked path is a directory (no path is beyond a symbolic link);
+    /// and (e) [`checked_out_files_plain`]. Anything else answers `false`: the caller takes the real baseline.
+    ///
+    /// `answered`: `git var GIT_ATTR_SYSTEM` named the system attributes file for this run (it is among the inputs,
+    /// or there is none); without that answer only Linux builds are known to put it where [`build_inputs`] looks.
+    fn checkout_left_no_diff(
+        &self,
+        checked_out: &ZList,
+        config: &CheckoutConfig,
+        answered: bool,
+    ) -> bool {
+        if !(answered || HEURISTIC_PLATFORM) {
             return false;
         }
         let Some(snap) = &self.snapshot else {
@@ -645,13 +675,7 @@ impl StatState {
         {
             return false;
         }
-        let no_attributes = self
-            .inputs
-            .iter()
-            .zip(&snap.inputs)
-            .all(|((_, kind), (l, s))| {
-                *kind != InputKind::Other || (l.kind == Kind::Missing && s.kind == Kind::Missing)
-            });
+        let text_auto = text_auto_allowed(config);
         let real_dirs = snap
             .paths
             .get(self.n_files..)
@@ -659,26 +683,50 @@ impl StatState {
             .iter()
             .all(|s| s.kind == Kind::Dir);
         let files = snap.paths.get(..self.n_files).unwrap_or_default();
-        no_attributes
-            && real_dirs
-            && index_plain(self.tracked.paths.iter())
+        let entries = || {
+            self.tracked
+                .paths
+                .iter()
+                .zip(self.tracked.modes.iter().copied())
+        };
+        real_dirs
+            && checked_out.iter().all(|p| !is_attributes_file(p))
+            && index_attributes_plain(entries(), &self.tracked.tags, files)
             && no_checkout_hooks(&self.info, config)
             && checked_out_files_plain(
-                self.tracked
-                    .paths
-                    .iter()
-                    .zip(self.tracked.modes.iter().copied()),
+                entries(),
                 files,
                 &checked_out.iter().collect(),
                 config.file_mode,
             )
+            && self.inputs.iter().zip(&snap.inputs).all(|((p, kind), st)| {
+                *kind != InputKind::Other || attributes::input_plain(p, *st, text_auto)
+            })
     }
 }
 
-/// Whether ADR-119's proof is attempted on this platform: Linux only. On macOS the system attributes file of the
-/// usual builds is not provably among the snapshot's inputs (Xcode's git, packagers' `sysconfdir`), so a missing
-/// input there cannot prove that none exists; Windows has no Stat mode.
-const PROOF_PLATFORM: bool = cfg!(target_os = "linux");
+/// Whether ADR-119's proof is attempted without `git var GIT_ATTR_SYSTEM`'s answer (git < 2.42, or no usable answer):
+/// on Linux only, where the usual builds read `/etc/gitattributes` or `<prefix>/etc/gitattributes`, both among the
+/// inputs. Elsewhere (Xcode's git, packagers' own `sysconfdir`) a missing input proves nothing; Windows has no Stat
+/// mode.
+const HEURISTIC_PLATFORM: bool = cfg!(target_os = "linux");
+
+/// ADR-133: whether a `text=auto` token converts nothing in this run. With `core.autocrlf` off ([`CheckoutConfig::plain`])
+/// and `core.eol` unset, `lf` or `native` off Windows, `output_eol(CRLF_AUTO)` is LF, so the checkout writes the blob's
+/// bytes; `git diff` reads them back equal (no CRLF to convert, or a CR already in the index: `has_crlf_in_index`).
+/// The matrix test must have agreed ([`attributes::TEXT_AUTO_MATRIX_PASSED`]).
+fn text_auto_allowed(config: &CheckoutConfig) -> bool {
+    attributes::TEXT_AUTO_MATRIX_PASSED && config.eol_lf && !cfg!(windows)
+}
+
+/// Whether a repository path names a `.gitattributes` file (in any directory, ASCII case ignored).
+fn is_attributes_file(p: &[u8]) -> bool {
+    p.iter()
+        .rposition(|&b| b == b'/')
+        .and_then(|slash| p.get(slash.saturating_add(1)..))
+        .unwrap_or(p)
+        .eq_ignore_ascii_case(b".gitattributes")
+}
 
 /// The hooks a path-limited `git checkout` can run (ADR-119): `post-checkout` (after the checkout of paths) and
 /// `post-index-change` (after every index write, git ≥ 2.22).
@@ -698,23 +746,49 @@ fn no_checkout_hooks(info: &RepoInfo, config: &CheckoutConfig) -> bool {
         .all(|h| St::lstat(&dir.join(h)).kind == Kind::Missing)
 }
 
-/// ADR-119 (b), the index half, over the index entries' paths in index order: no entry is a `.gitattributes` file
-/// (in any directory, ASCII case ignored), and no path has a second stage. git reads a tracked `.gitattributes` from
-/// the index when its worktree file is missing (first when a checkout writes a file, as a fall-back when `git diff`
-/// reads one), so a skip-worktree or assume-unchanged one that is not in the worktree still applies its attributes;
-/// an unmerged path is printed by `git diff` whatever the worktree holds.
-fn index_plain<'a>(paths: impl Iterator<Item = &'a [u8]>) -> bool {
+/// ADR-119 (b) and ADR-133 (b), the index half, over the index entries (`(path, mode)` in index order), their query F
+/// `-v` tags and the snapshot's tracked-path slots (`files`, in [`tracked_paths`] order): no path has a second stage
+/// (`git diff` prints an unmerged path whatever the worktree holds), and every entry named `.gitattributes` (ASCII
+/// case ignored) is spelled exactly so, a regular entry (`100644` or `100755`) tagged `H` (neither assume-unchanged
+/// nor skip-worktree), and its slot is a regular file. git reads a tracked `.gitattributes` from the index when its
+/// worktree file is missing (first when a checkout writes a file, as a fall-back when `git diff` reads one), and an
+/// assume-unchanged or skip-worktree one may differ from its worktree file arbitrarily; an unflagged one present in
+/// the worktree, outside the patch and clean in `diff-index`, carries the same tokens as its index blob, which the
+/// scan of the worktree file then covers. Without tags (an empty `tags`) any tracked `.gitattributes` refuses.
+fn index_attributes_plain<'a>(
+    entries: impl Iterator<Item = (&'a [u8], u32)>,
+    tags: &[u8],
+    files: &[St],
+) -> bool {
     let mut last: Option<&[u8]> = None;
-    for p in paths {
-        let name = p
-            .iter()
-            .rposition(|&b| b == b'/')
-            .and_then(|slash| p.get(slash.saturating_add(1)..))
-            .unwrap_or(p);
-        if name.eq_ignore_ascii_case(b".gitattributes") || last == Some(p) {
+    let mut slot = 0_usize;
+    for (i, (p, mode)) in entries.enumerate() {
+        if last == Some(p) {
             return false;
         }
         last = Some(p);
+        let attributes = is_attributes_file(p);
+        if mode == GITLINK {
+            if attributes {
+                return false;
+            }
+            continue;
+        }
+        if attributes {
+            let name = p
+                .iter()
+                .rposition(|&b| b == b'/')
+                .and_then(|slash| p.get(slash.saturating_add(1)..))
+                .unwrap_or(p);
+            let plain = name == b".gitattributes"
+                && tags.get(i) == Some(&b'H')
+                && matches!(mode, 0o100_644 | 0o100_755)
+                && files.get(slot).is_some_and(|st| st.kind == Kind::File);
+            if !plain {
+                return false;
+            }
+        }
+        slot = slot.saturating_add(1);
     }
     true
 }
@@ -843,12 +917,16 @@ impl DiffOracle {
     /// changes: the baseline stays lazy and [`Self::before_hook`] runs the real `git diff` after the snapshot, as
     /// before.
     ///
+    /// `system` is `git var GIT_ATTR_SYSTEM`'s answer for this run (ADR-133; `None`: not asked or no usable answer).
+    /// A named file joins the inputs before the snapshot, and an answer lets the proof run off Linux.
+    ///
     /// `verify` (`SNP_VERIFY_BASELINE=1`): a proven baseline is still taken with the real `git diff`, which becomes
     /// the baseline; [`Elision::Mismatch`] when it was not empty. A failing `git diff` leaves the baseline lazy.
     pub fn elide_checkout_baseline(
         &mut self,
         checked_out: &ZList,
         config: &CheckoutConfig,
+        system: Option<&SystemAttributes>,
         verify: bool,
     ) -> Elision {
         if self.last.is_some() {
@@ -857,10 +935,23 @@ impl DiffOracle {
         let Some(s) = self.stat.as_deref_mut() else {
             return Elision::NotProven;
         };
+        let answered = match system {
+            None => false,
+            Some(SystemAttributes::File(p)) => {
+                // only before the snapshot, so the file is in it; an input list that already has it keeps it
+                let known = s.inputs.iter().any(|(q, _)| q == p);
+                if !known && s.snapshot.is_none() {
+                    s.inputs.push((p.clone(), InputKind::Other));
+                    s.system_attributes = Some(p.clone());
+                }
+                known || s.system_attributes.as_ref() == Some(p)
+            }
+            Some(_) => true,
+        };
         if s.snapshot.is_none() {
             s.take_snapshot();
         }
-        if !s.checkout_left_no_diff(checked_out, config) {
+        if !s.checkout_left_no_diff(checked_out, config, answered) {
             return Elision::NotProven;
         }
         if !verify {
@@ -971,19 +1062,23 @@ impl DiffOracle {
         } else {
             Arc::clone(&s.origins)
         };
+        let system = s.system_attributes.clone();
         let rebuilt = if delta.index {
-            StatState::new(&s.info, &s.env, Arc::new(tracked), origins)
+            StatState::with_system(&s.info, &s.env, Arc::new(tracked), origins, system)
         } else {
             let dirs = s.paths.get(s.n_files..).unwrap_or_default();
-            build_inputs(&s.info, &s.env, &origins, dirs).map(|inputs| StatState {
-                info: s.info.clone(),
-                env: s.env.clone(),
-                paths: s.paths.clone(),
-                n_files: s.n_files,
-                tracked: Arc::clone(&s.tracked),
-                inputs,
-                origins,
-                snapshot: None,
+            build_inputs(&s.info, &s.env, &origins, dirs, system.as_deref()).map(|inputs| {
+                StatState {
+                    info: s.info.clone(),
+                    env: s.env.clone(),
+                    paths: s.paths.clone(),
+                    n_files: s.n_files,
+                    tracked: Arc::clone(&s.tracked),
+                    inputs,
+                    origins,
+                    system_attributes: system,
+                    snapshot: None,
+                }
             })
         };
         match rebuilt {
@@ -1079,23 +1174,114 @@ mod tests {
         )
     }
 
-    /// ADR-119 (b): a tracked `.gitattributes` anywhere, in any ASCII case, or an unmerged path refuses the proof.
+    /// [`index_attributes_plain`] over `(path, mode)` entries with their tags, every slot a regular file.
+    fn attrs_ok(entries: &[(&str, u32, u8)]) -> bool {
+        let tags: Vec<u8> = entries.iter().map(|(_, _, t)| *t).collect();
+        let files: Vec<St> = (1..=64).map(|i| file(i, 0o644)).collect();
+        index_attributes_plain(
+            entries.iter().map(|(p, m, _)| (p.as_bytes(), *m)),
+            &tags,
+            &files,
+        )
+    }
+
+    /// ADR-119 (b) and ADR-133 (b): a tracked `.gitattributes` passes only spelled exactly, as a regular entry tagged
+    /// `H` whose slot is a regular file; an unmerged path refuses.
     #[test]
-    fn the_index_must_track_no_attributes_and_no_conflict() {
-        let ok = |paths: &[&str]| index_plain(paths.iter().map(|p| p.as_bytes()));
-        assert!(ok(&[]));
-        assert!(ok(&[
-            "a",
-            "b/c",
+    fn tracked_attributes_must_be_unflagged_regular_files() {
+        const F: u32 = 0o100_644;
+        assert!(attrs_ok(&[]));
+        assert!(attrs_ok(&[
+            ("a", F, b'H'),
+            ("b/c", F, b'h'),
+            ("gitattributes", F, b'S'),
+            ("x.gitattributes", F, b'H'),
+            (".gitattributes.d/f", F, b'H'),
+        ]));
+        assert!(attrs_ok(&[(".gitattributes", F, b'H')]));
+        assert!(attrs_ok(&[
+            ("a", F, b'H'),
+            ("d/e/.gitattributes", 0o100_755, b'H')
+        ]));
+        for tag in *b"hSsMm" {
+            assert!(
+                !attrs_ok(&[(".gitattributes", F, tag)]),
+                "{}",
+                char::from(tag)
+            );
+        }
+        assert!(
+            !attrs_ok(&[("d/.GitAttributes", F, b'H')]),
+            "another spelling"
+        );
+        assert!(
+            !attrs_ok(&[(".gitattributes", 0o120_000, b'H')]),
+            "a symlink entry"
+        );
+        assert!(!attrs_ok(&[(".gitattributes", GITLINK, b'H')]), "a gitlink");
+        assert!(!attrs_ok(&[
+            ("a", F, b'H'),
+            ("m", F, b'M'),
+            ("m", F, b'M'),
+            ("z", F, b'H')
+        ]));
+        assert!(
+            attrs_ok(&[("a/", F, b'H'), ("a", F, b'H')]),
+            "distinct paths"
+        );
+        // no tags: any tracked `.gitattributes` refuses, other paths pass
+        let entries = [("a", F), (".gitattributes", F)];
+        let files = [file(1, 0o644), file(2, 0o644)];
+        let it = || entries.iter().map(|(p, m)| (p.as_bytes(), *m));
+        assert!(!index_attributes_plain(it(), &[], &files));
+        assert!(index_attributes_plain(it().take(1), &[], &files));
+        // the slot must be a regular file in the worktree (a gitlink takes no slot)
+        let it = || {
+            [("g", GITLINK), (".gitattributes", F)]
+                .into_iter()
+                .map(|(p, m)| (p.as_bytes(), m))
+        };
+        assert!(index_attributes_plain(it(), b"HH", &[file(1, 0o644)]));
+        for kind in [Kind::Missing, Kind::Symlink, Kind::Dir, Kind::Error(13)] {
+            let st = St {
+                kind,
+                ..file(1, 0o644)
+            };
+            assert!(!index_attributes_plain(it(), b"HH", &[st]), "{kind:?}");
+        }
+        assert!(!index_attributes_plain(it(), b"HH", &[]), "no slot");
+    }
+
+    /// ADR-133 (b): a `.gitattributes` in the patch (any directory, any ASCII case) is recognised.
+    #[test]
+    fn attributes_files_are_named_in_any_case() {
+        for yes in [".gitattributes", "d/.gitattributes", "a/b/.GITATTRIBUTES"] {
+            assert!(is_attributes_file(yes.as_bytes()), "{yes}");
+        }
+        for no in [
             "gitattributes",
             "x.gitattributes",
-            ".gitattributes.d/f"
-        ]));
-        assert!(!ok(&[".gitattributes"]));
-        assert!(!ok(&["a", "d/e/.gitattributes"]));
-        assert!(!ok(&["d/.GitAttributes"]));
-        assert!(!ok(&["a", "m", "m", "z"]), "a second stage");
-        assert!(ok(&["a/", "a"]), "distinct paths");
+            ".gitattributes/f",
+            "a/.gitattributes~",
+        ] {
+            assert!(!is_attributes_file(no.as_bytes()), "{no}");
+        }
+    }
+
+    /// ADR-133: `text=auto` converts nothing only with `core.eol` unset, `lf` or `native`, off Windows.
+    #[test]
+    fn text_auto_needs_an_lf_eol() {
+        let plain = CheckoutConfig {
+            plain: true,
+            eol_lf: true,
+            ..CheckoutConfig::default()
+        };
+        assert_eq!(text_auto_allowed(&plain), !cfg!(windows));
+        let crlf = CheckoutConfig {
+            eol_lf: false,
+            ..plain
+        };
+        assert!(!text_auto_allowed(&crlf));
     }
 
     /// ADR-119 (e): the per-path half of the proof, case by case.

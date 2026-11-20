@@ -17,7 +17,9 @@ mod api {
     use snp_core::failure::Failure;
     use snp_core::output::Printer;
     use snp_core::path::RepoPath;
-    use snp_git::{CheckoutConfig, DiffFingerprint, Git, IndexEntries, RepoInfo, ZList};
+    use snp_git::{
+        CheckoutConfig, DiffFingerprint, Git, IndexEntries, RepoInfo, SystemAttributes, ZList,
+    };
     use snp_proc::signals::SignalGuard;
     use snp_stash::diff_oracle::{Change, DiffMode, DiffOracle, Elision};
     use snp_stash::{StashCtx, StashGuard, Stashed, Unrestored};
@@ -123,10 +125,16 @@ mod api {
         has::<fn(&mut DiffOracle, Arc<std::sync::atomic::AtomicBool>)>(
             DiffOracle::guard_index_trust,
         );
-        // ADR-119
-        has::<fn(&mut DiffOracle, &ZList, &CheckoutConfig, bool) -> Elision>(
-            DiffOracle::elide_checkout_baseline,
-        );
+        // ADR-119 (ADR-133: the system attributes answer)
+        has::<
+            fn(
+                &mut DiffOracle,
+                &ZList,
+                &CheckoutConfig,
+                Option<&SystemAttributes>,
+                bool,
+            ) -> Elision,
+        >(DiffOracle::elide_checkout_baseline);
         // ADR-132
         has::<fn(&DiffOracle) -> bool>(DiffOracle::baseline_known);
         has::<fn(&mut DiffOracle, DiffFingerprint)>(DiffOracle::adopt_baseline);
