@@ -53,6 +53,13 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   lookup, the markers of used repositories kept without being read, orphan repository locks decided from one listing,
   and the tool sweep reads no environment sidecar when no tool version is old enough. Output and the removal set are
   unchanged.
+- Configs and manifests are read with one `stat` and a buffer sized from it: a small file takes two `read` calls
+  instead of a 32-byte probe and up to a dozen growing reads (B11, `snp gc` over 200 configs and 500 manifests:
+  17,342 -> 14,741 system calls). `validate-config` and `validate-manifest` without `--strict`/`--portable` stop after
+  the checks that produce every error and warning (new `snp_config::check_config` / `check_manifest`), skipping the
+  schema defaults and the typed model they then dropped (B10, 1,000 hooks: 194M -> 160M instructions, 168k -> 137k
+  allocations). The signal handler reads `SNP_KILL_GRACE` from the startup environment instead of capturing the
+  process environment a second time. Output, errors and warnings are unchanged.
 - Faster stash of large unstaged changes on Linux: when the stat stamps of the patch's files prove they did not change
   since the run took the worktree lock, and `git diff-index --name-only` shows no other changed file, the stash no
   longer runs a second full `git diff-index --binary` to re-verify the patch (ADR-097). snp's own CPU in the 10 MB
