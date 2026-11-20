@@ -20,6 +20,8 @@ mod extensions;
 #[cfg(test)]
 mod hook_impl;
 #[cfg(test)]
+mod index_proof;
+#[cfg(test)]
 mod meta;
 #[cfg(test)]
 mod prefetch;

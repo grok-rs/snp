@@ -126,6 +126,10 @@ pub(crate) const BASELINE_MISMATCH: &str =
 /// ADR-131: `SNP_VERIFY_FILE_CACHE=1` found a content-cache hit whose bytes differ from a fresh read (stderr; the
 /// fresh read was used).
 pub(crate) const FILE_CACHE_MISMATCH: &str = "snp: SNP_VERIFY_FILE_CACHE: a cached file read differed from a fresh read; using the fresh read";
+/// ADR-134: `SNP_VERIFY_INDEX_PROOF=1` found a non-empty `git diff` where the index-stat proof held (stderr, once per
+/// run).
+pub(crate) const INDEX_PROOF_MISMATCH: &str =
+    "snp: SNP_VERIFY_INDEX_PROOF: a proven-empty git diff was not empty; using the real one";
 
 /// D-EXT-05 / ADR-038: `SNP=0` while the config sets `allow_disable: false` (stderr).
 pub(crate) fn kill_switch_refused(config: &str) -> String {

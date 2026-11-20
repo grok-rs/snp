@@ -326,6 +326,15 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     };
     let files = side.origins.as_ref().map(|l| Arc::clone(&l.files));
     let mut oracle = DiffOracle::new(&git, &info, &run_env, baseline, side.tracked, files)?;
+    if let Some(listing) = side.origins.as_deref() {
+        oracle.enable_index_proof(
+            &info,
+            &run_env,
+            Arc::clone(&cx.pool),
+            listing,
+            cx.env.is_truthy_flag("SNP_VERIFY_INDEX_PROOF"),
+        );
+    }
     if baseline.is_none() && warm {
         checkout_baseline(
             cx,
@@ -353,7 +362,11 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         strict,
         refs: sel.refs.is_some(),
     };
-    lp.run(st.stash.as_mut(), &mut oracle)
+    let code = lp.run(st.stash.as_mut(), &mut oracle);
+    if oracle.proof_stats().is_some_and(|p| p.mismatches > 0) {
+        cx.printer.diag(messages::INDEX_PROOF_MISMATCH);
+    }
+    code
 }
 
 /// §3.1 step 14: `install_envs`, with the side queries (the staged list E, and F/G unless step 6 has them) on a
@@ -391,11 +404,13 @@ fn install_beside_side_queries(
                 && stat_possible(git, info, run_env)
         }
     };
+    // ADR-134: without the Stat mode, G alone arms the index-stat proof for the process hooks' `git diff`s
+    let proof = !stat && process_hooks >= 1 && index_proof_possible(info, run_env);
     let wants_staged = needs_files && files::wants_staged(sel, git, info);
     let have_early = early.tracked.is_some() && early.origins.is_some();
-    let side_work = wants_staged || (stat && !have_early);
+    let side_work = wants_staged || (stat && !have_early) || (proof && early.origins.is_none());
     let (installed, side) = std::thread::scope(|s| {
-        let queries = || side_queries(git, wants_staged, stat, early);
+        let queries = || side_queries(git, wants_staged, stat, proof, early);
         // no thread when the side queries have nothing to ask; inline when it cannot start
         let side = side_work.then(|| common::fork(s, queries));
         let installed = cx.resolver.install_envs(&picked.to_install, rcx);
@@ -1043,12 +1058,51 @@ struct Early {
     small: bool,
 }
 
-/// E, and F/G unless step 6 has them. `wants_staged` is decided once by the caller (it stats the merge files).
-fn side_queries(git: &Git, wants_staged: bool, stat: bool, early: &Early) -> Result<Side, Failure> {
+/// Whether the index-stat proof can arm in this run (ADR-134), checked before G is asked for it: Unix, no
+/// `SNP_DIFF_MODE=git`, no fsmonitor test variable, and the worktree and the git directory on filesystems the
+/// `DiffOracle` accepts. The oracle checks all of it again with G's configuration.
+fn index_proof_possible(info: &RepoInfo, env: &Env) -> bool {
+    let safe = |p: &std::path::Path| snp_os::fsinfo::stat_oracle_safe(p).unwrap_or(false);
+    cfg!(unix)
+        && env.get("SNP_DIFF_MODE").is_none_or(|v| v != "git")
+        && ["GIT_TEST_FSMONITOR", "GIT_FSMONITOR_TEST"]
+            .into_iter()
+            .all(|k| env.get_nonempty(k).is_none())
+        && safe(&info.root)
+        && safe(&info.git_dir)
+}
+
+/// E, and F/G unless step 6 has them; with `proof` (and no Stat mode) G alone, for the index-stat proof (ADR-134).
+/// `wants_staged` is decided once by the caller (it stats the merge files).
+fn side_queries(
+    git: &Git,
+    wants_staged: bool,
+    stat: bool,
+    proof: bool,
+    early: &Early,
+) -> Result<Side, Failure> {
     let early_pair = match (&early.tracked, &early.origins) {
         (Some(t), Some(o)) => Some((Arc::clone(t), Arc::clone(o))),
         _ => None,
     };
+    if !stat && proof {
+        // G kept from step 6, or asked beside E (a failure only costs the proof)
+        let kept = early.origins.as_ref().map(Arc::clone);
+        return std::thread::scope(|s| {
+            let g = (kept.is_none() && wants_staged)
+                .then(|| common::fork(s, || git.config_listing().ok().map(Arc::new)));
+            let staged = wants_staged.then(|| git.staged_files());
+            let origins = match g {
+                Some(g) => g.join(|_| None),
+                None => kept.or_else(|| git.config_listing().ok().map(Arc::new)),
+            };
+            Ok(Side {
+                staged: staged.transpose()?,
+                tracked: None,
+                origins,
+            })
+        });
+    }
     if !stat || early_pair.is_some() {
         let (tracked, origins) = early_pair.filter(|_| stat).unzip();
         return Ok(Side {
