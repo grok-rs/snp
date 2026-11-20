@@ -148,7 +148,10 @@ pub struct ConfigListing {
 pub struct CheckoutConfig {
     /// `core.autocrlf`, `core.fsmonitor`, `core.useBuiltinFSMonitor`, `core.ignoreStat`, `core.sparseCheckout` and
     /// `index.sparse` are unset or read as git's `false`; `core.fileMode` is unset or reads as a boolean;
-    /// `core.hooksPath`, when set, has a value; and no `hook.*` key (a configuration-based hook) is set.
+    /// `core.hooksPath`, when set, has a value; no `hook.*` key (a configuration-based hook) is set; and neither
+    /// `core.attributesFile` nor `attr.tree` is set at all. The last two are git's own word on which attributes apply:
+    /// the `DiffOracle`'s config reader is best effort (a UTF-8 BOM, a `%(prefix)/` value), so ADR-119 does not let
+    /// a file it read as missing prove that no attributes file exists.
     pub plain: bool,
     /// `core.fileMode`: `true` unless it reads as `false` (git's default; meaningful only when `plain`).
     pub file_mode: bool,
@@ -197,6 +200,7 @@ pub(crate) fn checkout_config<'a>(records: impl Iterator<Item = &'a [u8]>) -> Ch
     // the last value of each key that matters: `None` = a valueless key
     let mut last: Vec<(&[u8], Option<&[u8]>)> = Vec::new();
     let mut hook_key = false;
+    let mut attributes_key = false;
     for r in records {
         let (key, value) = match memchr::memchr(b'\n', r) {
             Some(nl) => (
@@ -207,6 +211,9 @@ pub(crate) fn checkout_config<'a>(records: impl Iterator<Item = &'a [u8]>) -> Ch
         };
         if key.starts_with(b"hook.") {
             hook_key = true;
+        }
+        if key == b"core.attributesfile" || key == b"attr.tree" {
+            attributes_key = true;
         }
         if OFF.contains(&key) || key == b"core.filemode" || key == b"core.hookspath" {
             match last.iter_mut().find(|(k, _)| *k == key) {
@@ -222,7 +229,11 @@ pub(crate) fn checkout_config<'a>(records: impl Iterator<Item = &'a [u8]>) -> Ch
     let file_mode = get(b"core.filemode").map_or(Some(true), config_bool);
     let hooks_path = get(b"core.hookspath");
     CheckoutConfig {
-        plain: off && !hook_key && file_mode.is_some() && hooks_path.is_none_or(|v| v.is_some()),
+        plain: off
+            && !hook_key
+            && !attributes_key
+            && file_mode.is_some()
+            && hooks_path.is_none_or(|v| v.is_some()),
         file_mode: file_mode.unwrap_or(true),
         hooks_path: hooks_path.flatten().map(Box::from),
     }
@@ -618,6 +629,18 @@ mod tests {
             assert!(!c(&[hook]).plain, "{hook:?}");
         }
         assert!(c(&[b"hooks.x\ny", b"githook.x\ny"]).plain);
+        // git's listing, not the oracle's reader, says whether an attributes source is configured; any value counts
+        for attrs in [
+            &b"core.attributesfile\n/a"[..],
+            b"core.attributesfile\n%(prefix)/etc/attrs",
+            b"core.attributesfile\n",
+            b"core.attributesfile",
+            b"attr.tree\nHEAD",
+            b"attr.tree",
+        ] {
+            assert!(!c(&[attrs]).plain, "{attrs:?}");
+        }
+        assert!(c(&[b"core.attributes\nx", b"attr.trees\nx"]).plain);
         let hp = c(&[b"core.hookspath\n/a", b"core.hookspath\n.githooks"]);
         assert!(hp.plain);
         assert_eq!(hp.hooks_path.as_deref(), Some(&b".githooks"[..]));

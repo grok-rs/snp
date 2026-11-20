@@ -417,6 +417,53 @@ fn attributes_filters_and_autocrlf_run_the_diff() {
     });
 }
 
+/// The oracle's own config reader is best effort, so whether `core.attributesFile` or `attr.tree` is set comes from
+/// git's listing (query G): any such key runs the baseline, even where the reader cannot see it. A global config
+/// with a UTF-8 BOM (git skips it) names an attributes file with a non-round-tripping filter; a `%(prefix)/` value
+/// (git >= 2.31 expands it); an `attr.tree` the reader cannot see either.
+#[test]
+fn attributes_keys_only_git_reads_run_the_diff() {
+    let bom = |h: &H, body: &str| {
+        let mut text = b"\xEF\xBB\xBF".to_vec();
+        text.extend_from_slice(body.as_bytes());
+        std::fs::write(h.base.join("home/.gitconfig"), text).unwrap();
+    };
+    runs_the_diff(&Case {
+        name: "core.attributesFile in a BOM-prefixed global config",
+        before: &|h| {
+            let f = h.base.join("attrs");
+            std::fs::write(&f, b"big.txt filter=upper\n").unwrap();
+            config(
+                h,
+                &[
+                    ("filter.upper.smudge", "sed s/lorem/LOREM/"),
+                    ("filter.upper.clean", "cat"),
+                ],
+            );
+            bom(
+                h,
+                &format!("[core]\n\tattributesFile = {}\n", f.to_str().unwrap()),
+            );
+        },
+        after: &nothing,
+    });
+    runs_the_diff(&Case {
+        name: "a %(prefix)/ core.attributesFile",
+        before: &|h| {
+            config(
+                h,
+                &[("core.attributesFile", "%(prefix)/snp-no-such-attributes")],
+            );
+        },
+        after: &nothing,
+    });
+    runs_the_diff(&Case {
+        name: "attr.tree in a BOM-prefixed global config",
+        before: &|h| bom(h, "[attr]\n\ttree = HEAD\n"),
+        after: &nothing,
+    });
+}
+
 /// A `post-checkout` or `post-index-change` hook can change the worktree after the checkout (here it appends to a
 /// tracked file, so the real baseline is not empty): the baseline runs wherever git finds the hook, and so it does
 /// for any configuration-based hook.

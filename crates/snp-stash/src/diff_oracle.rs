@@ -620,9 +620,10 @@ impl StatState {
     /// file was clean in that `diff-index`, which reads the worktree with the same index, configuration and
     /// attributes as `git diff`. The checkout rewrote only those paths, and wrote each from its index entry. So `git
     /// diff` prints nothing when (a) the effective configuration is plain ([`CheckoutConfig::plain`]: no
-    /// `core.autocrlf`, fsmonitor, ignoreStat, sparse checkout or configuration-based hook) and no fsmonitor test
-    /// hook is in the environment; (b) no attributes file exists (every attributes input of the snapshot is
-    /// missing) and the index tracks none ([`index_plain`]), so no filter, `text`/`eol`/`crlf`, `ident` or
+    /// `core.autocrlf`, fsmonitor, ignoreStat, sparse checkout, configuration-based hook, `core.attributesFile` or
+    /// `attr.tree`, as git itself lists them, not as the best-effort `gitconfig` reader reads them) and no fsmonitor
+    /// test hook is in the environment; (b) no attributes file exists (every attributes input of the snapshot is
+    /// missing: with no `core.attributesFile`, the default one is among them) and the index tracks none ([`index_plain`]), so no filter, `text`/`eol`/`crlf`, `ident` or
     /// `working-tree-encoding` conversion applies and the checkout wrote each blob's bytes, which `git diff` reads
     /// back unconverted; (c) no `post-checkout` or
     /// `post-index-change` hook exists, the two hooks a path-limited checkout runs; (d) every directory holding a
