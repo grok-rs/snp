@@ -127,6 +127,10 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   attributes file) instead of an `lstat` and a `stat`; only an input that is a symlink is also `stat`ed through to its
   target. A run of 10 hooks on a clean tree makes 143 fewer `statx` calls in snp's process (311 instead of 454: 13
   inputs, 11 snapshots and comparisons). What is compared, and so every result, is unchanged.
+- File-name tags scan a base name once: the first dot is found eight bytes at a time, the last dot by a backward
+  search that stops there, and the whole name and its first dot-separated part share one hash pass instead of being
+  hashed separately (`crates/snp-identify`). `run --all-files` on 50,000 files with a `types` filter runs about 3%
+  fewer instructions (name tags: about 14% fewer). The lookup tables and every tag set are unchanged.
 
 - Benchmarks (developer tooling, no runtime change): pull requests and pushes measure the base commit's snp, built
   against its own `deps.lock` crates and toolchain and primed into its own stores, in interleaved ABBA rounds with the

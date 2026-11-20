@@ -5,7 +5,8 @@
 //! known maximum probe length), so a lookup hashes the key once, compares it
 //! against at most `max_probe + 1` candidates and never allocates.
 //!
-//! The hash functions must stay identical to `xtask/src/codegen.rs`.
+//! The hash functions must stay identical to
+//! `xtask/src/tasks/identify_tables/codegen.rs`.
 
 use core::fmt;
 use core::iter::FusedIterator;
@@ -16,7 +17,14 @@ const EMPTY_SLOT: u16 = u16::MAX;
 
 /// FNV-1a over `key`, with the offset basis perturbed by `seed`.
 fn hash(seed: u64, key: &[u8]) -> u64 {
-    key.iter().fold(0xcbf2_9ce4_8422_2325_u64 ^ seed, |h, &b| {
+    hash_from(0xcbf2_9ce4_8422_2325_u64 ^ seed, key)
+}
+
+/// FNV-1a continued from the state `h` over `key`: `hash(seed, a ++ b)`
+/// equals `hash_from(hash(seed, a), b)`, so a caller that needs the hash of
+/// a key and of one of its prefixes hashes the bytes once.
+pub(crate) fn hash_from(h: u64, key: &[u8]) -> u64 {
+    key.iter().fold(h, |h, &b| {
         (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
     })
 }
@@ -69,8 +77,23 @@ impl StrIndex {
         if key.len() < self.min_len || key.len() > self.max_len {
             return None;
         }
+        self.find_hashed(key, hash(self.seed, key), key_at)
+    }
+
+    /// [`find`](Self::find) for a key whose hash `h` the caller computed
+    /// (`h` must be `hash(seed, key)`; any other value can only miss).
+    /// The length gates still apply.
+    pub(crate) fn find_hashed(
+        &self,
+        key: &[u8],
+        h: u64,
+        key_at: impl Fn(usize) -> Option<&'static str>,
+    ) -> Option<usize> {
+        if key.len() < self.min_len || key.len() > self.max_len {
+            return None;
+        }
         let mask = self.slots.len().checked_sub(1)?;
-        let mut s = slot(hash(self.seed, key), self.shift) & mask;
+        let mut s = slot(h, self.shift) & mask;
         for _ in 0..=self.max_probe {
             let idx = *self.slots.get(s)?;
             if idx == EMPTY_SLOT {
@@ -115,6 +138,26 @@ impl TagTable {
         let i = self
             .index
             .find(key, |i| self.entries.get(i).map(|(k, _)| *k))?;
+        self.entries.get(i).map(|(_, tags)| *tags)
+    }
+
+    /// The hash of `key` for [`get_hashed`](Self::get_hashed).
+    pub(crate) fn hash(&self, key: &[u8]) -> u64 {
+        hash(self.index.seed, key)
+    }
+
+    /// The longest key in bytes: a longer key never matches.
+    pub(crate) const fn max_len(&self) -> usize {
+        self.index.max_len
+    }
+
+    /// [`get_bytes`](Self::get_bytes) for a key whose hash `h` the caller
+    /// computed with [`hash`](Self::hash), possibly in steps through
+    /// [`hash_from`]; a wrong `h` can only miss.
+    pub(crate) fn get_hashed(&self, key: &[u8], h: u64) -> Option<TagSet> {
+        let i = self
+            .index
+            .find_hashed(key, h, |i| self.entries.get(i).map(|(k, _)| *k))?;
         self.entries.get(i).map(|(_, tags)| *tags)
     }
 
@@ -185,8 +228,58 @@ impl<'a> IntoIterator for &'a TagTable {
 
 #[cfg(test)]
 mod tests {
+    use super::{hash, hash_from};
     use crate::extensions::{EXTENSIONS, EXTENSIONS_NEED_BINARY_CHECK, NAMES};
     use crate::interpreters::INTERPRETERS;
+
+    /// FNV-1a 64 as `xtask/src/tasks/identify_tables/codegen.rs` writes it
+    /// (the generated slots depend on it bit for bit).
+    fn codegen_hash(seed: u64, key: &[u8]) -> u64 {
+        let mut h = 0xcbf2_9ce4_8422_2325_u64 ^ seed;
+        for &b in key {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        h
+    }
+
+    #[test]
+    fn hash_matches_codegen_and_resumes_mid_stream() {
+        // FNV-1a 64 reference values (seed 0 is the plain offset basis).
+        assert_eq!(hash(0, b""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(hash(0, b"a"), 0xaf63_dc4c_8601_ec8c);
+        assert_eq!(hash(0, b"foobar"), 0x8594_4171_f739_67e8);
+        let keys: [&[u8]; 7] = [
+            b"",
+            b".",
+            b"Dockerfile.xenial",
+            b"..a.py",
+            b"\xff\xfe.py",
+            "x.\u{212a}t".as_bytes(),
+            b"a-name-longer-than-any-table-key.tar.gz",
+        ];
+        for seed in [0, 1, 162, 975, 2254, 2894, u64::MAX] {
+            for key in keys {
+                let whole = hash(seed, key);
+                assert_eq!(whole, codegen_hash(seed, key));
+                for cut in 0..=key.len() {
+                    let (prefix, rest) = key.split_at_checked(cut).unwrap();
+                    let mid = hash(seed, prefix);
+                    assert_eq!(mid, codegen_hash(seed, prefix));
+                    assert_eq!(hash_from(mid, rest), whole, "{seed} {key:?} {cut}");
+                }
+            }
+        }
+        for (key, _) in NAMES.iter() {
+            let key = key.as_bytes();
+            assert_eq!(NAMES.get_hashed(key, NAMES.hash(key)), NAMES.get_bytes(key));
+            assert!(key.len() <= NAMES.max_len());
+        }
+        // A wrong hash can only miss; the length gates still apply.
+        assert_eq!(NAMES.get_hashed(b"Makefile", 0), None);
+        let long = b"Dockerfile-but-far-too-long";
+        assert_eq!(NAMES.get_hashed(long, NAMES.hash(long)), None);
+    }
 
     #[test]
     fn every_key_is_found_through_the_index() {
