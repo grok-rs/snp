@@ -17,11 +17,12 @@ ADR-097 the stash re-verification by stat stamps; ADR-098 the tier-1 prefilter; 
 the B8 heap budget and counters; ADR-101 classification CPU and fan-out sizing; ADR-102 native-hook facts; ADR-103
 borrowed hook argv; ADR-104 the step-6 changes of the run pipeline; ADR-105 the hook script template v2; ADR-106 trusted
 index modes on clean `--all-files` runs; ADR-108 the forward-only engine of the tier-1 prefilter; ADR-110 the meta-only
-classification tier; ADR-112 snp-yaml's owning materialisation; ADR-115 the tier-1 scan engine; ADR-116 the absorption
-of cfgv and file-identify into the workspace; ADR-117 the B8 stash-time overlaps; ADR-118 the musl mimalloc build
-without transparent huge pages; ADR-119 the proven post-checkout baseline; ADR-131 the file-content cache of
-consecutive in-process hooks; ADR-132 the baseline taken by the first native write in all-in-process runs; ADR-135 the
-hook script template v3; ADR-136 the wave-5 bench methodology.
+classification tier; ADR-112 snp-yaml's owning materialisation; ADR-114 overflow checks kept for every crate; ADR-115
+the tier-1 scan engine; ADR-116 the absorption of cfgv and file-identify into the workspace; ADR-117 the B8 stash-time
+overlaps; ADR-118 the musl mimalloc build without transparent huge pages; ADR-119 the proven post-checkout baseline;
+ADR-131 the file-content cache of consecutive in-process hooks; ADR-132 the baseline taken by the first native write in
+all-in-process runs; ADR-135 the hook script template v3; ADR-136 the wave-5 bench methodology; ADR-137 PIE release
+artifacts and their hardening gate.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -2398,6 +2399,48 @@ occurrence and only its single-occurrence nodes move. `validate-config` of the 5
 (61 KB) peaks at 18.7 MB RSS, against 18.8 MB before this ADR and 1.1 GB with the rejected cache. Loaded values,
 errors and their order (the recursive-node and limit errors come from phase 2, which is unchanged) are the same.
 
+### ADR-114 — Overflow checks stay on for every crate, third-party crates included (rejected: B1)
+
+*Owner decision B1 of the wave-5 performance plan (2026-11-21, after the release panel). Affirms ADR-066's backstop
+and the `release` profile of ARCHITECTURE §1.3 unchanged; this number was reserved for the proposal and records its
+rejection, so it is not proposed again without the evidence named below.*
+
+**Context.** The `release` and `dist` profiles build every crate with `overflow-checks = true` (ADR-066: a backstop
+behind the lints). The plan proposed turning the checks off for third-party crates only,
+`[profile.release.package."*"] overflow-checks = false`, for speed, under its own acceptance rule: a net
+non-negative instruction change on B3, B4, B5, B6, B10, B11 and B12u, or drop the item. Since ADR-116 the absorbed
+cfgv and file-identify are workspace members, which `"*"` does not match (verified in a `-v` build log: 25 workspace
+crates got `-C overflow-checks=on`, 110 registry crates none), so the proposal's explicit exceptions for them were
+obsolete.
+**Decision.** Rejected. Every crate keeps `overflow-checks = true` in `release` and `dist`; no profile changes.
+**Rationale.** (1) It fails the plan's own rule. Measured on the shipping `dist` profile (fat LTO, one codegen unit,
+rustc 1.100, x86_64-unknown-linux-gnu; callgrind instructions of the snp process, two runs where shown):
+
+| scenario | checks on | checks off for `"*"` | change |
+|---|---|---|---|
+| B1 | 681,111 | 674,682 | −0.94 % (about 6 k instructions, about 2 µs) |
+| B3 | 6.142 M / 6.137 M | 6.135 M / 6.123 M | −0.17 % (noise band) |
+| B4 | 104.99 M / 104.78 M | 105.38 M / 105.52 M | **+0.54 % (slower, both runs)** |
+| B6 | 87.70 M | 87.45 M | −0.29 % |
+| B10 | 190.56 M | 189.85 M | −0.37 % |
+| B11 | 159.93 M | 159.08 M | −0.53 % |
+| B12u | 560.7 M / 557.6 M | 547.6 M / 541.1 M | −2.6 % of snp's process, under 0.3 % of the scenario's tree |
+
+The binary shrinks (`.text` −40.7 KB, 692 fewer relative relocations, file −83 KB), but in CI time the gain is under
+0.1 ms on every scenario except B12u (at most about 1 ms of 341 ms), and B4 regresses: fat LTO inlines differently
+when function sizes change (plan3 had seen B5 at +0.58 % for the same reason). (2) The checks are a fail-closed
+backstop at no measurable cost: an overflow in a dependency on hostile input (a parser's `u32` counter or position in
+the YAML, TOML, XML or regex code) panics, unwinds into snp's `catch_unwind`, restores the stash and exits 3, visibly;
+with the checks off it wraps silently and can give a wrong hook verdict (fail open), or worse inside a dependency's
+`unsafe` code. Lengths cannot reach 2^64 on 64-bit targets, but `u32` counters can overflow. (3) No dependency relies
+on overflow panics for memory safety (it would be unsound in the default release profile, under which every crate is
+published, tested and fuzzed), so keeping the checks changes no semantics: the panic paths stay as they are under
+`panic = "unwind"` (FD-5) and S2.
+**Consequences.** Nothing changes in the build. The proposal comes back only with a profile in which a dependency's
+checked arithmetic is at least 3 % of a gated scenario, and then as a narrow, per-scenario-measured override of the
+crates concerned (for example `regex-automata`, `memchr`, `aho-corasick`), never `"*"`; a non-member path dependency
+added later would get the checks of `release` like any crate.
+
 ### ADR-115 — The tier-1 scan engine: str path texts with a large Unicode class skip `regex`
 
 *Amends ADR-108 (the forward-only engine also runs tier-1 texts and tier 2's prefilter) and ADR-003 (tier 1 is no longer
@@ -2980,6 +3023,93 @@ lose the racy re-hash of two files. These are fixture corrections, not speedups 
 is unaffected, since both binaries run the same fixtures, and the history and drift checks are advisory on CI. Each CI
 bench job runs 100 more short processes (B9nv and B3', about 1.5 s). `setup` sets the times of about 72 000 files
 once. A reader of run records that treats every key of a scenario as a tool sees `snp/B9nv` and `snp/B3'` under B9.
+
+### ADR-137 — Release artifacts stay PIE (static-pie on x86_64-musl); a hardening gate checks every binary
+
+*Owner decision O5 of the wave-5 performance plan (2026-11-21, after the release panel): non-PIE builds rejected, a
+release hardening gate added. Closes plan3's backlog item 6. Extends ADR-088's release checks and ARCHITECTURE §11.7.*
+
+**Context.** Every snp start pays the dynamic loader's relocation of the position-independent image. The plan
+proposed linking the Linux artifacts non-PIE, `-C relocation-model=static` (gnu archives and wheels; static non-PIE on
+musl). The startup lens measured it on the profiling build (thin LTO, 16 codegen units, 28,962 relative relocations);
+the release panel measured the shipping `dist` build: 18,678 relative relocations (15,010 into `.rodata`, mostly
+`&str` and slice data such as format pieces and `Location` file names; 2,873 into `.text`, vtables and function
+pointers; 791 into RELRO data; no single table dominates) and a RELRO segment of 431,048 bytes (109 pages written
+copy-on-write at start).
+
+| `snp --version` (B1), `dist`, x86_64-gnu | PIE (today) | `-C relocation-model=static` |
+|---|---|---|
+| callgrind instructions | 681,111 | 435,747 (−36 %) |
+| page faults | 204 | 95 |
+| local CPU, 2 × 300 runs | 1.18 / 1.18 ms | 0.80 / 0.77 ms |
+| kernel instructions | 1.45 M | 0.93 M |
+| B3, snp process instructions | 6,142,076 | 5,867,319 (−275 k) |
+
+Scaled by B1's CI/local ratio (0.69/1.18) that is about 0.15–0.25 ms of CI time per snp process. The panel also
+found that the release workflow checked no hardening property of the binaries it ships (only the embedded dependency
+list and the wheels' `--version`), and platform.yml's musl job accepts both "statically linked" and "static-pie
+linked".
+**Decision.** (1) **Non-PIE is rejected for every target.** No relocation-model flag anywhere: not in the
+manifests, `.cargo/config.toml` or any workflow (a test in `xtask/src/tasks/release.rs` checks those files). RELR
+(`-z pack-relative-relocs`) stays rejected too: it keeps the count and writes every RELRO page (lens measurement:
++5 % B1 instructions). (2) **A hardening gate.** `cargo xtask release hardening <target> <binary>...` reads each
+binary's headers itself (`xtask/src/tasks/release/hardening.rs`: ELF64, PE32+ and thin Mach-O, no tool and no new
+dependency) and fails, after reporting every problem of every binary, unless it carries its target's protections and
+machine:
+
+| target | required |
+|---|---|
+| `x86_64`/`aarch64-unknown-linux-gnu` | `ET_DYN` with `DF_1_PIE` and `PT_INTERP`; BIND_NOW (`DT_BIND_NOW`, `DF_BIND_NOW` or `DF_1_NOW`); a `PT_GNU_RELRO` segment; a `PT_GNU_STACK` without `PF_X`; no `DT_TEXTREL`/`DF_TEXTREL` |
+| `x86_64-unknown-linux-musl` | static-pie: `ET_DYN` with `DF_1_PIE`, no `PT_INTERP`, no `DT_NEEDED`; NX `PT_GNU_STACK`; no text relocations |
+| `aarch64-unknown-linux-musl` | static non-PIE: `ET_EXEC`, no `PT_INTERP`, no `DT_NEEDED`; NX `PT_GNU_STACK`; no text relocations |
+| `x86_64`/`aarch64-apple-darwin` | `MH_EXECUTE` with `MH_PIE`, without `MH_ALLOW_STACK_EXECUTION` |
+| `x86_64`/`aarch64-pc-windows-msvc` | PE32+ with `DYNAMIC_BASE`, `HIGH_ENTROPY_VA` and `NX_COMPAT`; relocations not stripped |
+
+An unknown target, a truncated or malformed header, or another file format is a failure, never a pass. The release
+workflow's `hardening` job (after `build-local-artifacts` and `wheels`) unpacks every archive of the plan and every
+wheel of the wheel matrix and runs the command on each binary; `host`, and so every publish, needs it to succeed.
+(3) **aarch64-musl is static non-PIE, and the gate says so exactly.** rustc 1.100's target specification of
+`aarch64-unknown-linux-musl` lacks `static-position-independent-executables` (x86_64-musl, x86_64-gnu and
+aarch64-gnu have it; `RUSTC_BOOTSTRAP=1 rustc -Z unstable-options --print target-spec-json --target <triple>`), so
+rustc's `link_output_kind` turns the requested static PIC executable into a static non-PIC one. This is the
+toolchain's limitation, not a choice: when a toolchain update links static-pie for the triple, the gate fails on that
+update with a message saying to move the expectation (here, in the code and in §11.7) to static-pie, rather than
+accepting either silently. The artifact could not be built on the deciding machine (no aarch64 linker); the fact is
+read from the target specification, and the first release dry run on the arm64 runner checks it.
+**Rationale.** (1) Image ASLR is the only code-reuse barrier the toolchain gives snp beyond Rust's memory safety:
+stable Rust 1.100 has no stack protector, CET (IBT/SHSTK) or BTI/PAC (`-Z stack-protector`, `-Z cf-protection` and
+`-Z branch-protection` are nightly-only), and neither image carries a GNU property note (ring's C objects are built
+with `-fcf-protection`, the Rust objects are not, and the linker ANDs the notes away). A non-PIE image puts its
+7.9 MB of `.text`, the GOT slots of `execvp`, `posix_spawnp`, `mprotect`, `mmap64`, `syscall` and `dlsym`, and 134 raw
+`syscall` instructions (rustix's `linux_raw`) at fixed addresses: return-to-PLT and return-to-syscall with no
+information leak needed. snp is a one-shot, non-interactive process, so an attacker has no leak-then-exploit loop and
+the 28+ bits of image randomisation are exactly what stops a blind exploit. The exposure is real even under a trusted
+configuration: `git am` runs pre-applypatch and a merge of a fork's branch runs pre-merge-commit over attacker-written
+files, the native hooks (check-yaml, check-json, check-toml, check-xml, detect-private-key and others) parse those
+files in process, commit messages reach commit-msg hooks, and rustls and ring parse TLS handshake bytes before any
+authentication. The prior probability of a memory-safety bug there is low (Rust, `forbid(unsafe_code)` in snp's
+crates); this is defence in depth, the standard for shipped binaries. (2) musl is worse: a static non-PIE binary has
+libc inside the image too, so nothing at all is randomised, and musl does not apply `PT_GNU_RELRO` in static binaries
+(verified on Rust's bundled musl: the range stays in an `rw-p` mapping), which leaves writable function-pointer tables
+at fixed addresses. The installer falls back to the musl build on hosts with glibc older than 2.34 (RHEL 8, Ubuntu
+20.04, Debian 11). (3) The gain flips no gate: B9's budget is relative to B3, which loses the same start; B2, B6 and
+B11 trail prek by 1–13 ms; B1 is twice as fast as prek and far under its 3 ms budget. (4) Scanners and channels:
+checksec, BinSkim (BA3001), lintian (`hardening-no-pie`) and annocheck would flag the artifacts, and channels would
+disagree (`cargo install` builds PIE). Go CLIs ship non-PIE on linux/amd64, but snp's Rust peers (prek, uv, ruff,
+ripgrep) ship PIE or static-pie. (5) Implementation traps the gate also guards against: `RUSTFLAGS=-C
+relocation-model=static` without `--target` breaks the build (rust-lld refuses the proc-macros' `R_X86_64_32S`), CI's
+`RUSTFLAGS=-Dwarnings` silently overrides config-file rustflags, and bench.yml would measure a binary other than the
+one release.yml ships (ADR-081's premise). (6) No practical stable way reduces the relocations instead: 80 % are
+`&str` slices spread over the program; `-Z location-detail=none` and `-Z fmt-debug=none` are nightly-only and would
+gut panic reports; prelink is gone (glibc 2.36) and incompatible with ASLR.
+**Consequences.** snp keeps paying about 0.2 ms of CI time per process (about 1.5 % of B9, 3 % of B2), with no gate
+affected. A release fails if any artifact loses a protection, for example through a toolchain, linker or flag change,
+and the PR that changes release.yml or the gate runs the whole check in its dry run (the arm64 Linux and Windows
+targets only once the repository is public). The x86_64-musl artifacts keep their RELRO range writable (a musl
+property, documented in §11.7, not checked). The verdict is revisited only for a hard startup gate missing by less
+than 0.25 ms with nothing else left to cut, or once stable Rust emits CET shadow stacks (BTI and PAC on aarch64) for
+snp's code, and even then for gnu only, never musl.
+
 ## Appendix A — Open questions of the research documents, resolved
 
 Format: question → decision (ADR or divergence). "Parity" = behave as pre-commit 4.6.2.

@@ -18,6 +18,13 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   (`measurements[*].time_wall_clock`) and refuses any other schema or unit, and it asks only for wall-clock time
   (`--metrics time_wall_clock`), because 2.0 also samples peak memory by default and RSS has its own runs. History
   records written before this change came from hyperfine 1.19.0.
+- release (ADR-137): a `hardening` job checks the binary of every archive and every wheel with the new
+  `cargo xtask release hardening <target> <binary>...` before anything is published: PIE, BIND_NOW, full RELRO, a
+  non-executable stack and no text relocations on linux-gnu; static-pie on x86_64-musl; static non-PIE on
+  aarch64-musl (Rust 1.100 cannot link static-pie for it); PIE on macOS; high-entropy ASLR and DEP on Windows.
+  Non-PIE artifacts were measured (about 0.2 ms less per snp start) and rejected: they would put the whole executable
+  at a fixed address, and stable Rust offers no stack protector or CET to make up for it. Overflow checks stay on
+  for third-party crates as well (ADR-114: turning them off gained under 1 % and slowed B4). No build-profile change.
 - bench (ADR-136): B11's configurations name their repositories `https://gc500.bench.invalid/rNNN`, which the bench
   gitconfig maps to the local clones, instead of absolute local paths, whose real paths snp resolves (40 % of its B11
   syscalls). Every generated fixture file and directory gets the commit date as its modification time before

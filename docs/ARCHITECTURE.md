@@ -246,7 +246,9 @@ its tests run with a fake resolver before snp-repo lands. Critical path: pycompa
 * **Profiles**: `release`: `opt-level = 3`, `lto = "fat"`, `codegen-units = 1`, **`panic = "unwind"`** (load-bearing,
   FD-5), `overflow-checks = true`, `debug = "line-tables-only"`, `strip = "debuginfo"`; `dist` inherits release +
   `strip = "symbols"`; `profiling` = release + `lto = "thin"` + `debug = "full"`; `perf` = release + `lto = "thin"` +
-  `codegen-units = 16` (the `perf-smoke` CI job's test binaries only, ADR-081). Dev profile: `opt-level = 1` for
+  `codegen-units = 16` (the `perf-smoke` CI job's test binaries only, ADR-081). Overflow checks stay on for third-party
+  crates too (ADR-114), and no profile, configuration or workflow sets a relocation model: the artifacts stay PIE
+  (ADR-137). Dev profile: `opt-level = 1` for
   `regex-automata`, `fancy-regex`, `libyaml-safer`, `blake3`. System allocator on gnu, macOS and Windows (mimalloc
   measured: +RSS, no gain, 07 §3.15). musl: decided by measurement (07 D10: musl's allocator is slow under
   contention): WP-36 benches the musl build with the system allocator and with mimalloc behind
@@ -3913,6 +3915,19 @@ graph. The Verus release zip and verusfmt are pinned by version and per-platform
 installed by `.github/scripts/proofs-tools.sh` (download, sha256 check, unpack; Verus's rustc 1.99.1 as a minimal
 rustup toolchain that is never the default); Lean is pinned by `proofs/lean/lean-toolchain` (elan) and the Lake package
 uses the core library only; `leanprover/lean-action` is pinned by commit SHA. A bump of any of them is a dedicated PR.
+
+**Artifact hardening (ADR-137).** Non-PIE builds are rejected. The release workflow's `hardening` job runs
+`cargo xtask release hardening <target> <binary>` on the binary of every archive and every wheel before anything is
+hosted; it reads the headers itself and fails on any missing protection, a wrong machine, an unknown target or a
+malformed file:
+
+| Target | Checked | Not available or not enforced |
+|---|---|---|
+| x86_64/aarch64 linux-gnu | PIE (`ET_DYN` + `DF_1_PIE`), BIND_NOW, `PT_GNU_RELRO` (full RELRO), NX stack, no text relocations | stack protector, CET (IBT/SHSTK), BTI/PAC: nightly-only in Rust 1.100, no GNU property note |
+| x86_64 linux-musl | static-pie, NX stack, no text relocations | musl does not apply `PT_GNU_RELRO` in static binaries: the RELRO range (vtables, function pointers) stays writable, at a random address |
+| aarch64 linux-musl | static **non**-PIE (`ET_EXEC`), NX stack, no text relocations | static-pie: rustc 1.100's target spec has no `static-position-independent-executables` for the triple; the gate fails when a toolchain adds it, and the expectation moves to static-pie. Nothing in the image is randomised, and RELRO is not applied (musl) |
+| x86_64/aarch64 macOS | `MH_PIE`, no `MH_ALLOW_STACK_EXECUTION` | |
+| x86_64/aarch64 Windows | `DYNAMIC_BASE`, `HIGH_ENTROPY_VA`, `NX_COMPAT`, relocations kept | |
 
 ---
 
