@@ -1278,6 +1278,50 @@ mod tests {
             assert!(!release.contains("grep -aqF '.dep-v0'"));
         }
 
+        /// ADR-137: every archive's and every wheel's binary passes `release hardening` before anything is hosted,
+        /// and no workflow or cargo configuration asks for a non-PIE link.
+        #[test]
+        fn the_artifacts_pass_the_hardening_gate_before_hosting() {
+            let release = read(".github/workflows/release.yml");
+            let job = release
+                .split("\n  hardening:\n")
+                .nth(1)
+                .and_then(|rest| rest.split("\n  host:\n").next())
+                .expect("release.yml has a hardening job before host");
+            assert!(job.contains("needs: [gates, plan, build-local-artifacts, wheels]"));
+            assert_eq!(
+                job.matches(r#"cargo xtask release hardening "$t" "$bin""#)
+                    .count(),
+                2,
+                "archives and wheels"
+            );
+            let host = release
+                .split("\n  host:\n")
+                .nth(1)
+                .and_then(|rest| rest.split("\n    steps:").next())
+                .unwrap();
+            assert!(host.contains(", hardening]"), "{host}");
+            assert!(
+                host.contains("needs.hardening.result == 'success'"),
+                "{host}"
+            );
+            assert!(release.contains("      - xtask/src/tasks/release/**\n"));
+            for f in [
+                ".github/workflows/release.yml",
+                ".github/workflows/platform.yml",
+                ".github/workflows/bench.yml",
+                ".cargo/config.toml",
+                "Cargo.toml",
+                "dist-workspace.toml",
+                "packaging/pypi/pyproject.toml",
+            ] {
+                let text = read(f);
+                for bad in ["relocation-model", "-no-pie", "no-pie"] {
+                    assert!(!text.contains(bad), "{f} mentions {bad} (ADR-137)");
+                }
+            }
+        }
+
         #[test]
         fn the_git_matrix_is_blocking() {
             let platform = read(".github/workflows/platform.yml");
