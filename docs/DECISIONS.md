@@ -20,7 +20,7 @@ index modes on clean `--all-files` runs; ADR-108 the forward-only engine of the 
 classification tier; ADR-112 snp-yaml's owning materialisation; ADR-115 the tier-1 scan engine; ADR-116 the absorption
 of cfgv and file-identify into the workspace; ADR-117 the B8 stash-time overlaps; ADR-118 the musl mimalloc build
 without transparent huge pages; ADR-119 the proven post-checkout baseline; ADR-131 the file-content cache of
-consecutive in-process hooks.
+consecutive in-process hooks; ADR-132 the baseline taken by the first native write in all-in-process runs.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -914,7 +914,7 @@ Amends ADR-034, ADR-036 and ADR-044.
 
 ### ADR-078 — DiffOracle soundness, round 2, and baseline timing
 
-*Status: Accepted; ADR-104 records how (3) is implemented (the code tracks clones, installs and downloads; the decision is unchanged); (3)'s parity mechanics amended by ADR-119 (after the stash's checkout the warm-path baseline is elided when the Stat-mode snapshot proves it empty). The amending ADR is normative where they differ.*
+*Status: Accepted; ADR-104 records how (3) is implemented (the code tracks clones, installs and downloads; the decision is unchanged); (3)'s parity mechanics amended by ADR-119 (after the stash's checkout the warm-path baseline is elided when the Stat-mode snapshot proves it empty); (3)'s baseline position amended by ADR-132 (in an all-in-process run with no known baseline, the first native write of a hook takes it, and a hook that writes nothing takes none). The amending ADRs are normative where they differ.*
 
 **Decision.** (1) Stat mode only on an allow-list of filesystems with kernel-maintained ctime and ns mtime (ext2/3/4,
 xfs, btrfs, tmpfs, zfs, f2fs, bcachefs; apfs, hfs) — every FUSE (sshfs, rclone, virtiofs), 9p, overlay, vfat, exfat,
@@ -1920,6 +1920,10 @@ the permits and cores.
 
 ### ADR-102 — Native-hook facts: `NativeHook::facts`, the PchFacts prefetch, the case-conflict repository index
 
+*Status: Accepted; decision (2) amended by ADR-132 (under the deferred baseline the prefetch starts without the diff
+oracle's baseline, which the first native write takes and which may overlap a fact's git child). The amending ADR is
+normative where they differ.*
+
 *Amends ARCHITECTURE §1.4.19 (the frozen native-hook contract gains a provided method), §1.4.13 (`pch_facts`) and
 §3.4 (one prefetch thread beside in-process hooks).*
 
@@ -2717,6 +2721,91 @@ admission rule, a forged mismatch under `SNP_VERIFY_FILE_CACHE` and stale-entry 
 scheduler, runs over aged files equal runs over fresh ones with `SNP_JOBS=1` and `2` under `SNP_VERIFY_FILE_CACHE=1`,
 a concurrent priority bucket and a process hook between single readers get no cache, and a process hook's same-size
 rewrite is seen after it (`crates/snp-run/tests/pipeline/content_cache.rs`). Proofs: none (K3/K6 keep `tail_action`).
+
+### ADR-132 — The baseline `git diff` of all-in-process runs is taken by the first native write ("O2-R")
+
+*Amends ADR-078(3) (the baseline's position), ADR-102 (the prefetch starts "after the diff oracle's baseline"),
+ARCHITECTURE §1.4.19 (the frozen native-hook contract: `HookCx` gains a field, the crate a `writer` module), §3.4 and
+§3.7 items 1 and 5. Not a divergence: an accepted race window (below); no non-race input differs.*
+
+**Context.** pre-commit takes `prior_diff` once before the first hook and compares every executed hook's diff with the
+previous one. snp's diff oracle needs that baseline only to compare a hook that may have changed files; a native that
+reports it wrote nothing is decided without it (`after_native(false, _)`). Yet `before_hook` took it before the first
+hook of every run, so B6 (13 pre-commit-hooks natives over a clean tree) spawned one `git diff` that nothing used: on
+the critical path, alone, before any hook (threads-2 of the wave-5 analysis: 23.3 M tree instructions, 9.1%, when the
+fixture's index is racy). The panel (`panel-parity`, decision 2) rejected the lens's unrestricted form (defer the
+baseline over leading in-process hooks in any run): in a mixed run it saves nothing, since the next process hook takes
+the same diff, and it fails open, since an edit by another process during the natives is then absorbed into the
+process hook's baseline and the run can exit 0 where pre-commit (and snp before) exit 1.
+**Decision.** (1) *Static gate*, decided once before the hook loop (`sched::defers_baseline`): the oracle's baseline is
+not already known (neither ADR-078(3)'s warm-path elision, nor ADR-106's step-15 before-diff, nor ADR-119's proof
+supplied it); every selected, unskipped hook runs in process (native, meta, `pygrep`, `fail`) and, for a native,
+reports its modifications exactly (`decide` then needs a baseline only after a write); no bucket holds two unskipped
+hooks (a concurrent group keeps its baseline before it); no hook has an active `stage_fixed`. Otherwise everything
+stays as before. A run with a process hook keeps today's position even when that hook ends up with no files: "no
+files" is not known statically, and exactness is worth the lost gain. (2) *When it holds*, neither the prefetch start
+(ADR-102) nor `run_one` calls `oracle.before_hook()` while the baseline is unknown; the hook's `HookCx` carries
+`gate: Some(&WriteGate)` (`snp_hooks::writer`: a `OnceLock<Result<DiffFingerprint, Failure>>` and the run's `Git`).
+Once the baseline is known (a writer took it and the comparison refreshed it), later hooks call `before_hook` as before
+(a Stat-mode snapshot, no diff). (3) *The write token.* A native writes the work tree only through `cx.writer()?`, a
+`Writer` with `rewrite`, `append_newline` and `truncate`; `common::rewrite` (trailing-whitespace, mixed-line-ending,
+fix-byte-order-marker, file-contents-sorter, requirements-txt-fixer, pretty-format-json, sort-simple-yaml,
+fix-encoding-pragma) and end-of-file-fixer's append/truncate are reimplemented on it (each still evicts the content
+cache first, ADR-131). With a gate, the first `writer()` of the hook runs the real `git diff` (`get_or_init`): partitions
+that want to write wait until it ends, partitions that only read keep running (both sides only read), so no byte is
+written before the baseline is complete and the baseline is the pre-hook tree, as before. The diff's git child streams
+through the backend and takes no `JobPool` permit, so `SNP_JOBS=1` cannot deadlock. Without a gate the token is handed
+out at once. (4) *After the hook*: a baseline the gate took becomes the hook's comparison base
+(`DiffOracle::adopt_baseline`), then `decide()` runs unchanged; a failing gate diff (practically only a stream failure:
+a spawn failure is hashed like pre-commit's `_oserror_to_output`) refused every write, and the runner reports it as the
+baseline's failure (exit 3, today's path, reported after the partitions end). A hook that never asked to write leaves
+the baseline unknown; the show-diff gate (`non_empty`) takes it at the end, pre-commit's position for the last
+`diff_after`. A write that bypassed the gate and is reported meets `compare_real` with no baseline: `Changed` (fail
+closed). (5) *Enforcement.* `crates/snp-hooks/clippy.toml` is the workspace's clippy configuration plus a write ban:
+`disallowed-methods` lists `std::fs::{write, copy, rename, remove_file, remove_dir, remove_dir_all, create_dir,
+create_dir_all, hard_link, soft_link, set_permissions}`, `std::fs::OpenOptions::open`, `std::fs::File::{create,
+create_new, options, set_len}`, `std::os::unix::fs::symlink`, `std::os::windows::fs::{symlink_file, symlink_dir}` and
+`snp_os::fs::rewrite_in_place`, and `disallowed-types` lists `std::fs::OpenOptions`; only `src/writer.rs` expects those
+lints (test fixtures that write carry their own expectation). `cargo xtask lint-guards` checks that the file keeps every
+workspace key unchanged and the whole ban, and that no non-test source outside `src/writer.rs` expects or allows the
+ban's lints; its test runs clippy with that file on a scratch crate and sees a raw `std::fs::write` and an
+`OpenOptions` rejected. A native that would write through a subprocess or a crate API the lint cannot see must call
+`cx.writer()` first (doc rule, `snp_hooks::writer`). (6) ADR-102's prefetch then starts without the baseline, so the
+gate's diff may overlap a fact's git child: all read-only (`git diff` writes the index only in
+`refresh_index_quietly`, never under a commit's held `index.lock`, and `PchFacts` stamps then recompute).
+**Race window** (an edit E by another process during an all-in-process run; "fix invisible" = a fix `git diff` cannot
+see: an untracked file passed with `--files`, `text=auto` normalisation, a `-diff` file already dirty):
+
+| E happens | pre-commit | before ADR-132 | ADR-132 |
+|---|---|---|---|
+| before the first hook | absorbed | absorbed | absorbed |
+| during a native, no native writes | that native fails, exit 1 | nobody, exit 0 | nobody, exit 0; the show-diff gate is computed at the end |
+| during or before writer W's first write, W's fix visible | Ni and W modified | W modified | W modified |
+| the same, W's fix invisible | W modified only if E was during W | W modified | W unmodified |
+
+The only output difference against before is the last row: one `- files were modified by this hook` line on W. Every
+pre-commit-hooks fixer exits 1 when it writes, so the exit code never changes. ADR-132 is closer to pre-commit in rows
+2-3 and farther in row 4 when E falls inside W; mixed runs are excluded because there the window would change the
+exit code (fail open).
+**Rejected.** (a) The unrestricted form (above). (b) Gating mixed runs with the process hook's baseline: the same diff,
+later, fail open. (c) A gate per partition: concurrent partitions would take different baselines. (d) Trusting the
+type system alone: the lint catches the raw APIs the token cannot.
+**Consequences.** B6 and B7 (fixture `pch960` regenerated in `target/bench`; profiling builds of perf/w5-o1 and this
+change; strace and callgrind with `--trace-children=yes`): B6 execs 11 → 10, `git diff` 1 → 0, syscalls 27,536 → 23,663
+(−14.1%), tree instructions 118.6 M → 108.4 M (−10.2 M, −8.6%); B7 execs 13 → 12, syscalls 28,131 → 24,147 (−14.2%),
+tree 120.7 M → 110.6 M (−8.4%). snp's own instructions are unchanged within the thread-scheduling noise (B6, three runs
+each: 90.48–90.55 M → 90.13–90.41 M). This fixture's index was not racy when measured, so git stat-compared the 961
+files instead of hashing them; on a racy index (the panel expects CI's, written in the same second as the commit) the
+saving is the analysis's 23 M. Output is byte-identical to the base build's on B6. Real repositories gain only on
+all-in-process runs whose baseline neither ADR-078(3), ADR-106 nor ADR-119 already elides (an `--all-files` CI run of
+pre-commit-hooks only, for example). Tests: the B6 shape takes no `git diff` while the fallback (the same run with an
+unskipped no-files process hook) takes one; a writer, alone and after read-only natives, gives the fallback's output,
+exit code and files with `SNP_JOBS` 1, 2 and 4, two `git diff`s, and a recording backend that holds the baseline
+300 ms sees no file written before it ends; a mixed run's `GIT_TRACE` from the first `git diff` on equals the base
+build's; injected edits give the race table's verdicts; `--show-diff-on-failure` without a writer equals the fallback
+(`crates/snp-run/tests/pipeline/deferred_baseline.rs`); concurrent gated partitions take one baseline before any write,
+end-of-file-fixer's append and truncate wait for it, a hook that writes nothing never fires the gate
+(`crates/snp-hooks/tests/write_gate`); the lint gate (`xtask lint-guards`). Proofs: none (no anchored item changed).
 
 ## Appendix A — Open questions of the research documents, resolved
 

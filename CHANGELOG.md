@@ -211,6 +211,15 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   it first. Output and side effects are unchanged, including edits made by other programs between hooks
   (`SNP_VERIFY_FILE_CACHE=1` cross-checks every reuse). On B6 snp makes 36.5% fewer system calls (43,344 → 27,512:
   `openat` 6,880 → 2,435, `read` 10,824 → 3,876; `statx` +1,082).
+- A run whose hooks all run inside snp (native pre-commit-hooks ports, `pygrep`, `fail`, meta) no longer runs the
+  baseline `git diff` before its hooks when nothing supplied it (ADR-132): the first native hook that writes a file
+  runs it just before its first write (other partitions of that hook wait for it), and a run in which no native writes
+  runs none. Any process hook, a priority group of several hooks or `stage_fixed` keeps the baseline where it was.
+  Output, exit codes and files are unchanged except in one race: an edit by another program before a fixer's first
+  write, when that fixer's own change is one `git diff` cannot see, no longer adds `- files were modified by this
+  hook` to it. Native hooks write only through a token that clippy enforces (`crates/snp-hooks/clippy.toml`,
+  checked by `cargo xtask lint-guards`). On B6, one process and 14% of the system calls fewer (27,536 → 23,663) and
+  10.2 M fewer instructions for the tree (−8.6%).
 
 ### Fixed
 

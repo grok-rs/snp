@@ -59,7 +59,7 @@ Each invariant has an owner, a mechanism and a test family; weakening one needs 
 | S10 | Crash-consistent on-disk state | markers written last; temp + fsync + rename; never write through symlinks (snp-os) | kill-9 matrix |
 | S11 | Deterministic output | config-order head-of-line printer; `IndexMap`; clippy `iter_over_hash_type = deny` | `--jobs 1` vs `--jobs 32` byte equality |
 | S12 | Every crate testable in isolation | seams: `GitBackend` (+ `ScriptedBackend`), `CmdRunner`, `Resolve`, `Preflight`, `Fetch`, `Clock`, `ToolDirs`, `ToolProbe` | unit suites with zero real processes |
-| S13 | Exact optimisations only | every optimisation that skips work (DiffOracle, baseline elision, lazy tags, fast path, P17, speculative config load, regex fast kinds, the file-content cache of ADR-131) has a soundness argument and a randomized/differential test against the unoptimised path; any doubt falls back to the exact path | §13.4 property tests, `SNP_DIFF_MODE=git`, `SNP_VERIFY_BASELINE=1` in CI, `SNP_VERIFY_FILE_CACHE=1` |
+| S13 | Exact optimisations only | every optimisation that skips work (DiffOracle, baseline elision, lazy tags, fast path, P17, speculative config load, regex fast kinds, the file-content cache of ADR-131, the deferred baseline of ADR-132) has a soundness argument and a randomized/differential test against the unoptimised path; any doubt falls back to the exact path | §13.4 property tests, `SNP_DIFF_MODE=git`, `SNP_VERIFY_BASELINE=1` in CI, `SNP_VERIFY_FILE_CACHE=1` |
 | S14 | Poison-proof safety paths | every `Mutex`/`RwLock` on a safety path is taken through `snp_core::sync::lock` (recovers `PoisonError::into_inner`) | panic-injection test inside a worker holding the printer lock (stash restored, exit 3, banner printed) |
 | S15 | fd hygiene under concurrent spawning | Linux: every fd snp creates is `O_CLOEXEC` atomically (std pipes, pty master `openpt(CLOEXEC)`, pty slave `open(O_RDWR\|O_NOCTTY\|O_CLOEXEC)`); macOS/BSD: a process-wide spawn lock serialises fd creation and `spawn()`; hook output is read by dedicated reader threads, so a descendant holding a pipe delays only its own hook and never blocks cancellation (§3.6) | N-partition test (pipe and pty mode) where one child sleeps: the others finish promptly; cancellation with a daemonised descendant holding stdout |
 
@@ -2021,6 +2021,10 @@ pub mod diff_oracle {   // ADR-027
         /// of `checked_out` left `git diff` empty; `verify` takes the real diff instead and reports a mismatch.
         pub fn elide_checkout_baseline(&mut self, checked_out: &snp_git::ZList, config: &snp_git::CheckoutConfig,
                                        verify: bool) -> Elision;
+        /// ADR-132: whether the next comparison's base is known (supplied, taken, and not made stale since).
+        pub fn baseline_known(&self) -> bool;
+        /// ADR-132: the baseline a gated hook's first writer took becomes the hook's comparison base.
+        pub fn adopt_baseline(&mut self, baseline: snp_git::DiffFingerprint);
     }
 }
 ```
@@ -2040,7 +2044,26 @@ pub use snp_argparse::columns;
     pub cancel: &'a CancelToken,
     /// The file-content cache of the window of consecutive in-process hooks (ADR-131): `read_all` fills it, `read_head`
     /// and end-of-file-fixer read it, every native write evicts first; `None` without one.
-    pub cache: Option<&'a ContentCache> }
+    pub cache: Option<&'a ContentCache>,
+    /// The hook's deferred baseline (ADR-132): `Some` when the runner did not take the diff oracle's baseline before
+    /// it; the first `writer()` call takes it.
+    pub gate: Option<&'a WriteGate> }
+/// ADR-132: natives write the work tree only through the `Writer` token (a crate-local clippy.toml bans every other
+/// write API outside `writer`; `cargo xtask lint-guards` keeps that file in force). With a gate, the first call runs
+/// the real `git diff` (a `OnceLock`: concurrent writers wait for it, read-only partitions keep running; the git child
+/// takes no pool permit); Err = that diff failed, nothing may be written (the runner reports the failure).
+pub use writer::{WriteGate, Writer};
+pub mod writer {
+    #[derive(Debug)] pub struct WriteGate { /* Git + OnceLock<Result<DiffFingerprint, Failure>> */ }
+    impl WriteGate { pub fn new(git: &snp_git::Git) -> Self; pub fn fired(&self) -> bool;
+                     pub fn into_baseline(self) -> Option<Result<snp_git::DiffFingerprint, Failure>>; }
+    #[derive(Debug)] pub struct Writer<'c, 'a> { /* &'c HookCx<'a> */ }
+    impl<'a> HookCx<'a> { pub fn writer(&self) -> Result<Writer<'_, 'a>, PyExc>; }
+    /// Each evicts the name's content-cache entry first (ADR-131).
+    impl Writer<'_, '_> { pub fn rewrite(&self, name: &OsStr, bytes: &[u8]) -> std::io::Result<()>;
+                          pub fn append_newline(&self, name: &OsStr) -> std::io::Result<()>;
+                          pub fn truncate(&self, name: &OsStr, len: u64) -> std::io::Result<()>; }
+}
 /// ADR-131: one window's validated file contents (Unix, `stat_oracle_safe` work tree; `new` answers `None` elsewhere).
 pub use content_cache::ContentCache;
 pub mod content_cache {
@@ -2705,7 +2728,8 @@ startup Env (captured once in main, minus __PYVENV_LAUNCHER__/PYTHONEXECUTABLE)
   execute. It takes one pool permit before any fact slot (lock order: permit, then slot; with N = 1 the natives simply
   wait for it), checks the cancel token and a stop flag between fetches, and drops every result and error: the hooks
   ask again and are answered from the cache or compute exactly as without it. It starts after the diff oracle's
-  baseline and is joined before any user process hook starts and at the end of the loop (before show-diff,
+  baseline (under ADR-132's deferred baseline, §3.7 item 5, before it: the first native write's `git diff` may then
+  overlap a fact's git child; both only read the repository) and is joined before any user process hook starts and at the end of the loop (before show-diff,
   `stage_fixed` and the restore), so no snp git ever runs beside a user process hook.
 * **File-content cache (ADR-131):** a window of consecutive buckets that each hold one in-process hook, with two or
   more unskipped readers (`content_cache::reads_contents` natives, `pygrep`), gets one `ContentCache` on Unix with a
@@ -2758,6 +2782,9 @@ run before the loop and after each *executed* hook. snp keeps a `DiffFingerprint
 O(1) memory) and decides per executed hook with `snp_stash::diff_oracle::DiffOracle`:
 
 1. **Native hook with `reads_only`** (pygrep, fail, meta, check-* pre-commit-hooks): digest unchanged — no spawn.
+   An external edit during such a hook is not charged to it: the next comparison (a native that writes, a process
+   hook) sees it, and with neither it is never reported (a race-only difference). Under ADR-132's deferred baseline
+   (item 5) an edit before a hook's first write is absorbed into that hook's baseline.
 2. **Native fixer**: reports the paths whose bytes it changed. None → unchanged. Some → `files_modified` decided by
    09 §6.7 (some path tracked ∧ no `text`/`eol`/`working-tree-encoding`/`filter`/`ident` attribute, no
    `core.autocrlf`/`core.safecrlf`, no assume-unchanged/skip-worktree on it); with a caveat that hook falls back to a
@@ -2793,8 +2820,14 @@ O(1) memory) and decides per executed hook with `snp_stash::diff_oracle::DiffOra
    known-empty after `diff-index` rc 0 in stash mode, or after the stash's checkout when the Stat-mode snapshot proves
    it left `git diff` empty (ADR-119); otherwise one baseline `git diff`, taken lazily after
    `install_envs` (pre-commit's position), never overlapped with resolution; a trust-capable `--all-files` run takes
-   it at step 15, beside its tagged listing (ADR-106). Skipped and no-files hooks reuse the previous digest. Never
-   `git diff --quiet` (CRLF and stat-dirty quirks).
+   it at step 15, beside its tagged listing (ADR-106). **Deferred baseline (ADR-132):** when none of those supplied
+   it and every selected, unskipped hook runs in process (native, meta, `pygrep`, `fail`) and reports its
+   modifications exactly, no bucket holds two unskipped hooks and no hook has an active `stage_fixed` (a static gate
+   decided before the loop), the baseline is not taken before each hook while it is unknown: the hook's first native
+   write takes it through `HookCx::writer` (no byte is written before that diff ends), it becomes the hook's
+   comparison base, and a hook that writes nothing takes no `git diff` (B6 takes none); the show-diff gate takes it at
+   the end when no hook did. Any process hook keeps the position above, even one that ends up with no files. Skipped
+   and no-files hooks reuse the previous digest. Never `git diff --quiet` (CRLF and stat-dirty quirks).
 6. **Parallel buckets** (extension): per-hook stat snapshots of each hook's input set + the bucket digest; a changed
    file is attributed to the single hook whose inputs contain it; otherwise every hook that could have caused it fails
    (conservative, fail closed; 05 §18.4 A1). blake3 content confirms stat changes.
