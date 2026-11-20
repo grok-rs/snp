@@ -20,7 +20,7 @@
 
 use std::borrow::Cow;
 
-use cfgv::{BigInt, Date, DateError, DateTime, Map, Set, TzOffset, Value};
+use cfgv::{BigInt, Date, DateError, DateTime, Map, Set, TzOffset, Value, ValueState};
 use indexmap::IndexMap;
 
 use crate::base64;
@@ -938,35 +938,60 @@ impl<'d> State<'d> {
     }
 
     /// `dict.__setitem__` over constructed pairs: equal keys (Python equality, `1 == 1.0 == True`) keep the first
-    /// key and its position and take the last value. Both tables are sized for `pairs` up front; a failed
-    /// reservation is the node-limit error at the mapping's mark `at`.
+    /// key and its position and take the last value ([`dedup_entries`]). A failed reservation is the node-limit
+    /// error at the mapping's mark `at`.
     fn dict_entries(
         &self,
         pairs: &[(NodeId, NodeId)],
         at: Mark,
     ) -> Result<Vec<(NodeId, NodeId)>, YamlError> {
-        let mut index: IndexMap<&Value, usize> = IndexMap::new();
-        let mut out: Vec<(NodeId, NodeId)> = Vec::new();
-        index
-            .try_reserve(pairs.len())
-            .map_err(|_| self.limit_nodes_error(at))?;
-        out.try_reserve_exact(pairs.len())
-            .map_err(|_| self.limit_nodes_error(at))?;
-        for (k, v) in pairs {
-            let Some(Some(Built::Scalar(key))) = self.built.get(k.index()) else {
-                continue;
-            };
-            if let Some(i) = index.get(key).copied() {
-                if let Some(slot) = out.get_mut(i) {
-                    slot.1 = *v;
-                }
-            } else {
-                index.insert(key, out.len());
-                out.push((*k, *v));
+        let key_of = |k: NodeId| match self.built.get(k.index()) {
+            Some(Some(Built::Scalar(key))) => Some(key),
+            _ => None,
+        };
+        dedup_entries(pairs, key_of, LINEAR_DEDUP_MAX).ok_or_else(|| self.limit_nodes_error(at))
+    }
+}
+
+/// Mappings of at most this many pairs deduplicate their keys by a linear scan (at most 16 x 16 comparisons, so no
+/// collision exposure; ADR-111) instead of hashing every key into an index.
+const LINEAR_DEDUP_MAX: usize = 16;
+
+/// `dict.__setitem__` over `pairs` whose keys `key_of` resolves (a pair without a key is skipped): equal keys keep
+/// the first key and its position and take the last value. Up to `linear_max` pairs compare each key with the kept
+/// ones (`==`); larger mappings use a hashed index (`Hash` agrees with `==`, so both find the same duplicates). The
+/// output and the index are sized for `pairs` up front; `None` when a reservation fails.
+fn dedup_entries<'v, N: Copy>(
+    pairs: &[(N, N)],
+    key_of: impl Fn(N) -> Option<&'v Value>,
+    linear_max: usize,
+) -> Option<Vec<(N, N)>> {
+    let mut out: Vec<(N, N)> = Vec::new();
+    out.try_reserve_exact(pairs.len()).ok()?;
+    if pairs.len() <= linear_max {
+        for &(k, v) in pairs {
+            let Some(key) = key_of(k) else { continue };
+            match out.iter_mut().find(|(seen, _)| key_of(*seen) == Some(key)) {
+                Some(slot) => slot.1 = v,
+                None => out.push((k, v)),
             }
         }
-        Ok(out)
+        return Some(out);
     }
+    let mut index: IndexMap<&Value, usize, ValueState> = IndexMap::default();
+    index.try_reserve(pairs.len()).ok()?;
+    for &(k, v) in pairs {
+        let Some(key) = key_of(k) else { continue };
+        if let Some(i) = index.get(key).copied() {
+            if let Some(slot) = out.get_mut(i) {
+                slot.1 = v;
+            }
+        } else {
+            index.insert(key, out.len());
+            out.push((k, v));
+        }
+    }
+    Some(out)
 }
 
 /// [`Graph::occurrences`] of a node: outside the tree, exactly once in it, or at least twice.
@@ -1393,8 +1418,53 @@ mod tests {
 
     use cfgv::Value;
 
-    use super::{ABSENT, Built, Graph, ONCE, SHARED, construct_graph, tail};
+    use super::{
+        ABSENT, Built, Graph, LINEAR_DEDUP_MAX, ONCE, SHARED, construct_graph, dedup_entries, tail,
+    };
     use crate::{Limits, NodeId, Schema, YamlError, compose};
+
+    /// Every key sequence of length 0..=5 over an alphabet with Python-equal values of different types (`1`,
+    /// `1.0`, `True`), a NaN, a key-less pair (`None` here) and distinct strings: the linear scan of small mappings
+    /// keeps exactly the pairs (first key, last value, first position) the hashed index keeps (ADR-111).
+    #[test]
+    fn linear_dedup_equals_hashed_dedup() {
+        let alphabet: [Option<Value>; 7] = [
+            Some(Value::Int(1)),
+            Some(Value::Float(1.0)),
+            Some(Value::Bool(true)),
+            Some(Value::Float(f64::NAN)),
+            Some(Value::from("a")),
+            Some(Value::from("b")),
+            None,
+        ];
+        let mut checked = 0_u32;
+        let mut sequences = 1_usize;
+        for len in 0..=5_usize {
+            for code in 0..sequences {
+                // Pair `i` is (key index, value position `i`).
+                let mut pairs: Vec<(usize, usize)> = Vec::new();
+                let mut c = code;
+                for i in 0..len {
+                    pairs.push((c % 7, 100 + i));
+                    c /= 7;
+                }
+                let key_of = |n: usize| alphabet.get(n).and_then(Option::as_ref);
+                let linear = dedup_entries(&pairs, key_of, usize::MAX).unwrap();
+                let hashed = dedup_entries(&pairs, key_of, 0).unwrap();
+                assert_eq!(linear, hashed, "{pairs:?}");
+                checked += 1;
+            }
+            sequences *= 7;
+        }
+        assert_eq!(checked, 1 + 7 + 49 + 343 + 2401 + 16_807);
+        // The cut-over: up to LINEAR_DEDUP_MAX pairs are scanned, one more hashes; both agree.
+        let many: Vec<(usize, usize)> = (0..=LINEAR_DEDUP_MAX).map(|i| (i % 5, i)).collect();
+        let key_of = |n: usize| alphabet.get(n).and_then(Option::as_ref);
+        assert_eq!(
+            dedup_entries(&many, key_of, LINEAR_DEDUP_MAX).unwrap(),
+            dedup_entries(&many, key_of, usize::MAX).unwrap()
+        );
+    }
 
     fn ints(r: std::ops::Range<i64>) -> Vec<Value> {
         r.map(Value::Int).collect()
