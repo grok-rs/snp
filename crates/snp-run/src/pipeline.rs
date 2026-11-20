@@ -208,23 +208,29 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         }
         st.stash = Some(guard);
     }
-    // F and G from step 6 describe the index only if nobody rewrote it meanwhile, such as another run's `git add`
-    // while we waited for the worktree lock (C2). The stamp also changes when the stash itself rewrote the index;
-    // then F is asked again at step 14 (fail closed).
-    // FOLLOW-UP(ADR-097): use `StashGuard::lock_contended()` once batch B lands, so that the stash's own index
-    // rewrites stop discarding F and G.
+    // F from step 6 describes the index only if nobody rewrote it meanwhile, such as another run's `git add` while
+    // we waited for the worktree lock (C2). The stamp also changes when the stash itself rewrote the index (its
+    // checkout of unstaged files, a `write-tree` that refreshes the cache tree); then F is asked again at step 14
+    // (fail closed). G does not read the index: it is kept unless we waited for the lock, when another run's hooks
+    // may have changed the config files (ADR-117).
     let fresh = six.stamp.is_some() && git0.index_stamp(&info) == six.stamp;
-    let ita_cleared = st
-        .stash
-        .as_ref()
-        .is_some_and(StashGuard::cleared_intent_to_add);
+    let (ita_cleared, contended) = st.stash.as_ref().map_or((false, false), |g| {
+        (g.cleared_intent_to_add(), g.lock_contended())
+    });
+    // F's size decides the one-hook Stat mode also when F itself is asked again (a cost hint, never an input)
+    let small = six.early.tracked.as_deref().is_some_and(small_tree);
     let early = if fresh {
         Early {
             tracked: six.early.tracked.filter(|_| !ita_cleared),
             origins: six.early.origins,
+            small,
         }
     } else {
-        Early::default()
+        Early {
+            tracked: None,
+            origins: six.early.origins.filter(|_| !contended),
+            small,
+        }
     };
     let git = git0.with_env(run_env.clone());
     // step 10: the config (warnings at pre-commit's position), the overlay
@@ -351,12 +357,17 @@ fn install_beside_side_queries(
         .filter(|h| matches!(h.exec, snp_repo::ExecKind::Language))
         .count();
     // F and G cost two spawns and save one `git diff` per executed process hook: from three hooks on, or from one
-    // when step 6 already has them and the tree is small enough that the stat pass beats the diff (ADR-104)
+    // when step 6 already has them and the tree is small enough that the stat pass beats the diff (ADR-104), or when
+    // step 6 had F on a small tree and the stash's own index rewrite dropped it (ADR-117: F, and G when it was
+    // dropped too, are asked again beside the installs)
     let stat = match (&early.tracked, &early.origins) {
         (Some(tracked), Some(_)) => {
             process_hooks >= 3 || (process_hooks >= 1 && small_tree(tracked))
         }
-        _ => process_hooks >= 3 && stat_possible(git, info, run_env),
+        _ => {
+            (process_hooks >= 3 || (process_hooks >= 1 && early.small))
+                && stat_possible(git, info, run_env)
+        }
     };
     let wants_staged = needs_files && files::wants_staged(sel, git, info);
     let have_early = early.tracked.is_some() && early.origins.is_some();
@@ -555,6 +566,7 @@ impl Step6<'_> {
                         Early {
                             tracked: f.join_or_run(|| None, |_| None),
                             origins,
+                            small: false,
                         }
                     } else {
                         Early::default()
@@ -582,7 +594,11 @@ impl Step6<'_> {
                 (None, None) => (load_now(), Early::default()),
             };
             let early = if hoist {
-                Early { tracked, origins }
+                Early {
+                    tracked,
+                    origins,
+                    small: false,
+                }
             } else {
                 early
             };
@@ -958,11 +974,14 @@ fn process_candidates(cfg: &Config, selectors: &[OsString]) -> usize {
         .sum()
 }
 
-/// F and G taken at step 6 (`None`: not speculated, failed, or stale after an intent-to-add clearing).
+/// F and G taken at step 6 (`None`: not speculated, failed, or stale after an index rewrite or an intent-to-add
+/// clearing).
 #[derive(Debug, Default)]
 struct Early {
     tracked: Option<Arc<IndexEntries>>,
     origins: Option<Arc<[PathBuf]>>,
+    /// Step 6's F described a [`small_tree`], even if it was dropped since (ADR-117).
+    small: bool,
 }
 
 /// E, and F/G unless step 6 has them. `wants_staged` is decided once by the caller (it stats the merge files).
@@ -979,15 +998,22 @@ fn side_queries(git: &Git, wants_staged: bool, stat: bool, early: &Early) -> Res
             origins,
         });
     }
-    // E, F and G are independent read-only queries: each on its own thread, so one spawn is on the critical path
+    // E, F and G are independent read-only queries: each on its own thread, so one spawn is on the critical path; a
+    // G kept from step 6 is not asked again (ADR-117)
+    let kept = early.origins.as_ref().map(Arc::clone);
     std::thread::scope(|s| {
         let f = common::fork(s, || git.tracked_with_modes().ok().map(Arc::new));
-        let g = common::fork(s, || git.config_origins().ok().map(Arc::from));
+        let g = kept
+            .is_none()
+            .then(|| common::fork(s, || git.config_origins().ok().map(Arc::from)));
         let staged = wants_staged.then(|| git.staged_files());
         // a failure of F or G only costs the Stat mode (the oracle falls back to `git diff`); a thread that could
         // not start runs its query here
         let tracked = f.join(|_| None);
-        let origins = g.join(|_| None);
+        let origins = match g {
+            Some(g) => g.join(|_| None),
+            None => kept,
+        };
         Ok(Side {
             staged: staged.transpose()?,
             tracked,
