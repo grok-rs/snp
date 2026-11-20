@@ -13,7 +13,10 @@
 #           ADR-090); all but pull requests append to it. The nightly also enforces the syscall ceilings
 #           (`strace -f -c`, B1 <= 64), the B3 allocation budget and B8's heap peak (dhat, ADR-100).
 # * musl:   B3/B4/B6/B12 of the musl artifact with the system allocator and with mimalloc (ADR-079); the adopted
-#           allocator (bench/budgets.toml [musl]) is held to the never-slower-than-prek rule.
+#           allocator (bench/budgets.toml [musl]) is held to the never-slower-than-prek rule. Nightly, on dispatch, and
+#           on pull requests whose diff matches MUSL_PATHS (the `musl-paths` job): the allocator selection, the
+#           lockfile, the bench gate and its budgets, and the crates that hold the musl scenarios' memory. A pull
+#           request gates both records exactly as the nightly does but appends nothing to the history.
 #
 # Every scenario runs; a miss accepted for now is a `[[known_miss]]` of bench/budgets.toml, with its reason (ADR-091).
 # MUSL_PENDING lists the scenarios outside the musl matrix (ADR-079: B3/B4/B6/B12), whose budgets warn
@@ -52,6 +55,14 @@ env:
   BENCH_SCENARIOS: B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12u
   MUSL_SCENARIOS: B1,B3,B4,B6,B12u
   MUSL_PENDING: B2,B5,B7,B8,B9,B10,B11
+  # A pull request runs the musl job iff a changed path matches (an extended regex over
+  # `git diff --no-renames --name-only`): the workspace manifest (profiles, the mimalloc version), snp's manifest and main.rs (the allocator selection),
+  # Cargo.lock, the bench gate, budgets and allocator decision, this workflow, and the source of the crates that
+  # allocate per file or per thread in B4/B6/B12u: the file table and classifier (snp-files, snp-identify), the
+  # ls-files parse (snp-git), the regex cache (snp-pyre), the scheduler and partitions (snp-run, snp-proc) and
+  # B6's in-process pre-commit-hooks ports (snp-hooks). Every other change is still measured nightly.
+  MUSL_PATHS: >-
+    ^(Cargo\.toml|Cargo\.lock|crates/snp/Cargo\.toml|crates/snp/src/main\.rs|bench/budgets\.toml|bench/musl-allocator\.md|xtask/src/tasks/bench\.rs|\.github/workflows/bench\.yml|crates/snp-(files|identify|git|pyre|run|proc|hooks)/(Cargo\.toml|src/.*))$
 
 defaults:
   run:
@@ -190,8 +201,43 @@ jobs:
             snp/bench/history
           retention-days: 30
 
+  # Pull requests only: does the diff touch MUSL_PATHS? The diff is the PR's merge commit against its base, two
+  # depth-1 commits. If the changed files cannot be listed, the musl job runs (fail closed).
+  musl-paths:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      run: ${{ steps.diff.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp }
+      - id: diff
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          run=true
+          if git fetch -q --no-tags --depth=1 origin "$BASE_SHA" &&
+            files=$(git diff --no-renames --name-only "$BASE_SHA" HEAD); then
+            if grep -qE "$MUSL_PATHS" <<<"$files"; then
+              echo "Changed paths that run the musl job:"
+              grep -E "$MUSL_PATHS" <<<"$files"
+            else
+              run=false
+              echo "No changed path matches MUSL_PATHS: the musl job is skipped (it still runs nightly)."
+            fi
+          else
+            echo "::warning::could not list the pull request's changed files; running the musl job"
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+  # Nightly and on dispatch always; on a pull request iff musl-paths says so. `!cancelled()` lets the job run when
+  # musl-paths is skipped (every event but pull_request).
   musl:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: musl-paths
+    if: >-
+      !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && needs.musl-paths.outputs.run == 'true'))
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -227,14 +273,17 @@ jobs:
         run: |
           cargo xtask bench gate --compare target/bench/results/musl-system.json target/bench/results/musl-mimalloc.json \
             | tee -a "$GITHUB_STEP_SUMMARY"
+      # The same checks on every event; only a pull request does not append its records to the history (`--record`).
       - name: Gate
         run: |
+          record=(--record)
+          if [ "${{ github.event_name }}" = pull_request ]; then record=(); fi
           for alloc in system mimalloc; do
-            cargo xtask bench gate --current "target/bench/results/musl-$alloc.json" --advisory-history --record \
+            cargo xtask bench gate --current "target/bench/results/musl-$alloc.json" --advisory-history "${record[@]}" \
               --allow-missing "$MUSL_PENDING"
           done
       - name: Save the bench history
-        if: success()
+        if: success() && github.event_name != 'pull_request'
         uses: actions/cache/save@v4
         with:
           path: snp/bench/history
