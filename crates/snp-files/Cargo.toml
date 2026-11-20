@@ -1,6 +1,6 @@
 [package]
 name = "snp-files"
-description = "File table with tiered lazy identify tags, classifier and hook filters"
+description = "File table with tiered lazy identify tags, classifier and hook filters (internal crate of snp; no API stability promise, versions follow snp)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

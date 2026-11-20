@@ -1,6 +1,6 @@
 [package]
 name = "snp-hooks-data"
-description = "Generated pre-commit-hooks data: tag profiles, manifests, blob table, builtin manifest"
+description = "Generated pre-commit-hooks data: tag profiles, manifests, blob table, builtin manifest (internal crate of snp; no API stability promise, versions follow snp)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

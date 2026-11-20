@@ -1,6 +1,6 @@
 [package]
 name = "snp-stash"
-description = "Staged-files stash guard (data-safety core) and the DiffOracle"
+description = "Staged-files stash guard (data-safety core) and the DiffOracle (internal crate of snp; no API stability promise, versions follow snp)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

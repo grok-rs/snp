@@ -1,6 +1,6 @@
 [package]
 name = "snp-git"
-description = "Every git invocation with pre-commit's exact argv, the GitBackend seam and owned repositories"
+description = "Every git invocation with pre-commit's exact argv, the GitBackend seam and owned repositories (internal crate of snp; no API stability promise, versions follow snp)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

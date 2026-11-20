@@ -1,6 +1,6 @@
 [package]
 name = "snp-cmd"
-description = "Non-run commands: install, uninstall, autoupdate, gc, clean, validate, doctor, self, cache"
+description = "Non-run commands: install, uninstall, autoupdate, gc, clean, validate, doctor, self, cache (internal crate of snp; no API stability promise, versions follow snp)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

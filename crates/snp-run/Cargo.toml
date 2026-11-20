@@ -1,6 +1,6 @@
 [package]
 name = "snp-run"
-description = "Run pipeline, scheduler, renderer, hook-impl, try-repo, install-hooks, list and meta hooks"
+description = "Run pipeline, scheduler, renderer, hook-impl, try-repo, install-hooks, list and meta hooks (internal crate of snp; no API stability promise, versions follow snp)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

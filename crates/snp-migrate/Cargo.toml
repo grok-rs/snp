@@ -1,6 +1,6 @@
 [package]
 name = "snp-migrate"
-description = "`snp migrate lefthook|builtin|upstream` converters"
+description = "`snp migrate lefthook|builtin|upstream` converters (internal crate of snp; no API stability promise, versions follow snp)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

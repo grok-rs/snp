@@ -1,6 +1,6 @@
 [package]
 name = "snp-pyparsers"
-description = "CPython-compatible validators for native hooks: json, YAML, tomllib, expat, difflib, INI"
+description = "CPython-compatible validators for native hooks: json, YAML, tomllib, expat, difflib, INI (internal crate of snp; no API stability promise, versions follow snp)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

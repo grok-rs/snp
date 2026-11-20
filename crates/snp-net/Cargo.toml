@@ -1,6 +1,6 @@
 [package]
 name = "snp-net"
-description = "Verified HTTPS downloads, safe archive extraction and the toolchain catalogue"
+description = "Verified HTTPS downloads, safe archive extraction and the toolchain catalogue (internal crate of snp; no API stability promise, versions follow snp)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

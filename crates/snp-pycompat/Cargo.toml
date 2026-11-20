@@ -1,6 +1,6 @@
 [package]
 name = "snp-pycompat"
-description = "CPython stdlib semantics (str/bytes splitting, codecs, repr, shlex, os.path, pre-commit composites)"
+description = "CPython stdlib semantics (str/bytes splitting, codecs, repr, shlex, os.path, pre-commit composites) (internal crate of snp; no API stability promise, versions follow snp)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
