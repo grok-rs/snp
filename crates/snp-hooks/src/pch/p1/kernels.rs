@@ -545,6 +545,33 @@ fn parents(file: &[u8], epoch: u16, windows: bool, out: &mut Vec<Vec<u8>>) {
     }
 }
 
+/// [`parents`] as borrowed prefixes of `file`, for the cases where every parent is one (epoch ≥ 3: the
+/// `split('/')` prefixes; epoch 2 off Windows: `posixpath.dirname` returns a prefix of its argument). Epoch 2 on
+/// Windows (`ntpath.dirname`, whose result is not a prefix) is not a case: [`RepoCaseIndex`] keeps the kernel there.
+fn parent_prefixes<'a>(file: &'a [u8], epoch: u16, out: &mut Vec<&'a [u8]>) {
+    if epoch >= 3 {
+        out.extend(
+            memchr_iter(b'/', file)
+                .rev()
+                .map(|i| file.get(..i).unwrap_or_default()),
+        );
+        return;
+    }
+    let mut cur = file;
+    loop {
+        let up = snp_pycompat::posixpath::dirname(cur);
+        // Python loops forever on a root (`dirname('/') == '/'`); stop at the fixpoint instead.
+        if up.is_empty() || up == cur {
+            if !up.is_empty() {
+                out.push(up);
+            }
+            return;
+        }
+        out.push(up);
+        cur = up;
+    }
+}
+
 /// `check_case_conflict.find_conflicting_filenames` (`check_case_conflict.py:28-56`) over the hook's inputs:
 /// `repo` = `git ls-files` lines, `files` = the argv file names, `added` = `added_files()`. Returns the names to
 /// report, sorted as Python sorts `str`. Epoch 1 (v3.0.0…v3.4.0) has no parent directories.
@@ -629,13 +656,14 @@ impl RepoCaseIndex {
                 names.insert(Box::from(n));
             }
         };
+        let mut extra: Vec<&[u8]> = Vec::new();
         for r in repo {
             let r = r.as_ref();
             add(r);
             // a name's parents depend on the name alone: the set is the kernel's `with_parents`
             if epoch >= 2 {
-                let mut extra = Vec::new();
-                parents(r, epoch, windows, &mut extra);
+                extra.clear();
+                parent_prefixes(r, epoch, &mut extra);
                 for p in &extra {
                     add(p);
                 }
@@ -651,12 +679,12 @@ impl RepoCaseIndex {
 
     /// Whether [`case_conflicts`] over this repository, `files` and `added` reports anything.
     pub fn conflicts(&self, files: &[&[u8]], added: &[&[u8]]) -> bool {
-        let mut relevant: BTreeSet<Vec<u8>> =
-            files.iter().chain(added).map(|r| r.to_vec()).collect();
+        // the caller's names and their parents, borrowed (every parent is a prefix here: see `new`)
+        let mut relevant: BTreeSet<&[u8]> = files.iter().chain(added).copied().collect();
         if self.epoch >= 2 {
-            let mut extra = Vec::new();
+            let mut extra: Vec<&[u8]> = Vec::new();
             for n in &relevant {
-                parents(n, self.epoch, self.windows, &mut extra);
+                parent_prefixes(n, self.epoch, &mut extra);
             }
             relevant.extend(extra);
         }
@@ -665,7 +693,7 @@ impl RepoCaseIndex {
         for v in &relevant {
             let e = counts.entry(py_lower_cow(v)).or_insert((0, 0));
             e.0 = e.0.saturating_add(1);
-            if self.names.contains(v.as_slice()) {
+            if self.names.contains(*v) {
                 e.1 = e.1.saturating_add(1);
             }
         }
@@ -1053,6 +1081,29 @@ zope==1\n# trailing\n"
 
     fn tricky_list(rng: &mut Rng, max: usize) -> Vec<Vec<u8>> {
         (0..rng.below(max)).map(|_| tricky_name(rng)).collect()
+    }
+
+    /// The borrowed parents are the kernel's owned ones, in order, wherever the index uses them.
+    #[test]
+    fn parent_prefixes_are_the_kernels_parents() {
+        let mut rng = Rng(0x2545_F491_4F6C_DD1D);
+        let fixed: [&[u8]; 9] = [
+            b"", b"/", b"//", b"a", b"a/", b"/a", b"a//b/", b"//a///b", b"a/b/c",
+        ];
+        let names: Vec<Vec<u8>> = fixed
+            .iter()
+            .map(|n| n.to_vec())
+            .chain((0..3000).map(|_| tricky_name(&mut rng)))
+            .collect();
+        for n in &names {
+            for epoch in 2..=4 {
+                let mut want = Vec::new();
+                parents(n, epoch, false, &mut want);
+                let mut got = Vec::new();
+                parent_prefixes(n, epoch, &mut got);
+                assert_eq!(got, want, "epoch {epoch}: {n:?}");
+            }
+        }
     }
 
     /// The indexed decision is the kernel's (`!case_conflicts(..).is_empty()`) for every epoch and platform, and
