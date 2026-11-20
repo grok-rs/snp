@@ -1,7 +1,9 @@
-//! `cargo xtask release <gates|notes|version>`: the release gates and release metadata (WBS WP-37, ADR-088).
+//! `cargo xtask release <gates|hardening|notes|version>`: the release gates, the artifact hardening gate and release
+//! metadata (WBS WP-37, ADR-088, ADR-137).
 //!
 //! ```text
 //! cargo xtask release gates [--tag vX.Y.Z] [--skip-proofs] [--allow-dirty] [--allow-unreleased] [--root DIR]
+//! cargo xtask release hardening <target> <binary>...   # the built binaries carry the target's protections (ADR-137)
 //! cargo xtask release notes [VERSION]      # the CHANGELOG.md section of VERSION (default: the workspace version)
 //! cargo xtask release version              # the workspace version
 //! ```
@@ -42,6 +44,8 @@ use anyhow::{Context as _, bail};
 use super::proofs;
 use crate::workspace;
 
+mod hardening;
+
 /// Runs the task with the arguments that follow its name.
 pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
     let strs: Vec<String> = args
@@ -68,6 +72,7 @@ pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
             }
             Ok(())
         }
+        "hardening" => hardening::run(rest),
         "notes" => {
             let root = workspace::root()?;
             let version = match rest {
@@ -87,7 +92,7 @@ pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
             Ok(())
         }
         _ => bail!(
-            "usage: cargo xtask release gates|notes|version [args...] (see xtask/src/tasks/release.rs)"
+            "usage: cargo xtask release gates|hardening|notes|version [args...] (see xtask/src/tasks/release.rs)"
         ),
     }
 }
