@@ -4242,8 +4242,9 @@ fn advisory_history(checks: &mut [Check]) {
     }
 }
 
-/// `[[known_miss]]`: a listed check that fails warns, with its reason, and one that passes says the entry can go.
-/// Only the budget or never-slower check itself is covered: getting worse still fails the regression check.
+/// `[[known_miss]]`: a listed check that fails warns, with its reason (a soft breach, already a warning, gets the
+/// reason too), and one that passes says the entry can go. Only the budget or never-slower check itself is covered:
+/// getting worse still fails the regression check.
 fn apply_known_misses(checks: &mut [Check], misses: &[KnownMiss]) {
     for m in misses {
         for c in checks
@@ -4258,7 +4259,10 @@ fn apply_known_misses(checks: &mut [Check], misses: &[KnownMiss]) {
                 Verdict::Pass => c
                     .detail
                     .push_str(" (a known miss: remove the entry once this holds on every runner)"),
-                Verdict::Warn => {}
+                // a soft budget's breach already warns; it carries the reason too (B9's interim entry, ADR-136)
+                Verdict::Warn => {
+                    write!(c.detail, " (known miss: {})", m.reason).unwrap_or_default();
+                }
             }
         }
     }
@@ -5786,6 +5790,11 @@ mod tests {
         assert_eq!(checks[0].detail, "d (known miss: the re-check)");
         // the other check, the other scenario, and getting worse all still fail
         assert!(checks[1..].iter().all(|c| c.verdict == Verdict::Fail));
+        // a soft budget's breach stays a warning and carries the reason
+        let mut soft = [check("B8", "p50 <= prek", Verdict::Warn)];
+        apply_known_misses(&mut soft, &misses);
+        assert_eq!(soft[0].verdict, Verdict::Warn);
+        assert_eq!(soft[0].detail, "d (known miss: the re-check)");
         let mut fixed = [check("B8", "p50 <= prek", Verdict::Pass)];
         apply_known_misses(&mut fixed, &misses);
         assert_eq!(fixed[0].verdict, Verdict::Pass);
@@ -7015,5 +7024,47 @@ mod tests {
         // a record round trip keeps the references
         let back = Record::from_json(&cur.to_json()).unwrap();
         assert_eq!(back.get("B9", B9NV_KEY).unwrap().rounds_ms, [3.0, 3.0]);
+    }
+
+    /// ADR-136 (owner decision O9): the known misses on record state current facts.
+    #[test]
+    fn known_misses_carry_the_corrected_reasons() {
+        let b = budgets();
+        let reason = |s: &str, check: &str| {
+            b.known_misses
+                .iter()
+                .find(|m| m.scenario == s && m.check == check)
+                .map(|m| m.reason.as_str())
+        };
+        // snp leads prek on B5 on CI: the entry is gone, so a regression fails again
+        assert!(reason("B5", "p50 <= prek").is_none());
+        // B4's stays until a musl record shows it passing
+        assert!(reason("B4", "p50 <= prek").is_some());
+        let b11 = reason("B11", "p50 <= prek").unwrap();
+        assert!(
+            !b11.contains("never loads manifests") && b11.contains("read all 500 manifests"),
+            "{b11}"
+        );
+        assert!(!b11.contains("realpath"), "{b11}");
+        for s in ["B6", "B12u"] {
+            assert!(
+                !reason(s, "p50 <= prek").unwrap().contains("not profiled"),
+                "{s}"
+            );
+        }
+        let b9 = reason("B9", "p50 <= 1x B3").unwrap();
+        assert!(b9.contains("--no-verify"), "{b9}");
+        // every entry names a check the gate makes
+        let budget_b9 = b
+            .limits
+            .iter()
+            .find(|x| x.os == "linux" && x.scenario == "B9")
+            .unwrap();
+        assert!(format!("p50 <= {}", budget_text(budget_b9)).starts_with("p50 <= 1x B3"));
+        assert_eq!(
+            (budget_b9.max, budget_b9.plus, budget_b9.hard),
+            (1.0, 3.0, false),
+            "the budget is unchanged"
+        );
     }
 }

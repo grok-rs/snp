@@ -322,7 +322,7 @@ reason = "seven git processes (parity and stash-safety checks); prek spawns fewe
 [[known_miss]]
 scenario = "B6"
 check = "p50 <= prek"
-reason = "not profiled yet (17-26 % behind prek on CI, more on musl)"
+reason = "snp runs pre-commit's baseline git diff before the first hook (ADR-078), which prek does not run, and keeps pre-commit-hooks' own git queries: 10 git processes against prek's 5. Both re-read files per native hook. 5 % behind prek on glibc CI (21.3 vs 20.3 ms, c20cc5e) while the fixture's index was racy and that git diff re-hashed all 961 files on the critical path (~9 % of the tree's instructions); ADR-136's non-racy fixture removes that (-7.9 M of snp's 111 M user instructions locally, prek -0.8 M)"
 
 [[known_miss]]
 scenario = "B8"
@@ -342,7 +342,7 @@ reason = "ADR-131 (the file-content cache): +1,082 statx against -15.6k syscalls
 [[known_miss]]
 scenario = "B11"
 check = "p50 <= prek"
-reason = "prek's gc hashes repo keys from the configs and never loads manifests; pre-commit and snp parse every used manifest"
+reason = "both tools read all 500 manifests, but prek keeps repositories by hashing (repo, rev) from the configs and parses with typed serde, while snp validates every config and manifest with cfgv as pre-commit does (an invalid manifest or a missing hook id changes what is kept) and reads one marker per repository; 162 M vs 60 M instructions (c20cc5e); with ADR-136's https repository URLs 143 M vs 59 M user instructions locally"
 
 [[known_miss]]
 scenario = "B4"
@@ -350,11 +350,11 @@ check = "p50 <= prek"
 reason = "not profiled yet (4-20 % behind prek on CI, the most on musl)"
 
 [[known_miss]]
-scenario = "B5"
-check = "p50 <= prek"
-reason = "not profiled yet (3 % behind prek on CI, within runner variation)"
-
-[[known_miss]]
 scenario = "B12u"
 check = "p50 <= prek"
-reason = "not profiled yet (6-18 % behind prek on CI, the most on musl)"
+reason = "both tools spawn the same 20 git diff processes over the 20,000-entry index (pre-commit's per-hook modification check), ~80 % of the tree's instructions; snp's own process is ~11 % of the samples, most of it classifying 20,000 paths against 20 Unicode patterns. 2 % behind prek on glibc CI (341 vs 334 ms, overlapping intervals)"
+
+[[known_miss]]
+scenario = "B9"
+check = "p50 <= 1x B3"
+reason = "the budget charges git's own commit to snp: git commit --no-verify alone is ~3/4 of B9 - B3 (77 % of the extra instructions: git commit and git maintenance), and B9 and B3 are measured in different windows; to be rebased on an interleaved --no-verify reference (O8)"
