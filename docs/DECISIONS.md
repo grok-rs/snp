@@ -58,7 +58,7 @@ serde_yaml-family crates are banned; the composer is an arena (aliases share nod
 
 ### ADR-003 — Regular expressions: the 01 Addendum, verbatim (C3)
 
-*Status: Accepted; amended by ADR-079 (tier-1/2 lazy-DFA cache = the crate default 2 MiB; `size_limit` 64 MiB unchanged), ADR-098 (the tier-1 exact fallback runs behind the relaxed prefilter) ADR-108 (that prefilter runs on a forward-only `regex-automata` engine) and ADR-115 (tier-1 str path texts with a large Unicode class run on that engine instead of `regex`; tier 2's prefilter too). The amending ADRs are normative where they differ.*
+*Status: Accepted; amended by ADR-079 (tier-1/2 lazy-DFA cache = the crate default 2 MiB; `size_limit` 64 MiB unchanged), ADR-098 (the tier-1 exact fallback runs behind the relaxed prefilter), ADR-108 (that prefilter runs on a forward-only `regex-automata` engine) and ADR-115 (tier-1 str path texts with a large Unicode class run on that engine instead of `regex`; tier 2's prefilter too). The amending ADRs are normative where they differ.*
 
 **Context.** 01 §13/§18.1 and 04a §12.3 proposed two tiers, 07 D4 picked fancy-regex alone, 10 Q6 deferred; all three
 proposals then contradicted the normative 01 Addendum (corpus of 4,858 real patterns) on constants and grammar.
