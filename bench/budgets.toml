@@ -327,7 +327,7 @@ reason = "not profiled yet (17-26 % behind prek on CI, more on musl)"
 [[known_miss]]
 scenario = "B8"
 check = "p50 <= prek"
-reason = "snp keeps pre-commit's post-checkout baseline git diff (~362 M instructions: it re-hashes the racily clean 10 MiB file; ADR-078), which prek skips; it also lists the patch with git apply --numstat (121 M, D-DATA-19) and fsyncs the 21 MB patch and journal (ADR-067; patch writeback overlapped since ADR-117), which prek does not; ADR-097's re-verification is only the stat-stamp pass here; tree 2,655 M vs prek's 2,467 M instructions after ADR-117"
+reason = "snp lists the patch with git apply --numstat (121 M instructions, D-DATA-19) and fsyncs the 21 MB patch and journal (ADR-067; patch writeback overlapped since ADR-117), which prek does not; ADR-097's re-verification is only the stat-stamp pass here; the post-checkout baseline git diff (~362 M: it re-hashed the racily clean 10 MiB file) is elided since ADR-119, as prek does; tree 2,292 M vs prek's 2,467 M instructions after ADR-119 (2,655 M after ADR-117)"
 
 [[known_miss]]
 scenario = "B11"

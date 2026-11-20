@@ -19,7 +19,7 @@ borrowed hook argv; ADR-104 the step-6 changes of the run pipeline; ADR-105 the 
 index modes on clean `--all-files` runs; ADR-108 the forward-only engine of the tier-1 prefilter; ADR-110 the meta-only
 classification tier; ADR-112 snp-yaml's owning materialisation; ADR-115 the tier-1 scan engine; ADR-116 the absorption
 of cfgv and file-identify into the workspace; ADR-117 the B8 stash-time overlaps; ADR-118 the musl mimalloc build
-without transparent huge pages.
+without transparent huge pages; ADR-119 the proven post-checkout baseline.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -913,7 +913,7 @@ Amends ADR-034, ADR-036 and ADR-044.
 
 ### ADR-078 — DiffOracle soundness, round 2, and baseline timing
 
-*Status: Accepted; ADR-104 records how (3) is implemented (the code tracks clones, installs and downloads; the decision is unchanged).*
+*Status: Accepted; ADR-104 records how (3) is implemented (the code tracks clones, installs and downloads; the decision is unchanged); (3)'s parity mechanics amended by ADR-119 (after the stash's checkout the warm-path baseline is elided when the Stat-mode snapshot proves it empty). The amending ADR is normative where they differ.*
 
 **Decision.** (1) Stat mode only on an allow-list of filesystems with kernel-maintained ctime and ns mtime (ext2/3/4,
 xfs, btrfs, tmpfs, zfs, f2fs, bcachefs; apfs, hfs) — every FUSE (sshfs, rclone, virtiofs), 9p, overlay, vfat, exfat,
@@ -2579,6 +2579,63 @@ allocator stays adopted. On 22 CPUs, B12u peaks at 31.5 MiB (system: 20.3 MiB): 
 core count, and the budgets are measured on the 4-vCPU runner. A host with THP set to `always` can still back aligned
 arena ranges with huge pages, because nothing calls `prctl`. The gnu, macOS and Windows builds do not contain
 mimalloc and are unchanged.
+### ADR-119 — B8: the post-checkout baseline is elided when the snapshot proves it empty
+
+*Amends ADR-078 (3) (its parity mechanics, not its guarantee: the baseline still equals the stdout of the `git diff`
+pre-commit takes, in every case) and ADR-117's Rejected (c), first item (owner decision of 2026-11-20: approved as a
+fail-closed fast path, not as a divergence). Every durability, verification and recovery rule of the stash is
+unchanged.*
+
+**Context.** After ADR-117, B8 (a 10 MiB unstaged rewrite) ran 2,653 M instructions for the tree against prek's
+2,467 M. Of them, 361 M were the pre-commit-parity baseline `git diff --no-ext-diff --no-textconv
+--ignore-submodules` taken after the stash's checkout (40–62 ms locally): the checkout leaves the 10 MiB file racily
+clean, so git hashes it again, while the oracle's snapshot hashes it with blake3 anyway. prek skips that diff. ADR-078
+(3) elides the baseline only when nothing was stashed (`diff-index` rc 0).
+**Decision.** On the warm path of ADR-078 (3) (no clone, install or download since `diff-index`, under 250 ms;
+ADR-104), after a stash whose checkout of the patch's files succeeded and which cleared no intent-to-add entry, the
+baseline is `DiffFingerprint::EMPTY` when the oracle's Stat-mode snapshot, taken right after the checkout, proves
+that `git diff` prints nothing (`DiffOracle::elide_checkout_baseline`). Otherwise the baseline stays lazy, exactly as
+before (the real `git diff` after the snapshot, before the first hook). The proof: the checked-out paths are exactly
+the files `diff-index` found different (D-DATA-19: git's own `apply --numstat` listing of the patch). Every other
+tracked file was clean in that `diff-index`, which reads the worktree through the same index, configuration and
+attributes as `git diff` (assume-unchanged and skip-worktree entries are invisible to both: git does not read their
+files). The checkout rewrote only those paths, each from its index entry. So `git diff` is empty when:
+(a) the effective configuration, from fan-out query G's records (`git config --list --show-origin -z`, already
+asked; `Git::config_listing`, the last value of each key, `-c` and `GIT_CONFIG_*` included), has `core.autocrlf`,
+`core.fsmonitor`, `core.useBuiltinFSMonitor`, `core.ignoreStat`, `core.sparseCheckout` and `index.sparse` unset or
+false (git's boolean reading; `input`, a hook path or any uncertain value fails), `core.fileMode` a boolean, a value
+for `core.hooksPath` when set, and no `hook.*` key (configuration-based hooks); and `GIT_TEST_FSMONITOR` /
+`GIT_FSMONITOR_TEST` are unset; (b) no attributes file exists: every attributes input of the snapshot is missing
+(ADR-027/078's complete list: `core.attributesFile` or its default, the system files, `info/attributes` of the git
+and common directories, and the `.gitattributes` of every directory holding a tracked path), so no `filter`,
+`text`/`eol`/`crlf`, `ident` or `working-tree-encoding` conversion applies, the checkout wrote each blob's bytes and
+`git diff` reads them back unconverted; (c) neither `post-checkout` (run by a checkout of paths) nor
+`post-index-change` (run by every index write) exists in any form in the hooks directory git uses
+(`core.hooksPath`, absolute or relative to the work-tree root; a `~` or `%(prefix)` value fails; else
+`<common dir>/hooks`); (d) every directory holding a tracked path is a directory (no file is beyond a symbolic link);
+(e) every checked-out path is a tracked stage-0 entry of mode `100644` or `100755` (no symbolic link, gitlink or
+second stage), its snapshot is a regular file whose owner-executable bit matches the mode under `core.fileMode`
+(git compares exactly that bit, so a umask without `u+x` would show a mode change), and no other tracked path
+reaches its inode (a case or normalization twin on an insensitive filesystem, a hard link). Anything else, and Git
+mode (Windows, other filesystems, more than 16 384 entries, `SNP_DIFF_MODE=git`), takes the real baseline.
+`SNP_VERIFY_BASELINE=1` takes a proven baseline with the real `git diff` and prints ADR-078's mismatch notice when it
+is not empty.
+**Rejected.** (a) Reading the assume-unchanged and skip-worktree tags (`ls-files -v`) to fail closed on them: they
+cannot make the diff non-empty (above), and query F would need another argv; an owner option. (b) Running `git
+check-attr` or parsing `.gitattributes` to allow attributes that convert nothing (`*.png binary`): a spawn or a
+parser for a rarer case, left for later. (c) Hashing each checked-out file as git does (SHA-1/SHA-256 of the blob) to
+compare it with the index: no new dependency, and the checkout already wrote the index's bytes; a concurrent edit in
+the window is ADR-078 (3)'s case, as for the `diff-index` rc 0 elision.
+**Consequences.** B8 (bench fixture, release build, callgrind with `--trace-children`, median of three): 2,653.4 M →
+2,291.9 M instructions for the tree, the sum of the 15 processes that still run (−13.6%; prek 2,467 M); the
+`git diff` process (361.4 M) no longer runs, so execve falls from 16 to 15 (strace), and snp's own count moves
+from 78.76 M to 78.68 M (callgrind of snp alone, children native). A tree measured entirely under callgrind misses
+ADR-078's 250 ms warm window and still runs the diff; native runs (hyperfine, strace) do not. Runs with an
+attributes file, `core.autocrlf`, a `post-checkout` or `post-index-change` hook, a symbolic link in the patch, an
+intent-to-add entry or Git mode are unchanged. Tests: a counting probe for the B8 shape, one case per condition
+above (each runs the diff), assume-unchanged, skip-worktree, mode-only and directory-behind-a-symlink cases, and a
+randomized differential; every run equals the always-diff path's output, exit code and repository, and
+`SNP_VERIFY_BASELINE` agrees (`crates/snp-run/tests/pipeline/checkout_baseline.rs`).
 ## Appendix A — Open questions of the research documents, resolved
 
 Format: question → decision (ADR or divergence). "Parity" = behave as pre-commit 4.6.2.
