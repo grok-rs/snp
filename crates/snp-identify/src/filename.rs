@@ -4,6 +4,7 @@
 use crate::extensions::{EXTENSIONS, EXTENSIONS_NEED_BINARY_CHECK, NAMES};
 use crate::generated::MAX_EXTENSION_LEN;
 use crate::interpreters::INTERPRETERS;
+use crate::table::hash_from;
 use crate::tags::TagSet;
 
 /// Identify a file from its name alone (no I/O), exactly like
@@ -40,12 +41,55 @@ pub fn tags_from_filename(path: impl AsRef<[u8]>) -> TagSet {
 }
 
 /// [`tags_from_filename`] for a name without directory components.
+///
+/// One scan finds the first dot (a forward search up to it) and the last
+/// dot (a backward search that stops at the first one); the name lookups
+/// and the extension reuse them, and the whole name and its first part
+/// share one hash pass ([`dotted_name_tags`]).
 fn tags_from_basename(name: &[u8]) -> TagSet {
-    let mut tags = name_tags(name);
-    if let Some(ext) = extension(name) {
+    let Some(first_dot) = first_dot_of(name) else {
+        // No dot: `filename.split('.')` is `[filename]` and there is no
+        // extension.
+        return NAMES.get_bytes(name).unwrap_or_default();
+    };
+    let after_first = first_dot.saturating_add(1);
+    let last_dot = name
+        .get(after_first..)
+        .and_then(|tail| tail.iter().rposition(|&b| b == b'.'))
+        .map_or(first_dot, |i| i.saturating_add(after_first));
+    let mut tags = dotted_name_tags(name, first_dot);
+    if let Some(ext) = extension_at(name, last_dot) {
         tags = tags.union(extension_tags(ext));
     }
     tags
+}
+
+/// `name.iter().position(|&b| b == b'.')`, eight bytes at a time.
+///
+/// A byte of `x = word ^ DOTS` is zero exactly where `word` has a dot, and
+/// `(x - LO) & !x & HI` sets the high bit of the lowest zero byte (a borrow
+/// can only flag bytes above it), so the lowest set bit, counted from the
+/// little-endian start of the word, is the first dot. The tail of fewer
+/// than eight bytes is scanned bytewise. (Inlined into its caller, a plain
+/// `position` loop costs about ten instructions per byte.)
+fn first_dot_of(name: &[u8]) -> Option<usize> {
+    const LO: u64 = 0x0101_0101_0101_0101;
+    const HI: u64 = 0x8080_8080_8080_8080;
+    const DOTS: u64 = 0x2e2e_2e2e_2e2e_2e2e;
+    let (words, tail) = name.as_chunks::<8>();
+    let mut base = 0_usize;
+    for &bytes in words {
+        let x = u64::from_le_bytes(bytes) ^ DOTS;
+        let found = x.wrapping_sub(LO) & !x & HI;
+        if found != 0 {
+            let lane = usize::try_from(found.trailing_zeros() >> 3).unwrap_or(0);
+            return Some(base.saturating_add(lane));
+        }
+        base = base.saturating_add(8);
+    }
+    tail.iter()
+        .position(|&b| b == b'.')
+        .map(|i| base.saturating_add(i))
 }
 
 /// Tags for a shebang interpreter, exactly like
@@ -198,9 +242,14 @@ fn nt_after_root(p: &[u8]) -> &[u8] {
 
 /// `os.path.splitext(name)[1][1:]` for a name without separators: `None`
 /// when there is no extension, `Some(b"")` for a trailing dot.
+#[cfg(test)]
 pub(crate) fn extension(name: &[u8]) -> Option<&[u8]> {
-    let dot = name.iter().rposition(|&b| b == b'.')?;
-    let (stem, ext) = name.split_at_checked(dot)?;
+    extension_at(name, name.iter().rposition(|&b| b == b'.')?)
+}
+
+/// [`extension`] given the position of the last dot of `name`.
+fn extension_at(name: &[u8], last_dot: usize) -> Option<&[u8]> {
+    let (stem, ext) = name.split_at_checked(last_dot)?;
     // Leading dots of the name do not start an extension (".bashrc", "...").
     if stem.iter().all(|&b| b == b'.') {
         return None;
@@ -208,19 +257,37 @@ pub(crate) fn extension(name: &[u8]) -> Option<&[u8]> {
     ext.get(1..)
 }
 
-/// `[filename] + filename.split('.')`, first hit in `NAMES`.
-fn name_tags(name: &[u8]) -> TagSet {
-    if let Some(tags) = NAMES.get_bytes(name) {
-        return tags;
-    }
-    if name.contains(&b'.') {
-        for part in name.split(|&b| b == b'.') {
-            if let Some(tags) = NAMES.get_bytes(part) {
+/// `[filename] + filename.split('.')`, first hit in `NAMES`, for a name
+/// whose first dot is at `first_dot`.
+///
+/// The whole name and its first part share one FNV pass: the state after
+/// the first part is that part's hash, and hashing on from it over the rest
+/// gives the whole name's. A whole name longer than any key is not hashed
+/// past its first part; a first part longer than any key is not hashed at
+/// all (the whole name is longer still). The later parts are looked up one
+/// by one.
+fn dotted_name_tags(name: &[u8], first_dot: usize) -> TagSet {
+    let Some((first, rest)) = name.split_at_checked(first_dot) else {
+        return TagSet::EMPTY;
+    };
+    if first.len() <= NAMES.max_len() {
+        let first_hash = NAMES.hash(first);
+        if name.len() <= NAMES.max_len() {
+            let whole_hash = hash_from(first_hash, rest);
+            if let Some(tags) = NAMES.get_hashed(name, whole_hash) {
                 return tags;
             }
         }
+        if let Some(tags) = NAMES.get_hashed(first, first_hash) {
+            return tags;
+        }
     }
-    TagSet::EMPTY
+    // `rest` starts with the first dot.
+    rest.get(1..)
+        .unwrap_or_default()
+        .split(|&b| b == b'.')
+        .find_map(|part| NAMES.get_bytes(part))
+        .unwrap_or_default()
 }
 
 /// `ext.lower()` looked up in `EXTENSIONS`, else `EXTENSIONS_NEED_BINARY_CHECK`.
@@ -252,10 +319,173 @@ fn extension_tags(ext: &[u8]) -> TagSet {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
 
     fn tags(name: &str) -> String {
         tags_from_filename(name).to_string()
+    }
+
+    /// The pre-U1 `tags_from_basename` (two dot scans, the first part
+    /// hashed twice), kept as the differential reference.
+    fn reference_tags_from_basename(name: &[u8]) -> TagSet {
+        let mut tags = NAMES.get_bytes(name);
+        if tags.is_none() && name.contains(&b'.') {
+            tags = name.split(|&b| b == b'.').find_map(|p| NAMES.get_bytes(p));
+        }
+        let mut tags = tags.unwrap_or_default();
+        let ext = name.iter().rposition(|&b| b == b'.').and_then(|dot| {
+            let (stem, ext) = name.split_at_checked(dot).unwrap();
+            (!stem.iter().all(|&b| b == b'.')).then(|| &ext[1..])
+        });
+        if let Some(ext) = ext {
+            tags = tags.union(extension_tags(ext));
+        }
+        tags
+    }
+
+    fn assert_same_as_reference(name: &[u8]) {
+        assert_eq!(
+            tags_from_basename(name),
+            reference_tags_from_basename(name),
+            "{:?}",
+            String::from_utf8_lossy(name)
+        );
+    }
+
+    #[test]
+    fn first_dot_matches_position() {
+        // Every length up to five words, every dot position, and neighbours
+        // of '.' (0x2d, 0x2f, 0xae = '.' | 0x80) and NUL around it.
+        for len in 0..=40 {
+            for filler in [b'a', b'-', b'/', 0xae, 0x00, 0xff] {
+                let mut name = vec![filler; len];
+                assert_eq!(first_dot_of(&name), None, "{name:?}");
+                for first in 0..len {
+                    name.fill(filler);
+                    name[first] = b'.';
+                    assert_eq!(first_dot_of(&name), Some(first), "{name:?}");
+                    for second in first..len {
+                        name[second] = b'.';
+                        assert_eq!(first_dot_of(&name), Some(first), "{name:?}");
+                        name[second] = filler;
+                        name[first] = b'.';
+                    }
+                }
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn first_dot_matches_position_on_arbitrary_bytes(
+            name in proptest::collection::vec(any::<u8>(), 0..80)
+        ) {
+            prop_assert_eq!(first_dot_of(&name), name.iter().position(|&b| b == b'.'));
+        }
+    }
+
+    #[test]
+    fn single_scan_matches_reference_on_edge_cases() {
+        let mut names: Vec<Vec<u8>> = [
+            "",
+            ".",
+            "..",
+            "...",
+            ".bashrc",
+            "a.",
+            "..a",
+            "..a.py",
+            ".a.py",
+            "a..b",
+            "a.b.c.d",
+            "Dockerfile",
+            "Dockerfile.",
+            ".Dockerfile",
+            "x.Dockerfile.y",
+            "Dockerfile.xenial",
+            "xenial.Dockerfile",
+            "setup.cfg",
+            "Pipfile.lock",
+            "Tiltfile.abc",
+            ".pre-commit-config.yaml",
+            "meson_options.txt",
+            "a.b.c.Makefile.d.png",
+            "Containerfile.hgrcasciidoc",
+            "x.\u{212a}t",
+            "x.\u{130}ni",
+            "\u{212a}.Makefile",
+            "Makefile.\u{212a}t",
+        ]
+        .iter()
+        .map(|s| s.as_bytes().to_vec())
+        .collect();
+        // Names around NAMES' longest key (17 bytes), with and without dots.
+        for len in 15..=20 {
+            names.push(vec![b'a'; len]);
+            let mut first_long = vec![b'a'; len];
+            first_long.extend_from_slice(b".Makefile.py");
+            names.push(first_long);
+            let mut whole_long = b"Makefile.".to_vec();
+            whole_long.extend(std::iter::repeat_n(b'x', len));
+            names.push(whole_long);
+        }
+        names.push(b"\xff\xfe.py".to_vec());
+        names.push(b"Makefile.\xff".to_vec());
+        names.push(b"\xff.Makefile".to_vec());
+        names.push(b"x.p\xffy".to_vec());
+        for name in &names {
+            assert_same_as_reference(name);
+        }
+        // Every table key, alone, as a part and as an extension.
+        for (key, _) in NAMES.iter().chain(EXTENSIONS.iter()) {
+            for name in [
+                key.to_owned(),
+                format!("{key}.x"),
+                format!("x.{key}"),
+                format!(".{key}"),
+                format!("{key}."),
+                format!("x.{key}.y"),
+                key.to_uppercase(),
+            ] {
+                assert_same_as_reference(name.as_bytes());
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(4096))]
+
+        /// Arbitrary bytes (non-UTF-8 included), dot-heavy names and
+        /// names built from table keys.
+        #[test]
+        fn single_scan_matches_reference(
+            name in prop_oneof![
+                proptest::collection::vec(any::<u8>(), 0..64),
+                proptest::collection::vec(
+                    prop_oneof![Just(b'.'), Just(b'a'), Just(b'K'), Just(0xff_u8)],
+                    0..40,
+                ),
+                proptest::collection::vec(
+                    prop_oneof![
+                        proptest::sample::select(NAMES.keys().collect::<Vec<_>>()),
+                        proptest::sample::select(EXTENSIONS.keys().collect::<Vec<_>>()),
+                        Just(""),
+                        Just("x"),
+                        Just("\u{212a}"),
+                    ],
+                    0..5,
+                )
+                .prop_map(|parts| parts.join(".").into_bytes()),
+                "[.a-zA-Z0-9_\u{212a}é-]{0,300}".prop_map(String::into_bytes),
+            ]
+        ) {
+            prop_assert_eq!(
+                tags_from_basename(&name),
+                reference_tags_from_basename(&name)
+            );
+        }
     }
 
     #[test]
