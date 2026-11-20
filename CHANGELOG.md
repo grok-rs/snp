@@ -140,6 +140,11 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
 
 ### Fixed
 
+- The nightly musl bench passes again (ADR-118). The `musl-mimalloc` build exceeded the hard peak-RSS budgets on
+  B4/B6/B12u (53.7/29.7/58.8 MiB), because mimalloc madvised its arenas into transparent huge pages. mimalloc is now
+  built with `no_thp` (19.6/10.6/21.8 MiB on four CPUs). The released musl binaries use the system allocator and are
+  unchanged.
+
 - `cargo xtask bench setup` no longer fails with `destination path … already exists` when an interrupted clone left
   the pre-commit-hooks mirror directory without `HEAD`: it removes it and clones again.
 

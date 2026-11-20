@@ -18,7 +18,7 @@ the B8 heap budget and counters; ADR-101 classification CPU and fan-out sizing; 
 borrowed hook argv; ADR-104 the step-6 changes of the run pipeline; ADR-105 the hook script template v2; ADR-106 trusted
 index modes on clean `--all-files` runs; ADR-108 the forward-only engine of the tier-1 prefilter; ADR-110 the meta-only
 classification tier; ADR-112 snp-yaml's owning materialisation; ADR-116 the absorption of cfgv and file-identify into
-the workspace.
+the workspace; ADR-118 the musl mimalloc build without transparent huge pages.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -925,7 +925,7 @@ these cases. Amends ADR-027.
 
 ### ADR-079 — Resource tuning: regex DFA cache, FileTable layout, probe-fact persistence, musl allocator
 
-*Status: Accepted; item (1) amended by ADR-098 (the tier-1 exact fallback's prefilter caps its lazy-DFA cache at 256 KiB) and ADR-108 (that prefilter is a forward-only lazy DFA, with the linear NFA engines behind it). The amending ADRs are normative where they differ.*
+*Status: Accepted; item (1) amended by ADR-098 (the tier-1 exact fallback's prefilter caps its lazy-DFA cache at 256 KiB) and ADR-108 (that prefilter is a forward-only lazy DFA, with the linear NFA engines behind it); item (4) amended by ADR-118 (the mimalloc build disables mimalloc's transparent huge pages). The amending ADRs are normative where they differ.*
 
 **Decision.** (1) `dfa_size_limit` (tier 1) and `delegate_dfa_size_limit` (tier 2) use the crate default 2 MiB: it is
 the lazy-DFA cache capacity per regex per thread, not an acceptance limit (64 MiB allowed threads × patterns × 64 MiB
@@ -2443,6 +2443,34 @@ touches the consumers.
 `cfgv` and `file-identify`, so the release graph keeps its size (§11.7 budget of 120 packages). A fix made in a
 standalone repository reaches snp only as an explicit port (or `git subtree pull --prefix=crates/snp-… <repo> <rev>`,
 then the workspace adaptation), and the reverse holds for fixes made here. ADR-061 is superseded in full.
+### ADR-118 — The musl mimalloc build disables mimalloc's transparent huge pages
+
+*Amends ADR-079 (4). No budget, gate or adopted allocator changes: `[musl] adopted` stays `"system"`.*
+
+**Context.** The nightly `musl` job of bench.yml has failed every day since 2026-11-15 (10f0e1a). The failing record
+is `musl-mimalloc`, the allocator ADR-079 measures but does not adopt: B4/B6/B12u peaked at 53.7/29.7/58.8 MiB
+against the hard budgets 28.61/23.84/28.61 MiB (run 44301994701), while `musl-system` passed (19.4/8.4/16.9 MiB). No
+merge raised it. The same three checks already failed on 2026-11-06 in the dispatch runs of the branch that widened
+`MUSL_SCENARIOS` from B1 to B1,B3,B4,B6,B12u (53.6/33.5/62.8 MiB, run 42300641866; ADR-091). The scheduled runs on
+6c1c15f up to 2026-11-13 were green only because they measured B1 alone and passed B3–B12u with `--allow-missing`.
+That widening merged (7dfcb47) after the 2026-11-13 run, and the 2026-11-14 run was cancelled. The cause is mimalloc's
+own configuration. libmimalloc-sys 0.1.49 builds mimalloc 3.3.2. On an overcommit system that build commits its
+1 GiB arenas up front and, with `allow_thp` on by default, madvises them `MADV_HUGEPAGE`. With transparent huge pages
+in `madvise` mode (Ubuntu's default), every 2 MiB region a thread's pages touch becomes resident as a whole. Measured
+on four CPUs, B3/B4/B6/B12u peaked at 15.9/50.3/27.6/53.3 MiB as built, 6.7/19.6/10.6/21.9 MiB with
+`MIMALLOC_ALLOW_THP=0`, 6.7/19.4/10.6/21.3 MiB with `MIMALLOC_ARENA_EAGER_COMMIT=0`, and 13.7/30.1/20.4/39.6 MiB with
+`MIMALLOC_PURGE_DELAY=0`. Delayed purging is therefore not the cause.
+**Decision.** `crates/snp` enables mimalloc's `no_thp` cargo feature. It compiles mimalloc with `MI_NO_THP`, which
+removes the `MADV_HUGEPAGE` call. The runtime option `allow_thp = 0` is not used: it disables THP with
+`prctl(PR_SET_THP_DISABLE)`, which every hook process would inherit across `execve`. An xtask test
+(`musl_mimalloc_is_built_without_transparent_huge_pages`) keeps the feature, because the musl job runs only nightly.
+**Consequences.** On four CPUs `musl-mimalloc` peaks at 6.8/19.6/10.6/21.8 MiB on B3/B4/B6/B12u, against
+6.0/19.1/8.2/16.5 MiB for `musl-system`. Every hard budget passes. By bench/musl-allocator.md's rule (at most 2 MiB
+more peak RSS on B4/B6/B12u), mimalloc still costs too much on B6 (+2.4 MiB) and B12u (+5.3 MiB), so the system
+allocator stays adopted. On 22 CPUs, B12u peaks at 31.5 MiB (system: 20.3 MiB): the per-thread heaps grow with the
+core count, and the budgets are measured on the 4-vCPU runner. A host with THP set to `always` can still back aligned
+arena ranges with huge pages, because nothing calls `prctl`. The gnu, macOS and Windows builds do not contain
+mimalloc and are unchanged.
 ## Appendix A — Open questions of the research documents, resolved
 
 Format: question → decision (ADR or divergence). "Parity" = behave as pre-commit 4.6.2.

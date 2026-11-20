@@ -251,7 +251,7 @@ its tests run with a fake resolver before snp-repo lands. Critical path: pycompa
   measured: +RSS, no gain, 07 §3.15). musl: decided by measurement (07 D10: musl's allocator is slow under
   contention): WP-36 benches the musl build with the system allocator and with mimalloc behind
   `#[cfg(target_env = "musl")] #[global_allocator]` in `crates/snp` on B3/B4/B6/B12, and mimalloc ships for musl
-  targets iff it wins (ADR-079).
+  targets iff it wins (ADR-079); that build enables mimalloc's `no_thp` (ADR-118).
 * **Dependencies** (complete `[workspace.dependencies]`, exact versions from 07 §6 unless noted; WP-00 owns the root
   manifest and nobody edits it later — a package needing a new external dependency files an ADR and the integration
   lead adds it): `cfgv` (path `crates/snp-cfgv`, `package = "snp-cfgv"`, `version = "=X.Y.Z"`) and `file-identify`
