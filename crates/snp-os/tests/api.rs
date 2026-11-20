@@ -17,6 +17,7 @@ mod api {
     use snp_core::output::ColorSetting;
     use snp_os::fs::{self, Ownership};
     use snp_os::lock::{FileLock, LockMode};
+    use snp_os::rootstat::{RootDir, StatData};
     use snp_os::{fsinfo, home, realpath, term};
 
     fn send_sync<T: Send + Sync>() {}
@@ -82,5 +83,19 @@ mod api {
         has::<fn(&Env) -> Option<PathBuf>>(home::default_cache_root);
         has::<fn(&Path, &Path) -> io::Result<PathBuf>>(realpath::realpath_nonstrict);
         has::<fn(&Path) -> io::Result<bool>>(fsinfo::stat_oracle_safe);
+        // ADR-134
+        send_sync::<RootDir>();
+        send_sync::<StatData>();
+        has::<fn(&Path) -> io::Result<RootDir>>(RootDir::open);
+        has::<fn(&RootDir, &std::ffi::CStr) -> io::Result<StatData>>(RootDir::lstat);
+        has::<StatData>(StatData {
+            mode: 0,
+            ino: 0,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            mtime: (0, 0),
+            ctime: (0, 0),
+        });
     }
 }
