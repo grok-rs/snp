@@ -127,6 +127,9 @@ mod api {
         has::<fn(&mut DiffOracle, &ZList, &CheckoutConfig, bool) -> Elision>(
             DiffOracle::elide_checkout_baseline,
         );
+        // ADR-132
+        has::<fn(&DiffOracle) -> bool>(DiffOracle::baseline_known);
+        has::<fn(&mut DiffOracle, DiffFingerprint)>(DiffOracle::adopt_baseline);
         has::<[Elision; 4]>([
             Elision::NotProven,
             Elision::Elided,
