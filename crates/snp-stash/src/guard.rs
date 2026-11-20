@@ -99,6 +99,8 @@ pub enum Stashed {
 pub struct StashGuard {
     stashed: Stashed,
     clean: bool,
+    /// The paths the stash's checkout rewrote from the index (git's own listing of the patch), once it succeeded.
+    checked_out: Option<ZList>,
     /// The worktree lock was taken on the wait path.
     contended: bool,
     inner: Option<Box<Inner>>,
@@ -435,6 +437,7 @@ pub fn enter(cx: StashCtx) -> Result<StashGuard, Failure> {
     let mut guard = StashGuard {
         stashed: Stashed::Nothing,
         clean: false,
+        checked_out: None,
         contended,
         inner: Some(Box::new(Inner {
             cx,
@@ -466,8 +469,9 @@ pub fn enter(cx: StashCtx) -> Result<StashGuard, Failure> {
             guard.clean = clean;
             Ok(guard)
         }
-        Ok(StashOutcome::Patch(p)) => {
+        Ok(StashOutcome::Patch(p, paths)) => {
             guard.stashed = Stashed::Patch(p);
+            guard.checked_out = Some(paths);
             Ok(guard)
         }
         Err(e) => {
@@ -487,8 +491,11 @@ pub fn enter(cx: StashCtx) -> Result<StashGuard, Failure> {
 
 /// The result of the stash steps.
 enum StashOutcome {
-    Nothing { clean: bool },
-    Patch(PathBuf),
+    Nothing {
+        clean: bool,
+    },
+    /// The patch and the paths its checkout rewrote.
+    Patch(PathBuf, ZList),
 }
 
 /// The result of the first `diff-index` (step 5).
@@ -733,7 +740,7 @@ impl Inner {
         self.flags.patch = PatchStep::Due;
         self.git().checkout_paths(&paths, true, Group::Isolated)?;
         fault::hit(Point::StashState(5));
-        Ok(StashOutcome::Patch(path))
+        Ok(StashOutcome::Patch(path, paths))
     }
 
     /// Step 5: the first `diff-index`, streamed into the lazily created patch file. Every exit without a usable
@@ -1483,6 +1490,13 @@ impl StashGuard {
     /// `diff-index` rc 0 ⇒ baseline digest known empty.
     pub fn diff_index_clean(&self) -> bool {
         self.clean
+    }
+
+    /// The paths the stash's checkout rewrote from the index — exactly the files of the patch (D-DATA-19, git's own
+    /// `apply --numstat` listing) — once that checkout succeeded; `None` when nothing was stashed. ADR-119's proof
+    /// input ([`crate::diff_oracle::DiffOracle::elide_checkout_baseline`]).
+    pub fn checked_out(&self) -> Option<&ZList> {
+        self.checked_out.as_ref()
     }
 
     /// Whether the stash removed intent-to-add entries from the index (`git rm --cached`): an index read taken

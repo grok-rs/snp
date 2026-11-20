@@ -23,7 +23,7 @@ use std::time::SystemTime;
 
 use snp_core::env::Env;
 use snp_core::failure::Failure;
-use snp_git::{DiffFingerprint, Git, IndexEntries, RepoInfo};
+use snp_git::{CheckoutConfig, DiffFingerprint, Git, IndexEntries, RepoInfo, ZList};
 
 /// At most this many index entries for Stat mode (ADR-027).
 const MAX_ENTRIES: usize = 16_384;
@@ -65,6 +65,20 @@ pub enum Change {
     Unchanged,
     /// The diff changed (the hook "modified files").
     Changed,
+}
+
+/// What [`DiffOracle::elide_checkout_baseline`] made of the baseline (ADR-119).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Elision {
+    /// Not proven (or not applicable): the baseline stays lazy, the real `git diff` runs before the first hook.
+    NotProven,
+    /// Proven empty: no `git diff` runs for it.
+    Elided,
+    /// Proven, and `SNP_VERIFY_BASELINE`'s real `git diff` was empty too.
+    Verified,
+    /// Proven, but `SNP_VERIFY_BASELINE`'s real `git diff` was not empty; it is the baseline.
+    Mismatch,
 }
 
 /// The kind of a stat result.
@@ -281,6 +295,8 @@ struct StatState {
     paths: Vec<PathBuf>,
     /// How many of `paths` are tracked paths (the rest are directories).
     n_files: usize,
+    /// The index entries `paths` were built from (ADR-119 reads their modes).
+    tracked: Arc<IndexEntries>,
     inputs: Vec<(PathBuf, InputKind)>,
     origins: Arc<[PathBuf]>,
     snapshot: Option<Snapshot>,
@@ -504,10 +520,10 @@ impl StatState {
     fn new(
         info: &RepoInfo,
         env: &Env,
-        tracked: &IndexEntries,
+        tracked: Arc<IndexEntries>,
         origins: Arc<[PathBuf]>,
     ) -> Option<Self> {
-        let (paths, n_files) = tracked_paths(&info.root, tracked)?;
+        let (paths, n_files) = tracked_paths(&info.root, &tracked)?;
         let dirs = paths.get(n_files..).unwrap_or_default();
         let inputs = build_inputs(info, env, &origins, dirs)?;
         Some(Self {
@@ -515,6 +531,7 @@ impl StatState {
             env: env.clone(),
             paths,
             n_files,
+            tracked,
             inputs,
             origins,
             snapshot: None,
@@ -588,6 +605,132 @@ impl StatState {
         }
         (d, stats, taken)
     }
+
+    /// ADR-119: whether the snapshot, taken after the stash's checkout, proves that `git diff` prints nothing.
+    ///
+    /// The checked-out paths are exactly the files the stash's `diff-index` found different; every other tracked
+    /// file was clean in that `diff-index`, which reads the worktree with the same index, configuration and
+    /// attributes as `git diff`. The checkout rewrote only those paths, and wrote each from its index entry. So `git
+    /// diff` prints nothing when (a) the effective configuration is plain ([`CheckoutConfig::plain`]: no
+    /// `core.autocrlf`, fsmonitor, ignoreStat, sparse checkout or configuration-based hook) and no fsmonitor test
+    /// hook is in the environment; (b) no attributes file exists (every attributes input of the snapshot is
+    /// missing), so no filter, `text`/`eol`/`crlf`, `ident` or `working-tree-encoding` conversion applies and the
+    /// checkout wrote each blob's bytes, which `git diff` reads back unconverted; (c) no `post-checkout` or
+    /// `post-index-change` hook exists, the two hooks a path-limited checkout runs; (d) every directory holding a
+    /// tracked path is a directory (no path is beyond a symbolic link); and (e)
+    /// [`checked_out_files_plain`]. Anything else answers `false`: the caller takes the real baseline.
+    fn checkout_left_no_diff(&self, checked_out: &ZList, config: &CheckoutConfig) -> bool {
+        let Some(snap) = &self.snapshot else {
+            return false;
+        };
+        if !config.plain
+            || ["GIT_TEST_FSMONITOR", "GIT_FSMONITOR_TEST"]
+                .into_iter()
+                .any(|k| self.env.get_nonempty(k).is_some())
+        {
+            return false;
+        }
+        let no_attributes = self
+            .inputs
+            .iter()
+            .zip(&snap.inputs)
+            .all(|((_, kind), (l, s))| {
+                *kind != InputKind::Other || (l.kind == Kind::Missing && s.kind == Kind::Missing)
+            });
+        let real_dirs = snap
+            .paths
+            .get(self.n_files..)
+            .unwrap_or_default()
+            .iter()
+            .all(|s| s.kind == Kind::Dir);
+        let files = snap.paths.get(..self.n_files).unwrap_or_default();
+        no_attributes
+            && real_dirs
+            && no_checkout_hooks(&self.info, config)
+            && checked_out_files_plain(
+                self.tracked
+                    .paths
+                    .iter()
+                    .zip(self.tracked.modes.iter().copied()),
+                files,
+                &checked_out.iter().collect(),
+                config.file_mode,
+            )
+    }
+}
+
+/// The hooks a path-limited `git checkout` can run (ADR-119): `post-checkout` (after the checkout of paths) and
+/// `post-index-change` (after every index write, git ≥ 2.22).
+const CHECKOUT_HOOKS: [&str; 2] = ["post-checkout", "post-index-change"];
+
+/// ADR-119 (c): neither of [`CHECKOUT_HOOKS`] exists, in any form (`lstat` finds nothing), in the directory git looks
+/// in: `core.hooksPath` (absolute, or relative to the work-tree root, where git runs) or `<common dir>/hooks`. A
+/// `core.hooksPath` git would expand (`~`, `%(prefix)`) or an empty one answers `false`.
+fn no_checkout_hooks(info: &RepoInfo, config: &CheckoutConfig) -> bool {
+    let dir = match config.hooks_path.as_deref() {
+        None => info.common_dir.join("hooks"),
+        Some(p) if p.is_empty() || p.starts_with(b"~") || p.starts_with(b"%(") => return false,
+        Some(p) => info.root.join(crate::journal::bytes_path(p)),
+    };
+    CHECKOUT_HOOKS
+        .iter()
+        .all(|h| St::lstat(&dir.join(h)).kind == Kind::Missing)
+}
+
+/// ADR-119 (e), over the index entries (`(path, mode)` in index order) and the snapshot's tracked-path slots
+/// (`files`, in [`tracked_paths`] order): every checked-out path (`want`) is a tracked entry at stage 0 (no gitlink, no second stage) of mode `100644` or `100755`, its slot is a regular
+/// file whose owner-executable bit matches the mode when `core.fileMode` holds (git compares exactly that bit, so a
+/// umask without it would show a mode change), and no other tracked path reaches its inode (a case or Unicode
+/// normalization twin on an insensitive filesystem, or a hard link: the checkout of one would change what `git diff`
+/// reads for the other). An empty list proves nothing.
+fn checked_out_files_plain<'a>(
+    tracked: impl Iterator<Item = (&'a [u8], u32)>,
+    files: &[St],
+    want: &HashSet<&[u8]>,
+    file_mode: bool,
+) -> bool {
+    if want.is_empty() {
+        return false;
+    }
+    let mut found: HashSet<&[u8]> = HashSet::new();
+    let mut inodes: HashSet<(u64, u64)> = HashSet::new();
+    let mut slot = 0_usize;
+    let mut last: Option<&[u8]> = None;
+    for (p, mode) in tracked {
+        // the slot rule of `tracked_paths`
+        if mode == GITLINK || last == Some(p) {
+            if want.contains(p) {
+                return false;
+            }
+            continue;
+        }
+        last = Some(p);
+        if want.contains(p) {
+            let Some(st) = files.get(slot) else {
+                return false;
+            };
+            let exec = st.mode & 0o100 != 0;
+            let regular = st.kind == Kind::File
+                && match mode {
+                    0o100_644 => !file_mode || !exec,
+                    0o100_755 => !file_mode || exec,
+                    _ => false,
+                };
+            if !regular || !found.insert(p) || !inodes.insert((st.dev, st.ino)) {
+                return false;
+            }
+        }
+        slot = slot.saturating_add(1);
+    }
+    found.len() == want.len()
+        && files
+            .iter()
+            .filter(|s| {
+                !matches!(s.kind, Kind::Missing | Kind::Error(_))
+                    && inodes.contains(&(s.dev, s.ino))
+            })
+            .count()
+            == inodes.len()
 }
 
 impl DiffOracle {
@@ -642,12 +785,54 @@ impl DiffOracle {
         if !safe(&info.root) || !safe(&info.git_dir) {
             return None;
         }
-        StatState::new(info, env, &tracked, origins)
+        StatState::new(info, env, tracked, origins)
     }
 
     /// The chosen mode.
     pub fn mode(&self) -> DiffMode {
         self.mode
+    }
+
+    /// ADR-119: right after the stash's checkout of `checked_out` (and before any hook), take the baseline as known
+    /// empty when the Stat-mode snapshot proves `git diff` prints nothing (see `StatState::checkout_left_no_diff`;
+    /// `config` is query G's [`CheckoutConfig`]). Only on a lazy baseline (none given to [`Self::new`]) in Stat mode;
+    /// the snapshot is taken here, so a later [`Self::before_hook`] keeps it. When the proof fails nothing else
+    /// changes: the baseline stays lazy and [`Self::before_hook`] runs the real `git diff` after the snapshot, as
+    /// before.
+    ///
+    /// `verify` (`SNP_VERIFY_BASELINE=1`): a proven baseline is still taken with the real `git diff`, which becomes
+    /// the baseline; [`Elision::Mismatch`] when it was not empty. A failing `git diff` leaves the baseline lazy.
+    pub fn elide_checkout_baseline(
+        &mut self,
+        checked_out: &ZList,
+        config: &CheckoutConfig,
+        verify: bool,
+    ) -> Elision {
+        if self.last.is_some() {
+            return Elision::NotProven;
+        }
+        let Some(s) = self.stat.as_deref_mut() else {
+            return Elision::NotProven;
+        };
+        if s.snapshot.is_none() {
+            s.take_snapshot();
+        }
+        if !s.checkout_left_no_diff(checked_out, config) {
+            return Elision::NotProven;
+        }
+        if !verify {
+            self.last = Some(DiffFingerprint::EMPTY);
+            return Elision::Elided;
+        }
+        let Ok(real) = self.git.diff_fingerprint() else {
+            return Elision::NotProven;
+        };
+        self.last = Some(real);
+        if real == DiffFingerprint::EMPTY {
+            Elision::Verified
+        } else {
+            Elision::Mismatch
+        }
     }
 
     /// Guards the flag of the file table's trusted index modes (ADR-106): from now on every [`Self::after_hook`] and
@@ -729,7 +914,7 @@ impl DiffOracle {
             Arc::clone(&s.origins)
         };
         let rebuilt = if delta.index {
-            StatState::new(&s.info, &s.env, &tracked, origins)
+            StatState::new(&s.info, &s.env, Arc::new(tracked), origins)
         } else {
             let dirs = s.paths.get(s.n_files..).unwrap_or_default();
             build_inputs(&s.info, &s.env, &origins, dirs).map(|inputs| StatState {
@@ -737,6 +922,7 @@ impl DiffOracle {
                 env: s.env.clone(),
                 paths: s.paths.clone(),
                 n_files: s.n_files,
+                tracked: Arc::clone(&s.tracked),
                 inputs,
                 origins,
                 snapshot: None,
@@ -810,6 +996,115 @@ impl DiffOracle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A regular file's stat tuple: inode `ino`, permission bits `perm`.
+    fn file(ino: u64, perm: u32) -> St {
+        St {
+            kind: Kind::File,
+            dev: 1,
+            ino,
+            size: 3,
+            mtime: 1,
+            ctime: 1,
+            mode: 0o100_000 | perm,
+        }
+    }
+
+    /// [`checked_out_files_plain`] over `(path, mode)` entries, slot stats and the checked-out list.
+    fn plain(entries: &[(&str, u32)], files: &[St], want: &[&str], file_mode: bool) -> bool {
+        let want: HashSet<&[u8]> = want.iter().map(|p| p.as_bytes()).collect();
+        checked_out_files_plain(
+            entries.iter().map(|(p, m)| (p.as_bytes(), *m)),
+            files,
+            &want,
+            file_mode,
+        )
+    }
+
+    /// ADR-119 (e): the per-path half of the proof, case by case.
+    #[test]
+    fn checked_out_files_must_be_plain_regular_files_of_their_own() {
+        let entries = [("a", 0o100_644), ("b", 0o100_755), ("c", 0o100_644)];
+        let files = [file(1, 0o644), file(2, 0o755), file(3, 0o600)];
+        assert!(plain(&entries, &files, &["a"], true));
+        assert!(plain(&entries, &files, &["a", "b", "c"], true));
+        assert!(
+            !plain(&entries, &files, &[], true),
+            "an empty list proves nothing"
+        );
+        assert!(!plain(&entries, &files, &["z"], true), "not tracked");
+        // the owner-executable bit, under `core.fileMode` only (a umask without `u+x`)
+        let no_x = [file(1, 0o644), file(2, 0o644), file(3, 0o600)];
+        assert!(!plain(&entries, &no_x, &["b"], true));
+        assert!(plain(&entries, &no_x, &["b"], false));
+        let x = [file(1, 0o744), file(2, 0o755), file(3, 0o600)];
+        assert!(!plain(&entries, &x, &["a"], true));
+        assert!(plain(&entries, &x, &["a"], false));
+        // not a regular file now, or not a regular entry
+        for kind in [
+            Kind::Symlink,
+            Kind::Dir,
+            Kind::Missing,
+            Kind::Other,
+            Kind::Error(13),
+        ] {
+            let st = St {
+                kind,
+                ..file(1, 0o644)
+            };
+            assert!(
+                !plain(
+                    &entries,
+                    &[st, file(2, 0o755), file(3, 0o600)],
+                    &["a"],
+                    true
+                ),
+                "{kind:?}"
+            );
+        }
+        assert!(
+            !plain(&[("a", 0o120_000)], &[file(1, 0o644)], &["a"], true),
+            "a symlink entry"
+        );
+        assert!(
+            !plain(&[("a", 0o100_664)], &[file(1, 0o664)], &["a"], true),
+            "an unusual mode"
+        );
+        // a gitlink has no slot; a second stage is refused
+        let staged = [
+            ("g", GITLINK),
+            ("m", 0o100_644),
+            ("m", 0o100_644),
+            ("x", 0o100_644),
+        ];
+        let slots = [file(5, 0o644), file(6, 0o644)];
+        assert!(plain(&staged, &slots, &["x"], true), "x is the second slot");
+        assert!(!plain(&staged, &slots, &["m"], true));
+        assert!(!plain(&staged, &slots, &["g"], true));
+        let shifted = [file(5, 0o644), St::MISSING];
+        assert!(
+            !plain(&staged, &shifted, &["x"], true),
+            "x's slot follows the rule of tracked_paths"
+        );
+        // an inode reached by another tracked path: a case twin on an insensitive filesystem, a hard link
+        let twins = [file(1, 0o644), file(2, 0o755), file(1, 0o644)];
+        assert!(!plain(&entries, &twins, &["a"], true));
+        assert!(!plain(&entries, &twins, &["c"], true));
+        assert!(plain(&entries, &twins, &["b"], true));
+        assert!(!plain(&entries, &twins, &["a", "c"], true));
+        // missing slots and unreadable ones share no inode
+        let holes = [
+            file(1, 0o644),
+            St::MISSING,
+            St {
+                kind: Kind::Error(13),
+                ..St::MISSING
+            },
+        ];
+        assert!(plain(&entries, &holes, &["a"], true));
+        // fewer slots than entries: refused, never read out of bounds
+        assert!(!plain(&entries, &files[..1], &["c"], true));
+    }
 
     /// The reference: an `lstat` and a `stat` call per input, as `stat_inputs` took them before.
     fn two_calls(p: &Path) -> (St, St) {
