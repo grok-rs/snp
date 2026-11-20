@@ -12,7 +12,7 @@
 
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::Read as _;
+use std::io::Read;
 use std::path::Path;
 
 use cfgv::{Cx, Schema, ValidationError, Value};
@@ -47,17 +47,25 @@ pub(crate) fn limits() -> snp_yaml::Limits {
 
 /// Reads `path` like `cfgv.load_from_filename` up to the validation context: `Err` is the not-a-file validation
 /// error or the uncaught `OSError`.
+///
+/// One `stat(path)` answers both `os.path.isfile` (checked before the open, so a FIFO or device is never opened)
+/// and the size limit (checked after the open, so an unreadable file still fails with its `OSError`). The buffer
+/// is reserved for the whole file plus one byte, so a small file takes one read for its bytes and one
+/// zero-length read instead of std's 32-byte probe-and-double sequence.
 pub(crate) fn read_file(
     path: &Path,
     display: &str,
     manifest: bool,
 ) -> Result<Vec<u8>, ConfigError> {
-    if !path.is_file() {
-        return Err(ConfigError::invalid(
-            manifest,
-            &ValidationError::new(messages::not_a_file(display)),
-        ));
-    }
+    let len = match std::fs::metadata(path) {
+        Ok(md) if md.is_file() => md.len(),
+        _ => {
+            return Err(ConfigError::invalid(
+                manifest,
+                &ValidationError::new(messages::not_a_file(display)),
+            ));
+        }
+    };
     let os_err = |e: &std::io::Error| ConfigError {
         manifest,
         rendered: format!(
@@ -67,24 +75,34 @@ pub(crate) fn read_file(
         ),
     };
     let max = limits().max_bytes;
-    let mut f = File::open(path).map_err(|e| os_err(&e))?;
-    let len = f.metadata().map_or(0, |m| m.len());
-    if usize::try_from(len).map_or(true, |l| l > max) {
-        // The YAML layer's own limit (D-SEC-11), reported with the file's real size and without reading it.
-        return Err(ConfigError::invalid(
-            manifest,
-            &ValidationError::new(format!(
-                "the input is {len} bytes long, more than the limit of {max} bytes"
-            ))
-            .with_context(format!("File {display}")),
-        ));
-    }
-    let mut bytes = Vec::new();
+    let f = File::open(path).map_err(|e| os_err(&e))?;
+    let hint = match usize::try_from(len) {
+        Ok(l) if l <= max => l,
+        _ => {
+            // The YAML layer's own limit (D-SEC-11), reported with the file's size and without reading it.
+            return Err(ConfigError::invalid(
+                manifest,
+                &ValidationError::new(format!(
+                    "the input is {len} bytes long, more than the limit of {max} bytes"
+                ))
+                .with_context(format!("File {display}")),
+            ));
+        }
+    };
     let cap = u64::try_from(max).unwrap_or(u64::MAX).saturating_add(1);
-    (&mut f)
-        .take(cap)
-        .read_to_end(&mut bytes)
-        .map_err(|e| os_err(&e))?;
+    read_reserved(f, hint, cap).map_err(|e| os_err(&e))
+}
+
+/// Reads `r` to its end, at most `cap` bytes, into a buffer reserved for `hint` bytes plus the final zero-length
+/// read. A reservation that fails (or a hint that overflows) only means the buffer grows as it is filled, as
+/// without a hint; a file whose size changed since `hint` was taken still reads to its end (capped).
+fn read_reserved(r: impl Read, hint: usize, cap: u64) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    if let Some(want) = hint.checked_add(1) {
+        let _reserved: Result<(), std::collections::TryReserveError> =
+            bytes.try_reserve_exact(want);
+    }
+    r.take(cap).read_to_end(&mut bytes)?;
     Ok(bytes)
 }
 
@@ -212,4 +230,84 @@ fn manifest_from_bytes(
         o,
     )?;
     Ok(convert::manifest(&value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{limits, read_file, read_reserved};
+
+    /// The reserved read returns the same bytes at the probe boundaries, the exact limit and above it, with the
+    /// buffer sized once (capacity = length + 1); one byte over the limit is refused without reading.
+    #[test]
+    fn reserved_read_matches_and_sizes_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let max = limits().max_bytes;
+        for len in [0usize, 1, 31, 32, 33, 64, 1484, 8192, 8193, 70_000, max] {
+            let bytes: Vec<u8> = (0..len).map(|i| u8::try_from(i % 251).unwrap()).collect();
+            let p = dir.path().join(format!("f{len}"));
+            std::fs::write(&p, &bytes).unwrap();
+            let got = read_file(&p, "f", false).unwrap();
+            assert_eq!(got, bytes, "{len}");
+            assert_eq!(got.capacity(), len + 1, "{len}");
+        }
+        let over = dir.path().join("over");
+        std::fs::write(&over, vec![b'a'; max + 1]).unwrap();
+        let e = read_file(&over, "over", true).unwrap_err();
+        assert!(e.manifest);
+        assert_eq!(
+            e.rendered,
+            format!(
+                "\n==> File over\n=====> the input is {} bytes long, more than the limit of {max} bytes",
+                max + 1
+            )
+        );
+    }
+
+    /// A reservation that cannot be made (or a stale hint) only changes how the buffer grows: the bytes are the
+    /// same, still capped.
+    #[test]
+    fn failed_or_stale_reservation_falls_back() {
+        let data: Vec<u8> = (0..5000u32).map(|i| u8::try_from(i % 7).unwrap()).collect();
+        for hint in [usize::MAX, usize::MAX / 2, 0, 3, 4999, 5000, 5001, 100_000] {
+            let got = read_reserved(&data[..], hint, 1 << 20).unwrap();
+            assert_eq!(got, data, "{hint}");
+        }
+        let capped = read_reserved(&data[..], usize::MAX / 2, 100).unwrap();
+        assert_eq!(capped, data.get(..100).unwrap());
+    }
+
+    /// `os.path.isfile` stays first: a directory or a missing path is "not a file", never opened.
+    #[test]
+    fn not_a_file_before_open() {
+        let dir = tempfile::tempdir().unwrap();
+        for p in [dir.path().to_path_buf(), dir.path().join("missing")] {
+            let e = read_file(&p, "x.yaml", false).unwrap_err();
+            assert_eq!(e.rendered, "\n=====> x.yaml is not a file");
+        }
+    }
+
+    /// The open comes before the size limit: an unreadable over-limit file is still the uncaught `OSError`
+    /// pre-commit's `open()` raises (skipped when running as root, which can open it).
+    #[cfg(unix)]
+    #[test]
+    fn open_error_before_size_limit() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("big.yaml");
+        let f = std::fs::File::create(&p).unwrap();
+        f.set_len(u64::try_from(limits().max_bytes).unwrap() + 1)
+            .unwrap();
+        drop(f);
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::File::open(&p).is_ok() {
+            return;
+        }
+        let e = read_file(&p, "big.yaml", false).unwrap_err();
+        assert!(
+            e.rendered
+                .starts_with("PermissionError: [Errno 13] Permission denied: "),
+            "{}",
+            e.rendered
+        );
+    }
 }
