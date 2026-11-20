@@ -2943,11 +2943,16 @@ exit 129); `attr.c` `bootstrap_attr_stack` reads exactly that file. Only `conver
 checkout writes and whether `git diff` sees a difference: it reads `text`, `crlf`, `eol`, `ident`, `filter` and
 `working-tree-encoding` (and `core.autocrlf` / `core.eol`); every other attribute changes at most how a non-empty diff
 is printed (`--no-textconv --no-ext-diff`), and the only builtin macro, `binary`, unsets `text`.
-**Decision.** (a) On a stashing run that checked files out and cleared no intent-to-add entry, with a Stat-mode oracle
-and git ≥ 2.42 (`GitCaps::attr_system`), the pipeline asks `git var GIT_ATTR_SYSTEM` once (`Git::system_attributes`),
-with the executable and environment of the parity `git diff`, on its own thread beside step 14's installs and side
-queries (F is asked again there anyway after a checkout, which rewrote the index), and never keeps the answer across
-runs (macOS `/usr/bin/git` is an `xcrun` shim). Only exit 0 with exactly one line ending in a newline that holds an
+**Decision.** (a) On a stashing run on the Stat-capable path (step 6's index stamp taken) with git ≥ 2.42
+(`GitCaps::attr_system`), the pipeline asks `git var GIT_ATTR_SYSTEM` once (`Git::system_attributes`), with the
+executable and environment of the parity `git diff` (the worktree-lock token the stash adds afterwards does not reach
+attribute lookup), overlapped with the stash's checkout: a scoped thread started around `snp_stash::enter` waits for
+`StashCtx::checkout_notice`, which the stash sends right before step 8's checkout and drops unsent on every other
+exit, and only then (worktree and git directory `stat_oracle_safe`) spawns `git var`; a run that checks nothing out
+spawns nothing. A thread that cannot start, a panic or a failed query is no answer. The answer is used only after a
+checkout that cleared no intent-to-add entry, with a Stat-mode oracle (otherwise the spawn is wasted: a checkout run
+whose oracle stays in Git mode, or one that cleared intent-to-add entries), and never kept across runs (macOS
+`/usr/bin/git` is an `xcrun` shim). Only exit 0 with exactly one line ending in a newline that holds an
 absolute path, or exit 1 with `GIT_ATTR_NOSYSTEM` in the environment (no system file), is an answer; anything else
 (a spawn failure, git's usage, a bad `GIT_ATTR_NOSYSTEM` boolean, a relative path) is none. A named file joins the
 snapshot's inputs (also for ADR-027's change detection), and with an answer the proof runs on any platform with a
@@ -2972,10 +2977,12 @@ first, which can differ arbitrarily for an assume-unchanged or skip-worktree ent
 the patch and clean in `diff-index` they carry the same tokens, which the scan of the worktree file covers. An unmerged
 path still refuses. LFS (`filter=lfs`) stays on the real diff. `SNP_VERIFY_BASELINE=1` cross-checks every proven
 baseline as before.
-**Rejected.** (a) Starting `git var` beside the stash's checkout itself: the pipeline learns that a checkout happens
-only from the stash guard's K9-anchored steps, so it would be asked on every stashing run, a wasted spawn on B2, B3
-and B9 (nothing stashed, where snp already trails prek or its own budget); asked after the checkout it overlaps F's
-second listing and the installs instead. (b) `git check-attr` per checked-out path, or a full attributes parser with
+**Rejected.** (a) Starting `git var` around `snp_stash::enter` unconditionally (or in step 6's fan-out): the
+pipeline learns that a checkout happens only inside the stash's K9-anchored steps, so it would be asked on every
+stashing run, a wasted spawn on B2, B3 and B9 (nothing stashed, where snp already trails prek or its own budget, and
+whose spawn-count bounds would break); the checkout notice keeps the owner's placement without that spawn. Starting it
+after the checkout, beside step 14's installs and side queries (this ADR's first draft), departs from the owner's
+placement. (b) `git check-attr` per checked-out path, or a full attributes parser with
 pattern matching: a spawn, or a parser, where a token over-approximation needs neither. (c) Allowing LFS repositories
 when the patch holds no LFS path: per-path `check-attr` in both directions (worktree and `--cached`) and a theoretical
 macro hole across mixed stacks; deferred. (d) `git var GIT_ATTR_GLOBAL`: `core.attributesFile` still refuses (ADR-119
@@ -3005,7 +3012,13 @@ diff while a macro setting `text`, `text=auto` under `core.eol=crlf`, a converti
 `.gitattributes`, a patched one, an assume-unchanged one with a smudge filter in the index, and a wrapper `git` whose
 own system attributes file converts take it; a git reporting 2.41.0 is not asked and keeps the heuristic,
 `GIT_ATTR_NOSYSTEM` reads no system file, and a macOS-gated case proves B8 with `git var`. Every case equals the
-always-diff path's output, exit code and repository, and `SNP_VERIFY_BASELINE` agrees.
+always-diff path's output, exit code and repository, and `SNP_VERIFY_BASELINE` agrees. The pipeline harness puts
+`SNP_TEST_PIPELINE_GIT_DIR` in front of its pinned `PATH`, and `SNP_TEST_EXPECT_GIT_VAR=1` makes every skipping case
+and a guard test fail unless that git answers and the baseline is elided; platform.yml's `git-native-latest` macOS
+job runs the whole matrix so with Homebrew git (Apple's `/usr/bin/git` is older than 2.42 with the default Xcode).
+The checkout notice is sent before the checkout command starts, and dropped unsent on a run with nothing to stash and
+on a lock timeout (`crates/snp-stash/tests/behaviour/guard.rs`); the K9 anchor `Inner::stash` was re-reviewed (the
+notice has no repository effect) and its fingerprint refreshed.
 ### ADR-135 — Hook script template v3: the hook directory without a subshell for the paths git builds
 
 *Amends ADR-105 (the template's `HERE` block and ID; its equivalence argument, ID handling and classification rules

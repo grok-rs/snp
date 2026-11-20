@@ -270,7 +270,7 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   `* text=auto` passes with `core.eol` unset, `lf` or `native`; a `.gitattributes` in the stash's patch, a tracked one
   that is assume-unchanged, skip-worktree or missing, a symlinked or unreadable one, LFS and Windows still take the
   real diff. It also runs on macOS and other Unix systems when git (2.42 or later) names its system attributes file
-  through `git var GIT_ATTR_SYSTEM`, asked once per stashing run that checked files out. On B8 with a committed
+  through `git var GIT_ATTR_SYSTEM`, asked once per stashing run that checks files out, overlapped with that checkout. On B8 with a committed
   `* text=auto` file the skipped diff was 1,333 M instructions; plain B8 pays one `git var` process (0.6 M), and runs
   that stash nothing (B2, B3, B9) are unchanged. The tracked-files query is `git ls-files -s -v -z` now.
 
