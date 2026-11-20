@@ -11,9 +11,13 @@
 //! Without a gate ([`HookCx::gate`] `None`: the baseline is already known, or the run is outside ADR-132's static
 //! gate) [`HookCx::writer`] hands out the token at once.
 //!
-//! Every write API of `std` and `snp_os` is banned outside this module by the crate's `clippy.toml`
-//! (`disallowed-methods` / `disallowed-types`, checked by `cargo xtask lint-guards`). A native that would have to
-//! write through a subprocess or a crate API the lint cannot see must call [`HookCx::writer`] first.
+//! Outside this module the crate's `clippy.toml` (`disallowed-methods` / `disallowed-types`, kept complete by
+//! `cargo xtask lint-guards`) bans the `std::fs` mutators (path functions, `OpenOptions`, `File::create*`, and the
+//! `set_len` / `set_permissions` / `set_times` / `set_modified` methods, which work on a handle opened read-only),
+//! `DirBuilder::create`, the Unix `chown` family, symlink creation, every write function of `snp_os::fs` and
+//! `snp_os::lock::FileLock`'s acquisition (it creates the lock file); ADR-132 (5) lists them. The lint cannot see a
+//! subprocess (`snp_proc`, the git children of `snp_git`) or another crate's write API: a native that would write
+//! that way must call [`HookCx::writer`] first (doc rule).
 //!
 //! The gate's `git diff` takes no pool permit (the git backend streams it directly), so a partition that holds the
 //! run's only permit (`SNP_JOBS=1`) cannot deadlock on it.

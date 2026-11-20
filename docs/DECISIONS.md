@@ -2763,14 +2763,19 @@ the baseline unknown; the show-diff gate (`non_empty`) takes it at the end, pre-
 `diff_after`. A write that bypassed the gate and is reported meets `compare_real` with no baseline: `Changed` (fail
 closed). (5) *Enforcement.* `crates/snp-hooks/clippy.toml` is the workspace's clippy configuration plus a write ban:
 `disallowed-methods` lists `std::fs::{write, copy, rename, remove_file, remove_dir, remove_dir_all, create_dir,
-create_dir_all, hard_link, soft_link, set_permissions}`, `std::fs::OpenOptions::open`, `std::fs::File::{create,
-create_new, options, set_len}`, `std::os::unix::fs::symlink`, `std::os::windows::fs::{symlink_file, symlink_dir}` and
-`snp_os::fs::rewrite_in_place`, and `disallowed-types` lists `std::fs::OpenOptions`; only `src/writer.rs` expects those
-lints (test fixtures that write carry their own expectation). `cargo xtask lint-guards` checks that the file keeps every
-workspace key unchanged and the whole ban, and that no non-test source outside `src/writer.rs` expects or allows the
-ban's lints; its test runs clippy with that file on a scratch crate and sees a raw `std::fs::write` and an
-`OpenOptions` rejected. A native that would write through a subprocess or a crate API the lint cannot see must call
-`cx.writer()` first (doc rule, `snp_hooks::writer`). (6) ADR-102's prefetch then starts without the baseline, so the
+create_dir_all, hard_link, soft_link, set_permissions, set_times, set_times_nofollow}`, `std::fs::OpenOptions::open`,
+`std::fs::File::{create, create_new, options, set_len, set_permissions, set_times, set_modified}` (the last three work on
+a handle opened read-only), `std::fs::DirBuilder::create`, `std::os::unix::fs::{symlink, chown, fchown, lchown}`,
+`std::os::windows::fs::{symlink_file, symlink_dir}`, every public write function of `snp_os::fs` (`rewrite_in_place,
+atomic_replace, write_new_durable, copy_into_new_durable, create_truncate_nofollow, rename_with_retry,
+remove_tree_within, retire_dir, unnamed_temp, ensure_private_dir`) and `snp_os::lock::FileLock::{try_acquire,
+acquire}` (they create the lock file), and `disallowed-types` lists `std::fs::OpenOptions`; only `src/writer.rs`
+expects those lints (test fixtures that write carry their own expectation). `cargo xtask lint-guards` checks that the
+file keeps every workspace key unchanged and the whole ban, and that no non-test source outside `src/writer.rs` expects
+or allows the ban's lints; its test runs clippy with that file on a scratch crate and sees a raw `std::fs::write`, an
+`OpenOptions` and `set_permissions` / `set_modified` on a `File::open` handle rejected. The lint does not cover a
+subprocess (`snp_proc`, or the git children of `snp_git`, e.g. `Git::checkout_paths` / `Git::apply`) or any other
+crate's write API: a native that would write that way must call `cx.writer()` first (doc rule, `snp_hooks::writer`). (6) ADR-102's prefetch then starts without the baseline, so the
 gate's diff may overlap a fact's git child: all read-only (`git diff` writes the index only in
 `refresh_index_quietly`, never under a commit's held `index.lock`, and `PchFacts` stamps then recompute).
 **Race window** (an edit E by another process during an all-in-process run; "fix invisible" = a fix `git diff` cannot

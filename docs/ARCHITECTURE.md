@@ -2048,8 +2048,10 @@ pub use snp_argparse::columns;
     /// The hook's deferred baseline (ADR-132): `Some` when the runner did not take the diff oracle's baseline before
     /// it; the first `writer()` call takes it.
     pub gate: Option<&'a WriteGate> }
-/// ADR-132: natives write the work tree only through the `Writer` token (a crate-local clippy.toml bans every other
-/// write API outside `writer`; `cargo xtask lint-guards` keeps that file in force). With a gate, the first call runs
+/// ADR-132: natives write the work tree only through the `Writer` token (a crate-local clippy.toml bans, outside
+/// `writer`, the `std::fs` mutators, incl. the mode/time setters on a read-only `File`, Unix `chown`, and every write
+/// API of `snp_os`; `cargo xtask lint-guards` keeps that file in force; a subprocess or another crate's write API is
+/// outside the lint and covered by the doc rule: call `writer()` first). With a gate, the first call runs
 /// the real `git diff` (a `OnceLock`: concurrent writers wait for it, read-only partitions keep running; the git child
 /// takes no pool permit); Err = that diff failed, nothing may be written (the runner reports the failure).
 pub use writer::{WriteGate, Writer};

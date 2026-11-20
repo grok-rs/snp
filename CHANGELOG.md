@@ -217,8 +217,9 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   runs none. Any process hook, a priority group of several hooks or `stage_fixed` keeps the baseline where it was.
   Output, exit codes and files are unchanged except in one race: an edit by another program before a fixer's first
   write, when that fixer's own change is one `git diff` cannot see, no longer adds `- files were modified by this
-  hook` to it. Native hooks write only through a token that clippy enforces (`crates/snp-hooks/clippy.toml`,
-  checked by `cargo xtask lint-guards`). On B6, one process and 14% of the system calls fewer (27,536 → 23,663) and
+  hook` to it. Native hooks write only through a token: clippy bans the `std::fs` and `snp_os` write APIs outside
+  it (`crates/snp-hooks/clippy.toml`, checked by `cargo xtask lint-guards`), and a documented rule covers writes
+  through a subprocess. On B6, one process and 14% of the system calls fewer (27,536 → 23,663) and
   10.2 M fewer instructions for the tree (−8.6%).
 
 ### Fixed
