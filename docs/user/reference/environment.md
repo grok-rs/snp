@@ -72,6 +72,7 @@ for legacy hooks.
 | `SNP_OUTPUT_BUDGET` | `64 MiB` | Memory for captured hook output across all running hooks; output beyond it spills to an unnamed temporary file. |
 | `SNP_DIFF_MODE` | — | `git`: always detect hook modifications with `git diff`, like pre-commit (disables the stat-based shortcut). |
 | `SNP_VERIFY_BASELINE` | — | `1`: cross-check the shortcut against a real `git diff` (CI self-test). |
+| `SNP_VERIFY_FILE_CACHE` | — | `1`: re-read every file a native hook reuses from an earlier hook and report a difference (CI self-test). |
 
 ### Downloads and toolchains
 

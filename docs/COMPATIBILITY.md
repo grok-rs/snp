@@ -393,7 +393,7 @@ snp-only: `SNP_HOME`, `SNP` (`0`/`false` kill switch), `SNP_BIN` (hook script), 
 `SNP_LOCAL_CONFIG`, `SNP_NO_HINTS`, `SNP_LOG`, `SNP_LOG_FILE`, `SNP_OFFLINE`, `SNP_UV`, `SNP_PYTHON_DOWNLOADS`,
 `SNP_NODE_MIRROR`, `SNP_ALLOW_INSECURE_MIRROR`, `SNP_DOCKER_ALWAYS_BUILD`, `SNP_PREFER_SYSTEM_TOOLCHAINS`,
 `SNP_ALLOW_OLD_GIT`, `SNP_STASH_LOCK_TIMEOUT`, `SNP_STASH_VERIFY`, `SNP_KILL_GRACE`, `SNP_DIFF_MODE`,
-`SNP_VERIFY_BASELINE`, `SNP_OUTPUT_BUDGET`, `SNP_PYTHON_WARNINGS`, `SNP_PYTHON_INSTALLER` (`auto`|`uv`|`pip`, ADR-073),
+`SNP_VERIFY_BASELINE`, `SNP_VERIFY_FILE_CACHE` (ADR-131), `SNP_OUTPUT_BUDGET`, `SNP_PYTHON_WARNINGS`, `SNP_PYTHON_INSTALLER` (`auto`|`uv`|`pip`, ADR-073),
 `SNP_ALLOW_FOREIGN_STORE` (D-SEC-13), `SNP_PREFETCH` (`0` disables background clone prefetch), `SNP_NODE_SHASUMS_URL` /
 `SNP_GO_JSON_URL` (https checksum manifests for mirrors). Duration variables are parsed with an upper bound; an
 invalid value is a FatalError naming the variable. Test builds only (`--features testing`, never in releases):

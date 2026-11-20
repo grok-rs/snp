@@ -19,7 +19,8 @@ borrowed hook argv; ADR-104 the step-6 changes of the run pipeline; ADR-105 the 
 index modes on clean `--all-files` runs; ADR-108 the forward-only engine of the tier-1 prefilter; ADR-110 the meta-only
 classification tier; ADR-112 snp-yaml's owning materialisation; ADR-115 the tier-1 scan engine; ADR-116 the absorption
 of cfgv and file-identify into the workspace; ADR-117 the B8 stash-time overlaps; ADR-118 the musl mimalloc build
-without transparent huge pages; ADR-119 the proven post-checkout baseline.
+without transparent huge pages; ADR-119 the proven post-checkout baseline; ADR-131 the file-content cache of
+consecutive in-process hooks.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -2654,6 +2655,69 @@ value and an `attr.tree` the reader cannot see run it too; a skip-worktree or as
 skip-worktree, untracked-cache, mode-only and directory-behind-a-symlink cases, and a randomized differential; every run
 equals the always-diff path's output, exit code and repository, and `SNP_VERIFY_BASELINE` agrees
 (`crates/snp-run/tests/pipeline/checkout_baseline.rs`).
+### ADR-131 — A file-content cache for consecutive in-process hooks ("B-racy")
+
+*Amends ARCHITECTURE §1.4.19 (the frozen native-hook contract: `HookCx` gains a field, `pygrep` a function) and §3.4
+(a content cache per window of consecutive in-process hooks). Not a divergence: exact under ADR-027's assumptions.*
+
+**Context.** pre-commit runs every pre-commit-hooks hook as a fresh process that opens each file again; snp's natives
+did the same in process, so B6 (13 natives, 960 files) opened each file 5.6 times: 6,880 `openat`, 6,650 `close`,
+10,977 `read`, 971 `lseek` and 6,483 `statx` in a 43,451-syscall tree (strace, cpu-1 of the wave-5 analysis), with
+open/close the costliest calls and worse with more threads. The panel (`panel-parity`, decision 1) rejected a cache
+that trusts the window (variant A: an edit by another process during the window is not seen, and a fixer can then
+overwrite it, losing the user's edit) and corrected the stat-validated variant B, which missed git's racy rule, the
+device and a torn-read check.
+**Decision.** (1) *Window.* The scheduler gives a window of consecutive buckets that each hold one in-process hook (a
+bucket of several hooks, whose members run concurrently, or a process hook ends it) one `snp_hooks::ContentCache` when
+the window holds two or more unskipped readers (`content_cache::reads_contents`: the natives that read through
+`read_all`, `read_head` or end-of-file-fixer's tail; `pygrep` hooks). It is made at the window's first bucket and
+dropped at the first bucket after it, before that bucket's hooks run, so never beside a process hook or inside a
+concurrent bucket. Only on Unix and a `stat_oracle_safe` work tree (ADR-078's allow-list; `ContentCache::new` answers
+`None` elsewhere, so Windows, NFS, SMB, FUSE, 9p, overlay, vfat and exfat get none), and only for a hook whose cwd is
+the work-tree root (a hook with the `root` key reads without it). `HookCx` gains `cache: Option<&ContentCache>`;
+`pygrep::run_partition_cached` takes it too. (2) *Fill*, only in `read_all` and pygrep's read: the time `t0` is taken
+before the `open`, the `statx(fd)` that `std::fs::read` makes anyway gives the stamp, and the bytes are kept only when
+the file is a regular file on the work tree's device, its mtime **and** ctime are older than `t0 − 2 s` (git's racy
+window), the bytes read equal the stat's size (no torn read), the file is at most 1 MiB and the cache's total stays
+within 16 MiB. Errors are never cached. A kept fill shares its buffer with the caller (no copy). (3) *Hit*: one
+`statx(path)` that follows symbolic links, as `open` does, compared on device, inode, size, mtime, ctime (seconds and
+nanoseconds) and file type. Equal: the cached bytes (`read_all`, pygrep), their first `n` (`read_head`, so
+check-executables-have-shebangs and check-byte-order-marker), or end-of-file-fixer's `tail_action` over a `Cursor` of
+them (K3/K6's listed caller is unchanged). Any difference or error: today's read, whose error, if any, is the hook's;
+the stale entry is dropped. A name without an entry costs nothing. The validation runs where today's `open` ran, so the
+observation time is unchanged. (4) *Writes*: `common::rewrite` and end-of-file-fixer's append/truncate evict the name
+**before** writing, also when the write then fails; written bytes are never cached (a freshly written file is racy, so
+a checker after a fixer re-reads it, as under pre-commit). A write through another name (a hard link, a symbolic link
+and its target, a case or normalization twin) changes the inode's ctime, so the alias's entry misses. (5)
+`SNP_VERIFY_FILE_CACHE=1` re-reads the file on every hit, uses the fresh bytes when they differ and prints
+`snp: SNP_VERIFY_FILE_CACHE: a cached file read differed from a fresh read; using the fresh read` once (stderr).
+**Assumptions** (ADR-027's, shared with git and the `DiffOracle`): the kernel maintains ctime; the clock does not step
+back by 2 s or more during a run; no mmap writer keeps a page dirty for more than 2 s without a timestamp update. A
+stamp kept is at least 2 s old, so any later change of the inode moves its ctime past it, even with coarse (jiffy,
+HFS+ one-second) timestamps; a fill that overlaps a write either sees the write's timestamps (racy, not kept) or keeps
+the pre-write stamp (the next hit misses).
+**Rejected.** (a) Variant A (trust the window): loses user edits (above). (b) Replacing an entry with a fixer's written
+bytes: a freshly written file is racy. (c) An inode map for aliases: ctime already catches them. (d) A per-run instead
+of per-window lifetime: allowed by the validation, not needed for B6; revisit for configs that mix natives and process
+hooks. (e) Windows: stable std exposes no ctime or file id. (f) A non-SipHash hasher for the map: about 1 M
+instructions on B6 against HashDoS resistance.
+**Consequences.** B6 (fixture regenerated in `target/`, profiling build, strace `-f -c` of the tree): 43,451 → 27,914
+syscalls (−35.8%): `openat` 6,880 → 2,435, `close` 6,650 → 2,205, `read` 10,977 → 4,154, `lseek` 971 → 10, `statx`
+6,483 → 7,565 (+1,082: a hit's `statx(path)` replaces a read's `statx(fd)`, and `read_head` hits add one). B7: 43,897 →
+28,295, `statx` 6,484 → 7,566. ADR-100's paired `statx` gate therefore fails on this change for B6 and B7: it is
+re-baselined as that ADR states, through two `[[known_miss]]` entries (`statx <= base`, B6 and B7) whose own check
+says to remove them once the base carries this change; no other counter or budget moves. snp's own instructions
+(callgrind, snp process): B6 89.7 M → 90.2 M (+0.6%: the map's hashing; the saving is in the kernel), B7 91.3 M → 91.8 M;
+dhat on B6: 92,191 → 90,340 blocks, heap peak 0.83 → 1.13 MiB (the cached files). Tests: a fixer-then-checker chain
+(trailing-whitespace → end-of-file-fixer → mixed-line-ending → check-yaml, check-json, detect-private-key), external
+edits between hooks (same size and new size, racy and old, a deletion), a same-size alias write, the caps, a
+non-regular file, errors, `chmod 000` after a fill, another device, end-of-file-fixer and shebang readers, pygrep,
+racy files never kept: every run equals the same run without a cache (`crates/snp-hooks/tests/content_cache`); the
+admission rule, a forged mismatch under `SNP_VERIFY_FILE_CACHE` and stale-entry accounting (unit tests); and in the
+scheduler, runs over aged files equal runs over fresh ones with `SNP_JOBS=1` and `2` under `SNP_VERIFY_FILE_CACHE=1`,
+a concurrent priority bucket and a process hook between single readers get no cache, and a process hook's same-size
+rewrite is seen after it (`crates/snp-run/tests/pipeline/content_cache.rs`). Proofs: none (K3/K6 keep `tail_action`).
+
 ## Appendix A — Open questions of the research documents, resolved
 
 Format: question → decision (ADR or divergence). "Parity" = behave as pre-commit 4.6.2.

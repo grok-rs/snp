@@ -330,6 +330,16 @@ check = "p50 <= prek"
 reason = "snp lists the patch with git apply --numstat (121 M instructions, D-DATA-19) and fsyncs the 21 MB patch and journal (ADR-067; patch writeback overlapped since ADR-117), which prek does not; ADR-097's re-verification is only the stat-stamp pass here; the post-checkout baseline git diff (~362 M: it re-hashed the racily clean 10 MiB file) is elided since ADR-119, as prek does; tree 2,292 M vs prek's 2,467 M instructions after ADR-119 (2,655 M after ADR-117)"
 
 [[known_miss]]
+scenario = "B6"
+check = "statx <= base"
+reason = "ADR-131 (the file-content cache) trades each read's statx(fd) for a hit's statx(path) and adds one per read_head hit: +1,082 statx against -15.5k syscalls in all (openat 6,880 -> 2,435); ADR-100's re-baseline, remove once the base carries ADR-131"
+
+[[known_miss]]
+scenario = "B7"
+check = "statx <= base"
+reason = "ADR-131 (the file-content cache): +1,082 statx against -15.6k syscalls in all, as on B6; ADR-100's re-baseline, remove once the base carries ADR-131"
+
+[[known_miss]]
 scenario = "B11"
 check = "p50 <= prek"
 reason = "prek's gc hashes repo keys from the configs and never loads manifests; pre-commit and snp parse every used manifest"

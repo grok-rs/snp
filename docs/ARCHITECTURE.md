@@ -2037,7 +2037,24 @@ pub use snp_argparse::columns;
 #[derive(Debug)] pub struct HookCx<'a> { pub root: &'a Path, pub env: &'a Env, pub git: &'a snp_git::Git, pub color: bool,
     pub epoch: Epoch, pub windows: bool, pub columns: usize, pub facts: &'a snp_git::pch_facts::PchFacts,
     /// Checked between files; on cancellation a native returns early and the runner reports `Interrupted`.
-    pub cancel: &'a CancelToken }
+    pub cancel: &'a CancelToken,
+    /// The file-content cache of the window of consecutive in-process hooks (ADR-131): `read_all` fills it, `read_head`
+    /// and end-of-file-fixer read it, every native write evicts first; `None` without one.
+    pub cache: Option<&'a ContentCache> }
+/// ADR-131: one window's validated file contents (Unix, `stat_oracle_safe` work tree; `new` answers `None` elsewhere).
+pub use content_cache::ContentCache;
+pub mod content_cache {
+    pub const PER_FILE_CAP: usize; pub const TOTAL_CAP: usize; pub const RACY_WINDOW: std::time::Duration;
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)] pub struct Stats { pub hits: u64, pub stale: u64,
+        pub fills: u64, pub refused: u64 }
+    #[derive(Debug)] pub struct ContentCache { /* … */ }
+    impl ContentCache { pub fn new(root: &Path, verify: bool) -> Option<Self>; pub fn stats(&self) -> Stats;
+                        pub fn mismatches(&self) -> u64; }
+    /// The natives that read through the cache (a window needs two readers, `pygrep` hooks included).
+    pub fn reads_contents(id: &str) -> bool;
+    /// Validated hits of every cache of the process (a counting probe).
+    pub fn process_hits() -> u64;
+}
 #[derive(Debug, Clone, Default)] pub struct Outcome { pub code: i32, pub output: Vec<u8>, pub modified: Vec<RepoPath>,
     pub crashed: bool, pub reads_only: bool }
 pub trait NativeHook: Send + Sync + 'static {
@@ -2092,6 +2109,9 @@ pub mod pygrep {   // 04a §8.4/§12; compiled once per hook per run (01 Addendu
     /// changes the parse, ADR-072); the pattern is recompiled through `cache` only when the parse differs from `c`.
     pub fn run_partition(c: &Compiled, argv: &[&OsStr], root: &Path, cache: &snp_pyre::RegexCache,
                          cancel: &CancelToken) -> super::Outcome;
+    /// `run_partition` reading the files through a window's content cache (ADR-131).
+    pub fn run_partition_cached(c: &Compiled, argv: &[&OsStr], root: &Path, cache: &snp_pyre::RegexCache,
+                                cancel: &CancelToken, contents: Option<&super::ContentCache>) -> super::Outcome;
 }
 pub mod fail { pub fn output(entry: &str, files: &[&[u8]]) -> Vec<u8>; }   // f'{entry}\n\n' + '\n'.join(files) + '\n'
 pub mod hazmat {   // ADR-006
@@ -2687,6 +2707,15 @@ startup Env (captured once in main, minus __PYVENV_LAUNCHER__/PYTHONEXECUTABLE)
   ask again and are answered from the cache or compute exactly as without it. It starts after the diff oracle's
   baseline and is joined before any user process hook starts and at the end of the loop (before show-diff,
   `stage_fixed` and the restore), so no snp git ever runs beside a user process hook.
+* **File-content cache (ADR-131):** a window of consecutive buckets that each hold one in-process hook, with two or
+  more unskipped readers (`content_cache::reads_contents` natives, `pygrep`), gets one `ContentCache` on Unix with a
+  `stat_oracle_safe` work tree, made at its first bucket and dropped at the first bucket after it, before that
+  bucket's hooks run: never beside a process hook, never in a bucket of several (concurrent) hooks. `read_all` and
+  pygrep fill it only with a regular file on the work tree's device whose mtime and ctime are older than `t0 − 2 s`
+  (`t0` taken before the `open`), whose bytes equal the stat's size, within 1 MiB per file and 16 MiB in all; a hit
+  costs one `statx(path)` compared on device, inode, size, mtime, ctime and type, and any difference reads the file as
+  before; every native write evicts its name first. Exact under ADR-027's assumptions; `SNP_VERIFY_FILE_CACHE=1`
+  re-reads every hit.
 
 ### 3.5 xargs partitioning and Python-exact shuffle
 

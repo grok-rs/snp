@@ -203,6 +203,14 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   its own with its index mode's executable bit.
   Anything else takes the real diff, as before. On B8 the git process that re-hashed the 10 MiB file no longer runs:
   2,653 M → 2,292 M instructions for the tree (prek: 2,467 M), 16 → 15 processes.
+- Consecutive in-process hooks share the files they read (ADR-131): on Linux and macOS, on a filesystem where snp
+  trusts stat information, a file that a native hook (or `pygrep`) read and that was last changed more than 2 seconds
+  earlier is kept in memory (at most 1 MiB per file, 16 MiB in all) until the next process hook or concurrent
+  priority group, and the following natives check one `stat` of the path (device, inode, size, mtime, ctime, type)
+  instead of opening and reading it again; anything different reads the file, and a native that writes a file drops
+  it first. Output and side effects are unchanged, including edits made by other programs between hooks
+  (`SNP_VERIFY_FILE_CACHE=1` cross-checks every reuse). On B6 snp makes 35.8% fewer system calls (43,451 → 27,914:
+  `openat` 6,880 → 2,435, `read` 10,977 → 4,154; `statx` +1,082).
 
 ### Fixed
 
