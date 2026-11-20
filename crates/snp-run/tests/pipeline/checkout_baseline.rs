@@ -1,11 +1,13 @@
 //! ADR-119: after a stash that checked out the patch's files, the baseline `git diff` is skipped only when the
 //! oracle's snapshot proves it empty. The B8 shape skips it (a counting probe); every condition that can make the
-//! checkout's result differ from what `git diff` reads (filters and every attributes file, a tracked `.gitattributes`
-//! only the index has, `core.autocrlf`, `post-checkout` and `post-index-change` hooks however configured,
-//! configuration-based hooks, intent-to-add entries, symbolic links, sparse checkout, `core.ignoreStat`, fsmonitor)
-//! runs it; and in every case, randomized ones included,
-//! the run's output, exit code and resulting repository equal the always-diff path's (`SNP_DIFF_MODE=git`), and
-//! `SNP_VERIFY_BASELINE=1` never finds a proven baseline non-empty.
+//! checkout's result differ from what `git diff` reads (converting attributes in any attributes file, a tracked
+//! `.gitattributes` only the index has or that is flagged or patched, `core.autocrlf`, `post-checkout` and
+//! `post-index-change` hooks however configured, configuration-based hooks, intent-to-add entries, symbolic links,
+//! sparse checkout, `core.ignoreStat`, fsmonitor) runs it, and attributes that convert nothing do not (ADR-133); the
+//! system attributes file comes from `git var GIT_ATTR_SYSTEM` on git >= 2.42 (a wrapper `git` with its own system
+//! file, an older git, `GIT_ATTR_NOSYSTEM`). In every case, randomized ones included, the run's output, exit code and
+//! resulting repository equal the always-diff path's (`SNP_DIFF_MODE=git`), and `SNP_VERIFY_BASELINE=1` never finds a
+//! proven baseline non-empty.
 
 use std::ffi::OsString;
 use std::fmt::Write as _;
@@ -30,13 +32,17 @@ const MARK: &str = ".hook-ran";
 /// the baseline, so a wrongly elided (empty) baseline in place of a non-empty one reads as "files were modified".
 const HOOK: &str = "sh -c 'touch .hook-ran big.txt' --";
 
-/// Counts the baseline-shaped `git diff` calls before and after the hook started.
+/// The system attributes query of ADR-133.
+const VAR: &str = "var GIT_ATTR_SYSTEM";
+
+/// Counts the baseline-shaped `git diff` calls before and after the hook started, and the `git var` calls.
 #[derive(Debug)]
 struct Counting {
     inner: ProcBackend,
     marker: PathBuf,
     before: AtomicUsize,
     after: AtomicUsize,
+    var: AtomicUsize,
 }
 
 impl Counting {
@@ -49,15 +55,23 @@ impl Counting {
             marker,
             before: AtomicUsize::new(0),
             after: AtomicUsize::new(0),
+            var: AtomicUsize::new(0),
         })
     }
 
     fn note(&self, argv: &[OsString]) {
+        // a wrapper script runs as `sh <script>`: skip both
+        let wrapped = argv
+            .get(1)
+            .is_some_and(|a| Path::new(a).ends_with("wrap/bin/git"));
         let a: Vec<String> = argv
             .iter()
-            .skip(1)
+            .skip(if wrapped { 2 } else { 1 })
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
+        if a.join(" ") == VAR {
+            self.var.fetch_add(1, Ordering::SeqCst);
+        }
         if a.join(" ") == DIFF {
             let n = if self.marker.exists() {
                 &self.after
@@ -175,11 +189,38 @@ fn outcome(h: &H, o: &Out) -> String {
     )
 }
 
-/// Runs `case` with `env`; returns the outcome and the baseline-shaped `git diff` calls before the hook.
-fn run(case: &Case<'_>, env: &[(&str, &str)]) -> (String, usize, bool) {
+/// Whether the `git` of `h`'s environment answers `git var GIT_ATTR_SYSTEM` (git >= 2.42, ADR-133).
+fn git_var_answers(h: &H) -> bool {
+    let env = Env::from_pairs(h.env.iter().cloned());
+    snp_git::GitExe::resolve(&env, &h.root, None)
+        .unwrap()
+        .caps
+        .attr_system
+}
+
+/// Whether ADR-119's proof can apply to `h` at all: a Stat-mode filesystem, and Linux (the system attributes file of
+/// the usual builds is among the inputs) or a git that names it (ADR-133).
+fn proof_possible(h: &H) -> bool {
+    snp_os::fsinfo::stat_oracle_safe(&h.root).unwrap_or(false)
+        && (cfg!(target_os = "linux") || git_var_answers(h))
+}
+
+/// What one run counted.
+struct Counts {
+    /// Baseline-shaped `git diff` calls before the hook.
+    before: usize,
+    /// `git var GIT_ATTR_SYSTEM` calls.
+    var: usize,
+    /// [`proof_possible`].
+    stat: bool,
+}
+
+/// Runs `case` with `env`; returns the outcome and what it counted.
+fn run_counted(case: &Case<'_>, env: &[(&str, &str)]) -> (String, Counts) {
     let mut h = make(case);
     for (k, v) in env {
-        h.env_set(k, *v);
+        let v = v.replace("<base>", &h.base.to_string_lossy());
+        h.env_set(k, v);
     }
     let rec = Counting::new(h.path(MARK));
     let backend: Arc<dyn GitBackend> = Arc::<Counting>::clone(&rec);
@@ -190,10 +231,18 @@ fn run(case: &Case<'_>, env: &[(&str, &str)]) -> (String, usize, bool) {
         "{}: the case must stash: {o:?}",
         case.name
     );
-    // ADR-119's proof is attempted on Linux only
-    let stat =
-        cfg!(target_os = "linux") && snp_os::fsinfo::stat_oracle_safe(&h.root).unwrap_or(false);
-    (outcome(&h, &o), rec.before.load(Ordering::SeqCst), stat)
+    let counts = Counts {
+        before: rec.before.load(Ordering::SeqCst),
+        var: rec.var.load(Ordering::SeqCst),
+        stat: proof_possible(&h),
+    };
+    (outcome(&h, &o), counts)
+}
+
+/// Runs `case` with `env`; returns the outcome and the baseline-shaped `git diff` calls before the hook.
+fn run(case: &Case<'_>, env: &[(&str, &str)]) -> (String, usize, bool) {
+    let (o, c) = run_counted(case, env);
+    (o, c.before, c.stat)
 }
 
 /// The run equals the always-diff path and `SNP_VERIFY_BASELINE` agrees; returns the default run's baseline-shaped
@@ -367,7 +416,7 @@ fn attributes_filters_and_autocrlf_run_the_diff() {
     runs_the_diff(&Case {
         name: "an untracked .gitattributes",
         before: &nothing,
-        after: &|h| h.write(".gitattributes", b"other.txt -text\n"),
+        after: &|h| h.write(".gitattributes", b"other.txt text\n"),
     });
     runs_the_diff(&Case {
         name: "info/attributes",
@@ -608,6 +657,261 @@ fn intent_to_add_symlinks_sparse_and_ignore_stat_run_the_diff() {
         before: &|h| config(h, &[("core.ignoreStat", "true")]),
         after: &nothing,
     });
+}
+
+/// The non-round-tripping smudge filter of the attributes cases: an elided baseline in its presence would blame the
+/// hook.
+fn upper_filter(h: &H) {
+    config(
+        h,
+        &[
+            ("filter.upper.smudge", "sed s/lorem/LOREM/"),
+            ("filter.upper.clean", "cat"),
+        ],
+    );
+}
+
+/// ADR-133 (b): attributes files whose tokens set or value none of `text`, `crlf`, `eol`, `ident`, `filter` and
+/// `working-tree-encoding` convert nothing, tracked or not, so the proof holds; `text=auto` too, with `core.eol`
+/// unset, `lf` or `native`.
+#[test]
+fn attributes_that_convert_nothing_skip_the_diff() {
+    let tracked = |body: &'static [u8]| {
+        move |h: &H| {
+            h.write(".gitattributes", body);
+            h.git(&["add", ".gitattributes"]);
+            h.commit("attributes");
+        }
+    };
+    skips(&Case {
+        name: "binary, -diff and linguist attributes, tracked",
+        before: &tracked(b"*.png binary\n*.txt -diff linguist-generated whitespace=cr-at-eol\n"),
+        after: &nothing,
+    });
+    skips(&Case {
+        name: "unset and unspecified conversions, untracked",
+        before: &nothing,
+        after: &|h| h.write(".gitattributes", b"* -text !eol -filter -ident\n"),
+    });
+    skips(&Case {
+        name: "a nested .gitattributes and info/attributes",
+        before: &|h| {
+            h.write("d/f.txt", b"f\n");
+            h.write("d/.gitattributes", b"*.txt -diff\n");
+            h.git(&["add", "d"]);
+            h.commit("nested");
+            h.write(".git/info/attributes", b"*.txt export-ignore\n");
+        },
+        after: &|h| h.write("d/f.txt", b"f, changed\n"),
+    });
+    skips(&Case {
+        name: "a BOM-prefixed .gitattributes",
+        before: &tracked(b"\xEF\xBB\xBF*.png binary\r\n"),
+        after: &nothing,
+    });
+    for eol in [None, Some("lf"), Some("native")] {
+        skips(&Case {
+            name: &format!("* text=auto, core.eol {eol:?}"),
+            before: &|h| {
+                if let Some(v) = eol {
+                    config(h, &[("core.eol", v)]);
+                }
+                // a CRLF blob committed before the attributes: `text=auto` leaves it alone (a CR in the index)
+                h.write("crlf.txt", b"one\r\ntwo\r\n");
+                h.git(&["add", "crlf.txt"]);
+                h.commit("crlf");
+                tracked(b"* text=auto\n")(h);
+            },
+            after: &|h| h.write("crlf.txt", b"one\r\ntwo, changed\r\n"),
+        });
+    }
+}
+
+/// ADR-133 (b): what the scanner refuses runs the diff: a macro that sets `text`, `text=auto` under `core.eol=crlf`,
+/// a converting BOM-prefixed file, a symlinked `.gitattributes`, a `.gitattributes` in the patch (its worktree version
+/// hid a CRLF file that the restored one shows), and a tracked one flagged assume-unchanged whose index copy has a
+/// smudge filter (git's checkout reads the index copy first).
+#[test]
+fn converting_flagged_or_patched_attributes_run_the_diff() {
+    runs_the_diff(&Case {
+        name: "a macro that sets text",
+        before: &|h| {
+            h.write(".gitattributes", b"[attr]norm text eol=lf\n*.txt norm\n");
+            h.git(&["add", ".gitattributes"]);
+            h.commit("macro");
+        },
+        after: &nothing,
+    });
+    runs_the_diff(&Case {
+        name: "text=auto under core.eol=crlf",
+        before: &|h| {
+            config(h, &[("core.eol", "crlf")]);
+            h.write(".gitattributes", b"* text=auto\n");
+            h.git(&["add", ".gitattributes"]);
+            h.commit("auto");
+        },
+        after: &nothing,
+    });
+    runs_the_diff(&Case {
+        name: "a BOM-prefixed .gitattributes with a filter",
+        before: &upper_filter,
+        after: &|h| h.write(".gitattributes", b"\xEF\xBB\xBFbig.txt filter=upper\n"),
+    });
+    runs_the_diff(&Case {
+        name: "a symlinked .gitattributes",
+        before: &|h| h.write("attrs", b"*.png binary\n"),
+        after: &|h| std::os::unix::fs::symlink("attrs", h.path(".gitattributes")).unwrap(),
+    });
+    runs_the_diff(&Case {
+        name: "a patched .gitattributes",
+        before: &|h| {
+            h.write(".gitattributes", b"*.png binary\n");
+            h.git(&["add", ".gitattributes"]);
+            h.commit("attributes");
+        },
+        after: &|h| {
+            h.write(".gitattributes", b"*.png binary\nother.txt text eol=crlf\n");
+            h.write("other.txt", b"other\r\n");
+        },
+    });
+    runs_the_diff(&Case {
+        name: "an assume-unchanged .gitattributes with a smudge filter in the index",
+        before: &|h| {
+            upper_filter(h);
+            h.write(".gitattributes", b"big.txt filter=upper\n");
+            h.git(&["add", ".gitattributes"]);
+            h.commit("attributes");
+            h.git(&["update-index", "--assume-unchanged", ".gitattributes"]);
+            h.write(".gitattributes", b"*.png binary\n");
+        },
+        after: &nothing,
+    });
+}
+
+/// The `git` that the test's own commands run (first of the harness `PATH`).
+fn real_git() -> PathBuf {
+    ["/usr/local/bin/git", "/usr/bin/git", "/bin/git"]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|p| p.is_file())
+        .unwrap()
+}
+
+/// A wrapper `git` in `<base>/wrap/bin` that runs the real one, except that `git var GIT_ATTR_SYSTEM` names
+/// `<base>/sysconf/gitattributes` (a build with its own `sysconfdir`, which ADR-119's prefix heuristic cannot see:
+/// the wrapper's prefix is `<base>/wrap`) and, with `version`, `git --version` prints it.
+fn wrapper(h: &H, version: Option<&str>) {
+    let bin = h.base.join("wrap/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let sys = h.base.join("sysconf/gitattributes");
+    let version = version.map_or_else(String::new, |v| {
+        format!("if [ \"$1\" = --version ]; then echo 'git version {v}'; exit 0; fi\n")
+    });
+    let script = format!(
+        "#!/bin/sh\n{version}if [ \"$1\" = var ] && [ \"$2\" = GIT_ATTR_SYSTEM ]; then echo '{}'; exit 0; fi\n\
+         exec '{}' \"$@\"\n",
+        sys.display(),
+        real_git().display()
+    );
+    std::fs::write(bin.join("git"), script).unwrap();
+    std::fs::set_permissions(bin.join("git"), std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// The system attributes file of the wrapper, with a converting line.
+fn converting_system_file(h: &H) {
+    let d = h.base.join("sysconf");
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("gitattributes"), b"big.txt filter=upper\n").unwrap();
+}
+
+const WRAPPED: [(&str, &str); 1] = [("PATH", "<base>/wrap/bin:/usr/local/bin:/usr/bin:/bin")];
+
+/// ADR-133 (a): the system attributes file comes from `git var GIT_ATTR_SYSTEM` (git >= 2.42), asked once per stashing
+/// run that checked files out, with the run's executable and environment. A wrapper `git` whose build has its own
+/// system file with a converting line runs the diff, where ADR-119's prefix heuristic alone found no file; the same
+/// wrapper naming a missing file skips it. A run that checks nothing out never asks.
+#[test]
+fn git_var_names_the_system_attributes_file() {
+    let b8 = Case {
+        name: "b8",
+        before: &nothing,
+        after: &nothing,
+    };
+    let (_, c) = run_counted(&b8, &[]);
+    let probe = H::new();
+    let new = git_var_answers(&probe);
+    assert_eq!(
+        c.var,
+        usize::from(new && snp_os::fsinfo::stat_oracle_safe(&probe.root).unwrap_or(false))
+    );
+    let converting = Case {
+        name: "a wrapper git with a converting system attributes file",
+        before: &|h| {
+            wrapper(h, None);
+            converting_system_file(h);
+            upper_filter(h);
+        },
+        after: &nothing,
+    };
+    let (before, stat) = check_with(&converting, &WRAPPED);
+    // without the answer (git < 2.42) only the heuristic looks: the documented hole of older gits on Linux
+    assert_eq!(before, usize::from(new || !stat), "{}", converting.name);
+    let missing = Case {
+        name: "a wrapper git naming a missing system attributes file",
+        before: &|h| wrapper(h, None),
+        after: &nothing,
+    };
+    let (before, stat) = check_with(&missing, &WRAPPED);
+    assert_eq!(before, usize::from(!stat), "{}", missing.name);
+}
+
+/// ADR-133 (a): an older git (here a wrapper reporting 2.41.0) is never asked; Linux keeps ADR-119's heuristic (the
+/// wrapper's system file is invisible to it, so the proof holds there), macOS takes the real diff.
+#[test]
+fn an_older_git_is_not_asked_and_keeps_the_heuristic() {
+    let case = Case {
+        name: "a git reporting 2.41.0",
+        before: &|h| {
+            wrapper(h, Some("2.41.0"));
+            converting_system_file(h);
+        },
+        after: &nothing,
+    };
+    let (_, c) = run_counted(&case, &WRAPPED);
+    assert_eq!(c.var, 0, "git < 2.42 is not asked");
+    let (before, stat) = check_with(&case, &WRAPPED);
+    assert_eq!(stat, cfg!(target_os = "linux") && stat);
+    assert_eq!(before, usize::from(!stat), "{}", case.name);
+}
+
+/// ADR-133 (a): `GIT_ATTR_NOSYSTEM` makes `git var` exit 1: no system input, the proof holds.
+#[test]
+fn git_attr_nosystem_reads_no_system_file() {
+    let case = Case {
+        name: "GIT_ATTR_NOSYSTEM",
+        before: &nothing,
+        after: &nothing,
+    };
+    let (before, stat) = check_with(&case, &[("GIT_ATTR_NOSYSTEM", "1")]);
+    assert_eq!(before, usize::from(!stat), "{}", case.name);
+}
+
+/// ADR-133 (a) drops ADR-119's "Linux only": on macOS a git that answers `git var GIT_ATTR_SYSTEM` (>= 2.42) proves
+/// the B8 shape's baseline empty, an older one takes the diff.
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_proves_the_baseline_with_git_var() {
+    let case = Case {
+        name: "b8 on macOS",
+        before: &nothing,
+        after: &nothing,
+    };
+    let probe = H::new();
+    let expected =
+        git_var_answers(&probe) && snp_os::fsinfo::stat_oracle_safe(&probe.root).unwrap_or(false);
+    let (before, stat) = check(&case);
+    assert_eq!(stat, expected);
+    assert_eq!(before, usize::from(!expected));
 }
 
 /// A tracked directory replaced by a symbolic link: its files are beyond the link, so `diff-index` reports them
