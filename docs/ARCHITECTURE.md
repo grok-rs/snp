@@ -2254,8 +2254,10 @@ inherit the workspace's version, MSRV and lints, and keep their library names, s
 
 cfgv (`crates/snp-cfgv`, imported from cfgv-rs 0.3.0 at `6a04a30`; no default features, the optional `serde` feature
 is used only by its tests and fuzz target; the `regex`-crate-backed `CheckFn::check_regex()` was dropped, ADR-116):
-* `cfgv::{Value, Map (= IndexMap<Value, Value>), Set (= IndexSet<Value>), BigInt, Date, DateTime, Schema, Validator,
-  MapItem, Cx, CheckFn, RegexCheck, ValidationError, validate_with, apply_defaults_owned, load_from_filename_with}`.
+* `cfgv::{Value, Map (= IndexMap<Value, Value>), Set (= IndexSet<Value>), StrKey, BigInt, Date, DateTime, Schema,
+  Validator, MapItem, Cx, CheckFn, RegexCheck, ValidationError, validate_with, apply_defaults_owned,
+  load_from_filename_with}`. `StrKey(&str)` looks a `str` key up by hash without building a `Value` (it hashes
+  through the same function as `Value::String` and is `Equivalent` only to an equal `Value::String`).
   `Value` already has `Null, Bool, Int, BigInt, Float, String, Bytes, List, Tuple, Map, Set, Date, DateTime` — no new
   variant is requested (the compatibility proposal's `Value::Opaque` is unnecessary).
 * pre-commit's custom validators (`StagesMigration[NoDefault]`, `LanguageMigration[Required]`, `WarnMutableRev`,
@@ -2339,8 +2341,12 @@ compiled once per distinct `(pattern, Options)` and lazily (engines built on fir
 Conversion (and snp-config's `MapItem`s, on the dict they check) builds no `cfgv::Value` key to read a dict: a literal
 key is found by scanning the dict for the equal `str` key (cfgv's equality never equates a `str` with another type, so
 it is the entry the hashed lookup finds), and the extension keys of a hook or root dict are parsed in one pass. A
-probe for a name read from the input (a `priority` alias in the root `priorities`) stays hashed, so a config costs at
-most a constant times its keys.
+probe for a name read from the input (a `priority` alias in the root `priorities`) stays hashed, through
+`cfgv::StrKey` (no key allocation), so a config costs at most a constant times its keys. The scan is kept for literal
+keys because a hashed `StrKey` probe (SipHash-1-3) costs more on the defaulted hook dicts (about 22 keys; B10 +3%
+instructions). cfgv's own validators probe each item's key once: `setdefault` hashes once and clones only when the
+key is missing (indexmap's raw-entry API), a required key is one `get`, and `ensure_absent` reuses the condition
+key's value already read.
 
 ### 2.2 Stage / HookType / Language enums
 

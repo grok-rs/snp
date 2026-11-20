@@ -16,7 +16,7 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use cfgv::{ValidationError, Value};
+use cfgv::{StrKey, ValidationError, Value};
 use snp_pycompat::precommit::rev_line_match;
 use snp_pycompat::text::{splitlines_keepends, strip};
 use snp_pycompat::textio::universal_newlines;
@@ -57,7 +57,7 @@ fn rev_repo_indices(text: &str, ext: ExtMode) -> Result<Vec<usize>, ConfigError>
         snp_yaml::load(&universal_newlines(text), &limits()).map_err(|e| invalid(e.to_string()))?;
     let repos = value
         .as_map()
-        .and_then(|m| m.get(&Value::from("repos")))
+        .and_then(|m| m.get(&StrKey("repos")))
         .and_then(Value::as_array)
         .unwrap_or_default();
     Ok(repos
@@ -66,7 +66,7 @@ fn rev_repo_indices(text: &str, ext: ExtMode) -> Result<Vec<usize>, ConfigError>
         .filter(|(_, r)| {
             let url = r
                 .as_map()
-                .and_then(|m| m.get(&Value::from("repo")))
+                .and_then(|m| m.get(&StrKey("repo")))
                 .and_then(Value::as_str);
             match url {
                 Some(LOCAL | META) => false,

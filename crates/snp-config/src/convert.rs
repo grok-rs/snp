@@ -41,8 +41,9 @@ pub(crate) fn arc(s: &str) -> Arc<str> {
 /// `k` is the entry `m.get(&Value::from(k))` finds; a non-string key never matches.
 ///
 /// A probe costs one pass over the dict. Callers probe a dict only for a fixed set of literal keys (never for a name
-/// read from the input; such a probe stays hashed) and parse the extension keys in one pass, so a config costs at
-/// most a constant times its keys.
+/// read from the input; such a probe stays hashed, through `cfgv::StrKey`) and parse the extension keys in one pass,
+/// so a config costs at most a constant times its keys. On the defaulted hook dicts (about 22 keys) the scan costs
+/// fewer instructions than one hashed `StrKey` probe (SipHash-1-3): B10 measured 5.5M Ir more with the hashed one.
 pub(crate) fn get<'a>(m: &'a Map, k: &str) -> Option<&'a Value> {
     m.iter()
         .find_map(|(key, v)| (key.as_str() == Some(k)).then_some(v))

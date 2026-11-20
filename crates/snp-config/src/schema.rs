@@ -11,7 +11,7 @@
 
 use std::sync::OnceLock;
 
-use cfgv::{CheckFn, ConditionValue, Cx, Map, Schema, Validator, Value};
+use cfgv::{CheckFn, ConditionValue, Cx, Map, Schema, StrKey, Validator, Value};
 use snp_core::brand::Brand;
 use snp_core::stage::{HookType, Stage};
 
@@ -323,7 +323,7 @@ pub(crate) fn repo_dict(brand: Brand, ext: ExtMode) -> Schema {
         ],
         |extra: &[Value], _keys: &[Value], dct: &Map, cx: &mut Cx<'_>| {
             let repo = dct
-                .get(&Value::from("repo"))
+                .get(&StrKey("repo"))
                 .map_or_default(|r| r.try_to_string().unwrap_or_else(|_| r.to_string()));
             cx.warn(messages::unexpected_keys_repo(&repo, &join_keys(extra)));
         },

@@ -6,7 +6,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use cfgv::{Map, Value};
+use cfgv::{Map, StrKey, Value};
 use indexmap::IndexMap;
 use snp_core::env::Env;
 use snp_core::output::DiagSink;
@@ -216,7 +216,7 @@ pub fn apply_root(cfg: &mut Config, ov: &Overlay, diag: &dyn DiagSink) {
         fields.push(Value::from(format!("repos (+{})", ov.repos.len())));
     }
     if let Some(root) = cfg.raw.as_map_mut() {
-        if let Some(Value::List(repos)) = root.get_mut(&Value::from("repos")) {
+        if let Some(Value::List(repos)) = root.get_mut(&StrKey("repos")) {
             repos.extend(ov.raw_repos.iter().cloned());
         }
         let mut marker = Map::new();
