@@ -11,6 +11,8 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
 
 ### Changed
 
+- bench: the B8 `p50 <= pre-commit` known miss is gone. PR #57's CI bench measured snp at 307 ms against
+  pre-commit's 418 ms (1.36x), so the gate fails again if snp ever falls behind pre-commit on B8.
 - cfgv and file-identify are part of the workspace (ADR-116): imported with their full history as `crates/snp-cfgv`
   (Python cfgv 3.5.0: byte-for-byte messages, PyYAML value model, `BigInt` with CPython's 4300-digit limit) and
   `crates/snp-identify` (Python identify 2.6.20: 323 tags as a `Copy` bitset, `env -S` / nix-shell shebangs, one
@@ -159,6 +161,14 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   durable, and a patch larger than 4 MiB is written back to disk (Linux) while git still prints it, so the final
   `fsync` has only the tail left. On B8 (a 10 MB unstaged rewrite) the whole tree runs 10% fewer instructions
   (2,960 M → 2,655 M) and the numstat and most of the patch's disk writes leave the critical path.
+- Benchmarks (CI only, no runtime change): the musl bench job also runs on pull requests that change the allocator
+  selection (`crates/snp/Cargo.toml`, `crates/snp/src/main.rs`), the workspace `Cargo.toml`, `Cargo.lock`, the bench
+  gate, budgets or allocator decision (`xtask/src/tasks/bench.rs`, `bench/budgets.toml`, `bench/musl-allocator.md`),
+  `.github/workflows/bench.yml`, or the source of the crates that hold the musl scenarios' memory (`snp-files`,
+  `snp-identify`, `snp-git`, `snp-pyre`, `snp-run`, `snp-proc`, `snp-hooks`); the `MUSL_PATHS` regex of `bench.yml`
+  is the list. It gates both allocator records as the nightly does, without appending them to the history. Before,
+  it ran only nightly and on dispatch, so a pull request could merge over a musl hard RSS budget its own dispatch
+  run had failed. The nightly and dispatch runs are unchanged.
 
 ### Fixed
 

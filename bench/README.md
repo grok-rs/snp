@@ -46,6 +46,20 @@ longest build of all). Every one of these cargo invocations takes `--jobs N` (de
 core); pass it when other work runs on the machine. Only `setup` uses the network (hyperfine, prek, the helper
 tools, the wheelhouse and the pre-commit-hooks mirror).
 
+**When CI runs the musl job.** The `musl` job of `.github/workflows/bench.yml` (`MUSL_SCENARIOS` of the musl build
+with the system allocator and with mimalloc, ADR-079) runs nightly, on dispatch, and on a pull request whose changed
+files match `MUSL_PATHS` in that workflow; pushes to main do not run it. The cheap `musl-paths` job decides, from
+`git diff --no-renames --name-only` of the PR's merge commit against its base (a moved file counts at both paths),
+and runs the musl job when it cannot list the files (fail closed). `MUSL_PATHS` covers what decides or gates the musl allocator: the workspace and `crates/snp`
+manifests and `crates/snp/src/main.rs` (profiles, the mimalloc version and features, the `#[global_allocator]`),
+`Cargo.lock`, `bench/budgets.toml`, `bench/musl-allocator.md`, `xtask/src/tasks/bench.rs` and the workflow itself, and
+the `Cargo.toml` and `src/` of the crates that allocate per file or per thread in B4/B6/B12u: `snp-files` and
+`snp-identify` (the file table and classifier), `snp-git` (the `ls-files` parse), `snp-pyre` (the regex cache),
+`snp-run` and `snp-proc` (the scheduler and partitions) and `snp-hooks` (B6's in-process pre-commit-hooks ports).
+Other changes reach the musl gate at the next nightly. A pull request gates both records exactly as the nightly
+does (every budget, `--allow-missing "$MUSL_PENDING"`, the never-slower rule for the adopted allocator) but passes
+no `--record` and saves no history cache, like the `e2e` job.
+
 ## Scenarios (ARCHITECTURE §12.1)
 
 All fixtures are generated deterministically (fixed identity and dates, an LCG for the file corpora): the same trees
