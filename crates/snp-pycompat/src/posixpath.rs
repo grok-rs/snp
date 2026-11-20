@@ -255,12 +255,149 @@ struct Frame {
     link: Vec<u8>,
 }
 
+/// `posixpath.join(a, b)` of one part, appended to `out` (which holds `a`): an absolute `b` replaces it; otherwise
+/// a `/` is added unless `out` is empty or already ends in `/`.
+#[cfg(any(unix, test))]
+fn join_into(out: &mut Vec<u8>, b: &[u8]) {
+    if isabs(b) {
+        out.clear();
+    } else if !out.is_empty() && out.last() != Some(&SEP) {
+        out.push(SEP);
+    }
+    out.extend_from_slice(b);
+}
+
 /// CPython 3.12 `posixpath._joinrealpath(path='', rest=p, strict=False, seen={})` without
 /// recursion: each symlink resolution pushes a [`Frame`] instead of a Python stack frame, so an
 /// arbitrarily long link chain needs no thread stack (Python would raise `RecursionError` near
 /// 1000 levels). Returns the path before the final `abspath`.
+///
+/// `path` is edited in place: a component name is a range of `rest`, `join(path, name)` appends to `path` (and
+/// truncates back when the result is a symlink), `..` truncates to the `split` head, and the path the filesystem is
+/// asked about is `path` itself when absolute, else `cwd` joined in a reused buffer. Only a symlink copies (the
+/// `seen` key and the frame's link). Same results, same `lstat`/`readlink` calls, as the allocating version
+/// (`join_realpath_oracle`, the test oracle).
 #[cfg(any(unix, test))]
 fn join_realpath(p: &[u8], cwd: &[u8], fs: &dyn LinkFs) -> std::io::Result<Vec<u8>> {
+    use std::collections::HashMap;
+
+    let mut scratch: Vec<u8> = Vec::new();
+    let mut seen: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
+    let mut stack: Vec<Frame> = Vec::new();
+    let mut path: Vec<u8> = Vec::new();
+    let mut rest: Vec<u8> = p.to_vec();
+    let mut pos = 0_usize;
+    let mut fresh_call = true;
+    loop {
+        if fresh_call {
+            fresh_call = false;
+            if isabs(&rest) {
+                pos = 1;
+                path.clear();
+                path.push(SEP);
+            }
+        }
+        let mut descended = false;
+        while let Some(tail) = rest.get(pos..).filter(|t| !t.is_empty()) {
+            // name, _, rest = rest.partition(sep)
+            let (name, consumed) = match tail.iter().position(|&b| b == SEP) {
+                Some(i) => (tail.get(..i).unwrap_or_default(), i.saturating_add(1)),
+                None => (tail, tail.len()),
+            };
+            pos = pos.saturating_add(consumed);
+            if name.is_empty() || name == b"." {
+                continue;
+            }
+            if name == b".." {
+                if path.is_empty() {
+                    path.extend_from_slice(b"..");
+                } else {
+                    // `split` returns a prefix of `path` as the head and its suffix as the last component
+                    let (head, last) = split(&path);
+                    let (head_len, dotdot) = (head.len(), last == b"..");
+                    path.truncate(head_len);
+                    if dotdot {
+                        join_into(&mut path, b"..");
+                        join_into(&mut path, b"..");
+                    }
+                }
+                continue;
+            }
+            let parent_len = path.len();
+            join_into(&mut path, name);
+            if path.contains(&0) {
+                // `os.lstat(newpath)` raises `ValueError: embedded null byte` (not an OSError,
+                // so non-strict realpath does not swallow it); components after a symlink loop
+                // are never lstat'ed and keep their NUL.
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "embedded null byte",
+                ));
+            }
+            let on_disk: &[u8] = if isabs(&path) {
+                &path
+            } else {
+                scratch.clear();
+                scratch.extend_from_slice(cwd);
+                join_into(&mut scratch, &path);
+                &scratch
+            };
+            if !fs.is_link(on_disk) {
+                continue;
+            }
+            // `path` is `newpath` (a symlink); the parent is `path[..parent_len]`
+            match seen.get(&path) {
+                Some(Some(resolved)) => {
+                    path.clone_from(resolved);
+                    continue;
+                }
+                Some(None) => {
+                    // a symlink loop: the resolved part + the rest unchanged, through every caller
+                    let mut out = path;
+                    join_into(&mut out, rest.get(pos..).unwrap_or_default());
+                    while let Some(frame) = stack.pop() {
+                        join_into(&mut out, frame.rest.get(frame.pos..).unwrap_or_default());
+                    }
+                    return Ok(out);
+                }
+                None => {}
+            }
+            let target = fs.readlink(on_disk)?;
+            let newpath = path.clone();
+            path.truncate(parent_len);
+            seen.insert(newpath.clone(), None);
+            stack.push(Frame {
+                rest: std::mem::replace(&mut rest, target),
+                pos,
+                link: newpath,
+            });
+            pos = 0;
+            fresh_call = true;
+            descended = true;
+            break;
+        }
+        if descended {
+            continue;
+        }
+        // this call resolved its whole rest
+        let Some(frame) = stack.pop() else {
+            return Ok(path);
+        };
+        seen.insert(frame.link, Some(path.clone()));
+        rest = frame.rest;
+        pos = frame.pos;
+    }
+}
+
+/// The allocating `join_realpath` before the in-place one (kept as its test oracle): a copy per component name,
+/// per `join` and per `on_disk` path.
+///
+/// CPython 3.12 `posixpath._joinrealpath(path='', rest=p, strict=False, seen={})` without
+/// recursion: each symlink resolution pushes a [`Frame`] instead of a Python stack frame, so an
+/// arbitrarily long link chain needs no thread stack (Python would raise `RecursionError` near
+/// 1000 levels). Returns the path before the final `abspath`.
+#[cfg(test)]
+fn join_realpath_oracle(p: &[u8], cwd: &[u8], fs: &dyn LinkFs) -> std::io::Result<Vec<u8>> {
     use std::collections::HashMap;
 
     let on_disk = |q: &[u8]| {
@@ -603,6 +740,124 @@ mod tests {
         assert_eq!(
             join_realpath(b"/x", b"/", &Broken).map_err(|e| e.kind()),
             Err(std::io::ErrorKind::PermissionDenied)
+        );
+    }
+
+    /// A [`FakeFs`] recording every query, to compare the calls of two implementations.
+    struct Recording<'a> {
+        fs: &'a FakeFs,
+        log: std::cell::Cell<Vec<(bool, Vec<u8>)>>,
+    }
+
+    impl Recording<'_> {
+        fn record(&self, read: bool, p: &[u8]) {
+            let mut log = self.log.take();
+            log.push((read, p.to_vec()));
+            self.log.set(log);
+        }
+    }
+
+    impl LinkFs for Recording<'_> {
+        fn is_link(&self, p: &[u8]) -> bool {
+            self.record(false, p);
+            self.fs.is_link(p)
+        }
+        fn readlink(&self, p: &[u8]) -> std::io::Result<Vec<u8>> {
+            self.record(true, p);
+            self.fs.readlink(p)
+        }
+    }
+
+    /// xorshift64* (snp-pycompat has no dev-dependencies, ADR-056).
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+        }
+        fn below(&mut self, n: usize) -> usize {
+            usize::try_from(self.next() % u64::try_from(n).unwrap()).unwrap()
+        }
+        fn pick<'a>(&mut self, xs: &[&'a str]) -> &'a str {
+            xs[self.below(xs.len())]
+        }
+    }
+
+    /// A random path of `/`-separated components (leading `/` sometimes, empty, `.`, `..` and link names
+    /// included, a NUL rarely).
+    fn random_path(rng: &mut Rng) -> String {
+        const COMPS: [&str; 14] = [
+            "a", "b", "l1", "l2", "l3", "l1", "l2", "..", ".", "", "sub", "r", "a", "a\0x",
+        ];
+        let mut out = String::new();
+        if rng.below(2) == 0 {
+            out.push('/');
+            if rng.below(8) == 0 {
+                out.push('/');
+            }
+        }
+        for i in 0..rng.below(6) {
+            if i > 0 {
+                out.push('/');
+            }
+            let c = rng.pick(&COMPS);
+            if c.contains('\0') && rng.below(16) != 0 {
+                out.push('a');
+            } else {
+                out.push_str(c);
+            }
+        }
+        out
+    }
+
+    /// The in-place `join_realpath` gives the oracle's result (path or error) with the same filesystem queries in
+    /// the same order, over random link tables (relative and absolute targets, chains, loops, `..`, dangling
+    /// links), paths and working directories.
+    #[test]
+    fn join_realpath_matches_the_allocating_oracle() {
+        const DIRS: [&str; 6] = ["/r", "/r/a", "", "/r/a/b", "/r/sub", "/r/l1"];
+        const NAMES: [&str; 5] = ["l1", "l2", "l3", "a", "b"];
+        const CWDS: [&str; 5] = ["/r", "/", "/r/", "/r/a/l1", "//r"];
+        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        let (mut links_followed, mut chains, mut errors) = (0, 0, 0);
+        for case in 0..50_000 {
+            let mut links = std::collections::HashMap::new();
+            for _ in 0..rng.below(10) {
+                let key = format!("{}/{}", rng.pick(&DIRS), rng.pick(&NAMES));
+                links.insert(key.into_bytes(), random_path(&mut rng).into_bytes());
+            }
+            let fs = FakeFs(links);
+            let p = random_path(&mut rng);
+            let cwd = rng.pick(&CWDS);
+            let new_fs = Recording {
+                fs: &fs,
+                log: std::cell::Cell::default(),
+            };
+            let old_fs = Recording {
+                fs: &fs,
+                log: std::cell::Cell::default(),
+            };
+            let simplify = |r: std::io::Result<Vec<u8>>| r.map_err(|e| (e.kind(), e.to_string()));
+            let new = simplify(join_realpath(p.as_bytes(), cwd.as_bytes(), &new_fs));
+            let old = simplify(join_realpath_oracle(p.as_bytes(), cwd.as_bytes(), &old_fs));
+            assert_eq!(new, old, "case {case}: {p:?} in {cwd:?} with {:?}", fs.0);
+            let old_log = old_fs.log.into_inner();
+            assert_eq!(
+                new_fs.log.into_inner(),
+                old_log,
+                "case {case}: {p:?} in {cwd:?}"
+            );
+            let reads = old_log.iter().filter(|(read, _)| *read).count();
+            links_followed += usize::from(reads > 0);
+            errors += usize::from(old.is_err());
+            chains += usize::from(reads >= 2);
+        }
+        assert!(
+            links_followed > 3_000 && errors > 300 && chains > 400,
+            "followed {links_followed}, errors {errors}, chains {chains}"
         );
     }
 }
