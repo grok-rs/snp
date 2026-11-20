@@ -1077,7 +1077,7 @@ impl Shell {
 fn clean_path(p: &[u8]) -> bool {
     let mut padded = p.to_vec();
     padded.push(b'/');
-    let has = |n: &[u8]| padded.windows(n.len()).any(|w| w == n);
+    let has = |n: &[u8]| memchr::memmem::find(&padded, n).is_some();
     !(has(b"//")
         || has(b"/./")
         || has(b"/../")
@@ -1203,7 +1203,7 @@ fn here_matches_the_dirname_line() {
         for sh in &shells {
             let (program, forms, cwds, cdpath, fast_total) =
                 (&program, &forms, &cwds, &cdpath, &fast_total);
-            scope.spawn(move || {
+            let worker = std::thread::Builder::new().spawn_scoped(scope, move || {
                 let run = |zero: &[u8], cwd: &Path, pwd: Option<&[u8]>, cd: Option<&str>| {
                     let mut cmd = sh.command();
                     cmd.arg("-c")
@@ -1231,12 +1231,13 @@ fn here_matches_the_dirname_line() {
                 };
                 for cwd in cwds {
                     let given = cwd.as_os_str().as_bytes().to_vec();
-                    let physical = std::fs::canonicalize(cwd)
+                    let physical = snp_os::realpath::realpath_nonstrict(cwd, Path::new("/"))
                         .unwrap()
                         .into_os_string()
                         .into_vec();
-                    let (parent, name) =
-                        given.split_at(given.iter().rposition(|c| *c == b'/').unwrap());
+                    let (parent, name) = given
+                        .split_at_checked(given.iter().rposition(|c| *c == b'/').unwrap())
+                        .unwrap();
                     let dotted = [parent, b"/.", name].concat();
                     let doubled = [parent, b"/", name].concat();
                     let trailing = [given.as_slice(), b"/"].concat();
@@ -1304,12 +1305,14 @@ fn here_matches_the_dirname_line() {
                     }
                 }
             });
+            worker.unwrap();
         }
     });
     std::fs::set_permissions(b.join("ns/hooks"), std::fs::Permissions::from_mode(0o755)).unwrap();
     assert!(fast_total.into_inner() > 0, "the fast path never ran");
     // macOS CI: the matrix ran under bash 3.2, `/bin/sh` and `/bin/bash` (ADR-135).
-    if cfg!(target_os = "macos") && std::env::var_os("CI").is_some() {
+    let process_env = snp_core::env::Env::capture_process();
+    if cfg!(target_os = "macos") && process_env.get("CI").is_some() {
         let v = Command::new("/bin/bash").arg("--version").output().unwrap();
         assert!(
             raw_text(&v.stdout).contains("version 3.2"),
@@ -1362,9 +1365,10 @@ enum GitAction {
 /// installed shell by its own name and, where it behaves differently, as a symlink named `sh` (bash, busybox, zsh).
 #[cfg(unix)]
 fn shebang_shells(root: &Path) -> Vec<(String, String)> {
+    let process_env = snp_core::env::Env::capture_process();
     let find = |name: &str| {
-        std::env::var_os("PATH").and_then(|p| {
-            std::env::split_paths(&p)
+        process_env.get("PATH").and_then(|p| {
+            std::env::split_paths(p)
                 .map(|d| d.join(name))
                 .find(|c| c.is_file())
         })
@@ -1651,13 +1655,7 @@ fn hook_dir_matches_v1_under_git() {
             rlink.join("hk").to_str().unwrap(),
             fast(true),
         ),
-        hp(
-            "hooksPath absolute, worktree",
-            &wt,
-            abs.clone(),
-            &a,
-            fast(true),
-        ),
+        hp("hooksPath absolute, worktree", &wt, abs, &a, fast(true)),
         GitLayout {
             config_repo: rs.clone(),
             ..base(
