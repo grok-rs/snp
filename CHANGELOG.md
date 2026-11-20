@@ -257,6 +257,14 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   or the default `%TAG` handles. `validate-config` on 1,000 hooks runs 6.8% fewer instructions (165.9 M → 154.6 M)
   with 30,000 (19%) fewer allocations, `gc` on 500 configs 3.1% fewer (150.2 M → 145.6 M) with 17,400 fewer. Loaded
   values, errors, marks and `Debug` output are unchanged.
+- The pre-commit-hooks natives and the hook argv path allocate less. check-case-conflict's repository index borrows
+  parent directories instead of copying them, the LFS attribute stamps of check-added-large-files are looked up
+  without copying each directory and built in one reused path, the shebang and byte-order-marker probes read into an
+  inline 4-byte buffer, the argparse emulation reserves its token tables and value lists, and the shuffled file order
+  of a hook is reserved exactly instead of doubling. `run --all-files` over 960 files with 13 pre-commit-hooks hooks
+  makes 17,000 (19%) fewer allocations and 4,600 fewer reallocations and runs 7.4% fewer instructions (88.8 M →
+  82.3 M); over 50,000 files the heap peak is 0.3 MB lower (5.79 → 5.48 MB; 7.41 → 7.07 MB with `types` filters).
+  Output and errors are unchanged.
 
 ### Fixed
 
