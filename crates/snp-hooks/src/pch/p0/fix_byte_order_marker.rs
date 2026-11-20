@@ -84,7 +84,7 @@ impl NativeHook for FixByteOrderMarker {
         let mut out = PyOut::default();
         let mut step = |name: &OsStr, out: &mut PyOut| {
             match read_head(cx, name, 3) {
-                Ok(head) if head == BOM => {}
+                Ok(head) if head.bytes() == BOM => {}
                 Ok(_) => return FileStep::Unchanged,
                 Err(e) => return FileStep::Crash(e),
             }

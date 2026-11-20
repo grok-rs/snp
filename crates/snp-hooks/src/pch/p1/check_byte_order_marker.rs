@@ -57,7 +57,7 @@ impl NativeHook for CheckByteOrderMarker {
         let files = filenames(&ns);
         let mut out = PyOut::default();
         let mut step = |name: &OsStr, out: &mut PyOut| match read_head(cx, name, 3) {
-            Ok(head) if kernels::has_bom(&head) => {
+            Ok(head) if kernels::has_bom(head.bytes()) => {
                 print_name(out, b"", name, b": Has a byte-order marker");
                 FileStep::Failed
             }

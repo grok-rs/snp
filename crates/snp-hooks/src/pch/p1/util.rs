@@ -140,7 +140,7 @@ pub(crate) fn mode_is_executable(mode: &str) -> bool {
 
 /// `has_shebang(path)`: `open(path, 'rb').read(2) == b'#!'`.
 pub(crate) fn has_shebang(cx: &HookCx<'_>, path: &OsStr) -> Result<bool, PyExc> {
-    Ok(crate::pch::p0::common::read_head(cx, path, 2)? == b"#!")
+    Ok(crate::pch::p0::common::read_head(cx, path, 2)?.bytes() == b"#!")
 }
 
 /// The raw bytes of an argv string.
