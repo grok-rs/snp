@@ -66,7 +66,9 @@ dhat = { workspace = true, optional = true }
 snp-net = { workspace = true, features = ["xz"] }
 
 [target.'cfg(target_env = "musl")'.dependencies]
-mimalloc = { workspace = true, optional = true }
+# `no_thp` (ADR-118): mimalloc never madvises its arenas into transparent huge pages, which tripled peak RSS on
+# B4/B6/B12u (every touched 2 MiB region became resident)
+mimalloc = { workspace = true, optional = true, features = ["no_thp"] }
 
 [dev-dependencies]
 # integration tests (tests/it) and the WP-36 criterion benches

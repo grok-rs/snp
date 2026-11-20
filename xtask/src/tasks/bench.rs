@@ -5486,6 +5486,24 @@ mod tests {
         assert_eq!(v(other), Verdict::Warn);
     }
 
+    /// ADR-118: the `musl-mimalloc` build keeps mimalloc's `no_thp`. Without it mimalloc madvises its arenas into
+    /// transparent huge pages and every 2 MiB region a thread touches becomes resident: B4/B6/B12u peaked at
+    /// 53.7/29.7/58.8 MiB on the nightly musl job (hard budgets 28.61/23.84/28.61), against 19.6/10.6/21.8 MiB with
+    /// `no_thp` on four CPUs. The musl job only runs nightly, so this is the check a pull request sees.
+    #[test]
+    fn musl_mimalloc_is_built_without_transparent_huge_pages() {
+        let manifest = workspace::root().unwrap().join("crates/snp/Cargo.toml");
+        let doc: toml::Table = std::fs::read_to_string(manifest).unwrap().parse().unwrap();
+        let features =
+            doc["target"]["cfg(target_env = \"musl\")"]["dependencies"]["mimalloc"]["features"]
+                .as_array()
+                .unwrap();
+        assert!(
+            features.iter().any(|f| f.as_str() == Some("no_thp")),
+            "crates/snp's musl mimalloc must enable `no_thp` (ADR-118): {features:?}"
+        );
+    }
+
     #[test]
     fn comment_lists_scenarios_and_failures() {
         let b = budgets();
