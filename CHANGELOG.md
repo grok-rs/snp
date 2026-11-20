@@ -110,12 +110,15 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   missing; a required key is read once), and the remaining config lookups that built a key value now use the new
   `cfgv::StrKey`. `validate-config` of 1,000 local hooks runs about 3% fewer instructions, `gc` over 200 configs about
   3.5% fewer. Output and messages are unchanged.
-- The installed hook script (template v2, ID `405bd8559925d194c1d22af6ef66282e`) finds its directory by parameter
-  expansion instead of running `dirname`: one process less per hook run, with the same `--hook-dir` (ADR-105). It
-  keeps the old template's ID as a `# snp 2.0 compat ID:` line, so snp 2.0.0–2.0.1 still recognise it. Scripts
-  installed by those versions keep working; `snp doctor` reports them as "an older snp hook script" until `snp
-  install` (or `snp doctor --fix`) rewrites them. A script with snp's header, an ID this version does not know and
-  pre-commit's compat ID is treated as an snp script, never as pre-commit's.
+- The installed hook script (template v3, ID `b5aab319837cfd7b570aecfbefd9e801`) finds its directory by parameter
+  expansion instead of running `dirname` in a subshell (ADR-105, ADR-135): for the hook paths git builds (a normal
+  repository's `.git/hooks`, worktrees, submodules, a plain `core.hooksPath`) it forks nothing: two forks and one
+  exec fewer per hook run than snp 2.0.0, with the same `--hook-dir`. Other shapes (a trailing `/` or `../` in
+  `core.hooksPath`, `:` or `\` in the path, an unusual `PWD`) keep one subshell. It keeps snp 2.0.0's template ID as
+  a `# snp 2.0 compat ID:` line, so snp 2.0.0 still recognises it. Scripts installed by snp 2.0.0 (or by development
+  builds of this release, template v2) keep working; `snp doctor` reports them as "an older snp hook script" until
+  `snp install` (or `snp doctor --fix`) rewrites them. A script with snp's header, an ID this version does not know
+  and pre-commit's compat ID is treated as an snp script, never as pre-commit's.
 - Restore-critical git commands (the stash's queries, checkouts and applies) get `GIT_TERMINAL_PROMPT=0` set on the
   command instead of on a copy of the whole environment: two fewer allocations per environment variable and command
   (about 220 fewer in a no-op `run`, about 500 in the 10 MB stash scenario, and about 1% fewer instructions in both).

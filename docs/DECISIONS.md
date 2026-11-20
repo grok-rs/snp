@@ -20,7 +20,8 @@ index modes on clean `--all-files` runs; ADR-108 the forward-only engine of the 
 classification tier; ADR-112 snp-yaml's owning materialisation; ADR-115 the tier-1 scan engine; ADR-116 the absorption
 of cfgv and file-identify into the workspace; ADR-117 the B8 stash-time overlaps; ADR-118 the musl mimalloc build
 without transparent huge pages; ADR-119 the proven post-checkout baseline; ADR-131 the file-content cache of
-consecutive in-process hooks; ADR-132 the baseline taken by the first native write in all-in-process runs.
+consecutive in-process hooks; ADR-132 the baseline taken by the first native write in all-in-process runs; ADR-135 the
+hook script template v3.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -499,7 +500,7 @@ benchmark showing a measurable win on B3/B9; removable without API change. **Rat
 
 ### ADR-048 — Hook script template and fallback chain
 
-*Status: Accepted; amended by ADR-060 (stable `SNP_EXE` selection, M-lines on stderr, prek/snp-1.x adoption registered as D-BRAND-02) and ADR-105 (template v2: `HERE` without `dirname`, ID `405bd8559925d194c1d22af6ef66282e`, the v1 ID kept as a compat line). The amending ADRs are normative where they differ.*
+*Status: Accepted; amended by ADR-060 (stable `SNP_EXE` selection, M-lines on stderr, prek/snp-1.x adoption registered as D-BRAND-02), ADR-105 (template v2: `HERE` without `dirname`, ID `405bd8559925d194c1d22af6ef66282e`, the v1 ID kept as a compat line) and ADR-135 (template v3: `HERE` without a subshell for the paths git builds, ID `b5aab319837cfd7b570aecfbefd9e801`). The amending ADRs are normative where they differ.*
 
 **Decision.** ARCHITECTURE §9.7 (11 §A.6 + the kill-switch branch): POSIX `sh`, LF everywhere, three identity lines
 (snp ID `5bb9bd89cf6c92c58fee7677ceaf4fc3`, pre-commit `CURRENT_HASH`, prek ID) so the last installer wins and no
@@ -2083,6 +2084,10 @@ path.
 
 ### ADR-105 — Hook script template v2: the hook directory without `dirname`
 
+*Status: Accepted; amended by ADR-135 (template v3: no subshell for the paths git builds, ID
+`b5aab319837cfd7b570aecfbefd9e801`, v2's ID moved into `SNP_PRIOR_IDS`). The amending ADR is normative where it
+differs.*
+
 *Amends ADR-048 (the template of ARCHITECTURE §9.7 and 11 §A.6).*
 
 **Context.** Every hook run starts with the installed script's
@@ -2659,6 +2664,7 @@ value and an `attr.tree` the reader cannot see run it too; a skip-worktree or as
 skip-worktree, untracked-cache, mode-only and directory-behind-a-symlink cases, and a randomized differential; every run
 equals the always-diff path's output, exit code and repository, and `SNP_VERIFY_BASELINE` agrees
 (`crates/snp-run/tests/pipeline/checkout_baseline.rs`).
+
 ### ADR-131 — A file-content cache for consecutive in-process hooks ("B-racy")
 
 *Amends ARCHITECTURE §1.4.19 (the frozen native-hook contract: `HookCx` gains a field, `pygrep` a function) and §3.4
@@ -2812,6 +2818,82 @@ build's; injected edits give the race table's verdicts; `--show-diff-on-failure`
 end-of-file-fixer's append and truncate wait for it, a hook that writes nothing never fires the gate
 (`crates/snp-hooks/tests/write_gate`); the lint gate (`xtask lint-guards`). Proofs: none (no anchored item changed).
 
+### ADR-135 — Hook script template v3: the hook directory without a subshell for the paths git builds
+
+*Amends ADR-105 (the template's `HERE` block and ID; its equivalence argument, ID handling and classification rules
+stand) and ADR-048 (the template of ARCHITECTURE §9.7 and 11 §A.6). Owner decision O6 of the wave-5 performance plan
+(2026-11-21), in the variant of the hooks panel, landed before 2.0.1 ships.*
+
+**Context.** After ADR-105 every hook run still forks one subshell for `HERE="$(CDPATH= cd -- "$HERE" && pwd)"`. In
+the paths git builds (`<hooks dir>/<name>`: `.git/hooks/<name>` relative to the toplevel for a normal repository, an
+absolute path for worktrees, submodules, `--separate-git-dir`, `GIT_DIR` and an absolute `core.hooksPath`) that `cd`
+only ever joins and canonicalises what the shell already knows. Measured: the subshell costs about 41 page faults,
+0.48 M kernel instructions and 0.2 ms CPU per hook run (dash, pinned), and one of B9's clones. The literal proposal
+("absolute → as is, relative → `$PWD/$HERE`") is wrong in three ways the panel found: (F1) on Git for Windows, worktree,
+submodule and absolute-`core.hooksPath` hooks get `$0=C:/…/hooks/<name>`, which does not start with `/`, so it would
+be joined as `/c/wt/C:/…` and a chained `.legacy` hook (git-lfs) silently skipped; (F2) dash, busybox, bash and zsh
+keep an inherited `PWD` with `/./`, `//` or a trailing `/` (set by a launcher, `env PWD=…`, an IDE) as long as it names
+the working directory, while `cd` canonicalises; (F3) v2's `$(…)` strips trailing LFs from a hooks directory name
+(a bug pre-commit's template shares), the join would keep them. Template v2 is unreleased (only v2.0.0, template v1,
+is tagged), so users still migrate once, v1 to v3.
+**Decision.** (1) The third line of the `HERE` block becomes a `case` (ARCHITECTURE §9.7): a `HERE` that is clean —
+no empty, `.` or `..` component, no trailing `/`, no `:` or `\`, no trailing LF — and absolute is used as is when
+`[ -d ] && [ -x ]` holds; a clean relative `HERE` under a `$PWD` that is absolute and clean (no empty, `.` or `..`
+component, no `:` or `\`) becomes `$PWD/$HERE` when that passes `-d` and `-x`. Every other shape, and a failed test,
+runs v2's `HERE="$(CDPATH= cd -- "$HERE" && pwd)"` on the **original** `HERE` (F5: `cd rel` and `cd $PWD/rel` differ
+when `PWD` is odd). (2) No variable besides `HERE` is assigned (F4: a temporary would overwrite a user-exported
+variable of that name in the environment of snp and of every hook). (3) `SNP_SCRIPT_ID` becomes
+`b5aab319837cfd7b570aecfbefd9e801` = md5(`snp hook script template v3`); v2's ID `405bd8559925d194c1d22af6ef66282e`
+moves into `SNP_PRIOR_IDS` (after v1's) for development installs; the `# snp 2.0 compat ID:` line with v1's ID stays,
+so snp 2.0.0 still recognises the script. No v2 compat line is added, because no release shipped v2; if v3 missed the
+2.0.1 release, a v2 compat line would have to be added, since a v2-era binary would otherwise classify v3 as
+`Snp { stale: true }` through ADR-105(3), call it "an older snp hook script" and downgrade it on `doctor --fix`.
+(4) v1 and v2 scripts are stale snp scripts: `doctor` warns, `install` and `doctor --fix` rewrite them to v3 keeping
+their options (ADR-105(4)).
+**Rationale.** With a clean `$PWD` and a clean `HERE`, the logical `cd -- "$HERE" && pwd` is exactly `$PWD/$HERE`:
+both are lexical over the same base, so symlinked components give the same answer; an absolute clean `HERE` is its
+own logical `pwd`. Every shell checks an inherited `PWD` against `.` by (dev, ino) and replaces a stale, missing or
+relative one by the physical `getcwd()`, so a `$PWD` that passes the guard names the working directory; logical and
+physical differ only between "git chdir'd" (physical) and "already at the toplevel through a symlink" (logical), and
+v2 and v3 see the same base in both. The `-d`/`-x` tests make a missing, non-directory or non-searchable directory
+fall back to v2's failing `cd` (`HERE=""` plus its message: F6). `case` matches bytes, so invalid UTF-8 is handled
+(F8); `PWD=/` and a hooks directory at `/` give `//` and fall back (F9); the fast path runs no `cd`, so an exported
+`CDPATH` cannot double the value (F10, D-DATA-07); `doctor`'s script parser reads only the `SNP_EXE=` and `set -- `
+lines, and the script still contains no `dirname` (F11). The `cd` error message's line number moves (F7) only when the
+hook directory is unusable, which a hook git runs cannot reach; it is not compat output. Tests
+(`crates/snp/tests/it/install.rs`): `here_matches_the_dirname_line` compares v3 with v2 and v2 with v1 byte for byte
+over 37 `$0` shapes (ADR-105's 18 plus `C:/…`, `C:\…\h/…`, `co:lon/…`, `back\slash/…`, a directory ending in LF —
+where only v1 differs —, one with an inner LF, a non-searchable, a missing and a non-directory hook directory, a deep
+path, and absolute variants) plus 4 root shapes, under `sh`, dash, bash, bash invoked as `sh`, `bash --posix`,
+`/bin/bash`, busybox sh, zsh invoked as `sh` and `zsh --emulate sh` (each where installed; on the macOS runner `sh`
+and `/bin/bash` are bash 3.2, which the test asserts under CI), from three working directories (one through a
+symlink), with eight inherited `PWD`s (unset, logical, physical, stale, relative, `/./`, `//`, trailing `/`) and
+`CDPATH` unset and set; a counter asserts that every clean git shape takes the fast path and every unclean one falls
+back. `hook_dir_matches_v1_under_git` runs 49 git layouts (toplevel, subdirectory, `git -C`, a symlinked working
+directory, unclean and stale `PWD`s, `GIT_DIR` absolute, relative and `.git`, a linked worktree including one reached
+through a symlink, `worktree add` and `checkout` `post-checkout` hooks, a submodule, `--separate-git-dir`, every
+`core.hooksPath` form of ADR-105 plus a relative symlink, `~/`, a path through a symlinked repository, a symlinked
+`.git/hooks`, and repositories named `sp ace`, `gl*ob?[x]`, `-dash`, `nl<LF>line`, `co:lon`, `back\slash` and
+`trail<LF>` with a `--detach` worktree each) under each shell in the `#!` line, with `CDPATH` unset and set, and
+asserts the fast path for the 37 layouts with clean paths and the fallback for the 9 with trailing slashes, `../` or
+`:`/`\` (the 3 unclean-`PWD` layouts depend on the shell and are only compared).
+Three mutants (no `PWD` guard, no `:`/`\` guard, no trailing-LF guard) each fail the matrices.
+`hook_dir_matches_v1_under_git_for_windows` runs on the Windows runner: `.git/hooks` takes the fast path under Git
+for Windows' `sh` (MSYS `$PWD`), a worktree's `C:/…` falls back, both equal v2 and v1. The hooks panel's own run
+(20,608 shell cases and 915 commits across git 2.18.5/2.43.0/2.56.0, 0 differences) is the wider evidence; macOS bash
+3.2 and Git for Windows could not be run locally and are covered by the CI jobs only.
+**Rejected.** The literal proposal (F1–F3). A temporary variable (F4). Narrowing to relative `HERE` only: it would
+lose worktrees and submodules for no correctness gain on the tested shells; it stays the fallback plan should a CI
+platform disagree. `$OSTYPE`/`uname` branches: a fork or an environment guess where a pattern suffices.
+**Consequences.** Per hook run, for every git layout without trailing slashes, `../` or `:`/`\` in its hook path:
+−1 fork (B9 counts locally: 52 → 51 clones, 350 → 349 `openat`; CI is expected to show 50 → 49). The script alone
+(dash, `SNP_BIN=/usr/bin/true`, pinned, 300 runs): 162 → 121 page faults, 2.28 M → 1.80 M kernel instructions,
+0.479 M → 0.578 M user instructions (dash parses and matches the longer block), 1.07–1.10 → 0.84–0.86 ms CPU. The CI
+estimate is −0.15 to −0.2 ms per Linux hook run, which by itself does not clear B9's current WARN (O8 re-specifies
+that budget); on Git for Windows, where fork is emulated, the gain is likely several ms for `.git/hooks` (not
+measured). As with ADR-105, the base-vs-head bench gate cannot show it, since `bench setup` installs the head's script
+for both builds. Scripts written by snp 2.0.0 and by development builds keep working; `snp doctor` warns until
+`snp install` rewrites them.
 ## Appendix A — Open questions of the research documents, resolved
 
 Format: question → decision (ADR or divergence). "Parity" = behave as pre-commit 4.6.2.
