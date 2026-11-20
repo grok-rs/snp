@@ -2427,9 +2427,12 @@ whose `regex` builds are cheap and whose literal strategies `regex` does better.
 652.6 M → 555.8 M instructions (−14.8 %): engine builds 77.2 M → 44.7 M, matching about 276 M → 216 M (the forward
 scan beats `regex`'s reverse-suffix strategy on these paths); massif peak 8.94 → 6.47 MB; DHAT 285 786 → 259 246
 blocks and 57.0 → 43.0 MB allocated (at the engine-build site 94 768 → 68 544 blocks and 22.7 → 11.3 MB; bytes live at
-the global peak 8.38 → 4.84 MB); output byte-identical. B1–B11 are unchanged or better
-(B3 −0.09 %, B4 −0.02 %, B6 −0.11 % as means of four runs; B5, B8, B10, B11 within ±0.07 %; B1 −0.29 % from the
-binary's layout alone). Per-thread memory of a scan text is one forward lazy-DFA cache (at most 2 MiB) instead of
+the global peak 8.38 → 4.84 MB); output byte-identical. A second pair of builds gave 644.8 M → 554.7 M (−14.0 %;
+three more paired runs −15.7 % on average, as the 32-job run varies by a few per cent) and a massif peak of 12.05 →
+7.16 MB. The musl build with the system allocator peaks at 20.0 → 13.4 MiB RSS on B12u (median of 15 interleaved
+runs). B1–B11 are unchanged or better (B3 −0.09 %, B4 −0.02 %, B6 −0.11 % as means of four runs; B8, B10, B11 within
+±0.07 %; B1 −0.29 % from the binary's layout alone), except B5 at −0.01 % to +0.23 % over five paired runs, none of
+it in snp-pyre (B5 spends 8 k instructions there): code layout in the classification job pool. Per-thread memory of a scan text is one forward lazy-DFA cache (at most 2 MiB) instead of
 `regex`'s forward and reverse caches. A scan text's matching no longer uses `regex`'s reverse strategies (reverse
 suffix, reverse anchored): a path pattern that only `regex`'s reverse-anchored search could reject in a few bytes is
 now scanned forward in full, which stays linear and is what the B12u numbers include. The plan's target for the build
