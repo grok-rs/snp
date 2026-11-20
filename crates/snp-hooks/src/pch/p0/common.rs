@@ -96,19 +96,13 @@ pub(crate) fn read_head(cx: &HookCx<'_>, name: &OsStr, n: u64) -> Result<Vec<u8>
     Ok(buf)
 }
 
-/// `open(name, 'wb').write(bytes)` on the same inode (09 §2.8, `snp_os::fs::rewrite_in_place`). The name's cache
-/// entry is evicted first, whatever the write then does (ADR-131).
+/// `open(name, 'wb').write(bytes)` on the same inode (09 §2.8), through the hook's write token (ADR-132: the first
+/// write of a gated hook takes the baseline `git diff` first). The name's cache entry is evicted first, whatever the
+/// write then does (ADR-131).
 pub(crate) fn rewrite(cx: &HookCx<'_>, name: &OsStr, bytes: &[u8]) -> Result<(), PyExc> {
-    evict(cx, name);
-    let path = framework::at(cx, name);
-    snp_os::fs::rewrite_in_place(&path, bytes).map_err(|e| io_exc(&e, name))
-}
-
-/// Drops `name` from the window's content cache before a native writes it (ADR-131).
-pub(crate) fn evict(cx: &HookCx<'_>, name: &OsStr) {
-    if let Some(c) = cache(cx) {
-        c.evict(name);
-    }
+    cx.writer()?
+        .rewrite(name, bytes)
+        .map_err(|e| io_exc(&e, name))
 }
 
 /// `print(prefix + name + suffix)` with the file name as raw bytes.

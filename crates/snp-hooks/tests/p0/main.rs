@@ -285,6 +285,10 @@ fn no_commit_to_branch_preflight() {
 /// `rewrite_in_place` keeps the inode, the mode and hard links (09 §2.8).
 #[cfg(unix)]
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+)]
 fn rewrite_preserves_inode_mode_and_links() {
     use std::os::unix::fs::MetadataExt as _;
     let sb = Sandbox::new(true);
@@ -306,6 +310,11 @@ fn rewrite_preserves_inode_mode_and_links() {
 /// one that needs a change is still the `PermissionError` crash.
 #[cfg(unix)]
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+)]
 fn readonly_file_without_change_passes() {
     let sb = Sandbox::new(true);
     sb.write("ok.txt", b"done\n");

@@ -1,4 +1,4 @@
-//! The native-hook contract (frozen in §1.4.19; ADR-071, ADR-072, ADR-102, ADR-131).
+//! The native-hook contract (frozen in §1.4.19; ADR-071, ADR-072, ADR-102, ADR-131, ADR-132).
 //!
 //! Owner: WP-26.
 
@@ -13,7 +13,7 @@ use snp_git::Git;
 use snp_git::pch_facts::{FactSet, PchFacts};
 use snp_hooks_data::Epoch;
 
-use crate::ContentCache;
+use crate::{ContentCache, WriteGate};
 
 /// What a native hook sees of the run.
 #[derive(Debug)]
@@ -40,6 +40,9 @@ pub struct HookCx<'a> {
     /// when the window has none (off Unix, unsafe filesystem, fewer than two readers, a concurrent bucket).
     /// `read_all` fills it; `read_head` and end-of-file-fixer only read it; every native write evicts first.
     pub cache: Option<&'a ContentCache>,
+    /// The deferred baseline of this hook (ADR-132): `Some` when the runner did not take the diff oracle's baseline
+    /// before it, so the first [`HookCx::writer`] call takes it. Natives write only through that token.
+    pub gate: Option<&'a WriteGate>,
 }
 
 /// The result of one partition (what the console script's process would have produced).

@@ -464,6 +464,10 @@ mod tests {
     /// and not served; without `verify` it would be.
     #[cfg(unix)]
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+    )]
     fn verify_counts_a_forged_mismatch() {
         let dir = tempfile::tempdir().unwrap();
         let Some(cache) = ContentCache::new(dir.path(), true) else {
@@ -496,6 +500,10 @@ mod tests {
     /// A stale entry is dropped and its bytes leave the total.
     #[cfg(unix)]
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+    )]
     fn stale_entries_leave_the_total() {
         let dir = tempfile::tempdir().unwrap();
         let Some(cache) = ContentCache::new(dir.path(), false) else {

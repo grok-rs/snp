@@ -134,6 +134,10 @@ fn fixer_then_checker_chain_equals_uncached() {
 /// Another process edits files between two hooks (same size and new size): the next hook sees the new bytes, exactly
 /// like without a cache; the untouched, old files are still served from the cache.
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+)]
 fn external_edits_between_hooks_are_seen() {
     // `gone.txt` last: its FileNotFoundError ends each partition
     let fx: [(&str, &[u8]); 4] = [
@@ -201,6 +205,10 @@ fn same_size_external_edit_of_an_old_file_is_seen() {
 /// A hard link (an alias, as a case or normalization twin on APFS would be): both names are cached, a same-size fixer
 /// rewrites one, a later hook reading the other name sees the new bytes.
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+)]
 fn same_size_alias_write_is_seen() {
     let make = || {
         let sb = Sandbox::new(true);
@@ -279,6 +287,10 @@ fn caps_bound_the_cache() {
 /// Errors are never cached, a file that is not regular is not kept, a file whose permissions change after the fill
 /// gives the same error as without a cache, and a file on another device (through a symlink) is not kept.
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+)]
 fn errors_non_regular_files_and_other_devices_are_not_cached() {
     let fx: [(&str, &[u8]); 2] = [("locked.txt", b"secret \n"), ("ok.txt", b"ok\n")];
     let (a, b) = twins(&fx);

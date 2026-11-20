@@ -13,6 +13,7 @@ mod hook;
 pub mod pch;
 pub mod pygrep;
 mod registry;
+pub mod writer;
 
 use cfgv as _;
 use file_identify as _;
@@ -24,3 +25,4 @@ pub use registry::native;
 /// pipe or a 0×0 pty); re-exported so snp-run needs no snp-argparse edge. Natives call `columns(env, None)`.
 pub use snp_argparse::columns;
 pub use snp_hooks_data::{Epoch, NativeSource};
+pub use writer::{WriteGate, Writer};

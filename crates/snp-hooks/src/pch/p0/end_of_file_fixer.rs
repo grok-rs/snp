@@ -7,8 +7,8 @@
 //! Owner: WP-26.
 
 use std::ffi::OsStr;
-use std::fs::{File, OpenOptions};
-use std::io::{Cursor, Read, Seek, SeekFrom, Write as _};
+use std::fs::File;
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::sync::Arc;
 
 use snp_argparse::{ActionSpec, ParserSpec};
@@ -111,23 +111,14 @@ fn file_action(cx: &HookCx<'_>, name: &OsStr) -> Result<EofAction, PyExc> {
         .and_then(|mut f| action(&mut f, name))
 }
 
-/// Applies `act` in place (append `\n` or truncate). The name's cache entry is evicted first (ADR-131).
+/// Applies `act` in place (append `\n` or truncate) through the hook's write token (ADR-132), which evicts the
+/// name's cache entry first (ADR-131).
 fn apply(cx: &HookCx<'_>, name: &OsStr, act: EofAction) -> Result<(), PyExc> {
     let err = |e: std::io::Error| io_exc(&e, name);
-    let path = framework::at(cx, name);
-    if act != EofAction::Keep {
-        common::evict(cx, name);
-    }
     match act {
         EofAction::Keep => Ok(()),
-        EofAction::Append => {
-            let mut f = OpenOptions::new().append(true).open(&path).map_err(err)?;
-            f.write_all(b"\n").map_err(err)
-        }
-        EofAction::Truncate(n) => {
-            let f = OpenOptions::new().write(true).open(&path).map_err(err)?;
-            f.set_len(n).map_err(err)
-        }
+        EofAction::Append => cx.writer()?.append_newline(name).map_err(err),
+        EofAction::Truncate(n) => cx.writer()?.truncate(name, n).map_err(err),
     }
 }
 

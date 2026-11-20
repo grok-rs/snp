@@ -155,6 +155,10 @@ fn gate_of(r: &Report) -> Gate {
 /// `SNP_PCH_GATES_REPORT`, reports) the parity gates.
 #[cfg(unix)]
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+)]
 fn caveat_corpus_gates() {
     let goldens = support::json("caveats/corpus/goldens.json");
     let mut vectors = BTreeMap::new();
