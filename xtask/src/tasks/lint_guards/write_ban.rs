@@ -362,7 +362,10 @@ mod tests {
             stderr.contains("use of a disallowed type `std::fs::OpenOptions`"),
             "{stderr}"
         );
-        for m in ["std::fs::File::set_permissions", "std::fs::File::set_modified"] {
+        for m in [
+            "std::fs::File::set_permissions",
+            "std::fs::File::set_modified",
+        ] {
             assert!(
                 stderr.contains(&format!("use of a disallowed method `{m}`")),
                 "{stderr}"
