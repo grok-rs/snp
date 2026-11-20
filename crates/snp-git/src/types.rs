@@ -5,6 +5,7 @@
 use std::ffi::OsString;
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::ZList;
 
@@ -128,6 +129,114 @@ pub struct IndexEntries {
     pub paths: ZList,
     /// The modes (`0o100644`, `0o100755`, `0o120000`, `0o160000`, …).
     pub modes: Box<[u32]>,
+}
+
+/// `git config --list --show-origin -z`, read once (fan-out query G, ADR-104; ADR-119): the origin files the
+/// `DiffOracle` watches, and what the effective configuration says about a checkout's effect on `git diff`.
+#[derive(Debug, Clone, Default)]
+pub struct ConfigListing {
+    /// The distinct origin files in first-seen order, relative ones joined to the root ([`crate::Git::config_origins`]).
+    pub files: Arc<[PathBuf]>,
+    /// ADR-119's facts, from the same records.
+    pub checkout: CheckoutConfig,
+}
+
+/// What the effective configuration (the last value of each key, as git resolves it; `-c` and `GIT_CONFIG_*` count)
+/// says about whether a path-limited `git checkout` of index entries can leave `git diff` non-empty (ADR-119). Fail
+/// closed: a value whose meaning is not certain makes [`CheckoutConfig::plain`] false. The default is not plain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckoutConfig {
+    /// `core.autocrlf`, `core.fsmonitor`, `core.useBuiltinFSMonitor`, `core.ignoreStat`, `core.sparseCheckout` and
+    /// `index.sparse` are unset or read as git's `false`; `core.fileMode` is unset or reads as a boolean;
+    /// `core.hooksPath`, when set, has a value; no `hook.*` key (a configuration-based hook) is set; and neither
+    /// `core.attributesFile` nor `attr.tree` is set at all. The last two are git's own word on which attributes apply:
+    /// the `DiffOracle`'s config reader is best effort (a UTF-8 BOM, a `%(prefix)/` value), so ADR-119 does not let
+    /// a file it read as missing prove that no attributes file exists.
+    pub plain: bool,
+    /// `core.fileMode`: `true` unless it reads as `false` (git's default; meaningful only when `plain`).
+    pub file_mode: bool,
+    /// The last `core.hooksPath` value as git printed it, `None` when unset.
+    pub hooks_path: Option<Box<[u8]>>,
+}
+
+impl Default for CheckoutConfig {
+    fn default() -> Self {
+        Self {
+            plain: false,
+            file_mode: true,
+            hooks_path: None,
+        }
+    }
+}
+
+/// git's boolean reading of a config value (`git_parse_maybe_bool` followed by `git_parse_int`): a valueless key is
+/// true; `true`/`yes`/`on` and `false`/`no`/`off`/the empty string, in any case; a run of decimal digits is false
+/// exactly when every digit is `0`. Anything else (a sign, a unit suffix, `input`, a hook path) is `None`: not
+/// certain, the caller fails closed.
+fn config_bool(value: Option<&[u8]>) -> Option<bool> {
+    let Some(v) = value else {
+        return Some(true);
+    };
+    let lower = v.to_ascii_lowercase();
+    match lower.as_slice() {
+        b"true" | b"yes" | b"on" => Some(true),
+        b"false" | b"no" | b"off" | b"" => Some(false),
+        digits if digits.iter().all(u8::is_ascii_digit) => Some(digits.iter().any(|&d| d != b'0')),
+        _ => None,
+    }
+}
+
+/// [`CheckoutConfig`] from the `key\nvalue` (or valueless `key`) records of `git config --list -z`, in config order.
+/// Keys come lowercased in their section and variable names; a subsection keeps its case.
+pub(crate) fn checkout_config<'a>(records: impl Iterator<Item = &'a [u8]>) -> CheckoutConfig {
+    const OFF: [&[u8]; 6] = [
+        b"core.autocrlf",
+        b"core.fsmonitor",
+        b"core.usebuiltinfsmonitor",
+        b"core.ignorestat",
+        b"core.sparsecheckout",
+        b"index.sparse",
+    ];
+    // the last value of each key that matters: `None` = a valueless key
+    let mut last: Vec<(&[u8], Option<&[u8]>)> = Vec::new();
+    let mut hook_key = false;
+    let mut attributes_key = false;
+    for r in records {
+        let (key, value) = match memchr::memchr(b'\n', r) {
+            Some(nl) => (
+                r.get(..nl).unwrap_or_default(),
+                Some(r.get(nl.saturating_add(1)..).unwrap_or_default()),
+            ),
+            None => (r, None),
+        };
+        if key.starts_with(b"hook.") {
+            hook_key = true;
+        }
+        if key == b"core.attributesfile" || key == b"attr.tree" {
+            attributes_key = true;
+        }
+        if OFF.contains(&key) || key == b"core.filemode" || key == b"core.hookspath" {
+            match last.iter_mut().find(|(k, _)| *k == key) {
+                Some(slot) => slot.1 = value,
+                None => last.push((key, value)),
+            }
+        }
+    }
+    let get = |key: &[u8]| last.iter().find(|(k, _)| *k == key).map(|(_, v)| *v);
+    let off = OFF
+        .iter()
+        .all(|k| get(k).is_none_or(|v| config_bool(v) == Some(false)));
+    let file_mode = get(b"core.filemode").map_or(Some(true), config_bool);
+    let hooks_path = get(b"core.hookspath");
+    CheckoutConfig {
+        plain: off
+            && !hook_key
+            && !attributes_key
+            && file_mode.is_some()
+            && hooks_path.is_none_or(|v| v.is_some()),
+        file_mode: file_mode.unwrap_or(true),
+        hooks_path: hooks_path.flatten().map(Box::from),
+    }
 }
 
 /// `git ls-files -s -v -f -z` folded into the list [`crate::Git::all_files`] prints, with each path's index mode and
@@ -448,6 +557,99 @@ pub(crate) fn parse_diff_raw(buf: Vec<u8>) -> Result<IndexEntries, BadRecord> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR-119: git's boolean reading; anything else is not certain.
+    #[test]
+    fn config_bool_reads_like_git() {
+        for (v, want) in [
+            (None, Some(true)),
+            (Some(&b"true"[..]), Some(true)),
+            (Some(b"Yes"), Some(true)),
+            (Some(b"ON"), Some(true)),
+            (Some(b"1"), Some(true)),
+            (Some(b"0010"), Some(true)),
+            (Some(b"false"), Some(false)),
+            (Some(b"No"), Some(false)),
+            (Some(b"off"), Some(false)),
+            (Some(b""), Some(false)),
+            (Some(b"0"), Some(false)),
+            (Some(b"000"), Some(false)),
+            (Some(b"input"), None),
+            (Some(b"-1"), None),
+            (Some(b"1k"), None),
+            (Some(b" false"), None),
+            (Some(b".git/hooks/query-watchman"), None),
+        ] {
+            assert_eq!(config_bool(v), want, "{v:?}");
+        }
+    }
+
+    /// ADR-119: the last value of each key decides; every listed key must read false (or be unset), `core.fileMode`
+    /// a boolean, `core.hooksPath` a value; any `hook.*` key turns the proof off.
+    #[test]
+    fn checkout_config_is_plain_only_when_certain() {
+        let c = |recs: &[&[u8]]| checkout_config(recs.iter().copied());
+        let plain = c(&[]);
+        assert!(plain.plain && plain.file_mode && plain.hooks_path.is_none());
+        assert_eq!(c(&[b"user.name\nx", b"core.bare\nfalse"]), plain);
+        for key in [
+            "core.autocrlf",
+            "core.fsmonitor",
+            "core.usebuiltinfsmonitor",
+            "core.ignorestat",
+            "core.sparsecheckout",
+            "index.sparse",
+        ] {
+            for bad in ["true", "input", "/hook"] {
+                let r = format!("{key}\n{bad}");
+                assert!(!c(&[r.as_bytes()]).plain, "{r}");
+            }
+            assert!(!c(&[key.as_bytes()]).plain, "a valueless {key} is true");
+            let off = format!("{key}\nfalse");
+            assert!(c(&[off.as_bytes()]).plain, "{off}");
+            let on = format!("{key}\ntrue");
+            assert!(
+                c(&[on.as_bytes(), off.as_bytes()]).plain,
+                "the last value wins"
+            );
+            assert!(
+                !c(&[off.as_bytes(), on.as_bytes()]).plain,
+                "the last value wins"
+            );
+        }
+        let fm = c(&[b"core.filemode\nfalse"]);
+        assert!(fm.plain && !fm.file_mode);
+        assert!(c(&[b"core.filemode\nfalse", b"core.filemode\ntrue"]).file_mode);
+        assert!(!c(&[b"core.filemode\nmaybe"]).plain);
+        for hook in [
+            &b"hook.lint.command\ntrue"[..],
+            b"hook.Lint.event\npost-checkout",
+            b"hook.x",
+        ] {
+            assert!(!c(&[hook]).plain, "{hook:?}");
+        }
+        assert!(c(&[b"hooks.x\ny", b"githook.x\ny"]).plain);
+        // git's listing, not the oracle's reader, says whether an attributes source is configured; any value counts
+        for attrs in [
+            &b"core.attributesfile\n/a"[..],
+            b"core.attributesfile\n%(prefix)/etc/attrs",
+            b"core.attributesfile\n",
+            b"core.attributesfile",
+            b"attr.tree\nHEAD",
+            b"attr.tree",
+        ] {
+            assert!(!c(&[attrs]).plain, "{attrs:?}");
+        }
+        assert!(c(&[b"core.attributes\nx", b"attr.trees\nx"]).plain);
+        let hp = c(&[b"core.hookspath\n/a", b"core.hookspath\n.githooks"]);
+        assert!(hp.plain);
+        assert_eq!(hp.hooks_path.as_deref(), Some(&b".githooks"[..]));
+        assert!(
+            !c(&[b"core.hookspath"]).plain,
+            "a valueless hooksPath is an error"
+        );
+        assert!(!CheckoutConfig::default().plain);
+    }
 
     #[test]
     fn object_ids() {

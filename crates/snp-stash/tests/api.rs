@@ -17,9 +17,9 @@ mod api {
     use snp_core::failure::Failure;
     use snp_core::output::Printer;
     use snp_core::path::RepoPath;
-    use snp_git::{DiffFingerprint, Git, IndexEntries, RepoInfo};
+    use snp_git::{CheckoutConfig, DiffFingerprint, Git, IndexEntries, RepoInfo, ZList};
     use snp_proc::signals::SignalGuard;
-    use snp_stash::diff_oracle::{Change, DiffMode, DiffOracle};
+    use snp_stash::diff_oracle::{Change, DiffMode, DiffOracle, Elision};
     use snp_stash::{StashCtx, StashGuard, Stashed, Unrestored};
 
     fn send_sync<T: Send + Sync>() {}
@@ -61,6 +61,7 @@ mod api {
         send_sync::<DiffMode>();
         send_sync::<DiffOracle>();
         send_sync::<Change>();
+        send_sync::<Elision>();
     }
 
     #[test]
@@ -75,6 +76,8 @@ mod api {
         has::<fn(StashCtx) -> Result<StashGuard, Failure>>(snp_stash::enter);
         has::<fn(&StashGuard) -> &Stashed>(StashGuard::stashed);
         has::<fn(&StashGuard) -> bool>(StashGuard::diff_index_clean);
+        // ADR-119
+        has::<fn(&StashGuard) -> Option<&ZList>>(StashGuard::checked_out);
         has::<fn(&StashGuard) -> Option<(&'static str, OsString)>>(StashGuard::child_env_token);
         has::<fn(&StashGuard) -> bool>(StashGuard::lock_contended);
         has::<fn(&mut StashGuard, &[RepoPath]) -> Result<bool, Failure>>(StashGuard::stage_fixed);
@@ -120,5 +123,15 @@ mod api {
         has::<fn(&mut DiffOracle, Arc<std::sync::atomic::AtomicBool>)>(
             DiffOracle::guard_index_trust,
         );
+        // ADR-119
+        has::<fn(&mut DiffOracle, &ZList, &CheckoutConfig, bool) -> Elision>(
+            DiffOracle::elide_checkout_baseline,
+        );
+        has::<[Elision; 4]>([
+            Elision::NotProven,
+            Elision::Elided,
+            Elision::Verified,
+            Elision::Mismatch,
+        ]);
     }
 }

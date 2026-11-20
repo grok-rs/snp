@@ -1474,6 +1474,11 @@ impl DiffFingerprint { pub const EMPTY: DiffFingerprint; }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub struct IndexStamp { /* private: dev, ino, size, mtime, ctime */ }
 /// ADR-106: the all_files list with each path's mode (0 = the empty blob) and whether every record is `H` at stage 0.
 #[derive(Debug, Clone, Default)] pub struct TaggedIndex { pub paths: ZList, pub modes: Box<[u32]>, pub plain: bool }
+/// ADR-119: query G's records once: the origin files (DiffOracle inputs) and the effective configuration's checkout facts
+/// (`plain`: core.autocrlf, fsmonitor, ignoreStat, sparse checkout unset or false, `core.fileMode` a boolean, no `hook.*`,
+/// `core.attributesFile` or `attr.tree` key; the default is not plain).
+#[derive(Debug, Clone, Default)] pub struct ConfigListing { pub files: Arc<[PathBuf]>, pub checkout: CheckoutConfig }
+#[derive(Debug, Clone, PartialEq, Eq)] pub struct CheckoutConfig { pub plain: bool, pub file_mode: bool, pub hooks_path: Option<Box<[u8]>> }
 
 #[derive(Clone, Debug)] pub struct Git { /* exe: Arc<GitExe>, env: Env, root: Arc<Path>, backend: Arc<dyn GitBackend> */ }  // cheap clone
 impl Git {
@@ -1521,6 +1526,7 @@ impl Git {
     pub fn show_diff(&self, color: bool) -> Result<(), Failure>;                     // inherits stdout
     pub fn hooks_path(&self) -> Result<Option<OsString>, Failure>;
     pub fn config_origins(&self) -> Result<Vec<PathBuf>, Failure>;                   // `config --list --show-origin -z` files
+    pub fn config_listing(&self) -> Result<ConfigListing, Failure>;                  // the same call: files + ADR-119 facts
     pub fn config_get(&self, key: &str) -> Result<Option<OsString>, Failure>;
     pub fn config_get_regexp(&self, pattern: &str) -> Result<Vec<(OsString, OsString)>, Failure>;
     pub fn pre_push(&self, stdin: &[u8], remote_name: &OsStr) -> Result<Option<PrePushNs>, Failure>; // 02 §16.3 + X13-HI-04
@@ -1931,6 +1937,7 @@ pub fn enter(cx: StashCtx) -> Result<StashGuard, Failure>;
 impl StashGuard {
     pub fn stashed(&self) -> &Stashed;
     pub fn diff_index_clean(&self) -> bool;                              // diff-index rc 0 ⇒ baseline digest known empty
+    pub fn checked_out(&self) -> Option<&snp_git::ZList>;               // the patch's paths the checkout rewrote (ADR-119)
     pub fn child_env_token(&self) -> Option<(&'static str, OsString)>;   // ("_SNP_STASH_LOCK", token) for nested runs
     pub fn lock_contended(&self) -> bool;                                // the lock was taken on the wait path: earlier reads may be stale
     /// `stage_fixed` (§8.3): apply --check; journal `staging-fixed {paths}` durably; `git --literal-pathspecs add -- <paths>`;
@@ -1956,6 +1963,7 @@ pub mod diff_oracle {   // ADR-027
     #[derive(Copy, Clone, Debug, PartialEq, Eq)] pub enum DiffMode { Stat, Git }
     #[derive(Debug)] pub struct DiffOracle { /* mode, last DiffFingerprint, snapshot: stats + diff-input sources + racy hashes */ }
     #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum Change { Unchanged, Changed }
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)] #[non_exhaustive] pub enum Elision { NotProven, Elided, Verified, Mismatch }
     impl DiffOracle {
         /// Stat mode only on Unix, `stat_oracle_safe` filesystems, ≤ 16_384 index entries, no `attr.tree` /
         /// `GIT_ATTR_SOURCE`, SNP_DIFF_MODE != "git", and `tracked` + `origins` supplied by the step-6 fan-out (no extra
@@ -1973,6 +1981,10 @@ pub mod diff_oracle {   // ADR-027
         pub fn non_empty(&mut self) -> Result<bool, Failure>;          // show-diff gate (last digest)
         /// ADR-106: cleared at the start of every after_hook/after_native.
         pub fn guard_index_trust(&mut self, valid: Arc<std::sync::atomic::AtomicBool>);
+        /// ADR-119: a lazy baseline in Stat mode becomes EMPTY when the snapshot (taken here) proves the stash's checkout
+        /// of `checked_out` left `git diff` empty; `verify` takes the real diff instead and reports a mismatch.
+        pub fn elide_checkout_baseline(&mut self, checked_out: &snp_git::ZList, config: &snp_git::CheckoutConfig,
+                                       verify: bool) -> Elision;
     }
 }
 ```
@@ -2534,7 +2546,7 @@ startup Env (captured once in main, minus __PYVENV_LAUNCHER__/PYTHONEXECUTABLE)
 | 13 | `SKIP` (+ `SNP_SKIP_GROUPS`, overlay `skip`, `skip/only` conditions) → `to_install` | 02 §6.2, 15 V-SKIP | `strip_fsbytes` semantics for non-UTF-8 SKIP |
 | 14 | `resolver.install_envs(to_install)` incl. delegated fast-path hooks and virtual install triplets | 03 §8.4, ADR-032 | `check_support` before any FS mutation (04b §5.1) |
 | 15 | `cols` from **all** selected hooks (skipped included); file selection (§3.2); `[INFO] Checking merge-conflict files only.`; global filter; `retain_lexists` — the classifier is built here, eagerly, when some selected hook reads files (`!always_run` ∨ `pass_filenames`) or `--from-ref`/`--to-ref` are set (P17: never otherwise; then only the merge-conflict notice is decided). A clean `--all-files` run whose filters allow it lists with `ls-files -s -v -f -z`, takes the before-diff here and trusts the index modes instead of `lstat`ing every file (§2.3, ADR-106) | 02 §9–10 | — |
-| 16 | Baseline digest (ADR-078): **elided or lazy** (at pre-commit's position). **Warm path** (no clone, install or download in steps 11–14, counted by `Resolve::store_work` and the run's counting fetcher, and steps 11–14 under 250 ms; ADR-104): `DiffFingerprint::EMPTY` when the stash step saw `diff-index` rc 0 and stashed nothing. Otherwise one `git diff` taken lazily after `install_envs`, before the first hook that needs it, pre-commit's position (an IDE autosave during an install must count as pre-existing, not as a hook modification); a trust-capable `--all-files` run took it at step 15 (ADR-106) | 02 §11.2 | `SNP_VERIFY_BASELINE=1` (CI) takes the real diff and asserts equality |
+| 16 | Baseline digest (ADR-078): **elided or lazy** (at pre-commit's position). **Warm path** (no clone, install or download in steps 11–14, counted by `Resolve::store_work` and the run's counting fetcher, and steps 11–14 under 250 ms; ADR-104): `DiffFingerprint::EMPTY` when the stash step saw `diff-index` rc 0 and stashed nothing, or (ADR-119) when it checked out the patch's files and (on Linux) the oracle's Stat-mode snapshot proves the checkout left `git diff` empty (plain configuration from G, no `core.attributesFile` or `attr.tree` key in G, no attributes file in the worktree or the index, no `post-checkout`/`post-index-change` hook, every checked-out path a regular file of its own with its index mode's executable bit, no intent-to-add clearing). Otherwise one `git diff` taken lazily after `install_envs`, before the first hook that needs it, pre-commit's position (an IDE autosave during an install must count as pre-existing, not as a hook modification); a trust-capable `--all-files` run took it at step 15 (ADR-106) | 02 §11.2 | `SNP_VERIFY_BASELINE=1` (CI) takes the real diff and asserts equality |
 | 17 | Schedule and execute (§3.4–3.7); print in config order (§3.9) | 02 §11 | one JobPool; cancellation stops new work |
 | 18 | `fail_fast` (config ∨ hook ∨ `--fail-fast`): stop after the current failing hook (bucket) | 02 §11.2 | later hooks print nothing |
 | 19 | `--show-diff-on-failure` (inside the stash) | 02 §15 | `git --no-pager diff …` inherits stdout (Printer flushed first) |
@@ -2691,7 +2703,8 @@ O(1) memory) and decides per executed hook with `snp_stash::diff_oracle::DiffOra
      (existence changes count — a new untracked `.gitattributes` can renormalise), the global and XDG git config
      files, the system config (unless `GIT_CONFIG_NOSYSTEM`), every `include.path`/`includeIf` target, the
      `core.attributesFile` target or — when it is unset — the default attributes file
-     (`$XDG_CONFIG_HOME/git/attributes`, else `~/.config/git/attributes`), and the system `$(prefix)/etc/gitattributes`
+     (`$XDG_CONFIG_HOME/git/attributes`, else `~/.config/git/attributes`), and the system `/etc/gitattributes` and
+     `$(prefix)/etc/gitattributes`, the prefix both of the `git` found on `PATH` and of its resolved target (ADR-119)
      (from `git config --list --show-origin -z`, fan-out query G, taken once per run and re-taken when any config
      file's stat changes). `GIT_CONFIG_*`/`GIT_DIR`-style env cannot change during a run (snp's env snapshot is
      immutable and hooks cannot modify it). An input is compared by its `lstat` and by its `stat` (a symlink's
@@ -2708,7 +2721,8 @@ O(1) memory) and decides per executed hook with `snp_stash::diff_oracle::DiffOra
 4. **`DiffMode::Git`** (Windows, network filesystems, > 16 384 tracked files, or `SNP_DIFF_MODE=git`): pre-commit's
    algorithm verbatim. On Windows stable std exposes no ctime/file-id, so no stat oracle is attempted.
 5. **Baseline** (§3.1 step 16): on the warm path (no clone, install or download, tracked in code, ADR-104)
-   known-empty after `diff-index` rc 0 in stash mode; otherwise one baseline `git diff`, taken lazily after
+   known-empty after `diff-index` rc 0 in stash mode, or after the stash's checkout when the Stat-mode snapshot proves
+   it left `git diff` empty (ADR-119); otherwise one baseline `git diff`, taken lazily after
    `install_envs` (pre-commit's position), never overlapped with resolution; a trust-capable `--all-files` run takes
    it at step 15, beside its tagged listing (ADR-106). Skipped and no-files hooks reuse the previous digest. Never
    `git diff --quiet` (CRLF and stat-dirty quirks).

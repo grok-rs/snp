@@ -24,13 +24,13 @@ mod pathspec;
 
 use crate::run::{self, Out, bare_git_argv, concat, os_from_bytes};
 use crate::types::{
-    BadRecord, IndexStamp, TaggedParser, is_null_oid, parse_diff_raw, parse_ls_files_stage,
-    parse_ls_files_stages,
+    BadRecord, IndexStamp, TaggedParser, checkout_config, is_null_oid, parse_diff_raw,
+    parse_ls_files_stage, parse_ls_files_stages,
 };
 use crate::zlist::TooLarge;
 use crate::{
-    DiffFingerprint, DiffIndex, GitBackend, GitExe, IndexEntries, MergeState, ObjectId, PrePushNs,
-    RepoInfo, TaggedIndex, ZList, messages,
+    ConfigListing, DiffFingerprint, DiffIndex, GitBackend, GitExe, IndexEntries, MergeState,
+    ObjectId, PrePushNs, RepoInfo, TaggedIndex, ZList, messages,
 };
 
 /// A handle on the user repository; cheap clone (`Arc`s inside).
@@ -1150,19 +1150,32 @@ impl Git {
     /// `git config --list --show-origin -z` (checked; snp-only, `DiffOracle` inputs): the distinct origin files in
     /// first-seen order, relative ones joined to the root. Non-file origins (`command line:`, `blob:`, …) are skipped.
     pub fn config_origins(&self) -> Result<Vec<PathBuf>, Failure> {
+        Ok(self.config_listing()?.files.to_vec())
+    }
+
+    /// [`Self::config_origins`] and, from the same records (every origin's, `command line:` included), the
+    /// [`CheckoutConfig`](crate::CheckoutConfig) of ADR-119: one `git config --list --show-origin -z` (checked;
+    /// fan-out query G).
+    pub fn config_listing(&self) -> Result<ConfigListing, Failure> {
         let records = self.checked_zlist(&["config", "--list", "--show-origin", "-z"])?;
-        let mut out: Vec<PathBuf> = Vec::new();
+        let mut files: Vec<PathBuf> = Vec::new();
+        let mut key_values: Vec<&[u8]> = Vec::new();
         let mut it = records.iter();
         while let Some(origin) = it.next() {
-            let _key_value: Option<&[u8]> = it.next();
+            if let Some(kv) = it.next() {
+                key_values.push(kv);
+            }
             if let Some(file) = origin.strip_prefix(b"file:") {
                 let p = join_norm(&self.root, file);
-                if !out.contains(&p) {
-                    out.push(p);
+                if !files.contains(&p) {
+                    files.push(p);
                 }
             }
         }
-        Ok(out)
+        Ok(ConfigListing {
+            files: files.into(),
+            checkout: checkout_config(key_values.into_iter()),
+        })
     }
 
     /// `git config --get <key>`: `Some(value)` (rc 0), `None` (rc 1: unset); other returncodes are the checked

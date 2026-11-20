@@ -11,7 +11,6 @@
 use std::ffi::{OsStr, OsString};
 use std::io::IsTerminal as _;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -24,11 +23,13 @@ use snp_core::failure::{Failure, PyExc};
 use snp_core::output::Level;
 use snp_core::stage::{HookType, Stage};
 use snp_files::{Classifier, FileTable};
-use snp_git::{DiffFingerprint, Git, GitVersion, IndexEntries, ProcBackend, RepoInfo};
+use snp_git::{
+    ConfigListing, DiffFingerprint, Git, GitVersion, IndexEntries, ProcBackend, RepoInfo,
+};
 use snp_proc::spawn::Role;
 use snp_pyre::Options;
 use snp_repo::ResolvedHook;
-use snp_stash::diff_oracle::DiffOracle;
+use snp_stash::diff_oracle::{DiffOracle, Elision};
 use snp_stash::{StashCtx, StashGuard, Stashed};
 use snp_store::{Store, StoreGuard};
 
@@ -308,11 +309,17 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     // looks quiet
     let quiet =
         work_before.0.is_some() && (cx.resolver.store_work(), parts.downloads()) == work_before;
+    let warm =
+        quiet && cx.clock.now().saturating_duration_since(t_resolve) < Duration::from_millis(250);
     let baseline = match fifteen.baseline {
         Some(fp) => Some(fp),
-        None => baseline(cx, st.stash.as_ref(), &git, &run_env, t_resolve, quiet),
+        None => baseline(cx, st.stash.as_ref(), &git, &run_env, warm),
     };
-    let mut oracle = DiffOracle::new(&git, &info, &run_env, baseline, side.tracked, side.origins)?;
+    let files = side.origins.as_ref().map(|l| Arc::clone(&l.files));
+    let mut oracle = DiffOracle::new(&git, &info, &run_env, baseline, side.tracked, files)?;
+    if baseline.is_none() && warm {
+        checkout_baseline(cx, st.stash.as_ref(), side.origins.as_deref(), &mut oracle);
+    }
     if let Some(flag) = fifteen.trust {
         oracle.guard_index_trust(flag);
     }
@@ -548,7 +555,7 @@ impl Step6<'_> {
             || common::load_config_with(cx, self.src, &self.buffered.warn, &self.buffered.diag);
         std::thread::scope(|s| {
             let f = hoist.then(|| common::fork(s, || git.tracked_with_stages().ok()));
-            let g = hoist.then(|| common::fork(s, || git.config_origins().ok().map(Arc::from)));
+            let g = hoist.then(|| common::fork(s, || git.config_listing().ok().map(Arc::new)));
             let load = preloaded.is_none().then(|| {
                 common::fork(s, move || {
                     let loaded = load_now();
@@ -562,7 +569,7 @@ impl Step6<'_> {
                             .is_ok_and(|c| process_candidates(c, &a.hooks) >= 3)
                     {
                         let f = common::fork(s, || git.tracked_with_modes().ok().map(Arc::new));
-                        let origins = git.config_origins().ok().map(Arc::from);
+                        let origins = git.config_listing().ok().map(Arc::new);
                         Early {
                             tracked: f.join_or_run(|| None, |_| None),
                             origins,
@@ -951,7 +958,7 @@ fn small_tree(tracked: &IndexEntries) -> bool {
 struct Side {
     staged: Option<snp_git::ZList>,
     tracked: Option<Arc<IndexEntries>>,
-    origins: Option<Arc<[PathBuf]>>,
+    origins: Option<Arc<ConfigListing>>,
 }
 
 /// The hooks of `cfg` that may run as processes (local and remote; meta and builtin hooks are in-process), among
@@ -979,7 +986,7 @@ fn process_candidates(cfg: &Config, selectors: &[OsString]) -> usize {
 #[derive(Debug, Default)]
 struct Early {
     tracked: Option<Arc<IndexEntries>>,
-    origins: Option<Arc<[PathBuf]>>,
+    origins: Option<Arc<ConfigListing>>,
     /// Step 6's F described a [`small_tree`], even if it was dropped since (ADR-117).
     small: bool,
 }
@@ -1005,7 +1012,7 @@ fn side_queries(git: &Git, wants_staged: bool, stat: bool, early: &Early) -> Res
         let f = common::fork(s, || git.tracked_with_modes().ok().map(Arc::new));
         let g = kept
             .is_none()
-            .then(|| common::fork(s, || git.config_origins().ok().map(Arc::from)));
+            .then(|| common::fork(s, || git.config_listing().ok().map(Arc::new)));
         let staged = wants_staged.then(|| git.staged_files());
         // a failure of F or G only costs the Stat mode (the oracle falls back to `git diff`); a thread that could
         // not start runs its query here
@@ -1025,20 +1032,17 @@ fn side_queries(git: &Git, wants_staged: bool, stat: bool, early: &Early) -> Res
 /// The baseline of ADR-078(3): known empty after a clean `diff-index` on the warm path, taken lazily (pre-commit's
 /// position, before the first hook) otherwise, and always with `SNP_VERIFY_BASELINE=1`.
 ///
-/// The warm path is ADR-078(3)'s "no clone, install or download since `diff-index`": `quiet` says the resolver
-/// counted no clone or install and no network request went out (ADR-104). The 250 ms bound on resolution and
-/// installation stays as a second, fail-closed guard: a long wait (a contended store lock) is also a window in
-/// which an IDE autosave must count as pre-existing.
+/// `warm` is ADR-078(3)'s "no clone, install or download since `diff-index`", decided by the caller: the resolver
+/// counted no clone or install and no network request went out (ADR-104), and resolution and installation took
+/// under 250 ms, a second, fail-closed guard: a long wait (a contended store lock) is also a window in which an IDE
+/// autosave must count as pre-existing. After a stash that checked out files, see [`checkout_baseline`] (ADR-119).
 fn baseline(
     cx: &RunCtx,
     stash: Option<&StashGuard>,
     git: &Git,
     env: &Env,
-    t_resolve: std::time::Instant,
-    quiet: bool,
+    warm: bool,
 ) -> Option<DiffFingerprint> {
-    let warm =
-        quiet && cx.clock.now().saturating_duration_since(t_resolve) < Duration::from_millis(250);
     let clean = stash.is_some_and(|g| g.diff_index_clean() && *g.stashed() == Stashed::Nothing);
     if !(warm && clean) {
         return None;
@@ -1051,6 +1055,28 @@ fn baseline(
         return Some(real);
     }
     Some(DiffFingerprint::EMPTY)
+}
+
+/// ADR-119: on the warm path, after a stash that checked out the patch's files, the baseline is known empty when the
+/// oracle's Stat-mode snapshot proves the checkout left `git diff` empty (`DiffOracle::elide_checkout_baseline`);
+/// otherwise it stays lazy, as before. Not after an intent-to-add clearing, and only with query G's configuration
+/// facts. `SNP_VERIFY_BASELINE=1` takes a proven baseline with the real `git diff` and reports a non-empty one.
+fn checkout_baseline(
+    cx: &RunCtx,
+    stash: Option<&StashGuard>,
+    config: Option<&ConfigListing>,
+    oracle: &mut DiffOracle,
+) {
+    let Some(g) = stash.filter(|g| !g.cleared_intent_to_add()) else {
+        return;
+    };
+    let (Some(paths), Some(config)) = (g.checked_out(), config) else {
+        return;
+    };
+    let verify = cx.env.is_truthy_flag("SNP_VERIFY_BASELINE");
+    if oracle.elide_checkout_baseline(paths, &config.checkout, verify) == Elision::Mismatch {
+        cx.printer.diag(messages::BASELINE_MISMATCH);
+    }
 }
 
 /// `output:` (root), `SNP_OUTPUT` overrides, `--summary` (snp brand) forces the footer; strict mode: default.

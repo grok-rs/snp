@@ -169,6 +169,14 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   is the list. It gates both allocator records as the nightly does, without appending them to the history. Before,
   it ran only nightly and on dispatch, so a pull request could merge over a musl hard RSS budget its own dispatch
   run had failed. The nightly and dispatch runs are unchanged.
+- After a stash of unstaged files, the baseline `git diff` before the first hook is skipped when snp can prove it
+  empty (ADR-119; output and side effects unchanged, `SNP_VERIFY_BASELINE=1` cross-checks it): on Linux, on the warm
+  path, in stat-oracle mode, with no attributes file (in the worktree or tracked) and no `core.attributesFile` or
+  `attr.tree` setting, no `core.autocrlf`, fsmonitor, `core.ignoreStat`, sparse checkout or configuration-based hook,
+  no `post-checkout` or `post-index-change` hook, no intent-to-add entry, and every checked-out file a regular file of
+  its own with its index mode's executable bit.
+  Anything else takes the real diff, as before. On B8 the git process that re-hashed the 10 MiB file no longer runs:
+  2,653 M → 2,292 M instructions for the tree (prek: 2,467 M), 16 → 15 processes.
 
 ### Fixed
 

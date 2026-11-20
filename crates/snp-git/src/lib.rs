@@ -27,7 +27,7 @@ pub use exe::{GitCaps, GitExe, GitVersion};
 pub use git::{CHECKOUT_PATHS_ARGS, CheckoutCall, Git, literal_pathspecs};
 pub use owned::{CloneMode, OwnedRepo, RevInfo, no_git_env, prefetch_eligible};
 pub use types::{
-    DiffFingerprint, DiffIndex, IndexEntries, IndexStamp, MergeState, ObjectId, PrePushNs,
-    RepoInfo, TaggedIndex,
+    CheckoutConfig, ConfigListing, DiffFingerprint, DiffIndex, IndexEntries, IndexStamp,
+    MergeState, ObjectId, PrePushNs, RepoInfo, TaggedIndex,
 };
 pub use zlist::ZList;

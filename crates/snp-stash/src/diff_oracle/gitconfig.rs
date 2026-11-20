@@ -8,6 +8,11 @@
 //! decides), except a missed include target — so every `path` key of an `include*` section is taken, whatever its
 //! condition.
 //!
+//! That bound holds for change detection only. ADR-119 proves a baseline empty from attributes inputs being missing,
+//! where a misread `core.attributesFile` or `attr.tree` (a UTF-8 BOM, a `%(prefix)/` value) would prove the wrong
+//! thing; so that proof never relies on this reader for them: any `core.attributesFile` or `attr.tree` key in git's
+//! own listing (`snp_git::CheckoutConfig::plain`) refuses it.
+//!
 //! Owner: WP-23.
 
 use std::collections::HashSet;

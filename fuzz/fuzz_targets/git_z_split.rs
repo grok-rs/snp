@@ -105,4 +105,8 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(files) = new.config_origins() {
         assert!(files.len() <= expected.len());
     }
+    // ADR-119: the same records, with the checkout facts parsed from them
+    if let Ok(listing) = new.config_listing() {
+        assert!(listing.files.len() <= expected.len());
+    }
 });
