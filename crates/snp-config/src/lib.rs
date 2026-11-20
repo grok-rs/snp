@@ -28,7 +28,7 @@ pub use load::{
 };
 pub use merge::{finalize_local, merge_hook};
 pub use model::{
-    Config, ConfigError, ConfigHook, ConfigSource, ExtMode, HookDef, LoadOpts, Manifest,
-    MergeError, RepoConfig,
+    Config, ConfigError, ConfigHook, ConfigSource, DefaultedHook, ExtMode, HookDef, LoadOpts,
+    Manifest, MergeError, RepoConfig,
 };
 pub use sample::SAMPLE_CONFIG;

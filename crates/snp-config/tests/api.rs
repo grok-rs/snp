@@ -23,8 +23,8 @@ mod api {
     use snp_config::schema;
     use snp_config::validate::{self, FileKind};
     use snp_config::{
-        Config, ConfigError, ConfigHook, ConfigSource, ExtMode, HookDef, LoadOpts, Manifest,
-        MergeError, RepoConfig,
+        Config, ConfigError, ConfigHook, ConfigSource, DefaultedHook, ExtMode, HookDef, LoadOpts,
+        Manifest, MergeError, RepoConfig,
     };
     use snp_core::brand::Brand;
     use snp_core::env::Env;
@@ -96,6 +96,7 @@ mod api {
         send_sync::<ConfigHook>();
         send_sync::<HookDef>();
         send_sync::<Manifest>();
+        send_sync::<DefaultedHook<'static>>();
         send_sync::<MergeError>();
         send_sync::<HookExt>();
         send_sync::<RootExt>();
@@ -158,6 +159,34 @@ mod api {
             hooks: vec![hook_def()],
         });
         has::<for<'a> fn(&'a Manifest, &str) -> Option<&'a HookDef>>(Manifest::get);
+        let defaulted = DefaultedHook {
+            id: "x",
+            name: "x",
+            entry: "x",
+            language: "python",
+            alias: "",
+            files: "",
+            exclude: "^$",
+            types: &["file"],
+            types_or: &[],
+            exclude_types: &[],
+            additional_dependencies: &[],
+            args: &[],
+            always_run: false,
+            fail_fast: false,
+            pass_filenames: true,
+            description: "",
+            language_version: "default",
+            log_file: "",
+            minimum_pre_commit_version: "0",
+            require_serial: false,
+            stages: &[],
+            verbose: false,
+        };
+        has::<fn(std::array::IntoIter<DefaultedHook<'static>, 1>) -> Manifest>(
+            Manifest::from_defaulted,
+        );
+        has::<Manifest>(Manifest::from_defaulted([defaulted]));
         has::<[MergeError; 3]>([
             MergeError::UnknownId {
                 id: Arc::from("x"),

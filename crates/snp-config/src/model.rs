@@ -247,6 +247,74 @@ impl Manifest {
     pub fn get(&self, id: &str) -> Option<&HookDef> {
         self.hooks.iter().rev().find(|h| &*h.id == id)
     }
+
+    /// The manifest of pre-validated hooks (generated data such as `snp_hooks_data::TagProfile::model`): the
+    /// `Manifest` that [`crate::load_manifest_bytes`] returns for a manifest whose hooks, after the schema
+    /// defaults, hold exactly these values. Nothing is checked, so the caller must hold that proof (snp-repo's
+    /// generated-data test, for the Tier A profiles), and the load must print nothing for that manifest.
+    pub fn from_defaulted<'a>(hooks: impl IntoIterator<Item = DefaultedHook<'a>>) -> Self {
+        Self {
+            hooks: hooks
+                .into_iter()
+                .map(|h| crate::convert::defaulted_hook(&h))
+                .collect(),
+        }
+    }
+}
+
+/// One manifest hook after `MANIFEST_HOOK_DICT`'s defaults, as the values of the defaulted dict (every key present;
+/// `language` and `stages` as the dict holds them, mapped as a loaded hook's are). The input of
+/// [`Manifest::from_defaulted`].
+#[derive(Debug, Clone, Copy)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one field per MANIFEST_HOOK_DICT key"
+)]
+pub struct DefaultedHook<'a> {
+    /// `id`.
+    pub id: &'a str,
+    /// `name`.
+    pub name: &'a str,
+    /// `entry`.
+    pub entry: &'a str,
+    /// `language`.
+    pub language: &'a str,
+    /// `alias`.
+    pub alias: &'a str,
+    /// `files`.
+    pub files: &'a str,
+    /// `exclude`.
+    pub exclude: &'a str,
+    /// `types`.
+    pub types: &'a [&'a str],
+    /// `types_or`.
+    pub types_or: &'a [&'a str],
+    /// `exclude_types`.
+    pub exclude_types: &'a [&'a str],
+    /// `additional_dependencies`.
+    pub additional_dependencies: &'a [&'a str],
+    /// `args`.
+    pub args: &'a [&'a str],
+    /// `always_run`.
+    pub always_run: bool,
+    /// `fail_fast`.
+    pub fail_fast: bool,
+    /// `pass_filenames`.
+    pub pass_filenames: bool,
+    /// `description`.
+    pub description: &'a str,
+    /// `language_version`.
+    pub language_version: &'a str,
+    /// `log_file`.
+    pub log_file: &'a str,
+    /// `minimum_pre_commit_version`.
+    pub minimum_pre_commit_version: &'a str,
+    /// `require_serial`.
+    pub require_serial: bool,
+    /// `stages`.
+    pub stages: &'a [&'a str],
+    /// `verbose`.
+    pub verbose: bool,
 }
 
 /// `[ERROR] …` + exit 1 from `repository.py:_hook` (01 §6.4).
