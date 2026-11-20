@@ -275,7 +275,7 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 ### 6.2 Exact optimisations (no observable change; each has an equivalence test)
 
 DiffOracle stat path (allow-listed filesystems only) and baseline elision on the warm path (`SNP_DIFF_MODE=git`,
-`SNP_VERIFY_BASELINE=1` cross-check; after the stash's checkout only when proven, ADR-119:
+`SNP_VERIFY_BASELINE=1` cross-check; after the stash's checkout only when proven, ADR-119 and ADR-133:
 `crates/snp-run/tests/pipeline/checkout_baseline.rs`), tiered lazy tagging and the git-mode fast path, trusted index modes on clean
 `--all-files` runs (ADR-106: `crates/snp-run/tests/pipeline/trust.rs`, the randomized soundness test in
 `crates/snp-run/src/trust.rs`, `tests/differential/scenarios/run/t10-run-37-trusted-index-modes.yaml`), P17

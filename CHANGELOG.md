@@ -265,8 +265,21 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   makes 17,000 (19%) fewer allocations and 4,600 fewer reallocations and runs 7.4% fewer instructions (88.8 M →
   82.3 M); over 50,000 files the heap peak is 0.3 MB lower (5.79 → 5.48 MB; 7.41 → 7.07 MB with `types` filters).
   Output and errors are unchanged.
+- That proof now also holds with attributes files that convert nothing (ADR-133): a file passes when no token sets
+  or values `text`, `crlf`, `eol`, `ident`, `filter` or `working-tree-encoding` (`-x` and `!x` are fine), and
+  `* text=auto` passes with `core.eol` unset, `lf` or `native`; a `.gitattributes` in the stash's patch, a tracked one
+  that is assume-unchanged, skip-worktree or missing, a symlinked or unreadable one, LFS and Windows still take the
+  real diff. It also runs on macOS and other Unix systems when git (2.42 or later) names its system attributes file
+  through `git var GIT_ATTR_SYSTEM`, asked once per stashing run that checked files out. On B8 with a committed
+  `* text=auto` file the skipped diff was 1,333 M instructions; plain B8 pays one `git var` process (0.6 M), and runs
+  that stash nothing (B2, B3, B9) are unchanged. The tracked-files query is `git ls-files -s -v -z` now.
 
 ### Fixed
+
+- The post-checkout baseline proof (ADR-119) could miss the system attributes file of a git reached through a
+  wrapper script, built with its own `sysconfdir` or with `RUNTIME_PREFIX` elsewhere, and so skip a `git diff` that
+  such a file's filter made non-empty. With git 2.42 or later the file is now the one `git var GIT_ATTR_SYSTEM` names
+  (ADR-133); older gits keep the previous rule on Linux only.
 
 - The nightly musl bench passes again (ADR-118). The `musl-mimalloc` build exceeded the hard peak-RSS budgets on
   B4/B6/B12u (53.7/29.7/58.8 MiB), because mimalloc madvised its arenas into transparent huge pages. mimalloc is now

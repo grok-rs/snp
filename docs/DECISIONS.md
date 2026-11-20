@@ -21,9 +21,10 @@ classification tier; ADR-111 the process-seeded cfgv map hasher; ADR-112 snp-yam
 overflow checks kept for every crate; ADR-115 the tier-1 scan engine; ADR-116 the absorption of cfgv and file-identify
 into the workspace; ADR-117 the B8 stash-time overlaps; ADR-118 the musl mimalloc build without transparent huge pages;
 ADR-119 the proven post-checkout baseline; ADR-131 the file-content cache of consecutive in-process hooks; ADR-132 the
-baseline taken by the first native write in all-in-process runs; ADR-135 the hook script template v3; ADR-136 the wave-5
-bench methodology; ADR-137 PIE release artifacts and their hardening gate; ADR-138 the internal crates' API policy and
-snp-yaml's borrowed tags and scalar text.
+baseline taken by the first native write in all-in-process runs; ADR-133 its follow-ups (the system attributes file from
+`git var`, attributes that convert nothing); ADR-135 the hook script template v3; ADR-136 the wave-5 bench methodology;
+ADR-137 PIE release artifacts and their hardening gate; ADR-138 the internal crates' API policy and snp-yaml's borrowed
+tags and scalar text.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -2693,6 +2694,10 @@ arena ranges with huge pages, because nothing calls `prctl`. The gnu, macOS and 
 mimalloc and are unchanged.
 ### ADR-119 — B8: the post-checkout baseline is elided when the snapshot proves it empty
 
+*Status: Accepted; (b), (f) and Rejected (a), (b) and (d) amended by ADR-133 (the system attributes file comes from
+`git var GIT_ATTR_SYSTEM` on git ≥ 2.42 on every platform; attributes files that set or value no converting attribute
+no longer refuse the proof). The amending ADR is normative where they differ.*
+
 *Amends ADR-078 (3) (its parity mechanics, not its guarantee: the baseline still equals the stdout of the `git diff`
 pre-commit takes, in every case) and ADR-117's Rejected (c), first item (owner decision of 2026-11-20: approved as a
 fail-closed fast path, not as a divergence). Every durability, verification and recovery rule of the stash is
@@ -2920,6 +2925,87 @@ build's; injected edits give the race table's verdicts; `--show-diff-on-failure`
 end-of-file-fixer's append and truncate wait for it, a hook that writes nothing never fires the gate
 (`crates/snp-hooks/tests/write_gate`); the lint gate (`xtask lint-guards`). Proofs: none (no anchored item changed).
 
+### ADR-133 — ADR-119 follow-ups: the system attributes file from `git var`, attributes that convert nothing
+
+*Amends ADR-119 (b), (f) and its Rejected (a), (b) and (d) (owner decisions "ADR-119 (a)" and "ADR-119 (b)" of
+2026-11-21, after the wave-5 parity panel). The proof's guarantee is unchanged: the elided baseline equals the stdout of
+the `git diff` pre-commit takes, in every case; anything not proven takes the real diff.*
+
+**Context.** ADR-119 proves the post-checkout baseline empty only on Linux and only when no attributes file exists.
+Two gaps. (1) Its system attributes inputs (`/etc/gitattributes`, `<prefix>/etc/gitattributes` of the `git` on `PATH`
+and of its target) are a heuristic with holes on Linux too: a wrapper `git` that execs a git of another prefix, a build
+with its own `sysconfdir`, a `RUNTIME_PREFIX` build installed elsewhere. A missed file that sets a filter makes the
+"no attributes file exists" proof wrong. macOS was left out for the same reason (Xcode's git). (2) Most real
+repositories have a `.gitattributes`, usually `* text=auto` or `*.png binary`, so the proof rarely fires outside the
+bench. git v2.56.0 `builtin/var.c`: `git var GIT_ATTR_SYSTEM` prints `normalize_path_copy(system_path(
+ETC_GITATTRIBUTES))` and exits 0, or exits 1 under `GIT_ATTR_NOSYSTEM` (git ≥ 2.42; older gits print their usage and
+exit 129); `attr.c` `bootstrap_attr_stack` reads exactly that file. Only `convert.c` `convert_attrs` decides what a
+checkout writes and whether `git diff` sees a difference: it reads `text`, `crlf`, `eol`, `ident`, `filter` and
+`working-tree-encoding` (and `core.autocrlf` / `core.eol`); every other attribute changes at most how a non-empty diff
+is printed (`--no-textconv --no-ext-diff`), and the only builtin macro, `binary`, unsets `text`.
+**Decision.** (a) On a stashing run that checked files out and cleared no intent-to-add entry, with a Stat-mode oracle
+and git ≥ 2.42 (`GitCaps::attr_system`), the pipeline asks `git var GIT_ATTR_SYSTEM` once (`Git::system_attributes`),
+with the executable and environment of the parity `git diff`, on its own thread beside step 14's installs and side
+queries (F is asked again there anyway after a checkout, which rewrote the index), and never keeps the answer across
+runs (macOS `/usr/bin/git` is an `xcrun` shim). Only exit 0 with exactly one line ending in a newline that holds an
+absolute path, or exit 1 with `GIT_ATTR_NOSYSTEM` in the environment (no system file), is an answer; anything else
+(a spawn failure, git's usage, a bad `GIT_ATTR_NOSYSTEM` boolean, a relative path) is none. A named file joins the
+snapshot's inputs (also for ADR-027's change detection), and with an answer the proof runs on any platform with a
+Stat mode: ADR-119 (f) is dropped. Without an answer the proof keeps ADR-119's heuristic on Linux and is not attempted
+elsewhere. (b) ADR-119 (b) becomes: every attributes input of the snapshot is missing or a regular file (not a
+symbolic link: git ≥ 2.32 ignores a symlinked `.gitattributes`, older gits follow it), readable, under 100 MB (git
+ignores larger files since the January 2023 security releases), in which no token, split on git's blank set
+`" \t\r\n"` plus `"` and NUL (extra separators only split a token git reads as one), is one of the six converting
+attributes or `<name>=<anything>`; the unset (`-x`) and unspecified (`!x`) forms are allowed. A macro setting one of
+them contains its token; a pattern spelled like one is a false refusal (safe); long lines git ignores are scanned
+anyway. `text=auto` exactly is allowed when `core.autocrlf` is off (ADR-119 (a)), `core.eol` is unset, `lf` or
+`native` (query G, `CheckoutConfig::eol_lf`) and the platform is not Windows: `output_eol(CRLF_AUTO)` is then LF, so the
+checkout writes the blob's bytes, and `git diff` reads them back equal (nothing to convert without a CRLF, and
+`has_crlf_in_index` leaves a blob with a CR alone, present in v2.18.5 and v2.56.0); it is allowed only because the
+attribute × blob-content matrix test agreed on all three gits it ran on (below). New: the patch holds no
+`.gitattributes` (any directory, ASCII case ignored): `diff-index` judged the other files under the pre-stash
+attributes, and the checkout restores another version (an unstaged `other.txt text eol=crlf` hides a CRLF file that
+the restored one shows). A tracked `.gitattributes` is allowed only spelled exactly so, as a `100644`/`100755` entry
+tagged `H` by query F, which becomes `ls-files -s -v -z` (`IndexEntries::tags`; ADR-119 Rejected (a) is taken), and
+present in the worktree as a regular file: the checkout reads the index copy first and `git diff` the worktree file
+first, which can differ arbitrarily for an assume-unchanged or skip-worktree entry, while for an unflagged one outside
+the patch and clean in `diff-index` they carry the same tokens, which the scan of the worktree file covers. An unmerged
+path still refuses. LFS (`filter=lfs`) stays on the real diff. `SNP_VERIFY_BASELINE=1` cross-checks every proven
+baseline as before.
+**Rejected.** (a) Starting `git var` beside the stash's checkout itself: the pipeline learns that a checkout happens
+only from the stash guard's K9-anchored steps, so it would be asked on every stashing run, a wasted spawn on B2, B3
+and B9 (nothing stashed, where snp already trails prek or its own budget); asked after the checkout it overlaps F's
+second listing and the installs instead. (b) `git check-attr` per checked-out path, or a full attributes parser with
+pattern matching: a spawn, or a parser, where a token over-approximation needs neither. (c) Allowing LFS repositories
+when the patch holds no LFS path: per-path `check-attr` in both directions (worktree and `--cached`) and a theoretical
+macro hole across mixed stacks; deferred. (d) `git var GIT_ATTR_GLOBAL`: `core.attributesFile` still refuses (ADR-119
+(a)), and the default global file is among the inputs. (e) Caching the answer across runs: the shim's target follows
+`DEVELOPER_DIR` and `xcode-select`.
+**Consequences.** On Linux with git 2.43 (local, release-like `profiling` build, bench fixtures regenerated in
+`target/`): B8 runs one more process, `git var GIT_ATTR_SYSTEM` (strace: 15 → 16 execve; 601,946 instructions under
+callgrind, against a tree of about 2,290 M, +0.03%); snp's own process 80.95 M → 80.97 M instructions (callgrind,
+children native, median of three). B2 and B3 are unchanged (9 and 18 execve before and after; snp's process 4.742 M →
+4.747 M instructions on B2, F's tags). On B8 with a committed `* text=auto` / `*.png binary` / `-diff linguist-*`
+`.gitattributes` the post-checkout `git diff` (1,332.8 M instructions under callgrind: `text=auto` makes git inspect
+the 10 MiB file, against 361 M without attributes) no longer runs (16 → 16 execve: the diff out, `git var` in); snp's
+own process 80.64 M → 80.85 M (the scan). macOS stashing runs with git ≥ 2.42 drop the post-checkout diff like Linux.
+Runs with converting attributes, a flagged, patched or symlinked `.gitattributes`, LFS, `core.eol=crlf`, git < 2.42
+off Linux, or Git mode take the real diff as before. Tests: the scanner's token cases, the input rules (missing,
+symlink, directory, error, 100 MB) and a file scan across read boundaries (`crates/snp-stash/src/diff_oracle/
+attributes.rs`); the attribute × blob-content matrix against real git (LF, CRLF, mixed, lone CR, binary-looking,
+BOM-prefixed, no final newline and empty blobs under `binary`, `-diff`, `linguist-*`, `-text`, `!text`, `-crlf -eol
+-ident -filter`, `text=auto` with `core.eol` unset, `lf`, `LF` and `native`, `whitespace`/`merge`, and a refused
+`text eol=crlf` control that must change the bytes): every allowed checkout wrote the blob's bytes and read back clean
+on git 2.18.5, 2.43.0 and 2.56.0 (the git on `PATH` plus `SNP_TEST_GIT_MATRIX`; CI's git-version axis re-runs it on
+every pinned git); the index half (tags, spelling, slots); `git var`'s answers (`crates/snp-git`, real git and a
+scripted backend: spawn failure, exit 1 without `GIT_ATTR_NOSYSTEM`, 129, relative path, git < 2.42 not asked);
+query F's tags against real git; and in `crates/snp-run/tests/pipeline/checkout_baseline.rs` non-converting
+attributes (tracked, untracked, nested, `info/attributes`, BOM, `text=auto` under three `core.eol` values) skip the
+diff while a macro setting `text`, `text=auto` under `core.eol=crlf`, a converting BOM-prefixed file, a symlinked
+`.gitattributes`, a patched one, an assume-unchanged one with a smudge filter in the index, and a wrapper `git` whose
+own system attributes file converts take it; a git reporting 2.41.0 is not asked and keeps the heuristic,
+`GIT_ATTR_NOSYSTEM` reads no system file, and a macOS-gated case proves B8 with `git var`. Every case equals the
+always-diff path's output, exit code and repository, and `SNP_VERIFY_BASELINE` agrees.
 ### ADR-135 — Hook script template v3: the hook directory without a subshell for the paths git builds
 
 *Amends ADR-105 (the template's `HERE` block and ID; its equivalence argument, ID handling and classification rules
