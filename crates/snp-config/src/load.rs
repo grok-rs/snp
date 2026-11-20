@@ -155,7 +155,7 @@ pub(crate) fn check_bytes(
             Ok(data)
         },
     );
-    future_warnings(&compiled, o);
+    future_warnings(&compiled, kind, o);
     result.map_err(|e| ConfigError::invalid(kind.is_manifest(), &e))
 }
 
@@ -166,32 +166,53 @@ fn defaulted(schema: &Schema, checked: Value) -> Value {
     schema.apply_defaults_owned(checked)
 }
 
-/// Test probe: how often this thread applied the schema defaults (the step check-only loads skip).
+/// Test probes: how often this thread applied the schema defaults (the step check-only loads skip) and compiled a
+/// pattern for its `FutureWarning`s.
 #[cfg(test)]
 pub(crate) mod probe {
     use std::cell::Cell;
 
     thread_local! {
         pub(crate) static DEFAULTED: Cell<usize> = const { Cell::new(0) };
+        pub(crate) static COMPILES: Cell<usize> = const { Cell::new(0) };
     }
 
     /// The count so far on this thread.
     pub(crate) fn defaulted() -> usize {
         DEFAULTED.with(Cell::get)
     }
+
+    /// How many `FutureWarning` compiles this thread asked the regex cache for.
+    pub(crate) fn compiles() -> usize {
+        COMPILES.with(Cell::get)
+    }
 }
 
 /// Emits one `[WARNING] regex …` stderr line per distinct (pattern, `FutureWarning`) of the compiled `files` /
 /// `exclude` patterns, in the order the schema compiled them (cfgv item order: a config's hooks before its
-/// top-level `files` / `exclude`; 01 Addendum §A.4, D-MISC-04). Patterns are compiled through the run's cache,
-/// so the filters reuse them.
-fn future_warnings(patterns: &[String], o: &LoadOpts<'_>) {
+/// top-level `files` / `exclude`; 01 Addendum §A.4, D-MISC-04). A pattern prints its warnings only when its compile
+/// succeeds.
+///
+/// A config's patterns are compiled through the run's cache, so the filters reuse them (the config load runs beside
+/// discovery, off the critical path). A manifest's patterns are first parsed with [`snp_pyre::validate`], the same
+/// parse under the same flags that [`Options::CONFIG`]'s compile starts with, so it returns the same warnings: only a
+/// pattern with warnings is compiled (to learn whether the compile succeeds), and the others are left to the filters
+/// of the hooks that use them. An empty list prints nothing whatever the compile would do, and a
+/// parse error means the compile fails too.
+fn future_warnings(patterns: &[String], kind: Kind, o: &LoadOpts<'_>) {
     let mut seen: Vec<(&str, &str)> = Vec::new();
     let mut compiled = Vec::new();
     for p in patterns {
         if p.is_empty() || p == "^$" {
             continue;
         }
+        if kind.is_manifest()
+            && snp_pyre::validate(p, Options::CONFIG.mode).map_or(true, |w| w.is_empty())
+        {
+            continue;
+        }
+        #[cfg(test)]
+        probe::COMPILES.with(|n| n.set(n.get().saturating_add(1)));
         if let Ok(rx) = o.regexes.get(p, Options::CONFIG) {
             compiled.push((p.as_str(), rx));
         }
@@ -319,7 +340,130 @@ fn manifest_from_bytes(
 
 #[cfg(test)]
 mod tests {
-    use super::{limits, read_file, read_reserved};
+    use std::ffi::OsStr;
+
+    use proptest::prelude::*;
+    use snp_core::brand::Brand;
+    use snp_core::output::CollectWarnings;
+    use snp_pyre::{Options, RegexCache};
+
+    use super::{Kind, future_warnings, limits, probe, read_file, read_reserved};
+    use crate::{ExtMode, LoadOpts, messages};
+
+    /// Runs `f` with fresh sinks and cache: (its result, the diagnostics, the cache). Nothing here warns.
+    fn with_opts<T>(f: impl FnOnce(&LoadOpts<'_>) -> T) -> (T, Vec<String>, RegexCache) {
+        let regexes = RegexCache::new();
+        let warn = CollectWarnings::new();
+        let diag = CollectWarnings::new();
+        let out = f(&LoadOpts {
+            brand: Brand::Snp,
+            ext: ExtMode::Enabled,
+            regexes: &regexes,
+            warn: &warn,
+            diag: &diag,
+        });
+        assert!(warn.take().is_empty());
+        (out, diag.take(), regexes)
+    }
+
+    /// The `FutureWarning` lines of the old rule: compile every pattern (skipping `''` and `^$`), print the
+    /// warnings of the compiles that succeed, one line per distinct (pattern, message), in pattern order.
+    fn compile_all(patterns: &[String]) -> Vec<String> {
+        let cache = RegexCache::new();
+        let mut seen: Vec<(String, String)> = Vec::new();
+        let mut out = Vec::new();
+        for p in patterns.iter().filter(|p| !p.is_empty() && *p != "^$") {
+            let Ok(rx) = cache.get(p, Options::CONFIG) else {
+                continue;
+            };
+            for w in rx.warnings() {
+                let key = (p.clone(), w.msg.to_string());
+                if !seen.contains(&key) {
+                    out.push(messages::future_warning(
+                        &snp_pycompat::repr::repr_str(p),
+                        &w.msg,
+                    ));
+                    seen.push(key);
+                }
+            }
+        }
+        out
+    }
+
+    /// Pattern fragments: plain, with `FutureWarning`s (nested sets, set operations), broken, and over the engine
+    /// budget (parses, warns, fails to compile).
+    const FRAGMENTS: [&str; 15] = [
+        "a", "^src/", r"\.py$", "[[a]", "[a--b]", "[a&&b]", "[a||b]", "[a~~b]", "(", "[", "(?i)",
+        r"\d", "{100000}", "|", "^$",
+    ];
+
+    proptest! {
+        /// A manifest's `FutureWarning` lines (parse first, compile only the patterns with warnings) equal the
+        /// lines of compiling every pattern, for any list of patterns; a config still compiles every pattern.
+        #[test]
+        fn manifest_warnings_equal_compiling_everything(
+            patterns in prop::collection::vec(
+                prop::collection::vec(prop::sample::select(FRAGMENTS.to_vec()), 0..4)
+                    .prop_map(|f| f.concat()),
+                0..6,
+            )
+        ) {
+            let want = compile_all(&patterns);
+            for kind in [Kind::Manifest, Kind::Config] {
+                let ((), got, _) = with_opts(|o| future_warnings(&patterns, kind, o));
+                prop_assert_eq!(&got, &want, "{:?}", kind);
+            }
+        }
+    }
+
+    /// A manifest compiles only the patterns that warn: a pattern without warnings is never compiled (the filters
+    /// of the hooks that use it compile it later), a warning pattern still warns once, and a warning pattern
+    /// whose compile fails (over the engine budget) stays silent.
+    #[test]
+    fn manifest_compiles_only_warning_patterns() {
+        let hook = |id: &str, filters: &str| {
+            format!(
+                "-   id: {id}\n    name: {id}\n    entry: {id}\n    language: system\n{filters}"
+            )
+        };
+        let yaml = [
+            hook("a", "    files: '^src/.*\\.py$'\n"),
+            hook("b", "    files: '[[a]'\n    exclude: '[[a]{100000}'\n"),
+            hook("c", "    files: '[[a]'\n"),
+        ]
+        .concat();
+        let before = probe::compiles();
+        let (m, diag, _) =
+            with_opts(|o| super::load_manifest_bytes(yaml.as_bytes(), OsStr::new("m.yaml"), o));
+        assert_eq!(m.unwrap().hooks.len(), 3);
+        assert_eq!(
+            diag,
+            [messages::future_warning(
+                "'[[a]'",
+                "Possible nested set at position 1"
+            )]
+        );
+        assert_eq!(
+            diag,
+            compile_all(&["^src/.*\\.py$", "[[a]", "[[a]{100000}", "[[a]"].map(str::to_owned))
+        );
+        // '[[a]' (twice, the second a cache hit) and '[[a]{100000}': never the plain pattern.
+        assert_eq!(probe::compiles() - before, 3);
+    }
+
+    /// A pattern that fails to parse is not compiled for a manifest (the compile would fail the same way); a config
+    /// compiles it (and caches the error).
+    #[test]
+    fn manifest_parse_error_is_not_compiled() {
+        let broken = ["(".to_owned()];
+        let before = probe::compiles();
+        let ((), diag, _) = with_opts(|o| future_warnings(&broken, Kind::Manifest, o));
+        assert!(diag.is_empty());
+        assert_eq!(probe::compiles() - before, 0);
+        let ((), diag, _) = with_opts(|o| future_warnings(&broken, Kind::Config, o));
+        assert!(diag.is_empty());
+        assert_eq!(probe::compiles() - before, 1);
+    }
 
     /// The reserved read returns the same bytes at the probe boundaries, the exact limit and above it, with the
     /// buffer sized once (capacity = length + 1); one byte over the limit is refused without reading.
