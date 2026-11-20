@@ -15,6 +15,7 @@
 
 mod attributes;
 mod gitconfig;
+mod index_proof;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -25,8 +26,10 @@ use std::time::SystemTime;
 use snp_core::env::Env;
 use snp_core::failure::Failure;
 use snp_git::{
-    CheckoutConfig, DiffFingerprint, Git, IndexEntries, RepoInfo, SystemAttributes, ZList,
+    CheckoutConfig, ConfigListing, DiffFingerprint, Git, IndexEntries, RepoInfo, SystemAttributes,
+    ZList,
 };
+use snp_proc::pool::JobPool;
 
 /// At most this many index entries for Stat mode (ADR-027).
 const MAX_ENTRIES: usize = 16_384;
@@ -58,6 +61,24 @@ pub struct DiffOracle {
     /// The flag of the file table's trusted index modes (ADR-106), cleared after every hook that may have changed
     /// the worktree.
     trust: Option<Arc<AtomicBool>>,
+    /// The index-stat proof (ADR-134), Git mode only.
+    proof: Option<Box<index_proof::IndexProof>>,
+    /// `SNP_VERIFY_INDEX_PROOF=1`: a proven diff is still taken with the real `git diff`.
+    verify_proof: bool,
+    /// Proven diffs the verify mode found non-empty.
+    proof_mismatches: u32,
+}
+
+/// What the index-stat proof did in a run (ADR-134).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ProofStats {
+    /// Passes that ran (a parse that could never prove runs none).
+    pub passes: u32,
+    /// Passes that proved `git diff` empty.
+    pub proven: u32,
+    /// Proven diffs `SNP_VERIFY_INDEX_PROOF`'s real `git diff` found non-empty.
+    pub mismatches: u32,
 }
 
 /// Whether a hook changed the diff.
@@ -876,6 +897,9 @@ impl DiffOracle {
             last: baseline,
             stat: stat.map(Box::new),
             trust: None,
+            proof: None,
+            verify_proof: false,
+            proof_mismatches: 0,
         };
         if oracle.last.is_some()
             && let Some(s) = oracle.stat.as_deref_mut()
@@ -908,6 +932,59 @@ impl DiffOracle {
     /// The chosen mode.
     pub fn mode(&self) -> DiffMode {
         self.mode
+    }
+
+    /// ADR-134: in Git mode, lets every `git diff` the oracle would take while the last fingerprint is empty (or not
+    /// taken yet) be decided by the index-stat proof first: when it holds, the fingerprint is
+    /// [`DiffFingerprint::EMPTY`] and nothing is spawned; on any doubt the real `git diff` runs, as before. `config`
+    /// is query G's listing (the proof's configuration gate, the config files it watches). Nothing changes in Stat
+    /// mode or when a gate fails (see `IndexProof::new`); the answer says whether the proof is armed.
+    ///
+    /// `verify` (`SNP_VERIFY_INDEX_PROOF=1`): a proven diff is still taken with the real `git diff`, which is used,
+    /// and a non-empty one is counted ([`Self::proof_stats`]).
+    pub fn enable_index_proof(
+        &mut self,
+        info: &RepoInfo,
+        env: &Env,
+        pool: Arc<JobPool>,
+        config: &ConfigListing,
+        verify: bool,
+    ) -> bool {
+        if self.mode != DiffMode::Git {
+            return false;
+        }
+        self.proof = index_proof::IndexProof::new(info, env, pool, config).map(Box::new);
+        self.verify_proof = verify;
+        self.proof.is_some()
+    }
+
+    /// What the index-stat proof did so far (`None` when it is not armed).
+    pub fn proof_stats(&self) -> Option<ProofStats> {
+        self.proof.as_deref().map(|p| ProofStats {
+            passes: p.passes,
+            proven: p.proven,
+            mismatches: self.proof_mismatches,
+        })
+    }
+
+    /// The fingerprint of `git diff` now: [`DiffFingerprint::EMPTY`] without a spawn when the last fingerprint is
+    /// empty or not taken yet and the index-stat proof holds (ADR-134), else the real `git diff`.
+    fn fingerprint_now(&mut self) -> Result<DiffFingerprint, Failure> {
+        let candidate = self.last.is_none_or(|l| l == DiffFingerprint::EMPTY);
+        if candidate
+            && let Some(p) = self.proof.as_deref_mut()
+            && p.holds(&self.git)
+        {
+            if !self.verify_proof {
+                return Ok(DiffFingerprint::EMPTY);
+            }
+            let real = self.git.diff_fingerprint()?;
+            if real != DiffFingerprint::EMPTY {
+                self.proof_mismatches = self.proof_mismatches.saturating_add(1);
+            }
+            return Ok(real);
+        }
+        self.git.diff_fingerprint()
     }
 
     /// ADR-119: right after the stash's checkout of `checked_out` (and before any hook), take the baseline as known
@@ -1018,7 +1095,7 @@ impl DiffOracle {
             s.take_snapshot();
         }
         if self.last.is_none() {
-            self.last = Some(self.git.diff_fingerprint()?);
+            self.last = Some(self.fingerprint_now()?);
         }
         Ok(())
     }
@@ -1090,7 +1167,7 @@ impl DiffOracle {
 
     /// One real `git diff`, compared with the last fingerprint (a stale one counts as changed: fail closed).
     fn compare_real(&mut self) -> Result<Change, Failure> {
-        let now = self.git.diff_fingerprint()?;
+        let now = self.fingerprint_now()?;
         let change = if self.last == Some(now) {
             Change::Unchanged
         } else {
@@ -1140,7 +1217,7 @@ impl DiffOracle {
         {
             s.take_snapshot();
         }
-        let d = self.git.diff_fingerprint()?;
+        let d = self.fingerprint_now()?;
         self.last = Some(d);
         Ok(d.non_empty)
     }

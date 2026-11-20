@@ -21,7 +21,7 @@ mod api {
         CheckoutConfig, DiffFingerprint, Git, IndexEntries, RepoInfo, SystemAttributes, ZList,
     };
     use snp_proc::signals::SignalGuard;
-    use snp_stash::diff_oracle::{Change, DiffMode, DiffOracle, Elision};
+    use snp_stash::diff_oracle::{Change, DiffMode, DiffOracle, Elision, ProofStats};
     use snp_stash::{StashCtx, StashGuard, Stashed, Unrestored};
 
     fn send_sync<T: Send + Sync>() {}
@@ -65,6 +65,7 @@ mod api {
         send_sync::<DiffOracle>();
         send_sync::<Change>();
         send_sync::<Elision>();
+        send_sync::<ProofStats>();
     }
 
     #[test]
@@ -145,5 +146,19 @@ mod api {
             Elision::Verified,
             Elision::Mismatch,
         ]);
+        // ADR-134
+        has::<
+            fn(
+                &mut DiffOracle,
+                &RepoInfo,
+                &Env,
+                Arc<snp_proc::pool::JobPool>,
+                &snp_git::ConfigListing,
+                bool,
+            ) -> bool,
+        >(DiffOracle::enable_index_proof);
+        has::<fn(&DiffOracle) -> Option<ProofStats>>(DiffOracle::proof_stats);
+        let p = ProofStats::default();
+        has::<(u32, u32, u32)>((p.passes, p.proven, p.mismatches));
     }
 }
