@@ -1289,8 +1289,32 @@ fn gen_validate1000(work: &Work, dir: &Path) -> anyhow::Result<()> {
     commit_all(work, dir, "init")
 }
 
-/// 500 hook repositories under `repos/` and 200 configurations under `configs/`: configuration `i` uses
-/// repositories `i`, `200 + i` and (for `i < 100`) `400 + i`, so every repository is used.
+/// The URL prefix B11's configurations name their repositories with: `<prefix>rNNN`. The bench gitconfig maps it to
+/// the local repositories under `gc500/repos/` (`url.<…>.insteadOf`, [`gitconfig_text`]); without that mapping a
+/// clone fails, since `.invalid` never resolves (RFC 2606), and the scenario is unavailable (ADR-136).
+const GC500_URL: &str = "https://gc500.bench.invalid/";
+
+/// Configuration `c` of B11: repositories `c`, `200 + c` and (for `c < 100`) `400 + c`, each named by its https URL
+/// under [`GC500_URL`] as real configurations name theirs, never by a local path (ADR-136: snp resolves a local path's
+/// real path, D-DATA-08, which made 40 % of its B11 syscalls; pre-commit and prek compare the strings).
+fn gc500_config(c: usize, revs: &[String]) -> anyhow::Result<String> {
+    let mut s = String::from("repos:\n");
+    let mut used = vec![c, c.saturating_add(200)];
+    if c < 100 {
+        used.push(c.saturating_add(400));
+    }
+    for r in used {
+        let rev = revs.get(r).context("500 revisions")?;
+        _ = write!(
+            s,
+            "-   repo: {GC500_URL}r{r:03}\n    rev: {rev}\n    hooks:\n    -   id: h{r:03}\n"
+        );
+    }
+    Ok(s)
+}
+
+/// 500 hook repositories under `repos/` and 200 configurations under `configs/` ([`gc500_config`]), so every
+/// repository is used.
 fn gen_gc500(work: &Work, dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
     init_repo(work, dir)?;
     let repos = dir.join("repos");
@@ -1312,22 +1336,8 @@ fn gen_gc500(work: &Work, dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
     }
     let mut configs = Vec::new();
     for c in 0..200_usize {
-        let mut s = String::from("repos:\n");
-        let mut used = vec![c, c.saturating_add(200)];
-        if c < 100 {
-            used.push(c.saturating_add(400));
-        }
-        for r in used {
-            let rev = revs.get(r).context("500 revisions")?;
-            let path = repos.join(format!("r{r:03}"));
-            _ = write!(
-                s,
-                "-   repo: {}\n    rev: {rev}\n    hooks:\n    -   id: h{r:03}\n",
-                path.display()
-            );
-        }
         let rel = format!("configs/c{c:03}.yaml");
-        write_file(dir, &rel, s.as_bytes())?;
+        write_file(dir, &rel, gc500_config(c, &revs)?.as_bytes())?;
         configs.push(dir.join(rel));
     }
     write_file(dir, ".pre-commit-config.yaml", noop_config(1).as_bytes())?;
@@ -1715,23 +1725,38 @@ fn resolve_tool(
     }
 }
 
-/// `home/.gitconfig`: identity, `main`, no autocrlf, and the redirect of pre-commit-hooks to the mirror.
+/// `home/.gitconfig`: identity, `main`, no autocrlf, the redirect of pre-commit-hooks to the mirror, and B11's
+/// repository URLs to the local repositories of `gc500` ([`gitconfig_text`]).
 fn write_gitconfig(work: &Work) -> anyhow::Result<()> {
-    let mirror = work.mirror();
-    let url = if cfg!(windows) {
-        format!(
-            "file:///{}",
-            mirror.display().to_string().replace('\\', "/")
-        )
-    } else {
-        format!("file://{}", mirror.display())
-    };
-    let text = format!(
-        "[user]\n\tname = {GIT_NAME}\n\temail = {GIT_EMAIL}\n[init]\n\tdefaultBranch = main\n[core]\n\t\
-         autocrlf = false\n[advice]\n\tdetachedHead = false\n[url \"{url}\"]\n\tinsteadOf = {PCH_URL}\n"
+    let text = gitconfig_text(
+        &work.mirror(),
+        &work.fixture(Fixture::Gc500, Tool::Snp).join("repos"),
     );
     std::fs::create_dir_all(work.home().join(".cache"))?;
     std::fs::write(work.gitconfig(), text).context("writing the bench .gitconfig")
+}
+
+/// A `file://` URL of the local directory `p` (`file:///C:/…` with forward slashes on Windows).
+fn file_url(p: &Path) -> String {
+    if cfg!(windows) {
+        format!("file:///{}", p.display().to_string().replace('\\', "/"))
+    } else {
+        format!("file://{}", p.display())
+    }
+}
+
+/// The text of the bench gitconfig. Every tool clones through git with `HOME` and `GIT_CONFIG_GLOBAL` pointing at it
+/// (pre-commit drops `GIT_CONFIG_GLOBAL` but keeps `HOME`), so both redirects hold for all three: pre-commit-hooks to
+/// the bare mirror (B6, B7), and B11's `https://gc500.bench.invalid/rNNN` ([`GC500_URL`]) to `gc500/repos/rNNN`
+/// (ADR-136; the trailing `/` on both sides keeps the repository name).
+fn gitconfig_text(mirror: &Path, gc500_repos: &Path) -> String {
+    format!(
+        "[user]\n\tname = {GIT_NAME}\n\temail = {GIT_EMAIL}\n[init]\n\tdefaultBranch = main\n[core]\n\t\
+         autocrlf = false\n[advice]\n\tdetachedHead = false\n[url \"{}\"]\n\tinsteadOf = {PCH_URL}\n\
+         [url \"{}/\"]\n\tinsteadOf = {GC500_URL}\n",
+        file_url(mirror),
+        file_url(gc500_repos),
+    )
 }
 
 /// The bare pre-commit-hooks mirror (cloned once; the source must have `PCH_REV`). A mirror directory without `HEAD`
@@ -6519,6 +6544,77 @@ mod tests {
         git(&work, &hooked, &["update-index", "-q", "--refresh"]).unwrap();
         assert_eq!(entry_mtimes(&work, &hooked), [GIT_DATE_UNIX, GIT_DATE_UNIX]);
         assert_eq!(git(&work, &hooked, &["status", "--porcelain"]).unwrap(), "");
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// ADR-136 (owner decision O4): B11's configurations name https URLs, never a local path, and the bench gitconfig
+    /// maps them to the local repositories, so every tool clones `gc500/repos/rNNN` without the network.
+    #[test]
+    fn gc500_repositories_are_https_urls_redirected_to_the_local_clones() {
+        let revs: Vec<String> = (0..500).map(|r| format!("{r:040x}")).collect();
+        let mut repos = BTreeSet::new();
+        for c in 0..200 {
+            let text = gc500_config(c, &revs).unwrap();
+            let lines: Vec<&str> = text
+                .lines()
+                .filter_map(|l| l.strip_prefix("-   repo: "))
+                .collect();
+            assert_eq!(lines.len(), if c < 100 { 3 } else { 2 }, "{text}");
+            for l in lines {
+                let name = l.strip_prefix(GC500_URL).expect(l);
+                let digits = name.strip_prefix('r').expect(l);
+                assert!(
+                    digits.len() == 3 && digits.bytes().all(|b| b.is_ascii_digit()),
+                    "{l}"
+                );
+                repos.insert(name.to_owned());
+            }
+            assert!(
+                !text.contains("file:") && !text.contains("/repos/"),
+                "{text}"
+            );
+        }
+        assert_eq!(repos.len(), GC_REPOS, "every repository is used");
+        assert!(gc500_config(0, &revs[..10]).is_err());
+
+        let text = gitconfig_text(
+            Path::new("/b/mirror.git"),
+            Path::new("/b/fixtures/gc500/repos"),
+        );
+        assert!(
+            text.contains(&format!(
+                "[url \"{}/\"]\n\tinsteadOf = {GC500_URL}\n",
+                file_url(Path::new("/b/fixtures/gc500/repos"))
+            )),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!(
+                "[url \"{}\"]\n\tinsteadOf = {PCH_URL}\n",
+                file_url(Path::new("/b/mirror.git"))
+            )),
+            "{text}"
+        );
+
+        // end to end: the URL resolves to the local repository through the written gitconfig (`.invalid` itself never
+        // resolves, so a missing or wrong mapping fails here)
+        let (base, work) = scratch_work("gc500-url");
+        write_gitconfig(&work).unwrap();
+        let repo = work
+            .fixture(Fixture::Gc500, Tool::Snp)
+            .join("repos")
+            .join("r007");
+        init_repo(&work, &repo).unwrap();
+        write_file(&repo, ".pre-commit-hooks.yaml", b"-   id: h007\n").unwrap();
+        commit_all(&work, &repo, "hook").unwrap();
+        let head = git(&work, &repo, &["rev-parse", "HEAD"]).unwrap();
+        let listed = git(
+            &work,
+            &work.dir,
+            &["ls-remote", &format!("{GC500_URL}r007"), "HEAD"],
+        )
+        .unwrap();
+        assert!(listed.starts_with(head.trim()), "{listed}");
         std::fs::remove_dir_all(&base).unwrap();
     }
 }
