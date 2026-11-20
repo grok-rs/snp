@@ -3930,7 +3930,7 @@ uses the core library only; `leanprover/lean-action` is pinned by commit SHA. A 
 | B6 | 13 pre-commit-hooks hooks, 960 files, fast path, warm | ≈ 1.5 s | ≤ 60 ms (soft) | | |
 | B7 | B6 cold (fresh store, network excluded) | tens of s | ≤ 1 s | | |
 | B8 | stash with a 10 MB unstaged patch | — | ≤ pre-commit, heap peak ≤ B3's + 2 MB (streamed patch; dhat, nightly, hard; ADR-100) | | |
-| B9 | `git commit` through the installed hook | — | ≤ B3 + 3 ms | | |
+| B9 | `git commit` through the installed hook | — | ≤ B3 + 3 ms; B9 − B9nv − B3' per round reported (information, ADR-136) | | |
 | B10 | `validate-config` with 1 000 hooks | — | ≤ 50 ms | | |
 | B11 | `gc` with 500 repos / 200 configs | — | ≤ 1 s | | |
 | B12 | peak RSS, B4 (50 k) / B6 | — | **≤ 30 MB / ≤ 25 MB (hard)** | | |

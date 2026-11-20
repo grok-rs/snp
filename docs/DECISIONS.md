@@ -21,7 +21,7 @@ classification tier; ADR-112 snp-yaml's owning materialisation; ADR-115 the tier
 of cfgv and file-identify into the workspace; ADR-117 the B8 stash-time overlaps; ADR-118 the musl mimalloc build
 without transparent huge pages; ADR-119 the proven post-checkout baseline; ADR-131 the file-content cache of
 consecutive in-process hooks; ADR-132 the baseline taken by the first native write in all-in-process runs; ADR-135 the
-hook script template v3.
+hook script template v3; ADR-136 the wave-5 bench methodology.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -463,7 +463,7 @@ project_root`, `Vec<Project>` planning (length 1), `project_prefix` filters, per
 
 ### ADR-043 — Performance budgets per OS
 
-*Status: Accepted; amended by ADR-086 (`reference_only` micro thresholds) ADR-090 (the regression rule's absolute floor; history from other runner VMs is reported, not gated), ADR-091 (`[[known_miss]]`), ADR-099 (the paired regression rule on interleaved base and head rounds) and ADR-100 (B8 budgeted by heap peak, not tree RSS; counter gates). The amending ADR is normative where they differ.*
+*Status: Accepted; amended by ADR-086 (`reference_only` micro thresholds) ADR-090 (the regression rule's absolute floor; history from other runner VMs is reported, not gated), ADR-091 (`[[known_miss]]`), ADR-099 (the paired regression rule on interleaved base and head rounds), ADR-100 (B8 budgeted by heap peak, not tree RSS; counter gates) and ADR-136 (B9's hook overhead B9 − B9nv − B3' reported per round beside the unchanged budget). The amending ADR is normative where they differ.*
 
 **Decision.** ARCHITECTURE §12.1. Linux hard gates: B1 ≤ 3 ms, B2 ≤ 10 ms, B3 ≤ 25 ms, B12 ≤ 30 MB. macOS soft
 budgets (B1 ≤ 5 ms, B3 ≤ 40 ms). Windows soft ratios to pre-commit (B1 ≤ 15 ms, B3 ≤ 0.5×) because every per-hook `git
@@ -1400,7 +1400,7 @@ own history stays a gate, since `--advisory-history` is opt-in.
 
 ### ADR-091 — Every scenario is measured; accepted misses are listed
 
-*Status: Accepted; amended by ADR-099 (the regression check is the paired rule; B11 compares equal work, its known miss reworded). The amending ADR is normative where they differ.*
+*Status: Accepted; amended by ADR-099 (the regression check is the paired rule; B11 compares equal work, its known miss reworded) and ADR-136 (the known-miss reasons of B6, B11 and B12u corrected, B5's entry removed, B9's interim entry; a soft breach shows its reason). The amending ADR is normative where they differ.*
 
 **Context.** `bench.yml` measured only B1: the list was to grow when `snp run` (WP-32) merged, and never did, so B2–B12
 and their budgets were unchecked on a released product. Measuring them on CI shows real misses (`bench/budgets.toml`).
@@ -1779,7 +1779,8 @@ new divergence. The 256 KiB cap re-tunes against CI's B12u RSS once batch C halv
 ### ADR-099 — The bench gate pairs interleaved base and head rounds; the base is built like the head
 
 *Status: Accepted; amended by ADR-116 (a base with `deps.lock` gets its crates from its own `deps-lock.sh`; a base
-without it needs none). The amending ADR is normative where they differ.*
+without it needs none) and ADR-136 (decision 6: B11's configurations name https URLs mapped to the local repositories;
+B11's known-miss reason corrected: prek reads all 500 manifests too). The amending ADR is normative where they differ.*
 
 **Context.** The performance analysis of 2026-11 (P06, P07) measured why same-code pull requests failed the bench
 gate. `bench.yml` measured the base commit's snp on every scenario, then the head's: the two windows of one scenario
@@ -2894,6 +2895,91 @@ that budget); on Git for Windows, where fork is emulated, the gain is likely sev
 measured). As with ADR-105, the base-vs-head bench gate cannot show it, since `bench setup` installs the head's script
 for both builds. Scripts written by snp 2.0.0 and by development builds keep working; `snp doctor` warns until
 `snp install` rewrites them.
+
+### ADR-136 — Bench methodology: https repositories in B11, fixtures without racy entries, B9's hook overhead, corrected known misses
+
+*Amends ADR-099 (decision 6: how B11's configurations name their repositories, and B11's known-miss reason), ADR-091
+(the list of known misses; a soft budget's warning carries its reason) and ADR-043 (B9's row: a reported hook overhead
+beside the unchanged budget). Owner decisions O4, O8 and O9 of the wave-5 performance plan (2026-11-21), in the
+designs of the store and hooks panels, plus the fixture-realism condition of the same batch.*
+
+**Context.** Four things in the bench measured something other than what the scenarios describe. (a) Every one of
+B11's 500 repositories was an absolute local path. snp resolves a local path's real path (D-DATA-08: one `statx` per
+component, 12 per entry on CI), which made about 40 % of its B11 syscalls; pre-commit compares `(repo, rev)` strings
+and prek stats only relative spellings. Real configurations name https URLs. (b) Every fixture wrote its files and ran
+`git add` within the same second, so its index entries were as new as the index: racily clean, and every later
+`git diff` or `git status` hashed those files again. Measured on the generated fixtures: all entries of `noop10` (2),
+`pch960` (961), `gc500` (202) and each tool's B9 copy (2); `files50k` and `unicode20` had none on the measuring
+machine, where `git add` takes more than a second, but a fast runner would leave a share that depends on its speed.
+Real repositories have files older than their index. (c) B9's budget, `B9 ≤ B3 + 3 ms`, charges git's own commit to
+snp: `git commit --no-verify` alone is about three quarters of B9 − B3 (77 % of the extra instructions are
+`git commit` and `git maintenance run --auto`), and B9 and B3 are timed minutes apart, a drift larger than today's
+miss. (d) Known-miss reasons were stale: B11's said prek never loads manifests (it reads all 500, as snp does), B6's
+and B12u's said "not profiled yet" (both were profiled in wave 5), and B5's entry passes on CI.
+**Decision.** (1) `gen_gc500` writes `repo: https://gc500.bench.invalid/rNNN`, and the bench gitconfig maps that
+prefix to the local repositories: `[url "file://<bench>/fixtures/gc500/repos/"] insteadOf =
+https://gc500.bench.invalid/` (the `file:///C:/…` form on Windows), the mechanism B6 and B7 already use for
+pre-commit-hooks. Every tool clones through git with that gitconfig (pre-commit drops `GIT_CONFIG_GLOBAL` but keeps
+`HOME`). A missing or wrong mapping fails closed: `.invalid` never resolves, so priming fails and B11 is unavailable;
+`setup`'s equal-work check (500 repositories per store, 200 tracked configs) is unchanged. `file://` URLs were rejected,
+since prek stats every non-http repository string (+500 failed `statx` at B11 scale); the realpath memo (P20.f) stays
+rejected. (2) Before every `git add`, the harness sets the access and modification times of every generated file and
+directory (each `.git` and symlinks excepted; directories after their contents) to the commit date, 2024-01-01T00:00:00Z
+(`GIT_DATE_UNIX = 1 704 067 200`), and `copy_tree` keeps modification times, so B9's per-tool copy of `noop10` keeps
+them through git's refresh of the copied index. The handle needs no write access (git's object files are read-only):
+`futimens` on Unix, `FILE_WRITE_ATTRIBUTES` (with `FILE_FLAG_BACKUP_SEMANTICS` for a directory) on Windows. B8's
+staged `small.txt` is set the same way; its 10 MiB unstaged rewrite keeps the time of its write, as a user's edit does,
+and its size still differs from the committed text's (ADR-099's B8 design), so git sees it modified whatever the times.
+The change applies to all tools equally: they share every fixture except B9's copies, which all keep the times.
+(3) snp's B9 always runs in interleaved rounds (10 × 5, one warm-up per block kind), with the base when there is one
+and with two reference blocks in snp's own hooked fixture and B9's environment: B9nv, `git commit --allow-empty -q
+--no-verify -m bench` (the same commit without the hook), and B3', `snp run` there (what the hook runs). Each round
+runs the blocks in mirrored order (base, B9, B9nv, B3'; then B3', B9nv, B9, base), so the base and the head keep
+ADR-099's ABBA order. The record keeps the references in B9's tools as `snp/B9nv` and `snp/B3'` (schema 2 unchanged:
+unknown tool keys were always read as measures; no check names them). The gate reports the check
+`hook overhead B9 - B9nv - B3' (information)`: the median over rounds of `H_r = B9_r − B9nv_r − B3'_r` (each a block
+median of the same round) with its distribution-free 95 % interval, B9nv's and B3''s medians, or why it is not
+measured; it always passes, and the PR comment prints it under the table. A failed reference marks only itself not
+measured. It gets a limit once at least three CI records show its spread (the owner's rule: `X = max(1.0 ms, observed
+p95 + 0.5 ms)`), in a later change of the budgets; until then the absolute `B9 ≤ B3 + 3 ms` budget, the paired check
+against the base and the never-slower rule stay exactly as they are. (4) Known misses: B11's, B6's and B12u's reasons
+become the store panel's texts (B11's realpath clause dropped with (1), B6's racy clause stated as the past
+condition (2) removes, both with this batch's local numbers), B5's entry is removed (snp leads prek on glibc CI, and
+B5 is outside the musl matrix), B4's stays until a musl record shows it passing, and B9 gets the interim entry for
+`p50 <= 1x B3` naming why its budget is mis-specified. A soft budget's breach, already a warning, now carries its
+known-miss reason too (before, only a failure did), so B9's entry is visible in the gate output.
+**Rationale.** Each change makes a scenario measure its title for every tool alike: real configurations name URLs and
+every tool now takes its real-world path for them; real repositories are not racily clean, and how many fixture
+entries were depended on the runner's speed, a hidden variable in every comparison across runners; B9's reference
+blocks share B9's minute, so their difference is what installing snp's hook costs (`sh` and the script, `hook-impl`
+beyond the run, git's hook spawn and index re-read), with git's own commit removed. Reporting before gating follows
+the owner's decision: the CI spread of `H` is not known yet (the panels' estimates: 0.6–1.2 ms).
+**Measurements** (this batch, local: whole-tree user instructions with `perf stat -e cpu_core/instructions/u` pinned
+to the P-cores, median of 5 runs; `strace -f -c` totals of one run; the same snp binary before and after).
+B11: snp 162.99 M → 142.99 M instructions (−12.3 %), 17 342 → 10 643 syscalls (`statx` 9 643 → 3 143); prek
+60.20 M → 59.41 M, 6 366 → 6 362; pre-commit 1 069 M → 1 065 M, 10 867 → 10 857. Every store keeps 500 repositories.
+Racy entries after (2): 0 in every fixture, including `files50k` (50 002) and `unicode20` (20 001). B6: snp
+110.97 M → 103.05 M (−7.1 %: the baseline `git diff` no longer hashes 961 files), 43 310 → 40 403 syscalls; prek
+81.40 M → 80.64 M, 41 164 → 40 508; pre-commit 528 153 → 480 750 syscalls. B8 unchanged and unimodal: snp
+2 256.8 M → 2 256.6 M, prek 2 430.9 M → 2 431.0 M (each set of five runs within 0.03 %). B9: snp 16.32 M → 16.27 M,
+prek 23.29 M → 22.68 M. B7 runs for all three tools. B9's new blocks, one laptop run (unpinned wall time, an
+illustration only): B9 35.55 ms, B9nv 6.30 ms, B3' 26.49 ms, `H` 2.83 ms [−0.23, 4.78] over 10 rounds.
+Tests (`xtask/src/tasks/bench.rs`): `fixtures_are_not_racily_clean` (generated files and directories carry the date,
+`.git` keeps its own, every entry is older than the index, B9's copy keeps the times through `update-index
+--refresh`), `the_fixture_time_is_git_date`, `gc500_repositories_are_https_urls_redirected_to_the_local_clones` (no
+local path in any configuration, every repository used, the gitconfig's mapping, and `git ls-remote` of
+`https://gc500.bench.invalid/r007` through the written gitconfig),
+`round_order_mirrors_and_keeps_the_base_first_in_even_rounds`,
+`hook_overhead_is_the_median_of_the_per_round_differences`, `the_hook_overhead_is_reported_and_never_gated` (a pass
+whatever the value and with missing or failed references; the absolute budget, the paired check and the never-slower
+rule unchanged; the record round trip), `known_misses_carry_the_corrected_reasons`, and
+`known_misses_warn_with_their_reason_and_nothing_else_changes` (now also a soft warning with its reason).
+**Consequences.** History steps down for every tool on B11 (snp about −4 ms on CI by the panel's estimate, the others
+about 0) and on B6/B7 (snp and prek, the racy re-hash gone), and on fast runners possibly on B4, B5 and B12u; B3 and B9
+lose the racy re-hash of two files. These are fixture corrections, not speedups of snp: the paired base-vs-head check
+is unaffected, since both binaries run the same fixtures, and the history and drift checks are advisory on CI. Each CI
+bench job runs 100 more short processes (B9nv and B3', about 1.5 s). `setup` sets the times of about 72 000 files
+once. A reader of run records that treats every key of a scenario as a tool sees `snp/B9nv` and `snp/B3'` under B9.
 ## Appendix A — Open questions of the research documents, resolved
 
 Format: question → decision (ADR or divergence). "Parity" = behave as pre-commit 4.6.2.

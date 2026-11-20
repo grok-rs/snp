@@ -63,10 +63,16 @@ no `--record` and saves no history cache, like the `e2e` job.
 ## Scenarios (ARCHITECTURE §12.1)
 
 All fixtures are generated deterministically (fixed identity and dates, an LCG for the file corpora): the same trees
-and commit SHAs on every machine. Every tool runs in a hermetic environment (own `HOME`, `GIT_CONFIG_GLOBAL`, no
+and commit SHAs on every machine. Before each `git add`, every generated file and directory (`.git` excepted) gets
+the commit date, 2024-01-01, as its modification time, and B9's per-tool copy keeps those times (ADR-136). So every
+index entry is older than its index, as in a real repository. Before, files written in the second git wrote the
+index were racily clean, and every later `git diff` or `git status` hashed them again: all entries of `noop10`,
+`pch960`, `gc500` and B9's copies on the measuring machine, and a share of `files50k` and `unicode20` that depended
+on the runner's speed. B8's unstaged rewrite keeps the time of its write, as a user's edit does; its size differs
+from the committed text's, so git sees it modified either way. Every tool runs in a hermetic environment (own `HOME`, `GIT_CONFIG_GLOBAL`, no
 system git config, C.UTF-8, `PATH=/usr/local/bin:/usr/bin:/bin`) with its own store (`SNP_HOME`, `PRE_COMMIT_HOME`,
 `PREK_HOME`). No measurement touches the network: every clone of pre-commit-hooks is redirected to a local bare
-mirror (`url.<mirror>.insteadOf`), every Python install resolves from the local wheelhouse only (`PIP_NO_INDEX`,
+mirror (`url.<mirror>.insteadOf`), and B11's `https://gc500.bench.invalid/` to its local repositories, every Python install resolves from the local wheelhouse only (`PIP_NO_INDEX`,
 `PIP_FIND_LINKS`, `UV_NO_INDEX`, `UV_FIND_LINKS`, `UV_OFFLINE`, `UV_PYTHON_DOWNLOADS=never`,
 `VIRTUALENV_NO_PERIODIC_UPDATE`), and the pinned uv is on the PATH. So B7 (store removed before every run) measures
 installation from local files, never network latency.
@@ -91,16 +97,23 @@ succeeded, so an interrupted setup leaves nothing for `run` to measure.
 | B6 | `pch960`: 960 clean files, 13 pre-commit-hooks hooks at v6.0.0 (prek's medium corpus) | `run --all-files` | time, RSS (B12 ≤ 25 MB = 23.84 MiB) |
 | B7 | `pch960`, store removed before every run (`--prepare`) | `run --all-files` | time |
 | B8 | `stash10m`: a 10 MiB unstaged rewrite of a tracked file (every line, and the size) + one staged change | `run` | time, RSS (information: git's diff is the largest process); nightly: heap peak (dhat, ≤ B3's + 2 MB, hard) |
-| B9 | `noop10` with the tool's own installed hook | `git commit --allow-empty` | time (≤ B3 + 3 ms) |
+| B9 | `noop10` with the tool's own installed hook | `git commit --allow-empty` | time (≤ B3 + 3 ms); snp's hook overhead B9 − B9nv − B3' per round (information, ADR-136) |
 | B10 | `validate1000`: 1 000 local hooks | `validate-config big.yaml` | time |
-| B11 | `gc500`: 500 hook repositories used by 200 configurations, all installed and tracked (prek primed with `run --config`, its tracking path; `setup` checks 200 configs and 500 repositories per store) | `gc` | time |
+| B11 | `gc500`: 500 hook repositories used by 200 configurations, all installed and tracked (prek primed with `run --config`, its tracking path; `setup` checks 200 configs and 500 repositories per store). The configurations name `https://gc500.bench.invalid/rNNN`, as real ones name URLs; the bench gitconfig maps that prefix to `gc500/repos/` (`url.<…>.insteadOf`, ADR-136) | `gc` | time |
 | B12u | `unicode20`: 20 000 non-ASCII paths, 20 hooks with Unicode `files` patterns, `SNP_JOBS=32` | `run --all-files` | time, RSS (≤ 30 MB = 28.61 MiB; the ADR-079 regex-cache case) |
 
 Timing: `hyperfine -N -w 5 -r 50` (the slow scenarios use fewer runs, listed in `xtask/src/tasks/bench.rs`). With
 `--base-snp`, snp and the base run in deterministic ABBA rounds per scenario (base, head; head, base; …): 10 rounds of
 5 runs for the 50-run scenarios, 10 × 2 for the 20-run ones, 5 × 1 for B7, one warm-up per binary in its first block;
 pre-commit and prek follow in the same window, and snp's budgets and the never-slower rule use its pooled runs. The
-base has its own warm, cold and gc stores and B9 fixture, primed by the base binary, and no RSS runs. RSS: the median
+base has its own warm, cold and gc stores and B9 fixture, primed by the base binary, and no RSS runs. snp's B9 always
+runs in rounds, with or without a base, together with two reference blocks in its own hooked fixture (ADR-136): B9nv,
+the same commit with `--no-verify`, and B3', `snp run` there. Each round runs the blocks in mirrored order (base, B9,
+B9nv, B3'; then B3', B9nv, B9, base), and the record keeps the references under B9 as `snp/B9nv` and `snp/B3'`. The
+gate and the PR comment report the median over rounds of `B9 − B9nv − B3'`, the time the installed hook adds beyond
+git's own commit and the run itself, with its 95 % interval, as information only: it gets a limit once at least three
+CI records show its spread, and until then the absolute B9 budget (a known miss), the paired check and the
+never-slower rule stay as they are. RSS: the median
 of 10 runs under `/usr/bin/time -v` (`-l` on macOS); it is the peak resident set of the **largest process of the
 tree** the tool waited for (a maximum, not a sum), so a git child larger than the tool itself is what gets reported
 (B8). It can only overstate snp's own, so the hard RSS budgets (B4, B6, B12u) fail closed.
@@ -165,8 +178,9 @@ the same.
   multi-threaded ones (soft until the reference runner's nightly records confirm them). The per-push guard of the
   streamed patch is `crates/snp-stash/tests/perf_patch_stream.rs` in the `perf-smoke` job.
 * **Known misses**: a `[[known_miss]]` of `budgets.toml` names a scenario, a check and the reason it fails today
-  (ADR-091). That one check warns with its reason, and the gate says when it passes so the entry can go. Every other
-  check still fails, and getting worse still fails the regression check.
+  (ADR-091). That one check warns with its reason (a soft budget, which already warns, also shows the reason; ADR-136),
+  and the gate says when it passes so the entry can go. Every other check still fails, and getting worse still fails
+  the regression check.
 * **Nothing passes silently**: a hard budget whose scenario is not in the record fails (a soft one warns), unless the
   scenario is listed in `--allow-missing` (the scenarios a workflow knowingly does not run: `MUSL_PENDING` in
   `.github/workflows/bench.yml`, those outside the musl matrix), which turns it into a warning. A syscall or allocation budget is checked only when

@@ -18,6 +18,16 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   (`measurements[*].time_wall_clock`) and refuses any other schema or unit, and it asks only for wall-clock time
   (`--metrics time_wall_clock`), because 2.0 also samples peak memory by default and RSS has its own runs. History
   records written before this change came from hyperfine 1.19.0.
+- bench (ADR-136): B11's configurations name their repositories `https://gc500.bench.invalid/rNNN`, which the bench
+  gitconfig maps to the local clones, instead of absolute local paths, whose real paths snp resolves (40 % of its B11
+  syscalls). Every generated fixture file and directory gets the commit date as its modification time before
+  `git add`, so no index entry is racily clean (before, all of `noop10`, `pch960`, `gc500` and B9's copies were, and
+  every `git diff` hashed them again). B11, B6 and B7 numbers step down for the tools that paid that cost (snp's B11
+  −12 % instructions locally, B6 −7 %); these are fixture corrections, not snp speedups. B9 also measures B9nv (the
+  same commit with `--no-verify`) and B3' (`snp run` in B9's fixture) in its rounds and reports
+  `B9 − B9nv − B3'`, the installed hook's own cost, as information. The known-miss reasons of B6, B11 and B12u state
+  current facts, B9 has an interim entry, and B5's entry is gone, so the gate fails again if snp falls behind prek on
+  B5.
 - bench: the B8 `p50 <= pre-commit` known miss is gone. PR #57's CI bench measured snp at 307 ms against
   pre-commit's 418 ms (1.36x), so the gate fails again if snp ever falls behind pre-commit on B8.
 - cfgv and file-identify are part of the workspace (ADR-116): imported with their full history as `crates/snp-cfgv`
