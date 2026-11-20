@@ -19,8 +19,9 @@ pub(crate) const CRATE: &str = "crates/snp-hooks";
 /// Its only write site.
 const WRITER: &str = "src/writer.rs";
 
-/// The write APIs banned outside the writer module (panel-parity §2 plus the other `std::fs` mutators).
-pub(crate) const BANNED_METHODS: [&str; 20] = [
+/// The write APIs banned outside the writer module (panel-parity §2 plus the other `std::fs` mutators, the
+/// mode/time/owner setters that work on a handle opened read-only, and every work-tree write API of `snp_os`).
+pub(crate) const BANNED_METHODS: [&str; 40] = [
     "std::fs::write",
     "std::fs::OpenOptions::open",
     "std::fs::File::create",
@@ -37,10 +38,30 @@ pub(crate) const BANNED_METHODS: [&str; 20] = [
     "std::fs::hard_link",
     "std::fs::soft_link",
     "std::fs::set_permissions",
+    "std::fs::set_times",
+    "std::fs::set_times_nofollow",
+    "std::fs::File::set_permissions",
+    "std::fs::File::set_times",
+    "std::fs::File::set_modified",
+    "std::fs::DirBuilder::create",
+    "std::os::unix::fs::chown",
+    "std::os::unix::fs::fchown",
+    "std::os::unix::fs::lchown",
     "std::os::unix::fs::symlink",
     "std::os::windows::fs::symlink_file",
     "std::os::windows::fs::symlink_dir",
     "snp_os::fs::rewrite_in_place",
+    "snp_os::fs::atomic_replace",
+    "snp_os::fs::write_new_durable",
+    "snp_os::fs::copy_into_new_durable",
+    "snp_os::fs::create_truncate_nofollow",
+    "snp_os::fs::rename_with_retry",
+    "snp_os::fs::remove_tree_within",
+    "snp_os::fs::retire_dir",
+    "snp_os::fs::unnamed_temp",
+    "snp_os::fs::ensure_private_dir",
+    "snp_os::lock::FileLock::try_acquire",
+    "snp_os::lock::FileLock::acquire",
 ];
 /// The write types banned outside the writer module.
 pub(crate) const BANNED_TYPES: [&str; 1] = ["std::fs::OpenOptions"];
@@ -305,7 +326,9 @@ mod tests {
         std::fs::write(
             dir.join("src/lib.rs"),
             "//! Probe.\n\n/// A native that bypasses the writer.\npub fn bypass(p: &std::path::Path) -> std::io::Result<()> {\n    \
-             std::fs::write(p, b\"x\")?;\n    let _f = std::fs::OpenOptions::new().append(true).open(p)?;\n    Ok(())\n}\n",
+             std::fs::write(p, b\"x\")?;\n    let _f = std::fs::OpenOptions::new().append(true).open(p)?;\n    \
+             let r = std::fs::File::open(p)?;\n    r.set_permissions(r.metadata()?.permissions())?;\n    \
+             r.set_modified(std::time::SystemTime::now())?;\n    Ok(())\n}\n",
         )
         .unwrap();
         let out = std::process::Command::new("cargo")
@@ -339,5 +362,11 @@ mod tests {
             stderr.contains("use of a disallowed type `std::fs::OpenOptions`"),
             "{stderr}"
         );
+        for m in ["std::fs::File::set_permissions", "std::fs::File::set_modified"] {
+            assert!(
+                stderr.contains(&format!("use of a disallowed method `{m}`")),
+                "{stderr}"
+            );
+        }
     }
 }

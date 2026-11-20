@@ -118,7 +118,10 @@ disallowed-methods = [
     # S2 / ADR-066: an OS refusal to create a thread is a Failure, not a panic.
     { path = "std::thread::spawn", reason = "panics when the OS refuses a thread: use std::thread::Builder::spawn" },
     { path = "std::thread::Scope::spawn", reason = "panics when the OS refuses a thread: use std::thread::Builder::spawn_scoped" },
-    # ADR-132: the write ban. Only src/writer.rs writes (an #[expect] there only; tests carry their own).
+    # ADR-132: the write ban. Only src/writer.rs writes (an #[expect] there only; tests carry their own). It covers the
+# std::fs mutators (paths, handles opened read-only: set_permissions/set_times/set_modified; DirBuilder; Unix chown)
+# and every work-tree write API of snp_os (fs::*, lock::FileLock::*acquire). A subprocess, or a write API of another
+# crate (snp_git, snp_proc), is outside the lint: ADR-132 (5)'s doc rule (call HookCx::writer first) covers it.
     { path = "std::fs::write", reason = "natives write only through HookCx::writer (ADR-132)" },
     { path = "std::fs::OpenOptions::open", reason = "natives write only through HookCx::writer (ADR-132)" },
     { path = "std::fs::File::create", reason = "natives write only through HookCx::writer (ADR-132)" },
@@ -135,10 +138,30 @@ disallowed-methods = [
     { path = "std::fs::hard_link", reason = "natives write only through HookCx::writer (ADR-132)" },
     { path = "std::fs::soft_link", reason = "natives write only through HookCx::writer (ADR-132)" },
     { path = "std::fs::set_permissions", reason = "natives write only through HookCx::writer (ADR-132)" },
+    { path = "std::fs::set_times", reason = "natives write only through HookCx::writer (ADR-132)" },
+    { path = "std::fs::set_times_nofollow", reason = "natives write only through HookCx::writer (ADR-132)" },
+    { path = "std::fs::File::set_permissions", reason = "natives write only through HookCx::writer (ADR-132)" },
+    { path = "std::fs::File::set_times", reason = "natives write only through HookCx::writer (ADR-132)" },
+    { path = "std::fs::File::set_modified", reason = "natives write only through HookCx::writer (ADR-132)" },
+    { path = "std::fs::DirBuilder::create", reason = "natives write only through HookCx::writer (ADR-132)" },
     { path = "std::os::unix::fs::symlink", reason = "natives write only through HookCx::writer (ADR-132)", allow-invalid = true },
     { path = "std::os::windows::fs::symlink_file", reason = "natives write only through HookCx::writer (ADR-132)", allow-invalid = true },
+    { path = "std::os::unix::fs::chown", reason = "natives write only through HookCx::writer (ADR-132)", allow-invalid = true },
+    { path = "std::os::unix::fs::fchown", reason = "natives write only through HookCx::writer (ADR-132)", allow-invalid = true },
+    { path = "std::os::unix::fs::lchown", reason = "natives write only through HookCx::writer (ADR-132)", allow-invalid = true },
     { path = "std::os::windows::fs::symlink_dir", reason = "natives write only through HookCx::writer (ADR-132)", allow-invalid = true },
     { path = "snp_os::fs::rewrite_in_place", reason = "natives write only through HookCx::writer (ADR-132)" },
+    { path = "snp_os::fs::atomic_replace", reason = "natives write only through HookCx::writer (ADR-132)" },
+    { path = "snp_os::fs::write_new_durable", reason = "natives write only through HookCx::writer (ADR-132)" },
+    { path = "snp_os::fs::copy_into_new_durable", reason = "natives write only through HookCx::writer (ADR-132)" },
+    { path = "snp_os::fs::create_truncate_nofollow", reason = "natives write only through HookCx::writer (ADR-132)" },
+    { path = "snp_os::fs::rename_with_retry", reason = "natives write only through HookCx::writer (ADR-132)" },
+    { path = "snp_os::fs::remove_tree_within", reason = "natives write only through HookCx::writer (ADR-132)" },
+    { path = "snp_os::fs::retire_dir", reason = "natives write only through HookCx::writer (ADR-132)" },
+    { path = "snp_os::fs::unnamed_temp", reason = "natives write only through HookCx::writer (ADR-132)" },
+    { path = "snp_os::fs::ensure_private_dir", reason = "natives write only through HookCx::writer (ADR-132)" },
+    { path = "snp_os::lock::FileLock::try_acquire", reason = "natives write only through HookCx::writer (ADR-132)" },
+    { path = "snp_os::lock::FileLock::acquire", reason = "natives write only through HookCx::writer (ADR-132)" },
 ]
 
 # ADR-132: the write ban (types). `OpenOptions` is how a file opens for writing.
