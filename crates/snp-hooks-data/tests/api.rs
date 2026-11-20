@@ -6,7 +6,7 @@
 
 #[cfg(test)]
 mod api {
-    use snp_hooks_data::{Epoch, Gate, HookClass, NativeSource, TagProfile};
+    use snp_hooks_data::{Epoch, Gate, HookClass, ManifestHook, NativeSource, TagProfile};
 
     fn send_sync<T: Send + Sync>() {}
 
@@ -21,6 +21,7 @@ mod api {
         send_sync::<HookClass>();
         send_sync::<Gate>();
         send_sync::<TagProfile>();
+        send_sync::<ManifestHook>();
         send_sync::<NativeSource>();
     }
 
@@ -40,6 +41,31 @@ mod api {
             commit: "0000000000000000000000000000000000000000",
             manifest_yaml: "",
             hooks: &[("trailing-whitespace", HookClass::Native, Epoch(0))],
+            model: None,
+        });
+        has::<ManifestHook>(ManifestHook {
+            id: "trailing-whitespace",
+            name: "trim trailing whitespace",
+            entry: "trailing-whitespace-fixer",
+            language: "python",
+            alias: "",
+            files: "",
+            exclude: "^$",
+            types: &["text"],
+            types_or: &[],
+            exclude_types: &[],
+            additional_dependencies: &[],
+            args: &[],
+            always_run: false,
+            fail_fast: false,
+            pass_filenames: true,
+            description: "",
+            language_version: "default",
+            log_file: "",
+            minimum_pre_commit_version: "0",
+            require_serial: false,
+            stages: &["pre-commit"],
+            verbose: false,
         });
         has::<[NativeSource; 2]>([NativeSource::PreCommitHooks, NativeSource::Builtin]);
         has::<&str>(snp_hooks_data::BUILTIN_MANIFEST_YAML);
@@ -50,6 +76,7 @@ mod api {
     fn functions() {
         has::<fn(&str) -> bool>(snp_hooks_data::is_pre_commit_hooks_url);
         has::<fn(&str) -> Option<&'static TagProfile>>(snp_hooks_data::profile_for_rev);
+        has::<fn() -> &'static [TagProfile]>(snp_hooks_data::tag_profiles);
         has::<fn(&str) -> Option<(&'static str, Epoch)>>(snp_hooks_data::verified_blob);
         has::<fn(&str) -> Option<&'static str>>(snp_hooks_data::module_for_entry);
         has::<fn(&str) -> &'static [&'static str]>(snp_hooks_data::import_closure);

@@ -5,6 +5,7 @@
 
 pub(crate) mod blobs;
 pub(crate) mod closures;
+pub(crate) mod models;
 pub(crate) mod parity_gates;
 pub(crate) mod scripts;
 pub(crate) mod tags;

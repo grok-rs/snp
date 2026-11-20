@@ -45,6 +45,7 @@ pub(crate) static TAG_PROFILES: &[TagProfile] = &[
             ("sort-simple-yaml", HookClass::Native, Epoch(1)),
             ("trailing-whitespace", HookClass::Native, Epoch(1)),
         ],
+        model: Some(super::models::V3_0_0),
     },
     TagProfile {
         tag: "v3.0.1",
@@ -84,6 +85,7 @@ pub(crate) static TAG_PROFILES: &[TagProfile] = &[
             ("sort-simple-yaml", HookClass::Native, Epoch(1)),
             ("trailing-whitespace", HookClass::Native, Epoch(1)),
         ],
+        model: Some(super::models::V3_0_1),
     },
     TagProfile {
         tag: "v3.1.0",
@@ -123,6 +125,7 @@ pub(crate) static TAG_PROFILES: &[TagProfile] = &[
             ("sort-simple-yaml", HookClass::Native, Epoch(1)),
             ("trailing-whitespace", HookClass::Native, Epoch(1)),
         ],
+        model: Some(super::models::V3_1_0),
     },
     TagProfile {
         tag: "v3.2.0",
@@ -162,6 +165,7 @@ pub(crate) static TAG_PROFILES: &[TagProfile] = &[
             ("sort-simple-yaml", HookClass::Native, Epoch(1)),
             ("trailing-whitespace", HookClass::Native, Epoch(1)),
         ],
+        model: Some(super::models::V3_2_0),
     },
     TagProfile {
         tag: "v3.3.0",
@@ -202,6 +206,7 @@ pub(crate) static TAG_PROFILES: &[TagProfile] = &[
             ("sort-simple-yaml", HookClass::Native, Epoch(1)),
             ("trailing-whitespace", HookClass::Native, Epoch(1)),
         ],
+        model: Some(super::models::V3_3_0),
     },
     TagProfile {
         tag: "v3.4.0",
@@ -243,6 +248,7 @@ pub(crate) static TAG_PROFILES: &[TagProfile] = &[
             ("sort-simple-yaml", HookClass::Native, Epoch(1)),
             ("trailing-whitespace", HookClass::Native, Epoch(1)),
         ],
+        model: Some(super::models::V3_4_0),
     },
     TagProfile {
         tag: "v4.0.0",
@@ -282,6 +288,7 @@ pub(crate) static TAG_PROFILES: &[TagProfile] = &[
             ("sort-simple-yaml", HookClass::Native, Epoch(1)),
             ("trailing-whitespace", HookClass::Native, Epoch(1)),
         ],
+        model: Some(super::models::V4_0_0),
     },
     TagProfile {
         tag: "v4.0.1",
@@ -321,6 +328,7 @@ pub(crate) static TAG_PROFILES: &[TagProfile] = &[
             ("sort-simple-yaml", HookClass::Native, Epoch(1)),
             ("trailing-whitespace", HookClass::Native, Epoch(1)),
         ],
+        model: Some(super::models::V4_0_1),
     },
     TagProfile {
         tag: "v4.1.0",
@@ -360,6 +368,7 @@ pub(crate) static TAG_PROFILES: &[TagProfile] = &[
             ("sort-simple-yaml", HookClass::Native, Epoch(1)),
             ("trailing-whitespace", HookClass::Native, Epoch(1)),
         ],
+        model: Some(super::models::V4_1_0),
     },
     TagProfile {
         tag: "v4.2.0",
@@ -399,6 +408,7 @@ pub(crate) static TAG_PROFILES: &[TagProfile] = &[
             ("sort-simple-yaml", HookClass::Native, Epoch(1)),
             ("trailing-whitespace", HookClass::Native, Epoch(1)),
         ],
+        model: Some(super::models::V4_2_0),
     },
     TagProfile {
         tag: "v4.3.0",
@@ -438,6 +448,7 @@ pub(crate) static TAG_PROFILES: &[TagProfile] = &[
             ("sort-simple-yaml", HookClass::Native, Epoch(1)),
             ("trailing-whitespace", HookClass::Native, Epoch(1)),
         ],
+        model: Some(super::models::V4_3_0),
     },
     TagProfile {
         tag: "v4.4.0",
@@ -478,6 +489,7 @@ pub(crate) static TAG_PROFILES: &[TagProfile] = &[
             ("sort-simple-yaml", HookClass::Native, Epoch(1)),
             ("trailing-whitespace", HookClass::Native, Epoch(1)),
         ],
+        model: Some(super::models::V4_4_0),
     },
     TagProfile {
         tag: "v4.5.0",
@@ -518,6 +530,7 @@ pub(crate) static TAG_PROFILES: &[TagProfile] = &[
             ("sort-simple-yaml", HookClass::Native, Epoch(1)),
             ("trailing-whitespace", HookClass::Native, Epoch(1)),
         ],
+        model: Some(super::models::V4_5_0),
     },
     TagProfile {
         tag: "v4.6.0",
@@ -558,6 +571,7 @@ pub(crate) static TAG_PROFILES: &[TagProfile] = &[
             ("sort-simple-yaml", HookClass::Native, Epoch(1)),
             ("trailing-whitespace", HookClass::Native, Epoch(1)),
         ],
+        model: Some(super::models::V4_6_0),
     },
     TagProfile {
         tag: "v5.0.0",
@@ -599,6 +613,7 @@ pub(crate) static TAG_PROFILES: &[TagProfile] = &[
             ("sort-simple-yaml", HookClass::Native, Epoch(1)),
             ("trailing-whitespace", HookClass::Native, Epoch(1)),
         ],
+        model: Some(super::models::V5_0_0),
     },
     TagProfile {
         tag: "v6.0.0",
@@ -640,5 +655,6 @@ pub(crate) static TAG_PROFILES: &[TagProfile] = &[
             ("sort-simple-yaml", HookClass::Native, Epoch(1)),
             ("trailing-whitespace", HookClass::Native, Epoch(1)),
         ],
+        model: Some(super::models::V6_0_0),
     },
 ];
