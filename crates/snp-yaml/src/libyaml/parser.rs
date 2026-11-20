@@ -3,6 +3,8 @@
 //!
 //! Owner: WP-14.
 
+use std::borrow::Cow;
+
 use super::scanner::{Scanner, Token, TokenKind};
 use super::{Error, Mark, Style};
 
@@ -69,11 +71,11 @@ enum State {
     End,
 }
 
-/// A `%TAG` directive.
+/// A `%TAG` directive: the document's own (owned) or one of the two default handles (static).
 #[derive(Debug, Clone)]
 struct TagDirective {
-    handle: Vec<u8>,
-    prefix: Vec<u8>,
+    handle: Cow<'static, [u8]>,
+    prefix: Cow<'static, [u8]>,
 }
 
 type R<T> = Result<T, Error>;
@@ -357,10 +359,10 @@ impl<'a> Parser<'a> {
             if handle.is_empty() {
                 tag = Some(suffix);
             } else {
-                let found = self.tag_directives.iter().find(|d| d.handle == handle);
+                let found = self.tag_directives.iter().find(|d| *d.handle == *handle);
                 match found {
                     Some(d) => {
-                        let mut full = d.prefix.clone();
+                        let mut full = d.prefix.to_vec();
                         full.extend_from_slice(&suffix);
                         tag = Some(full);
                     }
@@ -757,24 +759,27 @@ impl<'a> Parser<'a> {
                 Kind::TagDirective => {
                     let token = self.skip()?;
                     if let TokenKind::TagDirective { handle, prefix } = token.kind {
-                        if self.tag_directives.iter().any(|d| d.handle == handle) {
+                        if self.tag_directives.iter().any(|d| *d.handle == *handle) {
                             return Err(Error::parser(
                                 None,
                                 "found duplicate %TAG directive",
                                 start,
                             ));
                         }
-                        self.tag_directives.push(TagDirective { handle, prefix });
+                        self.tag_directives.push(TagDirective {
+                            handle: Cow::Owned(handle),
+                            prefix: Cow::Owned(prefix),
+                        });
                     }
                 }
                 _ => break,
             }
         }
         for (handle, prefix) in [(&b"!"[..], &b"!"[..]), (b"!!", b"tag:yaml.org,2002:")] {
-            if !self.tag_directives.iter().any(|d| d.handle == handle) {
+            if !self.tag_directives.iter().any(|d| *d.handle == *handle) {
                 self.tag_directives.push(TagDirective {
-                    handle: handle.to_vec(),
-                    prefix: prefix.to_vec(),
+                    handle: Cow::Borrowed(handle),
+                    prefix: Cow::Borrowed(prefix),
                 });
             }
         }
