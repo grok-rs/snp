@@ -79,7 +79,7 @@ pub fn value(j: &Json) -> Value {
         "tuple" => Value::Tuple(array(j, "v").iter().map(value).collect()),
         "set" => Value::Set(array(j, "v").iter().map(value).collect()),
         "dict" => {
-            let mut map = Map::new();
+            let mut map = Map::default();
             for pair in array(j, "v") {
                 let pair = pair.as_array().expect("pair");
                 map.insert(value(&pair[0]), value(&pair[1]));

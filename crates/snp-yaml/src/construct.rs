@@ -1141,7 +1141,7 @@ impl Graph {
                 }
                 Task::Seq(n) => Value::List(tail(&mut values, n)),
                 Task::Set(n) => {
-                    let mut set = Set::new();
+                    let mut set = Set::default();
                     set.try_reserve(n).map_err(|_| limit())?;
                     for k in tail(&mut values, n) {
                         set.insert(k);
@@ -1150,7 +1150,7 @@ impl Graph {
                 }
                 Task::Map(n) => {
                     let flat = tail(&mut values, n.saturating_mul(2));
-                    let mut map = Map::new();
+                    let mut map = Map::default();
                     map.try_reserve(n).map_err(|_| limit())?;
                     let mut it = flat.into_iter();
                     while let (Some(k), Some(v)) = (it.next(), it.next()) {

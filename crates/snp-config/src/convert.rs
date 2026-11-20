@@ -239,7 +239,7 @@ pub(crate) fn repo_config(repo: &Map, ext_mode: ExtMode) -> RepoConfig {
 
 /// The validated + defaulted config → `Config`.
 pub(crate) fn config(source: ConfigSource, raw: Value, ext_mode: ExtMode) -> Config {
-    let empty = Map::new();
+    let empty = Map::default();
     let m = raw.as_map().unwrap_or(&empty);
     let repos = get(m, "repos")
         .and_then(Value::as_array)
@@ -403,6 +403,6 @@ mod tests {
         }
         m.insert(Value::from("id"), Value::from("str"));
         assert_eq!(get_str(&m, "id"), Some("str"));
-        assert_eq!(get(&Map::new(), "id"), None);
+        assert_eq!(get(&Map::default(), "id"), None);
     }
 }

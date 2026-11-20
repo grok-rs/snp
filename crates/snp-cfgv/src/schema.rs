@@ -6,7 +6,7 @@ use crate::check::CheckFn;
 use crate::error::{ValidationError, validate_context};
 use crate::py;
 use crate::validator::{Cx, Validator};
-use crate::value::Value;
+use crate::value::{HashedKey, Value};
 
 /// A schema for a container value, mirroring Python cfgv's `Map`, `Array`
 /// and `KeyValueMap`.
@@ -21,8 +21,9 @@ pub enum Schema {
     Map {
         /// Name used in messages (`At {object_name}(...)`).
         object_name: String,
-        /// Key whose value identifies the map in the context line.
-        id_key: Option<Value>,
+        /// Key whose value identifies the map in the context line, with its
+        /// hash precomputed.
+        id_key: Option<HashedKey>,
         /// The items, checked in order.
         items: Arc<[Validator]>,
     },
@@ -75,15 +76,15 @@ impl Schema {
                 // an id that `repr()` cannot format fails even a valid map.
                 if let Some(id_key) = id_key {
                     id_key.check_str_digits()?;
-                    if let Some(id) = dct.get(id_key) {
+                    if let Some(id) = id_key.get(dct) {
                         id.check_str_digits()?;
                     }
                 }
                 let context = || match id_key {
                     None => format!("At {object_name}()"),
                     Some(id_key) => {
-                        let id = dct
-                            .get(id_key)
+                        let id = id_key
+                            .get(dct)
                             .map_or_else(|| "MISSING".to_owned(), Value::repr);
                         format!("At {object_name}({id_key}={id})")
                     }
@@ -252,7 +253,7 @@ impl Schema {
     ) -> Self {
         Self::Map {
             object_name: object_name.into(),
-            id_key,
+            id_key: id_key.map(HashedKey::new),
             items: items.into(),
         }
     }

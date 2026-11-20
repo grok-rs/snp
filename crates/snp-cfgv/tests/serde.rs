@@ -242,7 +242,7 @@ mod serde {
             Value::from(&b"id"[..]),
         ];
         for key in keys {
-            let mut map = cfgv::Map::new();
+            let mut map = cfgv::Map::default();
             map.insert("id".into(), "x".into());
             map.insert(key.clone(), "junk".into());
             let value = Value::Map(map);

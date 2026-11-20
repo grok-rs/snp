@@ -80,7 +80,7 @@ mod api {
     fn config_hook() -> ConfigHook {
         ConfigHook {
             id: Arc::from("trailing-whitespace"),
-            raw: cfgv::Map::new(),
+            raw: cfgv::Map::default(),
             ext: HookExt::default(),
         }
     }
@@ -344,7 +344,7 @@ mod api {
     #[test]
     fn overlay() {
         has::<HookPatch>(HookPatch {
-            raw: cfgv::Map::new(),
+            raw: cfgv::Map::default(),
             ext: HookExt::default(),
         });
         has::<fn(&HookPatch)>(patch_keys);

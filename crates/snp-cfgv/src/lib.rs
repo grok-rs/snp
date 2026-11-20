@@ -99,8 +99,8 @@ pub use schema::Schema;
 pub use serde_impl::{DeserializeError, from_value};
 pub use validator::{Cx, MapItem, Validator, WarnCallback};
 pub use value::{
-    BigInt, Date, DateError, DateTime, Map, MaxStrDigitsError, ParseBigIntError, Set, StrKey,
-    TzOffset, Value,
+    BigInt, Date, DateError, DateTime, HashedKey, Map, MaxStrDigitsError, ParseBigIntError, Set,
+    StrKey, TzOffset, Value, ValueState,
 };
 
 /// Validates `value` against `schema`, discarding warnings.

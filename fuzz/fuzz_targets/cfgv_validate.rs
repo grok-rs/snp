@@ -105,7 +105,7 @@ fn value(u: &mut Unstructured<'_>, depth: u32) -> Result<Value> {
         10 => Value::Tuple(items(u, depth)?),
         11 => Value::Set(items(u, depth)?.into_iter().collect::<Set>()),
         _ => {
-            let mut map = Map::new();
+            let mut map = Map::default();
             for _ in 0..u.int_in_range(0..=6)? {
                 let key = if u.ratio(4, 5)? {
                     Value::String(string(u)?)
@@ -191,7 +191,7 @@ static SCHEMA: LazyLock<Schema> = LazyLock::new(|| {
             Validator::optional_recurse(
                 "defaults",
                 Schema::key_value_map("Env", CheckFn::check_any(), hook),
-                Map::new(),
+                Map::default(),
             ),
             Validator::warn_additional_keys(
                 vec!["repo".into(), "rev".into(), "hooks".into()],

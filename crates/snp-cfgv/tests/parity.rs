@@ -270,7 +270,7 @@ mod parity {
 
     /// The generator's `kv_loader`: `key=value` lines.
     fn kv_loader(contents: &str) -> Result<Value, String> {
-        let mut map = Map::new();
+        let mut map = Map::default();
         for line in contents.split('\n') {
             if line.is_empty() {
                 continue;

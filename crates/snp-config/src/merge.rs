@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn every_hook_key_is_applied() {
-        let mut h = crate::convert::hook_def(&Map::new(), crate::ExtMode::Enabled);
+        let mut h = crate::convert::hook_def(&Map::default(), crate::ExtMode::Enabled);
         for key in HOOK_KEYS {
             assert!(apply_key(&mut h, key, &Value::from("x")), "{key}");
         }

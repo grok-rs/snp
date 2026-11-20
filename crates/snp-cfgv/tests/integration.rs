@@ -1115,7 +1115,7 @@ mod integration {
                 Value::List(arr.into_iter().map(json_to_value).collect())
             }
             serde_json::Value::Object(obj) => {
-                let mut map = indexmap::IndexMap::new();
+                let mut map = Map::default();
                 for (k, v) in obj {
                     map.insert(Value::String(k), json_to_value(v));
                 }

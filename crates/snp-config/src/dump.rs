@@ -72,7 +72,7 @@ pub fn effective_dump(cfg: &Config, json: bool) -> String {
         out.push_str(&messages::dump_overlay_header(path, &fields));
     }
     let raw = if raw.is_null() {
-        Value::Map(Map::new())
+        Value::Map(Map::default())
     } else {
         raw
     };
