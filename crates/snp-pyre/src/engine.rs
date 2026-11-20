@@ -8,9 +8,12 @@
 //!   (eagerly with an eager exact fallback). It is the forward-only `is_match` engine [`Forward`] (ADR-108): a
 //!   lazy DFA with a 256 KiB cache over a forward NFA without capture states, falling back to the bounded
 //!   backtracker or the `PikeVM` when the DFA cannot be built, gives up or quits.
+//! * Tier-1 scan engine (ADR-115): a str text on path haystacks with a large Unicode class, below the eager-build
+//!   estimate, runs on the same forward-only engine with `regex`'s 2 MiB cache instead of `regex` ([`Scan`]):
+//!   `re.match` is an anchored search, and a match span builds `regex` on first need.
 //! * Tier 2: `fancy_regex` with `backtrack_limit` 10⁸, delegate limits 64 MiB / 2 MiB, always behind the
-//!   relaxed tier-1 prefilter (`regex` with the crate-default 2 MiB cache); bytes patterns run on the Latin-1
-//!   lane (each byte `b` becomes `char::from(b)`).
+//!   relaxed tier-1 prefilter (the forward-only engine with a 2 MiB cache, ADR-115); bytes patterns run on the
+//!   Latin-1 lane (each byte `b` becomes `char::from(b)`).
 //!
 //! A prefilter that could not be built, or that would match every haystack, is simply absent: it only ever
 //! turns a haystack the relaxed text rejects into a no-match (relaxed ⊇ exact, §A.6.11), never into an error.
@@ -26,12 +29,13 @@ use std::sync::OnceLock;
 use regex_automata::nfa::thompson::{self, WhichCaptures, backtrack, pikevm};
 use regex_automata::util::pool::Pool;
 use regex_automata::util::syntax;
-use regex_automata::{Input, hybrid};
-use regex_syntax::hir::Look;
+use regex_automata::{Anchored, Input, hybrid};
+use regex_syntax::hir::{Class, Hir, HirKind, Look};
 
 use crate::error::MatchError;
 use crate::lower::Cond;
 use crate::messages;
+use crate::options::Haystack;
 
 /// `size_limit` of every `regex` build (01 Addendum §A.6.10).
 const SIZE_LIMIT: usize = 64 << 20;
@@ -89,13 +93,87 @@ pub(crate) enum T1 {
     Str(regex::Regex),
     /// bytes pattern (`unicode(false)`).
     Bytes(regex::bytes::Regex),
+    /// str pattern on the scan engine (ADR-115): `is_match` and anchored `is_match`; a match span builds
+    /// `regex` on first need.
+    Scan(Box<Scan>),
 }
 
+/// A str tier-1 text on the forward-only engine (ADR-115). A path pattern only needs yes/no answers
+/// (`re.search`, `re.match`, `re.fullmatch`), so it skips `regex`'s reverse NFA, capture states, bounded
+/// backtracker over them and one-pass DFA, whose construction dominates the compile of a text with a large
+/// Unicode class.
+#[derive(Debug)]
+pub(crate) struct Scan {
+    /// The forward-only engine, with `regex`'s 2 MiB lazy-DFA cache.
+    fwd: Forward,
+    /// The text, for the span engine.
+    text: Box<str>,
+    /// Nesting depth of the text.
+    depth: u32,
+    /// The span engine (`regex`), built on the first `find` (`None`: it could not be built).
+    find: OnceLock<Option<regex::Regex>>,
+}
+
+/// A Unicode class of at least this many ranges makes `regex`'s compile expensive (ADR-115): its UTF-8
+/// automaton is compiled forward and again, larger, in reverse. Python's Unicode `\w` lowers to a class of about
+/// 770 ranges and `[^\W\d_]` to about 730; `\d` has 70 and a case-folded literal 2 or 3.
+const LARGE_CLASS_RANGES: usize = 128;
+
 impl T1 {
-    /// Builds `text` (on a large stack when `depth` is deep).
+    /// Builds `text` on `regex` (on a large stack when `depth` is deep).
     pub(crate) fn build(text: &str, bytes: bool, depth: u32) -> Result<Self, String> {
         on_stack(depth, || Self::build_here(text, bytes))
             .unwrap_or_else(|| Err(messages::NO_BUILD_THREAD.into()))
+    }
+
+    /// Builds `text` for a tier-1 variant (ADR-115): on the scan engine when `scan` allows it (a str pattern on
+    /// path haystacks below the eager-build estimate) and the text has a large Unicode class, otherwise on
+    /// `regex`. Every error is the string `regex` reports for the same text.
+    pub(crate) fn build_tier1(
+        text: &str,
+        bytes: bool,
+        depth: u32,
+        scan: bool,
+    ) -> Result<Self, String> {
+        #[cfg(test)]
+        if probe::scan_off() {
+            return Self::build(text, bytes, depth);
+        }
+        // Cheap pre-check, so that most texts are parsed once (by `regex`): the large classes the lowering emits
+        // come from Unicode properties (`\w` is `[\pL\pN_]`); its other class members are written out one range
+        // at a time, and `\d` (70 ranges) is the largest class escape it emits. A text this skips stays on
+        // `regex`, which is always correct.
+        let property = memchr::memmem::find(text.as_bytes(), b"\\p").is_some()
+            || memchr::memmem::find(text.as_bytes(), b"\\P").is_some();
+        if !scan || bytes || !property {
+            return Self::build(text, bytes, depth);
+        }
+        on_stack(depth, || Self::build_scan_here(text, depth, false))
+            .unwrap_or_else(|| Err(messages::NO_BUILD_THREAD.into()))
+    }
+
+    /// Builds the str `text` on the scan engine whatever its classes (the reference of the scan-vs-`regex`
+    /// tests).
+    #[cfg(test)]
+    pub(crate) fn build_scan(text: &str, depth: u32) -> Result<Self, String> {
+        on_stack(depth, || Self::build_scan_here(text, depth, true))
+            .unwrap_or_else(|| Err(messages::NO_BUILD_THREAD.into()))
+    }
+
+    fn build_scan_here(text: &str, depth: u32, always: bool) -> Result<Self, String> {
+        // `regex` parses with the same configuration first, so a parse error is its error.
+        let hir = syntax::parse_with(text, &syntax_config(true))
+            .map_err(|e| messages::engine_limit(&e.to_string()))?;
+        if !always && !has_large_class(&hir) {
+            return Self::build_here(text, false);
+        }
+        let fwd = Forward::from_hir(&hir, true, DFA_SIZE_LIMIT)?;
+        Ok(Self::Scan(Box::new(Scan {
+            fwd,
+            text: text.into(),
+            depth,
+            find: OnceLock::new(),
+        })))
     }
 
     fn build_here(text: &str, bytes: bool) -> Result<Self, String> {
@@ -109,14 +187,17 @@ impl T1 {
                 .map(Self::Bytes)
                 .map_err(|e| describe_regex_error(&e))
         } else {
-            regex::RegexBuilder::new(text)
-                .size_limit(SIZE_LIMIT)
-                .dfa_size_limit(DFA_SIZE_LIMIT)
-                .nest_limit(NEST_LIMIT)
-                .build()
-                .map(Self::Str)
-                .map_err(|e| describe_regex_error(&e))
+            Self::build_str(text).map(Self::Str)
         }
+    }
+
+    fn build_str(text: &str) -> Result<regex::Regex, String> {
+        regex::RegexBuilder::new(text)
+            .size_limit(SIZE_LIMIT)
+            .dfa_size_limit(DFA_SIZE_LIMIT)
+            .nest_limit(NEST_LIMIT)
+            .build()
+            .map_err(|e| describe_regex_error(&e))
     }
 
     /// `is_match` on the haystack (str engines never match non-UTF-8 bytes).
@@ -124,45 +205,83 @@ impl T1 {
         match self {
             Self::Str(re) => h.text().is_some_and(|t| re.is_match(t)),
             Self::Bytes(re) => re.is_match(h.bytes()),
+            Self::Scan(s) => s.fwd.is_match(h, false),
         }
     }
 
-    /// The leftmost-first match span in bytes.
-    pub(crate) fn find(&self, h: Hay<'_>) -> Option<(usize, usize)> {
+    /// A match starting at position 0. The leftmost match starts there iff some match does, so `regex` answers
+    /// with its leftmost match and the scan engine with an anchored search.
+    pub(crate) fn matches_at_start(&self, h: Hay<'_>) -> Result<bool, MatchError> {
         match self {
-            Self::Str(re) => h
-                .text()
-                .and_then(|t| re.find(t))
-                .map(|m| (m.start(), m.end())),
-            Self::Bytes(re) => re.find(h.bytes()).map(|m| (m.start(), m.end())),
+            Self::Scan(s) => Ok(s.fwd.is_match(h, true)),
+            Self::Str(_) | Self::Bytes(_) => Ok(self.find(h)?.is_some_and(|(s, _)| s == 0)),
         }
     }
+
+    /// The leftmost-first match span in bytes. `MatchError::Backtrack` only if the scan engine's span engine
+    /// cannot be built, which the eager-build estimate rules out (ADR-115), like the other lazily built engines.
+    pub(crate) fn find(&self, h: Hay<'_>) -> Result<Option<(usize, usize)>, MatchError> {
+        let str_find = |re: &regex::Regex| {
+            h.text()
+                .and_then(|t| re.find(t))
+                .map(|m| (m.start(), m.end()))
+        };
+        match self {
+            Self::Str(re) => Ok(str_find(re)),
+            Self::Bytes(re) => Ok(re.find(h.bytes()).map(|m| (m.start(), m.end()))),
+            Self::Scan(s) => {
+                let re = s
+                    .find
+                    .get_or_init(|| on_stack(s.depth, || Self::build_str(&s.text).ok()).flatten());
+                re.as_ref().map(str_find).ok_or(MatchError::Backtrack)
+            }
+        }
+    }
+
+    /// Whether this is the scan engine.
+    #[cfg(test)]
+    pub(crate) const fn is_scan(&self) -> bool {
+        matches!(self, Self::Scan(_))
+    }
+}
+
+/// `regex`'s syntax configuration of tier 1 (str: Unicode and UTF-8; bytes: neither; nest limit 2048).
+fn syntax_config(text: bool) -> syntax::Config {
+    syntax::Config::new()
+        .unicode(text)
+        .utf8(text)
+        .nest_limit(NEST_LIMIT)
+}
+
+/// Whether `hir` has a Unicode class of at least [`LARGE_CLASS_RANGES`] ranges (iterative: the HIR may nest
+/// 2048 levels deep).
+fn has_large_class(hir: &Hir) -> bool {
+    let mut stack = vec![hir];
+    while let Some(h) = stack.pop() {
+        match h.kind() {
+            HirKind::Class(Class::Unicode(c)) if c.ranges().len() >= LARGE_CLASS_RANGES => {
+                return true;
+            }
+            HirKind::Repetition(r) => stack.push(&r.sub),
+            HirKind::Capture(c) => stack.push(&c.sub),
+            HirKind::Concat(v) | HirKind::Alternation(v) => stack.extend(v.iter()),
+            HirKind::Empty | HirKind::Literal(_) | HirKind::Class(_) | HirKind::Look(_) => {}
+        }
+    }
+    false
 }
 
 /// A relaxed tier-1 prefilter in front of a backtracking engine (§A.6.11, ADR-098): a haystack it rejects
-/// has no match, because the relaxed text's language is a superset of the exact text's.
+/// has no match, because the relaxed text's language is a superset of the exact text's. Both tiers' prefilters
+/// run on the forward-only engine (ADR-108, ADR-115).
 #[derive(Debug)]
-pub(crate) struct Prefilter(Screen);
-
-/// The engine of a [`Prefilter`].
-#[derive(Debug)]
-enum Screen {
-    /// Tier 2's prefilter: `regex` with the crate-default 2 MiB lazy-DFA cache (ADR-079).
-    Regex(T1),
-    /// The tier-1 exact fallback's prefilter: the forward-only engine (ADR-108).
-    Forward(Box<Forward>),
-}
+pub(crate) struct Prefilter(Box<Forward>);
 
 impl Prefilter {
-    /// Tier 2's prefilter of the relaxed `text`, or `None` when it cannot be built or is useless.
-    fn regex(text: &str, bytes: bool, depth: u32, anchored: bool) -> Option<Self> {
-        let re = T1::build(text, bytes, depth).ok()?;
-        Self(Screen::Regex(re)).useful(anchored)
-    }
-
-    /// The tier-1 exact fallback's prefilter of the relaxed `text` on the forward-only engine with a lazy-DFA
-    /// cache of `cache_capacity` bytes, or `None` when its NFA cannot be built or it is useless. A lazy DFA that
-    /// cannot be built at that capacity leaves the prefilter on the linear NFA engines, never without one.
+    /// The prefilter of the relaxed `text` on the forward-only engine with a lazy-DFA cache of `cache_capacity`
+    /// bytes ([`PREFILTER_DFA_SIZE_LIMIT`] for the tier-1 exact fallback, ADR-108; `regex`'s 2 MiB for tier 2,
+    /// ADR-115), or `None` when its NFA cannot be built or it is useless. A lazy DFA that cannot be built at that
+    /// capacity leaves the prefilter on the linear NFA engines, never without one.
     pub(crate) fn forward(
         text: &str,
         bytes: bool,
@@ -171,7 +290,7 @@ impl Prefilter {
         cache_capacity: usize,
     ) -> Option<Self> {
         let engine = Forward::build(text, bytes, depth, cache_capacity)?;
-        Self(Screen::Forward(Box::new(engine))).useful(anchored)
+        Self(Box::new(engine)).useful(anchored)
     }
 
     /// `self`, unless it is useless: a text without anchors that matches the empty string matches every
@@ -183,31 +302,26 @@ impl Prefilter {
     /// `false`: the haystack has no match of the exact text (under search, `re.match` and, on the fullmatch
     /// engines, `re.fullmatch` semantics alike).
     pub(crate) fn admits(&self, h: Hay<'_>) -> bool {
-        match &self.0 {
-            Screen::Regex(re) => re.is_match(h),
-            Screen::Forward(f) => f.is_match(h),
-        }
+        self.0.is_match(h, false)
     }
 
-    /// Whether the forward-only engine has its lazy DFA (`None`: the prefilter runs on `regex`).
+    /// Whether the forward-only engine has its lazy DFA.
     #[cfg(test)]
-    pub(crate) fn has_lazy_dfa(&self) -> Option<bool> {
-        match &self.0 {
-            Screen::Regex(_) => None,
-            Screen::Forward(f) => Some(f.dfa.is_some()),
-        }
+    pub(crate) fn has_lazy_dfa(&self) -> bool {
+        self.0.dfa.is_some()
     }
 }
 
-/// The forward-only `is_match` engine of the tier-1 prefilter (ADR-108).
+/// The forward-only `is_match` engine of the prefilters (ADR-108) and of the tier-1 scan engine (ADR-115).
 ///
-/// `regex`'s engine needs a forward *and* a reverse lazy DFA in one cache; with the prefilter's 256 KiB cap the
-/// pair often does not fit (B12u's `\b\w{3,8}\b/\w+\.md$`: its relaxed text's reverse NFA has 12 366 states
-/// against the forward one's 2 979, and the reverse DFA alone exceeds the cap), and it then runs the bounded
-/// backtracker on every haystack, clearing its visited set each time. A yes/no answer
+/// `regex`'s engine builds a forward *and* a reverse lazy DFA, each with a cache of the capacity; with the
+/// prefilter's 256 KiB cap the reverse one often cannot be built (B12u's `\b\w{3,8}\b/\w+\.md$`: its relaxed
+/// text's reverse NFA has 12 366 states against the forward one's 2 979), and `regex` then builds neither and
+/// runs the bounded backtracker on every haystack, clearing its visited set each time. A yes/no answer
 /// needs no match start, so this engine builds only the forward half, from the same syntax configuration as
 /// [`T1`] (str: Unicode and UTF-8; bytes: neither; nest limit 2048; NFA size limit 64 MiB), without capture
-/// states, and searches with `earliest`. When the DFA cannot be built at the capacity, gives up (cache
+/// states, and searches with `earliest`, unanchored or anchored at the start (`re.match` on the scan engine).
+/// When the DFA cannot be built at the capacity, gives up (cache
 /// thrashing) or quits (a Unicode word boundary on a non-ASCII byte), the bounded backtracker answers on
 /// haystacks of at most [`BACKTRACK_MAX_HAYSTACK`] bytes that fit its visited capacity, and the `PikeVM` on the
 /// rest — the engines and the order of regex-automata `meta`'s `is_match_nofail`. Every engine answers
@@ -239,16 +353,22 @@ impl Forward {
     /// Builds `text` (on a large stack when `depth` is deep); `None` when the text does not parse or its NFA
     /// exceeds the size limit.
     fn build(text: &str, bytes: bool, depth: u32, cache_capacity: usize) -> Option<Self> {
-        on_stack(depth, || Self::build_here(text, bytes, cache_capacity)).flatten()
+        on_stack(depth, || {
+            let utf8 = !bytes;
+            let hir = syntax::parse_with(text, &syntax_config(utf8)).ok()?;
+            Self::from_hir(&hir, utf8, cache_capacity).ok()
+        })
+        .flatten()
     }
 
-    fn build_here(text: &str, bytes: bool, cache_capacity: usize) -> Option<Self> {
-        let utf8 = !bytes;
-        let syntax = syntax::Config::new()
-            .unicode(utf8)
-            .utf8(utf8)
-            .nest_limit(NEST_LIMIT);
-        let hir = syntax::parse_with(text, &syntax).ok()?;
+    /// Builds the engines of `hir` (`utf8`: a str text). An NFA that cannot be built is the error `regex` reports
+    /// for it (ADR-115): `regex` compiles the same forward NFA with capture states, which is never smaller.
+    fn from_hir(hir: &Hir, utf8: bool, cache_capacity: usize) -> Result<Self, String> {
+        let nfa_error = |e: &thompson::BuildError| match e.size_limit() {
+            Some(limit) => messages::engine_limit(&format!("compiled size exceeds {limit} bytes")),
+            // `regex::Error::Syntax` of `meta::BuildError`'s Display for an NFA error.
+            None => messages::engine_limit("error building NFA"),
+        };
         let nfa = thompson::Compiler::new()
             .configure(
                 thompson::Config::new()
@@ -257,15 +377,15 @@ impl Forward {
                     .shrink(false)
                     .which_captures(WhichCaptures::None),
             )
-            .build_from_hir(&hir)
-            .ok()?;
+            .build_from_hir(hir)
+            .map_err(|e| nfa_error(&e))?;
         // A prefix-literal prefilter, as `meta` builds it: leftmost-first, and only for an unanchored search.
         let pre = if hir.properties().look_set_prefix().contains(Look::Start) {
             None
         } else {
             regex_automata::util::prefilter::Prefilter::from_hirs_prefix(
                 regex_automata::MatchKind::LeftmostFirst,
-                &[&hir],
+                &[hir],
             )
         };
         let dfa = hybrid::dfa::Builder::new()
@@ -289,8 +409,8 @@ impl Forward {
         let pikevm = pikevm::Builder::new()
             .configure(pikevm::Config::new().prefilter(pre))
             .build_from_nfa(nfa)
-            .ok()?;
-        Some(Self {
+            .map_err(|e| nfa_error(&e))?;
+        Ok(Self {
             dfa,
             backtrack,
             pikevm,
@@ -299,8 +419,9 @@ impl Forward {
         })
     }
 
-    /// `is_match` under search semantics (str engines never match bytes that are not UTF-8).
-    fn is_match(&self, h: Hay<'_>) -> bool {
+    /// `is_match` under search semantics, or of a match starting at position 0 (`anchored`); str engines never
+    /// match bytes that are not UTF-8.
+    fn is_match(&self, h: Hay<'_>, anchored: bool) -> bool {
         let hay = if self.text {
             match h.text() {
                 Some(t) => t.as_bytes(),
@@ -309,7 +430,10 @@ impl Forward {
         } else {
             h.bytes()
         };
-        let input = Input::new(hay).earliest(true);
+        let mut input = Input::new(hay).earliest(true);
+        if anchored {
+            input.set_anchored(Anchored::Yes);
+        }
         let mut cache = self.caches.get();
         if let Some(dfa) = &self.dfa {
             let c = cache.dfa.get_or_insert_with(|| dfa.create_cache());
@@ -493,6 +617,9 @@ pub(crate) struct Texts {
     pub(crate) bytes: bool,
     /// The relaxed text has anchors (the prefilter is useful even if it matches the empty string).
     pub(crate) relaxed_anchored: bool,
+    /// The haystack shape: the tier-1 texts of a str pattern on path haystacks (`files`, `exclude`, branch and
+    /// test-name patterns, whose callers ask only yes/no questions) may run on the scan engine (ADR-115).
+    pub(crate) haystack: Haystack,
 }
 
 /// The lazily built exact fallback of a tier-1 pattern and its relaxed prefilter.
@@ -604,11 +731,24 @@ impl Compiled {
         if texts.tier2 {
             let exact = T2::build(&wrap(&texts.main), texts.bytes, depth)?;
             let relaxed = texts.relaxed.as_deref().and_then(|r| {
-                Prefilter::regex(&wrap(r), texts.bytes, depth, texts.relaxed_anchored)
+                Prefilter::forward(
+                    &wrap(r),
+                    texts.bytes,
+                    depth,
+                    texts.relaxed_anchored,
+                    DFA_SIZE_LIMIT,
+                )
             });
             return Ok(Self::T2 { relaxed, exact });
         }
-        let fast = T1::build(&wrap(&texts.main), texts.bytes, depth)?;
+        // ADR-115: below the eager-build estimate no engine of the text reaches a size limit (the premise of
+        // every lazily built variant), so the scan engine's lazily built span engine cannot fail either.
+        let fast = T1::build_tier1(
+            &wrap(&texts.main),
+            texts.bytes,
+            depth,
+            texts.haystack == Haystack::Path && !eager_exact,
+        )?;
         let fallback = Fallback {
             exact_src: texts.exact.as_deref().map(|e| wrap(e).into_boxed_str()),
             exact: OnceLock::new(),
@@ -654,12 +794,11 @@ impl Compiled {
                         e.is_match(h)
                     };
                 }
-                // The leftmost match starts at 0 iff some match does.
-                Ok(if prefix {
-                    fast.find(h).is_some_and(|(s, _)| s == 0)
+                if prefix {
+                    fast.matches_at_start(h)
                 } else {
-                    fast.is_match(h)
-                })
+                    Ok(fast.is_match(h))
+                }
             }
             Self::T2 { relaxed, exact } => {
                 if let Some(r) = relaxed
@@ -673,6 +812,15 @@ impl Compiled {
                     exact.is_match(h)
                 }
             }
+        }
+    }
+
+    /// Whether the tier-1 fast engine is the scan engine (`None`: tier 2).
+    #[cfg(test)]
+    pub(crate) fn fast_is_scan(&self) -> Option<bool> {
+        match self {
+            Self::T1 { fast, .. } => Some(fast.is_scan()),
+            Self::T2 { .. } => None,
         }
     }
 
@@ -693,7 +841,7 @@ impl Compiled {
                     };
                     return e.find(h);
                 }
-                Ok(fast.find(h))
+                fast.find(h)
             }
             Self::T2 { relaxed, exact } => {
                 if let Some(r) = relaxed
@@ -715,6 +863,7 @@ pub(crate) mod probe {
     thread_local! {
         static EXACT_RUNS: Cell<u64> = const { Cell::new(0) };
         static PREFILTER_OFF: Cell<bool> = const { Cell::new(false) };
+        static SCAN_OFF: Cell<bool> = const { Cell::new(false) };
         static FORWARD: Cell<ForwardRuns> = const { Cell::new(ForwardRuns { dfa: 0, backtrack: 0, pikevm: 0 }) };
     }
 
@@ -786,5 +935,16 @@ pub(crate) mod probe {
     /// the parity tests) or back on, for this thread.
     pub(crate) fn set_prefilter_off(off: bool) {
         PREFILTER_OFF.with(|c| c.set(off));
+    }
+
+    /// Whether tier-1 texts are built on `regex` only on this thread.
+    pub(super) fn scan_off() -> bool {
+        SCAN_OFF.with(Cell::get)
+    }
+
+    /// Builds tier-1 texts on `regex` only (`true`: the pre-ADR-115 behaviour, the reference of the parity
+    /// tests) or lets the scan engine take them again, for this thread.
+    pub(crate) fn set_scan_off(off: bool) {
+        SCAN_OFF.with(|c| c.set(off));
     }
 }

@@ -1,7 +1,8 @@
 //! Property tests (01 Addendum §A.8 item 5): `compile` never panics; the relaxed prefilter never rejects a
 //! haystack the exact pattern matches, and the tier-1 one changes no answer (ADR-098); the tier-1 prefilter's
-//! forward-only engine answers as `regex` does (ADR-108); the fast tier-1 text agrees with the exact text on
-//! every haystack that meets no condition bit; the cheap match kinds agree with the engines.
+//! forward-only engine answers as `regex` does (ADR-108), and so does the tier-1 scan engine (ADR-115); the fast
+//! tier-1 text agrees with the exact text on every haystack that meets no condition bit; the cheap match kinds
+//! agree with the engines.
 
 use proptest::prelude::*;
 
@@ -226,7 +227,7 @@ proptest! {
         prop_assert!(forward.is_some(), "{p:?} {opts:?}: {text:?} has no forward engine");
         let Some(forward) = forward else { return Ok(()) };
         if no_dfa {
-            prop_assert_eq!(forward.has_lazy_dfa(), Some(false));
+            prop_assert!(!forward.has_lazy_dfa());
         }
         for h in &hs {
             let long = format!("{LONG_PAD}{h}");
@@ -234,6 +235,51 @@ proptest! {
             for hay in [Hay::Str(h), Hay::Bytes(h.as_bytes()), Hay::Str(&long), Hay::Bytes(&invalid)] {
                 prop_assert_eq!(forward.admits(hay), reference.is_match(hay), "{:?} {:?}: {:?} on {:?}", p, opts, text, hay);
             }
+        }
+    }
+
+    /// The scan engine (ADR-115) answers `is_match`, a match at position 0 and the match span exactly as `regex`
+    /// does on every str tier-1 text, in the search and the fullmatch form, on short, longer-than-128-byte and
+    /// non-UTF-8 haystacks.
+    #[test]
+    fn scan_agrees_with_regex(p in pattern(), sel in 0_u8..16, full_form in any::<bool>(), hs in proptest::collection::vec(haystack(), 1..12)) {
+        let opts = options(Mode::Str, sel);
+        let Some(texts) = full_texts(&p, opts) else { return Ok(()) };
+        if texts.tier2 {
+            return Ok(());
+        }
+        let text = if full_form { full(&texts.main) } else { texts.main.to_string() };
+        let depth = texts.depth.saturating_add(1);
+        let Ok(reference) = T1::build(&text, false, depth) else { return Ok(()) };
+        let scan = T1::build_scan(&text, depth);
+        prop_assert!(scan.is_ok(), "{p:?} {opts:?}: {text:?}: {scan:?}");
+        let Ok(scan) = scan else { return Ok(()) };
+        prop_assert!(scan.is_scan());
+        for h in &hs {
+            let long = format!("{LONG_PAD}{h}");
+            let invalid = [h.as_bytes(), b"\xff"].concat();
+            for hay in [Hay::Str(h), Hay::Str(&long), Hay::Bytes(&invalid)] {
+                prop_assert_eq!(scan.is_match(hay), reference.is_match(hay), "{:?}: {:?} on {:?}", p, text, hay);
+                prop_assert_eq!(scan.matches_at_start(hay), reference.matches_at_start(hay), "{:?}: {:?} on {:?}", p, text, hay);
+                prop_assert_eq!(scan.find(hay), reference.find(hay), "{:?}: {:?} on {:?}", p, text, hay);
+            }
+        }
+    }
+
+    /// Path patterns answer `re.search`, `re.match`, `re.fullmatch` and `search_bytes` the same with and
+    /// without the scan engine (ADR-115).
+    #[test]
+    fn scan_keeps_every_answer(p in pattern(), sel in 0_u8..16, hs in proptest::collection::vec(haystack(), 1..12)) {
+        let opts = Options { haystack: Haystack::Path, ..options(Mode::Str, sel) };
+        let re = compile_engines(&p, opts);
+        probe::set_scan_off(true);
+        let reference = compile_engines(&p, opts);
+        probe::set_scan_off(false);
+        prop_assert_eq!(re.as_ref().err(), reference.as_ref().err(), "{:?} {:?}", p, opts);
+        let (Ok(re), Ok(reference)) = (re, reference) else { return Ok(()) };
+        let answers = |re: &PyRegex, h: &str| (re.search(h), re.match_prefix(h), re.fullmatch(h), re.search_bytes(h.as_bytes()));
+        for h in &hs {
+            prop_assert_eq!(answers(&re, h), answers(&reference, h), "{:?} {:?} on {:?}", p, opts, h);
         }
     }
 
