@@ -10,7 +10,8 @@ artifacts' allocator to a measurement of B3/B4/B6/B12 with the system allocator 
 `cfg(all(target_env = "musl", feature = "musl-mimalloc"))` (and never together with `dhat-heap`). The feature is off by
 default; `deny.toml` admits mimalloc only through `wrappers = ["snp"]`.
 
-**Measurement.** The `musl` job of `.github/workflows/bench.yml` (nightly and on dispatch) builds
+**Measurement.** The `musl` job of `.github/workflows/bench.yml` (nightly, on dispatch, and on pull requests that
+touch its `MUSL_PATHS`, see `bench/README.md`) builds
 `x86_64-unknown-linux-musl` twice and measures the musl scenarios with both allocators:
 
 ```sh
