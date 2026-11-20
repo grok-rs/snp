@@ -202,6 +202,10 @@ impl Sandbox {
 
     /// `chmod mode` (Windows: read-only for 0o444, else nothing).
     #[cfg(not(unix))]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+    )]
     pub(crate) fn chmod(&self, rel: &str, mode: u32) {
         let mut p = std::fs::metadata(self.path(rel)).unwrap().permissions();
         p.set_readonly(mode & 0o222 == 0);
