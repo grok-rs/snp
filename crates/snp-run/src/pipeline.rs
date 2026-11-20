@@ -194,16 +194,25 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     }
     // step 8: run_env
     let mut run_env = runenv::run_env(&cx.env, a);
-    // step 9: the stash guard
+    // step 9: the stash guard; ADR-133: on the stat-capable path with git >= 2.42, `git var GIT_ATTR_SYSTEM` (for
+    // ADR-119's proof after a checkout) runs overlapped with the stash's checkout, and only when one starts
+    let mut system_attributes = None;
     if stash {
-        let guard = snp_stash::enter(stash_ctx(
-            cx,
-            inv.store,
-            &git0,
-            &info,
-            &run_env,
-            !recovery_reported,
-        ))?;
+        let ask = cx.git_exe.caps.attr_system && six.stamp.is_some();
+        let (entered, system) =
+            enter_overlapping_system_query(ask, &git0, &info, &run_env, |notice| {
+                snp_stash::enter(stash_ctx(
+                    cx,
+                    inv.store,
+                    &git0,
+                    &info,
+                    &run_env,
+                    !recovery_reported,
+                    notice,
+                ))
+            });
+        let guard = entered?;
+        system_attributes = system;
         if let Some((k, v)) = guard.child_env_token() {
             run_env = run_env.patched(&EnvPatch::default().set(k, v));
         }
@@ -279,12 +288,6 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         .hooks
         .iter()
         .any(|h| !h.def.always_run || h.def.pass_filenames);
-    // ADR-133: after a checkout ADR-119 may prove the baseline empty; git >= 2.42 names its system attributes file
-    let ask_system = cx.git_exe.caps.attr_system
-        && st
-            .stash
-            .as_ref()
-            .is_some_and(|g| g.checked_out().is_some() && !g.cleared_intent_to_add());
     let side = install_beside_side_queries(
         cx,
         &rcx,
@@ -295,7 +298,6 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         &picked,
         &early,
         needs_files,
-        ask_system,
     )?;
     // step 15: cols, the file table, the classifier (on a clean `--all-files` run from trusted index modes, with the
     // before-diff taken here: ADR-106)
@@ -329,7 +331,7 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
             cx,
             st.stash.as_ref(),
             side.origins.as_deref(),
-            side.system_attributes.as_ref(),
+            system_attributes.as_ref(),
             &mut oracle,
         );
     }
@@ -370,7 +372,6 @@ fn install_beside_side_queries(
     picked: &Picked<'_>,
     early: &Early,
     needs_files: bool,
-    ask_system: bool,
 ) -> Result<Side, Failure> {
     let process_hooks = picked
         .to_install
@@ -393,25 +394,53 @@ fn install_beside_side_queries(
     let wants_staged = needs_files && files::wants_staged(sel, git, info);
     let have_early = early.tracked.is_some() && early.origins.is_some();
     let side_work = wants_staged || (stat && !have_early);
-    let (installed, side, system) = std::thread::scope(|s| {
+    let (installed, side) = std::thread::scope(|s| {
         let queries = || side_queries(git, wants_staged, stat, early);
         // no thread when the side queries have nothing to ask; inline when it cannot start
         let side = side_work.then(|| common::fork(s, queries));
-        // ADR-133: `git var GIT_ATTR_SYSTEM` with the executable and environment of the parity `git diff`, only for a
-        // Stat-mode oracle after a checkout (ADR-119's only use of it), per run; a failure is no answer
-        let system = (ask_system && stat).then(|| common::fork(s, || git.system_attributes()));
         let installed = cx.resolver.install_envs(&picked.to_install, rcx);
         let side = match side {
             Some(f) => f.join(|p| Err(panicked(&p))),
             None => queries(),
         };
-        let system = system.and_then(|f| f.join(|_| None));
-        (installed, side, system)
+        (installed, side)
     });
     installed?;
-    side.map(|side| Side {
-        system_attributes: system,
-        ..side
+    side
+}
+
+/// Step 9 with ADR-133's overlap: when `ask`, a thread waits for the stash's checkout notice and only then, when the
+/// worktree and the git directory are on filesystems the Stat mode accepts, asks `git var GIT_ATTR_SYSTEM` with the
+/// executable and environment of the parity `git diff` (`git0` with `run_env`; the worktree-lock token added after the
+/// stash does not reach attribute lookup). The query overlaps the checkout, and a run that checks nothing out spawns
+/// nothing (the stash drops the notice unsent). Per run, never kept. A thread that cannot start, a panic or a failed
+/// query is no answer: ADR-119's proof then falls back as without `git var`.
+fn enter_overlapping_system_query<T>(
+    ask: bool,
+    git0: &Git,
+    info: &RepoInfo,
+    run_env: &Env,
+    enter: impl FnOnce(Option<std::sync::mpsc::SyncSender<()>>) -> T,
+) -> (T, Option<snp_git::SystemAttributes>) {
+    if !ask {
+        return (enter(None), None);
+    }
+    let git = git0.with_env(run_env.clone());
+    let (tx, rx) = std::sync::mpsc::sync_channel::<()>(1);
+    std::thread::scope(|s| {
+        let git = &git;
+        let safe = |p: &std::path::Path| snp_os::fsinfo::stat_oracle_safe(p).unwrap_or(false);
+        let waiter = std::thread::Builder::new().spawn_scoped(s, move || {
+            rx.recv()
+                .ok()
+                .filter(|()| safe(&info.root) && safe(&info.git_dir))
+                .and_then(|()| git.system_attributes())
+        });
+        // no waiter: no notice either, so a checkout is not reported to a receiver that is gone
+        let notice = waiter.is_ok().then_some(tx);
+        let entered = enter(notice);
+        let system = waiter.ok().and_then(|h| h.join().ok().flatten());
+        (entered, system)
     })
 }
 
@@ -866,6 +895,7 @@ fn stash_ctx(
     info: &RepoInfo,
     run_env: &Env,
     report_recovery: bool,
+    checkout_notice: Option<std::sync::mpsc::SyncSender<()>>,
 ) -> StashCtx {
     let backend = Arc::new(ProcBackend {
         cancel: snp_core::cancel::CancelToken::new(),
@@ -889,6 +919,7 @@ fn stash_ctx(
             }
         }),
         report_recovery,
+        checkout_notice,
     }
 }
 
@@ -974,14 +1005,12 @@ fn small_tree(tracked: &IndexEntries) -> bool {
     true
 }
 
-/// Fan-out queries E (staged list), F (`ls-files -s -v -z`) and G (`config --list --show-origin -z`), and the system
-/// attributes file `git var` named after a checkout (ADR-133).
+/// Fan-out queries E (staged list), F (`ls-files -s -v -z`) and G (`config --list --show-origin -z`).
 #[derive(Debug, Default)]
 struct Side {
     staged: Option<snp_git::ZList>,
     tracked: Option<Arc<IndexEntries>>,
     origins: Option<Arc<ConfigListing>>,
-    system_attributes: Option<snp_git::SystemAttributes>,
 }
 
 /// The hooks of `cfg` that may run as processes (local and remote; meta and builtin hooks are in-process), among
@@ -1026,7 +1055,6 @@ fn side_queries(git: &Git, wants_staged: bool, stat: bool, early: &Early) -> Res
             staged: wants_staged.then(|| git.staged_files()).transpose()?,
             tracked,
             origins,
-            system_attributes: None,
         });
     }
     // E, F and G are independent read-only queries: each on its own thread, so one spawn is on the critical path; a
@@ -1049,7 +1077,6 @@ fn side_queries(git: &Git, wants_staged: bool, stat: bool, early: &Early) -> Res
             staged: staged.transpose()?,
             tracked,
             origins,
-            system_attributes: None,
         })
     })
 }
@@ -1280,6 +1307,7 @@ mod tests {
             verify: false,
             old_git: false,
             report_recovery: true,
+            checkout_notice: None,
         })
         .unwrap();
         // the stash took the unstaged line away; a "hook" modified the file
