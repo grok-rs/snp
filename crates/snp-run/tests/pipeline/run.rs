@@ -1647,15 +1647,19 @@ fn one_hook_uses_the_stat_mode_only_on_a_small_tree() {
 
 /// ADR-117 (B8): a stash of unstaged files rewrites the index (its checkout), so F from step 6 is asked again; G, which
 /// does not read the index, is kept (the worktree lock was not contended). On a small tree one process hook then still
-/// uses the Stat mode: the baseline `git diff` and no after-hook one when the hook changes nothing, and a real diff
-/// that reports the hook's edit when it does. A larger tree keeps Git mode. Below three CPUs F is not taken at step 6
-/// and nothing changes.
+/// uses the Stat mode: no `git diff` at all when the hook changes nothing (ADR-119 proves the post-checkout baseline
+/// empty on the warm path, held here by a stepping clock), and only the after-hook diff that reports the hook's edit
+/// when it does. A larger tree keeps Git mode (the baseline and the after-hook diff). Below three CPUs F is not taken
+/// at step 6 and nothing changes.
 #[test]
 fn one_hook_keeps_the_stat_mode_after_the_stash_rewrote_the_index() {
     let hoist = snp_proc::xargs::cpu_count().get() >= 3;
     for (files, edits) in [(3_usize, false), (3, true), (300, false)] {
         let stat = hoist && files == 3;
         let mut h = H::new();
+        h.clock = Some(std::sync::Arc::new(StepClock::new(Duration::from_millis(
+            1,
+        ))));
         let entry = if edits {
             "sh -c 'echo more >> t.txt' --"
         } else {
@@ -1693,7 +1697,11 @@ fn one_hook_keeps_the_stat_mode_after_the_stash_rewrote_the_index() {
         let count = |p: &str| spawns.iter().filter(|s| s.starts_with(p)).count();
         assert_eq!(
             count("diff --no-ext-diff"),
-            if stat && !edits { 1 } else { 2 },
+            match (stat, edits) {
+                (true, false) => 0,
+                (true, true) => 1,
+                (false, _) => 2,
+            },
             "{files} files, edits={edits}:\n{}",
             spawns.join("\n")
         );
@@ -1751,13 +1759,17 @@ fn one_hook_after_an_intent_to_add_clearing_matches_git_diff() {
 }
 
 /// ADR-117: after a wait for the worktree lock G is asked again as well (another run's hooks may have changed the
-/// config files meanwhile); the Stat mode still applies.
+/// config files meanwhile); the Stat mode still applies, and ADR-119 proves the post-checkout baseline empty from the
+/// fresh G (the wait comes before the warm window, which a stepping clock holds here).
 #[test]
 fn a_contended_lock_asks_g_again() {
     if snp_proc::xargs::cpu_count().get() < 3 {
         return;
     }
     let mut h = H::new();
+    h.clock = Some(std::sync::Arc::new(StepClock::new(Duration::from_millis(
+        1,
+    ))));
     h.config(&local(&sys(
         "hook",
         "hook",
@@ -1796,7 +1808,7 @@ fn a_contended_lock_asks_g_again() {
         "{}",
         spawns.join("\n")
     );
-    assert_eq!(count("diff --no-ext-diff"), 1, "{}", spawns.join("\n"));
+    assert_eq!(count("diff --no-ext-diff"), 0, "{}", spawns.join("\n"));
     assert_eq!(h.read("u.txt"), "u\nunstaged\n", "restored");
 }
 

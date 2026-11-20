@@ -10,6 +10,8 @@
 mod harness;
 
 #[cfg(test)]
+mod checkout_baseline;
+#[cfg(test)]
 mod extensions;
 #[cfg(test)]
 mod hook_impl;
