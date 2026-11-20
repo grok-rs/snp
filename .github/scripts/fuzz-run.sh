@@ -31,7 +31,12 @@ for t in $(cargo +nightly fuzz list); do
             # default), so a 64 MB quarantine keeps use-after-free detection and frees the headroom. Leak detection
             # stays on. Do not raise -rss_limit_mb instead: purging would only start at half the new cap, RSS roughly
             # doubles, and 512 MB is the §13.5 limit. -malloc_limit_mb only states the default (= rss_limit_mb).
-            export ASAN_OPTIONS="${ASAN_OPTIONS:+$ASAN_OPTIONS:}quarantine_size_mb=64"
+            # ASan also keeps the stack of every allocation and free in its StackDepot, which never shrinks: a target
+            # whose inputs nest (cfgv_validate formats, clones and drops trees of values) adds about 1.4 new 30-frame
+            # stacks per execution; it hit the cap in nightly run 44505709240 with a 30 MB live heap, and locally the
+            # depot held 257 MB of 421 MB RSS after 756k executions. compress_stack_depot=2 (LZW, in a background
+            # thread) stores the same stacks in about a sixth of that (42 MB); reports keep their full stacks.
+            export ASAN_OPTIONS="${ASAN_OPTIONS:+$ASAN_OPTIONS:}quarantine_size_mb=64:compress_stack_depot=2"
             RUST_MIN_STACK=262144 "$bin/$t" -max_total_time="$seconds" -timeout=5 -rss_limit_mb=512 \
                 -malloc_limit_mb=512 -artifact_prefix="fuzz/artifacts/$t/" "fuzz/corpus/$t"
         )

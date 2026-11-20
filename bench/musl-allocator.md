@@ -29,6 +29,9 @@ and costs at most 2 MiB of peak RSS on B4/B6/B12u; otherwise keep the system all
 dependency in the default build). Adopting it means setting `[musl] adopted = "mimalloc"` and enabling
 `--features musl-mimalloc` for the musl targets of the release build (WP-37).
 
-**Status.** Provisional: **system allocator** (`adopted = "system"`). B3/B4/B6/B12u need `snp run` (WP-32), which is
-not merged yet; the measurement runs as soon as the bench workflow's `MUSL_SCENARIOS` is widened to
-`B1,B3,B4,B6,B12u`, and its result is recorded here and in ADR-079.
+**Status.** **System allocator** (`adopted = "system"`), measured. The musl job has measured B1, B3, B4, B6 and B12u
+nightly since `MUSL_SCENARIOS` was widened (ADR-091). Run 44301994701 (2026-11-18) found mimalloc significantly
+faster on B4 (−5.5 %), B6 (−23.4 %) and B12u (−10.1 %), at a cost of +34.3/+21.3/+41.9 MiB of peak RSS. Most of that
+cost came from mimalloc's transparent huge pages, so mimalloc is now built with `no_thp` (ADR-118). Even then it costs
++0.5/+2.4/+5.3 MiB on B4/B6/B12u (four CPUs, `musl-system` 19.1/8.2/16.5 MiB), more than the 2 MiB the rule allows on
+B6 and B12u.

@@ -140,6 +140,11 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
 
 ### Fixed
 
+- The nightly musl bench passes again (ADR-118). The `musl-mimalloc` build exceeded the hard peak-RSS budgets on
+  B4/B6/B12u (53.7/29.7/58.8 MiB), because mimalloc madvised its arenas into transparent huge pages. mimalloc is now
+  built with `no_thp` (19.6/10.6/21.8 MiB on four CPUs). The released musl binaries use the system allocator and are
+  unchanged.
+
 - `cargo xtask bench setup` no longer fails with `destination path … already exists` when an interrupted clone left
   the pre-commit-hooks mirror directory without `HEAD`: it removes it and clones again.
 
@@ -179,6 +184,13 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
 - CI fuzzing: the fuzz shards run with a 64 MB AddressSanitizer quarantine (`ASAN_OPTIONS=quarantine_size_mb=64`,
   default 256 MB) to keep targets well below the 512 MB RSS cap they crept toward; leak detection, use-after-free
   detection and the §13.5 limits are unchanged.
+- CI fuzzing: the fuzz shards also compress AddressSanitizer's stack depot (`compress_stack_depot=2`). The depot keeps
+  every distinct allocation and free stack for the life of the run and never shrinks; `cfgv_validate`, whose inputs
+  are nested values, added about 1.4 stacks per execution and crossed the 512 MB RSS cap after about 840k executions
+  of the nightly run with a 30 MB live heap. Compressed, the depot takes about a sixth of the memory (locally 257 MB
+  to 42 MB, peak RSS 421 MB to 246 MB after ~756k executions); reports keep their full stacks, and the RSS cap and
+  every other limit are unchanged. The product was not at fault: without sanitizers the target stays at 31 MB, and the
+  reported input alone peaks at 39 MB.
 - A `files`/`exclude` pattern with `\b` or `\B` no longer runs the backtracking engine on every non-ASCII path: the
   relaxed linear prefilter now guards tier 1's exact fallback too, so a path it rejects is "not matched" in
   milliseconds (as in pre-commit) instead of taking seconds or aborting the run with a backtracking-limit error
