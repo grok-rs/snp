@@ -2604,9 +2604,10 @@ when: (a) the effective configuration, from fan-out query G's records (`git conf
 asked; `Git::config_listing`, the last value of each key, `-c` and `GIT_CONFIG_*` included), has `core.autocrlf`,
 `core.fsmonitor`, `core.useBuiltinFSMonitor`, `core.ignoreStat`, `core.sparseCheckout` and `index.sparse` unset or false
 (git's boolean reading; `input`, a hook path or any uncertain value fails), `core.fileMode` a boolean, a value for
-`core.hooksPath` when set, and no `hook.*` key (configuration-based hooks); and `GIT_TEST_FSMONITOR` /
-`GIT_FSMONITOR_TEST` are unset; (b) no attributes file exists: every attributes input of the snapshot is missing
-(ADR-027/078's complete list: `core.attributesFile` or its default, the system files `/etc/gitattributes` and
+`core.hooksPath` when set, no `hook.*` key (configuration-based hooks), and no `core.attributesFile` or `attr.tree`
+key at all, whatever its value; and `GIT_TEST_FSMONITOR` / `GIT_FSMONITOR_TEST` are unset; (b) no attributes file
+exists: every attributes input of the snapshot is missing (ADR-027/078's complete list: the default attributes file
+that applies when `core.attributesFile` is unset, the system files `/etc/gitattributes` and
 `<prefix>/etc/gitattributes`, `<prefix>` both of the `git` on `PATH` and of its resolved target, which this ADR adds for
 packagers that link `bin/git` into a versioned tree and build it with `sysconfdir=<prefix>/etc` (Homebrew, Linuxbrew),
 `info/attributes` of the git and common directories, and the `.gitattributes` of every directory holding a tracked
@@ -2623,7 +2624,10 @@ regular file whose owner-executable bit matches the mode under `core.fileMode` (
 umask without `u+x` would show a mode change), and no other tracked path reaches its inode (a case or normalization twin
 on an insensitive filesystem, a hard link); (f) the platform is Linux: elsewhere the system attributes file of the usual
 builds (Xcode's git, a packager's own `sysconfdir`) is not provably among the inputs, so a missing input there proves
-nothing. Anything else, and Git mode (Windows, other filesystems, more than 16 384 entries, `SNP_DIFF_MODE=git`), takes
+nothing. (a)'s attributes keys come from git's listing, not from the oracle's config reader (`gitconfig.rs`), because
+that reader is best effort: where it misreads a file (a UTF-8 BOM, which git skips; a `%(prefix)/` value, which git ≥
+2.31 expands) it costs ADR-027 at most a spurious "changed", but here a configured attributes file it failed to see
+would be a missing input and would prove the wrong thing. Anything else, and Git mode (Windows, other filesystems, more than 16 384 entries, `SNP_DIFF_MODE=git`), takes
 the real baseline. `SNP_VERIFY_BASELINE=1` takes a proven baseline with the real `git diff` and prints ADR-078's
 mismatch notice when it is not empty.
 **Rejected.** (a) Reading the assume-unchanged and skip-worktree tags (`ls-files -v`) to fail closed on them: apart from
@@ -2643,7 +2647,8 @@ ADR-078's 250 ms warm window and still takes the diff (its other 15 processes co
 stat -e instructions:u` over the native tree agrees within its noise (medians of seven: 2,965 M and 2,807 M before,
 2,527 M and 2,574 M after). Runs on macOS, and runs with an attributes file, `core.autocrlf`, a `post-checkout` or
 `post-index-change` hook, a symbolic link in the patch, an intent-to-add entry or Git mode, are unchanged. Tests: a
-counting probe for the B8 shape, one case per condition above (each runs the diff; a skip-worktree or assume-unchanged
+counting probe for the B8 shape, one case per condition above (each runs the diff; a `core.attributesFile` with a converting filter in a BOM-prefixed global config, a `%(prefix)/`
+value and an `attr.tree` the reader cannot see run it too; a skip-worktree or assume-unchanged
 `.gitattributes` deleted from the worktree, with a smudge filter, is why (b) reads the index: elided, that run reports
 "files were modified by this hook"), fsmonitor (configured or `GIT_TEST_FSMONITOR`), `index.sparse`, assume-unchanged,
 skip-worktree, untracked-cache, mode-only and directory-behind-a-symlink cases, and a randomized differential; every run
