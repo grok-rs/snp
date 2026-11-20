@@ -139,6 +139,7 @@ fn run(
         columns: 80,
         facts: &facts,
         cancel: &cancel,
+        cache: None,
     };
     let mut argv: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
     argv.extend(["README", "new.txt", "Dir/b.txt", "run.sh"].map(OsStr::new));

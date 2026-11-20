@@ -12,6 +12,7 @@ use snp_hooks_data::Epoch;
 use snp_pycompat::codec::decode_utf8;
 use snp_pycompat::repr::{repr_str, repr_str_tuple};
 
+use crate::content_cache::Bytes;
 use crate::framework::{self, PyOut, io_exc};
 use crate::{HookCx, Outcome};
 
@@ -57,14 +58,37 @@ pub(crate) fn filenames(ns: &Namespace) -> Vec<&OsStr> {
         .collect()
 }
 
-/// `open(name, 'rb').read()` relative to the hook's cwd.
-pub(crate) fn read_all(cx: &HookCx<'_>, name: &OsStr) -> Result<Vec<u8>, PyExc> {
-    std::fs::read(framework::at(cx, name)).map_err(|e| io_exc(&e, name))
+/// `open(name, 'rb').read()` relative to the hook's cwd: through the window's content cache when there is one
+/// (ADR-131: a validated hit, else a fill), else `std::fs::read`.
+pub(crate) fn read_all(cx: &HookCx<'_>, name: &OsStr) -> Result<Bytes, PyExc> {
+    let path = framework::at(cx, name);
+    match cache(cx) {
+        Some(c) => c.read(name, &path),
+        None => std::fs::read(path).map(Bytes::Owned),
+    }
+    .map_err(|e| io_exc(&e, name))
 }
 
-/// `open(name, 'rb').read(n)`: at most `n` leading bytes.
+/// The window's content cache when this hook may use it (its cwd is the cache's root, ADR-131).
+pub(crate) fn cache<'a>(cx: &HookCx<'a>) -> Option<&'a crate::ContentCache> {
+    cx.cache.and_then(|c| c.view(cx.root))
+}
+
+/// `open(name, 'rb').read(n)`: at most `n` leading bytes. A validated cache hit serves them (ADR-131); a miss reads
+/// as before and fills nothing.
 pub(crate) fn read_head(cx: &HookCx<'_>, name: &OsStr, n: u64) -> Result<Vec<u8>, PyExc> {
-    let f = std::fs::File::open(framework::at(cx, name)).map_err(|e| io_exc(&e, name))?;
+    let path = framework::at(cx, name);
+    if let Some(b) = cache(cx).and_then(|c| c.hit(name, &path)) {
+        let head = b
+            .get(..usize::try_from(n).unwrap_or(usize::MAX).min(b.len()))
+            .unwrap_or_default();
+        let mut v = Vec::new();
+        if v.try_reserve_exact(head.len()).is_ok() {
+            v.extend_from_slice(head);
+            return Ok(v);
+        }
+    }
+    let f = std::fs::File::open(path).map_err(|e| io_exc(&e, name))?;
     let mut buf = Vec::new();
     f.take(n)
         .read_to_end(&mut buf)
@@ -72,9 +96,19 @@ pub(crate) fn read_head(cx: &HookCx<'_>, name: &OsStr, n: u64) -> Result<Vec<u8>
     Ok(buf)
 }
 
-/// `open(name, 'wb').write(bytes)` on the same inode (09 §2.8, `snp_os::fs::rewrite_in_place`).
+/// `open(name, 'wb').write(bytes)` on the same inode (09 §2.8, `snp_os::fs::rewrite_in_place`). The name's cache
+/// entry is evicted first, whatever the write then does (ADR-131).
 pub(crate) fn rewrite(cx: &HookCx<'_>, name: &OsStr, bytes: &[u8]) -> Result<(), PyExc> {
-    snp_os::fs::rewrite_in_place(&framework::at(cx, name), bytes).map_err(|e| io_exc(&e, name))
+    evict(cx, name);
+    let path = framework::at(cx, name);
+    snp_os::fs::rewrite_in_place(&path, bytes).map_err(|e| io_exc(&e, name))
+}
+
+/// Drops `name` from the window's content cache before a native writes it (ADR-131).
+pub(crate) fn evict(cx: &HookCx<'_>, name: &OsStr) {
+    if let Some(c) = cache(cx) {
+        c.evict(name);
+    }
 }
 
 /// `print(prefix + name + suffix)` with the file name as raw bytes.

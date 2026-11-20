@@ -114,7 +114,7 @@ impl NativeHook for FixEncodingPragma {
             let Some(new) = kernels::fix_encoding_pragma(&content, remove, &pragma) else {
                 return FileStep::Unchanged;
             };
-            if new != content
+            if new.as_slice() != &*content
                 && let Err(e) = rewrite(cx, name, &new)
             {
                 return FileStep::Crash(e);
@@ -124,7 +124,7 @@ impl NativeHook for FixEncodingPragma {
             } else {
                 print_name(out, format!("Added `{shown}` to ").as_bytes(), name, b"");
             }
-            if new == content {
+            if new.as_slice() == &*content {
                 return FileStep::Failed;
             }
             framework::repo_path(name).map_or(FileStep::Failed, FileStep::Changed)

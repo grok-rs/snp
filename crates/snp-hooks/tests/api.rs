@@ -21,9 +21,12 @@ mod api {
     use snp_core::path::RepoPath;
     use snp_git::Git;
     use snp_git::pch_facts::PchFacts;
+    use snp_hooks::content_cache::{self, Stats};
     use snp_hooks::framework::{self, FileStep, PyOut};
     use snp_hooks::pygrep::{self, Compiled};
-    use snp_hooks::{Epoch, HookCx, NativeHook, NativeSource, Outcome, fail, hazmat, pch};
+    use snp_hooks::{
+        ContentCache, Epoch, HookCx, NativeHook, NativeSource, Outcome, fail, hazmat, pch,
+    };
     use snp_pyre::RegexCache;
 
     fn send_sync<T: Send + Sync>() {}
@@ -63,7 +66,13 @@ mod api {
     }
 
     /// The public fields of `HookCx`.
-    fn hook_cx(git: &Git, facts: &PchFacts, env: &Env, cancel: &CancelToken) {
+    fn hook_cx(
+        git: &Git,
+        facts: &PchFacts,
+        env: &Env,
+        cancel: &CancelToken,
+        cache: Option<&ContentCache>,
+    ) {
         let cx = HookCx {
             root: Path::new("/r"),
             env,
@@ -74,6 +83,7 @@ mod api {
             columns: 80,
             facts,
             cancel,
+            cache,
         };
         native_hook(&Probe, &cx);
     }
@@ -87,11 +97,13 @@ mod api {
         send_sync::<FileStep>();
         send_sync::<Compiled>();
         debug::<Compiled>();
+        send_sync::<ContentCache>();
+        debug::<ContentCache>();
     }
 
     #[test]
     fn hook_contract() {
-        has::<fn(&Git, &PchFacts, &Env, &CancelToken)>(hook_cx);
+        has::<fn(&Git, &PchFacts, &Env, &CancelToken, Option<&ContentCache>)>(hook_cx);
         has::<fn(&dyn NativeHook, &HookCx<'_>)>(native_hook);
         assert!(Probe.reports_modifications_exactly());
         // ADR-102: the provided `facts` method names no fact by default
@@ -157,9 +169,39 @@ mod api {
         has::<fn(&Compiled, &[&OsStr], &Path, &RegexCache, &CancelToken) -> Outcome>(
             pygrep::run_partition,
         );
+        has::<
+            fn(
+                &Compiled,
+                &[&OsStr],
+                &Path,
+                &RegexCache,
+                &CancelToken,
+                Option<&ContentCache>,
+            ) -> Outcome,
+        >(pygrep::run_partition_cached);
         has::<fn(&str, &[&[u8]]) -> Vec<u8>>(fail::output);
         has::<fn(&[OsString], &Env) -> i32>(hazmat::in_hook_main);
         has::<fn(&HazmatTool, &Env, &CancelToken) -> Result<i32, Failure>>(hazmat::cli);
         has::<&'static ParserSpec>(hazmat::HAZMAT_PY_SPEC);
+    }
+
+    /// ADR-131: the content cache of a window of consecutive in-process hooks.
+    #[test]
+    fn content_cache() {
+        has::<fn(&Path, bool) -> Option<ContentCache>>(ContentCache::new);
+        has::<fn(&ContentCache) -> Stats>(ContentCache::stats);
+        has::<fn(&ContentCache) -> u64>(ContentCache::mismatches);
+        has::<fn(&str) -> bool>(content_cache::reads_contents);
+        has::<fn() -> u64>(content_cache::process_hits);
+        has::<usize>(content_cache::PER_FILE_CAP);
+        has::<usize>(content_cache::TOTAL_CAP);
+        has::<std::time::Duration>(content_cache::RACY_WINDOW);
+        let s = Stats {
+            hits: 0,
+            stale: 0,
+            fills: 0,
+            refused: 0,
+        };
+        assert_eq!(s, Stats::default());
     }
 }

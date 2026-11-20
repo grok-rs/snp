@@ -96,7 +96,10 @@ pub(crate) fn text_write_bytes(text: &str, windows: bool) -> Cow<'_, str> {
 /// The file is read through a read-only handle, so a read-only file that needs no change passes (D-CRASH-23,
 /// register row "and the other fixers"); one that does need a change fails with Python's `PermissionError` when
 /// it is rewritten. A missing file or a directory raises the same exception `open` would.
-pub(crate) fn read_for_update(cx: &HookCx<'_>, name: &OsStr) -> Result<Vec<u8>, PyExc> {
+pub(crate) fn read_for_update(
+    cx: &HookCx<'_>,
+    name: &OsStr,
+) -> Result<crate::content_cache::Bytes, PyExc> {
     read_all(cx, name)
 }
 

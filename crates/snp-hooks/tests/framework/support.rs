@@ -292,6 +292,7 @@ impl Ctx {
             columns: 80,
             facts: &self.facts,
             cancel: &self.cancel,
+            cache: None,
         }
     }
 }
