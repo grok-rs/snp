@@ -60,6 +60,12 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   schema defaults and the typed model they then dropped (B10, 1,000 hooks: 194M -> 160M instructions, 168k -> 137k
   allocations). The signal handler reads `SNP_KILL_GRACE` from the startup environment instead of capturing the
   process environment a second time. Output, errors and warnings are unchanged.
+- `snp gc` checks the tracked configs and the used manifests without building the typed model (new
+  `snp_config::facts` projections of the checked value, and `check_manifest_bytes` for the embedded pre-commit-hooks
+  manifests), skips the key derivation of hooks without dependencies (their key is the repository's), resolves
+  local-path repositories with an in-place `realpath` and decodes each `.snp-repo.json` without a JSON tree (B11, 200
+  configs and 500 repositories: 162M -> 114M instructions, 191k -> 114k allocations, 27.7 -> 15.3 MB allocated). The
+  removal set, the kept markers and the output are unchanged.
 - Faster stash of large unstaged changes on Linux: when the stat stamps of the patch's files prove they did not change
   since the run took the worktree lock, and `git diff-index --name-only` shows no other changed file, the stash no
   longer runs a second full `git diff-index --binary` to re-verify the patch (ADR-097). snp's own CPU in the 10 MB

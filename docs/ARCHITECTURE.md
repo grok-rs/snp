@@ -1671,6 +1671,23 @@ pub fn load_manifest_bytes(bytes: &[u8], display: &OsStr, o: &LoadOpts<'_>) -> R
 /// `validate-manifest`; `--strict`/`--portable` keep `load_config`.
 pub fn check_config(src: &ConfigSource, o: &LoadOpts<'_>) -> Result<cfgv::Value, ConfigError>;
 pub fn check_manifest(path: &Path, display: &OsStr, o: &LoadOpts<'_>) -> Result<cfgv::Value, ConfigError>;
+pub fn check_manifest_bytes(bytes: &[u8], display: &OsStr, o: &LoadOpts<'_>) -> Result<cfgv::Value, ConfigError>;
+/// gc's projections of a checked value (§5.6): what `Config::repos` / `Manifest::hooks` hold for the keys gc reads.
+/// `convert::repo_config` and `config_repos` share one `repo:` classifier (local / meta / builtin only with the
+/// extensions / remote); local and manifest hooks default `additional_dependencies` to `[]`, a remote config hook keeps
+/// its own (`None` = the manifest's); `ManifestFacts::deps` keeps the last duplicate id like `Manifest::get`.
+pub mod facts {
+    pub use cfgv::Value;
+    #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub enum RepoFacts<'a> {
+        Remote { repo: &'a str, rev: &'a str, hooks: Vec<HookFacts<'a>> },
+        Local { deps: Vec<Vec<Arc<str>>> }, Meta, Builtin,
+    }
+    #[derive(Debug, Clone, PartialEq, Eq)] pub struct HookFacts<'a> { pub id: &'a str, pub deps: Option<Vec<Arc<str>>> }
+    #[derive(Debug, Clone, PartialEq, Eq, Default)] pub struct ManifestFacts<'a> { pub hooks: Vec<(&'a str, Vec<Arc<str>>)> }
+    impl ManifestFacts<'_> { pub fn deps(&self, id: &str) -> Option<&[Arc<str>]>; }
+    pub fn config_repos(checked: &Value, ext: super::ExtMode) -> Vec<RepoFacts<'_>>;
+    pub fn manifest_hooks(checked: &Value) -> ManifestFacts<'_>;
+}
 /// pre-commit's schemas reproduced item by item with cfgv 0.3 MapItem impls (01 §3–§5). `repo: builtin` validation
 /// (no `rev`; `entry`/`additional_dependencies` forbidden; `language` absent or `system`) is part of the config schema
 /// as cfgv MapItems with cfgv-style contexts and messages (ADR-070); the unknown-id check stays in snp-repo's merge.
@@ -3133,7 +3150,7 @@ directory` (snp brand) once per process, then waits (cancel observed every 50 ms
 ### 5.6 gc, clean, crash log, sweep
 
 * **gc** (exclusive; marking in `snp_cmd::gc`): read `configs-v1` (`TrackedConfig { path, project_root }`); for each
-  tracked config: `load_config` (warnings printed, parity) → mark used keys with pre-commit's `_mark_used_repos` rules
+  tracked config: `check_config` (warnings printed, parity) → mark used keys with pre-commit's `_mark_used_repos` rules
   (meta skipped, local keys by deps, remote by `(repo, rev)` and per-hook deps, manifest unreadable ⇒ unused), deriving
   every key with `RepoId::from_config(repo, tracked.project_root)` — relative local repos resolve against the recorded
   project root, never gc's cwd (ADR-075); a remote `(repo, rev)` whose manifest is loadable from the embedded Tier A
@@ -3155,6 +3172,11 @@ directory` (snp brand) once per process, then waits (cancel observed every 50 ms
   derived); sweep decides orphan repository locks from its own `repos-v1` listing taken after the retirements, skips
   `<hex32>.lock` entries by name when it walks the environments' `.snp-tools.json` sidecars, and reads no sidecar
   when no tool version is older than an hour.
+  gc loads configs and manifests check-only (`check_config`, `check_manifest`, `check_manifest_bytes` for the Tier A
+  profile): the schema defaults and the typed model add no error and no warning, so a check succeeds and warns exactly
+  when the full load does, and marking reads its keys through `snp_config::facts`. A manifest hook that ends up
+  without dependencies uses the base key and marker its repository entry already marked; only hooks with dependencies
+  derive more. The equality of the marks with the old full-load marking is a property test (`store_cmds` tests).
 * **Config tracking on a fresh store** (C1): pre-commit creates its store before `mark_config_used`. snp's store is
   lazy, so `Store::mark_config_used` on a missing store keeps `(cfg_realpath, project_root)` in memory and the first
   successful `ensure_created` of that handle (or of try-repo's copy of it) records it; a fresh-store

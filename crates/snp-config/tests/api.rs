@@ -16,6 +16,7 @@ mod api {
         self, Condition, FailOnChanges, FastPath, HookExt, OutputMode, Priority, RootExt,
         StageFixed,
     };
+    use snp_config::facts;
     use snp_config::migrate::{self, Outcome};
     use snp_config::overlay::{self, HookPatch, Overlay};
     use snp_config::revline::{self, RevUpdate, Rewrite};
@@ -200,6 +201,30 @@ mod api {
         has::<fn(&Path, &OsStr, &LoadOpts<'_>) -> Result<cfgv::Value, ConfigError>>(
             snp_config::check_manifest,
         );
+        has::<fn(&[u8], &OsStr, &LoadOpts<'_>) -> Result<cfgv::Value, ConfigError>>(
+            snp_config::check_manifest_bytes,
+        );
+        has::<for<'a> fn(&'a facts::Value, ExtMode) -> Vec<facts::RepoFacts<'a>>>(
+            facts::config_repos,
+        );
+        has::<for<'a> fn(&'a facts::Value) -> facts::ManifestFacts<'a>>(facts::manifest_hooks);
+        let m = facts::ManifestFacts {
+            hooks: vec![("h", vec![Arc::from("dep")])],
+        };
+        has::<Option<&[Arc<str>]>>(m.deps("h"));
+        has::<facts::RepoFacts<'_>>(facts::RepoFacts::Remote {
+            repo: "r",
+            rev: "v1",
+            hooks: vec![facts::HookFacts {
+                id: "h",
+                deps: None,
+            }],
+        });
+        has::<facts::RepoFacts<'_>>(facts::RepoFacts::Local {
+            deps: vec![Vec::new()],
+        });
+        has::<facts::RepoFacts<'_>>(facts::RepoFacts::Meta);
+        has::<facts::RepoFacts<'_>>(facts::RepoFacts::Builtin);
         has::<fn(Brand, ExtMode) -> &'static cfgv::Schema>(schema::config_schema);
         has::<fn(Brand) -> &'static cfgv::Schema>(schema::manifest_schema);
         has::<
