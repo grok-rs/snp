@@ -13,6 +13,7 @@ mod backend;
 mod exe;
 mod git;
 pub mod hookscripts;
+pub mod index_file;
 mod messages;
 mod owned;
 pub mod pch_facts;
