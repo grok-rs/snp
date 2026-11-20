@@ -58,6 +58,9 @@ const RUNS: u32 = 50;
 const RSS_RUNS: u32 = 10;
 /// The fixed identity and dates of every fixture commit.
 const GIT_DATE: &str = "2024-01-01T00:00:00Z";
+/// [`GIT_DATE`] in seconds since the Unix epoch: the modification time of every generated fixture file and directory
+/// (ADR-136), so that no index entry is racily clean.
+const GIT_DATE_UNIX: u64 = 1_704_067_200;
 const GIT_NAME: &str = "snp bench";
 const GIT_EMAIL: &str = "bench@snp.invalid";
 /// The run-record schema version written; schema 1 records (before the paired rounds, counters and host facts of
@@ -804,7 +807,9 @@ fn remove_tree(path: &Path) -> anyhow::Result<()> {
     }
 }
 
-/// Copies the tree `from` to `to` (symlinks as symlinks on Unix, permissions kept by `fs::copy`).
+/// Copies the tree `from` to `to` (symlinks as symlinks on Unix, permissions kept by `fs::copy`, modification times
+/// kept as `cp -p` keeps them: B9's per-tool copy of `noop10` must keep the fixed times of ADR-136, or its first
+/// `git commit` would record entries as new as the index it writes, racily clean).
 fn copy_tree(from: &Path, to: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(to).with_context(|| format!("creating {}", to.display()))?;
     for entry in std::fs::read_dir(from).with_context(|| format!("reading {}", from.display()))? {
@@ -822,9 +827,72 @@ fn copy_tree(from: &Path, to: &Path) -> anyhow::Result<()> {
             bail!("symlink {} in a fixture (Unix only)", src.display());
         } else {
             std::fs::copy(&src, &dst).with_context(|| format!("copying {}", src.display()))?;
+            set_mtime(&dst, false, entry.metadata()?.modified()?)?;
         }
     }
-    Ok(())
+    let mtime = std::fs::metadata(from)
+        .with_context(|| format!("inspecting {}", from.display()))?
+        .modified()?;
+    set_mtime(to, true, mtime)
+}
+
+/// Sets the access and modification times of `path`, a directory when `dir`. The handle needs no write access, so
+/// git's read-only object files (B9's copy of `.git`) can be set: on Unix `futimens` only asks for ownership, on
+/// Windows the handle asks for `FILE_WRITE_ATTRIBUTES` alone (and `FILE_FLAG_BACKUP_SEMANTICS` for a directory).
+fn set_mtime(path: &Path, dir: bool, t: std::time::SystemTime) -> anyhow::Result<()> {
+    let times = std::fs::FileTimes::new().set_accessed(t).set_modified(t);
+    let mut options = std::fs::OpenOptions::new();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        options.access_mode(FILE_WRITE_ATTRIBUTES);
+        if dir {
+            options.custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _: bool = dir;
+        options.read(true);
+    }
+    options
+        .open(path)
+        .and_then(|f| f.set_times(times))
+        .with_context(|| format!("setting the times of {}", path.display()))
+}
+
+/// The fixed time of every generated fixture file and directory: [`GIT_DATE`].
+fn fixture_time() -> anyhow::Result<std::time::SystemTime> {
+    std::time::UNIX_EPOCH
+        .checked_add(std::time::Duration::from_secs(GIT_DATE_UNIX))
+        .context("GIT_DATE is not a representable time")
+}
+
+/// Sets every file and directory below `dir`, and `dir` itself, to [`fixture_time`], skipping each `.git` and every
+/// symlink (ADR-136). A fixture's files are then older than its index, as in a real repository, instead of falling in
+/// the second git writes the index: an entry whose time is not older than the index is racily clean, and every later
+/// `git diff` or `git status` hashes its file again (all 961 entries of `pch960` on the measuring machine), in a share
+/// set by the runner's speed. Directories are set after their contents.
+fn settle_times(dir: &Path) -> anyhow::Result<()> {
+    settle_below(dir, fixture_time()?)
+}
+
+fn settle_below(dir: &Path, t: std::time::SystemTime) -> anyhow::Result<()> {
+    for entry in std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
+        let entry = entry?;
+        if entry.file_name() == ".git" {
+            continue;
+        }
+        let ty = entry.file_type()?;
+        if ty.is_dir() {
+            settle_below(&entry.path(), t)?;
+        } else if !ty.is_symlink() {
+            set_mtime(&entry.path(), false, t)?;
+        }
+    }
+    set_mtime(dir, true, t)
 }
 
 /// One argument quoted for hyperfine's `--shell=none` splitter (POSIX shell words).
@@ -1056,7 +1124,9 @@ fn ensure_own_repo(work: &Work, dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `git add -A` and one commit of everything in `dir`, after [`settle_times`].
 fn commit_all(work: &Work, dir: &Path, msg: &str) -> anyhow::Result<()> {
+    settle_times(dir)?;
     git(work, dir, &["add", "-A"])?;
     git(work, dir, &["commit", "-q", "--no-verify", "-m", msg])?;
     Ok(())
@@ -1191,8 +1261,11 @@ fn gen_stash10m(work: &Work, dir: &Path) -> anyhow::Result<()> {
     write_file(dir, "big.txt", committed.as_bytes())?;
     write_file(dir, "small.txt", b"small\n")?;
     commit_all(work, dir, "init")?;
-    // a staged change for the hook, a 10 MiB unstaged rewrite for the stash
+    // a staged change for the hook, settled like every staged file; the 10 MiB unstaged rewrite for the stash keeps
+    // the time of its write, as a user's edit does, and its size differs from the committed text's, so git sees it
+    // modified whatever the times (ADR-136)
     write_file(dir, "small.txt", b"small, changed\n")?;
+    settle_times(dir)?;
     git(work, dir, &["add", "small.txt"])?;
     write_file(dir, "big.txt", rewrite.as_bytes())
 }
@@ -6373,6 +6446,79 @@ mod tests {
         // pre-commit and prek fail loudly; snp warns until the C1 fix is in both binaries
         assert!(gc_equal_work(&work, Tool::Prek, 2).is_err());
         assert!(gc_equal_work(&work, Tool::Snp, 1).is_ok());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// The `mtime:` seconds of every entry of `dir`'s index (`git ls-files --debug`).
+    fn entry_mtimes(work: &Work, dir: &Path) -> Vec<u64> {
+        git(work, dir, &["ls-files", "--debug"])
+            .unwrap()
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("mtime: "))
+            .map(|v| v.split(':').next().unwrap().parse().unwrap())
+            .collect()
+    }
+
+    fn mtime_secs(p: &Path) -> u64 {
+        std::fs::metadata(p)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    #[test]
+    fn the_fixture_time_is_git_date() {
+        // 2024-01-01: 54 years after 1970 with 13 leap days (1972 … 2020)
+        assert_eq!(GIT_DATE_UNIX, (54 * 365 + 13) * 86_400);
+        assert!(GIT_DATE.starts_with("2024-01-01T00:00:00"));
+        let t = fixture_time().unwrap();
+        assert_eq!(
+            t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+            GIT_DATE_UNIX
+        );
+    }
+
+    /// ADR-136: a generated fixture's files and directories carry `GIT_DATE`, every index entry is older than the index
+    /// (not racily clean, whatever the runner's speed), `.git` keeps its own times, and B9's per-tool copy keeps them.
+    #[test]
+    fn fixtures_are_not_racily_clean() {
+        let (base, work) = scratch_work("racy");
+        let dir = work.fixture(Fixture::Noop10, Tool::Snp);
+        gen_noop10(&work, &dir).unwrap();
+        let index = dir.join(".git").join("index");
+        let index_secs = mtime_secs(&index);
+        assert!(index_secs > GIT_DATE_UNIX);
+        let entries = entry_mtimes(&work, &dir);
+        assert_eq!(entries, [GIT_DATE_UNIX, GIT_DATE_UNIX]);
+        for p in [
+            dir.clone(),
+            dir.join("README.md"),
+            dir.join(".pre-commit-config.yaml"),
+        ] {
+            assert_eq!(mtime_secs(&p), GIT_DATE_UNIX, "{}", p.display());
+        }
+        // git's own files are not touched
+        assert_ne!(mtime_secs(&dir.join(".git").join("HEAD")), GIT_DATE_UNIX);
+        // a nested directory is set after its contents
+        write_file(&dir, "sub/deep/x.txt", b"x\n").unwrap();
+        settle_times(&dir).unwrap();
+        for p in ["sub", "sub/deep", "sub/deep/x.txt"] {
+            assert_eq!(mtime_secs(&dir.join(p)), GIT_DATE_UNIX, "{p}");
+        }
+        std::fs::remove_dir_all(dir.join("sub")).unwrap();
+        settle_times(&dir).unwrap();
+        // B9's copy: the times survive, and after git refreshes the copied index (new inodes) it stays non-racy
+        let hooked = work.fixture(Fixture::Hooked, Tool::Snp);
+        copy_tree(&dir, &hooked).unwrap();
+        assert_eq!(mtime_secs(&hooked.join("README.md")), GIT_DATE_UNIX);
+        assert_eq!(mtime_secs(&hooked), GIT_DATE_UNIX);
+        assert_eq!(mtime_secs(&hooked.join(".git").join("index")), index_secs);
+        git(&work, &hooked, &["update-index", "-q", "--refresh"]).unwrap();
+        assert_eq!(entry_mtimes(&work, &hooked), [GIT_DATE_UNIX, GIT_DATE_UNIX]);
+        assert_eq!(git(&work, &hooked, &["status", "--porcelain"]).unwrap(), "");
         std::fs::remove_dir_all(&base).unwrap();
     }
 }
