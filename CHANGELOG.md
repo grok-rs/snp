@@ -241,6 +241,15 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   it (`crates/snp-hooks/clippy.toml`, checked by `cargo xtask lint-guards`), and a documented rule covers writes
   through a subprocess. On B6, one process and 14% of the system calls fewer (27,536 → 23,663) and
   10.2 M fewer instructions for the tree (−8.6%).
+- Config and manifest validation hashes less and allocates less (ADR-111). Internal crates: snp-cfgv's `Map` and
+  `Set` hash with `ValueState`, one SipHash-1-3 key drawn per process instead of one per map (the HashDoS protection
+  is unchanged: keyed SipHash with a random key per process, as CPython's; build maps with `Map::default()`), and
+  schema keys are `HashedKey`s whose hash is computed once and reused for every map; snp-yaml deduplicates the keys of
+  a mapping of up to 16 pairs without hashing them. snp-config formats the `files`/`exclude` key only for a warning,
+  rewrites `language` and stage lists only when they hold `system`/`script` or a legacy stage name, and keeps each
+  compiled pattern once; snp-pyre sizes its parse buffers exactly. `validate-config` on 1,000 hooks runs 14.5% fewer
+  instructions (193.5 M → 165.4 M) with 13,000 fewer allocations, `gc` on 500 configs 7.8% fewer (163.7 M →
+  150.9 M). Messages, warnings, their order and every result are unchanged.
 
 ### Fixed
 

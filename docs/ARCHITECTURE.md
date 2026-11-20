@@ -2349,10 +2349,14 @@ inherit the workspace's version, MSRV and lints, and keep their library names, s
 
 cfgv (`crates/snp-cfgv`, imported from cfgv-rs 0.3.0 at `6a04a30`; no default features, the optional `serde` feature
 is used only by its tests and fuzz target; the `regex`-crate-backed `CheckFn::check_regex()` was dropped, ADR-116):
-* `cfgv::{Value, Map (= IndexMap<Value, Value>), Set (= IndexSet<Value>), StrKey, BigInt, Date, DateTime, Schema,
-  Validator, MapItem, Cx, CheckFn, RegexCheck, ValidationError, validate_with, apply_defaults_owned,
-  load_from_filename_with}`. `StrKey(&str)` looks a `str` key up by hash without building a `Value` (it hashes
-  through the same function as `Value::String` and is `Equivalent` only to an equal `Value::String`).
+* `cfgv::{Value, Map (= IndexMap<Value, Value, ValueState>), Set (= IndexSet<Value, ValueState>), ValueState,
+  HashedKey, StrKey, BigInt, Date, DateTime, Schema, Validator, MapItem, Cx, CheckFn, RegexCheck, ValidationError,
+  validate_with, apply_defaults_owned, load_from_filename_with}`. `StrKey(&str)` looks a `str` key up by hash without
+  building a `Value` (it hashes through the same function as `Value::String` and is `Equivalent` only to an equal
+  `Value::String`). `ValueState` is the zero-sized builder of every `Map`/`Set` (SipHash-1-3 keyed once per process;
+  maps are built with `Map::default()`), so `HashedKey::new(key)` hashes a schema key once and its lookups
+  (`get`, `get_full`, `get_mut`, `set_default`, …) reuse that hash in every map (ADR-111); snp-config's items hold their
+  keys as `HashedKey`s and reach a built-in item's key through `Validator::hashed_key`.
   `Value` already has `Null, Bool, Int, BigInt, Float, String, Bytes, List, Tuple, Map, Set, Date, DateTime` — no new
   variant is requested (the compatibility proposal's `Value::Opaque` is unnecessary).
 * pre-commit's custom validators (`StagesMigration[NoDefault]`, `LanguageMigration[Required]`, `WarnMutableRev`,

@@ -17,12 +17,12 @@ ADR-097 the stash re-verification by stat stamps; ADR-098 the tier-1 prefilter; 
 the B8 heap budget and counters; ADR-101 classification CPU and fan-out sizing; ADR-102 native-hook facts; ADR-103
 borrowed hook argv; ADR-104 the step-6 changes of the run pipeline; ADR-105 the hook script template v2; ADR-106 trusted
 index modes on clean `--all-files` runs; ADR-108 the forward-only engine of the tier-1 prefilter; ADR-110 the meta-only
-classification tier; ADR-112 snp-yaml's owning materialisation; ADR-114 overflow checks kept for every crate; ADR-115
-the tier-1 scan engine; ADR-116 the absorption of cfgv and file-identify into the workspace; ADR-117 the B8 stash-time
-overlaps; ADR-118 the musl mimalloc build without transparent huge pages; ADR-119 the proven post-checkout baseline;
-ADR-131 the file-content cache of consecutive in-process hooks; ADR-132 the baseline taken by the first native write in
-all-in-process runs; ADR-135 the hook script template v3; ADR-136 the wave-5 bench methodology; ADR-137 PIE release
-artifacts and their hardening gate.
+classification tier; ADR-111 the process-seeded cfgv map hasher; ADR-112 snp-yaml's owning materialisation; ADR-114
+overflow checks kept for every crate; ADR-115 the tier-1 scan engine; ADR-116 the absorption of cfgv and file-identify
+into the workspace; ADR-117 the B8 stash-time overlaps; ADR-118 the musl mimalloc build without transparent huge pages;
+ADR-119 the proven post-checkout baseline; ADR-131 the file-content cache of consecutive in-process hooks; ADR-132 the
+baseline taken by the first native write in all-in-process runs; ADR-135 the hook script template v3; ADR-136 the wave-5
+bench methodology; ADR-137 PIE release artifacts and their hardening gate.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -2348,6 +2348,59 @@ file). B4 (103.84 M → 103.76 M), B5, B12u and the classifier's share of B6 do 
 Two other layouts (the meta-only answer out of line; the per-file loop monomorphised per query kind) measured worse
 in every scenario. Not done: the plan's public `Needs.meta_only` field (a breaking change of a published crate) and
 the per-chunk reservation in `for_hook` (rejected).
+
+### ADR-111 — cfgv maps hash with one process-seeded SipHash; schema keys carry their hash
+
+*Relates to ADR-116 (snp-cfgv is an internal crate; no other ADR is amended) and ADR-112 (snp-yaml builds the maps).
+Owner decision of 2026-11-21 (wave-5 panel `rust`, variant (i)).*
+
+**Context.** cfgv's `Map` was `IndexMap<Value, Value>` with std's `RandomState`: every map drew its own SipHash-1-3
+keys. Validating a map looks up the schema's own fixed keys (`id`, `files`, the extension keys, …) in it, and each
+lookup hashed the key again, about 260 instructions per key. In `validate-config` on 1,000 hooks (B10) that was 22.4 M
+instructions of `hash_one`, 11.6% of the run: `Validator::check` (22,070 lookups), `set_default` (17,027), `ExtKey`
+(13,000), the snp-config items and the `id` of each context line. A hash precomputed once per key is only valid if
+every map hashes with the same keys, which a per-map `RandomState` rules out (a precomputed hash would silently miss,
+read as "key missing"). snp-yaml also hashed every key of every mapping into a dedup index (`dict_entries`, 3.4 M).
+**Decision.** (1) `Map` and `Set` take the zero-sized builder `cfgv::ValueState`: std's SipHash-1-3 (`DefaultHasher`)
+keyed by one `RandomState` drawn on first use in the process (`OnceLock`, as `snp-run/src/stamp.rs`). Maps are built
+with `Map::default()` / `with_capacity_and_hasher(n, ValueState)`; `IndexMap::new` no longer exists for them, so the
+compiler finds every site. (2) `cfgv::HashedKey` holds a key and its hash, computed at run time from the process seed
+when the schema is built (schemas live in `OnceLock` statics, so once per process). Its lookups (`get`, `get_full`,
+`get_mut`, `get_full_mut`, `contained_in`, `set_default`) go through `raw_entry_v1().from_key_hashed_nocheck` and
+`debug_assert` that the hash equals `map.hasher().hash_one(key)`; their signatures name `Map`, so a different builder
+breaks the build. The keys and condition keys of `Validator`'s built-in items, `Schema::Map`'s `id_key`, and
+snp-config's `ExtKey`, `StagesMigration`, `DeprecatedStagesWarning`, `LanguageMigration`, `WarnMutableRev`,
+`SensibleRegex` and `Compiled` (through `Validator::hashed_key`) are `HashedKey`s. `set_default` keeps the wave-4
+invariant: one probe, and the inserted clone hashes like the key. (3) snp-yaml's `dict_entries` deduplicates a
+mapping of at most 16 pairs by a linear `==` scan; larger mappings keep the hashed index (now `ValueState`). (4) A hash
+is never computed at compile time or with a fixed key, never printed, persisted or used for ordering. This is a review
+rule for any later use of `ValueState` or `HashedKey`.
+**HashDoS.** Untrusted input reaches these maps without anything being executed: a cloned hook repository's manifest
+(`gc`, `autoupdate`, `try-repo`, `validate-manifest`) and `validate-config` run as a CI gate on pull requests. The
+limits allow 16 MiB and 1 M nodes, so about 500 k keys in one mapping, and full-hash collisions would make that
+O(n²), a hang. The protection is exactly what it was, and what CPython (pre-commit) has: a keyed PRF (SipHash-1-3)
+with a 128-bit random key per process. Sharing the key across the process's maps exposes nothing, because nothing
+reveals a hash or a hash order: `IndexMap` iterates in insertion order, so no output, order or message can change
+either. The linear scan is bounded at 16 × 16 comparisons, so it adds no exposure. `unordered_hash` (the fixed-key
+hash of a `Map`/`Set` used as a key, which PyYAML rejects as unhashable) only feeds the keyed outer hasher, as before.
+S6: the seed is written once and never changes, the `stamp.rs` precedent; it is not mutable process state.
+**Rejected.** foldhash (its README claims no HashDoS resistance against interactive attackers and no
+seed-independent collision lists; a new dependency for at most the 10–20% of the hashing gain that (i) leaves), ahash, FxHash or any
+multiply-mix hasher (trivially collidable), a hand-rolled hasher, a compile-time or fixed-key precomputed SipHash (the
+key would be public), and sharing one `RandomState` clone by discipline (nothing would stop a map built otherwise from
+silently missing). `convert.rs`'s `StrKey` probes on the run path keep hashing (about 15 µs per run).
+**Consequences.** B10 and B11 (callgrind of snp's process, profiling build, fixtures of `cargo xtask bench setup`;
+together with the wave-5 allocation trims of the same change, alloc-6: the regex key's `repr` only for a warning,
+`translate_language` replacing only `system`/`script`, stage lists rewritten in place only for a legacy name, the
+compiled-pattern list kept once per pattern, snp-pyre's exact reserves): B10 193.5 M → 165.4 M instructions (−14.5%),
+`hash_one` 22.4 M → 2.0 M, 168,047 → 154,992 heap blocks (29.0 → 24.9 MB allocated); B11 163.7 M → 150.9 M (−7.8%),
+193,435 → 187,635 blocks. `Value` is 16 bytes smaller (no per-map state). Tests: proptests that hashed lookups equal
+plain ones (Python-equal keys across types, NaN, bytes, tuples, dates), that `ValueState` maps and the former
+`RandomState` maps agree operation by operation (insert, `shift_remove`, setdefault order), and that
+`apply_defaults`, `remove_defaults` and `check` through hashed keys agree with plain-map references
+(`crates/snp-cfgv/tests/properties.rs`); an exhaustive comparison of the linear and hashed dedup over every key
+sequence of up to five keys (`crates/snp-yaml/src/construct.rs`). The cfgv parity vectors, the snp-config acceptance
+tests and the CLI goldens are unchanged.
 
 ### ADR-112 — snp-yaml materialises by moving what occurs once; the `Node.tag` type change is deferred
 
