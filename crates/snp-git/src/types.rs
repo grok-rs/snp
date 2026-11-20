@@ -183,6 +183,10 @@ pub(crate) fn system_attributes(
 /// says about whether a path-limited `git checkout` of index entries can leave `git diff` non-empty (ADR-119). Fail
 /// closed: a value whose meaning is not certain makes [`CheckoutConfig::plain`] false. The default is not plain.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts of one config listing, each read by a different proof"
+)]
 pub struct CheckoutConfig {
     /// `core.autocrlf`, `core.fsmonitor`, `core.useBuiltinFSMonitor`, `core.ignoreStat`, `core.sparseCheckout` and
     /// `index.sparse` are unset or read as git's `false`; `core.fileMode` is unset or reads as a boolean;
@@ -199,6 +203,13 @@ pub struct CheckoutConfig {
     /// `core.autocrlf` off ([`Self::plain`]) and off Windows, a `text=auto` path is checked out as its blob's bytes
     /// (ADR-133). `false` for `crlf`, a valueless key or anything else.
     pub eol_lf: bool,
+    /// `core.fsmonitor`, `core.useBuiltinFSMonitor`, `core.ignoreStat`, `core.sparseCheckout` and `index.sparse` are
+    /// unset or read as git's `false`, and `core.worktree` is not set at all (a hook that sets it moves the worktree
+    /// `git diff` compares): what the index-stat proof needs from the configuration (ADR-134).
+    pub index_proof: bool,
+    /// The object id length of the repository's index entries: 20 when `extensions.objectFormat` is unset or `sha1`,
+    /// 32 for `sha256` (git compares the names exactly), `None` for anything else.
+    pub object_id_len: Option<usize>,
 }
 
 impl Default for CheckoutConfig {
@@ -208,6 +219,8 @@ impl Default for CheckoutConfig {
             file_mode: true,
             hooks_path: None,
             eol_lf: false,
+            index_proof: false,
+            object_id_len: None,
         }
     }
 }
@@ -244,6 +257,7 @@ pub(crate) fn checkout_config<'a>(records: impl Iterator<Item = &'a [u8]>) -> Ch
     let mut last: Vec<(&[u8], Option<&[u8]>)> = Vec::new();
     let mut hook_key = false;
     let mut attributes_key = false;
+    let mut worktree_key = false;
     for r in records {
         let (key, value) = match memchr::memchr(b'\n', r) {
             Some(nl) => (
@@ -258,10 +272,14 @@ pub(crate) fn checkout_config<'a>(records: impl Iterator<Item = &'a [u8]>) -> Ch
         if key == b"core.attributesfile" || key == b"attr.tree" {
             attributes_key = true;
         }
+        if key == b"core.worktree" {
+            worktree_key = true;
+        }
         if OFF.contains(&key)
             || key == b"core.filemode"
             || key == b"core.hookspath"
             || key == b"core.eol"
+            || key == b"extensions.objectformat"
         {
             match last.iter_mut().find(|(k, _)| *k == key) {
                 Some(slot) => slot.1 = value,
@@ -278,7 +296,19 @@ pub(crate) fn checkout_config<'a>(records: impl Iterator<Item = &'a [u8]>) -> Ch
     let eol_lf = get(b"core.eol").is_none_or(|v| {
         v.is_some_and(|v| v.eq_ignore_ascii_case(b"lf") || v.eq_ignore_ascii_case(b"native"))
     });
+    let index_proof = !worktree_key
+        && OFF
+            .iter()
+            .filter(|k| **k != b"core.autocrlf")
+            .all(|k| get(k).is_none_or(|v| config_bool(v) == Some(false)));
+    let object_id_len = match get(b"extensions.objectformat") {
+        None | Some(Some(b"sha1")) => Some(20),
+        Some(Some(b"sha256")) => Some(32),
+        Some(_) => None,
+    };
     CheckoutConfig {
+        index_proof,
+        object_id_len,
         plain: off
             && !hook_key
             && !attributes_key
@@ -729,6 +759,53 @@ mod tests {
             "a valueless hooksPath is an error"
         );
         assert!(!CheckoutConfig::default().plain);
+    }
+
+    /// ADR-134: the index-stat proof's gate is `plain`'s fsmonitor, ignoreStat and sparse keys (not autocrlf, hooks or
+    /// attributes), and the object id length follows `extensions.objectFormat` exactly.
+    #[test]
+    fn checkout_config_reads_the_index_proof_gate() {
+        let c = |recs: &[&[u8]]| checkout_config(recs.iter().copied());
+        let d = c(&[]);
+        assert!(d.index_proof);
+        assert_eq!(d.object_id_len, Some(20));
+        for key in [
+            "core.fsmonitor",
+            "core.usebuiltinfsmonitor",
+            "core.ignorestat",
+            "core.sparsecheckout",
+            "index.sparse",
+        ] {
+            for bad in ["true", "/hook", ""] {
+                let r = if bad.is_empty() {
+                    key.to_owned()
+                } else {
+                    format!("{key}\n{bad}")
+                };
+                assert!(!c(&[r.as_bytes()]).index_proof, "{r}");
+            }
+            let off = format!("{key}\nfalse");
+            assert!(c(&[off.as_bytes()]).index_proof, "{off}");
+        }
+        assert!(!c(&[b"core.worktree\n/elsewhere"]).index_proof);
+        assert!(!c(&[b"core.worktree"]).index_proof);
+        for other in [
+            &b"core.autocrlf\ntrue"[..],
+            b"hook.x.command\ny",
+            b"core.attributesfile\n/a",
+            b"core.filemode\nmaybe",
+        ] {
+            let got = c(&[other]);
+            assert!(got.index_proof && !got.plain, "{other:?}");
+        }
+        assert!(!CheckoutConfig::default().index_proof);
+        assert_eq!(CheckoutConfig::default().object_id_len, None);
+        let len = |v: &[u8]| c(&[v]).object_id_len;
+        assert_eq!(len(b"extensions.objectformat\nsha1"), Some(20));
+        assert_eq!(len(b"extensions.objectformat\nsha256"), Some(32));
+        assert_eq!(len(b"extensions.objectformat\nSHA256"), None);
+        assert_eq!(len(b"extensions.objectformat"), None);
+        assert_eq!(len(b"extensions.objectformat\nsha3"), None);
     }
 
     /// ADR-133: `core.eol` unset, `lf` or `native` (any ASCII case, the last value) lets `text=auto` check out raw
