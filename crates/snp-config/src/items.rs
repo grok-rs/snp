@@ -45,12 +45,13 @@ pub(crate) fn transform_stage(v: &Value) -> Value {
     }
 }
 
-/// `_translate_language` over a value (same unhashable rule as [`transform_stage`]).
-pub(crate) fn translate_language(v: &Value) -> Value {
+/// `_translate_language` over a value (same unhashable rule as [`transform_stage`]): the replacement for
+/// `system` / `script`, `None` for every value it keeps.
+pub(crate) fn translate_language(v: &Value) -> Option<Value> {
     match v.as_str() {
-        Some("system") => Value::from("unsupported"),
-        Some("script") => Value::from("unsupported_script"),
-        _ => v.clone(),
+        Some("system") => Some(Value::from("unsupported")),
+        Some("script") => Some(Value::from("unsupported_script")),
+        _ => None,
     }
 }
 
@@ -200,10 +201,20 @@ impl MapItem for StagesMigration {
             Some(default) => Some(self.key.set_default(dct, default)),
             None => self.key.get_mut(dct),
         };
-        if let Some(slot) = slot
-            && let Some(items) = slot.as_array()
-        {
-            *slot = Value::List(items.iter().map(transform_stage).collect());
+        let Some(slot) = slot else { return };
+        // `[transform_stage(s) for s in val]`, in place: a tuple becomes a list, and only the legacy names are
+        // replaced (every other item maps to an equal value).
+        if let Value::Tuple(items) = slot {
+            *slot = Value::List(std::mem::take(items));
+        }
+        if let Value::List(items) = slot {
+            for item in items {
+                if let Value::String(s) = item
+                    && LEGACY_STAGES.contains(&s.as_str())
+                {
+                    *item = transform_stage(item);
+                }
+            }
         }
     }
 
@@ -298,14 +309,19 @@ impl MapItem for LanguageMigration {
             None => Ok(()),
             Some(v) => validate_context(
                 || format!("At key: {}", self.key),
-                || self.check_fn.check(&translate_language(v)),
+                || {
+                    self.check_fn
+                        .check(translate_language(v).as_ref().unwrap_or(v))
+                },
             ),
         }
     }
 
     fn apply_default(&self, dct: &mut Map) {
-        if let Some(slot) = self.key.get_mut(dct) {
-            *slot = translate_language(slot);
+        if let Some(slot) = self.key.get_mut(dct)
+            && let Some(translated) = translate_language(slot)
+        {
+            *slot = translated;
         }
     }
 
@@ -426,22 +442,23 @@ impl MapItem for SensibleRegex {
         let Some(val) = self.key.get(dct).and_then(Value::as_str) else {
             return Ok(());
         };
-        let key = self.key.try_repr()?;
+        // Formatted only for a warning (the `repr` of a schema's own string key cannot fail).
+        let key = || self.key.try_repr();
         let id = || get(dct, "id").map_or_else(|| Ok("None".to_owned()), Value::try_repr);
         if val.contains("/*") {
             let msg = if self.hook {
-                messages::hook_regex_glob(&key, &id()?)
+                messages::hook_regex_glob(&key()?, &id()?)
             } else {
-                messages::top_regex_glob(&key)
+                messages::top_regex_glob(&key()?)
             };
             cx.warn(msg);
         }
         for fwd in FWD_SLASH_RES {
             if val.contains(fwd) {
                 let msg = if self.hook {
-                    messages::hook_regex_slash(self.brand, &key, &id()?, fwd)
+                    messages::hook_regex_slash(self.brand, &key()?, &id()?, fwd)
                 } else {
-                    messages::top_regex_slash(self.brand, &key, fwd)
+                    messages::top_regex_slash(self.brand, &key()?, fwd)
                 };
                 cx.warn(msg);
             }

@@ -16,6 +16,7 @@ use std::io::Read;
 use std::path::Path;
 
 use cfgv::{Cx, Schema, ValidationError, Value};
+use indexmap::IndexSet;
 use snp_core::failure::pyerr;
 use snp_pyre::Options;
 
@@ -132,7 +133,8 @@ pub(crate) fn check_bytes(
     kind: Kind,
     o: &LoadOpts<'_>,
 ) -> Result<Value, ConfigError> {
-    let mut compiled: Vec<String> = Vec::new();
+    // First occurrences only: a repeated pattern compiles to the same warnings, which print once anyway.
+    let mut compiled: IndexSet<String> = IndexSet::new();
     let result = cfgv::validate_context(
         || format!("File {display}"),
         || {
@@ -146,7 +148,11 @@ pub(crate) fn check_bytes(
                 return Err(ValidationError::new(inner.to_string()));
             }
             let mut cx = Cx::new(|msg: String| match msg.strip_prefix(COMPILED) {
-                Some(p) => compiled.push(p.to_owned()),
+                Some(p) => {
+                    if !compiled.contains(p) {
+                        compiled.insert(p.to_owned());
+                    }
+                }
                 None => o.warn.warn(&msg),
             });
             let checked = schema.check_with(&data, &mut cx);
@@ -198,8 +204,8 @@ pub(crate) mod probe {
 /// parse under the same flags that [`Options::CONFIG`]'s compile starts with, so it returns the same warnings: only a
 /// pattern with warnings is compiled (to learn whether the compile succeeds), and the others are left to the filters
 /// of the hooks that use them. An empty list prints nothing whatever the compile would do, and a
-/// parse error means the compile fails too.
-fn future_warnings(patterns: &[String], kind: Kind, o: &LoadOpts<'_>) {
+/// parse error means the compile fails too. `patterns` holds each pattern once, at its first compilation.
+fn future_warnings(patterns: &IndexSet<String>, kind: Kind, o: &LoadOpts<'_>) {
     let mut seen: Vec<(&str, &str)> = Vec::new();
     let mut compiled = Vec::new();
     for p in patterns {
@@ -342,6 +348,8 @@ fn manifest_from_bytes(
 mod tests {
     use std::ffi::OsStr;
 
+    use indexmap::IndexSet;
+
     use proptest::prelude::*;
     use snp_core::brand::Brand;
     use snp_core::output::CollectWarnings;
@@ -408,9 +416,12 @@ mod tests {
                 0..6,
             )
         ) {
-            let want = compile_all(&patterns);
+            // the load hands over first occurrences only (an IndexSet), so the reference compiles the same list
+            let set: IndexSet<String> = patterns.iter().cloned().collect();
+            let uniq: Vec<String> = set.iter().cloned().collect();
+            let want = compile_all(&uniq);
             for kind in [Kind::Manifest, Kind::Config] {
-                let ((), got, _) = with_opts(|o| future_warnings(&patterns, kind, o));
+                let ((), got, _) = with_opts(|o| future_warnings(&set, kind, o));
                 prop_assert_eq!(&got, &want, "{:?}", kind);
             }
         }
@@ -447,15 +458,15 @@ mod tests {
             diag,
             compile_all(&["^src/.*\\.py$", "[[a]", "[[a]{100000}", "[[a]"].map(str::to_owned))
         );
-        // '[[a]' (twice, the second a cache hit) and '[[a]{100000}': never the plain pattern.
-        assert_eq!(probe::compiles() - before, 3);
+        // '[[a]' (once: the load hands over first occurrences only) and '[[a]{100000}': never the plain pattern.
+        assert_eq!(probe::compiles() - before, 2);
     }
 
     /// A pattern that fails to parse is not compiled for a manifest (the compile would fail the same way); a config
     /// compiles it (and caches the error).
     #[test]
     fn manifest_parse_error_is_not_compiled() {
-        let broken = ["(".to_owned()];
+        let broken: IndexSet<String> = ["(".to_owned()].into_iter().collect();
         let before = probe::compiles();
         let ((), diag, _) = with_opts(|o| future_warnings(&broken, Kind::Manifest, o));
         assert_eq!(diag, Vec::<String>::new());
