@@ -21,7 +21,7 @@ mod api {
     use snp_git::{
         CheckoutConfig, CloneMode, ConfigListing, DiffFingerprint, DiffIndex, Git, GitBackend,
         GitCaps, GitExe, GitVersion, IndexEntries, IndexStamp, MergeState, ObjectId, OwnedRepo,
-        PrePushNs, ProcBackend, RepoInfo, RevInfo, TaggedIndex, ZList,
+        PrePushNs, ProcBackend, RepoInfo, RevInfo, SystemAttributes, TaggedIndex, ZList,
     };
     use snp_proc::spawn::{Captured, Group, PyStatus, Role, SpawnError, Stdin};
 
@@ -88,6 +88,7 @@ mod api {
             config_hooks: false,
             pathspec_from_file: true,
             diff_no_relative: true,
+            attr_system: true,
         };
         has::<GitExe>(GitExe {
             argv0: vec![OsString::from("/usr/bin/git")],
@@ -133,6 +134,8 @@ mod api {
         has::<IndexEntries>(IndexEntries {
             paths: ZList::default(),
             modes: Box::new([0o100_644]),
+            // ADR-133
+            tags: Box::new(*b"H"),
         });
         // ADR-106
         has::<TaggedIndex>(TaggedIndex {
@@ -147,9 +150,15 @@ mod api {
                 plain: true,
                 file_mode: true,
                 hooks_path: Some(Box::from(&b".githooks"[..])),
+                eol_lf: true,
             },
         });
         has::<CheckoutConfig>(CheckoutConfig::default());
+        // ADR-133
+        has::<[SystemAttributes; 2]>([
+            SystemAttributes::File(PathBuf::from("/etc/gitattributes")),
+            SystemAttributes::Disabled,
+        ]);
     }
 
     #[test]
@@ -198,6 +207,7 @@ mod api {
         has::<fn(&Git) -> Result<Option<OsString>, Failure>>(Git::hooks_path);
         has::<fn(&Git) -> Result<Vec<PathBuf>, Failure>>(Git::config_origins);
         has::<fn(&Git) -> Result<ConfigListing, Failure>>(Git::config_listing);
+        has::<fn(&Git) -> Option<SystemAttributes>>(Git::system_attributes);
         has::<fn(&Git, &str) -> Result<Option<OsString>, Failure>>(Git::config_get);
         has::<fn(&Git, &str) -> Result<Vec<(OsString, OsString)>, Failure>>(Git::config_get_regexp);
         has::<fn(&Git, &[u8], &OsStr) -> Result<Option<PrePushNs>, Failure>>(Git::pre_push);

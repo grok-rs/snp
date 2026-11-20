@@ -203,6 +203,7 @@ fn dedup_fallback_equals_ls_files_deduplicate() {
             config_hooks: false,
             pathspec_from_file: true,
             diff_no_relative: true,
+            attr_system: false,
         },
     });
     let (old_git, old_info) = Git::discover(old_exe, &sb.env, &repo, sb.backend()).unwrap();
@@ -722,6 +723,7 @@ fn checkout_paths_without_pathspec_from_file_chunks_literal_arguments() {
             config_hooks: false,
             pathspec_from_file: false,
             diff_no_relative: false,
+            attr_system: false,
         },
     });
     let (git, _) = Git::discover(old_exe, &sb.env, &repo, sb.backend()).unwrap();
@@ -745,7 +747,60 @@ fn checkout_paths_without_pathspec_from_file_chunks_literal_arguments() {
     assert_eq!(std::fs::read(repo.join("keep")).unwrap(), b"local edit\n");
 }
 
-/// COMPATIBILITY §6.2 equivalence (ADR-104): the unmerged flag of `tracked_with_stages` (one `ls-files -s -z`) equals
+/// ADR-133: query F's `-v` tags against real git: `H` cached, lowercase when assume-unchanged, `S` skip-worktree,
+/// `M` per stage of an unmerged path; one tag per entry, in step with the paths.
+#[test]
+fn query_f_tags_assume_unchanged_and_skip_worktree() {
+    let sb = Sandbox::new();
+    let repo = sb.init("tags");
+    for f in ["a", "b", "c"] {
+        sb.write(&repo, f, b"x\n");
+    }
+    sb.git(&repo, &["add", "."]);
+    sb.git(&repo, &["update-index", "--assume-unchanged", "b"]);
+    sb.git(&repo, &["update-index", "--skip-worktree", "c"]);
+    let (git, _) = sb.discover(&repo);
+    let e = git.tracked_with_modes().unwrap();
+    assert_eq!(zl(&e.paths), [b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
+    assert_eq!(&*e.tags, b"HhS");
+    let (staged, unmerged) = git.tracked_with_stages().unwrap();
+    assert!(!unmerged);
+    assert_eq!(staged.tags, e.tags);
+    let uu = sb.merge_conflict("uu-tags");
+    let (git, _) = sb.discover(&uu);
+    let (e, unmerged) = git.tracked_with_stages().unwrap();
+    assert!(unmerged);
+    assert_eq!(e.tags.len(), e.paths.len());
+    assert!(e.tags.contains(&b'M'));
+}
+
+/// ADR-133: `git var GIT_ATTR_SYSTEM` names an absolute file on git >= 2.42 and nothing under `GIT_ATTR_NOSYSTEM`;
+/// on an older git it is not even asked.
+#[test]
+fn system_attributes_from_git_var() {
+    let sb = Sandbox::new();
+    let repo = sb.init("var");
+    let (git, _) = sb.discover(&repo);
+    let new = sb.exe().caps.attr_system;
+    match git.system_attributes() {
+        Some(snp_git::SystemAttributes::File(p)) => assert!(new && p.is_absolute(), "{p:?}"),
+        other => assert!(!new && other.is_none(), "{other:?}"),
+    }
+    let env = sb
+        .env
+        .patched(&EnvPatch::default().set("GIT_ATTR_NOSYSTEM", "1"));
+    let (git, _) = Git::discover(sb.exe(), &env, &repo, sb.backend()).unwrap();
+    let want = new.then_some(snp_git::SystemAttributes::Disabled);
+    assert_eq!(git.system_attributes(), want);
+    // a value git cannot read as a boolean makes `git var` die: no answer, never "disabled"
+    let env = sb
+        .env
+        .patched(&EnvPatch::default().set("GIT_ATTR_NOSYSTEM", "maybe"));
+    let (git, _) = Git::discover(sb.exe(), &env, &repo, sb.backend()).unwrap();
+    assert_eq!(git.system_attributes(), None);
+}
+
+/// COMPATIBILITY §6.2 equivalence (ADR-104): the unmerged flag of `tracked_with_stages` (one `ls-files -s -v -z`) equals
 /// `has_unmerged` (`ls-files --unmerged`, pre-commit's `_has_unmerged_paths`) in every index shape a merge can leave.
 #[test]
 fn unmerged_from_ls_files_stage_matches_ls_files_unmerged() {
@@ -762,6 +817,12 @@ fn unmerged_from_ls_files_stage_matches_ls_files_unmerged() {
         let modes = git.tracked_with_modes().unwrap();
         assert_eq!(zl(&entries.paths), zl(&modes.paths), "{what}: same entries");
         assert_eq!(entries.modes, modes.modes, "{what}: same modes");
+        assert_eq!(entries.tags, modes.tags, "{what}: same tags");
+        assert_eq!(
+            entries.tags.len(),
+            entries.modes.len(),
+            "{what}: a tag per entry"
+        );
     };
     // both sides modified (UU)
     let uu = sb.merge_conflict("uu");
