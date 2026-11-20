@@ -123,6 +123,10 @@ pub(crate) fn argument_list_too_long(exe: &str) -> String {
 pub(crate) const BASELINE_MISMATCH: &str =
     "snp: SNP_VERIFY_BASELINE: the elided baseline diff was not empty; using the real one";
 
+/// ADR-131: `SNP_VERIFY_FILE_CACHE=1` found a content-cache hit whose bytes differ from a fresh read (stderr; the
+/// fresh read was used).
+pub(crate) const FILE_CACHE_MISMATCH: &str = "snp: SNP_VERIFY_FILE_CACHE: a cached file read differed from a fresh read; using the fresh read";
+
 /// D-EXT-05 / ADR-038: `SNP=0` while the config sets `allow_disable: false` (stderr).
 pub(crate) fn kill_switch_refused(config: &str) -> String {
     format!("snp: SNP=0 ignored: {config} sets allow_disable: false")

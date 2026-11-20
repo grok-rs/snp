@@ -21,7 +21,7 @@ use snp_core::fault::{self, Point};
 use snp_core::path::RepoPath;
 use snp_git::Git;
 use snp_git::pch_facts::PchFacts;
-use snp_hooks::{Epoch, HookCx, NativeSource};
+use snp_hooks::{ContentCache, Epoch, HookCx, NativeSource};
 use snp_lang::RunPlan;
 use snp_proc::spawn::{self, Group, Output, PyStatus, Role, Spec, Stdin};
 use snp_proc::tty::Terminal;
@@ -106,6 +106,7 @@ pub(crate) fn run_hook(
     h: &ResolvedHook,
     files: &[Cow<'_, OsStr>],
     tty: Option<&Terminal>,
+    contents: Option<&ContentCache>,
 ) -> Result<Ran, Failure> {
     let cwd = hook_cwd(e.git.root(), h);
     if h.def.ext.root.is_some() && !cwd.is_dir() {
@@ -139,11 +140,11 @@ pub(crate) fn run_hook(
             }
         }
         ExecKind::Native { source, id, epoch } => {
-            run_native(e, h, *source, id, *epoch, files, &cwd)?
+            run_native(e, h, *source, id, *epoch, files, &cwd, contents)?
         }
         _ => {
             let plan = e.cx.resolver.plan(h, e.rcx, e.color)?;
-            run_plan(e, h, plan, files, &cwd, tty)?
+            run_plan(e, h, plan, files, &cwd, tty, contents)?
         }
     };
     interrupted(e)?;
@@ -192,6 +193,7 @@ fn run_plan(
     files: &[Cow<'_, OsStr>],
     cwd: &Path,
     tty: Option<&Terminal>,
+    contents: Option<&ContentCache>,
 ) -> Result<Ran, Failure> {
     match plan {
         RunPlan::Xargs {
@@ -214,7 +216,7 @@ fn run_plan(
             let names: Vec<&[u8]> = files.iter().map(|f| os_bytes(f)).collect();
             Ok(Ran::error(1, snp_hooks::fail::output(&entry, &names)))
         }
-        RunPlan::Pygrep { args, entry } => run_pygrep(e, &args, &entry, files, cwd),
+        RunPlan::Pygrep { args, entry } => run_pygrep(e, &args, &entry, files, cwd, contents),
         RunPlan::Error { code, output } => Ok(Ran::error(i64::from(code), output)),
         _ => Err(Failure::unexpected("AssertionError", "unexpected run plan")),
     }
@@ -468,6 +470,10 @@ fn synthetic_cmd(prog: &str, args: &[Arc<str>]) -> Vec<OsString> {
 }
 
 /// A native pre-commit-hooks port (or builtin variant): shuffled and partitioned like its console script.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the hook, its native's identity, its files and the window's cache"
+)]
 fn run_native(
     e: &ExecEnv<'_>,
     h: &ResolvedHook,
@@ -476,6 +482,7 @@ fn run_native(
     epoch: Epoch,
     files: &[Cow<'_, OsStr>],
     cwd: &Path,
+    contents: Option<&ContentCache>,
 ) -> Result<Ran, Failure> {
     let Some(native) = snp_hooks::native(source, id) else {
         return Err(Failure::unexpected(
@@ -511,6 +518,7 @@ fn run_native(
         columns,
         facts: e.facts,
         cancel: &e.cx.cancel,
+        cache: contents,
     };
     let threads = NonZeroUsize::new(parts.len().min(jobs.get())).unwrap_or(NonZeroUsize::MIN);
     let results = e.cx.pool.map_ordered(threads, parts.len(), |i| {
@@ -548,6 +556,7 @@ fn run_pygrep(
     entry: &str,
     files: &[Cow<'_, OsStr>],
     cwd: &Path,
+    contents: Option<&ContentCache>,
 ) -> Result<Ran, Failure> {
     let columns = snp_hooks::columns(e.run_env, None);
     let compiled = match snp_hooks::pygrep::prepare(args, entry, columns) {
@@ -576,12 +585,13 @@ fn run_pygrep(
         let mut argv: Vec<&OsStr> = args.iter().map(|a| OsStr::new(&**a)).collect();
         argv.push(OsStr::new(entry));
         argv.extend(order.get(range).unwrap_or_default().iter().copied());
-        Ok(snp_hooks::pygrep::run_partition(
+        Ok(snp_hooks::pygrep::run_partition_cached(
             &compiled,
             &argv,
             cwd,
             &e.cx.regexes,
             &e.cx.cancel,
+            contents,
         ))
     });
     let mut out = HookOutput::default();
