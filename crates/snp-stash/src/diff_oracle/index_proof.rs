@@ -28,7 +28,6 @@
 //!
 //! Owner: WP-23.
 
-use std::collections::HashSet;
 use std::ffi::CStr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -46,6 +45,9 @@ use super::{InputKind, Kind, St};
 const PARALLEL_MIN: usize = 2_048;
 /// The smallest chunk a pool thread takes.
 const CHUNK_MIN: usize = 512;
+/// The most threads a pass uses, whatever the pool and core counts: the work is `lstat` calls, which contend in the
+/// kernel's path walk beyond a few threads, and every thread is started and joined for each pass.
+const PASS_THREADS: usize = 8;
 /// The file-type bits of `st_mode` and the regular-file and symlink types.
 const S_IFMT: u32 = 0o170_000;
 const S_IFREG: u32 = 0o100_000;
@@ -66,9 +68,8 @@ struct Watched {
 /// What one parse of the index allows.
 #[derive(Debug)]
 struct Plan {
-    /// The checked entries (stage 0, not skipped).
+    /// The index with only the checked entries left (stage 0, not skipped), filtered in place.
     index: IndexFile,
-    checked: Vec<IndexEntry>,
     /// Every leading directory of a checked entry, each followed by a NUL.
     dirs: Vec<u8>,
     /// `(start, len)` of each directory in `dirs`.
@@ -264,49 +265,57 @@ fn watch_more(
 
 /// Parses the index and keeps what the pass checks; `None` when this index can never prove (see [`Parsed::plan`]).
 fn plan(info: &RepoInfo, hash_len: usize, stamp: St) -> Option<Plan> {
-    let index = IndexFile::read(&info.index_file, hash_len).ok()?;
+    let mut index = IndexFile::read(&info.index_file, hash_len).ok()?;
     // the index file's mtime second as git keeps it (`istate->timestamp.sec`, an unsigned int)
     let index_sec = trunc32(i64::try_from(stamp.mtime.checked_div_euclid(1_000_000_000)?).ok()?);
-    let mut checked: Vec<IndexEntry> = Vec::new();
-    checked.try_reserve_exact(index.entries.len()).ok()?;
     for e in &index.entries {
-        if e.stage() != 0 || e.intent_to_add() {
-            return None;
-        }
-        if e.assume_valid() || e.skip_worktree() || e.mode == 0o160_000 {
-            continue;
-        }
         let smudged = e.size == 0 && !e.empty_blob;
-        if !matches!(e.mode, 0o100_644 | 0o100_755 | 0o120_000) || smudged || e.mtime.0 >= index_sec
-        {
+        let doubt = e.stage() != 0
+            || e.intent_to_add()
+            || (!skipped(e)
+                && (!matches!(e.mode, 0o100_644 | 0o100_755 | 0o120_000)
+                    || smudged
+                    || e.mtime.0 >= index_sec));
+        if doubt {
             return None;
         }
-        checked.push(*e);
     }
-    let (dirs, dir_spans) = leading_dirs(&index, &checked)?;
+    index.entries.retain(|e| !skipped(e));
+    let (dirs, dir_spans) = leading_dirs(&index, &index.entries)?;
     Some(Plan {
         index,
-        checked,
         dirs,
         dir_spans,
     })
+}
+
+/// An entry git never compares with the worktree: assume-unchanged, skip-worktree, or a gitlink (under
+/// `--ignore-submodules`).
+fn skipped(e: &IndexEntry) -> bool {
+    e.assume_valid() || e.skip_worktree() || e.mode == 0o160_000
 }
 
 /// Directory names, each followed by a NUL, and the `(start, len)` of each.
 type Dirs = (Vec<u8>, Vec<(usize, usize)>);
 
 /// Every distinct leading directory of the checked entries (`a/b/c` gives `a` and `a/b`), each followed by a NUL.
+///
+/// No hashing: a directory of a name is new unless the previous name has it too (it shares the name's bytes up to and
+/// including that slash), because the previous name's directories were all taken already. In index order (sorted by
+/// bytes) the names under one directory are contiguous, so each directory is taken once; an index out of order only
+/// takes some twice, never misses one.
 fn leading_dirs(index: &IndexFile, checked: &[IndexEntry]) -> Option<Dirs> {
-    let mut seen: HashSet<&[u8]> = HashSet::new();
     let mut dirs: Vec<u8> = Vec::new();
     let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut prev: &[u8] = &[];
     for e in checked {
         let name = index.name(e);
+        let common = name.iter().zip(prev).take_while(|(a, b)| a == b).count();
         let mut end = 0_usize;
         while let Some(off) = name.get(end..).and_then(memchr_slash) {
             end = end.saturating_add(off);
-            let dir = name.get(..end)?;
-            if seen.insert(dir) {
+            if end >= common {
+                let dir = name.get(..end)?;
                 dirs.try_reserve(dir.len().saturating_add(1)).ok()?;
                 spans.try_reserve(1).ok()?;
                 spans.push((dirs.len(), dir.len()));
@@ -315,6 +324,7 @@ fn leading_dirs(index: &IndexFile, checked: &[IndexEntry]) -> Option<Dirs> {
             }
             end = end.saturating_add(1);
         }
+        prev = name;
     }
     Some((dirs, spans))
 }
@@ -354,16 +364,16 @@ fn entry_matches(e: &IndexEntry, st: &StatData) -> bool {
 }
 
 /// One `lstat` per checked entry and per leading directory, relative to the root's descriptor, on the pool (at most
-/// its cores, ADR-101); the first doubt stops every thread.
+/// its cores, ADR-101, and [`PASS_THREADS`]); the first doubt stops every thread.
 fn pass(root: &std::path::Path, plan: &Plan, pool: &JobPool) -> bool {
     let Ok(dir) = RootDir::open(root) else {
         return false;
     };
-    let n_files = plan.checked.len();
+    let n_files = plan.index.entries.len();
     let n = n_files.saturating_add(plan.dir_spans.len());
     let failed = AtomicBool::new(false);
     let item = |i: usize| -> bool {
-        if let Some(e) = plan.checked.get(i) {
+        if let Some(e) = plan.index.entries.get(i) {
             plan.index
                 .name_cstr(e)
                 .and_then(|name| dir.lstat(name).ok())
@@ -389,7 +399,11 @@ fn pass(root: &std::path::Path, plan: &Plan, pool: &JobPool) -> bool {
         }
         true
     };
-    let threads = pool.permits().get().min(pool.cores().get());
+    let threads = pool
+        .permits()
+        .get()
+        .min(pool.cores().get())
+        .min(PASS_THREADS);
     if n < PARALLEL_MIN || threads <= 1 || JobPool::holds_permit() {
         return range(0, n);
     }
@@ -496,8 +510,8 @@ mod tests {
         let img = {
             let mut b = b"DIRC".to_vec();
             b.extend_from_slice(&2_u32.to_be_bytes());
-            b.extend_from_slice(&3_u32.to_be_bytes());
-            for name in [&b"a/b/c"[..], b"a/b/d", b"a/e/f"] {
+            b.extend_from_slice(&5_u32.to_be_bytes());
+            for name in [&b"a/b.txt"[..], b"a/b/c", b"a/b/d", b"a/bc/x/y", b"a/e/f"] {
                 let mut ent = Vec::new();
                 for w in [0_u32, 0, 0, 0, 0, 0, 0o100_644, 0, 0, 1] {
                     ent.extend_from_slice(&w.to_be_bytes());
@@ -515,7 +529,7 @@ mod tests {
         let ix = IndexFile::parse(&img, 20).unwrap();
         let (dirs, spans) = leading_dirs(&ix, &ix.entries).unwrap();
         let got: Vec<&[u8]> = spans.iter().map(|&(s, n)| &dirs[s..s + n]).collect();
-        assert_eq!(got, [&b"a"[..], b"a/b", b"a/e"]);
-        assert_eq!(dirs, b"a\0a/b\0a/e\0");
+        assert_eq!(got, [&b"a"[..], b"a/b", b"a/bc", b"a/bc/x", b"a/e"]);
+        assert_eq!(dirs, b"a\0a/b\0a/bc\0a/bc/x\0a/e\0");
     }
 }

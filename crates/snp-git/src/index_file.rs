@@ -13,6 +13,7 @@
 //! Owner: WP-18.
 
 use std::ffi::CStr;
+use std::io::BufRead;
 use std::path::Path;
 
 /// `CE_VALID` (assume-unchanged) in the entry flags.
@@ -139,32 +140,34 @@ pub struct IndexFile {
 
 impl IndexFile {
     /// Reads and parses the index at `path` (`RepoInfo::index_file`, which honours `GIT_INDEX_FILE`) with object
-    /// ids of `hash_len` bytes; the buffer is dropped after the parse.
+    /// ids of `hash_len` bytes, streamed through a 64 KiB buffer: only the entries and their names are kept. A file
+    /// whose length differs from its `fstat` size by the end refuses.
     pub fn read(path: &Path, hash_len: usize) -> Result<Self, IndexRefusal> {
-        // `fs::read` reserves the file's length fallibly (an allocation failure is an error, not an abort)
-        let buf = std::fs::read(path).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::OutOfMemory {
-                IndexRefusal::TooLarge
-            } else {
-                IndexRefusal::Io
-            }
-        })?;
-        Self::parse(&buf, hash_len)
+        let f = std::fs::File::open(path).map_err(|_| IndexRefusal::Io)?;
+        let len = f.metadata().map_err(|_| IndexRefusal::Io)?.len();
+        let len = usize::try_from(len).map_err(|_| IndexRefusal::TooLarge)?;
+        Self::parse_from(
+            std::io::BufReader::with_capacity(64 * 1024, f),
+            len,
+            hash_len,
+        )
     }
 
     /// Parses an index image (see the module documentation).
     pub fn parse(buf: &[u8], hash_len: usize) -> Result<Self, IndexRefusal> {
+        Self::parse_from(buf, buf.len(), hash_len)
+    }
+
+    /// Parses the `len` bytes `r` yields (and refuses when it yields more or fewer).
+    fn parse_from<R: BufRead>(r: R, len: usize, hash_len: usize) -> Result<Self, IndexRefusal> {
         let empty_blob: &[u8] = match hash_len {
             20 => &EMPTY_BLOB_SHA1,
             32 => &EMPTY_BLOB_SHA256,
             _ => return Err(IndexRefusal::HashSize),
         };
-        let end = buf
-            .len()
-            .checked_sub(hash_len)
-            .ok_or(IndexRefusal::Truncated)?;
-        let mut rd = Reader { buf, pos: 0, end };
-        if rd.take(4)? != b"DIRC" {
+        let end = len.checked_sub(hash_len).ok_or(IndexRefusal::Truncated)?;
+        let mut rd = Reader { r, pos: 0, end };
+        if &rd.array::<4>()? != b"DIRC" {
             return Err(IndexRefusal::Header);
         }
         let version = rd.u32()?;
@@ -181,25 +184,43 @@ impl IndexFile {
         entries
             .try_reserve_exact(count)
             .map_err(|_| IndexRefusal::TooLarge)?;
+        // an upper bound for v2/v3 (each name is followed by at least its NUL); untouched capacity is not resident,
+        // and the arena is shrunk to its length at the end
         let mut names: Vec<u8> = Vec::new();
         names
             .try_reserve(end.saturating_sub(rd.pos))
             .map_err(|_| IndexRefusal::TooLarge)?;
         // v4 prefix compression can make the names longer than the file; far beyond any real index is refused
-        let names_cap = buf.len().saturating_mul(32).max(1 << 20);
+        let names_cap = len.saturating_mul(32).max(1 << 20);
         let mut prev: (usize, usize) = (0, 0);
+        // the fixed part of an entry: the stat words, the id and the flags, read in one call
+        let mut fixed_buf = [0_u8; STAT_WORDS + 32 + 2];
+        let fixed_len = STAT_WORDS.saturating_add(hash_len).saturating_add(2);
         for _ in 0..count {
             let start = rd.pos;
-            let ctime = (rd.u32()?, rd.u32()?);
-            let mtime = (rd.u32()?, rd.u32()?);
-            let dev = rd.u32()?;
-            let ino = rd.u32()?;
-            let mode = rd.u32()?;
-            let uid = rd.u32()?;
-            let gid = rd.u32()?;
-            let size = rd.u32()?;
-            let oid = rd.take(hash_len)?;
-            let flags = rd.u16()?;
+            let fixed = fixed_buf
+                .get_mut(..fixed_len)
+                .ok_or(IndexRefusal::HashSize)?;
+            rd.fill(fixed)?;
+            let (stat, rest) = fixed
+                .split_first_chunk::<STAT_WORDS>()
+                .ok_or(IndexRefusal::Truncated)?;
+            let (oid, flags) = rest
+                .split_last_chunk::<2>()
+                .ok_or(IndexRefusal::Truncated)?;
+            let (words, _) = stat.as_chunks::<4>();
+            let mut w = words.iter().map(|c| u32::from_be_bytes(*c));
+            let mut next = || w.next().ok_or(IndexRefusal::Truncated);
+            let ctime = (next()?, next()?);
+            let mtime = (next()?, next()?);
+            let dev = next()?;
+            let ino = next()?;
+            let mode = next()?;
+            let uid = next()?;
+            let gid = next()?;
+            let size = next()?;
+            let empty = oid == empty_blob;
+            let flags = u16::from_be_bytes(*flags);
             let flags2 = if flags & CE_EXTENDED != 0 {
                 if version < 3 {
                     return Err(IndexRefusal::Entry);
@@ -218,27 +239,22 @@ impl IndexFile {
                 let strip = rd.varint()?;
                 let keep = prev.1.checked_sub(strip).ok_or(IndexRefusal::Entry)?;
                 let prefix_end = prev.0.checked_add(keep).ok_or(IndexRefusal::TooLarge)?;
-                let suffix = rd.cstr()?;
-                let grow = keep.saturating_add(suffix.len()).saturating_add(1);
-                if names.len().saturating_add(grow) > names_cap {
+                if names.len().saturating_add(keep) > names_cap {
                     return Err(IndexRefusal::TooLarge);
                 }
                 names
-                    .try_reserve(grow)
+                    .try_reserve(keep)
                     .map_err(|_| IndexRefusal::TooLarge)?;
                 names.extend_from_within(prev.0..prefix_end.min(names.len()));
-                names.extend_from_slice(suffix);
+                rd.cstr_into(&mut names, names_cap)?;
             } else {
-                let rest = rd.remaining();
-                let nul = memchr::memchr(0, rest).ok_or(IndexRefusal::Truncated)?;
-                let name = rd.take(nul)?;
-                names.extend_from_slice(name);
-                // the NUL and the padding to a multiple of 8 bytes from the entry's start
-                let used = rd.pos.saturating_sub(start);
+                rd.cstr_into(&mut names, names_cap)?;
+                // the padding to a multiple of 8 bytes from the entry's start (the NUL is its first byte)
+                let used = rd.pos.saturating_sub(start).saturating_sub(1);
                 let padded = used.checked_add(8).ok_or(IndexRefusal::TooLarge)? & !7;
-                rd.take(padded.saturating_sub(used))?;
+                rd.skip(padded.saturating_sub(used).saturating_sub(1))?;
             }
-            let name_len = names.len().saturating_sub(name_start);
+            let name_len = names.len().saturating_sub(name_start).saturating_sub(1);
             let len_ok = if len_field == usize::from(CE_NAMEMASK) {
                 name_len >= len_field
             } else {
@@ -247,7 +263,6 @@ impl IndexFile {
             if name_len == 0 || !len_ok {
                 return Err(IndexRefusal::Entry);
             }
-            names.push(0);
             prev = (name_start, name_len);
             entries.push(IndexEntry {
                 ctime,
@@ -260,29 +275,33 @@ impl IndexFile {
                 size,
                 flags,
                 flags2,
-                empty_blob: oid == empty_blob,
+                empty_blob: empty,
                 name_start: u32::try_from(name_start).map_err(|_| IndexRefusal::TooLarge)?,
                 name_len: u32::try_from(name_len).map_err(|_| IndexRefusal::TooLarge)?,
             });
         }
         let mut extensions: Vec<[u8; 4]> = Vec::new();
         while rd.pos < end {
-            let sig: [u8; 4] = rd
-                .take(4)?
-                .try_into()
-                .map_err(|_| IndexRefusal::Truncated)?;
+            let sig = rd.array::<4>()?;
             let size = usize::try_from(rd.u32()?).map_err(|_| IndexRefusal::TooLarge)?;
             let known = matches!(&sig, b"TREE" | b"REUC" | b"UNTR" | b"EOIE" | b"IEOT");
             let optional = sig.first().is_some_and(u8::is_ascii_uppercase);
             if !known && (matches!(&sig, b"link" | b"sdir" | b"FSMN") || !optional) {
                 return Err(IndexRefusal::Extension(sig));
             }
-            rd.take(size)?;
+            rd.skip(size)?;
             extensions
                 .try_reserve(1)
                 .map_err(|_| IndexRefusal::TooLarge)?;
             extensions.push(sig);
         }
+        // the trailing hash, then nothing more
+        rd.end = len;
+        rd.skip(hash_len)?;
+        if !rd.at_eof()? {
+            return Err(IndexRefusal::Truncated);
+        }
+        names.shrink_to_fit();
         Ok(Self {
             version,
             entries,
@@ -310,64 +329,111 @@ fn span(v: u32) -> usize {
     usize::try_from(v).unwrap_or(usize::MAX)
 }
 
-/// A bounds-checked cursor over the index image, ending at `end` (the trailing hash's start).
-struct Reader<'a> {
-    buf: &'a [u8],
+/// A read error: the end of the input is a truncation, anything else an I/O refusal.
+fn io_refusal(e: &std::io::Error) -> IndexRefusal {
+    if e.kind() == std::io::ErrorKind::UnexpectedEof {
+        IndexRefusal::Truncated
+    } else {
+        IndexRefusal::Io
+    }
+}
+
+/// A bounds-checked cursor over the index stream, never reading past `end` (the trailing hash's start).
+struct Reader<R> {
+    r: R,
     pos: usize,
     end: usize,
 }
 
-impl<'a> Reader<'a> {
-    fn take(&mut self, n: usize) -> Result<&'a [u8], IndexRefusal> {
-        let e = self
-            .pos
+impl<R: BufRead> Reader<R> {
+    /// The position after `n` more bytes, when they are before `end`.
+    fn after(&self, n: usize) -> Result<usize, IndexRefusal> {
+        self.pos
             .checked_add(n)
             .filter(|e| *e <= self.end)
-            .ok_or(IndexRefusal::Truncated)?;
-        let s = self.buf.get(self.pos..e).ok_or(IndexRefusal::Truncated)?;
-        self.pos = e;
-        Ok(s)
+            .ok_or(IndexRefusal::Truncated)
     }
 
-    fn remaining(&self) -> &'a [u8] {
-        self.buf.get(self.pos..self.end).unwrap_or_default()
+    fn fill(&mut self, out: &mut [u8]) -> Result<(), IndexRefusal> {
+        let e = self.after(out.len())?;
+        self.r.read_exact(out).map_err(|e| io_refusal(&e))?;
+        self.pos = e;
+        Ok(())
+    }
+
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], IndexRefusal> {
+        let mut b = [0_u8; N];
+        self.fill(&mut b)?;
+        Ok(b)
     }
 
     fn u32(&mut self) -> Result<u32, IndexRefusal> {
-        let b: [u8; 4] = self
-            .take(4)?
-            .try_into()
-            .map_err(|_| IndexRefusal::Truncated)?;
-        Ok(u32::from_be_bytes(b))
+        Ok(u32::from_be_bytes(self.array::<4>()?))
     }
 
     fn u16(&mut self) -> Result<u16, IndexRefusal> {
-        let b: [u8; 2] = self
-            .take(2)?
-            .try_into()
-            .map_err(|_| IndexRefusal::Truncated)?;
-        Ok(u16::from_be_bytes(b))
+        Ok(u16::from_be_bytes(self.array::<2>()?))
     }
 
-    /// The bytes up to the next NUL, which is consumed too.
-    fn cstr(&mut self) -> Result<&'a [u8], IndexRefusal> {
-        let nul = memchr::memchr(0, self.remaining()).ok_or(IndexRefusal::Truncated)?;
-        let s = self.take(nul)?;
-        self.take(1)?;
-        Ok(s)
+    fn skip(&mut self, n: usize) -> Result<(), IndexRefusal> {
+        let e = self.after(n)?;
+        let mut left = n;
+        while left > 0 {
+            let got = self.r.fill_buf().map_err(|e| io_refusal(&e))?.len();
+            if got == 0 {
+                return Err(IndexRefusal::Truncated);
+            }
+            let k = got.min(left);
+            self.r.consume(k);
+            left = left.saturating_sub(k);
+        }
+        self.pos = e;
+        Ok(())
+    }
+
+    /// Whether the input is exhausted.
+    fn at_eof(&mut self) -> Result<bool, IndexRefusal> {
+        Ok(self.r.fill_buf().map_err(|e| io_refusal(&e))?.is_empty())
+    }
+
+    /// Appends the bytes up to and including the next NUL to `names` (fallibly reserved, at most `cap` bytes in all).
+    fn cstr_into(&mut self, names: &mut Vec<u8>, cap: usize) -> Result<(), IndexRefusal> {
+        loop {
+            let avail = self.end.saturating_sub(self.pos);
+            let buf = self.r.fill_buf().map_err(|e| io_refusal(&e))?;
+            let buf = buf.get(..buf.len().min(avail)).unwrap_or_default();
+            if buf.is_empty() {
+                return Err(IndexRefusal::Truncated);
+            }
+            let (k, done) = match memchr::memchr(0, buf) {
+                Some(i) => (i.saturating_add(1), true),
+                None => (buf.len(), false),
+            };
+            let part = buf.get(..k).unwrap_or_default();
+            if names.len().saturating_add(k) > cap {
+                return Err(IndexRefusal::TooLarge);
+            }
+            names.try_reserve(k).map_err(|_| IndexRefusal::TooLarge)?;
+            names.extend_from_slice(part);
+            self.r.consume(k);
+            self.pos = self.pos.saturating_add(k);
+            if done {
+                return Ok(());
+            }
+        }
     }
 
     /// git's offset varint (`decode_varint`): seven bits per byte, most significant first, each continuation adding
     /// one; an overflow refuses.
     fn varint(&mut self) -> Result<usize, IndexRefusal> {
-        let mut c = *self.take(1)?.first().ok_or(IndexRefusal::Truncated)?;
+        let [mut c] = self.array::<1>()?;
         let mut val = usize::from(c & 0x7f);
         while c & 0x80 != 0 {
             val = val.checked_add(1).ok_or(IndexRefusal::Entry)?;
             if val.leading_zeros() < 7 {
                 return Err(IndexRefusal::Entry);
             }
-            c = *self.take(1)?.first().ok_or(IndexRefusal::Truncated)?;
+            [c] = self.array::<1>()?;
             val = val.checked_mul(0x80).ok_or(IndexRefusal::Entry)? | usize::from(c & 0x7f);
         }
         Ok(val)
