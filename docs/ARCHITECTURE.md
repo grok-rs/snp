@@ -1033,6 +1033,14 @@ pub mod fsinfo {
     /// (NFS, SMB, 9p, every FUSE incl. sshfs/rclone/virtiofs, overlayfs, vfat, exfat, ntfs-3g, unknown) → false.
     pub fn stat_oracle_safe(path: &Path) -> io::Result<bool>;
 }
+/// ADR-134: `lstat` relative to a directory descriptor (`O_PATH` on Linux, read-only elsewhere; Unix only, `open` fails
+/// on other platforms), for the index-stat proof.
+pub mod rootstat {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub struct StatData { pub mode: u32, pub ino: u64, pub uid: u32, pub gid: u32,
+        pub size: u64, pub mtime: (i64, i64), pub ctime: (i64, i64) }
+    #[derive(Debug)] pub struct RootDir { /* OwnedFd */ }
+    impl RootDir { pub fn open(dir: &Path) -> io::Result<Self>; pub fn lstat(&self, name: &CStr) -> io::Result<StatData>; }
+}
 pub fn same_file(a: &Path, b: &Path) -> io::Result<bool>;
 ```
 
@@ -1491,8 +1499,10 @@ impl DiffFingerprint { pub const EMPTY: DiffFingerprint; }
 /// `core.attributesFile` or `attr.tree` key; the default is not plain).
 #[derive(Debug, Clone, Default)] pub struct ConfigListing { pub files: Arc<[PathBuf]>, pub checkout: CheckoutConfig }
 /// `eol_lf` (ADR-133): `core.eol` unset, `lf` or `native`, so `text=auto` checks out blob bytes (with `core.autocrlf` off).
+/// `index_proof` (ADR-134): fsmonitor, ignoreStat, sparse checkout unset or false and no `core.worktree` key;
+/// `object_id_len`: 20 (`extensions.objectFormat` unset or `sha1`), 32 (`sha256`), `None` otherwise.
 #[derive(Debug, Clone, PartialEq, Eq)] pub struct CheckoutConfig { pub plain: bool, pub file_mode: bool, pub hooks_path: Option<Box<[u8]>>,
-                                                                    pub eol_lf: bool }
+                                                                    pub eol_lf: bool, pub index_proof: bool, pub object_id_len: Option<usize> }
 /// ADR-133: `git var GIT_ATTR_SYSTEM`'s answer for this run's executable and environment (git ≥ 2.42), never kept across runs.
 #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub enum SystemAttributes { File(PathBuf), Disabled }
 
@@ -1577,6 +1587,25 @@ pub fn prefetch_eligible(url: &str, env: &Env, core_ssh_command_set: bool) -> bo
 pub fn no_git_env(env: &Env) -> Env;                                                    // git.py:27-48 allowlist (Windows: names upper-cased, §2.5)
 /// Per-run cache of the git facts pre-commit-hooks compute, with their exact upstream argv (non `-z`, quotePath and
 /// renames honoured: bug-compat) and the hook env (09 §3, §9.6). Used by snp-hooks natives.
+/// ADR-134: a strict reader of index versions 2–4 (exact entry count, extensions by size up to the trailing hash; `link`,
+/// `sdir`, `FSMN` and unknown lowercase extensions refuse), for the DiffOracle's index-stat proof. No spawn.
+pub mod index_file {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)] #[non_exhaustive] pub enum IndexRefusal { Header, HashSize, Truncated, Entry,
+        Extension([u8; 4]), TooLarge, Io }
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub struct IndexEntry { pub ctime: (u32, u32), pub mtime: (u32, u32), pub dev: u32,
+        pub ino: u32, pub mode: u32, pub uid: u32, pub gid: u32, pub size: u32, pub flags: u16, pub flags2: u16, pub empty_blob: bool,
+        /* name span */ }
+    impl IndexEntry { pub fn stage(&self) -> u16; pub fn assume_valid(&self) -> bool; pub fn skip_worktree(&self) -> bool;
+        pub fn intent_to_add(&self) -> bool; }
+    #[derive(Debug, Clone, Default)] pub struct IndexFile { pub version: u32, pub entries: Vec<IndexEntry>, pub extensions: Vec<[u8; 4]>,
+        /* names */ }
+    impl IndexFile {
+        pub fn read(path: &Path, hash_len: usize) -> Result<Self, IndexRefusal>;
+        pub fn parse(buf: &[u8], hash_len: usize) -> Result<Self, IndexRefusal>;
+        pub fn name(&self, e: &IndexEntry) -> &[u8];
+        pub fn name_cstr(&self, e: &IndexEntry) -> Option<&std::ffi::CStr>;
+    }
+}
 pub mod pch_facts {
     #[derive(Debug)] pub struct PchFacts { /* Git + OnceLocks */ }
     impl PchFacts {
@@ -2012,6 +2041,9 @@ pub mod diff_oracle {   // ADR-027
     #[derive(Debug)] pub struct DiffOracle { /* mode, last DiffFingerprint, snapshot: stats + diff-input sources + racy hashes */ }
     #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum Change { Unchanged, Changed }
     #[derive(Debug, Clone, Copy, PartialEq, Eq)] #[non_exhaustive] pub enum Elision { NotProven, Elided, Verified, Mismatch }
+    /// ADR-134: passes run, passes that proved, proven diffs the verify mode found non-empty.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)] #[non_exhaustive] pub struct ProofStats { pub passes: u32, pub proven: u32,
+        pub mismatches: u32 }
     impl DiffOracle {
         /// Stat mode only on Unix, `stat_oracle_safe` filesystems, ≤ 16_384 index entries, no `attr.tree` /
         /// `GIT_ATTR_SOURCE`, SNP_DIFF_MODE != "git", and `tracked` + `origins` supplied by the step-6 fan-out (no extra
@@ -2039,6 +2071,12 @@ pub mod diff_oracle {   // ADR-027
         /// ADR-132: the baseline a gated hook's first writer took becomes the hook's comparison base.
         pub fn adopt_baseline(&mut self, baseline: snp_git::DiffFingerprint);
                                        system: Option<&snp_git::SystemAttributes>, verify: bool) -> Elision;
+        /// ADR-134: in Git mode, every `git diff` taken while the last fingerprint is empty or not taken yet is first
+        /// decided by the index-stat proof (EMPTY, no spawn, when it holds); `config` is query G's listing; `verify`
+        /// (`SNP_VERIFY_INDEX_PROOF=1`) takes the real diff anyway and counts a non-empty one. Returns whether it armed.
+        pub fn enable_index_proof(&mut self, info: &snp_git::RepoInfo, env: &snp_core::env::Env,
+                                  pool: Arc<snp_proc::pool::JobPool>, config: &snp_git::ConfigListing, verify: bool) -> bool;
+        pub fn proof_stats(&self) -> Option<ProofStats>;
     }
 }
 ```
@@ -2649,7 +2687,7 @@ startup Env (captured once in main, minus __PYVENV_LAUNCHER__/PYTHONEXECUTABLE)
 | 13 | `SKIP` (+ `SNP_SKIP_GROUPS`, overlay `skip`, `skip/only` conditions) → `to_install` | 02 §6.2, 15 V-SKIP | `strip_fsbytes` semantics for non-UTF-8 SKIP |
 | 14 | `resolver.install_envs(to_install)` incl. delegated fast-path hooks and virtual install triplets | 03 §8.4, ADR-032 | `check_support` before any FS mutation (04b §5.1) |
 | 15 | `cols` from **all** selected hooks (skipped included); file selection (§3.2); `[INFO] Checking merge-conflict files only.`; global filter; `retain_lexists` — the classifier is built here, eagerly, when some selected hook reads files (`!always_run` ∨ `pass_filenames`) or `--from-ref`/`--to-ref` are set (P17: never otherwise; then only the merge-conflict notice is decided). A clean `--all-files` run whose filters allow it lists with `ls-files -s -v -f -z`, takes the before-diff here and trusts the index modes instead of `lstat`ing every file (§2.3, ADR-106) | 02 §9–10 | — |
-| 16 | Baseline digest (ADR-078): **elided or lazy** (at pre-commit's position). **Warm path** (no clone, install or download in steps 11–14, counted by `Resolve::store_work` and the run's counting fetcher, and steps 11–14 under 250 ms; ADR-104): `DiffFingerprint::EMPTY` when the stash step saw `diff-index` rc 0 and stashed nothing, or (ADR-119) when it checked out the patch's files and the oracle's Stat-mode snapshot proves the checkout left `git diff` empty (plain configuration from G, no `core.attributesFile` or `attr.tree` key in G, no attributes file that sets or values `text`/`crlf`/`eol`/`ident`/`filter`/`working-tree-encoding` (`text=auto` allowed with `core.eol` unset/`lf`/`native`), no `.gitattributes` in the patch, every tracked `.gitattributes` unflagged in F's tags and present (ADR-133), no `post-checkout`/`post-index-change` hook, every checked-out path a regular file of its own with its index mode's executable bit, no intent-to-add clearing). The system attributes file is the one `git var GIT_ATTR_SYSTEM` names (git ≥ 2.42, asked overlapped with the stash's checkout, on its notice, so a run that checks nothing out never asks; per run; ADR-133); without that answer the proof runs on Linux only (ADR-119's prefix heuristic). Otherwise one `git diff` taken lazily after `install_envs`, before the first hook that needs it, pre-commit's position (an IDE autosave during an install must count as pre-existing, not as a hook modification); a trust-capable `--all-files` run took it at step 15 (ADR-106) | 02 §11.2 | `SNP_VERIFY_BASELINE=1` (CI) takes the real diff and asserts equality |
+| 16 | Baseline digest (ADR-078): **elided or lazy** (at pre-commit's position). **Warm path** (no clone, install or download in steps 11–14, counted by `Resolve::store_work` and the run's counting fetcher, and steps 11–14 under 250 ms; ADR-104): `DiffFingerprint::EMPTY` when the stash step saw `diff-index` rc 0 and stashed nothing, or (ADR-119) when it checked out the patch's files and the oracle's Stat-mode snapshot proves the checkout left `git diff` empty (plain configuration from G, no `core.attributesFile` or `attr.tree` key in G, no attributes file that sets or values `text`/`crlf`/`eol`/`ident`/`filter`/`working-tree-encoding` (`text=auto` allowed with `core.eol` unset/`lf`/`native`), no `.gitattributes` in the patch, every tracked `.gitattributes` unflagged in F's tags and present (ADR-133), no `post-checkout`/`post-index-change` hook, every checked-out path a regular file of its own with its index mode's executable bit, no intent-to-add clearing). The system attributes file is the one `git var GIT_ATTR_SYSTEM` names (git ≥ 2.42, asked overlapped with the stash's checkout, on its notice, so a run that checks nothing out never asks; per run; ADR-133); without that answer the proof runs on Linux only (ADR-119's prefix heuristic). Otherwise one `git diff` taken lazily after `install_envs`, before the first hook that needs it, pre-commit's position (an IDE autosave during an install must count as pre-existing, not as a hook modification), answered without a spawn in Git mode when the index-stat proof holds (§3.7 item 4, ADR-134; G is then asked beside step 14's installs); a trust-capable `--all-files` run took it at step 15 (ADR-106) | 02 §11.2 | `SNP_VERIFY_BASELINE=1` (CI) takes the real diff and asserts equality; `SNP_VERIFY_INDEX_PROOF=1` cross-checks the index-stat proof |
 | 17 | Schedule and execute (§3.4–3.7); print in config order (§3.9) | 02 §11 | one JobPool; cancellation stops new work |
 | 18 | `fail_fast` (config ∨ hook ∨ `--fail-fast`): stop after the current failing hook (bucket) | 02 §11.2 | later hooks print nothing |
 | 19 | `--show-diff-on-failure` (inside the stash) | 02 §15 | `git --no-pager diff …` inherits stdout (Printer flushed first) |
@@ -2836,7 +2874,19 @@ O(1) memory) and decides per executed hook with `snp_stash::diff_oracle::DiffOra
      randomized differential test (random tree edits, attribute/config edits, touch-only, same-size rewrites with
      restored mtimes) against real `git diff`, and `SNP_DIFF_MODE=git` exists as an escape hatch.
 4. **`DiffMode::Git`** (Windows, network filesystems, > 16 384 tracked files, or `SNP_DIFF_MODE=git`): pre-commit's
-   algorithm verbatim. On Windows stable std exposes no ctime/file-id, so no stat oracle is attempted.
+   algorithm verbatim. On Windows stable std exposes no ctime/file-id, so no stat oracle is attempted. On Unix
+   allow-listed filesystems the **index-stat proof** (ADR-134) decides first, whenever the last fingerprint is empty or
+   not taken yet: when the index (`GIT_INDEX_FILE`'s, read strictly by `snp_git::index_file`, its stamp unchanged from
+   before the read to the end of the pass) has only stage-0 entries and no intent-to-add entry, and every entry that is
+   not assume-unchanged, skip-worktree or a gitlink is non-racy (mtime second below the index file's), not smudged
+   (size 0 only for the empty blob over an empty file) and matches its root-relative `lstat` strictly (kind and owner
+   x bit, mtime and ctime s+ns, inode/uid/gid truncated to 32 bits, size truncated to 32 bits and never a non-zero
+   multiple of 4 GiB; not `st_dev`), and every leading directory is a directory, `git diff` prints nothing and writes
+   nothing: the fingerprint is EMPTY with no spawn. Its configuration gate comes from query G (fsmonitor, ignoreStat,
+   sparse checkout off, no `core.worktree`, a known object format; no fsmonitor test variable), asked beside step 14
+   for a run with a process hook and no Stat mode, and is re-checked when a config file's stamp changes. The pass runs
+   on the `JobPool` (cores cap, at most 8 threads) and stops at the first doubt; any doubt runs the real `git diff`.
+   `SNP_VERIFY_INDEX_PROOF=1` takes the real diff anyway and reports a non-empty one on stderr.
 5. **Baseline** (§3.1 step 16): on the warm path (no clone, install or download, tracked in code, ADR-104)
    known-empty after `diff-index` rc 0 in stash mode, or after the stash's checkout when the Stat-mode snapshot proves
    it left `git diff` empty (ADR-119, ADR-133); otherwise one baseline `git diff`, taken lazily after
@@ -2849,6 +2899,10 @@ O(1) memory) and decides per executed hook with `snp_stash::diff_oracle::DiffOra
    comparison base, and a hook that writes nothing takes no `git diff` (B6 takes none); the show-diff gate takes it at
    the end when no hook did. Any process hook keeps the position above, even one that ends up with no files. Skipped
    and no-files hooks reuse the previous digest. Never `git diff --quiet` (CRLF and stat-dirty quirks).
+   `install_envs` (pre-commit's position), never overlapped with resolution, which the index-stat proof may answer
+   without a spawn in Git mode (item 4, ADR-134); a trust-capable `--all-files` run takes it at step 15, beside its
+   tagged listing (ADR-106). Skipped and no-files hooks reuse the previous digest. Never
+   `git diff --quiet` (CRLF and stat-dirty quirks).
 6. **Parallel buckets** (extension): per-hook stat snapshots of each hook's input set + the bucket digest; a changed
    file is attributed to the single hook whose inputs contain it; otherwise every hook that could have caused it fails
    (conservative, fail closed; 05 §18.4 A1). blake3 content confirms stat changes.
@@ -4086,7 +4140,7 @@ the package owning the prefix fills it): `pycompat_shlex_split`, `pycompat_decod
 `pycompat_ntpath`, `pycompat_rev_line` (WP-11); `argparse_parse` (both specs, WP-12); `pyre_compile_match` (str +
 bytes, WP-13); `yaml_compose_construct`, `yaml_load` (WP-14); `proc_hookcmd_split`, `proc_shebang_resolve` (WP-15);
 `net_archive_extract` (WP-16); `pyparsers_json`, `pyparsers_yamlcheck`, `pyparsers_toml`, `pyparsers_xml` (WP-17);
-`git_z_split`, `git_pre_push`, `git_merge_msg`, `git_hook_script_classify`, `git_ls_files_tagged` (ADR-106) (WP-18);
+`git_z_split`, `git_pre_push`, `git_merge_msg`, `git_hook_script_classify`, `git_ls_files_tagged` (ADR-106), `git_index_file` (ADR-134) (WP-18);
 `config_load_validate`, `config_manifest_load`, `config_migrate`, `config_revline` (WP-21); `files_classify`,
 `store_env_dir_name`, `store_marker_parse` (WP-22); `stash_journal_parse` (WP-23); `lang_python_pyvenv_cfg` (WP-24);
 `lang_docker_mountinfo` (WP-25); `pygrep_match` and `pch_p0_<hook>` (WP-26); `pch_p1_<hook>`, `pch_p2_<hook>`,

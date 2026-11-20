@@ -35,6 +35,15 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   `B9 − B9nv − B3'`, the installed hook's own cost, as information. The known-miss reasons of B6, B11 and B12u state
   current facts, B9 has an interim entry, and B5's entry is gone, so the gate fails again if snp falls behind prek on
   B5.
+- When hook modifications are detected with `git diff` (over 16,384 index entries, or one or two process hooks on a
+  tree that is not small), snp skips the `git diff` after each hook, and the lazy one before the first, when the index
+  proves it empty (ADR-134; output and side effects unchanged, `SNP_VERIFY_INDEX_PROOF=1` cross-checks
+  it): on Unix filesystems the stat oracle accepts, with fsmonitor, `core.ignoreStat`, sparse checkout and
+  `core.worktree` off, every index entry at stage 0, no intent-to-add entry, no split or sparse index, every entry
+  older than the index file (not racy) and its file's `lstat` exactly the index's cached stat data, and no leading
+  directory replaced by a symbolic link. Anything else takes the real diff, as before. On B12u (20 hooks over 20,000
+  files) 19 of 20 `git diff`s no longer run: 1,504 M → 865 M instructions for the process tree, 428 → 410 processes;
+  B4 and B5 lose one of two (−4 %).
 - bench: the B8 `p50 <= pre-commit` known miss is gone. PR #57's CI bench measured snp at 307 ms against
   pre-commit's 418 ms (1.36x), so the gate fails again if snp ever falls behind pre-commit on B8.
 - cfgv and file-identify are part of the workspace (ADR-116): imported with their full history as `crates/snp-cfgv`

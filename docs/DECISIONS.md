@@ -22,7 +22,7 @@ overflow checks kept for every crate; ADR-115 the tier-1 scan engine; ADR-116 th
 into the workspace; ADR-117 the B8 stash-time overlaps; ADR-118 the musl mimalloc build without transparent huge pages;
 ADR-119 the proven post-checkout baseline; ADR-131 the file-content cache of consecutive in-process hooks; ADR-132 the
 baseline taken by the first native write in all-in-process runs; ADR-133 its follow-ups (the system attributes file from
-`git var`, attributes that convert nothing); ADR-135 the hook script template v3; ADR-136 the wave-5 bench methodology;
+`git var`, attributes that convert nothing); ADR-134 the index-stat proof; ADR-135 the hook script template v3; ADR-136 the wave-5 bench methodology;
 ADR-137 PIE release artifacts and their hardening gate; ADR-138 the internal crates' API policy and snp-yaml's borrowed
 tags and scalar text.
 
@@ -314,7 +314,7 @@ in `<store>/patches/` written temp+rename. **Consequences.** Signal and second-^
 
 ### ADR-027 — Modification detection: Unix DiffOracle, Windows real diff, baseline elision
 
-*Status: Accepted; amended by ADR-078 (filesystem allow-list, extra attribute inputs, warm-path-only baseline elision). The amending ADR is normative where they differ.*
+*Status: Accepted; amended by ADR-078 (filesystem allow-list, extra attribute inputs, warm-path-only baseline elision) and ADR-134 (in Git mode an index-stat proof replaces a `git diff` it proves empty). The amending ADRs are normative where they differ.*
 
 **Context.** robust kept one `git diff` per executed hook (B3 ≤ 25 ms doubtful, far off on Windows where a git spawn
 costs 10–30 ms); compat's stat fast path ignored non-tracked diff inputs; perf's DiffOracle was unsound on Windows and
@@ -918,7 +918,7 @@ Amends ADR-034, ADR-036 and ADR-044.
 
 ### ADR-078 — DiffOracle soundness, round 2, and baseline timing
 
-*Status: Accepted; ADR-104 records how (3) is implemented (the code tracks clones, installs and downloads; the decision is unchanged); (3)'s parity mechanics amended by ADR-119 (after the stash's checkout the warm-path baseline is elided when the Stat-mode snapshot proves it empty); (3)'s baseline position amended by ADR-132 (in an all-in-process run with no known baseline, the first native write of a hook takes it, and a hook that writes nothing takes none). The amending ADRs are normative where they differ.*
+*Status: Accepted; ADR-104 records how (3) is implemented (the code tracks clones, installs and downloads; the decision is unchanged); (3)'s parity mechanics amended by ADR-119 (after the stash's checkout the warm-path baseline is elided when the Stat-mode snapshot proves it empty) and ADR-134 (in Git mode the lazy baseline is the empty fingerprint when the index-stat proof holds); (3)'s baseline position amended by ADR-132 (in an all-in-process run with no known baseline, the first native write of a hook takes it, and a hook that writes nothing takes none). The amending ADRs are normative where they differ.*
 
 **Decision.** (1) Stat mode only on an allow-list of filesystems with kernel-maintained ctime and ns mtime (ext2/3/4,
 xfs, btrfs, tmpfs, zfs, f2fs, bcachefs; apfs, hfs) — every FUSE (sshfs, rclone, virtiofs), 9p, overlay, vfat, exfat,
@@ -3019,6 +3019,97 @@ job runs the whole matrix so with Homebrew git (Apple's `/usr/bin/git` is older 
 The checkout notice is sent before the checkout command starts, and dropped unsent on a run with nothing to stash and
 on a lock timeout (`crates/snp-stash/tests/behaviour/guard.rs`); the K9 anchor `Inner::stash` was re-reviewed (the
 notice has no repository effect) and its fingerprint refreshed.
+
+### ADR-134 — The index-stat proof: no per-hook `git diff` when the index proves it empty
+
+*Amends ADR-027 (Git mode) and ADR-078 (3)'s lazy baseline (owner decision "S1 index-stat proof" of 2026-11-21, after
+the wave-5 parity panel). The guarantee is unchanged: every fingerprint the oracle uses equals the stdout of the `git
+diff` pre-commit takes at that point, and the proof skips no side effect of it; anything not proven takes the real
+diff.*
+
+**Context.** In Git mode (more than 16 384 index entries, or one or two process hooks on a tree that is not small,
+ADR-104) every executed process hook costs one `git diff --no-ext-diff --no-textconv --ignore-submodules`: 81 % of
+B12u's tree instructions (20 diffs over 20 000 paths) and 67 % of B4's. git's `run_diff_files` (v2.18.5 and v2.56.0,
+`diff-lib.c`, `read-cache.c` `ie_match_stat` / `ce_match_stat_basic` / `is_racy_stat`, `statinfo.c`) reads a worktree
+file's content only for an entry whose cached stat data differs or that is racily clean; for every other entry it
+prints nothing and writes nothing (`refresh_index_quietly` runs only after a stat-dirty entry). git's default build
+compares whole seconds and never `st_dev` (`USE_NSEC` and `USE_STDEV` are opt-in).
+**Decision.** (1) `snp_git::index_file::IndexFile`, a strict reader of index versions 2, 3 and 4 (v4 prefix-compressed
+names): it consumes exactly the header's entry count and then extensions by size up to exactly the file length minus
+the hash (20 or 32 bytes from `extensions.objectFormat`); `link` (split index), `sdir` (sparse index), `FSMN`
+(fsmonitor) and unknown lowercase extensions refuse, `TREE`, `REUC`, `UNTR`, `EOIE`, `IEOT` and unknown uppercase
+ones are skipped; unknown second-word flags, the extended flag in v2, a name that disagrees with its length field and a
+v4 prefix longer than the previous name refuse; the checksum is not verified (git dies on a corrupt index with empty
+stdout, `index.skipHash` writes zeros); the file is streamed through a 64 KiB buffer and must end exactly where its
+`fstat` size says; `try_reserve` throughout, with its own fuzz target `git_index_file`. (2)
+`DiffOracle::enable_index_proof` arms the proof in Git mode only, when the platform is Unix, `SNP_DIFF_MODE` is not
+`git`, neither `GIT_TEST_FSMONITOR` nor `GIT_FSMONITOR_TEST` is set, the worktree and the git directory are
+`stat_oracle_safe`, and query G's configuration (`CheckoutConfig::index_proof`) has `core.fsmonitor`,
+`core.useBuiltinFSMonitor`, `core.ignoreStat`, `core.sparseCheckout` and `index.sparse` unset or false, no
+`core.worktree` at all, and a known object format (`CheckoutConfig::object_id_len`). The pipeline asks G for it beside
+step 14's installs when the run has a process hook and no Stat mode (step 6's G is reused when it ran). (3) Whenever
+the oracle would take a `git diff` while its last fingerprint is empty or not taken yet (the lazy baseline, the
+comparison after a hook, the show-diff gate), the proof runs first; with a non-empty last fingerprint it is not
+attempted (it could not hold). It holds when, for `RepoInfo::index_file` (which honours `GIT_INDEX_FILE`) with its
+stamp (dev, ino, size, mtime and ctime in nanoseconds) unchanged from before the read to the end of the pass: every
+entry is at stage 0 and none is intent-to-add; assume-unchanged, skip-worktree and gitlink entries are skipped (git
+never compares them under `--ignore-submodules`); every other entry is `100644`, `100755` or `120000`, not racy (its
+mtime second is below the index file's, as git truncates both to 32 bits: racily clean under neither build), not
+smudged (a stored size 0 only for the empty blob over an empty file), and its `lstat`, relative to an `O_PATH`
+descriptor of the root (`snp_os::rootstat`), matches strictly: kind and owner-executable bit, mtime and ctime seconds
+and nanoseconds, inode, uid and gid truncated to 32 bits, and the size truncated to 32 bits, where a non-zero size that
+truncates to 0 refuses (so gits with and without `munge_st_size` agree); and every leading directory of a checked
+entry is a directory by `lstat`. The config files (G's origins, every place git reads one from, include targets,
+`HEAD` for `onbranch:` includes; racy ones content-hashed) are stamped; a changed stamp asks G again and re-evaluates
+the gate. The pass runs on the run's `JobPool`, at most its cores (ADR-101) and 8 threads (the work is `lstat` calls), and
+stops at the first doubt; the leading directories are collected without hashing, from the bytes each name shares with
+the previous one. A parse that
+can never prove (a refusal, an unmerged, intent-to-add, racy, smudged or odd-mode entry) is kept by stamp, so no pass
+runs until the index changes. (4) The proof is stricter than any git build and setting: `core.fileMode=false`,
+`core.trustctime=false`, `core.checkStat=minimal` and `core.symlinks=false` only make git more lenient, so they are not
+read; `st_dev` is not compared, mirroring git's default build (a `USE_STDEV` build would only refresh the index, with
+no stdout; btrfs and device-mapper numbers change across reboots, so comparing it would disable the proof forever
+there). Attributes, filters and `core.autocrlf` do not matter: git reads them only for content comparisons, which the
+match excludes. (5) `SNP_VERIFY_INDEX_PROOF=1` still takes every proven diff with the real `git diff`, uses its result
+and prints `snp: SNP_VERIFY_INDEX_PROOF: a proven-empty git diff was not empty; using the real one` once on stderr
+when any was not empty.
+**Rejected.** (a) Comparing whole seconds only, as git's default build does: sound for that build, not for `USE_NSEC`
+builds; the cost is a proof that fails for an entry whose stat changed within the second of its last refresh until the
+file's second changes. (b) Comparing `st_dev`: see (4). (c) Hashing racy entries (phase 2 of the panel, so the proof
+also fires on fresh checkouts): deferred, it needs a no-conversion gate and its own ADR. (d) The parent-stamp
+refinement (lens threads-5: `lstat` only directories holding a tracked subdirectory): deferred, it needs its own
+soundness clause (bind mounts). (e) Replacing step 15's before-diff of a trust-capable `--all-files` run (ADR-106)
+with the proof: that diff overlaps the tagged listing; deferred. (f) The Stat mode's lazy baseline: deferred (the
+Stat mode is chosen where its own pass beats the diff).
+**Consequences.** Measured on Linux with git 2.43 (release-like `profiling` build, bench fixtures generated in
+`target/` by `cargo xtask bench setup`, whose `files50k` and `unicode20` indexes came out non-racy: the last file was
+written 8 s and 4 s before the index; CI's fixtures are not verified here, and the proof does not fire on a racy one),
+main against this change, callgrind over the whole process tree (user instructions; the pass's `lstat`s replace
+git's, so system calls stay level: B12u 717 k → 710 k under `strace -f -c`): B12u 1,504 M → 865 M instructions
+(−42 %), 428 → 410 processes (19 per-hook `git diff`s out, one `git config --list --show-origin -z` in), snp's own
+process 565 M → 688 M; B4 436 M → 417 M (−4.4 %) and B5 438 M → 419 M (−4.3 %), one `git diff` out and G in (29 → 29
+processes; the before-diff of step 15 stays). Peak RSS +1.3 MB on B4 and +2.4 MB on B12u (the index is streamed
+through a 64 KiB buffer; only the entries and their names are kept), under ADR-079's 30 MB. B2, B3 and B6 are
+unchanged (Stat mode or no process hook: G is not asked). Output, exit code and side effects are unchanged: the B4,
+B5 and B12u runs print the same bytes as main, with and without `SNP_VERIFY_INDEX_PROOF=1`. Tests: the reader's
+format cases (v2 extensions, v3 flags, long names, v4 prefix compression and varints, every refusal) and its fuzz
+target; the configuration gate (`crates/snp-git/src/types.rs`); the strict per-entry match and the leading-directory
+walk (`crates/snp-stash/src/diff_oracle/index_proof.rs`); in `crates/snp-stash/tests/behaviour/index_proof.rs`, a
+counting probe (a clean index of versions 2 and 4, with an assume-unchanged entry modified and a skip-worktree entry
+deleted, proves the baseline and five hooks with no `git diff`; a modification, a touch and an intent-to-add entry
+take the real one; a non-empty last fingerprint runs no pass), `GIT_INDEX_FILE`, a SHA-256 repository, the gates
+(ignoreStat, sparse checkout, fsmonitor in the configuration and the environment, `SNP_DIFF_MODE=git`, a split
+index), and a randomized differential against real `git diff` (settled clean states, writes, same-size rewrites
+with the mtime restored, touches, deletions, chmod, file to symlink, a leading directory swapped for a symlink to a
+copy, a directory replaced by a file, assume-unchanged and skip-worktree set and cleared, intent-to-add, index
+versions 2–4, split index on and off, `git add` by a hook, configuration edits re-checked by stamp, unmerged entries,
+gitlinks): every verdict equals real `git diff`'s, and whenever the proof held the real `git diff` printed nothing
+and left the index file alone; it ran 5 × 2,000 hooks on each of git 2.18.5, 2.43.0 and 2.56.0 (the git on `PATH`
+plus `SNP_TEST_GIT_MATRIX`; the suite default is 400 per git). `crates/snp-run/tests/pipeline/index_proof.rs` runs
+the pipeline in Git mode (two process hooks, 300 files): no per-hook `git diff` on a clean index, the real one after a
+modifying hook and on a racy index, every run equal to the always-diff path and to the verify mode. Not a proof anchor
+(proofs/registry.toml is untouched); the per-entry predicate is a natural K-candidate.
+
 ### ADR-135 — Hook script template v3: the hook directory without a subshell for the paths git builds
 
 *Amends ADR-105 (the template's `HERE` block and ID; its equivalence argument, ID handling and classification rules
