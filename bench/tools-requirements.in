@@ -1,4 +1,4 @@
 # The bench helper tools: uv (on the hermetic PATH, so prek and snp never download one; prek 0.5.11 defaults to 0.13.7) and
 # pip (downloads the wheelhouse).
 uv==0.13.7
-pip==25.3
+pip==26.3

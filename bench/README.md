@@ -17,7 +17,7 @@ against.
 
 ```sh
 cargo xtask oracle install          # pre-commit 4.7.0 on CPython 3.12.3 (target/oracle/pc470-py312)
-cargo xtask bench setup             # hyperfine 1.19.0, prek 0.5.11, fixtures, snp (dist), warm stores
+cargo xtask bench setup             # hyperfine 2.0.0, prek 0.5.11, fixtures, snp (dist), warm stores
 cargo xtask bench run               # target/bench/results/current.json
 cargo xtask bench gate              # budgets + regression against the last history record
 start=$(date +%s) && cargo bench -p snp --bench pyre_kinds ... -- --noplot && cargo xtask bench gate --micro --since "$start"
@@ -152,7 +152,7 @@ the same.
   median snp time among the last 10 history records (at least 3 needed). Without it, a series of slowdowns each just
   under 5 % of the previous record would pass forever, since every passing run becomes the next baseline. The gate reads the records and
   criterion's results from cargo's target directory (`CARGO_TARGET_DIR` respected), like `run` writes them, and uses
-  hyperfine 1.19.0 only (another hyperfine on PATH is ignored).
+  hyperfine 2.0.0 only (another hyperfine on PATH is ignored).
 * **History from other machines** (`--advisory-history`): the regression and drift checks against the history report
   warnings instead of failing (never the paired check or the counters). CI passes it on every event: the history comes from other
   runner VMs, where one binary measured 0.76–1.19 ms for B1 (glibc) and 0.48–0.66 ms (musl), and not even the ratio to

@@ -14,6 +14,10 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
 - bench: the comparator is prek 0.5.11 (was 0.5.10), and the bench's pinned uv is 0.13.7, prek 0.5.11's default, so
   neither prek nor snp downloads one. prek 0.5.11 infers hook effects to skip `git diff` calls, groups read-only hooks
   and caches file contents across read-only built-in hooks, so its times on B6, B8 and B12u are expected to drop.
+- bench: hyperfine 2.0.0 (was 1.19.0) and pip 26.3 (was 25.3). The harness reads hyperfine's schema-2 JSON
+  (`measurements[*].time_wall_clock`) and refuses any other schema or unit, and it asks only for wall-clock time
+  (`--metrics time_wall_clock`), because 2.0 also samples peak memory by default and RSS has its own runs. History
+  records written before this change came from hyperfine 1.19.0.
 - bench: the B8 `p50 <= pre-commit` known miss is gone. PR #57's CI bench measured snp at 307 ms against
   pre-commit's 418 ms (1.36x), so the gate fails again if snp ever falls behind pre-commit on B8.
 - cfgv and file-identify are part of the workspace (ADR-116): imported with their full history as `crates/snp-cfgv`

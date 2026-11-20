@@ -1,7 +1,7 @@
 //! `cargo xtask bench setup|run|gate`: the end-to-end performance and memory gates of ARCHITECTURE §12 (research 10
 //! §0.2, §7.11; ADR-043, ADR-047, ADR-071, ADR-079, ADR-099, ADR-100).
 //!
-//! * `setup` installs the measuring tools (hyperfine 1.19.0 and prek 0.5.11, both pinned; the pre-commit 4.7.0 oracle
+//! * `setup` installs the measuring tools (hyperfine 2.0.0 and prek 0.5.11, both pinned; the pre-commit 4.7.0 oracle
 //!   comes from `cargo xtask oracle install`), mirrors pre-commit-hooks locally (every clone is redirected to the
 //!   mirror through `url.<mirror>.insteadOf`), downloads the hash-locked wheelhouse every Python install resolves from
 //!   with no index and puts the pinned uv on the hermetic PATH (so no scenario touches the network), generates the
@@ -44,7 +44,7 @@ use serde_json::{Value, json};
 use crate::workspace::{self, say};
 
 /// The pinned hyperfine release (`cargo install --locked`).
-const HYPERFINE_VERSION: &str = "1.19.0";
+const HYPERFINE_VERSION: &str = "2.0.0";
 /// The pinned prek release (hash-locked in `bench/prek-requirements.txt`).
 const PREK_VERSION: &str = "0.5.11";
 /// The pre-commit-hooks tag of B6/B7 (the snp fast-path tag).
@@ -2135,22 +2135,42 @@ impl Measure {
     }
 }
 
-/// The run times (milliseconds) of hyperfine's `--export-json` (one command).
+/// The run times (milliseconds) of hyperfine's `--export-json` (one command): schema version 2 (hyperfine 2.x),
+/// `results[0].measurements[*].time_wall_clock.value` in seconds. Any other schema, unit or a run without a wall-clock
+/// value is an error, never a silently shorter sample.
 fn parse_hyperfine_times(text: &str) -> anyhow::Result<Vec<f64>> {
     let v: Value = serde_json::from_str(text).context("parsing hyperfine JSON")?;
+    ensure!(
+        v.get("schema_version").and_then(Value::as_u64) == Some(2),
+        "hyperfine JSON is not schema version 2 (hyperfine {HYPERFINE_VERSION} writes 2)"
+    );
     let r = v
         .get("results")
         .and_then(Value::as_array)
         .and_then(|a| a.first())
         .context("hyperfine JSON has no result")?;
-    let times: Vec<f64> = r
-        .get("times")
+    let runs = r
+        .get("measurements")
         .and_then(Value::as_array)
-        .context("hyperfine JSON has no times")?
-        .iter()
-        .filter_map(Value::as_f64)
-        .map(|s| s * 1000.0)
-        .collect();
+        .context("hyperfine JSON has no measurements")?;
+    let mut times = Vec::new();
+    times
+        .try_reserve_exact(runs.len())
+        .context("hyperfine JSON: too many runs")?;
+    for m in runs {
+        let wall = m
+            .get("time_wall_clock")
+            .context("hyperfine JSON: a run has no time_wall_clock")?;
+        ensure!(
+            wall.get("unit").and_then(Value::as_str) == Some("second"),
+            "hyperfine JSON: time_wall_clock is not in seconds"
+        );
+        let secs = wall
+            .get("value")
+            .and_then(Value::as_f64)
+            .context("hyperfine JSON: a run has no wall-clock value")?;
+        times.push(secs * 1000.0);
+    }
     ensure!(!times.is_empty(), "hyperfine measured no run");
     Ok(times)
 }
@@ -2786,6 +2806,8 @@ fn hyperfine_block(
         "-r",
         &runs.to_string(),
     ])
+    // wall-clock time only: hyperfine 2 also samples peak memory by default (RSS has its own /usr/bin/time runs)
+    .args(["--metrics", "time_wall_clock"])
     .arg("--command-name")
     .arg(format!("{} {}", tool.name(), s.id))
     .arg("--export-json")
@@ -4805,8 +4827,20 @@ mod tests {
 
     #[test]
     fn hyperfine_json_is_parsed() {
-        let text = r#"{"results":[{"command":"snp B1","mean":0.0012,"stddev":0.0001,"median":0.0011,
-            "min":0.0010,"max":0.0020,"times":[0.001,0.0011,0.0012,0.002,0.0011],"exit_codes":[0,0,0,0,0]}]}"#;
+        let run = |s: f64| {
+            format!(r#"{{"time_wall_clock":{{"value":{s},"unit":"second"}},"exit_code":0}}"#)
+        };
+        let runs: Vec<String> = [0.001, 0.0011, 0.0012, 0.002, 0.0011]
+            .iter()
+            .map(|&s| run(s))
+            .collect();
+        let text = format!(
+            r#"{{"schema_version":2,"primary_metric":"time_wall_clock","results":[{{"command":"snp B1",
+            "measurements":[{}],"summary":{{"time_wall_clock":{{"unit":"second","count":5,"mean":0.0012,
+            "median":0.0011,"min":0.001,"max":0.002,"stddev":0.0001}}}}}}]}}"#,
+            runs.join(",")
+        );
+        let text = text.as_str();
         let m = Measure::from_times(&parse_hyperfine_times(text).unwrap()).unwrap();
         assert!((m.median_ms - 1.1).abs() < 1e-9);
         // the statistics come from the times (pooled over blocks), not from hyperfine's per-invocation fields
@@ -4815,8 +4849,17 @@ mod tests {
         assert!((m.stddev_ms - 0.167_f64.sqrt()).abs() < 1e-9);
         assert_eq!(m.runs, 5);
         assert!(m.ci95_ms.0 <= m.median_ms && m.median_ms <= m.ci95_ms.1);
-        assert!(parse_hyperfine_times(r#"{"results":[]}"#).is_err());
-        assert!(parse_hyperfine_times(r#"{"results":[{"times":[]}]}"#).is_err());
+        assert!(parse_hyperfine_times(r#"{"schema_version":2,"results":[]}"#).is_err());
+        assert!(
+            parse_hyperfine_times(r#"{"schema_version":2,"results":[{"measurements":[]}]}"#)
+                .is_err()
+        );
+        // hyperfine 1.x's schema, a wrong unit and a run without a value are refused, not misread
+        assert!(parse_hyperfine_times(r#"{"results":[{"times":[0.001]}]}"#).is_err());
+        let ms = r#"{"schema_version":2,"results":[{"measurements":[{"time_wall_clock":{"value":1.0,"unit":"millisecond"}}]}]}"#;
+        assert!(parse_hyperfine_times(ms).is_err());
+        let none = r#"{"schema_version":2,"results":[{"measurements":[{"time_wall_clock":{"unit":"second"}}]}]}"#;
+        assert!(parse_hyperfine_times(none).is_err());
         assert!(parse_hyperfine_times("not json").is_err());
         // one run (a B7 block): no standard deviation
         let one = Measure::from_times(&[5.0]).unwrap();
@@ -5392,9 +5435,9 @@ mod tests {
 
     #[test]
     fn hyperfine_version_must_match_the_pin() {
-        assert!(is_hyperfine_version("hyperfine 1.19.0\n"));
-        assert!(!is_hyperfine_version("hyperfine 1.18.0\n"));
-        assert!(!is_hyperfine_version("hyperfine 1.19.01\n"));
+        assert!(is_hyperfine_version("hyperfine 2.0.0\n"));
+        assert!(!is_hyperfine_version("hyperfine 1.19.0\n"));
+        assert!(!is_hyperfine_version("hyperfine 2.0.01\n"));
         assert!(!is_hyperfine_version(""));
     }
 
