@@ -1,8 +1,9 @@
 //! ADR-119: after a stash that checked out the patch's files, the baseline `git diff` is skipped only when the
 //! oracle's snapshot proves it empty. The B8 shape skips it (a counting probe); every condition that can make the
-//! checkout's result differ from what `git diff` reads (filters and every attributes file, `core.autocrlf`,
-//! `post-checkout` and `post-index-change` hooks however configured, configuration-based hooks, intent-to-add
-//! entries, symbolic links, sparse checkout, `core.ignoreStat`) runs it; and in every case, randomized ones included,
+//! checkout's result differ from what `git diff` reads (filters and every attributes file, a tracked `.gitattributes`
+//! only the index has, `core.autocrlf`, `post-checkout` and `post-index-change` hooks however configured,
+//! configuration-based hooks, intent-to-add entries, symbolic links, sparse checkout, `core.ignoreStat`, fsmonitor)
+//! runs it; and in every case, randomized ones included,
 //! the run's output, exit code and resulting repository equal the always-diff path's (`SNP_DIFF_MODE=git`), and
 //! `SNP_VERIFY_BASELINE=1` never finds a proven baseline non-empty.
 
@@ -196,8 +197,16 @@ fn run(case: &Case<'_>, env: &[(&str, &str)]) -> (String, usize, bool) {
 /// The run equals the always-diff path and `SNP_VERIFY_BASELINE` agrees; returns the default run's baseline-shaped
 /// `git diff` calls before the hook (0: elided) and whether the filesystem allows Stat mode at all.
 fn check(case: &Case<'_>) -> (usize, bool) {
-    let (got, before, stat) = run(case, &[]);
-    let (always, always_before, _) = run(case, &[("SNP_DIFF_MODE", "git")]);
+    check_with(case, &[])
+}
+
+/// [`check`] with `extra` in the environment of every run.
+fn check_with(case: &Case<'_>, extra: &[(&str, &str)]) -> (usize, bool) {
+    let with = |kv: &[(&'static str, &'static str)]| -> Vec<(&str, &str)> {
+        extra.iter().copied().chain(kv.iter().copied()).collect()
+    };
+    let (got, before, stat) = run(case, extra);
+    let (always, always_before, _) = run(case, &with(&[("SNP_DIFF_MODE", "git")]));
     assert_eq!(
         always_before, 1,
         "{}: the always-diff path takes the baseline",
@@ -208,7 +217,7 @@ fn check(case: &Case<'_>) -> (usize, bool) {
         "{}: the outcome differs from the always-diff path",
         case.name
     );
-    let (verified, _, _) = run(case, &[("SNP_VERIFY_BASELINE", "1")]);
+    let (verified, _, _) = run(case, &with(&[("SNP_VERIFY_BASELINE", "1")]));
     assert!(
         !verified.contains("SNP_VERIFY_BASELINE"),
         "{}: a proven baseline was not empty:\n{verified}",
@@ -371,6 +380,29 @@ fn attributes_filters_and_autocrlf_run_the_diff() {
         },
         after: &nothing,
     });
+    // a tracked `.gitattributes` missing from the worktree but not in the patch (skip-worktree, or assume-unchanged
+    // and deleted): git reads the index's copy instead, first when the checkout writes a file, as a fall-back when
+    // `git diff` reads one, so the smudge filter applies although no attributes file exists
+    for (bit, name) in [
+        (
+            "--skip-worktree",
+            "an index-only .gitattributes, skip-worktree",
+        ),
+        (
+            "--assume-unchanged",
+            "an index-only .gitattributes, assume-unchanged",
+        ),
+    ] {
+        runs_the_diff(&Case {
+            name,
+            before: &|h| {
+                filter(h);
+                h.git(&["update-index", bit, ".gitattributes"]);
+                std::fs::remove_file(h.path(".gitattributes")).unwrap();
+            },
+            after: &nothing,
+        });
+    }
     runs_the_diff(&Case {
         name: "the default attributes file",
         before: &|h| {
@@ -453,10 +485,49 @@ fn checkout_hooks_run_the_diff() {
     });
 }
 
-/// Intent-to-add entries (cleared by the stash), a symbolic link in the patch, sparse checkout and `core.ignoreStat`
-/// run the baseline.
+/// Intent-to-add entries (cleared by the stash), a symbolic link in the patch, sparse checkout (`core.sparseCheckout`,
+/// `index.sparse`), `core.ignoreStat` and an fsmonitor (configured, or git's test hook in the environment) run the
+/// baseline; the untracked cache, which `git diff` never reads, does not stop the proof.
 #[test]
 fn intent_to_add_symlinks_sparse_and_ignore_stat_run_the_diff() {
+    // a hook git calls and then distrusts (it fails), so git scans everything as without it
+    let failing_monitor = |h: &H| {
+        let d = h.base.join("monitor");
+        hook(&d, "query", "exit 1");
+        d.join("query")
+    };
+    runs_the_diff(&Case {
+        name: "core.fsmonitor, a hook",
+        before: &|h| {
+            let q = failing_monitor(h);
+            config(h, &[("core.fsmonitor", q.to_str().unwrap())]);
+        },
+        after: &nothing,
+    });
+    let probe = H::new();
+    let q = failing_monitor(&probe);
+    let (before, _) = check_with(
+        &Case {
+            name: "GIT_TEST_FSMONITOR",
+            before: &nothing,
+            after: &nothing,
+        },
+        &[("GIT_TEST_FSMONITOR", q.to_str().unwrap())],
+    );
+    assert_eq!(
+        before, 1,
+        "GIT_TEST_FSMONITOR: the baseline `git diff` runs"
+    );
+    runs_the_diff(&Case {
+        name: "index.sparse",
+        before: &|h| config(h, &[("index.sparse", "true")]),
+        after: &nothing,
+    });
+    skips(&Case {
+        name: "core.untrackedCache",
+        before: &|h| config(h, &[("core.untrackedCache", "true")]),
+        after: &nothing,
+    });
     runs_the_diff(&Case {
         name: "intent-to-add",
         before: &nothing,
@@ -516,20 +587,25 @@ fn randomized_states_match_the_always_diff_path() {
     let mut seed = 0x5eed_u32;
     let mut next = move |n: u32| {
         seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-        (seed >> 8) % n
+        (seed >> 24) % n
     };
     let mut elided = 0_usize;
     let mut stat_capable = false;
-    for i in 0..12 {
+    for i in 0..16 {
         let picks: Vec<u32> = (0..8).map(|_| next(4)).collect();
         let before = |h: &H| {
             if picks[0] == 0 {
                 config(h, &[("core.autocrlf", "true")]);
             }
-            if picks[1] == 0 {
+            if picks[1] <= 1 {
                 h.write(".gitattributes", b"*.txt text\n");
                 h.git(&["add", ".gitattributes"]);
                 h.commit("attrs");
+            }
+            if picks[1] == 1 {
+                // tracked, but only the index has it
+                h.git(&["update-index", "--skip-worktree", ".gitattributes"]);
+                std::fs::remove_file(h.path(".gitattributes")).unwrap();
             }
             if picks[2] == 0 {
                 hook(

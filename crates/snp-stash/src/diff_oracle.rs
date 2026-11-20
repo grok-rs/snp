@@ -614,8 +614,9 @@ impl StatState {
     /// diff` prints nothing when (a) the effective configuration is plain ([`CheckoutConfig::plain`]: no
     /// `core.autocrlf`, fsmonitor, ignoreStat, sparse checkout or configuration-based hook) and no fsmonitor test
     /// hook is in the environment; (b) no attributes file exists (every attributes input of the snapshot is
-    /// missing), so no filter, `text`/`eol`/`crlf`, `ident` or `working-tree-encoding` conversion applies and the
-    /// checkout wrote each blob's bytes, which `git diff` reads back unconverted; (c) no `post-checkout` or
+    /// missing) and the index tracks none ([`index_plain`]), so no filter, `text`/`eol`/`crlf`, `ident` or
+    /// `working-tree-encoding` conversion applies and the checkout wrote each blob's bytes, which `git diff` reads
+    /// back unconverted; (c) no `post-checkout` or
     /// `post-index-change` hook exists, the two hooks a path-limited checkout runs; (d) every directory holding a
     /// tracked path is a directory (no path is beyond a symbolic link); and (e)
     /// [`checked_out_files_plain`]. Anything else answers `false`: the caller takes the real baseline.
@@ -646,6 +647,7 @@ impl StatState {
         let files = snap.paths.get(..self.n_files).unwrap_or_default();
         no_attributes
             && real_dirs
+            && index_plain(self.tracked.paths.iter())
             && no_checkout_hooks(&self.info, config)
             && checked_out_files_plain(
                 self.tracked
@@ -677,12 +679,34 @@ fn no_checkout_hooks(info: &RepoInfo, config: &CheckoutConfig) -> bool {
         .all(|h| St::lstat(&dir.join(h)).kind == Kind::Missing)
 }
 
+/// ADR-119 (b), the index half, over the index entries' paths in index order: no entry is a `.gitattributes` file
+/// (in any directory, ASCII case ignored), and no path has a second stage. git reads a tracked `.gitattributes` from
+/// the index when its worktree file is missing (first when a checkout writes a file, as a fall-back when `git diff`
+/// reads one), so a skip-worktree or assume-unchanged one that is not in the worktree still applies its attributes;
+/// an unmerged path is printed by `git diff` whatever the worktree holds.
+fn index_plain<'a>(paths: impl Iterator<Item = &'a [u8]>) -> bool {
+    let mut last: Option<&[u8]> = None;
+    for p in paths {
+        let name = p
+            .iter()
+            .rposition(|&b| b == b'/')
+            .and_then(|slash| p.get(slash.saturating_add(1)..))
+            .unwrap_or(p);
+        if name.eq_ignore_ascii_case(b".gitattributes") || last == Some(p) {
+            return false;
+        }
+        last = Some(p);
+    }
+    true
+}
+
 /// ADR-119 (e), over the index entries (`(path, mode)` in index order) and the snapshot's tracked-path slots
-/// (`files`, in [`tracked_paths`] order): every checked-out path (`want`) is a tracked entry at stage 0 (no gitlink, no second stage) of mode `100644` or `100755`, its slot is a regular
-/// file whose owner-executable bit matches the mode when `core.fileMode` holds (git compares exactly that bit, so a
-/// umask without it would show a mode change), and no other tracked path reaches its inode (a case or Unicode
-/// normalization twin on an insensitive filesystem, or a hard link: the checkout of one would change what `git diff`
-/// reads for the other). An empty list proves nothing.
+/// (`files`, in [`tracked_paths`] order): every checked-out path (`want`) is a tracked entry at stage 0 (no gitlink,
+/// no second stage) of mode `100644` or `100755`, its slot is a regular file whose owner-executable bit matches the
+/// mode when `core.fileMode` holds (git compares exactly that bit, so a umask without it would show a mode change),
+/// and no other tracked path reaches its inode (a case or Unicode normalization twin on an insensitive filesystem,
+/// or a hard link: the checkout of one would change what `git diff` reads for the other). An empty list proves
+/// nothing.
 fn checked_out_files_plain<'a>(
     tracked: impl Iterator<Item = (&'a [u8], u32)>,
     files: &[St],
@@ -1019,6 +1043,25 @@ mod tests {
             &want,
             file_mode,
         )
+    }
+
+    /// ADR-119 (b): a tracked `.gitattributes` anywhere, in any ASCII case, or an unmerged path refuses the proof.
+    #[test]
+    fn the_index_must_track_no_attributes_and_no_conflict() {
+        let ok = |paths: &[&str]| index_plain(paths.iter().map(|p| p.as_bytes()));
+        assert!(ok(&[]));
+        assert!(ok(&[
+            "a",
+            "b/c",
+            "gitattributes",
+            "x.gitattributes",
+            ".gitattributes.d/f"
+        ]));
+        assert!(!ok(&[".gitattributes"]));
+        assert!(!ok(&["a", "d/e/.gitattributes"]));
+        assert!(!ok(&["d/.GitAttributes"]));
+        assert!(!ok(&["a", "m", "m", "z"]), "a second stage");
+        assert!(ok(&["a/", "a"]), "distinct paths");
     }
 
     /// ADR-119 (e): the per-path half of the proof, case by case.
