@@ -39,15 +39,38 @@ struct Watching {
     /// How long the diff holds the gate (concurrent writers wait meanwhile).
     hold: Duration,
     diffs: Mutex<Vec<String>>,
+    /// Watched files found written while a `git diff` ran (at its start or at its end).
+    early: Mutex<Vec<String>>,
 }
 
 impl Watching {
-    fn unwritten(&self) -> Vec<String> {
-        self.watched
+    /// Notes the watched files already written.
+    fn check(&self) {
+        let written = self
+            .watched
             .iter()
             .filter(|(p, b)| std::fs::read(p).ok().as_ref() != Some(b))
-            .map(|(p, _)| p.display().to_string())
-            .collect()
+            .map(|(p, _)| p.display().to_string());
+        self.early.lock().unwrap().extend(written);
+    }
+
+    fn record(&self, argv: &[OsString]) {
+        let args: Vec<String> = argv
+            .iter()
+            .skip(1)
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        self.diffs.lock().unwrap().push(args.join(" "));
+    }
+
+    /// The `git diff` calls, after checking that none found a written file.
+    fn diffs(&self) -> Vec<String> {
+        let early = self.early.lock().unwrap().clone();
+        assert!(
+            early.is_empty(),
+            "written before the baseline diff ended: {early:?}"
+        );
+        self.diffs.lock().unwrap().clone()
     }
 }
 
@@ -70,21 +93,11 @@ impl GitBackend for Watching {
         cwd: &Path,
         sink: &mut dyn io::Write,
     ) -> Result<(PyStatus, Vec<u8>), SpawnError> {
-        let args: Vec<String> = argv
-            .iter()
-            .skip(1)
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect();
-        let args = args.join(" ");
-        let at_start = self.unwritten();
+        self.check();
         std::thread::sleep(self.hold);
         let r = self.inner.stream(argv, env, cwd, sink);
-        let at_end = self.unwritten();
-        assert!(
-            at_start.is_empty() && at_end.is_empty(),
-            "written before the baseline diff ended: {at_start:?} {at_end:?}"
-        );
-        self.diffs.lock().unwrap().push(args);
+        self.check();
+        self.record(argv);
         r
     }
 
@@ -119,6 +132,7 @@ fn repo(n: usize, content: &[u8], hold: Duration) -> (Sandbox, Git, Arc<Watching
             .collect(),
         hold,
         diffs: Mutex::new(Vec::new()),
+        early: Mutex::new(Vec::new()),
     });
     let exe = Arc::new(GitExe::resolve(&sb.env, &sb.root, None).unwrap());
     let backend: Arc<dyn GitBackend> = Arc::<Watching>::clone(&rec);
@@ -153,6 +167,11 @@ fn run_parts(
         gate,
     };
     std::thread::scope(|s| {
+        // every partition is spawned before the first join (they run concurrently)
+        #[expect(
+            clippy::needless_collect,
+            reason = "spawn all partitions before joining any"
+        )]
         let handles: Vec<_> = (0..parts)
             .map(|p| {
                 let cx = &cx;
@@ -205,12 +224,12 @@ fn concurrent_writers_wait_for_one_baseline_taken_before_any_write() {
     assert!(gate.fired());
     let baseline = gate.into_baseline().unwrap().unwrap();
     assert_eq!(baseline, DiffFingerprint::EMPTY);
-    assert_eq!(*rec.diffs.lock().unwrap(), [DIFF]);
+    assert_eq!(rec.diffs(), [DIFF]);
     let got = result(&sb, &gated, &names);
 
     let (sb2, git2, rec2, names2) = repo(16, b"x  \n", Duration::ZERO);
     let plain = run_parts(&sb2, &git2, "trailing-whitespace", &names2, 4, None);
-    assert!(rec2.diffs.lock().unwrap().is_empty());
+    assert_eq!(rec2.diffs(), Vec::<String>::new());
     assert_eq!(got, result(&sb2, &plain, &names2));
     assert!(got.1.iter().all(|b| b == b"x\n"), "{:?}", got.1);
 }
@@ -223,7 +242,7 @@ fn end_of_file_fixer_appends_and_truncates_after_the_baseline() {
         let gate = WriteGate::new(&git);
         let outs = run_parts(&sb, &git, "end-of-file-fixer", &names, 2, Some(&gate));
         assert!(outs.iter().all(|o| o.code == 1 && !o.modified.is_empty()));
-        assert_eq!(*rec.diffs.lock().unwrap(), [DIFF]);
+        assert_eq!(rec.diffs(), [DIFF]);
         assert!(gate.into_baseline().unwrap().is_ok());
         for n in &names {
             assert_eq!(std::fs::read(sb.path(n)).unwrap(), fixed);
@@ -248,7 +267,7 @@ fn a_hook_that_writes_nothing_takes_no_diff() {
         assert!(!gate.fired(), "{id}");
         assert!(gate.into_baseline().is_none(), "{id}");
     }
-    assert!(rec.diffs.lock().unwrap().is_empty());
+    assert_eq!(rec.diffs(), Vec::<String>::new());
 }
 
 /// Without a gate (the baseline is already known) the token is handed out at once: no `git diff`.
@@ -257,5 +276,5 @@ fn without_a_gate_the_writer_takes_no_diff() {
     let (sb, git, rec, names) = repo(2, b"x  \n", Duration::ZERO);
     let outs = run_parts(&sb, &git, "trailing-whitespace", &names, 1, None);
     assert_eq!(outs.first().map(|o| o.code), Some(1));
-    assert!(rec.diffs.lock().unwrap().is_empty());
+    assert_eq!(rec.diffs(), Vec::<String>::new());
 }

@@ -229,8 +229,16 @@ fn without_fallback(stdout: &str) -> String {
     stdout
         .lines()
         .filter(|l| !l.starts_with("nofiles"))
-        .map(|l| format!("{l}\n"))
-        .collect()
+        .fold(String::new(), |mut s, l| {
+            s.push_str(l);
+            s.push('\n');
+            s
+        })
+}
+
+/// The recording backend as the run's git backend.
+fn backend(rec: &Arc<Rec>) -> Arc<dyn GitBackend> {
+    Arc::<Rec>::clone(rec)
 }
 
 /// The B6 shape: thirteen-ish natives over a clean tree, `--all-files`. Nothing writes, so no `git diff` runs.
@@ -260,7 +268,7 @@ fn the_b6_shape_takes_no_git_diff() {
     for jobs in [1, 4] {
         let mut h = repo(jobs, &config, &refs);
         let rec = Rec::new(Vec::new(), Duration::ZERO, None);
-        h.backend = Some(Arc::<Rec>::clone(&rec) as Arc<dyn GitBackend>);
+        h.backend = Some(backend(&rec));
         let (_h, o) = run_bounded(h, all());
         assert_eq!(o.code, 0, "SNP_JOBS={jobs}: {}{}", o.stdout, o.stderr);
         assert_eq!(
@@ -272,7 +280,7 @@ fn the_b6_shape_takes_no_git_diff() {
         // the fallback takes today's baseline: one `git diff`
         let mut f = repo(jobs, &format!("{config}{}", no_files_hook()), &refs);
         let frec = Rec::new(Vec::new(), Duration::ZERO, None);
-        f.backend = Some(Arc::<Rec>::clone(&frec) as Arc<dyn GitBackend>);
+        f.backend = Some(backend(&frec));
         let (_f, fo) = run_bounded(f, all());
         assert_eq!(frec.diffs(), 1, "{:#?}", frec.calls.lock().unwrap());
         assert_eq!(without_fallback(&fo.stdout), o.stdout);
@@ -301,7 +309,7 @@ fn a_writer_matches_the_fallback_and_writes_after_the_baseline() {
                 .map(|n| (h.path(n), b"x  \n".to_vec()))
                 .collect();
             let rec = Rec::new(watched, Duration::from_millis(300), None);
-            h.backend = Some(Arc::<Rec>::clone(&rec) as Arc<dyn GitBackend>);
+            h.backend = Some(backend(&rec));
             let (h, o) = run_bounded(h, all());
             let what = format!("SNP_JOBS={jobs} {hooks:?}");
             assert_eq!(o.code, 1, "{what}: {}{}", o.stdout, o.stderr);
@@ -317,7 +325,7 @@ fn a_writer_matches_the_fallback_and_writes_after_the_baseline() {
             assert_eq!(early, [0, 0, names.len(), names.len()], "{what}");
             let mut f = repo(jobs, &format!("{config}{}", no_files_hook()), &files);
             let frec = Rec::new(Vec::new(), Duration::ZERO, None);
-            f.backend = Some(Arc::<Rec>::clone(&frec) as Arc<dyn GitBackend>);
+            f.backend = Some(backend(&frec));
             let (f, fo) = run_bounded(f, all());
             assert_eq!(
                 (o.code, &o.stdout, &o.stderr),
@@ -393,7 +401,7 @@ fn injected(
         bytes: b"edited by another process\n".to_vec(),
     };
     let rec = Rec::new(Vec::new(), Duration::ZERO, Some(edit));
-    h.backend = Some(Arc::<Rec>::clone(&rec) as Arc<dyn GitBackend>);
+    h.backend = Some(backend(&rec));
     let a = snp_cli::RunArgs {
         files: names.iter().map(OsString::from).collect(),
         ..args()
@@ -485,7 +493,7 @@ fn show_diff_without_a_writer_sees_the_runs_diff() {
         };
         let mut h = make(&config);
         let rec = Rec::new(Vec::new(), Duration::ZERO, None);
-        h.backend = Some(Arc::<Rec>::clone(&rec) as Arc<dyn GitBackend>);
+        h.backend = Some(backend(&rec));
         let (_h, o) = run_bounded(h, a());
         assert_eq!(o.code, 1, "{}{}", o.stdout, o.stderr);
         assert_eq!(
