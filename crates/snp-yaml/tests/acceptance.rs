@@ -855,5 +855,19 @@ mod acceptance {
             value(&format!("a: {long}\n")),
             value_map! {"a" => long.as_str()}
         );
+        // So do quoted scalars, borrowed (alloc-7) or folded after the boundary, and a control character inside
+        // a quoted scalar is still the reader's error at its position.
+        assert_eq!(
+            value(&format!("a: '{long}'\n")),
+            value_map! {"a" => long.as_str()}
+        );
+        assert_eq!(
+            value(&format!("a: \"{long}  \n  y\"\n")),
+            value_map! {"a" => format!("{long} y").as_str()}
+        );
+        assert_eq!(
+            err(&format!("a: '{}\u{1}'\n", rep("x", CHUNK - 4))),
+            ("ReaderError".to_owned(), reader("0001", CHUNK))
+        );
     }
 }
