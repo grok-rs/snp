@@ -171,7 +171,7 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   run had failed. The nightly and dispatch runs are unchanged.
 - After a stash of unstaged files, the baseline `git diff` before the first hook is skipped when snp can prove it
   empty (ADR-119; output and side effects unchanged, `SNP_VERIFY_BASELINE=1` cross-checks it): on the warm path, in
-  stat-oracle mode, with no attributes file, no `core.autocrlf`, fsmonitor, `core.ignoreStat`, sparse checkout or
+  stat-oracle mode, with no attributes file (in the worktree or tracked), no `core.autocrlf`, fsmonitor, `core.ignoreStat`, sparse checkout or
   configuration-based hook, no `post-checkout` or `post-index-change` hook, no intent-to-add entry, and every
   checked-out file a regular file of its own with its index mode's executable bit. Anything else takes the real
   diff, as before. On B8 the git process that re-hashed the 10 MiB file no longer runs: 2,653 M → 2,292 M
