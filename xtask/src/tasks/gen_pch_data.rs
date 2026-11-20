@@ -998,8 +998,8 @@ fn yaml_flow_list(v: &str) -> anyhow::Result<Vec<String>> {
 fn render_model_hook(h: &BTreeMap<String, YamlVal>) -> anyhow::Result<String> {
     let mut out = String::from("ManifestHook {\n");
     let list = |items: &[String]| {
-        let lits: Vec<String> = items.iter().map(|s| lit(s)).collect();
-        format!("&[{}]", lits.join(", "))
+        let literals: Vec<String> = items.iter().map(|s| lit(s)).collect();
+        format!("&[{}]", literals.join(", "))
     };
     let field = |out: &mut String, key: &str| -> anyhow::Result<()> {
         if let Some(&(_, default)) = STR_KEYS.iter().find(|(k, _)| *k == key) {
