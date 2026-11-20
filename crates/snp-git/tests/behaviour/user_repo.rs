@@ -643,8 +643,29 @@ fn lfs_files_memo_agrees_with_check_attr() {
     );
     assert_eq!(
         facts.lfs_files(&all).unwrap(),
+        PchFacts::new(git.clone()).lfs_files(&all).unwrap()
+    );
+    // `<git dir>/info/attributes` and the root `.gitattributes` are stamped too
+    sb.write(&repo, ".git/info/attributes", b"a.txt filter=lfs\n");
+    assert_eq!(
+        facts.lfs_files(&all[..2]).unwrap(),
+        vec![b"a.dat".to_vec(), b"a.txt".to_vec()]
+    );
+    sb.write(&repo, ".git/info/attributes", b"");
+    sb.write(
+        &repo,
+        ".gitattributes",
+        b"*.dat  filter=lfs\n*.txt filter=lfs\n",
+    );
+    assert_eq!(
+        facts.lfs_files(&all).unwrap(),
         PchFacts::new(git).lfs_files(&all).unwrap()
     );
+    assert_eq!(
+        facts.lfs_files(&all[..2]).unwrap(),
+        vec![b"a.dat".to_vec(), b"a.txt".to_vec()]
+    );
+    sb.write(&repo, ".gitattributes", b"*.dat filter=lfs\n");
     // an untracked path is asked directly
     sb.write(&repo, "new.dat", b"n");
     assert_eq!(

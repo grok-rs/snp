@@ -150,9 +150,10 @@ struct LfsIndex {
     paths: Modes,
     /// Those whose `filter` is `lfs`.
     lfs: std::collections::HashSet<Vec<u8>>,
-    /// `<dir>/.gitattributes` of every directory holding an index path (`""` = the root), and
-    /// `<git dir>/info/attributes` (key `None`).
-    attrs: std::collections::HashMap<Option<Vec<u8>>, FileStamp>,
+    /// `<git dir>/info/attributes`.
+    info_attrs: FileStamp,
+    /// `<dir>/.gitattributes` of every directory holding an index path (`""` = the root), looked up by `&[u8]`.
+    attrs: std::collections::HashMap<Vec<u8>, FileStamp>,
 }
 
 /// Every proper ancestor directory of a `/`-separated repository path, the root (`""`) first.
@@ -232,20 +233,21 @@ impl PchFacts {
             .collect()
     }
 
-    /// The stamp of `<dir>/.gitattributes` (`dir` relative to the root) or, for `None`, of
-    /// `<git dir>/info/attributes`.
-    fn attr_stamp(&self, dir: Option<&[u8]>) -> FileStamp {
-        match dir {
-            None => file_stamp(&self.git.admin_dir.join("info").join("attributes")),
-            Some(d) => {
-                let base = if d.is_empty() {
-                    self.git.root.to_path_buf()
-                } else {
-                    self.git.root.join(crate::run::os_from_bytes(d))
-                };
-                file_stamp(&base.join(".gitattributes"))
-            }
+    /// The stamp of `<git dir>/info/attributes`.
+    fn info_attr_stamp(&self) -> FileStamp {
+        file_stamp(&self.git.admin_dir.join("info").join("attributes"))
+    }
+
+    /// The stamp of `<dir>/.gitattributes` (`dir` relative to the root), the path built in `buf` (reused across
+    /// calls: one allocation per lookup run instead of two per directory).
+    fn attr_stamp(&self, dir: &[u8], buf: &mut PathBuf) -> FileStamp {
+        buf.as_mut_os_string().clear();
+        buf.push(&self.git.root);
+        if !dir.is_empty() {
+            buf.push(crate::run::os_from_bytes_cow(dir));
         }
+        buf.push(".gitattributes");
+        file_stamp(buf)
     }
 
     /// `check-attr filter` of every index path in one call; `None` when that call cannot stand in for the
@@ -260,19 +262,24 @@ impl PchFacts {
         } else {
             self.check_attr_lfs(&names).ok()?.into_iter().collect()
         };
-        let mut attrs = std::collections::HashMap::new();
-        attrs.insert(None, self.attr_stamp(None));
+        let info_attrs = self.info_attr_stamp();
+        let mut attrs: std::collections::HashMap<Vec<u8>, FileStamp> =
+            std::collections::HashMap::new();
+        let mut buf = PathBuf::new();
         for p in &names {
             for d in ancestors(p) {
-                attrs
-                    .entry(Some(d.to_vec()))
-                    .or_insert_with(|| self.attr_stamp(Some(d)));
+                // a lookup by `&[u8]`: the key is copied only for a directory not seen yet
+                if !attrs.contains_key(d) {
+                    let st = self.attr_stamp(d, &mut buf);
+                    attrs.insert(d.to_vec(), st);
+                }
             }
         }
         Some(LfsIndex {
             stamp,
             paths,
             lfs,
+            info_attrs,
             attrs,
         })
     }
@@ -280,19 +287,18 @@ impl PchFacts {
     /// The answer of `ix` for `paths` (input order, repeats kept, as git prints them), or `None` when a path is
     /// not an index path or an attribute source changed since `ix` was taken.
     fn lfs_from(&self, ix: &LfsIndex, paths: &[&[u8]]) -> Option<Vec<Vec<u8>>> {
-        if ix.stamp != self.stamp() || ix.attrs.get(&None) != Some(&self.attr_stamp(None)) {
+        if ix.stamp != self.stamp() || ix.info_attrs != self.info_attr_stamp() {
             return None;
         }
         let mut checked: std::collections::HashSet<&[u8]> = std::collections::HashSet::new();
+        let mut buf = PathBuf::new();
         let mut out = Vec::new();
         for p in paths {
             ix.paths
                 .binary_search_by(|(_, q)| q.as_slice().cmp(p))
                 .ok()?;
             for d in ancestors(p) {
-                if checked.insert(d)
-                    && ix.attrs.get(&Some(d.to_vec()))? != &self.attr_stamp(Some(d))
-                {
+                if checked.insert(d) && *ix.attrs.get(d)? != self.attr_stamp(d, &mut buf) {
                     return None;
                 }
             }
