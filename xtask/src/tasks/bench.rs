@@ -371,8 +371,7 @@ struct Scenario {
     id: &'static str,
     title: &'static str,
     fixture: Fixture,
-    /// The tool's arguments; `None`: the command is `git commit` through the installed hook (B9).
-    argv: Option<&'static [&'static str]>,
+    cmd: Cmd,
     store: StoreMode,
     /// Peak RSS is measured.
     rss: bool,
@@ -382,14 +381,74 @@ struct Scenario {
     snp_env: &'static [(&'static str, &'static str)],
 }
 
+/// What a scenario runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cmd {
+    /// The measured tool with these arguments.
+    Tool(&'static [&'static str]),
+    /// `git` with these arguments (B9: `git commit` through the installed hook).
+    Git(&'static [&'static str]),
+}
+
 const B9_GIT: &[&str] = &["commit", "--allow-empty", "-q", "-m", "bench"];
+/// B9nv: B9's commit with `--no-verify`, which skips the hook and nothing else (ADR-136).
+const B9NV_GIT: &[&str] = &[
+    "commit",
+    "--allow-empty",
+    "-q",
+    "--no-verify",
+    "-m",
+    "bench",
+];
+
+/// The record key (in B9's tools) of B9nv and of B3', snp's reference blocks of B9 (ADR-136).
+const B9NV_KEY: &str = "snp/B9nv";
+const B3P_KEY: &str = "snp/B3'";
+
+/// The reference blocks measured with snp in B9's interleaved rounds, in snp's hooked fixture with B9's environment
+/// (ADR-136): B9nv, the same commit without the hook (git's own commit, `git maintenance run --auto` included), and
+/// B3', `snp run` there (what the hook runs). Per round, `B9 − B9nv − B3'` is what the installed hook adds beyond
+/// the run itself: the `sh` script, `hook-impl`, git's hook spawn and index re-read.
+const B9_REFERENCES: [(&str, Scenario); 2] = [
+    (
+        B9NV_KEY,
+        Scenario {
+            id: "B9nv",
+            title: "B9's commit with --no-verify (reference)",
+            fixture: Fixture::Hooked,
+            cmd: Cmd::Git(B9NV_GIT),
+            store: StoreMode::Warm,
+            rss: false,
+            runs: None,
+            snp_env: &[],
+        },
+    ),
+    (
+        B3P_KEY,
+        Scenario {
+            id: "B3'",
+            title: "snp run in B9's fixture (reference)",
+            fixture: Fixture::Hooked,
+            cmd: Cmd::Tool(&["run"]),
+            store: StoreMode::Warm,
+            rss: false,
+            runs: None,
+            snp_env: &[],
+        },
+    ),
+];
+
+/// The reference blocks of scenario `s` (B9's, else none).
+fn references_of(s: &Scenario) -> &'static [(&'static str, Scenario)] {
+    if s.id == "B9" { &B9_REFERENCES } else { &[] }
+}
 
 const SCENARIOS: &[Scenario] = &[
     Scenario {
         id: "B1",
         title: "--version",
         fixture: Fixture::Noop10,
-        argv: Some(&["--version"]),
+        cmd: Cmd::Tool(&["--version"]),
         store: StoreMode::Warm,
         rss: false,
         runs: None,
@@ -399,7 +458,7 @@ const SCENARIOS: &[Scenario] = &[
         id: "B2",
         title: "run, 1 local `true` hook (always_run, no filenames)",
         fixture: Fixture::Noop10,
-        argv: Some(&["run", "noop-01"]),
+        cmd: Cmd::Tool(&["run", "noop-01"]),
         store: StoreMode::Warm,
         rss: false,
         runs: None,
@@ -409,7 +468,7 @@ const SCENARIOS: &[Scenario] = &[
         id: "B3",
         title: "run, 10 such hooks, nothing staged",
         fixture: Fixture::Noop10,
-        argv: Some(&["run"]),
+        cmd: Cmd::Tool(&["run"]),
         store: StoreMode::Warm,
         rss: true,
         runs: None,
@@ -419,7 +478,7 @@ const SCENARIOS: &[Scenario] = &[
         id: "B4",
         title: "run -a, 1 hook with filenames, 50 k files",
         fixture: Fixture::Files50k,
-        argv: Some(&["run", "--all-files"]),
+        cmd: Cmd::Tool(&["run", "--all-files"]),
         store: StoreMode::Warm,
         rss: true,
         runs: Some((2, 20)),
@@ -429,7 +488,7 @@ const SCENARIOS: &[Scenario] = &[
         id: "B5",
         title: "B4 + types/types_or/exclude_types",
         fixture: Fixture::Files50k,
-        argv: Some(&["run", "--all-files", "--config", "types.yaml"]),
+        cmd: Cmd::Tool(&["run", "--all-files", "--config", "types.yaml"]),
         store: StoreMode::Warm,
         rss: false,
         runs: Some((2, 20)),
@@ -439,7 +498,7 @@ const SCENARIOS: &[Scenario] = &[
         id: "B6",
         title: "13 pre-commit-hooks hooks, 960 files, warm",
         fixture: Fixture::Pch960,
-        argv: Some(&["run", "--all-files"]),
+        cmd: Cmd::Tool(&["run", "--all-files"]),
         store: StoreMode::Warm,
         rss: true,
         runs: Some((2, 20)),
@@ -449,7 +508,7 @@ const SCENARIOS: &[Scenario] = &[
         id: "B7",
         title: "B6 cold (fresh store, local mirror)",
         fixture: Fixture::Pch960,
-        argv: Some(&["run", "--all-files"]),
+        cmd: Cmd::Tool(&["run", "--all-files"]),
         store: StoreMode::Cold,
         rss: false,
         runs: Some((1, 5)),
@@ -459,7 +518,7 @@ const SCENARIOS: &[Scenario] = &[
         id: "B8",
         title: "stash with a 10 MB unstaged patch",
         fixture: Fixture::Stash10M,
-        argv: Some(&["run"]),
+        cmd: Cmd::Tool(&["run"]),
         store: StoreMode::Warm,
         rss: true,
         runs: Some((2, 20)),
@@ -469,7 +528,7 @@ const SCENARIOS: &[Scenario] = &[
         id: "B9",
         title: "git commit through the installed hook",
         fixture: Fixture::Hooked,
-        argv: None,
+        cmd: Cmd::Git(B9_GIT),
         store: StoreMode::Warm,
         rss: false,
         runs: None,
@@ -479,7 +538,7 @@ const SCENARIOS: &[Scenario] = &[
         id: "B10",
         title: "validate-config with 1 000 hooks",
         fixture: Fixture::Validate1000,
-        argv: Some(&["validate-config", "big.yaml"]),
+        cmd: Cmd::Tool(&["validate-config", "big.yaml"]),
         store: StoreMode::Warm,
         rss: false,
         runs: None,
@@ -489,7 +548,7 @@ const SCENARIOS: &[Scenario] = &[
         id: "B11",
         title: "gc with 500 repos / 200 configs",
         fixture: Fixture::Gc500,
-        argv: Some(&["gc"]),
+        cmd: Cmd::Tool(&["gc"]),
         store: StoreMode::Gc,
         rss: false,
         runs: Some((2, 20)),
@@ -499,7 +558,7 @@ const SCENARIOS: &[Scenario] = &[
         id: "B12u",
         title: "B12 regex cache: 20 Unicode patterns x 32 jobs, non-ASCII paths",
         fixture: Fixture::Unicode20,
-        argv: Some(&["run", "--all-files"]),
+        cmd: Cmd::Tool(&["run", "--all-files"]),
         store: StoreMode::Warm,
         rss: true,
         runs: Some((2, 20)),
@@ -2126,11 +2185,11 @@ fn gc_store_counts(tool: Tool, store: &Path) -> anyhow::Result<(Option<usize>, u
 
 /// The program and arguments of scenario `s` for the tool binary `exe`.
 fn scenario_command(s: &Scenario, exe: &Path) -> (PathBuf, Vec<OsString>) {
-    match s.argv {
-        Some(argv) => (exe.to_path_buf(), argv.iter().map(OsString::from).collect()),
-        None => (
+    match s.cmd {
+        Cmd::Tool(argv) => (exe.to_path_buf(), argv.iter().map(OsString::from).collect()),
+        Cmd::Git(argv) => (
             PathBuf::from("git"),
-            B9_GIT.iter().map(OsString::from).collect(),
+            argv.iter().map(OsString::from).collect(),
         ),
     }
 }
@@ -2700,22 +2759,54 @@ fn measure(root: &Path, args: &[String]) -> anyhow::Result<()> {
                 );
                 continue;
             }
-            let base_exe = base.as_deref().filter(|_| *tool == Tool::Snp);
-            if let Some(base_exe) = base_exe {
-                let base_exe = match unavailable(Tool::SnpBase) {
-                    Some(reason) => Err(format!("setup: {reason}")),
-                    None => Ok(base_exe),
-                };
+            let base_exe =
+                base.as_deref().filter(|_| *tool == Tool::Snp).map(|b| {
+                    match unavailable(Tool::SnpBase) {
+                        Some(reason) => Err(format!("setup: {reason}")),
+                        None => Ok(b),
+                    }
+                });
+            let refs = if *tool == Tool::Snp {
+                references_of(s)
+            } else {
+                &[]
+            };
+            if base_exe.is_some() || !refs.is_empty() {
+                let mut with: Vec<&str> = base_exe.iter().map(|_| "snp-base").collect();
+                with.extend(refs.iter().map(|(_, r)| r.id));
                 say(&format!(
-                    "bench: {} snp and snp-base (interleaved) — {}",
-                    s.id, s.title
+                    "bench: {} snp with {} (interleaved) — {}",
+                    s.id,
+                    with.join(", "),
+                    s.title
                 ));
-                let (head, base_out) =
-                    measure_paired(&work, &hyperfine, exe, &base_exe, s, counts, &raw);
-                log_outcome(s, Tool::SnpBase, &base_out);
-                log_outcome(s, Tool::Snp, &head);
-                per_tool.insert(Tool::SnpBase.name().to_owned(), base_out);
-                per_tool.insert(Tool::Snp.name().to_owned(), head);
+                let out = measure_rounds(
+                    &work,
+                    &hyperfine,
+                    exe,
+                    base_exe.as_ref(),
+                    refs,
+                    s,
+                    counts,
+                    &raw,
+                );
+                if let Some(base_out) = out.base {
+                    log_outcome(s, Tool::SnpBase, &base_out);
+                    per_tool.insert(Tool::SnpBase.name().to_owned(), base_out);
+                }
+                log_outcome(s, Tool::Snp, &out.head);
+                per_tool.insert(Tool::Snp.name().to_owned(), out.head);
+                for (key, o) in out.refs {
+                    log_reference(s, key, &o);
+                    per_tool.insert(key.to_owned(), o);
+                }
+                if !refs.is_empty() {
+                    say(&format!(
+                        "bench: {} snp {HOOK_OVERHEAD_CHECK}: {}",
+                        s.id,
+                        hook_overhead_text(&per_tool)
+                    ));
+                }
                 continue;
             }
             say(&format!("bench: {} {} — {}", s.id, tool.name(), s.title));
@@ -2833,6 +2924,73 @@ fn log_outcome(s: &Scenario, tool: Tool, o: &Outcome) {
         )),
     }
 }
+
+/// The log line of one of snp's reference blocks on `s` (ADR-136).
+fn log_reference(s: &Scenario, key: &str, o: &Outcome) {
+    match o {
+        Outcome::Ok(m) => say(&format!(
+            "bench: {} {key}: p50 {:.2} ms [{:.2}, {:.2}] (reference)",
+            s.id, m.median_ms, m.ci95_ms.0, m.ci95_ms.1
+        )),
+        Outcome::Failed(e) => say(&format!(
+            "bench: {} {key}: FAILED (reference): {}",
+            s.id,
+            one_line(e)
+        )),
+    }
+}
+
+/// B9's hook overhead (ADR-136, information only): `H_r = B9_r − B9nv_r − B3'_r` per round, from the block medians
+/// of one round, so all three come from the same minute of the runner; `(median of H, its 95 % interval, rounds)`.
+/// `None` when the rounds are missing, unequal in number, or not finite.
+fn hook_overhead(b9: &Measure, nv: &Measure, run: &Measure) -> Option<(f64, (f64, f64), usize)> {
+    let n = b9.rounds_ms.len();
+    if n == 0 || nv.rounds_ms.len() != n || run.rounds_ms.len() != n {
+        return None;
+    }
+    let h: Vec<f64> = b9
+        .rounds_ms
+        .iter()
+        .zip(&nv.rounds_ms)
+        .zip(&run.rounds_ms)
+        .map(|((b, v), r)| b - v - r)
+        .collect();
+    if h.iter().any(|x| !x.is_finite()) {
+        return None;
+    }
+    Some((median(&h)?, median_ci95(&h)?, n))
+}
+
+/// The hook overhead of B9's tools (snp, [`B9NV_KEY`], [`B3P_KEY`]) as one line: the value with its interval and the
+/// two references, or why it is not measured.
+fn hook_overhead_text(tools: &BTreeMap<String, Outcome>) -> String {
+    let get = |k: &str| match tools.get(k) {
+        Some(Outcome::Ok(m)) => Ok(m),
+        Some(Outcome::Failed(e)) => Err(format!("{k} failed: {}", one_line(e))),
+        None => Err(format!("{k} not measured")),
+    };
+    let value = get("snp").and_then(|b9| {
+        let nv = get(B9NV_KEY)?;
+        let run = get(B3P_KEY)?;
+        let (med, (lo, hi), n) = hook_overhead(b9, nv, run).ok_or_else(|| {
+            format!(
+                "the rounds cannot be combined ({} B9, {} B9nv, {} B3')",
+                b9.rounds_ms.len(),
+                nv.rounds_ms.len(),
+                run.rounds_ms.len()
+            )
+        })?;
+        Ok(format!(
+            "{med:.2} ms [{lo:.2}, {hi:.2}] over {n} rounds (B9nv {:.2} ms, B3' {:.2} ms)",
+            nv.median_ms, run.median_ms
+        ))
+    });
+    value.unwrap_or_else(|e| format!("not measured: {e}"))
+}
+
+/// The name of B9's information-only hook overhead check (ADR-136): it always passes until the owner sets its limit
+/// from at least three CI records.
+const HOOK_OVERHEAD_CHECK: &str = "hook overhead B9 - B9nv - B3' (information)";
 
 /// `s` on one line (whitespace runs collapsed), at most 240 characters: a table cell or a log line.
 fn one_line(s: &str) -> String {
@@ -2994,76 +3152,174 @@ fn add_rss(
     Ok(())
 }
 
-/// snp and the base commit's snp on `s` in interleaved ABBA rounds (ADR-099), then snp's RSS runs (the gate never
-/// reads the base's). Each round runs one block of each binary; each binary has one warm-up, in its first block.
-/// A failure of the base marks it not measured and the head still runs every round; a failure of the head ends the
-/// scenario.
-fn measure_paired(
+/// The role of a block in an interleaved measurement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Role {
+    /// The base commit's snp on the scenario (ADR-099).
+    Base,
+    /// snp on the scenario.
+    Head,
+    /// A reference block of snp, under its record key (ADR-136).
+    Reference(&'static str),
+}
+
+/// One kind of block of an interleaved measurement: a binary on a scenario, its pooled runs and block medians.
+struct Block<'a> {
+    role: Role,
+    exe: &'a Path,
+    scenario: &'a Scenario,
+    times: Vec<f64>,
+    medians: Vec<f64>,
+    err: Option<String>,
+}
+
+impl<'a> Block<'a> {
+    fn new(role: Role, exe: &'a Path, scenario: &'a Scenario) -> Self {
+        Self {
+            role,
+            exe,
+            scenario,
+            times: Vec::new(),
+            medians: Vec::new(),
+            err: None,
+        }
+    }
+
+    const fn tool(&self) -> Tool {
+        match self.role {
+            Role::Base => Tool::SnpBase,
+            Role::Head | Role::Reference(_) => Tool::Snp,
+        }
+    }
+
+    /// The file name of the block's raw hyperfine JSON in round `r`.
+    fn json_name(&self, s: &Scenario, r: u32) -> String {
+        match self.role {
+            Role::Base | Role::Head => format!("{}-{}-r{r:02}.json", s.id, self.tool().name()),
+            Role::Reference(_) => format!("{}-snp-{}-r{r:02}.json", s.id, self.scenario.id),
+        }
+    }
+
+    fn outcome(&self) -> Outcome {
+        if let Some(e) = &self.err {
+            return Outcome::Failed(e.clone());
+        }
+        match Measure::from_times(&self.times) {
+            Ok(mut m) => {
+                m.rounds_ms.clone_from(&self.medians);
+                Outcome::Ok(m)
+            }
+            Err(e) => Outcome::Failed(format!("{e:#}")),
+        }
+    }
+}
+
+/// What [`measure_rounds`] measured: snp, the base (when given) and each reference block under its record key.
+struct RoundsOut {
+    head: Outcome,
+    base: Option<Outcome>,
+    refs: Vec<(&'static str, Outcome)>,
+}
+
+/// The order of the blocks in round `r` of `n` blocks: as listed when [`base_first`], reversed otherwise (ABCD,
+/// DCBA, …), so every block sits at the same mean position over two rounds, and the base and the head keep
+/// ADR-099's ABBA order.
+fn round_order(r: u32, n: usize) -> Vec<usize> {
+    if base_first(r) {
+        (0..n).collect()
+    } else {
+        (0..n).rev().collect()
+    }
+}
+
+/// snp on `s` in interleaved rounds with the base commit's snp (`base`, ADR-099) and with `refs`, snp's reference
+/// blocks of `s` (B9's B9nv and B3', ADR-136), then snp's RSS runs (the gate never reads the base's). Each round runs
+/// one block of each, in [`round_order`]; each has one warm-up, in its first block. A failure of the base or of a
+/// reference marks it not measured and the others still run every round; a failure of the head ends the scenario.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the measurement's inputs, passed through from `measure`"
+)]
+fn measure_rounds(
     work: &Work,
     hyperfine: &Path,
     head: &Path,
-    base: &Result<&Path, String>,
+    base: Option<&Result<&Path, String>>,
+    refs: &'static [(&'static str, Scenario)],
     s: &Scenario,
     counts: (Option<u32>, Option<u32>),
     raw: &Path,
-) -> (Outcome, Outcome) {
+) -> RoundsOut {
     let (warmup, total) = run_counts(s, counts);
     let (rounds, per_block) = paired_rounds(total);
-    let mut base_err = base.as_ref().err().cloned();
-    let mut runs: BTreeMap<Tool, (Vec<f64>, Vec<f64>)> = BTreeMap::new();
+    let mut blocks = Vec::new();
+    if let Some(b) = base {
+        let mut block = Block::new(Role::Base, b.as_ref().map_or(head, |p| *p), s);
+        block.err = b.as_ref().err().cloned();
+        blocks.push(block);
+    }
+    blocks.push(Block::new(Role::Head, head, s));
+    for (key, rs) in refs {
+        blocks.push(Block::new(Role::Reference(key), head, rs));
+    }
+    let not_measured = || Outcome::Failed("not measured: snp failed this scenario".into());
     for r in 0..rounds {
-        let order = if base_first(r) {
-            [Tool::SnpBase, Tool::Snp]
-        } else {
-            [Tool::Snp, Tool::SnpBase]
-        };
-        for tool in order {
-            let exe = match (tool, base) {
-                (Tool::SnpBase, Ok(b)) if base_err.is_none() => *b,
-                (Tool::SnpBase, _) => continue,
-                _ => head,
+        for i in round_order(r, blocks.len()) {
+            let Some(block) = blocks.get_mut(i) else {
+                continue;
             };
-            let entry = runs.entry(tool).or_default();
-            let w = if entry.0.is_empty() { warmup } else { 0 };
-            let json_out = raw.join(format!("{}-{}-r{r:02}.json", s.id, tool.name()));
-            match hyperfine_block(work, hyperfine, tool, exe, s, (w, per_block), &json_out) {
+            if block.err.is_some() {
+                continue;
+            }
+            let w = if block.times.is_empty() { warmup } else { 0 };
+            let json_out = raw.join(block.json_name(s, r));
+            match hyperfine_block(
+                work,
+                hyperfine,
+                block.tool(),
+                block.exe,
+                block.scenario,
+                (w, per_block),
+                &json_out,
+            ) {
                 Ok(times) => {
                     if let Some(med) = median(&times) {
-                        entry.1.push(med);
+                        block.medians.push(med);
                     }
-                    entry.0.extend(times);
+                    block.times.extend(times);
                 }
-                Err(e) if tool == Tool::SnpBase => base_err = Some(format!("{e:#}")),
+                Err(e) if block.role != Role::Head => block.err = Some(format!("{e:#}")),
                 Err(e) => {
-                    return (
-                        Outcome::Failed(format!("{e:#}")),
-                        Outcome::Failed("not measured: snp failed this scenario".into()),
-                    );
+                    return RoundsOut {
+                        head: Outcome::Failed(format!("{e:#}")),
+                        base: base.map(|_| not_measured()),
+                        refs: refs.iter().map(|(k, _)| (*k, not_measured())).collect(),
+                    };
                 }
             }
         }
     }
-    let pooled = |tool: Tool| -> anyhow::Result<Measure> {
-        let (times, medians) = runs.get(&tool).context("no block ran")?;
-        let mut m = Measure::from_times(times)?;
-        m.rounds_ms.clone_from(medians);
-        Ok(m)
+    let mut out = RoundsOut {
+        head: not_measured(),
+        base: None,
+        refs: Vec::new(),
     };
-    let head_out = match pooled(Tool::Snp).and_then(|mut m| {
-        add_rss(work, Tool::Snp, head, s, &mut m)?;
-        Ok(m)
-    }) {
-        Ok(m) => Outcome::Ok(m),
-        Err(e) => Outcome::Failed(format!("{e:#}")),
-    };
-    let base_out = match base_err {
-        Some(e) => Outcome::Failed(e),
-        None => match pooled(Tool::SnpBase) {
-            Ok(m) => Outcome::Ok(m),
-            Err(e) => Outcome::Failed(format!("{e:#}")),
-        },
-    };
-    (head_out, base_out)
+    for block in &blocks {
+        match block.role {
+            Role::Base => out.base = Some(block.outcome()),
+            Role::Head => {
+                out.head = match block.outcome() {
+                    Outcome::Ok(mut m) => match add_rss(work, Tool::Snp, head, s, &mut m) {
+                        Ok(()) => Outcome::Ok(m),
+                        Err(e) => Outcome::Failed(format!("{e:#}")),
+                    },
+                    failed @ Outcome::Failed(_) => failed,
+                };
+            }
+            Role::Reference(key) => out.refs.push((key, block.outcome())),
+        }
+    }
+    out
 }
 
 /// The median peak RSS (KiB) of [`RSS_RUNS`] runs under `/usr/bin/time` (the largest process of the tree: a maximum
@@ -4121,6 +4377,16 @@ fn evaluate(
             ),
             None => {}
         }
+        // B9's hook overhead in its own rounds (ADR-136): reported, not gated yet (never a warning or a failure)
+        if id == "B9" {
+            push(
+                &mut out,
+                id,
+                HOOK_OVERHEAD_CHECK.into(),
+                Verdict::Pass,
+                hook_overhead_text(tools),
+            );
+        }
         let first_unpaired = out.len();
         // regression against the baseline: > pct and non-overlapping 95 % CIs
         if base.is_some_and(|r| r.get(id, "snp").is_none()) {
@@ -4444,6 +4710,16 @@ fn comment(cur: &Record, base: Option<&Record>, checks: &[Check]) -> String {
             _ = write!(s, " {} |", counts_cell(snp, paired_base));
         }
         s.push('\n');
+    }
+    if let Some(b9) = cur.scenarios.get("B9")
+        && cur.get("B9", "snp").is_some()
+    {
+        _ = writeln!(
+            s,
+            "\nB9 hook overhead, B9 − B9nv − B3' per round (information only, ADR-136: B9nv is the same commit with \
+             `--no-verify`, B3' is `snp run`, both in snp's B9 fixture and rounds): {}",
+            hook_overhead_text(b9)
+        );
     }
     let diffs: Vec<(&String, &Vec<String>)> = rows
         .iter()
@@ -6616,5 +6892,128 @@ mod tests {
         .unwrap();
         assert!(listed.starts_with(head.trim()), "{listed}");
         std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    fn timed(median: f64, rounds: &[f64]) -> Measure {
+        Measure {
+            rounds_ms: rounds.to_vec(),
+            ..m(median, (median, median))
+        }
+    }
+
+    #[test]
+    fn round_order_mirrors_and_keeps_the_base_first_in_even_rounds() {
+        assert_eq!(round_order(0, 4), [0, 1, 2, 3]);
+        assert_eq!(round_order(1, 4), [3, 2, 1, 0]);
+        assert_eq!(round_order(2, 2), [0, 1]);
+        assert_eq!(round_order(3, 1), [0]);
+        assert_eq!(round_order(0, 0), Vec::<usize>::new());
+        // B9 without a base: head, B9nv, B3' as listed
+        assert_eq!(
+            B9_REFERENCES.map(|(k, s)| (k, s.id)),
+            [(B9NV_KEY, "B9nv"), (B3P_KEY, "B3'")]
+        );
+        assert_eq!(references_of(scenario("B9").unwrap()).len(), 2);
+        assert!(references_of(scenario("B3").unwrap()).is_empty());
+        assert_eq!(B9_REFERENCES[0].1.cmd, Cmd::Git(B9NV_GIT));
+        assert_eq!(
+            B9NV_GIT
+                .iter()
+                .filter(|a| **a != "--no-verify")
+                .collect::<Vec<_>>(),
+            B9_GIT.iter().collect::<Vec<_>>(),
+            "B9nv is B9's commit plus --no-verify"
+        );
+        assert_eq!(B9_REFERENCES[1].1.cmd, Cmd::Tool(&["run"]));
+        assert!(
+            B9_REFERENCES
+                .iter()
+                .all(|(_, s)| s.fixture == Fixture::Hooked && s.store == StoreMode::Warm)
+        );
+    }
+
+    #[test]
+    fn hook_overhead_is_the_median_of_the_per_round_differences() {
+        let b9 = timed(14.2, &[14.0, 15.0, 13.0, 14.5]);
+        let nv = timed(3.0, &[3.0, 3.5, 2.5, 3.0]);
+        let run = timed(10.0, &[10.0, 10.5, 10.0, 10.5]);
+        // per round: 1.0, 1.0, 0.5, 1.0
+        let (med, (lo, hi), n) = hook_overhead(&b9, &nv, &run).unwrap();
+        assert_eq!((med, n), (1.0, 4));
+        assert!(lo <= med && med <= hi, "{lo} {hi}");
+        // not the difference of the pooled medians
+        assert_ne!(med, b9.median_ms - nv.median_ms - run.median_ms);
+        // unpaired, empty or non-finite rounds are not combined
+        assert!(hook_overhead(&b9, &timed(3.0, &[3.0]), &run).is_none());
+        assert!(hook_overhead(&timed(1.0, &[]), &timed(1.0, &[]), &timed(1.0, &[])).is_none());
+        assert!(hook_overhead(&b9, &timed(3.0, &[f64::NAN, 3.0, 3.0, 3.0]), &run).is_none());
+    }
+
+    /// The hook overhead is information only (ADR-136): it never warns or fails, whatever its value or when its
+    /// references are missing, and the absolute B9 budget, the paired check and the never-slower rule stay.
+    #[test]
+    fn the_hook_overhead_is_reported_and_never_gated() {
+        let b = budgets();
+        let b9 = timed(30.0, &[30.0, 30.0]);
+        let with = |refs: &[(&str, Outcome)]| {
+            let mut rows = vec![
+                ("B3", "snp", Outcome::Ok(m(10.0, (9.0, 11.0)))),
+                ("B9", "snp", Outcome::Ok(b9.clone())),
+                ("B9", "prek", Outcome::Ok(m(31.0, (30.0, 32.0)))),
+                ("B9", "pre-commit", Outcome::Ok(m(80.0, (79.0, 81.0)))),
+                ("B9", "snp-base", Outcome::Ok(timed(30.0, &[30.0, 30.0]))),
+            ];
+            rows.extend(refs.iter().map(|(k, o)| ("B9", *k, o.clone())));
+            let cur = record("gnu-system", &rows);
+            (evaluate(&cur, None, &b, &none(), &none(), &[]), cur)
+        };
+        let (checks, cur) = with(&[
+            (B9NV_KEY, Outcome::Ok(timed(3.0, &[3.0, 3.0]))),
+            (B3P_KEY, Outcome::Ok(timed(10.0, &[10.0, 10.0]))),
+        ]);
+        let info = verdict_of(&checks, "B9", HOOK_OVERHEAD_CHECK).unwrap();
+        assert_eq!(info.verdict, Verdict::Pass);
+        assert!(
+            info.detail
+                .starts_with("17.00 ms [17.00, 17.00] over 2 rounds (B9nv 3.00 ms, B3' 10.00 ms)"),
+            "{}",
+            info.detail
+        );
+        // the absolute budget (B3 + 3 ms = 13 ms) still breaches, and the paired and never-slower checks still run
+        assert_eq!(
+            verdict_of(&checks, "B9", "p50 <= 1x B3").unwrap().verdict,
+            Verdict::Warn
+        );
+        assert!(verdict_of(&checks, "B9", PAIRED_CHECK).is_some());
+        assert_eq!(
+            verdict_of(&checks, "B9", "p50 <= prek").unwrap().verdict,
+            Verdict::Pass
+        );
+        // the reference keys are not tools: no check names them, and the comment reports the overhead
+        assert!(checks.iter().all(|c| !c.what.contains("snp/")));
+        let text = comment(&cur, None, &checks);
+        assert!(text.contains("B9 hook overhead"), "{text}");
+        assert!(text.contains("17.00 ms [17.00, 17.00]"), "{text}");
+        assert!(!text.contains("| snp/"), "{text}");
+        // missing or failed references: still a pass, saying why
+        let (checks, _) = with(&[(B9NV_KEY, Outcome::Failed("exit 1".into()))]);
+        let info = verdict_of(&checks, "B9", HOOK_OVERHEAD_CHECK).unwrap();
+        assert_eq!(info.verdict, Verdict::Pass);
+        assert!(
+            info.detail
+                .starts_with("not measured: snp/B9nv failed: exit 1"),
+            "{}",
+            info.detail
+        );
+        let (checks, _) = with(&[]);
+        assert!(
+            verdict_of(&checks, "B9", HOOK_OVERHEAD_CHECK)
+                .unwrap()
+                .detail
+                .contains("not measured")
+        );
+        // a record round trip keeps the references
+        let back = Record::from_json(&cur.to_json()).unwrap();
+        assert_eq!(back.get("B9", B9NV_KEY).unwrap().rounds_ms, [3.0, 3.0]);
     }
 }
