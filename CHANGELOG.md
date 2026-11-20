@@ -11,6 +11,8 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
 
 ### Changed
 
+- bench: the B8 `p50 <= pre-commit` known miss is gone. PR #57's CI bench measured snp at 307 ms against
+  pre-commit's 418 ms (1.36x), so the gate fails again if snp ever falls behind pre-commit on B8.
 - cfgv and file-identify are part of the workspace (ADR-116): imported with their full history as `crates/snp-cfgv`
   (Python cfgv 3.5.0: byte-for-byte messages, PyYAML value model, `BigInt` with CPython's 4300-digit limit) and
   `crates/snp-identify` (Python identify 2.6.20: 323 tags as a `Copy` bitset, `env -S` / nix-shell shebangs, one
