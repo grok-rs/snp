@@ -159,6 +159,7 @@ mod api {
             Limiter::acquire_all,
         );
         has::<fn(CancelToken, bool) -> io::Result<SignalGuard>>(signals::install);
+        has::<fn(CancelToken, bool, &Env) -> io::Result<SignalGuard>>(signals::install_with_env);
         has::<fn(&SignalGuard) -> RestoreShield>(SignalGuard::shield);
         has::<fn(&SignalGuard) -> Option<i32>>(SignalGuard::die_by_signal_if_terminated);
         let sig = Sig::Int;

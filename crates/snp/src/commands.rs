@@ -63,7 +63,7 @@ fn install_signals(s: &Session, subreaper: bool) {
     if s.signals.get().is_some() {
         return;
     }
-    if let Ok(guard) = snp_proc::signals::install(s.cancel.clone(), subreaper) {
+    if let Ok(guard) = snp_proc::signals::install_with_env(s.cancel.clone(), subreaper, &s.env) {
         let _set: Result<(), Arc<snp_proc::signals::SignalGuard>> = s.signals.set(Arc::new(guard));
     }
 }

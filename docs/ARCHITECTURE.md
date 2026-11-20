@@ -1158,6 +1158,8 @@ pub mod signals {
     /// `subreaper` (run, hook-impl, try-repo on Linux): PR_SET_CHILD_SUBREAPER via rustix, so orphaned hook descendants
     /// reparent to snp and `registry::quiesce` can find them on the cancel path.
     pub fn install(cancel: CancelToken, subreaper: bool) -> io::Result<SignalGuard>;
+    /// `install` with `SNP_KILL_GRACE` read from the caller's startup snapshot (no second `Env::capture_process`).
+    pub fn install_with_env(cancel: CancelToken, subreaper: bool, env: &Env) -> io::Result<SignalGuard>;
     #[derive(Debug)] pub struct SignalGuard { /* thread handle */ }
     impl SignalGuard {
         pub fn shield(&self) -> RestoreShield;
