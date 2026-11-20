@@ -4,7 +4,7 @@
 //!
 //! A full load is `check` + `apply_defaults` + `convert`; the last two can neither fail nor warn, so a check-only
 //! load succeeds, fails and warns exactly when the full load does. The projections give what `convert` would give
-//! for the same keys: the `repo:` classification is the shared [`repo_kind`], the defaults gc depends on (a local
+//! for the same keys: the `repo:` classification is the shared `repo_kind`, the defaults gc depends on (a local
 //! or manifest hook without `additional_dependencies` has none) are applied here, and a manifest's by-id lookup
 //! keeps the last duplicate like [`crate::Manifest::get`]. `tests/check_only.rs` checks the equality against the
 //! full load for the oracle corpus and for generated configs and manifests.
