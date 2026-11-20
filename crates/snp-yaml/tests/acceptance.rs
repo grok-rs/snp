@@ -495,7 +495,7 @@ mod acceptance {
             line: 0,
             column: 0,
         };
-        let node = |kind, tag: &str| Node {
+        let node = |kind, tag: &'static str| Node {
             kind,
             tag: tag.into(),
             style: ScalarStyle::NotScalar,
@@ -869,5 +869,48 @@ mod acceptance {
             err(&format!("a: '{}\u{1}'\n", rep("x", CHUNK - 4))),
             ("ReaderError".to_owned(), reader("0001", CHUNK))
         );
+    }
+
+    /// ADR-138: a resolved tag (implicit scalars, quoted scalars, the non-specific `!`, collections) borrows the
+    /// resolver's static string; an explicit tag (`!!int`, `!local`, a `%TAG` prefix with `%XX`) is owned with the
+    /// same bytes; `Debug` shows a tag exactly as the former `Box<str>` did.
+    #[test]
+    fn resolved_tags_borrow_and_explicit_tags_are_owned() {
+        use std::borrow::Cow;
+        let text = "%TAG !e! tag:example.com,2000:\n---\na: 1\nb: 'x'\nc: ! 2\nd: [x]\ne: !!int 3\n\
+                    f: !local y\ng: !e!t%41 z\n";
+        let doc = compose(text, Schema::PyYaml11Safe, &Limits::default()).expect("compose");
+        let tags: Vec<(&str, bool)> = doc
+            .nodes
+            .iter()
+            .map(|n| (&*n.tag, matches!(n.tag, Cow::Borrowed(_))))
+            .collect();
+        let str_tag = ("tag:yaml.org,2002:str", true);
+        assert_eq!(
+            tags,
+            [
+                ("tag:yaml.org,2002:map", true),
+                str_tag,
+                ("tag:yaml.org,2002:int", true),
+                str_tag,
+                str_tag,
+                str_tag,
+                // libyaml makes a `!` scalar plain-implicit: it resolves like an untagged plain scalar.
+                ("tag:yaml.org,2002:int", true),
+                str_tag,
+                ("tag:yaml.org,2002:seq", true),
+                str_tag,
+                str_tag,
+                ("tag:yaml.org,2002:int", false),
+                str_tag,
+                ("!local", false),
+                str_tag,
+                ("tag:example.com,2000:tA", false),
+            ]
+        );
+        for n in &doc.nodes {
+            let boxed: Box<str> = (*n.tag).into();
+            assert_eq!(format!("{:?}", n.tag), format!("{boxed:?}"));
+        }
     }
 }

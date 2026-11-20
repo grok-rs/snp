@@ -939,7 +939,8 @@ pub fn decode_text(bytes: &[u8]) -> Result<std::borrow::Cow<'_, str>, snp_pycomp
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)] pub struct NodeId(pub u32);
 #[derive(Debug, Clone)] pub enum NodeKind { Scalar(Box<str>), Seq(Vec<NodeId>), Map(Vec<(NodeId, NodeId)>) }
 #[derive(Copy, Clone, Debug, PartialEq, Eq)] pub enum ScalarStyle { Plain, Single, Double, Literal, Folded, NotScalar }
-#[derive(Debug, Clone)] pub struct Node { pub kind: NodeKind, pub tag: Box<str>, pub style: ScalarStyle,
+/// `tag`: a resolved tag borrows the resolver's static string, an explicit tag is owned (ADR-138).
+#[derive(Debug, Clone)] pub struct Node { pub kind: NodeKind, pub tag: std::borrow::Cow<'static, str>, pub style: ScalarStyle,
                                           pub span: std::ops::Range<usize>, pub start: Mark, pub anchor: Option<Box<str>> }
 /// Arena composer: an alias is the *same* NodeId as its anchor (never a copy) — migrate-config dedupes by id.
 #[derive(Debug, Clone)] pub struct Document { pub nodes: Vec<Node>, pub root: Option<NodeId> }

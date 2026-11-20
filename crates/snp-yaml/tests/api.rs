@@ -55,12 +55,14 @@ mod api {
         };
         let node = Node {
             kind: NodeKind::Scalar("x".into()),
-            tag: "tag:yaml.org,2002:str".into(),
+            tag: Cow::Borrowed("tag:yaml.org,2002:str"),
             style: ScalarStyle::Plain,
             span: 0..1,
             start,
             anchor: None,
         };
+        // ADR-138: a resolved tag borrows a static string, an explicit one is owned.
+        has::<Cow<'static, str>>(node.tag.clone());
         let doc = Document {
             nodes: vec![node],
             root: Some(NodeId(0)),
