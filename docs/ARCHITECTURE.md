@@ -3212,7 +3212,8 @@ notice).
        nothing changed: under `core.fileMode` the original's executable bit is its index mode's (no mode change in the
        patch); the checked-out file has the snapshot's `lstat` (and, when racy against the last proof, its content
        hash), one link, not the backup's inode, no extended attribute; the backup is still its inode, with one link,
-       its size and mtime, the checked-out file's owner and group, no extended attribute. Then, file by file: the
+       its size and mtime, the checked-out file's owner and group, no extended attribute; every input of `git diff`
+       still has its snapshot stat (and hash when racy). Then, file by file: the
        `lstat` again, the backup's mode set to the checked-out file's permission bits (what `git apply`'s fresh file
        gets: `0666`/`0777` minus the umask, as the checkout's), its times to now (`futimens(UTIME_NOW)`), and
        `rename(backup, file)`. A failed check or first rename → `git apply` below; a later failure → the checkout of

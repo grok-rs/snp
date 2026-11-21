@@ -300,11 +300,12 @@ anchors = [
     # by rename (`restoreR`), with the oracle's proof (`RenameProof`) and the guard's final checks
     { item = "crates/snp-stash/src/guard.rs::Inner::make_backups", fingerprint = "7bcc43694b041cf0" },
     { item = "crates/snp-stash/src/guard.rs::backup_one", fingerprint = "c2090a774b5a4178" },
-    { item = "crates/snp-stash/src/guard.rs::Inner::rename_restore", fingerprint = "9ead6fe9060eb2f2" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::rename_restore", fingerprint = "6349ae494564476f" },
     { item = "crates/snp-stash/src/guard.rs::rename_plan", fingerprint = "2c7fee2d7c78cb04" },
     { item = "crates/snp-stash/src/guard.rs::rename_back", fingerprint = "26ed72ac9cf1f61e" },
-    { item = "crates/snp-stash/src/diff_oracle.rs::DiffOracle::restore_proof", fingerprint = "40d28a9b8c954f7d" },
+    { item = "crates/snp-stash/src/diff_oracle.rs::DiffOracle::restore_proof", fingerprint = "45e6aa13311a7b12" },
     { item = "crates/snp-stash/src/diff_oracle.rs::RestoreProof::content_unchanged", fingerprint = "c3faeb282f208807" },
+    { item = "crates/snp-stash/src/diff_oracle.rs::RestoreProof::inputs_unchanged", fingerprint = "79bddeeff76b68af" },
     { item = "crates/snp-stash/src/diff_oracle.rs::ProofFile::stat_unchanged", fingerprint = "77a94ffea1462c86" },
     { item = "crates/snp-git/src/git.rs::Git::patch_paths", fingerprint = "189c9aee406d8b09" },
     # ADR-151: the same listing fed the patch on stdin while it streams (its answer, or the file-based one above)

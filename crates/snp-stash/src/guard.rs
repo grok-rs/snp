@@ -1632,7 +1632,8 @@ impl Inner {
 
     /// ADR-152: the restore by rename. Tried only with backups of every file of the patch, the oracle's proof
     /// ([`StashGuard::prove_restore`]), no `stage_fixed` staging and no cleared intent-to-add entry, before the first
-    /// apply. First every file is checked, nothing changed: its proof entry exists; under `core.fileMode` its
+    /// apply. First the inputs of `git diff` are checked against the snapshot (configuration and attributes still
+    /// convert nothing), then every file, nothing changed: its proof entry exists; under `core.fileMode` its
     /// original executable bit is its index mode's (the patch then changes no mode, so `git apply`'s new file gets
     /// the mode the checkout's new file got); the checked-out file passes the proof's final check (the snapshot's
     /// `lstat`, and its content when that stat is racy), has one link, is not the backup's inode and carries no
@@ -1654,7 +1655,7 @@ impl Inner {
             return Renamed::No;
         };
         let mut plan: Vec<(usize, File, u32, PathBuf)> = Vec::new();
-        if plan.try_reserve(self.backups.len()).is_err() {
+        if plan.try_reserve(self.backups.len()).is_err() || !proof.inputs_unchanged() {
             return Renamed::No;
         }
         for (i, b) in self.backups.iter().enumerate() {

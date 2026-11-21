@@ -380,8 +380,10 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     };
     let code = lp.run(st.stash.as_mut(), &mut oracle);
     // ADR-152: the oracle's evidence for the restore by rename, after the last hook, step 19's output and step 20's
-    // staging (the guard refuses it after a `stage_fixed` staging)
+    // staging (the guard refuses it after a `stage_fixed` staging); never after a cancellation (a killed hook was not
+    // compared)
     if code.is_ok()
+        && cx.cancel.reason().is_none()
         && let Some(g) = st.stash.as_mut()
         && let Some(proof) = g.checked_out().and_then(|p| oracle.restore_proof(p))
     {

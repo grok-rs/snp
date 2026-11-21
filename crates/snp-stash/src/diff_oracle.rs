@@ -92,6 +92,9 @@ struct RestoreBasis {
 #[derive(Debug, Clone)]
 pub struct RestoreProof {
     files: Vec<ProofFile>,
+    /// Every input of `git diff` (index, configuration and attributes files) with its snapshot `(lstat, stat)` and,
+    /// when it was racy, its content hash.
+    inputs: Vec<(PathBuf, St, St, Option<[u8; 32]>)>,
     checked_at: i128,
     file_mode: bool,
 }
@@ -1500,8 +1503,21 @@ impl DiffOracle {
             }
             slot = slot.saturating_add(1);
         }
-        (files.len() == want.len()).then_some(RestoreProof {
+        if files.len() != want.len() {
+            return None;
+        }
+        let mut inputs: Vec<(PathBuf, St, St, Option<[u8; 32]>)> = Vec::new();
+        inputs.try_reserve(s.inputs.len()).ok()?;
+        for (i, ((p, _), (l, st))) in s.inputs.iter().zip(&snap.inputs).enumerate() {
+            let hash = match snap.racy_inputs.binary_search_by_key(&i, |(j, _)| *j) {
+                Ok(k) => Some(snap.racy_inputs.get(k)?.1?),
+                Err(_) => None,
+            };
+            inputs.push((p.clone(), *l, *st, hash));
+        }
+        Some(RestoreProof {
             files,
+            inputs,
             checked_at: basis.checked_at,
             file_mode: basis.file_mode,
         })
@@ -1524,6 +1540,19 @@ impl RestoreProof {
     )]
     pub(crate) const fn file_mode(&self) -> bool {
         self.file_mode
+    }
+
+    /// The final check of the inputs (ADR-152): every input of `git diff` (index, configuration and attributes files)
+    /// still has the snapshot's `lstat` and `stat`, and the content hash of a racy one is unchanged, so what `git apply`
+    /// would read (the attributes and the configuration that decide its conversions) is still what ADR-119 proved
+    /// converts nothing.
+    pub(crate) fn inputs_unchanged(&self) -> bool {
+        self.inputs.iter().all(|(p, l, st, hash)| {
+            let (now_l, now_st) = St::lstat_and_stat(p);
+            now_l == *l
+                && now_st == *st
+                && hash.is_none_or(|h| content_hash(p, now_st.kind, true) == Some(h))
+        })
     }
 
     /// The final check of `f` (ADR-152): its `lstat` is exactly the snapshot's, and when that stat is racy against

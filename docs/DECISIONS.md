@@ -3652,8 +3652,9 @@ the last hook, step 19's output and step 20's staging (`StashGuard::prove_restor
 `core.fileMode` the original's executable bit is its index mode's (the patch changes no mode); the checked-out file has
 the snapshot's `lstat` and, when that stat is racy against the last proof, its content hash, one link, is not the
 backup's inode and carries no extended attribute (so a fresh file gets none: no default ACL applies); the backup is
-still its inode with one link, its size and mtime, the checked-out file's owner and group and no extended attribute.
-Then, file by file, a last `lstat` comparison, the backup's mode set to the checked-out file's permission bits, its
+still its inode with one link, its size and mtime, the checked-out file's owner and group and no extended attribute;
+and every input of `git diff` (index, configuration and attributes files) still has its snapshot stat (and hash when
+racy). Then, file by file, a last `lstat` comparison, the backup's mode set to the checked-out file's permission bits, its
 times set to now (`futimens(UTIME_NOW)`), and `rename(backup, file)`. (4) *Fallbacks.* A failed check or a failed first
 rename changes nothing: `git apply` and the rest of step 10 as before. A failure after a rename checks every backed-up
 path out again (silently, the index blobs: the patch's pre-images), then `git apply` as before. Once every rename
@@ -3712,7 +3713,7 @@ filter); FI-31…FI-34 (a panic at each `StashBackup` step) and the driver's kil
 through the journal with every backup removed; journal and pointer round trips with `backups`, and the prefix
 validation. K9: `enter`, `Inner::{stash, secure, restore_patch, finish}` re-reviewed and refreshed;
 `Inner::{make_backups, rename_restore}`, `backup_one`, `rename_plan`, `rename_back`, `DiffOracle::restore_proof`,
-`RestoreProof::content_unchanged` and `ProofFile::stat_unchanged` anchored; two theorems and two witnesses added
+`RestoreProof::{content_unchanged, inputs_unchanged}` and `ProofFile::stat_unchanged` anchored; two theorems and two witnesses added
 (docs/VERIFICATION.md §9.2).
 
 ### ADR-153 — The stash's write-tree and diff-index decided in-process on the provably clean path
