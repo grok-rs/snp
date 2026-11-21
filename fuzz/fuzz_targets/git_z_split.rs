@@ -61,6 +61,7 @@ fn exe(version: GitVersion) -> Arc<GitExe> {
             config_hooks: false,
             pathspec_from_file: modern,
             diff_no_relative: modern,
+            attr_system: version >= GitVersion { major: 2, minor: 42, patch: 0 },
         },
     })
 }
