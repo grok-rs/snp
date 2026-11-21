@@ -284,7 +284,9 @@ classifier skip, speculative config load, regex fast kinds and lazy engine compi
 parallel clones (background prefetch whose every failure is discarded and redone in the foreground exactly as
 pre-commit) and installs with ordered transcript replay, local deps-variant clones, git fan-out (the intent-to-add
 query in it and step 6 beside discovery, ADR-154: `crates/snp-run/tests/pipeline/fanout.rs`; like the config check, the
-query may refresh the index's stat data before a preflight exit), cached `git --version`
+query may refresh the index's stat data before a preflight exit), the stash's `write-tree` and `diff-index` decided
+in-process on the provably clean path (ADR-153, with git's own `<index>.lock` taken and given back; cross-check:
+`crates/snp-stash/tests/behaviour/tree_elision.rs`, `SNP_VERIFY_STASH_ELISION=1`), cached `git --version`
 and probe facts (native binaries only), persistent rustup and shared toolchain directories, a job pool sized by the
 cgroup-aware CPU count and the fd budget (partition contents always use pre-commit's `jobs`). Message-parity markers
 (`keys-v1`) make cold and warm transcripts identical with the fast path (ADR-032).

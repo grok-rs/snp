@@ -1605,17 +1605,48 @@ pub mod index_file {
         Extension([u8; 4]), TooLarge, Io }
     #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub struct IndexEntry { pub ctime: (u32, u32), pub mtime: (u32, u32), pub dev: u32,
         pub ino: u32, pub mode: u32, pub uid: u32, pub gid: u32, pub size: u32, pub flags: u16, pub flags2: u16, pub empty_blob: bool,
-        /* name span */ }
+        /* name span, object id span */ }
     impl IndexEntry { pub fn stage(&self) -> u16; pub fn assume_valid(&self) -> bool; pub fn skip_worktree(&self) -> bool;
         pub fn intent_to_add(&self) -> bool; }
     #[derive(Debug, Clone, Default)] pub struct IndexFile { pub version: u32, pub entries: Vec<IndexEntry>, pub extensions: Vec<[u8; 4]>,
-        /* names */ }
+        /* names, kept object ids, hash length, kept TREE extension */ }
     impl IndexFile {
         pub fn read(path: &Path, hash_len: usize) -> Result<Self, IndexRefusal>;
         pub fn parse(buf: &[u8], hash_len: usize) -> Result<Self, IndexRefusal>;
+        /// ADR-153: also keep every entry's object id and the TREE extension (a second TREE refuses).
+        pub fn read_keep(path: &Path, hash_len: usize) -> Result<Self, IndexRefusal>;
+        pub fn parse_keep(buf: &[u8], hash_len: usize) -> Result<Self, IndexRefusal>;
         pub fn name(&self, e: &IndexEntry) -> &[u8];
         pub fn name_cstr(&self, e: &IndexEntry) -> Option<&std::ffi::CStr>;
+        pub fn oid(&self, e: &IndexEntry) -> Option<&[u8]>;
+        pub fn hash_len(&self) -> usize;
+        pub fn tree_extension(&self) -> Option<&[u8]>;
     }
+}
+/// ADR-153: the TREE extension parsed strictly (git's write order, canonical numbers, nothing left over) and the tree
+/// objects `update_one` builds from an index, for the stash's in-process write-tree and diff-index. No spawn.
+pub mod cache_tree {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)] #[non_exhaustive] pub enum CacheTreeRefusal { Malformed, Invalid, Mismatch, TooLarge }
+    #[derive(Debug, Clone)] pub struct CacheTree { /* the extension's bytes, nodes in pre-order */ }
+    #[derive(Debug, Clone, PartialEq, Eq)] pub struct TreeObject { pub oid: Vec<u8>, pub body: Vec<u8> }
+    impl CacheTree {
+        pub fn parse(ext: &[u8], hash_len: usize) -> Result<Self, CacheTreeRefusal>;
+        pub fn fully_valid(&self) -> bool;
+        pub fn root_oid(&self) -> Option<&[u8]>;
+        pub fn node_oids(&self) -> impl Iterator<Item = &[u8]> + '_;
+        pub fn len(&self) -> usize; pub fn is_empty(&self) -> bool;
+        pub fn expected_objects(&self, index: &IndexFile) -> Result<Vec<TreeObject>, CacheTreeRefusal>;
+    }
+}
+/// ADR-153: loose objects read strictly (canonical header, stream ending at the file's end, SHA-1 name check) and the
+/// gate under which git reads only those copies (no packs, alternates, replace refs). No spawn.
+pub mod odb {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)] #[non_exhaustive] pub enum OdbRefusal { HashSize, Io, TooLarge, Stream, Header, Hash, Unchecked }
+    pub fn hex(oid: &[u8]) -> String;
+    pub fn loose_path(objects: &Path, oid: &[u8]) -> Option<PathBuf>;
+    pub fn loose_exists(objects: &Path, oid: &[u8]) -> bool;
+    pub fn read_loose(objects: &Path, oid: &[u8], kind: &[u8]) -> Result<Vec<u8>, OdbRefusal>;
+    pub fn loose_only(common_dir: &Path, env: &Env) -> bool;
 }
 pub mod pch_facts {
     #[derive(Debug)] pub struct PchFacts { /* Git + OnceLocks */ }
@@ -2033,7 +2064,8 @@ use snp_git::{Git, IndexStamp, RepoInfo, ZList};
     pub lock_timeout: std::time::Duration /* SNP_STASH_LOCK_TIMEOUT, default 60 s, ≤ 1 h */, pub verify: bool,
     pub old_git: bool /* caps.version < 2.19: refuse to stash (D-DATA-17) */, pub report_recovery: bool /* ADR-083 */,
     pub checkout_notice: Option<std::sync::mpsc::SyncSender<()>> /* () right before step 8's checkout, else dropped (ADR-133) */,
-    pub intent_to_add_hint: Option<IndexStamp> /* step 6's empty C on a proved index with this stamp (ADR-154) */ }
+    pub intent_to_add_hint: Option<IndexStamp> /* step 6's empty C on a proved index with this stamp (ADR-154) */,
+    pub config_listing: Option<Arc<ConfigListing>> /* step 6's G: steps 4–5 in-process when provable (ADR-153) */ }
 #[derive(Debug, Clone, PartialEq, Eq)] pub enum Stashed { Nothing, Patch(PathBuf) }
 #[derive(Debug)] pub struct StashGuard { /* state machine; restores on drop (panic path only, via RunState::drop) */ }
 pub fn enter(cx: StashCtx) -> Result<StashGuard, Failure>;
@@ -3063,7 +3095,18 @@ notice).
    (checked; `--no-renames` fixes hazard (b), D-DATA-12), or step 6's empty answer to the same query on an index
    proved free of intent-to-add entries, while the lock was uncontended and the index stamp unchanged (ADR-154). If non-empty: `[WARNING] Unstaged intent-to-add files
    detected.`; the list is journaled; then `git rm --cached -- …` (xargs-partitioned, rc ignored, as pre-commit).
-4. **`tree = git write-tree`** (checked → exit 3 on failure).
+4. **`tree = git write-tree`** (checked → exit 3 on failure), or, on the provably clean path, the cache-tree's root
+   without a spawn (ADR-153): with step 6's G (lock uncontended) and the stamp of an index git read successfully in
+   this run (step 6's or step 3's C), when the strict reader keeps the entries' ids and the `TREE` extension, the
+   extension parses strictly, every node is valid and has a loose object (git's `cache_tree_fully_valid`), the
+   index is a regular file, the configuration passes ADR-134's gate, and `<index>.lock` can be created exclusively
+   and removed at once (write-tree's lock, so its lock errors stay git's: any failure runs the real command).
+   **Step 5 is skipped** (as rc 0: no patch, `diff_index_clean()` true) when the tree is the cache-tree's root and
+   every tree object `diff-index` reads is loose, read strictly (stream ending at the file's end), hashes to its name
+   and equals byte for byte the object built from the index in `update_one` order (a stale cache-tree is refused),
+   git reads them from those copies only (no packs, alternates or replace refs), and every entry is stat-clean by
+   ADR-134's strict match with none skipped (≤ 2 048 entries, inline). After a real `write-tree` the proof is tried
+   on the index it left. `SNP_VERIFY_STASH_ELISION=1` runs the real commands too and keeps their answer.
 5. **Diff.** `git diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff <tree> --` with
    `GIT_DIFF_OPTS` removed (hazard (a), D-DATA-11). stdout is **streamed** (never held in memory) directly into the
    final name `patches/patch<unix_secs>-<pid>` created with `create_new` 0600 (EEXIST → `-<n>` suffix: two runs with
@@ -4064,7 +4107,8 @@ Never slower than pre-commit or prek at p50 on any scenario (musl artifacts incl
 Linux (ADR-082, ADR-104): 1 combined `rev-parse` + the overlapped step-6 queries B, F and G (F answers A on a
 small tree; A instead on a larger one or with fewer than 3 CPUs) and the ITA query C (ADR-154; at the stash
 only when its proof refuses), all beside the `rev-parse` at the root of a plain repository (ADR-154) + `write-tree` and
-`diff-index` (pre-commit's G08/G09, 02 §7) + E at step 14 only when a hook reads files (P17) + 10 hooks + 0 `git diff`
+`diff-index` (pre-commit's G08/G09, 02 §7; both decided in-process on the provably clean path, ADR-153: B2/B3/B9
+spawn neither, B8 only `diff-index`) + E at step 14 only when a hook reads files (P17) + 10 hooks + 0 `git diff`
 (baseline elided by diff-index rc 0 on the warm path; DiffOracle stat path) ⇒ ≤ 17 spawns for B3 (7 git), ≈ 12 on
 the critical path (≈ 1 ms each measured); B2 (one hook; Stat mode from one hook on a small tree): 7 git + 1 hook ≤ 8.
 
@@ -4180,7 +4224,7 @@ the package owning the prefix fills it): `pycompat_shlex_split`, `pycompat_decod
 `pycompat_ntpath`, `pycompat_rev_line` (WP-11); `argparse_parse` (both specs, WP-12); `pyre_compile_match` (str +
 bytes, WP-13); `yaml_compose_construct`, `yaml_load` (WP-14); `proc_hookcmd_split`, `proc_shebang_resolve` (WP-15);
 `net_archive_extract` (WP-16); `pyparsers_json`, `pyparsers_yamlcheck`, `pyparsers_toml`, `pyparsers_xml` (WP-17);
-`git_z_split`, `git_pre_push`, `git_merge_msg`, `git_hook_script_classify`, `git_ls_files_tagged` (ADR-106), `git_index_file` (ADR-134) (WP-18);
+`git_z_split`, `git_pre_push`, `git_merge_msg`, `git_hook_script_classify`, `git_ls_files_tagged` (ADR-106), `git_index_file` (ADR-134), `git_cache_tree` (ADR-153) (WP-18);
 `config_load_validate`, `config_manifest_load`, `config_migrate`, `config_revline` (WP-21); `files_classify`,
 `store_env_dir_name`, `store_marker_parse` (WP-22); `stash_journal_parse` (WP-23); `lang_python_pyvenv_cfg` (WP-24);
 `lang_docker_mountinfo` (WP-25); `pygrep_match` and `pch_p0_<hook>` (WP-26); `pch_p1_<hook>`, `pch_p2_<hook>`,

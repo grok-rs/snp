@@ -69,6 +69,15 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   from five to four, with the same number of git processes; locally B2 −2.5 ms and B3 −2.9 ms (paired rounds). The
   intent-to-add query may now refresh the index's stat data also when a preflight check ends the run, as the config
   check already could.
+- The stash's `git write-tree` and `git diff-index` are decided in-process on the provably clean path (ADR-153;
+  output and side effects unchanged). `write-tree` is skipped when the index git already read in this run has a
+  fully valid cache-tree whose tree objects are all loose and `<index>.lock` can be taken and given back (snp
+  creates and removes it at once, so every lock error is still git's own); `diff-index` is skipped when that tree
+  is byte for byte the index's (every tree object loose, read strictly and hash-checked, no packs, alternates or
+  replace refs) and every entry is stat-clean by the index-stat proof's strict match. Anything else runs the real
+  commands. B2 and B3 no longer run either command, B9 neither when its index is not racy, B8 skips `write-tree`;
+  locally B2 −4.1 ms and B3 −4.3 ms (paired rounds), B2's process tree −19 % instructions.
+  `SNP_VERIFY_STASH_ELISION=1` runs the real commands as well and reports a disagreement on stderr.
 - bench: the B8 `p50 <= pre-commit` known miss is gone. PR #57's CI bench measured snp at 307 ms against
   pre-commit's 418 ms (1.36x), so the gate fails again if snp ever falls behind pre-commit on B8.
 - cfgv and file-identify are part of the workspace (ADR-116): imported with their full history as `crates/snp-cfgv`

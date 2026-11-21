@@ -24,8 +24,9 @@ ADR-119 the proven post-checkout baseline; ADR-131 the file-content cache of con
 baseline taken by the first native write in all-in-process runs; ADR-133 its follow-ups (the system attributes file from
 `git var`, attributes that convert nothing); ADR-134 the index-stat proof; ADR-135 the hook script template v3; ADR-136 the wave-5 bench methodology;
 ADR-137 PIE release artifacts and their hardening gate; ADR-138 the internal crates' API policy and snp-yaml's borrowed
-tags and scalar text; ADR-150 gc's parallel loading with ordered replay and its cheaper loads; ADR-154 the pre-chain
-fan-out (the intent-to-add query in step 6, step 6 beside discovery).
+tags and scalar text; ADR-150 gc's parallel loading with ordered replay and its cheaper loads; ADR-153 the stash's
+write-tree and diff-index decided in-process on the provably clean path; ADR-154 the pre-chain fan-out (the
+intent-to-add query in step 6, step 6 beside discovery).
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -3523,6 +3524,91 @@ fuzz target; `read_capped` against the plain read for file lengths and caps on b
 pool stress test with a 60 s cancellation poll (8 threads, 1-3 permits, `acquire` and concurrent `map_ordered`),
 where a lost wakeup stalls the FIFO head past the time bound (a seeded mutation that never notifies times out),
 checking the permit bound, the returned permits, the ticket counters and a zero waiter count.
+
+### ADR-153 — The stash's write-tree and diff-index decided in-process on the provably clean path
+
+*Status: Accepted. Wave-6 analysis item b2-1; the owner chose the `<index>.lock` probe (exact lock errors) over an
+`lstat` check with a registered divergence for an unwritable git directory. Amends §4.2 steps 4–5 and the §12.1
+spawn model of ARCHITECTURE; reuses ADR-134's per-entry stat match and configuration gate unchanged.*
+
+**Context.** With ADR-154, B2 (`run noop-01` on noop10) still ran `write-tree` and `diff-index` as two serial git
+stages before its hook (≈ 0.8 M + 1.0 M instructions, ≈ 1.2–2.0 ms each on CI's slow runner); B3 and B9 the same,
+B8 `write-tree` before its 10 MB patch. In all of them both commands are no-ops whose results are fully determined
+by the index, the object store and the worktree's stat data. git's own facts (sources of 2.18.5 and 2.56.0, checked
+on 2.18.5, 2.43 and 2.56): `write_index_as_tree` takes `<index>.lock` (`LOCK_DIE_ON_ERROR`), reads the index and,
+when the cache-tree is fully valid (`cache_tree_fully_valid`: every node `entry_count >= 0` and its object present,
+an `lstat` of the loose copy or a pack lookup), writes nothing and prints the root's id; it trusts a valid but stale
+cache-tree (a crafted index whose entry changed under a still-valid `TREE` makes `write-tree` print the old root while
+`diff-index` against it reports the change). `diff-index` never writes the index; it reads the root tree through
+`parse_object` (which checks the object's hash) and, on git < 2.20, every subtree; with the cache-tree matching, git
+≥ 2.20 takes the subtrees' entries from the index.
+
+**Decision.** (1) *write-tree.* The stash passes step 6's G (`StashCtx::config_listing`; ignored after a contended
+lock) and, from step 3, the stamp of an index git read successfully in this run: the ADR-154 hint, or the stamp that
+held across step 3's own C. `tree_elision::prepare` applies git's decision to those bytes: ADR-134's gate (Unix, no
+`SNP_DIFF_MODE=git`, no `GIT_TEST_*`/`GIT_FSMONITOR_TEST`, no `GIT_OBJECT_DIRECTORY`, the git directory
+`stat_oracle_safe`, `CheckoutConfig::index_proof` with a known object format), the index a regular file whose stamp
+equals the read stamp before and after `IndexFile::read_keep` (≤ 16 384 entries) keeps the entries' ids and the
+`TREE` extension, `cache_tree::CacheTree::parse` accepts it strictly (empty root name, git's subtree order, canonical
+numbers within `int`, nothing left), every node is valid and every node's object has a loose copy (`odb::loose_exists`,
+git's own `lstat`, sound with packs present). Then `lock_probe` creates `<index>.lock` exclusively (mode 0666 less
+the umask) and removes it at once; on success the tree is the cache-tree's root (lowercase hex, as `write-tree`
+prints it) and no process runs. Any refusal, and any probe error (a held lock, a read-only directory, `ENOSPC`, a
+lock that could not be removed), runs the real `write-tree`, whose errors are git's. (2) *diff-index.* Step 5 is
+skipped, with the outcome of rc 0 (no patch, `diff_index_clean()` true, so ADR-078's baseline is unchanged), when
+`tree_elision::diff_index_empty` holds for the tree: SHA-1; the tree is the cache-tree's root; at most 2 048 entries
+(checked inline); the worktree `stat_oracle_safe`; `odb::loose_only` (no file in `objects/pack`, no
+`objects/info/alternates`, no `refs/replace` directory, no `refs/replace/` line in `packed-refs`, no `reftable`, none
+of `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_REPLACE_REF_BASE`); every entry stat-clean by
+ADR-134's strict match with none skipped (`every_entry_stat_clean`: no unmerged, intent-to-add, assume-unchanged,
+skip-worktree or gitlink entry, nothing racy or smudged, leading directories directories); every node's expected tree
+object (`CacheTree::expected_objects`: the index entries in `update_one` order, a subdirectory where its first entry
+appears, `%o` modes, `40000` and the child node's id, every node's entry count and child count matching the index)
+equal byte for byte to the loose object read strictly (`odb::read_loose`: canonical `tree <size>\0` header, exact
+size, zlib stream ending exactly at the file's end, the whole object hashing to its name with an in-tree SHA-1); and
+the index stamp still the read stamp. When `write-tree` ran, the proof is tried on the index it left (git wrote it
+under its lock, or read it unchanged), inline: the case where the pre-run proof survives `write-tree` (a probe
+failure followed by a successful `write-tree`) is too rare to pay a thread for. (3) `SNP_VERIFY_STASH_ELISION=1` runs
+the real `write-tree` after an elided one and the real `diff-index` after a proven one, keeps their answer, and
+reports a disagreement once on stderr. (4) snp-git gains `cache_tree`, `odb` and `IndexFile::read_keep`/`parse_keep`
+/`oid`/`hash_len`/`tree_extension` (no new crate: `flate2` is a workspace dependency already; SHA-1 is a 60-line
+module checked against the FIPS vectors and git's object names).
+
+**Rationale.** (1) is git's own decision function applied to bytes git itself read successfully in this run (the
+stamp covers checksum, order and every other read error `write-tree` would die on; the configuration gate keeps
+fsmonitor, whose hook `read_index` would run, away); when it holds, `write-tree`'s only effects are the transient lock
+(reproduced with its error surface) and its stdout. (2) `diff-index` exits 0 with nothing printed iff no file pair
+is queued; with the tree byte-equal to the index's (root hash-checked as `parse_object` does, every subtree verified
+whatever git version reads it) it compares exactly the index entries, and ADR-134's match is stricter than any git's,
+so no content is read and no refresh happens (and `diff-index` writes nothing anyway). The stale cache-tree of the
+context is refused by the byte comparison; a corrupt or truncated object by the strict read; a packed, alternate or
+replaced copy by the gate. The skipped-entry kinds are refused rather than reasoned about, because `diff-index`
+treats them on other code paths than `diff-files`. Not reproduced: `GIT_TRACE` output of the two skipped processes
+(not part of the compat contract; the command set already differs), and a SHA-1 collision-attack tree (git's SHA-1DC
+refuses it; git could not have written it). Alternatives rejected: an `lstat(<index>.lock)` check with a registered
+divergence (owner: the probe is exact); a SHA-1 recompute of the whole cache-tree from blob ids (the byte comparison
+of the objects git reads is enough); reading packs for real repositories (phase 2: one `.idx` lookup per node, slower
+than the spawn beyond ~100 nodes); prek's "nothing unstaged → no write-tree" (not exact: pre-commit's `write-tree`
+writes the cache-tree after a `git add`).
+
+**Consequences.** B2 and B3 spawn neither command (exec lists: 9 → 7 processes on B2), B9 likewise when the index
+`git commit` hands the hook is not racy, B8 skips `write-tree` (its `diff-index` makes the patch); serial git stages
+before the first hook (with ADR-154): B2 and B3 3 → 1, B9 4 → 2, B8 7 → 6. Measured on the `cargo xtask
+bench setup` fixtures with the profiling build, elision on vs off (a `GIT_TEST_*` variable turns it off), paired
+interleaved untraced rounds: B2 p50 22.97 → 18.86 ms (−4.1 ms, 150 rounds), B3 32.03 → 27.72 ms (−4.3 ms, 100
+rounds), B8 904.5 → 889.6 ms (25 rounds, within noise); whole-tree callgrind B2 10.76 M → 8.74 M instructions
+(−18.8 %; prek 0.5.11's tree 9.06 M), B3 13.95 M → 11.93 M, syscalls B2 2 500 → 1 957. Real repositories with packs
+keep both commands (only fresh or loose-only repositories elide `diff-index`; `write-tree` elides whenever every
+node is loose). snp now creates and removes git's `<index>.lock` itself (owner decision). K9: `Inner::stash`
+re-reviewed and the new step `Inner::tree_and_proof` anchored (the model's `stashTree = treeOf` and empty
+`diffPatch` are what the elision returns; VERIFICATION §9.2). Tests: `crates/snp-stash/tests/behaviour/tree_elision.rs`
+(every case built twice and run armed and plain on the git on `PATH` and `SNP_TEST_GIT_MATRIX`, comparing outcome,
+patch, errors, output, index entries and cache-tree, objects added or removed and the lock: a clean repository skips
+both; an unstaged change skips `write-tree`; a staged change runs `write-tree` and proves the diff after it; a stale
+cache-tree is refused; a corrupt root object fails as git does; packs; a held `index.lock`; a symbolic-link index; the
+`GIT_INDEX_FILE=.git/index.lock` of `git commit -a`; skipped entries; the verify mode; the environment gates), unit
+tests of `cache_tree`, `odb`, `sha1` and `IndexFile::read_keep`, and the B9 shape pin
+(`crates/snp/tests/it/budgets.rs`, two fewer git spawns on a filesystem the stat proof accepts).
 
 ### ADR-154 — The pre-chain fan-out: the intent-to-add query in step 6, and step 6 beside discovery
 

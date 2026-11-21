@@ -70,10 +70,11 @@ for legacy hooks.
 | `SNP_STASH_VERIFY` | — | `1`: after restoring, check that the patch round-trips (warning only). |
 | `SNP_KILL_GRACE` | `2s` (≤ 60 s) | Time between interrupting hooks (Ctrl-C, `timeout`) and killing them. |
 | `SNP_OUTPUT_BUDGET` | `64 MiB` | Memory for captured hook output across all running hooks; output beyond it spills to an unnamed temporary file. |
-| `SNP_DIFF_MODE` | — | `git`: always detect hook modifications with `git diff`, like pre-commit (disables the stat-based shortcuts). |
+| `SNP_DIFF_MODE` | — | `git`: always detect hook modifications with `git diff`, like pre-commit (disables the stat-based shortcuts, including the stash's in-process `write-tree` and `diff-index`). |
 | `SNP_VERIFY_BASELINE` | — | `1`: cross-check the shortcut against a real `git diff` (CI self-test). |
 | `SNP_VERIFY_FILE_CACHE` | — | `1`: re-read every file a native hook reuses from an earlier hook and report a difference (CI self-test). |
 | `SNP_VERIFY_INDEX_PROOF` | — | `1`: cross-check the index-stat proof (no `git diff` when the index shows nothing changed) against a real `git diff` (CI self-test). |
+| `SNP_VERIFY_STASH_ELISION` | — | `1`: when the stash skips `git write-tree` or `git diff-index` on a provably clean repository, run them anyway, use their answer and report a difference (CI self-test). |
 
 ### Downloads and toolchains
 
