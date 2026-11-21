@@ -21,7 +21,7 @@ mod api {
         CheckoutConfig, DiffFingerprint, Git, IndexEntries, RepoInfo, SystemAttributes, ZList,
     };
     use snp_proc::signals::SignalGuard;
-    use snp_stash::diff_oracle::{Change, DiffMode, DiffOracle, Elision, ProofStats};
+    use snp_stash::diff_oracle::{Change, DiffMode, DiffOracle, Elision, ProofStats, RestoreProof};
     use snp_stash::{StashCtx, StashGuard, Stashed, Unrestored};
 
     fn send_sync<T: Send + Sync>() {}
@@ -68,6 +68,7 @@ mod api {
         send_sync::<Change>();
         send_sync::<Elision>();
         send_sync::<ProofStats>();
+        send_sync::<RestoreProof>();
     }
 
     #[test]
@@ -88,6 +89,8 @@ mod api {
         has::<fn(&StashGuard) -> bool>(StashGuard::lock_contended);
         has::<fn(&mut StashGuard, &[RepoPath]) -> Result<bool, Failure>>(StashGuard::stage_fixed);
         has::<fn(StashGuard) -> Result<(), Failure>>(StashGuard::restore);
+        // ADR-152
+        has::<fn(&mut StashGuard, RestoreProof)>(StashGuard::prove_restore);
     }
 
     #[test]
@@ -162,5 +165,7 @@ mod api {
         has::<fn(&DiffOracle) -> Option<ProofStats>>(DiffOracle::proof_stats);
         let p = ProofStats::default();
         has::<(u32, u32, u32)>((p.passes, p.proven, p.mismatches));
+        // ADR-152
+        has::<fn(&DiffOracle, &ZList) -> Option<RestoreProof>>(DiffOracle::restore_proof);
     }
 }
