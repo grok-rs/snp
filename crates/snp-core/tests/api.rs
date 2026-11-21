@@ -21,7 +21,8 @@ mod api {
     use snp_core::fault::{self, Point};
     use snp_core::lang::LanguageId;
     use snp_core::output::{
-        CollectWarnings, Color, ColorSetting, DiagSink, Level, Printer, PrinterOpts, WarnSink,
+        CollectWarnings, Color, ColorSetting, DiagSink, Level, LogLine, LogRecorder, Printer,
+        PrinterOpts, WarnSink,
     };
     use snp_core::path::RepoPath;
     use snp_core::profile;
@@ -156,6 +157,8 @@ mod api {
         has::<fn(&Printer, &str)>(<Printer as DiagSink>::diag);
         has::<fn(&CollectWarnings, &str)>(<CollectWarnings as WarnSink>::warn);
         has::<fn(&CollectWarnings, &str)>(<CollectWarnings as DiagSink>::diag);
+        has::<fn(&LogRecorder, &str)>(<LogRecorder as WarnSink>::warn);
+        has::<fn(&LogRecorder, &str)>(<LogRecorder as DiagSink>::diag);
         has::<fn(&dyn WarnSink, &dyn DiagSink)>(sinks);
         let c = CollectWarnings::new();
         sinks(&c, &c);
@@ -185,6 +188,8 @@ mod api {
         send_sync::<PrinterOpts>();
         send_sync::<Printer>();
         send_sync::<CollectWarnings>();
+        send_sync::<LogRecorder>();
+        send_sync::<LogLine>();
         send_sync::<RepoPath>();
         send_sync::<SystemClock>();
         send_sync::<Point>();
@@ -376,6 +381,17 @@ mod api {
         has::<&dyn DiagSink>(&p);
         has::<fn() -> CollectWarnings>(CollectWarnings::new);
         has::<fn(&CollectWarnings) -> Vec<String>>(CollectWarnings::take);
+        has::<fn() -> LogRecorder>(LogRecorder::new);
+        has::<fn(&LogRecorder) -> Vec<LogLine>>(LogRecorder::take);
+        has::<fn(&LogRecorder, &dyn WarnSink, &dyn DiagSink)>(LogRecorder::replay);
+        let r = LogRecorder::default();
+        r.warn("w");
+        r.diag("d");
+        assert_eq!(
+            r.take(),
+            vec![LogLine::Warn("w".to_owned()), LogLine::Diag("d".to_owned())]
+        );
+        has::<String>(format!("{r:?}"));
         let c = CollectWarnings::default();
         has::<&dyn WarnSink>(&c);
         has::<&dyn DiagSink>(&c);
