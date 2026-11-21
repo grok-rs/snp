@@ -197,6 +197,8 @@ mod api {
         has::<fn(&Git, &RepoInfo) -> Option<u32>>(Git::index_entry_count);
         has::<fn(&Git) -> Result<(IndexEntries, bool), Failure>>(Git::tracked_with_stages);
         has::<fn(&Git, &RepoInfo) -> Option<IndexStamp>>(Git::index_stamp);
+        // ADR-154
+        has::<fn(&Git, &RepoInfo) -> bool>(Git::index_without_intent_to_add);
         has::<fn(&Git, &OsStr, &OsStr) -> Result<ZList, Failure>>(Git::changed_files);
         has::<fn(&Git, &RepoInfo) -> MergeState>(Git::merge_state);
         has::<fn(&Git, &RepoInfo) -> Result<ZList, Failure>>(Git::conflicted_files);

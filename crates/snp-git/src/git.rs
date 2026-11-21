@@ -84,6 +84,19 @@ pub const CHECKOUT_PATHS_ARGS: [&str; 5] = [
 /// command line and every Unix `ARG_MAX`).
 const CHECKOUT_CHUNK_BYTES: usize = 24 * 1024;
 
+/// The largest index (header entry count) [`Git::index_without_intent_to_add`] reads (ADR-154): the Stat mode's
+/// bound, so the read stays far below the cost of the query it lets the stash skip.
+const ITA_PROOF_MAX_ENTRIES: u32 = 16_384;
+
+/// `config` bytes that may name an object format (`extensions.objectFormat`, `extensions.compatObjectFormat`): a
+/// variable name is one run of letters, digits and dashes, so any setting spells `objectformat` in some case.
+fn names_object_format(config: &[u8]) -> bool {
+    const KEY: &[u8] = b"objectformat";
+    config
+        .windows(KEY.len())
+        .any(|w| w.eq_ignore_ascii_case(KEY))
+}
+
 /// One git call of the stash's path-limited checkout ([`Git::checkout_path_calls`]): the arguments after `git` and its
 /// stdin.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1032,6 +1045,30 @@ impl Git {
         let (count, _) = rest.split_first_chunk::<4>()?;
         let version = u32::from_be_bytes(*version);
         (magic == b"DIRC" && (2..=4).contains(&version)).then(|| u32::from_be_bytes(*count))
+    }
+
+    /// Whether the index provably holds no intent-to-add entry (ADR-154; no spawn): the repository is SHA-1 (its
+    /// `config` file, which alone carries the repository format, does not name an object format), the header counts
+    /// at most 16 384 entries, and the strict index reader ([`crate::index_file`]) parses the
+    /// whole file (a split index, which keeps entries elsewhere, refuses) with no entry flagged intent-to-add.
+    ///
+    /// When it holds for the bytes `git diff --diff-filter=A` read, that query prints nothing whatever the worktree
+    /// (only an intent-to-add entry shows as added). Any doubt is `false`. A caller pairs it with an
+    /// [`IndexStamp`] taken before both the read and the query, so that both saw the same index.
+    pub fn index_without_intent_to_add(&self, info: &RepoInfo) -> bool {
+        if self
+            .index_entry_count(info)
+            .is_none_or(|n| n > ITA_PROOF_MAX_ENTRIES)
+        {
+            return false;
+        }
+        let sha1 = snp_os::fs::read_capped(&info.common_dir.join("config"), 1 << 20)
+            .is_ok_and(|c| !names_object_format(&c));
+        sha1 && crate::index_file::IndexFile::read(&info.index_file, 20).is_ok_and(|i| {
+            !i.entries
+                .iter()
+                .any(crate::index_file::IndexEntry::intent_to_add)
+        })
     }
 
     /// `git.get_changed_files` (`git.py:158-167`): `git diff --name-only --no-ext-diff -z <from>...<to>`; on a
