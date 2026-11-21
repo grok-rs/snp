@@ -33,7 +33,7 @@ use snp_core::failure::Failure;
 use snp_core::fault::{self, Point};
 use snp_core::output::{Level, Printer};
 use snp_core::path::RepoPath;
-use snp_git::{DiffIndex, Git, ObjectId, RepoInfo, ZList};
+use snp_git::{DiffIndex, Git, IndexStamp, ObjectId, RepoInfo, ZList};
 use snp_proc::signals::SignalGuard;
 use snp_proc::spawn::Group;
 
@@ -76,6 +76,12 @@ pub struct StashCtx {
     /// overlaps `git var GIT_ATTR_SYSTEM` with the checkout). It never changes what the stash does; `None` sends
     /// nothing.
     pub checkout_notice: Option<SyncSender<()>>,
+    /// The stamp of the index on which the run already asked the intent-to-add query with this context's command
+    /// and environment, and got success with nothing printed, from an index [`Git::index_without_intent_to_add`]
+    /// proved free of intent-to-add entries; the stamp was taken before both (snp-only, ADR-154). Step 3 reuses
+    /// that answer instead of asking again iff the worktree lock was not contended and the index still has this
+    /// stamp; otherwise it asks at pre-commit's position. `None` always asks.
+    pub intent_to_add_hint: Option<IndexStamp>,
 }
 
 impl StashCtx {
@@ -713,8 +719,13 @@ impl Inner {
     fn stash(&mut self) -> Result<StashOutcome, Failure> {
         // taken here, so every return below drops it unsent unless step 8 is reached
         let notice = self.cx.checkout_notice.take();
-        // 3. intent-to-add (`_intent_to_add_cleared`, + `--no-renames`: hazard b).
-        let ita = self.git().intent_to_add()?;
+        // 3. intent-to-add (`_intent_to_add_cleared`, + `--no-renames`: hazard b), or the run's earlier empty answer
+        // on this very index (ADR-154).
+        let ita = if self.intent_to_add_known_empty() {
+            ZList::default()
+        } else {
+            self.git().intent_to_add()?
+        };
         if !ita.is_empty() {
             self.printer().log(Level::Warning, messages::ITA_DETECTED);
             self.ita = ita;
@@ -753,6 +764,19 @@ impl Inner {
         self.git().checkout_paths(&paths, true, Group::Isolated)?;
         fault::hit(Point::StashState(5));
         Ok(StashOutcome::Patch(path, paths))
+    }
+
+    /// ADR-154: step 3's query need not run again. The run asked it with this context's command and environment on
+    /// an index the strict reader proved free of intent-to-add entries, and it succeeded with nothing printed
+    /// ([`StashCtx::intent_to_add_hint`]). The lock was not contended (no other run went first), and the index
+    /// still has the stamp taken before that answer, so the query would read the same index again, and on an index
+    /// without intent-to-add entries it prints nothing whatever the worktree. The early query's only side effect,
+    /// git's stat refresh of the index, changes the stamp and so forces the query here.
+    fn intent_to_add_known_empty(&self) -> bool {
+        let contended = self.lock.as_ref().is_some_and(WorktreeLock::contended);
+        !contended
+            && self.cx.intent_to_add_hint.is_some()
+            && self.git().index_stamp(&self.cx.info) == self.cx.intent_to_add_hint
     }
 
     /// Step 5: the first `diff-index`, streamed into the lazily created patch file. Every exit without a usable

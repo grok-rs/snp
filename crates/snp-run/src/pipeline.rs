@@ -209,6 +209,7 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
                     &run_env,
                     !recovery_reported,
                     notice,
+                    six.ita_empty,
                 ))
             });
         let guard = entered?;
@@ -592,6 +593,9 @@ struct Six {
     early: Early,
     /// The index stamp taken before F (ADR-104).
     stamp: Option<snp_git::IndexStamp>,
+    /// ADR-154: the index stamp under which query C, asked in this fan-out, succeeded with nothing printed on an
+    /// index proved free of intent-to-add entries (the stash's `intent_to_add_hint`).
+    ita_empty: Option<snp_git::IndexStamp>,
 }
 
 impl Step6<'_> {
@@ -610,15 +614,27 @@ impl Step6<'_> {
                 .map_or(0, |c| process_candidates(c, &a.hooks))
         });
         let hoist = entries.is_some_and(|n| hoist_early(self.info, n, candidates));
-        // taken before F starts: compared after the stash, it shows a rewrite of the index while we waited
-        let stamp = if speculate {
+        // taken before F and C start: compared after the stash, it shows a rewrite of the index while we waited
+        let stamp0 = if stash {
             git.index_stamp(self.info)
         } else {
             None
         };
+        let stamp = stamp0.filter(|_| speculate);
+        // ADR-154: query C with the stash's command and environment (the run environment is a pure function of the
+        // startup environment and the arguments), only on an index proved free of intent-to-add entries
+        let ita_git = stamp0.map(|_| git.with_env(runenv::run_env(&cx.env, a)));
+        let info = self.info;
         let load_now =
             || common::load_config_with(cx, self.src, &self.buffered.warn, &self.buffered.diag);
         std::thread::scope(|s| {
+            // first: its in-process proof comes before its spawn
+            let ita = ita_git.as_ref().map(|g| {
+                common::fork(s, move || {
+                    g.index_without_intent_to_add(info)
+                        && g.intent_to_add().is_ok_and(|l| l.is_empty())
+                })
+            });
             let f = hoist.then(|| common::fork(s, || git.tracked_with_stages().ok()));
             let g = hoist.then(|| common::fork(s, || git.config_listing().ok().map(Arc::new)));
             let load = preloaded.is_none().then(|| {
@@ -656,6 +672,8 @@ impl Step6<'_> {
             };
             let origins = g.and_then(|g| g.join(|_| None));
             let unstaged = unstaged.join(|p| Some(Err(panicked(&p))));
+            // a panic, or a failed or non-empty answer, leaves C to the stash at pre-commit's position
+            let ita_empty = stamp0.filter(|_| ita.is_some_and(|c| c.join(|_| false)));
             let (loaded, early) = match (preloaded, load) {
                 (Some(loaded), _) => (loaded, Early::default()),
                 // a thread that could not start loads here, without speculating F and G
@@ -680,6 +698,7 @@ impl Step6<'_> {
                 unstaged,
                 early,
                 stamp,
+                ita_empty,
             }
         })
     }
@@ -911,6 +930,7 @@ fn stash_ctx(
     run_env: &Env,
     report_recovery: bool,
     checkout_notice: Option<std::sync::mpsc::SyncSender<()>>,
+    intent_to_add_hint: Option<snp_git::IndexStamp>,
 ) -> StashCtx {
     let backend = Arc::new(ProcBackend {
         cancel: snp_core::cancel::CancelToken::new(),
@@ -935,6 +955,7 @@ fn stash_ctx(
         }),
         report_recovery,
         checkout_notice,
+        intent_to_add_hint,
     }
 }
 
@@ -1362,6 +1383,7 @@ mod tests {
             old_git: false,
             report_recovery: true,
             checkout_notice: None,
+            intent_to_add_hint: None,
         })
         .unwrap();
         // the stash took the unstaged line away; a "hook" modified the file
