@@ -1451,7 +1451,7 @@ fn hook_dir_matches_v1_under_git() {
     ok(git(
         &env,
         &r,
-        &["worktree", "add", "-q", wt.to_str().unwrap()],
+        &["worktree", "add", wt.to_str().unwrap()],
     ));
     std::fs::create_dir_all(wt.join("sub")).unwrap();
     let wtlink = root.join("wtlink");
@@ -1689,7 +1689,7 @@ fn hook_dir_matches_v1_under_git() {
         ok(git(
             &env,
             &repo,
-            &["worktree", "add", "-q", "--detach", w.to_str().unwrap()],
+            &["worktree", "add", "--detach", w.to_str().unwrap()],
         ));
         let unclean = name.contains(':') || name.contains('\\');
         let f = if unclean { Some(false) } else { fast(true) };
@@ -1733,7 +1733,7 @@ fn hook_dir_matches_v1_under_git() {
                     GitAction::WorktreeAdd => {
                         added += 1;
                         let dest = root.join(format!("added-{added}"));
-                        args.extend(["worktree", "add", "-q", "--detach"].map(str::to_owned));
+                        args.extend(["worktree", "add", "--detach"].map(str::to_owned));
                         args.push(dest.to_str().unwrap().to_owned());
                     }
                     GitAction::Checkout => {
@@ -1808,7 +1808,7 @@ fn hook_dir_matches_v1_under_git_for_windows() {
     let env = tenv();
     let r = empty_repo(&env, "r");
     let wt = env.root().join("wt");
-    let (code, _, err) = git(&env, &r, &["worktree", "add", "-q", wt.to_str().unwrap()]);
+    let (code, _, err) = git(&env, &r, &["worktree", "add", wt.to_str().unwrap()]);
     assert_eq!(code, 0, "{err}");
     write_hook(
         &r.join(".git/hooks/pre-commit"),

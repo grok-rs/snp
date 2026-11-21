@@ -263,7 +263,7 @@ jobs:
         run: |
           export SNP_TEST_PIPELINE_GIT_DIR="$(brew --prefix)/bin" SNP_TEST_EXPECT_GIT_VAR=1
           "$SNP_TEST_PIPELINE_GIT_DIR/git" --version
-          cargo nextest run --features snp/testing --locked --profile ci -p snp-run -E 'test(/^checkout_baseline::/)'
+          cargo nextest run --workspace --features snp/testing --locked --profile ci -E 'package(snp-run) & test(/^checkout_baseline::/)'
 
   musl:
     # Static builds (14 §A.5.1: T1 for releases, T2 for tests): built with the release profile, checked to be static,
