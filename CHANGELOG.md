@@ -335,8 +335,10 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   mode change, a second hard link, extended attributes, a deleted file, a converting attribute, over 1,000 files)
   falls back to `git apply`; every exit removes the links, and the next run's recovery removes those a crash left.
   An autosave that lands between the final check and the rename is overwritten rather than merged.
-  `SNP_STASH_RESTORE=apply` always uses `git apply`. On B8, locally: 17 → 16 processes, tree CPU 675 → 561 ms, and
-  the run about 140 ms shorter in hyperfine-like blocks (median 624 → 492 ms; prek 0.5.11: 571 ms).
+  `SNP_STASH_RESTORE=apply` always uses `git apply`. On B8, locally: 17 → 16 processes, whole-tree syscalls 22,633 →
+  19,881, tree CPU 675 → 561 ms, and the run about 130 to 140 ms shorter than before in two sets of hyperfine-like
+  blocks. Against prek 0.5.11 the two sets disagree (one 61 ms faster, one 121 ms slower), so that comparison is left
+  to CI.
 
 ### Fixed
 

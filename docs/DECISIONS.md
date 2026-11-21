@@ -3702,10 +3702,12 @@ source; the links are removed.
 hermetic environment from `cargo xtask bench setup`, pinned to CPUs 1–4 of a shared, loaded machine): processes 17 →
 16 (no restore `git apply`); whole-tree syscalls 22,633 → 19,881 (`strace -f -c`; prek 18,379); tree CPU (median of 8)
 675.1 → 561.1 ms (prek 593.8); untraced wall in hyperfine-like blocks (per round and tool one discarded warm-up and 5
-timed runs, tools interleaved by round, 10 rounds): median 624.3 → 491.9 ms against prek's 570.8, the head faster than
-the base in 9 rounds of 10 (median of per-round differences −141.2 ms) and than prek in 7 (−61.1 ms). Interleaving
-single runs of different tools penalises the head: the previous tool's restore leaves 10 MB being written back that
-its checkout then replaces. Tests: twin-repository comparisons at the guard level (`behaviour/rename.rs`: the B8
+timed runs, tools interleaved by round), two sets. Against the base both agree: set 1 (10 rounds) median 624.3 → 491.9
+ms, the head faster in 9 rounds of 10 (median of per-round differences −141.2 ms); set 2 (12 rounds) about −130 ms.
+Against prek 0.5.11 they disagree: set 1 491.9 against 570.8 ms (the head faster in 7 rounds of 10, −61.1 ms), set 2
+686.7 against 578.3 ms (faster in 0 of 12, +121 ms). Head against prek is therefore unsettled locally; CI decides.
+Interleaving single runs of different tools penalises the head: the previous tool's restore leaves 10 MB being written
+back that its checkout then replaces. Tests: twin-repository comparisons at the guard level (`behaviour/rename.rs`: the B8
 shape with an executable file in a subdirectory renamed; a hook edit, a touch, a `stage_fixed` staging, a mode change, a
 second hard link and a rename that fails after another fall back and end alike) and through the pipeline
 (`pipeline/restore_rename.rs`: also `SNP_DIFF_MODE=git`, `SNP_STASH_VERIFY=1`, an unstaged deletion, a converting
