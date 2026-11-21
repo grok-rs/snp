@@ -98,7 +98,7 @@ liblzma = { version = "0.4.8", default-features = false, features = ["static"] }
 # --- filesystem / platform ---
 tempfile = "3.27.0"
 same-file = "1.0.6"
-rustix = { version = "1.1.5", default-features = false, features = ["std", "fs", "process", "pty", "termios", "thread", "stdio", "event"] }
+rustix = { version = "1.1.5", default-features = false, features = ["std", "fs", "process", "pty", "termios", "thread", "stdio", "event", "pipe"] }
 signal-hook = { version = "0.3.18", features = ["extended-siginfo"] }
 ctrlc = { version = "3.5", features = ["termination"] }
 winapi-util = "0.1.11"

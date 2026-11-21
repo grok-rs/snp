@@ -722,9 +722,18 @@ impl<'b> Collector<'b> {
 ///
 /// A failing `sink` stops the copying (the rest of stdout is drained and discarded) and is reported as the
 /// `SpawnError` after the child exited.
+///
+/// stdout is read by ADR-151's batched reader ([`spawn_stream_reader`]): on Linux a stream past 64 KiB is drained in
+/// batches from an enlarged pipe, so a child printing megabytes in 4 KiB writes no longer wakes snp once per write.
+/// The bytes and their order are the same.
 pub fn stream(spec: &Spec<'_>, sink: &mut dyn Write) -> Result<(PyStatus, Vec<u8>), SpawnError> {
     let mut started = start(spec, &[], Stdio::piped(), Stdio::piped(), false)?;
     let (tx, rx) = mpsc::sync_channel(CHANNEL_BOUND);
+    if let Some(out) = started.stdout.take()
+        && let Err(io) = spawn_stream_reader(out, &tx)
+    {
+        return Err(started.abort(io));
+    }
     if let Err(io) = attach_pipes(&mut started, &tx) {
         return Err(started.abort(io));
     }
@@ -748,6 +757,152 @@ pub fn stream(spec: &Spec<'_>, sink: &mut dyn Write) -> Result<(PyStatus, Vec<u8
         });
     }
     Ok((waited.status, stderr))
+}
+
+/// A child whose stdin the caller writes while it runs, created by [`capture_fed`]; stdout and stderr are captured as
+/// by [`capture`] (ADR-151: `git apply --numstat` reads the stash patch while `git diff-index` still prints it).
+///
+/// The caller's thread is busy feeding the child, so a helper thread (`snp-fed`) supervises it with the spec's role,
+/// deadline and token, exactly as [`capture`] would. [`Fed::finish`] closes stdin and returns the [`Captured`]
+/// result; dropping a `Fed` closes stdin and waits for the child too, so a child that was started is always reaped.
+/// A write error (the child exited without reading everything) only means the result must not be trusted: the
+/// caller decides, and the child is still reaped.
+#[derive(Debug)]
+pub struct Fed {
+    /// The write end of the child's stdin, until it is closed.
+    stdin: Option<std::process::ChildStdin>,
+    /// The supervising thread; `None` once joined, and for a scripted result.
+    waiter: Option<std::thread::JoinHandle<Option<Captured>>>,
+    /// A result known in advance ([`Fed::scripted`]): writes are accepted and discarded.
+    ready: Option<Captured>,
+}
+
+impl Fed {
+    /// A `Fed` whose child already ended with `captured`: every write is accepted and discarded. For the test
+    /// backends of the `GitBackend` seam (a scripted reply), never for a real child.
+    pub fn scripted(captured: Captured) -> Self {
+        Self {
+            stdin: None,
+            waiter: None,
+            ready: Some(captured),
+        }
+    }
+
+    /// Closes stdin now (the child sees EOF and can finish while the caller does other work); later writes fail.
+    pub fn close_stdin(&mut self) {
+        drop(self.stdin.take());
+    }
+
+    /// Closes stdin (the child sees EOF) and waits for the child; `None` when the supervising thread panicked.
+    pub fn finish(mut self) -> Option<Captured> {
+        drop(self.stdin.take());
+        if let Some(c) = self.ready.take() {
+            return Some(c);
+        }
+        self.waiter.take().and_then(|h| h.join().ok().flatten())
+    }
+}
+
+impl Write for Fed {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self.stdin.as_mut() {
+            Some(w) => w.write(buf),
+            None if self.ready.is_some() => Ok(buf.len()),
+            None => Err(io::Error::from(io::ErrorKind::BrokenPipe)),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stdin.as_mut().map_or(Ok(()), Write::flush)
+    }
+}
+
+impl Drop for Fed {
+    fn drop(&mut self) {
+        drop(self.stdin.take());
+        if let Some(h) = self.waiter.take() {
+            let _ignored = h.join();
+        }
+    }
+}
+
+/// [`capture`] with a stdin the caller writes (see [`Fed`]); `spec.stdin` is ignored: the child's stdin is a pipe
+/// whose write end is returned. On Linux that pipe is enlarged to 1 MiB when the kernel allows it, so the feeding
+/// thread rarely waits for the child (best effort: the default size only costs waits).
+pub fn capture_fed(spec: &Spec<'_>) -> Result<Fed, SpawnError> {
+    // The helper thread exists before the child, so a thread the OS refuses never leaves a child unsupervised.
+    let (hand_tx, hand_rx) = mpsc::sync_channel::<(Started, Receiver<Chunk>)>(1);
+    let owned = (
+        spec.argv.to_vec(),
+        spec.env.clone(),
+        spec.cwd.to_path_buf(),
+        spec.cancel.clone(),
+    );
+    let (role, group, deadline) = (spec.role, spec.group, spec.deadline);
+    let waiter = std::thread::Builder::new()
+        .name("snp-fed".to_owned())
+        .stack_size(HELPER_STACK)
+        .spawn(move || {
+            let (started, rx) = hand_rx.recv().ok()?;
+            let (argv, env, cwd, cancel) = owned;
+            let spec = Spec {
+                argv: &argv,
+                env: &env,
+                cwd: &cwd,
+                stdin: Stdin::Null,
+                group,
+                role,
+                deadline,
+                cancel: &cancel,
+            };
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let waited = started.supervise(&spec, Some(&rx), |s, chunk| match s {
+                Stream::Out => stdout.extend_from_slice(&chunk),
+                Stream::Err => stderr.extend_from_slice(&chunk),
+            });
+            Some(Captured {
+                status: waited.status,
+                stdout,
+                stderr,
+                stopped_by_tty: waited.stopped_by_tty,
+            })
+        })
+        .map_err(|io| SpawnError {
+            program: spec_program(spec),
+            io,
+        })?;
+    let mut started = match start_with(spec, &[], Stdio::piped(), Stdio::piped(), false, true) {
+        Ok(s) => s,
+        Err(e) => {
+            drop(hand_tx);
+            let _ended = waiter.join();
+            return Err(e);
+        }
+    };
+    let stdin = started.stdin.take();
+    #[cfg(target_os = "linux")]
+    if let Some(w) = &stdin {
+        let _best_effort = rustix::pipe::fcntl_setpipe_size(w, BATCH_PIPE);
+    }
+    let (tx, rx) = mpsc::sync_channel(CHANNEL_BOUND);
+    if let Err(io) = attach_pipes(&mut started, &tx) {
+        drop(hand_tx);
+        let _ended = waiter.join();
+        return Err(started.abort(io));
+    }
+    drop(tx);
+    if let Err(mpsc::SendError((started, _rx))) = hand_tx.send((started, rx)) {
+        let _ended = waiter.join();
+        return Err(started.abort(io::Error::other(
+            "the supervising thread ended before the child started",
+        )));
+    }
+    Ok(Fed {
+        stdin,
+        waiter: Some(waiter),
+        ready: None,
+    })
 }
 
 /// stdio inherited: legacy hooks, show-diff, hazmat children.
@@ -816,6 +971,19 @@ const CHUNK: usize = 64 * 1024;
 const FIRST_CHUNK: usize = 4 * 1024;
 /// Stack of the helper threads (their buffers live on the heap).
 const HELPER_STACK: usize = 256 * 1024;
+/// ADR-151: the bytes a [`stream`] reader reads in blocking mode before it switches to batched reads.
+#[cfg(target_os = "linux")]
+const BATCH_AFTER: usize = CHUNK;
+/// ADR-151: the pipe size of a batched reader and of a [`capture_fed`] stdin (Linux's default `pipe-max-size`): about
+/// 10 ms of a fast `git diff`, so the child does not wait on a reader that naps [`BATCH_SLEEP`].
+#[cfg(target_os = "linux")]
+const BATCH_PIPE: usize = 1 << 20;
+/// ADR-151: how long a batched reader naps when the pipe is empty.
+#[cfg(target_os = "linux")]
+const BATCH_SLEEP: Duration = Duration::from_millis(1);
+/// ADR-151: empty polls in a row after which a batched reader goes back to blocking reads (a child that went quiet).
+#[cfg(target_os = "linux")]
+const BATCH_IDLE_POLLS: u32 = 8;
 
 /// `CREATE_NEW_PROCESS_GROUP`.
 #[cfg(windows)]
@@ -883,6 +1051,8 @@ struct Started {
     cell: Arc<Cell>,
     program: OsString,
     spawned_cancelled: bool,
+    /// The write end of the child's stdin, kept for the caller ([`capture_fed`] only).
+    stdin: Option<std::process::ChildStdin>,
     stdout: Option<std::process::ChildStdout>,
     stderr: Option<std::process::ChildStderr>,
 }
@@ -1241,6 +1411,19 @@ fn start(
     stderr: Stdio,
     pty_mode: bool,
 ) -> Result<Started, SpawnError> {
+    start_with(spec, files, stdout, stderr, pty_mode, false)
+}
+
+/// [`start`]; with `keep_stdin` the child's stdin is a pipe whose write end is kept in [`Started::stdin`] for the
+/// caller (`spec.stdin` is then ignored).
+fn start_with(
+    spec: &Spec<'_>,
+    files: &[&OsStr],
+    stdout: Stdio,
+    stderr: Stdio,
+    pty_mode: bool,
+    keep_stdin: bool,
+) -> Result<Started, SpawnError> {
     let Some((arg0, args)) = spec.argv.split_first() else {
         return Err(SpawnError {
             program: OsString::new(),
@@ -1278,6 +1461,7 @@ fn start(
     cmd.args(args).args(files).current_dir(spec.cwd);
     apply_env(&mut cmd, spec.env, spec.role);
     let stdin_mode = match (&spec.stdin, pty_mode) {
+        _ if keep_stdin => Stdio::piped(),
         (Stdin::EmptyPipe, true) | (Stdin::Null, _) => Stdio::null(),
         (Stdin::EmptyPipe | Stdin::Bytes(_), _) => Stdio::piped(),
         (Stdin::Inherit, _) => Stdio::inherit(),
@@ -1305,13 +1489,18 @@ fn start(
     tests::before_register();
     let cell = registry::register(proc_, pid, spec.role, group, spec.cancel.clone());
     drop(gate);
-    let started = Started {
+    let mut started = Started {
         cell,
         program: arg0.clone(),
         spawned_cancelled,
+        stdin: None,
         stdout: out,
         stderr: err,
     };
+    if keep_stdin {
+        started.stdin = stdin;
+        return Ok(started);
+    }
     match (&spec.stdin, stdin) {
         // The write end is closed at once: the child sees an empty, non-tty stdin (ADR-019).
         (Stdin::Bytes(bytes), Some(mut w)) => {
@@ -1458,6 +1647,93 @@ fn attach_pipes(started: &mut Started, tx: &SyncSender<Chunk>) -> io::Result<()>
         spawn_reader(Box::new(err), Stream::Err, tx, false)?;
     }
     Ok(())
+}
+
+/// The stdout reader of [`stream`]: the batched reader on Linux ([`batched_read`]), the plain one elsewhere.
+fn spawn_stream_reader(out: std::process::ChildStdout, tx: &SyncSender<Chunk>) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let tx = tx.clone();
+        std::thread::Builder::new()
+            .name("snp-stdout".to_owned())
+            .stack_size(HELPER_STACK)
+            .spawn(move || batched_read(out, &tx, enter_batched))
+            .map(drop)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        spawn_reader(Box::new(out), Stream::Out, tx, false)
+    }
+}
+
+/// ADR-151: switches `src` to batched reads: the pipe enlarged to [`BATCH_PIPE`], then snp's read end made
+/// non-blocking. `false` when either fails (nothing to undo but a larger pipe): the reader stays blocking.
+#[cfg(target_os = "linux")]
+fn enter_batched(src: &std::process::ChildStdout) -> bool {
+    rustix::pipe::fcntl_setpipe_size(src, BATCH_PIPE).is_ok() && set_nonblocking(src, true)
+}
+
+/// Sets or clears `O_NONBLOCK` on snp's own end of a pipe (the child's end is another file description).
+#[cfg(target_os = "linux")]
+fn set_nonblocking(src: &std::process::ChildStdout, on: bool) -> bool {
+    use rustix::fs::OFlags;
+    rustix::fs::fcntl_getfl(src).is_ok_and(|fl| {
+        let fl = if on {
+            fl.union(OFlags::NONBLOCK)
+        } else {
+            fl.difference(OFlags::NONBLOCK)
+        };
+        rustix::fs::fcntl_setfl(src, fl).is_ok()
+    })
+}
+
+/// ADR-151: the batched stdout reader. It reads like [`spawn_reader`] until [`BATCH_AFTER`] bytes arrived; then
+/// `enter` switches the pipe to batched reads ([`enter_batched`]): everything available is read (chunks of at most
+/// [`CHUNK`]) and an empty pipe means a [`BATCH_SLEEP`] nap, so a child writing megabytes in 4 KiB writes wakes snp
+/// about once per millisecond instead of once per write. After [`BATCH_IDLE_POLLS`] empty polls in a row the reader
+/// goes back to blocking reads (and may batch again later). A refused switch keeps the blocking reads; a switch back
+/// that fails keeps polling. The bytes, their order and EOF are exactly the plain reader's.
+#[cfg(target_os = "linux")]
+fn batched_read(
+    mut src: std::process::ChildStdout,
+    tx: &SyncSender<Chunk>,
+    enter: fn(&std::process::ChildStdout) -> bool,
+) {
+    let mut buf = vec![0_u8; FIRST_CHUNK];
+    let mut blocking_bytes = 0_usize;
+    let mut batched = false;
+    let mut idle = 0_u32;
+    loop {
+        match src.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                idle = 0;
+                let chunk = buf.get(..n).unwrap_or_default().to_vec();
+                if n == buf.len() && buf.len() < CHUNK {
+                    buf.resize(buf.len().saturating_mul(2).min(CHUNK), 0);
+                }
+                if tx.send((Stream::Out, chunk)).is_err() {
+                    break; // the waiter gave up (deadline / cancellation)
+                }
+                if !batched {
+                    blocking_bytes = blocking_bytes.saturating_add(n);
+                    batched = blocking_bytes >= BATCH_AFTER && enter(&src);
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                idle = idle.saturating_add(1);
+                if idle > BATCH_IDLE_POLLS && set_nonblocking(&src, false) {
+                    batched = false;
+                    blocking_bytes = 0;
+                    idle = 0;
+                } else {
+                    std::thread::sleep(BATCH_SLEEP);
+                }
+            }
+            Err(_) => break,
+        }
+    }
 }
 
 /// A dedicated, non-scoped reader thread: reads `src` to EOF (`EIO` = EOF on a pty master) and sends the chunks;
@@ -1830,6 +2106,152 @@ mod tests {
             assert!(c.stdout.iter().all(|b| *b == b'x'));
             assert_eq!(c.stderr, b"end");
         }
+    }
+
+    /// A deterministic, position-dependent byte pattern (a lost, duplicated or reordered chunk changes it).
+    fn pattern(n: usize) -> Vec<u8> {
+        (0..n)
+            .map(|i| u8::try_from((i * 7 + i / 4096) % 251).unwrap())
+            .collect()
+    }
+
+    /// ADR-151: `stream`'s batched reader delivers every byte in order, for outputs below and far above the switch,
+    /// and through pauses that send it back to blocking reads and into batched reads again.
+    #[test]
+    fn stream_batched_reader_keeps_every_byte_in_order() {
+        let (env, cancel) = (env(), CancelToken::new());
+        let dir = tempfile::tempdir().unwrap();
+        for (n, pause) in [
+            (0_usize, false),
+            (CHUNK - 1, false),
+            (CHUNK + 1, false),
+            (3 << 20, false),
+            (3 << 20, true),
+        ] {
+            let data = dir.path().join("data");
+            std::fs::write(&data, pattern(n)).unwrap();
+            // 4 KiB writes like git's stdio (`dd obs=4096`); with `pause`, two quiet gaps of 30 ms (longer than the
+            // reader's idle polls) between three parts.
+            let script = if pause {
+                "s=$(( $(wc -c < \"$1\") / 3 )); \
+                 dd if=\"$1\" bs=$s count=1 2>/dev/null | dd obs=4096 2>/dev/null; sleep 0.03; \
+                 dd if=\"$1\" bs=$s skip=1 count=1 2>/dev/null | dd obs=4096 2>/dev/null; sleep 0.03; \
+                 dd if=\"$1\" bs=$s skip=2 2>/dev/null | dd obs=4096 2>/dev/null; printf end >&2"
+            } else {
+                "dd if=\"$1\" obs=4096 2>/dev/null; printf end >&2"
+            };
+            let mut argv = sh(script);
+            argv.push(data.into_os_string());
+            let mut sink = Vec::new();
+            let (st, err) = stream(&spec(&argv, &env, Path::new("/"), &cancel), &mut sink).unwrap();
+            assert_eq!((st, err.as_slice()), (PyStatus(0), &b"end"[..]), "n={n}");
+            assert!(
+                sink == pattern(n),
+                "n={n} pause={pause}: {} bytes",
+                sink.len()
+            );
+        }
+    }
+
+    /// ADR-151's fallback: a pipe that cannot be switched to batched reads (`F_SETPIPE_SZ` refused) keeps the
+    /// blocking reads and still delivers everything.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn batched_reader_falls_back_to_blocking_reads() {
+        fn refuse(_: &std::process::ChildStdout) -> bool {
+            false
+        }
+        let n = 2 << 20;
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        std::fs::write(&data, pattern(n)).unwrap();
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "dd if=\"$1\" obs=4096 2>/dev/null", "--"])
+            .arg(&data)
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let out = child.stdout.take().unwrap();
+        let (tx, rx) = mpsc::sync_channel(CHANNEL_BOUND);
+        let reader = std::thread::Builder::new()
+            .spawn(move || batched_read(out, &tx, refuse))
+            .unwrap();
+        let mut got = Vec::new();
+        for (s, chunk) in rx {
+            assert_eq!(s, Stream::Out);
+            assert!(chunk.len() <= CHUNK);
+            got.extend_from_slice(&chunk);
+        }
+        reader.join().unwrap();
+        assert!(child.wait().unwrap().success());
+        assert!(got == pattern(n), "{} bytes", got.len());
+    }
+
+    /// ADR-151: a `capture_fed` child reads what the caller writes while it runs; `finish` closes its stdin and
+    /// returns its output, status and stderr.
+    #[test]
+    fn capture_fed_child_reads_what_is_written() {
+        let (env, cancel) = (env(), CancelToken::new());
+        let argv = sh("wc -c; printf err >&2; exit 4");
+        let mut fed = capture_fed(&spec(&argv, &env, Path::new("/"), &cancel)).unwrap();
+        let data = pattern(3 << 20);
+        let mut rest = data.as_slice();
+        while !rest.is_empty() {
+            let (part, later) = rest.split_at_checked(rest.len().min(64 << 10)).unwrap();
+            fed.write_all(part).unwrap();
+            rest = later;
+        }
+        let c = fed.finish().unwrap();
+        assert_eq!(c.status, PyStatus(4));
+        assert_eq!(String::from_utf8_lossy(&c.stdout).trim(), "3145728");
+        assert_eq!(c.stderr, b"err");
+        assert!(!c.stopped_by_tty);
+        // nothing written at all: EOF at once
+        let argv = sh("wc -c");
+        let c = capture_fed(&spec(&argv, &env, Path::new("/"), &cancel))
+            .unwrap()
+            .finish()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&c.stdout).trim(), "0");
+    }
+
+    /// A `capture_fed` child that exits without reading makes the writes fail (EPIPE, never SIGPIPE: Rust ignores
+    /// it); the child is still reaped, by `finish` or by a drop.
+    #[test]
+    fn capture_fed_child_that_stops_reading_fails_the_writes_and_is_reaped() {
+        let (env, cancel) = (env(), CancelToken::new());
+        let argv = sh("exit 7");
+        let mut fed = capture_fed(&spec(&argv, &env, Path::new("/"), &cancel)).unwrap();
+        let chunk = vec![b'x'; 64 << 10];
+        let failed = (0..64).any(|_| fed.write_all(&chunk).is_err());
+        assert!(failed, "writing 4 MiB to a child that exited never failed");
+        assert_eq!(fed.finish().unwrap().status, PyStatus(7));
+        // a drop waits for the supervisor, which reaps the child: it returns only once the child exited
+        let fed = capture_fed(&spec(&sh("sleep 0.2"), &env, Path::new("/"), &cancel)).unwrap();
+        let t = Instant::now();
+        drop(fed);
+        assert!(
+            t.elapsed() >= Duration::from_millis(150),
+            "{:?}",
+            t.elapsed()
+        );
+    }
+
+    /// A scripted `Fed` accepts every write and returns its result.
+    #[test]
+    fn scripted_fed_discards_writes() {
+        let mut fed = Fed::scripted(Captured {
+            status: PyStatus(128),
+            stdout: b"o".to_vec(),
+            stderr: b"e".to_vec(),
+            stopped_by_tty: false,
+        });
+        fed.write_all(b"anything").unwrap();
+        let c = fed.finish().unwrap();
+        assert_eq!(
+            (c.status, c.stdout, c.stderr),
+            (PyStatus(128), b"o".to_vec(), b"e".to_vec())
+        );
     }
 
     #[test]
