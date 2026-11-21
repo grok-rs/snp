@@ -217,6 +217,11 @@ impl GitBackend for ScriptedBackend {
     }
 }
 
+/// SHA-1 of `data` (ADR-153's object-name check), for tests that rewrite an index image and fix its checksum.
+pub fn sha1(data: &[u8]) -> [u8; 20] {
+    crate::sha1::digest(&[data])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

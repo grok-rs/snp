@@ -282,6 +282,12 @@ mod api {
         has::<for<'a> fn(&'a IndexFile, &IndexEntry) -> Option<&'a std::ffi::CStr>>(
             IndexFile::name_cstr,
         );
+        // ADR-153
+        has::<fn(&Path, usize) -> Result<IndexFile, IndexRefusal>>(IndexFile::read_keep);
+        has::<fn(&[u8], usize) -> Result<IndexFile, IndexRefusal>>(IndexFile::parse_keep);
+        has::<for<'a> fn(&'a IndexFile, &IndexEntry) -> Option<&'a [u8]>>(IndexFile::oid);
+        has::<fn(&IndexFile) -> usize>(IndexFile::hash_len);
+        has::<fn(&IndexFile) -> Option<&[u8]>>(IndexFile::tree_extension);
         has::<fn(&IndexEntry) -> u16>(IndexEntry::stage);
         has::<fn(&IndexEntry) -> bool>(IndexEntry::assume_valid);
         has::<fn(&IndexEntry) -> bool>(IndexEntry::skip_worktree);
@@ -296,6 +302,52 @@ mod api {
             IndexRefusal::Extension(*b"link"),
             IndexRefusal::TooLarge,
             IndexRefusal::Io,
+        ]);
+    }
+
+    /// ADR-153: the cache-tree parser and builder, and the strict loose-object reader.
+    #[test]
+    fn cache_tree_and_odb() {
+        use snp_git::cache_tree::{CacheTree, CacheTreeRefusal, TreeObject};
+        use snp_git::index_file::IndexFile;
+        use snp_git::odb::{self, OdbRefusal};
+        send_sync::<CacheTree>();
+        send_sync::<TreeObject>();
+        has::<fn(&[u8], usize) -> Result<CacheTree, CacheTreeRefusal>>(CacheTree::parse);
+        has::<fn(&CacheTree) -> bool>(CacheTree::fully_valid);
+        has::<fn(&CacheTree) -> Option<&[u8]>>(CacheTree::root_oid);
+        has::<fn(&CacheTree) -> usize>(CacheTree::len);
+        has::<fn(&CacheTree) -> bool>(CacheTree::is_empty);
+        has::<fn(&CacheTree, &IndexFile) -> Result<Vec<TreeObject>, CacheTreeRefusal>>(
+            CacheTree::expected_objects,
+        );
+        let t = TreeObject {
+            oid: Vec::new(),
+            body: Vec::new(),
+        };
+        has::<(&Vec<u8>, &Vec<u8>)>((&t.oid, &t.body));
+        if let Ok(ct) = CacheTree::parse(b"", 20) {
+            has::<Vec<&[u8]>>(ct.node_oids().collect());
+        }
+        has::<[CacheTreeRefusal; 4]>([
+            CacheTreeRefusal::Malformed,
+            CacheTreeRefusal::Invalid,
+            CacheTreeRefusal::Mismatch,
+            CacheTreeRefusal::TooLarge,
+        ]);
+        has::<fn(&[u8]) -> String>(odb::hex);
+        has::<fn(&Path, &[u8]) -> Option<PathBuf>>(odb::loose_path);
+        has::<fn(&Path, &[u8]) -> bool>(odb::loose_exists);
+        has::<fn(&Path, &[u8], &[u8]) -> Result<Vec<u8>, OdbRefusal>>(odb::read_loose);
+        has::<fn(&Path, &Env) -> bool>(odb::loose_only);
+        has::<[OdbRefusal; 7]>([
+            OdbRefusal::HashSize,
+            OdbRefusal::Io,
+            OdbRefusal::TooLarge,
+            OdbRefusal::Stream,
+            OdbRefusal::Header,
+            OdbRefusal::Hash,
+            OdbRefusal::Unchecked,
         ]);
     }
 

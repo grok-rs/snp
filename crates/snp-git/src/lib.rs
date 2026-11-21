@@ -10,14 +10,17 @@
 //! Owner: WP-18.
 
 mod backend;
+pub mod cache_tree;
 mod exe;
 mod git;
 pub mod hookscripts;
 pub mod index_file;
 mod messages;
+pub mod odb;
 mod owned;
 pub mod pch_facts;
 mod run;
+mod sha1;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 mod types;
