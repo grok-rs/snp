@@ -2,7 +2,7 @@
 #
 # * micro:  criterion micro-benches (`cargo bench -p snp`) + `cargo xtask bench gate --micro` (the exact W1/W2
 #           thresholds; the perf-smoke tests of ci.yml only catch a 3x regression).
-# * e2e:    hyperfine scenarios B1-B12 of snp (dist) vs pre-commit 4.7.0 (pc470-py312) and prek 0.5.10 on the Linux
+# * e2e:    hyperfine scenarios B1-B12 of snp (dist) vs pre-commit 4.7.0 (pc470-py312) and prek 0.5.11 on the Linux
 #           reference runner. Pull requests and pushes to main also build the base commit (the PR base, or the commit
 #           before the push) at base/snp with its own toolchain and its own stores (a base from before ADR-116 also
 #           gets its own deps.lock crates at base/cfgv-rs and base/file-identify); `bench run --base-snp` measures the two binaries in interleaved ABBA

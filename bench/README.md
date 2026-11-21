@@ -7,8 +7,8 @@ against.
 | File | What |
 |---|---|
 | `budgets.toml` | every gated number: the hard/soft budgets per OS of ARCHITECTURE §12.1, the regression rule, the never-slower-than tools, the syscall ceiling, the allocation budget, the micro thresholds of the W1/W2 packages and the adopted musl allocator |
-| `prek-requirements.{in,txt}` | prek 0.5.10, hash-locked (`uv pip compile --universal --generate-hashes`); installed wheels-only by `bench setup` |
-| `tools-requirements.{in,txt}` | the bench helpers, hash-locked: uv 0.13.5 (linked as `target/bench/tools/path/uv`, the head of the hermetic PATH, so prek and snp never download a uv) and pip (downloads the wheelhouse) |
+| `prek-requirements.{in,txt}` | prek 0.5.11, hash-locked (`uv pip compile --universal --generate-hashes`); installed wheels-only by `bench setup` |
+| `tools-requirements.{in,txt}` | the bench helpers, hash-locked: uv 0.13.7 (linked as `target/bench/tools/path/uv`, the head of the hermetic PATH, so prek and snp never download a uv) and pip (downloads the wheelhouse) |
 | `wheelhouse-requirements.{in,txt}` | the Python packages B6/B7 install (pre-commit-hooks' `ruamel.yaml` and the `setuptools` build backend of its `setup.py`), hash-locked; `bench setup` downloads them into `target/bench/tools/wheels`, and every measured install resolves from there with no index |
 | `history/<platform>-<variant>.jsonl` | one run record per line, appended by `cargo xtask bench gate --record` (CI keeps it in the Actions cache and uploads it as an artifact; git-ignored, so a local `--record` leaves the tree clean) |
 | `musl-allocator.md` | the ADR-079 musl allocator measurement and decision |
@@ -17,7 +17,7 @@ against.
 
 ```sh
 cargo xtask oracle install          # pre-commit 4.7.0 on CPython 3.12.3 (target/oracle/pc470-py312)
-cargo xtask bench setup             # hyperfine 1.19.0, prek 0.5.10, fixtures, snp (dist), warm stores
+cargo xtask bench setup             # hyperfine 2.0.0, prek 0.5.11, fixtures, snp (dist), warm stores
 cargo xtask bench run               # target/bench/results/current.json
 cargo xtask bench gate              # budgets + regression against the last history record
 start=$(date +%s) && cargo bench -p snp --bench pyre_kinds ... -- --noplot && cargo xtask bench gate --micro --since "$start"
@@ -152,7 +152,7 @@ the same.
   median snp time among the last 10 history records (at least 3 needed). Without it, a series of slowdowns each just
   under 5 % of the previous record would pass forever, since every passing run becomes the next baseline. The gate reads the records and
   criterion's results from cargo's target directory (`CARGO_TARGET_DIR` respected), like `run` writes them, and uses
-  hyperfine 1.19.0 only (another hyperfine on PATH is ignored).
+  hyperfine 2.0.0 only (another hyperfine on PATH is ignored).
 * **History from other machines** (`--advisory-history`): the regression and drift checks against the history report
   warnings instead of failing (never the paired check or the counters). CI passes it on every event: the history comes from other
   runner VMs, where one binary measured 0.76–1.19 ms for B1 (glibc) and 0.48–0.66 ms (musl), and not even the ratio to
