@@ -3585,7 +3585,9 @@ intent-to-add set is index content; with no flagged entry step 3 returns the mod
 the helper anchored (VERIFICATION §9.2). Tests: `crates/snp-run/tests/pipeline/fanout.rs` (C once in the fan-out;
 an intent-to-add entry and a split index keep today's `GIT_TRACE` order; an index rewritten after the early answer
 asks again and warns; step 6 beside discovery at the root; no speculation with `GIT_DIR`, from a subdirectory, in a
-linked worktree, for `--all-files`; discarded and re-asked when discovery reports another layout), and
+linked worktree, for `--all-files`; discarded and re-asked when discovery reports another layout),
+`crates/snp-stash/tests/behaviour/guard.rs` (an uncontended run with the hint's stamp skips the query; a run that
+waited for the lock asks it again, and on an index with an intent-to-add entry still warns, clears and re-adds it), and
 `crates/snp-git/tests/behaviour/user_repo.rs::intent_to_add_proof_holds_only_without_such_entries`.
 
 ## Appendix A — Open questions of the research documents, resolved

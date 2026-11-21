@@ -1230,3 +1230,123 @@ fn checkout_notice_comes_before_the_checkout_and_only_with_one() {
     );
     first.restore().unwrap();
 }
+
+/// The `git diff ... --diff-filter=A` intent-to-add queries of step 3.
+#[cfg(unix)]
+fn ita_queries(spy: &Spy) -> usize {
+    spy.calls()
+        .iter()
+        .filter(|c| c.starts_with("diff ") && c.contains("--diff-filter=A"))
+        .count()
+}
+
+/// A repository whose index is not racy (every entry's file is 10 s older than the index), so the stash's own reads
+/// before step 3 never rewrite it and the stamp taken before the run still holds at step 3; `ita` adds an
+/// intent-to-add entry `n`.
+#[cfg(unix)]
+fn quiet_index(sb: &Sandbox, name: &str, ita: bool) -> std::path::PathBuf {
+    let repo = sb.init(name);
+    let past = std::time::SystemTime::now() - Duration::from_secs(10);
+    let mut files = vec!["foo"];
+    sb.write(&repo, "foo", FOO.as_bytes());
+    if ita {
+        sb.write(&repo, "n", b"x\n");
+        files.push("n");
+    }
+    for f in &files {
+        std::fs::File::options()
+            .write(true)
+            .open(repo.join(f))
+            .unwrap()
+            .set_modified(past)
+            .unwrap();
+    }
+    sb.git(&repo, &["add", "foo"]);
+    if ita {
+        sb.git(&repo, &["add", "--intent-to-add", "n"]);
+    }
+    repo
+}
+
+/// Runs the stash on `repo` with `intent_to_add_hint` = the index's current stamp; with `contend`, the test holds the
+/// worktree lock until the run waits for it (the index stays untouched meanwhile). Returns the spy, stdout and
+/// whether the lock was contended; the guard is restored.
+#[cfg(unix)]
+fn run_with_hint(sb: &Sandbox, repo: &Path, contend: bool) -> (Arc<Spy>, String, bool) {
+    let spy = Spy::new();
+    let (git, info) = sb.discover_with(repo, Arc::<Spy>::clone(&spy));
+    let hint = git.index_stamp(&info);
+    assert!(hint.is_some());
+    let (mut cx, out, err) = sb.ctx_with(git, info);
+    cx.intent_to_add_hint = hint;
+    let held = contend.then(|| {
+        snp_os::lock::FileLock::try_acquire(
+            &repo.join(".git").join("snp-stash.lock"),
+            snp_os::lock::LockMode::Exclusive,
+        )
+        .unwrap()
+        .unwrap()
+    });
+    let t = std::thread::Builder::new()
+        .spawn(move || {
+            let g = snp_stash::enter(cx).unwrap();
+            let contended = g.lock_contended();
+            g.restore().unwrap();
+            contended
+        })
+        .unwrap();
+    if let Some(lock) = held {
+        let waited = std::time::Instant::now();
+        while !err.text().starts_with("snp: waiting") {
+            assert!(waited.elapsed() < Duration::from_secs(10), "no wait notice");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // only the contention differs from the uncontended run: the stamp still matches
+        let (probe, probe_info) = sb.discover(repo);
+        assert_eq!(probe.index_stamp(&probe_info), hint);
+        drop(lock);
+    }
+    let contended = t.join().unwrap();
+    (spy, out.text(), contended)
+}
+
+/// ADR-154: an uncontended run whose index still has the hint's stamp skips step 3's query; a run that had to wait
+/// for the worktree lock asks it again although the stamp is unchanged.
+#[cfg(unix)]
+#[test]
+fn intent_to_add_hint_is_used_only_without_contention() {
+    let sb = Sandbox::new();
+    let repo = quiet_index(&sb, "r", false);
+    let (spy, out, contended) = run_with_hint(&sb, &repo, false);
+    assert!(!contended);
+    assert_eq!(ita_queries(&spy), 0, "{:?}", spy.calls());
+    assert_eq!(out, "");
+
+    let (spy, out, contended) = run_with_hint(&sb, &repo, true);
+    assert!(contended);
+    assert_eq!(ita_queries(&spy), 1, "{:?}", spy.calls());
+    assert_eq!(out, "");
+}
+
+/// ADR-154: a hint forced on an index that carries an intent-to-add entry, with the lock contended: the query runs,
+/// so the warning and the clearing still happen, and the entry is back after the restore.
+#[cfg(unix)]
+#[test]
+fn contended_run_clears_intent_to_add_despite_a_hint() {
+    let sb = Sandbox::new();
+    let repo = quiet_index(&sb, "r", true);
+    let (spy, out, contended) = run_with_hint(&sb, &repo, true);
+    assert!(contended);
+    assert_eq!(ita_queries(&spy), 1, "{:?}", spy.calls());
+    assert_eq!(out, "[WARNING] Unstaged intent-to-add files detected.\n");
+    assert_eq!(
+        spy.calls()
+            .iter()
+            .filter(|c| c.contains("rm --cached"))
+            .count(),
+        1,
+        "{:?}",
+        spy.calls()
+    );
+    assert_eq!(sb.status_of(&repo, "n"), "A");
+}
