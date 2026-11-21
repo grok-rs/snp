@@ -1,0 +1,20 @@
+# snp's own commit hooks: the fast checks of CI's `fmt` and `typos` jobs, before every commit.
+# Install once per clone (the hook is shared by every worktree; branches without this file are skipped):
+#   snp install --allow-missing-config
+# Clippy, the tests and the xtask gates stay in CI: they take minutes.
+repos:
+-   repo: local
+    hooks:
+    -   id: cargo-fmt
+        name: cargo fmt
+        description: Formats the workspace (CI runs `cargo fmt --all --check`); re-stage what it changed.
+        entry: cargo fmt --all
+        language: system
+        types: [rust]
+        pass_filenames: false
+    -   id: typos
+        name: typos
+        description: Spell-checks the staged files with the repository's typos.toml (CI runs `typos`).
+        entry: typos --force-exclude
+        language: system
+        types: [text]
