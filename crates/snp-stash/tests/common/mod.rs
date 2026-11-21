@@ -406,6 +406,20 @@ pub(crate) enum Reply {
     Exit(i64, Vec<u8>, Vec<u8>),
     /// Exit like a git stopped by SIGTTIN (group killed): -9 and `stopped_by_tty`.
     TtyStop,
+    /// `capture_fed` only (elsewhere: [`Reply::Real`]): start a real child that never reads its stdin, so writes
+    /// past the pipe's capacity fail: `git apply --numstat -z --whitespace=nowarn <decoy>`, which lists the decoy
+    /// patch file instead and exits 0 (an answer the caller must not use).
+    FedUnread(PathBuf),
+    /// The program cannot start: a [`SpawnError`].
+    SpawnFail,
+}
+
+/// The [`SpawnError`] of [`Reply::SpawnFail`].
+fn spawn_fail(argv: &[OsString]) -> SpawnError {
+    SpawnError {
+        program: argv.first().cloned().unwrap_or_default(),
+        io: io::Error::from(io::ErrorKind::NotFound),
+    }
 }
 
 /// `(argument prefix, only the n-th match, matches seen, action)`.
@@ -518,7 +532,8 @@ impl GitBackend for Spy {
         group: Group,
     ) -> Result<Captured, SpawnError> {
         match self.react(argv) {
-            Reply::Real => self.real.capture(argv, env, cwd, stdin, group),
+            Reply::Real | Reply::FedUnread(_) => self.real.capture(argv, env, cwd, stdin, group),
+            Reply::SpawnFail => Err(spawn_fail(argv)),
             Reply::Exit(code, stdout, stderr) => Ok(Captured {
                 status: PyStatus(code),
                 stdout,
@@ -542,7 +557,8 @@ impl GitBackend for Spy {
         sink: &mut dyn Write,
     ) -> Result<(PyStatus, Vec<u8>), SpawnError> {
         match self.react(argv) {
-            Reply::Real => self.real.stream(argv, env, cwd, sink),
+            Reply::Real | Reply::FedUnread(_) => self.real.stream(argv, env, cwd, sink),
+            Reply::SpawnFail => Err(spawn_fail(argv)),
             Reply::Exit(code, stdout, stderr) => {
                 sink.write_all(&stdout).map_err(|io| SpawnError {
                     program: argv.first().cloned().unwrap_or_default(),
@@ -562,7 +578,8 @@ impl GitBackend for Spy {
         stdin: Stdin,
     ) -> Result<PyStatus, SpawnError> {
         match self.react(argv) {
-            Reply::Real => self.real.inherit(argv, env, cwd, stdin),
+            Reply::Real | Reply::FedUnread(_) => self.real.inherit(argv, env, cwd, stdin),
+            Reply::SpawnFail => Err(spawn_fail(argv)),
             Reply::Exit(code, ..) => Ok(PyStatus(code)),
             Reply::TtyStop => Ok(PyStatus(-9)),
         }
@@ -577,6 +594,12 @@ impl GitBackend for Spy {
     ) -> Result<Fed, SpawnError> {
         match self.react(argv) {
             Reply::Real => self.real.capture_fed(argv, env, cwd, group),
+            Reply::FedUnread(decoy) => {
+                let mut unread = argv.to_vec();
+                unread.push(decoy.into_os_string());
+                self.real.capture_fed(&unread, env, cwd, group)
+            }
+            Reply::SpawnFail => Err(spawn_fail(argv)),
             Reply::Exit(code, stdout, stderr) => Ok(Fed::scripted(Captured {
                 status: PyStatus(code),
                 stdout,

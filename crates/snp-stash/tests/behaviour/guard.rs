@@ -433,6 +433,74 @@ fn a_failing_fed_listing_falls_back_to_the_file_based_one() {
     assert_eq!(sb.read(&repo, "foo"), b"herp\n");
 }
 
+/// ADR-151's fallbacks when the fed listing gives no answer at all, checked against the same stash without the fed
+/// listing: the patch (larger than the 1 MiB stdin pipe) is listed from the file, the checkout and the restore are
+/// unchanged and so is the output. `reply` answers the fed `git apply --numstat` (logged either way: the backend saw
+/// the call), given the repository.
+fn unanswered_fed_listing_falls_back(reply: impl FnOnce(&Path) -> Reply) {
+    let sb = Sandbox::new();
+    let repo = sb.foo_staged("r");
+    let reply = reply(&repo);
+    // ~4 MiB of unstaged lines: the writes to a child that stopped reading fail once the pipe is full
+    let mut big = Vec::new();
+    for i in 0..200_000_u32 {
+        big.extend_from_slice(format!("unstaged line {i:08}\n").as_bytes());
+    }
+    sb.write(&repo, "foo", &big);
+    let spy = Spy::new();
+    spy.on(&["apply", "--numstat"], Some(1), reply);
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+    let (cx, out, _) = sb.ctx_with(git, info);
+    let g = snp_stash::enter(cx).unwrap();
+    let p = patch_of(&g);
+    let listings: Vec<String> = spy
+        .calls()
+        .into_iter()
+        .filter(|c| c.starts_with("apply --numstat"))
+        .collect();
+    assert_eq!(
+        listings,
+        [
+            "apply --numstat -z --whitespace=nowarn".to_owned(),
+            format!("apply --numstat -z --whitespace=nowarn {}", p.display()),
+        ]
+    );
+    assert!(std::fs::metadata(&p).unwrap().len() > 2 << 20);
+    assert_eq!(sb.read(&repo, "foo"), FOO.as_bytes());
+    assert_eq!(
+        out.text(),
+        format!(
+            "[WARNING] Unstaged files detected.\n[INFO] Stashing unstaged files to {}.\n",
+            p.display()
+        )
+    );
+    g.restore().unwrap();
+    assert_eq!(sb.read(&repo, "foo"), big);
+    assert!(!repo.join(".git/snp-stash.journal").exists());
+}
+
+/// ADR-151: the fed child never reads the patch, so a write fails partway (EPIPE) and the listing is dropped; step 7
+/// lists the file. The child exits 0 with a well-formed listing of another path (`decoy`), so using its answer
+/// would check out the wrong files: the test fails unless the failed write discards it.
+#[test]
+fn a_fed_listing_that_stops_reading_falls_back_to_the_file_based_one() {
+    unanswered_fed_listing_falls_back(|repo| {
+        let decoy = repo.join(".git/decoy.patch");
+        std::fs::write(
+            &decoy,
+            "diff --git a/decoy b/decoy\n--- a/decoy\n+++ b/decoy\n@@ -1 +1 @@\n-a\n+b\n",
+        )
+        .unwrap();
+        Reply::FedUnread(decoy)
+    });
+}
+
+/// ADR-151: the fed listing cannot start (a spawn error): only the file-based listing runs.
+#[test]
+fn a_fed_listing_that_cannot_start_falls_back_to_the_file_based_one() {
+    unanswered_fed_listing_falls_back(|_| Reply::SpawnFail);
+}
+
 /// The verification outcome wins over a listing error: the changes vanished while the paths were listed, so there
 /// is nothing to stash and the listing's failure does not matter.
 #[test]

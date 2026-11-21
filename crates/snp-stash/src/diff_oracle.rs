@@ -277,8 +277,7 @@ fn content_hash(p: &Path, kind: Kind, follow: bool) -> Option<[u8; 32]> {
         h.update(&crate::journal::path_bytes(&target));
     } else {
         let f = std::fs::File::open(p).ok()?;
-        let threads = std::thread::available_parallelism().map_or(1, usize::from);
-        if let Some(digest) = par_file_hash(&f, threads) {
+        if let Some(digest) = par_file_hash(&f) {
             return Some(digest);
         }
         h.update_reader(f).ok()?;
@@ -296,59 +295,74 @@ const PAR_HASH_SEGMENT: u64 = 1 << 20;
 #[cfg(unix)]
 const PAR_HASH_THREADS: usize = 8;
 
-/// ADR-151: blake3 of a file of at least [`PAR_HASH_MIN`] bytes, computed on up to `threads` threads: the input is
-/// split along blake3's own tree (`hazmat::left_subtree_len`) into subtrees of at least [`PAR_HASH_SEGMENT`] bytes,
-/// each hashed with positional reads, and their chaining values are merged as blake3 merges them, so the digest is
-/// exactly `blake3::hash` of the bytes. Every subtree must read exactly its length and the file must end where its
-/// `fstat` size said, else (or for a smaller file, one thread, a non-Unix platform or any read error) `None`, and the
-/// caller hashes the file sequentially as before: the result never differs from the sequential one for a file that
-/// does not change while it is read.
-fn par_file_hash(f: &std::fs::File, threads: usize) -> Option<[u8; 32]> {
+/// ADR-151: blake3 of a file of at least [`PAR_HASH_MIN`] bytes, computed on several threads (`par_hash_len`).
+/// The size is checked first, so a smaller file (the common racy case) costs one `fstat` and no thread-count query;
+/// the thread count is read once per process. `None` (the caller hashes sequentially) for a smaller file, one
+/// available thread, a non-Unix platform or any failure of `par_hash_len`.
+fn par_file_hash(f: &std::fs::File) -> Option<[u8; 32]> {
     #[cfg(unix)]
     {
-        use blake3::hazmat::{Mode, merge_subtrees_root};
+        static THREADS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
         let len = f.metadata().ok()?.len();
-        let threads = threads.min(PAR_HASH_THREADS);
-        if len < PAR_HASH_MIN || threads < 2 {
+        if len < PAR_HASH_MIN {
             return None;
         }
-        let target = PAR_HASH_SEGMENT.max(len.checked_div(u64::try_from(threads).ok()?)?);
-        let mut segments = Vec::new();
-        let root = split_subtree(0, len, target, &mut segments)?;
-        let cvs: Vec<Option<blake3::hazmat::ChainingValue>> = std::thread::scope(|s| {
-            // every segment's thread starts before the first join; a thread the OS refuses hashes at its join
-            let mut handles = Vec::new();
-            for &(off, n) in &segments {
-                let h = std::thread::Builder::new()
-                    .name("snp-diff-hash".to_owned())
-                    .stack_size(256 * 1024)
-                    .spawn_scoped(s, move || hash_subtree(f, off, n));
-                handles.push((off, n, h));
-            }
-            handles
-                .into_iter()
-                .map(|(off, n, h)| match h {
-                    Ok(h) => h.join().ok().flatten(),
-                    Err(_) => hash_subtree(f, off, n),
-                })
-                .collect()
-        });
-        // the file must end where `fstat` said: a longer one is hashed sequentially (to its end, as before)
-        let mut one = [0_u8; 1];
-        if std::os::unix::fs::FileExt::read_at(f, &mut one, len).ok()? != 0 {
-            return None;
-        }
-        let Tree::Pair(l, r) = root else {
-            return None;
-        };
-        let (l, r) = (l.merge(&cvs)?, r.merge(&cvs)?);
-        Some(*merge_subtrees_root(&l, &r, Mode::Hash).as_bytes())
+        let threads =
+            *THREADS.get_or_init(|| std::thread::available_parallelism().map_or(1, usize::from));
+        par_hash_len(f, len, threads)
     }
     #[cfg(not(unix))]
     {
-        let _ = (f, threads);
+        let _ = f;
         None
     }
+}
+
+/// ADR-151: blake3 of the first `len` bytes of `f` (its `fstat` size, at least [`PAR_HASH_MIN`]), computed on up to
+/// `threads` threads: the input is split along blake3's own tree (`hazmat::left_subtree_len`) into subtrees of at
+/// least [`PAR_HASH_SEGMENT`] bytes, each hashed with positional reads, and their chaining values are merged as blake3
+/// merges them, so the digest is exactly `blake3::hash` of the bytes. Every subtree must read exactly its length and
+/// the file must end at `len`, else (or for a smaller `len`, one thread or any read error) `None`, and the caller
+/// hashes the file sequentially as before: the result never differs from the sequential one for a file that does not
+/// change while it is read.
+#[cfg(unix)]
+fn par_hash_len(f: &std::fs::File, len: u64, threads: usize) -> Option<[u8; 32]> {
+    use blake3::hazmat::{Mode, merge_subtrees_root};
+    let threads = threads.min(PAR_HASH_THREADS);
+    if len < PAR_HASH_MIN || threads < 2 {
+        return None;
+    }
+    let target = PAR_HASH_SEGMENT.max(len.checked_div(u64::try_from(threads).ok()?)?);
+    let mut segments = Vec::new();
+    let root = split_subtree(0, len, target, &mut segments)?;
+    let cvs: Vec<Option<blake3::hazmat::ChainingValue>> = std::thread::scope(|s| {
+        // every segment's thread starts before the first join; a thread the OS refuses hashes at its join
+        let mut handles = Vec::new();
+        for &(off, n) in &segments {
+            let h = std::thread::Builder::new()
+                .name("snp-diff-hash".to_owned())
+                .stack_size(256 * 1024)
+                .spawn_scoped(s, move || hash_subtree(f, off, n));
+            handles.push((off, n, h));
+        }
+        handles
+            .into_iter()
+            .map(|(off, n, h)| match h {
+                Ok(h) => h.join().ok().flatten(),
+                Err(_) => hash_subtree(f, off, n),
+            })
+            .collect()
+    });
+    // the file must end at `len`: a longer one is hashed sequentially (to its end, as before)
+    let mut one = [0_u8; 1];
+    if std::os::unix::fs::FileExt::read_at(f, &mut one, len).ok()? != 0 {
+        return None;
+    }
+    let Tree::Pair(l, r) = root else {
+        return None;
+    };
+    let (l, r) = (l.merge(&cvs)?, r.merge(&cvs)?);
+    Some(*merge_subtrees_root(&l, &r, Mode::Hash).as_bytes())
 }
 
 /// The shape of a [`par_file_hash`] split: a leaf is the index of a segment.
@@ -1378,8 +1392,8 @@ mod tests {
     use super::*;
 
     /// ADR-151: the parallel hash is blake3's own digest for every size around the threshold and the segment and
-    /// chunk boundaries, for every thread count; below the threshold, with one thread, or for a file longer than its
-    /// `fstat` size it declines (the caller hashes sequentially).
+    /// chunk boundaries, for every thread count; below the threshold or with one thread it declines (the caller
+    /// hashes sequentially).
     #[cfg(unix)]
     #[test]
     fn par_file_hash_is_blake3_of_the_bytes() {
@@ -1403,16 +1417,18 @@ mod tests {
             let f = std::fs::File::open(&p).unwrap();
             for threads in [2, 3, 4, 7, 8, 64] {
                 assert_eq!(
-                    par_file_hash(&f, threads),
+                    par_hash_len(&f, u64::try_from(len).unwrap(), threads),
                     Some(want),
                     "len {len} threads {threads}"
                 );
             }
-            assert_eq!(par_file_hash(&f, 1), None);
+            assert_eq!(par_hash_len(&f, u64::try_from(len).unwrap(), 1), None);
             assert_eq!(content_hash(&p, Kind::File, false), Some(want));
         }
         std::fs::write(&p, vec![7_u8; 4 * mib - 1]).unwrap();
-        assert_eq!(par_file_hash(&std::fs::File::open(&p).unwrap(), 4), None);
+        let f = std::fs::File::open(&p).unwrap();
+        assert_eq!(par_file_hash(&f), None);
+        assert_eq!(par_hash_len(&f, 4 * (1 << 20) - 1, 4), None);
         // the split never yields a part that breaks blake3's subtree rules, and covers the input exactly
         for len in [4_u64 << 20, (10_u64 << 20) + 1, 123_456_789] {
             for target in [1 << 20, 3 << 20, 1 << 22] {
@@ -1430,6 +1446,40 @@ mod tests {
         // a misaligned or oversized part is refused, never a panic
         assert!(split_subtree(1, 2048, 1024, &mut Vec::new()).is_none());
         assert!(split_subtree(1024, 4096, 1 << 20, &mut Vec::new()).is_none());
+    }
+
+    /// ADR-151 fallbacks (K5): a file longer than the size the parallel hash was given (it grew after `fstat`) is
+    /// refused, never hashed to the old length, and the sequential hash covers the whole file; a size larger than the
+    /// file (a subtree read hits the end early) is refused too.
+    #[cfg(unix)]
+    #[test]
+    fn par_hash_len_refuses_a_file_that_grew_or_shrank() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("f");
+        let mib = 1_u64 << 20;
+        let bytes: Vec<u8> = (0..(6 * mib + 100))
+            .map(|i| u8::try_from(i % 251).unwrap())
+            .collect();
+        std::fs::write(&p, &bytes).unwrap();
+        let f = std::fs::File::open(&p).unwrap();
+        let real = u64::try_from(bytes.len()).unwrap();
+        // longer than the stat: the trailing-byte probe declines, for an aligned and an unaligned stale size
+        for stale in [5 * mib, real - 1, 4 * mib] {
+            assert_eq!(par_hash_len(&f, stale, 4), None, "stale {stale}");
+        }
+        assert_eq!(
+            content_hash(&p, Kind::File, false),
+            Some(*blake3::hash(&bytes).as_bytes())
+        );
+        // shorter than the stat: the last subtree reads EOF before its length
+        for past in [real + 1, real + 1024, 8 * mib] {
+            assert_eq!(par_hash_len(&f, past, 4), None, "past {past}");
+        }
+        // and the exact size still matches blake3
+        assert_eq!(
+            par_hash_len(&f, real, 4),
+            Some(*blake3::hash(&bytes).as_bytes())
+        );
     }
 
     /// A regular file's stat tuple: inode `ino`, permission bits `perm`.

@@ -3570,7 +3570,8 @@ keep the plain reader. The 1 MiB pipe is what makes the nap safe: at about 100 M
 input is split along blake3's own tree (`hazmat::left_subtree_len`) into subtrees of at least 1 MiB, read with
 positional reads, and their chaining values merged as blake3 merges them, so the digest is `blake3::hash` of the
 bytes. A short read, a file longer than its `fstat` size, a read error, one CPU or a non-Unix platform hash
-sequentially, as before. (4) *Notice at the first byte.* `StashCtx::checkout_notice` is sent when step 5 writes
+sequentially, as before. The size is checked first and the CPU count read once per process, so a smaller racy file
+costs what it did before (one `fstat` more, no cgroup reads). (4) *Notice at the first byte.* `StashCtx::checkout_notice` is sent when step 5 writes
 the patch's first byte, so `git var GIT_ATTR_SYSTEM` overlaps the diff; a run that writes no patch still never asks,
 and a patch that is then not checked out (vanished changes, a CRLF-quirk output, a failure) costs one unused query.
 **Rationale.** (1) is the same command over the same bytes through the same `apply_patch` (git reads a file argument
@@ -3583,7 +3584,9 @@ later, only for streams past 64 KiB, so no B2/B3 spawn ever switches); it remove
 snp's reader the busiest thread of the diff. ADR-067's durability and ADR-117 (3)'s early writeback stay: with
 batched reads writeback no longer slows git, and deferring it costs 4–29 ms at the final `fsync`. (3) cannot change
 a comparison: the digest is identical by construction and the unit test compares it with `blake3::hash` across
-sizes, boundaries and thread counts. (4) has no repository effect.
+sizes, boundaries and thread counts; a file longer or shorter than the size it was given is refused (tested). The
+fed listing's fallbacks are tested end to end: a child that cannot start, and one that stops reading (a failed write
+discards its answer, here a well-formed listing of another path). (4) has no repository effect.
 **Rejected.** (a) The path list from the patch's `diff --git` headers instead of numstat (B8-4; owner decision D3:
 not taken). (b) A larger pipe, or larger reads, with blocking reads: the reader still wakes per 4 KiB write (no gain
 measured). (c) prek's in-memory patch: breaks ADR-100's B8 heap budget. (d) git writing the patch file itself:
