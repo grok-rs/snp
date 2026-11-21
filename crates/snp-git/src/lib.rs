@@ -28,7 +28,7 @@ mod zlist;
 
 pub use backend::{GitBackend, ProcBackend};
 pub use exe::{GitCaps, GitExe, GitVersion};
-pub use git::{CHECKOUT_PATHS_ARGS, CheckoutCall, Git, literal_pathspecs};
+pub use git::{CHECKOUT_PATHS_ARGS, CheckoutCall, Git, PatchPathsFeed, literal_pathspecs};
 pub use owned::{CloneMode, OwnedRepo, RevInfo, no_git_env, prefetch_eligible};
 pub use types::{
     CheckoutConfig, ConfigListing, DiffFingerprint, DiffIndex, IndexEntries, IndexStamp,

@@ -10,7 +10,7 @@ use std::sync::Mutex;
 
 use snp_core::cancel::CancelToken;
 use snp_core::env::Env;
-use snp_proc::spawn::{self, Captured, Group, PyStatus, Role, SpawnError, Spec, Stdin};
+use snp_proc::spawn::{self, Captured, Fed, Group, PyStatus, Role, SpawnError, Spec, Stdin};
 
 use crate::GitBackend;
 
@@ -166,6 +166,30 @@ impl GitBackend for ScriptedBackend {
                 stderr,
                 stopped_by_tty: false,
             }),
+            Response::SpawnError(errno) => Err(spawn_error(argv, errno)),
+            Response::Panic => scripted_panic(argv),
+        }
+    }
+
+    fn capture_fed(
+        &self,
+        argv: &[OsString],
+        env: &Env,
+        cwd: &Path,
+        group: Group,
+    ) -> Result<Fed, SpawnError> {
+        match self.respond(argv) {
+            Response::Real => spawn::capture_fed(&self.spec(argv, env, cwd, Stdin::Null, group)),
+            Response::Exit {
+                code,
+                stdout,
+                stderr,
+            } => Ok(Fed::scripted(Captured {
+                status: PyStatus(code),
+                stdout,
+                stderr,
+                stopped_by_tty: false,
+            })),
             Response::SpawnError(errno) => Err(spawn_error(argv, errno)),
             Response::Panic => scripted_panic(argv),
         }

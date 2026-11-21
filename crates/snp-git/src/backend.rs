@@ -9,7 +9,7 @@ use std::path::Path;
 
 use snp_core::cancel::CancelToken;
 use snp_core::env::Env;
-use snp_proc::spawn::{self, Captured, Group, PyStatus, Role, SpawnError, Spec, Stdin};
+use snp_proc::spawn::{self, Captured, Fed, Group, PyStatus, Role, SpawnError, Spec, Stdin};
 
 /// Seam (S12): real = snp-proc; tests = `testing::ScriptedBackend` (fail any call by argv pattern, record calls).
 ///
@@ -40,6 +40,21 @@ pub trait GitBackend: Send + Sync + Debug {
         cwd: &Path,
         stdin: Stdin,
     ) -> Result<PyStatus, SpawnError>;
+    /// `spawn::capture_fed`: [`GitBackend::capture`] with a stdin the caller writes while the child runs (ADR-151:
+    /// the stash's `git apply --numstat` fed the patch as `diff-index` prints it). The default refuses
+    /// (`Unsupported`): a backend without it makes the caller take its file-based path.
+    fn capture_fed(
+        &self,
+        argv: &[OsString],
+        _env: &Env,
+        _cwd: &Path,
+        _group: Group,
+    ) -> Result<Fed, SpawnError> {
+        Err(SpawnError {
+            program: argv.first().cloned().unwrap_or_default(),
+            io: io::Error::from(io::ErrorKind::Unsupported),
+        })
+    }
 }
 
 /// `role` is used for every spawn: the run's backend uses `Role::Tool` with the run token; the stash builds its own
@@ -116,6 +131,16 @@ impl GitBackend for ProcBackend {
         stdin: Stdin,
     ) -> Result<PyStatus, SpawnError> {
         spawn::inherit(&self.spec(argv, env, cwd, stdin, Group::Inherit))
+    }
+
+    fn capture_fed(
+        &self,
+        argv: &[OsString],
+        env: &Env,
+        cwd: &Path,
+        group: Group,
+    ) -> Result<Fed, SpawnError> {
+        spawn::capture_fed(&self.spec(argv, env, cwd, Stdin::Null, group))
     }
 }
 

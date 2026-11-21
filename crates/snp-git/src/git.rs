@@ -132,6 +132,42 @@ fn parse_numstat_z(out: &[u8]) -> Result<ZList, Failure> {
     Ok(list)
 }
 
+/// ADR-151: a running `git apply --numstat -z --whitespace=nowarn` reading a stash patch on stdin
+/// ([`Git::patch_paths_feed`]). Writes go to its stdin; a write error only means [`PatchPathsFeed::finish`] must not
+/// be called for an answer (drop the feed: the child is still reaped).
+#[derive(Debug)]
+pub struct PatchPathsFeed {
+    fed: snp_proc::spawn::Fed,
+}
+
+impl PatchPathsFeed {
+    /// Closes git's input once the whole patch was written: git parses it while the caller goes on.
+    pub fn close(&mut self) {
+        self.fed.close_stdin();
+    }
+
+    /// Closes git's input (if [`PatchPathsFeed::close`] did not) and waits for it: the paths when git exited 0 (not
+    /// stopped) and its output parsed as [`Git::patch_paths`] parses it; `None` for anything else, and the caller then
+    /// lists the file with [`Git::patch_paths`], whose answer and error text are the canonical ones.
+    pub fn finish(self) -> Option<ZList> {
+        let c = self.fed.finish()?;
+        if c.status.0 != 0 || c.stopped_by_tty {
+            return None;
+        }
+        parse_numstat_z(&c.stdout).ok()
+    }
+}
+
+impl io::Write for PatchPathsFeed {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.fed.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.fed.flush()
+    }
+}
+
 /// The production [`pathspec::SeenSet`]: a hash set over the borrowed records, O(n) for any number of paths. A
 /// trusted item of kernel K7 (ADR-095 §2.6, `proofs/registry.toml`), checked against the verified
 /// [`pathspec::Scan`] by the differential test `seen_set_hash_matches_scan`.
@@ -799,6 +835,24 @@ impl Git {
             patch.as_os_str().to_os_string(),
         ];
         parse_numstat_z(&self.checked(&args)?.stdout)
+    }
+
+    /// ADR-151: [`Git::patch_paths`] reading the patch on stdin while the caller writes it: `git apply --numstat -z
+    /// --whitespace=nowarn` with no patch argument, so git reads its standard input, the same bytes through the same
+    /// `apply_patch` (the file name only appears in error texts, and those come from [`Git::patch_paths`]). The child
+    /// starts at once; feed it every byte of the patch, then [`PatchPathsFeed::finish`]. `None` when it cannot start
+    /// (or the backend cannot feed a child): the caller lists the file with [`Git::patch_paths`].
+    pub fn patch_paths_feed(&self) -> Option<PatchPathsFeed> {
+        let args = [
+            os("apply"),
+            os("--numstat"),
+            os("-z"),
+            os("--whitespace=nowarn"),
+        ];
+        self.backend
+            .capture_fed(&self.argv(&args), &self.env, &self.root, Group::Inherit)
+            .ok()
+            .map(|fed| PatchPathsFeed { fed })
     }
 
     /// D-DATA-19: the files whose working-tree content differs from the index as `git diff` sees it after refreshing

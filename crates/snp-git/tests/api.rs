@@ -38,6 +38,12 @@ mod api {
         has::<Result<Captured, SpawnError>>(b.capture(&[], env, cwd, Stdin::Null, Group::Inherit));
         has::<Result<(PyStatus, Vec<u8>), SpawnError>>(b.stream(&[], env, cwd, &mut io::sink()));
         has::<Result<PyStatus, SpawnError>>(b.inherit(&[], env, cwd, Stdin::Inherit));
+        has::<Result<snp_proc::spawn::Fed, SpawnError>>(b.capture_fed(
+            &[],
+            env,
+            cwd,
+            Group::Inherit,
+        ));
     }
 
     /// The RPIT method of `ZList`.
@@ -187,6 +193,9 @@ mod api {
         has::<fn(&Git, bool) -> Env>(Git::checkout_env);
         has::<fn(&Git, &ZList, bool, Group) -> Result<(), Failure>>(Git::checkout_paths);
         has::<fn(&Git, &Path) -> Result<ZList, Failure>>(Git::patch_paths);
+        // ADR-151: the same listing fed the patch on stdin while it is written
+        has::<fn(&Git) -> Option<snp_git::PatchPathsFeed>>(Git::patch_paths_feed);
+        has::<fn(snp_git::PatchPathsFeed) -> Option<ZList>>(snp_git::PatchPathsFeed::finish);
         has::<fn(&Git) -> Result<ZList, Failure>>(Git::changed_paths);
         has::<fn(&Git, &Path) -> Result<ZList, Failure>>(Git::rollback_paths);
         has::<fn(&Git, &Path, bool, Group) -> Result<bool, Failure>>(Git::apply);

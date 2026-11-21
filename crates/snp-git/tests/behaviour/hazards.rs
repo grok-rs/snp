@@ -234,3 +234,81 @@ fn hazard_d_object_format_mismatch_is_retried_once() {
     );
     assert_eq!(snapshot(&sb, &up), before);
 }
+
+/// ADR-151: `git apply --numstat` fed the patch on stdin while it is written lists exactly what the file-based
+/// listing of D-DATA-19 lists, byte for byte and in order, for a patch with a text rewrite, a binary change, a
+/// deletion, a mode change, an intent-to-add file and a name git quotes, whatever the write sizes; a patch git
+/// cannot parse is no answer (the caller then runs the file-based listing, whose error is the canonical one).
+#[test]
+fn the_fed_numstat_lists_exactly_what_the_file_based_one_lists() {
+    let sb = Sandbox::new();
+    let repo = sb.init("repo");
+    let lines: String = (1..=4000).fold(String::new(), |s, i| s + &format!("line {i}\n"));
+    let quoted = if cfg!(windows) {
+        "sp ace and\u{e9}.txt"
+    } else {
+        "sp ace\tand\"quote\u{e9}.txt"
+    };
+    sb.write(&repo, "big.txt", lines.as_bytes());
+    sb.write(&repo, "bin.dat", &[0_u8, 1, 2, 3, 255, 0, 7]);
+    sb.write(&repo, "gone.txt", b"bye\n");
+    sb.write(&repo, "mode.sh", b"echo\n");
+    sb.write(&repo, quoted, b"a\n");
+    sb.git(&repo, &["add", "."]);
+    sb.commit(&repo, "base");
+    sb.write(&repo, "big.txt", lines.replace("line", "LINE").as_bytes());
+    sb.write(&repo, "bin.dat", &[9_u8, 0, 8, 0, 7]);
+    std::fs::remove_file(repo.join("gone.txt")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(repo.join("mode.sh"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+    }
+    sb.write(&repo, quoted, b"b\n");
+    sb.write(&repo, "new.txt", b"intent\n");
+    sb.git(&repo, &["add", "-N", "new.txt"]);
+
+    let (git, _) = sb.discover(&repo);
+    let tree = git.write_tree().unwrap();
+    let mut patch_bytes = Vec::new();
+    assert!(matches!(
+        git.diff_index_patch(&tree, &mut patch_bytes).unwrap(),
+        DiffIndex::Patch { .. }
+    ));
+    let patch = sb.path("patch");
+    std::fs::write(&patch, &patch_bytes).unwrap();
+    let from_file = git.patch_paths(&patch).unwrap();
+    assert!(zl(&from_file).len() >= 5, "{:?}", zl(&from_file));
+    // the child sees one byte stream whatever the chunking (one byte at a time for the first 300 bytes)
+    for step in [1_usize, 4093, 64 << 10, usize::MAX] {
+        let mut feed = git.patch_paths_feed().expect("the numstat child starts");
+        let mut rest = patch_bytes.as_slice();
+        let mut writes = 0;
+        while !rest.is_empty() {
+            let n = if step == 1 && writes >= 300 {
+                rest.len()
+            } else {
+                step.min(rest.len())
+            };
+            let (now, later) = rest.split_at_checked(n).unwrap();
+            std::io::Write::write_all(&mut feed, now).unwrap();
+            rest = later;
+            writes += 1;
+        }
+        let fed = feed.finish().expect("the fed listing answers");
+        assert_eq!(zl(&fed), zl(&from_file), "step {step}");
+    }
+    // a corrupt patch: no answer from the fed run, an error from the file-based one
+    let corrupt = b"diff --git a/x b/x\n@@ garbage\n";
+    let mut feed = git.patch_paths_feed().unwrap();
+    std::io::Write::write_all(&mut feed, corrupt).unwrap();
+    assert!(feed.finish().is_none());
+    std::fs::write(&patch, corrupt).unwrap();
+    assert!(git.patch_paths(&patch).is_err());
+    // an empty input is refused either way ("No valid patches in input")
+    let feed = git.patch_paths_feed().unwrap();
+    assert!(feed.finish().is_none());
+    std::fs::write(&patch, b"").unwrap();
+    assert!(git.patch_paths(&patch).is_err());
+}
