@@ -5,6 +5,7 @@
 //!
 //! Owner: WP-33.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -278,4 +279,70 @@ fn an_unreadable_stash_journal_keeps_every_patch_with_a_warning() {
     assert_code(&out, 0);
     assert_eq!(text(&out.stderr), warning);
     assert!(patches.join("patch1700000000-9").exists());
+}
+
+/// Twelve tracked configs (above gc's inline threshold, ADR-150), each with its own unknown root key, one of them
+/// invalid, plus one unused repository: projects named so that tracked order is `p00` .. `p11`.
+fn many_configs(env: &TestEnv, st: &Store) -> PathBuf {
+    let up = "https://example.com/hooks";
+    let mut first = PathBuf::new();
+    for i in 0..12 {
+        let r = env.root().join(format!("p{i:02}"));
+        std::fs::create_dir_all(&r).unwrap();
+        let cfg = if i == 7 {
+            "i am: invalid\n".to_owned()
+        } else {
+            format!("k{i:02}: 1\n{}", config(up, "v1.0.0"))
+        };
+        std::fs::write(r.join(".pre-commit-config.yaml"), cfg).unwrap();
+        track(st, &r);
+        if i == 0 {
+            first = r;
+        }
+    }
+    materialize(st, up, &first, "v1.0.0", &[], Some(MANIFEST));
+    materialize(st, up, &first, "v0.9.0", &[], Some(MANIFEST));
+    first
+}
+
+/// ADR-150: with configs loaded on the pool, the warnings still print in tracked order, the invalid config is
+/// forgotten and the unused repository removed, exactly as the serial marking does.
+#[test]
+fn many_configs_print_in_tracked_order() {
+    let env = tenv();
+    let st = open_store(&env);
+    many_configs(&env, &st);
+    let mut want = String::new();
+    for i in (0..12).filter(|i| *i != 7) {
+        writeln!(want, "[WARNING] Unexpected key(s) present at root: k{i:02}").unwrap();
+    }
+    want.push_str("1 repo(s) removed.\n");
+    assert_eq!(gc(&env, env.root()), want);
+    assert_eq!(st.tracked_configs().len(), 11);
+    assert_eq!(st.all_repos().len(), 1);
+}
+
+/// ADR-066, ADR-150: a panic while gc loads its configs is exit 3 with the crash banner, and nothing is forgotten
+/// or removed.
+#[cfg(feature = "testing")]
+#[test]
+fn panic_while_loading_configs_removes_nothing() {
+    let env = tenv();
+    let st = open_store(&env);
+    many_configs(&env, &st);
+    let out = env
+        .snp_as_pre_commit(env.root())
+        .arg("gc")
+        .env("SNP_FAULT", "WorkerPartition@3")
+        .output();
+    assert_code(&out, 3);
+    let o = text(&out.stdout);
+    assert!(
+        o.contains(
+            "An unexpected error has occurred: PanicException: snp fault injection: WorkerPartition\n"
+        ),
+        "{o}"
+    );
+    assert_eq!(st.tracked_configs().len(), 12);
+    assert_eq!(st.all_repos().len(), 2);
 }

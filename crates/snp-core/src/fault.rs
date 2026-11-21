@@ -17,7 +17,7 @@ use crate::env::Env;
 pub enum Point {
     /// Inside the Printer's state lock (S14 test).
     PrinterWrite,
-    /// Inside a worker partition (thread holding a pool permit).
+    /// Inside a worker partition (thread holding a pool permit), and in each of gc's config loads (ADR-150).
     WorkerPartition,
     /// A stash state transition (`n` = the transition's index).
     StashState(u8),
