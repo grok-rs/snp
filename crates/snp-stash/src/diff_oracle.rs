@@ -287,10 +287,13 @@ fn content_hash(p: &Path, kind: Kind, follow: bool) -> Option<[u8; 32]> {
 }
 
 /// ADR-151: files of at least this many bytes are hashed by [`par_file_hash`].
+#[cfg(unix)]
 const PAR_HASH_MIN: u64 = 4 << 20;
 /// ADR-151: the smallest subtree one thread of [`par_file_hash`] hashes.
+#[cfg(unix)]
 const PAR_HASH_SEGMENT: u64 = 1 << 20;
 /// ADR-151: the most threads [`par_file_hash`] uses.
+#[cfg(unix)]
 const PAR_HASH_THREADS: usize = 8;
 
 /// ADR-151: blake3 of a file of at least [`PAR_HASH_MIN`] bytes, computed on up to `threads` threads: the input is

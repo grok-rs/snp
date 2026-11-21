@@ -723,7 +723,7 @@ impl<'b> Collector<'b> {
 /// A failing `sink` stops the copying (the rest of stdout is drained and discarded) and is reported as the
 /// `SpawnError` after the child exited.
 ///
-/// stdout is read by ADR-151's batched reader ([`spawn_stream_reader`]): on Linux a stream past 64 KiB is drained in
+/// stdout is read by ADR-151's batched reader: on Linux a stream past 64 KiB is drained in
 /// batches from an enlarged pipe, so a child printing megabytes in 4 KiB writes no longer wakes snp once per write.
 /// The bytes and their order are the same.
 pub fn stream(spec: &Spec<'_>, sink: &mut dyn Write) -> Result<(PyStatus, Vec<u8>), SpawnError> {
