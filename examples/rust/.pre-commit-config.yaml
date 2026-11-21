@@ -1,0 +1,35 @@
+# A Rust crate or workspace: cargo fmt and clippy as local hooks, typos, and generic file checks.
+# Valid for pre-commit 4.7.0 and snp alike; no snp extension is used.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.52.2
+    hooks:
+      - id: typos
+
+  # cargo is the project's own toolchain (rust-toolchain.toml), so these hooks use
+  # `language: system`: nothing is installed, the hook runs the cargo on PATH.
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --all
+        language: system
+        types: [rust]
+        pass_filenames: false     # cargo formats the whole workspace at once
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy --workspace --all-targets --locked -- -D warnings
+        language: system
+        types_or: [rust, toml]    # Cargo.toml changes can break the build too
+        pass_filenames: false
+        require_serial: true      # one cargo at a time: they share target/

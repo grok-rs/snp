@@ -1,0 +1,44 @@
+# Hooks on more than one git hook: quick checks on commit, the commit message on
+# commit-msg, slow checks on push, and an on-demand hook.
+# Valid for pre-commit 4.7.0 and snp alike; no snp extension is used.
+
+# `snp install` (no -t) installs a hook script for each of these.
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+# Hooks without `stages:` run only on commit (otherwise they would run in every
+# installed stage, commit-msg and pre-push included).
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: no-commit-to-branch          # no direct commits to main
+        args: [--branch, main]
+
+  # commit-msg: the hook receives the path of the message file (.git/COMMIT_EDITMSG).
+  # Its manifest already sets `stages: [commit-msg]`.
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.5.0
+    hooks:
+      - id: conventional-pre-commit
+        args: [--strict, feat, fix, docs, refactor, test, chore, ci]
+
+  - repo: local
+    hooks:
+      # pre-push: the files changed between the remote ref and what is pushed.
+      - id: unit-tests
+        name: unit tests
+        entry: make test
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+      # manual: never run by git; only `snp run --hook-stage manual …`.
+      - id: integration-tests
+        name: integration tests
+        entry: make integration
+        language: system
+        pass_filenames: false
+        stages: [manual]

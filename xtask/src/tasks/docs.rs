@@ -10,9 +10,9 @@
 //! 2. generates the DIVERGENCES book `docs/user/divergences.md` from the register of `docs/COMPATIBILITY.md` §5 (the
 //!    class sections and their ID order) and the per-ID pages `docs/divergences/<ID>.md` (rationale and examples;
 //!    internal ownership lines are dropped, unfilled stubs are marked as pending);
-//! 3. checks every Markdown page of the book, `README.md` and `CHANGELOG.md`: relative links must name an existing
-//!    file or directory, `#fragment`s must name a heading (GitHub slug rules) or an explicit `<a id>` of the target
-//!    page, and every page under `docs/user` must be listed in `SUMMARY.md`.
+//! 3. checks every Markdown page of the book, `README.md`, `CHANGELOG.md` and `examples/`: relative links must name
+//!    an existing file or directory, `#fragment`s must name a heading (GitHub slug rules) or an explicit `<a id>` of
+//!    the target page, and every page under `docs/user` must be listed in `SUMMARY.md`.
 //!
 //! `--check` regenerates in memory and fails when a committed generated page is stale (CI); without it the generated
 //! pages are written. Both modes fail on broken links. External (`http(s)://`, `mailto:`) links are not fetched.
@@ -41,6 +41,8 @@ const COMPAT: &str = "docs/COMPATIBILITY.md";
 const DIVERGENCE_DIR: &str = "docs/divergences";
 /// Pages outside `docs/user` whose links are checked too.
 const EXTRA_PAGES: &[&str] = &["README.md", "CHANGELOG.md"];
+/// A directory outside `docs/user` whose Markdown pages (recursively) are checked too, when it exists.
+const EXAMPLES_DIR: &str = "examples";
 /// Help width of the CLI reference (`COLUMNS`).
 const HELP_COLUMNS: usize = 100;
 /// The marker of a generated page.
@@ -521,6 +523,13 @@ fn check_book(root: &Path) -> anyhow::Result<Vec<String>> {
     let mut anchors: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
     let mut checked: Vec<String> = pages.clone();
     checked.extend(EXTRA_PAGES.iter().map(|p| (*p).to_owned()));
+    let examples = root.join(EXAMPLES_DIR);
+    if examples.is_dir() {
+        let mut pages = Vec::new();
+        collect_md(root, &examples, &mut pages)?;
+        pages.sort();
+        checked.extend(pages);
+    }
     for rel in &checked {
         let path = root.join(rel);
         let text = std::fs::read_to_string(&path)
@@ -1028,9 +1037,21 @@ mod tests {
         )
         .unwrap();
         std::fs::write(dir.join("CHANGELOG.md"), "# C\n").unwrap();
+        let example = dir.join(EXAMPLES_DIR).join("x");
+        std::fs::create_dir_all(&example).unwrap();
+        std::fs::write(
+            example.join("README.md"),
+            "# X\n\n[ok](../../docs/user/a.md#here) [gone](../../docs/user/nope.md)\n",
+        )
+        .unwrap();
         let problems = check_book(&dir).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(problems.len(), 3, "{problems:#?}");
+        assert_eq!(problems.len(), 4, "{problems:#?}");
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.contains("examples/x/README.md") && p.contains("nope.md"))
+        );
         assert!(problems.iter().any(|p| p.contains("#nope")));
         assert!(problems.iter().any(|p| p.contains("missing.md")));
         assert!(problems.iter().any(|p| p.contains("orphan.md: not listed")));

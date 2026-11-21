@@ -1,0 +1,29 @@
+# The lefthook configuration this example starts from (lefthook 1.x syntax).
+# `snp migrate lefthook -c lefthook.yml -o -` prints its conversion; .snp.yaml is that
+# conversion, tidied by hand and extended with more snp keys.
+pre-commit:
+  parallel: true
+  commands:
+    fmt:
+      glob: "*.rs"
+      run: cargo fmt -- {staged_files}
+      stage_fixed: true
+    lint:
+      glob: "*.{js,ts}"
+      root: web/
+      run: npx --no-install eslint --max-warnings=0 {staged_files}
+      env:
+        ESLINT_USE_FLAT_CONFIG: "true"
+    test:
+      run: cargo test --workspace
+      skip:
+        - merge
+        - rebase
+      fail_text: run `cargo test` locally to reproduce
+
+pre-push:
+  commands:
+    audit:
+      run: cargo deny check
+      only:
+        - ref: main

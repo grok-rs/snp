@@ -1,0 +1,31 @@
+# Fast native hooks: every hook here is one snp runs natively (the fast path) at
+# pre-commit-hooks v6.0.0, so snp clones nothing, builds no virtualenv and starts no Python.
+# pre-commit 4.7.0 runs the same file with the Python hooks; the output is the same.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # whitespace and encoding
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: fix-byte-order-marker
+      # syntax
+      - id: check-json
+      - id: check-yaml
+      - id: check-toml
+      - id: check-xml
+      # the repository
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-symlinks
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+      - id: no-commit-to-branch
+        args: [--branch, main]
+      # secrets
+      - id: detect-private-key

@@ -1,0 +1,16 @@
+# The config the workflow in snp.yml runs. It checks the workflow files themselves too.
+# Valid for pre-commit 4.7.0 and snp alike; no snp extension is used.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.39.0
+    hooks:
+      - id: check-github-workflows   # validates .github/workflows/*.yml against GitHub's schema

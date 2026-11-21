@@ -37,6 +37,8 @@ mod doctor; // WP-33
 #[cfg(test)]
 mod errors; // WP-33
 #[cfg(test)]
+mod examples; // WP-33 (examples/)
+#[cfg(test)]
 mod extensions; // WP-32
 #[cfg(test)]
 mod gc; // WP-33

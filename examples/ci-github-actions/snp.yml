@@ -1,0 +1,36 @@
+# .github/workflows/snp.yml — run every hook on every push and pull request.
+name: snp
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # The one-line replacement of pre-commit/action: same `extra_args`, snp's own cache.
+  snp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: grok-rs/snp-action@v1
+        # with:
+        #   extra_args: --all-files      # default, as in pre-commit/action
+        #   version: latest              # or an exact release such as 2.0.0
+        #   cache: "true"
+
+  # The same without the action. Note the cache key: it must differ from every key
+  # pre-commit used, or snp's cache is never saved (snp-1 is the key scheme's version).
+  snp-manual:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install snp
+        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/grok-rs/snp/releases/latest/download/snp-installer.sh | sh
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/snp
+          key: snp-1|${{ runner.os }}|${{ runner.arch }}|${{ env.pythonLocation }}|${{ hashFiles('.pre-commit-config.yaml') }}
+      - run: snp run --show-diff-on-failure --color=always --all-files

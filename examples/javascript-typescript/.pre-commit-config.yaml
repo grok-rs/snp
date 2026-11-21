@@ -1,0 +1,35 @@
+# A JavaScript / TypeScript project: prettier, plus ESLint and tsc from the project's own node_modules.
+# Valid for pre-commit 4.7.0 and snp alike; no snp extension is used.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-json
+        exclude: ^tsconfig.*\.json$   # tsconfig files allow comments
+      - id: check-yaml
+      - id: check-merge-conflict
+
+  # prettier in an environment snp builds (language: node), pinned by the mirror's tag.
+  - repo: https://github.com/rbubley/mirrors-prettier
+    rev: v3.10.1
+    hooks:
+      - id: prettier
+        types_or: [javascript, jsx, ts, tsx, css, json, yaml, markdown]
+
+  # ESLint and tsc come from package.json (run `npm ci` first), so their versions and
+  # plugins match what the project's own scripts use.
+  - repo: local
+    hooks:
+      - id: eslint
+        name: eslint
+        entry: npx --no-install eslint --max-warnings=0
+        language: system
+        types_or: [javascript, jsx, ts, tsx]
+      - id: tsc
+        name: tsc --noEmit
+        entry: npx --no-install tsc --noEmit -p .
+        language: system
+        types_or: [ts, tsx]
+        pass_filenames: false   # tsc checks the whole project from tsconfig.json
