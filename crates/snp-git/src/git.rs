@@ -361,15 +361,23 @@ impl Git {
         backend: Arc<dyn GitBackend>,
     ) -> Result<(Self, RepoInfo), Failure> {
         let info = Self::discover_info(&exe, env, cwd, backend.as_ref())?;
-        let git = Self {
+        let git = Self::at(exe, env, &info, backend);
+        Ok((git, info))
+    }
+
+    /// The handle [`Self::discover`] returns for the layout `info`, without asking git: the same executable,
+    /// environment, root, git directory, backend and brand. ADR-154's speculative pre-chain builds one for the layout
+    /// a repository rooted at the invocation cwd would have, and keeps its results only when discovery reports that
+    /// very layout.
+    pub fn at(exe: Arc<GitExe>, env: &Env, info: &RepoInfo, backend: Arc<dyn GitBackend>) -> Self {
+        Self {
             exe,
             env: env.clone(),
             root: Arc::from(info.root.as_path()),
             admin_dir: Arc::from(info.git_dir.as_path()),
             backend,
             brand: process_brand(),
-        };
-        Ok((git, info))
+        }
     }
 
     fn discover_info(

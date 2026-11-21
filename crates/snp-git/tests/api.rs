@@ -168,6 +168,8 @@ mod api {
         has::<fn(Arc<GitExe>, &Env, &Path, Arc<dyn GitBackend>) -> Result<(Git, RepoInfo), Failure>>(
             Git::discover,
         );
+        // ADR-154
+        has::<fn(Arc<GitExe>, &Env, &RepoInfo, Arc<dyn GitBackend>) -> Git>(Git::at);
         has::<fn(&Git, Env) -> Git>(Git::with_env);
         has::<fn(&Git, Arc<dyn GitBackend>) -> Git>(Git::with_backend);
         has::<fn(&Git) -> &Env>(Git::env);
