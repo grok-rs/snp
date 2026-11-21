@@ -379,6 +379,14 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         refs: sel.refs.is_some(),
     };
     let code = lp.run(st.stash.as_mut(), &mut oracle);
+    // ADR-152: the oracle's evidence for the restore by rename, after the last hook, step 19's output and step 20's
+    // staging (the guard refuses it after a `stage_fixed` staging)
+    if code.is_ok()
+        && let Some(g) = st.stash.as_mut()
+        && let Some(proof) = g.checked_out().and_then(|p| oracle.restore_proof(p))
+    {
+        g.prove_restore(proof);
+    }
     if oracle.proof_stats().is_some_and(|p| p.mismatches > 0) {
         cx.printer.diag(messages::INDEX_PROOF_MISMATCH);
     }
