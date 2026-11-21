@@ -34,7 +34,9 @@ snp install --install-hooks    # switch the hook scripts to snp and pre-build th
 snp run --all-files            # same as `pre-commit run --all-files`
 ```
 
-A repository without a config can start from `snp sample-config > .pre-commit-config.yaml`.
+A repository without a config can start from `snp sample-config > .pre-commit-config.yaml`, or from one of the
+[example configurations](https://github.com/grok-rs/snp/tree/main/examples) (Python, Rust, JavaScript/TypeScript, a
+monorepo, native hooks only, stages, CI, `repo: builtin`, the extension keys).
 
 ## Two names, two brands
 
@@ -55,6 +57,7 @@ the alias). The [migration guide](migration.md) walks through the switch and the
   that call `pre-commit`, rollback.
 * [CI integration](ci.md) — replacing `pre-commit/action`, cache keys, GitLab/Azure/CircleCI recipes, pre-commit.ci.
 * [Configuration](configuration.md) — the config file, the extension keys, `repo: builtin` and the local overlay.
+* [Examples](https://github.com/grok-rs/snp/tree/main/examples) — configs to copy, each checked by the test suite.
 * [Troubleshooting](troubleshooting.md) — `snp doctor`, crash logs, common problems.
 * Reference: [CLI](reference/cli.md), [environment variables](reference/environment.md),
   [compatibility](compatibility.md), [DIVERGENCES](divergences.md), [platform support](platforms.md).
