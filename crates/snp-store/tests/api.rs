@@ -6,6 +6,7 @@
 
 #[cfg(test)]
 mod api {
+    use std::collections::HashSet;
     use std::io;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -19,8 +20,8 @@ mod api {
     use snp_core::output::DiagSink;
     use snp_os::lock::FileLock;
     use snp_store::{
-        MarkerKey, RepoHandle, RepoId, RepoKey, RepoKind, RepoMeta, Store, StoreGuard,
-        StoreLocation, StoreSource, SweepReport, ToolRef, TrackedConfig,
+        MarkerKey, ProbeMemo, RepoHandle, RepoId, RepoIndex, RepoKey, RepoKind, RepoMeta, Store,
+        StoreGuard, StoreLocation, StoreSource, SweepReport, ToolRef, TrackedConfig,
     };
 
     fn send_sync<T: Send + Sync>() {}
@@ -45,6 +46,8 @@ mod api {
         send_sync::<StoreGuard>();
         send_sync::<Store>();
         send_sync::<SweepReport>();
+        send_sync::<ProbeMemo>();
+        send_sync::<RepoIndex<'static>>();
     }
 
     #[test]
@@ -66,6 +69,11 @@ mod api {
         let id = RepoId::Url(Arc::from("https://github.com/pre-commit/pre-commit-hooks"));
         has::<[RepoId; 2]>([id.clone(), RepoId::LocalPath(PathBuf::from("/src/hooks"))]);
         has::<fn(&str, &Path) -> RepoId>(RepoId::from_config);
+        has::<fn(&str, &Path, &ProbeMemo) -> RepoId>(RepoId::from_config_memo);
+        has::<fn() -> ProbeMemo>(ProbeMemo::new);
+        has::<ProbeMemo>(ProbeMemo::default());
+        has::<fn(&[(usize, &TrackedConfig)]) -> Vec<usize>>(snp_store::tracked_order);
+        has::<fn(&MarkerKey) -> String>(MarkerKey::file_name);
         has::<fn(&str, &[Arc<str>]) -> String>(snp_store::db_repo_name);
         has::<fn(&RepoId, &str, &[Arc<str>]) -> String>(snp_store::marker_repo_name);
         has::<ToolRef>(ToolRef {
@@ -142,9 +150,20 @@ mod api {
             Store::retain_markers_keeping,
         );
         has::<fn(&Store, &Path, &Path)>(Store::mark_config_used);
+        has::<fn(&Store, &HashSet<String>, &mut dyn FnMut(&MarkerKey) -> bool) -> usize>(
+            Store::retain_markers_keeping_names,
+        );
         has::<fn(&Store) -> Vec<TrackedConfig>>(Store::tracked_configs);
+        has::<fn(&Store) -> Vec<PathBuf>>(Store::config_entry_files);
+        has::<fn(&Path) -> Option<TrackedConfig>>(Store::read_config_entry);
         has::<fn(&Store, &[PathBuf])>(Store::forget_configs);
         has::<fn(&Store) -> Vec<RepoHandle>>(Store::all_repos);
+        has::<for<'a> fn(&'a Store) -> RepoIndex<'a>>(Store::repo_index);
+        has::<for<'a> fn(&'a RepoIndex<'static>, &RepoKey) -> Option<&'a RepoHandle>>(
+            RepoIndex::get,
+        );
+        has::<fn(&RepoIndex<'static>) -> usize>(RepoIndex::len);
+        has::<fn(&RepoIndex<'static>) -> bool>(RepoIndex::is_empty);
         has::<fn(&Store, &RepoKey) -> io::Result<()>>(Store::retire_repo);
         has::<fn(&Store, SystemTime) -> SweepReport>(Store::sweep);
         has::<fn(&Store) -> Result<Option<PathBuf>, Failure>>(Store::clean);

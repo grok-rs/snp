@@ -7,8 +7,9 @@
 //!
 //! Owner: WP-22.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use snp_core::profile::LOCAL_TEMPLATE_VERSION;
 
@@ -100,6 +101,24 @@ impl RepoId {
     /// directory) but keys local directories by their `realpath`, so `repo: ../tools` in two projects never shares
     /// one cache entry (D-DATA-08). A directory whose `realpath` cannot be computed is keyed as a URL.
     pub fn from_config(repo: &str, project_root: &Path) -> Self {
+        Self::derive(repo, project_root, None)
+    }
+
+    /// [`RepoId::from_config`] with a negative-prefix memo (gc, ADR-150): the same derivation, which skips the
+    /// directory probe of a relative `repo` whose first component the memo has seen fail to resolve.
+    ///
+    /// When `<project_root>/<first component>` cannot be `stat`ed, no longer path through it can be either (the
+    /// kernel resolves every component in turn, whatever the error), so the value is a URL, as the full probe would
+    /// have found. A `https://host/path` value thus costs one probe per project root instead of one per repository.
+    /// Unix only (Windows normalises `..` and trailing dots lexically before it resolves a path); elsewhere, and for
+    /// absolute or one-component values, this is `from_config`. Only failures are remembered: a prefix that resolves
+    /// leads to the full probe.
+    pub fn from_config_memo(repo: &str, project_root: &Path, memo: &ProbeMemo) -> Self {
+        Self::derive(repo, project_root, Some(memo))
+    }
+
+    /// The one derivation behind [`RepoId::from_config`] and [`RepoId::from_config_memo`] (ADR-070(8)).
+    fn derive(repo: &str, project_root: &Path, memo: Option<&ProbeMemo>) -> Self {
         let url = || Self::Url(Arc::from(repo));
         if repo.is_empty() || repo.contains('\0') {
             return url();
@@ -108,6 +127,11 @@ impl RepoId {
         let joined = if given.is_absolute() {
             given.to_path_buf()
         } else {
+            if let Some(m) = memo
+                && m.prefix_fails(project_root, given)
+            {
+                return url();
+            }
             project_root.join(given)
         };
         if !std::fs::metadata(&joined).is_ok_and(|m| m.is_dir()) {
@@ -129,6 +153,39 @@ impl RepoId {
                 v
             }
         }
+    }
+}
+
+/// The negative-prefix memo of [`RepoId::from_config_memo`]: whether `<project_root>/<first component>` resolved, per
+/// joined prefix, observed once per gc run (ADR-150). Shared by gc's workers.
+#[derive(Debug, Default)]
+pub struct ProbeMemo(Mutex<HashMap<PathBuf, bool>>);
+
+impl ProbeMemo {
+    /// An empty memo.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Whether the first component of the relative `given` (with at least one more after it) fails to resolve below
+    /// `project_root` (Unix; never elsewhere).
+    fn prefix_fails(&self, project_root: &Path, given: &Path) -> bool {
+        if !cfg!(unix) {
+            return false;
+        }
+        let mut parts = given.components();
+        let (Some(std::path::Component::Normal(first)), Some(_)) = (parts.next(), parts.next())
+        else {
+            return false;
+        };
+        let prefix = project_root.join(first);
+        if let Some(&resolves) = snp_core::sync::lock(&self.0).get(&prefix) {
+            return !resolves;
+        }
+        // The probe runs outside the lock; two workers may both probe one prefix, and both see the same answer.
+        let resolves = std::fs::metadata(&prefix).is_ok();
+        snp_core::sync::lock(&self.0).insert(prefix, resolves);
+        !resolves
     }
 }
 
@@ -181,6 +238,35 @@ pub struct TrackedConfig {
     pub path: PathBuf,
     /// Its project root.
     pub project_root: PathBuf,
+}
+
+/// gc's order of tracked configs: the indices of `configs` sorted by `(path, project_root)` with [`Path`]'s order,
+/// equal pairs after the first dropped (ADR-150).
+///
+/// What sorting the configs and `dedup`ing them gives ([`crate::Store::tracked_configs`]), computed over each path's
+/// components once (`Path`'s `Ord` and `PartialEq` compare [`Path::components`]; comparing the parsed component lists
+/// gives the same order without parsing each path again in every comparison). The indices are the first element of
+/// each pair, so the configs may be a subset of a larger list; ties keep the lower index first, so the first of equal
+/// pairs is kept, as by a stable sort.
+pub fn tracked_order(configs: &[(usize, &TrackedConfig)]) -> Vec<usize> {
+    type Keyed<'a> = (
+        Vec<std::path::Component<'a>>,
+        Vec<std::path::Component<'a>>,
+        usize,
+    );
+    let mut keyed: Vec<Keyed<'_>> = configs
+        .iter()
+        .map(|(i, t)| {
+            (
+                t.path.components().collect(),
+                t.project_root.components().collect(),
+                *i,
+            )
+        })
+        .collect();
+    keyed.sort_unstable();
+    keyed.dedup_by(|later, first| later.0 == first.0 && later.1 == first.1);
+    keyed.into_iter().map(|(_, _, i)| i).collect()
 }
 
 /// Remote clone or the `repo: local` template.
@@ -291,8 +377,9 @@ impl MarkerKey {
         RepoKey::from_hex(digest).map(|k| Self::Installed { install_key: k.0 })
     }
 
-    /// The marker's file name in `keys-v1`.
-    pub(crate) fn file_name(&self) -> String {
+    /// The marker's file name in `keys-v1` (a pure function of the key; gc derives the names of the markers it keeps
+    /// on its workers, ADR-150).
+    pub fn file_name(&self) -> String {
         let mut h = blake3::Hasher::new();
         h.update(MARKER_DOMAIN);
         match self {
@@ -460,5 +547,124 @@ mod tests {
             RepoId::from_config("../missing", &proj),
             RepoId::Url(u) if &*u == "../missing"
         ));
+    }
+
+    /// The memoised derivation (ADR-150) gives the plain one's id for every `repo:` value over a tree with
+    /// directories, files, symlinks to both, dangling and looping symlinks and an unsearchable directory, whatever
+    /// order the values come in (the memo is shared across them, as by gc's workers), and it probes fewer paths.
+    #[cfg(unix)]
+    #[test]
+    fn memoised_derivation_equals_the_plain_one() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let d = tempfile::tempdir().unwrap();
+        let root = snp_os::realpath::realpath_nonstrict(d.path(), Path::new("/")).unwrap();
+        for p in ["proj/d/e", "proj/sub", "tools/x", "locked/in"] {
+            std::fs::create_dir_all(root.join(p)).unwrap();
+        }
+        std::fs::write(root.join("proj/file"), b"").unwrap();
+        symlink(root.join("tools"), root.join("proj/to-tools")).unwrap();
+        symlink(root.join("proj/file"), root.join("proj/to-file")).unwrap();
+        symlink(root.join("nowhere"), root.join("proj/dangling")).unwrap();
+        symlink(root.join("proj/loop"), root.join("proj/loop")).unwrap();
+        symlink(root.join("locked/in"), root.join("proj/to-locked")).unwrap();
+        let locked = root.join("locked");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let values = [
+            "https://github.com/x/y",
+            "https://github.com/x/z",
+            "http:/x",
+            "git@github.com:x/y",
+            "d/e",
+            "d/e/",
+            "d//e",
+            "d/./e",
+            "d/../sub",
+            "d/missing",
+            "missing/e",
+            "missing/../d",
+            "file/x",
+            "to-file/x",
+            "to-tools/x",
+            "to-tools/../tools/x",
+            "dangling/x",
+            "loop/x",
+            "to-locked/x",
+            "./d/e",
+            "../tools/x",
+            "../proj/d",
+            "sub",
+            "d",
+            "",
+            "/",
+        ];
+        let proj = root.join("proj");
+        let key = |id: &RepoId| id.key_bytes();
+        for order in [false, true] {
+            let memo = ProbeMemo::new();
+            let mut list: Vec<&str> = values.to_vec();
+            if order {
+                list.reverse();
+            }
+            for _round in 0..2 {
+                for v in &list {
+                    let plain = RepoId::from_config(v, &proj);
+                    let memoised = RepoId::from_config_memo(v, &proj, &memo);
+                    assert_eq!(key(&plain), key(&memoised), "{v}");
+                }
+            }
+            let failed: Vec<PathBuf> = snp_core::sync::lock(&memo.0)
+                .iter()
+                .filter(|(_, ok)| !**ok)
+                .map(|(p, _)| p.clone())
+                .collect();
+            assert!(failed.contains(&proj.join("https:")), "{failed:?}");
+            assert!(failed.contains(&proj.join("missing")), "{failed:?}");
+        }
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
+
+        /// `tracked_order` is the old sort by `(path, project_root)` followed by `dedup`, as indices.
+        #[test]
+        fn tracked_order_is_sort_then_dedup(
+            pairs in proptest::collection::vec(
+                (
+                    proptest::collection::vec(
+                        proptest::sample::select(vec!["a", "b", "ab", ".", "..", "", "a.b", "-", "é"]),
+                        0..5,
+                    ),
+                    proptest::bool::ANY,
+                    proptest::sample::select(vec!["/r", "/r/", "/r/s", "r", "/r/./s", "/"]),
+                ),
+                0..12,
+            ),
+        ) {
+            let configs: Vec<TrackedConfig> = pairs
+                .iter()
+                .map(|(parts, abs, root)| TrackedConfig {
+                    path: PathBuf::from(format!("{}{}", if *abs { "/" } else { "" }, parts.join("/"))),
+                    project_root: PathBuf::from(root),
+                })
+                .collect();
+            let mut old = configs.clone();
+            old.sort_by(|a, b| (&a.path, &a.project_root).cmp(&(&b.path, &b.project_root)));
+            old.dedup();
+            let indexed: Vec<(usize, &TrackedConfig)> = configs.iter().enumerate().collect();
+            let new: Vec<TrackedConfig> = tracked_order(&indexed)
+                .into_iter()
+                .map(|i| configs[i].clone())
+                .collect();
+            // Equal pairs compare equal however they are spelled ("a//b" == "a/b"), so compare the spellings too:
+            // the first of each run of equal pairs is kept, as by a stable sort.
+            proptest::prop_assert_eq!(&new, &old);
+            let spell = |v: &[TrackedConfig]| -> Vec<(String, String)> {
+                v.iter()
+                    .map(|t| (t.path.display().to_string(), t.project_root.display().to_string()))
+                    .collect()
+            };
+            proptest::prop_assert_eq!(spell(&new), spell(&old));
+        }
     }
 }

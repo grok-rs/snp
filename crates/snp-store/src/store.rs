@@ -78,6 +78,48 @@ pub struct Store {
     pending_configs: Arc<Mutex<Vec<(PathBuf, PathBuf)>>>,
 }
 
+/// One listing of `repos-v1` whose entries load lazily ([`Store::repo_index`], ADR-150).
+///
+/// The keys are ordered by their bytes, as [`Store::all_repos`] orders its handles. Each entry is loaded at most once
+/// (a per-key [`OnceLock`]), by the first [`RepoIndex::get`], from any thread; concurrent first calls for one key
+/// wait for the one load.
+#[derive(Debug)]
+pub struct RepoIndex<'s> {
+    /// The store the entries belong to.
+    store: &'s Store,
+    /// The hex-named entries, ordered by key, each with its load.
+    entries: Vec<(RepoKey, OnceLock<Option<RepoHandle>>)>,
+}
+
+impl RepoIndex<'_> {
+    /// The listed keys, ordered by their bytes (complete or not: [`RepoIndex::get`] decides).
+    pub fn keys(&self) -> impl Iterator<Item = &RepoKey> {
+        self.entries.iter().map(|(k, _)| k)
+    }
+
+    /// The number of listed entries.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether `repos-v1` listed no entry.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// The complete entry of `key` (its marker parses and derives `key`, its checkout is present): the handle
+    /// [`Store::all_repos`] would have returned for it. `None` for a key that was not listed, an incomplete entry,
+    /// or a transient I/O failure. Loaded on the first call for `key` and remembered.
+    pub fn get(&self, key: &RepoKey) -> Option<&RepoHandle> {
+        let i = self
+            .entries
+            .binary_search_by(|(k, _)| k.0.cmp(&key.0))
+            .ok()?;
+        let (k, cell) = self.entries.get(i)?;
+        cell.get_or_init(|| self.store.load(k)).as_ref()
+    }
+}
+
 impl Store {
     /// No I/O (lazy, 03 Q12).
     ///
@@ -530,6 +572,18 @@ impl Store {
         maintenance::retain_markers(&self.root().join(layout::KEYS), &names, keep)
     }
 
+    /// [`Store::retain_markers_keeping`] with the kept markers' file names already derived
+    /// ([`MarkerKey::file_name`]); returns how many were removed.
+    ///
+    /// gc derives the names on its workers (ADR-150); the same names give the same kept set.
+    pub fn retain_markers_keeping_names(
+        &self,
+        kept_names: &HashSet<String>,
+        keep: &mut dyn FnMut(&MarkerKey) -> bool,
+    ) -> usize {
+        maintenance::retain_markers(&self.root().join(layout::KEYS), kept_names, keep)
+    }
+
     /// Best effort, lock-free, never creates the store.
     ///
     /// `Store.mark_config_used` (`store.py:225-235`, T10-STO-11/12): a no-op for a read-only store or a config that
@@ -574,14 +628,37 @@ impl Store {
     /// gc's `SELECT path FROM configs` (`gc.py:65-70`) with each config's recorded project root (ADR-075), sorted;
     /// malformed entries are skipped.
     pub fn tracked_configs(&self) -> Vec<TrackedConfig> {
-        let mut out: Vec<TrackedConfig> =
-            maintenance::config_entries(&self.root().join(layout::CONFIGS))
-                .into_iter()
-                .map(|(_, path, project_root)| TrackedConfig { path, project_root })
-                .collect();
-        out.sort_by(|a, b| (&a.path, &a.project_root).cmp(&(&b.path, &b.project_root)));
-        out.dedup();
-        out
+        let mut read: Vec<Option<TrackedConfig>> = self
+            .config_entry_files()
+            .iter()
+            .map(|f| Self::read_config_entry(f))
+            .collect();
+        let order = keys::tracked_order(
+            &read
+                .iter()
+                .enumerate()
+                .filter_map(|(i, t)| Some((i, t.as_ref()?)))
+                .collect::<Vec<_>>(),
+        );
+        order
+            .into_iter()
+            .filter_map(|i| read.get_mut(i).and_then(Option::take))
+            .collect()
+    }
+
+    /// The `configs-v1` entry files, in listing order (well-formed names only; their contents are not read).
+    ///
+    /// [`Store::tracked_configs`] split in two, so gc can read and decode the entries on its workers
+    /// ([`Store::read_config_entry`]) and put them in tracked order with [`crate::tracked_order`] (ADR-150).
+    pub fn config_entry_files(&self) -> Vec<PathBuf> {
+        maintenance::config_entry_files(&self.root().join(layout::CONFIGS))
+    }
+
+    /// One `configs-v1` entry file, read and decoded; `None` when it cannot be read or is malformed (skipped, as by
+    /// [`Store::tracked_configs`]).
+    pub fn read_config_entry(file: &Path) -> Option<TrackedConfig> {
+        let (path, project_root) = maintenance::read_config_entry(file)?;
+        Some(TrackedConfig { path, project_root })
     }
 
     /// Forgets configs that no longer exist.
@@ -612,6 +689,26 @@ impl Store {
             .collect();
         out.sort_by_key(|h| h.key.0);
         out
+    }
+
+    /// One listing of `repos-v1`, each entry loaded at most once, on first use.
+    ///
+    /// [`Store::all_repos`] without the up-front loads (ADR-150): the hex-named entries ordered by key, and
+    /// [`RepoIndex::get`] decides whether one is complete exactly as `all_repos` does, the first time it is asked.
+    /// gc takes it under the exclusive lock, so nothing can materialise or retire an entry while it is in use.
+    pub fn repo_index(&self) -> RepoIndex<'_> {
+        let mut keys: Vec<RepoKey> =
+            fs::read_dir(self.root().join(layout::REPOS)).map_or_default(|rd| {
+                rd.filter_map(Result::ok)
+                    .filter_map(|e| RepoKey::from_hex(e.file_name().as_encoded_bytes()))
+                    .collect()
+            });
+        keys.sort_unstable_by_key(|k| k.0);
+        keys.dedup();
+        RepoIndex {
+            store: self,
+            entries: keys.into_iter().map(|k| (k, OnceLock::new())).collect(),
+        }
     }
 
     /// Moves a repository to the trash.
