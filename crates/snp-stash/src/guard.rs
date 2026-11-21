@@ -12,7 +12,15 @@
 //! 3 intent-to-add cleared, 4 patch durable (state `stashed` journaled), 5 checkout done, 6 `staging-fixed` journaled,
 //! 7 fixes staged, 8 rolling back, 9 restored, 10 done — and `RestoreCommand(n)` before each restore command: 1 apply,
 //! 2 apply with `core.autocrlf=false`, 3 rollback checkout, 4 apply, 5 apply with `core.autocrlf=false`, 6 the
-//! intent-to-add re-add.
+//! intent-to-add re-add — and `StashBackup(n)` for ADR-152's restore by rename: 1 after the hard-link backups were
+//! made (right before the checkout), 2 before each rename, 3 after the last rename.
+//!
+//! ADR-152 (Linux): right before the checkout each file of the patch is hard-linked into the git dir under the name
+//! prefix the `stashed` journal already records; when the caller hands over the `DiffOracle`'s proof that nothing
+//! changed those files since the checkout and nothing converts them ([`StashGuard::prove_restore`]), the restore
+//! renames the preserved originals back (mode and times as `git apply`'s fresh file has them) instead of running
+//! `git apply`, and falls back to `git apply` on any doubt. Every exit removes the links; recovery removes the ones a
+//! crash left behind.
 //!
 //! Owner: WP-23.
 
@@ -39,6 +47,7 @@ use snp_git::{
 use snp_proc::signals::SignalGuard;
 use snp_proc::spawn::Group;
 
+use crate::diff_oracle::{ProofFile, RestoreProof};
 use crate::journal::{self, JournalData, PointerData, State};
 use crate::lock::{self, Acquired, LockStamp, WorktreeLock};
 use crate::{messages, recovery, tree_elision};
@@ -146,7 +155,56 @@ struct Inner {
     argv0: Option<Vec<OsString>>,
     /// Which restore steps are due.
     flags: Steps,
+    /// ADR-152: the name prefix of this run's hard-link backups in the git dir (journaled from the first journal
+    /// on); `None` off Linux and with `SNP_STASH_RESTORE=apply`.
+    backup_prefix: Option<String>,
+    /// ADR-152: the backups made right before the checkout, one per file of the patch, or none.
+    backups: Vec<Backup>,
+    /// ADR-152: the paths backed up (the checkout list), kept for the re-checkout after a partial restore by rename.
+    backed_up: ZList,
+    /// ADR-152: the `DiffOracle`'s restore proof, handed over before the restore.
+    proof: Option<RestoreProof>,
 }
+
+/// ADR-152: one hard-link backup: the original inode of a file of the patch, linked into the git dir right before
+/// the checkout replaced the file, with the stat it had then.
+#[derive(Debug)]
+#[cfg_attr(
+    not(unix),
+    expect(
+        dead_code,
+        reason = "ADR-152 renames on Unix builds only (Linux at run time)"
+    )
+)]
+struct Backup {
+    /// The repository path.
+    rel: Vec<u8>,
+    /// `<git_dir>/<prefix>-<n>`.
+    link: PathBuf,
+    dev: u64,
+    ino: u64,
+    size: u64,
+    /// `(mtime, mtime_nsec)`.
+    mtime: (i64, i64),
+    /// The owner-executable bit: what `diff-index` recorded as the file's new mode when `core.fileMode` holds.
+    exec: bool,
+}
+
+/// What [`Inner::rename_restore`] did.
+enum Renamed {
+    /// Nothing was renamed (not proven, or a check or the first rename failed): `git apply` restores.
+    No,
+    /// Every backup was renamed back: restored.
+    All,
+    /// Some backups were renamed back before a later step failed.
+    Partial,
+}
+
+/// ADR-152: at most this many files are backed up (above it `git apply` restores, as before).
+const MAX_BACKUPS: usize = 1_000;
+
+/// `SNP_STASH_RESTORE=apply` turns ADR-152's restore by rename off: every restore runs `git apply`.
+const RESTORE_ENV: &str = "SNP_STASH_RESTORE";
 
 /// The restore steps still due (each is cleared when done, so a resumed `finish` skips it).
 #[derive(Debug, Default, Clone, Copy)]
@@ -196,6 +254,7 @@ impl Journal {
             worktree: Some(self.data.worktree.clone()),
             staged_fixed: self.data.staged_fixed.clone(),
             ita: self.data.ita.clone(),
+            backups: self.data.backups.clone(),
         }
     }
 
@@ -494,8 +553,15 @@ pub fn enter(cx: StashCtx) -> Result<StashGuard, Failure> {
             tty_noted: false,
             argv0: None,
             flags: Steps::default(),
+            backup_prefix: None,
+            backups: Vec::new(),
+            backed_up: ZList::default(),
+            proof: None,
         })),
     };
+    if let Some(inner) = guard.inner.as_deref_mut() {
+        inner.backup_prefix = inner.new_backup_prefix();
+    }
     fault::hit(Point::StashState(1));
     if !nested
         && let Some(inner) = guard.inner.as_deref()
@@ -555,8 +621,9 @@ enum FirstPass {
 
 /// What [`Inner::secure`] made of a written patch.
 enum Secured {
-    /// Durable and verified; these are its paths, the checkout list.
-    Paths(ZList),
+    /// Durable and verified; these are its paths, the checkout list. `fast`: ADR-097's stat-stamp pass verified it
+    /// (no file of the patch changed since the lock was taken).
+    Paths { paths: ZList, fast: bool },
     /// The unstaged changes vanished meanwhile: nothing to stash.
     Vanished { clean: bool },
 }
@@ -610,7 +677,25 @@ impl Inner {
             tree: self.tree.as_ref().map(|t| t.as_str().to_owned()),
             patch: self.patch.clone(),
             staged_fixed: Vec::new(),
+            backups: self.backup_prefix.clone(),
         }
+    }
+
+    /// ADR-152: `snp-stash-bk-<pid>-<random>` on Linux unless `SNP_STASH_RESTORE=apply`.
+    fn new_backup_prefix(&self) -> Option<String> {
+        let off = self
+            .git()
+            .env()
+            .get(RESTORE_ENV)
+            .is_some_and(|v| v == "apply");
+        (cfg!(any(target_os = "linux", target_os = "android")) && !off).then(|| {
+            format!(
+                "{}{}-{}",
+                journal::BACKUP_PREFIX,
+                pid(),
+                lock::random_hex(6)
+            )
+        })
     }
 
     /// `<store>/patches`, created (0700) when missing (`os.makedirs(patch_dir, exist_ok=True)`).
@@ -790,16 +875,21 @@ impl Inner {
         };
         // 6–7. durable, listed and verified; any other outcome abandons the patch, here and only here.
         let secured = self.secure(&tree, &path, w, feed);
-        if !matches!(secured, Ok(Secured::Paths(_))) {
+        if !matches!(secured, Ok(Secured::Paths { .. })) {
             self.abandon_patch(&path);
         }
-        let paths = match secured? {
-            Secured::Paths(p) => p,
+        let (paths, fast) = match secured? {
+            Secured::Paths { paths, fast } => (paths, fast),
             Secured::Vanished { clean } => return Ok(StashOutcome::Nothing { clean }),
         };
         self.printer()
             .log(Level::Warning, messages::UNSTAGED_DETECTED);
         self.printer().log(Level::Info, &messages::stashing(&path));
+        // ADR-152: the originals, kept for the restore by rename (the `stashed` journal names their prefix)
+        if fast {
+            self.make_backups(&paths);
+        }
+        fault::hit(Point::StashBackup(1));
         // 8. checkout (pre-commit's `try` starts here: a failing checkout still restores).
         self.flags.patch = PatchStep::Due;
         self.git().checkout_paths(&paths, true, Group::Isolated)?;
@@ -1026,7 +1116,49 @@ impl Inner {
                 messages::no_patch_paths(path),
             ));
         }
-        Ok(Secured::Paths(paths))
+        Ok(Secured::Paths { paths, fast })
+    }
+
+    /// ADR-152: hard-links every file of the patch into the git dir (`<prefix>-<n>`, the prefix the `stashed` journal
+    /// already records), right before the checkout unlinks and recreates them, so the restore can rename the
+    /// originals back. All or nothing: each file must be a regular file with one link, without extended attributes,
+    /// on the lock's device, and unchanged since the lock was taken (`max(ctime, mtime) < M0`, so it is the inode
+    /// whose content the verified patch recorded); after the link the backup must be that inode, with two links and
+    /// the same size and mtime (a write between the check and the link would have moved the mtime past `M0`). Any
+    /// failure, more than [`MAX_BACKUPS`] files, or clocks that disagree remove every backup made: `git apply`
+    /// restores. Called only after ADR-097's stat-stamp pass verified the patch (`fast`), whose checks it relies on.
+    fn make_backups(&mut self, paths: &ZList) {
+        let Some(prefix) = self.backup_prefix.clone() else {
+            return;
+        };
+        let Some(stamp) = self.lock.as_ref().and_then(WorktreeLock::stamp) else {
+            return;
+        };
+        if paths.len() > MAX_BACKUPS || self.backups.try_reserve(paths.len()).is_err() {
+            return;
+        }
+        let info = &self.cx.info;
+        let mut ok = true;
+        for (n, rel) in paths.iter().enumerate() {
+            let link = info.git_dir.join(format!("{prefix}-{n}"));
+            let Some(b) = backup_one(&info.root, link, rel, &stamp) else {
+                ok = false;
+                break;
+            };
+            self.backups.push(b);
+        }
+        if !ok || !clock_consistent(&stamp, SystemTime::now(), Instant::now()) {
+            self.remove_backups();
+        } else {
+            self.backed_up = paths.clone();
+        }
+    }
+
+    /// ADR-152: removes every backup still in the git dir (after a restore by rename, the ones it did not rename).
+    fn remove_backups(&mut self) {
+        for b in std::mem::take(&mut self.backups) {
+            let _ignored = std::fs::remove_file(&b.link);
+        }
     }
 
     /// Step 6: the patch synced, then the journal + pointer (state `stashed`), then — without a store journal — the
@@ -1434,7 +1566,18 @@ impl Inner {
         let first = if self.flags.patch == PatchStep::RolledBack {
             Err(Failure::Exit(1))
         } else {
-            self.git_apply(patch, 1)
+            match self.rename_restore() {
+                Renamed::All => Ok(()),
+                Renamed::No => self.git_apply(patch, 1),
+                // the renamed files hold the user's bytes, not the patch's pre-images: the checkout writes them from
+                // the index again, then `git apply` restores everything as usual
+                Renamed::Partial => {
+                    let all = self.backed_up.clone();
+                    self.git()
+                        .checkout_paths(&all, true, Group::Isolated)
+                        .and_then(|()| self.git_apply(patch, 1))
+                }
+            }
         };
         let result = if first.is_ok() {
             Ok(())
@@ -1487,6 +1630,76 @@ impl Inner {
         }
     }
 
+    /// ADR-152: the restore by rename. Tried only with backups of every file of the patch, the oracle's proof
+    /// ([`StashGuard::prove_restore`]), no `stage_fixed` staging and no cleared intent-to-add entry, before the first
+    /// apply. First every file is checked, nothing changed: its proof entry exists; under `core.fileMode` its
+    /// original executable bit is its index mode's (the patch then changes no mode, so `git apply`'s new file gets
+    /// the mode the checkout's new file got); the checked-out file passes the proof's final check (the snapshot's
+    /// `lstat`, and its content when that stat is racy), has one link, is not the backup's inode and carries no
+    /// extended attribute (so a fresh file gets none: no default ACL); the backup is still that inode, with one link
+    /// and its size and mtime, owned by the checked-out file's owner and group (what a fresh file in that directory
+    /// gets), without extended attributes. Then, file by file, a last `lstat` check, the backup's mode set to the
+    /// checked-out file's permission bits and its times to now (`git apply` writes a fresh file: `0666`/`0777` minus
+    /// the umask, as the checkout's), and the rename over the checked-out file. A failed check or a failed first
+    /// rename changes nothing ([`Renamed::No`]); a later failure leaves some files renamed ([`Renamed::Partial`]): the
+    /// caller then checks every backed-up path out again (the index blobs, the patch's pre-images) before `git apply`.
+    fn rename_restore(&mut self) -> Renamed {
+        let proof = self.proof.take();
+        let Some(proof) = proof.filter(|_| {
+            !self.backups.is_empty()
+                && self.flags.patch == PatchStep::Due
+                && self.staged_fixed.is_empty()
+                && self.ita.is_empty()
+        }) else {
+            return Renamed::No;
+        };
+        let mut plan: Vec<(usize, File, u32, PathBuf)> = Vec::new();
+        if plan.try_reserve(self.backups.len()).is_err() {
+            return Renamed::No;
+        }
+        for (i, b) in self.backups.iter().enumerate() {
+            match rename_plan(&proof, b) {
+                Some((f, mode, path)) => plan.push((i, f, mode, path)),
+                None => return Renamed::No,
+            }
+        }
+        let mut renamed: Vec<usize> = Vec::new();
+        let mut failed = false;
+        for (i, f, mode, path) in &plan {
+            fault::hit(Point::StashBackup(2));
+            let Some(b) = self.backups.get(*i) else {
+                failed = true;
+                break;
+            };
+            let still = proof.file(&b.rel).is_some_and(ProofFile::stat_unchanged);
+            if !still || rename_back(f, *mode, &b.link, path).is_err() {
+                failed = true;
+                break;
+            }
+            renamed.push(*i);
+        }
+        drop(plan);
+        // a renamed backup no longer exists under its link name
+        let all = std::mem::take(&mut self.backups);
+        self.backups = all
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| !renamed.contains(i))
+            .map(|(_, b)| b)
+            .collect();
+        if !failed {
+            // restored: as after a successful apply, a panic from here on never makes the `Drop` fallback restore
+            // again
+            self.flags.patch = PatchStep::Idle;
+            fault::hit(Point::StashBackup(3));
+            Renamed::All
+        } else if renamed.is_empty() {
+            Renamed::No
+        } else {
+            Renamed::Partial
+        }
+    }
+
     /// Steps 10–11: restore, intent-to-add re-add, journal cleanup, unlock.
     ///
     /// Resumable: each step marks itself done, so the panic fallback (`Drop`) re-entered after a panic inside one of
@@ -1504,6 +1717,8 @@ impl Inner {
                 result = Err(e);
             }
         }
+        // ADR-152: whatever restored (or failed to), no backup outlives the run
+        self.remove_backups();
         if self.flags.ita_cleared {
             fault::hit(Point::RestoreCommand(6));
             let readd = self.git().add_intent_to_add(&self.ita, Group::Isolated);
@@ -1628,6 +1843,98 @@ fn stamps_older(_info: &RepoInfo, _paths: &ZList, _stamp: &LockStamp) -> bool {
     false
 }
 
+/// ADR-152: one backup of [`Inner::make_backups`]: `rel` under `root` hard-linked as `link`, or `None` (and no link
+/// left behind) when a check fails.
+#[cfg(unix)]
+fn backup_one(root: &Path, link: PathBuf, rel: &[u8], stamp: &LockStamp) -> Option<Backup> {
+    use std::os::unix::fs::MetadataExt;
+    let path = root.join(journal::bytes_path(rel));
+    let md = std::fs::symlink_metadata(&path).ok()?;
+    if !md.is_file()
+        || md.nlink() != 1
+        || md.dev() != stamp.dev
+        || lock::changed_ns(&md) >= stamp.m0_ns
+        || !snp_os::linkback::path_has_no_xattrs(&path).ok()?
+    {
+        return None;
+    }
+    std::fs::hard_link(&path, &link).ok()?;
+    let b = Backup {
+        rel: rel.to_vec(),
+        link,
+        dev: md.dev(),
+        ino: md.ino(),
+        size: md.size(),
+        mtime: (md.mtime(), md.mtime_nsec()),
+        exec: md.mode() & 0o100 != 0,
+    };
+    let same = std::fs::symlink_metadata(&b.link).is_ok_and(|l| {
+        l.is_file()
+            && (l.dev(), l.ino(), l.size(), l.nlink()) == (b.dev, b.ino, b.size, 2)
+            && (l.mtime(), l.mtime_nsec()) == b.mtime
+    });
+    if !same {
+        let _ignored = std::fs::remove_file(&b.link);
+        return None;
+    }
+    Some(b)
+}
+
+#[cfg(not(unix))]
+fn backup_one(_root: &Path, _link: PathBuf, _rel: &[u8], _stamp: &LockStamp) -> Option<Backup> {
+    None
+}
+
+/// ADR-152: the checks of [`Inner::rename_restore`] for one backup: the open backup, the mode to give it and the
+/// path to rename it to, or `None`.
+#[cfg(unix)]
+fn rename_plan(proof: &RestoreProof, b: &Backup) -> Option<(File, u32, PathBuf)> {
+    use std::os::unix::fs::MetadataExt;
+    let f = proof.file(&b.rel)?;
+    if proof.file_mode() && b.exec != f.index_exec() {
+        return None;
+    }
+    let out = proof.content_unchanged(f)?;
+    if out.nlink() != 1
+        || out.ino() == b.ino
+        || out.dev() != b.dev
+        || !snp_os::linkback::path_has_no_xattrs(f.path()).ok()?
+    {
+        return None;
+    }
+    let link_md = std::fs::symlink_metadata(&b.link).ok()?;
+    if !link_md.is_file() {
+        return None;
+    }
+    let file = File::open(&b.link).ok()?;
+    let md = file.metadata().ok()?;
+    let same = md.is_file()
+        && (md.dev(), md.ino(), md.size(), md.nlink()) == (b.dev, b.ino, b.size, 1)
+        && (md.mtime(), md.mtime_nsec()) == b.mtime
+        && (md.uid(), md.gid()) == (out.uid(), out.gid())
+        && snp_os::linkback::file_has_no_xattrs(&file).ok()?;
+    same.then(|| (file, out.mode() & 0o7777, f.path().to_path_buf()))
+}
+
+#[cfg(not(unix))]
+fn rename_plan(_proof: &RestoreProof, _b: &Backup) -> Option<(File, u32, PathBuf)> {
+    None
+}
+
+/// ADR-152: gives the backup `f` (open on `link`) the mode `mode` and the current times, then renames it to `path`.
+#[cfg(unix)]
+fn rename_back(f: &File, mode: u32, link: &Path, path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    f.set_permissions(std::fs::Permissions::from_mode(mode))?;
+    snp_os::linkback::touch_now(f)?;
+    std::fs::rename(link, path)
+}
+
+#[cfg(not(unix))]
+fn rename_back(_f: &File, _mode: u32, _link: &Path, _path: &Path) -> io::Result<()> {
+    Err(io::ErrorKind::Unsupported.into())
+}
+
 /// Truncate a buffered patch file for a rewrite.
 fn rewind(w: &mut BufWriter<File>) -> io::Result<()> {
     w.flush()?;
@@ -1666,6 +1973,16 @@ impl StashGuard {
     /// worktree before [`enter`] may be stale. `false` for a nested run (it never waits) and when the lock was free.
     pub fn lock_contended(&self) -> bool {
         self.contended
+    }
+
+    /// ADR-152: hands over the `DiffOracle`'s [`RestoreProof`] for this stash's checkout list, taken after the last
+    /// hook and any `--show-diff-on-failure` output; the restore then renames the preserved originals back instead of
+    /// running `git apply` when every check of [`StashGuard::restore`]'s rename step passes (Linux; elsewhere, without
+    /// backups, it changes nothing). A proof for other paths fails those checks: `git apply` restores.
+    pub fn prove_restore(&mut self, proof: RestoreProof) {
+        if let Some(inner) = self.inner.as_deref_mut() {
+            inner.proof = Some(proof);
+        }
     }
 
     /// `("_SNP_STASH_LOCK", token)` for nested runs.

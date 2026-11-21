@@ -69,6 +69,41 @@ pub struct DiffOracle {
     verify_proof: bool,
     /// Proven diffs the verify mode found non-empty.
     proof_mismatches: u32,
+    /// ADR-152: set when ADR-119 proved the post-checkout state, kept while every comparison since found no change.
+    restore: Option<RestoreBasis>,
+}
+
+/// What ADR-152's restore proof keeps from ADR-119's (see [`DiffOracle::restore_proof`]).
+#[derive(Debug, Clone, Copy)]
+struct RestoreBasis {
+    /// `core.fileMode` of the proven configuration.
+    file_mode: bool,
+    /// When the worktree was last proven equal to the snapshot (the snapshot itself, or the last comparison that
+    /// found no change).
+    checked_at: i128,
+}
+
+/// ADR-152: the oracle's evidence that the files the stash checked out still hold exactly what the checkout wrote,
+/// with nothing in the run's configuration or attributes converting them, so `git apply` of the stash's patch would
+/// leave each of them holding exactly the bytes it had before the stash (see [`DiffOracle::restore_proof`]). Only
+/// the oracle makes one; the stash guard checks every file again right before it renames ([`StashGuard::prove_restore`]).
+///
+/// [`StashGuard::prove_restore`]: crate::StashGuard::prove_restore
+#[derive(Debug, Clone)]
+pub struct RestoreProof {
+    files: Vec<ProofFile>,
+    checked_at: i128,
+    file_mode: bool,
+}
+
+/// One checked-out file of a [`RestoreProof`].
+#[derive(Debug, Clone)]
+pub(crate) struct ProofFile {
+    rel: Vec<u8>,
+    path: PathBuf,
+    st: St,
+    hash: Option<[u8; 32]>,
+    index_exec: bool,
 }
 
 /// What the index-stat proof did in a run (ADR-134).
@@ -472,6 +507,8 @@ struct Snapshot {
     racy_paths: Vec<(usize, Option<[u8; 32]>)>,
     /// Hashes of the racy inputs.
     racy_inputs: Vec<(usize, Option<[u8; 32]>)>,
+    /// When it was taken (the racy rule's reference time).
+    taken: i128,
 }
 
 /// Stat-mode state.
@@ -708,6 +745,7 @@ fn snapshot_with(
         inputs: input_stats,
         racy_paths,
         racy_inputs,
+        taken,
     }
 }
 
@@ -1064,6 +1102,7 @@ impl DiffOracle {
             proof: None,
             verify_proof: false,
             proof_mismatches: 0,
+            restore: None,
         };
         if oracle.last.is_some()
             && let Some(s) = oracle.stat.as_deref_mut()
@@ -1195,8 +1234,13 @@ impl DiffOracle {
         if !s.checkout_left_no_diff(checked_out, config, answered) {
             return Elision::NotProven;
         }
+        let basis = s.snapshot.as_ref().map(|snap| RestoreBasis {
+            file_mode: config.file_mode,
+            checked_at: snap.taken,
+        });
         if !verify {
             self.last = Some(DiffFingerprint::EMPTY);
+            self.restore = basis;
             return Elision::Elided;
         }
         let Ok(real) = self.git.diff_fingerprint() else {
@@ -1204,6 +1248,7 @@ impl DiffOracle {
         };
         self.last = Some(real);
         if real == DiffFingerprint::EMPTY {
+            self.restore = basis;
             Elision::Verified
         } else {
             Elision::Mismatch
@@ -1240,12 +1285,14 @@ impl DiffOracle {
     /// `git diff`.
     pub fn adopt_baseline(&mut self, baseline: DiffFingerprint) {
         self.last = Some(baseline);
+        self.restore = None;
     }
 
     /// Falls back to Git mode for the rest of the run.
     fn fall_back_to_git_mode(&mut self) {
         self.mode = DiffMode::Git;
         self.stat = None;
+        self.restore = None;
     }
 
     /// Before a hook that may modify files (stat snapshot, or nothing in Git mode).
@@ -1257,6 +1304,7 @@ impl DiffOracle {
             && s.snapshot.is_none()
         {
             s.take_snapshot();
+            self.restore = None;
         }
         if self.last.is_none() {
             self.last = Some(self.fingerprint_now()?);
@@ -1266,12 +1314,20 @@ impl DiffOracle {
 
     /// After it: `Unchanged` without spawning when provably identical, else one real `git diff` and digest compare.
     pub fn after_hook(&mut self) -> Result<Change, Failure> {
+        if self.stat.is_none() {
+            self.restore = None;
+        }
         self.invalidate_trust();
         if let Some(s) = self.stat.as_deref_mut() {
             let (delta, stats, taken) = s.compare();
             if !delta.any && self.last.is_some() {
+                // ADR-152: the worktree is still the snapshot's, proven at `taken`
+                if let Some(r) = self.restore.as_mut() {
+                    r.checked_at = taken;
+                }
                 return Ok(Change::Unchanged);
             }
+            self.restore = None;
             self.refresh_lists(&delta)?;
             match self.stat.as_deref_mut() {
                 Some(s) if !delta.index && !delta.config => {
@@ -1352,6 +1408,8 @@ impl DiffOracle {
         needs_real_diff: bool,
     ) -> Result<Change, Failure> {
         self.invalidate_trust();
+        // ADR-152: a native fixer's report is not a comparison of the worktree with the snapshot
+        self.restore = None;
         if needs_real_diff {
             if let Some(s) = self.stat.as_deref_mut() {
                 s.take_snapshot();
@@ -1380,10 +1438,147 @@ impl DiffOracle {
             && s.snapshot.is_none()
         {
             s.take_snapshot();
+            self.restore = None;
         }
         let d = self.fingerprint_now()?;
         self.last = Some(d);
         Ok(d.non_empty)
+    }
+
+    /// ADR-152: the evidence the stash's restore by rename needs for `checked_out` (the stash's checkout list,
+    /// [`crate::StashGuard::checked_out`]), or `None`.
+    ///
+    /// It exists only when (a) ADR-119 proved the post-checkout state ([`Self::elide_checkout_baseline`] answered
+    /// `Elided` or `Verified`): the checkout wrote each checked-out file's blob bytes and nothing in the configuration
+    /// or the attributes converts any file; (b) every comparison since found no change: the stat snapshot is still
+    /// the post-checkout one, for every tracked path (racy ones compared by content) and every input of `git diff`
+    /// (index, configuration and attributes files), and no native fixer's report or adopted baseline replaced a
+    /// comparison; (c) the last fingerprint is the empty diff; and (d) every checked-out path is a regular file of
+    /// mode `100644` or `100755` in the snapshot, hashed when it was racy. The proof carries each file's snapshot
+    /// stat, hash and index mode, `core.fileMode`, and when the worktree was last proven equal to the snapshot.
+    pub fn restore_proof(&self, checked_out: &ZList) -> Option<RestoreProof> {
+        let basis = self.restore?;
+        if self.mode != DiffMode::Stat || self.last != Some(DiffFingerprint::EMPTY) {
+            return None;
+        }
+        let s = self.stat.as_deref()?;
+        let snap = s.snapshot.as_ref()?;
+        let want: HashSet<&[u8]> = checked_out.iter().collect();
+        if want.is_empty() || want.len() != checked_out.len() {
+            return None;
+        }
+        let mut files: Vec<ProofFile> = Vec::new();
+        files.try_reserve(want.len()).ok()?;
+        let mut slot = 0_usize;
+        let mut last: Option<&[u8]> = None;
+        for (p, mode) in s.tracked.paths.iter().zip(s.tracked.modes.iter().copied()) {
+            // the slot rule of `tracked_paths`
+            if mode == GITLINK || last == Some(p) {
+                if want.contains(p) {
+                    return None;
+                }
+                continue;
+            }
+            last = Some(p);
+            if want.contains(p) {
+                let st = *snap.paths.get(slot)?;
+                let path = s.paths.get(slot)?.clone();
+                let hash = match snap.racy_paths.binary_search_by_key(&slot, |(i, _)| *i) {
+                    Ok(k) => Some(snap.racy_paths.get(k)?.1?),
+                    Err(_) => None,
+                };
+                if st.kind != Kind::File || !matches!(mode, 0o100_644 | 0o100_755) {
+                    return None;
+                }
+                files.push(ProofFile {
+                    rel: p.to_vec(),
+                    path,
+                    st,
+                    hash,
+                    index_exec: mode == 0o100_755,
+                });
+            }
+            slot = slot.saturating_add(1);
+        }
+        (files.len() == want.len()).then_some(RestoreProof {
+            files,
+            checked_at: basis.checked_at,
+            file_mode: basis.file_mode,
+        })
+    }
+}
+
+impl RestoreProof {
+    /// The proof's entry for the repository path `rel`.
+    pub(crate) fn file(&self, rel: &[u8]) -> Option<&ProofFile> {
+        self.files.iter().find(|f| f.rel == rel)
+    }
+
+    /// `core.fileMode` of the proven configuration.
+    #[cfg_attr(
+        not(unix),
+        expect(
+            dead_code,
+            reason = "ADR-152 renames on Unix builds only (Linux at run time)"
+        )
+    )]
+    pub(crate) const fn file_mode(&self) -> bool {
+        self.file_mode
+    }
+
+    /// The final check of `f` (ADR-152): its `lstat` is exactly the snapshot's, and when that stat is racy against
+    /// the last time the worktree was proven equal to the snapshot (a same-size write within the timestamp
+    /// granularity would not show), its content hashes to the snapshot's hash. Returns the `lstat` result.
+    #[cfg_attr(
+        not(unix),
+        expect(
+            dead_code,
+            reason = "ADR-152 renames on Unix builds only (Linux at run time)"
+        )
+    )]
+    pub(crate) fn content_unchanged(&self, f: &ProofFile) -> Option<std::fs::Metadata> {
+        let md = std::fs::symlink_metadata(&f.path).ok()?;
+        if St::from_metadata(&md) != f.st {
+            return None;
+        }
+        if f.st.racy(self.checked_at) {
+            let now = content_hash(&f.path, Kind::File, false)?;
+            if Some(now) != f.hash {
+                return None;
+            }
+        }
+        Some(md)
+    }
+}
+
+impl ProofFile {
+    /// Whether its `lstat` is still exactly the snapshot's (the stat check right before its rename).
+    pub(crate) fn stat_unchanged(&self) -> bool {
+        std::fs::symlink_metadata(&self.path).is_ok_and(|md| St::from_metadata(&md) == self.st)
+    }
+
+    /// The file's path in the worktree.
+    #[cfg_attr(
+        not(unix),
+        expect(
+            dead_code,
+            reason = "ADR-152 renames on Unix builds only (Linux at run time)"
+        )
+    )]
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Whether its index entry is `100755`.
+    #[cfg_attr(
+        not(unix),
+        expect(
+            dead_code,
+            reason = "ADR-152 renames on Unix builds only (Linux at run time)"
+        )
+    )]
+    pub(crate) const fn index_exec(&self) -> bool {
+        self.index_exec
     }
 }
 

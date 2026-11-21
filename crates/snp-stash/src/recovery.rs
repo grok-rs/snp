@@ -288,6 +288,9 @@ pub(crate) struct Scan {
     /// Runs with no unrestored patch whose intent-to-add re-add may not have run. Reported once (no unstaged
     /// content is at risk), then deleted.
     pub(crate) ita_only: Vec<ItaOnly>,
+    /// ADR-152: the backup name prefixes the runs' journals record. The backups only duplicate what each durable,
+    /// verified patch holds, so a pass holding the lock removes them whatever the run's state.
+    pub(crate) backups: Vec<String>,
 }
 
 /// A run whose patch was never restored, with the files that journal it.
@@ -395,6 +398,13 @@ impl Run {
             .or_else(|| self.pointer.as_ref().and_then(|p| p.tree.clone()))
     }
 
+    fn backups(&self) -> Option<String> {
+        self.data
+            .as_ref()
+            .and_then(|d| d.backups.clone())
+            .or_else(|| self.pointer.as_ref().and_then(|p| p.backups.clone()))
+    }
+
     fn staged_fixed(&self) -> Vec<RepoPath> {
         let raw: &[Vec<u8>] = match (&self.data, &self.pointer) {
             (Some(d), _) if !d.staged_fixed.is_empty() => &d.staged_fixed,
@@ -482,6 +492,7 @@ pub(crate) fn scan(git_dir: &Path, patches_dir: &Path, worktree_root: &Path) -> 
     }
     let mut out = Scan::default();
     for run in runs.into_values() {
+        out.backups.extend(run.backups());
         let state = run.state();
         let patch = run.patch().filter(|p| p.is_file());
         match patch {
@@ -563,6 +574,9 @@ pub(crate) fn report_locked(
     for stale in &scan.stale {
         let _ignored = std::fs::remove_file(stale);
     }
+    for prefix in &scan.backups {
+        journal::remove_backups(git_dir, prefix);
+    }
     let mut out = Vec::new();
     let mut pending = false;
     for o in &scan.unrestored {
@@ -634,6 +648,9 @@ pub fn dismiss_unrestored(
         return Vec::new();
     };
     let scan = scan(git_dir, patches_dir, worktree_root);
+    for prefix in &scan.backups {
+        journal::remove_backups(git_dir, prefix);
+    }
     let mut out = Vec::new();
     for o in &scan.unrestored {
         out.push(Dismissed {
