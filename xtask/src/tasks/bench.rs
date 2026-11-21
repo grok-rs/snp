@@ -6882,7 +6882,12 @@ mod tests {
         );
 
         // end to end: the URL resolves to the local repository through the written gitconfig (`.invalid` itself never
-        // resolves, so a missing or wrong mapping fails here)
+        // resolves, so a missing or wrong mapping fails here). Unix only: `scratch_work` pins the Unix PATH and a
+        // canonical (`\\?\`) HOME, which Git for Windows cannot read its configuration under; the bench itself runs on
+        // Linux and macOS, and the text assertions above hold on every platform.
+        if cfg!(windows) {
+            return;
+        }
         let (base, work) = scratch_work("gc500-url");
         write_gitconfig(&work).unwrap();
         let repo = work
