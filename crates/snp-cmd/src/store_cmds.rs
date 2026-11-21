@@ -1091,8 +1091,11 @@ mod tests {
                     names(&base.join("store/keys-v1")),
                 );
                 let cancel = CancelToken::new();
-                let out = run_gc(&base, width, permits, &cancel, &|i| {
-                    if i == 3 {
+                // Ctrl-C at the first config processed: the order follows the configs-v1 listing, so a fixed index
+                // could be the last one checked, after which no later check sees the cancellation (as serially)
+                let fired = std::sync::atomic::AtomicBool::new(false);
+                let out = run_gc(&base, width, permits, &cancel, &|_| {
+                    if !fired.swap(true, std::sync::atomic::Ordering::Relaxed) {
                         cancel.cancel(CancelReason::Interrupt);
                     }
                 });
