@@ -197,7 +197,8 @@ fn ita_entries(h: &H) -> String {
 }
 
 fn with_backend(mut h: H, rec: &Arc<Rec>) -> H {
-    h.backend = Some(Arc::clone(rec) as Arc<dyn GitBackend>);
+    let backend: Arc<dyn GitBackend> = Arc::<Rec>::clone(rec);
+    h.backend = Some(backend);
     h
 }
 
@@ -372,24 +373,34 @@ fn no_speculation_with_git_dir_from_a_subdirectory_in_a_worktree_or_for_all_file
     }
 }
 
-/// Discovery reports another layout than the cwd's (the cwd is a symbolic link to the repository: git prints the
-/// real git directory): the speculative answers are dropped and step 6 asks again; the run ends as usual.
+/// Discovery reports another layout than the cwd's (the cwd is a symbolic link to the repository: git >= 2.31 prints
+/// the real git directory for `--path-format=absolute`): the speculative answers are dropped and step 6 asks again;
+/// the run ends as usual. An older git, whose answer is joined to the cwd, reports the cwd's layout: kept then.
 #[test]
 fn speculation_is_discarded_when_discovery_reports_another_layout() {
     let (mut h, trace) = repo();
     let link = h.base.join("link");
     std::os::unix::fs::symlink(&h.root, &link).unwrap();
-    h.cwd = Some(link);
+    h.cwd = Some(link.clone());
+    let env = Env::from_pairs(h.env.iter().cloned());
+    let exe = Arc::new(snp_git::GitExe::resolve(&env, &link, None).unwrap());
+    let backend: Arc<dyn GitBackend> = Rec::new(None);
+    let (_, info) = snp_git::Git::discover(exe, &env, &link, backend).unwrap();
+    let asked = if info.git_dir == link.join(".git") {
+        1
+    } else {
+        2
+    };
     let rec = Rec::holding();
     let h = with_backend(h, &rec);
     let o = h.run(args());
     assert_passed(&o);
     assert!(rec.speculated(), "{:#?}", rec.events.lock().unwrap());
-    assert_eq!(rec.count("diff --quiet"), 2, "speculated, then asked again");
+    assert_eq!(rec.count("diff --quiet"), asked, "kept, or asked again");
     let t = traced(&trace);
     assert_eq!(
         t.iter().filter(|a| a.starts_with("diff --quiet")).count(),
-        2,
+        asked,
         "{t:#?}"
     );
     assert_eq!(h.read("t.txt"), "t\nunstaged\n");

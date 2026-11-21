@@ -89,12 +89,11 @@ const CHECKOUT_CHUNK_BYTES: usize = 24 * 1024;
 const ITA_PROOF_MAX_ENTRIES: u32 = 16_384;
 
 /// `config` bytes that may name an object format (`extensions.objectFormat`, `extensions.compatObjectFormat`): a
-/// variable name is one run of letters, digits and dashes, so any setting spells `objectformat` in some case.
-fn names_object_format(config: &[u8]) -> bool {
-    const KEY: &[u8] = b"objectformat";
-    config
-        .windows(KEY.len())
-        .any(|w| w.eq_ignore_ascii_case(KEY))
+/// variable name is one run of letters, digits and dashes, so any setting spells `objectformat` in some case
+/// (lowercased in place first).
+fn names_object_format(mut config: Vec<u8>) -> bool {
+    config.make_ascii_lowercase();
+    memchr::memmem::find(&config, b"objectformat").is_some()
 }
 
 /// One git call of the stash's path-limited checkout ([`Git::checkout_path_calls`]): the arguments after `git` and its
@@ -1071,7 +1070,7 @@ impl Git {
             return false;
         }
         let sha1 = snp_os::fs::read_capped(&info.common_dir.join("config"), 1 << 20)
-            .is_ok_and(|c| !names_object_format(&c));
+            .is_ok_and(|c| !names_object_format(c));
         sha1 && crate::index_file::IndexFile::read(&info.index_file, 20).is_ok_and(|i| {
             !i.entries
                 .iter()

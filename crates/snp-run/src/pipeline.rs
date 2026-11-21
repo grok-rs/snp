@@ -210,16 +210,20 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         let ask = cx.git_exe.caps.attr_system && six.stamp.is_some();
         let (entered, system) =
             enter_overlapping_system_query(ask, &git0, &info, &run_env, |notice| {
-                snp_stash::enter(stash_ctx(
-                    cx,
-                    inv.store,
-                    &git0,
-                    &info,
-                    &run_env,
-                    !recovery_reported,
-                    notice,
-                    six.ita_empty,
-                ))
+                let stash_cx = StashCtx {
+                    // step 6's empty intent-to-add answer (ADR-154)
+                    intent_to_add_hint: six.ita_empty,
+                    ..stash_ctx(
+                        cx,
+                        inv.store,
+                        &git0,
+                        &info,
+                        &run_env,
+                        !recovery_reported,
+                        notice,
+                    )
+                };
+                snp_stash::enter(stash_cx)
             });
         let guard = entered?;
         system_attributes = system;
@@ -556,8 +560,9 @@ fn index_trust(sel: &Selection<'_>, picked: &Picked<'_>, git: &Git) -> Option<tr
 }
 
 /// §3.1 step 3: discovery (or the caller's), with the config discovered and loaded at the invocation cwd on a thread
-/// meanwhile (`run` only; ADR-104). The thread's result is `None` when it could not start or panicked: step 6 then
-/// loads as before.
+/// meanwhile (`run` only; ADR-104), and, under [`speculative_layout`]'s gates, step 6 asked by that thread for the
+/// cwd's layout (ADR-154). The thread's result is `None` when it could not start or panicked: step 6 then loads and
+/// asks as before.
 fn discover(
     cx: &RunCtx,
     a: &RunArgs,
@@ -959,7 +964,6 @@ fn stash_ctx(
     run_env: &Env,
     report_recovery: bool,
     checkout_notice: Option<std::sync::mpsc::SyncSender<()>>,
-    intent_to_add_hint: Option<snp_git::IndexStamp>,
 ) -> StashCtx {
     let backend = Arc::new(ProcBackend {
         cancel: snp_core::cancel::CancelToken::new(),
@@ -984,7 +988,7 @@ fn stash_ctx(
         }),
         report_recovery,
         checkout_notice,
-        intent_to_add_hint,
+        intent_to_add_hint: None,
     }
 }
 
