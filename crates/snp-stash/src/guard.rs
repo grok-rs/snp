@@ -33,13 +33,13 @@ use snp_core::failure::Failure;
 use snp_core::fault::{self, Point};
 use snp_core::output::{Level, Printer};
 use snp_core::path::RepoPath;
-use snp_git::{DiffIndex, Git, IndexStamp, ObjectId, RepoInfo, ZList};
+use snp_git::{ConfigListing, DiffIndex, Git, IndexStamp, ObjectId, RepoInfo, ZList};
 use snp_proc::signals::SignalGuard;
 use snp_proc::spawn::Group;
 
 use crate::journal::{self, JournalData, PointerData, State};
 use crate::lock::{self, Acquired, LockStamp, WorktreeLock};
-use crate::{messages, recovery};
+use crate::{messages, recovery, tree_elision};
 
 /// Owns cheap handles (`Git` and `Printer` are `Arc`-backed) so the guard has no lifetime and can live inside
 /// `RunState`. `git` must be built with `Git::with_backend(ProcBackend { cancel: CancelToken::new(), role:
@@ -82,6 +82,11 @@ pub struct StashCtx {
     /// that answer instead of asking again iff the worktree lock was not contended and the index still has this
     /// stamp; otherwise it asks at pre-commit's position. `None` always asks.
     pub intent_to_add_hint: Option<IndexStamp>,
+    /// The run's `git config --list --show-origin -z` answer (step 6's G), when it was taken: with it, steps 4 and 5
+    /// may decide `write-tree` and `diff-index` in-process on the provably clean path (snp-only, ADR-153). Ignored
+    /// when the worktree lock was contended (another run's hooks may have changed the configuration). `None` always
+    /// runs both.
+    pub config_listing: Option<Arc<ConfigListing>>,
 }
 
 impl StashCtx {
@@ -720,11 +725,15 @@ impl Inner {
         // taken here, so every return below drops it unsent unless step 8 is reached
         let notice = self.cx.checkout_notice.take();
         // 3. intent-to-add (`_intent_to_add_cleared`, + `--no-renames`: hazard b), or the run's earlier empty answer
-        // on this very index (ADR-154).
-        let ita = if self.intent_to_add_known_empty() {
-            ZList::default()
+        // on this very index (ADR-154). `read`: the stamp of an index git read successfully in this run (ADR-153).
+        let (ita, read) = if self.intent_to_add_known_empty() {
+            (ZList::default(), self.cx.intent_to_add_hint)
         } else {
-            self.git().intent_to_add()?
+            let before = self.git().index_stamp(&self.cx.info);
+            let ita = self.git().intent_to_add()?;
+            let after = self.git().index_stamp(&self.cx.info);
+            let read = before.filter(|b| ita.is_empty() && after.as_ref() == Some(b));
+            (ita, read)
         };
         if !ita.is_empty() {
             self.printer().log(Level::Warning, messages::ITA_DETECTED);
@@ -735,11 +744,16 @@ impl Inner {
             self.git().rm_cached(&self.ita, Group::Isolated)?;
             fault::hit(Point::StashState(3));
         }
-        // 4. tree (checked → CalledProcessError, exit 3).
-        let tree = self.git().write_tree()?;
+        // 4. tree (checked → CalledProcessError, exit 3), or the root git would print (ADR-153).
+        let (tree, proven) = self.tree_and_proof(read)?;
         self.tree = Some(tree.clone());
-        // 5. diff-index.
-        let (path, w) = match self.first_pass(&tree)? {
+        // 5. diff-index, unless ADR-153 proved it prints nothing (as rc 0 does: no patch, clean).
+        let first = if proven {
+            FirstPass::Nothing { clean: true }
+        } else {
+            self.first_pass(&tree)?
+        };
+        let (path, w) = match first {
             FirstPass::Nothing { clean } => return Ok(StashOutcome::Nothing { clean }),
             FirstPass::Patch { path, w } => (path, w),
         };
@@ -777,6 +791,66 @@ impl Inner {
         !contended
             && self.cx.intent_to_add_hint.is_some()
             && self.git().index_stamp(&self.cx.info) == self.cx.intent_to_add_hint
+    }
+
+    /// Steps 4 and 5's in-process decision (ADR-153, [`tree_elision`]): the tree `write-tree` prints, and whether
+    /// `diff-index` on it is proven to exit 0 with nothing printed (then step 5 does not run).
+    ///
+    /// With step 6's configuration answer (not after a contended lock) and `read`, the stamp of an index git read
+    /// successfully in this run: when [`tree_elision::prepare`] shows that `write-tree` would print the cache-tree's
+    /// root and write nothing, and [`tree_elision::lock_probe`] took and gave back `write-tree`'s lock, the root is
+    /// the tree without a spawn; otherwise the real `write-tree` runs (its errors are pre-commit's), and the proof is
+    /// tried on the index as it left it. The proof ([`tree_elision::diff_index_empty`]) needs the tree to be the
+    /// cache-tree's root, byte-verified against the index. `SNP_VERIFY_STASH_ELISION=1` runs the real commands too
+    /// and keeps their answer, reporting a disagreement on stderr.
+    fn tree_and_proof(&self, read: Option<IndexStamp>) -> Result<(ObjectId, bool), Failure> {
+        let (git, info) = (self.git(), &self.cx.info);
+        let env = git.env();
+        let contended = self.lock.as_ref().is_some_and(WorktreeLock::contended);
+        let listing = self.cx.config_listing.as_deref().filter(|_| !contended);
+        let verify = env.is_truthy_flag("SNP_VERIFY_STASH_ELISION");
+        let elided = listing
+            .zip(read)
+            .and_then(|(l, r)| tree_elision::prepare(git, info, env, l, r))
+            .filter(|_| tree_elision::lock_probe(&info.index_file));
+        let was_elided = elided.is_some();
+        let (mut tree, prepared) = if let Some(p) = elided {
+            (p.root().clone(), Some(p))
+        } else {
+            let tree = git.write_tree()?;
+            // the index as write-tree left it: git wrote it under its lock, or read it unchanged
+            let after = git.index_stamp(info);
+            let p = listing
+                .zip(after)
+                .and_then(|(l, a)| tree_elision::prepare(git, info, env, l, a));
+            (tree, p)
+        };
+        let mut proven = prepared
+            .as_ref()
+            .is_some_and(|p| tree_elision::diff_index_empty(git, info, env, p, &tree));
+        if verify {
+            let mut agreed = true;
+            if was_elided {
+                let real = git.write_tree()?;
+                agreed = real == tree;
+                if !agreed {
+                    tree = real;
+                    proven = false;
+                }
+            }
+            if proven {
+                let clean = matches!(
+                    git.diff_index_patch(&tree, &mut io::sink())?,
+                    DiffIndex::Clean
+                );
+                agreed &= clean;
+                proven = clean;
+            }
+            if !agreed {
+                self.printer().diag(messages::ELISION_MISMATCH);
+            }
+        }
+        Ok((tree, proven))
     }
 
     /// Step 5: the first `diff-index`, streamed into the lazily created patch file. Every exit without a usable

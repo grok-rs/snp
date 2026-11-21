@@ -53,6 +53,7 @@ mod api {
             report_recovery: true,
             checkout_notice: None,
             intent_to_add_hint: None,
+            config_listing: None,
         }
     }
 

@@ -29,6 +29,10 @@ pub(crate) const LOCK_WAIT: &str = "snp: waiting for another snp run in this wor
 pub(crate) const TTY_STOPPED: &str =
     "snp: git needed the terminal during the restore and was stopped";
 
+/// ADR-153: `SNP_VERIFY_STASH_ELISION=1` found the real `write-tree` or `diff-index` disagreeing with the in-process
+/// decision (stderr, once per run: there is one stash).
+pub(crate) const ELISION_MISMATCH: &str = "snp: SNP_VERIFY_STASH_ELISION: an elided write-tree or diff-index disagreed with git; using git's answer";
+
 /// D-DATA-13: the re-verification `diff-index` kept disagreeing with the saved patch (ARCHITECTURE §4.2 step 6).
 pub(crate) const KEPT_CHANGING: &str =
     "snp: unstaged files kept changing while stashing; nothing was modified";

@@ -213,6 +213,8 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
                 let stash_cx = StashCtx {
                     // step 6's empty intent-to-add answer (ADR-154)
                     intent_to_add_hint: six.ita_empty,
+                    // step 6's G, for the in-process write-tree and diff-index (ADR-153)
+                    config_listing: six.early.origins.clone(),
                     ..stash_ctx(
                         cx,
                         inv.store,
@@ -989,6 +991,7 @@ fn stash_ctx(
         report_recovery,
         checkout_notice,
         intent_to_add_hint: None,
+        config_listing: None,
     }
 }
 
@@ -1492,6 +1495,7 @@ mod tests {
             report_recovery: true,
             checkout_notice: None,
             intent_to_add_hint: None,
+            config_listing: None,
         })
         .unwrap();
         // the stash took the unstaged line away; a "hook" modified the file

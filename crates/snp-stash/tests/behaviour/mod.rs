@@ -6,3 +6,4 @@ mod index_proof;
 mod oracle;
 mod recovery;
 mod stage_fixed;
+mod tree_elision;

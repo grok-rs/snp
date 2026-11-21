@@ -17,6 +17,8 @@ mod attributes;
 mod gitconfig;
 mod index_proof;
 
+pub(crate) use index_proof::every_entry_stat_clean;
+
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
