@@ -627,4 +627,141 @@ mod process {
         assert_eq!(sb.read(&repo, "foo"), b"x\n");
         assert!(!repo.join(".git/snp-stash.journal").exists());
     }
+
+    /// ADR-152's scenario (no intent-to-add entry, which would refuse the rename): unstaged changes to `a.txt` and
+    /// `d/b.txt`, a staged `s.txt`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn rename_scenario(sb: &Sandbox) -> PathBuf {
+        let repo = sb.init("r");
+        sb.write(&repo, "a.txt", FOO.as_bytes());
+        sb.write(&repo, "d/b.txt", FOO.as_bytes());
+        sb.write(&repo, "s.txt", b"s\n");
+        sb.git(&repo, &["add", "."]);
+        sb.commit(&repo, "init");
+        sb.write(&repo, "s.txt", b"staged\n");
+        sb.git(&repo, &["add", "s.txt"]);
+        sb.write(&repo, "a.txt", FOO.replace('3', "three").as_bytes());
+        sb.write(&repo, "d/b.txt", FOO.replace('5', "five").as_bytes());
+        repo
+    }
+
+    /// The restore by rename runs (the original inodes come back) and leaves no backup.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn a_proven_driver_run_renames_the_originals_back() {
+        use std::os::unix::fs::MetadataExt;
+        let sb = Sandbox::new();
+        let repo = rename_scenario(&sb);
+        // inode and birth time: a new file may reuse a freed inode number, never the birth time
+        let ino = |f: &str| {
+            let m = std::fs::metadata(repo.join(f)).unwrap();
+            (m.ino(), m.created().ok())
+        };
+        let before = (ino("a.txt"), ino("d/b.txt"));
+        let diff = sb.unstaged_diff(&repo);
+        let out = driver(&sb, &repo, &["--rename-proof"], &["true"])
+            .env("PATH", wrapper_path(&sb))
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", text(&out.stderr));
+        assert!(text(&out.stdout).contains("[INFO] Restored changes from "));
+        assert_eq!((ino("a.txt"), ino("d/b.txt")), before);
+        assert_eq!(sb.unstaged_diff(&repo), diff);
+        let log = std::fs::read_to_string(sb.path("git-log")).unwrap();
+        assert!(!log.contains(" apply --whitespace=nowarn "), "{log}");
+        assert_eq!(
+            crate::common::backups_in(&repo.join(".git")),
+            Vec::<String>::new()
+        );
+    }
+
+    /// The kill -9 rows of ADR-152: an abort right after the backups were made (before the checkout), before the
+    /// first and before the second rename, and after the last one. The `stashed` journal names the backups' prefix, so
+    /// the next run's recovery removes every backup; its notice (a recovery hint, or the retirement notice when the
+    /// changes are already back), run exactly as printed, gives back the pre-run worktree and index.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn kill_9_at_each_rename_step_leaves_a_recoverable_state() {
+        for (spec, left, back) in [
+            ("StashBackup(1)", 2, true),
+            ("StashBackup(2)", 2, false),
+            ("StashBackup(2)@2", 1, false),
+            ("StashBackup(3)", 0, true),
+        ] {
+            let sb = Sandbox::new();
+            let repo = rename_scenario(&sb);
+            let diff = sb.unstaged_diff(&repo);
+            let index = sb.index(&repo);
+            let out = driver(&sb, &repo, &["--abort-on-fault", "--rename-proof"], &[])
+                .env("SNP_FAULT", spec)
+                .output()
+                .unwrap();
+            killed_by(out.status, 6);
+            let git_dir = repo.join(".git");
+            assert_eq!(
+                crate::common::backups_in(&git_dir).len(),
+                left,
+                "{spec}: backups the crash left"
+            );
+            let found = snp_stash::recovery_scan(&git_dir, &sb.patches(), &repo);
+            assert_eq!(
+                (found.len(), found.first().map(|u| &*u.state)),
+                (1, Some("stashed")),
+                "{spec}"
+            );
+            let next = driver(&sb, &repo, &[], &[]).output().unwrap();
+            assert!(next.status.success(), "{spec}: {}", text(&next.stderr));
+            let notice = text(&next.stderr);
+            assert_eq!(
+                crate::common::backups_in(&git_dir),
+                Vec::<String>::new(),
+                "{spec}: the recovery removed the backups"
+            );
+            if back {
+                assert_eq!(
+                    notice,
+                    format!("{}\n", snp_stash_retired(&found[0].patch)),
+                    "{spec}"
+                );
+            } else {
+                // the hint, then once how to dismiss it
+                let hint = found[0].hint();
+                assert!(
+                    notice.starts_with(&format!("{hint}\nsnp: this notice repeats ")),
+                    "{spec}: {notice}"
+                );
+                if spec == "StashBackup(2)@2" {
+                    // one file is back already, so `git apply` refuses (as after a crash inside `git apply`): the
+                    // hint's second step puts the patch's files back from the stash-time tree first
+                    let put_back = hint
+                        .split("put them back with ")
+                        .nth(1)
+                        .and_then(|r| r.split(", then run the command again").next())
+                        .unwrap();
+                    let out = Command::new("sh")
+                        .arg("-c")
+                        .arg(put_back)
+                        .current_dir(&repo)
+                        .env_clear()
+                        .envs(sb.env.iter())
+                        .output()
+                        .unwrap();
+                    assert!(out.status.success(), "{put_back}: {}", text(&out.stderr));
+                }
+                run_hint(&sb, &repo, &hint);
+            }
+            assert_eq!(sb.unstaged_diff(&repo), diff, "{spec}: worktree");
+            assert_eq!(sb.index(&repo), index, "{spec}: index");
+        }
+    }
+
+    /// The retirement notice (`messages::retired_notice`).
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn snp_stash_retired(patch: &Path) -> String {
+        format!(
+            "snp: the unstaged changes saved in {} are back in the worktree; the recovery notice of that interrupted \
+             run is retired",
+            patch.display()
+        )
+    }
 }

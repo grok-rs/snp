@@ -29,7 +29,7 @@ mod fi {
     use snp_git::GitBackend;
     use snp_git::testing::{Response, ScriptedBackend};
 
-    use crate::common::{FOO, Sandbox, exc};
+    use crate::common::{FOO, Sandbox, backups_in, exc, prove_around};
 
     /// Fault points are process-global: one case at a time.
     static SERIAL: Mutex<()> = Mutex::new(());
@@ -572,5 +572,71 @@ mod fi {
         assert_eq!(e.exit_code(), 3);
         c.assert_pre_run_state();
         assert!(Path::new(&c.repo).is_dir());
+    }
+
+    /// FI-31…FI-34 (ADR-152, Linux): a panic at each step of the hard-link backups and of the restore by rename:
+    /// after the backups (right before the checkout), before the first and before the second rename, and after the
+    /// last one. The `Drop` fallback finishes the restore (`git apply`, through the conflict rollback when a file was
+    /// already renamed back): the worktree and the index end as they began, and no backup, journal or pointer is left.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn fi_31_to_34_panic_at_each_rename_step_restores() {
+        let _s = serial();
+        for spec in [
+            "StashBackup(1)",
+            "StashBackup(2)",
+            "StashBackup(2)@2",
+            "StashBackup(3)",
+        ] {
+            let sb = Sandbox::new();
+            let repo = sb.init("r");
+            sb.write(&repo, "a.txt", FOO.as_bytes());
+            sb.write(&repo, "d/b.txt", FOO.as_bytes());
+            sb.write(&repo, "s.txt", b"s\n");
+            sb.git(&repo, &["add", "."]);
+            sb.commit(&repo, "init");
+            sb.write(&repo, "s.txt", b"staged\n");
+            sb.git(&repo, &["add", "s.txt"]);
+            sb.write(&repo, "a.txt", FOO.replace('3', "three").as_bytes());
+            sb.write(&repo, "d/b.txt", FOO.replace('5', "five").as_bytes());
+            let diff = sb.unstaged_diff(&repo);
+            let index = sb.index(&repo);
+            let (cx, out, _) = sb.ctx(&repo);
+            arm(spec);
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut g = snp_stash::enter(cx)?;
+                assert!(prove_around(&sb, &repo, &mut g, || {}), "{spec}: proven");
+                g.restore()
+            }));
+            disarm();
+            let payload = r.unwrap_err();
+            let point = spec.split('@').next().unwrap_or_default();
+            assert_eq!(
+                payload
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .unwrap_or_default(),
+                format!("snp fault injection: {point}")
+            );
+            assert_eq!(sb.unstaged_diff(&repo), diff, "{spec}: worktree");
+            assert_eq!(sb.index(&repo), index, "{spec}: index");
+            assert_eq!(
+                backups_in(&repo.join(".git")),
+                Vec::<String>::new(),
+                "{spec}"
+            );
+            assert!(
+                snp_stash::find_unrestored(&repo.join(".git"), &sb.patches(), &repo).is_empty(),
+                "{spec}"
+            );
+            assert!(!repo.join(".git/snp-stash.journal").exists(), "{spec}");
+            // a file already renamed back makes the fallback's first apply conflict
+            assert_eq!(
+                out.text().contains("Rolling back"),
+                spec == "StashBackup(2)@2",
+                "{spec}: {}",
+                out.text()
+            );
+        }
     }
 }

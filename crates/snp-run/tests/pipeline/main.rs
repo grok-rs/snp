@@ -28,6 +28,8 @@ mod meta;
 #[cfg(test)]
 mod prefetch;
 #[cfg(test)]
+mod restore_rename;
+#[cfg(test)]
 mod run;
 #[cfg(test)]
 mod trust;

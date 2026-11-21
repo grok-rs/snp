@@ -615,3 +615,51 @@ impl GitBackend for Spy {
         }
     }
 }
+
+/// ADR-152: what `snp run` does with the `DiffOracle` around the hooks of a stashed run, with `hook` as the only
+/// hook: the oracle built from the post-checkout index and configuration, ADR-119's elision of the checkout's
+/// baseline, one comparison around `hook`, and the restore proof handed to the guard. Returns whether a proof was
+/// handed over.
+pub(crate) fn prove_around(
+    sb: &Sandbox,
+    repo: &Path,
+    g: &mut snp_stash::StashGuard,
+    hook: impl FnOnce(),
+) -> bool {
+    use snp_stash::diff_oracle::DiffOracle;
+    let (git, info) = sb.discover(repo);
+    let tracked = Arc::new(git.tracked_with_modes().unwrap());
+    let listing = git.config_listing().unwrap();
+    let mut o = DiffOracle::new(
+        &git,
+        &info,
+        &sb.env,
+        None,
+        Some(tracked),
+        Some(Arc::clone(&listing.files)),
+    )
+    .unwrap();
+    if let Some(paths) = g.checked_out() {
+        o.elide_checkout_baseline(paths, &listing.checkout, None, false);
+    }
+    o.before_hook().unwrap();
+    hook();
+    o.after_hook().unwrap();
+    match g.checked_out().and_then(|p| o.restore_proof(p)) {
+        Some(p) => {
+            g.prove_restore(p);
+            true
+        }
+        None => false,
+    }
+}
+
+/// ADR-152: the hard-link backups left in a git dir (`snp-stash-bk-*`).
+pub(crate) fn backups_in(git_dir: &Path) -> Vec<String> {
+    std::fs::read_dir(git_dir).map_or_default(|rd| {
+        rd.filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("snp-stash-bk-"))
+            .collect()
+    })
+}
