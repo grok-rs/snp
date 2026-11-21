@@ -305,8 +305,14 @@ fn system_attributes_fails_closed() {
     let asked =
         |scripted: &ScriptedBackend| scripted.calls().iter().filter(|c| args(c) == var).count();
     let new = sb.exe().caps.attr_system;
-    scripted.on(var, exit(0, b"/opt/git/etc/gitattributes\n", b""));
-    let want = new.then(|| snp_git::SystemAttributes::File("/opt/git/etc/gitattributes".into()));
+    // an absolute path of the platform: Git for Windows answers with a drive letter
+    let abs = if cfg!(windows) {
+        "C:/Program Files/Git/etc/gitattributes"
+    } else {
+        "/opt/git/etc/gitattributes"
+    };
+    scripted.on(var, exit(0, format!("{abs}\n").as_bytes(), b""));
+    let want = new.then(|| snp_git::SystemAttributes::File(abs.into()));
     assert_eq!(git.system_attributes(), want);
     for r in [
         Response::SpawnError(2),

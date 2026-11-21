@@ -898,14 +898,36 @@ crlf"
     #[test]
     fn system_attributes_answers() {
         let file = |p: &str| Some(SystemAttributes::File(PathBuf::from(p)));
+        // an absolute path of the platform: Git for Windows answers with a drive letter
+        let (abs, spaced) = if cfg!(windows) {
+            ("C:/Program Files/Git/etc/gitattributes", "C:/opt/a b/attrs")
+        } else {
+            ("/etc/gitattributes", "/opt/a b/attrs")
+        };
         assert_eq!(
-            system_attributes(0, b"/etc/gitattributes\n", false),
-            file("/etc/gitattributes")
+            system_attributes(0, format!("{abs}\n").as_bytes(), false),
+            file(abs)
         );
         assert_eq!(
-            system_attributes(0, b"/opt/a b/attrs\n", true),
-            file("/opt/a b/attrs")
+            system_attributes(0, format!("{spaced}\n").as_bytes(), true),
+            file(spaced)
         );
+        if cfg!(windows) {
+            // whatever drive or share git is installed on: snp asks git and takes any absolute answer
+            for other in [
+                "D:/Tools/Git/etc/gitattributes",
+                "E:\\Portable\\Git\\etc\\gitattributes",
+                "\\\\server\\share\\Git\\etc\\gitattributes",
+            ] {
+                assert_eq!(
+                    system_attributes(0, format!("{other}\n").as_bytes(), false),
+                    file(other),
+                    "{other}"
+                );
+            }
+            // a drive-less path is not absolute there: no answer, so the real diff runs (fails closed)
+            assert_eq!(system_attributes(0, b"/etc/gitattributes\n", false), None);
+        }
         assert_eq!(
             system_attributes(1, b"", true),
             Some(SystemAttributes::Disabled)
