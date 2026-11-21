@@ -24,9 +24,10 @@ ADR-119 the proven post-checkout baseline; ADR-131 the file-content cache of con
 baseline taken by the first native write in all-in-process runs; ADR-133 its follow-ups (the system attributes file from
 `git var`, attributes that convert nothing); ADR-134 the index-stat proof; ADR-135 the hook script template v3; ADR-136 the wave-5 bench methodology;
 ADR-137 PIE release artifacts and their hardening gate; ADR-138 the internal crates' API policy and snp-yaml's borrowed
-tags and scalar text; ADR-150 gc's parallel loading with ordered replay and its cheaper loads; ADR-153 the stash's
-write-tree and diff-index decided in-process on the provably clean path; ADR-154 the pre-chain fan-out (the
-intent-to-add query in step 6, step 6 beside discovery).
+tags and scalar text; ADR-150 gc's parallel loading with ordered replay and its cheaper loads; ADR-151 the stash patch's
+numstat fed while the patch streams and the batched reader of large child output; ADR-153 the stash's write-tree and
+diff-index decided in-process on the provably clean path; ADR-154 the pre-chain fan-out (the intent-to-add query in step
+6, step 6 beside discovery).
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -2625,6 +2626,9 @@ then the workspace adaptation), and the reverse holds for fixes made here. ADR-0
 
 ### ADR-117 — B8: the stash's own index rewrite keeps the Stat mode; the listing and the patch's disk writes overlap
 
+*Status: Accepted; (2) amended by ADR-151 (the listing reads the patch on stdin while it is written, the file-based
+listing beside step 6 is its fallback). The amending ADR is normative where they differ.*
+
 *Amends ADR-104 (4) and (5) (one hook's Stat mode, the stale-F rule) and ADR-097 (1) (the listing runs beside the
 durability step, not after it). Every durability, verification and recovery rule of ADR-027, ADR-067, ADR-078,
 ADR-097 and D-DATA-19 is unchanged.*
@@ -2928,6 +2932,10 @@ end-of-file-fixer's append and truncate wait for it, a hook that writes nothing 
 (`crates/snp-hooks/tests/write_gate`); the lint gate (`xtask lint-guards`). Proofs: none (no anchored item changed).
 
 ### ADR-133 — ADR-119 follow-ups: the system attributes file from `git var`, attributes that convert nothing
+
+*Status: Accepted; (a)'s placement amended by ADR-151 (the checkout notice is sent at the patch's first byte, so
+`git var` overlaps the stash's diff; a patch then not checked out costs one unused query). The amending ADR is
+normative where they differ.*
 
 *Amends ADR-119 (b), (f) and its Rejected (a), (b) and (d) (owner decisions "ADR-119 (a)" and "ADR-119 (b)" of
 2026-11-21, after the wave-5 parity panel). The proof's guarantee is unchanged: the elided baseline equals the stdout of
@@ -3524,6 +3532,87 @@ fuzz target; `read_capped` against the plain read for file lengths and caps on b
 pool stress test with a 60 s cancellation poll (8 threads, 1-3 permits, `acquire` and concurrent `map_ordered`),
 where a lost wakeup stalls the FIFO head past the time bound (a seeded mutation that never notifies times out),
 checking the permit bound, the returned permits, the ticket counters and a zero waiter count.
+
+### ADR-151 — B8: the patch's numstat reads the stream; a batched reader for large child output
+
+*Amends ADR-117 (2) (the listing reads the patch on stdin while it is written; it no longer starts from the flushed
+file beside the durability step, which stays its fallback) and ADR-133 (a) (the checkout notice is sent at the patch's
+first byte, not right before the checkout). Every durability, verification and recovery rule of ADR-027, ADR-067,
+ADR-078, ADR-097, ADR-117 (1) and (3) and D-DATA-19 is unchanged, and the listing is still git's own
+`apply --numstat` of the patch.*
+
+**Context.** B8 (a 10 MB unstaged rewrite) was one of the three scenarios snp still lost to prek 0.5.11 after wave 5:
+379.4 against 353.0 ms at p50 (CI run 44906093739 on 95ba5fc). The wave-6 B8 analysis measured it without a tracer
+(strace stops every tracee at every syscall and serialises snp's 16k syscalls of the diff with git's; perf task
+events do not), pinned to 4 logical CPUs like the CI runner. After `diff-index` ends, `git apply --numstat` ran
+38 ms on the critical path, about 40 % of it reading its input (`strbuf_read`, apply.c) before it parses. During
+the diff git writes its 21 MB patch in 4 KiB `write`s (stdio's buffer is a pipe's `st_blksize`), and snp's reader
+woke for each: 4,717 reads, a channel send, a futex wake and a `waitid` poll per chunk, about 8,700 context switches
+against prek's 4,600, and 60 ms more tree CPU competing with git for the runner's two cores. The oracle hashes the
+racily clean 10 MiB file twice on the critical path (the post-checkout snapshot and the post-hook comparison, about
+5 ms each), and ADR-133's `git var` competed with the checkout.
+**Decision.** (1) *Numstat fed during the diff.* At the patch's first byte, step 5's sink starts `git apply
+--numstat -z --whitespace=nowarn` with no patch argument, reading its standard input (`Git::patch_paths_feed`;
+`spawn::capture_fed`: a capture whose stdin the caller writes, supervised by a helper thread, enlarged to a 1 MiB
+pipe on Linux, always reaped). It writes every byte the patch file accepted to it, right after the file, and closes
+its input when the stream ends, so git parses while the early writeback finishes and step 6 runs. Step 6's listing
+thread takes its answer only for exit 0 and an output `patch_paths` parses; anything else (it could not start, a
+backend without `capture_fed`, a write error, another exit, a stop) lists the written file with `Git::patch_paths`
+as before, whose answer and error text are the canonical ones. The answer is used only once the patch is durable
+and verified (ADR-117 (2)); the rewrite path of the re-verification lists the rewritten file; a first pass that
+ends without a patch drops the listing. (2) *Batched reader.* `spawn::stream` reads stdout, on Linux, with a reader
+that switches after 64 KiB: the pipe is enlarged to 1 MiB (`fcntl_setpipe_size`, rustix's `pipe` feature: no new
+crate, `Cargo.lock` unchanged) and snp's read end made non-blocking; then everything available is read in chunks of
+at most 64 KiB (the channel's memory bound is unchanged) and an empty pipe means a 1 ms nap; after 8 empty polls the
+reader goes back to blocking reads. A refused switch (pipe-size limits) keeps the blocking reads; other platforms
+keep the plain reader. The 1 MiB pipe is what makes the nap safe: at about 100 MB/s git fills a 64 KiB pipe in
+0.6 ms. (3) *Parallel hash.* The oracle hashes a racy file of at least 4 MiB on up to 8 threads (one per CPU): the
+input is split along blake3's own tree (`hazmat::left_subtree_len`) into subtrees of at least 1 MiB, read with
+positional reads, and their chaining values merged as blake3 merges them, so the digest is `blake3::hash` of the
+bytes. A short read, a file longer than its `fstat` size, a read error, one CPU or a non-Unix platform hash
+sequentially, as before. (4) *Notice at the first byte.* `StashCtx::checkout_notice` is sent when step 5 writes
+the patch's first byte, so `git var GIT_ATTR_SYSTEM` overlaps the diff; a run that writes no patch still never asks,
+and a patch that is then not checked out (vanished changes, a CRLF-quirk output, a failure) costs one unused query.
+**Rationale.** (1) is the same command over the same bytes through the same `apply_patch` (git reads a file argument
+and standard input alike, apply.c `apply_all_patches`, on 2.18.5 and 2.56.0; the name only appears in error texts,
+which come from the fallback). Only bytes the file accepted are fed, so a later file error fails the first pass and
+abandons both. Feeding the parser while git prints moves its read off the critical path; a header-parsed list
+(B8-4) would also drop git's parse refusal before the checkout, an owner decision that was not taken. (2) changes
+nothing git sees (its write end is untouched) and nothing snp delivers (same bytes, same order, EOF at most 1 ms
+later, only for streams past 64 KiB, so no B2/B3 spawn ever switches); it removes the per-write hand-off that made
+snp's reader the busiest thread of the diff. ADR-067's durability and ADR-117 (3)'s early writeback stay: with
+batched reads writeback no longer slows git, and deferring it costs 4–29 ms at the final `fsync`. (3) cannot change
+a comparison: the digest is identical by construction and the unit test compares it with `blake3::hash` across
+sizes, boundaries and thread counts. (4) has no repository effect.
+**Rejected.** (a) The path list from the patch's `diff --git` headers instead of numstat (B8-4; owner decision D3:
+not taken). (b) A larger pipe, or larger reads, with blocking reads: the reader still wakes per 4 KiB write (no gain
+measured). (c) prek's in-memory patch: breaks ADR-100's B8 heap budget. (d) git writing the patch file itself:
+eager file creation on clean runs, timer-driven writeback, no stream to feed, inconsistent results. (e) The
+name-only query beside numstat: 2 ms, and it widens the verification window (ADR-117 Rejected (b)). (f) Hashing the
+checked-out paths beside step 14's fan-out (B8-7): a hash taken before the snapshot cannot be trusted for a racy
+file (a same-size write in the same timestamp tick is invisible to `lstat`), and taking the snapshot earlier would
+count a change made during the installs as the first hook's, against pre-commit's baseline position (ADR-078);
+deferred.
+**Consequences.** B8, locally (profiling builds of 95ba5fc and this ADR's head, the scenario's fixture and hermetic
+environment, pinned to CPUs 1–4 of a shared, loaded machine): whole-tree syscalls 24,018 → 16,705 (`strace -f -c`;
+futex 2,425 → 942, waitid 4,122 → 816, read 4,813 → 2,088); tree CPU 669.2 → 633.8 ms and context switches 8,694 →
+791 (`perf stat`, 12 interleaved pairs; prek 602.8 ms, 4,535); untraced wall (perf task events, 25 interleaved
+pairs) −54.2 ms at the paired median (23 of 25 pairs faster): `diff-index` −7.6, diff end → checkout start −35.3
+(the numstat's parse now overlaps the patch's writeback, which the loaded disk made slow: 214 ms of that gap in the
+base), checkout end → hook −1.2, hook end → restore −2.1. The process count stays 16: numstat now starts during the
+diff and `git var` at its first byte. snp's heap peak on B8 (dhat) 637,835 → 658,167 bytes (ADR-100's budget is B3's
+peak + 2 MB). B4, whose `ls-files -s -v -f -z` of 50,000 files is streamed: context switches 1,648 → 358, wall
+−1.6 ms, user instructions −0.75 M (15 pairs). B12u streams nothing past 64 KiB and is unchanged within the noise
+(40 pairs: wall +2.2 ms, task clock −2.3 ms, user instructions +3.3 M of 771 M, the head above the base in 22).
+Tests: batched reads keep every byte in order
+below and far above the switch and across pauses that send the reader back to blocking reads, and a refused switch
+still delivers everything (`snp-proc`); a fed child reads what is written, one that stops reading fails the writes
+and is still reaped, by `finish` or by a drop; the fed listing equals the file-based one byte for byte against real
+git for a patch with a text rewrite, a binary change, a deletion, a mode change, an intent-to-add file and a quoted
+name, for any write size, and corrupt or empty input gives no answer (`snp-git`); a failing fed listing falls back
+to the file-based one and the stash goes on, and the notice is there when the listing starts (`snp-stash`). K9:
+`Inner::stash`, `first_pass` and `secure` re-reviewed (docs/VERIFICATION.md §9.2), fingerprints refreshed,
+`Git::patch_paths_feed` and `PatchPathsFeed::finish` anchored; the model is unchanged.
 
 ### ADR-153 — The stash's write-tree and diff-index decided in-process on the provably clean path
 

@@ -316,6 +316,16 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   through `git var GIT_ATTR_SYSTEM`, asked once per stashing run that checks files out, overlapped with that checkout. On B8 with a committed
   `* text=auto` file the skipped diff was 1,333 M instructions; plain B8 pays one `git var` process (0.6 M), and runs
   that stash nothing (B2, B3, B9) are unchanged. The tracked-files query is `git ls-files -s -v -z` now.
+- A stash of a large unstaged change waits less (ADR-151; same git commands' answers, patch bytes, messages,
+  journal states and `fsync`s). `git apply --numstat`, which lists the patch's files, now reads the patch on its
+  standard input while `git diff-index` still prints it, so only its parse is left when the diff ends (when it cannot
+  run or fails, the patch file is listed as before, with the same errors). snp reads a large output of git (past
+  64 KiB) in batches from a 1 MiB pipe on Linux instead of once per 4 KiB write. The oracle hashes a racily clean
+  file of 4 MiB or more on several threads, with the same digest. The `git var GIT_ATTR_SYSTEM` query of ADR-133
+  starts at the patch's first byte instead of with the checkout, so it overlaps the diff. On B8 (a 10 MB unstaged
+  rewrite), locally: about 7,300 fewer syscalls in the whole tree (24,018 → 16,705), context switches 8,694 → 791,
+  tree CPU 669 → 634 ms, and the run about 54 ms shorter (median of 25 interleaved pairs on a loaded machine; much of
+  it from the numstat's parse overlapping the patch's writeback).
 
 ### Fixed
 

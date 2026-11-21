@@ -1109,8 +1109,16 @@ pub mod spawn {
     /// file table (no owned argv per partition). The `.bat`/`.cmd` line-break refusal (D-PLAT-03) and the spawn trace
     /// see the whole list. The other entry points take no files, so snp's own commands never carry any.
     pub fn merged_hook(spec: &Spec<'_>, files: &[&OsStr], pty: bool, budget: &OutputBudget) -> Result<Merged, SpawnError>;
-    /// stdout streamed into `sink` (diff hashing, stash patch), stderr captured. Returns status and stderr.
+    /// stdout streamed into `sink` (diff hashing, stash patch), stderr captured. Returns status and stderr. ADR-151: on
+    /// Linux stdout is read by a batched reader: past 64 KiB the pipe is enlarged to 1 MiB (`F_SETPIPE_SZ`) and snp's
+    /// end made non-blocking, everything available is read (chunks of at most 64 KiB) with a 1 ms nap on an empty
+    /// pipe, back to blocking reads after 8 empty polls; a refused switch keeps the blocking reads. Same bytes and order.
     pub fn stream(spec: &Spec<'_>, sink: &mut dyn io::Write) -> Result<(PyStatus, Vec<u8>), SpawnError>;
+    /// ADR-151: `capture` with a stdin the caller writes while the child runs (`Fed: io::Write`; on Linux a 1 MiB pipe,
+    /// best effort). A helper thread supervises the child with the spec's role, deadline and token; `finish` closes
+    /// stdin and returns the `Captured`, `close_stdin` sends EOF early, and a drop also waits, so the child is always
+    /// reaped. `Fed::scripted(Captured)` is a finished child for test backends (writes discarded).
+    pub fn capture_fed(spec: &Spec<'_>) -> Result<Fed, SpawnError>;
     pub fn inherit(spec: &Spec<'_>) -> Result<PyStatus, SpawnError>;   // legacy hooks, show-diff, hazmat children
     /// ADR-085 `interactive` hooks: stdin per spec (`Stdin::Terminal`), stdout/stderr inherited, supervised like any
     /// Hook child (the caller passes Group::Inherit, so a deadline signals the child process only); terminal modes saved
@@ -1475,6 +1483,8 @@ pub trait GitBackend: Send + Sync + std::fmt::Debug {
     fn capture(&self, argv: &[OsString], env: &Env, cwd: &Path, stdin: Stdin, group: Group) -> Result<Captured, SpawnError>;
     fn stream(&self, argv: &[OsString], env: &Env, cwd: &Path, sink: &mut dyn io::Write) -> Result<(PyStatus, Vec<u8>), SpawnError>;
     fn inherit(&self, argv: &[OsString], env: &Env, cwd: &Path, stdin: Stdin) -> Result<PyStatus, SpawnError>;
+    /// ADR-151: `spawn::capture_fed`; the default refuses (`Unsupported`), so the caller takes its file-based path.
+    fn capture_fed(&self, argv: &[OsString], env: &Env, cwd: &Path, group: Group) -> Result<Fed, SpawnError> { /* Unsupported */ }
 }
 /// `role` is used for every spawn: the run's backend uses Role::Tool with the run token; the stash builds its own
 /// backend with Role::Critical and a fresh token that is never cancelled (ADR-065).
@@ -1536,6 +1546,10 @@ impl Git {
     /// `GIT_*_PATHSPECS` removed; the stash's patch paths (`apply --numstat -z`), the rollback's plus `diff --name-only`.
     pub fn checkout_paths(&self, paths: &ZList, skip_post_checkout: bool, group: Group) -> Result<(), Failure>;
     pub fn patch_paths(&self, patch: &Path) -> Result<ZList, Failure>;               // apply --numstat -z <patch>
+    /// ADR-151: the same listing reading the patch on stdin while it is written (`apply --numstat -z --whitespace=nowarn`,
+    /// no file argument); `PatchPathsFeed: io::Write`, `close()` once the patch is complete, `finish() -> Option<ZList>`:
+    /// an answer only for exit 0 and a parse `patch_paths` accepts, else `None` (the caller runs `patch_paths`).
+    pub fn patch_paths_feed(&self) -> Option<PatchPathsFeed>;
     pub fn changed_paths(&self) -> Result<ZList, Failure>;                           // diff --name-only -z (refreshed)
     pub fn rollback_paths(&self, patch: &Path) -> Result<ZList, Failure>;            // patch paths ∪ changed paths
     pub fn apply(&self, patch: &Path, autocrlf_false: bool, group: Group) -> Result<bool, Failure>;
@@ -2066,6 +2080,7 @@ use snp_git::{Git, IndexStamp, RepoInfo, ZList};
     pub checkout_notice: Option<std::sync::mpsc::SyncSender<()>> /* () right before step 8's checkout, else dropped (ADR-133) */,
     pub intent_to_add_hint: Option<IndexStamp> /* step 6's empty C on a proved index with this stamp (ADR-154) */,
     pub config_listing: Option<Arc<ConfigListing>> /* step 6's G: steps 4–5 in-process when provable (ADR-153) */ }
+    pub checkout_notice: Option<std::sync::mpsc::SyncSender<()>> /* () at the patch's first byte (ADR-151), else dropped (ADR-133) */ }
 #[derive(Debug, Clone, PartialEq, Eq)] pub enum Stashed { Nothing, Patch(PathBuf) }
 #[derive(Debug)] pub struct StashGuard { /* state machine; restores on drop (panic path only, via RunState::drop) */ }
 pub fn enter(cx: StashCtx) -> Result<StashGuard, Failure>;
@@ -2738,14 +2753,14 @@ startup Env (captured once in main, minus __PYVENV_LAUNCHER__/PYTHONEXECUTABLE)
 | 6 | **Git fan-out** (read-only, scoped threads, same argv as pre-commit), stashing runs only: A `ls-files --unmerged` on the main thread, B `diff --quiet --no-ext-diff <cfg>` on a spawned thread; another spawned thread reads + validates the config **speculatively** with warnings buffered (ADR-047), unless step 3 already did. F `ls-files -s -v -z` and G `config --list --show-origin -z` (the DiffOracle inputs) are speculated here only when the run stashes and Stat mode is possible (Unix, index-header count ≤ 16 384, no `SNP_DIFF_MODE=git`/`GIT_ATTR_SOURCE`): first, at the top of step 6, when the config from step 3 is kept and has ≥ 3 process-hook candidates, or — with 1–2 candidates or no config yet — on a small tree (≤ 256 entries, ≥ 3 CPUs, worktree and git dir `stat_oracle_safe`); F's strictly parsed stages then also answer A (any failure of F asks A itself, ADR-104). Otherwise, without a config yet, after the load when it has ≥ 3 candidates (ADR-084(6)); else at step 14. Early F is dropped when the index file's stamp (dev, ino, size, mtime, ctime) changed by the end of step 9 (another run's `git add` during the lock wait, or the stash's own rewrite) and asked again at step 14, also for one or two process hooks when the dropped F described a small tree; early G, which does not read the index, is dropped only when the worktree lock was contended (ADR-117). The ITA query C runs first in the fan-out (stash's command and environment) when `Git::index_without_intent_to_add` holds (SHA-1, ≤ 16 384 entries, the strict reader parses the index, no intent-to-add entry), after the stamp; its success with empty output is the stash's `intent_to_add_hint`, reused at step 9 iff the lock was not contended and the stamp still holds, else the stash asks C at its position (ADR-154). The staged list E is taken at step 14 (`side_queries`) | 02 §5 | results consumed strictly in pre-commit's order; E/F/G skipped when unused (P17, all-files, files) |
 | 7 | Preflight in exact order: unmerged → from/to-ref pairing → unstaged config → commit-msg filename → `_PRE_COMMIT_SKIP_POST_CHECKOUT` early 0 | 02 §5 | — |
 | 8 | `run_env` = startup ⊕ run vars | 02 §6.1 | values are `OsString` (non-UTF-8 refs survive on Unix) |
-| 9 | **Stash guard** (`stash = !all_files && files.is_empty()` and no stdin files); on git < 2.19 a non-empty stash is refused before any mutation (D-DATA-17). On the Stat-capable path with git ≥ 2.42 a scoped thread waits for the stash's `checkout_notice` (sent right before its checkout, dropped unsent otherwise) and then asks `git var GIT_ATTR_SYSTEM` for step 16's proof, overlapped with the checkout (ADR-133) | 02 §7, §4 here | the guard is the only owner of worktree mutations until restore |
+| 9 | **Stash guard** (`stash = !all_files && files.is_empty()` and no stdin files); on git < 2.19 a non-empty stash is refused before any mutation (D-DATA-17). On the Stat-capable path with git ≥ 2.42 a scoped thread waits for the stash's `checkout_notice` (sent at the patch's first byte, ADR-151; dropped unsent when no patch is written) and then asks `git var GIT_ATTR_SYSTEM` for step 16's proof, overlapped with the stash's diff (ADR-133) | 02 §7, §4 here | the guard is the only owner of worktree mutations until restore |
 | 10 | Config: the speculative load of step 6 is used. It is exact: when B reports an unstaged config, step 7 has already exited 1, so no stash runs with a config the stash could change (ADR-047, ADR-104). Buffered warnings printed now (pre-commit's position). Overlay root items (`overlay::apply_root`, §8.4) | 02 §8 | exact by construction (S13) |
 | 11 | `resolver.all_hooks` (snp-repo): eligible clones prefetched in the background, `Initializing` lines and foreground clones in config order at pre-commit's moment; manifest; merge + overlay hook patches; language default probes; fast-path decisions G1–G6 incl. G5 through `ResolveCtx::preflight` and the clone of delegated Tier A repos | 03 §8.1, 09 §6 | per-repo locks; shared store lock held from first repo use until exit |
 | 12 | Select by `hook` id/alias (snp brand: several ids) and stage (+ `--group` extensions); `No hook with id …` → 1 | 02 §8 | stash restored on this early return (single exit) |
 | 13 | `SKIP` (+ `SNP_SKIP_GROUPS`, overlay `skip`, `skip/only` conditions) → `to_install` | 02 §6.2, 15 V-SKIP | `strip_fsbytes` semantics for non-UTF-8 SKIP |
 | 14 | `resolver.install_envs(to_install)` incl. delegated fast-path hooks and virtual install triplets | 03 §8.4, ADR-032 | `check_support` before any FS mutation (04b §5.1) |
 | 15 | `cols` from **all** selected hooks (skipped included); file selection (§3.2); `[INFO] Checking merge-conflict files only.`; global filter; `retain_lexists` — the classifier is built here, eagerly, when some selected hook reads files (`!always_run` ∨ `pass_filenames`) or `--from-ref`/`--to-ref` are set (P17: never otherwise; then only the merge-conflict notice is decided). A clean `--all-files` run whose filters allow it lists with `ls-files -s -v -f -z`, takes the before-diff here and trusts the index modes instead of `lstat`ing every file (§2.3, ADR-106) | 02 §9–10 | — |
-| 16 | Baseline digest (ADR-078): **elided or lazy** (at pre-commit's position). **Warm path** (no clone, install or download in steps 11–14, counted by `Resolve::store_work` and the run's counting fetcher, and steps 11–14 under 250 ms; ADR-104): `DiffFingerprint::EMPTY` when the stash step saw `diff-index` rc 0 and stashed nothing, or (ADR-119) when it checked out the patch's files and the oracle's Stat-mode snapshot proves the checkout left `git diff` empty (plain configuration from G, no `core.attributesFile` or `attr.tree` key in G, no attributes file that sets or values `text`/`crlf`/`eol`/`ident`/`filter`/`working-tree-encoding` (`text=auto` allowed with `core.eol` unset/`lf`/`native`), no `.gitattributes` in the patch, every tracked `.gitattributes` unflagged in F's tags and present (ADR-133), no `post-checkout`/`post-index-change` hook, every checked-out path a regular file of its own with its index mode's executable bit, no intent-to-add clearing). The system attributes file is the one `git var GIT_ATTR_SYSTEM` names (git ≥ 2.42, asked overlapped with the stash's checkout, on its notice, so a run that checks nothing out never asks; per run; ADR-133); without that answer the proof runs on Linux only (ADR-119's prefix heuristic). Otherwise one `git diff` taken lazily after `install_envs`, before the first hook that needs it, pre-commit's position (an IDE autosave during an install must count as pre-existing, not as a hook modification), answered without a spawn in Git mode when the index-stat proof holds (§3.7 item 4, ADR-134; G is then asked beside step 14's installs); a trust-capable `--all-files` run took it at step 15 (ADR-106) | 02 §11.2 | `SNP_VERIFY_BASELINE=1` (CI) takes the real diff and asserts equality; `SNP_VERIFY_INDEX_PROOF=1` cross-checks the index-stat proof |
+| 16 | Baseline digest (ADR-078): **elided or lazy** (at pre-commit's position). **Warm path** (no clone, install or download in steps 11–14, counted by `Resolve::store_work` and the run's counting fetcher, and steps 11–14 under 250 ms; ADR-104): `DiffFingerprint::EMPTY` when the stash step saw `diff-index` rc 0 and stashed nothing, or (ADR-119) when it checked out the patch's files and the oracle's Stat-mode snapshot proves the checkout left `git diff` empty (plain configuration from G, no `core.attributesFile` or `attr.tree` key in G, no attributes file that sets or values `text`/`crlf`/`eol`/`ident`/`filter`/`working-tree-encoding` (`text=auto` allowed with `core.eol` unset/`lf`/`native`), no `.gitattributes` in the patch, every tracked `.gitattributes` unflagged in F's tags and present (ADR-133), no `post-checkout`/`post-index-change` hook, every checked-out path a regular file of its own with its index mode's executable bit, no intent-to-add clearing). The system attributes file is the one `git var GIT_ATTR_SYSTEM` names (git ≥ 2.42, asked on the stash's notice at the patch's first byte, overlapped with its diff, so a run that writes no patch never asks; per run; ADR-133, ADR-151); without that answer the proof runs on Linux only (ADR-119's prefix heuristic). Otherwise one `git diff` taken lazily after `install_envs`, before the first hook that needs it, pre-commit's position (an IDE autosave during an install must count as pre-existing, not as a hook modification), answered without a spawn in Git mode when the index-stat proof holds (§3.7 item 4, ADR-134; G is then asked beside step 14's installs); a trust-capable `--all-files` run took it at step 15 (ADR-106) | 02 §11.2 | `SNP_VERIFY_BASELINE=1` (CI) takes the real diff and asserts equality; `SNP_VERIFY_INDEX_PROOF=1` cross-checks the index-stat proof |
 | 17 | Schedule and execute (§3.4–3.7); print in config order (§3.9) | 02 §11 | one JobPool; cancellation stops new work |
 | 18 | `fail_fast` (config ∨ hook ∨ `--fail-fast`): stop after the current failing hook (bucket) | 02 §11.2 | later hooks print nothing |
 | 19 | `--show-diff-on-failure` (inside the stash) | 02 §15 | `git --no-pager diff …` inherits stdout (Printer flushed first) |
@@ -2923,7 +2938,9 @@ O(1) memory) and decides per executed hook with `snp_stash::diff_oracle::DiffOra
      immutable and hooks cannot modify it). An input is compared by its `lstat` and by its `stat` (a symlink's
      target); one `lstat` call gives both unless the input is a symlink.
    - **Racy entries** (mtime ≥ snapshot time − 2 s, git's own racy rule) are content-hashed with blake3 at snapshot
-     time instead of disabling the oracle (after a stash checkout, every rewritten file is racy and is hashed).
+     time instead of disabling the oracle (after a stash checkout, every rewritten file is racy and is hashed). A file
+     of at least 4 MiB is hashed on up to 8 threads along blake3's own tree, with the same digest (ADR-151; any short
+     read or a file longer than its `fstat` size hashes sequentially).
    - After the hook: re-stat (parallel chunks when > 2 048 entries). Every tuple identical and every racy hash
      identical → **unchanged, no spawn**. Anything else → run the real `git diff`, compare digests (exact), take the
      next snapshot from the stats already collected.
@@ -3113,17 +3130,21 @@ notice).
    the same second and pid — possible across PID namespaces sharing a store — never overwrite each other); stderr
    captured. Nothing is hashed (ADR-097: the re-verification compares bytes or stamps). On Linux, past every 4 MiB
    of patch a worker thread `fdatasync`s it through its own read-only handle (early writeback, ADR-117: step 6's
-   `sync_all` then has only the tail left; a worker error fails this step like a write error).
-   * rc 0, or rc 1 with `bytes.strip()`-empty output → delete the file, no stash (`diff_index_clean()` is true
-     only for rc 0).
+   `sync_all` then has only the tail left; a worker error fails this step like a write error). At the patch's first
+   byte the stash also starts step 6's listing, `git apply --numstat -z --whitespace=nowarn` reading stdin
+   (`Git::patch_paths_feed`), feeds it every byte the file accepted and closes its input when the stream ends
+   (ADR-151), and sends ADR-133's checkout notice.
+   * rc 0, or rc 1 with `bytes.strip()`-empty output → delete the file and drop the listing, no stash
+     (`diff_index_clean()` is true only for rc 0).
    * other rc → FatalError `{prog} failed to diff -- perhaps due to permissions?\n\n<CalledProcessError format A>`.
 6. **Make the patch durable.** `sync_all` the patch, write the journal (`{state:"stashed", tree, patch}`, `create_new`)
    and the pointer, `sync_all` them. The directory of the patch is synced once: by the creation or replacement of the
    store journal (both sync `patches/` after the patch was created), or, when there is no store journal (intent-to-add
    files were cleared with an unwritable store and the patch could be created later), by an explicit fsync of
-   `patches/`. Meanwhile **list the patch's paths** (step 8's `git apply --numstat -z --whitespace=nowarn <patch>`,
-   on a thread beside the syncs: it reads only the written patch; its result is used only once the patch is durable,
-   ADR-117), and only then **re-verify** (ADR-097):
+   `patches/`. Meanwhile **list the patch's paths** (step 8's listing, on a thread beside the syncs: the answer of
+   the numstat fed in step 5, or, when it has none, `git apply --numstat -z --whitespace=nowarn <patch>` of the
+   written patch; neither reads the worktree; the result is used only once the patch is durable, ADR-117, ADR-151),
+   and only then **re-verify** (ADR-097):
    * **Stat stamps**, when they can prove that nothing the patch could include changed since the lock was taken.
      `M0` = `max(ctime, mtime)` of the lock file `fstat`ed right after the token write (step 1), before the first
      `diff-index`; none for a nested run, on Windows, when the token write failed, or with `SNP_STASH_REVERIFY=diff`.
@@ -3147,7 +3168,8 @@ notice).
 7. (No process-wide restore registry, ADR-066: the explicit `restore()` on the main thread, the panic-path
    `RunState::drop` and token cancellation cover every exit path; the panic hook and the signal thread never restore.)
 8. **Checkout of the patch's files** (D-DATA-19, ADR-093; pre-commit: `git -c submodule.recurse=0 checkout -- .`):
-   `git apply --numstat -z <patch>`, run in step 6 before the re-verification, lists them (no file listed:
+   `git apply --numstat -z` (fed in step 5, or of the written patch), taken in step 6 before the re-verification,
+   lists them (no file listed:
    `ValueError` before any mutation), then `git -c
    submodule.recurse=0 checkout --pathspec-from-file=- --pathspec-file-nul` reads them as `:(literal)` pathspecs
    from stdin, with `_PRE_COMMIT_SKIP_POST_CHECKOUT=1` and without `GIT_*_PATHSPECS`, `Role::Critical` (checked). A
