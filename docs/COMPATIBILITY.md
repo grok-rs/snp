@@ -226,6 +226,7 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 | D-PERF-02 | local `language: python` hooks without deps `pip install` a placeholder package | placeholder install skipped | 24 |
 | D-PERF-03 | pre-commit-hooks run from a cloned venv | native implementations (fast path, ADR-031); output byte-identical; Tier A repos are never cloned (FD-8) | 31, 26, 27 |
 | D-PERF-04 | docker hooks run `docker build` every run | skipped when the tagged image exists (`SNP_DOCKER_ALWAYS_BUILD=1` restores it) | 25 |
+| D-PERF-05 | the stash's restore runs `git apply`, which writes every file of the patch anew | on Linux, when the DiffOracle proves the hooks left those files as the checkout wrote them and nothing converts them (ADR-152), the originals hard-linked before the checkout are renamed back: same bytes, mode, git state and output; the inode and birth time are the original's, one process fewer runs, and an autosave landing between the final check and the rename is overwritten instead of merged; `SNP_STASH_RESTORE=apply` restores `git apply` | 23 |
 
 ### 5.7 EXT — observable only when an snp extension is used
 
@@ -282,7 +283,11 @@ cross-check: `crates/snp-stash/tests/behaviour/index_proof.rs`), tiered lazy tag
 `crates/snp-run/src/trust.rs`, `tests/differential/scenarios/run/t10-run-37-trusted-index-modes.yaml`), P17
 classifier skip, speculative config load, regex fast kinds and lazy engine compilation, spawn-free health checks,
 parallel clones (background prefetch whose every failure is discarded and redone in the foreground exactly as
-pre-commit) and installs with ordered transcript replay, local deps-variant clones, git fan-out, cached `git --version`
+pre-commit) and installs with ordered transcript replay, local deps-variant clones, git fan-out (the intent-to-add
+query in it and step 6 beside discovery, ADR-154: `crates/snp-run/tests/pipeline/fanout.rs`; like the config check, the
+query may refresh the index's stat data before a preflight exit), the stash's `write-tree` and `diff-index` decided
+in-process on the provably clean path (ADR-153, with git's own `<index>.lock` taken and given back; cross-check:
+`crates/snp-stash/tests/behaviour/tree_elision.rs`, `SNP_VERIFY_STASH_ELISION=1`), cached `git --version`
 and probe facts (native binaries only), persistent rustup and shared toolchain directories, a job pool sized by the
 cgroup-aware CPU count and the fd budget (partition contents always use pre-commit's `jobs`). Message-parity markers
 (`keys-v1`) make cold and warm transcripts identical with the fast path (ADR-032).
@@ -393,7 +398,8 @@ snp-only: `SNP_HOME`, `SNP` (`0`/`false` kill switch), `SNP_BIN` (hook script), 
 `SNP_ALLOW_NO_CONFIG`, `SNP_JOBS`, `SNP_SKIP_GROUPS`, `SNP_OUTPUT`, `SNP_NO_TTY` (`interactive` hooks run captured, ADR-085), `SNP_NO_FAST_PATH`, `SNP_COMPAT_STRICT`,
 `SNP_LOCAL_CONFIG`, `SNP_NO_HINTS`, `SNP_LOG`, `SNP_LOG_FILE`, `SNP_OFFLINE`, `SNP_UV`, `SNP_PYTHON_DOWNLOADS`,
 `SNP_NODE_MIRROR`, `SNP_ALLOW_INSECURE_MIRROR`, `SNP_DOCKER_ALWAYS_BUILD`, `SNP_PREFER_SYSTEM_TOOLCHAINS`,
-`SNP_ALLOW_OLD_GIT`, `SNP_STASH_LOCK_TIMEOUT`, `SNP_STASH_VERIFY`, `SNP_KILL_GRACE`, `SNP_DIFF_MODE`,
+`SNP_ALLOW_OLD_GIT`, `SNP_STASH_LOCK_TIMEOUT`, `SNP_STASH_VERIFY`, `SNP_STASH_RESTORE` (`apply`: no restore by rename,
+ADR-152), `SNP_KILL_GRACE`, `SNP_DIFF_MODE`,
 `SNP_VERIFY_BASELINE`, `SNP_VERIFY_FILE_CACHE` (ADR-131), `SNP_VERIFY_INDEX_PROOF` (ADR-134), `SNP_OUTPUT_BUDGET`, `SNP_PYTHON_WARNINGS`, `SNP_PYTHON_INSTALLER` (`auto`|`uv`|`pip`, ADR-073),
 `SNP_ALLOW_FOREIGN_STORE` (D-SEC-13), `SNP_PREFETCH` (`0` disables background clone prefetch), `SNP_NODE_SHASUMS_URL` /
 `SNP_GO_JSON_URL` (https checksum manifests for mirrors). Duration variables are parsed with an upper bound; an

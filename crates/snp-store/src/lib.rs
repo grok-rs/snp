@@ -12,9 +12,9 @@ mod messages;
 mod store;
 
 pub use keys::{
-    MarkerKey, RepoHandle, RepoId, RepoKey, RepoKind, RepoMeta, ToolRef, TrackedConfig,
-    db_repo_name, marker_repo_name,
+    MarkerKey, ProbeMemo, RepoHandle, RepoId, RepoKey, RepoKind, RepoMeta, ToolRef, TrackedConfig,
+    db_repo_name, marker_repo_name, tracked_order,
 };
 pub use location::{StoreLocation, StoreSource, resolve_location};
 pub use messages::locking_message;
-pub use store::{Store, StoreGuard, SweepReport};
+pub use store::{RepoIndex, Store, StoreGuard, SweepReport};

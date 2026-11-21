@@ -137,11 +137,17 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     let cli_files: Vec<OsString> = cli_files.iter().map(rebase).collect();
     let commit_msg_filename = a.commit_msg_filename.as_ref().map(rebase);
     let src = common::config_source(&config, &root);
-    // the speculative load stands only when it read the very file the real resolution chose, from the real root
+    // the speculative load stands only when it read the very file the real resolution chose, from the real root;
+    // step 6's queries asked beside discovery stand only when, moreover, they were asked for the real layout
+    // (ADR-154): the same commands, cwd and environment step 6 would use now
     let at_root = info.root == cx.invocation_cwd;
-    let preloaded = preloaded
-        .filter(|(path, _)| at_root && *path == config)
-        .map(|(_, loaded)| loaded);
+    let (preloaded, asked) = match preloaded.filter(|sp| at_root && sp.config == config) {
+        Some(sp) if sp.layout.as_ref().is_some_and(|l| same_layout(l, &info)) => {
+            (None, Some(sp.six))
+        }
+        Some(sp) => (Some(sp.six.loaded), None),
+        None => (None, None),
+    };
     // step 5: config tracking (main store, best effort) and the next-run recovery notice
     if inv.track_config {
         common::mark_config_used(&cx.store, &src.path, &root);
@@ -162,7 +168,7 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     }
     // step 6: the read-only preflight queries beside the config load and the DiffOracle inputs
     let buffered = Buffered::default();
-    let have_config = preloaded.is_some();
+    let have_config = preloaded.is_some() || asked.is_some();
     let step6 = Step6 {
         cx,
         a,
@@ -173,7 +179,10 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         stash,
         buffered: &buffered,
     };
-    let six = step6.run(preloaded);
+    let six = match asked {
+        Some(six) => six,
+        None => step6.run(preloaded),
+    };
     if inv.direct
         && let Ok(cfg) = &six.loaded
     {
@@ -201,15 +210,22 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         let ask = cx.git_exe.caps.attr_system && six.stamp.is_some();
         let (entered, system) =
             enter_overlapping_system_query(ask, &git0, &info, &run_env, |notice| {
-                snp_stash::enter(stash_ctx(
-                    cx,
-                    inv.store,
-                    &git0,
-                    &info,
-                    &run_env,
-                    !recovery_reported,
-                    notice,
-                ))
+                let stash_cx = StashCtx {
+                    // step 6's empty intent-to-add answer (ADR-154)
+                    intent_to_add_hint: six.ita_empty,
+                    // step 6's G, for the in-process write-tree and diff-index (ADR-153)
+                    config_listing: six.early.origins.clone(),
+                    ..stash_ctx(
+                        cx,
+                        inv.store,
+                        &git0,
+                        &info,
+                        &run_env,
+                        !recovery_reported,
+                        notice,
+                    )
+                };
+                snp_stash::enter(stash_cx)
             });
         let guard = entered?;
         system_attributes = system;
@@ -363,6 +379,16 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         refs: sel.refs.is_some(),
     };
     let code = lp.run(st.stash.as_mut(), &mut oracle);
+    // ADR-152: the oracle's evidence for the restore by rename, after the last hook, step 19's output and step 20's
+    // staging (the guard refuses it after a `stage_fixed` staging); never after a cancellation (a killed hook was not
+    // compared)
+    if code.is_ok()
+        && cx.cancel.reason().is_none()
+        && let Some(g) = st.stash.as_mut()
+        && let Some(proof) = g.checked_out().and_then(|p| oracle.restore_proof(p))
+    {
+        g.prove_restore(proof);
+    }
     if oracle.proof_stats().is_some_and(|p| p.mismatches > 0) {
         cx.printer.diag(messages::INDEX_PROOF_MISMATCH);
     }
@@ -546,8 +572,9 @@ fn index_trust(sel: &Selection<'_>, picked: &Picked<'_>, git: &Git) -> Option<tr
 }
 
 /// §3.1 step 3: discovery (or the caller's), with the config discovered and loaded at the invocation cwd on a thread
-/// meanwhile (`run` only; ADR-104). The thread's result is `None` when it could not start or panicked: step 6 then
-/// loads as before.
+/// meanwhile (`run` only; ADR-104), and, under [`speculative_layout`]'s gates, step 6 asked by that thread for the
+/// cwd's layout (ADR-154). The thread's result is `None` when it could not start or panicked: step 6 then loads and
+/// asks as before.
 fn discover(
     cx: &RunCtx,
     a: &RunArgs,
@@ -566,8 +593,14 @@ fn discover(
     })
 }
 
-/// The config path step 3 resolved at the invocation cwd and its load.
-type Speculated = (OsString, Result<Config, Failure>);
+/// What ran beside step 3's `rev-parse`: the config path resolved at the invocation cwd and its load (in `six`), and,
+/// when the gates of [`speculative_layout`] held, step 6 itself for the layout a repository rooted at the cwd has.
+struct Speculated {
+    config: OsString,
+    /// The layout step 6 was asked for (`None`: only the config was loaded; `six` holds just the load).
+    layout: Option<RepoInfo>,
+    six: Six,
+}
 
 /// §3.1 step 6's inputs.
 struct Step6<'s> {
@@ -592,6 +625,23 @@ struct Six {
     early: Early,
     /// The index stamp taken before F (ADR-104).
     stamp: Option<snp_git::IndexStamp>,
+    /// ADR-154: the index stamp under which query C, asked in this fan-out, succeeded with nothing printed on an
+    /// index proved free of intent-to-add entries (the stash's `intent_to_add_hint`).
+    ita_empty: Option<snp_git::IndexStamp>,
+}
+
+impl Six {
+    /// A config load without step 6's queries.
+    fn loaded(loaded: Result<Config, Failure>) -> Self {
+        Self {
+            loaded,
+            unmerged: None,
+            unstaged: None,
+            early: Early::default(),
+            stamp: None,
+            ita_empty: None,
+        }
+    }
 }
 
 impl Step6<'_> {
@@ -610,15 +660,27 @@ impl Step6<'_> {
                 .map_or(0, |c| process_candidates(c, &a.hooks))
         });
         let hoist = entries.is_some_and(|n| hoist_early(self.info, n, candidates));
-        // taken before F starts: compared after the stash, it shows a rewrite of the index while we waited
-        let stamp = if speculate {
+        // taken before F and C start: compared after the stash, it shows a rewrite of the index while we waited
+        let stamp0 = if stash {
             git.index_stamp(self.info)
         } else {
             None
         };
+        let stamp = stamp0.filter(|_| speculate);
+        // ADR-154: query C with the stash's command and environment (the run environment is a pure function of the
+        // startup environment and the arguments), only on an index proved free of intent-to-add entries
+        let ita_git = stamp0.map(|_| git.with_env(runenv::run_env(&cx.env, a)));
+        let info = self.info;
         let load_now =
             || common::load_config_with(cx, self.src, &self.buffered.warn, &self.buffered.diag);
         std::thread::scope(|s| {
+            // first: its in-process proof comes before its spawn
+            let ita = ita_git.as_ref().map(|g| {
+                common::fork(s, move || {
+                    g.index_without_intent_to_add(info)
+                        && g.intent_to_add().is_ok_and(|l| l.is_empty())
+                })
+            });
             let f = hoist.then(|| common::fork(s, || git.tracked_with_stages().ok()));
             let g = hoist.then(|| common::fork(s, || git.config_listing().ok().map(Arc::new)));
             let load = preloaded.is_none().then(|| {
@@ -656,6 +718,8 @@ impl Step6<'_> {
             };
             let origins = g.and_then(|g| g.join(|_| None));
             let unstaged = unstaged.join(|p| Some(Err(panicked(&p))));
+            // a panic, or a failed or non-empty answer, leaves C to the stash at pre-commit's position
+            let ita_empty = stamp0.filter(|_| ita.is_some_and(|c| c.join(|_| false)));
             let (loaded, early) = match (preloaded, load) {
                 (Some(loaded), _) => (loaded, Early::default()),
                 // a thread that could not start loads here, without speculating F and G
@@ -680,6 +744,7 @@ impl Step6<'_> {
                 unstaged,
                 early,
                 stamp,
+                ita_empty,
             }
         })
     }
@@ -935,6 +1000,8 @@ fn stash_ctx(
         }),
         report_recovery,
         checkout_notice,
+        intent_to_add_hint: None,
+        config_listing: None,
     }
 }
 
@@ -990,7 +1057,82 @@ fn speculative_config(cx: &RunCtx, a: &RunArgs, buffered: &Buffered) -> Option<S
     let config = common::adjust_config(&d.config, cwd, cwd);
     let src = common::config_source(&config, cwd);
     let loaded = common::load_config_with(cx, &src, &buffered.warn, &buffered.diag);
-    Some((config, loaded))
+    let Some((git, layout)) = speculative_layout(cx, a) else {
+        return Some(Speculated {
+            config,
+            layout: None,
+            six: Six::loaded(loaded),
+        });
+    };
+    // ADR-154: step 6 as it will run with this config kept, for the cwd's layout (`buffered` is unused: the config
+    // is loaded already)
+    let step6 = Step6 {
+        cx,
+        a,
+        git: &git,
+        info: &layout,
+        src: &src,
+        config: &config,
+        stash: true,
+        buffered,
+    };
+    let six = step6.run(Some(loaded));
+    Some(Speculated {
+        config,
+        layout: Some(layout),
+        six,
+    })
+}
+
+/// ADR-154: the layout of a repository rooted at the invocation cwd, with the handle discovery would build for it,
+/// when step 6 may be asked beside `rev-parse`: on Unix (elsewhere the index stamp, and with it everything step 6
+/// speculates, is unavailable), for a stashing run (decided by the arguments alone: no `--all-files`, no file
+/// arguments, no file list on stdin), with none of `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` and
+/// `GIT_INDEX_FILE` set, and `<cwd>/.git` a directory (a linked worktree's `.git` file, a symbolic link and a
+/// subdirectory invocation do not speculate). The caller keeps the results only when discovery reports this very
+/// layout ([`same_layout`]).
+fn speculative_layout(cx: &RunCtx, a: &RunArgs) -> Option<(Git, RepoInfo)> {
+    let stdin_list = a.ext.stdin_files.is_some() && cx.brand == snp_core::brand::Brand::Snp;
+    let located = [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+    ]
+    .iter()
+    .any(|k| cx.env.get(k).is_some());
+    if !cfg!(unix) || a.all_files || !a.files.is_empty() || stdin_list || located {
+        return None;
+    }
+    let root = cx.invocation_cwd.clone();
+    let git_dir = root.join(".git");
+    if !std::fs::symlink_metadata(&git_dir).is_ok_and(|m| m.is_dir()) {
+        return None;
+    }
+    let info = RepoInfo {
+        common_dir: git_dir.clone(),
+        index_file: git_dir.join("index"),
+        git_dir,
+        root,
+        is_worktree: false,
+    };
+    let git = Git::at(
+        Arc::clone(&cx.git_exe),
+        &cx.env,
+        &info,
+        Arc::clone(&cx.git_backend),
+    )
+    .with_brand(cx.brand);
+    Some((git, info))
+}
+
+/// Two layouts name the same root, git directory, common directory and index file (ADR-154).
+fn same_layout(a: &RepoInfo, b: &RepoInfo) -> bool {
+    a.root == b.root
+        && a.git_dir == b.git_dir
+        && a.common_dir == b.common_dir
+        && a.index_file == b.index_file
+        && a.is_worktree == b.is_worktree
 }
 
 /// Tracked entries plus their ancestor directories up to which one or two process hooks use the Stat mode: below it
@@ -1362,6 +1504,8 @@ mod tests {
             old_git: false,
             report_recovery: true,
             checkout_notice: None,
+            intent_to_add_hint: None,
+            config_listing: None,
         })
         .unwrap();
         // the stash took the unstaged line away; a "hook" modified the file

@@ -257,6 +257,7 @@ anchors = [
 # K9: a protocol model (Lean only, docs/VERIFICATION.md §9.2). No oracle: nothing executable is compared; the
 # behaviour tests below exercise the modelled scenarios against real git (named witnesses, not a proof link). The
 # anchors pin the guard.rs steps and the snp-git calls the model describes; A1-A5 are fields of `Hyps`, not axioms.
+# ADR-152's restore by rename is modelled in proofs/lean/SnpModels/Stash/Rename.lean (imported by the package root).
 [[model]]
 id = "K9-stash-protocol"
 lean = "proofs/lean/SnpModels/Stash/Protocol.lean"
@@ -269,6 +270,8 @@ theorems = [
     "SnpModels.Stash.rollback_complete",
     "SnpModels.Stash.no_silent_loss",
     "SnpModels.Stash.index_invariant",
+    "SnpModels.Stash.rename_restore_eq_apply",
+    "SnpModels.Stash.runR_eq_run",
 ]
 witnesses = [
     "crates/snp-stash/tests/behaviour/hidden.rs::a_change_a_clean_filter_hides_survives_the_stash",
@@ -277,18 +280,37 @@ witnesses = [
     "crates/snp-stash/tests/behaviour/hidden.rs::names_are_literal_pathspecs",
     # Pins where the model is stronger than git (A2 is whole-file, git applies by hunk context): a ¬G witness.
     "crates/snp-stash/tests/behaviour/hidden.rs::a_hook_edit_outside_the_users_hunks_merges_without_a_rollback",
+    # ADR-152: the rename ends as `git apply` ends (twin repositories), and a hook edit is never renamed over.
+    "crates/snp-stash/tests/behaviour/rename.rs::a_proven_restore_renames_the_originals_back_and_ends_as_git_apply_ends",
+    "crates/snp-stash/tests/behaviour/rename.rs::a_hook_edit_to_a_file_of_the_patch_restores_with_git_apply",
 ]
 anchors = [
-    { item = "crates/snp-stash/src/guard.rs::enter", fingerprint = "bed88b049149be8f" },
-    { item = "crates/snp-stash/src/guard.rs::Inner::stash", fingerprint = "157ddd4a934e3913" },
-    { item = "crates/snp-stash/src/guard.rs::Inner::first_pass", fingerprint = "14b9a5ba445dd668" },
-    { item = "crates/snp-stash/src/guard.rs::Inner::secure", fingerprint = "225838dc66c99bc7" },
+    { item = "crates/snp-stash/src/guard.rs::enter", fingerprint = "2e72a18912553ad0" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::stash", fingerprint = "2aab44baf5b5d800" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::intent_to_add_known_empty", fingerprint = "3c77281aa0c99280" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::tree_and_proof", fingerprint = "996fbaee59a27480" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::first_pass", fingerprint = "b6749df397d5d084" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::secure", fingerprint = "baacbf3cacfd77bb" },
     { item = "crates/snp-stash/src/guard.rs::Inner::stage_fixed", fingerprint = "cec3d73a66bef646" },
     { item = "crates/snp-stash/src/guard.rs::Inner::git_apply", fingerprint = "8cbc686e7d1df3e6" },
     { item = "crates/snp-stash/src/guard.rs::Inner::rollback_checkout", fingerprint = "98a0585191f9197c" },
-    { item = "crates/snp-stash/src/guard.rs::Inner::restore_patch", fingerprint = "589050b70214ca80" },
-    { item = "crates/snp-stash/src/guard.rs::Inner::finish", fingerprint = "ad4d9af3d498fa53" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::restore_patch", fingerprint = "40f418efc99d183f" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::finish", fingerprint = "97f3ac85597c9fb5" },
+    # ADR-152: the backups (`renameRestore`'s source: each preserved inode holds the user's original) and the restore
+    # by rename (`restoreR`), with the oracle's proof (`RenameProof`) and the guard's final checks
+    { item = "crates/snp-stash/src/guard.rs::Inner::make_backups", fingerprint = "7bcc43694b041cf0" },
+    { item = "crates/snp-stash/src/guard.rs::backup_one", fingerprint = "c2090a774b5a4178" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::rename_restore", fingerprint = "6349ae494564476f" },
+    { item = "crates/snp-stash/src/guard.rs::rename_plan", fingerprint = "2c7fee2d7c78cb04" },
+    { item = "crates/snp-stash/src/guard.rs::rename_back", fingerprint = "26ed72ac9cf1f61e" },
+    { item = "crates/snp-stash/src/diff_oracle.rs::DiffOracle::restore_proof", fingerprint = "45e6aa13311a7b12" },
+    { item = "crates/snp-stash/src/diff_oracle.rs::RestoreProof::content_unchanged", fingerprint = "c3faeb282f208807" },
+    { item = "crates/snp-stash/src/diff_oracle.rs::RestoreProof::inputs_unchanged", fingerprint = "79bddeeff76b68af" },
+    { item = "crates/snp-stash/src/diff_oracle.rs::ProofFile::stat_unchanged", fingerprint = "77a94ffea1462c86" },
     { item = "crates/snp-git/src/git.rs::Git::patch_paths", fingerprint = "189c9aee406d8b09" },
+    # ADR-151: the same listing fed the patch on stdin while it streams (its answer, or the file-based one above)
+    { item = "crates/snp-git/src/git.rs::Git::patch_paths_feed", fingerprint = "29858d2a9a42db1b" },
+    { item = "crates/snp-git/src/git.rs::PatchPathsFeed::finish", fingerprint = "6cefd45e42f94e26" },
     { item = "crates/snp-git/src/git.rs::Git::changed_paths", fingerprint = "b61db27db0cb3a63" },
     { item = "crates/snp-git/src/git.rs::Git::rollback_paths", fingerprint = "f2867ad6eff4b050" },
     { item = "crates/snp-git/src/git.rs::Git::checkout_paths", fingerprint = "17552402218417da" },
@@ -303,6 +325,8 @@ anchors = [
 "SnpModels.Stash.rollback_complete" = "956df0f2647cbbc1"
 "SnpModels.Stash.no_silent_loss" = "6bdf668f701a98f7"
 "SnpModels.Stash.index_invariant" = "e0b8ab6a659b7c3b"
+"SnpModels.Stash.rename_restore_eq_apply" = "dc2ff5de67c585ba"
+"SnpModels.Stash.runR_eq_run" = "38a368c0344d075c"
 
 # memchr 2.x `memchr(needle, &hay[from..])` shifted by `from`: the first `needle` at or after `from`, the contract of
 # `FindByte::find_byte` (K5b). Tested against the verified `Scalar` (and checked by every debug build of

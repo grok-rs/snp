@@ -894,3 +894,67 @@ fn index_stamp_follows_index_rewrites() {
     sb.git(&repo, &["add", "b"]);
     assert_ne!(git.index_stamp(&info), before, "git add rewrote the index");
 }
+
+/// ADR-154: the intent-to-add proof holds exactly on a SHA-1 index whose every entry the strict reader parses
+/// without the intent-to-add flag, and agrees with `git diff --diff-filter=A` wherever it holds: v2, a v3 index with
+/// skip-worktree, v4; refused with an intent-to-add entry (also when its file is deleted, where git lists nothing),
+/// for a split index, a missing index, a config that names an object format and an index above 16 384 entries.
+#[test]
+fn intent_to_add_proof_holds_only_without_such_entries() {
+    let sb = Sandbox::new();
+    let repo = sb.init("ita");
+    let (git, info) = sb.discover(&repo);
+    assert!(!git.index_without_intent_to_add(&info), "no index file yet");
+    sb.write(&repo, "a", b"a\n");
+    sb.write(&repo, "b", b"b\n");
+    sb.git(&repo, &["add", "a", "b"]);
+    sb.commit(&repo, "ab");
+    let ita_listed = |git: &Git| !git.intent_to_add().unwrap().is_empty();
+    assert!(git.index_without_intent_to_add(&info), "v2");
+    assert!(!ita_listed(&git));
+    sb.git(&repo, &["update-index", "--skip-worktree", "b"]);
+    assert!(git.index_without_intent_to_add(&info), "v3, skip-worktree");
+    sb.git(&repo, &["update-index", "--no-skip-worktree", "b"]);
+    sb.git(&repo, &["update-index", "--index-version", "4"]);
+    assert!(git.index_without_intent_to_add(&info), "v4");
+    assert!(!ita_listed(&git));
+    sb.git(&repo, &["update-index", "--index-version", "2"]);
+    sb.write(&repo, "n", b"n\n");
+    sb.git(&repo, &["add", "-N", "n"]);
+    // git >= 2.19 lists the entry as added; 2.18 as modified (diff.ita-invisible-in-index): either way the entry
+    // refuses the proof
+    assert!(
+        !git.index_without_intent_to_add(&info),
+        "intent-to-add entry"
+    );
+    std::fs::remove_file(repo.join("n")).unwrap();
+    assert!(
+        !git.index_without_intent_to_add(&info),
+        "the entry decides, not the worktree"
+    );
+    sb.git(&repo, &["rm", "-q", "--cached", "n"]);
+    assert!(git.index_without_intent_to_add(&info));
+    sb.git(&repo, &["update-index", "--split-index"]);
+    assert!(!git.index_without_intent_to_add(&info), "split index");
+    sb.git(&repo, &["update-index", "--no-split-index"]);
+    assert!(git.index_without_intent_to_add(&info));
+    let config = info.common_dir.join("config");
+    let saved = std::fs::read(&config).unwrap();
+    let mut named = saved.clone();
+    named.extend_from_slice(b"[extensions]\n\tObjectFormat = sha1\n");
+    std::fs::write(&config, &named).unwrap();
+    assert!(
+        !git.index_without_intent_to_add(&info),
+        "an object format named"
+    );
+    std::fs::write(&config, &saved).unwrap();
+    assert!(git.index_without_intent_to_add(&info));
+    // the header's count above the bound refuses before the entries are read
+    let index = std::fs::read(&info.index_file).unwrap();
+    let mut big = index.clone();
+    big.splice(8..12, 16_385_u32.to_be_bytes());
+    std::fs::write(&info.index_file, &big).unwrap();
+    assert!(!git.index_without_intent_to_add(&info), "too many entries");
+    std::fs::write(&info.index_file, &index).unwrap();
+    assert!(git.index_without_intent_to_add(&info));
+}

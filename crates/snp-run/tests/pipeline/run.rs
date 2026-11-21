@@ -1783,7 +1783,8 @@ fn a_contended_lock_asks_g_again() {
     h.git(&["commit", "-qm", "files"]);
     h.write("u.txt", b"u\nunstaged\n");
     let log = logged_git(&mut h);
-    // hold the worktree lock (an flock, like another run's) for a moment
+    // hold the worktree lock (an flock, like another run's) long enough that the run surely reaches it while held:
+    // 400 ms was not enough on CI's macOS Intel runner in serial mode (a debug build got there later, never waited)
     let lock = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -1793,7 +1794,7 @@ fn a_contended_lock_asks_g_again() {
     lock.lock().unwrap();
     let holder = std::thread::Builder::new()
         .spawn(move || {
-            std::thread::sleep(Duration::from_millis(400));
+            std::thread::sleep(Duration::from_secs(3));
             drop(lock);
         })
         .unwrap();

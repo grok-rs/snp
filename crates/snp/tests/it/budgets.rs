@@ -171,17 +171,20 @@ const fn windows_diff_spawns(hooks: usize) -> usize {
 /// Whether the `git` on `PATH` is older than 2.31, the floor of the tested range the spawn budgets are stated for
 /// (bench/README.md "Spawn budgets"): older git takes fallback paths that spawn more git, so the new shape pins skip
 /// there instead of joining `packaging/ci/git-known-failures`.
-fn git_below_budget_range(env: &TestEnv) -> bool {
+/// The `major.minor` of the environment's git (`[0, 0]` parts that do not parse).
+fn git_major_minor(env: &TestEnv) -> Vec<u32> {
     let out = env.git(env.root()).args(["--version"]).output();
     let text = String::from_utf8_lossy(&out.stdout);
-    let ver: Vec<u32> = text
-        .trim()
+    text.trim()
         .trim_start_matches("git version ")
         .split('.')
         .take(2)
         .map(|c| c.parse().unwrap_or(0))
-        .collect();
-    ver.as_slice() < [2, 31].as_slice()
+        .collect()
+}
+
+fn git_below_budget_range(env: &TestEnv) -> bool {
+    git_major_minor(env).as_slice() < [2, 31].as_slice()
 }
 
 /// The fixed git cost of a warm run: one combined `rev-parse` and at most six overlapped fan-out queries.
@@ -189,8 +192,9 @@ const WARM_RUN_GIT: usize = 1 + 6;
 
 /// The git cost of a warm stashing `run` whose hooks read no files (P17: no staged list E), `process_hooks` of them
 /// executed: one combined `rev-parse`; fan-out A, B, C, plus F and G when the Stat mode applies (Unix, from three
-/// process hooks on, ARCHITECTURE §3.1 step 14); the stash's `write-tree` + `diff-index` (02 §7); one `git diff` per
-/// executed hook without the Stat mode (and on Windows the baseline as well, ADR-043).
+/// process hooks on, ARCHITECTURE §3.1 step 14); the stash's `write-tree` + `diff-index` (02 §7; at most: ADR-153
+/// decides them in-process on the provably clean path); one `git diff` per executed hook without the Stat mode (and
+/// on Windows the baseline as well, ADR-043).
 ///
 /// On a `small` tree (at most 256 index entries) with three or more CPUs, F and G start first and F answers A, and
 /// the Stat mode applies from one process hook on (ADR-104): B, C, F and G, and no `git diff`.
@@ -445,7 +449,9 @@ fn b6_shape_fast_path_within_13_spawns() {
 
 /// B9 shape pin (P15): `git commit --allow-empty` through the installed hook of a `noop` repository with ten hooks.
 /// hook-impl reuses its own discovery (one combined `rev-parse`, ADR-084) and runs the same pipeline as B3, so on
-/// Linux the git count is exactly B3's and every hook spawns once; elsewhere the B3 bounds apply.
+/// Linux the git count is exactly B3's and every hook spawns once; elsewhere the B3 bounds apply. The files are
+/// settled in the past (as the bench fixture's, ADR-136), so the index `git commit` hands the hook is not racy and,
+/// on a filesystem the stat proof accepts, the stash's `write-tree` and `diff-index` are decided in-process (ADR-153).
 #[test]
 #[cfg_attr(
     not(feature = "testing"),
@@ -458,6 +464,20 @@ fn b9_hook_impl_shape_is_pinned() {
         return;
     }
     let repo = noop_repo(&env, "b9", &noop_config(10));
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(10);
+    for f in [".pre-commit-config.yaml", "README.md"] {
+        std::fs::File::options()
+            .write(true)
+            .open(repo.join(f))
+            .unwrap()
+            .set_modified(past)
+            .unwrap();
+    }
+    let refreshed = env
+        .git(&repo)
+        .args(["update-index", "-q", "--refresh"])
+        .output();
+    assert_eq!(refreshed.code, 0, "{refreshed:?}");
     let installed = env.snp(&repo).args(["install"]).output();
     assert_eq!(installed.code, 0, "{installed:?}");
     let commit = |log: Option<&Path>| {
@@ -475,9 +495,25 @@ fn b9_hook_impl_shape_is_pinned() {
     let log = SpawnLog::read(&log_path);
     let git = stash_run_git(10, true);
     assert_bounds("B9", &out, &log, git + 10, 10);
+    // ADR-153 elides write-tree and diff-index when the index's cache-tree is fully valid. Under `git commit` that
+    // depends on git: from 2.39 (CI's matrix) the hook sees a refreshed cache-tree; 2.31 and 2.34 hand it a stale one,
+    // and the elision correctly falls back to the real commands, so either count is right there.
+    let safe = snp_os::fsinfo::stat_oracle_safe(&repo).unwrap_or(false);
+    let required = safe && git_major_minor(&env).as_slice() >= [2, 39].as_slice();
+    let got = log.git();
     if cfg!(target_os = "linux") {
-        assert_eq!(log.git(), git, "B9 git spawns\n{}", log.dump());
-        assert_eq!(log.total(), git + 10, "B9 spawns\n{}", log.dump());
+        if required {
+            assert_eq!(got, git - 2, "B9 git spawns\n{}", log.dump());
+        } else if safe {
+            assert!(
+                got == git || got == git - 2,
+                "B9 git spawns {got}\n{}",
+                log.dump()
+            );
+        } else {
+            assert_eq!(got, git, "B9 git spawns\n{}", log.dump());
+        }
+        assert_eq!(log.total(), got + 10, "B9 spawns\n{}", log.dump());
     }
 }
 

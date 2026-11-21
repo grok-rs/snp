@@ -10,6 +10,9 @@
 //! too. The trailing checksum is not verified: git dies on a corrupt index with nothing on stdout, and
 //! `index.skipHash` writes zeros. Every allocation is a `try_reserve`; no indexing, no unchecked arithmetic (S2).
 //!
+//! [`IndexFile::read_keep`] also keeps every entry's object id and the `TREE` extension's bytes (a second `TREE`
+//! refuses), for ADR-153's in-process `write-tree` and `diff-index` ([`crate::cache_tree`]).
+//!
 //! Owner: WP-18.
 
 use std::ffi::CStr;
@@ -97,7 +100,12 @@ pub struct IndexEntry {
     name_start: u32,
     /// The name's length (without its NUL).
     name_len: u32,
+    /// The object id's start in [`IndexFile::oids`] ([`NOT_KEPT`] unless read with [`IndexFile::read_keep`]).
+    oid_start: u32,
 }
+
+/// [`IndexEntry::oid_start`] of an index read without its object ids.
+const NOT_KEPT: u32 = u32::MAX;
 
 impl IndexEntry {
     /// The merge stage (0 for a merged entry).
@@ -136,6 +144,12 @@ pub struct IndexFile {
     pub extensions: Vec<[u8; 4]>,
     /// Every name followed by a NUL.
     names: Vec<u8>,
+    /// ADR-153: every entry's raw object id, back to back (empty unless read with [`IndexFile::read_keep`]).
+    oids: Vec<u8>,
+    /// ADR-153: the object id length the index was read with (0 for a default value).
+    hash_len: usize,
+    /// ADR-153: the `TREE` extension's bytes, when read with [`IndexFile::read_keep`] and present.
+    tree: Option<Vec<u8>>,
 }
 
 impl IndexFile {
@@ -143,6 +157,16 @@ impl IndexFile {
     /// ids of `hash_len` bytes, streamed through a 64 KiB buffer: only the entries and their names are kept. A file
     /// whose length differs from its `fstat` size by the end refuses.
     pub fn read(path: &Path, hash_len: usize) -> Result<Self, IndexRefusal> {
+        Self::read_with(path, hash_len, false)
+    }
+
+    /// [`Self::read`] that also keeps every entry's object id ([`Self::oid`]) and the `TREE` extension's bytes
+    /// ([`Self::tree_extension`]), for ADR-153's in-process `write-tree` and `diff-index`.
+    pub fn read_keep(path: &Path, hash_len: usize) -> Result<Self, IndexRefusal> {
+        Self::read_with(path, hash_len, true)
+    }
+
+    fn read_with(path: &Path, hash_len: usize, keep: bool) -> Result<Self, IndexRefusal> {
         let f = std::fs::File::open(path).map_err(|_| IndexRefusal::Io)?;
         let len = f.metadata().map_err(|_| IndexRefusal::Io)?.len();
         let len = usize::try_from(len).map_err(|_| IndexRefusal::TooLarge)?;
@@ -150,16 +174,28 @@ impl IndexFile {
             std::io::BufReader::with_capacity(64 * 1024, f),
             len,
             hash_len,
+            keep,
         )
     }
 
     /// Parses an index image (see the module documentation).
     pub fn parse(buf: &[u8], hash_len: usize) -> Result<Self, IndexRefusal> {
-        Self::parse_from(buf, buf.len(), hash_len)
+        Self::parse_from(buf, buf.len(), hash_len, false)
     }
 
-    /// Parses the `len` bytes `r` yields (and refuses when it yields more or fewer).
-    fn parse_from<R: BufRead>(r: R, len: usize, hash_len: usize) -> Result<Self, IndexRefusal> {
+    /// [`Self::parse`] keeping the object ids and the `TREE` extension, as [`Self::read_keep`] does.
+    pub fn parse_keep(buf: &[u8], hash_len: usize) -> Result<Self, IndexRefusal> {
+        Self::parse_from(buf, buf.len(), hash_len, true)
+    }
+
+    /// Parses the `len` bytes `r` yields (and refuses when it yields more or fewer); `keep` keeps the object ids and
+    /// the `TREE` extension.
+    fn parse_from<R: BufRead>(
+        r: R,
+        len: usize,
+        hash_len: usize,
+        keep: bool,
+    ) -> Result<Self, IndexRefusal> {
         let empty_blob: &[u8] = match hash_len {
             20 => &EMPTY_BLOB_SHA1,
             32 => &EMPTY_BLOB_SHA256,
@@ -184,6 +220,11 @@ impl IndexFile {
         entries
             .try_reserve_exact(count)
             .map_err(|_| IndexRefusal::TooLarge)?;
+        let mut oids: Vec<u8> = Vec::new();
+        if keep {
+            oids.try_reserve_exact(count.checked_mul(hash_len).ok_or(IndexRefusal::TooLarge)?)
+                .map_err(|_| IndexRefusal::TooLarge)?;
+        }
         // an upper bound for v2/v3 (each name is followed by at least its NUL); untouched capacity is not resident,
         // and the arena is shrunk to its length at the end
         let mut names: Vec<u8> = Vec::new();
@@ -264,6 +305,17 @@ impl IndexFile {
                 return Err(IndexRefusal::Entry);
             }
             prev = (name_start, name_len);
+            let oid_start = if keep {
+                let at = u32::try_from(oids.len()).map_err(|_| IndexRefusal::TooLarge)?;
+                if at == NOT_KEPT {
+                    return Err(IndexRefusal::TooLarge);
+                }
+                // reserved for every entry above
+                oids.extend_from_slice(oid);
+                at
+            } else {
+                NOT_KEPT
+            };
             entries.push(IndexEntry {
                 ctime,
                 mtime,
@@ -278,9 +330,11 @@ impl IndexFile {
                 empty_blob: empty,
                 name_start: u32::try_from(name_start).map_err(|_| IndexRefusal::TooLarge)?,
                 name_len: u32::try_from(name_len).map_err(|_| IndexRefusal::TooLarge)?,
+                oid_start,
             });
         }
         let mut extensions: Vec<[u8; 4]> = Vec::new();
+        let mut tree: Option<Vec<u8>> = None;
         while rd.pos < end {
             let sig = rd.array::<4>()?;
             let size = usize::try_from(rd.u32()?).map_err(|_| IndexRefusal::TooLarge)?;
@@ -289,7 +343,22 @@ impl IndexFile {
             if !known && (matches!(&sig, b"link" | b"sdir" | b"FSMN") || !optional) {
                 return Err(IndexRefusal::Extension(sig));
             }
-            rd.skip(size)?;
+            if keep && &sig == b"TREE" {
+                // git reads the first `TREE` only if there are two; a second one is a doubt
+                if tree.is_some() {
+                    return Err(IndexRefusal::Extension(sig));
+                }
+                // bounded by the file before anything is reserved
+                rd.after(size)?;
+                let mut body: Vec<u8> = Vec::new();
+                body.try_reserve_exact(size)
+                    .map_err(|_| IndexRefusal::TooLarge)?;
+                body.resize(size, 0);
+                rd.fill(&mut body)?;
+                tree = Some(body);
+            } else {
+                rd.skip(size)?;
+            }
             extensions
                 .try_reserve(1)
                 .map_err(|_| IndexRefusal::TooLarge)?;
@@ -307,7 +376,31 @@ impl IndexFile {
             entries,
             extensions,
             names,
+            oids,
+            hash_len,
+            tree,
         })
+    }
+
+    /// The raw object id of `e` (an entry of this index); `None` unless the index was read with
+    /// [`Self::read_keep`] or [`Self::parse_keep`].
+    pub fn oid(&self, e: &IndexEntry) -> Option<&[u8]> {
+        if e.oid_start == NOT_KEPT {
+            return None;
+        }
+        let s = span(e.oid_start);
+        self.oids.get(s..s.checked_add(self.hash_len)?)
+    }
+
+    /// The object id length the index was read with.
+    pub fn hash_len(&self) -> usize {
+        self.hash_len
+    }
+
+    /// The `TREE` (cache-tree) extension's bytes, when the index was read with [`Self::read_keep`] or
+    /// [`Self::parse_keep`] and has one.
+    pub fn tree_extension(&self) -> Option<&[u8]> {
+        self.tree.as_deref()
     }
 
     /// The name of `e` (an entry of this index), without its NUL.
@@ -581,6 +674,42 @@ mod tests {
         assert!(e[2].intent_to_add());
         assert_eq!(e[3].stage(), 2);
         assert_eq!(ix.name(&e[3]), b"d");
+    }
+
+    /// ADR-153: the object ids and the `TREE` extension are kept only on request; a second `TREE` refuses then.
+    #[test]
+    fn keeps_object_ids_and_the_tree_extension() {
+        let b = image(
+            2,
+            &[entry(b"a", 0, None, 3), entry(b"b", 0, None, 1)],
+            &[ext(*b"REUC", b"q"), ext(*b"TREE", b"xyz")].concat(),
+        );
+        let plain = IndexFile::parse(&b, 20).unwrap();
+        assert_eq!(plain.oid(&plain.entries[0]), None);
+        assert_eq!(plain.tree_extension(), None);
+        let kept = IndexFile::parse_keep(&b, 20).unwrap();
+        assert_eq!(kept.oid(&kept.entries[1]), Some(&[0xab; 20][..]));
+        assert_eq!(kept.tree_extension(), Some(&b"xyz"[..]));
+        assert_eq!(kept.hash_len(), 20);
+        assert_eq!(kept.extensions, vec![*b"REUC", *b"TREE"]);
+        let two = image(
+            2,
+            &[entry(b"a", 0, None, 3)],
+            &[ext(*b"TREE", b""), ext(*b"TREE", b"")].concat(),
+        );
+        assert!(IndexFile::parse(&two, 20).is_ok());
+        assert_eq!(
+            IndexFile::parse_keep(&two, 20).unwrap_err(),
+            IndexRefusal::Extension(*b"TREE")
+        );
+        // a TREE size beyond the file refuses before anything is reserved
+        let mut huge = image(2, &[entry(b"a", 0, None, 3)], &ext(*b"TREE", b""));
+        let at = huge.len() - 24;
+        huge.splice(at..at + 4, u32::MAX.to_be_bytes());
+        assert_eq!(
+            IndexFile::parse_keep(&huge, 20).unwrap_err(),
+            IndexRefusal::Truncated
+        );
     }
 
     #[test]

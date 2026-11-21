@@ -289,6 +289,50 @@ fn plan(info: &RepoInfo, hash_len: usize, stamp: St) -> Option<Plan> {
     })
 }
 
+/// ADR-153: the per-entry stat proof for the stash's `diff-index`, on the calling thread, with no entry skipped:
+/// every entry of `index` (the parse of the index whose mtime second, as git keeps it, is `index_sec`) is merged,
+/// not intent-to-add, assume-unchanged or skip-worktree, `100644`, `100755` or `120000` (no gitlink), not racily
+/// smudged, not racy, and its `lstat` and every leading directory's match as in [`plan`] and [`pass`]. Stricter than
+/// [`IndexProof`]: `diff-index` treats the entries this skips through other code paths, so it does not rely on them.
+pub(crate) fn every_entry_stat_clean(
+    root: &std::path::Path,
+    index: &IndexFile,
+    index_sec: u32,
+) -> bool {
+    let plain = index.entries.iter().all(|e| {
+        let smudged = e.size == 0 && !e.empty_blob;
+        let doubt = e.stage() != 0
+            || e.intent_to_add()
+            || skipped(e)
+            || !matches!(e.mode, 0o100_644 | 0o100_755 | 0o120_000)
+            || smudged
+            || e.mtime.0 >= index_sec;
+        !doubt
+    });
+    if !plain {
+        return false;
+    }
+    let Some((dirs, dir_spans)) = leading_dirs(index, &index.entries) else {
+        return false;
+    };
+    let Ok(dir) = RootDir::open(root) else {
+        return false;
+    };
+    let files_ok = index.entries.iter().all(|e| {
+        index
+            .name_cstr(e)
+            .and_then(|name| dir.lstat(name).ok())
+            .is_some_and(|st| entry_matches(e, &st))
+    });
+    files_ok
+        && dir_spans.iter().all(|&(s, len)| {
+            dirs.get(s..s.saturating_add(len).saturating_add(1))
+                .and_then(|b| CStr::from_bytes_with_nul(b).ok())
+                .and_then(|name| dir.lstat(name).ok())
+                .is_some_and(|st| st.mode & S_IFMT == S_IFDIR)
+        })
+}
+
 /// An entry git never compares with the worktree: assume-unchanged, skip-worktree, or a gitlink (under
 /// `--ignore-submodules`).
 fn skipped(e: &IndexEntry) -> bool {

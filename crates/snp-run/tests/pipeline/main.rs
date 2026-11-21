@@ -18,6 +18,8 @@ mod deferred_baseline;
 #[cfg(test)]
 mod extensions;
 #[cfg(test)]
+mod fanout;
+#[cfg(test)]
 mod hook_impl;
 #[cfg(test)]
 mod index_proof;
@@ -25,6 +27,8 @@ mod index_proof;
 mod meta;
 #[cfg(test)]
 mod prefetch;
+#[cfg(test)]
+mod restore_rename;
 #[cfg(test)]
 mod run;
 #[cfg(test)]

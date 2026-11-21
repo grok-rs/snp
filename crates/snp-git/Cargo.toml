@@ -20,6 +20,7 @@ snp-os.workspace = true
 snp-proc.workspace = true
 snp-pycompat.workspace = true
 blake3.workspace = true
+flate2.workspace = true
 memchr.workspace = true
 
 [dev-dependencies]

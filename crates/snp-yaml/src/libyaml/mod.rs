@@ -173,26 +173,69 @@ impl<'a> Reader<'a> {
             }
             self.raw_read = self.raw_read.saturating_add(RAW_CHUNK).min(total);
             let limit = self.raw_read.saturating_sub(self.bom);
-            let rest = self.body.get(self.decoded..).unwrap_or("");
-            for c in rest.chars() {
-                let end = self.decoded.saturating_add(c.len_utf8());
-                if end > limit {
-                    // An incomplete character stays in the raw buffer.
-                    break;
-                }
-                if !allowed(c) {
-                    return Err(Error::Reader {
-                        value: u32::from(c),
-                        offset: self.decoded.saturating_add(self.bom),
-                    });
-                }
-                self.decoded = end;
-                self.unread = self.unread.saturating_add(1);
-            }
+            self.decode_to(limit)?;
             if self.unread >= n {
                 return Ok(());
             }
         }
+    }
+
+    /// Decodes the characters of the body that end at or before byte `limit`, checking each one against
+    /// [`allowed`] (ADR-150).
+    ///
+    /// A run of allowed ASCII bytes (`\t`, `\n`, `\r`, `0x20..=0x7E`: exactly the ASCII part of [`allowed`]) is
+    /// counted without decoding, one character per byte; any other byte goes through the character check, one
+    /// character at a time. So the chunk limit, the character count and the first disallowed character's offset are
+    /// those of the plain character loop it replaced (`decode_to_reference`, the oracle of its equivalence test).
+    fn decode_to(&mut self, limit: usize) -> Result<(), Error> {
+        let bytes = self.body.as_bytes();
+        loop {
+            let run = bytes
+                .get(self.decoded..limit)
+                .unwrap_or_default()
+                .iter()
+                .take_while(|&&b| matches!(b, b'\t' | b'\n' | b'\r' | b' '..=b'~'))
+                .count();
+            self.decoded = self.decoded.saturating_add(run);
+            self.unread = self.unread.saturating_add(run);
+            let Some(c) = self.body.get(self.decoded..).and_then(|s| s.chars().next()) else {
+                return Ok(());
+            };
+            let end = self.decoded.saturating_add(c.len_utf8());
+            if end > limit {
+                // An incomplete character stays in the raw buffer.
+                return Ok(());
+            }
+            if !allowed(c) {
+                return Err(Error::Reader {
+                    value: u32::from(c),
+                    offset: self.decoded.saturating_add(self.bom),
+                });
+            }
+            self.decoded = end;
+            self.unread = self.unread.saturating_add(1);
+        }
+    }
+
+    /// The character loop [`Self::decode_to`] replaced: the oracle of its equivalence test.
+    #[cfg(test)]
+    fn decode_to_reference(&mut self, limit: usize) -> Result<(), Error> {
+        let rest = self.body.get(self.decoded..).unwrap_or("");
+        for c in rest.chars() {
+            let end = self.decoded.saturating_add(c.len_utf8());
+            if end > limit {
+                break;
+            }
+            if !allowed(c) {
+                return Err(Error::Reader {
+                    value: u32::from(c),
+                    offset: self.decoded.saturating_add(self.bom),
+                });
+            }
+            self.decoded = end;
+            self.unread = self.unread.saturating_add(1);
+        }
+        Ok(())
     }
 
     /// `buffer[k]`: the `k`-th unread character; NUL past the end of the input (libyaml's terminator). The
@@ -361,6 +404,102 @@ mod tests {
                     }),
                     "{at}"
                 );
+            }
+        }
+    }
+
+    /// Characters on both sides of every class boundary of `allowed`: allowed ASCII, disallowed ASCII controls
+    /// and DEL, C1 controls (`U+85` allowed), the surrogate gap's neighbours, `U+FFFE`/`U+FFFF`, a BOM inside the
+    /// text, and 2-, 3- and 4-byte characters (which straddle chunk limits).
+    const PIECES: &[&str] = &[
+        "a",
+        "key: value\n",
+        " ",
+        "~",
+        "\t",
+        "\r\n",
+        "\0",
+        "\u{1}",
+        "\u{8}",
+        "\u{b}",
+        "\u{c}",
+        "\u{1f}",
+        "\u{7f}",
+        "\u{80}",
+        "\u{84}",
+        "\u{85}",
+        "\u{9f}",
+        "\u{a0}",
+        "\u{e9}",
+        "\u{d7ff}",
+        "\u{e000}",
+        "\u{20ac}",
+        "\u{fffd}",
+        "\u{fffe}",
+        "\u{ffff}",
+        "\u{feff}",
+        "\u{10000}",
+        "\u{10ffff}",
+    ];
+
+    /// xorshift64*: deterministic, so a failure reproduces from its case number.
+    struct Gen(u64);
+
+    impl Gen {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            usize::try_from(self.next() % u64::try_from(n).unwrap()).unwrap()
+        }
+    }
+
+    /// The ASCII fast path of `decode_to` against the character loop it replaced, on random texts (mostly clean
+    /// ASCII with rare other characters, or anything) and random increasing limits: the same result (the same
+    /// first disallowed character and offset), the same decoded prefix and the same character count after every
+    /// step, whatever the limit (chunk multiples with and without a BOM, mid-character, past the end).
+    #[test]
+    fn ascii_fast_path_matches_the_character_loop() {
+        let mut g = Gen(0x9e37_79b9_7f4a_7c15);
+        for case in 0..4000 {
+            let rare = g.below(2) == 0;
+            let len = if g.below(8) == 0 { 2 * RAW_CHUNK } else { 64 };
+            let mut text = String::new();
+            if g.below(4) == 0 {
+                text.push('\u{feff}');
+            }
+            for _ in 0..g.below(len) {
+                let piece = if rare && g.below(64) != 0 {
+                    PIECES[g.below(3)]
+                } else {
+                    PIECES[g.below(PIECES.len())]
+                };
+                text.push_str(piece);
+            }
+            let mut fast = Reader::new(&text);
+            let mut oracle = Reader::new(&text);
+            let mut limit = 0;
+            loop {
+                limit = match g.below(3) {
+                    0 => limit + g.below(5),
+                    1 => limit + g.below(RAW_CHUNK + 4),
+                    _ => (limit / RAW_CHUNK + 1) * RAW_CHUNK - fast.bom,
+                };
+                let got = fast.decode_to(limit);
+                let want = oracle.decode_to_reference(limit);
+                assert_eq!(got, want, "case {case}: limit {limit}");
+                assert_eq!(
+                    (fast.decoded, fast.unread),
+                    (oracle.decoded, oracle.unread),
+                    "case {case}: limit {limit}"
+                );
+                if got.is_err() || limit > fast.body.len() {
+                    break;
+                }
             }
         }
     }

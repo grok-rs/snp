@@ -44,6 +44,40 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   directory replaced by a symbolic link. Anything else takes the real diff, as before. On B12u (20 hooks over 20,000
   files) 19 of 20 `git diff`s no longer run: 1,504 M → 865 M instructions for the process tree, 428 → 410 processes;
   B4 and B5 lose one of two (−4 %).
+- `gc` loads its tracked configs in parallel (ADR-150): with 8 or more `configs-v1` entries, each entry is read,
+  checked and marked (config, manifests, keys, marker names) on the job pool, up to min(cores, 8) threads (always
+  one on musl), and each config's warnings and diagnostics are replayed in tracked order through the printer, so
+  stdout, stderr, the exit, the forgotten configs, the removed repositories and markers are unchanged (a property
+  test compares them with the serial marking byte for byte; a cancelled or panicking load fails before anything is
+  forgotten or removed, and prints nothing more). `repos-v1` entries load lazily, when first asked for, tracked
+  configs sort on cached path components, the kept markers' file names are derived on the workers, and a
+  negative-prefix memo spares the directory probe of each `https://…` repository (one per project root instead).
+  B11 locally (4 CPUs, process wall): 30.5 → 19.3 ms (prek 0.5.11: 22.6 ms); instructions 89.0 M → 90.2 M (pool and
+  replay overhead), syscalls 8,243 → 8,365 (−491 `statx`, +404 `futex` and the thread starts).
+- Cheaper config loads, small reads and pool handoffs (ADR-150 "Cheaper loads"): the YAML reader counts runs of
+  allowed ASCII without decoding them (same allowed set, chunk limit and control-character offsets), `read_capped`
+  reads small files through a per-thread buffer without `fstat`, and the job pool notifies its condition variable
+  only when a thread waits. B11: 90.2 M → 87.6 M instructions, 8,370 → 7,274 syscalls (−701 `statx`, −398
+  `futex`); B10: 128.1 M → 122.4 M instructions; `futex` calls 1,343 → ~780 on B6 and 5,106 → 1,748 on B12u.
+- A stashing `run` waits for two fewer serial git calls before its hooks (ADR-154; output and side effects
+  unchanged). The intent-to-add query runs beside the other step-6 queries when the index is proved free of
+  intent-to-add entries (SHA-1, at most 16,384 entries, the strict index reader parses it), and the stash reuses
+  its empty answer while the index is unchanged and the worktree lock was free; otherwise the stash asks it as
+  before. At the root of a plain repository (`.git` a directory, no `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` or
+  `GIT_INDEX_FILE`), those queries start beside the discovery `rev-parse` and are kept only when discovery reports
+  that very layout. B2 and B3 go from five serial git stages before the hook to three, B8 from nine to seven, B9
+  from five to four, with the same number of git processes; locally B2 −2.5 ms and B3 −2.9 ms (paired rounds). The
+  intent-to-add query may now refresh the index's stat data also when a preflight check ends the run, as the config
+  check already could.
+- The stash's `git write-tree` and `git diff-index` are decided in-process on the provably clean path (ADR-153;
+  output and side effects unchanged). `write-tree` is skipped when the index git already read in this run has a
+  fully valid cache-tree whose tree objects are all loose and `<index>.lock` can be taken and given back (snp
+  creates and removes it at once, so every lock error is still git's own); `diff-index` is skipped when that tree
+  is byte for byte the index's (every tree object loose, read strictly and hash-checked, no packs, alternates or
+  replace refs) and every entry is stat-clean by the index-stat proof's strict match. Anything else runs the real
+  commands. B2 and B3 no longer run either command, B9 neither when its index is not racy, B8 skips `write-tree`;
+  locally B2 −4.1 ms and B3 −4.3 ms (paired rounds), B2's process tree −19 % instructions.
+  `SNP_VERIFY_STASH_ELISION=1` runs the real commands as well and reports a disagreement on stderr.
 - bench: the B8 `p50 <= pre-commit` known miss is gone. PR #57's CI bench measured snp at 307 ms against
   pre-commit's 418 ms (1.36x), so the gate fails again if snp ever falls behind pre-commit on B8.
 - cfgv and file-identify are part of the workspace (ADR-116): imported with their full history as `crates/snp-cfgv`
@@ -282,6 +316,29 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   through `git var GIT_ATTR_SYSTEM`, asked once per stashing run that checks files out, overlapped with that checkout. On B8 with a committed
   `* text=auto` file the skipped diff was 1,333 M instructions; plain B8 pays one `git var` process (0.6 M), and runs
   that stash nothing (B2, B3, B9) are unchanged. The tracked-files query is `git ls-files -s -v -z` now.
+- A stash of a large unstaged change waits less (ADR-151; same git commands' answers, patch bytes, messages,
+  journal states and `fsync`s). `git apply --numstat`, which lists the patch's files, now reads the patch on its
+  standard input while `git diff-index` still prints it, so only its parse is left when the diff ends (when it cannot
+  run or fails, the patch file is listed as before, with the same errors). snp reads a large output of git (past
+  64 KiB) in batches from a 1 MiB pipe on Linux instead of once per 4 KiB write. The oracle hashes a racily clean
+  file of 32 MiB or more on several threads, with the same digest. The `git var GIT_ATTR_SYSTEM` query of ADR-133
+  starts at the patch's first byte instead of with the checkout, so it overlaps the diff. On B8 (a 10 MB unstaged
+  rewrite), locally: about 7,300 fewer syscalls in the whole tree (24,018 → 16,705), context switches 8,694 → 791,
+  tree CPU 669 → 634 ms, and the run about 54 ms shorter (median of 25 interleaved pairs on a loaded machine; much of
+  it from the numstat's parse overlapping the patch's writeback).
+- On Linux the stash can be restored without `git apply` (ADR-152, the owner's decision; divergence D-PERF-05). Right
+  before the checkout snp hard-links every file of the patch into the git dir (under a name the journal records
+  first); when the hooks changed none of those files and nothing converts them (the diff oracle's proof, ADR-119),
+  the restore renames the originals back, with the mode and times `git apply`'s fresh file would have. The bytes,
+  modes, `git status`, `git diff`, the index and every message are the same; the inode and birth time are the
+  original's, and one process fewer runs. Any doubt (a hook edit or touch, `stage_fixed`, an intent-to-add entry, a
+  mode change, a second hard link, extended attributes, a deleted file, a converting attribute, over 1,000 files)
+  falls back to `git apply`; every exit removes the links, and the next run's recovery removes those a crash left.
+  An autosave that lands between the final check and the rename is overwritten rather than merged.
+  `SNP_STASH_RESTORE=apply` always uses `git apply`. On B8, locally: 17 → 16 processes, whole-tree syscalls 22,633 →
+  19,881, tree CPU 675 → 561 ms, and the run about 130 to 140 ms shorter than before in two sets of hyperfine-like
+  blocks. Against prek 0.5.11 the two sets disagree (one 61 ms faster, one 121 ms slower), so that comparison is left
+  to CI.
 
 ### Fixed
 

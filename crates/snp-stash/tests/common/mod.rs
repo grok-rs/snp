@@ -16,7 +16,7 @@ use snp_core::env::Env;
 use snp_core::failure::Failure;
 use snp_core::output::{Printer, PrinterOpts};
 use snp_git::{Git, GitBackend, GitExe, ProcBackend, RepoInfo};
-use snp_proc::spawn::{Captured, Group, PyStatus, Role, SpawnError, Stdin};
+use snp_proc::spawn::{Captured, Fed, Group, PyStatus, Role, SpawnError, Stdin};
 use snp_stash::StashCtx;
 
 /// `FOO_CONTENTS` of `tests/staged_files_only_test.py`.
@@ -335,6 +335,8 @@ impl Sandbox {
                 old_git: false,
                 report_recovery: true,
                 checkout_notice: None,
+                intent_to_add_hint: None,
+                config_listing: None,
             },
             out,
             err,
@@ -404,6 +406,20 @@ pub(crate) enum Reply {
     Exit(i64, Vec<u8>, Vec<u8>),
     /// Exit like a git stopped by SIGTTIN (group killed): -9 and `stopped_by_tty`.
     TtyStop,
+    /// `capture_fed` only (elsewhere: [`Reply::Real`]): start a real child that never reads its stdin, so writes
+    /// past the pipe's capacity fail: `git apply --numstat -z --whitespace=nowarn <decoy>`, which lists the decoy
+    /// patch file instead and exits 0 (an answer the caller must not use).
+    FedUnread(PathBuf),
+    /// The program cannot start: a [`SpawnError`].
+    SpawnFail,
+}
+
+/// The [`SpawnError`] of [`Reply::SpawnFail`].
+fn spawn_fail(argv: &[OsString]) -> SpawnError {
+    SpawnError {
+        program: argv.first().cloned().unwrap_or_default(),
+        io: io::Error::from(io::ErrorKind::NotFound),
+    }
 }
 
 /// `(argument prefix, only the n-th match, matches seen, action)`.
@@ -516,7 +532,8 @@ impl GitBackend for Spy {
         group: Group,
     ) -> Result<Captured, SpawnError> {
         match self.react(argv) {
-            Reply::Real => self.real.capture(argv, env, cwd, stdin, group),
+            Reply::Real | Reply::FedUnread(_) => self.real.capture(argv, env, cwd, stdin, group),
+            Reply::SpawnFail => Err(spawn_fail(argv)),
             Reply::Exit(code, stdout, stderr) => Ok(Captured {
                 status: PyStatus(code),
                 stdout,
@@ -540,7 +557,8 @@ impl GitBackend for Spy {
         sink: &mut dyn Write,
     ) -> Result<(PyStatus, Vec<u8>), SpawnError> {
         match self.react(argv) {
-            Reply::Real => self.real.stream(argv, env, cwd, sink),
+            Reply::Real | Reply::FedUnread(_) => self.real.stream(argv, env, cwd, sink),
+            Reply::SpawnFail => Err(spawn_fail(argv)),
             Reply::Exit(code, stdout, stderr) => {
                 sink.write_all(&stdout).map_err(|io| SpawnError {
                     program: argv.first().cloned().unwrap_or_default(),
@@ -560,9 +578,90 @@ impl GitBackend for Spy {
         stdin: Stdin,
     ) -> Result<PyStatus, SpawnError> {
         match self.react(argv) {
-            Reply::Real => self.real.inherit(argv, env, cwd, stdin),
+            Reply::Real | Reply::FedUnread(_) => self.real.inherit(argv, env, cwd, stdin),
+            Reply::SpawnFail => Err(spawn_fail(argv)),
             Reply::Exit(code, ..) => Ok(PyStatus(code)),
             Reply::TtyStop => Ok(PyStatus(-9)),
         }
     }
+
+    fn capture_fed(
+        &self,
+        argv: &[OsString],
+        env: &Env,
+        cwd: &Path,
+        group: Group,
+    ) -> Result<Fed, SpawnError> {
+        match self.react(argv) {
+            Reply::Real => self.real.capture_fed(argv, env, cwd, group),
+            Reply::FedUnread(decoy) => {
+                let mut unread = argv.to_vec();
+                unread.push(decoy.into_os_string());
+                self.real.capture_fed(&unread, env, cwd, group)
+            }
+            Reply::SpawnFail => Err(spawn_fail(argv)),
+            Reply::Exit(code, stdout, stderr) => Ok(Fed::scripted(Captured {
+                status: PyStatus(code),
+                stdout,
+                stderr,
+                stopped_by_tty: false,
+            })),
+            Reply::TtyStop => Ok(Fed::scripted(Captured {
+                status: PyStatus(-9),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                stopped_by_tty: true,
+            })),
+        }
+    }
+}
+
+/// ADR-152: what `snp run` does with the `DiffOracle` around the hooks of a stashed run, with `hook` as the only
+/// hook: the oracle built from the post-checkout index and configuration, ADR-119's elision of the checkout's
+/// baseline, one comparison around `hook`, and the restore proof handed to the guard. Returns whether a proof was
+/// handed over.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub(crate) fn prove_around(
+    sb: &Sandbox,
+    repo: &Path,
+    g: &mut snp_stash::StashGuard,
+    hook: impl FnOnce(),
+) -> bool {
+    use snp_stash::diff_oracle::DiffOracle;
+    let (git, info) = sb.discover(repo);
+    let tracked = Arc::new(git.tracked_with_modes().unwrap());
+    let listing = git.config_listing().unwrap();
+    let mut o = DiffOracle::new(
+        &git,
+        &info,
+        &sb.env,
+        None,
+        Some(tracked),
+        Some(Arc::clone(&listing.files)),
+    )
+    .unwrap();
+    if let Some(paths) = g.checked_out() {
+        o.elide_checkout_baseline(paths, &listing.checkout, None, false);
+    }
+    o.before_hook().unwrap();
+    hook();
+    o.after_hook().unwrap();
+    match g.checked_out().and_then(|p| o.restore_proof(p)) {
+        Some(p) => {
+            g.prove_restore(p);
+            true
+        }
+        None => false,
+    }
+}
+
+/// ADR-152: the hard-link backups left in a git dir (`snp-stash-bk-*`).
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub(crate) fn backups_in(git_dir: &Path) -> Vec<String> {
+    std::fs::read_dir(git_dir).map_or_default(|rd| {
+        rd.filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("snp-stash-bk-"))
+            .collect()
+    })
 }

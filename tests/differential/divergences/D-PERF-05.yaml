@@ -1,0 +1,11 @@
+# D-PERF-05 (PERF, owner WP-23): on Linux a proven stash restore renames the preserved originals back instead of running
+# `git apply` (ADR-152). Bytes, modes, the index and the transcripts are equal by design; what differs (the inode and
+# birth time of a restored file, one process fewer, an autosave in the final-check-to-rename window) is not visible to
+# the differential harness (see docs/divergences/D-PERF-05.md). Pinned by tests that compare twin repositories and
+# check the inode; WP-35's harness treats `status: unit` as "covered elsewhere".
+expect_divergence: D-PERF-05
+status: unit
+unit_tests:
+  - crates/snp-stash/tests/behaviour/rename.rs::a_proven_restore_renames_the_originals_back_and_ends_as_git_apply_ends
+  - crates/snp-stash/tests/behaviour/rename.rs::a_hook_edit_to_a_file_of_the_patch_restores_with_git_apply
+  - crates/snp-run/tests/pipeline/restore_rename.rs::the_b8_shape_restores_by_rename

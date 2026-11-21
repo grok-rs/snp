@@ -103,6 +103,9 @@ pub(crate) struct JournalData {
     pub(crate) patch: Option<PathBuf>,
     /// The paths `stage_fixed` stages.
     pub(crate) staged_fixed: Vec<Vec<u8>>,
+    /// ADR-152: the name prefix of the run's hard-link backups in its git dir (`<prefix>-<n>`), recorded before any
+    /// of them exists; absent in older journals and off Linux.
+    pub(crate) backups: Option<String>,
 }
 
 /// The git-dir pointer contents.
@@ -122,6 +125,8 @@ pub(crate) struct PointerData {
     pub(crate) staged_fixed: Vec<Vec<u8>>,
     /// The intent-to-add paths cleared from the index (git order; absent in older pointers).
     pub(crate) ita: Vec<Vec<u8>>,
+    /// ADR-152: the backups' name prefix, as in [`JournalData::backups`].
+    pub(crate) backups: Option<String>,
 }
 
 // ---- byte-string codec ----
@@ -280,6 +285,9 @@ impl JournalData {
         );
         m.insert("patch".to_owned(), enc_opt_path(self.patch.as_deref()));
         m.insert("staged_fixed".to_owned(), enc_list(&self.staged_fixed));
+        if let Some(b) = &self.backups {
+            m.insert("backups".to_owned(), Value::String(b.clone()));
+        }
         let mut out = Value::Object(m).to_string().into_bytes();
         out.push(b'\n');
         out
@@ -311,6 +319,7 @@ impl JournalData {
             tree: get_opt_str(m, "tree").ok()?,
             patch: get_opt_path(m, "patch").ok()?,
             staged_fixed: get_list(m, "staged_fixed")?,
+            backups: get_opt_str(m, "backups").ok()?,
         })
     }
 }
@@ -333,6 +342,9 @@ impl PointerData {
         );
         m.insert("staged_fixed".to_owned(), enc_list(&self.staged_fixed));
         m.insert("ita".to_owned(), enc_list(&self.ita));
+        if let Some(b) = &self.backups {
+            m.insert("backups".to_owned(), Value::String(b.clone()));
+        }
         let mut out = Value::Object(m).to_string().into_bytes();
         out.push(b'\n');
         out
@@ -353,7 +365,48 @@ impl PointerData {
             worktree: get_opt_path(m, "worktree").ok()?,
             staged_fixed: get_list(m, "staged_fixed")?,
             ita: get_list(m, "ita")?,
+            backups: get_opt_str(m, "backups").ok()?,
         })
+    }
+}
+
+/// ADR-152: the start of every backup name prefix.
+pub(crate) const BACKUP_PREFIX: &str = "snp-stash-bk-";
+
+/// ADR-152: whether `prefix` is a backup name prefix snp writes (`snp-stash-bk-<pid>-<hex>`), so a journal can
+/// never make recovery delete anything else.
+pub(crate) fn valid_backup_prefix(prefix: &str) -> bool {
+    let Some(rest) = prefix.strip_prefix(BACKUP_PREFIX) else {
+        return false;
+    };
+    let Some((pid, hex)) = rest.split_once('-') else {
+        return false;
+    };
+    !pid.is_empty()
+        && pid.bytes().all(|b| b.is_ascii_digit())
+        && !hex.is_empty()
+        && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// ADR-152: removes every `<prefix>-<n>` entry of `git_dir` (the run's hard-link backups; a removal error is
+/// ignored, the next recovery pass tries again). An invalid prefix removes nothing.
+pub(crate) fn remove_backups(git_dir: &Path, prefix: &str) {
+    if !valid_backup_prefix(prefix) {
+        return;
+    }
+    let Ok(rd) = std::fs::read_dir(git_dir) else {
+        return;
+    };
+    for e in rd.filter_map(Result::ok) {
+        let name = e.file_name();
+        let ours = name
+            .to_str()
+            .and_then(|n| n.strip_prefix(prefix))
+            .and_then(|r| r.strip_prefix('-'))
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+        if ours {
+            let _ignored = std::fs::remove_file(e.path());
+        }
     }
 }
 
@@ -453,6 +506,7 @@ mod tests {
             tree: Some("4b825dc642cb6eb9a060e54bf8d69288fbee4904".to_owned()),
             patch: Some(PathBuf::from("/s/patches/patch1-2")),
             staged_fixed: vec![b"x y".to_vec()],
+            backups: Some("snp-stash-bk-42-0a1b2c".to_owned()),
         }
     }
 
@@ -474,8 +528,62 @@ mod tests {
             worktree: Some(PathBuf::from("/r")),
             staged_fixed: Vec::new(),
             ita: vec![b"n".to_vec(), b"\xff".to_vec()],
+            backups: None,
         };
-        assert_eq!(PointerData::parse(&p.to_bytes()), Some(p));
+        assert_eq!(PointerData::parse(&p.to_bytes()), Some(p.clone()));
+        let with = PointerData {
+            backups: Some("snp-stash-bk-1-ab".to_owned()),
+            ..p
+        };
+        assert_eq!(PointerData::parse(&with.to_bytes()), Some(with));
+    }
+
+    #[test]
+    fn backup_prefixes_and_their_removal() {
+        assert!(valid_backup_prefix("snp-stash-bk-12-0af"));
+        for bad in [
+            "",
+            "snp-stash-bk-",
+            "snp-stash-bk-12",
+            "snp-stash-bk--0a",
+            "snp-stash-bk-12-",
+            "snp-stash-bk-12-0A",
+            "snp-stash-bk-1/../x-0a",
+            "snp-stash-bk-12-0a/..",
+            "other-12-0a",
+        ] {
+            assert!(!valid_backup_prefix(bad), "{bad}");
+        }
+        let d = tempfile::tempdir().unwrap();
+        for n in [
+            "snp-stash-bk-12-0a-0",
+            "snp-stash-bk-12-0a-17",
+            "snp-stash-bk-12-0a-x",
+            "snp-stash-bk-12-0a-",
+            "snp-stash-bk-12-0ab-0",
+            "snp-stash-bk-13-0a-0",
+            "index",
+        ] {
+            std::fs::write(d.path().join(n), b"").unwrap();
+        }
+        remove_backups(d.path(), "snp-stash-bk-12-0a/");
+        assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 7);
+        remove_backups(d.path(), "snp-stash-bk-12-0a");
+        let mut left: Vec<String> = std::fs::read_dir(d.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                "index",
+                "snp-stash-bk-12-0a-",
+                "snp-stash-bk-12-0a-x",
+                "snp-stash-bk-12-0ab-0",
+                "snp-stash-bk-13-0a-0"
+            ]
+        );
     }
 
     #[test]
@@ -490,6 +598,7 @@ mod tests {
             b"{\"v\":1,\"state\":\"s\",\"worktree\":{\"hex\":\"zz\"}}",
             b"{\"v\":1,\"state\":\"s\",\"worktree\":\"/r\",\"ita\":5}",
             b"{\"v\":1,\"state\":\"s\",\"worktree\":\"/r\",\"tree\":5}",
+            b"{\"v\":1,\"state\":\"s\",\"worktree\":\"/r\",\"backups\":5}",
         ] {
             assert_eq!(JournalData::parse(bad), None, "{bad:?}");
         }

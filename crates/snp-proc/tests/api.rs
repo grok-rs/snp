@@ -24,7 +24,7 @@ mod api {
     use snp_proc::resolve::{self, ExeError};
     use snp_proc::signals::{self, RestoreShield, SignalGuard};
     use snp_proc::spawn::{
-        self, Captured, Group, Merged, Output, OutputBudget, PyStatus, Role, SpawnError, Spec,
+        self, Captured, Fed, Group, Merged, Output, OutputBudget, PyStatus, Role, SpawnError, Spec,
         Stdin,
     };
     use snp_proc::xargs::{self, ArgumentTooLong};
@@ -35,6 +35,11 @@ mod api {
     /// Type-checks `t` against the explicit type argument.
     fn has<T>(t: T) {
         drop(t);
+    }
+
+    /// ADR-151: a `Fed` is the writer of its child's stdin.
+    fn fed_writes(f: &mut Fed) -> &mut dyn io::Write {
+        f
     }
 
     fn aggregate(v: Vec<PyStatus>) -> PyStatus {
@@ -119,6 +124,12 @@ mod api {
             spawn::stream,
         );
         has::<fn(&Spec<'_>) -> Result<PyStatus, SpawnError>>(spawn::inherit);
+        // ADR-151: a capture whose stdin the caller writes while the child runs
+        has::<fn(&Spec<'_>) -> Result<Fed, SpawnError>>(spawn::capture_fed);
+        has::<fn(Captured) -> Fed>(Fed::scripted);
+        has::<fn(Fed) -> Option<Captured>>(Fed::finish);
+        has::<fn(&mut Fed)>(Fed::close_stdin);
+        has::<fn(&mut Fed) -> &mut dyn io::Write>(fed_writes);
         // ADR-103: the hook-only entry points that append borrowed partition files
         has::<fn(&Spec<'_>, &[&OsStr], bool, &OutputBudget) -> Result<Merged, SpawnError>>(
             spawn::merged_hook,

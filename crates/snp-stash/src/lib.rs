@@ -9,6 +9,7 @@ mod journal;
 mod lock;
 mod messages;
 mod recovery;
+mod tree_elision;
 
 pub use guard::{StashCtx, StashGuard, Stashed, enter};
 pub use recovery::{

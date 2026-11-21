@@ -45,16 +45,28 @@ fn entries(dir: &Path) -> Vec<fs::DirEntry> {
 
 /// `(entry file, config realpath, project root)` of every well-formed `configs-v1` entry.
 pub(crate) fn config_entries(dir: &Path) -> Vec<(PathBuf, PathBuf, PathBuf)> {
-    entries(dir)
+    config_entry_files(dir)
         .into_iter()
-        .filter(|e| RepoKey::from_hex(e.file_name().as_encoded_bytes()).is_some())
-        .filter_map(|e| {
-            let path = e.path();
-            let bytes = snp_os::fs::read_capped(&path, SMALL_CAP).ok()?;
-            let (cfg, root) = marker::decode_config_entry(&bytes)?;
+        .filter_map(|path| {
+            let (cfg, root) = read_config_entry(&path)?;
             Some((path, cfg, root))
         })
         .collect()
+}
+
+/// The well-formed (`<hex32>`) entry files of `configs-v1`, in listing order.
+pub(crate) fn config_entry_files(dir: &Path) -> Vec<PathBuf> {
+    entries(dir)
+        .into_iter()
+        .filter(|e| RepoKey::from_hex(e.file_name().as_encoded_bytes()).is_some())
+        .map(|e| e.path())
+        .collect()
+}
+
+/// `(config realpath, project root)` of one `configs-v1` entry file; `None` when unreadable or malformed.
+pub(crate) fn read_config_entry(file: &Path) -> Option<(PathBuf, PathBuf)> {
+    let bytes = snp_os::fs::read_capped(file, SMALL_CAP).ok()?;
+    marker::decode_config_entry(&bytes)
 }
 
 /// Keeps the markers `keep` accepts and, unread, the files named in `kept_names`; removes the rest (and undecodable

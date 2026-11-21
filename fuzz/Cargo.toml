@@ -132,6 +132,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "git_cache_tree"
+path = "fuzz_targets/git_cache_tree.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "git_hook_script_classify"
 path = "fuzz_targets/git_hook_script_classify.rs"
 test = false

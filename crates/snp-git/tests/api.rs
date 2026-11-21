@@ -38,6 +38,12 @@ mod api {
         has::<Result<Captured, SpawnError>>(b.capture(&[], env, cwd, Stdin::Null, Group::Inherit));
         has::<Result<(PyStatus, Vec<u8>), SpawnError>>(b.stream(&[], env, cwd, &mut io::sink()));
         has::<Result<PyStatus, SpawnError>>(b.inherit(&[], env, cwd, Stdin::Inherit));
+        has::<Result<snp_proc::spawn::Fed, SpawnError>>(b.capture_fed(
+            &[],
+            env,
+            cwd,
+            Group::Inherit,
+        ));
     }
 
     /// The RPIT method of `ZList`.
@@ -168,6 +174,8 @@ mod api {
         has::<fn(Arc<GitExe>, &Env, &Path, Arc<dyn GitBackend>) -> Result<(Git, RepoInfo), Failure>>(
             Git::discover,
         );
+        // ADR-154
+        has::<fn(Arc<GitExe>, &Env, &RepoInfo, Arc<dyn GitBackend>) -> Git>(Git::at);
         has::<fn(&Git, Env) -> Git>(Git::with_env);
         has::<fn(&Git, Arc<dyn GitBackend>) -> Git>(Git::with_backend);
         has::<fn(&Git) -> &Env>(Git::env);
@@ -185,6 +193,9 @@ mod api {
         has::<fn(&Git, bool) -> Env>(Git::checkout_env);
         has::<fn(&Git, &ZList, bool, Group) -> Result<(), Failure>>(Git::checkout_paths);
         has::<fn(&Git, &Path) -> Result<ZList, Failure>>(Git::patch_paths);
+        // ADR-151: the same listing fed the patch on stdin while it is written
+        has::<fn(&Git) -> Option<snp_git::PatchPathsFeed>>(Git::patch_paths_feed);
+        has::<fn(snp_git::PatchPathsFeed) -> Option<ZList>>(snp_git::PatchPathsFeed::finish);
         has::<fn(&Git) -> Result<ZList, Failure>>(Git::changed_paths);
         has::<fn(&Git, &Path) -> Result<ZList, Failure>>(Git::rollback_paths);
         has::<fn(&Git, &Path, bool, Group) -> Result<bool, Failure>>(Git::apply);
@@ -197,6 +208,8 @@ mod api {
         has::<fn(&Git, &RepoInfo) -> Option<u32>>(Git::index_entry_count);
         has::<fn(&Git) -> Result<(IndexEntries, bool), Failure>>(Git::tracked_with_stages);
         has::<fn(&Git, &RepoInfo) -> Option<IndexStamp>>(Git::index_stamp);
+        // ADR-154
+        has::<fn(&Git, &RepoInfo) -> bool>(Git::index_without_intent_to_add);
         has::<fn(&Git, &OsStr, &OsStr) -> Result<ZList, Failure>>(Git::changed_files);
         has::<fn(&Git, &RepoInfo) -> MergeState>(Git::merge_state);
         has::<fn(&Git, &RepoInfo) -> Result<ZList, Failure>>(Git::conflicted_files);
@@ -278,6 +291,12 @@ mod api {
         has::<for<'a> fn(&'a IndexFile, &IndexEntry) -> Option<&'a std::ffi::CStr>>(
             IndexFile::name_cstr,
         );
+        // ADR-153
+        has::<fn(&Path, usize) -> Result<IndexFile, IndexRefusal>>(IndexFile::read_keep);
+        has::<fn(&[u8], usize) -> Result<IndexFile, IndexRefusal>>(IndexFile::parse_keep);
+        has::<for<'a> fn(&'a IndexFile, &IndexEntry) -> Option<&'a [u8]>>(IndexFile::oid);
+        has::<fn(&IndexFile) -> usize>(IndexFile::hash_len);
+        has::<fn(&IndexFile) -> Option<&[u8]>>(IndexFile::tree_extension);
         has::<fn(&IndexEntry) -> u16>(IndexEntry::stage);
         has::<fn(&IndexEntry) -> bool>(IndexEntry::assume_valid);
         has::<fn(&IndexEntry) -> bool>(IndexEntry::skip_worktree);
@@ -292,6 +311,52 @@ mod api {
             IndexRefusal::Extension(*b"link"),
             IndexRefusal::TooLarge,
             IndexRefusal::Io,
+        ]);
+    }
+
+    /// ADR-153: the cache-tree parser and builder, and the strict loose-object reader.
+    #[test]
+    fn cache_tree_and_odb() {
+        use snp_git::cache_tree::{CacheTree, CacheTreeRefusal, TreeObject};
+        use snp_git::index_file::IndexFile;
+        use snp_git::odb::{self, OdbRefusal};
+        send_sync::<CacheTree>();
+        send_sync::<TreeObject>();
+        has::<fn(&[u8], usize) -> Result<CacheTree, CacheTreeRefusal>>(CacheTree::parse);
+        has::<fn(&CacheTree) -> bool>(CacheTree::fully_valid);
+        has::<fn(&CacheTree) -> Option<&[u8]>>(CacheTree::root_oid);
+        has::<fn(&CacheTree) -> usize>(CacheTree::len);
+        has::<fn(&CacheTree) -> bool>(CacheTree::is_empty);
+        has::<fn(&CacheTree, &IndexFile) -> Result<Vec<TreeObject>, CacheTreeRefusal>>(
+            CacheTree::expected_objects,
+        );
+        let t = TreeObject {
+            oid: Vec::new(),
+            body: Vec::new(),
+        };
+        has::<(&Vec<u8>, &Vec<u8>)>((&t.oid, &t.body));
+        if let Ok(ct) = CacheTree::parse(b"", 20) {
+            has::<Vec<&[u8]>>(ct.node_oids().collect());
+        }
+        has::<[CacheTreeRefusal; 4]>([
+            CacheTreeRefusal::Malformed,
+            CacheTreeRefusal::Invalid,
+            CacheTreeRefusal::Mismatch,
+            CacheTreeRefusal::TooLarge,
+        ]);
+        has::<fn(&[u8]) -> String>(odb::hex);
+        has::<fn(&Path, &[u8]) -> Option<PathBuf>>(odb::loose_path);
+        has::<fn(&Path, &[u8]) -> bool>(odb::loose_exists);
+        has::<fn(&Path, &[u8], &[u8]) -> Result<Vec<u8>, OdbRefusal>>(odb::read_loose);
+        has::<fn(&Path, &Env) -> bool>(odb::loose_only);
+        has::<[OdbRefusal; 7]>([
+            OdbRefusal::HashSize,
+            OdbRefusal::Io,
+            OdbRefusal::TooLarge,
+            OdbRefusal::Stream,
+            OdbRefusal::Header,
+            OdbRefusal::Hash,
+            OdbRefusal::Unchecked,
         ]);
     }
 

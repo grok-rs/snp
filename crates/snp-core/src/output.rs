@@ -441,6 +441,56 @@ impl DiagSink for CollectWarnings {
     }
 }
 
+/// One line a [`LogRecorder`] holds: a warning ([`WarnSink`]) or a diagnostic ([`DiagSink`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LogLine {
+    /// A `[WARNING] …` line (stdout through the printer).
+    Warn(String),
+    /// A stderr diagnostic.
+    Diag(String),
+}
+
+/// Records warnings and diagnostics as two streams in arrival order, so a worker's output can be replayed later
+/// through the real sinks, with the same calls in the same order (gc's parallel loading, ADR-150).
+#[derive(Debug, Default)]
+pub struct LogRecorder(Mutex<Vec<LogLine>>);
+
+impl LogRecorder {
+    /// An empty recorder.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Takes everything recorded so far.
+    pub fn take(&self) -> Vec<LogLine> {
+        std::mem::take(&mut *sync::lock(&self.0))
+    }
+
+    /// Takes everything recorded so far and replays it: each warning through `warn`, each diagnostic through `diag`,
+    /// in arrival order.
+    pub fn replay(&self, warn: &dyn WarnSink, diag: &dyn DiagSink) {
+        for line in self.take() {
+            match line {
+                LogLine::Warn(m) => warn.warn(&m),
+                LogLine::Diag(m) => diag.diag(&m),
+            }
+        }
+    }
+}
+
+impl WarnSink for LogRecorder {
+    fn warn(&self, msg: &str) {
+        sync::lock(&self.0).push(LogLine::Warn(msg.to_owned()));
+    }
+}
+
+impl DiagSink for LogRecorder {
+    fn diag(&self, msg: &str) {
+        sync::lock(&self.0).push(LogLine::Diag(msg.to_owned()));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -688,6 +738,23 @@ mod tests {
         DiagSink::diag(&p, "note");
         assert_eq!(out.take(), b"[WARNING] careful\n");
         assert_eq!(err.take(), b"note\n");
+    }
+
+    /// A recorder keeps the two streams apart and replays them in arrival order through the printer's sinks, which
+    /// gives the bytes the direct calls give.
+    #[test]
+    fn recorder_replays_both_streams_in_order() {
+        let r = LogRecorder::new();
+        WarnSink::warn(&r, "w1");
+        DiagSink::diag(&r, "d1");
+        WarnSink::warn(&r, "w2");
+        let (p, out, err) = printer(false, false, false);
+        r.replay(&p, &p);
+        assert_eq!(out.take(), b"[WARNING] w1\n[WARNING] w2\n");
+        assert_eq!(err.take(), b"d1\n");
+        assert_eq!(r.take(), Vec::new());
+        DiagSink::diag(&r, "d2");
+        assert_eq!(r.take(), vec![LogLine::Diag("d2".to_owned())]);
     }
 
     #[test]

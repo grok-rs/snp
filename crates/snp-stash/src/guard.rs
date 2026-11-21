@@ -12,7 +12,15 @@
 //! 3 intent-to-add cleared, 4 patch durable (state `stashed` journaled), 5 checkout done, 6 `staging-fixed` journaled,
 //! 7 fixes staged, 8 rolling back, 9 restored, 10 done — and `RestoreCommand(n)` before each restore command: 1 apply,
 //! 2 apply with `core.autocrlf=false`, 3 rollback checkout, 4 apply, 5 apply with `core.autocrlf=false`, 6 the
-//! intent-to-add re-add.
+//! intent-to-add re-add — and `StashBackup(n)` for ADR-152's restore by rename: 1 after the hard-link backups were
+//! made (right before the checkout), 2 before each rename, 3 after the last rename.
+//!
+//! ADR-152 (Linux): right before the checkout each file of the patch is hard-linked into the git dir under the name
+//! prefix the `stashed` journal already records; when the caller hands over the `DiffOracle`'s proof that nothing
+//! changed those files since the checkout and nothing converts them ([`StashGuard::prove_restore`]), the restore
+//! renames the preserved originals back (mode and times as `git apply`'s fresh file has them) instead of running
+//! `git apply`, and falls back to `git apply` on any doubt. Every exit removes the links; recovery removes the ones a
+//! crash left behind.
 //!
 //! Owner: WP-23.
 
@@ -33,13 +41,16 @@ use snp_core::failure::Failure;
 use snp_core::fault::{self, Point};
 use snp_core::output::{Level, Printer};
 use snp_core::path::RepoPath;
-use snp_git::{DiffIndex, Git, ObjectId, RepoInfo, ZList};
+use snp_git::{
+    ConfigListing, DiffIndex, Git, IndexStamp, ObjectId, PatchPathsFeed, RepoInfo, ZList,
+};
 use snp_proc::signals::SignalGuard;
 use snp_proc::spawn::Group;
 
+use crate::diff_oracle::{ProofFile, RestoreProof};
 use crate::journal::{self, JournalData, PointerData, State};
 use crate::lock::{self, Acquired, LockStamp, WorktreeLock};
-use crate::{messages, recovery};
+use crate::{messages, recovery, tree_elision};
 
 /// Owns cheap handles (`Git` and `Printer` are `Arc`-backed) so the guard has no lifetime and can live inside
 /// `RunState`. `git` must be built with `Git::with_backend(ProcBackend { cancel: CancelToken::new(), role:
@@ -71,11 +82,23 @@ pub struct StashCtx {
     /// Report orphaned stashes once the lock is held (§4.6). `false` when the run already reported them at its start
     /// ([`crate::recovery_report`] got the lock), so every notice is printed exactly once per run.
     pub report_recovery: bool,
-    /// Sent `()` once, right before step 8's checkout, and dropped unsent on every other exit of the stash steps, so a
-    /// receiver learns "a checkout is starting" or, from the disconnection, "none will" (snp-only, ADR-133: the run
-    /// overlaps `git var GIT_ATTR_SYSTEM` with the checkout). It never changes what the stash does; `None` sends
-    /// nothing.
+    /// Sent `()` once, when step 5 writes the first byte of a patch, and dropped unsent on every exit of the stash
+    /// steps that writes none, so a receiver learns "a checkout may follow" or, from the disconnection, "none will"
+    /// (snp-only, ADR-133: the run overlaps `git var GIT_ATTR_SYSTEM` with the stash; ADR-151 moved the notice from
+    /// right before step 8's checkout to the patch's first byte, so the query overlaps the diff, and a patch that is
+    /// then not checked out costs one unused query). It never changes what the stash does; `None` sends nothing.
     pub checkout_notice: Option<SyncSender<()>>,
+    /// The stamp of the index on which the run already asked the intent-to-add query with this context's command
+    /// and environment, and got success with nothing printed, from an index [`Git::index_without_intent_to_add`]
+    /// proved free of intent-to-add entries; the stamp was taken before both (snp-only, ADR-154). Step 3 reuses
+    /// that answer instead of asking again iff the worktree lock was not contended and the index still has this
+    /// stamp; otherwise it asks at pre-commit's position. `None` always asks.
+    pub intent_to_add_hint: Option<IndexStamp>,
+    /// The run's `git config --list --show-origin -z` answer (step 6's G), when it was taken: with it, steps 4 and 5
+    /// may decide `write-tree` and `diff-index` in-process on the provably clean path (snp-only, ADR-153). Ignored
+    /// when the worktree lock was contended (another run's hooks may have changed the configuration). `None` always
+    /// runs both.
+    pub config_listing: Option<Arc<ConfigListing>>,
 }
 
 impl StashCtx {
@@ -132,7 +155,56 @@ struct Inner {
     argv0: Option<Vec<OsString>>,
     /// Which restore steps are due.
     flags: Steps,
+    /// ADR-152: the name prefix of this run's hard-link backups in the git dir (journaled from the first journal
+    /// on); `None` off Linux and with `SNP_STASH_RESTORE=apply`.
+    backup_prefix: Option<String>,
+    /// ADR-152: the backups made right before the checkout, one per file of the patch, or none.
+    backups: Vec<Backup>,
+    /// ADR-152: the paths backed up (the checkout list), kept for the re-checkout after a partial restore by rename.
+    backed_up: ZList,
+    /// ADR-152: the `DiffOracle`'s restore proof, handed over before the restore.
+    proof: Option<RestoreProof>,
 }
+
+/// ADR-152: one hard-link backup: the original inode of a file of the patch, linked into the git dir right before
+/// the checkout replaced the file, with the stat it had then.
+#[derive(Debug)]
+#[cfg_attr(
+    not(unix),
+    expect(
+        dead_code,
+        reason = "ADR-152 renames on Unix builds only (Linux at run time)"
+    )
+)]
+struct Backup {
+    /// The repository path.
+    rel: Vec<u8>,
+    /// `<git_dir>/<prefix>-<n>`.
+    link: PathBuf,
+    dev: u64,
+    ino: u64,
+    size: u64,
+    /// `(mtime, mtime_nsec)`.
+    mtime: (i64, i64),
+    /// The owner-executable bit: what `diff-index` recorded as the file's new mode when `core.fileMode` holds.
+    exec: bool,
+}
+
+/// What [`Inner::rename_restore`] did.
+enum Renamed {
+    /// Nothing was renamed (not proven, or a check or the first rename failed): `git apply` restores.
+    No,
+    /// Every backup was renamed back: restored.
+    All,
+    /// Some backups were renamed back before a later step failed.
+    Partial,
+}
+
+/// ADR-152: at most this many files are backed up (above it `git apply` restores, as before).
+const MAX_BACKUPS: usize = 1_000;
+
+/// `SNP_STASH_RESTORE=apply` turns ADR-152's restore by rename off: every restore runs `git apply`.
+const RESTORE_ENV: &str = "SNP_STASH_RESTORE";
 
 /// The restore steps still due (each is cleared when done, so a resumed `finish` skips it).
 #[derive(Debug, Default, Clone, Copy)]
@@ -182,6 +254,7 @@ impl Journal {
             worktree: Some(self.data.worktree.clone()),
             staged_fixed: self.data.staged_fixed.clone(),
             ita: self.data.ita.clone(),
+            backups: self.data.backups.clone(),
         }
     }
 
@@ -369,11 +442,21 @@ impl<'scope, 'env> Writeback<'scope, 'env> {
 /// The first `diff-index` sink: the patch file (`patches/patch<secs>-<pid>[-<n>]`, `create_new` 0600) is created at
 /// the first byte, so a clean run never touches the store. A creation or write error is kept (and stops the stream)
 /// so the caller can tell a read-only store (X13-ST-04) from a git failure.
+///
+/// ADR-151: at the first byte it also starts step 7's listing, `git apply --numstat` reading the patch on stdin
+/// ([`Git::patch_paths_feed`]), and feeds it every byte the file accepted, right after the file did; a listing that
+/// cannot start or stops accepting bytes is dropped (its child reaped) and step 7 lists the file instead. And it sends
+/// ADR-133's checkout notice at that first byte, so `git var GIT_ATTR_SYSTEM` overlaps the diff instead of the
+/// checkout.
 struct LazyPatch<'a, 'scope, 'env> {
     inner: &'a Inner,
     opened: Option<(PathBuf, BufWriter<File>)>,
     failed: Option<(io::Error, PathBuf)>,
     early: Writeback<'scope, 'env>,
+    /// The fed listing, while it accepts bytes.
+    feed: Option<PatchPathsFeed>,
+    /// ADR-133's notice, until the first byte sends it.
+    notice: Option<SyncSender<()>>,
 }
 
 impl Write for LazyPatch<'_, '_, '_> {
@@ -383,7 +466,14 @@ impl Write for LazyPatch<'_, '_, '_> {
         }
         if self.opened.is_none() {
             match self.inner.create_patch_file() {
-                Ok((p, f)) => self.opened = Some((p, BufWriter::new(f))),
+                Ok((p, f)) => {
+                    self.opened = Some((p, BufWriter::new(f)));
+                    if let Some(n) = self.notice.take() {
+                        // a full or disconnected receiver only loses an overlap
+                        let _lost: Result<(), _> = n.try_send(());
+                    }
+                    self.feed = self.inner.git().patch_paths_feed();
+                }
                 Err((e, shown)) => {
                     let kind = e.kind();
                     self.failed = Some((e, shown));
@@ -397,6 +487,12 @@ impl Write for LazyPatch<'_, '_, '_> {
         match w.write(buf) {
             Ok(n) => {
                 self.early.wrote(n, p);
+                if let Some(feed) = self.feed.as_mut()
+                    && feed.write_all(buf.get(..n).unwrap_or_default()).is_err()
+                {
+                    // the child stopped reading: no answer from it (dropping it reaps it)
+                    self.feed = None;
+                }
                 Ok(n)
             }
             Err(e) => {
@@ -457,8 +553,15 @@ pub fn enter(cx: StashCtx) -> Result<StashGuard, Failure> {
             tty_noted: false,
             argv0: None,
             flags: Steps::default(),
+            backup_prefix: None,
+            backups: Vec::new(),
+            backed_up: ZList::default(),
+            proof: None,
         })),
     };
+    if let Some(inner) = guard.inner.as_deref_mut() {
+        inner.backup_prefix = inner.new_backup_prefix();
+    }
     fault::hit(Point::StashState(1));
     if !nested
         && let Some(inner) = guard.inner.as_deref()
@@ -508,14 +611,19 @@ enum StashOutcome {
 enum FirstPass {
     /// No patch: rc 0 (`clean`) or the CRLF quirk; no file is left behind.
     Nothing { clean: bool },
-    /// The patch file, written and flushed (not yet durable).
-    Patch { path: PathBuf, w: BufWriter<File> },
+    /// The patch file, written and flushed (not yet durable), and the listing fed while it streamed (ADR-151).
+    Patch {
+        path: PathBuf,
+        w: BufWriter<File>,
+        feed: Option<PatchPathsFeed>,
+    },
 }
 
 /// What [`Inner::secure`] made of a written patch.
 enum Secured {
-    /// Durable and verified; these are its paths, the checkout list.
-    Paths(ZList),
+    /// Durable and verified; these are its paths, the checkout list. `fast`: ADR-097's stat-stamp pass verified it
+    /// (no file of the patch changed since the lock was taken).
+    Paths { paths: ZList, fast: bool },
     /// The unstaged changes vanished meanwhile: nothing to stash.
     Vanished { clean: bool },
 }
@@ -569,7 +677,25 @@ impl Inner {
             tree: self.tree.as_ref().map(|t| t.as_str().to_owned()),
             patch: self.patch.clone(),
             staged_fixed: Vec::new(),
+            backups: self.backup_prefix.clone(),
         }
+    }
+
+    /// ADR-152: `snp-stash-bk-<pid>-<random>` on Linux unless `SNP_STASH_RESTORE=apply`.
+    fn new_backup_prefix(&self) -> Option<String> {
+        let off = self
+            .git()
+            .env()
+            .get(RESTORE_ENV)
+            .is_some_and(|v| v == "apply");
+        (cfg!(any(target_os = "linux", target_os = "android")) && !off).then(|| {
+            format!(
+                "{}{}-{}",
+                journal::BACKUP_PREFIX,
+                pid(),
+                lock::random_hex(6)
+            )
+        })
     }
 
     /// `<store>/patches`, created (0700) when missing (`os.makedirs(patch_dir, exist_ok=True)`).
@@ -711,10 +837,19 @@ impl Inner {
     /// pass (no patch, or the patch could not be written) only discard the file and never touch the journal. A panic
     /// unwinds without deleting anything (the `Drop` restore and the recovery notice still name the patch).
     fn stash(&mut self) -> Result<StashOutcome, Failure> {
-        // taken here, so every return below drops it unsent unless step 8 is reached
+        // taken here, so every return below drops it unsent unless step 5 writes a patch byte (ADR-151)
         let notice = self.cx.checkout_notice.take();
-        // 3. intent-to-add (`_intent_to_add_cleared`, + `--no-renames`: hazard b).
-        let ita = self.git().intent_to_add()?;
+        // 3. intent-to-add (`_intent_to_add_cleared`, + `--no-renames`: hazard b), or the run's earlier empty answer
+        // on this very index (ADR-154). `read`: the stamp of an index git read successfully in this run (ADR-153).
+        let (ita, read) = if self.intent_to_add_known_empty() {
+            (ZList::default(), self.cx.intent_to_add_hint)
+        } else {
+            let before = self.git().index_stamp(&self.cx.info);
+            let ita = self.git().intent_to_add()?;
+            let after = self.git().index_stamp(&self.cx.info);
+            let read = before.filter(|b| ita.is_empty() && after.as_ref() == Some(b));
+            (ita, read)
+        };
         if !ita.is_empty() {
             self.printer().log(Level::Warning, messages::ITA_DETECTED);
             self.ita = ita;
@@ -724,41 +859,126 @@ impl Inner {
             self.git().rm_cached(&self.ita, Group::Isolated)?;
             fault::hit(Point::StashState(3));
         }
-        // 4. tree (checked → CalledProcessError, exit 3).
-        let tree = self.git().write_tree()?;
+        // 4. tree (checked → CalledProcessError, exit 3), or the root git would print (ADR-153).
+        let (tree, proven) = self.tree_and_proof(read)?;
         self.tree = Some(tree.clone());
-        // 5. diff-index.
-        let (path, w) = match self.first_pass(&tree)? {
+        // 5. diff-index (ADR-151: the notice goes out at the patch's first byte), unless ADR-153 proved it prints
+        // nothing (as rc 0 does: no patch, clean).
+        let first = if proven {
+            FirstPass::Nothing { clean: true }
+        } else {
+            self.first_pass(&tree, notice)?
+        };
+        let (path, w, feed) = match first {
             FirstPass::Nothing { clean } => return Ok(StashOutcome::Nothing { clean }),
-            FirstPass::Patch { path, w } => (path, w),
+            FirstPass::Patch { path, w, feed } => (path, w, feed),
         };
         // 6–7. durable, listed and verified; any other outcome abandons the patch, here and only here.
-        let secured = self.secure(&tree, &path, w);
-        if !matches!(secured, Ok(Secured::Paths(_))) {
+        let secured = self.secure(&tree, &path, w, feed);
+        if !matches!(secured, Ok(Secured::Paths { .. })) {
             self.abandon_patch(&path);
         }
-        let paths = match secured? {
-            Secured::Paths(p) => p,
+        let (paths, fast) = match secured? {
+            Secured::Paths { paths, fast } => (paths, fast),
             Secured::Vanished { clean } => return Ok(StashOutcome::Nothing { clean }),
         };
         self.printer()
             .log(Level::Warning, messages::UNSTAGED_DETECTED);
         self.printer().log(Level::Info, &messages::stashing(&path));
+        // ADR-152: the originals, kept for the restore by rename (the `stashed` journal names their prefix)
+        if fast {
+            self.make_backups(&paths);
+        }
+        fault::hit(Point::StashBackup(1));
         // 8. checkout (pre-commit's `try` starts here: a failing checkout still restores).
         self.flags.patch = PatchStep::Due;
-        if let Some(n) = notice {
-            // a full or disconnected receiver only loses an overlap
-            let _lost: Result<(), _> = n.try_send(());
-        }
         self.git().checkout_paths(&paths, true, Group::Isolated)?;
         fault::hit(Point::StashState(5));
         Ok(StashOutcome::Patch(path, paths))
     }
 
-    /// Step 5: the first `diff-index`, streamed into the lazily created patch file. Every exit without a usable
-    /// patch deletes the file it created and leaves the journal alone; git < 2.19 only learns whether a stash would
-    /// be needed.
-    fn first_pass(&self, tree: &ObjectId) -> Result<FirstPass, Failure> {
+    /// ADR-154: step 3's query need not run again. The run asked it with this context's command and environment on
+    /// an index the strict reader proved free of intent-to-add entries, and it succeeded with nothing printed
+    /// ([`StashCtx::intent_to_add_hint`]). The lock was not contended (no other run went first), and the index
+    /// still has the stamp taken before that answer, so the query would read the same index again, and on an index
+    /// without intent-to-add entries it prints nothing whatever the worktree. The early query's only side effect,
+    /// git's stat refresh of the index, changes the stamp and so forces the query here.
+    fn intent_to_add_known_empty(&self) -> bool {
+        let contended = self.lock.as_ref().is_some_and(WorktreeLock::contended);
+        !contended
+            && self.cx.intent_to_add_hint.is_some()
+            && self.git().index_stamp(&self.cx.info) == self.cx.intent_to_add_hint
+    }
+
+    /// Steps 4 and 5's in-process decision (ADR-153, [`tree_elision`]): the tree `write-tree` prints, and whether
+    /// `diff-index` on it is proven to exit 0 with nothing printed (then step 5 does not run).
+    ///
+    /// With step 6's configuration answer (not after a contended lock) and `read`, the stamp of an index git read
+    /// successfully in this run: when [`tree_elision::prepare`] shows that `write-tree` would print the cache-tree's
+    /// root and write nothing, and [`tree_elision::lock_probe`] took and gave back `write-tree`'s lock, the root is
+    /// the tree without a spawn; otherwise the real `write-tree` runs (its errors are pre-commit's), and the proof is
+    /// tried on the index as it left it. The proof ([`tree_elision::diff_index_empty`]) needs the tree to be the
+    /// cache-tree's root, byte-verified against the index. `SNP_VERIFY_STASH_ELISION=1` runs the real commands too
+    /// and keeps their answer, reporting a disagreement on stderr.
+    fn tree_and_proof(&self, read: Option<IndexStamp>) -> Result<(ObjectId, bool), Failure> {
+        let (git, info) = (self.git(), &self.cx.info);
+        let env = git.env();
+        let contended = self.lock.as_ref().is_some_and(WorktreeLock::contended);
+        let listing = self.cx.config_listing.as_deref().filter(|_| !contended);
+        let verify = env.is_truthy_flag("SNP_VERIFY_STASH_ELISION");
+        let elided = listing
+            .zip(read)
+            .and_then(|(l, r)| tree_elision::prepare(git, info, env, l, r))
+            .filter(|_| tree_elision::lock_probe(&info.index_file));
+        let was_elided = elided.is_some();
+        let (mut tree, prepared) = if let Some(p) = elided {
+            (p.root().clone(), Some(p))
+        } else {
+            let tree = git.write_tree()?;
+            // the index as write-tree left it: git wrote it under its lock, or read it unchanged
+            let after = git.index_stamp(info);
+            let p = listing
+                .zip(after)
+                .and_then(|(l, a)| tree_elision::prepare(git, info, env, l, a));
+            (tree, p)
+        };
+        let mut proven = prepared
+            .as_ref()
+            .is_some_and(|p| tree_elision::diff_index_empty(git, info, env, p, &tree));
+        if verify {
+            let mut agreed = true;
+            if was_elided {
+                let real = git.write_tree()?;
+                agreed = real == tree;
+                if !agreed {
+                    tree = real;
+                    proven = false;
+                }
+            }
+            if proven {
+                let clean = matches!(
+                    git.diff_index_patch(&tree, &mut io::sink())?,
+                    DiffIndex::Clean
+                );
+                agreed &= clean;
+                proven = clean;
+            }
+            if !agreed {
+                self.printer().diag(messages::ELISION_MISMATCH);
+            }
+        }
+        Ok((tree, proven))
+    }
+
+    /// Step 5: the first `diff-index`, streamed into the lazily created patch file ([`LazyPatch`], which also feeds
+    /// ADR-151's listing and sends `notice` at the first byte). Every exit without a usable patch deletes the file it
+    /// created, drops the listing and leaves the journal alone; git < 2.19 only learns whether a stash would be
+    /// needed.
+    fn first_pass(
+        &self,
+        tree: &ObjectId,
+        notice: Option<SyncSender<()>>,
+    ) -> Result<FirstPass, Failure> {
         if self.cx.old_git {
             return match self.git().diff_index_patch(tree, &mut io::sink())? {
                 DiffIndex::Patch { .. } => Err(self.old_git_refusal()),
@@ -766,14 +986,20 @@ impl Inner {
                 _ => Ok(FirstPass::Nothing { clean: false }),
             };
         }
-        let (first, opened, failed) = std::thread::scope(|s| {
+        let (first, opened, failed, feed) = std::thread::scope(|s| {
             let mut sink = LazyPatch {
                 inner: self,
                 opened: None,
                 failed: None,
                 early: Writeback::new(s),
+                feed: None,
+                notice,
             };
             let res = self.git().diff_index_patch(tree, &mut sink);
+            // ADR-151: the stream is over, so the listing has every byte: it parses while the writeback finishes
+            if let Some(feed) = sink.feed.as_mut() {
+                feed.close();
+            }
             let flushed = sink.opened.as_mut().map_or(Ok(()), |(_, w)| w.flush());
             if let (Err(e), Some((p, _))) = (flushed, &sink.opened) {
                 sink.failed = Some((e, p.clone()));
@@ -785,7 +1011,7 @@ impl Inner {
             {
                 sink.failed = Some((e, p.clone()));
             }
-            (res, sink.opened, sink.failed)
+            (res, sink.opened, sink.failed, sink.feed)
         });
         let discard = |opened: Option<(PathBuf, BufWriter<File>)>| {
             if let Some((p, w)) = opened {
@@ -810,7 +1036,7 @@ impl Inner {
             }
         };
         match (outcome, opened) {
-            (DiffIndex::Patch { .. }, Some((path, w))) => Ok(FirstPass::Patch { path, w }),
+            (DiffIndex::Patch { .. }, Some((path, w))) => Ok(FirstPass::Patch { path, w, feed }),
             (other, opened) => {
                 discard(opened);
                 Ok(FirstPass::Nothing {
@@ -833,11 +1059,16 @@ impl Inner {
     ///
     /// ADR-097: the verification is a stat-stamp pass when it can prove that nothing the patch could include changed
     /// since this run took the worktree ([`Inner::unchanged_since_lock`]), else the ADR-067 second `diff-index`.
+    ///
+    /// ADR-151: `feed` is the listing step 5 fed while the patch streamed; the listing thread waits for its answer
+    /// and lists the file with [`Git::patch_paths`] when it has none (it failed, or could not be fed every byte), so
+    /// a listing error is always the file-based one.
     fn secure(
         &mut self,
         tree: &ObjectId,
         path: &Path,
         mut w: BufWriter<File>,
+        feed: Option<PatchPathsFeed>,
     ) -> Result<Secured, Failure> {
         // 7. D-DATA-19: the checkout rewrites exactly the files of the patch, so a change `git diff` cannot see (a
         // clean filter hides it, or the file is `--assume-unchanged`) is never overwritten. git's own parser lists
@@ -849,7 +1080,10 @@ impl Inner {
         let (durable, listing) = std::thread::scope(|s| {
             let listing = std::thread::Builder::new()
                 .name("snp-numstat".to_owned())
-                .spawn_scoped(s, || git.patch_paths(path))
+                .spawn_scoped(s, || {
+                    feed.and_then(PatchPathsFeed::finish)
+                        .map_or_else(|| git.patch_paths(path), Ok)
+                })
                 .ok();
             let durable = self.make_durable(path, &w);
             (durable, listing.and_then(|h| h.join().ok()))
@@ -882,7 +1116,49 @@ impl Inner {
                 messages::no_patch_paths(path),
             ));
         }
-        Ok(Secured::Paths(paths))
+        Ok(Secured::Paths { paths, fast })
+    }
+
+    /// ADR-152: hard-links every file of the patch into the git dir (`<prefix>-<n>`, the prefix the `stashed` journal
+    /// already records), right before the checkout unlinks and recreates them, so the restore can rename the
+    /// originals back. All or nothing: each file must be a regular file with one link, without extended attributes,
+    /// on the lock's device, and unchanged since the lock was taken (`max(ctime, mtime) < M0`, so it is the inode
+    /// whose content the verified patch recorded); after the link the backup must be that inode, with two links and
+    /// the same size and mtime (a write between the check and the link would have moved the mtime past `M0`). Any
+    /// failure, more than [`MAX_BACKUPS`] files, or clocks that disagree remove every backup made: `git apply`
+    /// restores. Called only after ADR-097's stat-stamp pass verified the patch (`fast`), whose checks it relies on.
+    fn make_backups(&mut self, paths: &ZList) {
+        let Some(prefix) = self.backup_prefix.clone() else {
+            return;
+        };
+        let Some(stamp) = self.lock.as_ref().and_then(WorktreeLock::stamp) else {
+            return;
+        };
+        if paths.len() > MAX_BACKUPS || self.backups.try_reserve(paths.len()).is_err() {
+            return;
+        }
+        let info = &self.cx.info;
+        let mut ok = true;
+        for (n, rel) in paths.iter().enumerate() {
+            let link = info.git_dir.join(format!("{prefix}-{n}"));
+            let Some(b) = backup_one(&info.root, link, rel, &stamp) else {
+                ok = false;
+                break;
+            };
+            self.backups.push(b);
+        }
+        if !ok || !clock_consistent(&stamp, SystemTime::now(), Instant::now()) {
+            self.remove_backups();
+        } else {
+            self.backed_up = paths.clone();
+        }
+    }
+
+    /// ADR-152: removes every backup still in the git dir (after a restore by rename, the ones it did not rename).
+    fn remove_backups(&mut self) {
+        for b in std::mem::take(&mut self.backups) {
+            let _ignored = std::fs::remove_file(&b.link);
+        }
     }
 
     /// Step 6: the patch synced, then the journal + pointer (state `stashed`), then — without a store journal — the
@@ -1290,7 +1566,18 @@ impl Inner {
         let first = if self.flags.patch == PatchStep::RolledBack {
             Err(Failure::Exit(1))
         } else {
-            self.git_apply(patch, 1)
+            match self.rename_restore() {
+                Renamed::All => Ok(()),
+                Renamed::No => self.git_apply(patch, 1),
+                // the renamed files hold the user's bytes, not the patch's pre-images: the checkout writes them from
+                // the index again, then `git apply` restores everything as usual
+                Renamed::Partial => {
+                    let all = self.backed_up.clone();
+                    self.git()
+                        .checkout_paths(&all, true, Group::Isolated)
+                        .and_then(|()| self.git_apply(patch, 1))
+                }
+            }
         };
         let result = if first.is_ok() {
             Ok(())
@@ -1343,6 +1630,77 @@ impl Inner {
         }
     }
 
+    /// ADR-152: the restore by rename. Tried only with backups of every file of the patch, the oracle's proof
+    /// ([`StashGuard::prove_restore`]), no `stage_fixed` staging and no cleared intent-to-add entry, before the first
+    /// apply. First the inputs of `git diff` are checked against the snapshot (configuration and attributes still
+    /// convert nothing), then every file, nothing changed: its proof entry exists; under `core.fileMode` its
+    /// original executable bit is its index mode's (the patch then changes no mode, so `git apply`'s new file gets
+    /// the mode the checkout's new file got); the checked-out file passes the proof's final check (the snapshot's
+    /// `lstat`, and its content when that stat is racy), has one link, is not the backup's inode and carries no
+    /// extended attribute (so a fresh file gets none: no default ACL); the backup is still that inode, with one link
+    /// and its size and mtime, owned by the checked-out file's owner and group (what a fresh file in that directory
+    /// gets), without extended attributes. Then, file by file, a last `lstat` check, the backup's mode set to the
+    /// checked-out file's permission bits and its times to now (`git apply` writes a fresh file: `0666`/`0777` minus
+    /// the umask, as the checkout's), and the rename over the checked-out file. A failed check or a failed first
+    /// rename changes nothing ([`Renamed::No`]); a later failure leaves some files renamed ([`Renamed::Partial`]): the
+    /// caller then checks every backed-up path out again (the index blobs, the patch's pre-images) before `git apply`.
+    fn rename_restore(&mut self) -> Renamed {
+        let proof = self.proof.take();
+        let Some(proof) = proof.filter(|_| {
+            !self.backups.is_empty()
+                && self.flags.patch == PatchStep::Due
+                && self.staged_fixed.is_empty()
+                && self.ita.is_empty()
+        }) else {
+            return Renamed::No;
+        };
+        let mut plan: Vec<(usize, File, u32, PathBuf)> = Vec::new();
+        if plan.try_reserve(self.backups.len()).is_err() || !proof.inputs_unchanged() {
+            return Renamed::No;
+        }
+        for (i, b) in self.backups.iter().enumerate() {
+            match rename_plan(&proof, b) {
+                Some((f, mode, path)) => plan.push((i, f, mode, path)),
+                None => return Renamed::No,
+            }
+        }
+        let mut renamed: Vec<usize> = Vec::new();
+        let mut failed = false;
+        for (i, f, mode, path) in &plan {
+            fault::hit(Point::StashBackup(2));
+            let Some(b) = self.backups.get(*i) else {
+                failed = true;
+                break;
+            };
+            let still = proof.file(&b.rel).is_some_and(ProofFile::stat_unchanged);
+            if !still || rename_back(f, *mode, &b.link, path).is_err() {
+                failed = true;
+                break;
+            }
+            renamed.push(*i);
+        }
+        drop(plan);
+        // a renamed backup no longer exists under its link name
+        let all = std::mem::take(&mut self.backups);
+        self.backups = all
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| !renamed.contains(i))
+            .map(|(_, b)| b)
+            .collect();
+        if !failed {
+            // restored: as after a successful apply, a panic from here on never makes the `Drop` fallback restore
+            // again
+            self.flags.patch = PatchStep::Idle;
+            fault::hit(Point::StashBackup(3));
+            Renamed::All
+        } else if renamed.is_empty() {
+            Renamed::No
+        } else {
+            Renamed::Partial
+        }
+    }
+
     /// Steps 10–11: restore, intent-to-add re-add, journal cleanup, unlock.
     ///
     /// Resumable: each step marks itself done, so the panic fallback (`Drop`) re-entered after a panic inside one of
@@ -1360,6 +1718,8 @@ impl Inner {
                 result = Err(e);
             }
         }
+        // ADR-152: whatever restored (or failed to), no backup outlives the run
+        self.remove_backups();
         if self.flags.ita_cleared {
             fault::hit(Point::RestoreCommand(6));
             let readd = self.git().add_intent_to_add(&self.ita, Group::Isolated);
@@ -1484,6 +1844,98 @@ fn stamps_older(_info: &RepoInfo, _paths: &ZList, _stamp: &LockStamp) -> bool {
     false
 }
 
+/// ADR-152: one backup of [`Inner::make_backups`]: `rel` under `root` hard-linked as `link`, or `None` (and no link
+/// left behind) when a check fails.
+#[cfg(unix)]
+fn backup_one(root: &Path, link: PathBuf, rel: &[u8], stamp: &LockStamp) -> Option<Backup> {
+    use std::os::unix::fs::MetadataExt;
+    let path = root.join(journal::bytes_path(rel));
+    let md = std::fs::symlink_metadata(&path).ok()?;
+    if !md.is_file()
+        || md.nlink() != 1
+        || md.dev() != stamp.dev
+        || lock::changed_ns(&md) >= stamp.m0_ns
+        || !snp_os::linkback::path_has_no_xattrs(&path).ok()?
+    {
+        return None;
+    }
+    std::fs::hard_link(&path, &link).ok()?;
+    let b = Backup {
+        rel: rel.to_vec(),
+        link,
+        dev: md.dev(),
+        ino: md.ino(),
+        size: md.size(),
+        mtime: (md.mtime(), md.mtime_nsec()),
+        exec: md.mode() & 0o100 != 0,
+    };
+    let same = std::fs::symlink_metadata(&b.link).is_ok_and(|l| {
+        l.is_file()
+            && (l.dev(), l.ino(), l.size(), l.nlink()) == (b.dev, b.ino, b.size, 2)
+            && (l.mtime(), l.mtime_nsec()) == b.mtime
+    });
+    if !same {
+        let _ignored = std::fs::remove_file(&b.link);
+        return None;
+    }
+    Some(b)
+}
+
+#[cfg(not(unix))]
+fn backup_one(_root: &Path, _link: PathBuf, _rel: &[u8], _stamp: &LockStamp) -> Option<Backup> {
+    None
+}
+
+/// ADR-152: the checks of [`Inner::rename_restore`] for one backup: the open backup, the mode to give it and the
+/// path to rename it to, or `None`.
+#[cfg(unix)]
+fn rename_plan(proof: &RestoreProof, b: &Backup) -> Option<(File, u32, PathBuf)> {
+    use std::os::unix::fs::MetadataExt;
+    let f = proof.file(&b.rel)?;
+    if proof.file_mode() && b.exec != f.index_exec() {
+        return None;
+    }
+    let out = proof.content_unchanged(f)?;
+    if out.nlink() != 1
+        || out.ino() == b.ino
+        || out.dev() != b.dev
+        || !snp_os::linkback::path_has_no_xattrs(f.path()).ok()?
+    {
+        return None;
+    }
+    let link_md = std::fs::symlink_metadata(&b.link).ok()?;
+    if !link_md.is_file() {
+        return None;
+    }
+    let file = File::open(&b.link).ok()?;
+    let md = file.metadata().ok()?;
+    let same = md.is_file()
+        && (md.dev(), md.ino(), md.size(), md.nlink()) == (b.dev, b.ino, b.size, 1)
+        && (md.mtime(), md.mtime_nsec()) == b.mtime
+        && (md.uid(), md.gid()) == (out.uid(), out.gid())
+        && snp_os::linkback::file_has_no_xattrs(&file).ok()?;
+    same.then(|| (file, out.mode() & 0o7777, f.path().to_path_buf()))
+}
+
+#[cfg(not(unix))]
+fn rename_plan(_proof: &RestoreProof, _b: &Backup) -> Option<(File, u32, PathBuf)> {
+    None
+}
+
+/// ADR-152: gives the backup `f` (open on `link`) the mode `mode` and the current times, then renames it to `path`.
+#[cfg(unix)]
+fn rename_back(f: &File, mode: u32, link: &Path, path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    f.set_permissions(std::fs::Permissions::from_mode(mode))?;
+    snp_os::linkback::touch_now(f)?;
+    std::fs::rename(link, path)
+}
+
+#[cfg(not(unix))]
+fn rename_back(_f: &File, _mode: u32, _link: &Path, _path: &Path) -> io::Result<()> {
+    Err(io::ErrorKind::Unsupported.into())
+}
+
 /// Truncate a buffered patch file for a rewrite.
 fn rewind(w: &mut BufWriter<File>) -> io::Result<()> {
     w.flush()?;
@@ -1522,6 +1974,16 @@ impl StashGuard {
     /// worktree before [`enter`] may be stale. `false` for a nested run (it never waits) and when the lock was free.
     pub fn lock_contended(&self) -> bool {
         self.contended
+    }
+
+    /// ADR-152: hands over the `DiffOracle`'s [`RestoreProof`] for this stash's checkout list, taken after the last
+    /// hook and any `--show-diff-on-failure` output; the restore then renames the preserved originals back instead of
+    /// running `git apply` when every check of [`StashGuard::restore`]'s rename step passes (Linux; elsewhere, without
+    /// backups, it changes nothing). A proof for other paths fails those checks: `git apply` restores.
+    pub fn prove_restore(&mut self, proof: RestoreProof) {
+        if let Some(inner) = self.inner.as_deref_mut() {
+            inner.proof = Some(proof);
+        }
     }
 
     /// `("_SNP_STASH_LOCK", token)` for nested runs.

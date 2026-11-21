@@ -3,12 +3,13 @@
 //! kill -9 and transcript matrices of WP-23 (`tests/driver.rs`).
 //!
 //! ```text
-//! snp-stash-driver <repo> <patches-dir> [--color] [--stage-fixed <path>]… [--abort-on-fault] -- <hook argv…>
+//! snp-stash-driver <repo> <patches-dir> [--color] [--stage-fixed <path>]… [--abort-on-fault] [--rename-proof] -- <hook argv…>
 //! ```
 //!
 //! The hook runs with the run environment plus `_SNP_STASH_LOCK` (inherited stdio, `Role::Hook`, the run token).
 //! `SNP_FAULT` arms a fault point; with `--abort-on-fault` an injected fault aborts the process (no unwinding, no
-//! destructors: a kill -9 at that transition). `SNP_STASH_VERIFY`, `SNP_STASH_LOCK_TIMEOUT` and
+//! destructors: a kill -9 at that transition). `--rename-proof` runs the `DiffOracle` around the hook as `snp run` does
+//! and hands its restore proof to the guard (ADR-152's restore by rename). `SNP_STASH_VERIFY`, `SNP_STASH_LOCK_TIMEOUT` and
 //! `SNP_STASH_DRIVER_OLD_GIT=1` (git < 2.19) configure the context. Exit status: 0, the envelope's 1/3, 130 after
 //! SIGINT, death by SIGTERM/SIGHUP (143/129) after the restore.
 //!
@@ -39,6 +40,7 @@ struct Args {
     color: bool,
     stage_fixed: Vec<RepoPath>,
     abort_on_fault: bool,
+    rename_proof: bool,
     hook: Vec<OsString>,
 }
 
@@ -52,6 +54,7 @@ fn parse(mut it: impl Iterator<Item = OsString>) -> Option<Args> {
         match arg.to_str() {
             Some("--color") => a.color = true,
             Some("--abort-on-fault") => a.abort_on_fault = true,
+            Some("--rename-proof") => a.rename_proof = true,
             Some("--stage-fixed") => {
                 let p = it.next()?;
                 a.stage_fixed
@@ -96,7 +99,7 @@ fn main() -> ExitCode {
     snp_core::fault::arm_from_env(&env);
     let Some(args) = parse(std::env::args_os().skip(1)) else {
         let p = Printer::stdio(opts(false, CancelToken::new()));
-        p.py_eprint("usage: snp-stash-driver <repo> <patches-dir> [--color] [--stage-fixed P]… [--abort-on-fault] -- <hook…>");
+        p.py_eprint("usage: snp-stash-driver <repo> <patches-dir> [--color] [--stage-fixed P]… [--abort-on-fault] [--rename-proof] -- <hook…>");
         return ExitCode::from(2);
     };
     if args.abort_on_fault {
@@ -161,6 +164,7 @@ fn run(
         role: Role::Critical,
     });
     let git = git.with_brand(Brand::PreCommit).with_backend(critical);
+    let for_oracle = args.rename_proof.then(|| (git.clone(), info.clone()));
     let cx = StashCtx {
         git,
         info,
@@ -174,6 +178,8 @@ fn run(
         old_git: env.is_truthy_flag("SNP_STASH_DRIVER_OLD_GIT"),
         report_recovery: true,
         checkout_notice: None,
+        intent_to_add_hint: None,
+        config_listing: None,
     };
     let mut guard = match snp_stash::enter(cx) {
         Ok(g) => g,
@@ -184,6 +190,12 @@ fn run(
         hook_env = hook_env.set(k, v);
     }
     let hook_env = env.patched(&hook_env);
+    let mut oracle = for_oracle.and_then(|(git, info)| proof_oracle(&guard, &git, &info, env));
+    if let Some(o) = oracle.as_mut()
+        && o.before_hook().is_err()
+    {
+        oracle = None;
+    }
     let mut result: Result<(), Failure> = Ok(());
     let mut hook_signalled = false;
     if !args.hook.is_empty() {
@@ -204,6 +216,12 @@ fn run(
             Err(e) => printer.py_eprint(&e.python_text()),
         }
     }
+    if let Some(mut o) = oracle
+        && o.after_hook().is_ok()
+        && let Some(proof) = guard.checked_out().and_then(|p| o.restore_proof(p))
+    {
+        guard.prove_restore(proof);
+    }
     if hook_signalled {
         // A terminal ^C reaches the hook and snp together, but snp's handler runs on its own thread: give it a moment
         // so the cancel path (not the stage-fixed path) is taken.
@@ -222,6 +240,30 @@ fn run(
     }
     let restored = guard.restore();
     report_merged(merge_results(result, restored, cancel), printer)
+}
+
+/// `snp run`'s `DiffOracle` after the stash (ADR-119's elision of the checkout's baseline, for ADR-152's proof):
+/// `None` when nothing was checked out or a query fails.
+fn proof_oracle(
+    guard: &snp_stash::StashGuard,
+    git: &Git,
+    info: &snp_git::RepoInfo,
+    env: &Env,
+) -> Option<snp_stash::diff_oracle::DiffOracle> {
+    let paths = guard.checked_out()?;
+    let tracked = Arc::new(git.tracked_with_modes().ok()?);
+    let listing = git.config_listing().ok()?;
+    let mut o = snp_stash::diff_oracle::DiffOracle::new(
+        git,
+        info,
+        env,
+        None,
+        Some(tracked),
+        Some(Arc::clone(&listing.files)),
+    )
+    .ok()?;
+    o.elide_checkout_baseline(paths, &listing.checkout, None, false);
+    Some(o)
 }
 
 /// Polls the run token for up to `limit`.

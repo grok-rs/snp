@@ -17,6 +17,8 @@ mod attributes;
 mod gitconfig;
 mod index_proof;
 
+pub(crate) use index_proof::every_entry_stat_clean;
+
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -67,6 +69,44 @@ pub struct DiffOracle {
     verify_proof: bool,
     /// Proven diffs the verify mode found non-empty.
     proof_mismatches: u32,
+    /// ADR-152: set when ADR-119 proved the post-checkout state, kept while every comparison since found no change.
+    restore: Option<RestoreBasis>,
+}
+
+/// What ADR-152's restore proof keeps from ADR-119's (see [`DiffOracle::restore_proof`]).
+#[derive(Debug, Clone, Copy)]
+struct RestoreBasis {
+    /// `core.fileMode` of the proven configuration.
+    file_mode: bool,
+    /// When the worktree was last proven equal to the snapshot (the snapshot itself, or the last comparison that
+    /// found no change).
+    checked_at: i128,
+}
+
+/// ADR-152: the oracle's evidence that the files the stash checked out still hold exactly what the checkout wrote,
+/// with nothing in the run's configuration or attributes converting them, so `git apply` of the stash's patch would
+/// leave each of them holding exactly the bytes it had before the stash (see [`DiffOracle::restore_proof`]). Only
+/// the oracle makes one; the stash guard checks every file again right before it renames ([`StashGuard::prove_restore`]).
+///
+/// [`StashGuard::prove_restore`]: crate::StashGuard::prove_restore
+#[derive(Debug, Clone)]
+pub struct RestoreProof {
+    files: Vec<ProofFile>,
+    /// Every input of `git diff` (index, configuration and attributes files) with its snapshot `(lstat, stat)` and,
+    /// when it was racy, its content hash.
+    inputs: Vec<(PathBuf, St, St, Option<[u8; 32]>)>,
+    checked_at: i128,
+    file_mode: bool,
+}
+
+/// One checked-out file of a [`RestoreProof`].
+#[derive(Debug, Clone)]
+pub(crate) struct ProofFile {
+    rel: Vec<u8>,
+    path: PathBuf,
+    st: St,
+    hash: Option<[u8; 32]>,
+    index_exec: bool,
 }
 
 /// What the index-stat proof did in a run (ADR-134).
@@ -266,7 +306,8 @@ impl St {
     }
 }
 
-/// The content hash of a racy path (`None` when unreadable: compared as such).
+/// The content hash of a racy path (`None` when unreadable: compared as such). A large file is hashed on several
+/// threads ([`par_file_hash`], ADR-151), with the same digest.
 fn content_hash(p: &Path, kind: Kind, follow: bool) -> Option<[u8; 32]> {
     let mut h = blake3::Hasher::new();
     if kind == Kind::Symlink && !follow {
@@ -274,9 +315,176 @@ fn content_hash(p: &Path, kind: Kind, follow: bool) -> Option<[u8; 32]> {
         h.update(&crate::journal::path_bytes(&target));
     } else {
         let f = std::fs::File::open(p).ok()?;
+        if let Some(digest) = par_file_hash(&f) {
+            return Some(digest);
+        }
         h.update_reader(f).ok()?;
     }
     Some(*h.finalize().as_bytes())
+}
+
+/// ADR-151: the smallest size [`par_hash_len`] splits (below it one thread is as fast).
+#[cfg(unix)]
+const PAR_HASH_MIN: u64 = 4 << 20;
+/// ADR-151: files of at least this many bytes are hashed on several threads by [`par_file_hash`]. Higher than
+/// [`PAR_HASH_MIN`]: each parallel hash starts its helper threads anew, and below this size the few milliseconds it
+/// saves do not pay for them (B8's 10 MiB file, hashed a few times per run, added about nine threads per run on a
+/// 4-CPU runner for about 3 ms).
+#[cfg(unix)]
+const PAR_FILE_HASH_MIN: u64 = 32 << 20;
+/// ADR-151: the smallest subtree one thread of [`par_file_hash`] hashes.
+#[cfg(unix)]
+const PAR_HASH_SEGMENT: u64 = 1 << 20;
+/// ADR-151: the most threads [`par_file_hash`] uses.
+#[cfg(unix)]
+const PAR_HASH_THREADS: usize = 8;
+
+/// ADR-151: blake3 of a file of at least [`PAR_FILE_HASH_MIN`] bytes, computed on several threads (`par_hash_len`).
+/// The size is checked first, so a smaller file (the common racy case) costs one `fstat` and no thread-count query;
+/// the thread count is read once per process. `None` (the caller hashes sequentially) for a smaller file, one
+/// available thread, a non-Unix platform or any failure of `par_hash_len`.
+fn par_file_hash(f: &std::fs::File) -> Option<[u8; 32]> {
+    #[cfg(unix)]
+    {
+        static THREADS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let len = f.metadata().ok()?.len();
+        if len < PAR_FILE_HASH_MIN {
+            return None;
+        }
+        let threads =
+            *THREADS.get_or_init(|| std::thread::available_parallelism().map_or(1, usize::from));
+        par_hash_len(f, len, threads)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = f;
+        None
+    }
+}
+
+/// ADR-151: blake3 of the first `len` bytes of `f` (its `fstat` size, at least [`PAR_HASH_MIN`]), computed on up to
+/// `threads` threads: the input is split along blake3's own tree (`hazmat::left_subtree_len`) into subtrees of at
+/// least [`PAR_HASH_SEGMENT`] bytes, each hashed with positional reads, and their chaining values are merged as blake3
+/// merges them, so the digest is exactly `blake3::hash` of the bytes. Every subtree must read exactly its length and
+/// the file must end at `len`, else (or for a smaller `len`, one thread or any read error) `None`, and the caller
+/// hashes the file sequentially as before: the result never differs from the sequential one for a file that does not
+/// change while it is read.
+#[cfg(unix)]
+fn par_hash_len(f: &std::fs::File, len: u64, threads: usize) -> Option<[u8; 32]> {
+    use blake3::hazmat::{Mode, merge_subtrees_root};
+    let threads = threads.min(PAR_HASH_THREADS);
+    if len < PAR_HASH_MIN || threads < 2 {
+        return None;
+    }
+    let target = PAR_HASH_SEGMENT.max(len.checked_div(u64::try_from(threads).ok()?)?);
+    let mut segments = Vec::new();
+    let root = split_subtree(0, len, target, &mut segments)?;
+    let cvs: Vec<Option<blake3::hazmat::ChainingValue>> = std::thread::scope(|s| {
+        // every segment's thread starts before the first join; a thread the OS refuses hashes at its join
+        let mut handles = Vec::new();
+        for &(off, n) in &segments {
+            let h = std::thread::Builder::new()
+                .name("snp-diff-hash".to_owned())
+                .stack_size(256 * 1024)
+                .spawn_scoped(s, move || hash_subtree(f, off, n));
+            handles.push((off, n, h));
+        }
+        handles
+            .into_iter()
+            .map(|(off, n, h)| match h {
+                Ok(h) => h.join().ok().flatten(),
+                Err(_) => hash_subtree(f, off, n),
+            })
+            .collect()
+    });
+    // the file must end at `len`: a longer one is hashed sequentially (to its end, as before)
+    let mut one = [0_u8; 1];
+    if std::os::unix::fs::FileExt::read_at(f, &mut one, len).ok()? != 0 {
+        return None;
+    }
+    let Tree::Pair(l, r) = root else {
+        return None;
+    };
+    let (l, r) = (l.merge(&cvs)?, r.merge(&cvs)?);
+    Some(*merge_subtrees_root(&l, &r, Mode::Hash).as_bytes())
+}
+
+/// The shape of a [`par_file_hash`] split: a leaf is the index of a segment.
+#[cfg(unix)]
+enum Tree {
+    Leaf(usize),
+    Pair(Box<Self>, Box<Self>),
+}
+
+#[cfg(unix)]
+impl Tree {
+    /// The chaining value of this subtree, from the segments' ones (`None` when one is missing).
+    fn merge(
+        &self,
+        cvs: &[Option<blake3::hazmat::ChainingValue>],
+    ) -> Option<blake3::hazmat::ChainingValue> {
+        match self {
+            Self::Leaf(i) => cvs.get(*i).copied().flatten(),
+            Self::Pair(l, r) => Some(blake3::hazmat::merge_subtrees_non_root(
+                &l.merge(cvs)?,
+                &r.merge(cvs)?,
+                blake3::hazmat::Mode::Hash,
+            )),
+        }
+    }
+}
+
+/// Splits the subtree `[off, off + len)` along blake3's tree until each part is at most `target` bytes, appending the
+/// parts to `segments` in order. `None` when a part would break blake3's subtree rules (never, for a split from
+/// offset 0; checked rather than assumed).
+#[cfg(unix)]
+fn split_subtree(off: u64, len: u64, target: u64, segments: &mut Vec<(u64, u64)>) -> Option<Tree> {
+    let chunk = u64::try_from(blake3::CHUNK_LEN).ok()?;
+    if off.checked_rem(chunk)? != 0
+        || len == 0
+        || blake3::hazmat::max_subtree_len(off).is_some_and(|max| len > max)
+    {
+        return None;
+    }
+    if len <= target || len <= chunk {
+        segments.push((off, len));
+        return Some(Tree::Leaf(segments.len().checked_sub(1)?));
+    }
+    let left = blake3::hazmat::left_subtree_len(len);
+    let l = split_subtree(off, left, target, segments)?;
+    let r = split_subtree(
+        off.checked_add(left)?,
+        len.checked_sub(left)?,
+        target,
+        segments,
+    )?;
+    Some(Tree::Pair(Box::new(l), Box::new(r)))
+}
+
+/// The non-root chaining value of the subtree `[off, off + len)` of `f`, read with positional reads; `None` when the
+/// file does not hold exactly those bytes or a read fails.
+#[cfg(unix)]
+fn hash_subtree(f: &std::fs::File, off: u64, len: u64) -> Option<blake3::hazmat::ChainingValue> {
+    use blake3::hazmat::HasherExt;
+    let mut h = blake3::Hasher::new();
+    h.set_input_offset(off);
+    let mut buf = vec![0_u8; 32 << 10];
+    let mut done = 0_u64;
+    while done < len {
+        let want = usize::try_from(len.checked_sub(done)?)
+            .unwrap_or(usize::MAX)
+            .min(buf.len());
+        let part = buf.get_mut(..want)?;
+        let n = match std::os::unix::fs::FileExt::read_at(f, part, off.checked_add(done)?) {
+            Ok(0) => return None,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return None,
+        };
+        h.update(part.get(..n)?);
+        done = done.checked_add(u64::try_from(n).ok()?)?;
+    }
+    Some(h.finalize_non_root())
 }
 
 /// Nanoseconds since the epoch.
@@ -308,6 +516,8 @@ struct Snapshot {
     racy_paths: Vec<(usize, Option<[u8; 32]>)>,
     /// Hashes of the racy inputs.
     racy_inputs: Vec<(usize, Option<[u8; 32]>)>,
+    /// When it was taken (the racy rule's reference time).
+    taken: i128,
 }
 
 /// Stat-mode state.
@@ -544,6 +754,7 @@ fn snapshot_with(
         inputs: input_stats,
         racy_paths,
         racy_inputs,
+        taken,
     }
 }
 
@@ -900,6 +1111,7 @@ impl DiffOracle {
             proof: None,
             verify_proof: false,
             proof_mismatches: 0,
+            restore: None,
         };
         if oracle.last.is_some()
             && let Some(s) = oracle.stat.as_deref_mut()
@@ -1031,8 +1243,13 @@ impl DiffOracle {
         if !s.checkout_left_no_diff(checked_out, config, answered) {
             return Elision::NotProven;
         }
+        let basis = s.snapshot.as_ref().map(|snap| RestoreBasis {
+            file_mode: config.file_mode,
+            checked_at: snap.taken,
+        });
         if !verify {
             self.last = Some(DiffFingerprint::EMPTY);
+            self.restore = basis;
             return Elision::Elided;
         }
         let Ok(real) = self.git.diff_fingerprint() else {
@@ -1040,6 +1257,7 @@ impl DiffOracle {
         };
         self.last = Some(real);
         if real == DiffFingerprint::EMPTY {
+            self.restore = basis;
             Elision::Verified
         } else {
             Elision::Mismatch
@@ -1076,12 +1294,14 @@ impl DiffOracle {
     /// `git diff`.
     pub fn adopt_baseline(&mut self, baseline: DiffFingerprint) {
         self.last = Some(baseline);
+        self.restore = None;
     }
 
     /// Falls back to Git mode for the rest of the run.
     fn fall_back_to_git_mode(&mut self) {
         self.mode = DiffMode::Git;
         self.stat = None;
+        self.restore = None;
     }
 
     /// Before a hook that may modify files (stat snapshot, or nothing in Git mode).
@@ -1093,6 +1313,7 @@ impl DiffOracle {
             && s.snapshot.is_none()
         {
             s.take_snapshot();
+            self.restore = None;
         }
         if self.last.is_none() {
             self.last = Some(self.fingerprint_now()?);
@@ -1102,12 +1323,20 @@ impl DiffOracle {
 
     /// After it: `Unchanged` without spawning when provably identical, else one real `git diff` and digest compare.
     pub fn after_hook(&mut self) -> Result<Change, Failure> {
+        if self.stat.is_none() {
+            self.restore = None;
+        }
         self.invalidate_trust();
         if let Some(s) = self.stat.as_deref_mut() {
             let (delta, stats, taken) = s.compare();
             if !delta.any && self.last.is_some() {
+                // ADR-152: the worktree is still the snapshot's, proven at `taken`
+                if let Some(r) = self.restore.as_mut() {
+                    r.checked_at = taken;
+                }
                 return Ok(Change::Unchanged);
             }
+            self.restore = None;
             self.refresh_lists(&delta)?;
             match self.stat.as_deref_mut() {
                 Some(s) if !delta.index && !delta.config => {
@@ -1188,6 +1417,8 @@ impl DiffOracle {
         needs_real_diff: bool,
     ) -> Result<Change, Failure> {
         self.invalidate_trust();
+        // ADR-152: a native fixer's report is not a comparison of the worktree with the snapshot
+        self.restore = None;
         if needs_real_diff {
             if let Some(s) = self.stat.as_deref_mut() {
                 s.take_snapshot();
@@ -1216,16 +1447,270 @@ impl DiffOracle {
             && s.snapshot.is_none()
         {
             s.take_snapshot();
+            self.restore = None;
         }
         let d = self.fingerprint_now()?;
         self.last = Some(d);
         Ok(d.non_empty)
+    }
+
+    /// ADR-152: the evidence the stash's restore by rename needs for `checked_out` (the stash's checkout list,
+    /// [`crate::StashGuard::checked_out`]), or `None`.
+    ///
+    /// It exists only when (a) ADR-119 proved the post-checkout state ([`Self::elide_checkout_baseline`] answered
+    /// `Elided` or `Verified`): the checkout wrote each checked-out file's blob bytes and nothing in the configuration
+    /// or the attributes converts any file; (b) every comparison since found no change: the stat snapshot is still
+    /// the post-checkout one, for every tracked path (racy ones compared by content) and every input of `git diff`
+    /// (index, configuration and attributes files), and no native fixer's report or adopted baseline replaced a
+    /// comparison; (c) the last fingerprint is the empty diff; and (d) every checked-out path is a regular file of
+    /// mode `100644` or `100755` in the snapshot, hashed when it was racy. The proof carries each file's snapshot
+    /// stat, hash and index mode, `core.fileMode`, and when the worktree was last proven equal to the snapshot.
+    pub fn restore_proof(&self, checked_out: &ZList) -> Option<RestoreProof> {
+        let basis = self.restore?;
+        if self.mode != DiffMode::Stat || self.last != Some(DiffFingerprint::EMPTY) {
+            return None;
+        }
+        let s = self.stat.as_deref()?;
+        let snap = s.snapshot.as_ref()?;
+        let want: HashSet<&[u8]> = checked_out.iter().collect();
+        if want.is_empty() || want.len() != checked_out.len() {
+            return None;
+        }
+        let mut files: Vec<ProofFile> = Vec::new();
+        files.try_reserve(want.len()).ok()?;
+        let mut slot = 0_usize;
+        let mut last: Option<&[u8]> = None;
+        for (p, mode) in s.tracked.paths.iter().zip(s.tracked.modes.iter().copied()) {
+            // the slot rule of `tracked_paths`
+            if mode == GITLINK || last == Some(p) {
+                if want.contains(p) {
+                    return None;
+                }
+                continue;
+            }
+            last = Some(p);
+            if want.contains(p) {
+                let st = *snap.paths.get(slot)?;
+                let path = s.paths.get(slot)?.clone();
+                let hash = match snap.racy_paths.binary_search_by_key(&slot, |(i, _)| *i) {
+                    Ok(k) => Some(snap.racy_paths.get(k)?.1?),
+                    Err(_) => None,
+                };
+                if st.kind != Kind::File || !matches!(mode, 0o100_644 | 0o100_755) {
+                    return None;
+                }
+                files.push(ProofFile {
+                    rel: p.to_vec(),
+                    path,
+                    st,
+                    hash,
+                    index_exec: mode == 0o100_755,
+                });
+            }
+            slot = slot.saturating_add(1);
+        }
+        if files.len() != want.len() {
+            return None;
+        }
+        let mut inputs: Vec<(PathBuf, St, St, Option<[u8; 32]>)> = Vec::new();
+        inputs.try_reserve(s.inputs.len()).ok()?;
+        for (i, ((p, _), (l, st))) in s.inputs.iter().zip(&snap.inputs).enumerate() {
+            let hash = match snap.racy_inputs.binary_search_by_key(&i, |(j, _)| *j) {
+                Ok(k) => Some(snap.racy_inputs.get(k)?.1?),
+                Err(_) => None,
+            };
+            inputs.push((p.clone(), *l, *st, hash));
+        }
+        Some(RestoreProof {
+            files,
+            inputs,
+            checked_at: basis.checked_at,
+            file_mode: basis.file_mode,
+        })
+    }
+}
+
+impl RestoreProof {
+    /// The proof's entry for the repository path `rel`.
+    pub(crate) fn file(&self, rel: &[u8]) -> Option<&ProofFile> {
+        self.files.iter().find(|f| f.rel == rel)
+    }
+
+    /// `core.fileMode` of the proven configuration.
+    #[cfg_attr(
+        not(unix),
+        expect(
+            dead_code,
+            reason = "ADR-152 renames on Unix builds only (Linux at run time)"
+        )
+    )]
+    pub(crate) const fn file_mode(&self) -> bool {
+        self.file_mode
+    }
+
+    /// The final check of the inputs (ADR-152): every input of `git diff` (index, configuration and attributes files)
+    /// still has the snapshot's `lstat` and `stat`, and the content hash of a racy one is unchanged, so what `git apply`
+    /// would read (the attributes and the configuration that decide its conversions) is still what ADR-119 proved
+    /// converts nothing.
+    pub(crate) fn inputs_unchanged(&self) -> bool {
+        self.inputs.iter().all(|(p, l, st, hash)| {
+            let (now_l, now_st) = St::lstat_and_stat(p);
+            now_l == *l
+                && now_st == *st
+                && hash.is_none_or(|h| content_hash(p, now_st.kind, true) == Some(h))
+        })
+    }
+
+    /// The final check of `f` (ADR-152): its `lstat` is exactly the snapshot's, and when that stat is racy against
+    /// the last time the worktree was proven equal to the snapshot (a same-size write within the timestamp
+    /// granularity would not show), its content hashes to the snapshot's hash. Returns the `lstat` result.
+    #[cfg_attr(
+        not(unix),
+        expect(
+            dead_code,
+            reason = "ADR-152 renames on Unix builds only (Linux at run time)"
+        )
+    )]
+    pub(crate) fn content_unchanged(&self, f: &ProofFile) -> Option<std::fs::Metadata> {
+        let md = std::fs::symlink_metadata(&f.path).ok()?;
+        if St::from_metadata(&md) != f.st {
+            return None;
+        }
+        if f.st.racy(self.checked_at) {
+            let now = content_hash(&f.path, Kind::File, false)?;
+            if Some(now) != f.hash {
+                return None;
+            }
+        }
+        Some(md)
+    }
+}
+
+impl ProofFile {
+    /// Whether its `lstat` is still exactly the snapshot's (the stat check right before its rename).
+    pub(crate) fn stat_unchanged(&self) -> bool {
+        std::fs::symlink_metadata(&self.path).is_ok_and(|md| St::from_metadata(&md) == self.st)
+    }
+
+    /// The file's path in the worktree.
+    #[cfg_attr(
+        not(unix),
+        expect(
+            dead_code,
+            reason = "ADR-152 renames on Unix builds only (Linux at run time)"
+        )
+    )]
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Whether its index entry is `100755`.
+    #[cfg_attr(
+        not(unix),
+        expect(
+            dead_code,
+            reason = "ADR-152 renames on Unix builds only (Linux at run time)"
+        )
+    )]
+    pub(crate) const fn index_exec(&self) -> bool {
+        self.index_exec
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR-151: the parallel hash is blake3's own digest for every size around the threshold and the segment and
+    /// chunk boundaries, for every thread count; below the threshold or with one thread it declines (the caller
+    /// hashes sequentially).
+    #[cfg(unix)]
+    #[test]
+    fn par_file_hash_is_blake3_of_the_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("f");
+        let mib = 1_usize << 20;
+        for len in [
+            4 * mib,
+            4 * mib + 1,
+            4 * mib + 1023,
+            5 * mib - 1,
+            6 * mib + 1024 * 3 + 17,
+            10 * mib + 12_345,
+            16 * mib,
+        ] {
+            let bytes: Vec<u8> = (0..len)
+                .map(|i| u8::try_from((i * 31 + i / 1021) % 253).unwrap())
+                .collect();
+            std::fs::write(&p, &bytes).unwrap();
+            let want = *blake3::hash(&bytes).as_bytes();
+            let f = std::fs::File::open(&p).unwrap();
+            for threads in [2, 3, 4, 7, 8, 64] {
+                assert_eq!(
+                    par_hash_len(&f, u64::try_from(len).unwrap(), threads),
+                    Some(want),
+                    "len {len} threads {threads}"
+                );
+            }
+            assert_eq!(par_hash_len(&f, u64::try_from(len).unwrap(), 1), None);
+            assert_eq!(content_hash(&p, Kind::File, false), Some(want));
+        }
+        std::fs::write(&p, vec![7_u8; 4 * mib - 1]).unwrap();
+        let f = std::fs::File::open(&p).unwrap();
+        assert_eq!(par_file_hash(&f), None);
+        assert_eq!(par_hash_len(&f, 4 * (1 << 20) - 1, 4), None);
+        // the split never yields a part that breaks blake3's subtree rules, and covers the input exactly
+        for len in [4_u64 << 20, (10_u64 << 20) + 1, 123_456_789] {
+            for target in [1 << 20, 3 << 20, 1 << 22] {
+                let mut segs = Vec::new();
+                assert!(split_subtree(0, len, target, &mut segs).is_some());
+                let mut at = 0;
+                for (off, n) in segs {
+                    assert_eq!(off, at);
+                    assert!(n <= target.max(1024) && n > 0);
+                    at += n;
+                }
+                assert_eq!(at, len);
+            }
+        }
+        // a misaligned or oversized part is refused, never a panic
+        assert!(split_subtree(1, 2048, 1024, &mut Vec::new()).is_none());
+        assert!(split_subtree(1024, 4096, 1 << 20, &mut Vec::new()).is_none());
+    }
+
+    /// ADR-151 fallbacks (K5): a file longer than the size the parallel hash was given (it grew after `fstat`) is
+    /// refused, never hashed to the old length, and the sequential hash covers the whole file; a size larger than the
+    /// file (a subtree read hits the end early) is refused too.
+    #[cfg(unix)]
+    #[test]
+    fn par_hash_len_refuses_a_file_that_grew_or_shrank() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("f");
+        let mib = 1_u64 << 20;
+        let bytes: Vec<u8> = (0..(6 * mib + 100))
+            .map(|i| u8::try_from(i % 251).unwrap())
+            .collect();
+        std::fs::write(&p, &bytes).unwrap();
+        let f = std::fs::File::open(&p).unwrap();
+        let real = u64::try_from(bytes.len()).unwrap();
+        // longer than the stat: the trailing-byte probe declines, for an aligned and an unaligned stale size
+        for stale in [5 * mib, real - 1, 4 * mib] {
+            assert_eq!(par_hash_len(&f, stale, 4), None, "stale {stale}");
+        }
+        assert_eq!(
+            content_hash(&p, Kind::File, false),
+            Some(*blake3::hash(&bytes).as_bytes())
+        );
+        // shorter than the stat: the last subtree reads EOF before its length
+        for past in [real + 1, real + 1024, 8 * mib] {
+            assert_eq!(par_hash_len(&f, past, 4), None, "past {past}");
+        }
+        // and the exact size still matches blake3
+        assert_eq!(
+            par_hash_len(&f, real, 4),
+            Some(*blake3::hash(&bytes).as_bytes())
+        );
+    }
 
     /// A regular file's stat tuple: inode `ino`, permission bits `perm`.
     fn file(ino: u64, perm: u32) -> St {

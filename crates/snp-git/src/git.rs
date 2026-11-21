@@ -84,6 +84,18 @@ pub const CHECKOUT_PATHS_ARGS: [&str; 5] = [
 /// command line and every Unix `ARG_MAX`).
 const CHECKOUT_CHUNK_BYTES: usize = 24 * 1024;
 
+/// The largest index (header entry count) [`Git::index_without_intent_to_add`] reads (ADR-154): the Stat mode's
+/// bound, so the read stays far below the cost of the query it lets the stash skip.
+const ITA_PROOF_MAX_ENTRIES: u32 = 16_384;
+
+/// `config` bytes that may name an object format (`extensions.objectFormat`, `extensions.compatObjectFormat`): a
+/// variable name is one run of letters, digits and dashes, so any setting spells `objectformat` in some case
+/// (lowercased in place first).
+fn names_object_format(mut config: Vec<u8>) -> bool {
+    config.make_ascii_lowercase();
+    memchr::memmem::find(&config, b"objectformat").is_some()
+}
+
 /// One git call of the stash's path-limited checkout ([`Git::checkout_path_calls`]): the arguments after `git` and its
 /// stdin.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,6 +130,42 @@ fn parse_numstat_z(out: &[u8]) -> Result<ZList, Failure> {
             .map_err(too_large)?;
     }
     Ok(list)
+}
+
+/// ADR-151: a running `git apply --numstat -z --whitespace=nowarn` reading a stash patch on stdin
+/// ([`Git::patch_paths_feed`]). Writes go to its stdin; a write error only means [`PatchPathsFeed::finish`] must not
+/// be called for an answer (drop the feed: the child is still reaped).
+#[derive(Debug)]
+pub struct PatchPathsFeed {
+    fed: snp_proc::spawn::Fed,
+}
+
+impl PatchPathsFeed {
+    /// Closes git's input once the whole patch was written: git parses it while the caller goes on.
+    pub fn close(&mut self) {
+        self.fed.close_stdin();
+    }
+
+    /// Closes git's input (if [`PatchPathsFeed::close`] did not) and waits for it: the paths when git exited 0 (not
+    /// stopped) and its output parsed as [`Git::patch_paths`] parses it; `None` for anything else, and the caller then
+    /// lists the file with [`Git::patch_paths`], whose answer and error text are the canonical ones.
+    pub fn finish(self) -> Option<ZList> {
+        let c = self.fed.finish()?;
+        if c.status.0 != 0 || c.stopped_by_tty {
+            return None;
+        }
+        parse_numstat_z(&c.stdout).ok()
+    }
+}
+
+impl io::Write for PatchPathsFeed {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.fed.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.fed.flush()
+    }
 }
 
 /// The production [`pathspec::SeenSet`]: a hash set over the borrowed records, O(n) for any number of paths. A
@@ -348,15 +396,23 @@ impl Git {
         backend: Arc<dyn GitBackend>,
     ) -> Result<(Self, RepoInfo), Failure> {
         let info = Self::discover_info(&exe, env, cwd, backend.as_ref())?;
-        let git = Self {
+        let git = Self::at(exe, env, &info, backend);
+        Ok((git, info))
+    }
+
+    /// The handle [`Self::discover`] returns for the layout `info`, without asking git: the same executable,
+    /// environment, root, git directory, backend and brand. ADR-154's speculative pre-chain builds one for the layout
+    /// a repository rooted at the invocation cwd would have, and keeps its results only when discovery reports that
+    /// very layout.
+    pub fn at(exe: Arc<GitExe>, env: &Env, info: &RepoInfo, backend: Arc<dyn GitBackend>) -> Self {
+        Self {
             exe,
             env: env.clone(),
             root: Arc::from(info.root.as_path()),
             admin_dir: Arc::from(info.git_dir.as_path()),
             backend,
             brand: process_brand(),
-        };
-        Ok((git, info))
+        }
     }
 
     fn discover_info(
@@ -781,6 +837,24 @@ impl Git {
         parse_numstat_z(&self.checked(&args)?.stdout)
     }
 
+    /// ADR-151: [`Git::patch_paths`] reading the patch on stdin while the caller writes it: `git apply --numstat -z
+    /// --whitespace=nowarn` with no patch argument, so git reads its standard input, the same bytes through the same
+    /// `apply_patch` (the file name only appears in error texts, and those come from [`Git::patch_paths`]). The child
+    /// starts at once; feed it every byte of the patch, then [`PatchPathsFeed::finish`]. `None` when it cannot start
+    /// (or the backend cannot feed a child): the caller lists the file with [`Git::patch_paths`].
+    pub fn patch_paths_feed(&self) -> Option<PatchPathsFeed> {
+        let args = [
+            os("apply"),
+            os("--numstat"),
+            os("-z"),
+            os("--whitespace=nowarn"),
+        ];
+        self.backend
+            .capture_fed(&self.argv(&args), &self.env, &self.root, Group::Inherit)
+            .ok()
+            .map(|fed| PatchPathsFeed { fed })
+    }
+
     /// D-DATA-19: the files whose working-tree content differs from the index as `git diff` sees it after refreshing
     /// the stat data — what a whole-tree checkout visibly changes, without the files whose differences git cannot see:
     /// `git diff --name-only -z --no-renames --no-ext-diff --no-color --ignore-submodules --no-relative` (checked).
@@ -1032,6 +1106,30 @@ impl Git {
         let (count, _) = rest.split_first_chunk::<4>()?;
         let version = u32::from_be_bytes(*version);
         (magic == b"DIRC" && (2..=4).contains(&version)).then(|| u32::from_be_bytes(*count))
+    }
+
+    /// Whether the index provably holds no intent-to-add entry (ADR-154; no spawn): the repository is SHA-1 (its
+    /// `config` file, which alone carries the repository format, does not name an object format), the header counts
+    /// at most 16 384 entries, and the strict index reader ([`crate::index_file`]) parses the
+    /// whole file (a split index, which keeps entries elsewhere, refuses) with no entry flagged intent-to-add.
+    ///
+    /// When it holds for the bytes `git diff --diff-filter=A` read, that query prints nothing whatever the worktree
+    /// (only an intent-to-add entry shows as added). Any doubt is `false`. A caller pairs it with an
+    /// [`IndexStamp`] taken before both the read and the query, so that both saw the same index.
+    pub fn index_without_intent_to_add(&self, info: &RepoInfo) -> bool {
+        if self
+            .index_entry_count(info)
+            .is_none_or(|n| n > ITA_PROOF_MAX_ENTRIES)
+        {
+            return false;
+        }
+        let sha1 = snp_os::fs::read_capped(&info.common_dir.join("config"), 1 << 20)
+            .is_ok_and(|c| !names_object_format(c));
+        sha1 && crate::index_file::IndexFile::read(&info.index_file, 20).is_ok_and(|i| {
+            !i.entries
+                .iter()
+                .any(crate::index_file::IndexEntry::intent_to_add)
+        })
     }
 
     /// `git.get_changed_files` (`git.py:158-167`): `git diff --name-only --no-ext-diff -z <from>...<to>`; on a

@@ -246,21 +246,63 @@ pub fn retire_dir(path: &Path, trash: &Path) -> io::Result<()> {
     Err(last)
 }
 
+/// The first read of [`read_capped`]: files up to this size are read without asking for their length.
+const FIRST_READ: u64 = 4096;
+
+thread_local! {
+    /// [`read_capped`]'s first-read buffer, kept per thread so small reads neither allocate it nor zero it.
+    static FIRST_BUF: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Reads at most `cap` bytes of `path`.
 ///
 /// Bounded `open(path, 'rb').read(cap)` for files that may be hostile or huge (markers, hook scripts, `README`
 /// signatures).
+///
+/// The file length is only an allocation hint (ADR-150): the first min(cap, 4 KiB) bytes are read to the end into
+/// a reused per-thread buffer, so a small file (gc reads ~700 markers and configs-v1 entries of a few hundred
+/// bytes) costs no `fstat` and one exact allocation; only a file that fills the buffer is `fstat`ed to pre-size the
+/// rest. The bytes read are those of one bounded `read_to_end`.
 pub fn read_capped(path: &Path, cap: u64) -> io::Result<Vec<u8>> {
     let f = File::open(path)?;
-    let mut out = Vec::new();
+    let first = cap.min(FIRST_READ);
+    // `read_to_end` stops at the end of the file or at `first` bytes, so fewer means the end came first.
+    let head = |buf: &mut Vec<u8>| -> io::Result<(Vec<u8>, bool)> {
+        buf.clear();
+        reserve_bytes(buf, first)?;
+        let n = (&f).take(first).read_to_end(buf)?;
+        let mut out = Vec::new();
+        out.try_reserve_exact(n)
+            .map_err(|_| io::Error::from(io::ErrorKind::OutOfMemory))?;
+        out.extend_from_slice(buf);
+        Ok((out, u64::try_from(n).unwrap_or(u64::MAX) < first))
+    };
+    let (mut out, at_end) = FIRST_BUF
+        .try_with(|cell| cell.try_borrow_mut().ok().map(|mut buf| head(&mut buf)))
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| head(&mut Vec::new()))?;
+    let rest = cap.saturating_sub(first);
+    if at_end || rest == 0 {
+        return Ok(out);
+    }
     // Pre-size from the file length when it is known and bounded (never more than `cap`).
     if let Ok(md) = f.metadata() {
-        let hint = md.len().min(cap).min(64 * 1024 * 1024);
-        out.try_reserve(usize::try_from(hint).unwrap_or(0))
-            .map_err(|_| io::Error::from(io::ErrorKind::OutOfMemory))?;
+        let hint = md
+            .len()
+            .min(cap)
+            .min(64 * 1024 * 1024)
+            .saturating_sub(first);
+        reserve_bytes(&mut out, hint)?;
     }
-    f.take(cap).read_to_end(&mut out)?;
+    (&f).take(rest).read_to_end(&mut out)?;
     Ok(out)
+}
+
+/// `try_reserve(n)` with an allocation failure as `OutOfMemory`.
+fn reserve_bytes(out: &mut Vec<u8>, n: u64) -> io::Result<()> {
+    out.try_reserve(usize::try_from(n).unwrap_or(0))
+        .map_err(|_| io::Error::from(io::ErrorKind::OutOfMemory))
 }
 
 /// Create/truncate without following a final symlink (crash log).
@@ -1137,6 +1179,24 @@ mod tests {
         assert_eq!(read_capped(&p, 100).unwrap(), b"0123456789");
         assert_eq!(read_capped(&p, 0).unwrap(), b"");
         assert!(read_capped(&d.path().join("missing"), 1).is_err());
+    }
+
+    /// The first read (no `fstat`, a 4 KiB buffer) and the pre-sized rest read the bytes of one bounded read: files
+    /// and caps shorter than, equal to and longer than the first read, and larger files.
+    #[test]
+    fn read_capped_reads_the_same_bytes_on_both_paths() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("f");
+        let first = usize::try_from(FIRST_READ).unwrap();
+        for len in [0, 1, first - 1, first, first + 1, 9000, 1 << 16, 3 << 16] {
+            let data: Vec<u8> = (0..len).map(|i| u8::try_from(i % 251).unwrap()).collect();
+            std::fs::write(&p, &data).unwrap();
+            for cap in [1, first - 1, first, first + 1, 8192, 1 << 16, 1 << 20] {
+                let want = &data[..len.min(cap)];
+                let got = read_capped(&p, u64::try_from(cap).unwrap()).unwrap();
+                assert_eq!(got, want, "len {len} cap {cap}");
+            }
+        }
     }
 
     #[test]

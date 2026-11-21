@@ -20,8 +20,8 @@ use snp_core::failure::Failure;
 use snp_core::lang::LanguageId;
 use snp_core::output::CollectWarnings;
 use snp_store::{
-    MarkerKey, RepoHandle, RepoId, RepoKind, RepoMeta, Store, StoreSource, ToolRef,
-    resolve_location,
+    MarkerKey, RepoHandle, RepoId, RepoKey, RepoKind, RepoMeta, Store, StoreSource, ToolRef,
+    TrackedConfig, resolve_location,
 };
 
 #[cfg(unix)]
@@ -469,6 +469,126 @@ fn local_keys_and_all_repos() {
     s.retire_repo(&key).unwrap();
     s.retire_repo(&key).unwrap(); // ENOENT-tolerant (X13-CMD-07)
     assert_eq!(s.all_repos().len(), 1);
+}
+
+/// `repo_index` (ADR-150) lists every hex-named `repos-v1` entry in key order, and `get` answers exactly the handles
+/// `all_repos` loads: complete entries only (not a checkout-less one, one whose marker names another key, an
+/// undecodable marker, an empty directory), `None` for an unlisted key, each entry loaded once.
+#[test]
+fn repo_index_agrees_with_all_repos() {
+    let (_g, root, s) = new_store();
+    let repos = root.join("repos-v1");
+    let keys: Vec<RepoKey> = (0..6)
+        .map(|i| {
+            let (k, m) = remote(URL, &format!("v{i}"), &[]);
+            materialize(&s, &k, m);
+            k
+        })
+        .collect();
+    std::fs::remove_dir_all(repos.join(keys[1].hex()).join("src/.git")).unwrap();
+    std::fs::copy(
+        repos.join(keys[2].hex()).join(".snp-repo.json"),
+        repos.join(keys[3].hex()).join(".snp-repo.json"),
+    )
+    .unwrap();
+    std::fs::write(repos.join(keys[4].hex()).join(".snp-repo.json"), b"junk").unwrap();
+    let stray = RepoKey([7; 16]);
+    std::fs::create_dir_all(repos.join(stray.hex())).unwrap();
+    std::fs::create_dir_all(repos.join("not-a-key")).unwrap();
+    let all: Vec<RepoKey> = s.all_repos().into_iter().map(|h| h.key).collect();
+    let index = s.repo_index();
+    let listed: Vec<RepoKey> = index.keys().copied().collect();
+    let mut want: Vec<RepoKey> = keys.iter().copied().chain([stray]).collect();
+    want.sort_by_key(|k| k.0);
+    assert_eq!(listed, want);
+    assert_eq!((index.len(), index.is_empty()), (7, false));
+    let complete: Vec<RepoKey> = listed
+        .iter()
+        .filter(|k| index.get(k).is_some())
+        .copied()
+        .collect();
+    assert_eq!(complete, all);
+    assert_eq!(all.len(), 3, "{all:?}");
+    assert!(index.get(&RepoKey([1; 16])).is_none());
+    let first = index.get(&keys[0]).unwrap();
+    assert!(std::ptr::eq(first, index.get(&keys[0]).unwrap()));
+    // Loaded once: removing the checkout afterwards does not change the remembered answer.
+    std::fs::remove_dir_all(repos.join(keys[0].hex()).join("src/.git")).unwrap();
+    assert!(index.get(&keys[0]).is_some());
+    assert!(s.repo_index().get(&keys[0]).is_none());
+    let (_g2, _root2, empty) = new_store();
+    assert!(empty.repo_index().is_empty());
+}
+
+/// The configs-v1 reader split in two (ADR-150): listing plus per-entry reads give `tracked_configs`, malformed
+/// entries skipped, and `tracked_order` over the decoded entries is that order.
+#[test]
+fn config_entries_split_agrees_with_tracked_configs() {
+    let (g, root, s) = new_store();
+    let base = g.path().join("p");
+    for i in [3, 1, 2, 1] {
+        let cfg = base.join(format!("c{i}.yaml"));
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(&cfg, b"repos: []\n").unwrap();
+        s.mark_config_used(&cfg, &base.join(format!("r{}", i % 2)));
+    }
+    let dir = root.join("configs-v1");
+    std::fs::write(dir.join("00000000000000000000000000000000"), b"junk").unwrap();
+    std::fs::write(dir.join("not-an-entry"), b"junk").unwrap();
+    let files = s.config_entry_files();
+    assert_eq!(files.len(), 4, "{files:?}");
+    let read: Vec<Option<TrackedConfig>> =
+        files.iter().map(|f| Store::read_config_entry(f)).collect();
+    assert_eq!(read.iter().filter(|t| t.is_none()).count(), 1);
+    let decoded: Vec<(usize, &TrackedConfig)> = read
+        .iter()
+        .enumerate()
+        .filter_map(|(i, t)| Some((i, t.as_ref()?)))
+        .collect();
+    let ordered: Vec<TrackedConfig> = snp_store::tracked_order(&decoded)
+        .into_iter()
+        .map(|i| read[i].clone().unwrap())
+        .collect();
+    assert_eq!(ordered, s.tracked_configs());
+    assert_eq!(ordered.len(), 3);
+}
+
+/// `retain_markers_keeping_names` with the names `MarkerKey::file_name` derives keeps what `retain_markers_keeping`
+/// keeps.
+#[test]
+fn retain_markers_keeping_names_agrees() {
+    let markers: Vec<MarkerKey> = (0..4)
+        .map(|i| MarkerKey::Initialized {
+            db_repo_name: Arc::from(format!("https://x/r{i}").as_str()),
+            rev: Arc::from("v1"),
+        })
+        .chain([MarkerKey::Installed {
+            install_key: [3; 16],
+        }])
+        .collect();
+    let kept = [markers[0].clone(), markers[2].clone()];
+    let mut survivors = Vec::new();
+    for by_name in [false, true] {
+        let (_g, _root, s) = new_store();
+        for m in &markers {
+            s.set_marker(m);
+        }
+        let mut read = 0;
+        let mut keep = |k: &MarkerKey| {
+            read += 1;
+            matches!(k, MarkerKey::Installed { .. })
+        };
+        let removed = if by_name {
+            let names = kept.iter().map(MarkerKey::file_name).collect();
+            s.retain_markers_keeping_names(&names, &mut keep)
+        } else {
+            s.retain_markers_keeping(&kept, &mut keep)
+        };
+        let left: Vec<bool> = markers.iter().map(|m| s.marker_exists(m)).collect();
+        survivors.push((removed, read, left));
+    }
+    assert_eq!(survivors[0], survivors[1]);
+    assert_eq!(survivors[0].0, 2);
 }
 
 // ----- environments and install markers -----
@@ -1420,7 +1540,7 @@ fn configs_marked_before_the_store_exists_are_tracked_on_creation() {
     std::fs::create_dir_all(&proj).unwrap();
     let cfg = proj.join("c.yaml");
     std::fs::write(&cfg, b"repos: []\n").unwrap();
-    let want = vec![snp_store::TrackedConfig {
+    let want = vec![TrackedConfig {
         path: cfg.clone(),
         project_root: proj.clone(),
     }];

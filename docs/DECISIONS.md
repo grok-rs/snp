@@ -24,7 +24,10 @@ ADR-119 the proven post-checkout baseline; ADR-131 the file-content cache of con
 baseline taken by the first native write in all-in-process runs; ADR-133 its follow-ups (the system attributes file from
 `git var`, attributes that convert nothing); ADR-134 the index-stat proof; ADR-135 the hook script template v3; ADR-136 the wave-5 bench methodology;
 ADR-137 PIE release artifacts and their hardening gate; ADR-138 the internal crates' API policy and snp-yaml's borrowed
-tags and scalar text.
+tags and scalar text; ADR-150 gc's parallel loading with ordered replay and its cheaper loads; ADR-151 the stash patch's
+numstat fed while the patch streams and the batched reader of large child output; ADR-152 the owner's decision to
+restore the stash by renaming preserved originals back; ADR-153 the stash's write-tree and diff-index decided in-process
+on the provably clean path; ADR-154 the pre-chain fan-out (the intent-to-add query in step 6, step 6 beside discovery).
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -191,7 +194,7 @@ the guard is the last field of `RunState`. **Rationale.** FD-5: the stash must b
 
 ### ADR-016 — Stash algorithm and hardening (C16)
 
-*Status: Accepted; amended by ADR-067 (create_new patch + re-verify before checkout, git-dir pointer, lock-based recovery, `git apply --3way` hints, StagingFixed state) and ADR-093 (both checkouts limited to the patch's files and, on the rollback, the files `git diff` shows changed: D-DATA-19). The amending ADR is normative where they differ.*
+*Status: Accepted; amended by ADR-067 (create_new patch + re-verify before checkout, git-dir pointer, lock-based recovery, `git apply --3way` hints, StagingFixed state), ADR-093 (both checkouts limited to the patch's files and, on the rollback, the files `git diff` shows changed: D-DATA-19) and ADR-152 (on Linux, a restore the DiffOracle proves equal to `git apply`'s renames the preserved originals back instead of running it). The amending ADR is normative where they differ.*
 
 **Context.** 02 §21.10 keeps pre-commit's restore; 06 §7–8 proposed read-tree/verify restore (different git state on
 conflict; false mismatches under `core.autocrlf`, 14 A.4.5). **Decision.** pre-commit's exact algorithm and messages
@@ -2022,7 +2025,7 @@ blocks 185,963 → 127,179. The harness's process-tree RSS stays near git's own 
 *Amends ADR-047, ADR-084(6) and ARCHITECTURE §3.1 rows 3, 6, 10, 15 and 16, §3.7 item 5, the §12.1 spawn model and the
 §1.4.13 listing; implements ADR-078(3) as written.*
 
-*Status: Accepted; items (4) and (5) amended by ADR-117 (F asked again after the stash's own index rewrite, G kept). The amending ADR is normative where they differ.*
+*Status: Accepted; items (4) and (5) amended by ADR-117 (F asked again after the stash's own index rewrite, G kept); items (3) and (7) amended by ADR-154 (the intent-to-add query C joins the step-6 fan-out, its empty answer reused by the stash; step 6 may run beside step 3's `rev-parse`). The amending ADRs are normative where they differ.*
 
 **Context.** The performance review of November 2026 (P25(c)) found the step-6 text out of date with the code. Row 6
 put the ITA query C in the parallel fan-out, but the stash asks it serially (B2's fourth git call). It also listed E
@@ -2623,6 +2626,9 @@ then the workspace adaptation), and the reverse holds for fixes made here. ADR-0
 
 ### ADR-117 — B8: the stash's own index rewrite keeps the Stat mode; the listing and the patch's disk writes overlap
 
+*Status: Accepted; (2) amended by ADR-151 (the listing reads the patch on stdin while it is written, the file-based
+listing beside step 6 is its fallback). The amending ADR is normative where they differ.*
+
 *Amends ADR-104 (4) and (5) (one hook's Stat mode, the stale-F rule) and ADR-097 (1) (the listing runs beside the
 durability step, not after it). Every durability, verification and recovery rule of ADR-027, ADR-067, ADR-078,
 ADR-097 and D-DATA-19 is unchanged.*
@@ -2926,6 +2932,10 @@ end-of-file-fixer's append and truncate wait for it, a hook that writes nothing 
 (`crates/snp-hooks/tests/write_gate`); the lint gate (`xtask lint-guards`). Proofs: none (no anchored item changed).
 
 ### ADR-133 — ADR-119 follow-ups: the system attributes file from `git var`, attributes that convert nothing
+
+*Status: Accepted; (a)'s placement amended by ADR-151 (the checkout notice is sent at the patch's first byte, so
+`git var` overlaps the stash's diff; a patch then not checked out costs one unused query). The amending ADR is
+normative where they differ.*
 
 *Amends ADR-119 (b), (f) and its Rejected (a), (b) and (d) (owner decisions "ADR-119 (a)" and "ADR-119 (b)" of
 2026-11-21, after the wave-5 parity panel). The proof's guarantee is unchanged: the elided baseline equals the stdout of
@@ -3421,6 +3431,443 @@ acceptance test gains borrowed and folded quoted scalars and a reader error insi
 test checks that resolved tags are `Borrowed`, explicit tags (`!!int`, `!local`, a `%TAG` prefix with `%41`) are
 `Owned`, and `Debug` matches `Box<str>`. The oracle vectors, the API contract test (now naming
 `Cow<'static, str>`), the CLI goldens and the difftest scenarios are unchanged.
+
+### ADR-150 — gc loads its tracked configs in parallel and replays their output in tracked order
+
+*Status: Accepted (wave 6, B11; analysis `deep-b11` G1-G4, and G5-G7 in the part "Cheaper loads" below). Concurrency
+on gc's deletion path (ARCHITECTURE §5.6); no kernel or model changes (K8 protects `sweep`/`clean`, which are
+untouched).*
+
+**Context.** B11 (`gc` over 500 repositories and 200 configs) was snp's slowest scenario against prek 0.5.11 on CI:
+25.86 ms against 18.22 (run 44906093739), with snp on one thread and half of its time in the kernel. About 86% of the
+work is independent and read-only: 200 config checks, 500 manifest checks, 500 key derivations and 500 repository
+marker reads. Every exact single-thread cut together was worth 2-3 ms, not enough. A local experiment on the real
+crates, pinned to 2 cores × 2 SMT threads, ran 22.4-22.8 ms serially and 11.4-11.9 ms on 4 threads. With musl's
+allocator the same fan-out was slower (32.5 → 38.7-43.0 ms: mallocng's global lock).
+**Decision.** (1) **Serial prologue.** Lock as before; one `repos-v1` listing, `Store::repo_index()`: the hex-named
+entries in key order, each with a `OnceLock`, so `RepoIndex::get` runs `all_repos`'s per-entry load at most once, on
+first use, from any thread; one `configs-v1` listing (`Store::config_entry_files`, unread); `SNP_COMPAT_STRICT` read
+once. (2) **Width.** min(pool permits, `available_parallelism()`, 8). It is 1 (the marking runs inline, printing as
+each config loads, as before) below 8 entries, with one permit, and always on `target_env = "musl"`. The rule counts
+entries and never measures time (ADR-101). (3) **Jobs** (`map_ordered`, one permit each, ADR-065(8), ADR-101(2)): job
+`i` reads and decodes entry `i` (`Store::read_config_entry`, malformed entries skipped as before), checks the config
+and its manifests with `LoadOpts` whose sinks are a per-entry `LogRecorder` (snp-core: warnings and diagnostics as
+two streams in arrival order), derives the marks and the `keys-v1` file names of the kept `Initialized` markers
+(`MarkerKey::file_name`, now public), drops its checked values and returns only the marks. Jobs are read-only: they
+read files and the store's entries and write only to their own recorder; the shared state is the regex cache (first
+stored wins, warnings a pure function of the pattern), cfgv's read-only seed, the per-key `OnceLock`s and the key
+memo (5). No warn-once flag is on this path. (4) **Merge.** If any job was refused (cancellation) or panicked, gc
+returns before replaying anything: the cancellation as the per-config check reports it (signal, closed stdout), a
+panic as `Interrupted(Panic)` when the panic hook recorded it (the envelope then reports the recorded payload,
+location and backtrace, as for a panic on the main thread), else the job's `PanicException`. Otherwise, serially in
+tracked order: the per-config cancellation check, the replay of the entry's log through `WarnSink::warn` and
+`DiagSink::diag` of the printer (the calls the inline marking makes, in the same order), and the union of its marks
+or the config as dead. Tracked order is `snp_store::tracked_order`: the old sort by `(path, project_root)` and
+`dedup`, computed on each path's component list once (`Path`'s `Ord` and `PartialEq` compare components); the first
+of equal pairs is kept, and a hand-made duplicate entry is loaded twice but replayed and marked once, as before. Then
+`forget_configs`, the retire loop (listed keys in key order: used ones skipped, complete unused ones retired, the
+first failure exit 3), `sweep` and the marker retention (`Store::retain_markers_keeping_names` with the workers'
+names) run unchanged. (5) **`RepoId::from_config_memo`.** The one derivation of ADR-070(8) behind both entry points
+gains a negative-prefix memo: for a relative value with at least two components whose first component is a normal
+name, a failed `stat` of `<project_root>/<first>` (memoised per joined prefix for the run) means every longer path
+fails too, whatever the error, so the value is a URL without the full probe. Unix only (Windows normalises `..` and
+trailing dots lexically before resolving); only failures short-circuit.
+**Rationale.** The output is a function of the per-config logs and the marks, both computed exactly as the serial loop
+computes them; replaying the logs in tracked order makes the same printer calls in the same sequence, so stdout,
+stderr, their flush points and EPIPE handling are those of the serial run, and the marks are set unions, so the
+forgotten configs, the removal set and its order, the count and the kept markers are identical. Loading an entry when
+first asked returns what the up-front load returned because nothing can materialise or retire a repository while gc
+holds the exclusive lock. Cancellation keeps the property that matters: an incomplete marking never reaches
+`forget_configs` or a retirement, and the output is a prefix of the serial output (empty when the signal arrives
+during the fan-out, cut at the next config boundary during the replay). The deep dive's replay of a panicking job's
+partial log was dropped: with the entries read on the workers, a refused entry's place in tracked order is unknown,
+so a replay could print a later config's warnings before an earlier one's; printing nothing is still a prefix (bug
+path only, S2). Below 8 configs the pool start (about 0.25 ms locally) costs more than the parallel loads save. On
+musl the fan-out was measured slower, so musl stays inline until its allocator changes (ADR-079, ADR-118). The memo is
+sound because path resolution walks the components in order on Unix; it only removes probes that must fail.
+**Consequences.** B11 locally (Core Ultra 7 155H, processes pinned to CPUs 1-4, `perf stat -r 20`, 8 interleaved
+rounds, process wall including exec): 30.5 → 19.3 ms (prek 0.5.11: 22.6 ms); on all 22 CPUs (width 8) 35.9 → 14.7
+ms. CPU time rises (28.5 → 39.6 ms task-clock on 4 CPUs: shared cores, per-thread arenas). Callgrind: 89.04 M → 90.21 M
+instructions (all threads). strace: 8,243 → 8,365 syscalls (`statx` 2,443 → 1,952, 501 → 4 failing; +404 `futex`
+from the pool's condition variable, +7 `clone3`). Projected on the 4-vCPU CI runner from the local ratio: about 16
+ms against prek's 18.2. Tests: a property test runs gc serially (width 1) and in parallel (width 4 on a 4-permit pool,
+whatever the CPU count) over generated stores (valid, invalid, unreadable, deleted and YAML-broken configs,
+duplicates, unknown-key warnings, regex `FutureWarning`s, remote, local, meta, local-path and Tier A repositories,
+manifests valid, invalid, missing or warning, dependency keys, markers) and compares the stdout and stderr writes in
+order, the result and the repositories, configs and markers left; a non-vacuity test and a seeded mutation (replay in
+listing order) fail it. Cancellation from a job and a panic in a job (with and without the hook's `Panic`) leave the
+store untouched with output a prefix of the serial run's; the width rule, including the musl gate, is a unit test;
+an integration test checks the tracked-order warnings of 12 configs and, with `SNP_FAULT=WorkerPartition@3`, exit 3
+with nothing forgotten or removed (`WorkerPartition` now also fires in each gc config load). `RepoIndex` against
+`all_repos` (complete, checkout-less, foreign-key, undecodable and empty entries), the split configs-v1 reader,
+`retain_markers_keeping_names`, `tracked_order` against sort-and-dedup (property test) and the memoised derivation
+against the plain one (directories, files, symlinks, dangling and looping links, an unsearchable directory) have
+their own tests.
+
+**Cheaper loads (G5-G7).** Three exact cuts under every config load, marker read and pool fan-out. (G5) snp-yaml's
+reader (`Reader::fill`, libyaml's `yaml_parser_update_buffer`) counts a run of allowed ASCII bytes (`\t`, `\n`, `\r`,
+`0x20-0x7E`: exactly the ASCII part of libyaml's allowed set) as one character per byte without decoding it, and
+sends every other byte through the old per-character check. The allowed set, the chunk limit (a character that
+straddles it waits for the next chunk), the character count and the first disallowed character's value and offset
+are unchanged; no mark or scanner code changes (this is not the rejected Q09 b-d). (G6) `snp_os::fs::read_capped`
+reads the first min(cap, 4 KiB) bytes to the end into a reused per-thread buffer (no allocation or zeroing per call)
+and copies them into an exact-size result; only a file that fills it is `fstat`ed, to pre-size the rest as before.
+The length was only an allocation hint, so the bytes are those of one bounded read to the end; a file of up to 4 KiB
+costs no `fstat` (gc: 500 markers and 200 `configs-v1` entries). Unlike the deep dive's "cap ≤ 64 KiB" rule this
+covers the 1 MiB-capped markers too, and a large file loses nothing. (G7) `JobPool` counts its waiters in the pool
+state, under the lock, before `wait_timeout` and uncounts them after waking, before the re-check; a release, a
+handout or a cancelled waiter handing its turn on calls `notify_all` only when the count is non-zero (std's futex
+condition variable makes a syscall for every `notify_all`). A thread that is not counted holds the lock before its
+next check of `available` and `serving`, so it sees the change; permit handout, FIFO tickets, nested permits
+(ADR-070), the cancellation poll and `Limiter` are unchanged (ADR-065, ADR-066, ADR-070).
+Measured locally (profiling build, harness fixtures, snp's process): B11 callgrind 90.22 M → 87.63 M instructions
+(`Reader::fill` 3.50 M → 0.96 M), syscalls 8,370 → 7,274 (`statx` 1,952 → 1,251, `futex` 407 → 9); B10 128.08 M →
+122.40 M instructions (`Reader::fill` 7.44 M → 1.88 M); B6 76.69 M → 76.27 M, `futex` 1,343 → 751-800; B12u `futex`
+5,106 → 1,748 for the tree; paired interleaved wall times show no regression on B6, B10, B11 or B12u (laptop
+noise; CI decides). Tests: the fast path against the old character loop (kept as a `cfg(test)` oracle) on 4,000
+generated texts (clean ASCII with rare and frequent control, C1, surrogate-neighbour, noncharacter, BOM and 2- to
+4-byte characters, with and without a leading BOM) at random increasing limits, chunk multiples and mid-character
+ones (a seeded mutation, DEL in the fast set, fails it), with the existing chunk-boundary tests and the `yaml_load`
+fuzz target; `read_capped` against the plain read for file lengths and caps on both sides of 4 KiB and 64 KiB; a
+pool stress test with a 60 s cancellation poll (8 threads, 1-3 permits, `acquire` and concurrent `map_ordered`),
+where a lost wakeup stalls the FIFO head past the time bound (a seeded mutation that never notifies times out),
+checking the permit bound, the returned permits, the ticket counters and a zero waiter count.
+
+### ADR-151 — B8: the patch's numstat reads the stream; a batched reader for large child output
+
+*Amends ADR-117 (2) (the listing reads the patch on stdin while it is written; it no longer starts from the flushed
+file beside the durability step, which stays its fallback) and ADR-133 (a) (the checkout notice is sent at the patch's
+first byte, not right before the checkout). Every durability, verification and recovery rule of ADR-027, ADR-067,
+ADR-078, ADR-097, ADR-117 (1) and (3) and D-DATA-19 is unchanged, and the listing is still git's own
+`apply --numstat` of the patch.*
+
+**Context.** B8 (a 10 MB unstaged rewrite) was one of the three scenarios snp still lost to prek 0.5.11 after wave 5:
+379.4 against 353.0 ms at p50 (CI run 44906093739 on 95ba5fc). The wave-6 B8 analysis measured it without a tracer
+(strace stops every tracee at every syscall and serialises snp's 16k syscalls of the diff with git's; perf task
+events do not), pinned to 4 logical CPUs like the CI runner. After `diff-index` ends, `git apply --numstat` ran
+38 ms on the critical path, about 40 % of it reading its input (`strbuf_read`, apply.c) before it parses. During
+the diff git writes its 21 MB patch in 4 KiB `write`s (stdio's buffer is a pipe's `st_blksize`), and snp's reader
+woke for each: 4,717 reads, a channel send, a futex wake and a `waitid` poll per chunk, about 8,700 context switches
+against prek's 4,600, and 60 ms more tree CPU competing with git for the runner's two cores. The oracle hashes the
+racily clean 10 MiB file twice on the critical path (the post-checkout snapshot and the post-hook comparison, about
+5 ms each), and ADR-133's `git var` competed with the checkout.
+**Decision.** (1) *Numstat fed during the diff.* At the patch's first byte, step 5's sink starts `git apply
+--numstat -z --whitespace=nowarn` with no patch argument, reading its standard input (`Git::patch_paths_feed`;
+`spawn::capture_fed`: a capture whose stdin the caller writes, supervised by a helper thread, enlarged to a 1 MiB
+pipe on Linux, always reaped). It writes every byte the patch file accepted to it, right after the file, and closes
+its input when the stream ends, so git parses while the early writeback finishes and step 6 runs. Step 6's listing
+thread takes its answer only for exit 0 and an output `patch_paths` parses; anything else (it could not start, a
+backend without `capture_fed`, a write error, another exit, a stop) lists the written file with `Git::patch_paths`
+as before, whose answer and error text are the canonical ones. The answer is used only once the patch is durable
+and verified (ADR-117 (2)); the rewrite path of the re-verification lists the rewritten file; a first pass that
+ends without a patch drops the listing. (2) *Batched reader.* `spawn::stream` reads stdout, on Linux, with a reader
+that switches after 64 KiB: the pipe is enlarged to 1 MiB (`fcntl_setpipe_size`, rustix's `pipe` feature: no new
+crate, `Cargo.lock` unchanged) and snp's read end made non-blocking; then everything available is read in chunks of
+at most 64 KiB (the channel's memory bound is unchanged) and an empty pipe means a 1 ms nap; after 8 empty polls the
+reader goes back to blocking reads. A refused switch (pipe-size limits) keeps the blocking reads; other platforms
+keep the plain reader. The 1 MiB pipe is what makes the nap safe: at about 100 MB/s git fills a 64 KiB pipe in
+0.6 ms. (3) *Parallel hash.* The oracle hashes a racy file of at least 32 MiB on up to 8 threads (one per CPU; first set at 4 MiB, raised before merge because each parallel hash starts its helper threads anew: on B8's 10 MiB file that was about nine extra threads per run on a 4-CPU runner for about 3 ms, and it tripped the bench's `clones` counter gate): the
+input is split along blake3's own tree (`hazmat::left_subtree_len`) into subtrees of at least 1 MiB, read with
+positional reads, and their chaining values merged as blake3 merges them, so the digest is `blake3::hash` of the
+bytes. A short read, a file longer than its `fstat` size, a read error, one CPU or a non-Unix platform hash
+sequentially, as before. The size is checked first and the CPU count read once per process, so a smaller racy file
+costs what it did before (one `fstat` more, no cgroup reads). (4) *Notice at the first byte.* `StashCtx::checkout_notice` is sent when step 5 writes
+the patch's first byte, so `git var GIT_ATTR_SYSTEM` overlaps the diff; a run that writes no patch still never asks,
+and a patch that is then not checked out (vanished changes, a CRLF-quirk output, a failure) costs one unused query.
+**Rationale.** (1) is the same command over the same bytes through the same `apply_patch` (git reads a file argument
+and standard input alike, apply.c `apply_all_patches`, on 2.18.5 and 2.56.0; the name only appears in error texts,
+which come from the fallback). Only bytes the file accepted are fed, so a later file error fails the first pass and
+abandons both. Feeding the parser while git prints moves its read off the critical path; a header-parsed list
+(B8-4) would also drop git's parse refusal before the checkout, an owner decision that was not taken. (2) changes
+nothing git sees (its write end is untouched) and nothing snp delivers (same bytes, same order, EOF at most 1 ms
+later, only for streams past 64 KiB, so no B2/B3 spawn ever switches); it removes the per-write hand-off that made
+snp's reader the busiest thread of the diff. ADR-067's durability and ADR-117 (3)'s early writeback stay: with
+batched reads writeback no longer slows git, and deferring it costs 4–29 ms at the final `fsync`. (3) cannot change
+a comparison: the digest is identical by construction and the unit test compares it with `blake3::hash` across
+sizes, boundaries and thread counts; a file longer or shorter than the size it was given is refused (tested). The
+fed listing's fallbacks are tested end to end: a child that cannot start, and one that stops reading (a failed write
+discards its answer, here a well-formed listing of another path). (4) has no repository effect.
+**Rejected.** (a) The path list from the patch's `diff --git` headers instead of numstat (B8-4; owner decision D3:
+not taken). (b) A larger pipe, or larger reads, with blocking reads: the reader still wakes per 4 KiB write (no gain
+measured). (c) prek's in-memory patch: breaks ADR-100's B8 heap budget. (d) git writing the patch file itself:
+eager file creation on clean runs, timer-driven writeback, no stream to feed, inconsistent results. (e) The
+name-only query beside numstat: 2 ms, and it widens the verification window (ADR-117 Rejected (b)). (f) Hashing the
+checked-out paths beside step 14's fan-out (B8-7): a hash taken before the snapshot cannot be trusted for a racy
+file (a same-size write in the same timestamp tick is invisible to `lstat`), and taking the snapshot earlier would
+count a change made during the installs as the first hook's, against pre-commit's baseline position (ADR-078);
+deferred.
+**Consequences.** B8, locally (profiling builds of 95ba5fc and this ADR's head, the scenario's fixture and hermetic
+environment, pinned to CPUs 1–4 of a shared, loaded machine): whole-tree syscalls 24,018 → 16,705 (`strace -f -c`;
+futex 2,425 → 942, waitid 4,122 → 816, read 4,813 → 2,088); tree CPU 669.2 → 633.8 ms and context switches 8,694 →
+791 (`perf stat`, 12 interleaved pairs; prek 602.8 ms, 4,535); untraced wall (perf task events, 25 interleaved
+pairs) −54.2 ms at the paired median (23 of 25 pairs faster): `diff-index` −7.6, diff end → checkout start −35.3
+(the numstat's parse now overlaps the patch's writeback, which the loaded disk made slow: 214 ms of that gap in the
+base), checkout end → hook −1.2, hook end → restore −2.1. The process count stays 16: numstat now starts during the
+diff and `git var` at its first byte. snp's heap peak on B8 (dhat) 637,835 → 658,167 bytes (ADR-100's budget is B3's
+peak + 2 MB). B4, whose `ls-files -s -v -f -z` of 50,000 files is streamed: context switches 1,648 → 358, wall
+−1.6 ms, user instructions −0.75 M (15 pairs). B12u streams nothing past 64 KiB and is unchanged within the noise
+(40 pairs: wall +2.2 ms, task clock −2.3 ms, user instructions +3.3 M of 771 M, the head above the base in 22).
+Tests: batched reads keep every byte in order
+below and far above the switch and across pauses that send the reader back to blocking reads, and a refused switch
+still delivers everything (`snp-proc`); a fed child reads what is written, one that stops reading fails the writes
+and is still reaped, by `finish` or by a drop; the fed listing equals the file-based one byte for byte against real
+git for a patch with a text rewrite, a binary change, a deletion, a mode change, an intent-to-add file and a quoted
+name, for any write size, and corrupt or empty input gives no answer (`snp-git`); a failing fed listing falls back
+to the file-based one and the stash goes on, and the notice is there when the listing starts (`snp-stash`). K9:
+`Inner::stash`, `first_pass` and `secure` re-reviewed (docs/VERIFICATION.md §9.2), fingerprints refreshed,
+`Git::patch_paths_feed` and `PatchPathsFeed::finish` anchored; the model is unchanged.
+
+### ADR-152 — B8: restore the stash by renaming preserved originals back (owner decision)
+
+*Owner decision D2 of the wave-6 plan (2026-11-21): adopted, Linux first, journaled, `git apply` as the fallback, the
+K9 model updated. Amends ADR-016 (the restore's `git apply`, "byte for byte in the git commands", is replaced by an
+in-process rename when a proof holds). Every durability, verification and recovery rule of ADR-027, ADR-067, ADR-078,
+ADR-097, ADR-117, ADR-119, ADR-133 and D-DATA-19 is unchanged; the patch is still written, made durable, verified and
+kept, and is still what recovery restores from.*
+
+**Context.** After ADR-151, B8 (a 10 MB unstaged rewrite, one staged file, `snp run` with one hook that changes
+nothing) still paid the restore's `git apply` on its critical path: 136–143 ms locally, about 92 ms CI-scaled, the
+largest step after the diff itself; prek 0.5.11 pays the same apply. The wave-6 B8 analysis (B8-1) prototyped keeping
+the original inode: the checkout unlinks and recreates every file it writes, so a hard link made just before it keeps
+the user's file intact, and renaming it back restores the bytes without reading, parsing or writing 21 MB. Exact
+options alone left B8 at about prek's p50; the owner adopted this one (decision D2) with the conditions recorded below.
+**Decision.** (1) *Backups.* On Linux (unless `SNP_STASH_RESTORE=apply`) every journal of the run records a name prefix
+`snp-stash-bk-<pid>-<random>` (`backups`, in the store journal and the git-dir pointer, so the durable `stashed` state
+names it before any backup exists). Right before step 8's checkout, and only when ADR-097's stat-stamp pass verified
+the patch, every file of the patch is hard-linked to `<git_dir>/<prefix>-<n>`: all or nothing, at most 1,000 files,
+each a regular file with one link, no extended attribute (`llistxattr`; this also covers POSIX ACLs and security
+labels), on the lock's device and with `max(ctime, mtime) < M0` (unchanged since the lock was taken, so it is the
+inode whose content the verified patch recorded); after the link the backup must be that inode with two links and the
+same size and mtime (a write between the check and the link moves the mtime past `M0`), and the clocks must still agree
+(ADR-097). Any failure removes the backups made: `git apply` restores, as before. (2) *Proof.* `DiffOracle::restore_proof`
+answers only when ADR-119 proved the post-checkout state (the checkout wrote each file's blob bytes and nothing in the
+configuration or the attributes converts any file), every comparison since found the whole snapshot unchanged (every
+tracked path, racy contents by hash, every input of `git diff`: index, configuration and attributes files; a native
+fixer's report or an adopted baseline clears it), the last fingerprint is the empty diff, and every checked-out path is
+a regular `100644`/`100755` file of the snapshot, hashed when racy. It carries each file's snapshot stat, hash and
+index mode, `core.fileMode`, and when the worktree was last proven equal to the snapshot. `snp run` hands it over after
+the last hook, step 19's output and step 20's staging (`StashGuard::prove_restore`). (3) *Restore by rename.* Step
+10a tries it before the first apply when the proof is there, every file has a backup, nothing was staged by
+`stage_fixed` and no intent-to-add entry was cleared. Every file is checked first, nothing changed: under
+`core.fileMode` the original's executable bit is its index mode's (the patch changes no mode); the checked-out file has
+the snapshot's `lstat` and, when that stat is racy against the last proof, its content hash, one link, is not the
+backup's inode and carries no extended attribute (so a fresh file gets none: no default ACL applies); the backup is
+still its inode with one link, its size and mtime, the checked-out file's owner and group and no extended attribute;
+and every input of `git diff` (index, configuration and attributes files) still has its snapshot stat (and hash when
+racy). Then, file by file, a last `lstat` comparison, the backup's mode set to the checked-out file's permission bits, its
+times set to now (`futimens(UTIME_NOW)`), and `rename(backup, file)`. (4) *Fallbacks.* A failed check or a failed first
+rename changes nothing: `git apply` and the rest of step 10 as before. A failure after a rename checks every backed-up
+path out again (silently, the index blobs: the patch's pre-images), then `git apply` as before. Once every rename
+succeeded the patch step is done, so a panic after it never restores twice. (5) *Cleanup.* `finish` removes every
+backup still linked on every path (restored, fallen back, K+); the recovery pass that holds the lock (and the explicit
+dismissal) removes the backups every journal it finds names, whatever its state, after validating the prefix
+(`snp-stash-bk-<digits>-<hex>`, entries `<prefix>-<digits>` only). (6) Fault points `StashBackup(1)` after the backups,
+`StashBackup(2)` before each rename, `StashBackup(3)` after the last.
+**Rationale.** *Exactness.* Under the proof every file of the patch holds exactly the bytes the checkout wrote, the blob
+of its index entry (ADR-119), and nothing converts it, so what git sees of it is its pre-image and `git apply`
+succeeds; with no conversion its result is the user's file exactly (K9 `roundtrip_exact`'s premise), which is the
+content of the preserved inode. The metadata is set to what `git apply` leaves: it unlinks the file and creates it
+with `open(O_CREAT|O_EXCL, (mode & 0100) ? 0777 : 0666)` (apply.c `try_create_file`), and the checkout created the file
+it replaced the same way from the index mode (entry.c, parallel-checkout.c), so when the two modes' executable bits
+agree (always without `core.fileMode`, checked with it) the checkout's permission bits, after the umask and any default
+ACL, are exactly `git apply`'s, as are its owner and group (the same process credentials and directory). The mtime is
+the current time, as for a fresh write. Output lines, the journal states (`restored`, then removed), the kept patch and
+the index are unchanged; `git status` and `git diff` report the same (both files differ from the index entry's stat and
+are compared by content). The twin-repository tests compare a rename-restored tree with a `git apply`-restored one:
+output, bytes, modes, `git status`, `git diff`, the index. *Model.* K9 gains `restoreR` (the rename when `RenameProof`
+holds: identity filters on the patch's files and the worktree still the checkout's) and proves
+`rename_restore_eq_apply` (under the proof `git apply` succeeds and its worktree is the rename's) and `runR_eq_run`
+(the run with the rename ends exactly as without it, so T1–T6 carry over). The links between the model and the
+filesystem (that the preserved inode holds the user's file, the final checks, the metadata) are the guard's checks
+and the tests, not the proof. *Recovery.* A crash before the checkout leaves the worktree untouched (the backups are
+removed by the next run); a crash after some renames leaves the `stashed` journal and the durable patch: the notice
+retires the orphan when everything is back, and otherwise its commands (the restore from the stash-time tree, then the
+apply) restore it, exactly as after a crash inside `git apply`, whose writes are not atomic either.
+**The one behavioural difference.** `git apply` reads each file, computes for about 100 ms, then unlinks and recreates
+it; a write landing in that window is lost too. The rename's window is the time between the final check of a file and
+its rename (microseconds). What differs is an autosave that lands between the last comparison and the restore *outside
+the user's hunks* of a file of the patch: `git apply` merges it (it checks hunks by their context: the K9 ¬G witness
+`a_hook_edit_outside_the_users_hunks_merges_without_a_rollback`), the final check sees it and falls back to that same
+`git apply`; only an autosave landing between the final check and the rename is overwritten instead of merged. The
+inode and birth time of a restored file are the original's (`git apply` makes new ones), and the restore spawns one
+process fewer. These are registered as D-PERF-05. `SNP_STASH_RESTORE=apply` restores `git apply` for every run.
+**Rejected.** (a) Restoring by rename without the oracle's proof (a hook or a converting attribute would be
+overwritten). (b) Per-file mixing of rename and apply (a partial apply of a patch is not something git does; the
+all-or-nothing rule keeps the restore one of the two). (c) macOS and Windows for now: macOS ACLs are not visible as
+extended attributes, Windows cannot rename over an open file; they keep `git apply` (no backups are made there).
+(d) Reading the umask from `/proc/self/status` or setting it (racy across threads): the checkout's fresh file already
+carries the mode `git apply` would give. (e) Keeping the backups for a K+ failure: the durable patch is the recovery
+source; the links are removed.
+**Consequences.** B8, locally (profiling builds of ADR-151's head and this ADR's head, the scenario's fixture and
+hermetic environment from `cargo xtask bench setup`, pinned to CPUs 1–4 of a shared, loaded machine): processes 17 →
+16 (no restore `git apply`); whole-tree syscalls 22,633 → 19,881 (`strace -f -c`; prek 18,379); tree CPU (median of 8)
+675.1 → 561.1 ms (prek 593.8); untraced wall in hyperfine-like blocks (per round and tool one discarded warm-up and 5
+timed runs, tools interleaved by round), two sets. Against the base both agree: set 1 (10 rounds) median 624.3 → 491.9
+ms, the head faster in 9 rounds of 10 (median of per-round differences −141.2 ms); set 2 (12 rounds) about −130 ms.
+Against prek 0.5.11 they disagree: set 1 491.9 against 570.8 ms (the head faster in 7 rounds of 10, −61.1 ms), set 2
+686.7 against 578.3 ms (faster in 0 of 12, +121 ms). Head against prek is therefore unsettled locally; CI decides.
+Interleaving single runs of different tools penalises the head: the previous tool's restore leaves 10 MB being written
+back that its checkout then replaces. Tests: twin-repository comparisons at the guard level (`behaviour/rename.rs`: the B8
+shape with an executable file in a subdirectory renamed; a hook edit, a touch, a `stage_fixed` staging, a mode change, a
+second hard link and a rename that fails after another fall back and end alike) and through the pipeline
+(`pipeline/restore_rename.rs`: also `SNP_DIFF_MODE=git`, `SNP_STASH_VERIFY=1`, an unstaged deletion, a converting
+filter); FI-31…FI-34 (a panic at each `StashBackup` step) and the driver's kill -9 rows at the same steps, recovered
+through the journal with every backup removed; journal and pointer round trips with `backups`, and the prefix
+validation. K9: `enter`, `Inner::{stash, secure, restore_patch, finish}` re-reviewed and refreshed;
+`Inner::{make_backups, rename_restore}`, `backup_one`, `rename_plan`, `rename_back`, `DiffOracle::restore_proof`,
+`RestoreProof::{content_unchanged, inputs_unchanged}` and `ProofFile::stat_unchanged` anchored; two theorems and two witnesses added
+(docs/VERIFICATION.md §9.2).
+
+### ADR-153 — The stash's write-tree and diff-index decided in-process on the provably clean path
+
+*Status: Accepted. Wave-6 analysis item b2-1; the owner chose the `<index>.lock` probe (exact lock errors) over an
+`lstat` check with a registered divergence for an unwritable git directory. Amends §4.2 steps 4–5 and the §12.1
+spawn model of ARCHITECTURE; reuses ADR-134's per-entry stat match and configuration gate unchanged.*
+
+**Context.** With ADR-154, B2 (`run noop-01` on noop10) still ran `write-tree` and `diff-index` as two serial git
+stages before its hook (≈ 0.8 M + 1.0 M instructions, ≈ 1.2–2.0 ms each on CI's slow runner); B3 and B9 the same,
+B8 `write-tree` before its 10 MB patch. In all of them both commands are no-ops whose results are fully determined
+by the index, the object store and the worktree's stat data. git's own facts (sources of 2.18.5 and 2.56.0, checked
+on 2.18.5, 2.43 and 2.56): `write_index_as_tree` takes `<index>.lock` (`LOCK_DIE_ON_ERROR`), reads the index and,
+when the cache-tree is fully valid (`cache_tree_fully_valid`: every node `entry_count >= 0` and its object present,
+an `lstat` of the loose copy or a pack lookup), writes nothing and prints the root's id; it trusts a valid but stale
+cache-tree (a crafted index whose entry changed under a still-valid `TREE` makes `write-tree` print the old root while
+`diff-index` against it reports the change). `diff-index` never writes the index; it reads the root tree through
+`parse_object` (which checks the object's hash) and, on git < 2.20, every subtree; with the cache-tree matching, git
+≥ 2.20 takes the subtrees' entries from the index.
+
+**Decision.** (1) *write-tree.* The stash passes step 6's G (`StashCtx::config_listing`; ignored after a contended
+lock) and, from step 3, the stamp of an index git read successfully in this run: the ADR-154 hint, or the stamp that
+held across step 3's own C. `tree_elision::prepare` applies git's decision to those bytes: ADR-134's gate (Unix, no
+`SNP_DIFF_MODE=git`, no `GIT_TEST_*`/`GIT_FSMONITOR_TEST`, no `GIT_OBJECT_DIRECTORY`, the git directory
+`stat_oracle_safe`, `CheckoutConfig::index_proof` with a known object format), the index a regular file whose stamp
+equals the read stamp before and after `IndexFile::read_keep` (≤ 16 384 entries) keeps the entries' ids and the
+`TREE` extension, `cache_tree::CacheTree::parse` accepts it strictly (empty root name, git's subtree order, canonical
+numbers within `int`, nothing left), every node is valid and every node's object has a loose copy (`odb::loose_exists`,
+git's own `lstat`, sound with packs present). Then `lock_probe` creates `<index>.lock` exclusively (mode 0666 less
+the umask) and removes it at once; on success the tree is the cache-tree's root (lowercase hex, as `write-tree`
+prints it) and no process runs. Any refusal, and any probe error (a held lock, a read-only directory, `ENOSPC`, a
+lock that could not be removed), runs the real `write-tree`, whose errors are git's. (2) *diff-index.* Step 5 is
+skipped, with the outcome of rc 0 (no patch, `diff_index_clean()` true, so ADR-078's baseline is unchanged), when
+`tree_elision::diff_index_empty` holds for the tree: SHA-1; the tree is the cache-tree's root; at most 2 048 entries
+(checked inline); the worktree `stat_oracle_safe`; `odb::loose_only` (no file in `objects/pack`, no
+`objects/info/alternates`, no `refs/replace` directory, no `refs/replace/` line in `packed-refs`, no `reftable`, none
+of `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_REPLACE_REF_BASE`); every entry stat-clean by
+ADR-134's strict match with none skipped (`every_entry_stat_clean`: no unmerged, intent-to-add, assume-unchanged,
+skip-worktree or gitlink entry, nothing racy or smudged, leading directories directories); every node's expected tree
+object (`CacheTree::expected_objects`: the index entries in `update_one` order, a subdirectory where its first entry
+appears, `%o` modes, `40000` and the child node's id, every node's entry count and child count matching the index)
+equal byte for byte to the loose object read strictly (`odb::read_loose`: canonical `tree <size>\0` header, exact
+size, zlib stream ending exactly at the file's end, the whole object hashing to its name with an in-tree SHA-1); and
+the index stamp still the read stamp. When `write-tree` ran, the proof is tried on the index it left (git wrote it
+under its lock, or read it unchanged), inline: the case where the pre-run proof survives `write-tree` (a probe
+failure followed by a successful `write-tree`) is too rare to pay a thread for. (3) `SNP_VERIFY_STASH_ELISION=1` runs
+the real `write-tree` after an elided one and the real `diff-index` after a proven one, keeps their answer, and
+reports a disagreement once on stderr. (4) snp-git gains `cache_tree`, `odb` and `IndexFile::read_keep`/`parse_keep`
+/`oid`/`hash_len`/`tree_extension` (no new crate: `flate2` is a workspace dependency already; SHA-1 is a 60-line
+module checked against the FIPS vectors and git's object names).
+
+**Rationale.** (1) is git's own decision function applied to bytes git itself read successfully in this run (the
+stamp covers checksum, order and every other read error `write-tree` would die on; the configuration gate keeps
+fsmonitor, whose hook `read_index` would run, away); when it holds, `write-tree`'s only effects are the transient lock
+(reproduced with its error surface) and its stdout. (2) `diff-index` exits 0 with nothing printed iff no file pair
+is queued; with the tree byte-equal to the index's (root hash-checked as `parse_object` does, every subtree verified
+whatever git version reads it) it compares exactly the index entries, and ADR-134's match is stricter than any git's,
+so no content is read and no refresh happens (and `diff-index` writes nothing anyway). The stale cache-tree of the
+context is refused by the byte comparison; a corrupt or truncated object by the strict read; a packed, alternate or
+replaced copy by the gate. The skipped-entry kinds are refused rather than reasoned about, because `diff-index`
+treats them on other code paths than `diff-files`. Not reproduced: `GIT_TRACE` output of the two skipped processes
+(not part of the compat contract; the command set already differs), and a SHA-1 collision-attack tree (git's SHA-1DC
+refuses it; git could not have written it). Alternatives rejected: an `lstat(<index>.lock)` check with a registered
+divergence (owner: the probe is exact); a SHA-1 recompute of the whole cache-tree from blob ids (the byte comparison
+of the objects git reads is enough); reading packs for real repositories (phase 2: one `.idx` lookup per node, slower
+than the spawn beyond ~100 nodes); prek's "nothing unstaged → no write-tree" (not exact: pre-commit's `write-tree`
+writes the cache-tree after a `git add`).
+
+**Consequences.** B2 and B3 spawn neither command (exec lists: 9 → 7 processes on B2), B9 likewise when the index
+`git commit` hands the hook is not racy, B8 skips `write-tree` (its `diff-index` makes the patch); serial git stages
+before the first hook (with ADR-154): B2 and B3 3 → 1, B9 4 → 2, B8 7 → 6. Measured on the `cargo xtask
+bench setup` fixtures with the profiling build, elision on vs off (a `GIT_TEST_*` variable turns it off), paired
+interleaved untraced rounds: B2 p50 22.97 → 18.86 ms (−4.1 ms, 150 rounds), B3 32.03 → 27.72 ms (−4.3 ms, 100
+rounds), B8 904.5 → 889.6 ms (25 rounds, within noise); whole-tree callgrind B2 10.76 M → 8.74 M instructions
+(−18.8 %; prek 0.5.11's tree 9.06 M), B3 13.95 M → 11.93 M, syscalls B2 2 500 → 1 957. Real repositories with packs
+keep both commands (only fresh or loose-only repositories elide `diff-index`; `write-tree` elides whenever every
+node is loose). snp now creates and removes git's `<index>.lock` itself (owner decision). K9: `Inner::stash`
+re-reviewed and the new step `Inner::tree_and_proof` anchored (the model's `stashTree = treeOf` and empty
+`diffPatch` are what the elision returns; VERIFICATION §9.2). Tests: `crates/snp-stash/tests/behaviour/tree_elision.rs`
+(every case built twice and run armed and plain on the git on `PATH` and `SNP_TEST_GIT_MATRIX`, comparing outcome,
+patch, errors, output, index entries and cache-tree, objects added or removed and the lock: a clean repository skips
+both; an unstaged change skips `write-tree`; a staged change runs `write-tree` and proves the diff after it; a stale
+cache-tree is refused; a corrupt root object fails as git does; packs; a held `index.lock`; a symbolic-link index; the
+`GIT_INDEX_FILE=.git/index.lock` of `git commit -a`; skipped entries; the verify mode; the environment gates), unit
+tests of `cache_tree`, `odb`, `sha1` and `IndexFile::read_keep`, and the B9 shape pin
+(`crates/snp/tests/it/budgets.rs`, two fewer git spawns on a filesystem the stat proof accepts).
+
+### ADR-154 — The pre-chain fan-out: the intent-to-add query in step 6, and step 6 beside discovery
+
+*Status: Accepted. Amends ADR-104 (3) and (7) (C joins the step-6 fan-out; step 6 may start beside step 3's
+`rev-parse`) and §3.1 row 6, §4.2 step 3 and the §12.1 spawn model of ARCHITECTURE; the amended clauses are
+superseded where they differ. Wave-6 analysis items b2-2 and b2-3, listed by the plan of 2026-11-21 as exact items
+(no owner decision beyond extending ADR-104's accepted early refresh to C).*
+
+**Context.** After wave 5, B2 (`run noop-01` on noop10) still ran five serial git stages before its hook:
+`rev-parse` → {F, G, B} → C (the intent-to-add query, `git diff --no-renames --no-ext-diff --ignore-submodules
+--diff-filter=A --name-only -z`) → `write-tree` → `diff-index`, against prek 0.5.11's three. On CI's slow runner a
+stage costs about 1.2–2.0 ms, and snp lost B2 by 1.37x. C ran alone after the worktree lock because pre-commit asks
+it inside `staged_files_only`; but its answer depends only on the index (diff-files reports `A` only for an
+intent-to-add entry), and stage 1 left snp idle while `rev-parse` ran. ADR-104(7) already loads the config at the
+invocation cwd beside `rev-parse` and keeps it when the real root and config path match; it started no git child.
+**Decision.** (1) *C in the fan-out (b2-2).* For a stashing run, step 6 takes the index stamp (ADR-104) before any
+query, then forks C first, beside F, G and B. The fork first proves the index free of intent-to-add entries without
+a spawn (`Git::index_without_intent_to_add`): the repository is SHA-1 (its `config` file, the only one git reads the
+repository format from, does not name an object format), the header counts at most 16 384 entries, and the strict
+ADR-134 reader parses the whole index with no entry flagged intent-to-add (a split index, sparse index, fsmonitor
+extension or anything the reader does not follow refuses). Only then does it run C, with the stash's command and
+environment (`run_env`, a pure function of the startup environment and the arguments). Success with nothing printed
+becomes `StashCtx::intent_to_add_hint` = the stamp. (2) *Reuse at step 3.* The stash takes the list as empty without
+asking (`Inner::intent_to_add_known_empty`) iff the hint is set, the worktree lock was not contended, and the index
+file still has the hint's stamp; otherwise it asks C at pre-commit's position, so C's errors, the
+`Unstaged intent-to-add files detected.` warning and the clearing stay pre-commit's. Any failure, panic or non-empty
+answer of the early C sets no hint. (3) *Step 6 beside discovery (b2-3).* `run` (not `hook-impl`, which has
+discovered already, nor try-repo) runs step 6 itself on the speculative config thread of ADR-104(7), right after
+that load, for the layout a repository rooted at the invocation cwd has (root = cwd, git and common directory
+`<cwd>/.git`, index `<cwd>/.git/index`, not a worktree), with the handle discovery would build for it (`Git::at`).
+Gates: Unix; a stashing run decided by the arguments alone (no `--all-files`, no file arguments, no stdin file list);
+none of `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE` set; `<cwd>/.git` a directory (not a symbolic
+link, not a linked worktree's file; a subdirectory invocation has none). The results are kept iff the config is kept
+(ADR-104(7): real root = cwd, byte-equal config path) and discovery reports exactly that layout (root, git directory,
+common directory, index file, worktree flag); otherwise they are dropped and step 6 runs as before (a kept config
+still counts). Step 6 there is the same function with the same inputs it would get later: hoisting, A from F, the
+stamp, C and its proof decide exactly as they would.
+**Rationale.** (1)–(2) are exact: with no intent-to-add entry, C prints nothing whatever the worktree, and the stamp
+proves step 3 would read the bytes the proof and the early C read (git replaces the index by rename; any rewrite
+changes the inode or the times). The proof is on content, not on the header version: a v2 header alone does not
+exclude a crafted extended flag, and a v3 or v4 index is common (skip-worktree, `feature.manyFiles`). C's only side
+effect, git's stat refresh of the index, changes the stamp and so sends step 3 back to git. A contended lock means
+another run went first; ADR-117 already distrusts early answers then. The early C's success carries over for the
+same reason the early F and G do (ADR-104/117): pre-commit takes no lock, so a concurrent writer between the early
+query and step 3 is an interleaving pre-commit could also see with C at its position. (3) runs the same commands in
+the same cwd with the same environment as step 6 would; outputs are consumed at the same positions, and on rejection
+the speculative children's only effect is the stat refresh B and C may do, which step 6's own B and C repeat.
+Alternatives rejected: prek's single porcelain query (checked vs unchecked semantics, different argv); skipping C
+(its checked error surface and refresh are pre-commit's); the header-version gate alone (crafted v2 entries). The
+in-process write-tree (b2-1, ADR-153) is a separate decision.
+**Consequences.** Serial git stages before the first hook (strace timelines on the `cargo xtask bench setup`
+fixtures, profiling build): B2 5 → 3, B3 5 → 3, B8 9 → 7, B9 5 → 4 (hook-impl keeps its own discovery, so only (1)
+applies); the number of git processes is unchanged (C moves; it is asked twice only on a fallback). Paired,
+interleaved untraced rounds against the base (200 each, local laptop): B2 −2.5 ms (p50 15.5 → 12.8 ms), B3 −2.9 ms;
+(1) alone −1.5 ms on B2. snp's own process +2% instructions on B2 (4.49 M → 4.58 M: the index read and the config
+read), +66 syscalls in the tree. Step 6 beside discovery puts up to five git processes on the CPUs at once. Registered
+as an exact optimisation (COMPATIBILITY §6.2, git fan-out): C may now refresh the index's stat data also when a
+preflight check then ends the run, as B already could (ADR-104). K9: `Inner::stash` re-reviewed (the model's
+intent-to-add set is index content; with no flagged entry step 3 returns the modelled value), fingerprints refreshed,
+the helper anchored (VERIFICATION §9.2). Tests: `crates/snp-run/tests/pipeline/fanout.rs` (C once in the fan-out;
+an intent-to-add entry and a split index keep today's `GIT_TRACE` order; an index rewritten after the early answer
+asks again and warns; step 6 beside discovery at the root; no speculation with `GIT_DIR`, from a subdirectory, in a
+linked worktree, for `--all-files`; discarded and re-asked when discovery reports another layout),
+`crates/snp-stash/tests/behaviour/guard.rs` (an uncontended run with the hint's stamp skips the query; a run that
+waited for the lock asks it again, and on an index with an intent-to-add entry still warns, clears and re-adds it), and
+`crates/snp-git/tests/behaviour/user_repo.rs::intent_to_add_proof_holds_only_without_such_entries`.
 
 ## Appendix A — Open questions of the research documents, resolved
 

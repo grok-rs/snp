@@ -16,3 +16,5 @@ import SnpModels
 #print axioms SnpModels.Stash.rollback_complete
 #print axioms SnpModels.Stash.no_silent_loss
 #print axioms SnpModels.Stash.index_invariant
+#print axioms SnpModels.Stash.rename_restore_eq_apply
+#print axioms SnpModels.Stash.runR_eq_run
