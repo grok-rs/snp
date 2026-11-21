@@ -24,7 +24,7 @@ ADR-119 the proven post-checkout baseline; ADR-131 the file-content cache of con
 baseline taken by the first native write in all-in-process runs; ADR-133 its follow-ups (the system attributes file from
 `git var`, attributes that convert nothing); ADR-134 the index-stat proof; ADR-135 the hook script template v3; ADR-136 the wave-5 bench methodology;
 ADR-137 PIE release artifacts and their hardening gate; ADR-138 the internal crates' API policy and snp-yaml's borrowed
-tags and scalar text.
+tags and scalar text; ADR-150 gc's parallel loading with ordered replay.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -3421,6 +3421,77 @@ acceptance test gains borrowed and folded quoted scalars and a reader error insi
 test checks that resolved tags are `Borrowed`, explicit tags (`!!int`, `!local`, a `%TAG` prefix with `%41`) are
 `Owned`, and `Debug` matches `Box<str>`. The oracle vectors, the API contract test (now naming
 `Cow<'static, str>`), the CLI goldens and the difftest scenarios are unchanged.
+
+### ADR-150 — gc loads its tracked configs in parallel and replays their output in tracked order
+
+*Status: Accepted (wave 6, B11; analysis `deep-b11` G1-G4). Concurrency on gc's deletion path (ARCHITECTURE §5.6);
+no kernel or model changes (K8 protects `sweep`/`clean`, which are untouched).*
+
+**Context.** B11 (`gc` over 500 repositories and 200 configs) was snp's slowest scenario against prek 0.5.11 on CI:
+25.86 ms against 18.22 (run 44906093739), with snp on one thread and half of its time in the kernel. About 86% of the
+work is independent and read-only: 200 config checks, 500 manifest checks, 500 key derivations and 500 repository
+marker reads. Every exact single-thread cut together was worth 2-3 ms, not enough. A local experiment on the real
+crates, pinned to 2 cores × 2 SMT threads, ran 22.4-22.8 ms serially and 11.4-11.9 ms on 4 threads. With musl's
+allocator the same fan-out was slower (32.5 → 38.7-43.0 ms: mallocng's global lock).
+**Decision.** (1) **Serial prologue.** Lock as before; one `repos-v1` listing, `Store::repo_index()`: the hex-named
+entries in key order, each with a `OnceLock`, so `RepoIndex::get` runs `all_repos`'s per-entry load at most once, on
+first use, from any thread; one `configs-v1` listing (`Store::config_entry_files`, unread); `SNP_COMPAT_STRICT` read
+once. (2) **Width.** min(pool permits, `available_parallelism()`, 8). It is 1 (the marking runs inline, printing as
+each config loads, as before) below 8 entries, with one permit, and always on `target_env = "musl"`. The rule counts
+entries and never measures time (ADR-101). (3) **Jobs** (`map_ordered`, one permit each, ADR-065(8), ADR-101(2)): job
+`i` reads and decodes entry `i` (`Store::read_config_entry`, malformed entries skipped as before), checks the config
+and its manifests with `LoadOpts` whose sinks are a per-entry `LogRecorder` (snp-core: warnings and diagnostics as
+two streams in arrival order), derives the marks and the `keys-v1` file names of the kept `Initialized` markers
+(`MarkerKey::file_name`, now public), drops its checked values and returns only the marks. Jobs are read-only: they
+read files and the store's entries and write only to their own recorder; the shared state is the regex cache (first
+stored wins, warnings a pure function of the pattern), cfgv's read-only seed, the per-key `OnceLock`s and the key
+memo (5). No warn-once flag is on this path. (4) **Merge.** If any job was refused (cancellation) or panicked, gc
+returns before replaying anything: the cancellation as the per-config check reports it (signal, closed stdout), a
+panic as `Interrupted(Panic)` when the panic hook recorded it (the envelope then reports the recorded payload,
+location and backtrace, as for a panic on the main thread), else the job's `PanicException`. Otherwise, serially in
+tracked order: the per-config cancellation check, the replay of the entry's log through `WarnSink::warn` and
+`DiagSink::diag` of the printer (the calls the inline marking makes, in the same order), and the union of its marks
+or the config as dead. Tracked order is `snp_store::tracked_order`: the old sort by `(path, project_root)` and
+`dedup`, computed on each path's component list once (`Path`'s `Ord` and `PartialEq` compare components); the first
+of equal pairs is kept, and a hand-made duplicate entry is loaded twice but replayed and marked once, as before. Then
+`forget_configs`, the retire loop (listed keys in key order: used ones skipped, complete unused ones retired, the
+first failure exit 3), `sweep` and the marker retention (`Store::retain_markers_keeping_names` with the workers'
+names) run unchanged. (5) **`RepoId::from_config_memo`.** The one derivation of ADR-070(8) behind both entry points
+gains a negative-prefix memo: for a relative value with at least two components whose first component is a normal
+name, a failed `stat` of `<project_root>/<first>` (memoised per joined prefix for the run) means every longer path
+fails too, whatever the error, so the value is a URL without the full probe. Unix only (Windows normalises `..` and
+trailing dots lexically before resolving); only failures short-circuit.
+**Rationale.** The output is a function of the per-config logs and the marks, both computed exactly as the serial loop
+computes them; replaying the logs in tracked order makes the same printer calls in the same sequence, so stdout,
+stderr, their flush points and EPIPE handling are those of the serial run, and the marks are set unions, so the
+forgotten configs, the removal set and its order, the count and the kept markers are identical. Loading an entry when
+first asked returns what the up-front load returned because nothing can materialise or retire a repository while gc
+holds the exclusive lock. Cancellation keeps the property that matters: an incomplete marking never reaches
+`forget_configs` or a retirement, and the output is a prefix of the serial output (empty when the signal arrives
+during the fan-out, cut at the next config boundary during the replay). The deep dive's replay of a panicking job's
+partial log was dropped: with the entries read on the workers, a refused entry's place in tracked order is unknown,
+so a replay could print a later config's warnings before an earlier one's; printing nothing is still a prefix (bug
+path only, S2). Below 8 configs the pool start (about 0.25 ms locally) costs more than the parallel loads save. On
+musl the fan-out was measured slower, so musl stays inline until its allocator changes (ADR-079, ADR-118). The memo is
+sound because path resolution walks the components in order on Unix; it only removes probes that must fail.
+**Consequences.** B11 locally (Core Ultra 7 155H, processes pinned to CPUs 1-4, `perf stat -r 20`, 8 interleaved
+rounds, process wall including exec): 30.5 → 19.3 ms (prek 0.5.11: 22.6 ms); on all 22 CPUs (width 8) 35.9 → 14.7
+ms. CPU time rises (28.5 → 39.6 ms task-clock on 4 CPUs: shared cores, per-thread arenas). Callgrind: 89.04 M → 90.21 M
+instructions (all threads). strace: 8,243 → 8,365 syscalls (`statx` 2,443 → 1,952, 501 → 4 failing; +404 `futex`
+from the pool's condition variable, +7 `clone3`). Projected on the 4-vCPU CI runner from the local ratio: about 16
+ms against prek's 18.2. Tests: a property test runs gc serially (width 1) and in parallel (width 4 on a 4-permit pool,
+whatever the CPU count) over generated stores (valid, invalid, unreadable, deleted and YAML-broken configs,
+duplicates, unknown-key warnings, regex `FutureWarning`s, remote, local, meta, local-path and Tier A repositories,
+manifests valid, invalid, missing or warning, dependency keys, markers) and compares the stdout and stderr writes in
+order, the result and the repositories, configs and markers left; a non-vacuity test and a seeded mutation (replay in
+listing order) fail it. Cancellation from a job and a panic in a job (with and without the hook's `Panic`) leave the
+store untouched with output a prefix of the serial run's; the width rule, including the musl gate, is a unit test;
+an integration test checks the tracked-order warnings of 12 configs and, with `SNP_FAULT=WorkerPartition@3`, exit 3
+with nothing forgotten or removed (`WorkerPartition` now also fires in each gc config load). `RepoIndex` against
+`all_repos` (complete, checkout-less, foreign-key, undecodable and empty entries), the split configs-v1 reader,
+`retain_markers_keeping_names`, `tracked_order` against sort-and-dedup (property test) and the memoised derivation
+against the plain one (directories, files, symlinks, dangling and looping links, an unsearchable directory) have
+their own tests.
 
 ## Appendix A — Open questions of the research documents, resolved
 

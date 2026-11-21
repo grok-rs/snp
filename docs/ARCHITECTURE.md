@@ -500,6 +500,11 @@ pub mod output {
     #[derive(Debug, Default)] pub struct CollectWarnings(/* Mutex<Vec<String>> */);   // tests + bare replay (meta hooks)
     impl CollectWarnings { pub fn new() -> Self; pub fn take(&self) -> Vec<String>; }
     impl WarnSink for CollectWarnings {}  impl DiagSink for CollectWarnings {}
+    /// Two streams in arrival order, replayed later through the real sinks (gc's parallel loading, ADR-150).
+    #[derive(Clone, Debug, PartialEq, Eq)] #[non_exhaustive] pub enum LogLine { Warn(String), Diag(String) }
+    #[derive(Debug, Default)] pub struct LogRecorder(/* Mutex<Vec<LogLine>> */);
+    impl LogRecorder { pub fn new() -> Self; pub fn take(&self) -> Vec<LogLine>; pub fn replay(&self, warn: &dyn WarnSink, diag: &dyn DiagSink); }
+    impl WarnSink for LogRecorder {}  impl DiagSink for LogRecorder {}
 }
 pub mod path {
     /// Repo-relative, '/'-separated path as raw bytes (Unix may be non-UTF-8). Rejects NUL, absolute, empty.
@@ -1859,7 +1864,7 @@ pub fn json_schema() -> &'static str;                 // with extension keys
 #### 1.4.16 `snp-store` (W2, WP-22)
 
 ```rust
-use std::{ffi::OsStr, io, path::{Path, PathBuf}, sync::Arc};
+use std::{collections::HashSet, ffi::OsStr, io, path::{Path, PathBuf}, sync::Arc};
 use snp_core::{brand::Brand, cancel::CancelToken, env::Env, failure::Failure, lang::LanguageId};
 use snp_os::lock::FileLock;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum StoreSource { SnpHome, XdgCacheHome, PlatformDefault }
@@ -1876,7 +1881,11 @@ impl RepoId {
     /// directory (relative values resolved against `project_root` = `ConfigSource::project_root` at run time, the recorded
     /// project root of a tracked config at gc time) ⇒ `LocalPath(realpath)`, else `Url(repo verbatim)` (ADR-070).
     pub fn from_config(repo: &str, project_root: &Path) -> RepoId;
+    /// The same derivation, skipping the probe of a relative value whose first component a gc-wide memo saw fail to
+    /// resolve (Unix; ADR-150).
+    pub fn from_config_memo(repo: &str, project_root: &Path, memo: &ProbeMemo) -> RepoId;
 }
+#[derive(Debug, Default)] pub struct ProbeMemo { /* Mutex<HashMap<PathBuf, bool>> */ }
 /// store.db_repo_name: `repo` or `repo:dep1,dep2` (deps in config order, no sorting); local repos use `local[:deps]`.
 pub fn db_repo_name(repo: &str, deps: &[Arc<str>]) -> String;
 /// The `Initialized` marker's name: db_repo_name for a URL, `abs:<realpath>[:deps]` for a local directory (ADR-082).
@@ -1885,6 +1894,9 @@ pub fn marker_repo_name(id: &RepoId, repo: &str, deps: &[Arc<str>]) -> String;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)] pub struct ToolRef { pub tool: Arc<str>, pub version: Arc<str> }
 /// A tracked config and the project root its relative `repo:` paths resolve against (configs-v1 records both).
 #[derive(Clone, Debug, PartialEq, Eq)] pub struct TrackedConfig { pub path: PathBuf, pub project_root: PathBuf }
+/// gc's order of tracked configs: indices sorted by (path, project_root) with Path's order, equal pairs after the first
+/// dropped (cached component keys; ADR-150).
+pub fn tracked_order(configs: &[(usize, &TrackedConfig)]) -> Vec<usize>;
 #[derive(Clone, Debug)] pub enum RepoKind { Remote { id: RepoId, rev: Arc<str> }, Local }
 #[derive(Clone, Debug)] pub struct RepoMeta { pub kind: RepoKind, pub deps: Arc<[Arc<str>]> }
 #[derive(Clone, Debug)] pub struct RepoHandle { pub key: RepoKey, pub src: PathBuf, pub envs: PathBuf, pub meta: RepoMeta }
@@ -1919,8 +1931,12 @@ impl Store {
     pub fn set_marker(&self, k: &MarkerKey);                                      // best effort, create_new
     pub fn mark_config_used(&self, cfg_realpath: &Path, project_root: &Path);     // best effort, lock-free, never creates the store
     pub fn tracked_configs(&self) -> Vec<TrackedConfig>;
+    pub fn config_entry_files(&self) -> Vec<PathBuf>;                            // configs-v1 entries, unread (ADR-150)
+    pub fn read_config_entry(file: &Path) -> Option<TrackedConfig>;              // one entry; None = unreadable/malformed
     pub fn forget_configs(&self, dead: &[PathBuf]);
     pub fn all_repos(&self) -> Vec<RepoHandle>;
+    pub fn repo_index(&self) -> RepoIndex<'_>;                                    // one repos-v1 listing, lazy loads (ADR-150)
+    pub fn retain_markers_keeping_names(&self, kept_names: &HashSet<String>, keep: &mut dyn FnMut(&MarkerKey) -> bool) -> usize;
     pub fn retire_repo(&self, key: &RepoKey) -> io::Result<()>;
     pub fn sweep(&self, now: std::time::SystemTime) -> SweepReport;               // scratch/trash orphans, old restored patches, tools no `.snp-tools.json` references
     pub fn clean(&self) -> Result<Option<PathBuf>, Failure>;                      // retire snp's layout (keeps recovery data, .lock, unknown files: D-DATA-04); Some(journal): unreadable, every patch kept
@@ -1929,6 +1945,9 @@ impl Store {
     pub fn tool_dir(&self, tool: &str, version: &str) -> PathBuf; pub fn cache_dir(&self, name: &str) -> PathBuf;
     pub fn relocated_from(&self) -> Option<PathBuf>;                              // store-v1.json path differs → old path
 }
+/// Keys in byte order; `get` loads an entry at most once (per-key OnceLock) and answers what `all_repos` would.
+#[derive(Debug)] pub struct RepoIndex<'s> { /* &'s Store, Vec<(RepoKey, OnceLock<Option<RepoHandle>>)> */ }
+impl RepoIndex<'_> { pub fn keys(&self) -> impl Iterator<Item = &RepoKey>; pub fn get(&self, key: &RepoKey) -> Option<&RepoHandle>; pub fn len(&self) -> usize; pub fn is_empty(&self) -> bool; }
 #[derive(Debug, Default)] pub struct SweepReport { pub removed_dirs: usize, pub removed_patches: usize, pub legacy_v1_removed: bool, pub unreadable_journal: Option<PathBuf> }
 ```
 (gc *marking* — pre-commit's `_mark_used_repos` rules — lives in `snp_cmd::gc`, which owns the config dependency.)
@@ -3318,10 +3337,11 @@ directory` (snp brand) once per process, then waits (cancel observed every 50 ms
   `(db_repo_name, rev)` keys that are neither present nor Tier-A-loadable, snp 1.x leftovers only when the README
   carries the 1.x signature (an snp-only stderr line `Removed snp 1.x cache data from {store}.`, D-DIAG-05).
   Output: `{n} repo(s) removed.` (n counts `(db_repo_name, rev)` keys, like pre-commit's rows).
-  gc reads `repos-v1` once, after taking the exclusive lock (pre-commit's single `SELECT … FROM repos`): that
-  key-sorted snapshot answers every manifest lookup and drives the retirements, so their order and the first failing
-  path (exit 3) are deterministic. The `Initialized` markers of used remote keys are kept unread (their file names are
-  derived); sweep decides orphan repository locks from its own `repos-v1` listing taken after the retirements, skips
+  gc lists `repos-v1` once, after taking the exclusive lock (pre-commit's single `SELECT … FROM repos`): that
+  key-sorted listing (`Store::repo_index`) loads each entry at most once, when a manifest lookup or the retire loop
+  first asks for it, answers every manifest lookup and drives the retirements (listed keys in key order, unused and
+  complete ones retired), so their order and the first failing path (exit 3) are deterministic. The `Initialized`
+  markers of used remote keys are kept unread (their file names are derived on the workers, below); sweep decides orphan repository locks from its own `repos-v1` listing taken after the retirements, skips
   `<hex32>.lock` entries by name when it walks the environments' `.snp-tools.json` sidecars, and reads no sidecar
   when no tool version is older than an hour.
   gc loads configs and manifests check-only (`check_config`, `check_manifest`, `check_manifest_bytes` for the Tier A
@@ -3329,6 +3349,17 @@ directory` (snp brand) once per process, then waits (cancel observed every 50 ms
   when the full load does, and marking reads its keys through `snp_config::facts`. A manifest hook that ends up
   without dependencies uses the base key and marker its repository entry already marked; only hooks with dependencies
   derive more. The equality of the marks with the old full-load marking is a property test (`store_cmds` tests).
+  **Parallel loading (ADR-150).** With at least 8 `configs-v1` entries, on a pool width of min(permits,
+  `available_parallelism`, 8) (always 1 on musl, whose allocator lock made the fan-out slower), job `i` reads and
+  decodes entry `i`, checks the config and its manifests and derives its marks, keys (`RepoId::from_config_memo`: one
+  negative-prefix memo per run, so `https://…` values cost one probe per project root) and marker file names; the
+  jobs are read-only and write their warnings and diagnostics to a per-config `LogRecorder`. If any job was refused
+  (cancellation) or panicked, gc fails before replaying anything. Otherwise, serially in tracked order
+  (`tracked_order`: the old `(path, project_root)` sort and `dedup` on cached component keys), the per-config
+  cancellation check runs, the config's log is replayed through the printer (the calls the inline marking makes) and
+  its marks are unioned; `forget_configs`, the retire loop, `sweep` and the marker retention follow unchanged. stdout,
+  stderr, the exit and the removals equal the serial marking's (a property test over generated stores compares them
+  byte for byte); below 8 entries the same functions run inline, printing as each config loads.
 * **Config tracking on a fresh store** (C1): pre-commit creates its store before `mark_config_used`. snp's store is
   lazy, so `Store::mark_config_used` on a missing store keeps `(cfg_realpath, project_root)` in memory and the first
   successful `ensure_created` of that handle (or of try-repo's copy of it) records it; a fresh-store

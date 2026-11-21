@@ -44,6 +44,16 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   directory replaced by a symbolic link. Anything else takes the real diff, as before. On B12u (20 hooks over 20,000
   files) 19 of 20 `git diff`s no longer run: 1,504 M → 865 M instructions for the process tree, 428 → 410 processes;
   B4 and B5 lose one of two (−4 %).
+- `gc` loads its tracked configs in parallel (ADR-150): with 8 or more `configs-v1` entries, each entry is read,
+  checked and marked (config, manifests, keys, marker names) on the job pool, up to min(cores, 8) threads (always
+  one on musl), and each config's warnings and diagnostics are replayed in tracked order through the printer, so
+  stdout, stderr, the exit, the forgotten configs, the removed repositories and markers are unchanged (a property
+  test compares them with the serial marking byte for byte; a cancelled or panicking load fails before anything is
+  forgotten or removed, and prints nothing more). `repos-v1` entries load lazily, when first asked for, tracked
+  configs sort on cached path components, the kept markers' file names are derived on the workers, and a
+  negative-prefix memo spares the directory probe of each `https://…` repository (one per project root instead).
+  B11 locally (4 CPUs, process wall): 30.5 → 19.3 ms (prek 0.5.11: 22.6 ms); instructions 89.0 M → 90.2 M (pool and
+  replay overhead), syscalls 8,243 → 8,365 (−491 `statx`, +404 `futex` and the thread starts).
 - bench: the B8 `p50 <= pre-commit` known miss is gone. PR #57's CI bench measured snp at 307 ms against
   pre-commit's 418 ms (1.36x), so the gate fails again if snp ever falls behind pre-commit on B8.
 - cfgv and file-identify are part of the workspace (ADR-116): imported with their full history as `crates/snp-cfgv`
