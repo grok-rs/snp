@@ -226,6 +226,7 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 | D-PERF-02 | local `language: python` hooks without deps `pip install` a placeholder package | placeholder install skipped | 24 |
 | D-PERF-03 | pre-commit-hooks run from a cloned venv | native implementations (fast path, ADR-031); output byte-identical; Tier A repos are never cloned (FD-8) | 31, 26, 27 |
 | D-PERF-04 | docker hooks run `docker build` every run | skipped when the tagged image exists (`SNP_DOCKER_ALWAYS_BUILD=1` restores it) | 25 |
+| D-PERF-05 | the stash's restore runs `git apply`, which writes every file of the patch anew | on Linux, when the DiffOracle proves the hooks left those files as the checkout wrote them and nothing converts them (ADR-152), the originals hard-linked before the checkout are renamed back: same bytes, mode, git state and output; the inode and birth time are the original's, one process fewer runs, and an autosave landing between the final check and the rename is overwritten instead of merged; `SNP_STASH_RESTORE=apply` restores `git apply` | 23 |
 
 ### 5.7 EXT — observable only when an snp extension is used
 
@@ -397,7 +398,8 @@ snp-only: `SNP_HOME`, `SNP` (`0`/`false` kill switch), `SNP_BIN` (hook script), 
 `SNP_ALLOW_NO_CONFIG`, `SNP_JOBS`, `SNP_SKIP_GROUPS`, `SNP_OUTPUT`, `SNP_NO_TTY` (`interactive` hooks run captured, ADR-085), `SNP_NO_FAST_PATH`, `SNP_COMPAT_STRICT`,
 `SNP_LOCAL_CONFIG`, `SNP_NO_HINTS`, `SNP_LOG`, `SNP_LOG_FILE`, `SNP_OFFLINE`, `SNP_UV`, `SNP_PYTHON_DOWNLOADS`,
 `SNP_NODE_MIRROR`, `SNP_ALLOW_INSECURE_MIRROR`, `SNP_DOCKER_ALWAYS_BUILD`, `SNP_PREFER_SYSTEM_TOOLCHAINS`,
-`SNP_ALLOW_OLD_GIT`, `SNP_STASH_LOCK_TIMEOUT`, `SNP_STASH_VERIFY`, `SNP_KILL_GRACE`, `SNP_DIFF_MODE`,
+`SNP_ALLOW_OLD_GIT`, `SNP_STASH_LOCK_TIMEOUT`, `SNP_STASH_VERIFY`, `SNP_STASH_RESTORE` (`apply`: no restore by rename,
+ADR-152), `SNP_KILL_GRACE`, `SNP_DIFF_MODE`,
 `SNP_VERIFY_BASELINE`, `SNP_VERIFY_FILE_CACHE` (ADR-131), `SNP_VERIFY_INDEX_PROOF` (ADR-134), `SNP_OUTPUT_BUDGET`, `SNP_PYTHON_WARNINGS`, `SNP_PYTHON_INSTALLER` (`auto`|`uv`|`pip`, ADR-073),
 `SNP_ALLOW_FOREIGN_STORE` (D-SEC-13), `SNP_PREFETCH` (`0` disables background clone prefetch), `SNP_NODE_SHASUMS_URL` /
 `SNP_GO_JSON_URL` (https checksum manifests for mirrors). Duration variables are parsed with an upper bound; an

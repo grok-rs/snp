@@ -25,9 +25,9 @@ baseline taken by the first native write in all-in-process runs; ADR-133 its fol
 `git var`, attributes that convert nothing); ADR-134 the index-stat proof; ADR-135 the hook script template v3; ADR-136 the wave-5 bench methodology;
 ADR-137 PIE release artifacts and their hardening gate; ADR-138 the internal crates' API policy and snp-yaml's borrowed
 tags and scalar text; ADR-150 gc's parallel loading with ordered replay and its cheaper loads; ADR-151 the stash patch's
-numstat fed while the patch streams and the batched reader of large child output; ADR-153 the stash's write-tree and
-diff-index decided in-process on the provably clean path; ADR-154 the pre-chain fan-out (the intent-to-add query in step
-6, step 6 beside discovery).
+numstat fed while the patch streams and the batched reader of large child output; ADR-152 the owner's decision to
+restore the stash by renaming preserved originals back; ADR-153 the stash's write-tree and diff-index decided in-process
+on the provably clean path; ADR-154 the pre-chain fan-out (the intent-to-add query in step 6, step 6 beside discovery).
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -194,7 +194,7 @@ the guard is the last field of `RunState`. **Rationale.** FD-5: the stash must b
 
 ### ADR-016 — Stash algorithm and hardening (C16)
 
-*Status: Accepted; amended by ADR-067 (create_new patch + re-verify before checkout, git-dir pointer, lock-based recovery, `git apply --3way` hints, StagingFixed state) and ADR-093 (both checkouts limited to the patch's files and, on the rollback, the files `git diff` shows changed: D-DATA-19). The amending ADR is normative where they differ.*
+*Status: Accepted; amended by ADR-067 (create_new patch + re-verify before checkout, git-dir pointer, lock-based recovery, `git apply --3way` hints, StagingFixed state), ADR-093 (both checkouts limited to the patch's files and, on the rollback, the files `git diff` shows changed: D-DATA-19) and ADR-152 (on Linux, a restore the DiffOracle proves equal to `git apply`'s renames the preserved originals back instead of running it). The amending ADR is normative where they differ.*
 
 **Context.** 02 §21.10 keeps pre-commit's restore; 06 §7–8 proposed read-tree/verify restore (different git state on
 conflict; false mismatches under `core.autocrlf`, 14 A.4.5). **Decision.** pre-commit's exact algorithm and messages
@@ -3616,6 +3616,104 @@ name, for any write size, and corrupt or empty input gives no answer (`snp-git`)
 to the file-based one and the stash goes on, and the notice is there when the listing starts (`snp-stash`). K9:
 `Inner::stash`, `first_pass` and `secure` re-reviewed (docs/VERIFICATION.md §9.2), fingerprints refreshed,
 `Git::patch_paths_feed` and `PatchPathsFeed::finish` anchored; the model is unchanged.
+
+### ADR-152 — B8: restore the stash by renaming preserved originals back (owner decision)
+
+*Owner decision D2 of the wave-6 plan (2026-11-21): adopted, Linux first, journaled, `git apply` as the fallback, the
+K9 model updated. Amends ADR-016 (the restore's `git apply`, "byte for byte in the git commands", is replaced by an
+in-process rename when a proof holds). Every durability, verification and recovery rule of ADR-027, ADR-067, ADR-078,
+ADR-097, ADR-117, ADR-119, ADR-133 and D-DATA-19 is unchanged; the patch is still written, made durable, verified and
+kept, and is still what recovery restores from.*
+
+**Context.** After ADR-151, B8 (a 10 MB unstaged rewrite, one staged file, `snp run` with one hook that changes
+nothing) still paid the restore's `git apply` on its critical path: 136–143 ms locally, about 92 ms CI-scaled, the
+largest step after the diff itself; prek 0.5.11 pays the same apply. The wave-6 B8 analysis (B8-1) prototyped keeping
+the original inode: the checkout unlinks and recreates every file it writes, so a hard link made just before it keeps
+the user's file intact, and renaming it back restores the bytes without reading, parsing or writing 21 MB. Exact
+options alone left B8 at about prek's p50; the owner adopted this one (decision D2) with the conditions recorded below.
+**Decision.** (1) *Backups.* On Linux (unless `SNP_STASH_RESTORE=apply`) every journal of the run records a name prefix
+`snp-stash-bk-<pid>-<random>` (`backups`, in the store journal and the git-dir pointer, so the durable `stashed` state
+names it before any backup exists). Right before step 8's checkout, and only when ADR-097's stat-stamp pass verified
+the patch, every file of the patch is hard-linked to `<git_dir>/<prefix>-<n>`: all or nothing, at most 1,000 files,
+each a regular file with one link, no extended attribute (`llistxattr`; this also covers POSIX ACLs and security
+labels), on the lock's device and with `max(ctime, mtime) < M0` (unchanged since the lock was taken, so it is the
+inode whose content the verified patch recorded); after the link the backup must be that inode with two links and the
+same size and mtime (a write between the check and the link moves the mtime past `M0`), and the clocks must still agree
+(ADR-097). Any failure removes the backups made: `git apply` restores, as before. (2) *Proof.* `DiffOracle::restore_proof`
+answers only when ADR-119 proved the post-checkout state (the checkout wrote each file's blob bytes and nothing in the
+configuration or the attributes converts any file), every comparison since found the whole snapshot unchanged (every
+tracked path, racy contents by hash, every input of `git diff`: index, configuration and attributes files; a native
+fixer's report or an adopted baseline clears it), the last fingerprint is the empty diff, and every checked-out path is
+a regular `100644`/`100755` file of the snapshot, hashed when racy. It carries each file's snapshot stat, hash and
+index mode, `core.fileMode`, and when the worktree was last proven equal to the snapshot. `snp run` hands it over after
+the last hook, step 19's output and step 20's staging (`StashGuard::prove_restore`). (3) *Restore by rename.* Step
+10a tries it before the first apply when the proof is there, every file has a backup, nothing was staged by
+`stage_fixed` and no intent-to-add entry was cleared. Every file is checked first, nothing changed: under
+`core.fileMode` the original's executable bit is its index mode's (the patch changes no mode); the checked-out file has
+the snapshot's `lstat` and, when that stat is racy against the last proof, its content hash, one link, is not the
+backup's inode and carries no extended attribute (so a fresh file gets none: no default ACL applies); the backup is
+still its inode with one link, its size and mtime, the checked-out file's owner and group and no extended attribute.
+Then, file by file, a last `lstat` comparison, the backup's mode set to the checked-out file's permission bits, its
+times set to now (`futimens(UTIME_NOW)`), and `rename(backup, file)`. (4) *Fallbacks.* A failed check or a failed first
+rename changes nothing: `git apply` and the rest of step 10 as before. A failure after a rename checks every backed-up
+path out again (silently, the index blobs: the patch's pre-images), then `git apply` as before. Once every rename
+succeeded the patch step is done, so a panic after it never restores twice. (5) *Cleanup.* `finish` removes every
+backup still linked on every path (restored, fallen back, K+); the recovery pass that holds the lock (and the explicit
+dismissal) removes the backups every journal it finds names, whatever its state, after validating the prefix
+(`snp-stash-bk-<digits>-<hex>`, entries `<prefix>-<digits>` only). (6) Fault points `StashBackup(1)` after the backups,
+`StashBackup(2)` before each rename, `StashBackup(3)` after the last.
+**Rationale.** *Exactness.* Under the proof every file of the patch holds exactly the bytes the checkout wrote, the blob
+of its index entry (ADR-119), and nothing converts it, so what git sees of it is its pre-image and `git apply`
+succeeds; with no conversion its result is the user's file exactly (K9 `roundtrip_exact`'s premise), which is the
+content of the preserved inode. The metadata is set to what `git apply` leaves: it unlinks the file and creates it
+with `open(O_CREAT|O_EXCL, (mode & 0100) ? 0777 : 0666)` (apply.c `try_create_file`), and the checkout created the file
+it replaced the same way from the index mode (entry.c, parallel-checkout.c), so when the two modes' executable bits
+agree (always without `core.fileMode`, checked with it) the checkout's permission bits, after the umask and any default
+ACL, are exactly `git apply`'s, as are its owner and group (the same process credentials and directory). The mtime is
+the current time, as for a fresh write. Output lines, the journal states (`restored`, then removed), the kept patch and
+the index are unchanged; `git status` and `git diff` report the same (both files differ from the index entry's stat and
+are compared by content). The twin-repository tests compare a rename-restored tree with a `git apply`-restored one:
+output, bytes, modes, `git status`, `git diff`, the index. *Model.* K9 gains `restoreR` (the rename when `RenameProof`
+holds: identity filters on the patch's files and the worktree still the checkout's) and proves
+`rename_restore_eq_apply` (under the proof `git apply` succeeds and its worktree is the rename's) and `runR_eq_run`
+(the run with the rename ends exactly as without it, so T1–T6 carry over). The links between the model and the
+filesystem (that the preserved inode holds the user's file, the final checks, the metadata) are the guard's checks
+and the tests, not the proof. *Recovery.* A crash before the checkout leaves the worktree untouched (the backups are
+removed by the next run); a crash after some renames leaves the `stashed` journal and the durable patch: the notice
+retires the orphan when everything is back, and otherwise its commands (the restore from the stash-time tree, then the
+apply) restore it, exactly as after a crash inside `git apply`, whose writes are not atomic either.
+**The one behavioural difference.** `git apply` reads each file, computes for about 100 ms, then unlinks and recreates
+it; a write landing in that window is lost too. The rename's window is the time between the final check of a file and
+its rename (microseconds). What differs is an autosave that lands between the last comparison and the restore *outside
+the user's hunks* of a file of the patch: `git apply` merges it (it checks hunks by their context: the K9 ¬G witness
+`a_hook_edit_outside_the_users_hunks_merges_without_a_rollback`), the final check sees it and falls back to that same
+`git apply`; only an autosave landing between the final check and the rename is overwritten instead of merged. The
+inode and birth time of a restored file are the original's (`git apply` makes new ones), and the restore spawns one
+process fewer. These are registered as D-PERF-05. `SNP_STASH_RESTORE=apply` restores `git apply` for every run.
+**Rejected.** (a) Restoring by rename without the oracle's proof (a hook or a converting attribute would be
+overwritten). (b) Per-file mixing of rename and apply (a partial apply of a patch is not something git does; the
+all-or-nothing rule keeps the restore one of the two). (c) macOS and Windows for now: macOS ACLs are not visible as
+extended attributes, Windows cannot rename over an open file; they keep `git apply` (no backups are made there).
+(d) Reading the umask from `/proc/self/status` or setting it (racy across threads): the checkout's fresh file already
+carries the mode `git apply` would give. (e) Keeping the backups for a K+ failure: the durable patch is the recovery
+source; the links are removed.
+**Consequences.** B8, locally (profiling builds of ADR-151's head and this ADR's head, the scenario's fixture and
+hermetic environment from `cargo xtask bench setup`, pinned to CPUs 1–4 of a shared, loaded machine): processes 17 →
+16 (no restore `git apply`); whole-tree syscalls 22,633 → 19,881 (`strace -f -c`; prek 18,379); tree CPU (median of 8)
+675.1 → 561.1 ms (prek 593.8); untraced wall in hyperfine-like blocks (per round and tool one discarded warm-up and 5
+timed runs, tools interleaved by round, 10 rounds): median 624.3 → 491.9 ms against prek's 570.8, the head faster than
+the base in 9 rounds of 10 (median of per-round differences −141.2 ms) and than prek in 7 (−61.1 ms). Interleaving
+single runs of different tools penalises the head: the previous tool's restore leaves 10 MB being written back that
+its checkout then replaces. Tests: twin-repository comparisons at the guard level (`behaviour/rename.rs`: the B8
+shape with an executable file in a subdirectory renamed; a hook edit, a touch, a `stage_fixed` staging, a mode change, a
+second hard link and a rename that fails after another fall back and end alike) and through the pipeline
+(`pipeline/restore_rename.rs`: also `SNP_DIFF_MODE=git`, `SNP_STASH_VERIFY=1`, an unstaged deletion, a converting
+filter); FI-31…FI-34 (a panic at each `StashBackup` step) and the driver's kill -9 rows at the same steps, recovered
+through the journal with every backup removed; journal and pointer round trips with `backups`, and the prefix
+validation. K9: `enter`, `Inner::{stash, secure, restore_patch, finish}` re-reviewed and refreshed;
+`Inner::{make_backups, rename_restore}`, `backup_one`, `rename_plan`, `rename_back`, `DiffOracle::restore_proof`,
+`RestoreProof::content_unchanged` and `ProofFile::stat_unchanged` anchored; two theorems and two witnesses added
+(docs/VERIFICATION.md §9.2).
 
 ### ADR-153 — The stash's write-tree and diff-index decided in-process on the provably clean path
 

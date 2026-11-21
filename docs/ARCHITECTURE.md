@@ -2102,6 +2102,9 @@ impl StashGuard {
     /// `stage_fixed` (§8.3): apply --check; journal `staging-fixed {paths}` durably; `git --literal-pathspecs add -- <paths>`;
     /// Ok(false) = would not apply (nothing staged).
     pub fn stage_fixed(&mut self, paths: &[RepoPath]) -> Result<bool, Failure>;
+    /// ADR-152: the DiffOracle's restore proof for `checked_out()`, taken after the last hook; the restore then renames
+    /// the preserved originals back instead of `git apply` when every check passes (§4.2 step 10a).
+    pub fn prove_restore(&mut self, proof: diff_oracle::RestoreProof);
     pub fn restore(self) -> Result<(), Failure>;
 }
 /// A journaled run that never restored (§4.6). Recovery hints use `git apply --whitespace=nowarn` (ADR-084; `--binary` patches carry
@@ -2150,6 +2153,11 @@ pub mod diff_oracle {   // ADR-027
                                        verify: bool) -> Elision;
         /// ADR-132: whether the next comparison's base is known (supplied, taken, and not made stale since).
         pub fn baseline_known(&self) -> bool;
+        /// ADR-152: `Some` only when ADR-119 proved the post-checkout state, every comparison since found the snapshot
+        /// (paths, racy contents, every input) unchanged, the last fingerprint is EMPTY and every checked-out path is a
+        /// regular `100644`/`100755` file of the snapshot (hashed when racy): each file's snapshot stat, hash and index
+        /// mode, `core.fileMode`, and when the worktree was last proven equal to the snapshot.
+        pub fn restore_proof(&self, checked_out: &snp_git::ZList) -> Option<RestoreProof>;
         /// ADR-132: the baseline a gated hook's first writer took becomes the hook's comparison base.
         pub fn adopt_baseline(&mut self, baseline: snp_git::DiffFingerprint);
                                        system: Option<&snp_git::SystemAttributes>, verify: bool) -> Elision;
@@ -3085,7 +3093,8 @@ make every interruption recoverable.
 Idle ──lock──▶ Locked ──(journal + git-dir pointer created lazily)──▶ Started ──ITA list journaled, rm --cached──▶ ItaCleared
    ──patch durable + journaled + re-verified──▶ PatchWritten ──checkout <patch paths>──▶ Stashed ──(hooks run)──▶
    [StagingFixed {paths} journaled ──git add──▶] Restoring
-   ──apply ok──▶ Restored ──ITA re-added──▶ Done (journal + pointer deleted, lock token truncated, unlock)
+   ──apply ok (or, ADR-152, the originals renamed back)──▶ Restored ──ITA re-added──▶ Done (journal + pointer deleted,
+   lock token truncated, unlock)
                                       └──apply fails twice──▶ RolledBack ──apply ok──▶ Restored
                                                                      └──apply fails──▶ Failed (K+: patch + journal kept)
 ```
@@ -3110,8 +3119,9 @@ notice).
    git <V> cannot stash intent-to-add files safely; snp requires git 2.19.0 or newer to stash unstaged changes (found
    <git>).` (exit 1, D-DATA-17).
 2. **Journal** `<store>/patches/run-<pid>-<rand>.snp-journal` (`{v, state, token, worktree, git_dir, common_dir,
-   index_file, head, pid, start_time, snp_version, ita:[…], tree, patch, staged_fixed:[…]}`) and the **git-dir pointer**
-   `<git_dir>/snp-stash.journal` (`{journal, patch, tree, state}`, so recovery works from any store — a GUI client with
+   index_file, head, pid, start_time, snp_version, ita:[…], tree, patch, staged_fixed:[…], backups}`; `backups`, Linux
+   only: the name prefix `snp-stash-bk-<pid>-<rand>` of step 8's hard-link backups, ADR-152) and the **git-dir pointer**
+   `<git_dir>/snp-stash.journal` (`{journal, patch, tree, state, backups}`, so recovery works from any store — a GUI client with
    another `SNP_HOME` still sees it) are created lazily with `create_new`, immediately before the first mutation (step
    3's `rm --cached` or step 8's checkout) — clean runs never touch the disk; every later state is written (temp +
    rename, fsync per the durability rule of §4.1) *before* the git mutation it describes. If the store is not writable
@@ -3184,12 +3194,31 @@ notice).
    from stdin, with `_PRE_COMMIT_SKIP_POST_CHECKOUT=1` and without `GIT_*_PATHSPECS`, `Role::Critical` (checked). A
    change git cannot see (a clean filter, `--assume-unchanged`) is never overwritten. A failure here still goes
    through restore (pre-commit's `finally` semantics).
+   ADR-152 (Linux, unless `SNP_STASH_RESTORE=apply`), right before this checkout and only after the stat-stamp
+   verification: every listed file is hard-linked to `<git_dir>/<backups prefix>-<n>` (the prefix is already in the
+   durable `stashed` journal). All or nothing, at most 1,000 files: a regular file with one link, no extended
+   attribute, on the lock's device, `max(ctime, mtime) < M0` (so it is the inode whose content the verified patch
+   recorded), and after the link the backup is that inode with two links and the same size and mtime; clocks checked
+   again after the last link. Any failure removes the backups made. The checkout then unlinks and recreates each file,
+   leaving the original inode under its backup name only.
 9. Hooks run. `stage_fixed` (extension) may stage files via `StashGuard::stage_fixed` (§8.3).
 10. **Restore** (always, §4.4), every command `Role::Critical` (Isolated group, never signalled, never cancelled,
     `GIT_TERMINAL_PROMPT=0`, a SIGTTIN/SIGTTOU stop fails the command with one stderr line `snp: git needed the
     terminal during the restore and was stopped`), under a `RestoreShield`; on the cancel path `registry::quiesce`
     first kills the cancelled hooks' remaining descendants (§10.4):
-    a. `git apply --whitespace=nowarn <patch>`; on failure `git -c core.autocrlf=false apply --whitespace=nowarn <patch>`.
+    a. ADR-152's **restore by rename**, when the caller handed over the DiffOracle's proof (`StashGuard::prove_restore`:
+       ADR-119 proved the post-checkout state and every comparison since found it unchanged), backups exist for every
+       file, nothing was staged by `stage_fixed` and no intent-to-add entry was cleared. Every file is checked first,
+       nothing changed: under `core.fileMode` the original's executable bit is its index mode's (no mode change in the
+       patch); the checked-out file has the snapshot's `lstat` (and, when racy against the last proof, its content
+       hash), one link, not the backup's inode, no extended attribute; the backup is still its inode, with one link,
+       its size and mtime, the checked-out file's owner and group, no extended attribute. Then, file by file: the
+       `lstat` again, the backup's mode set to the checked-out file's permission bits (what `git apply`'s fresh file
+       gets: `0666`/`0777` minus the umask, as the checkout's), its times to now (`futimens(UTIME_NOW)`), and
+       `rename(backup, file)`. A failed check or first rename → `git apply` below; a later failure → the checkout of
+       step 8 again over every backed-up path (silent), then `git apply` below. No restore `git apply` runs on success.
+       Otherwise `git apply --whitespace=nowarn <patch>`; on failure `git -c core.autocrlf=false apply --whitespace=nowarn
+       <patch>`.
     b. Both failed → journal `rolling-back`; `[WARNING] Stashed changes conflicted with hook auto-fixes... Rolling back
        fixes...`; the checkout of step 8 over the patch's files followed by every other file `git diff --name-only`
        lists (`Git::rollback_paths`: every hook fix git can see is discarded, D-DATA-19); apply again (both
@@ -3203,8 +3232,9 @@ notice).
        restored patches after 30 days, D-DATA-04).
     e. `SNP_STASH_VERIFY=1`: `verify_restored` warns on stderr if the patch is not present in the worktree (never
        changes the outcome).
-11. **ITA re-add:** `git add --intent-to-add -- …` (partitioned, rc ignored, `Role::Critical`); journal and pointer
-    deleted; lock token truncated; worktree lock released.
+11. **ITA re-add:** `git add --intent-to-add -- …` (partitioned, rc ignored, `Role::Critical`); every remaining backup
+    link removed (ADR-152, on every path, success, fallback and K+ alike); journal and pointer deleted; lock token
+    truncated; worktree lock released.
 
 ### 4.3 Crash and signal safety
 
@@ -3268,7 +3298,10 @@ are removed and `snp: the unstaged changes saved in <patch> are back in the work
 interrupted run is retired` is printed once (plus the intent-to-add notice when the run had cleared entries).
 `snp doctor --fix --stash` retires every orphan of the worktree explicitly, applied or not, naming each kept patch.
 Retiring never deletes the patch; its modification time is reset, so `gc`'s 30-day retention (D-DATA-04) counts from
-the retirement. `snp doctor` lists the orphans; `snp cache gc`/`gc` never deletes a journaled patch.
+the retirement. `snp doctor` lists the orphans; `snp cache gc`/`gc` never deletes a journaled patch. ADR-152: every
+pass with the lock held (and the explicit dismissal) also removes the hard-link backups each found journal names
+(`<git_dir>/<backups>-<n>`, the prefix validated as `snp-stash-bk-<digits>-<hex>`), whatever the run's state: they
+only duplicate what its durable, verified patch holds, and the notice's commands restore from the patch.
 
 ### 4.7 Fault-injection coverage (`snp_git::testing::ScriptedBackend`)
 
@@ -3282,7 +3315,9 @@ a hook that exits at once and a slow `git apply` that must survive the 2 s grace
 hook leaving `sh -c '(sleep 1; printf x >> tracked.txt) &'` plus SIGTERM to snp's pid (worktree + index equal the
 pre-run state after restore; Linux), an autosave between diff-index and checkout (re-verify rewrites the patch), a
 restore command stopped by SIGTTIN (posix), git < 2.19 with unstaged changes (refused before mutation), kill-9 at
-`StagingFixed`. Invariant asserted after each: worktree + index + patch + journal together reconstruct the pre-run
+`StagingFixed`; ADR-152 (Linux): a panic (FI-31…FI-34) and a kill -9 at each `StashBackup(n)` step (after the backups,
+before the first and the second rename, after the last), the backups removed by the `Drop` fallback or by the next
+run's recovery. Invariant asserted after each: worktree + index + patch + journal together reconstruct the pre-run
 state (`git diff <tree>` vs the original unstaged diff bytes), and the recovery notice names a command that restores
 it.
 

@@ -326,6 +326,17 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   rewrite), locally: about 7,300 fewer syscalls in the whole tree (24,018 → 16,705), context switches 8,694 → 791,
   tree CPU 669 → 634 ms, and the run about 54 ms shorter (median of 25 interleaved pairs on a loaded machine; much of
   it from the numstat's parse overlapping the patch's writeback).
+- On Linux the stash can be restored without `git apply` (ADR-152, the owner's decision; divergence D-PERF-05). Right
+  before the checkout snp hard-links every file of the patch into the git dir (under a name the journal records
+  first); when the hooks changed none of those files and nothing converts them (the diff oracle's proof, ADR-119),
+  the restore renames the originals back, with the mode and times `git apply`'s fresh file would have. The bytes,
+  modes, `git status`, `git diff`, the index and every message are the same; the inode and birth time are the
+  original's, and one process fewer runs. Any doubt (a hook edit or touch, `stage_fixed`, an intent-to-add entry, a
+  mode change, a second hard link, extended attributes, a deleted file, a converting attribute, over 1,000 files)
+  falls back to `git apply`; every exit removes the links, and the next run's recovery removes those a crash left.
+  An autosave that lands between the final check and the rename is overwritten rather than merged.
+  `SNP_STASH_RESTORE=apply` always uses `git apply`. On B8, locally: 17 → 16 processes, tree CPU 675 → 561 ms, and
+  the run about 140 ms shorter in hyperfine-like blocks (median 624 → 492 ms; prek 0.5.11: 571 ms).
 
 ### Fixed
 

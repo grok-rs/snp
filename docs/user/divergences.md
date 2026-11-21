@@ -2,7 +2,7 @@
 
 # DIVERGENCES
 
-snp reproduces pre-commit 4.7.0 byte for byte. This book lists **every** deliberate difference (91
+snp reproduces pre-commit 4.7.0 byte for byte. This book lists **every** deliberate difference (92
 entries): each one is admissible only because pre-commit crashes, loses data or has a security bug there, or
 because an owner decision forces it (snp's own store, its name, no `unsafe`, performance), or because it is
 visible only when you use an snp extension. Every entry has a differential test that fails the build when the
@@ -20,7 +20,7 @@ the normative register is `docs/COMPATIBILITY.md` §5 in the repository.
 | [5.3 SEC — security](#53-sec--security) | [D-SEC-01](#d-sec-01) [D-SEC-05](#d-sec-05) [D-SEC-06](#d-sec-06) [D-SEC-07](#d-sec-07) [D-SEC-08](#d-sec-08) [D-SEC-09](#d-sec-09) [D-SEC-10](#d-sec-10) [D-SEC-11](#d-sec-11) [D-SEC-12](#d-sec-12) [D-SEC-13](#d-sec-13) |
 | [5.4 STORE and BRAND — forced by FD-2 and FD-1](#54-store-and-brand--forced-by-fd-2-and-fd-1) | [D-STORE-01](#d-store-01) [D-STORE-02](#d-store-02) [D-DATA-04](#d-data-04) [D-BRAND-01](#d-brand-01) [D-BRAND-02](#d-brand-02) [D-MISC-02](#d-misc-02) |
 | [5.5 PLAT — platform](#55-plat--platform) | [D-PLAT-02](#d-plat-02) [D-PLAT-03](#d-plat-03) [D-PLAT-06](#d-plat-06) [D-PLAT-08](#d-plat-08) [D-PLAT-09](#d-plat-09) [D-PLAT-10](#d-plat-10) [D-PLAT-12](#d-plat-12) |
-| [5.6 PERF — forced by FD-7/FD-8, invisible in hook output](#56-perf--forced-by-fd-7fd-8-invisible-in-hook-output) | [D-PERF-01](#d-perf-01) [D-PERF-02](#d-perf-02) [D-PERF-03](#d-perf-03) [D-PERF-04](#d-perf-04) |
+| [5.6 PERF — forced by FD-7/FD-8, invisible in hook output](#56-perf--forced-by-fd-7fd-8-invisible-in-hook-output) | [D-PERF-01](#d-perf-01) [D-PERF-02](#d-perf-02) [D-PERF-03](#d-perf-03) [D-PERF-04](#d-perf-04) [D-PERF-05](#d-perf-05) |
 | [5.7 EXT — observable only when an snp extension is used](#57-ext--observable-only-when-an-snp-extension-is-used) | [D-EXT-01](#d-ext-01) [D-EXT-02](#d-ext-02) [D-EXT-03](#d-ext-03) [D-EXT-04](#d-ext-04) [D-EXT-05](#d-ext-05) [D-EXT-06](#d-ext-06) [D-EXT-07](#d-ext-07) [D-EXT-08](#d-ext-08) [D-EXT-09](#d-ext-09) |
 | [5.8 DIAG — always-on stderr diagnostics (stdout and exit codes unchanged)](#58-diag--always-on-stderr-diagnostics-stdout-and-exit-codes-unchanged) | [D-DIAG-01](#d-diag-01) [D-DIAG-02](#d-diag-02) [D-DIAG-03](#d-diag-03) [D-DIAG-04](#d-diag-04) [D-DIAG-05](#d-diag-05) [D-DIAG-06](#d-diag-06) |
 | [5.9 TIERB — Python-internal bytes](#59-tierb--python-internal-bytes) | [D-MISC-04](#d-misc-04) [D-MISC-05](#d-misc-05) [D-MISC-06](#d-misc-06) [D-MISC-07](#d-misc-07) [D-MISC-08](#d-misc-08) [D-MISC-09](#d-misc-09) |
@@ -4025,6 +4025,51 @@ run
 ```
 
 With `SNP_DOCKER_ALWAYS_BUILD=1`, snp's log equals pre-commit's.
+
+### D-PERF-05
+
+on Linux a proven stash restore renames the preserved originals back instead of running `git apply`
+
+* **Class:** PERF (COMPATIBILITY §5.6)
+
+##### Register entry (COMPATIBILITY §5.6)
+
+| pre-commit 4.7.0 | snp |
+|---|---|
+| the stash's restore runs `git apply`, which writes every file of the patch anew | on Linux, when the DiffOracle proves the hooks left those files as the checkout wrote them and nothing converts them (ADR-152), the originals hard-linked before the checkout are renamed back: same bytes, mode, git state and output; the inode and birth time are the original's, one process fewer runs, and an autosave landing between the final check and the rename is overwritten instead of merged; `SNP_STASH_RESTORE=apply` restores `git apply` |
+
+##### Rationale
+
+pre-commit restores the unstaged changes with `git apply --whitespace=nowarn <patch>` (`staged_files_only.py:26-33`):
+git reads the whole patch, checks each file's pre-image and writes each file again (unlink, then `open(O_CREAT|O_EXCL)`
+with `0666` or `0777` minus the umask). For a large unstaged change that is the longest step after the diff itself
+(about 140 ms for a 10 MB rewrite). The stash's checkout unlinks and recreates every file it writes too, so a hard
+link made just before it keeps the user's original file, byte for byte, under another name.
+
+When the diff oracle proves that every file of the patch still holds exactly what the checkout wrote (its index
+blob: ADR-119's proof of the post-checkout state, and every comparison after the hooks found it unchanged) and that
+no attribute or setting converts it, `git apply` would succeed and leave each file holding exactly the user's
+original bytes. snp then renames the originals back instead, after checking every file again (stat and, when racy,
+content; one link; owner, group; no extended attributes; no mode change in the patch), and gives each the mode and
+times `git apply`'s fresh file would have (the checkout's fresh file has that mode already). Any doubt, error or
+partial failure falls back to `git apply` (a partial rename first checks the files out again).
+
+##### What differs
+
+* The restored file is the original inode: its inode number and birth time are the user's file's, not a new file's.
+  Its content, mode, owner, group and modification time (now) are what `git apply` leaves, and `git status`,
+  `git diff` and the index report exactly the same.
+* One process fewer (no restore `git apply`).
+* A write to a file of the patch that lands between snp's final check of that file and its rename (microseconds) is
+  overwritten. `git apply` has a window of the same kind (it reads, computes, then unlinks and recreates the file),
+  but merges an edit outside the user's hunks that lands before it reads; with the rename such an edit is merged only
+  when it lands before the final check (which then falls back to `git apply`).
+* Not on macOS, Windows or other systems, and never with `SNP_STASH_RESTORE=apply`.
+
+##### Reproduction
+
+Inode identity and the race window are not visible to the differential harness, which compares bytes, modes, the
+index and the transcripts (all equal by design): the scenario file is `status: unit` and names the tests that pin it.
 
 ## 5.7 EXT — observable only when an snp extension is used
 
