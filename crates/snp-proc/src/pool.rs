@@ -95,6 +95,11 @@ struct PoolState {
     next_ticket: u64,
     /// The ticket allowed to take the next permit.
     serving: u64,
+    /// Threads blocked (or about to block) in the condition variable's wait (ADR-150): counted under the lock
+    /// before waiting and uncounted after waking, so a thread that changes `available` or `serving` and sees 0
+    /// here knows that every other acquirer will re-check the state before waiting, and skips the notification
+    /// (std's futex condvar makes a syscall for every `notify_all`).
+    waiters: usize,
 }
 
 /// The global bound on concurrent child processes / native partitions (S7). Fair FIFO handout.
@@ -114,6 +119,9 @@ pub struct JobPool {
     permits: NonZeroUsize,
     /// The cores CPU-bound fan-outs are capped at (ADR-101; `permits` when not given).
     cores: NonZeroUsize,
+    /// How often a blocked `acquire` re-checks its cancellation token ([`POLL`]; longer in the lost-wakeup test,
+    /// where a missed notification would then show as a stall).
+    poll: Duration,
 }
 
 /// One permit of a [`JobPool`]; releases on drop.
@@ -137,8 +145,11 @@ impl Drop for Permit<'_> {
         }
         let mut st = sync::lock(&self.pool.state);
         st.available = st.available.saturating_add(1);
+        let wake = st.waiters > 0;
         drop(st);
-        self.pool.cv.notify_all();
+        if wake {
+            self.pool.cv.notify_all();
+        }
     }
 }
 
@@ -160,11 +171,13 @@ impl JobPool {
                 available: permits.get(),
                 next_ticket: 0,
                 serving: 0,
+                waiters: 0,
             }),
             cv: Condvar::new(),
             cancel,
             permits,
             cores,
+            poll: POLL,
         })
     }
 
@@ -221,15 +234,21 @@ impl JobPool {
                 if st.serving == ticket {
                     st.serving = st.serving.wrapping_add(1);
                 }
+                let wake = st.waiters > 0;
                 drop(st);
-                self.cv.notify_all();
+                if wake {
+                    self.cv.notify_all();
+                }
                 return None;
             }
             if st.serving == ticket && st.available > 0 {
                 st.available = st.available.saturating_sub(1);
                 st.serving = st.serving.wrapping_add(1);
+                let wake = st.waiters > 0;
                 drop(st);
-                self.cv.notify_all();
+                if wake {
+                    self.cv.notify_all();
+                }
                 let held = held_counter();
                 if let Some(h) = &held {
                     h.fetch_add(1, Ordering::AcqRel);
@@ -240,10 +259,13 @@ impl JobPool {
                     held,
                 });
             }
-            st = match self.cv.wait_timeout(st, POLL) {
+            // Counted before the wait releases the lock, uncounted once it holds it again (before the re-check).
+            st.waiters = st.waiters.saturating_add(1);
+            st = match self.cv.wait_timeout(st, self.poll) {
                 Ok((g, _)) => g,
                 Err(poisoned) => poisoned.into_inner().0,
             };
+            st.waiters = st.waiters.saturating_sub(1);
         }
     }
 
@@ -735,6 +757,63 @@ mod tests {
             pool.map_ordered(nz(2), 1, Ok).as_slice(),
             [Err(Failure::Interrupted(CancelReason::Terminate))]
         ));
+    }
+
+    /// ADR-150: `notify_all` only when a waiter is counted loses no wakeup. The cancellation poll is 60 s here, so
+    /// a missed notification stalls the FIFO head (every later ticket waits behind it while nobody holds a permit)
+    /// and the test overruns its time bound. Many threads hammer `acquire`/drop and `map_ordered` on 1-3 permits;
+    /// the permit bound holds throughout, every permit comes back and no waiter is left counted.
+    #[test]
+    fn notify_only_when_waiting_loses_no_wakeup() {
+        let start = Instant::now();
+        for permits in 1..=3 {
+            let mut pool = JobPool::new(nz(permits), CancelToken::new());
+            Arc::get_mut(&mut pool).unwrap().poll = Duration::from_secs(60);
+            let running = AtomicUsize::new(0);
+            let peak = AtomicUsize::new(0);
+            let work = |spin: usize| {
+                let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(now, Ordering::SeqCst);
+                for _ in 0..spin {
+                    std::hint::spin_loop();
+                }
+                if spin.is_multiple_of(7) {
+                    std::thread::yield_now();
+                }
+                running.fetch_sub(1, Ordering::SeqCst);
+            };
+            std::thread::scope(|s| {
+                for t in 0..8usize {
+                    let (pool, work) = (&pool, &work);
+                    std::thread::Builder::new()
+                        .spawn_scoped(s, move || {
+                            for round in 0..1500 {
+                                if (round + t).is_multiple_of(50) {
+                                    let out = pool.map_ordered(nz(4), 6, |i| {
+                                        work(i);
+                                        Ok(i)
+                                    });
+                                    assert!(out.iter().all(Result::is_ok));
+                                } else {
+                                    let p = pool.acquire().unwrap();
+                                    work(round % 13);
+                                    drop(p);
+                                }
+                            }
+                        })
+                        .unwrap();
+                }
+            });
+            assert!(peak.load(Ordering::SeqCst) <= permits);
+            let st = sync::lock(&pool.state);
+            assert_eq!((st.available, st.waiters), (permits, 0));
+            assert_eq!(st.next_ticket, st.serving);
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(30),
+            "a wakeup was lost: {:?}",
+            start.elapsed()
+        );
     }
 
     #[test]
