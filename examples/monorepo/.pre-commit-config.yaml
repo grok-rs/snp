@@ -1,0 +1,66 @@
+# A polyglot monorepo: each tool sees only its own directory, through `files:` regexes.
+#
+#   services/api/   Python (ruff)
+#   services/core/  Rust (cargo fmt, run from that directory)
+#   web/            TypeScript (prettier, ESLint)
+#   scripts/        shell scripts (shellcheck)
+#   .github/        GitHub Actions workflows (check-github-workflows)
+#
+# Valid for pre-commit 4.7.0 and snp alike; no snp extension is used.
+exclude: ^(vendor/|third_party/|web/dist/)   # never handed to any hook
+repos:
+  # Repository-wide checks: no `files:`, they see everything that is not excluded.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]   # Kubernetes manifests under deploy/
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: check-case-conflict
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.6
+    hooks:
+      - id: ruff-check
+        files: ^services/api/
+        args: [--fix]
+      - id: ruff-format
+        files: ^services/api/
+
+  - repo: https://github.com/rbubley/mirrors-prettier
+    rev: v3.10.1
+    hooks:
+      - id: prettier
+        files: ^web/
+        types_or: [javascript, jsx, ts, tsx, css, json]
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        files: ^scripts/
+
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.39.0
+    hooks:
+      - id: check-github-workflows   # its own `files:` already matches .github/workflows/
+
+  - repo: local
+    hooks:
+      # Hooks run in the repository root with root-relative file names: name the config
+      # explicitly (npm workspaces hoist eslint into the root node_modules).
+      - id: eslint-web
+        name: eslint (web)
+        entry: npx --no-install eslint --config web/eslint.config.js --max-warnings=0
+        language: system
+        files: ^web/src/.*\.(js|jsx|ts|tsx)$
+      - id: cargo-fmt-core
+        name: cargo fmt (services/core)
+        entry: cargo fmt --manifest-path services/core/Cargo.toml --all
+        language: system
+        files: ^services/core/
+        types: [rust]
+        pass_filenames: false

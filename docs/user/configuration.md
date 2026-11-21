@@ -32,6 +32,9 @@ schema, for editor integration.
 On top of that, snp understands a small set of **extension keys**, all optional. Absent keys mean exact pre-commit
 behaviour.
 
+Complete configs to copy, for common project types and for the features below, are in the repository's
+[`examples/`](https://github.com/grok-rs/snp/tree/main/examples) directory.
+
 ## Config file name
 
 Without `-c/--config`, snp looks in the repository root for, in this order:

@@ -1,0 +1,61 @@
+# snp extension keys (lefthook-style), converted from lefthook.yml next to this file.
+# Every key below is optional; without them snp behaves exactly as pre-commit 4.7.0.
+# Under Python pre-commit the hook-level extension keys only print
+# "[WARNING] Unexpected key(s) present", but the file is meant for snp: it is named .snp.yaml.
+minimum_snp_version: "2.0.1"     # older snp versions refuse the file with a clear message
+fail_on_changes: never           # lefthook's default: a hook that only fixes files does not fail
+output: summary                  # footer with wall time and per-hook durations
+default_install_hook_types: [pre-commit, pre-push]
+priorities:                      # names for `priority`; lower runs first
+  fast: 0
+  slow: 10
+repos:
+  - repo: local
+    hooks:
+      # `fmt` and `lint` share the priority `fast`: one bucket, run concurrently
+      # (lefthook's `parallel: true`). Output stays in config order.
+      - id: fmt
+        name: cargo fmt
+        entry: cargo fmt --
+        language: system
+        types: [rust]
+        require_serial: true     # one `cargo fmt` call with every staged file
+        priority: fast
+        groups: [rust, quick]
+        stage_fixed: true        # re-stage the files it formatted (checks the patch applies)
+      - id: lint
+        name: eslint (web)
+        entry: npx --no-install eslint --max-warnings=0
+        language: system
+        types_or: [javascript, ts]
+        root: web                # runs in web/, gets only files under web/, relative to it
+        env: {ESLINT_USE_FLAT_CONFIG: "true"}   # literal values, no $VAR expansion
+        priority: fast
+        groups: [web, quick]
+      - id: test
+        name: cargo test
+        entry: cargo test --workspace
+        language: system
+        pass_filenames: false
+        priority: slow           # starts after the `fast` bucket has finished
+        groups: [rust]
+        skip: [merge, rebase]    # not while git is merging or rebasing
+        timeout: 10m             # TERM, then KILL 2 s later; counts as a failure
+        fail_text: run `cargo test` locally to reproduce
+      - id: audit
+        name: cargo deny
+        entry: cargo deny check
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        only:                    # list items are alternatives (OR); keys of one map must all hold (AND)
+          - {ref: main}
+          - {ref: "release/*", ci: false}
+      - id: push-refs
+        name: show pushed refs
+        entry: cat
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+        use_stdin: true          # receives git's "<local ref> <sha> <remote ref> <sha>" lines

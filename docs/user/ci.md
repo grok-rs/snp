@@ -51,6 +51,9 @@ directory is the one snp uses: `SNP_HOME`, else `$XDG_CACHE_HOME/snp`, else `~/.
 - run: snp run --show-diff-on-failure --color=always --all-files
 ```
 
+A complete workflow with both variants, and a config that also validates the workflow files, is in
+[`examples/ci-github-actions`](https://github.com/grok-rs/snp/tree/main/examples/ci-github-actions).
+
 The cache key:
 
 * `snp-1` is the version of the key scheme (the counterpart of `pre-commit-3` in `pre-commit/action`); it differs from
