@@ -1448,11 +1448,7 @@ fn hook_dir_matches_v1_under_git() {
     let rlink = root.join("rlink");
     std::os::unix::fs::symlink(&r, &rlink).unwrap();
     let wt = root.join("wt");
-    ok(git(
-        &env,
-        &r,
-        &["worktree", "add", wt.to_str().unwrap()],
-    ));
+    ok(git(&env, &r, &["worktree", "add", wt.to_str().unwrap()]));
     std::fs::create_dir_all(wt.join("sub")).unwrap();
     let wtlink = root.join("wtlink");
     std::os::unix::fs::symlink(&wt, &wtlink).unwrap();
