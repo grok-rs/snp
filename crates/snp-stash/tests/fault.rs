@@ -29,7 +29,9 @@ mod fi {
     use snp_git::GitBackend;
     use snp_git::testing::{Response, ScriptedBackend};
 
-    use crate::common::{FOO, Sandbox, backups_in, exc, prove_around};
+    use crate::common::{FOO, Sandbox, exc};
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    use crate::common::{backups_in, prove_around};
 
     /// Fault points are process-global: one case at a time.
     static SERIAL: Mutex<()> = Mutex::new(());

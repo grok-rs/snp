@@ -620,6 +620,7 @@ impl GitBackend for Spy {
 /// hook: the oracle built from the post-checkout index and configuration, ADR-119's elision of the checkout's
 /// baseline, one comparison around `hook`, and the restore proof handed to the guard. Returns whether a proof was
 /// handed over.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub(crate) fn prove_around(
     sb: &Sandbox,
     repo: &Path,
@@ -655,6 +656,7 @@ pub(crate) fn prove_around(
 }
 
 /// ADR-152: the hard-link backups left in a git dir (`snp-stash-bk-*`).
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub(crate) fn backups_in(git_dir: &Path) -> Vec<String> {
     std::fs::read_dir(git_dir).map_or_default(|rd| {
         rd.filter_map(Result::ok)
