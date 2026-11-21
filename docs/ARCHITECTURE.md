@@ -2956,7 +2956,7 @@ O(1) memory) and decides per executed hook with `snp_stash::diff_oracle::DiffOra
      target); one `lstat` call gives both unless the input is a symlink.
    - **Racy entries** (mtime ≥ snapshot time − 2 s, git's own racy rule) are content-hashed with blake3 at snapshot
      time instead of disabling the oracle (after a stash checkout, every rewritten file is racy and is hashed). A file
-     of at least 4 MiB is hashed on up to 8 threads along blake3's own tree, with the same digest (ADR-151; any short
+     of at least 32 MiB is hashed on up to 8 threads along blake3's own tree, with the same digest (ADR-151; any short
      read or a file longer than its `fstat` size hashes sequentially).
    - After the hook: re-stat (parallel chunks when > 2 048 entries). Every tuple identical and every racy hash
      identical → **unchanged, no spawn**. Anything else → run the real `git diff`, compare digests (exact), take the

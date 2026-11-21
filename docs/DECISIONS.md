@@ -3566,7 +3566,7 @@ crate, `Cargo.lock` unchanged) and snp's read end made non-blocking; then everyt
 at most 64 KiB (the channel's memory bound is unchanged) and an empty pipe means a 1 ms nap; after 8 empty polls the
 reader goes back to blocking reads. A refused switch (pipe-size limits) keeps the blocking reads; other platforms
 keep the plain reader. The 1 MiB pipe is what makes the nap safe: at about 100 MB/s git fills a 64 KiB pipe in
-0.6 ms. (3) *Parallel hash.* The oracle hashes a racy file of at least 4 MiB on up to 8 threads (one per CPU): the
+0.6 ms. (3) *Parallel hash.* The oracle hashes a racy file of at least 32 MiB on up to 8 threads (one per CPU; first set at 4 MiB, raised before merge because each parallel hash starts its helper threads anew: on B8's 10 MiB file that was about nine extra threads per run on a 4-CPU runner for about 3 ms, and it tripped the bench's `clones` counter gate): the
 input is split along blake3's own tree (`hazmat::left_subtree_len`) into subtrees of at least 1 MiB, read with
 positional reads, and their chaining values merged as blake3 merges them, so the digest is `blake3::hash` of the
 bytes. A short read, a file longer than its `fstat` size, a read error, one CPU or a non-Unix platform hash

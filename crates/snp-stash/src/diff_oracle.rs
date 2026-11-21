@@ -323,9 +323,15 @@ fn content_hash(p: &Path, kind: Kind, follow: bool) -> Option<[u8; 32]> {
     Some(*h.finalize().as_bytes())
 }
 
-/// ADR-151: files of at least this many bytes are hashed by [`par_file_hash`].
+/// ADR-151: the smallest size [`par_hash_len`] splits (below it one thread is as fast).
 #[cfg(unix)]
 const PAR_HASH_MIN: u64 = 4 << 20;
+/// ADR-151: files of at least this many bytes are hashed on several threads by [`par_file_hash`]. Higher than
+/// [`PAR_HASH_MIN`]: each parallel hash starts its helper threads anew, and below this size the few milliseconds it
+/// saves do not pay for them (B8's 10 MiB file, hashed a few times per run, added about nine threads per run on a
+/// 4-CPU runner for about 3 ms).
+#[cfg(unix)]
+const PAR_FILE_HASH_MIN: u64 = 32 << 20;
 /// ADR-151: the smallest subtree one thread of [`par_file_hash`] hashes.
 #[cfg(unix)]
 const PAR_HASH_SEGMENT: u64 = 1 << 20;
@@ -333,7 +339,7 @@ const PAR_HASH_SEGMENT: u64 = 1 << 20;
 #[cfg(unix)]
 const PAR_HASH_THREADS: usize = 8;
 
-/// ADR-151: blake3 of a file of at least [`PAR_HASH_MIN`] bytes, computed on several threads (`par_hash_len`).
+/// ADR-151: blake3 of a file of at least [`PAR_FILE_HASH_MIN`] bytes, computed on several threads (`par_hash_len`).
 /// The size is checked first, so a smaller file (the common racy case) costs one `fstat` and no thread-count query;
 /// the thread count is read once per process. `None` (the caller hashes sequentially) for a smaller file, one
 /// available thread, a non-Unix platform or any failure of `par_hash_len`.
@@ -342,7 +348,7 @@ fn par_file_hash(f: &std::fs::File) -> Option<[u8; 32]> {
     {
         static THREADS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
         let len = f.metadata().ok()?.len();
-        if len < PAR_HASH_MIN {
+        if len < PAR_FILE_HASH_MIN {
             return None;
         }
         let threads =
