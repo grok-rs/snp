@@ -283,7 +283,8 @@ fn journal_and_pointer_are_durable_before_the_checkout() {
     assert_eq!(patch, original);
     assert!(in_store);
     // The command sequence is pre-commit's (02 §7) plus, D-DATA-19, the patch's paths for a checkout limited to them
-    // and then the re-verification: the verification is the last read of the worktree before the checkout. ADR-097:
+    // (ADR-151: git's numstat reads the patch on stdin while diff-index prints it, so it starts during the diff) and
+    // then the re-verification: the verification is the last read of the worktree before the checkout. ADR-097:
     // where stat stamps can prove nothing changed since the lock was taken, the re-verification is the name-only
     // diff-index (no file outside the patch changed) plus a stamp pass; elsewhere the second content diff-index.
     let calls = spy.calls();
@@ -311,7 +312,7 @@ fn journal_and_pointer_are_durable_before_the_checkout() {
             format!(
                 "diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff {tree_arg} --"
             ),
-            format!("apply --numstat -z --whitespace=nowarn {}", p.display()),
+            "apply --numstat -z --whitespace=nowarn".to_owned(),
             verification,
             checkout,
         ]
@@ -338,7 +339,8 @@ fn autosave_between_diff_index_and_checkout_is_caught() {
     sb.write(&repo, "foo", b"herp\n");
     let spy = Spy::new();
     {
-        // After the patch is durable, while its paths are listed: the latest point before the verification.
+        // While the patch's paths are listed (ADR-151: the listing starts at the patch's first byte, after git read
+        // the file it prints), before the verification.
         let repo = repo.clone();
         spy.before(
             &["apply", "--numstat"],
@@ -389,6 +391,46 @@ fn a_failing_patch_listing_leaves_the_worktree_untouched() {
     assert_eq!(sb.read(&repo, "foo"), b"herp\n");
     assert!(sb.patch_files().is_empty(), "{:?}", sb.patch_files());
     assert!(!repo.join(".git/snp-stash.journal").exists());
+}
+
+/// ADR-151's fallback: the listing fed during the diff fails (here a scripted exit 128 of that first numstat only), so
+/// the paths come from the file-based `git apply --numstat -z --whitespace=nowarn <patch>`, and the stash goes on
+/// exactly as without the fed listing.
+#[test]
+fn a_failing_fed_listing_falls_back_to_the_file_based_one() {
+    let sb = Sandbox::new();
+    let repo = sb.foo_staged("r");
+    sb.write(&repo, "foo", b"herp\n");
+    let spy = Spy::new();
+    spy.on(
+        &["apply", "--numstat"],
+        Some(1),
+        Reply::Exit(128, Vec::new(), b"fatal: scripted\n".to_vec()),
+    );
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+    let (cx, out, _) = sb.ctx_with(git, info);
+    let g = snp_stash::enter(cx).unwrap();
+    let p = patch_of(&g);
+    let listings: Vec<String> = spy
+        .calls()
+        .into_iter()
+        .filter(|c| c.starts_with("apply --numstat"))
+        .collect();
+    assert_eq!(
+        listings,
+        [
+            "apply --numstat -z --whitespace=nowarn".to_owned(),
+            format!("apply --numstat -z --whitespace=nowarn {}", p.display()),
+        ]
+    );
+    assert_eq!(sb.read(&repo, "foo"), FOO.as_bytes());
+    assert!(
+        out.text().contains("Stashing unstaged files to"),
+        "{}",
+        out.text()
+    );
+    g.restore().unwrap();
+    assert_eq!(sb.read(&repo, "foo"), b"herp\n");
 }
 
 /// The verification outcome wins over a listing error: the changes vanished while the paths were listed, so there
@@ -1166,27 +1208,28 @@ fn old_git_container_refuses_only_a_non_empty_stash() {
     assert_eq!(sb.read(&repo, "foo"), b"herp\n");
 }
 
-/// ADR-133: `checkout_notice` is sent exactly once, before step 8's checkout starts, and is dropped unsent (the
-/// receiver disconnects) on a run with nothing to stash and on a run that fails before the stash steps, while the
-/// guard is still alive, so a receiver waiting for it never blocks past `enter`. The stash itself is unchanged.
+/// ADR-133: `checkout_notice` is sent exactly once, at the patch's first byte (ADR-151: before the patch's paths are
+/// listed, so well before step 8's checkout), and is dropped unsent (the receiver disconnects) on a run with nothing
+/// to stash and on a run that fails before the stash steps, while the guard is still alive, so a receiver waiting for
+/// it never blocks past `enter`. The stash itself is unchanged.
 #[test]
 fn checkout_notice_comes_before_the_checkout_and_only_with_one() {
     use std::sync::mpsc::{RecvTimeoutError, TryRecvError, sync_channel};
-    // a checkout: the notice is already there when the checkout command starts
+    // a checkout: the notice is already there when the listing (fed during the diff) starts
     let sb = Sandbox::new();
     let repo = sb.foo_staged("r");
     sb.write(&repo, "foo", b"herp\n");
     let (tx, rx) = sync_channel::<()>(1);
     let rx = Arc::new(Mutex::new(rx));
-    let at_checkout = Arc::new(Mutex::new(None));
+    let at_listing = Arc::new(Mutex::new(None));
     let spy = Spy::new();
     {
-        let (rx, at_checkout) = (Arc::clone(&rx), Arc::clone(&at_checkout));
+        let (rx, at_listing) = (Arc::clone(&rx), Arc::clone(&at_listing));
         spy.before(
-            &["-c", "submodule.recurse=0", "checkout"],
+            &["apply", "--numstat"],
             Some(1),
             Box::new(move |_| {
-                *at_checkout.lock().unwrap() = Some(rx.lock().unwrap().try_recv());
+                *at_listing.lock().unwrap() = Some(rx.lock().unwrap().try_recv());
             }),
         );
     }
@@ -1195,7 +1238,7 @@ fn checkout_notice_comes_before_the_checkout_and_only_with_one() {
     cx.checkout_notice = Some(tx);
     let g = snp_stash::enter(cx).unwrap();
     assert!(g.checked_out().is_some());
-    assert_eq!(at_checkout.lock().unwrap().take(), Some(Ok(())));
+    assert_eq!(at_listing.lock().unwrap().take(), Some(Ok(())));
     assert_eq!(
         rx.lock().unwrap().try_recv(),
         Err(TryRecvError::Disconnected)

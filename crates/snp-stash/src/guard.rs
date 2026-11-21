@@ -33,7 +33,9 @@ use snp_core::failure::Failure;
 use snp_core::fault::{self, Point};
 use snp_core::output::{Level, Printer};
 use snp_core::path::RepoPath;
-use snp_git::{ConfigListing, DiffIndex, Git, IndexStamp, ObjectId, RepoInfo, ZList};
+use snp_git::{
+    ConfigListing, DiffIndex, Git, IndexStamp, ObjectId, PatchPathsFeed, RepoInfo, ZList,
+};
 use snp_proc::signals::SignalGuard;
 use snp_proc::spawn::Group;
 
@@ -71,10 +73,11 @@ pub struct StashCtx {
     /// Report orphaned stashes once the lock is held (§4.6). `false` when the run already reported them at its start
     /// ([`crate::recovery_report`] got the lock), so every notice is printed exactly once per run.
     pub report_recovery: bool,
-    /// Sent `()` once, right before step 8's checkout, and dropped unsent on every other exit of the stash steps, so a
-    /// receiver learns "a checkout is starting" or, from the disconnection, "none will" (snp-only, ADR-133: the run
-    /// overlaps `git var GIT_ATTR_SYSTEM` with the checkout). It never changes what the stash does; `None` sends
-    /// nothing.
+    /// Sent `()` once, when step 5 writes the first byte of a patch, and dropped unsent on every exit of the stash
+    /// steps that writes none, so a receiver learns "a checkout may follow" or, from the disconnection, "none will"
+    /// (snp-only, ADR-133: the run overlaps `git var GIT_ATTR_SYSTEM` with the stash; ADR-151 moved the notice from
+    /// right before step 8's checkout to the patch's first byte, so the query overlaps the diff, and a patch that is
+    /// then not checked out costs one unused query). It never changes what the stash does; `None` sends nothing.
     pub checkout_notice: Option<SyncSender<()>>,
     /// The stamp of the index on which the run already asked the intent-to-add query with this context's command
     /// and environment, and got success with nothing printed, from an index [`Git::index_without_intent_to_add`]
@@ -380,11 +383,21 @@ impl<'scope, 'env> Writeback<'scope, 'env> {
 /// The first `diff-index` sink: the patch file (`patches/patch<secs>-<pid>[-<n>]`, `create_new` 0600) is created at
 /// the first byte, so a clean run never touches the store. A creation or write error is kept (and stops the stream)
 /// so the caller can tell a read-only store (X13-ST-04) from a git failure.
+///
+/// ADR-151: at the first byte it also starts step 7's listing, `git apply --numstat` reading the patch on stdin
+/// ([`Git::patch_paths_feed`]), and feeds it every byte the file accepted, right after the file did; a listing that
+/// cannot start or stops accepting bytes is dropped (its child reaped) and step 7 lists the file instead. And it sends
+/// ADR-133's checkout notice at that first byte, so `git var GIT_ATTR_SYSTEM` overlaps the diff instead of the
+/// checkout.
 struct LazyPatch<'a, 'scope, 'env> {
     inner: &'a Inner,
     opened: Option<(PathBuf, BufWriter<File>)>,
     failed: Option<(io::Error, PathBuf)>,
     early: Writeback<'scope, 'env>,
+    /// The fed listing, while it accepts bytes.
+    feed: Option<PatchPathsFeed>,
+    /// ADR-133's notice, until the first byte sends it.
+    notice: Option<SyncSender<()>>,
 }
 
 impl Write for LazyPatch<'_, '_, '_> {
@@ -394,7 +407,14 @@ impl Write for LazyPatch<'_, '_, '_> {
         }
         if self.opened.is_none() {
             match self.inner.create_patch_file() {
-                Ok((p, f)) => self.opened = Some((p, BufWriter::new(f))),
+                Ok((p, f)) => {
+                    self.opened = Some((p, BufWriter::new(f)));
+                    if let Some(n) = self.notice.take() {
+                        // a full or disconnected receiver only loses an overlap
+                        let _lost: Result<(), _> = n.try_send(());
+                    }
+                    self.feed = self.inner.git().patch_paths_feed();
+                }
                 Err((e, shown)) => {
                     let kind = e.kind();
                     self.failed = Some((e, shown));
@@ -408,6 +428,12 @@ impl Write for LazyPatch<'_, '_, '_> {
         match w.write(buf) {
             Ok(n) => {
                 self.early.wrote(n, p);
+                if let Some(feed) = self.feed.as_mut()
+                    && feed.write_all(buf.get(..n).unwrap_or_default()).is_err()
+                {
+                    // the child stopped reading: no answer from it (dropping it reaps it)
+                    self.feed = None;
+                }
                 Ok(n)
             }
             Err(e) => {
@@ -519,8 +545,12 @@ enum StashOutcome {
 enum FirstPass {
     /// No patch: rc 0 (`clean`) or the CRLF quirk; no file is left behind.
     Nothing { clean: bool },
-    /// The patch file, written and flushed (not yet durable).
-    Patch { path: PathBuf, w: BufWriter<File> },
+    /// The patch file, written and flushed (not yet durable), and the listing fed while it streamed (ADR-151).
+    Patch {
+        path: PathBuf,
+        w: BufWriter<File>,
+        feed: Option<PatchPathsFeed>,
+    },
 }
 
 /// What [`Inner::secure`] made of a written patch.
@@ -722,7 +752,7 @@ impl Inner {
     /// pass (no patch, or the patch could not be written) only discard the file and never touch the journal. A panic
     /// unwinds without deleting anything (the `Drop` restore and the recovery notice still name the patch).
     fn stash(&mut self) -> Result<StashOutcome, Failure> {
-        // taken here, so every return below drops it unsent unless step 8 is reached
+        // taken here, so every return below drops it unsent unless step 5 writes a patch byte (ADR-151)
         let notice = self.cx.checkout_notice.take();
         // 3. intent-to-add (`_intent_to_add_cleared`, + `--no-renames`: hazard b), or the run's earlier empty answer
         // on this very index (ADR-154). `read`: the stamp of an index git read successfully in this run (ADR-153).
@@ -747,18 +777,19 @@ impl Inner {
         // 4. tree (checked → CalledProcessError, exit 3), or the root git would print (ADR-153).
         let (tree, proven) = self.tree_and_proof(read)?;
         self.tree = Some(tree.clone());
-        // 5. diff-index, unless ADR-153 proved it prints nothing (as rc 0 does: no patch, clean).
+        // 5. diff-index (ADR-151: the notice goes out at the patch's first byte), unless ADR-153 proved it prints
+        // nothing (as rc 0 does: no patch, clean).
         let first = if proven {
             FirstPass::Nothing { clean: true }
         } else {
-            self.first_pass(&tree)?
+            self.first_pass(&tree, notice)?
         };
-        let (path, w) = match first {
+        let (path, w, feed) = match first {
             FirstPass::Nothing { clean } => return Ok(StashOutcome::Nothing { clean }),
-            FirstPass::Patch { path, w } => (path, w),
+            FirstPass::Patch { path, w, feed } => (path, w, feed),
         };
         // 6–7. durable, listed and verified; any other outcome abandons the patch, here and only here.
-        let secured = self.secure(&tree, &path, w);
+        let secured = self.secure(&tree, &path, w, feed);
         if !matches!(secured, Ok(Secured::Paths(_))) {
             self.abandon_patch(&path);
         }
@@ -771,10 +802,6 @@ impl Inner {
         self.printer().log(Level::Info, &messages::stashing(&path));
         // 8. checkout (pre-commit's `try` starts here: a failing checkout still restores).
         self.flags.patch = PatchStep::Due;
-        if let Some(n) = notice {
-            // a full or disconnected receiver only loses an overlap
-            let _lost: Result<(), _> = n.try_send(());
-        }
         self.git().checkout_paths(&paths, true, Group::Isolated)?;
         fault::hit(Point::StashState(5));
         Ok(StashOutcome::Patch(path, paths))
@@ -853,10 +880,15 @@ impl Inner {
         Ok((tree, proven))
     }
 
-    /// Step 5: the first `diff-index`, streamed into the lazily created patch file. Every exit without a usable
-    /// patch deletes the file it created and leaves the journal alone; git < 2.19 only learns whether a stash would
-    /// be needed.
-    fn first_pass(&self, tree: &ObjectId) -> Result<FirstPass, Failure> {
+    /// Step 5: the first `diff-index`, streamed into the lazily created patch file ([`LazyPatch`], which also feeds
+    /// ADR-151's listing and sends `notice` at the first byte). Every exit without a usable patch deletes the file it
+    /// created, drops the listing and leaves the journal alone; git < 2.19 only learns whether a stash would be
+    /// needed.
+    fn first_pass(
+        &self,
+        tree: &ObjectId,
+        notice: Option<SyncSender<()>>,
+    ) -> Result<FirstPass, Failure> {
         if self.cx.old_git {
             return match self.git().diff_index_patch(tree, &mut io::sink())? {
                 DiffIndex::Patch { .. } => Err(self.old_git_refusal()),
@@ -864,14 +896,20 @@ impl Inner {
                 _ => Ok(FirstPass::Nothing { clean: false }),
             };
         }
-        let (first, opened, failed) = std::thread::scope(|s| {
+        let (first, opened, failed, feed) = std::thread::scope(|s| {
             let mut sink = LazyPatch {
                 inner: self,
                 opened: None,
                 failed: None,
                 early: Writeback::new(s),
+                feed: None,
+                notice,
             };
             let res = self.git().diff_index_patch(tree, &mut sink);
+            // ADR-151: the stream is over, so the listing has every byte: it parses while the writeback finishes
+            if let Some(feed) = sink.feed.as_mut() {
+                feed.close();
+            }
             let flushed = sink.opened.as_mut().map_or(Ok(()), |(_, w)| w.flush());
             if let (Err(e), Some((p, _))) = (flushed, &sink.opened) {
                 sink.failed = Some((e, p.clone()));
@@ -883,7 +921,7 @@ impl Inner {
             {
                 sink.failed = Some((e, p.clone()));
             }
-            (res, sink.opened, sink.failed)
+            (res, sink.opened, sink.failed, sink.feed)
         });
         let discard = |opened: Option<(PathBuf, BufWriter<File>)>| {
             if let Some((p, w)) = opened {
@@ -908,7 +946,7 @@ impl Inner {
             }
         };
         match (outcome, opened) {
-            (DiffIndex::Patch { .. }, Some((path, w))) => Ok(FirstPass::Patch { path, w }),
+            (DiffIndex::Patch { .. }, Some((path, w))) => Ok(FirstPass::Patch { path, w, feed }),
             (other, opened) => {
                 discard(opened);
                 Ok(FirstPass::Nothing {
@@ -931,11 +969,16 @@ impl Inner {
     ///
     /// ADR-097: the verification is a stat-stamp pass when it can prove that nothing the patch could include changed
     /// since this run took the worktree ([`Inner::unchanged_since_lock`]), else the ADR-067 second `diff-index`.
+    ///
+    /// ADR-151: `feed` is the listing step 5 fed while the patch streamed; the listing thread waits for its answer
+    /// and lists the file with [`Git::patch_paths`] when it has none (it failed, or could not be fed every byte), so
+    /// a listing error is always the file-based one.
     fn secure(
         &mut self,
         tree: &ObjectId,
         path: &Path,
         mut w: BufWriter<File>,
+        feed: Option<PatchPathsFeed>,
     ) -> Result<Secured, Failure> {
         // 7. D-DATA-19: the checkout rewrites exactly the files of the patch, so a change `git diff` cannot see (a
         // clean filter hides it, or the file is `--assume-unchanged`) is never overwritten. git's own parser lists
@@ -947,7 +990,10 @@ impl Inner {
         let (durable, listing) = std::thread::scope(|s| {
             let listing = std::thread::Builder::new()
                 .name("snp-numstat".to_owned())
-                .spawn_scoped(s, || git.patch_paths(path))
+                .spawn_scoped(s, || {
+                    feed.and_then(PatchPathsFeed::finish)
+                        .map_or_else(|| git.patch_paths(path), Ok)
+                })
                 .ok();
             let durable = self.make_durable(path, &w);
             (durable, listing.and_then(|h| h.join().ok()))

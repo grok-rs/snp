@@ -280,17 +280,20 @@ witnesses = [
 ]
 anchors = [
     { item = "crates/snp-stash/src/guard.rs::enter", fingerprint = "bed88b049149be8f" },
-    { item = "crates/snp-stash/src/guard.rs::Inner::stash", fingerprint = "a36e9ebecc3f1d95" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::stash", fingerprint = "9c91cbec38726bc0" },
     { item = "crates/snp-stash/src/guard.rs::Inner::intent_to_add_known_empty", fingerprint = "3c77281aa0c99280" },
     { item = "crates/snp-stash/src/guard.rs::Inner::tree_and_proof", fingerprint = "996fbaee59a27480" },
-    { item = "crates/snp-stash/src/guard.rs::Inner::first_pass", fingerprint = "14b9a5ba445dd668" },
-    { item = "crates/snp-stash/src/guard.rs::Inner::secure", fingerprint = "225838dc66c99bc7" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::first_pass", fingerprint = "b6749df397d5d084" },
+    { item = "crates/snp-stash/src/guard.rs::Inner::secure", fingerprint = "1da53552abe47720" },
     { item = "crates/snp-stash/src/guard.rs::Inner::stage_fixed", fingerprint = "cec3d73a66bef646" },
     { item = "crates/snp-stash/src/guard.rs::Inner::git_apply", fingerprint = "8cbc686e7d1df3e6" },
     { item = "crates/snp-stash/src/guard.rs::Inner::rollback_checkout", fingerprint = "98a0585191f9197c" },
     { item = "crates/snp-stash/src/guard.rs::Inner::restore_patch", fingerprint = "589050b70214ca80" },
     { item = "crates/snp-stash/src/guard.rs::Inner::finish", fingerprint = "ad4d9af3d498fa53" },
     { item = "crates/snp-git/src/git.rs::Git::patch_paths", fingerprint = "189c9aee406d8b09" },
+    # ADR-151: the same listing fed the patch on stdin while it streams (its answer, or the file-based one above)
+    { item = "crates/snp-git/src/git.rs::Git::patch_paths_feed", fingerprint = "29858d2a9a42db1b" },
+    { item = "crates/snp-git/src/git.rs::PatchPathsFeed::finish", fingerprint = "6cefd45e42f94e26" },
     { item = "crates/snp-git/src/git.rs::Git::changed_paths", fingerprint = "b61db27db0cb3a63" },
     { item = "crates/snp-git/src/git.rs::Git::rollback_paths", fingerprint = "f2867ad6eff4b050" },
     { item = "crates/snp-git/src/git.rs::Git::checkout_paths", fingerprint = "17552402218417da" },

@@ -16,7 +16,7 @@ use snp_core::env::Env;
 use snp_core::failure::Failure;
 use snp_core::output::{Printer, PrinterOpts};
 use snp_git::{Git, GitBackend, GitExe, ProcBackend, RepoInfo};
-use snp_proc::spawn::{Captured, Group, PyStatus, Role, SpawnError, Stdin};
+use snp_proc::spawn::{Captured, Fed, Group, PyStatus, Role, SpawnError, Stdin};
 use snp_stash::StashCtx;
 
 /// `FOO_CONTENTS` of `tests/staged_files_only_test.py`.
@@ -565,6 +565,30 @@ impl GitBackend for Spy {
             Reply::Real => self.real.inherit(argv, env, cwd, stdin),
             Reply::Exit(code, ..) => Ok(PyStatus(code)),
             Reply::TtyStop => Ok(PyStatus(-9)),
+        }
+    }
+
+    fn capture_fed(
+        &self,
+        argv: &[OsString],
+        env: &Env,
+        cwd: &Path,
+        group: Group,
+    ) -> Result<Fed, SpawnError> {
+        match self.react(argv) {
+            Reply::Real => self.real.capture_fed(argv, env, cwd, group),
+            Reply::Exit(code, stdout, stderr) => Ok(Fed::scripted(Captured {
+                status: PyStatus(code),
+                stdout,
+                stderr,
+                stopped_by_tty: false,
+            })),
+            Reply::TtyStop => Ok(Fed::scripted(Captured {
+                status: PyStatus(-9),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                stopped_by_tty: true,
+            })),
         }
     }
 }
