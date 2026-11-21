@@ -282,7 +282,9 @@ cross-check: `crates/snp-stash/tests/behaviour/index_proof.rs`), tiered lazy tag
 `crates/snp-run/src/trust.rs`, `tests/differential/scenarios/run/t10-run-37-trusted-index-modes.yaml`), P17
 classifier skip, speculative config load, regex fast kinds and lazy engine compilation, spawn-free health checks,
 parallel clones (background prefetch whose every failure is discarded and redone in the foreground exactly as
-pre-commit) and installs with ordered transcript replay, local deps-variant clones, git fan-out, cached `git --version`
+pre-commit) and installs with ordered transcript replay, local deps-variant clones, git fan-out (the intent-to-add
+query in it and step 6 beside discovery, ADR-154: `crates/snp-run/tests/pipeline/fanout.rs`; like the config check, the
+query may refresh the index's stat data before a preflight exit), cached `git --version`
 and probe facts (native binaries only), persistent rustup and shared toolchain directories, a job pool sized by the
 cgroup-aware CPU count and the fd budget (partition contents always use pre-commit's `jobs`). Message-parity markers
 (`keys-v1`) make cold and warm transcripts identical with the fast path (ADR-032).

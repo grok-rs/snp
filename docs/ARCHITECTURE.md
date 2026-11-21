@@ -1518,6 +1518,8 @@ impl Git {
     /// One `git rev-parse --show-cdup --is-inside-git-dir --git-dir --git-common-dir --git-path index` (fallback to separate
     /// calls on 2.19–2.30 or on newline-containing paths); FatalError texts verbatim (02 §3).
     pub fn discover(exe: Arc<GitExe>, env: &Env, cwd: &Path, backend: Arc<dyn GitBackend>) -> Result<(Git, RepoInfo), Failure>;
+    /// ADR-154: the handle `discover` returns for the layout `info`, without asking git (the speculative pre-chain).
+    pub fn at(exe: Arc<GitExe>, env: &Env, info: &RepoInfo, backend: Arc<dyn GitBackend>) -> Git;
     pub fn with_env(&self, env: Env) -> Git;                         // run vars exported (pre-commit sets os.environ)
     pub fn with_backend(&self, b: Arc<dyn GitBackend>) -> Git;       // the stash's Critical backend (ADR-065)
     pub fn env(&self) -> &Env; pub fn root(&self) -> &Path;
@@ -1548,6 +1550,8 @@ impl Git {
     pub fn tracked_with_stages(&self) -> Result<(IndexEntries, bool), Failure>;       // ls-files -s -v -z + "has a stage ≠ 0" (ADR-104)
     /// The index file's (dev, ino, size, mtime ns, ctime ns); `None` off Unix (ADR-104).
     pub fn index_stamp(&self, info: &RepoInfo) -> Option<IndexStamp>;
+    /// ADR-154: SHA-1, ≤ 16 384 entries, the strict reader parses the index (no split index) and no entry is intent-to-add.
+    pub fn index_without_intent_to_add(&self, info: &RepoInfo) -> bool;
     pub fn changed_files(&self, from: &OsStr, to: &OsStr) -> Result<ZList, Failure>;
     pub fn merge_state(&self, info: &RepoInfo) -> MergeState;                         // stat MERGE_MSG ∧ MERGE_HEAD
     pub fn conflicted_files(&self, info: &RepoInfo) -> Result<ZList, Failure>;        // first-seen order union; MERGE_MSG on bytes
@@ -2019,7 +2023,7 @@ impl Classifier {
 ```rust
 use std::{ffi::OsString, path::{Path, PathBuf}, sync::Arc};
 use snp_core::{cancel::CancelToken, clock::Clock, failure::Failure, output::Printer, path::RepoPath};
-use snp_git::{Git, RepoInfo, ZList};
+use snp_git::{Git, IndexStamp, RepoInfo, ZList};
 /// Owns cheap handles (Git and Printer are Arc-backed) so the guard has no lifetime and can live inside RunState.
 /// `git` must be built with `Git::with_backend(ProcBackend { cancel: CancelToken::new(), role: Role::Critical })`: a
 /// token that is never cancelled, so restore commands are never cut short (ADR-065). `cancel` is the run token
@@ -2028,7 +2032,8 @@ use snp_git::{Git, RepoInfo, ZList};
     pub cancel: CancelToken, pub clock: Arc<dyn Clock>, pub signals: Option<Arc<snp_proc::signals::SignalGuard>>,
     pub lock_timeout: std::time::Duration /* SNP_STASH_LOCK_TIMEOUT, default 60 s, ≤ 1 h */, pub verify: bool,
     pub old_git: bool /* caps.version < 2.19: refuse to stash (D-DATA-17) */, pub report_recovery: bool /* ADR-083 */,
-    pub checkout_notice: Option<std::sync::mpsc::SyncSender<()>> /* () right before step 8's checkout, else dropped (ADR-133) */ }
+    pub checkout_notice: Option<std::sync::mpsc::SyncSender<()>> /* () right before step 8's checkout, else dropped (ADR-133) */,
+    pub intent_to_add_hint: Option<IndexStamp> /* step 6's empty C on a proved index with this stamp (ADR-154) */ }
 #[derive(Debug, Clone, PartialEq, Eq)] pub enum Stashed { Nothing, Patch(PathBuf) }
 #[derive(Debug)] pub struct StashGuard { /* state machine; restores on drop (panic path only, via RunState::drop) */ }
 pub fn enter(cx: StashCtx) -> Result<StashGuard, Failure>;
@@ -2695,10 +2700,10 @@ startup Env (captured once in main, minus __PYVENV_LAUNCHER__/PYTHONEXECUTABLE)
 |---|---|---|---|
 | 1 | `snp::entry`: brand from `argv[0]`; `argv[1] == "__hazmat"` raw dispatch; `[]`→`["run"]`; argparse; `Usage`/`Help`/`Version` exit before anything touches the store | 12 §A.17 #1, #9 | no store, no git, no thread; `--version` ≤ 3 ms |
 | 2 | Signals installed (Linux: child subreaper for run/hook-impl/try-repo); `CancelToken`; `Printer(color)`; `Store::new` (lazy); `JobPool` (`pool_size`), `Limiter`s (net 8, installs min(N,4)), `OutputBudget`, `ToolProbe`, `ProcRunner` — all carried by `RunCtx` | 02 §4 | signal thread only cancels the token and applies the §10.4 table |
-| 3 | `GitExe::resolve` (cached version, 02 G.4), then `Git::discover` (one combined `rev-parse`; it needs `caps` for the 2.19–2.30 fallback) → FatalError texts unchanged | 02 §3, G.4 | never refuses here; < 2.31 warns once on stderr (D-DIAG-01); a stash on < 2.19 is refused at step 9 (D-DATA-17). `run` meanwhile discovers and loads the config at the invocation cwd on a thread (note-free, warnings buffered); the load is kept only when the root is the cwd and step 4 resolves the byte-equal path, otherwise it and its warnings are dropped (ADR-104) |
+| 3 | `GitExe::resolve` (cached version, 02 G.4), then `Git::discover` (one combined `rev-parse`; it needs `caps` for the 2.19–2.30 fallback) → FatalError texts unchanged | 02 §3, G.4 | never refuses here; < 2.31 warns once on stderr (D-DIAG-01); a stash on < 2.19 is refused at step 9 (D-DATA-17). `run` meanwhile discovers and loads the config at the invocation cwd on a thread (note-free, warnings buffered); the load is kept only when the root is the cwd and step 4 resolves the byte-equal path, otherwise it and its warnings are dropped (ADR-104). On Unix, for a stashing run decided by the arguments alone, with no `GIT_DIR`/`GIT_WORK_TREE`/`GIT_COMMON_DIR`/`GIT_INDEX_FILE` and `<cwd>/.git` a directory, that thread then runs step 6 itself for the cwd's layout (`Git::at`); its answers are kept only when the config is kept and discovery reports exactly that layout (root, git dir, common dir, index), otherwise dropped and step 6 runs as below (ADR-154) |
 | 4 | Without `-c`: `snp_config::discover` picks the config in the root (`.snp.yaml`, `.snp.yml`, `.pre-commit-config.yaml`; compat brand: `.pre-commit-config.yaml` first; ADR-087), its stderr note once; then `_adjust_args_and_chdir` as a **pure function** (`ospath::abspath/relpath`, explicit cwd; no chdir) | 02 §3, 15 V-ADJ | cross-drive relpath keeps the absolute path (D-PLAT-06); the same `snp_run::common::resolve_config` / `snp_cmd::frame::git_frame` serves every git command |
 | 5 | `store.mark_config_used(realpath(cfg), project_root)` (best effort, skipped if read-only / store absent); stash recovery scan when the worktree lock is free and the run is not nested (§4.6); the `run` hint (TTY only, §9.7) | 03 §7.8 | never creates the store just for tracking |
-| 6 | **Git fan-out** (read-only, scoped threads, same argv as pre-commit), stashing runs only: A `ls-files --unmerged` on the main thread, B `diff --quiet --no-ext-diff <cfg>` on a spawned thread; another spawned thread reads + validates the config **speculatively** with warnings buffered (ADR-047), unless step 3 already did. F `ls-files -s -v -z` and G `config --list --show-origin -z` (the DiffOracle inputs) are speculated here only when the run stashes and Stat mode is possible (Unix, index-header count ≤ 16 384, no `SNP_DIFF_MODE=git`/`GIT_ATTR_SOURCE`): first, at the top of step 6, when the config from step 3 is kept and has ≥ 3 process-hook candidates, or — with 1–2 candidates or no config yet — on a small tree (≤ 256 entries, ≥ 3 CPUs, worktree and git dir `stat_oracle_safe`); F's strictly parsed stages then also answer A (any failure of F asks A itself, ADR-104). Otherwise, without a config yet, after the load when it has ≥ 3 candidates (ADR-084(6)); else at step 14. Early F is dropped when the index file's stamp (dev, ino, size, mtime, ctime) changed by the end of step 9 (another run's `git add` during the lock wait, or the stash's own rewrite) and asked again at step 14, also for one or two process hooks when the dropped F described a small tree; early G, which does not read the index, is dropped only when the worktree lock was contended (ADR-117). The ITA query C is not part of the fan-out: the stash asks it serially at step 9. The staged list E is taken at step 14 (`side_queries`) | 02 §5 | results consumed strictly in pre-commit's order; E/F/G skipped when unused (P17, all-files, files) |
+| 6 | **Git fan-out** (read-only, scoped threads, same argv as pre-commit), stashing runs only: A `ls-files --unmerged` on the main thread, B `diff --quiet --no-ext-diff <cfg>` on a spawned thread; another spawned thread reads + validates the config **speculatively** with warnings buffered (ADR-047), unless step 3 already did. F `ls-files -s -v -z` and G `config --list --show-origin -z` (the DiffOracle inputs) are speculated here only when the run stashes and Stat mode is possible (Unix, index-header count ≤ 16 384, no `SNP_DIFF_MODE=git`/`GIT_ATTR_SOURCE`): first, at the top of step 6, when the config from step 3 is kept and has ≥ 3 process-hook candidates, or — with 1–2 candidates or no config yet — on a small tree (≤ 256 entries, ≥ 3 CPUs, worktree and git dir `stat_oracle_safe`); F's strictly parsed stages then also answer A (any failure of F asks A itself, ADR-104). Otherwise, without a config yet, after the load when it has ≥ 3 candidates (ADR-084(6)); else at step 14. Early F is dropped when the index file's stamp (dev, ino, size, mtime, ctime) changed by the end of step 9 (another run's `git add` during the lock wait, or the stash's own rewrite) and asked again at step 14, also for one or two process hooks when the dropped F described a small tree; early G, which does not read the index, is dropped only when the worktree lock was contended (ADR-117). The ITA query C runs first in the fan-out (stash's command and environment) when `Git::index_without_intent_to_add` holds (SHA-1, ≤ 16 384 entries, the strict reader parses the index, no intent-to-add entry), after the stamp; its success with empty output is the stash's `intent_to_add_hint`, reused at step 9 iff the lock was not contended and the stamp still holds, else the stash asks C at its position (ADR-154). The staged list E is taken at step 14 (`side_queries`) | 02 §5 | results consumed strictly in pre-commit's order; E/F/G skipped when unused (P17, all-files, files) |
 | 7 | Preflight in exact order: unmerged → from/to-ref pairing → unstaged config → commit-msg filename → `_PRE_COMMIT_SKIP_POST_CHECKOUT` early 0 | 02 §5 | — |
 | 8 | `run_env` = startup ⊕ run vars | 02 §6.1 | values are `OsString` (non-UTF-8 refs survive on Unix) |
 | 9 | **Stash guard** (`stash = !all_files && files.is_empty()` and no stdin files); on git < 2.19 a non-empty stash is refused before any mutation (D-DATA-17). On the Stat-capable path with git ≥ 2.42 a scoped thread waits for the stash's `checkout_notice` (sent right before its checkout, dropped unsent otherwise) and then asks `git var GIT_ATTR_SYSTEM` for step 16's proof, overlapped with the checkout (ADR-133) | 02 §7, §4 here | the guard is the only owner of worktree mutations until restore |
@@ -3055,7 +3060,8 @@ notice).
    and only ITA files exist (no patch to write), the store journal is skipped with a stderr note (pre-commit needs no
    store write there; parity of success); the pointer is still written.
 3. **Intent-to-add.** `git diff --no-renames --no-ext-diff --ignore-submodules --diff-filter=A --name-only -z`
-   (checked; `--no-renames` fixes hazard (b), D-DATA-12). If non-empty: `[WARNING] Unstaged intent-to-add files
+   (checked; `--no-renames` fixes hazard (b), D-DATA-12), or step 6's empty answer to the same query on an index
+   proved free of intent-to-add entries, while the lock was uncontended and the index stamp unchanged (ADR-154). If non-empty: `[WARNING] Unstaged intent-to-add files
    detected.`; the list is journaled; then `git rm --cached -- …` (xargs-partitioned, rc ignored, as pre-commit).
 4. **`tree = git write-tree`** (checked → exit 3 on failure).
 5. **Diff.** `git diff-index --ignore-submodules --binary --exit-code --no-color --no-ext-diff <tree> --` with
@@ -4056,7 +4062,8 @@ malformed file:
 
 Never slower than pre-commit or prek at p50 on any scenario (musl artifacts included, ADR-079). B3 spawn model on
 Linux (ADR-082, ADR-104): 1 combined `rev-parse` + the overlapped step-6 queries B, F and G (F answers A on a
-small tree; A instead on a larger one or with fewer than 3 CPUs) + the stash's serial ITA query C, `write-tree` and
+small tree; A instead on a larger one or with fewer than 3 CPUs) and the ITA query C (ADR-154; at the stash
+only when its proof refuses), all beside the `rev-parse` at the root of a plain repository (ADR-154) + `write-tree` and
 `diff-index` (pre-commit's G08/G09, 02 §7) + E at step 14 only when a hook reads files (P17) + 10 hooks + 0 `git diff`
 (baseline elided by diff-index rc 0 on the warm path; DiffOracle stat path) ⇒ ≤ 17 spawns for B3 (7 git), ≈ 12 on
 the critical path (≈ 1 ms each measured); B2 (one hook; Stat mode from one hook on a small tree): 7 git + 1 hook ≤ 8.

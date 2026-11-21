@@ -59,6 +59,16 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   reads small files through a per-thread buffer without `fstat`, and the job pool notifies its condition variable
   only when a thread waits. B11: 90.2 M → 87.6 M instructions, 8,370 → 7,274 syscalls (−701 `statx`, −398
   `futex`); B10: 128.1 M → 122.4 M instructions; `futex` calls 1,343 → ~780 on B6 and 5,106 → 1,748 on B12u.
+- A stashing `run` waits for two fewer serial git calls before its hooks (ADR-154; output and side effects
+  unchanged). The intent-to-add query runs beside the other step-6 queries when the index is proved free of
+  intent-to-add entries (SHA-1, at most 16,384 entries, the strict index reader parses it), and the stash reuses
+  its empty answer while the index is unchanged and the worktree lock was free; otherwise the stash asks it as
+  before. At the root of a plain repository (`.git` a directory, no `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` or
+  `GIT_INDEX_FILE`), those queries start beside the discovery `rev-parse` and are kept only when discovery reports
+  that very layout. B2 and B3 go from five serial git stages before the hook to three, B8 from nine to seven, B9
+  from five to four, with the same number of git processes; locally B2 −2.5 ms and B3 −2.9 ms (paired rounds). The
+  intent-to-add query may now refresh the index's stat data also when a preflight check ends the run, as the config
+  check already could.
 - bench: the B8 `p50 <= pre-commit` known miss is gone. PR #57's CI bench measured snp at 307 ms against
   pre-commit's 418 ms (1.36x), so the gate fails again if snp ever falls behind pre-commit on B8.
 - cfgv and file-identify are part of the workspace (ADR-116): imported with their full history as `crates/snp-cfgv`

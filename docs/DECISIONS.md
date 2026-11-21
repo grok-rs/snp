@@ -24,7 +24,8 @@ ADR-119 the proven post-checkout baseline; ADR-131 the file-content cache of con
 baseline taken by the first native write in all-in-process runs; ADR-133 its follow-ups (the system attributes file from
 `git var`, attributes that convert nothing); ADR-134 the index-stat proof; ADR-135 the hook script template v3; ADR-136 the wave-5 bench methodology;
 ADR-137 PIE release artifacts and their hardening gate; ADR-138 the internal crates' API policy and snp-yaml's borrowed
-tags and scalar text; ADR-150 gc's parallel loading with ordered replay and its cheaper loads.
+tags and scalar text; ADR-150 gc's parallel loading with ordered replay and its cheaper loads; ADR-154 the pre-chain
+fan-out (the intent-to-add query in step 6, step 6 beside discovery).
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -2022,7 +2023,7 @@ blocks 185,963 → 127,179. The harness's process-tree RSS stays near git's own 
 *Amends ADR-047, ADR-084(6) and ARCHITECTURE §3.1 rows 3, 6, 10, 15 and 16, §3.7 item 5, the §12.1 spawn model and the
 §1.4.13 listing; implements ADR-078(3) as written.*
 
-*Status: Accepted; items (4) and (5) amended by ADR-117 (F asked again after the stash's own index rewrite, G kept). The amending ADR is normative where they differ.*
+*Status: Accepted; items (4) and (5) amended by ADR-117 (F asked again after the stash's own index rewrite, G kept); items (3) and (7) amended by ADR-154 (the intent-to-add query C joins the step-6 fan-out, its empty answer reused by the stash; step 6 may run beside step 3's `rev-parse`). The amending ADRs are normative where they differ.*
 
 **Context.** The performance review of November 2026 (P25(c)) found the step-6 text out of date with the code. Row 6
 put the ITA query C in the parallel fan-out, but the stash asks it serially (B2's fourth git call). It also listed E
@@ -3522,6 +3523,70 @@ fuzz target; `read_capped` against the plain read for file lengths and caps on b
 pool stress test with a 60 s cancellation poll (8 threads, 1-3 permits, `acquire` and concurrent `map_ordered`),
 where a lost wakeup stalls the FIFO head past the time bound (a seeded mutation that never notifies times out),
 checking the permit bound, the returned permits, the ticket counters and a zero waiter count.
+
+### ADR-154 — The pre-chain fan-out: the intent-to-add query in step 6, and step 6 beside discovery
+
+*Status: Accepted. Amends ADR-104 (3) and (7) (C joins the step-6 fan-out; step 6 may start beside step 3's
+`rev-parse`) and §3.1 row 6, §4.2 step 3 and the §12.1 spawn model of ARCHITECTURE; the amended clauses are
+superseded where they differ. Wave-6 analysis items b2-2 and b2-3, listed by the plan of 2026-11-21 as exact items
+(no owner decision beyond extending ADR-104's accepted early refresh to C).*
+
+**Context.** After wave 5, B2 (`run noop-01` on noop10) still ran five serial git stages before its hook:
+`rev-parse` → {F, G, B} → C (the intent-to-add query, `git diff --no-renames --no-ext-diff --ignore-submodules
+--diff-filter=A --name-only -z`) → `write-tree` → `diff-index`, against prek 0.5.11's three. On CI's slow runner a
+stage costs about 1.2–2.0 ms, and snp lost B2 by 1.37x. C ran alone after the worktree lock because pre-commit asks
+it inside `staged_files_only`; but its answer depends only on the index (diff-files reports `A` only for an
+intent-to-add entry), and stage 1 left snp idle while `rev-parse` ran. ADR-104(7) already loads the config at the
+invocation cwd beside `rev-parse` and keeps it when the real root and config path match; it started no git child.
+**Decision.** (1) *C in the fan-out (b2-2).* For a stashing run, step 6 takes the index stamp (ADR-104) before any
+query, then forks C first, beside F, G and B. The fork first proves the index free of intent-to-add entries without
+a spawn (`Git::index_without_intent_to_add`): the repository is SHA-1 (its `config` file, the only one git reads the
+repository format from, does not name an object format), the header counts at most 16 384 entries, and the strict
+ADR-134 reader parses the whole index with no entry flagged intent-to-add (a split index, sparse index, fsmonitor
+extension or anything the reader does not follow refuses). Only then does it run C, with the stash's command and
+environment (`run_env`, a pure function of the startup environment and the arguments). Success with nothing printed
+becomes `StashCtx::intent_to_add_hint` = the stamp. (2) *Reuse at step 3.* The stash takes the list as empty without
+asking (`Inner::intent_to_add_known_empty`) iff the hint is set, the worktree lock was not contended, and the index
+file still has the hint's stamp; otherwise it asks C at pre-commit's position, so C's errors, the
+`Unstaged intent-to-add files detected.` warning and the clearing stay pre-commit's. Any failure, panic or non-empty
+answer of the early C sets no hint. (3) *Step 6 beside discovery (b2-3).* `run` (not `hook-impl`, which has
+discovered already, nor try-repo) runs step 6 itself on the speculative config thread of ADR-104(7), right after
+that load, for the layout a repository rooted at the invocation cwd has (root = cwd, git and common directory
+`<cwd>/.git`, index `<cwd>/.git/index`, not a worktree), with the handle discovery would build for it (`Git::at`).
+Gates: Unix; a stashing run decided by the arguments alone (no `--all-files`, no file arguments, no stdin file list);
+none of `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE` set; `<cwd>/.git` a directory (not a symbolic
+link, not a linked worktree's file; a subdirectory invocation has none). The results are kept iff the config is kept
+(ADR-104(7): real root = cwd, byte-equal config path) and discovery reports exactly that layout (root, git directory,
+common directory, index file, worktree flag); otherwise they are dropped and step 6 runs as before (a kept config
+still counts). Step 6 there is the same function with the same inputs it would get later: hoisting, A from F, the
+stamp, C and its proof decide exactly as they would.
+**Rationale.** (1)–(2) are exact: with no intent-to-add entry, C prints nothing whatever the worktree, and the stamp
+proves step 3 would read the bytes the proof and the early C read (git replaces the index by rename; any rewrite
+changes the inode or the times). The proof is on content, not on the header version: a v2 header alone does not
+exclude a crafted extended flag, and a v3 or v4 index is common (skip-worktree, `feature.manyFiles`). C's only side
+effect, git's stat refresh of the index, changes the stamp and so sends step 3 back to git. A contended lock means
+another run went first; ADR-117 already distrusts early answers then. The early C's success carries over for the
+same reason the early F and G do (ADR-104/117): pre-commit takes no lock, so a concurrent writer between the early
+query and step 3 is an interleaving pre-commit could also see with C at its position. (3) runs the same commands in
+the same cwd with the same environment as step 6 would; outputs are consumed at the same positions, and on rejection
+the speculative children's only effect is the stat refresh B and C may do, which step 6's own B and C repeat.
+Alternatives rejected: prek's single porcelain query (checked vs unchecked semantics, different argv); skipping C
+(its checked error surface and refresh are pre-commit's); the header-version gate alone (crafted v2 entries). The
+in-process write-tree (b2-1, ADR-153) is a separate decision.
+**Consequences.** Serial git stages before the first hook (strace timelines on the `cargo xtask bench setup`
+fixtures, profiling build): B2 5 → 3, B3 5 → 3, B8 9 → 7, B9 5 → 4 (hook-impl keeps its own discovery, so only (1)
+applies); the number of git processes is unchanged (C moves; it is asked twice only on a fallback). Paired,
+interleaved untraced rounds against the base (200 each, local laptop): B2 −2.5 ms (p50 15.5 → 12.8 ms), B3 −2.9 ms;
+(1) alone −1.5 ms on B2. snp's own process +2% instructions on B2 (4.49 M → 4.58 M: the index read and the config
+read), +66 syscalls in the tree. Step 6 beside discovery puts up to five git processes on the CPUs at once. Registered
+as an exact optimisation (COMPATIBILITY §6.2, git fan-out): C may now refresh the index's stat data also when a
+preflight check then ends the run, as B already could (ADR-104). K9: `Inner::stash` re-reviewed (the model's
+intent-to-add set is index content; with no flagged entry step 3 returns the modelled value), fingerprints refreshed,
+the helper anchored (VERIFICATION §9.2). Tests: `crates/snp-run/tests/pipeline/fanout.rs` (C once in the fan-out;
+an intent-to-add entry and a split index keep today's `GIT_TRACE` order; an index rewritten after the early answer
+asks again and warns; step 6 beside discovery at the root; no speculation with `GIT_DIR`, from a subdirectory, in a
+linked worktree, for `--all-files`; discarded and re-asked when discovery reports another layout), and
+`crates/snp-git/tests/behaviour/user_repo.rs::intent_to_add_proof_holds_only_without_such_entries`.
 
 ## Appendix A — Open questions of the research documents, resolved
 
