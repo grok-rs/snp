@@ -76,8 +76,8 @@ impl GitBackend for Counting {
 }
 
 /// 300 tracked files in 30 directories (not a small tree: Git mode for one or two process hooks, ADR-104), two
-/// process hooks; `second` is the second hook's entry. With `settle`, the index is rebuilt with exact stat data and
-/// every file's mtime 10 s in the past (non-racy).
+/// process hooks; `second` is the second hook's entry. The index is rebuilt with exact stat data and every file's
+/// mtime 10 s in the past with `settle` (non-racy), else 60 s in the future (racy whatever the clock does).
 fn make(second: &str, settle: bool) -> H {
     let mut h = H::new();
     h.clock = Some(Arc::new(StepClock::new(Duration::from_millis(1))));
@@ -94,15 +94,19 @@ fn make(second: &str, settle: bool) -> H {
     }
     h.git(&["add", "."]);
     h.commit("files");
-    if settle {
-        let past = SystemTime::now() - Duration::from_secs(10);
+    {
+        let mtime = if settle {
+            SystemTime::now() - Duration::from_secs(10)
+        } else {
+            SystemTime::now() + Duration::from_secs(60)
+        };
         let listed = h.git(&["ls-files", "-z"]).stdout;
         for p in listed.split(|&b| b == 0).filter(|p| !p.is_empty()) {
             let f = std::fs::File::options()
                 .write(true)
                 .open(h.path(std::str::from_utf8(p).unwrap()))
                 .unwrap();
-            f.set_modified(past).unwrap();
+            f.set_modified(mtime).unwrap();
         }
         h.git(&["read-tree", "HEAD"]);
         drop(h.git_any(&["update-index", "-q", "--refresh"]));

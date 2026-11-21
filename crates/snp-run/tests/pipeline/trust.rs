@@ -445,7 +445,9 @@ fn after_hook(calls: &[Call]) -> Vec<String> {
 
 /// A trust-capable run asks the tagged listing, the before-diff and the gate before the first hook (in any order:
 /// they run at once), never `ls-files -z --deduplicate`, and one `git diff` after the hook; so does a dirty tree,
-/// where the gate fails and every file takes its `lstat`.
+/// where the gate fails and every file takes its `lstat`. `SNP_DIFF_MODE=git` keeps the index-stat proof (ADR-134)
+/// out: its query G and, when a second boundary makes the fresh index non-racy, its proven after-hook diff are
+/// covered by `index_proof.rs`.
 #[test]
 fn trusted_run_queries_listing_diff_and_gate_before_the_first_hook() {
     for dirty in [false, true] {
@@ -454,6 +456,7 @@ fn trusted_run_queries_listing_diff_and_gate_before_the_first_hook() {
         if dirty {
             h.write("a.py", b"print(2)\n");
         }
+        h.env_set("SNP_DIFF_MODE", "git");
         let rec = recorded(&mut h, None);
         let o = h.run(all());
         assert_eq!(o.code, 1, "{o:?}");
@@ -473,7 +476,8 @@ fn trusted_run_queries_listing_diff_and_gate_before_the_first_hook() {
 }
 
 /// A filter on `executable`, or no hook that can run: today's queries (`ls-files -z --deduplicate`, the lazy
-/// before-diff only when a hook runs), no tagged listing and no gate.
+/// before-diff only when a hook runs), no tagged listing and no gate (`SNP_DIFF_MODE=git`: without the index-stat
+/// proof's query G, ADR-134).
 #[test]
 fn runs_the_trust_cannot_help_keep_todays_queries() {
     let mut h = committed(&[("a.py", b"print(1)\n")]);
@@ -482,6 +486,7 @@ fn runs_the_trust_cannot_help_keep_todays_queries() {
         lister("files", ""),
         lister("exe", "types: [executable]")
     )));
+    h.env_set("SNP_DIFF_MODE", "git");
     let rec = recorded(&mut h, None);
     let o = h.run(all());
     assert_eq!(o.code, 1, "{o:?}");
