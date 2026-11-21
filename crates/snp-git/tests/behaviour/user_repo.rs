@@ -917,10 +917,12 @@ fn intent_to_add_proof_holds_only_without_such_entries() {
     sb.git(&repo, &["update-index", "--no-skip-worktree", "b"]);
     sb.git(&repo, &["update-index", "--index-version", "4"]);
     assert!(git.index_without_intent_to_add(&info), "v4");
+    assert!(!ita_listed(&git));
     sb.git(&repo, &["update-index", "--index-version", "2"]);
     sb.write(&repo, "n", b"n\n");
     sb.git(&repo, &["add", "-N", "n"]);
-    assert!(ita_listed(&git));
+    // git >= 2.19 lists the entry as added; 2.18 as modified (diff.ita-invisible-in-index): either way the entry
+    // refuses the proof
     assert!(
         !git.index_without_intent_to_add(&info),
         "intent-to-add entry"
