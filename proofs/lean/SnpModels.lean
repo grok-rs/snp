@@ -4,3 +4,4 @@ import SnpModels.Hex
 import SnpModels.Stash.Model
 import SnpModels.Stash.Protocol
 import SnpModels.Stash.Counterexample
+import SnpModels.Stash.Rename
