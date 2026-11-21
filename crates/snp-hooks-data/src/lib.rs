@@ -1,6 +1,6 @@
-//! Generated pre-commit-hooks data: per-tag manifests, tag → commit, epochs and classes, the verified blob table,
-//! the console-script map, the `repo: builtin` manifest, parity gates and URL identity; no logic beyond lookups
-//! (ARCHITECTURE §1.4.12, §7.2; 09 §5–§6; ADR-031).
+//! Generated pre-commit-hooks data: per-tag manifests and their pre-validated models, tag → commit, epochs and
+//! classes, the verified blob table, the console-script map, the `repo: builtin` manifest, parity gates and URL
+//! identity; no logic beyond lookups (ARCHITECTURE §1.4.12, §7.2; 09 §5–§6; ADR-031).
 //!
 //! Every table under `src/generated/` is produced by `cargo xtask gen-pch-data <clone>` from the tags
 //! v3.0.0…v6.0.0 of `github.com/pre-commit/pre-commit-hooks` and checked for drift in CI
@@ -16,8 +16,8 @@ mod types;
 pub use generated::{BUILTIN_MANIFEST_YAML, GENERATED_FROM};
 pub use lookup::{
     import_closure, is_pre_commit_hooks_url, module_for_entry, parity_gate, profile_for_rev,
-    verified_blob,
+    tag_profiles, verified_blob,
 };
-pub use types::{Epoch, Gate, HookClass, NativeSource, TagProfile};
+pub use types::{Epoch, Gate, HookClass, ManifestHook, NativeSource, TagProfile};
 
 use snp_core as _;

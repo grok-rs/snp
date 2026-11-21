@@ -456,6 +456,69 @@ repos:
         );
     }
 
+    /// ADR-111 / alloc-6: repeated `files` patterns interleaved with other `FutureWarning` patterns print each
+    /// (pattern, warning) once, in first-compilation order (hooks before the top level), also when a later item
+    /// fails; the sensible-regex warnings keep their text and order.
+    #[test]
+    fn repeated_patterns_warn_once_in_first_compilation_order() {
+        let hook = |id: &str, files: &str| {
+            format!(
+                "    -   id: {id}\n        name: {id}\n        entry: x\n        language: system\n        files: '{files}'\n"
+            )
+        };
+        let hooks = [
+            hook("a", "[[]"),
+            hook("b", "[a&&b]"),
+            hook("c", "[[]"),
+            hook("d", "x/*"),
+            hook("e", "[a&&b]"),
+            hook("f", "[[]"),
+        ]
+        .concat();
+        let text = format!("exclude: '[a||b]'\nrepos:\n-   repo: local\n    hooks:\n{hooks}");
+        let l = load_config_text(&text, PC, E);
+        assert!(l.result.is_ok());
+        assert_eq!(
+            l.warnings,
+            [
+                "The 'files' field in hook 'd' is a regex, not a glob -- matching '/*' probably isn't what you want here"
+            ]
+        );
+        let fw = [
+            "[WARNING] regex '[[]': Possible nested set at position 1 (Python FutureWarning)",
+            "[WARNING] regex '[a&&b]': Possible set intersection at position 2 (Python FutureWarning)",
+            "[WARNING] regex '[a||b]': Possible set union at position 2 (Python FutureWarning)",
+        ];
+        assert_eq!(l.diag, fw);
+        // A later item fails: the patterns compiled before it still warn, in the same order.
+        let l = load_config_text(&format!("{text}fail_fast: 1\n"), PC, E);
+        assert!(l.result.is_err());
+        assert_eq!(l.diag, fw);
+    }
+
+    /// alloc-6: `language` is rewritten only for `system` / `script`, and a stage list only for its legacy names (a
+    /// tuple becomes a list, other items are kept as they are).
+    #[test]
+    fn language_and_stage_migrations_rewrite_only_legacy_values() {
+        let text = "default_stages: [commit, manual]\nrepos:\n-   repo: local\n    hooks:\n    -   id: a\n        name: a\n        entry: a\n        language: script\n        stages: [push, pre-commit, merge-commit]\n    -   id: b\n        name: b\n        entry: b\n        language: python\n";
+        let (cfg, _) = ok(load_config_text(text, PC, E));
+        let hooks = local_hooks(&cfg);
+        assert_eq!(hooks[0].language.as_str(), "unsupported_script");
+        assert_eq!(hooks[1].language.as_str(), "python");
+        let stages: Vec<Stage> = hooks[0].stages.iter().collect();
+        let hook = |h: &str| Stage::parse(h).expect("stage");
+        assert_eq!(
+            stages,
+            [
+                hook("pre-commit"),
+                hook("pre-merge-commit"),
+                hook("pre-push")
+            ]
+        );
+        let defaults: Vec<Stage> = cfg.default_stages.iter().collect();
+        assert_eq!(defaults, [hook("pre-commit"), Stage::Manual]);
+    }
+
     // --- repo: builtin ------------------------------------------------------------------------------------------
 
     fn validate_text(text: &str, ext: ExtMode) -> Option<String> {

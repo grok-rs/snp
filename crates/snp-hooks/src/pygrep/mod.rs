@@ -27,6 +27,7 @@ use snp_core::cancel::CancelToken;
 use snp_core::env::Env;
 use snp_pyre::{Haystack, Mode, Options, PyRegex, RegexCache};
 
+use crate::ContentCache;
 use crate::framework::{self, positional, store_true, with_help};
 
 /// `prog` of `python -m pre_commit.languages.pygrep` (CPython ≤ 3.13: the module file's basename).
@@ -175,6 +176,19 @@ pub fn run_partition(
     cache: &RegexCache,
     cancel: &CancelToken,
 ) -> crate::Outcome {
+    run_partition_cached(c, argv, root, cache, cancel, None)
+}
+
+/// [`run_partition`] reading the files through the window's content cache when there is one (ADR-131: a validated
+/// hit, else a fill), else with `std::fs::read`.
+pub fn run_partition_cached(
+    c: &Compiled,
+    argv: &[&OsStr],
+    root: &Path,
+    cache: &RegexCache,
+    cancel: &CancelToken,
+    contents: Option<&ContentCache>,
+) -> crate::Outcome {
     let failed = |code: i32, output: Vec<u8>| crate::Outcome {
         code,
         output,
@@ -209,7 +223,12 @@ pub fn run_partition(
         if cancel.is_cancelled() {
             break;
         }
-        let content = match std::fs::read(framework::in_root(root, name)) {
+        let path = framework::in_root(root, name);
+        let read = match contents.and_then(|cc| cc.view(root)) {
+            Some(cc) => cc.read(name, &path),
+            None => std::fs::read(path).map(crate::content_cache::Bytes::Owned),
+        };
+        let content = match read {
             Ok(b) => b,
             Err(e) => {
                 out.extend_from_slice(&framework::crash_line(&framework::io_exc(&e, name)));

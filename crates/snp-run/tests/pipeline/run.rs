@@ -1356,7 +1356,7 @@ fn git_spawns(log: &std::path::Path) -> Vec<String> {
 
 /// ARCHITECTURE §12.1 B2/B3 shapes, warm second run: the git spawn count is an upper bound (an O(hooks) `git diff`
 /// or a duplicated query shows up here long before it shows up as a timing regression). With three or more CPUs
-/// (ADR-104) both take 7: `rev-parse`, F `ls-files -s -z` (which also answers A), G `config --list --show-origin
+/// (ADR-104) both take 7: `rev-parse`, F `ls-files -s -v -z` (which also answers A), G `config --list --show-origin
 /// -z`, B `diff --quiet <cfg>`, the stash's ITA query, `write-tree` and `diff-index`, and no `git diff` (the Stat
 /// mode applies from one hook on a small tree). Below three CPUs: A instead of F/G, plus F/G after the load for B3
 /// (8) and one `git diff` for B2 (7).
@@ -1491,7 +1491,7 @@ fn conflicted(h: &H) {
     let _conflict = h.git_any(&["merge", "-q", "other"]);
 }
 
-/// ADR-104: on a small index F (`ls-files -s -z`) starts before the config load and answers query A, so no
+/// ADR-104: on a small index F (`ls-files -s -v -z`) starts before the config load and answers query A, so no
 /// `ls-files --unmerged` runs; the preflight output is the one of the asked query (`SNP_DIFF_MODE=git` turns the
 /// speculation off), for an unmerged index and after it is resolved.
 #[test]
@@ -1533,7 +1533,7 @@ fn unmerged_preflight_from_early_f_matches_the_asked_query() {
     }
 }
 
-/// ADR-104: when F fails (here an index whose header is sound but whose garbage entry `ls-files -s -z` prints in a
+/// ADR-104: when F fails (here an index whose header is sound but whose garbage entry `ls-files -s -v -z` prints in a
 /// shape the strict parser refuses), the preflight asks `git ls-files --unmerged` at the same position, so the
 /// outcome is the one of pre-commit's own query.
 #[test]
@@ -1566,7 +1566,7 @@ fn a_failing_early_f_reports_the_unmerged_query_error() {
     );
     let position = |s: &str| spec_log.iter().position(|l| l == s);
     assert!(
-        position("ls-files -s -z").is_some() && position("ls-files --unmerged").is_some(),
+        position("ls-files -s -v -z").is_some() && position("ls-files --unmerged").is_some(),
         "F failed, then A was asked:\n{}",
         spec_log.join("\n")
     );
@@ -1602,7 +1602,7 @@ fn early_f_is_asked_again_after_an_index_rewrite() {
     );
     let spawns = git_spawns(&log);
     assert_eq!(
-        spawns.iter().filter(|s| *s == "ls-files -s -z").count(),
+        spawns.iter().filter(|s| *s == "ls-files -s -v -z").count(),
         2,
         "{}",
         spawns.join("\n")
@@ -1708,7 +1708,7 @@ fn one_hook_keeps_the_stat_mode_after_the_stash_rewrote_the_index() {
             spawns.join("\n")
         );
         if stat {
-            assert_eq!(count("ls-files -s -z"), 2, "{}", spawns.join("\n"));
+            assert_eq!(count("ls-files -s -v -z"), 2, "{}", spawns.join("\n"));
             assert_eq!(
                 count("config --list --show-origin"),
                 1,
@@ -1749,7 +1749,7 @@ fn one_hook_after_an_intent_to_add_clearing_matches_git_diff() {
         let spawns = git_spawns(&log);
         if snp_proc::xargs::cpu_count().get() >= 3 {
             let count = |p: &str| spawns.iter().filter(|s| s.starts_with(p)).count();
-            assert_eq!(count("ls-files -s -z"), 2, "{}", spawns.join("\n"));
+            assert_eq!(count("ls-files -s -v -z"), 2, "{}", spawns.join("\n"));
             assert_eq!(
                 count("config --list --show-origin"),
                 1,
@@ -1803,7 +1803,7 @@ fn a_contended_lock_asks_g_again() {
     assert!(o.stderr.contains("waiting for another"), "{o:?}");
     let spawns = git_spawns(&log);
     let count = |p: &str| spawns.iter().filter(|s| s.starts_with(p)).count();
-    assert_eq!(count("ls-files -s -z"), 2, "{}", spawns.join("\n"));
+    assert_eq!(count("ls-files -s -v -z"), 2, "{}", spawns.join("\n"));
     assert_eq!(
         count("config --list --show-origin"),
         2,

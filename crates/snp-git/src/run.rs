@@ -173,6 +173,19 @@ pub(crate) fn os_from_bytes(b: &[u8]) -> OsString {
     }
 }
 
+/// [`os_from_bytes`] without the copy where the platform allows it (Unix: the bytes, borrowed).
+pub(crate) fn os_from_bytes_cow(b: &[u8]) -> std::borrow::Cow<'_, OsStr> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        std::borrow::Cow::Borrowed(OsStr::from_bytes(b))
+    }
+    #[cfg(not(unix))]
+    {
+        std::borrow::Cow::Owned(os_from_bytes(b))
+    }
+}
+
 /// `OsString` from parts (`f'{a}...{b}'`).
 pub(crate) fn concat(parts: &[&OsStr]) -> OsString {
     let mut out = OsString::new();
@@ -222,5 +235,7 @@ mod tests {
             OsString::from("a...b")
         );
         assert_eq!(os_from_bytes(b"x y"), OsString::from("x y"));
+        assert_eq!(os_from_bytes_cow(b"x y"), OsStr::new("x y"));
+        assert_eq!(&*os_from_bytes_cow(b"a\xffb"), os_from_bytes(b"a\xffb"));
     }
 }

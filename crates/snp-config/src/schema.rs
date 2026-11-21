@@ -391,7 +391,7 @@ fn build_config_schema(brand: Brand, ext: ExtMode) -> Schema {
         Validator::optional_recurse(
             "default_language_version",
             default_language_version(),
-            Value::Map(Map::new()),
+            Value::Map(Map::default()),
         ),
         Validator::custom(StagesMigration::new("default_stages", Some(all_stages()))),
         Validator::custom(DeprecatedStagesWarning::top(brand)),
@@ -487,7 +487,7 @@ pub(crate) fn overlay_schema(brand: Brand) -> &'static Schema {
                         CheckFn::check_string(),
                         overlay_patch_dict(brand),
                     ),
-                    Value::Map(Map::new()),
+                    Value::Map(Map::default()),
                 ),
                 Validator::optional("skip_groups", ext::check_groups(), Value::List(Vec::new())),
                 ExtKey::item("fail_on_changes", ext::check_fail_on_changes()),

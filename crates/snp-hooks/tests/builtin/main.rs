@@ -174,6 +174,10 @@ fn large_files_non_ascii_and_renames() {
 
 /// check-merge-conflict: cherry-pick and revert conflicts count as merges; `--diff3` reports `||||||| `.
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+)]
 fn merge_conflict_states_and_diff3() {
     for head in ["CHERRY_PICK_HEAD", "REVERT_HEAD"] {
         let sb = Sandbox::new(true);

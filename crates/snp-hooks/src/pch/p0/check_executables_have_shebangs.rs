@@ -51,7 +51,7 @@ pub(crate) static BUILTIN: CheckExecutablesHaveShebangs =
 
 /// `has_shebang(path)`: the first two bytes are `#!`.
 fn has_shebang(cx: &HookCx<'_>, path: &OsStr) -> Result<bool, PyExc> {
-    Ok(read_head(cx, path, 2)? == b"#!")
+    Ok(read_head(cx, path, 2)?.bytes() == b"#!")
 }
 
 /// `_message(path)` (stderr).

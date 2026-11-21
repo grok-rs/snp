@@ -60,6 +60,7 @@ fn git(out: &[u8], chunk: usize) -> Git {
             config_hooks: false,
             pathspec_from_file: true,
             diff_no_relative: true,
+            attr_system: true,
         },
     });
     let backend = Arc::new(Canned { out: out.to_vec(), chunk });

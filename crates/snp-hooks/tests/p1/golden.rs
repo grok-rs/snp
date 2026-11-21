@@ -61,12 +61,20 @@ fn writes_case_colliding_paths(case: &serde_json::Value) -> bool {
 }
 
 /// Whether the temp directory's file system tells `a` from `A`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+)]
 fn case_sensitive_fs() -> bool {
     let d = tempfile::tempdir().unwrap();
     std::fs::write(d.path().join("a"), b"").unwrap();
     !d.path().join("A").exists()
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+)]
 fn steps(sb: &Sandbox, steps: &serde_json::Value) -> Vec<String> {
     let mut written: Vec<String> = Vec::new();
     for step in steps.as_array().into_iter().flatten() {

@@ -10,7 +10,7 @@ use ::serde::de::{
 use ::serde::ser::{self, Serialize, SerializeMap, SerializeSeq};
 use ::serde::{Deserialize, forward_to_deserialize_any};
 
-use crate::value::{Map, Value};
+use crate::value::{Map, Value, ValueState};
 
 /// Error returned when deserializing a type from a [`Value`] fails.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -400,7 +400,8 @@ impl<'de> Visitor<'de> for ValueVisitor {
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
-        let mut out = Map::with_capacity(map.size_hint().unwrap_or(0).min(4096));
+        let mut out =
+            Map::with_capacity_and_hasher(map.size_hint().unwrap_or(0).min(4096), ValueState);
         while let Some((k, v)) = map.next_entry::<Value, Value>()? {
             out.insert(k, v);
         }

@@ -142,7 +142,7 @@ pub fn load(path: &Path, o: &LoadOpts<'_>) -> Result<Overlay, ConfigError> {
 }
 
 fn from_value(path: &Path, value: &Value) -> Overlay {
-    let empty = Map::new();
+    let empty = Map::default();
     let root = value.as_map().unwrap_or(&empty);
     let skip_groups: Vec<String> = get(root, "skip_groups")
         .and_then(Value::as_array)
@@ -219,7 +219,7 @@ pub fn apply_root(cfg: &mut Config, ov: &Overlay, diag: &dyn DiagSink) {
         if let Some(Value::List(repos)) = root.get_mut(&StrKey("repos")) {
             repos.extend(ov.raw_repos.iter().cloned());
         }
-        let mut marker = Map::new();
+        let mut marker = Map::default();
         marker.insert(Value::from("path"), Value::from(ov.path.to_string_lossy()));
         marker.insert(Value::from("fields"), Value::List(fields));
         root.insert(marker_key(), Value::Map(marker));

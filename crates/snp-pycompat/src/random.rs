@@ -158,7 +158,10 @@ impl Mt19937 {
 /// beyond `u32::MAX + 1` (never reached) are truncated.
 #[must_use]
 pub fn precommit_shuffled_indices(n: usize) -> Vec<u32> {
-    let mut v: Vec<u32> = (0..n).map_while(|i| u32::try_from(i).ok()).collect();
+    let mut v: Vec<u32> = Vec::new();
+    // `map_while` hides the length from `collect`; a failed reservation falls back to doubling growth
+    let _reserved: Result<(), std::collections::TryReserveError> = v.try_reserve_exact(n);
+    v.extend((0..n).map_while(|i| u32::try_from(i).ok()));
     let mut rng = Mt19937::init_by_array(&[FIXED_RANDOM_SEED]);
     for i in (1..v.len()).rev() {
         let bound = u64::try_from(i).unwrap_or(u64::MAX).saturating_add(1);

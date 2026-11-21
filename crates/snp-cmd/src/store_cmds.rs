@@ -10,9 +10,8 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use snp_cli::{CacheAction, CacheArgs};
-use snp_config::{
-    ConfigSource, Manifest, RepoConfig, load_config, load_manifest, load_manifest_bytes,
-};
+use snp_config::facts::{self, RepoFacts, Value};
+use snp_config::{ConfigSource, check_config, check_manifest, check_manifest_bytes};
 use snp_core::failure::Failure;
 use snp_core::output::Level;
 use snp_pyre::RegexCache;
@@ -37,7 +36,7 @@ fn exclusive(cx: &CmdCtx<'_>) -> Result<StoreGuard, Failure> {
 }
 
 /// What gc's marking keeps (ADR-075).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 struct Used {
     /// Repository keys still in use (pre-commit's `unused.discard((repo, rev))`).
     keys: HashSet<RepoKey>,
@@ -48,14 +47,10 @@ struct Used {
     local_markers: HashSet<String>,
 }
 
-/// The `additional_dependencies` a config hook sets (config-level dict, no defaults), when it sets them.
-fn config_hook_deps(raw_deps: Option<Vec<Arc<str>>>, manifest_deps: &[Arc<str>]) -> Vec<Arc<str>> {
-    raw_deps.unwrap_or_else(|| manifest_deps.to_vec())
-}
-
-/// The manifest of a remote `(repo, rev)` as gc can load it: from the materialised clone, else from the embedded
-/// Tier A profile of pre-commit-hooks (ADR-075). `None` = not cloned, or `InvalidManifestError` (the repository
-/// stays unused and is removed, `gc.py:33-38`).
+/// The manifest of a remote `(repo, rev)` as gc can load it, checked but not defaulted (`snp_config::facts`): from
+/// the materialised clone, else from the embedded Tier A profile of pre-commit-hooks (ADR-075). `None` = not cloned,
+/// or `InvalidManifestError` (the repository stays unused and is removed, `gc.py:33-38`). The check fails and warns
+/// exactly when a full `load_manifest` does.
 ///
 /// `present` is gc's one `repos-v1` snapshot, taken under the exclusive lock (pre-commit's single `SELECT repo, ref,
 /// path FROM repos`, `gc.py:65-70`): nothing can materialise or retire a repository while gc holds that lock.
@@ -66,76 +61,66 @@ fn gc_manifest(
     key: &RepoKey,
     present: &HashMap<RepoKey, &RepoHandle>,
     regexes: &RegexCache,
-) -> Option<(Manifest, bool)> {
+) -> Option<Value> {
     let o = frame::load_opts(cx, regexes, frame::ext_mode(cx));
     if let Some(h) = present.get(key) {
         let path = h.src.join(".pre-commit-hooks.yaml");
-        return load_manifest(&path, path.as_os_str(), &o)
-            .ok()
-            .map(|m| (m, true));
+        return check_manifest(&path, path.as_os_str(), &o).ok();
     }
     if snp_hooks_data::is_pre_commit_hooks_url(repo)
         && let Some(profile) = snp_hooks_data::profile_for_rev(rev)
     {
-        return load_manifest_bytes(
+        return check_manifest_bytes(
             profile.manifest_yaml.as_bytes(),
             OsStr::new(".pre-commit-hooks.yaml"),
             &o,
         )
-        .ok()
-        .map(|m| (m, false));
+        .ok();
     }
     None
 }
 
-/// `_mark_used_repos` (`gc.py:18-58`) for one loaded config, with every key derived by
-/// `RepoId::from_config(repo, tracked.project_root)` (ADR-075).
+/// `_mark_used_repos` (`gc.py:18-58`) for the repositories of one checked config, with every key derived by
+/// `RepoId::from_config(repo, tracked.project_root)` (ADR-075). `manifest(repo, rev, base key)` is the checked
+/// manifest of a remote repository ([`gc_manifest`]), loaded once per entry as pre-commit does.
+///
+/// A config hook that ends up without `additional_dependencies` uses the base key and marker, which the
+/// repository's entry has already marked: only hooks with dependencies derive more.
 fn mark_used(
-    cx: &CmdCtx<'_>,
-    cfg: &snp_config::Config,
+    repos: &[RepoFacts<'_>],
     root: &Path,
-    present: &HashMap<RepoKey, &RepoHandle>,
     used: &mut Used,
-    regexes: &RegexCache,
+    manifest: &mut dyn FnMut(&str, &str, &RepoKey) -> Option<Value>,
 ) {
-    for repo in &cfg.repos {
+    for repo in repos {
         match repo {
-            RepoConfig::Local { hooks } => {
-                for h in hooks {
-                    used.keys
-                        .insert(Store::local_key(&h.additional_dependencies));
-                    used.local_markers
-                        .insert(db_repo_name("local", &h.additional_dependencies));
+            RepoFacts::Local { deps } => {
+                for d in deps {
+                    used.keys.insert(Store::local_key(d));
+                    used.local_markers.insert(db_repo_name("local", d));
                 }
             }
-            RepoConfig::Remote { repo, rev, hooks } => {
+            RepoFacts::Remote { repo, rev, hooks } => {
                 let id = RepoId::from_config(repo, root);
                 let key = Store::remote_key(&id, rev, &[]);
-                let Some((manifest, _present)) = gc_manifest(cx, repo, rev, &key, present, regexes)
-                else {
+                let Some(checked) = manifest(repo, rev, &key) else {
                     continue;
                 };
+                let defined = facts::manifest_hooks(&checked);
                 used.keys.insert(key);
                 used.remote_markers
-                    .insert((marker_repo_name(&id, repo, &[]), rev.to_string()));
+                    .insert((marker_repo_name(&id, repo, &[]), (*rev).to_owned()));
                 for h in hooks {
-                    let Some(m) = manifest.get(&h.id) else {
+                    let Some(manifest_deps) = defined.deps(h.id) else {
                         continue;
                     };
-                    let raw_deps = h
-                        .raw
-                        .iter()
-                        .find(|(k, _)| k.as_str() == Some("additional_dependencies"))
-                        .and_then(|(_, v)| v.as_array())
-                        .map(|deps| {
-                            deps.iter()
-                                .filter_map(|d| d.as_str().map(Arc::from))
-                                .collect::<Vec<Arc<str>>>()
-                        });
-                    let deps = config_hook_deps(raw_deps, &m.additional_dependencies);
-                    used.keys.insert(Store::remote_key(&id, rev, &deps));
+                    let deps = h.deps.as_deref().unwrap_or(manifest_deps);
+                    if deps.is_empty() {
+                        continue;
+                    }
+                    used.keys.insert(Store::remote_key(&id, rev, deps));
                     used.remote_markers
-                        .insert((marker_repo_name(&id, repo, &deps), rev.to_string()));
+                        .insert((marker_repo_name(&id, repo, deps), (*rev).to_owned()));
                 }
             }
             _ => {}
@@ -143,19 +128,16 @@ fn mark_used(
     }
 }
 
-/// Loads one tracked config for gc: `None` = dead (pre-commit catches `InvalidConfigError`; snp also treats the
-/// configs that would crash pre-commit's loader as dead, X13-CFG-14 / X13-CMD-09).
-fn load_tracked(
-    cx: &CmdCtx<'_>,
-    t: &TrackedConfig,
-    regexes: &RegexCache,
-) -> Option<snp_config::Config> {
+/// Checks one tracked config for gc: `None` = dead (pre-commit catches `InvalidConfigError`; snp also treats the
+/// configs that would crash pre-commit's loader as dead, X13-CFG-14 / X13-CMD-09). The check fails and warns
+/// exactly when a full `load_config` does; gc reads its few keys from the checked value (`snp_config::facts`).
+fn load_tracked(cx: &CmdCtx<'_>, t: &TrackedConfig, regexes: &RegexCache) -> Option<Value> {
     let src = ConfigSource {
         path: t.path.clone(),
         display: t.path.as_os_str().to_os_string(),
         project_root: t.project_root.clone(),
     };
-    load_config(&src, &frame::load_opts(cx, regexes, frame::ext_mode(cx))).ok()
+    check_config(&src, &frame::load_opts(cx, regexes, frame::ext_mode(cx))).ok()
 }
 
 /// `pre-commit gc`: `_mark_used_repos` over the tracked configs, then sweep; `{n} repo(s) removed.`.
@@ -185,7 +167,12 @@ pub fn gc(cx: &CmdCtx<'_>) -> Result<i32, Failure> {
             return Err(f);
         }
         match load_tracked(cx, &t, &regexes) {
-            Some(cfg) => mark_used(cx, &cfg, &t.project_root, &present, &mut used, &regexes),
+            Some(checked) => mark_used(
+                &facts::config_repos(&checked, frame::ext_mode(cx)),
+                &t.project_root,
+                &mut used,
+                &mut |repo, rev, key| gc_manifest(cx, repo, rev, key, &present, &regexes),
+            ),
             None => dead.push(t.path),
         }
     }
@@ -339,13 +326,276 @@ mod tests {
         assert_eq!(human_size(u64::MAX), "16383.9 PiB");
     }
 
-    #[test]
-    fn deps_default_to_the_manifest() {
-        let m: Vec<Arc<str>> = vec![Arc::from("six")];
-        assert_eq!(config_hook_deps(None, &m), m);
-        assert_eq!(
-            config_hook_deps(Some(Vec::new()), &m),
-            Vec::<Arc<str>>::new()
-        );
+    mod marks {
+        use std::fmt::Write as _;
+        use std::path::Path;
+
+        use proptest::prelude::*;
+        use snp_config::{
+            Config, ConfigSource, ExtMode, LoadOpts, Manifest, RepoConfig, load_config,
+            load_manifest_bytes,
+        };
+        use snp_core::brand::Brand;
+        use snp_core::output::CollectWarnings;
+
+        use super::*;
+
+        /// The marking before the check-only loads (the oracle): the fully loaded config and manifests, every
+        /// manifest hook re-deriving its key and marker even without dependencies.
+        fn mark_used_full(
+            cfg: &Config,
+            root: &Path,
+            used: &mut Used,
+            manifest: &mut dyn FnMut(&str, &str, &RepoKey) -> Option<Manifest>,
+        ) {
+            for repo in &cfg.repos {
+                match repo {
+                    RepoConfig::Local { hooks } => {
+                        for h in hooks {
+                            used.keys
+                                .insert(Store::local_key(&h.additional_dependencies));
+                            used.local_markers
+                                .insert(db_repo_name("local", &h.additional_dependencies));
+                        }
+                    }
+                    RepoConfig::Remote { repo, rev, hooks } => {
+                        let id = RepoId::from_config(repo, root);
+                        let key = Store::remote_key(&id, rev, &[]);
+                        let Some(manifest) = manifest(repo, rev, &key) else {
+                            continue;
+                        };
+                        used.keys.insert(key);
+                        used.remote_markers
+                            .insert((marker_repo_name(&id, repo, &[]), rev.to_string()));
+                        for h in hooks {
+                            let Some(m) = manifest.get(&h.id) else {
+                                continue;
+                            };
+                            let raw_deps = h
+                                .raw
+                                .iter()
+                                .find(|(k, _)| k.as_str() == Some("additional_dependencies"))
+                                .and_then(|(_, v)| v.as_array())
+                                .map(|deps| {
+                                    deps.iter()
+                                        .filter_map(|d| d.as_str().map(Arc::from))
+                                        .collect::<Vec<Arc<str>>>()
+                                });
+                            let deps =
+                                raw_deps.unwrap_or_else(|| m.additional_dependencies.to_vec());
+                            used.keys.insert(Store::remote_key(&id, rev, &deps));
+                            used.remote_markers
+                                .insert((marker_repo_name(&id, repo, &deps), rev.to_string()));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        const IDS: [&str; 3] = ["a", "b", "c"];
+        const DEPS: [&str; 4] = [
+            "",
+            "additional_dependencies: []",
+            "additional_dependencies: [x]",
+            "additional_dependencies: [x, 'y==1']",
+        ];
+
+        /// A config hook or manifest hook: id, dependencies line, whether the required keys are present.
+        type Hook = (usize, usize, bool);
+
+        /// A `repos` entry: 0 URL, 1 local path (an existing directory), 2 local, 3 meta, 4 builtin; the
+        /// repository number (repeats share a manifest); its hooks.
+        type Repo = (u8, usize, Vec<Hook>);
+
+        /// A manifest per repository number: absent, invalid, or the hooks.
+        type Man = Option<Option<Vec<Hook>>>;
+
+        fn hook_lines(out: &mut String, (id, deps, full): &Hook, indent: &str) {
+            let id = IDS.get(*id).copied().unwrap_or("a");
+            writeln!(out, "{indent}-   id: {id}").unwrap();
+            if *full {
+                writeln!(
+                    out,
+                    "{indent}    name: n\n{indent}    entry: e\n{indent}    language: system"
+                )
+                .unwrap();
+            }
+            if let Some(d) = DEPS.get(*deps).filter(|d| !d.is_empty()) {
+                writeln!(out, "{indent}    {d}").unwrap();
+            }
+        }
+
+        fn render_config(repos: &[Repo]) -> String {
+            let mut s = String::from(if repos.is_empty() {
+                "repos: []\n"
+            } else {
+                "repos:\n"
+            });
+            for (kind, n, hooks) in repos {
+                match kind {
+                    0 => writeln!(s, "-   repo: https://example.com/r{n}\n    rev: v{n}"),
+                    1 => writeln!(s, "-   repo: ./d{n}\n    rev: v{n}"),
+                    2 => writeln!(s, "-   repo: local"),
+                    3 => writeln!(s, "-   repo: meta"),
+                    _ => writeln!(s, "-   repo: builtin"),
+                }
+                .unwrap();
+                s.push_str(if hooks.is_empty() {
+                    "    hooks: []\n"
+                } else {
+                    "    hooks:\n"
+                });
+                for h in hooks {
+                    if *kind == 3 {
+                        s.push_str("    -   id: identity\n");
+                    } else {
+                        // local hooks need the required keys; builtin hooks take ids only
+                        let h = if *kind == 2 {
+                            (h.0, h.1, true)
+                        } else if *kind == 4 {
+                            (h.0, 0, false)
+                        } else {
+                            (h.0, h.1, false)
+                        };
+                        hook_lines(&mut s, &h, "    ");
+                    }
+                }
+            }
+            s
+        }
+
+        fn render_manifest(m: Option<&Vec<Hook>>) -> String {
+            match m {
+                None => "-   id: a\n".to_owned(),
+                Some(hooks) if hooks.is_empty() => "[]\n".to_owned(),
+                Some(hooks) => {
+                    let mut s = String::new();
+                    for h in hooks {
+                        hook_lines(&mut s, &(h.0, h.1, true), "");
+                    }
+                    s
+                }
+            }
+        }
+
+        fn hook() -> impl Strategy<Value = Hook> {
+            (0..IDS.len(), 0..DEPS.len(), Just(true))
+        }
+
+        fn repo() -> impl Strategy<Value = Repo> {
+            (
+                prop::sample::select(vec![0u8, 0, 1, 1, 2, 3, 4]),
+                0usize..4,
+                prop::collection::vec(hook(), 0..4),
+            )
+        }
+
+        fn man() -> impl Strategy<Value = Man> {
+            prop::option::weighted(
+                0.85,
+                prop::option::weighted(0.85, prop::collection::vec(hook(), 0..5)),
+            )
+        }
+
+        /// Marks of `config` with `manifests` (by repository number) both ways: (old, new); `None` = the config
+        /// does not load (both ways).
+        fn marks(config: &str, manifests: &[Man], ext: ExtMode) -> Option<(Used, Used)> {
+            let dir = tempfile::tempdir().unwrap();
+            for n in 0..4 {
+                fs::create_dir_all(dir.path().join(format!("d{n}"))).unwrap();
+            }
+            let path = dir.path().join("cfg.yaml");
+            fs::write(&path, config).unwrap();
+            let src = ConfigSource {
+                path,
+                display: "cfg.yaml".into(),
+                project_root: dir.path().to_path_buf(),
+            };
+            let regexes = RegexCache::default();
+            let (warn, diag) = (CollectWarnings::new(), CollectWarnings::new());
+            let o = LoadOpts {
+                brand: Brand::Snp,
+                ext,
+                regexes: &regexes,
+                warn: &warn,
+                diag: &diag,
+            };
+            let text = |repo: &str| -> Option<String> {
+                let n: usize = repo.rsplit(['r', 'd']).next()?.parse().ok()?;
+                manifests
+                    .get(n)?
+                    .as_ref()
+                    .map(|m| render_manifest(m.as_ref()))
+            };
+            let display = OsStr::new(".pre-commit-hooks.yaml");
+            let full = load_config(&src, &o);
+            let checked = check_config(&src, &o);
+            assert_eq!(full.is_ok(), checked.is_ok(), "{config}");
+            let (cfg, checked) = (full.ok()?, checked.ok()?);
+            let mut old = Used::default();
+            mark_used_full(&cfg, &src.project_root, &mut old, &mut |repo, _, _| {
+                load_manifest_bytes(text(repo)?.as_bytes(), display, &o).ok()
+            });
+            let mut new = Used::default();
+            mark_used(
+                &facts::config_repos(&checked, ext),
+                &src.project_root,
+                &mut new,
+                &mut |repo, _, _| check_manifest_bytes(text(repo)?.as_bytes(), display, &o).ok(),
+            );
+            Some((old, new))
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(128))]
+
+            /// The marks gc derives from the check-only loads equal the old marking's over the full loads.
+            #[test]
+            fn check_only_marks_equal_full_load_marks(
+                repos in prop::collection::vec(repo(), 0..5),
+                manifests in prop::collection::vec(man(), 4),
+                strict in prop::bool::weighted(0.2),
+            ) {
+                let ext = if strict { ExtMode::Strict } else { ExtMode::Enabled };
+                let config = render_config(&repos);
+                if let Some((old, new)) = marks(&config, &manifests, ext) {
+                    prop_assert_eq!(old, new, "{}", config);
+                }
+            }
+        }
+
+        /// The generators reach configs that load with remote keys per dependency set, local-path ids, local
+        /// markers and repositories left unmarked by an invalid or absent manifest.
+        #[test]
+        fn marks_generator_is_not_vacuous() {
+            use proptest::strategy::ValueTree as _;
+            let mut runner = proptest::test_runner::TestRunner::deterministic();
+            let strategy = (
+                prop::collection::vec(repo(), 0..5),
+                prop::collection::vec(man(), 4),
+            );
+            let (mut loaded, mut dep_keys, mut abs, mut local) = (0, 0, 0, 0);
+            for _ in 0..200 {
+                let (repos, manifests) = strategy.new_tree(&mut runner).unwrap().current();
+                let Some((old, new)) = marks(&render_config(&repos), &manifests, ExtMode::Enabled)
+                else {
+                    continue;
+                };
+                assert_eq!(old, new);
+                loaded += 1;
+                dep_keys += usize::from(new.remote_markers.iter().any(|(n, _)| n.contains(":x")));
+                abs += usize::from(
+                    new.remote_markers
+                        .iter()
+                        .any(|(n, _)| n.starts_with("abs:")),
+                );
+                local += usize::from(new.local_markers.iter().any(|n| n.starts_with("local:")));
+            }
+            assert!(
+                loaded >= 100 && dep_keys >= 20 && abs >= 20 && local >= 20,
+                "loaded {loaded}, dep keys {dep_keys}, abs {abs}, local {local}"
+            );
+        }
     }
 }

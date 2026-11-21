@@ -13,6 +13,7 @@ mod backend;
 mod exe;
 mod git;
 pub mod hookscripts;
+pub mod index_file;
 mod messages;
 mod owned;
 pub mod pch_facts;
@@ -28,6 +29,6 @@ pub use git::{CHECKOUT_PATHS_ARGS, CheckoutCall, Git, literal_pathspecs};
 pub use owned::{CloneMode, OwnedRepo, RevInfo, no_git_env, prefetch_eligible};
 pub use types::{
     CheckoutConfig, ConfigListing, DiffFingerprint, DiffIndex, IndexEntries, IndexStamp,
-    MergeState, ObjectId, PrePushNs, RepoInfo, TaggedIndex,
+    MergeState, ObjectId, PrePushNs, RepoInfo, SystemAttributes, TaggedIndex,
 };
 pub use zlist::ZList;

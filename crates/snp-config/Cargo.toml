@@ -1,6 +1,6 @@
 [package]
 name = "snp-config"
-description = "pre-commit config and manifest schemas on cfgv, typed model, merge, extensions, overlay"
+description = "pre-commit config and manifest schemas on cfgv, typed model, merge, extensions, overlay (internal crate of snp; no API stability promise, versions follow snp)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

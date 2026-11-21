@@ -651,6 +651,7 @@ mod rows {
                 config_hooks: false,
                 pathspec_from_file: false,
                 diff_no_relative: false,
+                attr_system: false,
             },
         });
         let e = snp_git::Git::discover(old, &sb.env, &repo, scripted).unwrap_err();

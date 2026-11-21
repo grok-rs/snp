@@ -173,6 +173,7 @@ fn run(
         verify: env.is_truthy_flag("SNP_STASH_VERIFY"),
         old_git: env.is_truthy_flag("SNP_STASH_DRIVER_OLD_GIT"),
         report_recovery: true,
+        checkout_notice: None,
     };
     let mut guard = match snp_stash::enter(cx) {
         Ok(g) => g,

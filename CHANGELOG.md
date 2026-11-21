@@ -18,6 +18,32 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   (`measurements[*].time_wall_clock`) and refuses any other schema or unit, and it asks only for wall-clock time
   (`--metrics time_wall_clock`), because 2.0 also samples peak memory by default and RSS has its own runs. History
   records written before this change came from hyperfine 1.19.0.
+- release (ADR-137): a `hardening` job checks the binary of every archive and every wheel with the new
+  `cargo xtask release hardening <target> <binary>...` before anything is published: PIE, BIND_NOW, full RELRO, a
+  non-executable stack and no text relocations on linux-gnu; static-pie on x86_64-musl; static non-PIE on
+  aarch64-musl (Rust 1.100 cannot link static-pie for it); PIE on macOS; high-entropy ASLR and DEP on Windows.
+  Non-PIE artifacts were measured (about 0.2 ms less per snp start) and rejected: they would put the whole executable
+  at a fixed address, and stable Rust offers no stack protector or CET to make up for it. Overflow checks stay on
+  for third-party crates as well (ADR-114: turning them off gained under 1 % and slowed B4). No build-profile change.
+- bench (ADR-136): B11's configurations name their repositories `https://gc500.bench.invalid/rNNN`, which the bench
+  gitconfig maps to the local clones, instead of absolute local paths, whose real paths snp resolves (40 % of its B11
+  syscalls). Every generated fixture file and directory gets the commit date as its modification time before
+  `git add`, so no index entry is racily clean (before, all of `noop10`, `pch960`, `gc500` and B9's copies were, and
+  every `git diff` hashed them again). B11, B6 and B7 numbers step down for the tools that paid that cost (snp's B11
+  −12 % instructions locally, B6 −7 %); these are fixture corrections, not snp speedups. B9 also measures B9nv (the
+  same commit with `--no-verify`) and B3' (`snp run` in B9's fixture) in its rounds and reports
+  `B9 − B9nv − B3'`, the installed hook's own cost, as information. The known-miss reasons of B6, B11 and B12u state
+  current facts, B9 has an interim entry, and B5's entry is gone, so the gate fails again if snp falls behind prek on
+  B5.
+- When hook modifications are detected with `git diff` (over 16,384 index entries, or one or two process hooks on a
+  tree that is not small), snp skips the `git diff` after each hook, and the lazy one before the first, when the index
+  proves it empty (ADR-134; output and side effects unchanged, `SNP_VERIFY_INDEX_PROOF=1` cross-checks
+  it): on Unix filesystems the stat oracle accepts, with fsmonitor, `core.ignoreStat`, sparse checkout and
+  `core.worktree` off, every index entry at stage 0, no intent-to-add entry, no split or sparse index, every entry
+  older than the index file (not racy) and its file's `lstat` exactly the index's cached stat data, and no leading
+  directory replaced by a symbolic link. Anything else takes the real diff, as before. On B12u (20 hooks over 20,000
+  files) 19 of 20 `git diff`s no longer run: 1,504 M → 865 M instructions for the process tree, 428 → 410 processes;
+  B4 and B5 lose one of two (−4 %).
 - bench: the B8 `p50 <= pre-commit` known miss is gone. PR #57's CI bench measured snp at 307 ms against
   pre-commit's 418 ms (1.36x), so the gate fails again if snp ever falls behind pre-commit on B8.
 - cfgv and file-identify are part of the workspace (ADR-116): imported with their full history as `crates/snp-cfgv`
@@ -53,6 +79,25 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   lookup, the markers of used repositories kept without being read, orphan repository locks decided from one listing,
   and the tool sweep reads no environment sidecar when no tool version is old enough. Output and the removal set are
   unchanged.
+- Configs and manifests are read with one `stat` and a buffer sized from it: a small file takes two `read` calls
+  instead of a 32-byte probe and up to a dozen growing reads (B11, `snp gc` over 200 configs and 500 manifests:
+  17,342 -> 14,741 system calls). `validate-config` and `validate-manifest` without `--strict`/`--portable` stop after
+  the checks that produce every error and warning (new `snp_config::check_config` / `check_manifest`), skipping the
+  schema defaults and the typed model they then dropped (B10, 1,000 hooks: 194M -> 160M instructions, 168k -> 137k
+  allocations). The signal handler reads `SNP_KILL_GRACE` from the startup environment instead of capturing the
+  process environment a second time. Output, errors and warnings are unchanged.
+- `snp gc` checks the tracked configs and the used manifests without building the typed model (new
+  `snp_config::facts` projections of the checked value, and `check_manifest_bytes` for the embedded pre-commit-hooks
+  manifests), skips the key derivation of hooks without dependencies (their key is the repository's), resolves
+  local-path repositories with an in-place `realpath` and decodes each `.snp-repo.json` without a JSON tree (B11, 200
+  configs and 500 repositories: 162M -> 114M instructions, 191k -> 114k allocations, 27.7 -> 15.3 MB allocated). The
+  removal set, the kept markers and the output are unchanged.
+- A pinned `pre-commit/pre-commit-hooks` tag (Tier A) no longer loads its embedded manifest on every run: the
+  manifest is built from a model `cargo xtask gen-pch-data` generates per tag (the hooks after the schema defaults),
+  which a generated-data test proves equal to the load for every tag. Other manifests compile a `files`/`exclude`
+  pattern only when its parse reports a regex `FutureWarning`, instead of compiling every pattern to look for one
+  (B6, 13 pre-commit-hooks v6.0.0 hooks over 960 files: 89.4M -> 82.1M instructions; B7 91.1M -> 83.6M). Output,
+  errors and warnings are unchanged.
 - Faster stash of large unstaged changes on Linux: when the stat stamps of the patch's files prove they did not change
   since the run took the worktree lock, and `git diff-index --name-only` shows no other changed file, the stash no
   longer runs a second full `git diff-index --binary` to re-verify the patch (ADR-097). snp's own CPU in the 10 MB
@@ -91,12 +136,15 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   missing; a required key is read once), and the remaining config lookups that built a key value now use the new
   `cfgv::StrKey`. `validate-config` of 1,000 local hooks runs about 3% fewer instructions, `gc` over 200 configs about
   3.5% fewer. Output and messages are unchanged.
-- The installed hook script (template v2, ID `405bd8559925d194c1d22af6ef66282e`) finds its directory by parameter
-  expansion instead of running `dirname`: one process less per hook run, with the same `--hook-dir` (ADR-105). It
-  keeps the old template's ID as a `# snp 2.0 compat ID:` line, so snp 2.0.0–2.0.1 still recognise it. Scripts
-  installed by those versions keep working; `snp doctor` reports them as "an older snp hook script" until `snp
-  install` (or `snp doctor --fix`) rewrites them. A script with snp's header, an ID this version does not know and
-  pre-commit's compat ID is treated as an snp script, never as pre-commit's.
+- The installed hook script (template v3, ID `b5aab319837cfd7b570aecfbefd9e801`) finds its directory by parameter
+  expansion instead of running `dirname` in a subshell (ADR-105, ADR-135): for the hook paths git builds (a normal
+  repository's `.git/hooks`, worktrees, submodules, a plain `core.hooksPath`) it forks nothing: two forks and one
+  exec fewer per hook run than snp 2.0.0, with the same `--hook-dir`. Other shapes (a trailing `/` or `../` in
+  `core.hooksPath`, `:` or `\` in the path, an unusual `PWD`) keep one subshell. It keeps snp 2.0.0's template ID as
+  a `# snp 2.0 compat ID:` line, so snp 2.0.0 still recognises it. Scripts installed by snp 2.0.0 (or by development
+  builds of this release, template v2) keep working; `snp doctor` reports them as "an older snp hook script" until
+  `snp install` (or `snp doctor --fix`) rewrites them. A script with snp's header, an ID this version does not know
+  and pre-commit's compat ID is treated as an snp script, never as pre-commit's.
 - Restore-critical git commands (the stash's queries, checkouts and applies) get `GIT_TERMINAL_PROMPT=0` set on the
   command instead of on a copy of the whole environment: two fewer allocations per environment variable and command
   (about 220 fewer in a no-op `run`, about 500 in the 10 MB stash scenario, and about 1% fewer instructions in both).
@@ -184,8 +232,63 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   its own with its index mode's executable bit.
   Anything else takes the real diff, as before. On B8 the git process that re-hashed the 10 MiB file no longer runs:
   2,653 M → 2,292 M instructions for the tree (prek: 2,467 M), 16 → 15 processes.
+- Consecutive in-process hooks share the files they read (ADR-131): on Linux and macOS, on a filesystem where snp
+  trusts stat information, a file that a native hook (or `pygrep`) read and that was last changed more than 2 seconds
+  earlier is kept in memory (at most 1 MiB per file, 16 MiB in all) until the next process hook or concurrent
+  priority group, and the following natives check one `stat` of the path (device, inode, size, mtime, ctime, type)
+  instead of opening and reading it again; anything different reads the file, and a native that writes a file drops
+  it first. Output and side effects are unchanged, including edits made by other programs between hooks
+  (`SNP_VERIFY_FILE_CACHE=1` cross-checks every reuse). On B6 snp makes 36.5% fewer system calls (43,344 → 27,512:
+  `openat` 6,880 → 2,435, `read` 10,824 → 3,876; `statx` +1,082).
+- A run whose hooks all run inside snp (native pre-commit-hooks ports, `pygrep`, `fail`, meta) no longer runs the
+  baseline `git diff` before its hooks when nothing supplied it (ADR-132): the first native hook that writes a file
+  runs it just before its first write (other partitions of that hook wait for it), and a run in which no native writes
+  runs none. Any process hook, a priority group of several hooks or `stage_fixed` keeps the baseline where it was.
+  Output, exit codes and files are unchanged except in one race: an edit by another program before a fixer's first
+  write, when that fixer's own change is one `git diff` cannot see, no longer adds `- files were modified by this
+  hook` to it. Native hooks write only through a token: clippy bans the `std::fs` and `snp_os` write APIs outside
+  it (`crates/snp-hooks/clippy.toml`, checked by `cargo xtask lint-guards`), and a documented rule covers writes
+  through a subprocess. On B6, one process and 14% of the system calls fewer (27,536 → 23,663) and
+  10.2 M fewer instructions for the tree (−8.6%).
+- Config and manifest validation hashes less and allocates less (ADR-111). Internal crates: snp-cfgv's `Map` and
+  `Set` hash with `ValueState`, one SipHash-1-3 key drawn per process instead of one per map (the HashDoS protection
+  is unchanged: keyed SipHash with a random key per process, as CPython's; build maps with `Map::default()`), and
+  schema keys are `HashedKey`s whose hash is computed once and reused for every map; snp-yaml deduplicates the keys of
+  a mapping of up to 16 pairs without hashing them. snp-config formats the `files`/`exclude` key only for a warning,
+  rewrites `language` and stage lists only when they hold `system`/`script` or a legacy stage name, and keeps each
+  compiled pattern once; snp-pyre sizes its parse buffers exactly. `validate-config` on 1,000 hooks runs 14.5% fewer
+  instructions (193.5 M → 165.4 M) with 13,000 fewer allocations, `gc` on 500 configs 7.8% fewer (163.7 M →
+  150.9 M). Messages, warnings, their order and every result are unchanged.
+- Loading YAML allocates less (ADR-138). Internal crates: snp-yaml's `Node.tag` is a `Cow<'static, str>` (was
+  `Box<str>`), borrowed for a tag the resolver assigns and owned for an explicit tag; the 24 published internal
+  crates make no API stability promise (ADR-088(2)) and now say so in their crates.io descriptions. The scanner
+  copies a quoted scalar once instead of character by character and no longer allocates for line breaks, blank runs
+  or the default `%TAG` handles. `validate-config` on 1,000 hooks runs 6.8% fewer instructions (165.9 M → 154.6 M)
+  with 30,000 (19%) fewer allocations, `gc` on 500 configs 3.1% fewer (150.2 M → 145.6 M) with 17,400 fewer. Loaded
+  values, errors, marks and `Debug` output are unchanged.
+- The pre-commit-hooks natives and the hook argv path allocate less. check-case-conflict's repository index borrows
+  parent directories instead of copying them, the LFS attribute stamps of check-added-large-files are looked up
+  without copying each directory and built in one reused path, the shebang and byte-order-marker probes read into an
+  inline 4-byte buffer, the argparse emulation reserves its token tables and value lists, and the shuffled file order
+  of a hook is reserved exactly instead of doubling. `run --all-files` over 960 files with 13 pre-commit-hooks hooks
+  makes 17,000 (19%) fewer allocations and 4,600 fewer reallocations and runs 7.4% fewer instructions (88.8 M →
+  82.3 M); over 50,000 files the heap peak is 0.3 MB lower (5.79 → 5.48 MB; 7.41 → 7.07 MB with `types` filters).
+  Output and errors are unchanged.
+- That proof now also holds with attributes files that convert nothing (ADR-133): a file passes when no token sets
+  or values `text`, `crlf`, `eol`, `ident`, `filter` or `working-tree-encoding` (`-x` and `!x` are fine), and
+  `* text=auto` passes with `core.eol` unset, `lf` or `native`; a `.gitattributes` in the stash's patch, a tracked one
+  that is assume-unchanged, skip-worktree or missing, a symlinked or unreadable one, LFS and Windows still take the
+  real diff. It also runs on macOS and other Unix systems when git (2.42 or later) names its system attributes file
+  through `git var GIT_ATTR_SYSTEM`, asked once per stashing run that checks files out, overlapped with that checkout. On B8 with a committed
+  `* text=auto` file the skipped diff was 1,333 M instructions; plain B8 pays one `git var` process (0.6 M), and runs
+  that stash nothing (B2, B3, B9) are unchanged. The tracked-files query is `git ls-files -s -v -z` now.
 
 ### Fixed
+
+- The post-checkout baseline proof (ADR-119) could miss the system attributes file of a git reached through a
+  wrapper script, built with its own `sysconfdir` or with `RUNTIME_PREFIX` elsewhere, and so skip a `git diff` that
+  such a file's filter made non-empty. With git 2.42 or later the file is now the one `git var GIT_ATTR_SYSTEM` names
+  (ADR-133); older gits keep the previous rule on Linux only.
 
 - The nightly musl bench passes again (ADR-118). The `musl-mimalloc` build exceeded the hard peak-RSS budgets on
   B4/B6/B12u (53.7/29.7/58.8 MiB), because mimalloc madvised its arenas into transparent huge pages. mimalloc is now

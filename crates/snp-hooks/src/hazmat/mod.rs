@@ -312,7 +312,7 @@ pub fn in_hook_main(args: &[OsString], env: &Env) -> i32 {
         return 1;
     };
     let cancel = CancelToken::new();
-    let guard = snp_proc::signals::install(cancel.clone(), false).ok();
+    let guard = snp_proc::signals::install_with_env(cancel.clone(), false, env).ok();
     let result = with_kill_watch(&cancel, || run_tool(&tool, env, &cwd, &cancel));
     let code = match result {
         Ok(ret) => exit_status(ret),

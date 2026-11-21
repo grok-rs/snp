@@ -63,10 +63,21 @@ static ACTIVE: Mutex<Option<Arc<State>>> = Mutex::new(None);
 /// reparent to snp and `registry::quiesce` can find them on the cancel path.
 ///
 /// `SNP_KILL_GRACE` is read from the process environment through `Env::capture_process` (snp never mutates it, so
-/// this equals the startup snapshot); an unparsable, negative or non-finite value means 2 s, values above 60 s are
-/// clamped. The grace also bounds the deadline escalation of `spawn` (TERM → grace → KILL). pre-commit itself has no
-/// handler: SIGINT raises `KeyboardInterrupt` (`error_handler.py:71-81`), SIGTERM/SIGHUP kill it outright.
+/// this equals the startup snapshot; a caller that holds that snapshot passes it to [`install_with_env`] instead of
+/// capturing the environment a second time); an unparsable, negative or non-finite value means 2 s, values above
+/// 60 s are clamped. The grace also bounds the deadline escalation of `spawn` (TERM → grace → KILL). pre-commit
+/// itself has no handler: SIGINT raises `KeyboardInterrupt` (`error_handler.py:71-81`), SIGTERM/SIGHUP kill it
+/// outright.
 pub fn install(cancel: CancelToken, subreaper: bool) -> io::Result<SignalGuard> {
+    install_with_env(cancel, subreaper, &Env::capture_process())
+}
+
+/// [`install`] with `SNP_KILL_GRACE` read from `env`, the process's startup snapshot (`Env::capture_process`).
+pub fn install_with_env(
+    cancel: CancelToken,
+    subreaper: bool,
+    env: &Env,
+) -> io::Result<SignalGuard> {
     imp::ensure_handler()?;
     // Best effort: without the subreaper (a kernel or sandbox refusing the prctl) only the orphan sweep of
     // `quiesce` is lost.
@@ -76,7 +87,7 @@ pub fn install(cancel: CancelToken, subreaper: bool) -> io::Result<SignalGuard> 
     }
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     let _: bool = subreaper;
-    let grace = parse_grace(Env::capture_process().get("SNP_KILL_GRACE"));
+    let grace = parse_grace(env.get("SNP_KILL_GRACE"));
     registry::set_kill_grace(grace);
     let state = Arc::new(State {
         cancel,
@@ -366,5 +377,20 @@ mod tests {
         for bad in ["-1", "nan", "inf", "", "two", "1s"] {
             assert_eq!(g(bad), DEFAULT_GRACE, "{bad}");
         }
+    }
+
+    /// The grace comes from the snapshot the caller passes, not from a second capture of the process
+    /// environment (the test process has no `SNP_KILL_GRACE=7`).
+    #[test]
+    fn grace_from_the_given_snapshot() {
+        let env = Env::from_pairs([("SNP_KILL_GRACE", "7")]);
+        let guard = install_with_env(CancelToken::new(), false, &env).unwrap();
+        assert_eq!(registry::kill_grace(), Duration::from_secs(7));
+        assert_eq!(guard.state.grace, Duration::from_secs(7));
+        drop(guard);
+        let guard =
+            install_with_env(CancelToken::new(), false, &Env::from_pairs([("A", "b")])).unwrap();
+        assert_eq!(registry::kill_grace(), DEFAULT_GRACE);
+        drop(guard);
     }
 }

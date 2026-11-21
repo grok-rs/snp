@@ -2,16 +2,13 @@
 //! warning context.
 
 use std::fmt;
-use std::hash::BuildHasher;
 use std::sync::Arc;
-
-use indexmap::map::raw_entry_v1::{RawEntryApiV1, RawEntryMut};
 
 use crate::check::{CheckFn, join_str};
 use crate::condition::ConditionValue;
 use crate::error::{ValidationError, validate_context};
 use crate::schema::Schema;
-use crate::value::{Map, Value, py_sort};
+use crate::value::{HashedKey, Map, Value, py_sort};
 
 /// The validation context threaded through every check: an ordered sink for
 /// the warnings that validators emit.
@@ -179,22 +176,22 @@ pub type WarnCallback = Arc<dyn Fn(&[Value], &[Value], &Map, &mut Cx<'_>) + Send
 pub enum Validator {
     /// `Required(key, check_fn)`.
     Required {
-        /// The key.
-        key: Value,
+        /// The key, with its hash precomputed.
+        key: HashedKey,
         /// Check applied to the value.
         check_fn: CheckFn,
     },
     /// `RequiredRecurse(key, schema)`.
     RequiredRecurse {
-        /// The key.
-        key: Value,
+        /// The key, with its hash precomputed.
+        key: HashedKey,
         /// Schema the value is validated against.
         schema: Arc<Schema>,
     },
     /// `Optional(key, check_fn, default)`.
     Optional {
-        /// The key.
-        key: Value,
+        /// The key, with its hash precomputed.
+        key: HashedKey,
         /// Check applied to the value when present.
         check_fn: CheckFn,
         /// Value set by `apply_defaults` when the key is missing.
@@ -202,8 +199,8 @@ pub enum Validator {
     },
     /// `OptionalRecurse(key, schema, default)`.
     OptionalRecurse {
-        /// The key.
-        key: Value,
+        /// The key, with its hash precomputed.
+        key: HashedKey,
         /// Schema the value is validated against when present.
         schema: Arc<Schema>,
         /// Value set by `apply_defaults` when the key is missing.
@@ -211,20 +208,20 @@ pub enum Validator {
     },
     /// `OptionalNoDefault(key, check_fn)`.
     OptionalNoDefault {
-        /// The key.
-        key: Value,
+        /// The key, with its hash precomputed.
+        key: HashedKey,
         /// Check applied to the value when present.
         check_fn: CheckFn,
     },
     /// `Conditional(key, check_fn, condition_key, condition_value,
     /// ensure_absent)`: the key is required when the condition matches.
     Conditional {
-        /// The key.
-        key: Value,
+        /// The key, with its hash precomputed.
+        key: HashedKey,
         /// Check applied to the value.
         check_fn: CheckFn,
-        /// Key whose value is tested.
-        condition_key: Value,
+        /// Key whose value is tested, with its hash precomputed.
+        condition_key: HashedKey,
         /// The condition.
         condition_value: ConditionValue,
         /// Reject the key when the condition key is present but does not
@@ -234,14 +231,14 @@ pub enum Validator {
     /// `ConditionalOptional(key, check_fn, default, condition_key,
     /// condition_value, ensure_absent)`.
     ConditionalOptional {
-        /// The key.
-        key: Value,
+        /// The key, with its hash precomputed.
+        key: HashedKey,
         /// Check applied to the value when present.
         check_fn: CheckFn,
         /// Value set by `apply_defaults` when the condition matches.
         default: Value,
-        /// Key whose value is tested.
-        condition_key: Value,
+        /// Key whose value is tested, with its hash precomputed.
+        condition_key: HashedKey,
         /// The condition.
         condition_value: ConditionValue,
         /// Reject the key when the condition key is present but does not
@@ -251,12 +248,12 @@ pub enum Validator {
     /// `ConditionalRecurse(key, schema, condition_key, condition_value,
     /// ensure_absent)`.
     ConditionalRecurse {
-        /// The key.
-        key: Value,
+        /// The key, with its hash precomputed.
+        key: HashedKey,
         /// Schema the value is validated against.
         schema: Arc<Schema>,
-        /// Key whose value is tested.
-        condition_key: Value,
+        /// Key whose value is tested, with its hash precomputed.
+        condition_key: HashedKey,
         /// The condition.
         condition_value: ConditionValue,
         /// Reject the key when the condition key is present but does not
@@ -377,7 +374,7 @@ impl fmt::Debug for Validator {
 // --- Check logic (cfgv.py `_check_*`) --------------------------------------
 
 /// The check of a present value (the second half of `_check_optional`).
-fn check_present<F>(key: &Value, val: &Value, check: F) -> Result<(), ValidationError>
+fn check_present<F>(key: &HashedKey, val: &Value, check: F) -> Result<(), ValidationError>
 where
     F: FnOnce(&Value) -> Result<(), ValidationError>,
 {
@@ -387,22 +384,22 @@ where
 }
 
 /// `_check_optional` with an arbitrary check of the value.
-fn check_optional_with<F>(key: &Value, dct: &Map, check: F) -> Result<(), ValidationError>
+fn check_optional_with<F>(key: &HashedKey, dct: &Map, check: F) -> Result<(), ValidationError>
 where
     F: FnOnce(&Value) -> Result<(), ValidationError>,
 {
-    dct.get(key)
+    key.get(dct)
         .map_or(Ok(()), |val| check_present(key, val, check))
 }
 
 /// `_check_required` (`_require_key`, then `_check_optional`) with an
 /// arbitrary check of the value, in one probe: a missing key is the error,
 /// a present one is checked.
-fn check_required_with<F>(key: &Value, dct: &Map, check: F) -> Result<(), ValidationError>
+fn check_required_with<F>(key: &HashedKey, dct: &Map, check: F) -> Result<(), ValidationError>
 where
     F: FnOnce(&Value) -> Result<(), ValidationError>,
 {
-    match dct.get(key) {
+    match key.get(dct) {
         Some(val) => check_present(key, val, check),
         None => Err(ValidationError::new(format!(
             "Missing required key: {}",
@@ -415,7 +412,7 @@ where
 /// condition key's value (`None` when it is missing), which the caller has
 /// already read to evaluate the condition.
 fn check_ensure_absent(
-    key: &Value,
+    key: &HashedKey,
     condition_key: &Value,
     condition_value: &ConditionValue,
     ensure_absent: bool,
@@ -425,7 +422,7 @@ fn check_ensure_absent(
     if !ensure_absent || condition.is_none() {
         return Ok(());
     }
-    match dct.get(key) {
+    match key.get(dct) {
         Some(found) => {
             condition_value.check_str_digits()?;
             let key = key.try_to_string()?;
@@ -448,8 +445,8 @@ fn extra_keys<'a>(dct: &'a Map, keys: &[Value]) -> Vec<&'a Value> {
 }
 
 /// Applies or removes defaults of a nested schema in place.
-fn recurse_in_place(dct: &mut Map, key: &Value, schema: &Schema, apply: bool) {
-    if let Some(slot) = dct.get_mut(key) {
+fn recurse_in_place(dct: &mut Map, key: &HashedKey, schema: &Schema, apply: bool) {
+    if let Some(slot) = key.get_mut(dct) {
         transform_slot(slot, schema, apply);
     }
 }
@@ -463,25 +460,16 @@ fn transform_slot(slot: &mut Value, schema: &Schema, apply: bool) {
     }
 }
 
-/// `dct.setdefault(key, default)` in one probe: the key is hashed once, and
-/// the key and the default are cloned only when the key is missing (then
-/// inserted at the end, like Python). Returns the value now under `key`.
-fn set_default<'a>(dct: &'a mut Map, key: &Value, default: &Value) -> &'a mut Value {
-    let hash = dct.hasher().hash_one(key);
-    match dct.raw_entry_mut_v1().from_key_hashed_nocheck(hash, key) {
-        RawEntryMut::Occupied(slot) => slot.into_mut(),
-        // `hash` is the map's own hash of `key`, and a clone hashes alike.
-        RawEntryMut::Vacant(slot) => {
-            slot.insert_hashed_nocheck(hash, key.clone(), default.clone())
-                .1
-        }
-    }
+/// `dct.setdefault(key, default)` in one probe with the key's precomputed
+/// hash ([`HashedKey::set_default`]).
+fn set_default<'a>(dct: &'a mut Map, key: &HashedKey, default: &Value) -> &'a mut Value {
+    key.set_default(dct, default)
 }
 
 /// `if dct.get(key, MISSING) == default: del dct[key]` (order-preserving),
 /// in one probe.
-fn remove_if_default(dct: &mut Map, key: &Value, default: &Value) {
-    if let Some((index, _, val)) = dct.get_full(key)
+fn remove_if_default(dct: &mut Map, key: &HashedKey, default: &Value) {
+    if let Some((index, val)) = key.get_full(dct)
         && val == default
     {
         dct.shift_remove_index(index);
@@ -519,13 +507,13 @@ impl Validator {
                 condition_value,
                 ensure_absent,
             } => {
-                let condition = dct.get(condition_key);
+                let condition = condition_key.get(dct);
                 if condition_value.matches(condition) {
                     check_required_with(key, dct, |v| check_fn.check(v))
                 } else {
                     check_ensure_absent(
                         key,
-                        condition_key,
+                        condition_key.value(),
                         condition_value,
                         *ensure_absent,
                         condition,
@@ -541,13 +529,13 @@ impl Validator {
                 ensure_absent,
                 ..
             } => {
-                let condition = dct.get(condition_key);
+                let condition = condition_key.get(dct);
                 if condition_value.matches(condition) {
                     check_optional_with(key, dct, |v| check_fn.check(v))
                 } else {
                     check_ensure_absent(
                         key,
-                        condition_key,
+                        condition_key.value(),
                         condition_value,
                         *ensure_absent,
                         condition,
@@ -562,13 +550,13 @@ impl Validator {
                 condition_value,
                 ensure_absent,
             } => {
-                let condition = dct.get(condition_key);
+                let condition = condition_key.get(dct);
                 if condition_value.matches(condition) {
                     check_required_with(key, dct, |v| schema.check_with(v, cx))
                 } else {
                     check_ensure_absent(
                         key,
-                        condition_key,
+                        condition_key.value(),
                         condition_value,
                         *ensure_absent,
                         condition,
@@ -617,7 +605,7 @@ impl Validator {
                 condition_value,
                 ..
             } => {
-                if condition_value.matches(dct.get(condition_key)) {
+                if condition_value.matches(condition_key.get(dct)) {
                     set_default(dct, key, default);
                 }
             }
@@ -628,7 +616,7 @@ impl Validator {
                 condition_value,
                 ..
             } => {
-                if condition_value.matches(dct.get(condition_key)) {
+                if condition_value.matches(condition_key.get(dct)) {
                     recurse_in_place(dct, key, schema, true);
                 }
             }
@@ -652,7 +640,7 @@ impl Validator {
                 schema,
                 default,
             } => {
-                if let Some((index, _, slot)) = dct.get_full_mut(key) {
+                if let Some((index, slot)) = key.get_full_mut(dct) {
                     transform_slot(slot, schema, false);
                     if *slot == *default {
                         dct.shift_remove_index(index);
@@ -666,7 +654,7 @@ impl Validator {
                 condition_value,
                 ..
             } => {
-                if condition_value.matches(dct.get(condition_key)) {
+                if condition_value.matches(condition_key.get(dct)) {
                     remove_if_default(dct, key, default);
                 }
             }
@@ -677,7 +665,7 @@ impl Validator {
                 condition_value,
                 ..
             } => {
-                if condition_value.matches(dct.get(condition_key)) {
+                if condition_value.matches(condition_key.get(dct)) {
                     recurse_in_place(dct, key, schema, false);
                 }
             }
@@ -694,6 +682,17 @@ impl Validator {
     #[must_use]
     pub fn key(&self) -> Option<&Value> {
         match self {
+            Self::Custom(item) => item.key(),
+            _ => self.hashed_key().map(HashedKey::value),
+        }
+    }
+
+    /// The key of a built-in keyed item with its precomputed hash, for
+    /// lookups in the maps it validates. `None` for custom items and the
+    /// `*AdditionalKeys` items.
+    #[must_use]
+    pub const fn hashed_key(&self) -> Option<&HashedKey> {
+        match self {
             Self::Required { key, .. }
             | Self::RequiredRecurse { key, .. }
             | Self::Optional { key, .. }
@@ -702,8 +701,9 @@ impl Validator {
             | Self::Conditional { key, .. }
             | Self::ConditionalOptional { key, .. }
             | Self::ConditionalRecurse { key, .. } => Some(key),
-            Self::Custom(item) => item.key(),
-            Self::NoAdditionalKeys { .. } | Self::WarnAdditionalKeys { .. } => None,
+            Self::Custom(_) | Self::NoAdditionalKeys { .. } | Self::WarnAdditionalKeys { .. } => {
+                None
+            }
         }
     }
 
@@ -755,7 +755,7 @@ impl Validator {
     #[must_use]
     pub fn required(key: impl Into<Value>, check_fn: CheckFn) -> Self {
         Self::Required {
-            key: key.into(),
+            key: HashedKey::new(key),
             check_fn,
         }
     }
@@ -764,7 +764,7 @@ impl Validator {
     #[must_use]
     pub fn required_recurse(key: impl Into<Value>, schema: impl Into<Arc<Schema>>) -> Self {
         Self::RequiredRecurse {
-            key: key.into(),
+            key: HashedKey::new(key),
             schema: schema.into(),
         }
     }
@@ -773,7 +773,7 @@ impl Validator {
     #[must_use]
     pub fn optional(key: impl Into<Value>, check_fn: CheckFn, default: impl Into<Value>) -> Self {
         Self::Optional {
-            key: key.into(),
+            key: HashedKey::new(key),
             check_fn,
             default: default.into(),
         }
@@ -787,7 +787,7 @@ impl Validator {
         default: impl Into<Value>,
     ) -> Self {
         Self::OptionalRecurse {
-            key: key.into(),
+            key: HashedKey::new(key),
             schema: schema.into(),
             default: default.into(),
         }
@@ -797,7 +797,7 @@ impl Validator {
     #[must_use]
     pub fn optional_no_default(key: impl Into<Value>, check_fn: CheckFn) -> Self {
         Self::OptionalNoDefault {
-            key: key.into(),
+            key: HashedKey::new(key),
             check_fn,
         }
     }
@@ -824,9 +824,9 @@ impl Validator {
         ensure_absent: bool,
     ) -> Self {
         Self::Conditional {
-            key: key.into(),
+            key: HashedKey::new(key),
             check_fn,
-            condition_key: condition_key.into(),
+            condition_key: HashedKey::new(condition_key),
             condition_value,
             ensure_absent,
         }
@@ -864,10 +864,10 @@ impl Validator {
         ensure_absent: bool,
     ) -> Self {
         Self::ConditionalOptional {
-            key: key.into(),
+            key: HashedKey::new(key),
             check_fn,
             default: default.into(),
-            condition_key: condition_key.into(),
+            condition_key: HashedKey::new(condition_key),
             condition_value,
             ensure_absent,
         }
@@ -895,9 +895,9 @@ impl Validator {
         ensure_absent: bool,
     ) -> Self {
         Self::ConditionalRecurse {
-            key: key.into(),
+            key: HashedKey::new(key),
             schema: schema.into(),
-            condition_key: condition_key.into(),
+            condition_key: HashedKey::new(condition_key),
             condition_value,
             ensure_absent,
         }

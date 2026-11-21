@@ -8,6 +8,7 @@ mod convert;
 pub mod discover;
 mod dump;
 pub mod ext;
+pub mod facts;
 mod items;
 mod load;
 mod merge;
@@ -21,10 +22,13 @@ pub mod schema;
 pub mod validate;
 
 pub use dump::{effective_dump, json_schema};
-pub use load::{load_config, load_manifest, load_manifest_bytes};
+pub use load::{
+    check_config, check_manifest, check_manifest_bytes, load_config, load_manifest,
+    load_manifest_bytes,
+};
 pub use merge::{finalize_local, merge_hook};
 pub use model::{
-    Config, ConfigError, ConfigHook, ConfigSource, ExtMode, HookDef, LoadOpts, Manifest,
-    MergeError, RepoConfig,
+    Config, ConfigError, ConfigHook, ConfigSource, DefaultedHook, ExtMode, HookDef, LoadOpts,
+    Manifest, MergeError, RepoConfig,
 };
 pub use sample::SAMPLE_CONFIG;

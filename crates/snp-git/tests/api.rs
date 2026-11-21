@@ -21,7 +21,7 @@ mod api {
     use snp_git::{
         CheckoutConfig, CloneMode, ConfigListing, DiffFingerprint, DiffIndex, Git, GitBackend,
         GitCaps, GitExe, GitVersion, IndexEntries, IndexStamp, MergeState, ObjectId, OwnedRepo,
-        PrePushNs, ProcBackend, RepoInfo, RevInfo, TaggedIndex, ZList,
+        PrePushNs, ProcBackend, RepoInfo, RevInfo, SystemAttributes, TaggedIndex, ZList,
     };
     use snp_proc::spawn::{Captured, Group, PyStatus, Role, SpawnError, Stdin};
 
@@ -88,6 +88,7 @@ mod api {
             config_hooks: false,
             pathspec_from_file: true,
             diff_no_relative: true,
+            attr_system: true,
         };
         has::<GitExe>(GitExe {
             argv0: vec![OsString::from("/usr/bin/git")],
@@ -133,6 +134,8 @@ mod api {
         has::<IndexEntries>(IndexEntries {
             paths: ZList::default(),
             modes: Box::new([0o100_644]),
+            // ADR-133
+            tags: Box::new(*b"H"),
         });
         // ADR-106
         has::<TaggedIndex>(TaggedIndex {
@@ -147,9 +150,17 @@ mod api {
                 plain: true,
                 file_mode: true,
                 hooks_path: Some(Box::from(&b".githooks"[..])),
+                eol_lf: true,
+                index_proof: true,
+                object_id_len: Some(20),
             },
         });
         has::<CheckoutConfig>(CheckoutConfig::default());
+        // ADR-133
+        has::<[SystemAttributes; 2]>([
+            SystemAttributes::File(PathBuf::from("/etc/gitattributes")),
+            SystemAttributes::Disabled,
+        ]);
     }
 
     #[test]
@@ -198,6 +209,7 @@ mod api {
         has::<fn(&Git) -> Result<Option<OsString>, Failure>>(Git::hooks_path);
         has::<fn(&Git) -> Result<Vec<PathBuf>, Failure>>(Git::config_origins);
         has::<fn(&Git) -> Result<ConfigListing, Failure>>(Git::config_listing);
+        has::<fn(&Git) -> Option<SystemAttributes>>(Git::system_attributes);
         has::<fn(&Git, &str) -> Result<Option<OsString>, Failure>>(Git::config_get);
         has::<fn(&Git, &str) -> Result<Vec<(OsString, OsString)>, Failure>>(Git::config_get_regexp);
         has::<fn(&Git, &[u8], &OsStr) -> Result<Option<PrePushNs>, Failure>>(Git::pre_push);
@@ -251,6 +263,36 @@ mod api {
     /// `PchFacts::tracked_derived` with an explicit value type (its `build` is an `impl FnOnce`).
     fn tracked_derived(f: &PchFacts, tracked: &Arc<[Vec<u8>]>) -> Option<Arc<usize>> {
         f.tracked_derived(tracked, 0, <[Vec<u8>]>::len)
+    }
+
+    /// ADR-134: the strict index reader.
+    #[test]
+    fn index_file() {
+        use snp_git::index_file::{IndexEntry, IndexFile, IndexRefusal};
+        send_sync::<IndexFile>();
+        send_sync::<IndexEntry>();
+        send_sync::<IndexRefusal>();
+        has::<fn(&Path, usize) -> Result<IndexFile, IndexRefusal>>(IndexFile::read);
+        has::<fn(&[u8], usize) -> Result<IndexFile, IndexRefusal>>(IndexFile::parse);
+        has::<for<'a> fn(&'a IndexFile, &IndexEntry) -> &'a [u8]>(IndexFile::name);
+        has::<for<'a> fn(&'a IndexFile, &IndexEntry) -> Option<&'a std::ffi::CStr>>(
+            IndexFile::name_cstr,
+        );
+        has::<fn(&IndexEntry) -> u16>(IndexEntry::stage);
+        has::<fn(&IndexEntry) -> bool>(IndexEntry::assume_valid);
+        has::<fn(&IndexEntry) -> bool>(IndexEntry::skip_worktree);
+        has::<fn(&IndexEntry) -> bool>(IndexEntry::intent_to_add);
+        let ix = IndexFile::default();
+        has::<(u32, &Vec<IndexEntry>, &Vec<[u8; 4]>)>((ix.version, &ix.entries, &ix.extensions));
+        has::<[IndexRefusal; 7]>([
+            IndexRefusal::Header,
+            IndexRefusal::HashSize,
+            IndexRefusal::Truncated,
+            IndexRefusal::Entry,
+            IndexRefusal::Extension(*b"link"),
+            IndexRefusal::TooLarge,
+            IndexRefusal::Io,
+        ]);
     }
 
     #[test]

@@ -53,7 +53,7 @@ mod vectors {
                     ));
                 }
             }
-            let mut m = Map::new();
+            let mut m = Map::default();
             m.insert(Value::from("k"), Value::from(s));
             let got = dump(&Value::Map(m));
             if v["dump"] != got.as_str() {

@@ -16,14 +16,15 @@ mod api {
         self, Condition, FailOnChanges, FastPath, HookExt, OutputMode, Priority, RootExt,
         StageFixed,
     };
+    use snp_config::facts;
     use snp_config::migrate::{self, Outcome};
     use snp_config::overlay::{self, HookPatch, Overlay};
     use snp_config::revline::{self, RevUpdate, Rewrite};
     use snp_config::schema;
     use snp_config::validate::{self, FileKind};
     use snp_config::{
-        Config, ConfigError, ConfigHook, ConfigSource, ExtMode, HookDef, LoadOpts, Manifest,
-        MergeError, RepoConfig,
+        Config, ConfigError, ConfigHook, ConfigSource, DefaultedHook, ExtMode, HookDef, LoadOpts,
+        Manifest, MergeError, RepoConfig,
     };
     use snp_core::brand::Brand;
     use snp_core::env::Env;
@@ -79,7 +80,7 @@ mod api {
     fn config_hook() -> ConfigHook {
         ConfigHook {
             id: Arc::from("trailing-whitespace"),
-            raw: cfgv::Map::new(),
+            raw: cfgv::Map::default(),
             ext: HookExt::default(),
         }
     }
@@ -95,6 +96,7 @@ mod api {
         send_sync::<ConfigHook>();
         send_sync::<HookDef>();
         send_sync::<Manifest>();
+        send_sync::<DefaultedHook<'static>>();
         send_sync::<MergeError>();
         send_sync::<HookExt>();
         send_sync::<RootExt>();
@@ -157,6 +159,34 @@ mod api {
             hooks: vec![hook_def()],
         });
         has::<for<'a> fn(&'a Manifest, &str) -> Option<&'a HookDef>>(Manifest::get);
+        let defaulted = DefaultedHook {
+            id: "x",
+            name: "x",
+            entry: "x",
+            language: "python",
+            alias: "",
+            files: "",
+            exclude: "^$",
+            types: &["file"],
+            types_or: &[],
+            exclude_types: &[],
+            additional_dependencies: &[],
+            args: &[],
+            always_run: false,
+            fail_fast: false,
+            pass_filenames: true,
+            description: "",
+            language_version: "default",
+            log_file: "",
+            minimum_pre_commit_version: "0",
+            require_serial: false,
+            stages: &[],
+            verbose: false,
+        };
+        has::<fn(std::array::IntoIter<DefaultedHook<'static>, 1>) -> Manifest>(
+            Manifest::from_defaulted,
+        );
+        has::<Manifest>(Manifest::from_defaulted([defaulted]));
         has::<[MergeError; 3]>([
             MergeError::UnknownId {
                 id: Arc::from("x"),
@@ -194,6 +224,36 @@ mod api {
         has::<fn(&[u8], &OsStr, &LoadOpts<'_>) -> Result<Manifest, ConfigError>>(
             snp_config::load_manifest_bytes,
         );
+        has::<fn(&ConfigSource, &LoadOpts<'_>) -> Result<cfgv::Value, ConfigError>>(
+            snp_config::check_config,
+        );
+        has::<fn(&Path, &OsStr, &LoadOpts<'_>) -> Result<cfgv::Value, ConfigError>>(
+            snp_config::check_manifest,
+        );
+        has::<fn(&[u8], &OsStr, &LoadOpts<'_>) -> Result<cfgv::Value, ConfigError>>(
+            snp_config::check_manifest_bytes,
+        );
+        has::<for<'a> fn(&'a facts::Value, ExtMode) -> Vec<facts::RepoFacts<'a>>>(
+            facts::config_repos,
+        );
+        has::<for<'a> fn(&'a facts::Value) -> facts::ManifestFacts<'a>>(facts::manifest_hooks);
+        let m = facts::ManifestFacts {
+            hooks: vec![("h", vec![Arc::from("dep")])],
+        };
+        has::<Option<&[Arc<str>]>>(m.deps("h"));
+        has::<facts::RepoFacts<'_>>(facts::RepoFacts::Remote {
+            repo: "r",
+            rev: "v1",
+            hooks: vec![facts::HookFacts {
+                id: "h",
+                deps: None,
+            }],
+        });
+        has::<facts::RepoFacts<'_>>(facts::RepoFacts::Local {
+            deps: vec![Vec::new()],
+        });
+        has::<facts::RepoFacts<'_>>(facts::RepoFacts::Meta);
+        has::<facts::RepoFacts<'_>>(facts::RepoFacts::Builtin);
         has::<fn(Brand, ExtMode) -> &'static cfgv::Schema>(schema::config_schema);
         has::<fn(Brand) -> &'static cfgv::Schema>(schema::manifest_schema);
         has::<
@@ -284,7 +344,7 @@ mod api {
     #[test]
     fn overlay() {
         has::<HookPatch>(HookPatch {
-            raw: cfgv::Map::new(),
+            raw: cfgv::Map::default(),
             ext: HookExt::default(),
         });
         has::<fn(&HookPatch)>(patch_keys);

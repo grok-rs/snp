@@ -85,6 +85,11 @@ fn strip_suffix_ascii_ci<'a>(s: &'a str, suffix: &str) -> &'a str {
     }
 }
 
+/// Every Tier A profile, oldest tag first.
+pub fn tag_profiles() -> &'static [TagProfile] {
+    TAG_PROFILES
+}
+
 /// Tier A (09 §6.3): the profile of a known tag (`rev` equal to the tag name, e.g. `v6.0.0`) or of the full commit of
 /// a known tag (`rev` equal to its 40 lowercase hex digits, the form `pre-commit autoupdate --freeze` writes). Any
 /// other rev (abbreviated SHA, branch, unknown tag) is `None` and goes to Tier B.

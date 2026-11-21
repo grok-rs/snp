@@ -194,16 +194,25 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     }
     // step 8: run_env
     let mut run_env = runenv::run_env(&cx.env, a);
-    // step 9: the stash guard
+    // step 9: the stash guard; ADR-133: on the stat-capable path with git >= 2.42, `git var GIT_ATTR_SYSTEM` (for
+    // ADR-119's proof after a checkout) runs overlapped with the stash's checkout, and only when one starts
+    let mut system_attributes = None;
     if stash {
-        let guard = snp_stash::enter(stash_ctx(
-            cx,
-            inv.store,
-            &git0,
-            &info,
-            &run_env,
-            !recovery_reported,
-        ))?;
+        let ask = cx.git_exe.caps.attr_system && six.stamp.is_some();
+        let (entered, system) =
+            enter_overlapping_system_query(ask, &git0, &info, &run_env, |notice| {
+                snp_stash::enter(stash_ctx(
+                    cx,
+                    inv.store,
+                    &git0,
+                    &info,
+                    &run_env,
+                    !recovery_reported,
+                    notice,
+                ))
+            });
+        let guard = entered?;
+        system_attributes = system;
         if let Some((k, v)) = guard.child_env_token() {
             run_env = run_env.patched(&EnvPatch::default().set(k, v));
         }
@@ -317,8 +326,23 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
     };
     let files = side.origins.as_ref().map(|l| Arc::clone(&l.files));
     let mut oracle = DiffOracle::new(&git, &info, &run_env, baseline, side.tracked, files)?;
+    if let Some(listing) = side.origins.as_deref() {
+        oracle.enable_index_proof(
+            &info,
+            &run_env,
+            Arc::clone(&cx.pool),
+            listing,
+            cx.env.is_truthy_flag("SNP_VERIFY_INDEX_PROOF"),
+        );
+    }
     if baseline.is_none() && warm {
-        checkout_baseline(cx, st.stash.as_ref(), side.origins.as_deref(), &mut oracle);
+        checkout_baseline(
+            cx,
+            st.stash.as_ref(),
+            side.origins.as_deref(),
+            system_attributes.as_ref(),
+            &mut oracle,
+        );
     }
     if let Some(flag) = fifteen.trust {
         oracle.guard_index_trust(flag);
@@ -338,7 +362,11 @@ fn body(st: &mut RunState, cx: &RunCtx, a: &RunArgs, inv: &Invocation<'_>) -> Re
         strict,
         refs: sel.refs.is_some(),
     };
-    lp.run(st.stash.as_mut(), &mut oracle)
+    let code = lp.run(st.stash.as_mut(), &mut oracle);
+    if oracle.proof_stats().is_some_and(|p| p.mismatches > 0) {
+        cx.printer.diag(messages::INDEX_PROOF_MISMATCH);
+    }
+    code
 }
 
 /// §3.1 step 14: `install_envs`, with the side queries (the staged list E, and F/G unless step 6 has them) on a
@@ -376,11 +404,13 @@ fn install_beside_side_queries(
                 && stat_possible(git, info, run_env)
         }
     };
+    // ADR-134: without the Stat mode, G alone arms the index-stat proof for the process hooks' `git diff`s
+    let proof = !stat && process_hooks >= 1 && index_proof_possible(info, run_env);
     let wants_staged = needs_files && files::wants_staged(sel, git, info);
     let have_early = early.tracked.is_some() && early.origins.is_some();
-    let side_work = wants_staged || (stat && !have_early);
+    let side_work = wants_staged || (stat && !have_early) || (proof && early.origins.is_none());
     let (installed, side) = std::thread::scope(|s| {
-        let queries = || side_queries(git, wants_staged, stat, early);
+        let queries = || side_queries(git, wants_staged, stat, proof, early);
         // no thread when the side queries have nothing to ask; inline when it cannot start
         let side = side_work.then(|| common::fork(s, queries));
         let installed = cx.resolver.install_envs(&picked.to_install, rcx);
@@ -392,6 +422,41 @@ fn install_beside_side_queries(
     });
     installed?;
     side
+}
+
+/// Step 9 with ADR-133's overlap: when `ask`, a thread waits for the stash's checkout notice and only then, when the
+/// worktree and the git directory are on filesystems the Stat mode accepts, asks `git var GIT_ATTR_SYSTEM` with the
+/// executable and environment of the parity `git diff` (`git0` with `run_env`; the worktree-lock token added after the
+/// stash does not reach attribute lookup). The query overlaps the checkout, and a run that checks nothing out spawns
+/// nothing (the stash drops the notice unsent). Per run, never kept. A thread that cannot start, a panic or a failed
+/// query is no answer: ADR-119's proof then falls back as without `git var`.
+fn enter_overlapping_system_query<T>(
+    ask: bool,
+    git0: &Git,
+    info: &RepoInfo,
+    run_env: &Env,
+    enter: impl FnOnce(Option<std::sync::mpsc::SyncSender<()>>) -> T,
+) -> (T, Option<snp_git::SystemAttributes>) {
+    if !ask {
+        return (enter(None), None);
+    }
+    let git = git0.with_env(run_env.clone());
+    let (tx, rx) = std::sync::mpsc::sync_channel::<()>(1);
+    std::thread::scope(|s| {
+        let git = &git;
+        let safe = |p: &std::path::Path| snp_os::fsinfo::stat_oracle_safe(p).unwrap_or(false);
+        let waiter = std::thread::Builder::new().spawn_scoped(s, move || {
+            rx.recv()
+                .ok()
+                .filter(|()| safe(&info.root) && safe(&info.git_dir))
+                .and_then(|()| git.system_attributes())
+        });
+        // no waiter: no notice either, so a checkout is not reported to a receiver that is gone
+        let notice = waiter.is_ok().then_some(tx);
+        let entered = enter(notice);
+        let system = waiter.ok().and_then(|h| h.join().ok().flatten());
+        (entered, system)
+    })
 }
 
 /// §3.1 step 15's results.
@@ -845,6 +910,7 @@ fn stash_ctx(
     info: &RepoInfo,
     run_env: &Env,
     report_recovery: bool,
+    checkout_notice: Option<std::sync::mpsc::SyncSender<()>>,
 ) -> StashCtx {
     let backend = Arc::new(ProcBackend {
         cancel: snp_core::cancel::CancelToken::new(),
@@ -868,6 +934,7 @@ fn stash_ctx(
             }
         }),
         report_recovery,
+        checkout_notice,
     }
 }
 
@@ -953,7 +1020,7 @@ fn small_tree(tracked: &IndexEntries) -> bool {
     true
 }
 
-/// Fan-out queries E (staged list), F (`ls-files -s -z`) and G (`config --list --show-origin -z`).
+/// Fan-out queries E (staged list), F (`ls-files -s -v -z`) and G (`config --list --show-origin -z`).
 #[derive(Debug, Default)]
 struct Side {
     staged: Option<snp_git::ZList>,
@@ -991,12 +1058,51 @@ struct Early {
     small: bool,
 }
 
-/// E, and F/G unless step 6 has them. `wants_staged` is decided once by the caller (it stats the merge files).
-fn side_queries(git: &Git, wants_staged: bool, stat: bool, early: &Early) -> Result<Side, Failure> {
+/// Whether the index-stat proof can arm in this run (ADR-134), checked before G is asked for it: Unix, no
+/// `SNP_DIFF_MODE=git`, no fsmonitor test variable, and the worktree and the git directory on filesystems the
+/// `DiffOracle` accepts. The oracle checks all of it again with G's configuration.
+fn index_proof_possible(info: &RepoInfo, env: &Env) -> bool {
+    let safe = |p: &std::path::Path| snp_os::fsinfo::stat_oracle_safe(p).unwrap_or(false);
+    cfg!(unix)
+        && env.get("SNP_DIFF_MODE").is_none_or(|v| v != "git")
+        && ["GIT_TEST_FSMONITOR", "GIT_FSMONITOR_TEST"]
+            .into_iter()
+            .all(|k| env.get_nonempty(k).is_none())
+        && safe(&info.root)
+        && safe(&info.git_dir)
+}
+
+/// E, and F/G unless step 6 has them; with `proof` (and no Stat mode) G alone, for the index-stat proof (ADR-134).
+/// `wants_staged` is decided once by the caller (it stats the merge files).
+fn side_queries(
+    git: &Git,
+    wants_staged: bool,
+    stat: bool,
+    proof: bool,
+    early: &Early,
+) -> Result<Side, Failure> {
     let early_pair = match (&early.tracked, &early.origins) {
         (Some(t), Some(o)) => Some((Arc::clone(t), Arc::clone(o))),
         _ => None,
     };
+    if !stat && proof {
+        // G kept from step 6, or asked beside E (a failure only costs the proof)
+        let kept = early.origins.as_ref().map(Arc::clone);
+        return std::thread::scope(|s| {
+            let g = (kept.is_none() && wants_staged)
+                .then(|| common::fork(s, || git.config_listing().ok().map(Arc::new)));
+            let staged = wants_staged.then(|| git.staged_files());
+            let origins = match g {
+                Some(g) => g.join(|_| None),
+                None => kept.or_else(|| git.config_listing().ok().map(Arc::new)),
+            };
+            Ok(Side {
+                staged: staged.transpose()?,
+                tracked: None,
+                origins,
+            })
+        });
+    }
     if !stat || early_pair.is_some() {
         let (tracked, origins) = early_pair.filter(|_| stat).unzip();
         return Ok(Side {
@@ -1060,11 +1166,13 @@ fn baseline(
 /// ADR-119: on the warm path, after a stash that checked out the patch's files, the baseline is known empty when the
 /// oracle's Stat-mode snapshot proves the checkout left `git diff` empty (`DiffOracle::elide_checkout_baseline`);
 /// otherwise it stays lazy, as before. Not after an intent-to-add clearing, and only with query G's configuration
-/// facts. `SNP_VERIFY_BASELINE=1` takes a proven baseline with the real `git diff` and reports a non-empty one.
+/// facts; `system` is `git var GIT_ATTR_SYSTEM`'s answer of this run (ADR-133). `SNP_VERIFY_BASELINE=1` takes a
+/// proven baseline with the real `git diff` and reports a non-empty one.
 fn checkout_baseline(
     cx: &RunCtx,
     stash: Option<&StashGuard>,
     config: Option<&ConfigListing>,
+    system: Option<&snp_git::SystemAttributes>,
     oracle: &mut DiffOracle,
 ) {
     let Some(g) = stash.filter(|g| !g.cleared_intent_to_add()) else {
@@ -1074,7 +1182,8 @@ fn checkout_baseline(
         return;
     };
     let verify = cx.env.is_truthy_flag("SNP_VERIFY_BASELINE");
-    if oracle.elide_checkout_baseline(paths, &config.checkout, verify) == Elision::Mismatch {
+    if oracle.elide_checkout_baseline(paths, &config.checkout, system, verify) == Elision::Mismatch
+    {
         cx.printer.diag(messages::BASELINE_MISMATCH);
     }
 }
@@ -1252,6 +1361,7 @@ mod tests {
             verify: false,
             old_git: false,
             report_recovery: true,
+            checkout_notice: None,
         })
         .unwrap();
         // the stash took the unstaged line away; a "hook" modified the file

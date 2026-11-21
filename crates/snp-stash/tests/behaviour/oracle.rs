@@ -11,7 +11,7 @@ use snp_stash::diff_oracle::{Change, DiffMode, DiffOracle};
 
 use crate::common::{Sandbox, Spy};
 
-/// The fan-out inputs (`ls-files -s -z`, `config --list --show-origin -z`).
+/// The fan-out inputs (`ls-files -s -v -z`, `config --list --show-origin -z`).
 fn fanout(git: &Git) -> (Arc<snp_git::IndexEntries>, Arc<[PathBuf]>) {
     (
         Arc::new(git.tracked_with_modes().unwrap()),

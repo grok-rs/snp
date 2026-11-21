@@ -13,9 +13,12 @@ use snp_core::lang::LanguageId;
 use snp_core::stage::{HookType, Stage, StageSet};
 
 use crate::ext::{self, HookExt};
-use crate::items::{BUILTIN, DEFAULT, LOCAL, META};
+use crate::facts::{RepoKind, hook_maps, repo_kind};
+use crate::items::DEFAULT;
 use crate::schema::HOOK_KEYS;
-use crate::{Config, ConfigHook, ConfigSource, ExtMode, HookDef, Manifest, RepoConfig};
+use crate::{
+    Config, ConfigHook, ConfigSource, DefaultedHook, ExtMode, HookDef, Manifest, RepoConfig,
+};
 
 /// Shared `Arc<str>`s for the values almost every hook carries (ARCHITECTURE §2.1 memory shape).
 static COMMON: LazyLock<[Arc<str>; 5]> = LazyLock::new(|| {
@@ -71,21 +74,33 @@ pub(crate) fn str_list(v: &Value) -> Arc<[Arc<str>]> {
 }
 
 pub(crate) fn tag_set(v: &Value) -> TagSet {
-    TagSet::from_names(
+    tag_names(
         v.as_array()
             .unwrap_or_default()
             .iter()
             .filter_map(Value::as_str),
     )
-    .unwrap_or_default()
+}
+
+/// Tag names → the set (an unknown name gives the empty set; the schema never lets one through).
+fn tag_names<'a>(names: impl IntoIterator<Item = &'a str>) -> TagSet {
+    TagSet::from_names(names).unwrap_or_default()
 }
 
 /// A stage list (legacy names already transformed by `apply_defaults`) → the set; unknown names are ignored.
 pub(crate) fn stage_set(v: &Value) -> StageSet {
-    v.as_array()
-        .unwrap_or_default()
-        .iter()
-        .filter_map(Value::as_str)
+    stage_names(
+        v.as_array()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(Value::as_str),
+    )
+}
+
+/// Stage names (legacy names transformed) → the set; unknown names are ignored.
+fn stage_names<'a>(names: impl IntoIterator<Item = &'a str>) -> StageSet {
+    names
+        .into_iter()
         .filter_map(|s| Stage::parse(Stage::transform_legacy(s)))
         .fold(StageSet::EMPTY, StageSet::with)
 }
@@ -134,8 +149,11 @@ pub(crate) fn extra_keys(m: &Map, ext: ExtMode) -> Vec<Arc<str>> {
 }
 
 fn language(m: &Map) -> LanguageId {
-    get_str(m, "language")
-        .and_then(LanguageId::from_config)
+    language_name(get_str(m, "language"))
+}
+
+fn language_name(name: Option<&str>) -> LanguageId {
+    name.and_then(LanguageId::from_config)
         .unwrap_or(LanguageId::Unsupported)
 }
 
@@ -198,28 +216,20 @@ pub(crate) fn config_hook(m: &Map, ext_mode: ExtMode) -> ConfigHook {
     }
 }
 
-fn hook_maps(repo: &Map) -> impl Iterator<Item = &Map> {
-    get(repo, "hooks")
-        .and_then(Value::as_array)
-        .unwrap_or_default()
-        .iter()
-        .filter_map(Value::as_map)
-}
-
 /// One validated `repos` entry → `RepoConfig`.
 pub(crate) fn repo_config(repo: &Map, ext_mode: ExtMode) -> RepoConfig {
     let url = get_str(repo, "repo").unwrap_or_default();
-    match url {
-        LOCAL => RepoConfig::Local {
+    match repo_kind(url, ext_mode) {
+        RepoKind::Local => RepoConfig::Local {
             hooks: hook_maps(repo).map(|h| hook_def(h, ext_mode)).collect(),
         },
-        META => RepoConfig::Meta {
+        RepoKind::Meta => RepoConfig::Meta {
             hooks: hook_maps(repo).map(|h| hook_def(h, ext_mode)).collect(),
         },
-        BUILTIN if ext_mode == ExtMode::Enabled => RepoConfig::Builtin {
+        RepoKind::Builtin => RepoConfig::Builtin {
             hooks: hook_maps(repo).map(|h| config_hook(h, ext_mode)).collect(),
         },
-        _ => RepoConfig::Remote {
+        RepoKind::Remote => RepoConfig::Remote {
             repo: Arc::from(url),
             rev: Arc::from(get_str(repo, "rev").unwrap_or_default()),
             hooks: hook_maps(repo).map(|h| config_hook(h, ext_mode)).collect(),
@@ -229,7 +239,7 @@ pub(crate) fn repo_config(repo: &Map, ext_mode: ExtMode) -> RepoConfig {
 
 /// The validated + defaulted config → `Config`.
 pub(crate) fn config(source: ConfigSource, raw: Value, ext_mode: ExtMode) -> Config {
-    let empty = Map::new();
+    let empty = Map::default();
     let m = raw.as_map().unwrap_or(&empty);
     let repos = get(m, "repos")
         .and_then(Value::as_array)
@@ -278,6 +288,40 @@ pub(crate) fn config(source: ConfigSource, raw: Value, ext_mode: ExtMode) -> Con
 }
 
 /// The validated + defaulted manifest → `Manifest` (extension keys are unknown keys in a manifest).
+/// A pre-validated manifest hook ([`DefaultedHook`]) → `HookDef`: what [`hook_def`] gives for the defaulted dict
+/// holding the same values under `ExtMode::Strict`, as [`manifest`] converts (no extra keys, no extension keys).
+pub(crate) fn defaulted_hook(h: &DefaultedHook<'_>) -> HookDef {
+    let list = |items: &[&str]| -> Arc<[Arc<str>]> { items.iter().copied().map(arc).collect() };
+    let stages = stage_names(h.stages.iter().copied());
+    HookDef {
+        id: arc(h.id),
+        name: arc(h.name),
+        entry: arc(h.entry),
+        language: language_name(Some(h.language)),
+        alias: arc(h.alias),
+        files: arc(h.files),
+        exclude: arc(h.exclude),
+        types: tag_names(h.types.iter().copied()),
+        types_or: tag_names(h.types_or.iter().copied()),
+        exclude_types: tag_names(h.exclude_types.iter().copied()),
+        additional_dependencies: list(h.additional_dependencies),
+        args: list(h.args),
+        always_run: h.always_run,
+        fail_fast: h.fail_fast,
+        pass_filenames: h.pass_filenames,
+        description: arc(h.description),
+        language_version: arc(h.language_version),
+        log_file: arc(h.log_file),
+        minimum_pre_commit_version: arc(h.minimum_pre_commit_version),
+        require_serial: h.require_serial,
+        stages_set: !stages.is_empty(),
+        stages,
+        verbose: h.verbose,
+        extra_keys: Vec::new(),
+        ext: HookExt::default(),
+    }
+}
+
 pub(crate) fn manifest(raw: &Value) -> Manifest {
     Manifest {
         hooks: raw
@@ -359,6 +403,6 @@ mod tests {
         }
         m.insert(Value::from("id"), Value::from("str"));
         assert_eq!(get_str(&m, "id"), Some("str"));
-        assert_eq!(get(&Map::new(), "id"), None);
+        assert_eq!(get(&Map::default(), "id"), None);
     }
 }

@@ -4,7 +4,6 @@
 //! Owner: WP-26.
 
 use std::ffi::{OsStr, OsString};
-use std::io::Read as _;
 
 use snp_argparse::{Namespace, ParserSpec};
 use snp_core::failure::PyExc;
@@ -12,6 +11,7 @@ use snp_hooks_data::Epoch;
 use snp_pycompat::codec::decode_utf8;
 use snp_pycompat::repr::{repr_str, repr_str_tuple};
 
+use crate::content_cache::Bytes;
 use crate::framework::{self, PyOut, io_exc};
 use crate::{HookCx, Outcome};
 
@@ -57,24 +57,78 @@ pub(crate) fn filenames(ns: &Namespace) -> Vec<&OsStr> {
         .collect()
 }
 
-/// `open(name, 'rb').read()` relative to the hook's cwd.
-pub(crate) fn read_all(cx: &HookCx<'_>, name: &OsStr) -> Result<Vec<u8>, PyExc> {
-    std::fs::read(framework::at(cx, name)).map_err(|e| io_exc(&e, name))
+/// `open(name, 'rb').read()` relative to the hook's cwd: through the window's content cache when there is one
+/// (ADR-131: a validated hit, else a fill), else `std::fs::read`.
+pub(crate) fn read_all(cx: &HookCx<'_>, name: &OsStr) -> Result<Bytes, PyExc> {
+    let path = framework::at(cx, name);
+    match cache(cx) {
+        Some(c) => c.read(name, &path),
+        None => std::fs::read(path).map(Bytes::Owned),
+    }
+    .map_err(|e| io_exc(&e, name))
 }
 
-/// `open(name, 'rb').read(n)`: at most `n` leading bytes.
-pub(crate) fn read_head(cx: &HookCx<'_>, name: &OsStr, n: u64) -> Result<Vec<u8>, PyExc> {
-    let f = std::fs::File::open(framework::at(cx, name)).map_err(|e| io_exc(&e, name))?;
-    let mut buf = Vec::new();
-    f.take(n)
-        .read_to_end(&mut buf)
-        .map_err(|e| io_exc(&e, name))?;
-    Ok(buf)
+/// The window's content cache when this hook may use it (its cwd is the cache's root, ADR-131).
+pub(crate) fn cache<'a>(cx: &HookCx<'a>) -> Option<&'a crate::ContentCache> {
+    cx.cache.and_then(|c| c.view(cx.root))
 }
 
-/// `open(name, 'wb').write(bytes)` on the same inode (09 §2.8, `snp_os::fs::rewrite_in_place`).
+/// The leading bytes [`read_head`] read, held inline (at most [`Head::CAP`]).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Head {
+    buf: [u8; Self::CAP],
+    len: usize,
+}
+
+impl Head {
+    /// The most bytes a probe asks for (the callers ask for 2 or 3).
+    pub(crate) const CAP: usize = 4;
+
+    /// The bytes read.
+    pub(crate) fn bytes(&self) -> &[u8] {
+        self.buf.get(..self.len).unwrap_or_default()
+    }
+
+    /// At most `n` (clamped to [`Head::CAP`]) leading bytes of `r`: `read_to_end` over `take(n)` without the heap
+    /// (`read` until `n` bytes or end of file, an interrupted read retried).
+    fn read_from(mut r: impl std::io::Read, n: usize) -> std::io::Result<Self> {
+        let mut head = Self {
+            buf: [0; Self::CAP],
+            len: 0,
+        };
+        let want = n.min(Self::CAP);
+        while let Some(rest) = head.buf.get_mut(head.len..want)
+            && !rest.is_empty()
+        {
+            match r.read(rest) {
+                Ok(0) => break,
+                Ok(k) => head.len = head.len.saturating_add(k).min(want),
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(head)
+    }
+}
+
+/// `open(name, 'rb').read(n)`: at most `n` leading bytes (`n` ≤ [`Head::CAP`]). A validated cache hit serves them
+/// (ADR-131) through the same bounded read; a miss reads the file as before and fills nothing.
+pub(crate) fn read_head(cx: &HookCx<'_>, name: &OsStr, n: usize) -> Result<Head, PyExc> {
+    let path = framework::at(cx, name);
+    if let Some(b) = cache(cx).and_then(|c| c.hit(name, &path)) {
+        return Head::read_from(b.as_slice(), n).map_err(|e| io_exc(&e, name));
+    }
+    let f = std::fs::File::open(path).map_err(|e| io_exc(&e, name))?;
+    Head::read_from(f, n).map_err(|e| io_exc(&e, name))
+}
+
+/// `open(name, 'wb').write(bytes)` on the same inode (09 §2.8), through the hook's write token (ADR-132: the first
+/// write of a gated hook takes the baseline `git diff` first). The name's cache entry is evicted first, whatever the
+/// write then does (ADR-131).
 pub(crate) fn rewrite(cx: &HookCx<'_>, name: &OsStr, bytes: &[u8]) -> Result<(), PyExc> {
-    snp_os::fs::rewrite_in_place(&framework::at(cx, name), bytes).map_err(|e| io_exc(&e, name))
+    cx.writer()?
+        .rewrite(name, bytes)
+        .map_err(|e| io_exc(&e, name))
 }
 
 /// `print(prefix + name + suffix)` with the file name as raw bytes.
@@ -184,5 +238,88 @@ mod tests {
         assert!(epoch_in(Epoch(3), 3).is_ok());
         assert!(epoch_in(Epoch(0), 3).is_err());
         assert!(epoch_in(Epoch(4), 3).is_err());
+    }
+
+    /// A reader that returns its chunks one `read` at a time (a chunk longer than the buffer is split), an
+    /// `Interrupted` error before each, then end of file (or `fail` once the chunks run out).
+    struct Chunky {
+        chunks: std::collections::VecDeque<Vec<u8>>,
+        interrupt: bool,
+        fail: bool,
+        reads: usize,
+    }
+
+    impl std::io::Read for Chunky {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.reads += 1;
+            if self.interrupt {
+                self.interrupt = false;
+                return Err(std::io::ErrorKind::Interrupted.into());
+            }
+            self.interrupt = true;
+            let Some(c) = self.chunks.pop_front() else {
+                return if self.fail {
+                    Err(std::io::Error::other("boom"))
+                } else {
+                    Ok(0)
+                };
+            };
+            let k = c.len().min(buf.len());
+            for (d, s) in buf.iter_mut().zip(&c) {
+                *d = *s;
+            }
+            if c.len() > k {
+                self.chunks.push_front(c[k..].to_vec());
+            }
+            Ok(k)
+        }
+    }
+
+    fn chunky(chunks: &[&[u8]], fail: bool) -> Chunky {
+        Chunky {
+            // an empty `read` is end of file: empty chunks are not reads
+            chunks: chunks
+                .iter()
+                .filter(|c| !c.is_empty())
+                .map(|c| c.to_vec())
+                .collect(),
+            interrupt: true,
+            fail,
+            reads: 0,
+        }
+    }
+
+    /// `Head::read_from` is `read_to_end` over `take(n)`: short and empty files, reads split anywhere, interrupted
+    /// reads retried, errors kept, `n` clamped to the inline capacity.
+    #[test]
+    fn read_head_is_read_to_end_over_take() {
+        let data: &[u8] = b"\xef\xbb\xbfrest";
+        for len in 0..=data.len() {
+            for split in 0..=len {
+                for n in 0..=6_usize {
+                    let mut want = Vec::new();
+                    std::io::Read::read_to_end(
+                        &mut std::io::Read::take(&data[..len], u64::try_from(n).unwrap()),
+                        &mut want,
+                    )
+                    .unwrap();
+                    want.truncate(Head::CAP);
+                    let got =
+                        Head::read_from(chunky(&[&data[..split], &data[split..len]], false), n)
+                            .unwrap();
+                    assert_eq!(
+                        got.bytes(),
+                        want.as_slice(),
+                        "len {len} split {split} n {n}"
+                    );
+                }
+            }
+        }
+        // an error before `n` bytes is the error; once `n` bytes are in, nothing more is read
+        assert!(Head::read_from(chunky(&[b"#"], true), 2).is_err());
+        let mut r = chunky(&[b"#!", b"/bin/sh"], true);
+        assert_eq!(Head::read_from(&mut r, 2).unwrap().bytes(), b"#!");
+        assert_eq!(r.reads, 2);
+        assert_eq!(Head::read_from(chunky(&[], false), 3).unwrap().bytes(), b"");
     }
 }

@@ -1165,3 +1165,68 @@ fn old_git_container_refuses_only_a_non_empty_stash() {
     assert_eq!(out.text(), "");
     assert_eq!(sb.read(&repo, "foo"), b"herp\n");
 }
+
+/// ADR-133: `checkout_notice` is sent exactly once, before step 8's checkout starts, and is dropped unsent (the
+/// receiver disconnects) on a run with nothing to stash and on a run that fails before the stash steps, while the
+/// guard is still alive, so a receiver waiting for it never blocks past `enter`. The stash itself is unchanged.
+#[test]
+fn checkout_notice_comes_before_the_checkout_and_only_with_one() {
+    use std::sync::mpsc::{RecvTimeoutError, TryRecvError, sync_channel};
+    // a checkout: the notice is already there when the checkout command starts
+    let sb = Sandbox::new();
+    let repo = sb.foo_staged("r");
+    sb.write(&repo, "foo", b"herp\n");
+    let (tx, rx) = sync_channel::<()>(1);
+    let rx = Arc::new(Mutex::new(rx));
+    let at_checkout = Arc::new(Mutex::new(None));
+    let spy = Spy::new();
+    {
+        let (rx, at_checkout) = (Arc::clone(&rx), Arc::clone(&at_checkout));
+        spy.before(
+            &["-c", "submodule.recurse=0", "checkout"],
+            Some(1),
+            Box::new(move |_| {
+                *at_checkout.lock().unwrap() = Some(rx.lock().unwrap().try_recv());
+            }),
+        );
+    }
+    let (git, info) = sb.discover_with(&repo, Arc::<Spy>::clone(&spy));
+    let (mut cx, _, _) = sb.ctx_with(git, info);
+    cx.checkout_notice = Some(tx);
+    let g = snp_stash::enter(cx).unwrap();
+    assert!(g.checked_out().is_some());
+    assert_eq!(at_checkout.lock().unwrap().take(), Some(Ok(())));
+    assert_eq!(
+        rx.lock().unwrap().try_recv(),
+        Err(TryRecvError::Disconnected)
+    );
+    g.restore().unwrap();
+    assert_eq!(sb.read(&repo, "foo"), b"herp\n");
+
+    // nothing to stash: no notice, and the sender is gone although the guard lives
+    let clean = sb.foo_staged("clean");
+    let (tx, rx) = sync_channel::<()>(1);
+    let (mut cx, _, _) = sb.ctx(&clean);
+    cx.checkout_notice = Some(tx);
+    let g = snp_stash::enter(cx).unwrap();
+    assert!(g.checked_out().is_none());
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(5)),
+        Err(RecvTimeoutError::Disconnected)
+    );
+    g.restore().unwrap();
+
+    // the lock times out before the stash steps: no notice
+    let (cx, _, _) = sb.ctx(&repo);
+    let first = snp_stash::enter(cx).unwrap();
+    let (tx, rx) = sync_channel::<()>(1);
+    let (mut cx, _, _) = sb.ctx(&repo);
+    cx.lock_timeout = Duration::from_millis(100);
+    cx.checkout_notice = Some(tx);
+    assert!(snp_stash::enter(cx).is_err());
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(5)),
+        Err(RecvTimeoutError::Disconnected)
+    );
+    first.restore().unwrap();
+}

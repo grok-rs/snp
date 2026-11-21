@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use snp_core::brand::Brand;
 use snp_git::testing::{Response, ScriptedBackend};
-use snp_git::{DiffIndex, Git};
+use snp_git::{DiffIndex, Git, GitExe};
 use snp_proc::spawn::Group;
 
 use crate::common::{Sandbox, exc};
@@ -294,6 +294,51 @@ fn git_exe_path(scripted: &ScriptedBackend) -> String {
     scripted.calls()[0][0].to_string_lossy().into_owned()
 }
 
+/// ADR-133: `git var GIT_ATTR_SYSTEM` answers only with exit 0 and one absolute line, or exit 1 under
+/// `GIT_ATTR_NOSYSTEM`; a spawn failure (whose `_oserror_to_output` status would be 1) or git < 2.42's usage exit is no
+/// answer; and git < 2.42 is never asked.
+#[test]
+fn system_attributes_fails_closed() {
+    let sb = Sandbox::new();
+    let (repo, scripted, git) = setup(&sb);
+    let var = "var GIT_ATTR_SYSTEM";
+    let asked =
+        |scripted: &ScriptedBackend| scripted.calls().iter().filter(|c| args(c) == var).count();
+    let new = sb.exe().caps.attr_system;
+    // an absolute path of the platform: Git for Windows answers with a drive letter
+    let abs = if cfg!(windows) {
+        "C:/Program Files/Git/etc/gitattributes"
+    } else {
+        "/opt/git/etc/gitattributes"
+    };
+    scripted.on(var, exit(0, format!("{abs}\n").as_bytes(), b""));
+    let want = new.then(|| snp_git::SystemAttributes::File(abs.into()));
+    assert_eq!(git.system_attributes(), want);
+    for r in [
+        Response::SpawnError(2),
+        exit(1, b"", b""),
+        exit(129, b"", b"usage: git var (-l | <variable>)\n"),
+        exit(0, b"relative/attrs\n", b""),
+    ] {
+        scripted.on(var, r);
+        assert_eq!(git.system_attributes(), None);
+    }
+    assert_eq!(asked(&scripted), if new { 5 } else { 0 });
+    // an old git is never asked
+    let mut old = GitExe::resolve(&sb.env, &repo, None).unwrap();
+    old.caps.attr_system = false;
+    let scripted = Arc::new(ScriptedBackend::new());
+    let (git, _) = Git::discover(
+        Arc::new(old),
+        &sb.env,
+        &repo,
+        Arc::<ScriptedBackend>::clone(&scripted),
+    )
+    .unwrap();
+    assert_eq!(git.system_attributes(), None);
+    assert_eq!(asked(&scripted), 0);
+}
+
 #[test]
 fn a_scripted_panic_reaches_the_caller() {
     let sb = Sandbox::new();
@@ -485,7 +530,7 @@ fn every_user_repo_call_has_pre_commits_exact_argv() {
         "--literal-pathspecs add -- a",
         "diff --staged --name-only --no-ext-diff -z --diff-filter=ACMRTUXB --no-renames",
         all_files,
-        "ls-files -s -z",
+        "ls-files -s -v -z",
         "diff --staged --raw -z --no-renames --diff-filter=ACMRTUXB",
         "diff --name-only --no-ext-diff -z origin/main...HEAD",
         "write-tree",

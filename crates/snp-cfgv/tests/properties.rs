@@ -10,8 +10,8 @@ mod properties {
     use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
 
     use cfgv::{
-        BigInt, CheckFn, ConditionValue, Cx, Date, DateTime, Map, Schema, TzOffset, Validator,
-        Value, py, validate_with,
+        BigInt, CheckFn, ConditionValue, Cx, Date, DateTime, HashedKey, Map, Schema, TzOffset,
+        Validator, Value, py, validate_with,
     };
     use proptest::prelude::*;
 
@@ -309,6 +309,148 @@ mod properties {
             drop(schema.apply_defaults_owned(v.clone()));
             drop(schema.remove_defaults_owned(v));
         }
+
+        /// ADR-111: a lookup through a [`HashedKey`] (precomputed hash) finds what the plain lookup finds,
+        /// for keys that are equal across types (`True == 1 == 1.0`), NaN, bytes, tuples and dates.
+        #[test]
+        fn hashed_lookups_equal_plain_lookups(
+            pairs in prop::collection::vec((key_value(), leaf()), 0..12),
+            probes in prop::collection::vec(key_value(), 0..8),
+        ) {
+            let map: Map = pairs.into_iter().collect();
+            for k in probes {
+                let hk = HashedKey::new(k.clone());
+                prop_assert_eq!(hk.value(), &k);
+                prop_assert_eq!(hk.get(&map), map.get(&k));
+                prop_assert_eq!(hk.get_full(&map), map.get_full(&k).map(|(i, _, v)| (i, v)));
+                prop_assert_eq!(hk.contained_in(&map), map.contains_key(&k));
+                let mut copy = map.clone();
+                prop_assert_eq!(
+                    hk.get_full_mut(&mut copy).map(|(i, v)| (i, v.clone())),
+                    map.get_full(&k).map(|(i, _, v)| (i, v.clone()))
+                );
+                prop_assert_eq!(hk.get_mut(&mut copy).map(|v| v.clone()), map.get(&k).cloned());
+            }
+        }
+
+        /// ADR-111: maps hashed with `ValueState` behave exactly like the former `RandomState` maps
+        /// (get, insert, `shift_remove`, setdefault order), entry for entry.
+        #[test]
+        fn maps_built_old_and_new_agree(ops in prop::collection::vec(map_op(), 0..24)) {
+            let mut new = Map::default();
+            let mut old = OldMap::default();
+            for op in ops {
+                match op {
+                    MapOp::Insert(k, v) => {
+                        prop_assert_eq!(new.insert(k.clone(), v.clone()), old.insert(k, v));
+                    }
+                    MapOp::Remove(k) => {
+                        prop_assert_eq!(new.shift_remove(&k), old.shift_remove(&k));
+                    }
+                    MapOp::SetDefault(k, v) => {
+                        let got = HashedKey::new(k.clone()).set_default(&mut new, &v).clone();
+                        let want = old.entry(k).or_insert(v).clone();
+                        prop_assert_eq!(got.repr(), want.repr());
+                    }
+                    MapOp::Get(k) => prop_assert_eq!(new.get(&k), old.get(&k)),
+                }
+                prop_assert_eq!(entries(new.iter()), entries(old.iter()));
+            }
+        }
+
+        /// ADR-111: `apply_defaults`, `remove_defaults` and `check` through the hashed schema keys agree with
+        /// plain-map references of Python's `setdefault`, `del` and `_require_key`.
+        #[test]
+        fn schema_items_agree_with_plain_maps(
+            pairs in prop::collection::vec((key_value(), leaf()), 0..8),
+            items in prop::collection::vec((key_value(), leaf()), 0..5),
+            required in prop::collection::vec(key_value(), 0..3),
+        ) {
+            let map: Map = pairs.iter().cloned().collect();
+            let old: OldMap = pairs.into_iter().collect();
+            let schema = Schema::map(
+                "M",
+                None,
+                items
+                    .iter()
+                    .map(|(k, d)| Validator::optional(k.clone(), CheckFn::check_any(), d.clone()))
+                    .collect::<Vec<_>>(),
+            );
+            let applied = schema.apply_defaults(&Value::Map(map.clone()));
+            let mut want = old.clone();
+            for (k, d) in &items {
+                want.entry(k.clone()).or_insert_with(|| d.clone());
+            }
+            let applied_map = applied.as_map().expect("a map stays a map");
+            prop_assert_eq!(entries(applied_map.iter()), entries(want.iter()));
+
+            let removed = schema.remove_defaults(&applied);
+            for (k, d) in &items {
+                if want.get(k) == Some(d) {
+                    want.shift_remove(k);
+                }
+            }
+            let removed_map = removed.as_map().expect("a map stays a map");
+            prop_assert_eq!(entries(removed_map.iter()), entries(want.iter()));
+
+            let checked = Schema::map(
+                "M",
+                None,
+                required
+                    .iter()
+                    .map(|k| Validator::required(k.clone(), CheckFn::check_any()))
+                    .collect::<Vec<_>>(),
+            )
+            .check(&Value::Map(map));
+            let missing = required.iter().find(|k| !old.contains_key(*k));
+            match (checked, missing) {
+                (Ok(()), None) => {}
+                (Err(e), Some(k)) => prop_assert_eq!(
+                    e.message(),
+                    format!("Missing required key: {}", k.try_to_string().expect("digits"))
+                ),
+                (got, want) => prop_assert!(false, "{got:?} vs missing {want:?}"),
+            }
+        }
+    }
+
+    /// The map type before ADR-111.
+    type OldMap = indexmap::IndexMap<Value, Value, std::hash::RandomState>;
+
+    /// The entries by `repr`, which tells `1`, `1.0` and `True` apart.
+    fn entries<'a>(it: impl Iterator<Item = (&'a Value, &'a Value)>) -> Vec<(String, String)> {
+        it.map(|(k, v)| (k.repr(), v.repr())).collect()
+    }
+
+    /// Keys that collide often under Python equality.
+    fn key_value() -> impl Strategy<Value = Value> {
+        prop_oneof![
+            2 => leaf(),
+            1 => Just(Value::Int(1)),
+            1 => Just(Value::Float(1.0)),
+            1 => Just(Value::Bool(true)),
+            1 => Just(Value::Float(f64::NAN)),
+            1 => Just(Value::Tuple(vec![Value::Int(1), Value::from("a")])),
+            1 => Just(Value::Bytes(b"ab".to_vec())),
+            3 => "[a-c]{0,2}".prop_map(Value::String),
+        ]
+    }
+
+    #[derive(Debug, Clone)]
+    enum MapOp {
+        Insert(Value, Value),
+        Remove(Value),
+        SetDefault(Value, Value),
+        Get(Value),
+    }
+
+    fn map_op() -> impl Strategy<Value = MapOp> {
+        prop_oneof![
+            (key_value(), leaf()).prop_map(|(k, v)| MapOp::Insert(k, v)),
+            key_value().prop_map(MapOp::Remove),
+            (key_value(), leaf()).prop_map(|(k, v)| MapOp::SetDefault(k, v)),
+            key_value().prop_map(MapOp::Get),
+        ]
     }
 
     fn config_schema() -> Schema {
@@ -400,7 +542,7 @@ mod properties {
             prop::option::of(string()),
         )
             .prop_map(|(id, args, always_run, n, files)| {
-                let mut map = Map::new();
+                let mut map = Map::default();
                 map.insert("id".into(), id);
                 let optional = [
                     ("args", args.map(Value::List)),
@@ -426,7 +568,7 @@ mod properties {
             prop::option::of(leaf()),
         )
             .prop_map(|(repo, rev, hooks, extra)| {
-                let mut map = Map::new();
+                let mut map = Map::default();
                 map.insert("repo".into(), repo);
                 if let Some(rev) = rev {
                     map.insert("rev".into(), rev);
@@ -448,7 +590,7 @@ mod properties {
             )),
         )
             .prop_map(|(repos, fail_fast, env)| {
-                let mut map = Map::new();
+                let mut map = Map::default();
                 if let Some(repos) = repos {
                     map.insert("repos".into(), Value::List(repos));
                 }
@@ -457,7 +599,7 @@ mod properties {
                 }
                 if let Some(env) = env {
                     let vars = env.into_iter().map(|(k, v)| {
-                        let mut var = Map::new();
+                        let mut var = Map::default();
                         if let Some(v) = v {
                             var.insert("v".into(), v);
                         }

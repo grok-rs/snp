@@ -120,15 +120,18 @@ pub struct PrePushNs {
     pub remote_branch: OsString,
 }
 
-/// Index entries as an arena (ADR-079): `ls-files -s -z` (all tracked: `DiffOracle` + git-mode tags) or
+/// Index entries as an arena (ADR-079): `ls-files -s -v -z` (all tracked: `DiffOracle` + git-mode tags) or
 /// `diff --staged --raw -z --no-renames --diff-filter=ACMRTUXB` (staged only: git-mode tags when Stat mode is
-/// impossible). `modes[i]` belongs to `paths.get(i)`; one buffer, no per-path allocation.
+/// impossible). `modes[i]` and `tags[i]` belong to `paths.get(i)`; one buffer, no per-path allocation.
 #[derive(Debug, Clone, Default)]
 pub struct IndexEntries {
     /// The paths.
     pub paths: ZList,
     /// The modes (`0o100644`, `0o100755`, `0o120000`, `0o160000`, …).
     pub modes: Box<[u32]>,
+    /// The `ls-files -v` tag of each entry (ADR-133): `H` cached, `S` skip-worktree, `M` unmerged, lowercase when
+    /// assume-unchanged. Empty when the listing had no tags (the staged list): a caller that needs them fails closed.
+    pub tags: Box<[u8]>,
 }
 
 /// `git config --list --show-origin -z`, read once (fan-out query G, ADR-104; ADR-119): the origin files the
@@ -141,10 +144,49 @@ pub struct ConfigListing {
     pub checkout: CheckoutConfig,
 }
 
+/// Where git reads its system attributes file, as `git var GIT_ATTR_SYSTEM` (git ≥ 2.42) answered for the run's
+/// executable and environment (ADR-133). Never kept across runs: on macOS `/usr/bin/git` is an `xcrun` shim whose
+/// target follows `DEVELOPER_DIR` and `xcode-select`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SystemAttributes {
+    /// git reads this file (absolute; it need not exist).
+    File(PathBuf),
+    /// `GIT_ATTR_NOSYSTEM` is in the environment and git reads none.
+    Disabled,
+}
+
+/// [`SystemAttributes`] from `git var GIT_ATTR_SYSTEM`'s exit status and stdout; `nosystem` = `GIT_ATTR_NOSYSTEM` is in
+/// its environment. Only exit 0 with exactly one line (ending in a newline, no other newline) holding an absolute
+/// path, or exit 1 with `nosystem`, is an answer; anything else (git < 2.42 exits 129, a bad boolean in
+/// `GIT_ATTR_NOSYSTEM` 128, a spawn failure, a relative path) is `None`: the caller does without (fail closed).
+pub(crate) fn system_attributes(
+    status: i64,
+    stdout: &[u8],
+    nosystem: bool,
+) -> Option<SystemAttributes> {
+    match status {
+        0 => {
+            let line = stdout.strip_suffix(b"\n")?;
+            if line.is_empty() || line.contains(&b'\n') || line.contains(&0) {
+                return None;
+            }
+            let path = PathBuf::from(crate::run::os_from_bytes(line));
+            path.is_absolute().then_some(SystemAttributes::File(path))
+        }
+        1 if nosystem && stdout.is_empty() => Some(SystemAttributes::Disabled),
+        _ => None,
+    }
+}
+
 /// What the effective configuration (the last value of each key, as git resolves it; `-c` and `GIT_CONFIG_*` count)
 /// says about whether a path-limited `git checkout` of index entries can leave `git diff` non-empty (ADR-119). Fail
 /// closed: a value whose meaning is not certain makes [`CheckoutConfig::plain`] false. The default is not plain.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts of one config listing, each read by a different proof"
+)]
 pub struct CheckoutConfig {
     /// `core.autocrlf`, `core.fsmonitor`, `core.useBuiltinFSMonitor`, `core.ignoreStat`, `core.sparseCheckout` and
     /// `index.sparse` are unset or read as git's `false`; `core.fileMode` is unset or reads as a boolean;
@@ -157,6 +199,17 @@ pub struct CheckoutConfig {
     pub file_mode: bool,
     /// The last `core.hooksPath` value as git printed it, `None` when unset.
     pub hooks_path: Option<Box<[u8]>>,
+    /// `core.eol` is unset, or its last value is `lf` or `native` (git compares them ignoring ASCII case): with
+    /// `core.autocrlf` off ([`Self::plain`]) and off Windows, a `text=auto` path is checked out as its blob's bytes
+    /// (ADR-133). `false` for `crlf`, a valueless key or anything else.
+    pub eol_lf: bool,
+    /// `core.fsmonitor`, `core.useBuiltinFSMonitor`, `core.ignoreStat`, `core.sparseCheckout` and `index.sparse` are
+    /// unset or read as git's `false`, and `core.worktree` is not set at all (a hook that sets it moves the worktree
+    /// `git diff` compares): what the index-stat proof needs from the configuration (ADR-134).
+    pub index_proof: bool,
+    /// The object id length of the repository's index entries: 20 when `extensions.objectFormat` is unset or `sha1`,
+    /// 32 for `sha256` (git compares the names exactly), `None` for anything else.
+    pub object_id_len: Option<usize>,
 }
 
 impl Default for CheckoutConfig {
@@ -165,6 +218,9 @@ impl Default for CheckoutConfig {
             plain: false,
             file_mode: true,
             hooks_path: None,
+            eol_lf: false,
+            index_proof: false,
+            object_id_len: None,
         }
     }
 }
@@ -201,6 +257,7 @@ pub(crate) fn checkout_config<'a>(records: impl Iterator<Item = &'a [u8]>) -> Ch
     let mut last: Vec<(&[u8], Option<&[u8]>)> = Vec::new();
     let mut hook_key = false;
     let mut attributes_key = false;
+    let mut worktree_key = false;
     for r in records {
         let (key, value) = match memchr::memchr(b'\n', r) {
             Some(nl) => (
@@ -215,7 +272,15 @@ pub(crate) fn checkout_config<'a>(records: impl Iterator<Item = &'a [u8]>) -> Ch
         if key == b"core.attributesfile" || key == b"attr.tree" {
             attributes_key = true;
         }
-        if OFF.contains(&key) || key == b"core.filemode" || key == b"core.hookspath" {
+        if key == b"core.worktree" {
+            worktree_key = true;
+        }
+        if OFF.contains(&key)
+            || key == b"core.filemode"
+            || key == b"core.hookspath"
+            || key == b"core.eol"
+            || key == b"extensions.objectformat"
+        {
             match last.iter_mut().find(|(k, _)| *k == key) {
                 Some(slot) => slot.1 = value,
                 None => last.push((key, value)),
@@ -228,7 +293,22 @@ pub(crate) fn checkout_config<'a>(records: impl Iterator<Item = &'a [u8]>) -> Ch
         .all(|k| get(k).is_none_or(|v| config_bool(v) == Some(false)));
     let file_mode = get(b"core.filemode").map_or(Some(true), config_bool);
     let hooks_path = get(b"core.hookspath");
+    let eol_lf = get(b"core.eol").is_none_or(|v| {
+        v.is_some_and(|v| v.eq_ignore_ascii_case(b"lf") || v.eq_ignore_ascii_case(b"native"))
+    });
+    let index_proof = !worktree_key
+        && OFF
+            .iter()
+            .filter(|k| **k != b"core.autocrlf")
+            .all(|k| get(k).is_none_or(|v| config_bool(v) == Some(false)));
+    let object_id_len = match get(b"extensions.objectformat") {
+        None | Some(Some(b"sha1")) => Some(20),
+        Some(Some(b"sha256")) => Some(32),
+        Some(_) => None,
+    };
     CheckoutConfig {
+        index_proof,
+        object_id_len,
         plain: off
             && !hook_key
             && !attributes_key
@@ -236,6 +316,7 @@ pub(crate) fn checkout_config<'a>(records: impl Iterator<Item = &'a [u8]>) -> Ch
             && hooks_path.is_none_or(|v| v.is_some()),
         file_mode: file_mode.unwrap_or(true),
         hooks_path: hooks_path.flatten().map(Box::from),
+        eol_lf,
     }
 }
 
@@ -474,17 +555,44 @@ fn u32_at(i: usize) -> Result<u32, BadRecord> {
 /// those records, so its output is non-blank iff this is `true` (ADR-104). The stage is parsed strictly (one digit,
 /// 0–3), over every raw record, before any caller filters or deduplicates.
 pub(crate) fn parse_ls_files_stages(buf: Vec<u8>) -> Result<(IndexEntries, bool), BadRecord> {
+    parse_stages(buf, false)
+}
+
+/// [`parse_ls_files_stages`] over `git ls-files -s -v -z` (query F, ADR-133): each record starts with its tag, one
+/// ASCII letter and a space, kept in [`IndexEntries::tags`].
+pub(crate) fn parse_ls_files_tagged_stages(
+    buf: Vec<u8>,
+) -> Result<(IndexEntries, bool), BadRecord> {
+    parse_stages(buf, true)
+}
+
+/// [`parse_ls_files_tagged_stages`] without the unmerged flag.
+pub(crate) fn parse_ls_files_tagged(buf: Vec<u8>) -> Result<IndexEntries, BadRecord> {
+    parse_stages(buf, true).map(|(e, _)| e)
+}
+
+fn parse_stages(buf: Vec<u8>, tagged: bool) -> Result<(IndexEntries, bool), BadRecord> {
     let records =
         ZList::from_z(buf).map_err(|_| BadRecord(b"git output larger than 4 GiB".to_vec()))?;
     let (buf, spans) = records.into_parts();
     let mut out_spans = Vec::new();
     let mut modes = Vec::new();
+    let mut tags = Vec::new();
     let mut unmerged = false;
     for (s, e) in spans {
         let rec = slice(&buf, s, e);
         let bad = || BadRecord(rec.to_vec());
         let tab = memchr::memchr(b'\t', rec).ok_or_else(bad)?;
-        let head = rec.get(..tab).unwrap_or_default();
+        let mut head = rec.get(..tab).unwrap_or_default();
+        if tagged {
+            match head {
+                [tag, b' ', rest @ ..] if tag.is_ascii_alphabetic() => {
+                    tags.push(*tag);
+                    head = rest;
+                }
+                _ => return Err(bad()),
+            }
+        }
         let mut fields = head.split(|&b| b == b' ');
         let mode = fields.next().and_then(octal).ok_or_else(bad)?;
         let _object = fields.next().ok_or_else(bad)?;
@@ -507,6 +615,7 @@ pub(crate) fn parse_ls_files_stages(buf: Vec<u8>) -> Result<(IndexEntries, bool)
         IndexEntries {
             paths: ZList::from_parts(buf, out_spans),
             modes: modes.into_boxed_slice(),
+            tags: tags.into_boxed_slice(),
         },
         unmerged,
     ))
@@ -551,6 +660,7 @@ pub(crate) fn parse_diff_raw(buf: Vec<u8>) -> Result<IndexEntries, BadRecord> {
     Ok(IndexEntries {
         paths: ZList::from_parts(buf, out_spans),
         modes: modes.into_boxed_slice(),
+        tags: Box::default(),
     })
 }
 
@@ -651,6 +761,103 @@ mod tests {
         assert!(!CheckoutConfig::default().plain);
     }
 
+    /// ADR-134: the index-stat proof's gate is `plain`'s fsmonitor, ignoreStat and sparse keys (not autocrlf, hooks or
+    /// attributes), and the object id length follows `extensions.objectFormat` exactly.
+    #[test]
+    fn checkout_config_reads_the_index_proof_gate() {
+        let c = |recs: &[&[u8]]| checkout_config(recs.iter().copied());
+        let d = c(&[]);
+        assert!(d.index_proof);
+        assert_eq!(d.object_id_len, Some(20));
+        for key in [
+            "core.fsmonitor",
+            "core.usebuiltinfsmonitor",
+            "core.ignorestat",
+            "core.sparsecheckout",
+            "index.sparse",
+        ] {
+            for bad in ["true", "/hook", ""] {
+                let r = if bad.is_empty() {
+                    key.to_owned()
+                } else {
+                    format!("{key}\n{bad}")
+                };
+                assert!(!c(&[r.as_bytes()]).index_proof, "{r}");
+            }
+            let off = format!("{key}\nfalse");
+            assert!(c(&[off.as_bytes()]).index_proof, "{off}");
+        }
+        assert!(!c(&[b"core.worktree\n/elsewhere"]).index_proof);
+        assert!(!c(&[b"core.worktree"]).index_proof);
+        for other in [
+            &b"core.autocrlf\ntrue"[..],
+            b"hook.x.command\ny",
+            b"core.attributesfile\n/a",
+            b"core.filemode\nmaybe",
+        ] {
+            let got = c(&[other]);
+            assert!(got.index_proof && !got.plain, "{other:?}");
+        }
+        assert!(!CheckoutConfig::default().index_proof);
+        assert_eq!(CheckoutConfig::default().object_id_len, None);
+        let len = |v: &[u8]| c(&[v]).object_id_len;
+        assert_eq!(len(b"extensions.objectformat\nsha1"), Some(20));
+        assert_eq!(len(b"extensions.objectformat\nsha256"), Some(32));
+        assert_eq!(len(b"extensions.objectformat\nSHA256"), None);
+        assert_eq!(len(b"extensions.objectformat"), None);
+        assert_eq!(len(b"extensions.objectformat\nsha3"), None);
+    }
+
+    /// ADR-133: `core.eol` unset, `lf` or `native` (any ASCII case, the last value) lets `text=auto` check out raw
+    /// bytes; `crlf`, a valueless key or anything else does not, and never changes `plain`.
+    #[test]
+    fn checkout_config_reads_core_eol() {
+        let c = |recs: &[&[u8]]| checkout_config(recs.iter().copied());
+        assert!(c(&[]).eol_lf);
+        for ok in [
+            &b"core.eol
+lf"[..],
+            b"core.eol
+LF",
+            b"core.eol
+Native",
+        ] {
+            let got = c(&[ok]);
+            assert!(got.eol_lf && got.plain, "{ok:?}");
+        }
+        for bad in [
+            &b"core.eol
+crlf"[..],
+            b"core.eol",
+            b"core.eol
+",
+            b"core.eol
+lf ",
+        ] {
+            let got = c(&[bad]);
+            assert!(!got.eol_lf && got.plain, "{bad:?}");
+        }
+        assert!(
+            c(&[
+                b"core.eol
+crlf",
+                b"core.eol
+lf"
+            ])
+            .eol_lf
+        );
+        assert!(
+            !c(&[
+                b"core.eol
+lf",
+                b"core.eol
+crlf"
+            ])
+            .eol_lf
+        );
+        assert!(!CheckoutConfig::default().eol_lf);
+    }
+
     #[test]
     fn object_ids() {
         let z40: String = std::iter::repeat_n('0', 40).collect();
@@ -685,6 +892,99 @@ mod tests {
         assert!(parse_ls_files_stage(b"garbage\0".to_vec()).is_err());
         assert!(parse_ls_files_stage(b"9x 0 0\tp\0".to_vec()).is_err());
         assert!(parse_ls_files_stage(Vec::new()).unwrap().paths.is_empty());
+    }
+
+    /// ADR-133: only exit 0 with one absolute line, or exit 1 under `GIT_ATTR_NOSYSTEM`, answers.
+    #[test]
+    fn system_attributes_answers() {
+        let file = |p: &str| Some(SystemAttributes::File(PathBuf::from(p)));
+        // an absolute path of the platform: Git for Windows answers with a drive letter
+        let (abs, spaced) = if cfg!(windows) {
+            ("C:/Program Files/Git/etc/gitattributes", "C:/opt/a b/attrs")
+        } else {
+            ("/etc/gitattributes", "/opt/a b/attrs")
+        };
+        assert_eq!(
+            system_attributes(0, format!("{abs}\n").as_bytes(), false),
+            file(abs)
+        );
+        assert_eq!(
+            system_attributes(0, format!("{spaced}\n").as_bytes(), true),
+            file(spaced)
+        );
+        if cfg!(windows) {
+            // whatever drive or share git is installed on: snp asks git and takes any absolute answer
+            for other in [
+                "D:/Tools/Git/etc/gitattributes",
+                "E:\\Portable\\Git\\etc\\gitattributes",
+                "\\\\server\\share\\Git\\etc\\gitattributes",
+            ] {
+                assert_eq!(
+                    system_attributes(0, format!("{other}\n").as_bytes(), false),
+                    file(other),
+                    "{other}"
+                );
+            }
+            // a drive-less path is not absolute there: no answer, so the real diff runs (fails closed)
+            assert_eq!(system_attributes(0, b"/etc/gitattributes\n", false), None);
+        }
+        assert_eq!(
+            system_attributes(1, b"", true),
+            Some(SystemAttributes::Disabled)
+        );
+        for (status, out, nosystem) in [
+            (1, &b""[..], false),
+            (1, b"/etc/gitattributes\n", true),
+            (0, b"/etc/gitattributes", false),
+            (0, b"/etc/a\n/etc/b\n", false),
+            (0, b"/etc/a\n\n", false),
+            (0, b"\n", false),
+            (0, b"", false),
+            (0, b"etc/gitattributes\n", false),
+            (0, b"/etc/a\0b\n", false),
+            (129, b"usage: git var\n", false),
+            (128, b"", true),
+        ] {
+            assert_eq!(
+                system_attributes(status, out, nosystem),
+                None,
+                "{status} {out:?}"
+            );
+        }
+    }
+
+    /// Query F's `-v` records (ADR-133): one ASCII letter and a space before the mode, kept per entry; anything else
+    /// is a bad record. The untagged parser keeps no tags.
+    #[test]
+    fn query_f_tagged_records() {
+        let sha = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
+        let out = format!(
+            "H 100644 {sha} 0\ta\0h 100644 {sha} 0\t.gitattributes\0S 100755 {sha} 0\tb\0\
+             M 100644 {sha} 1\tc\0M 100644 {sha} 2\tc\0"
+        );
+        let (e, unmerged) = parse_ls_files_tagged_stages(out.into_bytes()).unwrap();
+        assert!(unmerged);
+        assert_eq!(&*e.tags, b"HhSMM");
+        assert_eq!(e.paths.len(), 5);
+        assert_eq!(e.modes.first(), Some(&0o100_644));
+        for bad in [
+            format!("100644 {sha} 0\ta\0"),
+            format!("HH 100644 {sha} 0\ta\0"),
+            format!("? 100644 {sha} 0\ta\0"),
+            format!("H  100644 {sha} 0\ta\0"),
+        ] {
+            assert!(
+                parse_ls_files_tagged(bad.clone().into_bytes()).is_err(),
+                "{bad:?}"
+            );
+        }
+        let plain = format!("100644 {sha} 0\ta\0");
+        assert!(
+            parse_ls_files_stage(plain.into_bytes())
+                .unwrap()
+                .tags
+                .is_empty()
+        );
     }
 
     /// The stage field is strict and `unmerged` covers every raw record (ADR-104).

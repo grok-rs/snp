@@ -12,9 +12,15 @@ mod harness;
 #[cfg(test)]
 mod checkout_baseline;
 #[cfg(test)]
+mod content_cache;
+#[cfg(test)]
+mod deferred_baseline;
+#[cfg(test)]
 mod extensions;
 #[cfg(test)]
 mod hook_impl;
+#[cfg(test)]
+mod index_proof;
 #[cfg(test)]
 mod meta;
 #[cfg(test)]

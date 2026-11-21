@@ -1,6 +1,6 @@
 [package]
 name = "snp-cfgv"
-description = "Python cfgv 3.5.0 for snp: validate configuration with byte-for-byte compatible error messages"
+description = "Python cfgv 3.5.0 for snp: validate configuration with byte-for-byte compatible error messages (internal crate of snp; no API stability promise, versions follow snp)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

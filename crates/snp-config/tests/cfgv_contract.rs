@@ -11,8 +11,8 @@ mod cfgv_bindings {
     use std::sync::Arc;
 
     use cfgv::{
-        BigInt, CheckFn, Cx, Date, DateTime, LoadError, Map, MapItem, RegexCheck, RegexPattern,
-        Schema, Set, StrKey, ValidationError, Validator, Value,
+        BigInt, CheckFn, Cx, Date, DateTime, HashedKey, LoadError, Map, MapItem, RegexCheck,
+        RegexPattern, Schema, Set, StrKey, ValidationError, Validator, Value, ValueState,
     };
 
     fn send_sync<T: Send + Sync>() {}
@@ -80,14 +80,14 @@ mod cfgv_bindings {
             Value::Bytes(b"b".to_vec()),
             Value::List(vec![Value::Null]),
             Value::Tuple(Vec::new()),
-            Value::Map(Map::new()),
-            Value::Set(Set::new()),
+            Value::Map(Map::default()),
+            Value::Set(Set::default()),
             Value::Date(date),
             Value::DateTime(datetime),
         ];
         has::<[Value; 13]>(values);
-        has::<indexmap::IndexMap<Value, Value>>(Map::new());
-        has::<indexmap::IndexSet<Value>>(Set::new());
+        has::<indexmap::IndexMap<Value, Value, ValueState>>(Map::default());
+        has::<indexmap::IndexSet<Value, ValueState>>(Set::default());
         send_sync::<Value>();
         send_sync::<Schema>();
         send_sync::<CheckFn>();
@@ -98,7 +98,7 @@ mod cfgv_bindings {
     /// key of another type.
     #[test]
     fn str_key() {
-        let mut m = Map::new();
+        let mut m = Map::default();
         m.insert(Value::Bytes(b"repo".to_vec()), Value::Int(1));
         assert_eq!(m.get(&StrKey("repo")), None);
         m.insert(Value::from("repo"), Value::Int(2));
@@ -107,6 +107,29 @@ mod cfgv_bindings {
         assert!(m.contains_key(&StrKey("repo")));
         let set: Set = std::iter::once(Value::from("a")).collect();
         assert!(set.contains(&StrKey("a")));
+    }
+
+    /// `HashedKey` (the snp-config items' keys) over `ValueState` maps (ADR-111): the same entry as a plain lookup,
+    /// setdefault order, and the built-in item's key through `Validator::hashed_key`.
+    #[test]
+    fn hashed_key() {
+        let mut m: Map = Map::with_capacity_and_hasher(2, ValueState);
+        m.insert(Value::from("id"), Value::Int(1));
+        let key: HashedKey = HashedKey::new("id");
+        assert_eq!(key.get(&m), m.get(&Value::from("id")));
+        assert_eq!(key.get_full(&m), Some((0, &Value::Int(1))));
+        assert!(key.contained_in(&m));
+        if let Some(v) = key.get_mut(&mut m) {
+            *v = Value::Int(2);
+        }
+        let stages = HashedKey::new("stages");
+        assert_eq!(stages.set_default(&mut m, &Value::Null), &Value::Null);
+        let keys: Vec<&Value> = m.keys().collect();
+        assert_eq!(keys, [&Value::from("id"), &Value::from("stages")]);
+        assert_eq!(format!("At key: {key}"), "At key: id");
+        let item = Validator::optional_no_default("files", CheckFn::check_string());
+        assert_eq!(item.hashed_key().map(HashedKey::value), item.key());
+        assert_eq!(Validator::custom(NotAllowed("entry")).hashed_key(), None);
     }
 
     #[test]
@@ -175,7 +198,7 @@ mod cfgv_bindings {
                 ),
             ],
         );
-        let mut value = Map::new();
+        let mut value = Map::default();
         value.insert(Value::from("other"), Value::Int(1));
         let value = Value::Map(value);
         let mut warnings = Vec::new();
@@ -185,7 +208,7 @@ mod cfgv_bindings {
         has::<fn(Value, &Schema) -> Value>(cfgv::apply_defaults_owned);
         let defaulted = cfgv::apply_defaults_owned(value, &schema);
         assert_eq!(defaulted.as_map().map(indexmap::IndexMap::len), Some(2));
-        let mut entry = Map::new();
+        let mut entry = Map::default();
         entry.insert(Value::from("entry"), Value::from("x"));
         let err = cfgv::validate_with(&Value::Map(entry.clone()), &schema, &mut Cx::discard())
             .unwrap_err();

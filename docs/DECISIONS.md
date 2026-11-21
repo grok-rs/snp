@@ -17,9 +17,14 @@ ADR-097 the stash re-verification by stat stamps; ADR-098 the tier-1 prefilter; 
 the B8 heap budget and counters; ADR-101 classification CPU and fan-out sizing; ADR-102 native-hook facts; ADR-103
 borrowed hook argv; ADR-104 the step-6 changes of the run pipeline; ADR-105 the hook script template v2; ADR-106 trusted
 index modes on clean `--all-files` runs; ADR-108 the forward-only engine of the tier-1 prefilter; ADR-110 the meta-only
-classification tier; ADR-112 snp-yaml's owning materialisation; ADR-115 the tier-1 scan engine; ADR-116 the absorption
-of cfgv and file-identify into the workspace; ADR-117 the B8 stash-time overlaps; ADR-118 the musl mimalloc build
-without transparent huge pages; ADR-119 the proven post-checkout baseline.
+classification tier; ADR-111 the process-seeded cfgv map hasher; ADR-112 snp-yaml's owning materialisation; ADR-114
+overflow checks kept for every crate; ADR-115 the tier-1 scan engine; ADR-116 the absorption of cfgv and file-identify
+into the workspace; ADR-117 the B8 stash-time overlaps; ADR-118 the musl mimalloc build without transparent huge pages;
+ADR-119 the proven post-checkout baseline; ADR-131 the file-content cache of consecutive in-process hooks; ADR-132 the
+baseline taken by the first native write in all-in-process runs; ADR-133 its follow-ups (the system attributes file from
+`git var`, attributes that convert nothing); ADR-134 the index-stat proof; ADR-135 the hook script template v3; ADR-136 the wave-5 bench methodology;
+ADR-137 PIE release artifacts and their hardening gate; ADR-138 the internal crates' API policy and snp-yaml's borrowed
+tags and scalar text.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -309,7 +314,7 @@ in `<store>/patches/` written temp+rename. **Consequences.** Signal and second-^
 
 ### ADR-027 — Modification detection: Unix DiffOracle, Windows real diff, baseline elision
 
-*Status: Accepted; amended by ADR-078 (filesystem allow-list, extra attribute inputs, warm-path-only baseline elision). The amending ADR is normative where they differ.*
+*Status: Accepted; amended by ADR-078 (filesystem allow-list, extra attribute inputs, warm-path-only baseline elision) and ADR-134 (in Git mode an index-stat proof replaces a `git diff` it proves empty). The amending ADRs are normative where they differ.*
 
 **Context.** robust kept one `git diff` per executed hook (B3 ≤ 25 ms doubtful, far off on Windows where a git spawn
 costs 10–30 ms); compat's stat fast path ignored non-tracked diff inputs; perf's DiffOracle was unsound on Windows and
@@ -461,7 +466,7 @@ project_root`, `Vec<Project>` planning (length 1), `project_prefix` filters, per
 
 ### ADR-043 — Performance budgets per OS
 
-*Status: Accepted; amended by ADR-086 (`reference_only` micro thresholds) ADR-090 (the regression rule's absolute floor; history from other runner VMs is reported, not gated), ADR-091 (`[[known_miss]]`), ADR-099 (the paired regression rule on interleaved base and head rounds) and ADR-100 (B8 budgeted by heap peak, not tree RSS; counter gates). The amending ADR is normative where they differ.*
+*Status: Accepted; amended by ADR-086 (`reference_only` micro thresholds) ADR-090 (the regression rule's absolute floor; history from other runner VMs is reported, not gated), ADR-091 (`[[known_miss]]`), ADR-099 (the paired regression rule on interleaved base and head rounds), ADR-100 (B8 budgeted by heap peak, not tree RSS; counter gates) and ADR-136 (B9's hook overhead B9 − B9nv − B3' reported per round beside the unchanged budget). The amending ADR is normative where they differ.*
 
 **Decision.** ARCHITECTURE §12.1. Linux hard gates: B1 ≤ 3 ms, B2 ≤ 10 ms, B3 ≤ 25 ms, B12 ≤ 30 MB. macOS soft
 budgets (B1 ≤ 5 ms, B3 ≤ 40 ms). Windows soft ratios to pre-commit (B1 ≤ 15 ms, B3 ≤ 0.5×) because every per-hook `git
@@ -498,7 +503,7 @@ benchmark showing a measurable win on B3/B9; removable without API change. **Rat
 
 ### ADR-048 — Hook script template and fallback chain
 
-*Status: Accepted; amended by ADR-060 (stable `SNP_EXE` selection, M-lines on stderr, prek/snp-1.x adoption registered as D-BRAND-02) and ADR-105 (template v2: `HERE` without `dirname`, ID `405bd8559925d194c1d22af6ef66282e`, the v1 ID kept as a compat line). The amending ADRs are normative where they differ.*
+*Status: Accepted; amended by ADR-060 (stable `SNP_EXE` selection, M-lines on stderr, prek/snp-1.x adoption registered as D-BRAND-02), ADR-105 (template v2: `HERE` without `dirname`, ID `405bd8559925d194c1d22af6ef66282e`, the v1 ID kept as a compat line) and ADR-135 (template v3: `HERE` without a subshell for the paths git builds, ID `b5aab319837cfd7b570aecfbefd9e801`). The amending ADRs are normative where they differ.*
 
 **Decision.** ARCHITECTURE §9.7 (11 §A.6 + the kill-switch branch): POSIX `sh`, LF everywhere, three identity lines
 (snp ID `5bb9bd89cf6c92c58fee7677ceaf4fc3`, pre-commit `CURRENT_HASH`, prek ID) so the last installer wins and no
@@ -913,7 +918,7 @@ Amends ADR-034, ADR-036 and ADR-044.
 
 ### ADR-078 — DiffOracle soundness, round 2, and baseline timing
 
-*Status: Accepted; ADR-104 records how (3) is implemented (the code tracks clones, installs and downloads; the decision is unchanged); (3)'s parity mechanics amended by ADR-119 (after the stash's checkout the warm-path baseline is elided when the Stat-mode snapshot proves it empty). The amending ADR is normative where they differ.*
+*Status: Accepted; ADR-104 records how (3) is implemented (the code tracks clones, installs and downloads; the decision is unchanged); (3)'s parity mechanics amended by ADR-119 (after the stash's checkout the warm-path baseline is elided when the Stat-mode snapshot proves it empty) and ADR-134 (in Git mode the lazy baseline is the empty fingerprint when the index-stat proof holds); (3)'s baseline position amended by ADR-132 (in an all-in-process run with no known baseline, the first native write of a hook takes it, and a hook that writes nothing takes none). The amending ADRs are normative where they differ.*
 
 **Decision.** (1) Stat mode only on an allow-list of filesystems with kernel-maintained ctime and ns mtime (ext2/3/4,
 xfs, btrfs, tmpfs, zfs, f2fs, bcachefs; apfs, hfs) — every FUSE (sshfs, rclone, virtiofs), 9p, overlay, vfat, exfat,
@@ -1255,7 +1260,8 @@ and COMPATIBILITY §5.7/§5.8/§7.4 describe it.
 ### ADR-088 — Release channels: crates.io and Homebrew
 
 *Status: Accepted; amended by ADR-116 (the publish set gains snp-cfgv and snp-identify, which replace the external
-user crates cfgv and file-identify and their ADR-061 provenance requirement). The amending ADR is normative where
+user crates cfgv and file-identify and their ADR-061 provenance requirement); (2) affirmed by ADR-138 (the published
+internal crates make no API stability promise and say so in their descriptions). The amending ADR is normative where
 they differ.*
 
 **Context.** ADR-049 released snp through cargo-dist (GitHub releases, shell/PowerShell installers) and PyPI
@@ -1398,7 +1404,7 @@ own history stays a gate, since `--advisory-history` is opt-in.
 
 ### ADR-091 — Every scenario is measured; accepted misses are listed
 
-*Status: Accepted; amended by ADR-099 (the regression check is the paired rule; B11 compares equal work, its known miss reworded). The amending ADR is normative where they differ.*
+*Status: Accepted; amended by ADR-099 (the regression check is the paired rule; B11 compares equal work, its known miss reworded) and ADR-136 (the known-miss reasons of B6, B11 and B12u corrected, B5's entry removed, B9's interim entry; a soft breach shows its reason). The amending ADR is normative where they differ.*
 
 **Context.** `bench.yml` measured only B1: the list was to grow when `snp run` (WP-32) merged, and never did, so B2–B12
 and their budgets were unchecked on a released product. Measuring them on CI shows real misses (`bench/budgets.toml`).
@@ -1777,7 +1783,8 @@ new divergence. The 256 KiB cap re-tunes against CI's B12u RSS once batch C halv
 ### ADR-099 — The bench gate pairs interleaved base and head rounds; the base is built like the head
 
 *Status: Accepted; amended by ADR-116 (a base with `deps.lock` gets its crates from its own `deps-lock.sh`; a base
-without it needs none). The amending ADR is normative where they differ.*
+without it needs none) and ADR-136 (decision 6: B11's configurations name https URLs mapped to the local repositories;
+B11's known-miss reason corrected: prek reads all 500 manifests too). The amending ADR is normative where they differ.*
 
 **Context.** The performance analysis of 2026-11 (P06, P07) measured why same-code pull requests failed the bench
 gate. `bench.yml` measured the base commit's snp on every scenario, then the head's: the two windows of one scenario
@@ -1918,6 +1925,10 @@ keep it. No ADR is amended: ADR-084(6)'s "at most 8 threads" and ADR-065's pool 
 the permits and cores.
 
 ### ADR-102 — Native-hook facts: `NativeHook::facts`, the PchFacts prefetch, the case-conflict repository index
+
+*Status: Accepted; decision (2) amended by ADR-132 (under the deferred baseline the prefetch starts without the diff
+oracle's baseline, which the first native write takes and which may overlap a fact's git child). The amending ADR is
+normative where they differ.*
 
 *Amends ARCHITECTURE §1.4.19 (the frozen native-hook contract gains a provided method), §1.4.13 (`pch_facts`) and
 §3.4 (one prefetch thread beside in-process hooks).*
@@ -2077,6 +2088,10 @@ and the stat pass against A and one `git diff`; +10% on a 100-file fixture), wit
 path.
 
 ### ADR-105 — Hook script template v2: the hook directory without `dirname`
+
+*Status: Accepted; amended by ADR-135 (template v3: no subshell for the paths git builds, ID
+`b5aab319837cfd7b570aecfbefd9e801`, v2's ID moved into `SNP_PRIOR_IDS`). The amending ADR is normative where it
+differs.*
 
 *Amends ADR-048 (the template of ARCHITECTURE §9.7 and 11 §A.6).*
 
@@ -2337,7 +2352,63 @@ Two other layouts (the meta-only answer out of line; the per-file loop monomorph
 in every scenario. Not done: the plan's public `Needs.meta_only` field (a breaking change of a published crate) and
 the per-chunk reservation in `for_hook` (rejected).
 
+### ADR-111 — cfgv maps hash with one process-seeded SipHash; schema keys carry their hash
+
+*Relates to ADR-116 (snp-cfgv is an internal crate; no other ADR is amended) and ADR-112 (snp-yaml builds the maps).
+Owner decision of 2026-11-21 (wave-5 panel `rust`, variant (i)).*
+
+**Context.** cfgv's `Map` was `IndexMap<Value, Value>` with std's `RandomState`: every map drew its own SipHash-1-3
+keys. Validating a map looks up the schema's own fixed keys (`id`, `files`, the extension keys, …) in it, and each
+lookup hashed the key again, about 260 instructions per key. In `validate-config` on 1,000 hooks (B10) that was 22.4 M
+instructions of `hash_one`, 11.6% of the run: `Validator::check` (22,070 lookups), `set_default` (17,027), `ExtKey`
+(13,000), the snp-config items and the `id` of each context line. A hash precomputed once per key is only valid if
+every map hashes with the same keys, which a per-map `RandomState` rules out (a precomputed hash would silently miss,
+read as "key missing"). snp-yaml also hashed every key of every mapping into a dedup index (`dict_entries`, 3.4 M).
+**Decision.** (1) `Map` and `Set` take the zero-sized builder `cfgv::ValueState`: std's SipHash-1-3 (`DefaultHasher`)
+keyed by one `RandomState` drawn on first use in the process (`OnceLock`, as `snp-run/src/stamp.rs`). Maps are built
+with `Map::default()` / `with_capacity_and_hasher(n, ValueState)`; `IndexMap::new` no longer exists for them, so the
+compiler finds every site. (2) `cfgv::HashedKey` holds a key and its hash, computed at run time from the process seed
+when the schema is built (schemas live in `OnceLock` statics, so once per process). Its lookups (`get`, `get_full`,
+`get_mut`, `get_full_mut`, `contained_in`, `set_default`) go through `raw_entry_v1().from_key_hashed_nocheck` and
+`debug_assert` that the hash equals `map.hasher().hash_one(key)`; their signatures name `Map`, so a different builder
+breaks the build. The keys and condition keys of `Validator`'s built-in items, `Schema::Map`'s `id_key`, and
+snp-config's `ExtKey`, `StagesMigration`, `DeprecatedStagesWarning`, `LanguageMigration`, `WarnMutableRev`,
+`SensibleRegex` and `Compiled` (through `Validator::hashed_key`) are `HashedKey`s. `set_default` keeps the wave-4
+invariant: one probe, and the inserted clone hashes like the key. (3) snp-yaml's `dict_entries` deduplicates a
+mapping of at most 16 pairs by a linear `==` scan; larger mappings keep the hashed index (now `ValueState`). (4) A hash
+is never computed at compile time or with a fixed key, never printed, persisted or used for ordering. This is a review
+rule for any later use of `ValueState` or `HashedKey`.
+**HashDoS.** Untrusted input reaches these maps without anything being executed: a cloned hook repository's manifest
+(`gc`, `autoupdate`, `try-repo`, `validate-manifest`) and `validate-config` run as a CI gate on pull requests. The
+limits allow 16 MiB and 1 M nodes, so about 500 k keys in one mapping, and full-hash collisions would make that
+O(n²), a hang. The protection is exactly what it was, and what CPython (pre-commit) has: a keyed PRF (SipHash-1-3)
+with a 128-bit random key per process. Sharing the key across the process's maps exposes nothing, because nothing
+reveals a hash or a hash order: `IndexMap` iterates in insertion order, so no output, order or message can change
+either. The linear scan is bounded at 16 × 16 comparisons, so it adds no exposure. `unordered_hash` (the fixed-key
+hash of a `Map`/`Set` used as a key, which PyYAML rejects as unhashable) only feeds the keyed outer hasher, as before.
+S6: the seed is written once and never changes, the `stamp.rs` precedent; it is not mutable process state.
+**Rejected.** foldhash (its README claims no HashDoS resistance against interactive attackers and no
+seed-independent collision lists; a new dependency for at most the 10–20% of the hashing gain that (i) leaves), ahash, FxHash or any
+multiply-mix hasher (trivially collidable), a hand-rolled hasher, a compile-time or fixed-key precomputed SipHash (the
+key would be public), and sharing one `RandomState` clone by discipline (nothing would stop a map built otherwise from
+silently missing). `convert.rs`'s `StrKey` probes on the run path keep hashing (about 15 µs per run).
+**Consequences.** B10 and B11 (callgrind of snp's process, profiling build, fixtures of `cargo xtask bench setup`;
+together with the wave-5 allocation trims of the same change, alloc-6: the regex key's `repr` only for a warning,
+`translate_language` replacing only `system`/`script`, stage lists rewritten in place only for a legacy name, the
+compiled-pattern list kept once per pattern, snp-pyre's exact reserves): B10 193.5 M → 165.4 M instructions (−14.5%),
+`hash_one` 22.4 M → 2.0 M, 168,047 → 154,992 heap blocks (29.0 → 24.9 MB allocated); B11 163.7 M → 150.9 M (−7.8%),
+193,435 → 187,635 blocks. `Value` is 16 bytes smaller (no per-map state). Tests: proptests that hashed lookups equal
+plain ones (Python-equal keys across types, NaN, bytes, tuples, dates), that `ValueState` maps and the former
+`RandomState` maps agree operation by operation (insert, `shift_remove`, setdefault order), and that
+`apply_defaults`, `remove_defaults` and `check` through hashed keys agree with plain-map references
+(`crates/snp-cfgv/tests/properties.rs`); an exhaustive comparison of the linear and hashed dedup over every key
+sequence of up to five keys (`crates/snp-yaml/src/construct.rs`). The cfgv parity vectors, the snp-config acceptance
+tests and the CLI goldens are unchanged.
+
 ### ADR-112 — snp-yaml materialises by moving what occurs once; the `Node.tag` type change is deferred
+
+*Status: Accepted; amended by ADR-138 ((5): `Node.tag` is `Cow<'static, str>` under ADR-088(2), no major version).
+The amending ADR is normative where they differ.*
 
 *Relates to ADR-002 (snp's own constructor), D-SEC-11 (limits before anything is copied) and ADR-088 (snp-yaml is a
 published crate).*
@@ -2386,6 +2457,48 @@ heap blocks; heap peak 9.64 → 9.47 MB, with 86,031 → 64,979 live blocks at t
 occurrence and only its single-occurrence nodes move. `validate-config` of the 500-level spine over 20,000 leaves
 (61 KB) peaks at 18.7 MB RSS, against 18.8 MB before this ADR and 1.1 GB with the rejected cache. Loaded values,
 errors and their order (the recursive-node and limit errors come from phase 2, which is unchanged) are the same.
+
+### ADR-114 — Overflow checks stay on for every crate, third-party crates included (rejected: B1)
+
+*Owner decision B1 of the wave-5 performance plan (2026-11-21, after the release panel). Affirms ADR-066's backstop
+and the `release` profile of ARCHITECTURE §1.3 unchanged; this number was reserved for the proposal and records its
+rejection, so it is not proposed again without the evidence named below.*
+
+**Context.** The `release` and `dist` profiles build every crate with `overflow-checks = true` (ADR-066: a backstop
+behind the lints). The plan proposed turning the checks off for third-party crates only,
+`[profile.release.package."*"] overflow-checks = false`, for speed, under its own acceptance rule: a net
+non-negative instruction change on B3, B4, B5, B6, B10, B11 and B12u, or drop the item. Since ADR-116 the absorbed
+cfgv and file-identify are workspace members, which `"*"` does not match (verified in a `-v` build log: 25 workspace
+crates got `-C overflow-checks=on`, 110 registry crates none), so the proposal's explicit exceptions for them were
+obsolete.
+**Decision.** Rejected. Every crate keeps `overflow-checks = true` in `release` and `dist`; no profile changes.
+**Rationale.** (1) It fails the plan's own rule. Measured on the shipping `dist` profile (fat LTO, one codegen unit,
+rustc 1.100, x86_64-unknown-linux-gnu; callgrind instructions of the snp process, two runs where shown):
+
+| scenario | checks on | checks off for `"*"` | change |
+|---|---|---|---|
+| B1 | 681,111 | 674,682 | −0.94 % (about 6 k instructions, about 2 µs) |
+| B3 | 6.142 M / 6.137 M | 6.135 M / 6.123 M | −0.17 % (noise band) |
+| B4 | 104.99 M / 104.78 M | 105.38 M / 105.52 M | **+0.54 % (slower, both runs)** |
+| B6 | 87.70 M | 87.45 M | −0.29 % |
+| B10 | 190.56 M | 189.85 M | −0.37 % |
+| B11 | 159.93 M | 159.08 M | −0.53 % |
+| B12u | 560.7 M / 557.6 M | 547.6 M / 541.1 M | −2.6 % of snp's process, under 0.3 % of the scenario's tree |
+
+The binary shrinks (`.text` −40.7 KB, 692 fewer relative relocations, file −83 KB), but in CI time the gain is under
+0.1 ms on every scenario except B12u (at most about 1 ms of 341 ms), and B4 regresses: fat LTO inlines differently
+when function sizes change (plan3 had seen B5 at +0.58 % for the same reason). (2) The checks are a fail-closed
+backstop at no measurable cost: an overflow in a dependency on hostile input (a parser's `u32` counter or position in
+the YAML, TOML, XML or regex code) panics, unwinds into snp's `catch_unwind`, restores the stash and exits 3, visibly;
+with the checks off it wraps silently and can give a wrong hook verdict (fail open), or worse inside a dependency's
+`unsafe` code. Lengths cannot reach 2^64 on 64-bit targets, but `u32` counters can overflow. (3) No dependency relies
+on overflow panics for memory safety (it would be unsound in the default release profile, under which every crate is
+published, tested and fuzzed), so keeping the checks changes no semantics: the panic paths stay as they are under
+`panic = "unwind"` (FD-5) and S2.
+**Consequences.** Nothing changes in the build. The proposal comes back only with a profile in which a dependency's
+checked arithmetic is at least 3 % of a gated scenario, and then as a narrow, per-scenario-measured override of the
+crates concerned (for example `regex-automata`, `memchr`, `aho-corasick`), never `"*"`; a non-member path dependency
+added later would get the checks of `release` like any crate.
 
 ### ADR-115 — The tier-1 scan engine: str path texts with a large Unicode class skip `regex`
 
@@ -2581,6 +2694,10 @@ arena ranges with huge pages, because nothing calls `prctl`. The gnu, macOS and 
 mimalloc and are unchanged.
 ### ADR-119 — B8: the post-checkout baseline is elided when the snapshot proves it empty
 
+*Status: Accepted; (b), (f) and Rejected (a), (b) and (d) amended by ADR-133 (the system attributes file comes from
+`git var GIT_ATTR_SYSTEM` on git ≥ 2.42 on every platform; attributes files that set or value no converting attribute
+no longer refuse the proof). The amending ADR is normative where they differ.*
+
 *Amends ADR-078 (3) (its parity mechanics, not its guarantee: the baseline still equals the stdout of the `git diff`
 pre-commit takes, in every case) and ADR-117's Rejected (c), first item (owner decision of 2026-11-20: approved as a
 fail-closed fast path, not as a divergence). Every durability, verification and recovery rule of the stash is
@@ -2654,6 +2771,657 @@ value and an `attr.tree` the reader cannot see run it too; a skip-worktree or as
 skip-worktree, untracked-cache, mode-only and directory-behind-a-symlink cases, and a randomized differential; every run
 equals the always-diff path's output, exit code and repository, and `SNP_VERIFY_BASELINE` agrees
 (`crates/snp-run/tests/pipeline/checkout_baseline.rs`).
+
+### ADR-131 — A file-content cache for consecutive in-process hooks ("B-racy")
+
+*Amends ARCHITECTURE §1.4.19 (the frozen native-hook contract: `HookCx` gains a field, `pygrep` a function) and §3.4
+(a content cache per window of consecutive in-process hooks). Not a divergence: exact under ADR-027's assumptions.*
+
+**Context.** pre-commit runs every pre-commit-hooks hook as a fresh process that opens each file again; snp's natives
+did the same in process, so B6 (13 natives, 960 files) opened each file 5.6 times: 6,880 `openat`, 6,650 `close`,
+10,977 `read`, 971 `lseek` and 6,483 `statx` in a 43,451-syscall tree (strace, cpu-1 of the wave-5 analysis), with
+open/close the costliest calls and worse with more threads. The panel (`panel-parity`, decision 1) rejected a cache
+that trusts the window (variant A: an edit by another process during the window is not seen, and a fixer can then
+overwrite it, losing the user's edit) and corrected the stat-validated variant B, which missed git's racy rule, the
+device and a torn-read check.
+**Decision.** (1) *Window.* The scheduler gives a window of consecutive buckets that each hold one in-process hook (a
+bucket of several hooks, whose members run concurrently, or a process hook ends it) one `snp_hooks::ContentCache` when
+the window holds two or more unskipped readers (`content_cache::reads_contents`: the natives that read through
+`read_all`, `read_head` or end-of-file-fixer's tail; `pygrep` hooks). It is made at the window's first bucket and
+dropped at the first bucket after it, before that bucket's hooks run, so never beside a process hook or inside a
+concurrent bucket. Only on Unix and a `stat_oracle_safe` work tree (ADR-078's allow-list; `ContentCache::new` answers
+`None` elsewhere, so Windows, NFS, SMB, FUSE, 9p, overlay, vfat and exfat get none), and only for a hook whose cwd is
+the work-tree root (a hook with the `root` key reads without it). `HookCx` gains `cache: Option<&ContentCache>`;
+`pygrep::run_partition_cached` takes it too. (2) *Fill*, only in `read_all` and pygrep's read: the time `t0` is taken
+before the `open`, the `statx(fd)` that `std::fs::read` makes anyway gives the stamp, and the bytes are kept only when
+the file is a regular file on the work tree's device, its mtime **and** ctime are older than `t0 − 2 s` (git's racy
+window), the bytes read equal the stat's size (no torn read), the file is at most 1 MiB and the cache's total stays
+within 16 MiB. Errors are never cached. A kept fill shares its buffer with the caller (no copy). (3) *Hit*: one
+`statx(path)` that follows symbolic links, as `open` does, compared on device, inode, size, mtime, ctime (seconds and
+nanoseconds) and file type. Equal: the cached bytes (`read_all`, pygrep), their first `n` (`read_head`, so
+check-executables-have-shebangs and check-byte-order-marker), or end-of-file-fixer's `tail_action` over a `Cursor` of
+them (K3/K6's listed caller is unchanged). Any difference or error: today's read, whose error, if any, is the hook's;
+the stale entry is dropped. A name without an entry costs nothing. The validation runs where today's `open` ran, so the
+observation time is unchanged. (4) *Writes*: `common::rewrite` and end-of-file-fixer's append/truncate evict the name
+**before** writing, also when the write then fails; written bytes are never cached (a freshly written file is racy, so
+a checker after a fixer re-reads it, as under pre-commit). A write through another name (a hard link, a symbolic link
+and its target, a case or normalization twin) changes the inode's ctime, so the alias's entry misses. (5)
+`SNP_VERIFY_FILE_CACHE=1` re-reads the file on every hit, uses the fresh bytes when they differ and prints
+`snp: SNP_VERIFY_FILE_CACHE: a cached file read differed from a fresh read; using the fresh read` once (stderr).
+**Assumptions** (ADR-027's, shared with git and the `DiffOracle`): the kernel maintains ctime; the clock does not step
+back by 2 s or more during a run; no mmap writer keeps a page dirty for more than 2 s without a timestamp update. A
+stamp kept is at least 2 s old, so any later change of the inode moves its ctime past it, even with coarse (jiffy,
+HFS+ one-second) timestamps; a fill that overlaps a write either sees the write's timestamps (racy, not kept) or keeps
+the pre-write stamp (the next hit misses).
+**Rejected.** (a) Variant A (trust the window): loses user edits (above). (b) Replacing an entry with a fixer's written
+bytes: a freshly written file is racy. (c) An inode map for aliases: ctime already catches them. (d) A per-run instead
+of per-window lifetime: allowed by the validation, not needed for B6; revisit for configs that mix natives and process
+hooks. (e) Windows: stable std exposes no ctime or file id. (f) A non-SipHash hasher for the map: about 1 M
+instructions on B6 against HashDoS resistance.
+**Consequences.** B6 (fixture regenerated in `target/`, profiling builds of `main` and of this change, strace `-f -c` of
+the tree): 43,344 → 27,512 syscalls (−36.5%): `openat` 6,880 → 2,435, `close` 6,650 → 2,205, `read` 10,824 → 3,876,
+`lseek` 971 → 10, `statx` 6,483 → 7,565 (+1,082: a hit's `statx(path)` replaces a read's `statx(fd)`, and `read_head`
+hits add one). B7: 43,966 → 28,361, `statx` 6,484 → 7,566. ADR-100's paired `statx` gate therefore fails on this change for B6 and B7: it is
+re-baselined as that ADR states, through two `[[known_miss]]` entries (`statx <= base`, B6 and B7) whose own check
+says to remove them once the base carries this change; no other counter or budget moves. snp's own instructions
+(callgrind, snp process): B6 89.8 M → 90.2 M (+0.5%: the map's hashing; the saving is in the kernel), B7 91.1 M → 92.0 M
+(+1.0%); dhat on B6: 92,163 → 90,321 blocks, heap peak 0.79 → 1.07 MiB (the cached files). Tests: a fixer-then-checker chain
+(trailing-whitespace → end-of-file-fixer → mixed-line-ending → check-yaml, check-json, detect-private-key), external
+edits between hooks (same size and new size, racy and old, a deletion), a same-size alias write, the caps, a
+non-regular file, errors, `chmod 000` after a fill, another device, end-of-file-fixer and shebang readers, pygrep,
+racy files never kept: every run equals the same run without a cache (`crates/snp-hooks/tests/content_cache`); the
+admission rule, a forged mismatch under `SNP_VERIFY_FILE_CACHE` and stale-entry accounting (unit tests); and in the
+scheduler, runs over aged files equal runs over fresh ones with `SNP_JOBS=1` and `2` under `SNP_VERIFY_FILE_CACHE=1`,
+a concurrent priority bucket and a process hook between single readers get no cache, and a process hook's same-size
+rewrite is seen after it (`crates/snp-run/tests/pipeline/content_cache.rs`). Proofs: none (K3/K6 keep `tail_action`).
+
+### ADR-132 — The baseline `git diff` of all-in-process runs is taken by the first native write ("O2-R")
+
+*Amends ADR-078(3) (the baseline's position), ADR-102 (the prefetch starts "after the diff oracle's baseline"),
+ARCHITECTURE §1.4.19 (the frozen native-hook contract: `HookCx` gains a field, the crate a `writer` module), §3.4 and
+§3.7 items 1 and 5. Not a divergence: an accepted race window (below); no non-race input differs.*
+
+**Context.** pre-commit takes `prior_diff` once before the first hook and compares every executed hook's diff with the
+previous one. snp's diff oracle needs that baseline only to compare a hook that may have changed files; a native that
+reports it wrote nothing is decided without it (`after_native(false, _)`). Yet `before_hook` took it before the first
+hook of every run, so B6 (13 pre-commit-hooks natives over a clean tree) spawned one `git diff` that nothing used: on
+the critical path, alone, before any hook (threads-2 of the wave-5 analysis: 23.3 M tree instructions, 9.1%, when the
+fixture's index is racy). The panel (`panel-parity`, decision 2) rejected the lens's unrestricted form (defer the
+baseline over leading in-process hooks in any run): in a mixed run it saves nothing, since the next process hook takes
+the same diff, and it fails open, since an edit by another process during the natives is then absorbed into the
+process hook's baseline and the run can exit 0 where pre-commit (and snp before) exit 1.
+**Decision.** (1) *Static gate*, decided once before the hook loop (`sched::defers_baseline`): the oracle's baseline is
+not already known (neither ADR-078(3)'s warm-path elision, nor ADR-106's step-15 before-diff, nor ADR-119's proof
+supplied it); every selected, unskipped hook runs in process (native, meta, `pygrep`, `fail`) and, for a native,
+reports its modifications exactly (`decide` then needs a baseline only after a write); no bucket holds two unskipped
+hooks (a concurrent group keeps its baseline before it); no hook has an active `stage_fixed`. Otherwise everything
+stays as before. A run with a process hook keeps today's position even when that hook ends up with no files: "no
+files" is not known statically, and exactness is worth the lost gain. (2) *When it holds*, neither the prefetch start
+(ADR-102) nor `run_one` calls `oracle.before_hook()` while the baseline is unknown; the hook's `HookCx` carries
+`gate: Some(&WriteGate)` (`snp_hooks::writer`: a `OnceLock<Result<DiffFingerprint, Failure>>` and the run's `Git`).
+Once the baseline is known (a writer took it and the comparison refreshed it), later hooks call `before_hook` as before
+(a Stat-mode snapshot, no diff). (3) *The write token.* A native writes the work tree only through `cx.writer()?`, a
+`Writer` with `rewrite`, `append_newline` and `truncate`; `common::rewrite` (trailing-whitespace, mixed-line-ending,
+fix-byte-order-marker, file-contents-sorter, requirements-txt-fixer, pretty-format-json, sort-simple-yaml,
+fix-encoding-pragma) and end-of-file-fixer's append/truncate are reimplemented on it (each still evicts the content
+cache first, ADR-131). With a gate, the first `writer()` of the hook runs the real `git diff` (`get_or_init`): partitions
+that want to write wait until it ends, partitions that only read keep running (both sides only read), so no byte is
+written before the baseline is complete and the baseline is the pre-hook tree, as before. The diff's git child streams
+through the backend and takes no `JobPool` permit, so `SNP_JOBS=1` cannot deadlock. Without a gate the token is handed
+out at once. (4) *After the hook*: a baseline the gate took becomes the hook's comparison base
+(`DiffOracle::adopt_baseline`), then `decide()` runs unchanged; a failing gate diff (practically only a stream failure:
+a spawn failure is hashed like pre-commit's `_oserror_to_output`) refused every write, and the runner reports it as the
+baseline's failure (exit 3, today's path, reported after the partitions end). A hook that never asked to write leaves
+the baseline unknown; the show-diff gate (`non_empty`) takes it at the end, pre-commit's position for the last
+`diff_after`. A write that bypassed the gate and is reported meets `compare_real` with no baseline: `Changed` (fail
+closed). (5) *Enforcement.* `crates/snp-hooks/clippy.toml` is the workspace's clippy configuration plus a write ban:
+`disallowed-methods` lists `std::fs::{write, copy, rename, remove_file, remove_dir, remove_dir_all, create_dir,
+create_dir_all, hard_link, soft_link, set_permissions, set_times, set_times_nofollow}`, `std::fs::OpenOptions::open`,
+`std::fs::File::{create, create_new, options, set_len, set_permissions, set_times, set_modified}` (the last three work on
+a handle opened read-only), `std::fs::DirBuilder::create`, `std::os::unix::fs::{symlink, chown, fchown, lchown}`,
+`std::os::windows::fs::{symlink_file, symlink_dir}`, every public write function of `snp_os::fs` (`rewrite_in_place,
+atomic_replace, write_new_durable, copy_into_new_durable, create_truncate_nofollow, rename_with_retry,
+remove_tree_within, retire_dir, unnamed_temp, ensure_private_dir`) and `snp_os::lock::FileLock::{try_acquire,
+acquire}` (they create the lock file), and `disallowed-types` lists `std::fs::OpenOptions`; only `src/writer.rs`
+expects those lints (test fixtures that write carry their own expectation). `cargo xtask lint-guards` checks that the
+file keeps every workspace key unchanged and the whole ban, and that no non-test source outside `src/writer.rs` expects
+or allows the ban's lints; its test runs clippy with that file on a scratch crate and sees a raw `std::fs::write`, an
+`OpenOptions` and `set_permissions` / `set_modified` on a `File::open` handle rejected. The lint does not cover a
+subprocess (`snp_proc`, or the git children of `snp_git`, e.g. `Git::checkout_paths` / `Git::apply`) or any other
+crate's write API: a native that would write that way must call `cx.writer()` first (doc rule, `snp_hooks::writer`). (6) ADR-102's prefetch then starts without the baseline, so the
+gate's diff may overlap a fact's git child: all read-only (`git diff` writes the index only in
+`refresh_index_quietly`, never under a commit's held `index.lock`, and `PchFacts` stamps then recompute).
+**Race window** (an edit E by another process during an all-in-process run; "fix invisible" = a fix `git diff` cannot
+see: an untracked file passed with `--files`, `text=auto` normalisation, a `-diff` file already dirty):
+
+| E happens | pre-commit | before ADR-132 | ADR-132 |
+|---|---|---|---|
+| before the first hook | absorbed | absorbed | absorbed |
+| during a native, no native writes | that native fails, exit 1 | nobody, exit 0 | nobody, exit 0; the show-diff gate is computed at the end |
+| during or before writer W's first write, W's fix visible | Ni and W modified | W modified | W modified |
+| the same, W's fix invisible | W modified only if E was during W | W modified | W unmodified |
+
+The only output difference against before is the last row: one `- files were modified by this hook` line on W. Every
+pre-commit-hooks fixer exits 1 when it writes, so the exit code never changes. ADR-132 is closer to pre-commit in rows
+2-3 and farther in row 4 when E falls inside W; mixed runs are excluded because there the window would change the
+exit code (fail open).
+**Rejected.** (a) The unrestricted form (above). (b) Gating mixed runs with the process hook's baseline: the same diff,
+later, fail open. (c) A gate per partition: concurrent partitions would take different baselines. (d) Trusting the
+type system alone: the lint catches the raw APIs the token cannot.
+**Consequences.** B6 and B7 (fixture `pch960` regenerated in `target/bench`; profiling builds of perf/w5-o1 and this
+change; strace and callgrind with `--trace-children=yes`): B6 execs 11 → 10, `git diff` 1 → 0, syscalls 27,536 → 23,663
+(−14.1%), tree instructions 118.6 M → 108.4 M (−10.2 M, −8.6%); B7 execs 13 → 12, syscalls 28,131 → 24,147 (−14.2%),
+tree 120.7 M → 110.6 M (−8.4%). snp's own instructions are unchanged within the thread-scheduling noise (B6, three runs
+each: 90.48–90.55 M → 90.13–90.41 M). This fixture's index was not racy when measured, so git stat-compared the 961
+files instead of hashing them; on a racy index (the panel expects CI's, written in the same second as the commit) the
+saving is the analysis's 23 M. Output is byte-identical to the base build's on B6. Real repositories gain only on
+all-in-process runs whose baseline neither ADR-078(3), ADR-106 nor ADR-119 already elides (an `--all-files` CI run of
+pre-commit-hooks only, for example). Tests: the B6 shape takes no `git diff` while the fallback (the same run with an
+unskipped no-files process hook) takes one; a writer, alone and after read-only natives, gives the fallback's output,
+exit code and files with `SNP_JOBS` 1, 2 and 4, two `git diff`s, and a recording backend that holds the baseline
+300 ms sees no file written before it ends; a mixed run's `GIT_TRACE` from the first `git diff` on equals the base
+build's; injected edits give the race table's verdicts; `--show-diff-on-failure` without a writer equals the fallback
+(`crates/snp-run/tests/pipeline/deferred_baseline.rs`); concurrent gated partitions take one baseline before any write,
+end-of-file-fixer's append and truncate wait for it, a hook that writes nothing never fires the gate
+(`crates/snp-hooks/tests/write_gate`); the lint gate (`xtask lint-guards`). Proofs: none (no anchored item changed).
+
+### ADR-133 — ADR-119 follow-ups: the system attributes file from `git var`, attributes that convert nothing
+
+*Amends ADR-119 (b), (f) and its Rejected (a), (b) and (d) (owner decisions "ADR-119 (a)" and "ADR-119 (b)" of
+2026-11-21, after the wave-5 parity panel). The proof's guarantee is unchanged: the elided baseline equals the stdout of
+the `git diff` pre-commit takes, in every case; anything not proven takes the real diff.*
+
+**Context.** ADR-119 proves the post-checkout baseline empty only on Linux and only when no attributes file exists.
+Two gaps. (1) Its system attributes inputs (`/etc/gitattributes`, `<prefix>/etc/gitattributes` of the `git` on `PATH`
+and of its target) are a heuristic with holes on Linux too: a wrapper `git` that execs a git of another prefix, a build
+with its own `sysconfdir`, a `RUNTIME_PREFIX` build installed elsewhere. A missed file that sets a filter makes the
+"no attributes file exists" proof wrong. macOS was left out for the same reason (Xcode's git). (2) Most real
+repositories have a `.gitattributes`, usually `* text=auto` or `*.png binary`, so the proof rarely fires outside the
+bench. git v2.56.0 `builtin/var.c`: `git var GIT_ATTR_SYSTEM` prints `normalize_path_copy(system_path(
+ETC_GITATTRIBUTES))` and exits 0, or exits 1 under `GIT_ATTR_NOSYSTEM` (git ≥ 2.42; older gits print their usage and
+exit 129); `attr.c` `bootstrap_attr_stack` reads exactly that file. Only `convert.c` `convert_attrs` decides what a
+checkout writes and whether `git diff` sees a difference: it reads `text`, `crlf`, `eol`, `ident`, `filter` and
+`working-tree-encoding` (and `core.autocrlf` / `core.eol`); every other attribute changes at most how a non-empty diff
+is printed (`--no-textconv --no-ext-diff`), and the only builtin macro, `binary`, unsets `text`.
+**Decision.** (a) On a stashing run on the Stat-capable path (step 6's index stamp taken) with git ≥ 2.42
+(`GitCaps::attr_system`), the pipeline asks `git var GIT_ATTR_SYSTEM` once (`Git::system_attributes`), with the
+executable and environment of the parity `git diff` (the worktree-lock token the stash adds afterwards does not reach
+attribute lookup), overlapped with the stash's checkout: a scoped thread started around `snp_stash::enter` waits for
+`StashCtx::checkout_notice`, which the stash sends right before step 8's checkout and drops unsent on every other
+exit, and only then (worktree and git directory `stat_oracle_safe`) spawns `git var`; a run that checks nothing out
+spawns nothing. A thread that cannot start, a panic or a failed query is no answer. The answer is used only after a
+checkout that cleared no intent-to-add entry, with a Stat-mode oracle (otherwise the spawn is wasted: a checkout run
+whose oracle stays in Git mode, or one that cleared intent-to-add entries), and never kept across runs (macOS
+`/usr/bin/git` is an `xcrun` shim). Only exit 0 with exactly one line ending in a newline that holds an
+absolute path, or exit 1 with `GIT_ATTR_NOSYSTEM` in the environment (no system file), is an answer; anything else
+(a spawn failure, git's usage, a bad `GIT_ATTR_NOSYSTEM` boolean, a relative path) is none. A named file joins the
+snapshot's inputs (also for ADR-027's change detection), and with an answer the proof runs on any platform with a
+Stat mode: ADR-119 (f) is dropped. Without an answer the proof keeps ADR-119's heuristic on Linux and is not attempted
+elsewhere. (b) ADR-119 (b) becomes: every attributes input of the snapshot is missing or a regular file (not a
+symbolic link: git ≥ 2.32 ignores a symlinked `.gitattributes`, older gits follow it), readable, under 100 MB (git
+ignores larger files since the January 2023 security releases), in which no token, split on git's blank set
+`" \t\r\n"` plus `"` and NUL (extra separators only split a token git reads as one), is one of the six converting
+attributes or `<name>=<anything>`; the unset (`-x`) and unspecified (`!x`) forms are allowed. A macro setting one of
+them contains its token; a pattern spelled like one is a false refusal (safe); long lines git ignores are scanned
+anyway. `text=auto` exactly is allowed when `core.autocrlf` is off (ADR-119 (a)), `core.eol` is unset, `lf` or
+`native` (query G, `CheckoutConfig::eol_lf`) and the platform is not Windows: `output_eol(CRLF_AUTO)` is then LF, so the
+checkout writes the blob's bytes, and `git diff` reads them back equal (nothing to convert without a CRLF, and
+`has_crlf_in_index` leaves a blob with a CR alone, present in v2.18.5 and v2.56.0); it is allowed only because the
+attribute × blob-content matrix test agreed on all three gits it ran on (below). New: the patch holds no
+`.gitattributes` (any directory, ASCII case ignored): `diff-index` judged the other files under the pre-stash
+attributes, and the checkout restores another version (an unstaged `other.txt text eol=crlf` hides a CRLF file that
+the restored one shows). A tracked `.gitattributes` is allowed only spelled exactly so, as a `100644`/`100755` entry
+tagged `H` by query F, which becomes `ls-files -s -v -z` (`IndexEntries::tags`; ADR-119 Rejected (a) is taken), and
+present in the worktree as a regular file: the checkout reads the index copy first and `git diff` the worktree file
+first, which can differ arbitrarily for an assume-unchanged or skip-worktree entry, while for an unflagged one outside
+the patch and clean in `diff-index` they carry the same tokens, which the scan of the worktree file covers. An unmerged
+path still refuses. LFS (`filter=lfs`) stays on the real diff. `SNP_VERIFY_BASELINE=1` cross-checks every proven
+baseline as before.
+**Rejected.** (a) Starting `git var` around `snp_stash::enter` unconditionally (or in step 6's fan-out): the
+pipeline learns that a checkout happens only inside the stash's K9-anchored steps, so it would be asked on every
+stashing run, a wasted spawn on B2, B3 and B9 (nothing stashed, where snp already trails prek or its own budget, and
+whose spawn-count bounds would break); the checkout notice keeps the owner's placement without that spawn. Starting it
+after the checkout, beside step 14's installs and side queries (this ADR's first draft), departs from the owner's
+placement. (b) `git check-attr` per checked-out path, or a full attributes parser with
+pattern matching: a spawn, or a parser, where a token over-approximation needs neither. (c) Allowing LFS repositories
+when the patch holds no LFS path: per-path `check-attr` in both directions (worktree and `--cached`) and a theoretical
+macro hole across mixed stacks; deferred. (d) `git var GIT_ATTR_GLOBAL`: `core.attributesFile` still refuses (ADR-119
+(a)), and the default global file is among the inputs. (e) Caching the answer across runs: the shim's target follows
+`DEVELOPER_DIR` and `xcode-select`.
+**Consequences.** On Linux with git 2.43 (local, release-like `profiling` build, bench fixtures regenerated in
+`target/`): B8 runs one more process, `git var GIT_ATTR_SYSTEM` (strace: 15 → 16 execve; 601,946 instructions under
+callgrind, against a tree of about 2,290 M, +0.03%); snp's own process 80.95 M → 80.97 M instructions (callgrind,
+children native, median of three). B2 and B3 are unchanged (9 and 18 execve before and after; snp's process 4.742 M →
+4.747 M instructions on B2, F's tags). On B8 with a committed `* text=auto` / `*.png binary` / `-diff linguist-*`
+`.gitattributes` the post-checkout `git diff` (1,332.8 M instructions under callgrind: `text=auto` makes git inspect
+the 10 MiB file, against 361 M without attributes) no longer runs (16 → 16 execve: the diff out, `git var` in); snp's
+own process 80.64 M → 80.85 M (the scan). macOS stashing runs with git ≥ 2.42 drop the post-checkout diff like Linux.
+Runs with converting attributes, a flagged, patched or symlinked `.gitattributes`, LFS, `core.eol=crlf`, git < 2.42
+off Linux, or Git mode take the real diff as before. Tests: the scanner's token cases, the input rules (missing,
+symlink, directory, error, 100 MB) and a file scan across read boundaries (`crates/snp-stash/src/diff_oracle/
+attributes.rs`); the attribute × blob-content matrix against real git (LF, CRLF, mixed, lone CR, binary-looking,
+BOM-prefixed, no final newline and empty blobs under `binary`, `-diff`, `linguist-*`, `-text`, `!text`, `-crlf -eol
+-ident -filter`, `text=auto` with `core.eol` unset, `lf`, `LF` and `native`, `whitespace`/`merge`, and a refused
+`text eol=crlf` control that must change the bytes): every allowed checkout wrote the blob's bytes and read back clean
+on git 2.18.5, 2.43.0 and 2.56.0 (the git on `PATH` plus `SNP_TEST_GIT_MATRIX`; CI's git-version axis re-runs it on
+every pinned git); the index half (tags, spelling, slots); `git var`'s answers (`crates/snp-git`, real git and a
+scripted backend: spawn failure, exit 1 without `GIT_ATTR_NOSYSTEM`, 129, relative path, git < 2.42 not asked);
+query F's tags against real git; and in `crates/snp-run/tests/pipeline/checkout_baseline.rs` non-converting
+attributes (tracked, untracked, nested, `info/attributes`, BOM, `text=auto` under three `core.eol` values) skip the
+diff while a macro setting `text`, `text=auto` under `core.eol=crlf`, a converting BOM-prefixed file, a symlinked
+`.gitattributes`, a patched one, an assume-unchanged one with a smudge filter in the index, and a wrapper `git` whose
+own system attributes file converts take it; a git reporting 2.41.0 is not asked and keeps the heuristic,
+`GIT_ATTR_NOSYSTEM` reads no system file, and a macOS-gated case proves B8 with `git var`. Every case equals the
+always-diff path's output, exit code and repository, and `SNP_VERIFY_BASELINE` agrees. The pipeline harness puts
+`SNP_TEST_PIPELINE_GIT_DIR` in front of its pinned `PATH`, and `SNP_TEST_EXPECT_GIT_VAR=1` makes every skipping case
+and a guard test fail unless that git answers and the baseline is elided; platform.yml's `git-native-latest` macOS
+job runs the whole matrix so with Homebrew git (Apple's `/usr/bin/git` is older than 2.42 with the default Xcode).
+The checkout notice is sent before the checkout command starts, and dropped unsent on a run with nothing to stash and
+on a lock timeout (`crates/snp-stash/tests/behaviour/guard.rs`); the K9 anchor `Inner::stash` was re-reviewed (the
+notice has no repository effect) and its fingerprint refreshed.
+
+### ADR-134 — The index-stat proof: no per-hook `git diff` when the index proves it empty
+
+*Amends ADR-027 (Git mode) and ADR-078 (3)'s lazy baseline (owner decision "S1 index-stat proof" of 2026-11-21, after
+the wave-5 parity panel). The guarantee is unchanged: every fingerprint the oracle uses equals the stdout of the `git
+diff` pre-commit takes at that point, and the proof skips no side effect of it; anything not proven takes the real
+diff.*
+
+**Context.** In Git mode (more than 16 384 index entries, or one or two process hooks on a tree that is not small,
+ADR-104) every executed process hook costs one `git diff --no-ext-diff --no-textconv --ignore-submodules`: 81 % of
+B12u's tree instructions (20 diffs over 20 000 paths) and 67 % of B4's. git's `run_diff_files` (v2.18.5 and v2.56.0,
+`diff-lib.c`, `read-cache.c` `ie_match_stat` / `ce_match_stat_basic` / `is_racy_stat`, `statinfo.c`) reads a worktree
+file's content only for an entry whose cached stat data differs or that is racily clean; for every other entry it
+prints nothing and writes nothing (`refresh_index_quietly` runs only after a stat-dirty entry). git's default build
+compares whole seconds and never `st_dev` (`USE_NSEC` and `USE_STDEV` are opt-in).
+**Decision.** (1) `snp_git::index_file::IndexFile`, a strict reader of index versions 2, 3 and 4 (v4 prefix-compressed
+names): it consumes exactly the header's entry count and then extensions by size up to exactly the file length minus
+the hash (20 or 32 bytes from `extensions.objectFormat`); `link` (split index), `sdir` (sparse index), `FSMN`
+(fsmonitor) and unknown lowercase extensions refuse, `TREE`, `REUC`, `UNTR`, `EOIE`, `IEOT` and unknown uppercase
+ones are skipped; unknown second-word flags, the extended flag in v2, a name that disagrees with its length field and a
+v4 prefix longer than the previous name refuse; the checksum is not verified (git dies on a corrupt index with empty
+stdout, `index.skipHash` writes zeros); the file is streamed through a 64 KiB buffer and must end exactly where its
+`fstat` size says; `try_reserve` throughout, with its own fuzz target `git_index_file`. (2)
+`DiffOracle::enable_index_proof` arms the proof in Git mode only, when the platform is Unix, `SNP_DIFF_MODE` is not
+`git`, neither `GIT_TEST_FSMONITOR` nor `GIT_FSMONITOR_TEST` is set, the worktree and the git directory are
+`stat_oracle_safe`, and query G's configuration (`CheckoutConfig::index_proof`) has `core.fsmonitor`,
+`core.useBuiltinFSMonitor`, `core.ignoreStat`, `core.sparseCheckout` and `index.sparse` unset or false, no
+`core.worktree` at all, and a known object format (`CheckoutConfig::object_id_len`). The pipeline asks G for it beside
+step 14's installs when the run has a process hook and no Stat mode (step 6's G is reused when it ran). (3) Whenever
+the oracle would take a `git diff` while its last fingerprint is empty or not taken yet (the lazy baseline, the
+comparison after a hook, the show-diff gate), the proof runs first; with a non-empty last fingerprint it is not
+attempted (it could not hold). It holds when, for `RepoInfo::index_file` (which honours `GIT_INDEX_FILE`) with its
+stamp (dev, ino, size, mtime and ctime in nanoseconds) unchanged from before the read to the end of the pass: every
+entry is at stage 0 and none is intent-to-add; assume-unchanged, skip-worktree and gitlink entries are skipped (git
+never compares them under `--ignore-submodules`); every other entry is `100644`, `100755` or `120000`, not racy (its
+mtime second is below the index file's, as git truncates both to 32 bits: racily clean under neither build), not
+smudged (a stored size 0 only for the empty blob over an empty file), and its `lstat`, relative to an `O_PATH`
+descriptor of the root (`snp_os::rootstat`), matches strictly: kind and owner-executable bit, mtime and ctime seconds
+and nanoseconds, inode, uid and gid truncated to 32 bits, and the size truncated to 32 bits, where a non-zero size that
+truncates to 0 refuses (so gits with and without `munge_st_size` agree); and every leading directory of a checked
+entry is a directory by `lstat`. The config files (G's origins, every place git reads one from, include targets,
+`HEAD` for `onbranch:` includes; racy ones content-hashed) are stamped; a changed stamp asks G again and re-evaluates
+the gate. The pass runs on the run's `JobPool`, at most its cores (ADR-101) and 8 threads (the work is `lstat` calls), and
+stops at the first doubt; the leading directories are collected without hashing, from the bytes each name shares with
+the previous one. A parse that
+can never prove (a refusal, an unmerged, intent-to-add, racy, smudged or odd-mode entry) is kept by stamp, so no pass
+runs until the index changes. (4) The proof is stricter than any git build and setting: `core.fileMode=false`,
+`core.trustctime=false`, `core.checkStat=minimal` and `core.symlinks=false` only make git more lenient, so they are not
+read; `st_dev` is not compared, mirroring git's default build (a `USE_STDEV` build would only refresh the index, with
+no stdout; btrfs and device-mapper numbers change across reboots, so comparing it would disable the proof forever
+there). Attributes, filters and `core.autocrlf` do not matter: git reads them only for content comparisons, which the
+match excludes. (5) `SNP_VERIFY_INDEX_PROOF=1` still takes every proven diff with the real `git diff`, uses its result
+and prints `snp: SNP_VERIFY_INDEX_PROOF: a proven-empty git diff was not empty; using the real one` once on stderr
+when any was not empty.
+**Rejected.** (a) Comparing whole seconds only, as git's default build does: sound for that build, not for `USE_NSEC`
+builds; the cost is a proof that fails for an entry whose stat changed within the second of its last refresh until the
+file's second changes. (b) Comparing `st_dev`: see (4). (c) Hashing racy entries (phase 2 of the panel, so the proof
+also fires on fresh checkouts): deferred, it needs a no-conversion gate and its own ADR. (d) The parent-stamp
+refinement (lens threads-5: `lstat` only directories holding a tracked subdirectory): deferred, it needs its own
+soundness clause (bind mounts). (e) Replacing step 15's before-diff of a trust-capable `--all-files` run (ADR-106)
+with the proof: that diff overlaps the tagged listing; deferred. (f) The Stat mode's lazy baseline: deferred (the
+Stat mode is chosen where its own pass beats the diff).
+**Consequences.** Measured on Linux with git 2.43 (release-like `profiling` build, bench fixtures generated in
+`target/` by `cargo xtask bench setup`, whose `files50k` and `unicode20` indexes came out non-racy: the last file was
+written 8 s and 4 s before the index; CI's fixtures are not verified here, and the proof does not fire on a racy one),
+main against this change, callgrind over the whole process tree (user instructions; the pass's `lstat`s replace
+git's, so system calls stay level: B12u 717 k → 710 k under `strace -f -c`): B12u 1,504 M → 865 M instructions
+(−42 %), 428 → 410 processes (19 per-hook `git diff`s out, one `git config --list --show-origin -z` in), snp's own
+process 565 M → 688 M; B4 436 M → 417 M (−4.4 %) and B5 438 M → 419 M (−4.3 %), one `git diff` out and G in (29 → 29
+processes; the before-diff of step 15 stays). Peak RSS +1.3 MB on B4 and +2.4 MB on B12u (the index is streamed
+through a 64 KiB buffer; only the entries and their names are kept), under ADR-079's 30 MB. B2, B3 and B6 are
+unchanged (Stat mode or no process hook: G is not asked). Output, exit code and side effects are unchanged: the B4,
+B5 and B12u runs print the same bytes as main, with and without `SNP_VERIFY_INDEX_PROOF=1`. Tests: the reader's
+format cases (v2 extensions, v3 flags, long names, v4 prefix compression and varints, every refusal) and its fuzz
+target; the configuration gate (`crates/snp-git/src/types.rs`); the strict per-entry match and the leading-directory
+walk (`crates/snp-stash/src/diff_oracle/index_proof.rs`); in `crates/snp-stash/tests/behaviour/index_proof.rs`, a
+counting probe (a clean index of versions 2 and 4, with an assume-unchanged entry modified and a skip-worktree entry
+deleted, proves the baseline and five hooks with no `git diff`; a modification, a touch and an intent-to-add entry
+take the real one; a non-empty last fingerprint runs no pass), `GIT_INDEX_FILE`, a SHA-256 repository, the gates
+(ignoreStat, sparse checkout, fsmonitor in the configuration and the environment, `SNP_DIFF_MODE=git`, a split
+index), and a randomized differential against real `git diff` (settled clean states, writes, same-size rewrites
+with the mtime restored, touches, deletions, chmod, file to symlink, a leading directory swapped for a symlink to a
+copy, a directory replaced by a file, assume-unchanged and skip-worktree set and cleared, intent-to-add, index
+versions 2–4, split index on and off, `git add` by a hook, configuration edits re-checked by stamp, unmerged entries,
+gitlinks): every verdict equals real `git diff`'s, and whenever the proof held the real `git diff` printed nothing
+and left the index file alone; it ran 5 × 2,000 hooks on each of git 2.18.5, 2.43.0 and 2.56.0 (the git on `PATH`
+plus `SNP_TEST_GIT_MATRIX`; the suite default is 400 per git). `crates/snp-run/tests/pipeline/index_proof.rs` runs
+the pipeline in Git mode (two process hooks, 300 files): no per-hook `git diff` on a clean index, the real one after a
+modifying hook and on a racy index, every run equal to the always-diff path and to the verify mode. Not a proof anchor
+(proofs/registry.toml is untouched); the per-entry predicate is a natural K-candidate.
+
+### ADR-135 — Hook script template v3: the hook directory without a subshell for the paths git builds
+
+*Amends ADR-105 (the template's `HERE` block and ID; its equivalence argument, ID handling and classification rules
+stand) and ADR-048 (the template of ARCHITECTURE §9.7 and 11 §A.6). Owner decision O6 of the wave-5 performance plan
+(2026-11-21), in the variant of the hooks panel, landed before 2.0.1 ships.*
+
+**Context.** After ADR-105 every hook run still forks one subshell for `HERE="$(CDPATH= cd -- "$HERE" && pwd)"`. In
+the paths git builds (`<hooks dir>/<name>`: `.git/hooks/<name>` relative to the toplevel for a normal repository, an
+absolute path for worktrees, submodules, `--separate-git-dir`, `GIT_DIR` and an absolute `core.hooksPath`) that `cd`
+only ever joins and canonicalises what the shell already knows. Measured: the subshell costs about 41 page faults,
+0.48 M kernel instructions and 0.2 ms CPU per hook run (dash, pinned), and one of B9's clones. The literal proposal
+("absolute → as is, relative → `$PWD/$HERE`") is wrong in three ways the panel found: (F1) on Git for Windows, worktree,
+submodule and absolute-`core.hooksPath` hooks get `$0=C:/…/hooks/<name>`, which does not start with `/`, so it would
+be joined as `/c/wt/C:/…` and a chained `.legacy` hook (git-lfs) silently skipped; (F2) dash, busybox, bash and zsh
+keep an inherited `PWD` with `/./`, `//` or a trailing `/` (set by a launcher, `env PWD=…`, an IDE) as long as it names
+the working directory, while `cd` canonicalises; (F3) v2's `$(…)` strips trailing LFs from a hooks directory name
+(a bug pre-commit's template shares), the join would keep them. Template v2 is unreleased (only v2.0.0, template v1,
+is tagged), so users still migrate once, v1 to v3.
+**Decision.** (1) The third line of the `HERE` block becomes a `case` (ARCHITECTURE §9.7): a `HERE` that is clean —
+no empty, `.` or `..` component, no trailing `/`, no `:` or `\`, no trailing LF — and absolute is used as is when
+`[ -d ] && [ -x ]` holds; a clean relative `HERE` under a `$PWD` that is absolute and clean (no empty, `.` or `..`
+component, no `:` or `\`) becomes `$PWD/$HERE` when that passes `-d` and `-x`. Every other shape, and a failed test,
+runs v2's `HERE="$(CDPATH= cd -- "$HERE" && pwd)"` on the **original** `HERE` (F5: `cd rel` and `cd $PWD/rel` differ
+when `PWD` is odd). (2) No variable besides `HERE` is assigned (F4: a temporary would overwrite a user-exported
+variable of that name in the environment of snp and of every hook). (3) `SNP_SCRIPT_ID` becomes
+`b5aab319837cfd7b570aecfbefd9e801` = md5(`snp hook script template v3`); v2's ID `405bd8559925d194c1d22af6ef66282e`
+moves into `SNP_PRIOR_IDS` (after v1's) for development installs; the `# snp 2.0 compat ID:` line with v1's ID stays,
+so snp 2.0.0 still recognises the script. No v2 compat line is added, because no release shipped v2; if v3 missed the
+2.0.1 release, a v2 compat line would have to be added, since a v2-era binary would otherwise classify v3 as
+`Snp { stale: true }` through ADR-105(3), call it "an older snp hook script" and downgrade it on `doctor --fix`.
+(4) v1 and v2 scripts are stale snp scripts: `doctor` warns, `install` and `doctor --fix` rewrite them to v3 keeping
+their options (ADR-105(4)).
+**Rationale.** With a clean `$PWD` and a clean `HERE`, the logical `cd -- "$HERE" && pwd` is exactly `$PWD/$HERE`:
+both are lexical over the same base, so symlinked components give the same answer; an absolute clean `HERE` is its
+own logical `pwd`. Every shell checks an inherited `PWD` against `.` by (dev, ino) and replaces a stale, missing or
+relative one by the physical `getcwd()`, so a `$PWD` that passes the guard names the working directory; logical and
+physical differ only between "git chdir'd" (physical) and "already at the toplevel through a symlink" (logical), and
+v2 and v3 see the same base in both. The `-d`/`-x` tests make a missing, non-directory or non-searchable directory
+fall back to v2's failing `cd` (`HERE=""` plus its message: F6). `case` matches bytes, so invalid UTF-8 is handled
+(F8); `PWD=/` and a hooks directory at `/` give `//` and fall back (F9); the fast path runs no `cd`, so an exported
+`CDPATH` cannot double the value (F10, D-DATA-07); `doctor`'s script parser reads only the `SNP_EXE=` and `set -- `
+lines, and the script still contains no `dirname` (F11). The `cd` error message's line number moves (F7) only when the
+hook directory is unusable, which a hook git runs cannot reach; it is not compat output. Tests
+(`crates/snp/tests/it/install.rs`): `here_matches_the_dirname_line` compares v3 with v2 and v2 with v1 byte for byte
+over 37 `$0` shapes (ADR-105's 18 plus `C:/…`, `C:\…\h/…`, `co:lon/…`, `back\slash/…`, a directory ending in LF —
+where only v1 differs —, one with an inner LF, a non-searchable, a missing and a non-directory hook directory, a deep
+path, and absolute variants) plus 4 root shapes, under `sh`, dash, bash, bash invoked as `sh`, `bash --posix`,
+`/bin/bash`, busybox sh, zsh invoked as `sh` and `zsh --emulate sh` (each where installed; on the macOS runner `sh`
+and `/bin/bash` are bash 3.2, which the test asserts under CI), from three working directories (one through a
+symlink), with eight inherited `PWD`s (unset, logical, physical, stale, relative, `/./`, `//`, trailing `/`) and
+`CDPATH` unset and set; a counter asserts that every clean git shape takes the fast path and every unclean one falls
+back. `hook_dir_matches_v1_under_git` runs 49 git layouts (toplevel, subdirectory, `git -C`, a symlinked working
+directory, unclean and stale `PWD`s, `GIT_DIR` absolute, relative and `.git`, a linked worktree including one reached
+through a symlink, `worktree add` and `checkout` `post-checkout` hooks, a submodule, `--separate-git-dir`, every
+`core.hooksPath` form of ADR-105 plus a relative symlink, `~/`, a path through a symlinked repository, a symlinked
+`.git/hooks`, and repositories named `sp ace`, `gl*ob?[x]`, `-dash`, `nl<LF>line`, `co:lon`, `back\slash` and
+`trail<LF>` with a `--detach` worktree each) under each shell in the `#!` line, with `CDPATH` unset and set, and
+asserts the fast path for the 37 layouts with clean paths and the fallback for the 9 with trailing slashes, `../` or
+`:`/`\` (the 3 unclean-`PWD` layouts depend on the shell and are only compared).
+Three mutants (no `PWD` guard, no `:`/`\` guard, no trailing-LF guard) each fail the matrices.
+`hook_dir_matches_v1_under_git_for_windows` runs on the Windows runner: `.git/hooks` takes the fast path under Git
+for Windows' `sh` (MSYS `$PWD`), a worktree's `C:/…` falls back, both equal v2 and v1. The hooks panel's own run
+(20,608 shell cases and 915 commits across git 2.18.5/2.43.0/2.56.0, 0 differences) is the wider evidence; macOS bash
+3.2 and Git for Windows could not be run locally and are covered by the CI jobs only.
+**Rejected.** The literal proposal (F1–F3). A temporary variable (F4). Narrowing to relative `HERE` only: it would
+lose worktrees and submodules for no correctness gain on the tested shells; it stays the fallback plan should a CI
+platform disagree. `$OSTYPE`/`uname` branches: a fork or an environment guess where a pattern suffices.
+**Consequences.** Per hook run, for every git layout without trailing slashes, `../` or `:`/`\` in its hook path:
+−1 fork (B9 counts locally: 52 → 51 clones, 350 → 349 `openat`; CI is expected to show 50 → 49). The script alone
+(dash, `SNP_BIN=/usr/bin/true`, pinned, 300 runs): 162 → 121 page faults, 2.28 M → 1.80 M kernel instructions,
+0.479 M → 0.578 M user instructions (dash parses and matches the longer block), 1.07–1.10 → 0.84–0.86 ms CPU. The CI
+estimate is −0.15 to −0.2 ms per Linux hook run, which by itself does not clear B9's current WARN (O8 re-specifies
+that budget); on Git for Windows, where fork is emulated, the gain is likely several ms for `.git/hooks` (not
+measured). As with ADR-105, the base-vs-head bench gate cannot show it, since `bench setup` installs the head's script
+for both builds. Scripts written by snp 2.0.0 and by development builds keep working; `snp doctor` warns until
+`snp install` rewrites them.
+
+### ADR-136 — Bench methodology: https repositories in B11, fixtures without racy entries, B9's hook overhead, corrected known misses
+
+*Amends ADR-099 (decision 6: how B11's configurations name their repositories, and B11's known-miss reason), ADR-091
+(the list of known misses; a soft budget's warning carries its reason) and ADR-043 (B9's row: a reported hook overhead
+beside the unchanged budget). Owner decisions O4, O8 and O9 of the wave-5 performance plan (2026-11-21), in the
+designs of the store and hooks panels, plus the fixture-realism condition of the same batch.*
+
+**Context.** Four things in the bench measured something other than what the scenarios describe. (a) Every one of
+B11's 500 repositories was an absolute local path. snp resolves a local path's real path (D-DATA-08: one `statx` per
+component, 12 per entry on CI), which made about 40 % of its B11 syscalls; pre-commit compares `(repo, rev)` strings
+and prek stats only relative spellings. Real configurations name https URLs. (b) Every fixture wrote its files and ran
+`git add` within the same second, so its index entries were as new as the index: racily clean, and every later
+`git diff` or `git status` hashed those files again. Measured on the generated fixtures: all entries of `noop10` (2),
+`pch960` (961), `gc500` (202) and each tool's B9 copy (2); `files50k` and `unicode20` had none on the measuring
+machine, where `git add` takes more than a second, but a fast runner would leave a share that depends on its speed.
+Real repositories have files older than their index. (c) B9's budget, `B9 ≤ B3 + 3 ms`, charges git's own commit to
+snp: `git commit --no-verify` alone is about three quarters of B9 − B3 (77 % of the extra instructions are
+`git commit` and `git maintenance run --auto`), and B9 and B3 are timed minutes apart, a drift larger than today's
+miss. (d) Known-miss reasons were stale: B11's said prek never loads manifests (it reads all 500, as snp does), B6's
+and B12u's said "not profiled yet" (both were profiled in wave 5), and B5's entry passes on CI.
+**Decision.** (1) `gen_gc500` writes `repo: https://gc500.bench.invalid/rNNN`, and the bench gitconfig maps that
+prefix to the local repositories: `[url "file://<bench>/fixtures/gc500/repos/"] insteadOf =
+https://gc500.bench.invalid/` (the `file:///C:/…` form on Windows), the mechanism B6 and B7 already use for
+pre-commit-hooks. Every tool clones through git with that gitconfig (pre-commit drops `GIT_CONFIG_GLOBAL` but keeps
+`HOME`). A missing or wrong mapping fails closed: `.invalid` never resolves, so priming fails and B11 is unavailable;
+`setup`'s equal-work check (500 repositories per store, 200 tracked configs) is unchanged. `file://` URLs were rejected,
+since prek stats every non-http repository string (+500 failed `statx` at B11 scale); the realpath memo (P20.f) stays
+rejected. (2) Before every `git add`, the harness sets the access and modification times of every generated file and
+directory (each `.git` and symlinks excepted; directories after their contents) to the commit date, 2024-01-01T00:00:00Z
+(`GIT_DATE_UNIX = 1 704 067 200`), and `copy_tree` keeps modification times, so B9's per-tool copy of `noop10` keeps
+them through git's refresh of the copied index. The handle needs no write access (git's object files are read-only):
+`futimens` on Unix, `FILE_WRITE_ATTRIBUTES` (with `FILE_FLAG_BACKUP_SEMANTICS` for a directory) on Windows. B8's
+staged `small.txt` is set the same way; its 10 MiB unstaged rewrite keeps the time of its write, as a user's edit does,
+and its size still differs from the committed text's (ADR-099's B8 design), so git sees it modified whatever the times.
+The change applies to all tools equally: they share every fixture except B9's copies, which all keep the times.
+(3) snp's B9 always runs in interleaved rounds (10 × 5, one warm-up per block kind), with the base when there is one
+and with two reference blocks in snp's own hooked fixture and B9's environment: B9nv, `git commit --allow-empty -q
+--no-verify -m bench` (the same commit without the hook), and B3', `snp run` there (what the hook runs). Each round
+runs the blocks in mirrored order (base, B9, B9nv, B3'; then B3', B9nv, B9, base), so the base and the head keep
+ADR-099's ABBA order. The record keeps the references in B9's tools as `snp/B9nv` and `snp/B3'` (schema 2 unchanged:
+unknown tool keys were always read as measures; no check names them). The gate reports the check
+`hook overhead B9 - B9nv - B3' (information)`: the median over rounds of `H_r = B9_r − B9nv_r − B3'_r` (each a block
+median of the same round) with its distribution-free 95 % interval, B9nv's and B3''s medians, or why it is not
+measured; it always passes, and the PR comment prints it under the table. A failed reference marks only itself not
+measured. It gets a limit once at least three CI records show its spread (the owner's rule: `X = max(1.0 ms, observed
+p95 + 0.5 ms)`), in a later change of the budgets; until then the absolute `B9 ≤ B3 + 3 ms` budget, the paired check
+against the base and the never-slower rule stay exactly as they are. (4) Known misses: B11's, B6's and B12u's reasons
+become the store panel's texts (B11's realpath clause dropped with (1), B6's racy clause stated as the past
+condition (2) removes, both with this batch's local numbers), B5's entry is removed (snp leads prek on glibc CI, and
+B5 is outside the musl matrix), B4's stays until a musl record shows it passing, and B9 gets the interim entry for
+`p50 <= 1x B3` naming why its budget is mis-specified. A soft budget's breach, already a warning, now carries its
+known-miss reason too (before, only a failure did), so B9's entry is visible in the gate output.
+**Rationale.** Each change makes a scenario measure its title for every tool alike: real configurations name URLs and
+every tool now takes its real-world path for them; real repositories are not racily clean, and how many fixture
+entries were depended on the runner's speed, a hidden variable in every comparison across runners; B9's reference
+blocks share B9's minute, so their difference is what installing snp's hook costs (`sh` and the script, `hook-impl`
+beyond the run, git's hook spawn and index re-read), with git's own commit removed. Reporting before gating follows
+the owner's decision: the CI spread of `H` is not known yet (the panels' estimates: 0.6–1.2 ms).
+**Measurements** (this batch, local: whole-tree user instructions with `perf stat -e cpu_core/instructions/u` pinned
+to the P-cores, median of 5 runs; `strace -f -c` totals of one run; the same snp binary before and after).
+B11: snp 162.99 M → 142.99 M instructions (−12.3 %), 17 342 → 10 643 syscalls (`statx` 9 643 → 3 143); prek
+60.20 M → 59.41 M, 6 366 → 6 362; pre-commit 1 069 M → 1 065 M, 10 867 → 10 857. Every store keeps 500 repositories.
+Racy entries after (2): 0 in every fixture, including `files50k` (50 002) and `unicode20` (20 001). B6: snp
+110.97 M → 103.05 M (−7.1 %: the baseline `git diff` no longer hashes 961 files), 43 310 → 40 403 syscalls; prek
+81.40 M → 80.64 M, 41 164 → 40 508; pre-commit 528 153 → 480 750 syscalls. B8 unchanged and unimodal: snp
+2 256.8 M → 2 256.6 M, prek 2 430.9 M → 2 431.0 M (each set of five runs within 0.03 %). B9: snp 16.32 M → 16.27 M,
+prek 23.29 M → 22.68 M. B7 runs for all three tools. B9's new blocks, one laptop run (unpinned wall time, an
+illustration only): B9 35.55 ms, B9nv 6.30 ms, B3' 26.49 ms, `H` 2.83 ms [−0.23, 4.78] over 10 rounds.
+Tests (`xtask/src/tasks/bench.rs`): `fixtures_are_not_racily_clean` (generated files and directories carry the date,
+`.git` keeps its own, every entry is older than the index, B9's copy keeps the times through `update-index
+--refresh`), `the_fixture_time_is_git_date`, `gc500_repositories_are_https_urls_redirected_to_the_local_clones` (no
+local path in any configuration, every repository used, the gitconfig's mapping, and `git ls-remote` of
+`https://gc500.bench.invalid/r007` through the written gitconfig),
+`round_order_mirrors_and_keeps_the_base_first_in_even_rounds`,
+`hook_overhead_is_the_median_of_the_per_round_differences`, `the_hook_overhead_is_reported_and_never_gated` (a pass
+whatever the value and with missing or failed references; the absolute budget, the paired check and the never-slower
+rule unchanged; the record round trip), `known_misses_carry_the_corrected_reasons`, and
+`known_misses_warn_with_their_reason_and_nothing_else_changes` (now also a soft warning with its reason).
+**Consequences.** History steps down for every tool on B11 (snp about −4 ms on CI by the panel's estimate, the others
+about 0) and on B6/B7 (snp and prek, the racy re-hash gone), and on fast runners possibly on B4, B5 and B12u; B3 and B9
+lose the racy re-hash of two files. These are fixture corrections, not speedups of snp: the paired base-vs-head check
+is unaffected, since both binaries run the same fixtures, and the history and drift checks are advisory on CI. Each CI
+bench job runs 100 more short processes (B9nv and B3', about 1.5 s). `setup` sets the times of about 72 000 files
+once. A reader of run records that treats every key of a scenario as a tool sees `snp/B9nv` and `snp/B3'` under B9.
+
+### ADR-137 — Release artifacts stay PIE (static-pie on x86_64-musl); a hardening gate checks every binary
+
+*Owner decision O5 of the wave-5 performance plan (2026-11-21, after the release panel): non-PIE builds rejected, a
+release hardening gate added. Closes plan3's backlog item 6. Extends ADR-088's release checks and ARCHITECTURE §11.7.*
+
+**Context.** Every snp start pays the dynamic loader's relocation of the position-independent image. The plan
+proposed linking the Linux artifacts non-PIE, `-C relocation-model=static` (gnu archives and wheels; static non-PIE on
+musl). The startup lens measured it on the profiling build (thin LTO, 16 codegen units, 28,962 relative relocations);
+the release panel measured the shipping `dist` build: 18,678 relative relocations (15,010 into `.rodata`, mostly
+`&str` and slice data such as format pieces and `Location` file names; 2,873 into `.text`, vtables and function
+pointers; 791 into RELRO data; no single table dominates) and a RELRO segment of 431,048 bytes (109 pages written
+copy-on-write at start).
+
+| `snp --version` (B1), `dist`, x86_64-gnu | PIE (today) | `-C relocation-model=static` |
+|---|---|---|
+| callgrind instructions | 681,111 | 435,747 (−36 %) |
+| page faults | 204 | 95 |
+| local CPU, 2 × 300 runs | 1.18 / 1.18 ms | 0.80 / 0.77 ms |
+| kernel instructions | 1.45 M | 0.93 M |
+| B3, snp process instructions | 6,142,076 | 5,867,319 (−275 k) |
+
+Scaled by B1's CI/local ratio (0.69/1.18) that is about 0.15–0.25 ms of CI time per snp process. The panel also
+found that the release workflow checked no hardening property of the binaries it ships (only the embedded dependency
+list and the wheels' `--version`), and platform.yml's musl job accepts both "statically linked" and "static-pie
+linked".
+**Decision.** (1) **Non-PIE is rejected for every target.** No relocation-model flag anywhere: not in the
+manifests, `.cargo/config.toml` or any workflow (a test in `xtask/src/tasks/release.rs` checks those files). RELR
+(`-z pack-relative-relocs`) stays rejected too: it keeps the count and writes every RELRO page (lens measurement:
++5 % B1 instructions). (2) **A hardening gate.** `cargo xtask release hardening <target> <binary>...` reads each
+binary's headers itself (`xtask/src/tasks/release/hardening.rs`: ELF64, PE32+ and thin Mach-O, no tool and no new
+dependency) and fails, after reporting every problem of every binary, unless it carries its target's protections and
+machine:
+
+| target | required |
+|---|---|
+| `x86_64`/`aarch64-unknown-linux-gnu` | `ET_DYN` with `DF_1_PIE` and `PT_INTERP`; BIND_NOW (`DT_BIND_NOW`, `DF_BIND_NOW` or `DF_1_NOW`); a `PT_GNU_RELRO` segment; a `PT_GNU_STACK` without `PF_X`; no `DT_TEXTREL`/`DF_TEXTREL` |
+| `x86_64-unknown-linux-musl` | static-pie: `ET_DYN` with `DF_1_PIE`, no `PT_INTERP`, no `DT_NEEDED`; NX `PT_GNU_STACK`; no text relocations |
+| `aarch64-unknown-linux-musl` | static non-PIE: `ET_EXEC`, no `PT_INTERP`, no `DT_NEEDED`; NX `PT_GNU_STACK`; no text relocations |
+| `x86_64`/`aarch64-apple-darwin` | `MH_EXECUTE` with `MH_PIE`, without `MH_ALLOW_STACK_EXECUTION` |
+| `x86_64`/`aarch64-pc-windows-msvc` | PE32+ with `DYNAMIC_BASE`, `HIGH_ENTROPY_VA` and `NX_COMPAT`; relocations not stripped |
+
+An unknown target, a truncated or malformed header, or another file format is a failure, never a pass. The release
+workflow's `hardening` job (after `build-local-artifacts` and `wheels`) unpacks every archive of the plan and every
+wheel of the wheel matrix and runs the command on each binary; `host`, and so every publish, needs it to succeed.
+(3) **aarch64-musl is static non-PIE, and the gate says so exactly.** rustc 1.100's target specification of
+`aarch64-unknown-linux-musl` lacks `static-position-independent-executables` (x86_64-musl, x86_64-gnu and
+aarch64-gnu have it; `RUSTC_BOOTSTRAP=1 rustc -Z unstable-options --print target-spec-json --target <triple>`), so
+rustc's `link_output_kind` turns the requested static PIC executable into a static non-PIC one. This is the
+toolchain's limitation, not a choice: when a toolchain update links static-pie for the triple, the gate fails on that
+update with a message saying to move the expectation (here, in the code and in §11.7) to static-pie, rather than
+accepting either silently. The artifact could not be built on the deciding machine (no aarch64 linker); the fact is
+read from the target specification, and the first release dry run on the arm64 runner checks it.
+**Rationale.** (1) Image ASLR is the only code-reuse barrier the toolchain gives snp beyond Rust's memory safety:
+stable Rust 1.100 has no stack protector, CET (IBT/SHSTK) or BTI/PAC (`-Z stack-protector`, `-Z cf-protection` and
+`-Z branch-protection` are nightly-only), and neither image carries a GNU property note (ring's C objects are built
+with `-fcf-protection`, the Rust objects are not, and the linker ANDs the notes away). A non-PIE image puts its
+7.9 MB of `.text`, the GOT slots of `execvp`, `posix_spawnp`, `mprotect`, `mmap64`, `syscall` and `dlsym`, and 134 raw
+`syscall` instructions (rustix's `linux_raw`) at fixed addresses: return-to-PLT and return-to-syscall with no
+information leak needed. snp is a one-shot, non-interactive process, so an attacker has no leak-then-exploit loop and
+the 28+ bits of image randomisation are exactly what stops a blind exploit. The exposure is real even under a trusted
+configuration: `git am` runs pre-applypatch and a merge of a fork's branch runs pre-merge-commit over attacker-written
+files, the native hooks (check-yaml, check-json, check-toml, check-xml, detect-private-key and others) parse those
+files in process, commit messages reach commit-msg hooks, and rustls and ring parse TLS handshake bytes before any
+authentication. The prior probability of a memory-safety bug there is low (Rust, `forbid(unsafe_code)` in snp's
+crates); this is defence in depth, the standard for shipped binaries. (2) musl is worse: a static non-PIE binary has
+libc inside the image too, so nothing at all is randomised, and musl does not apply `PT_GNU_RELRO` in static binaries
+(verified on Rust's bundled musl: the range stays in an `rw-p` mapping), which leaves writable function-pointer tables
+at fixed addresses. The installer falls back to the musl build on hosts with glibc older than 2.34 (RHEL 8, Ubuntu
+20.04, Debian 11). (3) The gain flips no gate: B9's budget is relative to B3, which loses the same start; B2, B6 and
+B11 trail prek by 1–13 ms; B1 is twice as fast as prek and far under its 3 ms budget. (4) Scanners and channels:
+checksec, BinSkim (BA3001), lintian (`hardening-no-pie`) and annocheck would flag the artifacts, and channels would
+disagree (`cargo install` builds PIE). Go CLIs ship non-PIE on linux/amd64, but snp's Rust peers (prek, uv, ruff,
+ripgrep) ship PIE or static-pie. (5) Implementation traps the gate also guards against: `RUSTFLAGS=-C
+relocation-model=static` without `--target` breaks the build (rust-lld refuses the proc-macros' `R_X86_64_32S`), CI's
+`RUSTFLAGS=-Dwarnings` silently overrides config-file rustflags, and bench.yml would measure a binary other than the
+one release.yml ships (ADR-081's premise). (6) No practical stable way reduces the relocations instead: 80 % are
+`&str` slices spread over the program; `-Z location-detail=none` and `-Z fmt-debug=none` are nightly-only and would
+gut panic reports; prelink is gone (glibc 2.36) and incompatible with ASLR.
+**Consequences.** snp keeps paying about 0.2 ms of CI time per process (about 1.5 % of B9, 3 % of B2), with no gate
+affected. A release fails if any artifact loses a protection, for example through a toolchain, linker or flag change,
+and the PR that changes release.yml or the gate runs the whole check in its dry run (the arm64 Linux and Windows
+targets only once the repository is public). The x86_64-musl artifacts keep their RELRO range writable (a musl
+property, documented in §11.7, not checked). The verdict is revisited only for a hard startup gate missing by less
+than 0.25 ms with nothing else left to cut, or once stable Rust emits CET shadow stacks (BTI and PAC on aarch64) for
+snp's code, and even then for gnu only, never musl.
+
+### ADR-138 — Internal crates have no API promise; snp-yaml borrows resolved tags and scalar text
+
+*Status: Accepted. Affirms ADR-088(2) and amends ADR-112(5); the amended clause is superseded where they differ.
+Owner decision of 2026-11-21 (wave-5 panel `rust`, Y1; allocation lens alloc-7).*
+
+**Context.** ADR-112(5) deferred `Node.tag: Cow<'static, str>` because it changes a public field of `snp-yaml`, a
+crate ADR-088 publishes: it asked for "an owner decision and a major-version plan". ADR-088(2) had already stated
+the policy that answers it: the internal crates have no semver promise and snp requires each of them as `=X.Y.Z`.
+The unreleased 2.0.1 train also breaks snp-yaml 2.0.0's API anyway: `load` and `construct` return `cfgv::Value`,
+which ADR-116 moved from the crates.io crate `cfgv` 0.3 to `snp-cfgv`. On 2026-11-20, crates.io listed five reverse
+dependencies of snp-yaml, all of them snp's own crates. A major version of the whole workspace is not an option either:
+the workspace version is user-visible (`snp --version`, `minimum_snp_version`, the PyPI wheel, the Homebrew
+formula). In `validate-config` on 1,000 hooks (B10), the boxed tags were 21,053 allocations (about 18,000 scalar and
+3,000 collection tags), all for strings the resolver holds as statics. DHAT also showed snp-yaml's scanner allocating
+buffers it never reads. Each plain scalar that ends a line allocated a `String` for its one `\n` (`leading_break`:
+4,010 blocks in B10, 3,000 in B11). The blank run before a plain scalar's next word was copied while the value was
+still borrowed (2,000 blocks in B10). Quoted scalars grew their value one character at a time (6,000 blocks for
+B10's 3,000 quoted scalars). Every document built the two default `%TAG` directives as four `Vec<u8>`s (2,800 blocks
+in B11).
+**Decision.** (1) **ADR-088(2) is affirmed.** The 24 published library crates (snp-argparse, -cfgv, -cli, -cmd,
+-config, -core, -files, -git, -hooks, -hooks-data, -identify, -lang, -migrate, -net, -os, -proc, -pycompat,
+-pyparsers, -pyre, -repo, -run, -stash, -store, -yaml) are internal crates of snp. Their versions follow snp's, and
+their public API may change in any release without a major version. A change is recorded in the CHANGELOG. Each
+crate's crates.io `description` ends "(internal crate of snp; no API stability promise, versions follow snp)". The
+user-facing contract stays the `snp` binary's: its CLI, output, files and the `snp` package. snp-testkit,
+snp-difftest, snp-probe and xtask are unpublished and already say so. (2) **`Node.tag` is `Cow<'static, str>`**
+(amends ADR-112(5)). A tag the resolver assigns borrows its static string. That covers implicit plain scalars
+(`resolve_plain(..).as_tag()`), quoted scalars and the non-specific `!` (`STR_TAG`, or the plain-implicit
+resolution libyaml gives `!`), and untagged collections (`SEQ_TAG`, `MAP_TAG`). An explicit tag is
+`Cow::Owned(String)`. It keeps the bytes and the `UnicodeDecodeError` of `decode_tag`, and wrapping the decoded
+`String` copies nothing. `Debug` prints a `Cow` as the `str` it holds, so `{:?}` of a node or document is
+byte-identical. `Node` grows by 8 bytes per node. (3) **Scanner buffers (alloc-7, crate-private).**
+`leading_break` is an `Option<char>`, filled by `read_break`, the one-character form of `READ_LINE`. libyaml appends
+to it only when no break is pending and empties it whenever it is used, so it never holds more than one character.
+The blank run after a scalar's last non-blank character is a byte range of the input. Blanks are copied verbatim, so
+the range is copied only into a value that is already owned, and dropped at a break as libyaml clears its buffer.
+A quoted scalar stays borrowed until the first `''`, escape, escaped break or line break. Its value is then the input
+between the opening quote and that point (at a break, up to the start of the blanks before it, which libyaml
+drops). That text is copied once, and the scan continues as before. A scalar with none of these is copied once at
+the closing quote. The parser's `TagDirective` holds `Cow<'static, [u8]>`. The defaults `!` and `!!` borrow static
+bytes, and a document's own `%TAG` keeps its owned bytes. Lookup order and the duplicate check are unchanged.
+**Rationale.** Under (1), the type change needs no version plan: nothing outside snp builds against snp-yaml, and
+2.0.1 already changes its API. The private-representation alternative of the panel would have given the same gain
+without an API change. It costs about 200 lines and a second node type in the most parity-critical crate, and only
+pays off under a semver promise that ADR-088 never made. A 16-byte `Tag` newtype would save the 8 bytes per node at
+the cost of new API surface. Arena memory has never been the constraint, and B10's heap peak still falls. The scanner
+changes cannot take a wrong path. A borrowed value is, by construction, the very characters the old code pushed one by
+one (the reader holds the whole input, and every position is a character boundary). The per-character advance,
+`CACHE` calls, marks and error checks are unchanged, so reader errors, positions and messages are too. Anything that
+transforms text (escapes, `''`, folding) leaves the fast path before it happens.
+**Consequences.** Callgrind and DHAT of snp's process (profiling build, fixtures of `cargo xtask bench setup`,
+against the ADR-111 head): B10 165.9 M → 154.6 M instructions (−6.8%), 154,992 → 124,925 heap blocks (−19.4%),
+heap peak 8.58 → 8.40 MB; B11 150.2 M → 145.6 M (−3.1%), 187,635 → 170,235 blocks (−9.3%). Bytes allocated are
+unchanged (24.87 MB on B10). Tests: a test-only copy of the former quoted and plain scanners
+(`crates/snp-yaml/src/libyaml/scanner_reference.rs`) backs a differential test. On 60,000 generated quoted and 60,000
+plain scalars, some crossing a 16 KiB raw chunk, it compares values, styles, marks, errors and the scanner state
+after each scan. The scalars mix verbatim runs, blanks before breaks, every break form, `''`, valid and invalid
+escapes, escaped breaks, indicators and document markers, in block and flow context at several indentations. A
+seeded mutation of the break cut-off fails it. Unit tests cover each way off the quoted fast path. The raw-chunk
+acceptance test gains borrowed and folded quoted scalars and a reader error inside a quoted scalar. An acceptance
+test checks that resolved tags are `Borrowed`, explicit tags (`!!int`, `!local`, a `%TAG` prefix with `%41`) are
+`Owned`, and `Debug` matches `Box<str>`. The oracle vectors, the API contract test (now naming
+`Cow<'static, str>`), the CLI goldens and the difftest scenarios are unchanged.
+
 ## Appendix A — Open questions of the research documents, resolved
 
 Format: question → decision (ADR or divergence). "Parity" = behave as pre-commit 4.6.2.

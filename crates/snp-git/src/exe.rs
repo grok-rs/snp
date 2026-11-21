@@ -84,6 +84,8 @@ const PATHSPEC_FROM_FILE: GitVersion = GitVersion::new(2, 25, 0);
 const DIFF_NO_RELATIVE: GitVersion = GitVersion::new(2, 28, 0);
 /// Config-based hooks `hook.<name>.{command,event}` (02 G.5).
 const CONFIG_HOOKS: GitVersion = GitVersion::new(2, 54, 0);
+/// `git var GIT_ATTR_SYSTEM` (git 2.42.0; ADR-133).
+const ATTR_SYSTEM: GitVersion = GitVersion::new(2, 42, 0);
 
 /// Capability fallbacks by version band (02 G.2, G.10).
 #[derive(Clone, Debug)]
@@ -109,6 +111,9 @@ pub struct GitCaps {
     pub pathspec_from_file: bool,
     /// `diff --no-relative` (≥ 2.28, with the `diff.relative` setting it overrides; older git needs neither).
     pub diff_no_relative: bool,
+    /// `git var GIT_ATTR_SYSTEM` (≥ 2.42; older gits exit 129 with their usage): where git reads its system
+    /// attributes file (ADR-133).
+    pub attr_system: bool,
 }
 
 impl GitCaps {
@@ -124,6 +129,7 @@ impl GitCaps {
             config_hooks: at_least(CONFIG_HOOKS),
             pathspec_from_file: at_least(PATHSPEC_FROM_FILE),
             diff_no_relative: at_least(DIFF_NO_RELATIVE),
+            attr_system: at_least(ATTR_SYSTEM),
         }
     }
 }

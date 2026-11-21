@@ -90,13 +90,16 @@ pub fn validate(
                 display: path.to_os_string(),
                 project_root: p.parent().map_or_default(Path::to_path_buf),
             };
-            let cfg = crate::load_config(&src, o)?;
             if strict {
+                let cfg = crate::load_config(&src, o)?;
                 strict_warnings(&cfg, o);
+            } else {
+                // Errors and warnings all come from the check; the model would only be dropped.
+                crate::check_config(&src, o)?;
             }
             Ok(())
         }
-        FileKind::Manifest => crate::load_manifest(Path::new(path), path, o).map(|_| ()),
+        FileKind::Manifest => crate::check_manifest(Path::new(path), path, o).map(|_| ()),
     }
 }
 
@@ -110,4 +113,61 @@ pub fn validate_file(
     strict: bool,
 ) -> Option<String> {
     validate(kind, path, o, strict).err().map(|e| e.rendered)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+
+    use snp_core::brand::Brand;
+    use snp_core::output::CollectWarnings;
+    use snp_pyre::RegexCache;
+
+    use super::{FileKind, validate};
+    use crate::load::probe;
+    use crate::{ExtMode, LoadOpts};
+
+    /// Non-strict validation stops after the check (no schema defaults, no model); `--strict` builds the model.
+    #[test]
+    fn only_strict_validation_applies_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("cfg.yaml");
+        std::fs::write(
+            &cfg,
+            "repos:\n-   repo: local\n    hooks:\n    -   id: h\n        name: h\n        entry: h\n        language: system\n        bogus: 1\n",
+        )
+        .unwrap();
+        let manifest = dir.path().join("m.yaml");
+        std::fs::write(
+            &manifest,
+            "-   id: h\n    name: h\n    entry: h\n    language: system\n",
+        )
+        .unwrap();
+        let regexes = RegexCache::new();
+        let warn = CollectWarnings::new();
+        let diag = CollectWarnings::new();
+        let o = LoadOpts {
+            brand: Brand::Snp,
+            ext: ExtMode::Enabled,
+            regexes: &regexes,
+            warn: &warn,
+            diag: &diag,
+        };
+        let before = probe::defaulted();
+        validate(FileKind::Config, cfg.as_os_str(), &o, false).unwrap();
+        validate(FileKind::Manifest, manifest.as_os_str(), &o, false).unwrap();
+        validate(FileKind::Manifest, manifest.as_os_str(), &o, true).unwrap();
+        assert_eq!(probe::defaulted(), before);
+        assert_eq!(warn.take(), Vec::<String>::new());
+        validate(FileKind::Config, cfg.as_os_str(), &o, true).unwrap();
+        assert_eq!(probe::defaulted(), before + 1);
+        // The W11 hook-key warning exists only on the strict path, which needs the model.
+        assert_eq!(warn.take().len(), 1);
+        let missing = validate(FileKind::Config, OsStr::new("no-such.yaml"), &o, false);
+        assert_eq!(
+            missing.map_err(|e| e.rendered),
+            Err("\n=====> no-such.yaml is not a file".to_owned())
+        );
+        assert_eq!(probe::defaulted(), before + 1);
+    }
 }

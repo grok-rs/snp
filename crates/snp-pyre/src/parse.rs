@@ -49,11 +49,15 @@ pub(crate) struct Parsed {
 /// `re.compile` (pygrep's `re.IGNORECASE`, `re.MULTILINE | re.DOTALL`).
 pub(crate) fn parse(src: &str, mode: Mode, init: Flags) -> Result<Parsed, PyReError> {
     let istext = matches!(mode, Mode::Str);
-    let units: Vec<u32> = if istext {
-        src.chars().map(u32::from).collect()
+    // At most one unit per byte: reserved up front (best effort; growing is the fallback) instead of `collect`'s
+    // `len / 4` guess for `chars`.
+    let mut units: Vec<u32> = Vec::new();
+    units.try_reserve_exact(src.len()).unwrap_or_default();
+    if istext {
+        units.extend(src.chars().map(u32::from));
     } else {
-        src.bytes().map(u32::from).collect()
-    };
+        units.extend(src.bytes().map(u32::from));
+    }
     let t = Tokenizer::new(&units, istext)?;
     let mut p = Parser {
         t,
@@ -1361,7 +1365,9 @@ fn compute_info(ast: &mut Ast) {
     let unicode = !ast.bytes && !ast.flags.has(Flags::A);
     let ignorecase = ast.flags.has(Flags::I);
     let n = ast.nodes.len();
+    // One `Info` per node and per sequence: reserved exactly (best effort; growing is the fallback).
     let mut node_info: Vec<Info> = Vec::new();
+    node_info.try_reserve_exact(n).unwrap_or_default();
     let mut seq_info: Vec<Option<Info>> = vec![None; ast.seqs.len()];
     let mut group_width: HashMap<u32, (u128, u128)> = HashMap::new();
     for i in 0..n {
@@ -1522,6 +1528,7 @@ fn compute_info(ast: &mut Ast) {
     }
     // Sequences never reached from a node (orphans of the unpacking) still get facts, for completeness.
     let mut filled: Vec<Info> = Vec::new();
+    filled.try_reserve_exact(seq_info.len()).unwrap_or_default();
     for (sid, slot) in seq_info.iter().enumerate() {
         let info = slot.unwrap_or_else(|| {
             ast.seqs

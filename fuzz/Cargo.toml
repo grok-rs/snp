@@ -139,6 +139,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "git_index_file"
+path = "fuzz_targets/git_index_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "git_ls_files_tagged"
 path = "fuzz_targets/git_ls_files_tagged.rs"
 test = false

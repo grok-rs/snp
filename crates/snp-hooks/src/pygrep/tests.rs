@@ -64,6 +64,10 @@ fn flag_shaped_entry_is_deferred() {
 
 /// D-SEC-10: a backtracking-limit hit is the register's line (pattern and path reprs), exit 1.
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+)]
 fn backtrack_limit_message() {
     let dir = tempfile::tempdir().unwrap();
     let mut line = vec![b'a'; 40];
@@ -88,6 +92,10 @@ fn backtrack_limit_message() {
 
 /// `FutureWarning`s of the pattern start the partition's output.
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+)]
 fn future_warnings_precede_matches() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a"), b"x]\n").unwrap();

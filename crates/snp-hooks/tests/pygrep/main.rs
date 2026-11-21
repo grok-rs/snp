@@ -27,6 +27,10 @@ use support::{latin1, os, show};
 /// One case's outcome: `prepare` once for `args + [entry]`, then `run_partition` over the full argv (the runner's
 /// sequence), in a directory holding the fixtures. The ones the case's argv names are written last: `u.bin` and
 /// `U.bin` are one file on a case-insensitive file system, which then holds the content the case reads.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+)]
 fn run(
     fixtures: &serde_json::Map<String, serde_json::Value>,
     case: &serde_json::Value,
@@ -134,6 +138,10 @@ fn x13_exe_07_non_re_error_entries() {
 /// ADR-072: a partition whose file names change the parse (`-i`, `--negate`) behaves like pygrep.py, and one
 /// with a `-x.py` file is the usage error of that partition only.
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+)]
 fn flag_shaped_file_names_change_the_parse() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.txt"), b"FOO\n").unwrap();
@@ -162,6 +170,10 @@ fn flag_shaped_file_names_change_the_parse() {
 
 /// A cancelled run stops before the next file.
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+)]
 fn cancellation_between_files() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.txt"), b"foo\n").unwrap();

@@ -12,10 +12,11 @@ mod api {
     use std::sync::Arc;
 
     use cfgv::{
-        BigInt, CheckFn, ConditionValue, Cx, Date, DateError, DateTime, LoadError, Map, MapItem,
-        MaxStrDigitsError, ParseBigIntError, RegexPattern, Schema, Set, TzOffset, ValidationError,
-        Validator, Value, ValueType, apply_defaults, apply_defaults_owned, load_from_filename, py,
-        remove_defaults, remove_defaults_owned, validate, validate_with, value_map,
+        BigInt, CheckFn, ConditionValue, Cx, Date, DateError, DateTime, HashedKey, LoadError, Map,
+        MapItem, MaxStrDigitsError, ParseBigIntError, RegexPattern, Schema, Set, TzOffset,
+        ValidationError, Validator, Value, ValueState, ValueType, apply_defaults,
+        apply_defaults_owned, load_from_filename, py, remove_defaults, remove_defaults_owned,
+        validate, validate_with, value_map,
     };
 
     const fn assert_send_sync<T: Send + Sync>() {}
@@ -25,6 +26,8 @@ mod api {
         assert_send_sync::<Value>();
         assert_send_sync::<Map>();
         assert_send_sync::<Set>();
+        assert_send_sync::<HashedKey>();
+        assert_send_sync::<ValueState>();
         assert_send_sync::<BigInt>();
         assert_send_sync::<ParseBigIntError>();
         assert_send_sync::<MaxStrDigitsError>();
@@ -409,7 +412,7 @@ mod api {
         let unhashable = [
             (Value::List(Vec::new()), "list"),
             (value_map! {}, "dict"),
-            (Value::Set(Set::new()), "set"),
+            (Value::Set(Set::default()), "set"),
             (
                 Value::Tuple(vec![Value::from(1), Value::List(Vec::new())]),
                 "list",
@@ -653,7 +656,10 @@ mod api {
         let check = CheckFn::check_array(CheckFn::check_string());
         assert!(check.check(&Value::Tuple(vec!["a".into()])).is_ok());
         assert_eq!(
-            check.check(&Value::Set(Set::new())).unwrap_err().message(),
+            check
+                .check(&Value::Set(Set::default()))
+                .unwrap_err()
+                .message(),
             "Expected array but got 'set'"
         );
     }
@@ -728,7 +734,7 @@ mod api {
         let date = Date::new(2020, 2, 29).unwrap();
         assert_eq!((date.year(), date.month(), date.day()), (2020, 2, 29));
         assert_eq!(Value::from(date).as_date(), Some(date));
-        assert_eq!(Value::Set(Set::new()).as_set().map(Set::len), Some(0));
+        assert_eq!(Value::Set(Set::default()).as_set().map(Set::len), Some(0));
         assert_eq!(
             Value::from(DateTime::new(date, 1, 2, 3, 4, Some(TzOffset::UTC)).unwrap())
                 .as_datetime()

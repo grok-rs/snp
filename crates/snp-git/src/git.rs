@@ -25,12 +25,12 @@ mod pathspec;
 use crate::run::{self, Out, bare_git_argv, concat, os_from_bytes};
 use crate::types::{
     BadRecord, IndexStamp, TaggedParser, checkout_config, is_null_oid, parse_diff_raw,
-    parse_ls_files_stage, parse_ls_files_stages,
+    parse_ls_files_tagged, parse_ls_files_tagged_stages, system_attributes,
 };
 use crate::zlist::TooLarge;
 use crate::{
     ConfigListing, DiffFingerprint, DiffIndex, GitBackend, GitExe, IndexEntries, MergeState,
-    ObjectId, PrePushNs, RepoInfo, TaggedIndex, ZList, messages,
+    ObjectId, PrePushNs, RepoInfo, SystemAttributes, TaggedIndex, ZList, messages,
 };
 
 /// A handle on the user repository; cheap clone (`Arc`s inside).
@@ -959,22 +959,44 @@ impl Git {
         records.is_ok_and(|r| trust_config(r.iter()))
     }
 
-    /// `git ls-files -s -z` (checked): every index entry with its mode, unmerged stages included (ADR-079).
+    /// `git ls-files -s -v -z` (checked; query F): every index entry with its mode and its `-v` tag, unmerged stages
+    /// included (ADR-079; the tags are ADR-133's: assume-unchanged lowercases them, skip-worktree is `S`).
     pub fn tracked_with_modes(&self) -> Result<IndexEntries, Failure> {
-        let out = self.checked(&["ls-files", "-s", "-z"])?;
-        parse_ls_files_stage(out.stdout).map_err(|r| bad_record("ls-files -s -z", &r))
+        let out = self.checked(&["ls-files", "-s", "-v", "-z"])?;
+        parse_ls_files_tagged(out.stdout).map_err(|r| bad_record("ls-files -s -v -z", &r))
     }
 
-    /// [`Self::tracked_with_modes`] plus whether the index has unmerged entries, from the same `git ls-files -s -z`:
-    /// `true` iff [`Self::has_unmerged`] would be (ADR-104; COMPATIBILITY §6.2 equivalence test). A failure is the
-    /// caller's cue to ask `git ls-files --unmerged` itself, so the reported error stays pre-commit's.
+    /// [`Self::tracked_with_modes`] plus whether the index has unmerged entries, from the same `git ls-files -s -v
+    /// -z`: `true` iff [`Self::has_unmerged`] would be (ADR-104; COMPATIBILITY §6.2 equivalence test). A failure is
+    /// the caller's cue to ask `git ls-files --unmerged` itself, so the reported error stays pre-commit's.
     pub fn tracked_with_stages(&self) -> Result<(IndexEntries, bool), Failure> {
-        let out = self.checked(&["ls-files", "-s", "-z"])?;
-        parse_ls_files_stages(out.stdout).map_err(|r| bad_record("ls-files -s -z", &r))
+        let out = self.checked(&["ls-files", "-s", "-v", "-z"])?;
+        parse_ls_files_tagged_stages(out.stdout).map_err(|r| bad_record("ls-files -s -v -z", &r))
+    }
+
+    /// `git var GIT_ATTR_SYSTEM` (snp-only, ADR-133): where this executable, in this environment, reads its system
+    /// attributes file. `None` without asking on git < 2.42 ([`crate::GitCaps::attr_system`]), and for any answer
+    /// other than exit 0 with one absolute path line, or exit 1 under `GIT_ATTR_NOSYSTEM`
+    /// ([`SystemAttributes::Disabled`]): a spawn failure is no answer, never "disabled".
+    pub fn system_attributes(&self) -> Option<SystemAttributes> {
+        if !self.exe.caps.attr_system {
+            return None;
+        }
+        let argv = self.argv(&["var", "GIT_ATTR_SYSTEM"]);
+        // not `run::capture`: its spawn failure is `_oserror_to_output`'s status 1, which reads as "disabled"
+        let out = self
+            .backend
+            .capture(&argv, &self.env, &self.root, Stdin::Null, Group::Inherit)
+            .ok()?;
+        system_attributes(
+            out.status.0,
+            &out.stdout,
+            self.env.get("GIT_ATTR_NOSYSTEM").is_some(),
+        )
     }
 
     /// The index file's identity and change stamp (no spawn): two equal stamps around a span mean nobody rewrote the
-    /// index in between, so an `ls-files -s -z` taken before it still describes it (ADR-104). `None` when the index
+    /// index in between, so an `ls-files -s -v -z` taken before it still describes it (ADR-104). `None` when the index
     /// cannot be stat'ed, and always on non-Unix platforms (no stable inode or ctime there): callers treat `None` as
     /// "changed".
     pub fn index_stamp(&self, info: &RepoInfo) -> Option<IndexStamp> {
@@ -998,7 +1020,7 @@ impl Git {
     /// Entry count from the index header (`DIRC`, version, count; 12 bytes read, no spawn) — Stat-mode gate.
     ///
     /// `None` when the index is missing, unreadable or not a version 2–4 index. A split index (`core.splitIndex`)
-    /// counts only the entries of the main file: an underestimate the caller's own `ls-files -s -z` corrects.
+    /// counts only the entries of the main file: an underestimate the caller's own `ls-files -s -v -z` corrects.
     pub fn index_entry_count(&self, info: &RepoInfo) -> Option<u32> {
         let mut header = [0_u8; 12];
         std::fs::File::open(&info.index_file)

@@ -148,7 +148,7 @@ fn hash_str<H: Hasher>(s: &str, state: &mut H) {
 /// ```
 /// use cfgv::{Map, StrKey, Value};
 ///
-/// let mut m = Map::new();
+/// let mut m = Map::default();
 /// m.insert(Value::Bytes(b"id".to_vec()), Value::Int(1));
 /// assert_eq!(m.get(&StrKey("id")), None);
 /// m.insert(Value::from("id"), Value::Int(2));

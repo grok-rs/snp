@@ -293,7 +293,7 @@ fn prefetch_adds_no_git_call_to_a_check_added_large_files_commit() {
             .count();
         assert_eq!(added, 1, "SNP_JOBS={jobs}: {got:#?}");
         // the exact list holds for the git range it was taken in (GitCaps changes other calls outside it)
-        // ADR-104(3) starts F (`ls-files -s -z`) and G (`config --list --show-origin -z`) early on a small tree when
+        // ADR-104(3) starts F (`ls-files -s -v -z`) and G (`config --list --show-origin -z`) early on a small tree when
         // Stat mode is possible (three or more CPUs, `stat_oracle_safe` worktree and git dir); F then answers query A
         // (`ls-files --unmerged`). Which variant runs depends on the machine, so both are exact.
         if exact_list_applies(&env, &root) {
@@ -315,7 +315,7 @@ fn expected_calf_git_with_early_fg() -> Vec<String> {
         .map(|a| (*a).to_owned())
         .chain([
             "config --list --show-origin -z".to_owned(),
-            "ls-files -s -z".to_owned(),
+            "ls-files -s -v -z".to_owned(),
         ])
         .collect();
     v.sort();

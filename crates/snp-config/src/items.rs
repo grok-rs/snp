@@ -9,8 +9,8 @@
 //! Owner: WP-21.
 
 use cfgv::{
-    CheckFn, ConditionValue, Cx, Map, MapItem, StrKey, ValidationError, Validator, Value,
-    validate_context,
+    CheckFn, ConditionValue, Cx, HashedKey, Map, MapItem, StrKey, ValidationError, Validator,
+    Value, validate_context,
 };
 use file_identify::Tag;
 use snp_core::brand::Brand;
@@ -45,12 +45,13 @@ pub(crate) fn transform_stage(v: &Value) -> Value {
     }
 }
 
-/// `_translate_language` over a value (same unhashable rule as [`transform_stage`]).
-pub(crate) fn translate_language(v: &Value) -> Value {
+/// `_translate_language` over a value (same unhashable rule as [`transform_stage`]): the replacement for
+/// `system` / `script`, `None` for every value it keeps.
+pub(crate) fn translate_language(v: &Value) -> Option<Value> {
     match v.as_str() {
-        Some("system") => Value::from("unsupported"),
-        Some("script") => Value::from("unsupported_script"),
-        _ => v.clone(),
+        Some("system") => Some(Value::from("unsupported")),
+        Some("script") => Some(Value::from("unsupported_script")),
+        _ => None,
     }
 }
 
@@ -92,8 +93,8 @@ impl MapItem for Compiled {
         self.0.check(dct, cx)?;
         if let Some(p) = self
             .0
-            .key()
-            .and_then(|k| dct.get(k))
+            .hashed_key()
+            .and_then(|k| k.get(dct))
             .and_then(Value::as_str)
         {
             cx.warn(format!("{COMPILED}{p}"));
@@ -160,7 +161,7 @@ pub(crate) fn check_min_version(brand: Brand) -> CheckFn {
 /// `StagesMigrationNoDefault` / `StagesMigration` (`clientlib.py:112-139`).
 #[derive(Debug)]
 pub(crate) struct StagesMigration {
-    key: Value,
+    key: HashedKey,
     /// `None`: the `NoDefault` variant.
     default: Option<Value>,
 }
@@ -168,7 +169,7 @@ pub(crate) struct StagesMigration {
 impl StagesMigration {
     pub(crate) fn new(key: &str, default: Option<Value>) -> Self {
         Self {
-            key: Value::from(key),
+            key: HashedKey::new(key),
             default,
         }
     }
@@ -176,7 +177,7 @@ impl StagesMigration {
 
 impl MapItem for StagesMigration {
     fn check(&self, dct: &Map, _cx: &mut Cx<'_>) -> Result<(), ValidationError> {
-        let Some(val) = dct.get(&self.key) else {
+        let Some(val) = self.key.get(dct) else {
             return Ok(());
         };
         validate_context(
@@ -196,20 +197,29 @@ impl MapItem for StagesMigration {
     }
 
     fn apply_default(&self, dct: &mut Map) {
-        if let Some(default) = &self.default
-            && !dct.contains_key(&self.key)
-        {
-            dct.insert(self.key.clone(), default.clone());
+        let slot = match &self.default {
+            Some(default) => Some(self.key.set_default(dct, default)),
+            None => self.key.get_mut(dct),
+        };
+        let Some(slot) = slot else { return };
+        // `[transform_stage(s) for s in val]`, in place: a tuple becomes a list, and only the legacy names are
+        // replaced (every other item maps to an equal value).
+        if let Value::Tuple(items) = slot {
+            *slot = Value::List(std::mem::take(items));
         }
-        if let Some(slot) = dct.get_mut(&self.key)
-            && let Some(items) = slot.as_array()
-        {
-            *slot = Value::List(items.iter().map(transform_stage).collect());
+        if let Value::List(items) = slot {
+            for item in items {
+                if let Value::String(s) = item
+                    && LEGACY_STAGES.contains(&s.as_str())
+                {
+                    *item = transform_stage(item);
+                }
+            }
         }
     }
 
     fn key(&self) -> Option<&Value> {
-        Some(&self.key)
+        Some(self.key.value())
     }
 }
 
@@ -217,7 +227,7 @@ impl MapItem for StagesMigration {
 /// (`clientlib.py:142-191`): legacy names in order, duplicates kept.
 #[derive(Debug)]
 pub(crate) struct DeprecatedStagesWarning {
-    key: Value,
+    key: HashedKey,
     /// `true`: the hook variant (W8), `false`: the top-level variant (W9).
     hook: bool,
     brand: Brand,
@@ -226,7 +236,7 @@ pub(crate) struct DeprecatedStagesWarning {
 impl DeprecatedStagesWarning {
     pub(crate) fn hook(brand: Brand) -> Self {
         Self {
-            key: Value::from("stages"),
+            key: HashedKey::new("stages"),
             hook: true,
             brand,
         }
@@ -234,7 +244,7 @@ impl DeprecatedStagesWarning {
 
     pub(crate) fn top(brand: Brand) -> Self {
         Self {
-            key: Value::from("default_stages"),
+            key: HashedKey::new("default_stages"),
             hook: false,
             brand,
         }
@@ -243,7 +253,7 @@ impl DeprecatedStagesWarning {
 
 impl MapItem for DeprecatedStagesWarning {
     fn check(&self, dct: &Map, cx: &mut Cx<'_>) -> Result<(), ValidationError> {
-        let Some(val) = dct.get(&self.key) else {
+        let Some(val) = self.key.get(dct) else {
             return Ok(());
         };
         CheckFn::check_array(CheckFn::check_any()).check(val)?;
@@ -267,14 +277,14 @@ impl MapItem for DeprecatedStagesWarning {
     }
 
     fn key(&self) -> Option<&Value> {
-        Some(&self.key)
+        Some(self.key.value())
     }
 }
 
 /// `LanguageMigration` / `LanguageMigrationRequired` (`clientlib.py:194-227`).
 #[derive(Debug)]
 pub(crate) struct LanguageMigration {
-    key: Value,
+    key: HashedKey,
     check_fn: CheckFn,
     required: bool,
 }
@@ -282,7 +292,7 @@ pub(crate) struct LanguageMigration {
 impl LanguageMigration {
     pub(crate) fn new(check_fn: CheckFn, required: bool) -> Self {
         Self {
-            key: Value::from("language"),
+            key: HashedKey::new("language"),
             check_fn,
             required,
         }
@@ -291,7 +301,7 @@ impl LanguageMigration {
 
 impl MapItem for LanguageMigration {
     fn check(&self, dct: &Map, _cx: &mut Cx<'_>) -> Result<(), ValidationError> {
-        match dct.get(&self.key) {
+        match self.key.get(dct) {
             None if self.required => Err(ValidationError::new(format!(
                 "Missing required key: {}",
                 self.key
@@ -299,19 +309,24 @@ impl MapItem for LanguageMigration {
             None => Ok(()),
             Some(v) => validate_context(
                 || format!("At key: {}", self.key),
-                || self.check_fn.check(&translate_language(v)),
+                || {
+                    self.check_fn
+                        .check(translate_language(v).as_ref().unwrap_or(v))
+                },
             ),
         }
     }
 
     fn apply_default(&self, dct: &mut Map) {
-        if let Some(slot) = dct.get_mut(&self.key) {
-            *slot = translate_language(slot);
+        if let Some(slot) = self.key.get_mut(dct)
+            && let Some(translated) = translate_language(slot)
+        {
+            *slot = translated;
         }
     }
 
     fn key(&self) -> Option<&Value> {
-        Some(&self.key)
+        Some(self.key.value())
     }
 
     fn check_fn(&self) -> Option<&CheckFn> {
@@ -343,7 +358,7 @@ impl MapItem for NotAllowed {
 #[derive(Debug)]
 pub(crate) struct WarnMutableRev {
     inner: Validator,
-    key: Value,
+    key: HashedKey,
     brand: Brand,
 }
 
@@ -357,7 +372,7 @@ impl WarnMutableRev {
                 ConditionValue::NotIn(vec![Value::from(LOCAL), Value::from(META)]),
                 true,
             ),
-            key: Value::from("rev"),
+            key: HashedKey::new("rev"),
             brand,
         }
     }
@@ -372,7 +387,7 @@ fn is_hex_rev(rev: &str) -> bool {
 impl MapItem for WarnMutableRev {
     fn check(&self, dct: &Map, cx: &mut Cx<'_>) -> Result<(), ValidationError> {
         self.inner.check(dct, cx)?;
-        if let Some(rev) = dct.get(&self.key).and_then(Value::as_str)
+        if let Some(rev) = self.key.get(dct).and_then(Value::as_str)
             && !rev.contains('.')
             && !is_hex_rev(rev)
         {
@@ -390,7 +405,7 @@ impl MapItem for WarnMutableRev {
     }
 
     fn key(&self) -> Option<&Value> {
-        Some(&self.key)
+        Some(self.key.value())
     }
 
     fn check_fn(&self) -> Option<&CheckFn> {
@@ -402,7 +417,7 @@ impl MapItem for WarnMutableRev {
 #[derive(Debug)]
 pub(crate) struct SensibleRegex {
     inner: Validator,
-    key: Value,
+    key: HashedKey,
     hook: bool,
     brand: Brand,
 }
@@ -411,7 +426,7 @@ impl SensibleRegex {
     pub(crate) fn new(key: &str, hook: bool, brand: Brand) -> Self {
         Self {
             inner: Validator::optional_no_default(key, CheckFn::check_string()),
-            key: Value::from(key),
+            key: HashedKey::new(key),
             hook,
             brand,
         }
@@ -424,25 +439,26 @@ const FWD_SLASH_RES: [&str; 3] = [r"[\\/]", r"[\/]", r"[/\\]"];
 impl MapItem for SensibleRegex {
     fn check(&self, dct: &Map, cx: &mut Cx<'_>) -> Result<(), ValidationError> {
         self.inner.check(dct, cx)?;
-        let Some(val) = dct.get(&self.key).and_then(Value::as_str) else {
+        let Some(val) = self.key.get(dct).and_then(Value::as_str) else {
             return Ok(());
         };
-        let key = self.key.try_repr()?;
+        // Formatted only for a warning (the `repr` of a schema's own string key cannot fail).
+        let key = || self.key.try_repr();
         let id = || get(dct, "id").map_or_else(|| Ok("None".to_owned()), Value::try_repr);
         if val.contains("/*") {
             let msg = if self.hook {
-                messages::hook_regex_glob(&key, &id()?)
+                messages::hook_regex_glob(&key()?, &id()?)
             } else {
-                messages::top_regex_glob(&key)
+                messages::top_regex_glob(&key()?)
             };
             cx.warn(msg);
         }
         for fwd in FWD_SLASH_RES {
             if val.contains(fwd) {
                 let msg = if self.hook {
-                    messages::hook_regex_slash(self.brand, &key, &id()?, fwd)
+                    messages::hook_regex_slash(self.brand, &key()?, &id()?, fwd)
                 } else {
-                    messages::top_regex_slash(self.brand, &key, fwd)
+                    messages::top_regex_slash(self.brand, &key()?, fwd)
                 };
                 cx.warn(msg);
             }
@@ -451,7 +467,7 @@ impl MapItem for SensibleRegex {
     }
 
     fn key(&self) -> Option<&Value> {
-        Some(&self.key)
+        Some(self.key.value())
     }
 
     fn check_fn(&self) -> Option<&CheckFn> {
@@ -512,7 +528,7 @@ impl MapItem for BuiltinNoRev {
 /// An extension key: checked inside `At key: {key}` when present (snp leaves, pre-commit contexts; ARCHITECTURE
 /// §8.1).
 pub(crate) struct ExtKey {
-    key: Value,
+    key: HashedKey,
     check: CheckFn,
 }
 
@@ -527,7 +543,7 @@ impl std::fmt::Debug for ExtKey {
 impl ExtKey {
     pub(crate) fn item(key: &str, check: CheckFn) -> Validator {
         Validator::custom(Self {
-            key: Value::from(key),
+            key: HashedKey::new(key),
             check,
         })
     }
@@ -535,14 +551,14 @@ impl ExtKey {
 
 impl MapItem for ExtKey {
     fn check(&self, dct: &Map, _cx: &mut Cx<'_>) -> Result<(), ValidationError> {
-        match dct.get(&self.key) {
+        match self.key.get(dct) {
             None => Ok(()),
             Some(v) => validate_context(|| format!("At key: {}", self.key), || self.check.check(v)),
         }
     }
 
     fn key(&self) -> Option<&Value> {
-        Some(&self.key)
+        Some(self.key.value())
     }
 
     fn check_fn(&self) -> Option<&CheckFn> {

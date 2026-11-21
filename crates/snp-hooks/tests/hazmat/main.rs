@@ -149,6 +149,10 @@ impl Args {
 }
 
 /// The fixture tree of `cases.json` in a fresh directory (the work tree of the hook).
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+)]
 fn fixtures() -> tempfile::TempDir {
     let cases = support::json("hazmat/cases.json");
     let dir = tempfile::tempdir().unwrap();
@@ -281,6 +285,10 @@ fn t10_haz_01_cmd_filenames() {
 }
 
 /// T10-HAZ-02 (`:37-41`): a file outside the subdir → `unexpected file without prefix='subdir/': not-subdir/2`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+)]
 fn t10_haz_02_cd_prefix() {
     let dir = fixtures();
     std::fs::create_dir_all(dir.path().join("subdir")).unwrap();
@@ -297,6 +305,10 @@ fn t10_haz_02_cd_prefix() {
 }
 
 /// T10-HAZ-03 (`:48-67`): the command runs in the subdir with the prefix stripped; nothing on stderr.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+)]
 fn t10_haz_03_cd_runs_in_subdir() {
     let dir = fixtures();
     std::fs::create_dir_all(dir.path().join("subdir")).unwrap();

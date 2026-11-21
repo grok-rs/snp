@@ -59,7 +59,7 @@ Each invariant has an owner, a mechanism and a test family; weakening one needs 
 | S10 | Crash-consistent on-disk state | markers written last; temp + fsync + rename; never write through symlinks (snp-os) | kill-9 matrix |
 | S11 | Deterministic output | config-order head-of-line printer; `IndexMap`; clippy `iter_over_hash_type = deny` | `--jobs 1` vs `--jobs 32` byte equality |
 | S12 | Every crate testable in isolation | seams: `GitBackend` (+ `ScriptedBackend`), `CmdRunner`, `Resolve`, `Preflight`, `Fetch`, `Clock`, `ToolDirs`, `ToolProbe` | unit suites with zero real processes |
-| S13 | Exact optimisations only | every optimisation that skips work (DiffOracle, baseline elision, lazy tags, fast path, P17, speculative config load, regex fast kinds) has a soundness argument and a randomized/differential test against the unoptimised path; any doubt falls back to the exact path | §13.4 property tests, `SNP_DIFF_MODE=git`, `SNP_VERIFY_BASELINE=1` in CI |
+| S13 | Exact optimisations only | every optimisation that skips work (DiffOracle, baseline elision, lazy tags, fast path, P17, speculative config load, regex fast kinds, the file-content cache of ADR-131, the deferred baseline of ADR-132) has a soundness argument and a randomized/differential test against the unoptimised path; any doubt falls back to the exact path | §13.4 property tests, `SNP_DIFF_MODE=git`, `SNP_VERIFY_BASELINE=1` in CI, `SNP_VERIFY_FILE_CACHE=1` |
 | S14 | Poison-proof safety paths | every `Mutex`/`RwLock` on a safety path is taken through `snp_core::sync::lock` (recovers `PoisonError::into_inner`) | panic-injection test inside a worker holding the printer lock (stash restored, exit 3, banner printed) |
 | S15 | fd hygiene under concurrent spawning | Linux: every fd snp creates is `O_CLOEXEC` atomically (std pipes, pty master `openpt(CLOEXEC)`, pty slave `open(O_RDWR\|O_NOCTTY\|O_CLOEXEC)`); macOS/BSD: a process-wide spawn lock serialises fd creation and `spawn()`; hook output is read by dedicated reader threads, so a descendant holding a pipe delays only its own hook and never blocks cancellation (§3.6) | N-partition test (pipe and pty mode) where one child sleeps: the others finish promptly; cancellation with a daemonised descendant holding stdout |
 
@@ -246,7 +246,9 @@ its tests run with a fake resolver before snp-repo lands. Critical path: pycompa
 * **Profiles**: `release`: `opt-level = 3`, `lto = "fat"`, `codegen-units = 1`, **`panic = "unwind"`** (load-bearing,
   FD-5), `overflow-checks = true`, `debug = "line-tables-only"`, `strip = "debuginfo"`; `dist` inherits release +
   `strip = "symbols"`; `profiling` = release + `lto = "thin"` + `debug = "full"`; `perf` = release + `lto = "thin"` +
-  `codegen-units = 16` (the `perf-smoke` CI job's test binaries only, ADR-081). Dev profile: `opt-level = 1` for
+  `codegen-units = 16` (the `perf-smoke` CI job's test binaries only, ADR-081). Overflow checks stay on for third-party
+  crates too (ADR-114), and no profile, configuration or workflow sets a relocation model: the artifacts stay PIE
+  (ADR-137). Dev profile: `opt-level = 1` for
   `regex-automata`, `fancy-regex`, `libyaml-safer`, `blake3`. System allocator on gnu, macOS and Windows (mimalloc
   measured: +RSS, no gain, 07 §3.15). musl: decided by measurement (07 D10: musl's allocator is slow under
   contention): WP-36 benches the musl build with the system allocator and with mimalloc behind
@@ -937,7 +939,8 @@ pub fn decode_text(bytes: &[u8]) -> Result<std::borrow::Cow<'_, str>, snp_pycomp
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)] pub struct NodeId(pub u32);
 #[derive(Debug, Clone)] pub enum NodeKind { Scalar(Box<str>), Seq(Vec<NodeId>), Map(Vec<(NodeId, NodeId)>) }
 #[derive(Copy, Clone, Debug, PartialEq, Eq)] pub enum ScalarStyle { Plain, Single, Double, Literal, Folded, NotScalar }
-#[derive(Debug, Clone)] pub struct Node { pub kind: NodeKind, pub tag: Box<str>, pub style: ScalarStyle,
+/// `tag`: a resolved tag borrows the resolver's static string, an explicit tag is owned (ADR-138).
+#[derive(Debug, Clone)] pub struct Node { pub kind: NodeKind, pub tag: std::borrow::Cow<'static, str>, pub style: ScalarStyle,
                                           pub span: std::ops::Range<usize>, pub start: Mark, pub anchor: Option<Box<str>> }
 /// Arena composer: an alias is the *same* NodeId as its anchor (never a copy) — migrate-config dedupes by id.
 #[derive(Debug, Clone)] pub struct Document { pub nodes: Vec<Node>, pub root: Option<NodeId> }
@@ -1029,6 +1032,14 @@ pub mod fsinfo {
     /// f_type ∈ {ext2/3/4, xfs, btrfs, tmpfs, zfs, f2fs, bcachefs}; macOS f_fstypename ∈ {apfs, hfs}. Everything else
     /// (NFS, SMB, 9p, every FUSE incl. sshfs/rclone/virtiofs, overlayfs, vfat, exfat, ntfs-3g, unknown) → false.
     pub fn stat_oracle_safe(path: &Path) -> io::Result<bool>;
+}
+/// ADR-134: `lstat` relative to a directory descriptor (`O_PATH` on Linux, read-only elsewhere; Unix only, `open` fails
+/// on other platforms), for the index-stat proof.
+pub mod rootstat {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub struct StatData { pub mode: u32, pub ino: u64, pub uid: u32, pub gid: u32,
+        pub size: u64, pub mtime: (i64, i64), pub ctime: (i64, i64) }
+    #[derive(Debug)] pub struct RootDir { /* OwnedFd */ }
+    impl RootDir { pub fn open(dir: &Path) -> io::Result<Self>; pub fn lstat(&self, name: &CStr) -> io::Result<StatData>; }
 }
 pub fn same_file(a: &Path, b: &Path) -> io::Result<bool>;
 ```
@@ -1158,6 +1169,8 @@ pub mod signals {
     /// `subreaper` (run, hook-impl, try-repo on Linux): PR_SET_CHILD_SUBREAPER via rustix, so orphaned hook descendants
     /// reparent to snp and `registry::quiesce` can find them on the cancel path.
     pub fn install(cancel: CancelToken, subreaper: bool) -> io::Result<SignalGuard>;
+    /// `install` with `SNP_KILL_GRACE` read from the caller's startup snapshot (no second `Env::capture_process`).
+    pub fn install_with_env(cancel: CancelToken, subreaper: bool, env: &Env) -> io::Result<SignalGuard>;
     #[derive(Debug)] pub struct SignalGuard { /* thread handle */ }
     impl SignalGuard {
         pub fn shield(&self) -> RestoreShield;
@@ -1410,7 +1423,13 @@ pub mod ini { pub fn aws_credentials(text: &str) -> Result<Vec<(String, String)>
 #[derive(Copy, Clone, Debug, PartialEq, Eq)] pub enum HookClass { Native, NativeWithCaveats, Delegate, FailLanguage, Stub }
 #[derive(Copy, Clone, Debug, PartialEq, Eq)] pub enum Gate { Exact, Caveat, Delegate }    // CI parity-gate result (09 §9.9)
 #[derive(Debug)] pub struct TagProfile { pub tag: &'static str, pub commit: &'static str, pub manifest_yaml: &'static str,
-                                         pub hooks: &'static [(&'static str /*id*/, HookClass, Epoch)] }
+                                         pub hooks: &'static [(&'static str /*id*/, HookClass, Epoch)],
+                                         pub model: Option<&'static [&'static ManifestHook]> }
+/// `manifest_yaml` after `MANIFEST_HOOK_DICT`'s defaults, one field per key (generated `models.rs`, the distinct hooks
+/// once each); snp-repo's generated-data test `profile_models_equal_the_load` proves it equal to the load.
+#[derive(Debug, PartialEq, Eq)] pub struct ManifestHook { pub id: &'static str, /* … every hook key: &'static str,
+    &'static [&'static str] for lists, bool for flags */ pub verbose: bool }
+pub fn tag_profiles() -> &'static [TagProfile];                    // every Tier A profile, oldest first
 pub fn is_pre_commit_hooks_url(url: &str) -> bool;                 // 09 §6.2 normalisation; never logs userinfo
 pub fn profile_for_rev(rev: &str) -> Option<&'static TagProfile>;  // exact tag or full 40-hex commit of a tag (Tier A)
 pub fn verified_blob(blob_hex: &str) -> Option<(&'static str /*module*/, Epoch)>;   // Tier B
@@ -1467,10 +1486,11 @@ impl DiffFingerprint { pub const EMPTY: DiffFingerprint; }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum MergeState { None, Merging }
 #[derive(Debug, Clone)] pub struct PrePushNs { pub all_files: bool, pub from_ref: Option<OsString>, pub to_ref: Option<OsString>,
                        pub local_branch: OsString, pub remote_branch: OsString }
-/// Index entries as an arena (ADR-079): `ls-files -s -z` (all tracked: DiffOracle + git-mode tags) or
+/// Index entries as an arena (ADR-079): `ls-files -s -v -z` (all tracked: DiffOracle + git-mode tags) or
 /// `diff --staged --raw -z --no-renames --diff-filter=ACMRTUXB` (staged only: git-mode tags when Stat mode is impossible).
-/// `modes[i]` belongs to `paths.get(i)`; one buffer, no per-path allocation.
-#[derive(Debug, Clone, Default)] pub struct IndexEntries { pub paths: ZList, pub modes: Box<[u32]> }
+/// `modes[i]` and `tags[i]` belong to `paths.get(i)`; one buffer, no per-path allocation. `tags`: the `-v` tag letters
+/// (ADR-133; `H`, `S`, `M`, lowercase when assume-unchanged), empty for the staged list.
+#[derive(Debug, Clone, Default)] pub struct IndexEntries { pub paths: ZList, pub modes: Box<[u32]>, pub tags: Box<[u8]> }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub struct IndexStamp { /* private: dev, ino, size, mtime, ctime */ }
 /// ADR-106: the all_files list with each path's mode (0 = the empty blob) and whether every record is `H` at stage 0.
 #[derive(Debug, Clone, Default)] pub struct TaggedIndex { pub paths: ZList, pub modes: Box<[u32]>, pub plain: bool }
@@ -1478,7 +1498,13 @@ impl DiffFingerprint { pub const EMPTY: DiffFingerprint; }
 /// (`plain`: core.autocrlf, fsmonitor, ignoreStat, sparse checkout unset or false, `core.fileMode` a boolean, no `hook.*`,
 /// `core.attributesFile` or `attr.tree` key; the default is not plain).
 #[derive(Debug, Clone, Default)] pub struct ConfigListing { pub files: Arc<[PathBuf]>, pub checkout: CheckoutConfig }
-#[derive(Debug, Clone, PartialEq, Eq)] pub struct CheckoutConfig { pub plain: bool, pub file_mode: bool, pub hooks_path: Option<Box<[u8]>> }
+/// `eol_lf` (ADR-133): `core.eol` unset, `lf` or `native`, so `text=auto` checks out blob bytes (with `core.autocrlf` off).
+/// `index_proof` (ADR-134): fsmonitor, ignoreStat, sparse checkout unset or false and no `core.worktree` key;
+/// `object_id_len`: 20 (`extensions.objectFormat` unset or `sha1`), 32 (`sha256`), `None` otherwise.
+#[derive(Debug, Clone, PartialEq, Eq)] pub struct CheckoutConfig { pub plain: bool, pub file_mode: bool, pub hooks_path: Option<Box<[u8]>>,
+                                                                    pub eol_lf: bool, pub index_proof: bool, pub object_id_len: Option<usize> }
+/// ADR-133: `git var GIT_ATTR_SYSTEM`'s answer for this run's executable and environment (git ≥ 2.42), never kept across runs.
+#[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub enum SystemAttributes { File(PathBuf), Disabled }
 
 #[derive(Clone, Debug)] pub struct Git { /* exe: Arc<GitExe>, env: Env, root: Arc<Path>, backend: Arc<dyn GitBackend> */ }  // cheap clone
 impl Git {
@@ -1508,11 +1534,11 @@ impl Git {
     pub fn add_literal(&self, paths: &[RepoPath], group: Group) -> Result<(), Failure>; // stage_fixed (snp-only)
     pub fn staged_files(&self) -> Result<ZList, Failure>;                             // + --no-renames (output-neutral)
     pub fn all_files(&self) -> Result<ZList, Failure>;                                // --deduplicate, or adjacent dedup on < 2.31 (D-CRASH-26)
-    pub fn tracked_with_modes(&self) -> Result<IndexEntries, Failure>;                // ls-files -s -z
+    pub fn tracked_with_modes(&self) -> Result<IndexEntries, Failure>;                // ls-files -s -v -z (query F)
     pub fn staged_with_modes(&self) -> Result<IndexEntries, Failure>;                 // diff --staged --raw -z --no-renames …
     /// Entry count from the index header (`DIRC`, version, count; 12 bytes read, no spawn) — Stat-mode gate.
     pub fn index_entry_count(&self, info: &RepoInfo) -> Option<u32>;
-    pub fn tracked_with_stages(&self) -> Result<(IndexEntries, bool), Failure>;       // ls-files -s -z + "has a stage ≠ 0" (ADR-104)
+    pub fn tracked_with_stages(&self) -> Result<(IndexEntries, bool), Failure>;       // ls-files -s -v -z + "has a stage ≠ 0" (ADR-104)
     /// The index file's (dev, ino, size, mtime ns, ctime ns); `None` off Unix (ADR-104).
     pub fn index_stamp(&self, info: &RepoInfo) -> Option<IndexStamp>;
     pub fn changed_files(&self, from: &OsStr, to: &OsStr) -> Result<ZList, Failure>;
@@ -1527,6 +1553,9 @@ impl Git {
     pub fn hooks_path(&self) -> Result<Option<OsString>, Failure>;
     pub fn config_origins(&self) -> Result<Vec<PathBuf>, Failure>;                   // `config --list --show-origin -z` files
     pub fn config_listing(&self) -> Result<ConfigListing, Failure>;                  // the same call: files + ADR-119 facts
+    /// ADR-133: `git var GIT_ATTR_SYSTEM` (git ≥ 2.42, else not asked); only exit 0 with one absolute line, or exit 1 under
+    /// `GIT_ATTR_NOSYSTEM` (`Disabled`), answers; anything else (a spawn failure included) is `None`.
+    pub fn system_attributes(&self) -> Option<SystemAttributes>;
     pub fn config_get(&self, key: &str) -> Result<Option<OsString>, Failure>;
     pub fn config_get_regexp(&self, pattern: &str) -> Result<Vec<(OsString, OsString)>, Failure>;
     pub fn pre_push(&self, stdin: &[u8], remote_name: &OsStr) -> Result<Option<PrePushNs>, Failure>; // 02 §16.3 + X13-HI-04
@@ -1558,6 +1587,25 @@ pub fn prefetch_eligible(url: &str, env: &Env, core_ssh_command_set: bool) -> bo
 pub fn no_git_env(env: &Env) -> Env;                                                    // git.py:27-48 allowlist (Windows: names upper-cased, §2.5)
 /// Per-run cache of the git facts pre-commit-hooks compute, with their exact upstream argv (non `-z`, quotePath and
 /// renames honoured: bug-compat) and the hook env (09 §3, §9.6). Used by snp-hooks natives.
+/// ADR-134: a strict reader of index versions 2–4 (exact entry count, extensions by size up to the trailing hash; `link`,
+/// `sdir`, `FSMN` and unknown lowercase extensions refuse), for the DiffOracle's index-stat proof. No spawn.
+pub mod index_file {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)] #[non_exhaustive] pub enum IndexRefusal { Header, HashSize, Truncated, Entry,
+        Extension([u8; 4]), TooLarge, Io }
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub struct IndexEntry { pub ctime: (u32, u32), pub mtime: (u32, u32), pub dev: u32,
+        pub ino: u32, pub mode: u32, pub uid: u32, pub gid: u32, pub size: u32, pub flags: u16, pub flags2: u16, pub empty_blob: bool,
+        /* name span */ }
+    impl IndexEntry { pub fn stage(&self) -> u16; pub fn assume_valid(&self) -> bool; pub fn skip_worktree(&self) -> bool;
+        pub fn intent_to_add(&self) -> bool; }
+    #[derive(Debug, Clone, Default)] pub struct IndexFile { pub version: u32, pub entries: Vec<IndexEntry>, pub extensions: Vec<[u8; 4]>,
+        /* names */ }
+    impl IndexFile {
+        pub fn read(path: &Path, hash_len: usize) -> Result<Self, IndexRefusal>;
+        pub fn parse(buf: &[u8], hash_len: usize) -> Result<Self, IndexRefusal>;
+        pub fn name(&self, e: &IndexEntry) -> &[u8];
+        pub fn name_cstr(&self, e: &IndexEntry) -> Option<&std::ffi::CStr>;
+    }
+}
 pub mod pch_facts {
     #[derive(Debug)] pub struct PchFacts { /* Git + OnceLocks */ }
     impl PchFacts {
@@ -1582,8 +1630,8 @@ pub mod pch_facts {
 pub mod hookscripts {
     #[derive(Debug, Clone, PartialEq, Eq)] pub enum Owner { Missing, NotAFile, Snp { stale: bool }, SnpV1,
         PreCommit { era: Option<u8> }, Prek, Lefthook, Foreign }
-    pub const SNP_SCRIPT_ID: &str = "405bd8559925d194c1d22af6ef66282e"; // template v2 (ADR-105)
-    pub const SNP_PRIOR_IDS: &[&str];                                   // [v1: "5bb9bd89cf6c92c58fee7677ceaf4fc3"]
+    pub const SNP_SCRIPT_ID: &str = "b5aab319837cfd7b570aecfbefd9e801"; // template v3 (ADR-135)
+    pub const SNP_PRIOR_IDS: &[&str]; // [v1: "5bb9bd89cf6c92c58fee7677ceaf4fc3", v2: "405bd8559925d194c1d22af6ef66282e"]
     pub fn classify(path: &Path) -> io::Result<Owner>;
     impl Owner { pub fn is_manager(&self) -> bool; pub fn owner_name(&self) -> Option<&'static str>; } // "pre-commit" | "prek" | "snp 1.x"
 }
@@ -1663,6 +1711,29 @@ pub fn load_config(src: &ConfigSource, o: &LoadOpts<'_>) -> Result<Config, Confi
 /// `display` is converted with `to_string_lossy` for cfgv's `load_from_filename_with(…, display_filename: Option<&str>, …)`.
 pub fn load_manifest(path: &Path, display: &OsStr, o: &LoadOpts<'_>) -> Result<Manifest, ConfigError>;
 pub fn load_manifest_bytes(bytes: &[u8], display: &OsStr, o: &LoadOpts<'_>) -> Result<Manifest, ConfigError>; // Tier A data
+/// Check-only halves of `load_config` / `load_manifest`: read, YAML-load, validate with warnings, no defaults and no
+/// model; `Ok` = the checked, un-defaulted value. They fail, warn and print FutureWarnings exactly when the full load
+/// does (the defaults and the conversion are infallible and silent). Used by non-strict `validate-config` /
+/// `validate-manifest`; `--strict`/`--portable` keep `load_config`.
+pub fn check_config(src: &ConfigSource, o: &LoadOpts<'_>) -> Result<cfgv::Value, ConfigError>;
+pub fn check_manifest(path: &Path, display: &OsStr, o: &LoadOpts<'_>) -> Result<cfgv::Value, ConfigError>;
+pub fn check_manifest_bytes(bytes: &[u8], display: &OsStr, o: &LoadOpts<'_>) -> Result<cfgv::Value, ConfigError>;
+/// gc's projections of a checked value (§5.6): what `Config::repos` / `Manifest::hooks` hold for the keys gc reads.
+/// `convert::repo_config` and `config_repos` share one `repo:` classifier (local / meta / builtin only with the
+/// extensions / remote); local and manifest hooks default `additional_dependencies` to `[]`, a remote config hook keeps
+/// its own (`None` = the manifest's); `ManifestFacts::deps` keeps the last duplicate id like `Manifest::get`.
+pub mod facts {
+    pub use cfgv::Value;
+    #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub enum RepoFacts<'a> {
+        Remote { repo: &'a str, rev: &'a str, hooks: Vec<HookFacts<'a>> },
+        Local { deps: Vec<Vec<Arc<str>>> }, Meta, Builtin,
+    }
+    #[derive(Debug, Clone, PartialEq, Eq)] pub struct HookFacts<'a> { pub id: &'a str, pub deps: Option<Vec<Arc<str>>> }
+    #[derive(Debug, Clone, PartialEq, Eq, Default)] pub struct ManifestFacts<'a> { pub hooks: Vec<(&'a str, Vec<Arc<str>>)> }
+    impl ManifestFacts<'_> { pub fn deps(&self, id: &str) -> Option<&[Arc<str>]>; }
+    pub fn config_repos(checked: &Value, ext: super::ExtMode) -> Vec<RepoFacts<'_>>;
+    pub fn manifest_hooks(checked: &Value) -> ManifestFacts<'_>;
+}
 /// pre-commit's schemas reproduced item by item with cfgv 0.3 MapItem impls (01 §3–§5). `repo: builtin` validation
 /// (no `rev`; `entry`/`additional_dependencies` forbidden; `language` absent or `system`) is part of the config schema
 /// as cfgv MapItems with cfgv-style contexts and messages (ADR-070); the unknown-id check stays in snp-repo's merge.
@@ -1694,7 +1765,12 @@ pub mod schema {
     pub verbose: bool, pub extra_keys: Vec<Arc<str>>, pub ext: ext::HookExt,
 }
 #[derive(Debug, Clone)] pub struct Manifest { pub hooks: Vec<HookDef> }   // by-id lookup: last duplicate wins
-impl Manifest { pub fn get(&self, id: &str) -> Option<&HookDef>; }
+impl Manifest { pub fn get(&self, id: &str) -> Option<&HookDef>;
+    /// The `Manifest` the load returns for hooks whose defaulted values are these; checks nothing (the caller proves
+    /// equality with the load: the Tier A models).
+    pub fn from_defaulted<'a>(hooks: impl IntoIterator<Item = DefaultedHook<'a>>) -> Self; }
+/// One manifest hook after the schema defaults as borrowed values (every key; `language`, `stages` as written).
+#[derive(Debug, Clone, Copy)] pub struct DefaultedHook<'a> { pub id: &'a str, /* … */ pub verbose: bool }
 #[derive(Debug)] pub enum MergeError {   // `[ERROR] …` + exit 1 (01 §6.4)
     UnknownId { id: Arc<str>, repo: Arc<str> }, LanguageVersionOnEnvless { id: Arc<str>, lang: LanguageId },
     DepsOnEnvless { id: Arc<str>, lang: LanguageId } }
@@ -1930,7 +2006,8 @@ use snp_git::{Git, RepoInfo, ZList};
 #[derive(Debug)] pub struct StashCtx { pub git: Git, pub info: RepoInfo, pub patches_dir: PathBuf, pub printer: Arc<Printer>,
     pub cancel: CancelToken, pub clock: Arc<dyn Clock>, pub signals: Option<Arc<snp_proc::signals::SignalGuard>>,
     pub lock_timeout: std::time::Duration /* SNP_STASH_LOCK_TIMEOUT, default 60 s, ≤ 1 h */, pub verify: bool,
-    pub old_git: bool /* caps.version < 2.19: refuse to stash (D-DATA-17) */ }
+    pub old_git: bool /* caps.version < 2.19: refuse to stash (D-DATA-17) */, pub report_recovery: bool /* ADR-083 */,
+    pub checkout_notice: Option<std::sync::mpsc::SyncSender<()>> /* () right before step 8's checkout, else dropped (ADR-133) */ }
 #[derive(Debug, Clone, PartialEq, Eq)] pub enum Stashed { Nothing, Patch(PathBuf) }
 #[derive(Debug)] pub struct StashGuard { /* state machine; restores on drop (panic path only, via RunState::drop) */ }
 pub fn enter(cx: StashCtx) -> Result<StashGuard, Failure>;
@@ -1964,6 +2041,9 @@ pub mod diff_oracle {   // ADR-027
     #[derive(Debug)] pub struct DiffOracle { /* mode, last DiffFingerprint, snapshot: stats + diff-input sources + racy hashes */ }
     #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum Change { Unchanged, Changed }
     #[derive(Debug, Clone, Copy, PartialEq, Eq)] #[non_exhaustive] pub enum Elision { NotProven, Elided, Verified, Mismatch }
+    /// ADR-134: passes run, passes that proved, proven diffs the verify mode found non-empty.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)] #[non_exhaustive] pub struct ProofStats { pub passes: u32, pub proven: u32,
+        pub mismatches: u32 }
     impl DiffOracle {
         /// Stat mode only on Unix, `stat_oracle_safe` filesystems, ≤ 16_384 index entries, no `attr.tree` /
         /// `GIT_ATTR_SOURCE`, SNP_DIFF_MODE != "git", and `tracked` + `origins` supplied by the step-6 fan-out (no extra
@@ -1982,9 +2062,21 @@ pub mod diff_oracle {   // ADR-027
         /// ADR-106: cleared at the start of every after_hook/after_native.
         pub fn guard_index_trust(&mut self, valid: Arc<std::sync::atomic::AtomicBool>);
         /// ADR-119: a lazy baseline in Stat mode becomes EMPTY when the snapshot (taken here) proves the stash's checkout
-        /// of `checked_out` left `git diff` empty; `verify` takes the real diff instead and reports a mismatch.
+        /// of `checked_out` left `git diff` empty; `system` is `git var`'s answer (ADR-133: a named file joins the inputs
+        /// and the proof runs off Linux too); `verify` takes the real diff instead and reports a mismatch.
         pub fn elide_checkout_baseline(&mut self, checked_out: &snp_git::ZList, config: &snp_git::CheckoutConfig,
                                        verify: bool) -> Elision;
+        /// ADR-132: whether the next comparison's base is known (supplied, taken, and not made stale since).
+        pub fn baseline_known(&self) -> bool;
+        /// ADR-132: the baseline a gated hook's first writer took becomes the hook's comparison base.
+        pub fn adopt_baseline(&mut self, baseline: snp_git::DiffFingerprint);
+                                       system: Option<&snp_git::SystemAttributes>, verify: bool) -> Elision;
+        /// ADR-134: in Git mode, every `git diff` taken while the last fingerprint is empty or not taken yet is first
+        /// decided by the index-stat proof (EMPTY, no spawn, when it holds); `config` is query G's listing; `verify`
+        /// (`SNP_VERIFY_INDEX_PROOF=1`) takes the real diff anyway and counts a non-empty one. Returns whether it armed.
+        pub fn enable_index_proof(&mut self, info: &snp_git::RepoInfo, env: &snp_core::env::Env,
+                                  pool: Arc<snp_proc::pool::JobPool>, config: &snp_git::ConfigListing, verify: bool) -> bool;
+        pub fn proof_stats(&self) -> Option<ProofStats>;
     }
 }
 ```
@@ -2001,7 +2093,45 @@ pub use snp_argparse::columns;
 #[derive(Debug)] pub struct HookCx<'a> { pub root: &'a Path, pub env: &'a Env, pub git: &'a snp_git::Git, pub color: bool,
     pub epoch: Epoch, pub windows: bool, pub columns: usize, pub facts: &'a snp_git::pch_facts::PchFacts,
     /// Checked between files; on cancellation a native returns early and the runner reports `Interrupted`.
-    pub cancel: &'a CancelToken }
+    pub cancel: &'a CancelToken,
+    /// The file-content cache of the window of consecutive in-process hooks (ADR-131): `read_all` fills it, `read_head`
+    /// and end-of-file-fixer read it, every native write evicts first; `None` without one.
+    pub cache: Option<&'a ContentCache>,
+    /// The hook's deferred baseline (ADR-132): `Some` when the runner did not take the diff oracle's baseline before
+    /// it; the first `writer()` call takes it.
+    pub gate: Option<&'a WriteGate> }
+/// ADR-132: natives write the work tree only through the `Writer` token (a crate-local clippy.toml bans, outside
+/// `writer`, the `std::fs` mutators, incl. the mode/time setters on a read-only `File`, Unix `chown`, and every write
+/// API of `snp_os`; `cargo xtask lint-guards` keeps that file in force; a subprocess or another crate's write API is
+/// outside the lint and covered by the doc rule: call `writer()` first). With a gate, the first call runs
+/// the real `git diff` (a `OnceLock`: concurrent writers wait for it, read-only partitions keep running; the git child
+/// takes no pool permit); Err = that diff failed, nothing may be written (the runner reports the failure).
+pub use writer::{WriteGate, Writer};
+pub mod writer {
+    #[derive(Debug)] pub struct WriteGate { /* Git + OnceLock<Result<DiffFingerprint, Failure>> */ }
+    impl WriteGate { pub fn new(git: &snp_git::Git) -> Self; pub fn fired(&self) -> bool;
+                     pub fn into_baseline(self) -> Option<Result<snp_git::DiffFingerprint, Failure>>; }
+    #[derive(Debug)] pub struct Writer<'c, 'a> { /* &'c HookCx<'a> */ }
+    impl<'a> HookCx<'a> { pub fn writer(&self) -> Result<Writer<'_, 'a>, PyExc>; }
+    /// Each evicts the name's content-cache entry first (ADR-131).
+    impl Writer<'_, '_> { pub fn rewrite(&self, name: &OsStr, bytes: &[u8]) -> std::io::Result<()>;
+                          pub fn append_newline(&self, name: &OsStr) -> std::io::Result<()>;
+                          pub fn truncate(&self, name: &OsStr, len: u64) -> std::io::Result<()>; }
+}
+/// ADR-131: one window's validated file contents (Unix, `stat_oracle_safe` work tree; `new` answers `None` elsewhere).
+pub use content_cache::ContentCache;
+pub mod content_cache {
+    pub const PER_FILE_CAP: usize; pub const TOTAL_CAP: usize; pub const RACY_WINDOW: std::time::Duration;
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)] pub struct Stats { pub hits: u64, pub stale: u64,
+        pub fills: u64, pub refused: u64 }
+    #[derive(Debug)] pub struct ContentCache { /* … */ }
+    impl ContentCache { pub fn new(root: &Path, verify: bool) -> Option<Self>; pub fn stats(&self) -> Stats;
+                        pub fn mismatches(&self) -> u64; }
+    /// The natives that read through the cache (a window needs two readers, `pygrep` hooks included).
+    pub fn reads_contents(id: &str) -> bool;
+    /// Validated hits of every cache of the process (a counting probe).
+    pub fn process_hits() -> u64;
+}
 #[derive(Debug, Clone, Default)] pub struct Outcome { pub code: i32, pub output: Vec<u8>, pub modified: Vec<RepoPath>,
     pub crashed: bool, pub reads_only: bool }
 pub trait NativeHook: Send + Sync + 'static {
@@ -2056,6 +2186,9 @@ pub mod pygrep {   // 04a §8.4/§12; compiled once per hook per run (01 Addendu
     /// changes the parse, ADR-072); the pattern is recompiled through `cache` only when the parse differs from `c`.
     pub fn run_partition(c: &Compiled, argv: &[&OsStr], root: &Path, cache: &snp_pyre::RegexCache,
                          cancel: &CancelToken) -> super::Outcome;
+    /// `run_partition` reading the files through a window's content cache (ADR-131).
+    pub fn run_partition_cached(c: &Compiled, argv: &[&OsStr], root: &Path, cache: &snp_pyre::RegexCache,
+                                cancel: &CancelToken, contents: Option<&super::ContentCache>) -> super::Outcome;
 }
 pub mod fail { pub fn output(entry: &str, files: &[&[u8]]) -> Vec<u8>; }   // f'{entry}\n\n' + '\n'.join(files) + '\n'
 pub mod hazmat {   // ADR-006
@@ -2266,10 +2399,14 @@ inherit the workspace's version, MSRV and lints, and keep their library names, s
 
 cfgv (`crates/snp-cfgv`, imported from cfgv-rs 0.3.0 at `6a04a30`; no default features, the optional `serde` feature
 is used only by its tests and fuzz target; the `regex`-crate-backed `CheckFn::check_regex()` was dropped, ADR-116):
-* `cfgv::{Value, Map (= IndexMap<Value, Value>), Set (= IndexSet<Value>), StrKey, BigInt, Date, DateTime, Schema,
-  Validator, MapItem, Cx, CheckFn, RegexCheck, ValidationError, validate_with, apply_defaults_owned,
-  load_from_filename_with}`. `StrKey(&str)` looks a `str` key up by hash without building a `Value` (it hashes
-  through the same function as `Value::String` and is `Equivalent` only to an equal `Value::String`).
+* `cfgv::{Value, Map (= IndexMap<Value, Value, ValueState>), Set (= IndexSet<Value, ValueState>), ValueState,
+  HashedKey, StrKey, BigInt, Date, DateTime, Schema, Validator, MapItem, Cx, CheckFn, RegexCheck, ValidationError,
+  validate_with, apply_defaults_owned, load_from_filename_with}`. `StrKey(&str)` looks a `str` key up by hash without
+  building a `Value` (it hashes through the same function as `Value::String` and is `Equivalent` only to an equal
+  `Value::String`). `ValueState` is the zero-sized builder of every `Map`/`Set` (SipHash-1-3 keyed once per process;
+  maps are built with `Map::default()`), so `HashedKey::new(key)` hashes a schema key once and its lookups
+  (`get`, `get_full`, `get_mut`, `set_default`, …) reuse that hash in every map (ADR-111); snp-config's items hold their
+  keys as `HashedKey`s and reach a built-in item's key through `Validator::hashed_key`.
   `Value` already has `Null, Bool, Int, BigInt, Float, String, Bytes, List, Tuple, Map, Set, Date, DateTime` — no new
   variant is requested (the compatibility proposal's `Value::Opaque` is unnecessary).
 * pre-commit's custom validators (`StagesMigration[NoDefault]`, `LanguageMigration[Required]`, `WarnMutableRev`,
@@ -2286,8 +2423,12 @@ is used only by its tests and fuzz target; the `regex`-crate-backed `CheckFn::ch
   including OverflowError/ValueError/RecursionError (D-CRASH-04), renders the single leaf `'<repr>' is not a valid
   python regex`. `check_regex_try_with` + `ValidationError::uncaught` (which could reproduce pre-commit's exit-3
   crash) is deliberately unused.
-  FutureWarnings are not routed through cfgv: snp-config calls `snp_pyre::validate` on every `files`/`exclude` after
-  validation and emits one stderr line per distinct (pattern, warning) through `DiagSink` (01 Addendum §A.4).
+  FutureWarnings are not routed through cfgv: snp-config collects every `files`/`exclude` that passed its check and
+  afterwards emits one stderr line per distinct (pattern, warning) through `DiagSink` (01 Addendum §A.4), for the
+  patterns whose `Options::CONFIG` compile succeeds. A config compiles each pattern through the run's cache (the load
+  runs beside discovery and warms the cache for the filters); a manifest first parses it with `snp_pyre::validate`
+  (the compile's own parse, same flags, same warnings) and compiles only a pattern that warns, so the unused patterns
+  of a cloned or builtin manifest are never compiled.
 * Extension keys are additional `MapItem`s appended after pre-commit's items and added to the known-key lists of the
   `WarnAdditionalKeys` items, so error precedence and every warning for pre-commit keys is unchanged.
 
@@ -2444,7 +2585,7 @@ a partial set cached by an earlier hook that needed only the name tier. A run to
   only filters that reference no tag at all.
 * **git-mode fast path.** When the file list is the staged list *after* the stash (worktree == index), on Unix, with
   `core.fileMode=true` and `core.symlinks=true`, `Meta::from_git_mode_with(mode, PythonCompat)` gives kind/executable
-  with zero syscalls (`ls-files -s -z`, or the staged-only `diff --staged --raw -z` when Stat mode is impossible, ran
+  with zero syscalls (`ls-files -s -v -z`, or the staged-only `diff --staged --raw -z` when Stat mode is impossible, ran
   in the fan-out, §3.1). `set_trusted_modes` has no production caller yet.
 * **Trusted index modes on `--all-files` (ADR-106).** When the list is `git ls-files` (`--all-files`, no stage, ref or
   `--files` override), on Unix, some selected hook can execute and no selected filter references `executable` or
@@ -2536,17 +2677,17 @@ startup Env (captured once in main, minus __PYVENV_LAUNCHER__/PYTHONEXECUTABLE)
 | 3 | `GitExe::resolve` (cached version, 02 G.4), then `Git::discover` (one combined `rev-parse`; it needs `caps` for the 2.19–2.30 fallback) → FatalError texts unchanged | 02 §3, G.4 | never refuses here; < 2.31 warns once on stderr (D-DIAG-01); a stash on < 2.19 is refused at step 9 (D-DATA-17). `run` meanwhile discovers and loads the config at the invocation cwd on a thread (note-free, warnings buffered); the load is kept only when the root is the cwd and step 4 resolves the byte-equal path, otherwise it and its warnings are dropped (ADR-104) |
 | 4 | Without `-c`: `snp_config::discover` picks the config in the root (`.snp.yaml`, `.snp.yml`, `.pre-commit-config.yaml`; compat brand: `.pre-commit-config.yaml` first; ADR-087), its stderr note once; then `_adjust_args_and_chdir` as a **pure function** (`ospath::abspath/relpath`, explicit cwd; no chdir) | 02 §3, 15 V-ADJ | cross-drive relpath keeps the absolute path (D-PLAT-06); the same `snp_run::common::resolve_config` / `snp_cmd::frame::git_frame` serves every git command |
 | 5 | `store.mark_config_used(realpath(cfg), project_root)` (best effort, skipped if read-only / store absent); stash recovery scan when the worktree lock is free and the run is not nested (§4.6); the `run` hint (TTY only, §9.7) | 03 §7.8 | never creates the store just for tracking |
-| 6 | **Git fan-out** (read-only, scoped threads, same argv as pre-commit), stashing runs only: A `ls-files --unmerged` on the main thread, B `diff --quiet --no-ext-diff <cfg>` on a spawned thread; another spawned thread reads + validates the config **speculatively** with warnings buffered (ADR-047), unless step 3 already did. F `ls-files -s -z` and G `config --list --show-origin -z` (the DiffOracle inputs) are speculated here only when the run stashes and Stat mode is possible (Unix, index-header count ≤ 16 384, no `SNP_DIFF_MODE=git`/`GIT_ATTR_SOURCE`): first, at the top of step 6, when the config from step 3 is kept and has ≥ 3 process-hook candidates, or — with 1–2 candidates or no config yet — on a small tree (≤ 256 entries, ≥ 3 CPUs, worktree and git dir `stat_oracle_safe`); F's strictly parsed stages then also answer A (any failure of F asks A itself, ADR-104). Otherwise, without a config yet, after the load when it has ≥ 3 candidates (ADR-084(6)); else at step 14. Early F is dropped when the index file's stamp (dev, ino, size, mtime, ctime) changed by the end of step 9 (another run's `git add` during the lock wait, or the stash's own rewrite) and asked again at step 14, also for one or two process hooks when the dropped F described a small tree; early G, which does not read the index, is dropped only when the worktree lock was contended (ADR-117). The ITA query C is not part of the fan-out: the stash asks it serially at step 9. The staged list E is taken at step 14 (`side_queries`) | 02 §5 | results consumed strictly in pre-commit's order; E/F/G skipped when unused (P17, all-files, files) |
+| 6 | **Git fan-out** (read-only, scoped threads, same argv as pre-commit), stashing runs only: A `ls-files --unmerged` on the main thread, B `diff --quiet --no-ext-diff <cfg>` on a spawned thread; another spawned thread reads + validates the config **speculatively** with warnings buffered (ADR-047), unless step 3 already did. F `ls-files -s -v -z` and G `config --list --show-origin -z` (the DiffOracle inputs) are speculated here only when the run stashes and Stat mode is possible (Unix, index-header count ≤ 16 384, no `SNP_DIFF_MODE=git`/`GIT_ATTR_SOURCE`): first, at the top of step 6, when the config from step 3 is kept and has ≥ 3 process-hook candidates, or — with 1–2 candidates or no config yet — on a small tree (≤ 256 entries, ≥ 3 CPUs, worktree and git dir `stat_oracle_safe`); F's strictly parsed stages then also answer A (any failure of F asks A itself, ADR-104). Otherwise, without a config yet, after the load when it has ≥ 3 candidates (ADR-084(6)); else at step 14. Early F is dropped when the index file's stamp (dev, ino, size, mtime, ctime) changed by the end of step 9 (another run's `git add` during the lock wait, or the stash's own rewrite) and asked again at step 14, also for one or two process hooks when the dropped F described a small tree; early G, which does not read the index, is dropped only when the worktree lock was contended (ADR-117). The ITA query C is not part of the fan-out: the stash asks it serially at step 9. The staged list E is taken at step 14 (`side_queries`) | 02 §5 | results consumed strictly in pre-commit's order; E/F/G skipped when unused (P17, all-files, files) |
 | 7 | Preflight in exact order: unmerged → from/to-ref pairing → unstaged config → commit-msg filename → `_PRE_COMMIT_SKIP_POST_CHECKOUT` early 0 | 02 §5 | — |
 | 8 | `run_env` = startup ⊕ run vars | 02 §6.1 | values are `OsString` (non-UTF-8 refs survive on Unix) |
-| 9 | **Stash guard** (`stash = !all_files && files.is_empty()` and no stdin files); on git < 2.19 a non-empty stash is refused before any mutation (D-DATA-17) | 02 §7, §4 here | the guard is the only owner of worktree mutations until restore |
+| 9 | **Stash guard** (`stash = !all_files && files.is_empty()` and no stdin files); on git < 2.19 a non-empty stash is refused before any mutation (D-DATA-17). On the Stat-capable path with git ≥ 2.42 a scoped thread waits for the stash's `checkout_notice` (sent right before its checkout, dropped unsent otherwise) and then asks `git var GIT_ATTR_SYSTEM` for step 16's proof, overlapped with the checkout (ADR-133) | 02 §7, §4 here | the guard is the only owner of worktree mutations until restore |
 | 10 | Config: the speculative load of step 6 is used. It is exact: when B reports an unstaged config, step 7 has already exited 1, so no stash runs with a config the stash could change (ADR-047, ADR-104). Buffered warnings printed now (pre-commit's position). Overlay root items (`overlay::apply_root`, §8.4) | 02 §8 | exact by construction (S13) |
 | 11 | `resolver.all_hooks` (snp-repo): eligible clones prefetched in the background, `Initializing` lines and foreground clones in config order at pre-commit's moment; manifest; merge + overlay hook patches; language default probes; fast-path decisions G1–G6 incl. G5 through `ResolveCtx::preflight` and the clone of delegated Tier A repos | 03 §8.1, 09 §6 | per-repo locks; shared store lock held from first repo use until exit |
 | 12 | Select by `hook` id/alias (snp brand: several ids) and stage (+ `--group` extensions); `No hook with id …` → 1 | 02 §8 | stash restored on this early return (single exit) |
 | 13 | `SKIP` (+ `SNP_SKIP_GROUPS`, overlay `skip`, `skip/only` conditions) → `to_install` | 02 §6.2, 15 V-SKIP | `strip_fsbytes` semantics for non-UTF-8 SKIP |
 | 14 | `resolver.install_envs(to_install)` incl. delegated fast-path hooks and virtual install triplets | 03 §8.4, ADR-032 | `check_support` before any FS mutation (04b §5.1) |
 | 15 | `cols` from **all** selected hooks (skipped included); file selection (§3.2); `[INFO] Checking merge-conflict files only.`; global filter; `retain_lexists` — the classifier is built here, eagerly, when some selected hook reads files (`!always_run` ∨ `pass_filenames`) or `--from-ref`/`--to-ref` are set (P17: never otherwise; then only the merge-conflict notice is decided). A clean `--all-files` run whose filters allow it lists with `ls-files -s -v -f -z`, takes the before-diff here and trusts the index modes instead of `lstat`ing every file (§2.3, ADR-106) | 02 §9–10 | — |
-| 16 | Baseline digest (ADR-078): **elided or lazy** (at pre-commit's position). **Warm path** (no clone, install or download in steps 11–14, counted by `Resolve::store_work` and the run's counting fetcher, and steps 11–14 under 250 ms; ADR-104): `DiffFingerprint::EMPTY` when the stash step saw `diff-index` rc 0 and stashed nothing, or (ADR-119) when it checked out the patch's files and (on Linux) the oracle's Stat-mode snapshot proves the checkout left `git diff` empty (plain configuration from G, no `core.attributesFile` or `attr.tree` key in G, no attributes file in the worktree or the index, no `post-checkout`/`post-index-change` hook, every checked-out path a regular file of its own with its index mode's executable bit, no intent-to-add clearing). Otherwise one `git diff` taken lazily after `install_envs`, before the first hook that needs it, pre-commit's position (an IDE autosave during an install must count as pre-existing, not as a hook modification); a trust-capable `--all-files` run took it at step 15 (ADR-106) | 02 §11.2 | `SNP_VERIFY_BASELINE=1` (CI) takes the real diff and asserts equality |
+| 16 | Baseline digest (ADR-078): **elided or lazy** (at pre-commit's position). **Warm path** (no clone, install or download in steps 11–14, counted by `Resolve::store_work` and the run's counting fetcher, and steps 11–14 under 250 ms; ADR-104): `DiffFingerprint::EMPTY` when the stash step saw `diff-index` rc 0 and stashed nothing, or (ADR-119) when it checked out the patch's files and the oracle's Stat-mode snapshot proves the checkout left `git diff` empty (plain configuration from G, no `core.attributesFile` or `attr.tree` key in G, no attributes file that sets or values `text`/`crlf`/`eol`/`ident`/`filter`/`working-tree-encoding` (`text=auto` allowed with `core.eol` unset/`lf`/`native`), no `.gitattributes` in the patch, every tracked `.gitattributes` unflagged in F's tags and present (ADR-133), no `post-checkout`/`post-index-change` hook, every checked-out path a regular file of its own with its index mode's executable bit, no intent-to-add clearing). The system attributes file is the one `git var GIT_ATTR_SYSTEM` names (git ≥ 2.42, asked overlapped with the stash's checkout, on its notice, so a run that checks nothing out never asks; per run; ADR-133); without that answer the proof runs on Linux only (ADR-119's prefix heuristic). Otherwise one `git diff` taken lazily after `install_envs`, before the first hook that needs it, pre-commit's position (an IDE autosave during an install must count as pre-existing, not as a hook modification), answered without a spawn in Git mode when the index-stat proof holds (§3.7 item 4, ADR-134; G is then asked beside step 14's installs); a trust-capable `--all-files` run took it at step 15 (ADR-106) | 02 §11.2 | `SNP_VERIFY_BASELINE=1` (CI) takes the real diff and asserts equality; `SNP_VERIFY_INDEX_PROOF=1` cross-checks the index-stat proof |
 | 17 | Schedule and execute (§3.4–3.7); print in config order (§3.9) | 02 §11 | one JobPool; cancellation stops new work |
 | 18 | `fail_fast` (config ∨ hook ∨ `--fail-fast`): stop after the current failing hook (bucket) | 02 §11.2 | later hooks print nothing |
 | 19 | `--show-diff-on-failure` (inside the stash) | 02 §15 | `git --no-pager diff …` inherits stdout (Printer flushed first) |
@@ -2645,8 +2786,18 @@ startup Env (captured once in main, minus __PYVENV_LAUNCHER__/PYTHONEXECUTABLE)
   execute. It takes one pool permit before any fact slot (lock order: permit, then slot; with N = 1 the natives simply
   wait for it), checks the cancel token and a stop flag between fetches, and drops every result and error: the hooks
   ask again and are answered from the cache or compute exactly as without it. It starts after the diff oracle's
-  baseline and is joined before any user process hook starts and at the end of the loop (before show-diff,
+  baseline (under ADR-132's deferred baseline, §3.7 item 5, before it: the first native write's `git diff` may then
+  overlap a fact's git child; both only read the repository) and is joined before any user process hook starts and at the end of the loop (before show-diff,
   `stage_fixed` and the restore), so no snp git ever runs beside a user process hook.
+* **File-content cache (ADR-131):** a window of consecutive buckets that each hold one in-process hook, with two or
+  more unskipped readers (`content_cache::reads_contents` natives, `pygrep`), gets one `ContentCache` on Unix with a
+  `stat_oracle_safe` work tree, made at its first bucket and dropped at the first bucket after it, before that
+  bucket's hooks run: never beside a process hook, never in a bucket of several (concurrent) hooks. `read_all` and
+  pygrep fill it only with a regular file on the work tree's device whose mtime and ctime are older than `t0 − 2 s`
+  (`t0` taken before the `open`), whose bytes equal the stat's size, within 1 MiB per file and 16 MiB in all; a hit
+  costs one `statx(path)` compared on device, inode, size, mtime, ctime and type, and any difference reads the file as
+  before; every native write evicts its name first. Exact under ADR-027's assumptions; `SNP_VERIFY_FILE_CACHE=1`
+  re-reads every hit.
 
 ### 3.5 xargs partitioning and Python-exact shuffle
 
@@ -2689,6 +2840,9 @@ run before the loop and after each *executed* hook. snp keeps a `DiffFingerprint
 O(1) memory) and decides per executed hook with `snp_stash::diff_oracle::DiffOracle`:
 
 1. **Native hook with `reads_only`** (pygrep, fail, meta, check-* pre-commit-hooks): digest unchanged — no spawn.
+   An external edit during such a hook is not charged to it: the next comparison (a native that writes, a process
+   hook) sees it, and with neither it is never reported (a race-only difference). Under ADR-132's deferred baseline
+   (item 5) an edit before a hook's first write is absorbed into that hook's baseline.
 2. **Native fixer**: reports the paths whose bytes it changed. None → unchanged. Some → `files_modified` decided by
    09 §6.7 (some path tracked ∧ no `text`/`eol`/`working-tree-encoding`/`filter`/`ident` attribute, no
    `core.autocrlf`/`core.safecrlf`, no assume-unchanged/skip-worktree on it); with a caveat that hook falls back to a
@@ -2704,7 +2858,8 @@ O(1) memory) and decides per executed hook with `snp_stash::diff_oracle::DiffOra
      files, the system config (unless `GIT_CONFIG_NOSYSTEM`), every `include.path`/`includeIf` target, the
      `core.attributesFile` target or — when it is unset — the default attributes file
      (`$XDG_CONFIG_HOME/git/attributes`, else `~/.config/git/attributes`), and the system `/etc/gitattributes` and
-     `$(prefix)/etc/gitattributes`, the prefix both of the `git` found on `PATH` and of its resolved target (ADR-119)
+     `$(prefix)/etc/gitattributes`, the prefix both of the `git` found on `PATH` and of its resolved target (ADR-119),
+     and after a stash's checkout the file `git var GIT_ATTR_SYSTEM` names (ADR-133)
      (from `git config --list --show-origin -z`, fan-out query G, taken once per run and re-taken when any config
      file's stat changes). `GIT_CONFIG_*`/`GIT_DIR`-style env cannot change during a run (snp's env snapshot is
      immutable and hooks cannot modify it). An input is compared by its `lstat` and by its `stat` (a symlink's
@@ -2719,12 +2874,34 @@ O(1) memory) and decides per executed hook with `snp_stash::diff_oracle::DiffOra
      randomized differential test (random tree edits, attribute/config edits, touch-only, same-size rewrites with
      restored mtimes) against real `git diff`, and `SNP_DIFF_MODE=git` exists as an escape hatch.
 4. **`DiffMode::Git`** (Windows, network filesystems, > 16 384 tracked files, or `SNP_DIFF_MODE=git`): pre-commit's
-   algorithm verbatim. On Windows stable std exposes no ctime/file-id, so no stat oracle is attempted.
+   algorithm verbatim. On Windows stable std exposes no ctime/file-id, so no stat oracle is attempted. On Unix
+   allow-listed filesystems the **index-stat proof** (ADR-134) decides first, whenever the last fingerprint is empty or
+   not taken yet: when the index (`GIT_INDEX_FILE`'s, read strictly by `snp_git::index_file`, its stamp unchanged from
+   before the read to the end of the pass) has only stage-0 entries and no intent-to-add entry, and every entry that is
+   not assume-unchanged, skip-worktree or a gitlink is non-racy (mtime second below the index file's), not smudged
+   (size 0 only for the empty blob over an empty file) and matches its root-relative `lstat` strictly (kind and owner
+   x bit, mtime and ctime s+ns, inode/uid/gid truncated to 32 bits, size truncated to 32 bits and never a non-zero
+   multiple of 4 GiB; not `st_dev`), and every leading directory is a directory, `git diff` prints nothing and writes
+   nothing: the fingerprint is EMPTY with no spawn. Its configuration gate comes from query G (fsmonitor, ignoreStat,
+   sparse checkout off, no `core.worktree`, a known object format; no fsmonitor test variable), asked beside step 14
+   for a run with a process hook and no Stat mode, and is re-checked when a config file's stamp changes. The pass runs
+   on the `JobPool` (cores cap, at most 8 threads) and stops at the first doubt; any doubt runs the real `git diff`.
+   `SNP_VERIFY_INDEX_PROOF=1` takes the real diff anyway and reports a non-empty one on stderr.
 5. **Baseline** (§3.1 step 16): on the warm path (no clone, install or download, tracked in code, ADR-104)
    known-empty after `diff-index` rc 0 in stash mode, or after the stash's checkout when the Stat-mode snapshot proves
-   it left `git diff` empty (ADR-119); otherwise one baseline `git diff`, taken lazily after
+   it left `git diff` empty (ADR-119, ADR-133); otherwise one baseline `git diff`, taken lazily after
    `install_envs` (pre-commit's position), never overlapped with resolution; a trust-capable `--all-files` run takes
-   it at step 15, beside its tagged listing (ADR-106). Skipped and no-files hooks reuse the previous digest. Never
+   it at step 15, beside its tagged listing (ADR-106). **Deferred baseline (ADR-132):** when none of those supplied
+   it and every selected, unskipped hook runs in process (native, meta, `pygrep`, `fail`) and reports its
+   modifications exactly, no bucket holds two unskipped hooks and no hook has an active `stage_fixed` (a static gate
+   decided before the loop), the baseline is not taken before each hook while it is unknown: the hook's first native
+   write takes it through `HookCx::writer` (no byte is written before that diff ends), it becomes the hook's
+   comparison base, and a hook that writes nothing takes no `git diff` (B6 takes none); the show-diff gate takes it at
+   the end when no hook did. Any process hook keeps the position above, even one that ends up with no files. Skipped
+   and no-files hooks reuse the previous digest. Never `git diff --quiet` (CRLF and stat-dirty quirks).
+   `install_envs` (pre-commit's position), never overlapped with resolution, which the index-stat proof may answer
+   without a spawn in Git mode (item 4, ADR-134); a trust-capable `--all-files` run takes it at step 15, beside its
+   tagged listing (ADR-106). Skipped and no-files hooks reuse the previous digest. Never
    `git diff --quiet` (CRLF and stat-dirty quirks).
 6. **Parallel buckets** (extension): per-hook stat snapshots of each hook's input set + the bucket digest; a changed
    file is attributed to the single hook whose inputs contain it; otherwise every hook that could have caused it fails
@@ -3125,7 +3302,7 @@ directory` (snp brand) once per process, then waits (cancel observed every 50 ms
 ### 5.6 gc, clean, crash log, sweep
 
 * **gc** (exclusive; marking in `snp_cmd::gc`): read `configs-v1` (`TrackedConfig { path, project_root }`); for each
-  tracked config: `load_config` (warnings printed, parity) → mark used keys with pre-commit's `_mark_used_repos` rules
+  tracked config: `check_config` (warnings printed, parity) → mark used keys with pre-commit's `_mark_used_repos` rules
   (meta skipped, local keys by deps, remote by `(repo, rev)` and per-hook deps, manifest unreadable ⇒ unused), deriving
   every key with `RepoId::from_config(repo, tracked.project_root)` — relative local repos resolve against the recorded
   project root, never gc's cwd (ADR-075); a remote `(repo, rev)` whose manifest is loadable from the embedded Tier A
@@ -3147,6 +3324,11 @@ directory` (snp brand) once per process, then waits (cancel observed every 50 ms
   derived); sweep decides orphan repository locks from its own `repos-v1` listing taken after the retirements, skips
   `<hex32>.lock` entries by name when it walks the environments' `.snp-tools.json` sidecars, and reads no sidecar
   when no tool version is older than an hour.
+  gc loads configs and manifests check-only (`check_config`, `check_manifest`, `check_manifest_bytes` for the Tier A
+  profile): the schema defaults and the typed model add no error and no warning, so a check succeeds and warns exactly
+  when the full load does, and marking reads its keys through `snp_config::facts`. A manifest hook that ends up
+  without dependencies uses the base key and marker its repository entry already marked; only hooks with dependencies
+  derive more. The equality of the marks with the old full-load marking is a property test (`store_cmds` tests).
 * **Config tracking on a fresh store** (C1): pre-commit creates its store before `mark_config_used`. snp's store is
   lazy, so `Store::mark_config_used` on a missing store keeps `(cfg_realpath, project_root)` in memory and the first
   successful `ensure_created` of that handle (or of try-repo's copy of it) records it; a fresh-store
@@ -3275,7 +3457,10 @@ Cellar realpath); `/usr/bin/git` shim resolved once per process (14 A.7.10; its 
 
 **Detection tiers.** `is_pre_commit_hooks_url` (https/ssh/scp, `.git`, trailing `/`, case-insensitive GitHub path).
 *Tier A*: exact known tag or the full commit of a known tag → embedded per-tag manifest and epoch profile; **no clone,
-no venv, no network** when every selected hook of the repo is native. *Tier B*: any other rev or URL → the normal
+no venv, no network** when every selected hook of the repo is native. The manifest is built from the profile's
+pre-validated model (`TagProfile::model`, generated by `gen-pch-data`), not loaded: the generated-data test proves the
+model equal to the load of `manifest_yaml` for every profile, brand and extension mode, and that load prints nothing;
+a profile without a model falls back to the load. *Tier B*: any other rev or URL → the normal
 clone (blobless `--filter=blob:none` allowed), and `git ls-tree` blob ids of the module and its import closure must all
 be in `VERIFIED_BLOBS` and the manifest's `(entry, language)` must match the console-script table; else DELEGATE.
 
@@ -3504,22 +3689,31 @@ snp.`, the migration-mode text → `bug: snp's script is installed in migration 
 cfgv object names. The difftest applies `brand_map` to the (prog-patched) oracle output and then requires byte
 equality, so the snp brand is tested as exactly as the compat brand.
 
-### 9.7 Hook script (installed by `install`/`init-templatedir`; ADR-048, ADR-105)
+### 9.7 Hook script (installed by `install`/`init-templatedir`; ADR-048, ADR-105, ADR-135)
 
-11 §A.6 template v2, POSIX `sh`, LF on every OS, written atomically (replaces symlinks instead of writing through
+11 §A.6 template v3, POSIX `sh`, LF on every OS, written atomically (replaces symlinks instead of writing through
 them):
 
 ```sh
 #!/bin/sh
 # File generated by snp: https://github.com/grok-rs/snp
-# ID: 405bd8559925d194c1d22af6ef66282e
+# ID: b5aab319837cfd7b570aecfbefd9e801
 # pre-commit compat ID: 138fd403232d2ddd5efb44317e38bf03
 # prek compat ID: 182c10f181da4464a3eec51b83331688
 # snp 2.0 compat ID: 5bb9bd89cf6c92c58fee7677ceaf4fc3
 
 case $0 in */*) HERE=${0%/*} ;; *) HERE=. ;; esac
 case $HERE in *[!/]*) ;; *) HERE=/ ;; esac
-HERE="$(CDPATH= cd -- "$HERE" && pwd)"
+case $HERE/ in
+    *//*|*/./*|*/../*|./*|../*|*\\*|*:*|*'
+'/) HERE="$(CDPATH= cd -- "$HERE" && pwd)" ;;
+    /*) [ -d "$HERE" ] && [ -x "$HERE" ] || HERE="$(CDPATH= cd -- "$HERE" && pwd)" ;;
+    *) case $PWD/ in
+        *//*|*/./*|*/../*|*\\*|*:*) HERE="$(CDPATH= cd -- "$HERE" && pwd)" ;;
+        /*) if [ -d "$PWD/$HERE" ] && [ -x "$PWD/$HERE" ]; then HERE=$PWD/$HERE; else HERE="$(CDPATH= cd -- "$HERE" && pwd)"; fi ;;
+        *) HERE="$(CDPATH= cd -- "$HERE" && pwd)" ;;
+    esac ;;
+esac
 
 # start templated
 SNP_EXE=/home/u/.cargo/bin/snp
@@ -3578,7 +3772,11 @@ script never checks `SNP` when a binary exists: `hook-impl` runs the legacy hook
 (ADR-038). The `# … ID:` lines are load-bearing (pre-commit's and prek's `is_our_script`); a template change bumps the
 snp ID and moves the old one into `SNP_PRIOR_IDS`. Template v2 (ADR-105) computes `HERE` by parameter expansion
 instead of a `dirname` child (−1 fork and execve per hook run; the logical `pwd` equals v1's for every `$0` git
-builds) and keeps the v1 ID as the `snp 2.0 compat ID` line, so snp 2.0.x still classifies a v2 script as its own; a
+builds). Template v3 (ADR-135) skips v2's remaining subshell when `HERE` is clean (no empty, `.` or `..` component,
+no trailing `/`, no `:`, `\` or trailing LF) and absolute, or relative under a clean absolute `$PWD`, and the result
+passes `-d` and `-x`; every other shape runs v2's line on the original `HERE`, so the value is v2's byte for byte
+(−1 more fork per hook run for every layout git builds without trailing slashes, `../` or `:`/`\`). Both keep the
+v1 ID as the `snp 2.0 compat ID` line, so snp 2.0.x still classifies the script as its own; a
 script under the `# File generated by snp:` header with an unknown `# ID:` line and a pre-commit compat ID is
 `Snp { stale: true }`, never pre-commit's (the header alone, without a pre-commit ID, decides nothing: K5),
 and `doctor` reports a stale snp script as "an older snp hook script" (Warn, `--fix` and `install` rewrite it).
@@ -3789,6 +3987,19 @@ installed by `.github/scripts/proofs-tools.sh` (download, sha256 check, unpack; 
 rustup toolchain that is never the default); Lean is pinned by `proofs/lean/lean-toolchain` (elan) and the Lake package
 uses the core library only; `leanprover/lean-action` is pinned by commit SHA. A bump of any of them is a dedicated PR.
 
+**Artifact hardening (ADR-137).** Non-PIE builds are rejected. The release workflow's `hardening` job runs
+`cargo xtask release hardening <target> <binary>` on the binary of every archive and every wheel before anything is
+hosted; it reads the headers itself and fails on any missing protection, a wrong machine, an unknown target or a
+malformed file:
+
+| Target | Checked | Not available or not enforced |
+|---|---|---|
+| x86_64/aarch64 linux-gnu | PIE (`ET_DYN` + `DF_1_PIE`), BIND_NOW, `PT_GNU_RELRO` (full RELRO), NX stack, no text relocations | stack protector, CET (IBT/SHSTK), BTI/PAC: nightly-only in Rust 1.100, no GNU property note |
+| x86_64 linux-musl | static-pie, NX stack, no text relocations | musl does not apply `PT_GNU_RELRO` in static binaries: the RELRO range (vtables, function pointers) stays writable, at a random address |
+| aarch64 linux-musl | static **non**-PIE (`ET_EXEC`), NX stack, no text relocations | static-pie: rustc 1.100's target spec has no `static-position-independent-executables` for the triple; the gate fails when a toolchain adds it, and the expectation moves to static-pie. Nothing in the image is randomised, and RELRO is not applied (musl) |
+| x86_64/aarch64 macOS | `MH_PIE`, no `MH_ALLOW_STACK_EXECUTION` | |
+| x86_64/aarch64 Windows | `DYNAMIC_BASE`, `HIGH_ENTROPY_VA`, `NX_COMPAT`, relocations kept | |
+
 ---
 
 ## 12. Performance and memory plan
@@ -3805,7 +4016,7 @@ uses the core library only; `leanprover/lean-action` is pinned by commit SHA. A 
 | B6 | 13 pre-commit-hooks hooks, 960 files, fast path, warm | ≈ 1.5 s | ≤ 60 ms (soft) | | |
 | B7 | B6 cold (fresh store, network excluded) | tens of s | ≤ 1 s | | |
 | B8 | stash with a 10 MB unstaged patch | — | ≤ pre-commit, heap peak ≤ B3's + 2 MB (streamed patch; dhat, nightly, hard; ADR-100) | | |
-| B9 | `git commit` through the installed hook | — | ≤ B3 + 3 ms | | |
+| B9 | `git commit` through the installed hook | — | ≤ B3 + 3 ms; B9 − B9nv − B3' per round reported (information, ADR-136) | | |
 | B10 | `validate-config` with 1 000 hooks | — | ≤ 50 ms | | |
 | B11 | `gc` with 500 repos / 200 configs | — | ≤ 1 s | | |
 | B12 | peak RSS, B4 (50 k) / B6 | — | **≤ 30 MB / ≤ 25 MB (hard)** | | |
@@ -3929,7 +4140,7 @@ the package owning the prefix fills it): `pycompat_shlex_split`, `pycompat_decod
 `pycompat_ntpath`, `pycompat_rev_line` (WP-11); `argparse_parse` (both specs, WP-12); `pyre_compile_match` (str +
 bytes, WP-13); `yaml_compose_construct`, `yaml_load` (WP-14); `proc_hookcmd_split`, `proc_shebang_resolve` (WP-15);
 `net_archive_extract` (WP-16); `pyparsers_json`, `pyparsers_yamlcheck`, `pyparsers_toml`, `pyparsers_xml` (WP-17);
-`git_z_split`, `git_pre_push`, `git_merge_msg`, `git_hook_script_classify`, `git_ls_files_tagged` (ADR-106) (WP-18);
+`git_z_split`, `git_pre_push`, `git_merge_msg`, `git_hook_script_classify`, `git_ls_files_tagged` (ADR-106), `git_index_file` (ADR-134) (WP-18);
 `config_load_validate`, `config_manifest_load`, `config_migrate`, `config_revline` (WP-21); `files_classify`,
 `store_env_dir_name`, `store_marker_parse` (WP-22); `stash_journal_parse` (WP-23); `lang_python_pyvenv_cfg` (WP-24);
 `lang_docker_mountinfo` (WP-25); `pygrep_match` and `pch_p0_<hook>` (WP-26); `pch_p1_<hook>`, `pch_p2_<hook>`,

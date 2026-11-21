@@ -1,6 +1,6 @@
 [package]
 name = "snp-repo"
-description = "Hook resolution, clones, fast-path decisions and environment install orchestration"
+description = "Hook resolution, clones, fast-path decisions and environment install orchestration (internal crate of snp; no API stability promise, versions follow snp)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

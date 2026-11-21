@@ -275,8 +275,9 @@ rows (`X13-…`, ARCHITECTURE §13.8).
 ### 6.2 Exact optimisations (no observable change; each has an equivalence test)
 
 DiffOracle stat path (allow-listed filesystems only) and baseline elision on the warm path (`SNP_DIFF_MODE=git`,
-`SNP_VERIFY_BASELINE=1` cross-check; after the stash's checkout only when proven, ADR-119:
-`crates/snp-run/tests/pipeline/checkout_baseline.rs`), tiered lazy tagging and the git-mode fast path, trusted index modes on clean
+`SNP_VERIFY_BASELINE=1` cross-check; after the stash's checkout only when proven, ADR-119 and ADR-133:
+`crates/snp-run/tests/pipeline/checkout_baseline.rs`), the index-stat proof in Git mode (ADR-134, `SNP_VERIFY_INDEX_PROOF=1`
+cross-check: `crates/snp-stash/tests/behaviour/index_proof.rs`), tiered lazy tagging and the git-mode fast path, trusted index modes on clean
 `--all-files` runs (ADR-106: `crates/snp-run/tests/pipeline/trust.rs`, the randomized soundness test in
 `crates/snp-run/src/trust.rs`, `tests/differential/scenarios/run/t10-run-37-trusted-index-modes.yaml`), P17
 classifier skip, speculative config load, regex fast kinds and lazy engine compilation, spawn-free health checks,
@@ -393,7 +394,7 @@ snp-only: `SNP_HOME`, `SNP` (`0`/`false` kill switch), `SNP_BIN` (hook script), 
 `SNP_LOCAL_CONFIG`, `SNP_NO_HINTS`, `SNP_LOG`, `SNP_LOG_FILE`, `SNP_OFFLINE`, `SNP_UV`, `SNP_PYTHON_DOWNLOADS`,
 `SNP_NODE_MIRROR`, `SNP_ALLOW_INSECURE_MIRROR`, `SNP_DOCKER_ALWAYS_BUILD`, `SNP_PREFER_SYSTEM_TOOLCHAINS`,
 `SNP_ALLOW_OLD_GIT`, `SNP_STASH_LOCK_TIMEOUT`, `SNP_STASH_VERIFY`, `SNP_KILL_GRACE`, `SNP_DIFF_MODE`,
-`SNP_VERIFY_BASELINE`, `SNP_OUTPUT_BUDGET`, `SNP_PYTHON_WARNINGS`, `SNP_PYTHON_INSTALLER` (`auto`|`uv`|`pip`, ADR-073),
+`SNP_VERIFY_BASELINE`, `SNP_VERIFY_FILE_CACHE` (ADR-131), `SNP_VERIFY_INDEX_PROOF` (ADR-134), `SNP_OUTPUT_BUDGET`, `SNP_PYTHON_WARNINGS`, `SNP_PYTHON_INSTALLER` (`auto`|`uv`|`pip`, ADR-073),
 `SNP_ALLOW_FOREIGN_STORE` (D-SEC-13), `SNP_PREFETCH` (`0` disables background clone prefetch), `SNP_NODE_SHASUMS_URL` /
 `SNP_GO_JSON_URL` (https checksum manifests for mirrors). Duration variables are parsed with an upper bound; an
 invalid value is a FatalError naming the variable. Test builds only (`--features testing`, never in releases):

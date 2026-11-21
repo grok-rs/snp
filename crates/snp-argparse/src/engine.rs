@@ -379,6 +379,11 @@ impl<'a> ParserRun<'a, '_> {
         let mut after_dashdash = false;
         let mut pattern = Vec::new();
         let mut tuples = Vec::new();
+        // one entry per token; a failed reservation means ordinary growth
+        let _reserved: Result<(), std::collections::TryReserveError> =
+            pattern.try_reserve_exact(self.args.len());
+        let _reserved: Result<(), std::collections::TryReserveError> =
+            tuples.try_reserve_exact(self.args.len());
         for arg in self.args {
             if after_dashdash {
                 pattern.push(b'A');
@@ -704,6 +709,9 @@ impl<'a> ParserRun<'a, '_> {
             return Ok(Values::One(c));
         }
         let mut out = Vec::new();
+        // one value per string; a failed reservation means ordinary growth
+        let _reserved: Result<(), std::collections::TryReserveError> =
+            out.try_reserve_exact(strings.len());
         for s in strings {
             let c = convert(a, s)?;
             if !matches!(nargs, Nargs::Remainder) {

@@ -6,7 +6,8 @@
 mod data {
     use snp_hooks_data::{
         BUILTIN_MANIFEST_YAML, Epoch, GENERATED_FROM, Gate, HookClass, import_closure,
-        is_pre_commit_hooks_url, module_for_entry, parity_gate, profile_for_rev, verified_blob,
+        is_pre_commit_hooks_url, module_for_entry, parity_gate, profile_for_rev, tag_profiles,
+        verified_blob,
     };
 
     /// 09 §6.2: the match table (plus the normalisation rules it states).
@@ -102,6 +103,8 @@ mod data {
             ("v5.0.0", "cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b"),
             ("v6.0.0", "3e8a8703264a2f4a69428a0aa4dcb512790b2c8c"),
         ];
+        let all: Vec<(&str, &str)> = tag_profiles().iter().map(|p| (p.tag, p.commit)).collect();
+        assert_eq!(all, table);
         for (tag, commit) in table {
             let by_tag = profile_for_rev(tag).unwrap();
             let by_commit = profile_for_rev(commit).unwrap();
@@ -109,6 +112,11 @@ mod data {
             assert_eq!((by_tag.tag, by_tag.commit), (tag, commit));
             assert!(by_tag.manifest_yaml.starts_with("-   id: "), "{tag}");
             assert_ne!(by_tag.hooks.len(), 0);
+            // The pre-validated model lists the same hooks in the same order (its fields: snp-repo's
+            // generated-data test).
+            let model: Vec<&str> = by_tag.model.unwrap().iter().map(|h| h.id).collect();
+            let ids: Vec<&str> = by_tag.hooks.iter().map(|h| h.0).collect();
+            assert_eq!(model, ids, "{tag}");
         }
         for rev in [
             "v6.0",

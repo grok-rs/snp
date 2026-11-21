@@ -17,9 +17,11 @@ mod api {
     use snp_core::failure::Failure;
     use snp_core::output::Printer;
     use snp_core::path::RepoPath;
-    use snp_git::{CheckoutConfig, DiffFingerprint, Git, IndexEntries, RepoInfo, ZList};
+    use snp_git::{
+        CheckoutConfig, DiffFingerprint, Git, IndexEntries, RepoInfo, SystemAttributes, ZList,
+    };
     use snp_proc::signals::SignalGuard;
-    use snp_stash::diff_oracle::{Change, DiffMode, DiffOracle, Elision};
+    use snp_stash::diff_oracle::{Change, DiffMode, DiffOracle, Elision, ProofStats};
     use snp_stash::{StashCtx, StashGuard, Stashed, Unrestored};
 
     fn send_sync<T: Send + Sync>() {}
@@ -49,6 +51,7 @@ mod api {
             verify: false,
             old_git: false,
             report_recovery: true,
+            checkout_notice: None,
         }
     }
 
@@ -62,6 +65,7 @@ mod api {
         send_sync::<DiffOracle>();
         send_sync::<Change>();
         send_sync::<Elision>();
+        send_sync::<ProofStats>();
     }
 
     #[test]
@@ -123,15 +127,38 @@ mod api {
         has::<fn(&mut DiffOracle, Arc<std::sync::atomic::AtomicBool>)>(
             DiffOracle::guard_index_trust,
         );
-        // ADR-119
-        has::<fn(&mut DiffOracle, &ZList, &CheckoutConfig, bool) -> Elision>(
-            DiffOracle::elide_checkout_baseline,
-        );
+        // ADR-119 (ADR-133: the system attributes answer)
+        has::<
+            fn(
+                &mut DiffOracle,
+                &ZList,
+                &CheckoutConfig,
+                Option<&SystemAttributes>,
+                bool,
+            ) -> Elision,
+        >(DiffOracle::elide_checkout_baseline);
+        // ADR-132
+        has::<fn(&DiffOracle) -> bool>(DiffOracle::baseline_known);
+        has::<fn(&mut DiffOracle, DiffFingerprint)>(DiffOracle::adopt_baseline);
         has::<[Elision; 4]>([
             Elision::NotProven,
             Elision::Elided,
             Elision::Verified,
             Elision::Mismatch,
         ]);
+        // ADR-134
+        has::<
+            fn(
+                &mut DiffOracle,
+                &RepoInfo,
+                &Env,
+                Arc<snp_proc::pool::JobPool>,
+                &snp_git::ConfigListing,
+                bool,
+            ) -> bool,
+        >(DiffOracle::enable_index_proof);
+        has::<fn(&DiffOracle) -> Option<ProofStats>>(DiffOracle::proof_stats);
+        let p = ProofStats::default();
+        has::<(u32, u32, u32)>((p.passes, p.proven, p.mismatches));
     }
 }

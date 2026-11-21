@@ -1,7 +1,9 @@
-//! `cargo xtask release <gates|notes|version>`: the release gates and release metadata (WBS WP-37, ADR-088).
+//! `cargo xtask release <gates|hardening|notes|version>`: the release gates, the artifact hardening gate and release
+//! metadata (WBS WP-37, ADR-088, ADR-137).
 //!
 //! ```text
 //! cargo xtask release gates [--tag vX.Y.Z] [--skip-proofs] [--allow-dirty] [--allow-unreleased] [--root DIR]
+//! cargo xtask release hardening <target> <binary>...   # the built binaries carry the target's protections (ADR-137)
 //! cargo xtask release notes [VERSION]      # the CHANGELOG.md section of VERSION (default: the workspace version)
 //! cargo xtask release version              # the workspace version
 //! ```
@@ -42,6 +44,8 @@ use anyhow::{Context as _, bail};
 use super::proofs;
 use crate::workspace;
 
+mod hardening;
+
 /// Runs the task with the arguments that follow its name.
 pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
     let strs: Vec<String> = args
@@ -68,6 +72,7 @@ pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
             }
             Ok(())
         }
+        "hardening" => hardening::run(rest),
         "notes" => {
             let root = workspace::root()?;
             let version = match rest {
@@ -87,7 +92,7 @@ pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
             Ok(())
         }
         _ => bail!(
-            "usage: cargo xtask release gates|notes|version [args...] (see xtask/src/tasks/release.rs)"
+            "usage: cargo xtask release gates|hardening|notes|version [args...] (see xtask/src/tasks/release.rs)"
         ),
     }
 }
@@ -1271,6 +1276,50 @@ mod tests {
             assert!(release.contains(r#"cargo xtask release notes "$TAG""#));
             assert!(release.contains("rust-audit-info \"$bin\""));
             assert!(!release.contains("grep -aqF '.dep-v0'"));
+        }
+
+        /// ADR-137: every archive's and every wheel's binary passes `release hardening` before anything is hosted,
+        /// and no workflow or cargo configuration asks for a non-PIE link.
+        #[test]
+        fn the_artifacts_pass_the_hardening_gate_before_hosting() {
+            let release = read(".github/workflows/release.yml");
+            let job = release
+                .split("\n  hardening:\n")
+                .nth(1)
+                .and_then(|rest| rest.split("\n  host:\n").next())
+                .expect("release.yml has a hardening job before host");
+            assert!(job.contains("needs: [gates, plan, build-local-artifacts, wheels]"));
+            assert_eq!(
+                job.matches(r#"cargo xtask release hardening "$t" "$bin""#)
+                    .count(),
+                2,
+                "archives and wheels"
+            );
+            let host = release
+                .split("\n  host:\n")
+                .nth(1)
+                .and_then(|rest| rest.split("\n    steps:").next())
+                .unwrap();
+            assert!(host.contains(", hardening]"), "{host}");
+            assert!(
+                host.contains("needs.hardening.result == 'success'"),
+                "{host}"
+            );
+            assert!(release.contains("      - xtask/src/tasks/release/**\n"));
+            for f in [
+                ".github/workflows/release.yml",
+                ".github/workflows/platform.yml",
+                ".github/workflows/bench.yml",
+                ".cargo/config.toml",
+                "Cargo.toml",
+                "dist-workspace.toml",
+                "packaging/pypi/pyproject.toml",
+            ] {
+                let text = read(f);
+                for bad in ["relocation-model", "-no-pie", "no-pie"] {
+                    assert!(!text.contains(bad), "{f} mentions {bad} (ADR-137)");
+                }
+            }
         }
 
         #[test]

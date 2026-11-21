@@ -76,6 +76,11 @@ fn p1_registry_and_preflight() {
 /// with `PermissionError`); one that does need a change still crashes, at the write, as in Python.
 #[cfg(unix)]
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+)]
 fn readonly_fixers_without_change_pass() {
     let sb = Sandbox::new(true);
     sb.write("sorted.txt", b"a\nb\n");

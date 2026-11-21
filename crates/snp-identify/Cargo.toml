@@ -1,6 +1,6 @@
 [package]
 name = "snp-identify"
-description = "Python identify 2.6.20 for snp: file type tags from names, extensions, shebangs and content"
+description = "Python identify 2.6.20 for snp: file type tags from names, extensions, shebangs and content (internal crate of snp; no API stability promise, versions follow snp)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

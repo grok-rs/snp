@@ -7,8 +7,8 @@
 //! Owner: WP-26.
 
 use std::ffi::OsStr;
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write as _};
+use std::fs::File;
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::sync::Arc;
 
 use snp_argparse::{ActionSpec, ParserSpec};
@@ -98,20 +98,27 @@ const fn eisdir() -> i32 {
     if cfg!(windows) { 13 } else { 21 }
 }
 
-/// Applies `act` in place (append `\n` or truncate).
+/// The action for `name`: from a validated content-cache hit through [`tail_action`] over a `Cursor` (ADR-131;
+/// only regular files are cached, so the directory check is moot), else from the file ([`action`]).
+fn file_action(cx: &HookCx<'_>, name: &OsStr) -> Result<EofAction, PyExc> {
+    let path = framework::at(cx, name);
+    if let Some(b) = common::cache(cx).and_then(|c| c.hit(name, &path)) {
+        let len = u64::try_from(b.len()).unwrap_or(u64::MAX);
+        return tail_action(&mut Cursor::new(b.as_slice()), len).map_err(|e| io_exc(&e, name));
+    }
+    File::open(path)
+        .map_err(|e| io_exc(&e, name))
+        .and_then(|mut f| action(&mut f, name))
+}
+
+/// Applies `act` in place (append `\n` or truncate) through the hook's write token (ADR-132), which evicts the
+/// name's cache entry first (ADR-131).
 fn apply(cx: &HookCx<'_>, name: &OsStr, act: EofAction) -> Result<(), PyExc> {
     let err = |e: std::io::Error| io_exc(&e, name);
-    let path = framework::at(cx, name);
     match act {
         EofAction::Keep => Ok(()),
-        EofAction::Append => {
-            let mut f = OpenOptions::new().append(true).open(&path).map_err(err)?;
-            f.write_all(b"\n").map_err(err)
-        }
-        EofAction::Truncate(n) => {
-            let f = OpenOptions::new().write(true).open(&path).map_err(err)?;
-            f.set_len(n).map_err(err)
-        }
+        EofAction::Append => cx.writer()?.append_newline(name).map_err(err),
+        EofAction::Truncate(n) => cx.writer()?.truncate(name, n).map_err(err),
     }
 }
 
@@ -142,10 +149,7 @@ impl NativeHook for EndOfFileFixer {
         let files = filenames(&ns);
         let mut out = PyOut::default();
         let mut step = |name: &OsStr, out: &mut PyOut| {
-            let act = File::open(framework::at(cx, name))
-                .map_err(|e| io_exc(&e, name))
-                .and_then(|mut f| action(&mut f, name));
-            let act = match act {
+            let act = match file_action(cx, name) {
                 Ok(EofAction::Keep) => return FileStep::Unchanged,
                 Ok(a) => a,
                 Err(e) => return FileStep::Crash(e),
@@ -168,9 +172,7 @@ impl NativeHook for EndOfFileFixer {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
-
-    use super::{BLOCK, EofAction, kernels, tail_action};
+    use super::{BLOCK, Cursor, EofAction, kernels, tail_action};
 
     /// The block scan agrees with the whole-content kernel, including runs longer than a block and runs that
     /// straddle block boundaries.

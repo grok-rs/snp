@@ -6,8 +6,13 @@
 //! Owner: WP-14.
 
 use std::collections::VecDeque;
+use std::ops::Range;
 
 use super::{Error, Mark, Reader, Style};
+
+#[cfg(test)]
+#[path = "scanner_reference.rs"]
+mod reference;
 
 /// `MAX_NUMBER_LENGTH` of `%YAML` version numbers.
 const MAX_NUMBER_LENGTH: u32 = 9;
@@ -206,26 +211,37 @@ impl<'a> Scanner<'a> {
 
     /// `READ_LINE`: CR LF, CR, LF and NEL become `\n`; LS and PS are kept.
     fn read_line(&mut self, s: &mut String) {
+        if let Some(c) = self.read_break() {
+            s.push(c);
+        }
+    }
+
+    /// `READ_LINE` into a one-character buffer: the break it would append (`None`, and nothing consumed, when the
+    /// next character is not a break).
+    fn read_break(&mut self) -> Option<char> {
         let c = self.ch(0);
-        if c == '\r' && self.ch(1) == '\n' {
-            s.push('\n');
+        let read = if c == '\r' && self.ch(1) == '\n' {
             self.reader.advance();
             self.reader.advance();
             self.mark.index = self.mark.index.saturating_add(2);
             self.mark.column = 0;
             self.mark.line = self.mark.line.saturating_add(1);
+            Some('\n')
         } else if is_break(c) {
             self.reader.advance();
-            s.push(if c == '\u{2028}' || c == '\u{2029}' {
-                c
-            } else {
-                '\n'
-            });
             self.mark.index = self.mark.index.saturating_add(1);
             self.mark.column = 0;
             self.mark.line = self.mark.line.saturating_add(1);
-        }
+            Some(if c == '\u{2028}' || c == '\u{2029}' {
+                c
+            } else {
+                '\n'
+            })
+        } else {
+            None
+        };
         self.mark.byte = self.reader.pos();
+        read
     }
 
     fn err<T>(&self, context: &'static str, context_mark: Mark, problem: &'static str) -> R<T> {
@@ -1235,13 +1251,19 @@ impl<'a> Scanner<'a> {
     }
 
     fn scan_flow_scalar(&mut self, single: bool) -> R<Token> {
-        let mut s = String::new();
-        let mut leading_break = String::new();
+        // `None` while the value is still the input between the quotes verbatim: no `''`, no escape and no line
+        // break yet. It is then copied once, at the first of those or at the closing quote, instead of character
+        // by character.
+        let mut s: Option<String> = None;
+        // libyaml's `leading_break` buffer only ever holds the one break that ended a line.
+        let mut leading_break: Option<char> = None;
         let mut trailing_breaks = String::new();
-        let mut whitespaces = String::new();
+        // The blanks after the last non-blank character, as byte offsets of the input: blanks are kept verbatim.
+        let mut whitespaces: Option<Range<usize>> = None;
         let quote = if single { '\'' } else { '"' };
         let start = self.mark;
         self.skip();
+        let content = self.mark.byte;
         loop {
             self.cache(4)?;
             if self.mark.column == 0
@@ -1266,7 +1288,9 @@ impl<'a> Scanner<'a> {
             let mut leading_blanks = false;
             while !is_blankz(self.ch(0)) {
                 if single && self.ch(0) == '\'' && self.ch(1) == '\'' {
-                    s.push('\'');
+                    let here = self.mark.byte;
+                    s.get_or_insert_with(|| self.reader.slice(content, here).to_owned())
+                        .push('\'');
                     self.skip();
                     self.skip();
                 } else {
@@ -1274,31 +1298,36 @@ impl<'a> Scanner<'a> {
                         break;
                     }
                     if !single && self.ch(0) == '\\' && is_break(self.ch(1)) {
+                        let here = self.mark.byte;
+                        s.get_or_insert_with(|| self.reader.slice(content, here).to_owned());
                         self.cache(3)?;
                         self.skip();
                         self.skip_line();
                         leading_blanks = true;
                         break;
                     } else if !single && self.ch(0) == '\\' {
+                        let here = self.mark.byte;
+                        let buf =
+                            s.get_or_insert_with(|| self.reader.slice(content, here).to_owned());
                         let mut code_length = 0usize;
                         match self.ch(1) {
-                            '0' => s.push('\0'),
-                            'a' => s.push('\x07'),
-                            'b' => s.push('\x08'),
-                            't' | '\t' => s.push('\t'),
-                            'n' => s.push('\n'),
-                            'v' => s.push('\x0b'),
-                            'f' => s.push('\x0c'),
-                            'r' => s.push('\r'),
-                            'e' => s.push('\x1b'),
-                            ' ' => s.push(' '),
-                            '"' => s.push('"'),
-                            '/' => s.push('/'),
-                            '\\' => s.push('\\'),
-                            'N' => s.push('\u{85}'),
-                            '_' => s.push('\u{a0}'),
-                            'L' => s.push('\u{2028}'),
-                            'P' => s.push('\u{2029}'),
+                            '0' => buf.push('\0'),
+                            'a' => buf.push('\x07'),
+                            'b' => buf.push('\x08'),
+                            't' | '\t' => buf.push('\t'),
+                            'n' => buf.push('\n'),
+                            'v' => buf.push('\x0b'),
+                            'f' => buf.push('\x0c'),
+                            'r' => buf.push('\r'),
+                            'e' => buf.push('\x1b'),
+                            ' ' => buf.push(' '),
+                            '"' => buf.push('"'),
+                            '/' => buf.push('/'),
+                            '\\' => buf.push('\\'),
+                            'N' => buf.push('\u{85}'),
+                            '_' => buf.push('\u{a0}'),
+                            'L' => buf.push('\u{2028}'),
+                            'P' => buf.push('\u{2029}'),
                             'x' => code_length = 2,
                             'u' => code_length = 4,
                             'U' => code_length = 8,
@@ -1334,13 +1363,16 @@ impl<'a> Scanner<'a> {
                                     "found invalid Unicode character escape code",
                                 );
                             };
-                            s.push(c);
+                            buf.push(c);
                             for _ in 0..code_length {
                                 self.skip();
                             }
                         }
                     } else {
-                        self.read(&mut s);
+                        match s.as_mut() {
+                            Some(buf) => self.read(buf),
+                            None => self.skip(),
+                        }
                     }
                 }
                 self.cache(2)?;
@@ -1355,44 +1387,55 @@ impl<'a> Scanner<'a> {
                     if leading_blanks {
                         self.skip();
                     } else {
-                        self.read(&mut whitespaces);
+                        let from = self.mark.byte;
+                        self.skip();
+                        whitespaces = Some(whitespaces.map_or(from, |w| w.start)..self.mark.byte);
                     }
                 } else {
                     self.cache(2)?;
                     if leading_blanks {
                         self.read_line(&mut trailing_breaks);
                     } else {
-                        whitespaces.clear();
-                        self.read_line(&mut leading_break);
+                        // The first break of a line: the blanks before it are dropped, so the value stops being
+                        // the input verbatim here.
+                        let end = whitespaces.take().map_or(self.mark.byte, |w| w.start);
+                        s.get_or_insert_with(|| self.reader.slice(content, end).to_owned());
+                        leading_break = self.read_break();
                         leading_blanks = true;
                     }
                 }
                 self.cache(1)?;
             }
             if leading_blanks {
-                if leading_break.starts_with('\n') {
-                    if trailing_breaks.is_empty() {
-                        s.push(' ');
+                // Both ways into `leading_blanks` (a break above, an escaped break) made the value owned.
+                if let Some(buf) = s.as_mut() {
+                    if leading_break == Some('\n') {
+                        if trailing_breaks.is_empty() {
+                            buf.push(' ');
+                        } else {
+                            buf.push_str(&trailing_breaks);
+                            trailing_breaks.clear();
+                        }
                     } else {
-                        s.push_str(&trailing_breaks);
+                        if let Some(c) = leading_break {
+                            buf.push(c);
+                        }
+                        buf.push_str(&trailing_breaks);
                         trailing_breaks.clear();
                     }
-                    leading_break.clear();
-                } else {
-                    s.push_str(&leading_break);
-                    s.push_str(&trailing_breaks);
-                    leading_break.clear();
-                    trailing_breaks.clear();
                 }
-            } else {
-                s.push_str(&whitespaces);
-                whitespaces.clear();
+                leading_break = None;
+            } else if let Some(w) = whitespaces.take()
+                && let Some(buf) = s.as_mut()
+            {
+                buf.push_str(self.reader.slice(w.start, w.end));
             }
         }
+        let value = s.unwrap_or_else(|| self.reader.slice(content, self.mark.byte).to_owned());
         self.skip();
         Ok(Token {
             kind: TokenKind::Scalar {
-                value: s,
+                value,
                 style: if single { Style::Single } else { Style::Double },
             },
             start,
@@ -1404,9 +1447,12 @@ impl<'a> Scanner<'a> {
         // `None` while the value is still the input between `start` and `end` verbatim (no line folding yet):
         // it is then copied once instead of character by character.
         let mut s: Option<String> = None;
-        let mut leading_break = String::new();
+        // libyaml's `leading_break` buffer only ever holds the one break that ended a line.
+        let mut leading_break: Option<char> = None;
         let mut trailing_breaks = String::new();
-        let mut whitespaces = String::new();
+        // The blanks after the last non-blank character, as byte offsets of the input: blanks inside a line are
+        // kept verbatim, so they are copied only into an owned value.
+        let mut whitespaces: Option<Range<usize>> = None;
         let mut leading_blanks = false;
         let indent = self.indent.saturating_add(1);
         let start = self.mark;
@@ -1444,27 +1490,26 @@ impl<'a> Scanner<'a> {
                 if leading_blanks {
                     let buf =
                         s.get_or_insert_with(|| self.reader.slice(start.byte, end.byte).to_owned());
-                    if leading_break.starts_with('\n') {
+                    if leading_break == Some('\n') {
                         if trailing_breaks.is_empty() {
                             buf.push(' ');
                         } else {
                             buf.push_str(&trailing_breaks);
                             trailing_breaks.clear();
                         }
-                        leading_break.clear();
                     } else {
-                        buf.push_str(&leading_break);
+                        if let Some(c) = leading_break {
+                            buf.push(c);
+                        }
                         buf.push_str(&trailing_breaks);
-                        leading_break.clear();
                         trailing_breaks.clear();
                     }
+                    leading_break = None;
                     leading_blanks = false;
-                } else if !whitespaces.is_empty() {
-                    // Blanks inside a line are kept verbatim.
-                    if let Some(buf) = s.as_mut() {
-                        buf.push_str(&whitespaces);
-                    }
-                    whitespaces.clear();
+                } else if let Some(w) = whitespaces.take()
+                    && let Some(buf) = s.as_mut()
+                {
+                    buf.push_str(self.reader.slice(w.start, w.end));
                 }
                 match s.as_mut() {
                     Some(buf) => self.read(buf),
@@ -1486,7 +1531,9 @@ impl<'a> Scanner<'a> {
                             "found a tab character that violates indentation",
                         );
                     } else if !leading_blanks {
-                        self.read(&mut whitespaces);
+                        let from = self.mark.byte;
+                        self.skip();
+                        whitespaces = Some(whitespaces.map_or(from, |w| w.start)..self.mark.byte);
                     } else {
                         self.skip();
                     }
@@ -1495,8 +1542,8 @@ impl<'a> Scanner<'a> {
                     if leading_blanks {
                         self.read_line(&mut trailing_breaks);
                     } else {
-                        whitespaces.clear();
-                        self.read_line(&mut leading_break);
+                        whitespaces = None;
+                        leading_break = self.read_break();
                         leading_blanks = true;
                     }
                 }
@@ -1518,5 +1565,195 @@ impl<'a> Scanner<'a> {
             start,
             end,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::RAW_CHUNK;
+    use super::{R, Scanner, Token};
+
+    /// Pieces the generated scalars are made of: plain and non-ASCII characters, blanks, every break form, quotes,
+    /// `''`, escapes (valid, bad, escaped breaks), indicators, document markers and comments.
+    const PIECES: &[&str] = &[
+        "a",
+        "b",
+        "z9",
+        "\u{e9}",
+        "\u{20ac}",
+        "\u{10000}",
+        " ",
+        "  ",
+        "\t",
+        "\n",
+        "\r\n",
+        "\r",
+        "\u{85}",
+        "\u{2028}",
+        "\u{2029}",
+        "'",
+        "''",
+        "\"",
+        "\\",
+        "\\n",
+        "\\t",
+        "\\\"",
+        "\\x41",
+        "\\u00e9",
+        "\\U0001F600",
+        "\\\n",
+        "\\\r\n",
+        "\\q",
+        "\\x4",
+        "\\uD800",
+        "#",
+        " #",
+        ":",
+        ": ",
+        ":,",
+        "-",
+        "\n---",
+        "\n...",
+        "\n--- ",
+        ",",
+        "[",
+        "]",
+        "{",
+        "}",
+        "?",
+        "\n  ",
+        "\n\t",
+        "\n\n",
+    ];
+
+    /// A small deterministic generator (xorshift64*), so a failure reproduces from its case number.
+    struct Gen(u64);
+
+    impl Gen {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            usize::try_from(self.next() % u64::try_from(n).unwrap()).unwrap()
+        }
+
+        fn text(&mut self, max: usize) -> String {
+            let n = self.below(max + 1);
+            (0..n).map(|_| PIECES[self.below(PIECES.len())]).collect()
+        }
+    }
+
+    /// The token or error, and the scanner state the scan leaves behind.
+    type Outcome = (
+        R<(super::TokenKind, super::Mark, super::Mark)>,
+        super::Mark,
+        usize,
+        bool,
+    );
+
+    fn outcome<'t>(
+        sc: &mut Scanner<'t>,
+        scan: impl FnOnce(&mut Scanner<'t>) -> R<Token>,
+    ) -> Outcome {
+        let r = scan(sc).map(|t| (t.kind, t.start, t.end));
+        (r, sc.mark, sc.reader.pos(), sc.simple_key_allowed)
+    }
+
+    /// Runs the current scanner and the reference one on `text` from the same state; `None` when the reader
+    /// rejects the first character.
+    fn both<'t>(
+        text: &'t str,
+        setup: impl Fn(&mut Scanner<'t>),
+        scan: impl FnOnce(&mut Scanner<'t>) -> R<Token>,
+        reference: impl FnOnce(&mut Scanner<'t>) -> R<Token>,
+    ) -> Option<(Outcome, Outcome)> {
+        let mut new = Scanner::new(text);
+        let mut old = Scanner::new(text);
+        new.cache(1).ok()?;
+        old.cache(1).ok()?;
+        setup(&mut new);
+        setup(&mut old);
+        Some((outcome(&mut new, scan), outcome(&mut old, reference)))
+    }
+
+    /// alloc-7: the quoted and plain scanners with their borrowed fast paths produce exactly the reference
+    /// scanners' tokens (value, style, marks), errors and end state, on generated inputs that mix verbatim runs,
+    /// blanks before breaks, every break form, `''`, escapes and folding, and on scalars that cross a raw chunk.
+    #[test]
+    fn borrowed_scalar_scans_equal_the_reference_scanners() {
+        let mut g = Gen(0x9e37_79b9_7f4a_7c15);
+        let long: String = std::iter::repeat_n("a", RAW_CHUNK - 3).collect();
+        let mut compared = 0usize;
+        for case in 0..60_000usize {
+            let prefix = if case % 500 == 0 { long.as_str() } else { "" };
+            let body = format!("{prefix}{}", g.text(10));
+            // Quoted: an opening quote, the body, usually a closing quote, then what follows the scalar.
+            let single = g.below(2) == 0;
+            let q = if single { "'" } else { "\"" };
+            let close = if g.below(8) == 0 { "" } else { q };
+            let text = format!("{q}{body}{close}{}", g.text(3));
+            if let Some((new, old)) = both(
+                &text,
+                |_| {},
+                |s| s.scan_flow_scalar(single),
+                |s| s.scan_flow_scalar_reference(single),
+            ) {
+                assert_eq!(new, old, "case {case}: quoted {text:?}");
+                compared += 1;
+            }
+            // Plain: the body as a plain scalar, in block or flow context, at a few indentations.
+            let flow = g.below(3) == 0;
+            let indent = [-1i64, 0, 1, 3][g.below(4)];
+            let text = format!("{prefix}{}", g.text(10));
+            let setup = |s: &mut Scanner<'_>| {
+                s.flow_level = usize::from(flow);
+                s.indent = indent;
+            };
+            if let Some((new, old)) = both(
+                &text,
+                setup,
+                Scanner::scan_plain_scalar,
+                Scanner::scan_plain_scalar_reference,
+            ) {
+                assert_eq!(
+                    new, old,
+                    "case {case}: plain {text:?} flow={flow} indent={indent}"
+                );
+                compared += 1;
+            }
+        }
+        assert!(compared > 100_000, "only {compared} cases ran");
+    }
+
+    /// A quoted scalar without `''`, escapes or breaks is the input between its quotes (trailing blanks included),
+    /// and each way off the fast path (`''`, an escape, an escaped break, a folded break, LS, CR LF) gives PyYAML's
+    /// value.
+    #[test]
+    fn quoted_scalars_fold_and_unescape_after_the_fast_path() {
+        let cases: &[(&str, &str)] = &[
+            ("'plain  text '", "plain  text "),
+            ("\"\u{e9}t\u{e9} \"", "\u{e9}t\u{e9} "),
+            ("'it''s'", "it's"),
+            ("'a  \n  b'", "a b"),
+            ("'a \n\n b'", "a\nb"),
+            ("\"a\\tb\"", "a\tb"),
+            ("\"a \\\n  b\"", "a b"),
+            ("\"x\u{2028}y\"", "x\u{2028}y"),
+            ("'x \r\n y'", "x y"),
+            ("''", ""),
+        ];
+        for (text, want) in cases {
+            let mut sc = Scanner::new(text);
+            sc.cache(1).unwrap();
+            let t = sc.scan_flow_scalar(text.starts_with('\'')).unwrap();
+            match t.kind {
+                super::TokenKind::Scalar { value, .. } => assert_eq!(value, *want, "{text:?}"),
+                other => panic!("{other:?}"),
+            }
+        }
     }
 }

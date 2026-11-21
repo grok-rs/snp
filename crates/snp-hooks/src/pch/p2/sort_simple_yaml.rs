@@ -79,7 +79,7 @@ impl NativeHook for SortSimpleYaml {
             print_name(out, b"Fixing file `", name, b"`");
             let bytes = text_write_bytes(&new, cx.windows);
             // A file that is exactly `\n` is "rewritten" with the same bytes: exit 1, nothing modified.
-            if bytes.as_bytes() == before.as_slice() {
+            if bytes.as_bytes() == &*before {
                 return FileStep::Failed;
             }
             if let Err(e) = rewrite(cx, name, bytes.as_bytes()) {

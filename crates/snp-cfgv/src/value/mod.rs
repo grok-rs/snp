@@ -4,6 +4,7 @@ mod bigint;
 mod cmp;
 mod datetime;
 mod fmt;
+mod hashed;
 
 use indexmap::{IndexMap, IndexSet};
 
@@ -11,13 +12,16 @@ pub use bigint::{BigInt, MaxStrDigitsError, ParseBigIntError};
 pub use cmp::StrKey;
 pub(crate) use cmp::py_sort;
 pub use datetime::{Date, DateError, DateTime, TzOffset};
+pub use hashed::{HashedKey, ValueState};
 
-/// A Python `dict`: insertion-ordered, with [`Value`] keys.
-pub type Map = IndexMap<Value, Value>;
+/// A Python `dict`: insertion-ordered, with [`Value`] keys, hashed with the
+/// process-wide [`ValueState`] (build one with `Map::default()` or
+/// `Map::with_capacity_and_hasher(n, ValueState)`).
+pub type Map = IndexMap<Value, Value, ValueState>;
 
 /// A Python `set`. cfgv keeps insertion order (CPython iterates sets in hash
-/// order, which is not reproducible for strings).
-pub type Set = IndexSet<Value>;
+/// order, which is not reproducible for strings). Hashed like [`Map`].
+pub type Set = IndexSet<Value, ValueState>;
 
 /// A dynamically typed value mirroring the Python objects that PyYAML's
 /// `SafeLoader` produces and Python cfgv validates.

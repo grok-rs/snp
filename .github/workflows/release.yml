@@ -14,6 +14,9 @@
 # * `dist` builds the eight targets with cargo-auditable, a CycloneDX SBOM per package and SHA-256 checksums, plus the
 #   shell and PowerShell installers and the Homebrew formula `snp.rb` (no bin-aliases);
 # * `wheels` builds the snp-cli wheels with maturin (bindings = "bin") and smoke-tests them;
+# * `hardening` checks the binary of every archive and every wheel with `cargo xtask release hardening` (ADR-137:
+#   PIE, BIND_NOW, GNU_RELRO and an NX stack on linux-gnu, static-pie on x86_64-musl, static non-PIE on
+#   aarch64-musl, PIE on macOS, high-entropy ASLR and DEP on Windows); nothing is hosted unless it passes;
 # * `announce` attests every asset (GitHub artifact attestations) and creates the GitHub release with the CHANGELOG
 #   section as notes; `publish-pypi` uploads the wheels with trusted publishing (before the release);
 #   `publish-crates` (`cargo publish`, CARGO_REGISTRY_TOKEN) and `publish-homebrew` (Formula/snp.rb in
@@ -38,6 +41,7 @@ on:
       - .github/scripts/publish-crates.sh
       - packaging/pypi/**
       - xtask/src/tasks/release.rs
+      - xtask/src/tasks/release/**
   workflow_dispatch:
     inputs:
       tag:
@@ -442,9 +446,83 @@ jobs:
           name: wheels-${{ matrix.target }}
           path: snp/packaging/pypi/dist
 
+  hardening:
+    # ADR-137: the release binaries stay PIE / static-pie (non-PIE builds are rejected), and this job makes that
+    # checkable: every archive's and every wheel's binary is read back by `cargo xtask release hardening` (its own
+    # ELF/PE/Mach-O header reader, xtask/src/tasks/release/hardening.rs) against its target's expectations. One
+    # Linux job checks all eight targets, so the macOS and Windows binaries need no xtask build on their runners.
+    name: artifact hardening
+    needs: [gates, plan, build-local-artifacts, wheels]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: snp, persist-credentials: false }
+      - run: rustup toolchain install
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-build-local-*
+          path: snp/target/distrib/
+          merge-multiple: true
+      # one directory per wheel artifact (wheels-<target>), which names the target of its wheels
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: wheels
+      - run: cargo build -p xtask --locked
+      - name: Every archive's binary is hardened
+        env:
+          TARGETS: ${{ needs.plan.outputs.targets }}
+        run: |
+          set -euo pipefail
+          for t in $TARGETS; do
+            dir="$RUNNER_TEMP/hardening/archive-$t"
+            rm -rf "$dir" && mkdir -p "$dir"
+            case "$t" in
+              *windows*)
+                archive="target/distrib/snp-$t.zip"; exe=snp.exe
+                test -f "$archive" || { echo "::error::missing $archive"; exit 1; }
+                unzip -q "$archive" -d "$dir" ;;
+              *)
+                archive="target/distrib/snp-$t.tar.xz"; exe=snp
+                test -f "$archive" || { echo "::error::missing $archive"; exit 1; }
+                tar -xJf "$archive" -C "$dir" ;;
+            esac
+            bin="$(find "$dir" -type f -name "$exe" | head -n 1)"
+            [ -n "$bin" ] || { echo "::error::$archive contains no $exe"; exit 1; }
+            cargo xtask release hardening "$t" "$bin"
+          done
+      - name: Every wheel's binary is hardened
+        env:
+          WHEELS: ${{ needs.gates.outputs.wheels }}
+        run: |
+          set -euo pipefail
+          want="$(jq 'length' <<< "$WHEELS")"
+          got=0
+          for w in "$GITHUB_WORKSPACE"/wheels/wheels-*; do
+            t="${w##*/wheels-}"
+            jq -e --arg t "$t" 'any(.[]; .target == $t)' <<< "$WHEELS" > /dev/null \
+              || { echo "::error::wheel artifact for $t, which the wheel matrix does not build"; exit 1; }
+            case "$t" in *windows*) exe=snp.exe ;; *) exe=snp ;; esac
+            n=0
+            for whl in "$w"/*.whl; do
+              [ -f "$whl" ] || continue
+              dir="$RUNNER_TEMP/hardening/wheel-$t-$n"
+              rm -rf "$dir" && mkdir -p "$dir"
+              unzip -q "$whl" -d "$dir"
+              bin="$(find "$dir" -type f -path '*.data/scripts/*' -name "$exe" | head -n 1)"
+              [ -n "$bin" ] || { echo "::error::$whl contains no $exe script"; exit 1; }
+              cargo xtask release hardening "$t" "$bin"
+              n=$((n + 1))
+            done
+            [ "$n" -gt 0 ] || { echo "::error::no wheel for $t"; exit 1; }
+            got=$((got + 1))
+          done
+          [ "$got" -eq "$want" ] || { echo "::error::checked the wheels of $got targets, the matrix builds $want"; exit 1; }
+
   host:
-    needs: [gates, plan, build-local-artifacts, build-global-artifacts, wheels]
-    if: ${{ always() && needs.gates.outputs.publishing == 'true' && needs.plan.result == 'success' && needs.build-local-artifacts.result == 'success' && needs.build-global-artifacts.result == 'success' && needs.wheels.result == 'success' }}
+    needs: [gates, plan, build-local-artifacts, build-global-artifacts, wheels, hardening]
+    if: ${{ always() && needs.gates.outputs.publishing == 'true' && needs.plan.result == 'success' && needs.build-local-artifacts.result == 'success' && needs.build-global-artifacts.result == 'success' && needs.wheels.result == 'success' && needs.hardening.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:

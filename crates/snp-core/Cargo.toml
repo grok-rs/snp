@@ -1,6 +1,6 @@
 [package]
 name = "snp-core"
-description = "snp vocabulary: stages, languages, brand, Env/EnvPatch, CancelToken, Failure envelope, Printer"
+description = "snp vocabulary: stages, languages, brand, Env/EnvPatch, CancelToken, Failure envelope, Printer (internal crate of snp; no API stability promise, versions follow snp)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

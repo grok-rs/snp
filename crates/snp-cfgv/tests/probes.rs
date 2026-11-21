@@ -95,7 +95,7 @@ mod probes {
         assert_eq!(m.get(&StrKey("id")), Some(&Value::from("str")));
         // `True == 1`: the bool key replaced the int key's value, so the map holds 5 entries.
         assert_eq!(m.get_index_of(&StrKey("id")), Some(4));
-        assert_eq!(Map::new().get(&StrKey("id")), None);
+        assert_eq!(Map::default().get(&StrKey("id")), None);
     }
 
     proptest! {

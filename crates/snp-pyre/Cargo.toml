@@ -1,6 +1,6 @@
 [package]
 name = "snp-pyre"
-description = "CPython-3.12 `re` front end lowered to regex (tier 1) and fancy-regex (tier 2)"
+description = "CPython-3.12 `re` front end lowered to regex (tier 1) and fancy-regex (tier 2) (internal crate of snp; no API stability promise, versions follow snp)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -26,14 +26,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use snp_config::overlay::HookPatch;
 use snp_config::{
-    Config, ConfigHook, ExtMode, HookDef, LoadOpts, Manifest, MergeError, RepoConfig,
+    Config, ConfigError, ConfigHook, DefaultedHook, ExtMode, HookDef, LoadOpts, Manifest,
+    MergeError, RepoConfig,
 };
 use snp_core::cancel::CancelReason;
 use snp_core::failure::Failure;
 use snp_core::lang::LanguageId;
 use snp_core::output::{CollectWarnings, Level, WarnSink};
 use snp_git::{CloneMode, OwnedRepo};
-use snp_hooks_data::{Epoch, HookClass, NativeSource, TagProfile};
+use snp_hooks_data::{Epoch, HookClass, ManifestHook, NativeSource, TagProfile};
 use snp_proc::spawn::{Group, Stdin};
 use snp_store::{MarkerKey, RepoHandle, RepoId, RepoKey, RepoKind, RepoMeta, Store};
 
@@ -660,10 +661,9 @@ impl<'c, 'a> Resolution<'c, 'a> {
         self.ensure_store()?;
         let mut base: Option<RepoHandle> = None;
         let manifest = if let Some(profile) = plan.profile {
-            let display = would_be_manifest_path(cx, &plan.base_key);
-            snp_config::load_manifest_bytes(
-                profile.manifest_yaml.as_bytes(),
-                display.as_os_str(),
+            profile_manifest(
+                profile,
+                || would_be_manifest_path(cx, &plan.base_key).into_os_string(),
                 &load_opts(cx, cx.warn),
             )?
         } else {
@@ -990,6 +990,52 @@ fn would_be_manifest_path(cx: &ResolveCtx<'_>, key: &RepoKey) -> PathBuf {
         .join(MANIFEST_FILE)
 }
 
+/// A Tier A profile's manifest. With a pre-validated model (`TagProfile::model`, every generated profile) it is
+/// built from the model without a load: the generated-data test `profile_models_equal_the_load` proves the model's
+/// `Manifest` equal to the load of `manifest_yaml` for every profile, brand and extension mode, and that load prints
+/// nothing (no `[WARNING]`, no regex `FutureWarning`) and cannot fail, so skipping it changes no output. A profile
+/// without a model falls back to the load (`display`, the would-be manifest path, appears only in its errors).
+fn profile_manifest(
+    profile: &TagProfile,
+    display: impl FnOnce() -> OsString,
+    o: &LoadOpts<'_>,
+) -> Result<Manifest, ConfigError> {
+    match profile.model {
+        Some(model) => Ok(Manifest::from_defaulted(
+            model.iter().copied().map(defaulted_hook),
+        )),
+        None => snp_config::load_manifest_bytes(profile.manifest_yaml.as_bytes(), &display(), o),
+    }
+}
+
+/// A generated hook as the input of [`Manifest::from_defaulted`] (the same fields).
+fn defaulted_hook(h: &'static ManifestHook) -> DefaultedHook<'static> {
+    DefaultedHook {
+        id: h.id,
+        name: h.name,
+        entry: h.entry,
+        language: h.language,
+        alias: h.alias,
+        files: h.files,
+        exclude: h.exclude,
+        types: h.types,
+        types_or: h.types_or,
+        exclude_types: h.exclude_types,
+        additional_dependencies: h.additional_dependencies,
+        args: h.args,
+        always_run: h.always_run,
+        fail_fast: h.fail_fast,
+        pass_filenames: h.pass_filenames,
+        description: h.description,
+        language_version: h.language_version,
+        log_file: h.log_file,
+        minimum_pre_commit_version: h.minimum_pre_commit_version,
+        require_serial: h.require_serial,
+        stages: h.stages,
+        verbose: h.verbose,
+    }
+}
+
 /// The builtin manifest (`snp_hooks_data::BUILTIN_MANIFEST_YAML`).
 fn builtin_manifest(cx: &ResolveCtx<'_>) -> Result<Manifest, Failure> {
     Ok(snp_config::load_manifest_bytes(
@@ -1157,7 +1203,135 @@ pub(crate) fn table(cfg: &Config, cx: &ResolveCtx<'_>) -> Vec<(Arc<str>, Arc<str
 
 #[cfg(test)]
 mod tests {
+    use snp_core::brand::Brand;
+    use snp_pyre::RegexCache;
+
     use super::*;
+
+    /// Runs `f` with fresh sinks and cache: its result, the `[WARNING]` lines and the diagnostics.
+    fn with_opts<T>(
+        brand: Brand,
+        ext: ExtMode,
+        f: impl FnOnce(&LoadOpts<'_>) -> T,
+    ) -> (T, Vec<String>, Vec<String>) {
+        let regexes = RegexCache::new();
+        let warn = CollectWarnings::new();
+        let diag = CollectWarnings::new();
+        let out = f(&LoadOpts {
+            brand,
+            ext,
+            regexes: &regexes,
+            warn: &warn,
+            diag: &diag,
+        });
+        (out, warn.take(), diag.take())
+    }
+
+    /// Generated-data test of `TagProfile::model` (the guard of [`profile_manifest`]'s fast path): for every
+    /// profile, brand and extension mode, the load of `manifest_yaml` succeeds, prints nothing and gives the
+    /// `Manifest` the model builds (compared field by field through `Debug`, which shows every field).
+    #[test]
+    fn profile_models_equal_the_load() {
+        let profiles = snp_hooks_data::tag_profiles();
+        assert_eq!(profiles.len(), 16);
+        for profile in profiles {
+            let model = profile
+                .model
+                .unwrap_or_else(|| panic!("{}: no model", profile.tag));
+            let built = format!(
+                "{:?}",
+                Manifest::from_defaulted(model.iter().copied().map(defaulted_hook))
+            );
+            for brand in [Brand::PreCommit, Brand::Snp] {
+                for ext in [ExtMode::Enabled, ExtMode::Strict] {
+                    let (loaded, warnings, diag) = with_opts(brand, ext, |o| {
+                        snp_config::load_manifest_bytes(
+                            profile.manifest_yaml.as_bytes(),
+                            OsStr::new(".pre-commit-hooks.yaml"),
+                            o,
+                        )
+                    });
+                    let tag = (profile.tag, brand, ext);
+                    let loaded = loaded.unwrap_or_else(|e| panic!("{tag:?}: {}", e.rendered));
+                    assert!(warnings.is_empty(), "{tag:?}: {warnings:?}");
+                    assert!(diag.is_empty(), "{tag:?}: {diag:?}");
+                    assert_eq!(format!("{loaded:?}"), built, "{tag:?}");
+                    let mut loads = 0;
+                    let (fast, warnings, diag) = with_opts(brand, ext, |o| {
+                        profile_manifest(
+                            profile,
+                            || {
+                                loads += 1;
+                                OsString::new()
+                            },
+                            o,
+                        )
+                    });
+                    assert_eq!((loads, warnings, diag), (0, vec![], vec![]), "{tag:?}");
+                    assert_eq!(format!("{:?}", fast.unwrap()), built, "{tag:?}");
+                }
+            }
+        }
+    }
+
+    /// A profile without a model loads `manifest_yaml` (and reports its errors with the would-be path); one with a
+    /// model never reads `manifest_yaml`.
+    #[test]
+    fn profile_without_model_falls_back_to_the_load() {
+        static V6: &TagProfile = &TagProfile {
+            tag: "v6.0.0",
+            commit: "3e8a8703264a2f4a69428a0aa4dcb512790b2c8c",
+            manifest_yaml: "-   id: x\n    name: x\n    entry: x\n    language: fail\n    files: '[[a]'\n",
+            hooks: &[("x", HookClass::FailLanguage, Epoch(1))],
+            model: None,
+        };
+        static BROKEN: &TagProfile = &TagProfile {
+            tag: "v6.0.0",
+            commit: "3e8a8703264a2f4a69428a0aa4dcb512790b2c8c",
+            manifest_yaml: "-   id: x\n",
+            hooks: &[],
+            model: None,
+        };
+        static MODEL_ONLY: &TagProfile = &TagProfile {
+            tag: "v6.0.0",
+            commit: "3e8a8703264a2f4a69428a0aa4dcb512790b2c8c",
+            manifest_yaml: "-   id: x\n",
+            hooks: &[],
+            model: Some(&[]),
+        };
+        let (m, warnings, diag) = with_opts(Brand::Snp, ExtMode::Enabled, |o| {
+            profile_manifest(V6, || OsString::from("would-be.yaml"), o)
+        });
+        let m = m.unwrap();
+        assert_eq!(m.hooks.len(), 1);
+        assert_eq!(&*m.hooks[0].files, "[[a]");
+        assert_eq!(warnings, Vec::<String>::new());
+        assert_eq!(diag.len(), 1, "{diag:?}");
+        let (e, ..) = with_opts(Brand::Snp, ExtMode::Enabled, |o| {
+            profile_manifest(BROKEN, || OsString::from("would-be.yaml"), o)
+        });
+        let e = e.unwrap_err();
+        assert!(e.manifest);
+        assert!(
+            e.rendered.starts_with("\n==> File would-be.yaml\n"),
+            "{}",
+            e.rendered
+        );
+        // The same broken YAML with a model: the model wins, nothing is loaded.
+        let mut loads = 0;
+        let (m, ..) = with_opts(Brand::Snp, ExtMode::Enabled, |o| {
+            profile_manifest(
+                MODEL_ONLY,
+                || {
+                    loads += 1;
+                    OsString::new()
+                },
+                o,
+            )
+        });
+        assert_eq!(m.unwrap().hooks.len(), 0);
+        assert_eq!(loads, 0);
+    }
 
     #[test]
     fn clone_url_joins_local_directories_only() {

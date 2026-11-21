@@ -65,6 +65,10 @@ pub(crate) struct Sandbox {
 
 impl Sandbox {
     /// A sandbox whose work tree is a fresh `git init` (when `git_init`).
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+    )]
     pub(crate) fn new(git_init: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let base = snp_pycompat::ospath::realpath(dir.path().as_os_str(), dir.path()).unwrap();
@@ -173,6 +177,10 @@ impl Sandbox {
     }
 
     /// Writes a file (creating parents).
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+    )]
     pub(crate) fn write(&self, rel: &str, bytes: &[u8]) {
         let p = self.path(rel);
         if let Some(parent) = p.parent() {
@@ -183,6 +191,10 @@ impl Sandbox {
 
     /// `chmod mode`.
     #[cfg(unix)]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+    )]
     pub(crate) fn chmod(&self, rel: &str, mode: u32) {
         use std::os::unix::fs::PermissionsExt as _;
         std::fs::set_permissions(self.path(rel), std::fs::Permissions::from_mode(mode)).unwrap();
@@ -190,6 +202,10 @@ impl Sandbox {
 
     /// `chmod mode` (Windows: read-only for 0o444, else nothing).
     #[cfg(not(unix))]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+    )]
     pub(crate) fn chmod(&self, rel: &str, mode: u32) {
         let mut p = std::fs::metadata(self.path(rel)).unwrap().permissions();
         p.set_readonly(mode & 0o222 == 0);
@@ -198,6 +214,10 @@ impl Sandbox {
 
     /// Applies the steps of a case (`w`, `x`, `ro`, `mkdir`, `git`, `gitfile`, `ln`); returns the written paths in
     /// first-write order.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a test fixture writes files; the write ban (ADR-132) is for native hook code"
+    )]
     pub(crate) fn steps(&self, steps: &serde_json::Value) -> Vec<String> {
         let mut written: Vec<String> = Vec::new();
         for step in steps.as_array().into_iter().flatten() {
@@ -292,6 +312,8 @@ impl Ctx {
             columns: 80,
             facts: &self.facts,
             cancel: &self.cancel,
+            cache: None,
+            gate: None,
         }
     }
 }

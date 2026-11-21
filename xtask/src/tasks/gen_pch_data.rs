@@ -3,7 +3,8 @@
 //!
 //! * `gen-pch-data [--check] <full clone of github.com/pre-commit/pre-commit-hooks>` reads the tags
 //!   v3.0.0…v6.0.0 of the clone (bare or not) with `git` and writes `crates/snp-hooks-data/src/generated/`:
-//!   per-tag manifests (verbatim `.pre-commit-hooks.yaml`), the tag → commit table (09 §5.1), per-hook
+//!   per-tag manifests (verbatim `.pre-commit-hooks.yaml`) and their pre-validated models (`models.rs`: every hook
+//!   after `MANIFEST_HOOK_DICT`'s defaults, `TagProfile::model`), the tag → commit table (09 §5.1), per-hook
 //!   `snp_hooks_data::HookClass` and epoch (09 §1, §5.2 refined by the curated [`MODULES`] table below), the
 //!   `VERIFIED_BLOBS` table (every module blob of every tag and its import closure, seeded and checked against
 //!   09 §5.4), the console-script → module map (`setup.cfg`), `BUILTIN_MANIFEST_YAML` (the v6.0.0 manifest
@@ -859,6 +860,271 @@ fn classify(t: &TagData, h: &ManifestHook) -> anyhow::Result<(&'static str, u16)
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// the pre-validated manifest models (`snp_hooks_data::ManifestHook`, `TagProfile::model`)
+// ---------------------------------------------------------------------------------------------------------------
+
+/// A manifest value of the block style every tag uses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum YamlVal {
+    Str(String),
+    List(Vec<String>),
+    Bool(bool),
+}
+
+/// The string keys of `MANIFEST_HOOK_DICT` and their defaults (`None`: required).
+const STR_KEYS: [(&str, Option<&str>); 11] = [
+    ("id", None),
+    ("name", None),
+    ("entry", None),
+    ("language", None),
+    ("alias", Some("")),
+    ("files", Some("")),
+    ("exclude", Some("^$")),
+    ("description", Some("")),
+    ("language_version", Some("default")),
+    ("log_file", Some("")),
+    ("minimum_pre_commit_version", Some("0")),
+];
+
+/// The list keys of `MANIFEST_HOOK_DICT` and their defaults.
+const LIST_KEYS: [(&str, &[&str]); 6] = [
+    ("types", &["file"]),
+    ("types_or", &[]),
+    ("exclude_types", &[]),
+    ("additional_dependencies", &[]),
+    ("args", &[]),
+    ("stages", &[]),
+];
+
+/// The boolean keys of `MANIFEST_HOOK_DICT` and their defaults.
+const BOOL_KEYS: [(&str, bool); 5] = [
+    ("always_run", false),
+    ("fail_fast", false),
+    ("pass_filenames", true),
+    ("require_serial", false),
+    ("verbose", false),
+];
+
+/// Every hook of a `.pre-commit-hooks.yaml` as its keys, in the block style every tag uses (see
+/// [`parse_manifest`]). Strict: a key outside `MANIFEST_HOOK_DICT`, a duplicate key, a value of the wrong shape, a
+/// plain scalar PyYAML would resolve to another type, or any YAML this reader does not know is an error; the
+/// generated-data test of snp-repo checks the result against the real load.
+fn parse_manifest_maps(text: &str) -> anyhow::Result<Vec<BTreeMap<String, YamlVal>>> {
+    let mut hooks: Vec<BTreeMap<String, YamlVal>> = Vec::new();
+    for (raw, n) in text.lines().zip(1usize..) {
+        let line = raw.trim_end();
+        if line.is_empty() || line.trim_start().starts_with('#') {
+            continue;
+        }
+        let body = if let Some(rest) = line.strip_prefix('-') {
+            hooks.push(BTreeMap::new());
+            rest.trim_start()
+        } else {
+            ensure!(
+                line.starts_with(' '),
+                "line {n}: unexpected top-level line {line:?}"
+            );
+            line.trim_start()
+        };
+        let Some((key, value)) = body.split_once(": ") else {
+            bail!("line {n}: no `key: value` in {line:?}")
+        };
+        let value = value.trim();
+        let Some(hook) = hooks.last_mut() else {
+            bail!("line {n}: key before the first hook")
+        };
+        let parsed = if STR_KEYS.iter().any(|(k, _)| *k == key) {
+            YamlVal::Str(yaml_str(value).with_context(|| format!("line {n}: {key}"))?)
+        } else if LIST_KEYS.iter().any(|(k, _)| *k == key) {
+            YamlVal::List(yaml_flow_list(value).with_context(|| format!("line {n}: {key}"))?)
+        } else if BOOL_KEYS.iter().any(|(k, _)| *k == key) {
+            YamlVal::Bool(match value {
+                "true" => true,
+                "false" => false,
+                _ => bail!("line {n}: {key}: unsupported boolean {value:?}"),
+            })
+        } else {
+            bail!("line {n}: key {key:?} is not a MANIFEST_HOOK_DICT key")
+        };
+        ensure!(
+            hook.insert(key.to_owned(), parsed).is_none(),
+            "line {n}: duplicate key {key}"
+        );
+    }
+    Ok(hooks)
+}
+
+/// A string scalar ([`yaml_scalar`]) that PyYAML loads as a `str`. Conservative: a plain scalar spelling a YAML 1.1
+/// boolean or null, anything Rust parses as a float, and anything made only of digits and `_.:+-eE` except a dotted
+/// version (`3.2.0`, at least two dots) is refused.
+fn yaml_str(v: &str) -> anyhow::Result<String> {
+    let s = yaml_scalar(v)?;
+    if !v.starts_with(['\'', '"']) {
+        let lower = s.to_ascii_lowercase();
+        let numeric = s
+            .chars()
+            .all(|c| c.is_ascii_digit() || "_.:+-eE".contains(c));
+        let version = s.split('.').count() >= 3
+            && s.split('.')
+                .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+        ensure!(
+            !matches!(
+                lower.as_str(),
+                "true" | "false" | "yes" | "no" | "on" | "off" | "y" | "n" | "null" | "~"
+            ) && s.parse::<f64>().is_err()
+                && (!numeric || version),
+            "plain scalar {v:?} may not load as a str"
+        );
+    }
+    Ok(s)
+}
+
+/// A one-line flow sequence of [`yaml_str`] items without commas or brackets inside them: `[a, 'b']`, `[]`.
+fn yaml_flow_list(v: &str) -> anyhow::Result<Vec<String>> {
+    let Some(inner) = v.strip_prefix('[').and_then(|s| s.strip_suffix(']')) else {
+        bail!("not a flow sequence: {v:?}")
+    };
+    ensure!(
+        !inner.contains(['[', ']', '{', '}']),
+        "nested flow collection in {v:?}"
+    );
+    if inner.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    inner.split(',').map(|item| yaml_str(item.trim())).collect()
+}
+
+/// One hook after `MANIFEST_HOOK_DICT`'s defaults, rendered as a `ManifestHook` literal.
+fn render_model_hook(h: &BTreeMap<String, YamlVal>) -> anyhow::Result<String> {
+    let mut out = String::from("ManifestHook {\n");
+    let list = |items: &[String]| {
+        let literals: Vec<String> = items.iter().map(|s| lit(s)).collect();
+        format!("&[{}]", literals.join(", "))
+    };
+    let field = |out: &mut String, key: &str| -> anyhow::Result<()> {
+        if let Some(&(_, default)) = STR_KEYS.iter().find(|(k, _)| *k == key) {
+            let v = match (h.get(key), default) {
+                (Some(YamlVal::Str(s)), _) => s.clone(),
+                (None, Some(d)) => d.to_owned(),
+                (v, _) => bail!("{key}: {v:?}"),
+            };
+            writeln!(out, "    {key}: {},", lit(&v))?;
+        } else if let Some(&(_, default)) = LIST_KEYS.iter().find(|(k, _)| *k == key) {
+            let v = match h.get(key) {
+                Some(YamlVal::List(l)) => l.clone(),
+                None => default.iter().map(|s| (*s).to_owned()).collect(),
+                v => bail!("{key}: {v:?}"),
+            };
+            writeln!(out, "    {key}: {},", list(&v))?;
+        } else if let Some(&(_, default)) = BOOL_KEYS.iter().find(|(k, _)| *k == key) {
+            let v = match h.get(key) {
+                Some(YamlVal::Bool(b)) => *b,
+                None => default,
+                v => bail!("{key}: {v:?}"),
+            };
+            writeln!(out, "    {key}: {v},")?;
+        } else {
+            bail!("unknown field {key}");
+        }
+        Ok(())
+    };
+    // `snp_hooks_data::ManifestHook`'s field order.
+    for key in [
+        "id",
+        "name",
+        "entry",
+        "language",
+        "alias",
+        "files",
+        "exclude",
+        "types",
+        "types_or",
+        "exclude_types",
+        "additional_dependencies",
+        "args",
+        "always_run",
+        "fail_fast",
+        "pass_filenames",
+        "description",
+        "language_version",
+        "log_file",
+        "minimum_pre_commit_version",
+        "require_serial",
+        "stages",
+        "verbose",
+    ] {
+        field(&mut out, key)?;
+    }
+    out.push('}');
+    Ok(out)
+}
+
+/// The Rust name of a tag's model: `v4.0.1` → `V4_0_1`.
+fn model_name(tag: &str) -> String {
+    tag.to_ascii_uppercase().replace('.', "_")
+}
+
+/// `models.rs`: the distinct defaulted hooks of every tag as statics (`H000`, … in first-seen order) and one hook
+/// list per tag.
+fn render_models(tags: &[TagData]) -> anyhow::Result<String> {
+    let mut distinct: Vec<String> = Vec::new();
+    let mut per_tag: Vec<(&str, Vec<usize>)> = Vec::new();
+    for t in tags {
+        let maps = parse_manifest_maps(&t.manifest)
+            .with_context(|| format!("{}: .pre-commit-hooks.yaml model", t.tag))?;
+        ensure!(
+            maps.len() == t.hooks.len(),
+            "{}: {} model hooks, {} hooks",
+            t.tag,
+            maps.len(),
+            t.hooks.len()
+        );
+        let mut idx = Vec::new();
+        for m in &maps {
+            let rendered = render_model_hook(m).with_context(|| format!("{}: model", t.tag))?;
+            let i = distinct
+                .iter()
+                .position(|d| *d == rendered)
+                .unwrap_or_else(|| {
+                    distinct.push(rendered);
+                    distinct.len().saturating_sub(1)
+                });
+            idx.push(i);
+        }
+        per_tag.push((t.tag, idx));
+    }
+    let mut out = String::new();
+    writeln!(
+        out,
+        "{HEADER}//! Tier A: each tag's manifest after pre-commit's `MANIFEST_HOOK_DICT` defaults (`TagProfile::model`),"
+    )?;
+    writeln!(
+        out,
+        "//! the {} distinct hooks once each. snp-repo's generated-data test proves every list equal to the runtime load",
+        distinct.len()
+    )?;
+    writeln!(
+        out,
+        "//! of the tag's `manifest_yaml`.\n//!\n//! Owner: WP-17.\n"
+    )?;
+    writeln!(out, "use crate::ManifestHook;\n")?;
+    for (i, d) in distinct.iter().enumerate() {
+        writeln!(out, "static H{i:03}: ManifestHook = {d};\n")?;
+    }
+    for (tag, idx) in &per_tag {
+        let refs: Vec<String> = idx.iter().map(|i| format!("&H{i:03}")).collect();
+        writeln!(out, "/// `{tag}`.")?;
+        writeln!(
+            out,
+            "pub(crate) static {}: &[&ManifestHook] = &[{}];",
+            model_name(tag),
+            refs.join(", ")
+        )?;
+    }
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // generation
 // ---------------------------------------------------------------------------------------------------------------
 
@@ -1024,10 +1290,16 @@ fn render(tags: &[TagData]) -> anyhow::Result<Files> {
             )?;
         }
         writeln!(profiles, "        ],")?;
+        writeln!(
+            profiles,
+            "        model: Some(super::models::{}),",
+            model_name(t.tag)
+        )?;
         writeln!(profiles, "    }},")?;
     }
     writeln!(profiles, "];")?;
     files.insert("tags.rs".to_owned(), profiles.into_bytes());
+    files.insert("models.rs".to_owned(), render_models(tags)?.into_bytes());
 
     // ---- verified blobs: every module blob of every tag (DELEGATE epochs map to Epoch(0)) ----
     let mut blobs: BTreeMap<String, (String, u16)> = BTreeMap::new();
@@ -1234,7 +1506,14 @@ fn render(tags: &[TagData]) -> anyhow::Result<Files> {
         mod_rs,
         "//!\n//! Owner: WP-17 (`parity_gates.rs`: WP-27 from W2 on).\n"
     )?;
-    for module in ["blobs", "closures", "parity_gates", "scripts", "tags"] {
+    for module in [
+        "blobs",
+        "closures",
+        "models",
+        "parity_gates",
+        "scripts",
+        "tags",
+    ] {
         writeln!(mod_rs, "pub(crate) mod {module};")?;
     }
     writeln!(mod_rs)?;
@@ -1434,6 +1713,56 @@ mod tests {
             ("B", "fail")
         );
         assert!(parse_manifest("-   id: [x]\n").is_err());
+    }
+
+    /// The model reader takes every `MANIFEST_HOOK_DICT` key in the tags' shapes and refuses anything else.
+    #[test]
+    fn manifest_model_reader() {
+        let m = "-   id: a\n    name: 'it''s'\n    entry: a\n    language: python\n    types: [text, 'executable']\n    \
+                 stages: []\n    always_run: true\n    minimum_pre_commit_version: 3.2.0\n";
+        let hooks = parse_manifest_maps(m).unwrap();
+        assert_eq!(hooks.len(), 1);
+        let h = &hooks[0];
+        assert_eq!(h.get("name"), Some(&YamlVal::Str("it's".to_owned())));
+        assert_eq!(
+            h.get("types"),
+            Some(&YamlVal::List(vec![
+                "text".to_owned(),
+                "executable".to_owned()
+            ]))
+        );
+        assert_eq!(h.get("stages"), Some(&YamlVal::List(Vec::new())));
+        assert_eq!(h.get("always_run"), Some(&YamlVal::Bool(true)));
+        assert_eq!(
+            h.get("minimum_pre_commit_version"),
+            Some(&YamlVal::Str("3.2.0".to_owned()))
+        );
+        let rendered = render_model_hook(h).unwrap();
+        assert!(rendered.contains("    exclude: \"^$\",\n"), "{rendered}");
+        assert!(
+            rendered.contains("    pass_filenames: true,\n"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("    language_version: \"default\",\n"),
+            "{rendered}"
+        );
+        for bad in [
+            "-   id: a\n    unknown: x\n",
+            "-   id: a\n    id: b\n",
+            "-   id: a\n    always_run: yes\n",
+            "-   id: a\n    types: text\n",
+            "-   id: a\n    types: [[x]]\n",
+            "-   id: a\n    minimum_pre_commit_version: 3.2\n",
+            "-   id: a\n    minimum_pre_commit_version: 1_0\n",
+            "-   id: a\n    name: null\n",
+            "-   id: a\n    name: Yes\n",
+            "-   id: a\n    args:\n",
+            "-   id: a\n    name: |\n",
+        ] {
+            assert!(parse_manifest_maps(bad).is_err(), "{bad:?}");
+        }
+        assert!(render_model_hook(&parse_manifest_maps("-   id: a\n").unwrap()[0]).is_err());
     }
 
     #[test]

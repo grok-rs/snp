@@ -128,6 +128,8 @@ fn run_native(id: &str, epoch: u16, data: &[u8]) {
         columns: 80,
         facts: &n.facts,
         cancel: &n.cancel,
+        cache: None,
+        gate: None,
     };
     let o = hook.run(&cx, &argv_ref);
     assert!(

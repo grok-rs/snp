@@ -7,6 +7,7 @@
 //!
 //! Owner: WP-14.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -79,8 +80,9 @@ pub struct Node {
     /// Payload.
     pub kind: NodeKind,
     /// Resolved tag: the explicit tag, or for an untagged node (or one tagged with the non-specific `!`) the tag
-    /// PyYAML's resolver assigns (`Resolver.resolve`).
-    pub tag: Box<str>,
+    /// PyYAML's resolver assigns (`Resolver.resolve`). A resolved tag borrows the resolver's static string; an
+    /// explicit tag is owned (ADR-138).
+    pub tag: Cow<'static, str>,
     /// Scalar style.
     pub style: ScalarStyle,
     /// Byte span in the text: from the start of the node's first token (its anchor or tag when it has one) to the
@@ -208,17 +210,17 @@ fn convert(e: ParseError) -> YamlError {
 }
 
 /// `PyUnicode_FromYamlString(tag)`: a tag may hold `%XX` octets that are not UTF-8 (`UnicodeDecodeError`).
-fn decode_tag(tag: Vec<u8>) -> Result<Box<str>, YamlError> {
+fn decode_tag(tag: Vec<u8>) -> Result<Cow<'static, str>, YamlError> {
     if let Err(e) = decode_utf8(&tag) {
         return Err(YamlError::python("UnicodeDecodeError", e.to_string()));
     }
     String::from_utf8(tag)
-        .map(String::into_boxed_str)
+        .map(Cow::Owned)
         .map_err(|_| YamlError::marked("YAMLError", None, None, INVALID_DOCUMENT, None))
 }
 
 /// The explicit tag of a node; `None` when it is absent or the non-specific `!` (which PyYAML resolves).
-fn explicit_tag(tag: Option<Vec<u8>>) -> Result<Option<Box<str>>, YamlError> {
+fn explicit_tag(tag: Option<Vec<u8>>) -> Result<Option<Cow<'static, str>>, YamlError> {
     match tag {
         None => Ok(None),
         Some(t) if t == b"!" => Ok(None),
@@ -360,7 +362,7 @@ impl<'a> Composer<'a> {
                         ));
                     }
                     let default = if is_seq { SEQ_TAG } else { MAP_TAG };
-                    let tag = explicit_tag(tag)?.unwrap_or_else(|| default.into());
+                    let tag = explicit_tag(tag)?.unwrap_or(Cow::Borrowed(default));
                     let node = Node {
                         kind: if is_seq {
                             NodeKind::Seq(Vec::new())
@@ -433,12 +435,12 @@ impl<'a> Composer<'a> {
     }
 
     /// `Resolver.resolve(ScalarNode, value, (plain_implicit, quoted_implicit))` for an untagged (or `!`) scalar.
-    fn implicit_scalar_tag(&self, value: &str, plain_implicit: bool) -> Box<str> {
-        if plain_implicit {
-            resolve_plain(value, self.schema).as_tag().into()
+    fn implicit_scalar_tag(&self, value: &str, plain_implicit: bool) -> Cow<'static, str> {
+        Cow::Borrowed(if plain_implicit {
+            resolve_plain(value, self.schema).as_tag()
         } else {
-            STR_TAG.into()
-        }
+            STR_TAG
+        })
     }
 }
 

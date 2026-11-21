@@ -1,4 +1,5 @@
-//! `cargo xtask lint-guards`: no `?` and no `return` inside `run`/`hook_impl` of crates/snp-run (§4.4, ADR-015).
+//! `cargo xtask lint-guards`: no `?` and no `return` inside `run`/`hook_impl` of crates/snp-run (§4.4, ADR-015),
+//! and the snp-hooks write ban is in force ([`write_ban`], ADR-132).
 //!
 //! `snp_run::run` and `snp_run::hook_impl` have a single exit: the stash guard is restored explicitly before the
 //! one return path, so neither body may contain the `?` operator or a `return` expression. Closures and nested
@@ -13,6 +14,8 @@ use anyhow::{Context as _, bail};
 use syn::visit::{self, Visit};
 
 use crate::workspace;
+
+mod write_ban;
 
 /// (file, function) pairs under the single-exit discipline.
 const GUARDED: [(&str, &str); 2] = [
@@ -91,16 +94,21 @@ pub(crate) fn run(args: &[OsString]) -> anyhow::Result<()> {
             problems.push(format!("{file}: {v}"));
         }
     }
-    if problems.is_empty() {
-        workspace::say("lint-guards: ok (snp_run::run and snp_run::hook_impl have a single exit)");
+    let bans = write_ban::check(&root)?;
+    if problems.is_empty() && bans.is_empty() {
+        workspace::say(
+            "lint-guards: ok (snp_run::run and snp_run::hook_impl have a single exit; the snp-hooks write ban is in \
+             force)",
+        );
         return Ok(());
     }
-    for p in &problems {
+    for p in problems.iter().chain(&bans) {
         workspace::say(&format!("lint-guards: {p}"));
     }
     bail!(
-        "{} single-exit violation(s) (ARCHITECTURE §4.4)",
-        problems.len()
+        "{} single-exit violation(s) (ARCHITECTURE §4.4), {} write-ban problem(s) (ADR-132)",
+        problems.len(),
+        bans.len()
     )
 }
 
