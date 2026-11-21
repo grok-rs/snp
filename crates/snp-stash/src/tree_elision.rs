@@ -36,7 +36,7 @@ use snp_git::{ConfigListing, Git, IndexStamp, ObjectId, RepoInfo, odb};
 
 use crate::diff_oracle::every_entry_stat_clean;
 
-/// The largest index [`prepare`] reads (the Stat mode's bound).
+/// The largest index [`prepare`] reads (the Stat mode's bound), checked on the header before anything else is read.
 const MAX_ENTRIES: usize = 16_384;
 /// The largest index [`diff_index_empty`] checks: one `lstat` per entry on the calling thread.
 pub(crate) const MAX_DIFF_ENTRIES: usize = 2_048;
@@ -112,7 +112,12 @@ pub(crate) fn prepare(
 ) -> Option<Prepared> {
     let hash_len = gate(info, env, listing)?;
     let index_sec = regular_index_sec(&info.index_file)?;
-    if git.index_stamp(info) != Some(read) {
+    // the header's count first (12 bytes), so a large index is never read
+    let small = git
+        .index_entry_count(info)
+        .and_then(|n| usize::try_from(n).ok())
+        .is_some_and(|n| n <= MAX_ENTRIES);
+    if !small || git.index_stamp(info) != Some(read) {
         return None;
     }
     let index = IndexFile::read_keep(&info.index_file, hash_len).ok()?;
