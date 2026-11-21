@@ -24,7 +24,7 @@ ADR-119 the proven post-checkout baseline; ADR-131 the file-content cache of con
 baseline taken by the first native write in all-in-process runs; ADR-133 its follow-ups (the system attributes file from
 `git var`, attributes that convert nothing); ADR-134 the index-stat proof; ADR-135 the hook script template v3; ADR-136 the wave-5 bench methodology;
 ADR-137 PIE release artifacts and their hardening gate; ADR-138 the internal crates' API policy and snp-yaml's borrowed
-tags and scalar text; ADR-150 gc's parallel loading with ordered replay.
+tags and scalar text; ADR-150 gc's parallel loading with ordered replay and its cheaper loads.
 
 Index of the 18 research contradictions: C1→ADR-019, C2→ADR-002, C3→ADR-003, C4→ADR-004, C5→ADR-005, C6→ADR-006,
 C7→ADR-007, C8→ADR-008, C9→ADR-009, C10→ADR-012, C11→ADR-011, C12→ADR-013, C13→ADR-014, C14→ADR-017,
@@ -3424,8 +3424,9 @@ test checks that resolved tags are `Borrowed`, explicit tags (`!!int`, `!local`,
 
 ### ADR-150 — gc loads its tracked configs in parallel and replays their output in tracked order
 
-*Status: Accepted (wave 6, B11; analysis `deep-b11` G1-G4). Concurrency on gc's deletion path (ARCHITECTURE §5.6);
-no kernel or model changes (K8 protects `sweep`/`clean`, which are untouched).*
+*Status: Accepted (wave 6, B11; analysis `deep-b11` G1-G4, and G5-G7 in the part "Cheaper loads" below). Concurrency
+on gc's deletion path (ARCHITECTURE §5.6); no kernel or model changes (K8 protects `sweep`/`clean`, which are
+untouched).*
 
 **Context.** B11 (`gc` over 500 repositories and 200 configs) was snp's slowest scenario against prek 0.5.11 on CI:
 25.86 ms against 18.22 (run 44906093739), with snp on one thread and half of its time in the kernel. About 86% of the
@@ -3492,6 +3493,35 @@ with nothing forgotten or removed (`WorkerPartition` now also fires in each gc c
 `retain_markers_keeping_names`, `tracked_order` against sort-and-dedup (property test) and the memoised derivation
 against the plain one (directories, files, symlinks, dangling and looping links, an unsearchable directory) have
 their own tests.
+
+**Cheaper loads (G5-G7).** Three exact cuts under every config load, marker read and pool fan-out. (G5) snp-yaml's
+reader (`Reader::fill`, libyaml's `yaml_parser_update_buffer`) counts a run of allowed ASCII bytes (`\t`, `\n`, `\r`,
+`0x20-0x7E`: exactly the ASCII part of libyaml's allowed set) as one character per byte without decoding it, and
+sends every other byte through the old per-character check. The allowed set, the chunk limit (a character that
+straddles it waits for the next chunk), the character count and the first disallowed character's value and offset
+are unchanged; no mark or scanner code changes (this is not the rejected Q09 b-d). (G6) `snp_os::fs::read_capped`
+reads the first min(cap, 4 KiB) bytes to the end into a reused per-thread buffer (no allocation or zeroing per call)
+and copies them into an exact-size result; only a file that fills it is `fstat`ed, to pre-size the rest as before.
+The length was only an allocation hint, so the bytes are those of one bounded read to the end; a file of up to 4 KiB
+costs no `fstat` (gc: 500 markers and 200 `configs-v1` entries). Unlike the deep dive's "cap ≤ 64 KiB" rule this
+covers the 1 MiB-capped markers too, and a large file loses nothing. (G7) `JobPool` counts its waiters in the pool
+state, under the lock, before `wait_timeout` and uncounts them after waking, before the re-check; a release, a
+handout or a cancelled waiter handing its turn on calls `notify_all` only when the count is non-zero (std's futex
+condition variable makes a syscall for every `notify_all`). A thread that is not counted holds the lock before its
+next check of `available` and `serving`, so it sees the change; permit handout, FIFO tickets, nested permits
+(ADR-070), the cancellation poll and `Limiter` are unchanged (ADR-065, ADR-066, ADR-070).
+Measured locally (profiling build, harness fixtures, snp's process): B11 callgrind 90.22 M → 87.63 M instructions
+(`Reader::fill` 3.50 M → 0.96 M), syscalls 8,370 → 7,274 (`statx` 1,952 → 1,251, `futex` 407 → 9); B10 128.08 M →
+122.40 M instructions (`Reader::fill` 7.44 M → 1.88 M); B6 76.69 M → 76.27 M, `futex` 1,343 → 751-800; B12u `futex`
+5,106 → 1,748 for the tree; paired interleaved wall times show no regression on B6, B10, B11 or B12u (laptop
+noise; CI decides). Tests: the fast path against the old character loop (kept as a `cfg(test)` oracle) on 4,000
+generated texts (clean ASCII with rare and frequent control, C1, surrogate-neighbour, noncharacter, BOM and 2- to
+4-byte characters, with and without a leading BOM) at random increasing limits, chunk multiples and mid-character
+ones (a seeded mutation, DEL in the fast set, fails it), with the existing chunk-boundary tests and the `yaml_load`
+fuzz target; `read_capped` against the plain read for file lengths and caps on both sides of 4 KiB and 64 KiB; a
+pool stress test with a 60 s cancellation poll (8 threads, 1-3 permits, `acquire` and concurrent `map_ordered`),
+where a lost wakeup stalls the FIFO head past the time bound (a seeded mutation that never notifies times out),
+checking the permit bound, the returned permits, the ticket counters and a zero waiter count.
 
 ## Appendix A — Open questions of the research documents, resolved
 

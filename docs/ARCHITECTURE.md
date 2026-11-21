@@ -994,6 +994,7 @@ pub mod fs {
     pub fn unnamed_temp(dir: &Path) -> io::Result<File>;
     /// rename(path → trash/<rand>) then remove; gc/clean never leave half-deleted dirs at live paths.
     pub fn retire_dir(path: &Path, trash: &Path) -> io::Result<()>;
+    /// At most `cap` bytes; the first min(cap, 4 KiB) go through a per-thread buffer without `fstat` (ADR-150).
     pub fn read_capped(path: &Path, cap: u64) -> io::Result<Vec<u8>>;
     pub fn create_truncate_nofollow(path: &Path) -> io::Result<File>;          // crash log
     /// mkdir -p, created components 0700 (Unix). Refuses (PermissionDenied) only a world-writable non-sticky final dir;
@@ -1138,7 +1139,8 @@ pub mod pool {
     /// holds a permit (thread-local flag) runs nested `map_ordered` work inline and sequentially without acquiring
     /// (debug builds assert that a permit holder never blocks in `acquire`); bucket-level hook threads hold no permit.
     /// So `PRE_COMMIT_NO_CONCURRENCY=1` (N = 1) cannot deadlock a meta hook that classifies files.
-    #[derive(Debug)] pub struct JobPool { /* Mutex<usize> + Condvar + CancelToken */ }
+    /// The condition variable is notified only while a waiter is counted under the lock (ADR-150).
+    #[derive(Debug)] pub struct JobPool { /* Mutex<{available, tickets, waiters}> + Condvar + CancelToken */ }
     #[derive(Debug)] pub struct Permit<'a>(/* &'a JobPool */);   // releases on drop
     impl JobPool {
         pub fn new(permits: NonZeroUsize, cancel: CancelToken) -> Arc<Self>;  // cores = permits

@@ -54,6 +54,11 @@ Targets pre-commit 4.7.0 (was 4.6.2); the workspace version is 2.0.1 (ADR-089).
   negative-prefix memo spares the directory probe of each `https://…` repository (one per project root instead).
   B11 locally (4 CPUs, process wall): 30.5 → 19.3 ms (prek 0.5.11: 22.6 ms); instructions 89.0 M → 90.2 M (pool and
   replay overhead), syscalls 8,243 → 8,365 (−491 `statx`, +404 `futex` and the thread starts).
+- Cheaper config loads, small reads and pool handoffs (ADR-150 "Cheaper loads"): the YAML reader counts runs of
+  allowed ASCII without decoding them (same allowed set, chunk limit and control-character offsets), `read_capped`
+  reads small files through a per-thread buffer without `fstat`, and the job pool notifies its condition variable
+  only when a thread waits. B11: 90.2 M → 87.6 M instructions, 8,370 → 7,274 syscalls (−701 `statx`, −398
+  `futex`); B10: 128.1 M → 122.4 M instructions; `futex` calls 1,343 → ~780 on B6 and 5,106 → 1,748 on B12u.
 - bench: the B8 `p50 <= pre-commit` known miss is gone. PR #57's CI bench measured snp at 307 ms against
   pre-commit's 418 ms (1.36x), so the gate fails again if snp ever falls behind pre-commit on B8.
 - cfgv and file-identify are part of the workspace (ADR-116): imported with their full history as `crates/snp-cfgv`
