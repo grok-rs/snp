@@ -3,7 +3,7 @@
 //! fault-injection and panic tests, never in releases).
 //!
 //! `SNP_FAULT=<point>[@n]` arms one point; `<point>` is a [`Point`] name (`PrinterWrite`,
-//! `WorkerPartition`, `StashState`, `RestoreCommand`, `InstallCommit`, `StoreMaterialize`),
+//! `WorkerPartition`, `StashState`, `RestoreCommand`, `StashBackup`, `InstallCommit`, `StoreMaterialize`),
 //! optionally with an argument (`StashState(3)`; without one, any argument matches). The `n`-th hit
 //! (default 1) panics with the payload `snp fault injection: <point>`.
 
@@ -23,6 +23,8 @@ pub enum Point {
     StashState(u8),
     /// A restore command (`n` = its index in the restore sequence).
     RestoreCommand(u8),
+    /// A step of the stash's hard-link backups and its restore by rename (ADR-152; `n` = the step's index).
+    StashBackup(u8),
     /// Just before an install's commit marker is written.
     InstallCommit,
     /// While materialising a store entry.
@@ -36,6 +38,7 @@ impl Point {
             Self::WorkerPartition => "WorkerPartition",
             Self::StashState(_) => "StashState",
             Self::RestoreCommand(_) => "RestoreCommand",
+            Self::StashBackup(_) => "StashBackup",
             Self::InstallCommit => "InstallCommit",
             Self::StoreMaterialize => "StoreMaterialize",
         }
@@ -43,7 +46,7 @@ impl Point {
 
     const fn arg(self) -> Option<u8> {
         match self {
-            Self::StashState(n) | Self::RestoreCommand(n) => Some(n),
+            Self::StashState(n) | Self::RestoreCommand(n) | Self::StashBackup(n) => Some(n),
             _ => None,
         }
     }
@@ -93,11 +96,12 @@ mod imp {
 
     static ARMED: Mutex<Option<Armed>> = Mutex::new(None);
 
-    const NAMES: [&str; 6] = [
+    const NAMES: [&str; 7] = [
         "PrinterWrite",
         "WorkerPartition",
         "StashState",
         "RestoreCommand",
+        "StashBackup",
         "InstallCommit",
         "StoreMaterialize",
     ];
@@ -163,6 +167,8 @@ mod imp {
             assert!(parse("Nope").is_none());
             assert!(parse("PrinterWrite@0").is_none());
             assert!(parse("StashState(x)").is_none());
+            let a = parse("StashBackup(1)").unwrap();
+            assert_eq!((a.name.as_str(), a.arg), ("StashBackup", Some(1)));
         }
     }
 }
@@ -175,6 +181,7 @@ mod tests {
     fn display_and_disarmed_hits() {
         assert_eq!(Point::StashState(3).to_string(), "StashState(3)");
         assert_eq!(Point::PrinterWrite.to_string(), "PrinterWrite");
+        assert_eq!(Point::StashBackup(2).to_string(), "StashBackup(2)");
         // Nothing is armed by default: hits never panic.
         arm_from_env(&Env::from_pairs([("OTHER", "1")]));
         hit(Point::InstallCommit);

@@ -416,11 +416,12 @@ mod api {
         drop(sync::read(&l));
         has::<RwLockWriteGuard<'_, i32>>(sync::write(&l));
         has::<fn() -> SpawnGuard>(spawnlock::guard);
-        has::<[Point; 6]>([
+        has::<[Point; 7]>([
             Point::PrinterWrite,
             Point::WorkerPartition,
             Point::StashState(1),
             Point::RestoreCommand(1),
+            Point::StashBackup(1),
             Point::InstallCommit,
             Point::StoreMaterialize,
         ]);

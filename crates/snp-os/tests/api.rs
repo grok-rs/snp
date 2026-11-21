@@ -18,7 +18,7 @@ mod api {
     use snp_os::fs::{self, Ownership};
     use snp_os::lock::{FileLock, LockMode};
     use snp_os::rootstat::{RootDir, StatData};
-    use snp_os::{fsinfo, home, realpath, term};
+    use snp_os::{fsinfo, home, linkback, realpath, term};
 
     fn send_sync<T: Send + Sync>() {}
 
@@ -83,6 +83,10 @@ mod api {
         has::<fn(&Env) -> Option<PathBuf>>(home::default_cache_root);
         has::<fn(&Path, &Path) -> io::Result<PathBuf>>(realpath::realpath_nonstrict);
         has::<fn(&Path) -> io::Result<bool>>(fsinfo::stat_oracle_safe);
+        // ADR-152
+        has::<fn(&Path) -> io::Result<bool>>(linkback::path_has_no_xattrs);
+        has::<fn(&File) -> io::Result<bool>>(linkback::file_has_no_xattrs);
+        has::<fn(&File) -> io::Result<()>>(linkback::touch_now);
         // ADR-134
         send_sync::<RootDir>();
         send_sync::<StatData>();

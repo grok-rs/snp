@@ -532,7 +532,7 @@ pub mod spawnlock {  // S15 (ADR-037): no-op on Linux and Windows; a process-wid
 /// `fault-injection` is on (enabled only by `crates/snp`'s `testing` feature for FI/panic tests, never in releases).
 pub mod fault {
     #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-    pub enum Point { PrinterWrite, WorkerPartition, StashState(u8), RestoreCommand(u8), InstallCommit, StoreMaterialize }
+    pub enum Point { PrinterWrite, WorkerPartition, StashState(u8), RestoreCommand(u8), StashBackup(u8), InstallCommit, StoreMaterialize }
     /// `SNP_FAULT=<point>[@n]` (n-th hit, default 1); read once by `snp::entry` from the captured Env.
     pub fn arm_from_env(env: &crate::env::Env);
     /// Panics with payload `snp fault injection: <point>` on the armed hit; otherwise does nothing.
@@ -1038,6 +1038,15 @@ pub mod fsinfo {
     /// f_type ∈ {ext2/3/4, xfs, btrfs, tmpfs, zfs, f2fs, bcachefs}; macOS f_fstypename ∈ {apfs, hfs}. Everything else
     /// (NFS, SMB, 9p, every FUSE incl. sshfs/rclone/virtiofs, overlayfs, vfat, exfat, ntfs-3g, unknown) → false.
     pub fn stat_oracle_safe(path: &Path) -> io::Result<bool>;
+}
+/// ADR-152: the filesystem steps of the stash's restore by rename (Linux only; elsewhere every call answers
+/// `Unsupported` and the stash keeps `git apply`).
+pub mod linkback {
+    /// `llistxattr` / `flistxattr` report no name (a filesystem without xattr support has none).
+    pub fn path_has_no_xattrs(path: &Path) -> io::Result<bool>;
+    pub fn file_has_no_xattrs(f: &File) -> io::Result<bool>;
+    /// `futimens(UTIME_NOW, UTIME_NOW)`: the times a fresh write leaves, from the kernel's clock.
+    pub fn touch_now(f: &File) -> io::Result<()>;
 }
 /// ADR-134: `lstat` relative to a directory descriptor (`O_PATH` on Linux, read-only elsewhere; Unix only, `open` fails
 /// on other platforms), for the index-stat proof.
