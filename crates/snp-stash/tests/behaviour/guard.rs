@@ -1334,6 +1334,15 @@ fn intent_to_add_hint_is_used_only_without_contention() {
 #[test]
 fn contended_run_clears_intent_to_add_despite_a_hint() {
     let sb = Sandbox::new();
+    // git < 2.19 does not report intent-to-add files (D-DATA-17): the run refuses them there (`old_git`).
+    let floor = snp_git::GitVersion {
+        major: 2,
+        minor: 19,
+        patch: 0,
+    };
+    if sb.exe().caps.version.is_some_and(|v| v < floor) {
+        return;
+    }
     let repo = quiet_index(&sb, "r", true);
     let (spy, out, contended) = run_with_hint(&sb, &repo, true);
     assert!(contended);
