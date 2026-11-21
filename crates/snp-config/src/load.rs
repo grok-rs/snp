@@ -466,7 +466,7 @@ mod tests {
     /// compiles it (and caches the error).
     #[test]
     fn manifest_parse_error_is_not_compiled() {
-        let broken: IndexSet<String> = ["(".to_owned()].into_iter().collect();
+        let broken: IndexSet<String> = std::iter::once("(".to_owned()).collect();
         let before = probe::compiles();
         let ((), diag, _) = with_opts(|o| future_warnings(&broken, Kind::Manifest, o));
         assert_eq!(diag, Vec::<String>::new());
